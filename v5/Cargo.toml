@@ -20,6 +20,9 @@ blake3 = "1"
 notify = "6"
 rayon = "1"
 syn = { version = "2", features = ["full"] }
+# span-locations lets syn report 1-based line/col for declaration sites
+# (TypeEntity.line) when parsing a file outside a proc-macro context.
+proc-macro2 = { version = "1", features = ["span-locations"] }
 tree-sitter = "0.25"
 tree-sitter-rust = "0.24"
 tree-sitter-c = "0.24"

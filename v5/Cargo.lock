@@ -1381,6 +1381,7 @@ dependencies = [
  "oxc_parser",
  "oxc_resolver",
  "oxc_span",
+ "proc-macro2",
  "protobuf",
  "rayon",
  "regex",

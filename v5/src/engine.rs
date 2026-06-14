@@ -53,9 +53,14 @@ const MODULE_RELS: [&str; 6] = [
     "crate_edge",
 ];
 
-/// Syntax-only Rust type graph. `kind` is edge metadata; closure(type_edge)
-/// walks the first two columns.
-const TYPE_RELS: [&str; 2] = ["type_edge", "type_edge_rev"];
+/// Syntax-only type graph. `kind` is edge metadata; closure(type_edge) walks
+/// the first two columns. `type_edge`/`type_edge_rev` are name-keyed (the
+/// historic contract). The sem-style additions are def-keyed: `type_entity`
+/// is the declared-symbol table (kind, parent, location), `type_sig` is each
+/// callable's arrow `[...A] => B` exploded by slot, and `type_link` is the
+/// SCIP-resolved graph where endpoints are definition symbols, not bare names.
+const TYPE_RELS: [&str; 5] =
+    ["type_edge", "type_edge_rev", "type_entity", "type_sig", "type_link"];
 
 /// Compiler-backed SCIP importer. `scip_edge` is file-to-file dependency data
 /// extracted from definition/reference occurrences in an existing index.scip.
@@ -106,6 +111,12 @@ fn type_rel_decls() -> Vec<RelDecl> {
     vec![
         RelDecl { name: "type_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text)] },
         RelDecl { name: "type_edge_rev".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text), c("rev", Type::Text)] },
+        RelDecl { name: "type_entity".into(), cols: vec![
+            c("sym", Type::Text), c("name", Type::Text), c("kind", Type::Text),
+            c("parent", Type::Text), c("file", Type::Path), c("line", Type::Int)] },
+        RelDecl { name: "type_sig".into(), cols: vec![
+            c("sym", Type::Text), c("slot", Type::Text), c("pos", Type::Int), c("ref", Type::Text)] },
+        RelDecl { name: "type_link".into(), cols: vec![c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text)] },
     ]
 }
 
@@ -164,6 +175,27 @@ fn rels_used(prog: &Program, rels: &[&str]) -> bool {
 fn module_rels_used(prog: &Program) -> bool { rels_used(prog, &MODULE_RELS) }
 
 fn type_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_RELS) }
+
+/// The trailing identifier of a SCIP symbol descriptor: `... Foo#` -> "Foo",
+/// `... bar().` -> "bar". Used to key the SCIP override by plain type name.
+fn scip_descriptor_name(symbol: &str) -> Option<String> {
+    let bytes = symbol.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    // the last maximal identifier run in the symbol string
+    let mut last: Option<(usize, usize)> = None;
+    let mut run_start: Option<usize> = None;
+    for (idx, &b) in bytes.iter().enumerate() {
+        if is_ident(b) {
+            run_start.get_or_insert(idx);
+        } else if let Some(s) = run_start.take() {
+            last = Some((s, idx));
+        }
+    }
+    if let Some(s) = run_start.take() {
+        last = Some((s, bytes.len()));
+    }
+    last.map(|(s, e)| symbol[s..e].to_string())
+}
 
 fn scip_rels_used(prog: &Program) -> bool { rels_used(prog, &SCIP_RELS) }
 
@@ -1747,7 +1779,7 @@ impl Engine {
                     bail!("{} is a built-in module-graph relation; pick another name", d.name);
                 }
                 if TYPE_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in type-graph relation (type_edge / type_edge_rev); pick another name", d.name);
+                    bail!("{} is a built-in type-graph relation (type_edge / type_edge_rev / type_entity / type_sig / type_link); pick another name", d.name);
                 }
                 if SCIP_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in SCIP relation; pick another name", d.name);
@@ -2104,27 +2136,110 @@ impl Engine {
         // by the rayon pool, not the corpus (peak-RSS invariant). Rows carry their
         // rev so the type graph is history-aware like module_edge_rev.
         let root = self.root.clone();
-        let rows: Vec<Vec<Value>> = files.par_iter().flat_map(|(path, rev)| {
-            let t = |s: &str| Value::Text(s.to_string());
+        // Per-file extraction via the language registry (no extension if-chain;
+        // registry order makes .kts match Kotlin before .ts would). Each file
+        // yields its declared entities + edge graph; collected before resolution
+        // because name->def resolution is corpus-global (a barrier).
+        let facts: Vec<(String, String, typegraph::TypeFacts)> = files.par_iter().filter_map(|(path, rev)| {
+            let lang = typegraph::type_langs().iter().find(|l| l.matches(path))?;
             let content = read_content(&root, rev, path).unwrap_or_default();
-            // .kts must be tested before .ts: LIKE '%.ts' matches both
-            let edges = if path.ends_with(".rs") {
-                typegraph::edges(&content)
-            } else if path.ends_with(".kt") || path.ends_with(".kts") {
-                typegraph::kotlin_edges(&content)
-            } else if path.ends_with(".tsx") {
-                typegraph::ts_edges(&content, true)
-            } else {
-                typegraph::ts_edges(&content, false)
-            };
-            edges
-                .into_iter()
-                .map(|edge| vec![t(&edge.from), t(&edge.to), t(edge.kind), t(rev)])
-                .collect::<Vec<_>>()
+            Some((path.clone(), rev.clone(), lang.extract(path, &content)))
         }).collect();
-        self.refresh_rel("type_edge_rev", &["from", "to", "kind", "rev"], &rows)?;
+
+        // Resolver: a name maps to its definition symbol when exactly one entity
+        // in the corpus declares it (syntactic). A SCIP index, when present,
+        // overrides per (file, name) with the indexed def file (collision-proof).
+        let mut by_name: HashMap<&str, Vec<&str>> = HashMap::new();
+        let mut sym_at: HashMap<(&str, &str), &str> = HashMap::new();
+        for (_, _, f) in &facts {
+            for e in &f.entities {
+                by_name.entry(e.name.as_str()).or_default().push(e.sym.as_str());
+                sym_at.insert((e.file.as_str(), e.name.as_str()), e.sym.as_str());
+            }
+        }
+        let scip = self.scip_name_defs().unwrap_or_default();
+        let resolve = |file: &str, name: &str| -> Option<String> {
+            if let Some(def_file) = scip.get(&(file.to_string(), name.to_string())) {
+                if let Some(sym) = sym_at.get(&(def_file.as_str(), name)) {
+                    return Some(sym.to_string());
+                }
+            }
+            match by_name.get(name) {
+                Some(v) if v.len() == 1 => Some(v[0].to_string()),
+                _ => None,
+            }
+        };
+
+        let t = |s: &str| Value::Text(s.to_string());
+        let i = |n: u32| Value::Int(n as i64);
+        let mut edge_rev_rows: Vec<Vec<Value>> = Vec::new();
+        let mut entity_rows: Vec<Vec<Value>> = Vec::new();
+        let mut sig_rows: Vec<Vec<Value>> = Vec::new();
+        let mut link_rows: Vec<Vec<Value>> = Vec::new();
+        let mut seen_entity: HashSet<&str> = HashSet::new();
+        let mut seen_link: HashSet<(String, String, &str)> = HashSet::new();
+        for (path, rev, f) in &facts {
+            // historic name-keyed edges, unchanged
+            for edge in &f.edges {
+                edge_rev_rows.push(vec![t(&edge.from), t(&edge.to), t(edge.kind), t(rev)]);
+                // SCIP-resolved graph: owner sym -> resolved target sym (or the
+                // bare name when external/ambiguous, so leaf types still appear)
+                let src = sym_at.get(&(path.as_str(), edge.from.as_str()))
+                    .map(|s| s.to_string()).unwrap_or_else(|| edge.from.clone());
+                let dst = resolve(path, &edge.to).unwrap_or_else(|| edge.to.clone());
+                if seen_link.insert((src.clone(), dst.clone(), edge.kind)) {
+                    link_rows.push(vec![t(&src), t(&dst), t(edge.kind)]);
+                }
+            }
+            for ent in &f.entities {
+                if seen_entity.insert(ent.sym.as_str()) {
+                    entity_rows.push(vec![
+                        t(&ent.sym), t(&ent.name), t(ent.kind.tag()),
+                        t(ent.parent.as_deref().unwrap_or("")), t(&ent.file), i(ent.line),
+                    ]);
+                }
+                // the arrow [...A] => B, one row per referenced type per slot
+                if let Some(ty) = &ent.ty {
+                    for (pos, slot) in ty.params.iter().enumerate() {
+                        for r in slot {
+                            let rf = resolve(path, r.name()).unwrap_or_else(|| r.name().to_string());
+                            sig_rows.push(vec![t(&ent.sym), t("param"), i(pos as u32), t(&rf)]);
+                        }
+                    }
+                    for r in &ty.ret {
+                        let rf = resolve(path, r.name()).unwrap_or_else(|| r.name().to_string());
+                        sig_rows.push(vec![t(&ent.sym), t("ret"), i(0), t(&rf)]);
+                    }
+                }
+            }
+        }
+        self.refresh_rel("type_edge_rev", &["from", "to", "kind", "rev"], &edge_rev_rows)?;
+        self.refresh_rel("type_entity", &["sym", "name", "kind", "parent", "file", "line"], &entity_rows)?;
+        self.refresh_rel("type_sig", &["sym", "slot", "pos", "ref"], &sig_rows)?;
+        self.refresh_rel("type_link", &["src", "dst", "kind"], &link_rows)?;
         self.rebuild_legacy_type_rels()?;
         Ok(())
+    }
+
+    /// Best-effort SCIP override for resolution: read `scip_ref(file, symbol,
+    /// def_file)` and key it by (file, trailing-descriptor-name) -> def_file.
+    /// Empty when no index.scip is present, so the syntactic path carries.
+    fn scip_name_defs(&self) -> Result<HashMap<(String, String), String>> {
+        let mut out = HashMap::new();
+        let conn = self.db.conn();
+        let Ok(mut s) = conn.prepare(&format!("SELECT file, symbol, def_file FROM {}", tbl("scip_ref"))) else {
+            return Ok(out);
+        };
+        let rows = s.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+        })?;
+        for row in rows.flatten() {
+            let (file, symbol, def_file) = row;
+            if let Some(name) = scip_descriptor_name(&symbol) {
+                out.insert((file, name), def_file);
+            }
+        }
+        Ok(out)
     }
 
     /// Rebuild the convenient rev-less `type_edge(from, to, kind)` from the

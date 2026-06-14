@@ -22,6 +22,165 @@ pub struct TypeEdge {
     pub kind: &'static str,
 }
 
+/// What a declared symbol is. sem's entity_type, shared across languages so the
+/// deck can style a function differently from a data type. The `tag` is the
+/// short slug used in a symbol id and in the `type_entity.kind` column.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntityKind {
+    Struct,
+    Enum,
+    Trait,
+    Class,
+    Interface,
+    Alias,
+    Function,
+    Method,
+    Const,
+}
+
+impl EntityKind {
+    pub fn tag(self) -> &'static str {
+        match self {
+            EntityKind::Struct => "struct",
+            EntityKind::Enum => "enum",
+            EntityKind::Trait => "trait",
+            EntityKind::Class => "class",
+            EntityKind::Interface => "interface",
+            EntityKind::Alias => "alias",
+            EntityKind::Function => "function",
+            EntityKind::Method => "method",
+            EntityKind::Const => "const",
+        }
+    }
+    /// Functions and methods carry an arrow type; everything else is a data type.
+    pub fn is_callable(self) -> bool {
+        matches!(self, EntityKind::Function | EntityKind::Method)
+    }
+}
+
+/// One slot in a function's arrow type. Resolution later binds `Named` to a
+/// definition symbol (`Resolved`) or leaves it `Unresolved` (stdlib/extern).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TypeRef {
+    Named(String),
+    Resolved(String),
+    Unresolved(String),
+}
+
+impl TypeRef {
+    pub fn name(&self) -> &str {
+        match self {
+            TypeRef::Named(s) | TypeRef::Resolved(s) | TypeRef::Unresolved(s) => s,
+        }
+    }
+}
+
+/// A function *is* a type: `[...A] => B`. `params` is the ordered input refs,
+/// `ret` the output ref. A param slot with several refs (e.g. a union) keeps
+/// them all; an empty slot means a non-type (keyword/primitive) parameter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TypeExpr {
+    pub params: Vec<Vec<TypeRef>>,
+    pub ret: Vec<TypeRef>,
+}
+
+/// A declared type-or-function entity: sem's SemanticEntity trimmed to what the
+/// type graph needs (identity, kind, location, parent, and -- for callables --
+/// the arrow type). No content/hashes; those live in the spine.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TypeEntity {
+    pub sym: String,
+    pub name: String,
+    pub kind: EntityKind,
+    pub parent: Option<String>,
+    pub file: String,
+    pub line: u32,
+    pub ty: Option<TypeExpr>,
+}
+
+/// One language's extraction of a file: declared entities + the flat edge graph.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TypeFacts {
+    pub entities: Vec<TypeEntity>,
+    pub edges: Vec<TypeEdge>,
+}
+
+/// sem-style symbol id: `file::kind::name`, scoped by an optional parent for
+/// methods (`file::method::Class.name`). Stable, index-free, human-readable.
+pub fn mint_sym(file: &str, kind: EntityKind, name: &str, parent: Option<&str>) -> String {
+    match parent {
+        Some(p) => format!("{file}::{}::{p}.{name}", kind.tag()),
+        None => format!("{file}::{}::{name}", kind.tag()),
+    }
+}
+
+/// The common interface: a language front-end that recognizes paths and turns a
+/// file's source into `TypeFacts`. The per-language specifics (syn, tree-sitter,
+/// oxc) live behind this; the engine asks the registry, never the extension.
+pub trait TypeLang: Sync {
+    fn name(&self) -> &'static str;
+    fn matches(&self, path: &str) -> bool;
+    fn extract(&self, file: &str, content: &str) -> TypeFacts;
+}
+
+/// Registry order matters: `.kts` matches before `.ts` would, so KotlinTypes
+/// must precede TsTypes. The engine picks the first `matches` hit.
+pub fn type_langs() -> &'static [&'static dyn TypeLang] {
+    &[&RustTypes, &KotlinTypes, &TsTypes]
+}
+
+pub struct RustTypes;
+pub struct KotlinTypes;
+pub struct TsTypes;
+
+impl TypeLang for RustTypes {
+    fn name(&self) -> &'static str { "rust" }
+    fn matches(&self, path: &str) -> bool { path.ends_with(".rs") }
+    fn extract(&self, file: &str, content: &str) -> TypeFacts {
+        TypeFacts { entities: rust_entities(file, content), edges: edges(content) }
+    }
+}
+
+impl TypeLang for KotlinTypes {
+    fn name(&self) -> &'static str { "kotlin" }
+    fn matches(&self, path: &str) -> bool { path.ends_with(".kt") || path.ends_with(".kts") }
+    fn extract(&self, file: &str, content: &str) -> TypeFacts {
+        TypeFacts { entities: kotlin_entities(file, content), edges: kotlin_edges(content) }
+    }
+}
+
+impl TypeLang for TsTypes {
+    fn name(&self) -> &'static str { "ts" }
+    fn matches(&self, path: &str) -> bool { path.ends_with(".ts") || path.ends_with(".tsx") }
+    fn extract(&self, file: &str, content: &str) -> TypeFacts {
+        let tsx = path_is_tsx(file);
+        TypeFacts { entities: ts_entities(file, content, tsx), edges: ts_edges(content, tsx) }
+    }
+}
+
+fn path_is_tsx(file: &str) -> bool {
+    file.ends_with(".tsx")
+}
+
+/// Map a byte offset to a 1-based line number. Built once per file by the oxc
+/// entity pass (oxc spans are byte offsets, unlike syn's line/col).
+fn line_index(content: &str) -> Vec<usize> {
+    let mut starts = vec![0usize];
+    for (i, b) in content.bytes().enumerate() {
+        if b == b'\n' {
+            starts.push(i + 1);
+        }
+    }
+    starts
+}
+
+fn line_at(starts: &[usize], offset: usize) -> u32 {
+    match starts.binary_search(&offset) {
+        Ok(i) => (i + 1) as u32,
+        Err(i) => i as u32, // i = count of starts <= offset
+    }
+}
+
 pub fn edges(content: &str) -> Vec<TypeEdge> {
     let Ok(file) = syn::parse_file(content) else {
         return Vec::new();
@@ -778,6 +937,308 @@ fn ts_enum_edges(e: &ts_ast::TSEnumDeclaration, out: &mut BTreeSet<(String, Stri
     }
 }
 
+// --- entity pass: declared symbols with kind, location, and (for callables)
+// the arrow type. Parses a second time (independent of the edge pass) so the
+// tested edge extraction stays untouched; one file, two cheap syntax walks. ---
+
+fn ts_entities(file: &str, content: &str, tsx: bool) -> Vec<TypeEntity> {
+    let alloc = oxc_allocator::Allocator::default();
+    let st = if tsx { oxc_span::SourceType::tsx() } else { oxc_span::SourceType::ts() };
+    let ret = oxc_parser::Parser::new(&alloc, content, st).parse();
+    if ret.panicked {
+        return Vec::new();
+    }
+    let starts = line_index(content);
+    let mut out = Vec::new();
+    for stmt in &ret.program.body {
+        use ts_ast::Statement as S;
+        match stmt {
+            S::ExportNamedDeclaration(e) => {
+                if let Some(d) = &e.declaration {
+                    ts_decl_entity(d, file, &starts, &mut out);
+                }
+            }
+            S::ExportDefaultDeclaration(e) => match &e.declaration {
+                ts_ast::ExportDefaultDeclarationKind::ClassDeclaration(c) => ts_class_entity(c, file, &starts, &mut out),
+                ts_ast::ExportDefaultDeclarationKind::TSInterfaceDeclaration(i) => {
+                    push_entity(&mut out, file, &starts, &i.id.name, i.span.start, EntityKind::Interface, None, None)
+                }
+                ts_ast::ExportDefaultDeclarationKind::FunctionDeclaration(f) => ts_fn_entity(f, file, &starts, &mut out),
+                _ => {}
+            },
+            S::ClassDeclaration(c) => ts_class_entity(c, file, &starts, &mut out),
+            S::TSInterfaceDeclaration(i) => {
+                push_entity(&mut out, file, &starts, &i.id.name, i.span.start, EntityKind::Interface, None, None)
+            }
+            S::TSTypeAliasDeclaration(a) => {
+                push_entity(&mut out, file, &starts, &a.id.name, a.span.start, EntityKind::Alias, None, None)
+            }
+            S::TSEnumDeclaration(e) => {
+                push_entity(&mut out, file, &starts, &e.id.name, e.span.start, EntityKind::Enum, None, None)
+            }
+            S::FunctionDeclaration(f) => ts_fn_entity(f, file, &starts, &mut out),
+            S::VariableDeclaration(v) => ts_var_fn_entity(v, file, &starts, &mut out),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn ts_decl_entity(d: &ts_ast::Declaration, file: &str, starts: &[usize], out: &mut Vec<TypeEntity>) {
+    match d {
+        ts_ast::Declaration::ClassDeclaration(c) => ts_class_entity(c, file, starts, out),
+        ts_ast::Declaration::TSInterfaceDeclaration(i) => {
+            push_entity(out, file, starts, &i.id.name, i.span.start, EntityKind::Interface, None, None)
+        }
+        ts_ast::Declaration::TSTypeAliasDeclaration(a) => {
+            push_entity(out, file, starts, &a.id.name, a.span.start, EntityKind::Alias, None, None)
+        }
+        ts_ast::Declaration::TSEnumDeclaration(e) => {
+            push_entity(out, file, starts, &e.id.name, e.span.start, EntityKind::Enum, None, None)
+        }
+        ts_ast::Declaration::FunctionDeclaration(f) => ts_fn_entity(f, file, starts, out),
+        ts_ast::Declaration::VariableDeclaration(v) => ts_var_fn_entity(v, file, starts, out),
+        _ => {}
+    }
+}
+
+fn ts_class_entity(c: &ts_ast::Class, file: &str, starts: &[usize], out: &mut Vec<TypeEntity>) {
+    let Some(id) = &c.id else { return };
+    let owner = id.name.to_string();
+    push_entity(out, file, starts, &id.name, c.span.start, EntityKind::Class, None, None);
+    for el in &c.body.body {
+        if let ts_ast::ClassElement::MethodDefinition(m) = el {
+            // normal method name `foo()`; skip computed/private/constructor keys
+            if m.kind == ts_ast::MethodDefinitionKind::Constructor {
+                continue;
+            }
+            if let ts_ast::PropertyKey::StaticIdentifier(k) = &m.key {
+                let ty = ts_fn_type(&m.value.type_parameters, &m.value.params, &m.value.return_type);
+                push_entity(out, file, starts, &k.name, m.span.start, EntityKind::Method, Some(&owner), Some(ty));
+            }
+        }
+    }
+}
+
+fn ts_fn_entity(f: &ts_ast::Function, file: &str, starts: &[usize], out: &mut Vec<TypeEntity>) {
+    let Some(id) = &f.id else { return };
+    let ty = ts_fn_type(&f.type_parameters, &f.params, &f.return_type);
+    push_entity(out, file, starts, &id.name, f.span.start, EntityKind::Function, None, Some(ty));
+}
+
+fn ts_var_fn_entity(v: &ts_ast::VariableDeclaration, file: &str, starts: &[usize], out: &mut Vec<TypeEntity>) {
+    for d in &v.declarations {
+        let ts_ast::BindingPattern::BindingIdentifier(name) = &d.id else { continue };
+        let ty = match &d.init {
+            Some(ts_ast::Expression::ArrowFunctionExpression(a)) => {
+                ts_fn_type(&a.type_parameters, &a.params, &a.return_type)
+            }
+            Some(ts_ast::Expression::FunctionExpression(f)) => {
+                ts_fn_type(&f.type_parameters, &f.params, &f.return_type)
+            }
+            _ => continue,
+        };
+        push_entity(out, file, starts, &name.name, d.span.start, EntityKind::Function, None, Some(ty));
+    }
+}
+
+/// Build the arrow `[...A] => B` for a function form. Each param slot collects
+/// its referenced type names (declared type-param names excluded); the return
+/// slot likewise. Keyword/primitive slots come back empty.
+fn ts_fn_type(
+    type_parameters: &Option<oxc_allocator::Box<ts_ast::TSTypeParameterDeclaration>>,
+    params: &ts_ast::FormalParameters,
+    return_type: &Option<oxc_allocator::Box<ts_ast::TSTypeAnnotation>>,
+) -> TypeExpr {
+    let mut tp = BTreeSet::new();
+    if let Some(tps) = type_parameters {
+        for p in &tps.params {
+            tp.insert(p.name.name.to_string());
+        }
+    }
+    let named = |refs: Vec<String>| refs.into_iter().map(TypeRef::Named).collect::<Vec<_>>();
+    let params = params
+        .items
+        .iter()
+        .map(|p| match &p.type_annotation {
+            Some(ann) => named(ts_refs_in_type(&ann.type_annotation, &tp)),
+            None => Vec::new(),
+        })
+        .collect();
+    let ret = match return_type {
+        Some(rt) => named(ts_refs_in_type(&rt.type_annotation, &tp)),
+        None => Vec::new(),
+    };
+    TypeExpr { params, ret }
+}
+
+fn push_entity(
+    out: &mut Vec<TypeEntity>,
+    file: &str,
+    starts: &[usize],
+    name: &str,
+    span_start: u32,
+    kind: EntityKind,
+    parent: Option<&str>,
+    ty: Option<TypeExpr>,
+) {
+    out.push(TypeEntity {
+        sym: mint_sym(file, kind, name, parent),
+        name: name.to_string(),
+        kind,
+        parent: parent.map(|p| mint_sym(file, EntityKind::Class, p, None)),
+        file: file.to_string(),
+        line: line_at(starts, span_start as usize),
+        ty,
+    });
+}
+
+// --- Rust entity pass (syn): structs/enums/unions/traits as data types, free
+// functions and impl methods as callables with arrow types. Lines come from
+// proc-macro2 span-locations (the `Spanned` ident span). ---
+
+fn rust_entities(file: &str, content: &str) -> Vec<TypeEntity> {
+    let Ok(parsed) = syn::parse_file(content) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for item in &parsed.items {
+        rust_item_entity(item, file, &mut out);
+    }
+    out
+}
+
+fn rust_line(span: proc_macro2::Span) -> u32 {
+    span.start().line as u32
+}
+
+fn rust_item_entity(item: &Item, file: &str, out: &mut Vec<TypeEntity>) {
+    // `parent` is the bare owner name (e.g. "Engine"); the method sym uses it
+    // as `Class.name` while the stored parent field is the minted class sym.
+    let mut e = |name: String, line: u32, kind: EntityKind, parent: Option<String>, ty: Option<TypeExpr>| {
+        out.push(TypeEntity {
+            sym: mint_sym(file, kind, &name, parent.as_deref()),
+            name,
+            kind,
+            parent: parent.map(|p| mint_sym(file, EntityKind::Class, &p, None)),
+            file: file.to_string(),
+            line,
+            ty,
+        });
+    };
+    match item {
+        Item::Struct(s) => e(s.ident.to_string(), rust_line(s.ident.span()), EntityKind::Struct, None, None),
+        Item::Enum(en) => e(en.ident.to_string(), rust_line(en.ident.span()), EntityKind::Enum, None, None),
+        Item::Union(u) => e(u.ident.to_string(), rust_line(u.ident.span()), EntityKind::Struct, None, None),
+        Item::Trait(t) => e(t.ident.to_string(), rust_line(t.ident.span()), EntityKind::Trait, None, None),
+        Item::Fn(f) => e(
+            f.sig.ident.to_string(),
+            rust_line(f.sig.ident.span()),
+            EntityKind::Function,
+            None,
+            Some(rust_fn_type(&f.sig)),
+        ),
+        Item::Impl(i) => {
+            let owner = primary_type(&i.self_ty);
+            for ii in &i.items {
+                if let syn::ImplItem::Fn(m) = ii {
+                    e(
+                        m.sig.ident.to_string(),
+                        rust_line(m.sig.ident.span()),
+                        EntityKind::Method,
+                        owner.clone(),
+                        Some(rust_fn_type(&m.sig)),
+                    );
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rust_fn_type(sig: &syn::Signature) -> TypeExpr {
+    let named = |refs: Vec<String>| refs.into_iter().map(TypeRef::Named).collect::<Vec<_>>();
+    // `self` receivers are not value params; drop them so positions line up
+    // with the written argument list.
+    let params = sig
+        .inputs
+        .iter()
+        .filter_map(|arg| match arg {
+            syn::FnArg::Typed(pt) => Some(named(type_refs(&pt.ty))),
+            syn::FnArg::Receiver(_) => None,
+        })
+        .collect();
+    let ret = match &sig.output {
+        ReturnType::Type(_, ty) => named(type_refs(ty)),
+        ReturnType::Default => Vec::new(),
+    };
+    TypeExpr { params, ret }
+}
+
+// --- Kotlin entity pass (tree-sitter): the declared types. Functions wait on
+// demand; the deck's first consumer is TypeScript. Line is the node's row. ---
+
+fn kotlin_entities(file: &str, content: &str) -> Vec<TypeEntity> {
+    let mut parser = tree_sitter::Parser::new();
+    let lang = tree_sitter::Language::new(tree_sitter_kotlin_sg::LANGUAGE);
+    if parser.set_language(&lang).is_err() {
+        return Vec::new();
+    }
+    let Some(tree) = parser.parse(content, None) else {
+        return Vec::new();
+    };
+    let src = content.as_bytes();
+    let mut out = Vec::new();
+    walk_kotlin_entities(tree.root_node(), src, file, &mut out);
+    out
+}
+
+fn walk_kotlin_entities(node: tree_sitter::Node, src: &[u8], file: &str, out: &mut Vec<TypeEntity>) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if matches!(child.kind(), "class_declaration" | "object_declaration") {
+            let mut c = child.walk();
+            let kids: Vec<tree_sitter::Node> = child.children(&mut c).collect();
+            if let Some(id) = kids.iter().find(|n| n.kind() == "type_identifier") {
+                let name = id.utf8_text(src).unwrap_or("").to_string();
+                let kind = if kids.iter().any(|n| n.kind() == "interface") {
+                    EntityKind::Interface
+                } else if kids.iter().any(|n| n.kind() == "enum") {
+                    EntityKind::Enum
+                } else {
+                    EntityKind::Class
+                };
+                out.push(TypeEntity {
+                    sym: mint_sym(file, kind, &name, None),
+                    name,
+                    kind,
+                    parent: None,
+                    file: file.to_string(),
+                    line: (child.start_position().row + 1) as u32,
+                    ty: None,
+                });
+            }
+        } else if child.kind() == "function_declaration" {
+            // top-level / member `fun name(...)`; the name is a simple_identifier
+            let mut c = child.walk();
+            let kids: Vec<tree_sitter::Node> = child.children(&mut c).collect();
+            if let Some(id) = kids.iter().find(|n| n.kind() == "simple_identifier") {
+                let name = id.utf8_text(src).unwrap_or("").to_string();
+                out.push(TypeEntity {
+                    sym: mint_sym(file, EntityKind::Function, &name, None),
+                    name,
+                    kind: EntityKind::Function,
+                    parent: None,
+                    file: file.to_string(),
+                    line: (child.start_position().row + 1) as u32,
+                    ty: None,
+                });
+            }
+        }
+        walk_kotlin_entities(child, src, file, out);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -919,6 +1380,77 @@ export function Card({ item }: CardProps) { return <div>{item.name}</div> }
         let got = ts_edges(src, true);
         assert!(has(&got, "CardProps", "Item", "field"), "tsx interface prop: {got:?}");
         assert!(has(&got, "CardProps", "Sku", "field"), "function-type param ref: {got:?}");
+    }
+
+    #[test]
+    fn ts_entities_kinds_lines_and_arrow_types() {
+        let src = "\
+export interface Entity { id: Id }
+export type Event = A | B
+export enum Color { Red }
+export class Repo {
+    find(q: Query): Entity { return q as Entity }
+}
+export function resolveIdent(model: Model, n: string): NodeId[] { return [] }
+export const cone = (model: Model, mode: ConeMode): View => view()
+";
+        let es = ts_entities("src/core/model.ts", src, false);
+        let by = |name: &str| es.iter().find(|e| e.name == name).unwrap_or_else(|| panic!("missing {name}: {es:?}"));
+        // kinds
+        assert_eq!(by("Entity").kind, EntityKind::Interface);
+        assert_eq!(by("Event").kind, EntityKind::Alias);
+        assert_eq!(by("Color").kind, EntityKind::Enum);
+        assert_eq!(by("Repo").kind, EntityKind::Class);
+        assert_eq!(by("resolveIdent").kind, EntityKind::Function);
+        assert_eq!(by("cone").kind, EntityKind::Function);
+        // sem-style symbol + declaration line (1-based)
+        assert_eq!(by("Entity").sym, "src/core/model.ts::interface::Entity");
+        assert_eq!(by("Entity").line, 1);
+        assert_eq!(by("resolveIdent").line, 7);
+        // method: parented to the class, callable
+        let find = by("find");
+        assert_eq!(find.kind, EntityKind::Method);
+        assert_eq!(find.parent.as_deref(), Some("src/core/model.ts::class::Repo"));
+        assert_eq!(find.sym, "src/core/model.ts::method::Repo.find");
+        // a function IS a type: [...A] => B
+        let f = by("resolveIdent").ty.as_ref().unwrap();
+        assert_eq!(f.params[0], vec![TypeRef::Named("Model".into())]);  // first param type
+        assert!(f.params[1].is_empty(), "string is a keyword, no ref: {f:?}");
+        assert_eq!(f.ret, vec![TypeRef::Named("NodeId".into())]);
+        let a = by("cone").ty.as_ref().unwrap();
+        assert_eq!(a.params[1], vec![TypeRef::Named("ConeMode".into())]);
+        assert_eq!(a.ret, vec![TypeRef::Named("View".into())]);
+    }
+
+    #[test]
+    fn rust_entities_kinds_and_arrow_types() {
+        let src = "\
+pub struct Engine { db: Db }
+pub enum Mode { A, B }
+pub trait Sink {}
+pub fn run(e: Engine, n: usize) -> Report { todo!() }
+impl Engine {
+    pub fn tick(&self, db: Db) -> Result { todo!() }
+}
+";
+        let es = rust_entities("src/engine.rs", src);
+        let by = |name: &str| es.iter().find(|e| e.name == name).unwrap_or_else(|| panic!("missing {name}: {es:?}"));
+        assert_eq!(by("Engine").kind, EntityKind::Struct);
+        assert_eq!(by("Mode").kind, EntityKind::Enum);
+        assert_eq!(by("Sink").kind, EntityKind::Trait);
+        assert_eq!(by("run").kind, EntityKind::Function);
+        assert_eq!(by("Engine").line, 1);
+        assert_eq!(by("run").line, 4);
+        // free fn arrow type, receiver excluded on the method
+        let run = by("run").ty.as_ref().unwrap();
+        assert_eq!(run.params[0], vec![TypeRef::Named("Engine".into())]);
+        assert!(run.params[1].is_empty(), "usize is primitive: {run:?}");
+        assert_eq!(run.ret, vec![TypeRef::Named("Report".into())]);
+        let tick = by("tick");
+        assert_eq!(tick.kind, EntityKind::Method);
+        assert_eq!(tick.parent.as_deref(), Some("src/engine.rs::class::Engine"));
+        let tty = tick.ty.as_ref().unwrap();
+        assert_eq!(tty.params, vec![vec![TypeRef::Named("Db".into())]], "self dropped: {tty:?}");
     }
 
     #[test]

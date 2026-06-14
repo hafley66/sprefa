@@ -109,3 +109,51 @@ seen(path) <- scan("WORK", "src/**/*.kts", path, rev), match(path, rev, /./, lin
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
     assert!(out.contains("Wire\tStore\tfield"), "kotlin field edge from .kts: {out}");
 }
+
+const ENTITY_PROG: &str = r#"
+rel seen(path: file).
+seen(path) <- scan("WORK", "src/**/*.{ts,tsx}", path, rev), match(path, rev, /./, line).
+? type_entity(sym, name, kind, parent, file, line).
+? type_sig(sym, slot, pos, ref).
+? type_link(src, dst, kind).
+"#;
+
+#[test]
+fn ts_entities_sig_and_resolved_links() {
+    // Two files: a model with the data types, a view module whose function
+    // consumes them. Resolution must bind the view's refs to the model's defs.
+    let d = sandbox("entities");
+    fs::create_dir_all(d.join("src/core")).unwrap();
+    fs::write(
+        d.join("src/core/model.ts"),
+        "export type Model = { id: Id }\nexport type View = { ok: boolean }\n",
+    )
+    .unwrap();
+    fs::write(
+        d.join("src/core/views.ts"),
+        "import { Model, View } from './model'\nexport function cone(m: Model): View { return run() }\n",
+    )
+    .unwrap();
+
+    let (code, out, err) = run(&d, ENTITY_PROG);
+    assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
+
+    let entity = out.split("? type_sig").next().unwrap_or("");
+    let sig = out.split("? type_sig").nth(1).unwrap_or("").split("? type_link").next().unwrap_or("");
+    let link = out.split("? type_link").nth(1).unwrap_or("");
+
+    // entity table: kind + declaration line, sem-style symbol
+    assert!(entity.contains("src/core/core/model.ts::alias::Model\tModel\talias")
+        || entity.contains("src/core/model.ts::alias::Model\tModel\talias"), "entity row: {entity}");
+    assert!(entity.contains("::function::cone\tcone\tfunction"), "function entity: {entity}");
+
+    // arrow type, resolved across files: cone's param + ret point at model.ts defs
+    assert!(sig.contains("::function::cone\tparam\t0\t") && sig.contains("model.ts::alias::Model"),
+        "param resolved to def: {sig}");
+    assert!(sig.contains("::function::cone\tret\t0\t") && sig.contains("model.ts::alias::View"),
+        "return resolved to def: {sig}");
+
+    // SCIP-resolved link graph: owner sym -> resolved target sym
+    assert!(link.contains("::function::cone\t") && link.contains("model.ts::alias::Model\tparam"),
+        "resolved link: {link}");
+}
