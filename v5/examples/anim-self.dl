@@ -35,13 +35,15 @@ edge(f, t) <- fan(f, _), edge0(f, t).
 rel tag(node: text, ns: text, value: text).
 tag(f, "tag", "hub") <- fan(f, n), n >= 5.
 
-# where each shown type is declared (panel rows + periscope)
-rel decl(name: text, path: file, line: int).
-decl(name, path, line) <- seen(path), scan("WORK", "src/**/*.{ts,tsx}", path, rev),
-  match(path, rev, /^(?:export )?(?:type|interface|class|enum) (?<name>[A-Za-z][A-Za-z0-9]*)/, line).
-
+# where each shown node is declared: read straight from `type_entity`, the
+# sem-style entity table the engine now emits (no regex). One row per declared
+# type OR function, with its exact line -- so the periscope and panel rows point
+# at real declaration sites and a function node carries kind = "function".
 rel node_ref(node: text, panel: text, locator: text).
-node_ref(n, "fs", "${path}:${line}") <- node(n, _, _), decl(n, path, line).
+node_ref(n, "fs", "${file}:${line}") <- node(n, _, _), type_entity(sym, n, kind, parent, file, line).
+
+# tag function nodes so the deck can tell a function apart from a data type
+tag(n, "kind", k) <- node(n, _, _), type_entity(sym, n, k, parent, file, line).
 
 rel card(id: text, body: text).
 card("about.today", "every node here is a type from anim's own src/, extracted by the oxc producer written today").
@@ -52,16 +54,23 @@ card_about("about.today", "RelRows").
 
 # the day's diff as a tour: focus steps over the types, span steps into the
 # exact functions, rendered by the machinery the spans describe.
-# Span line numbers are DERIVED, not pinned: each step pins to a regex hit
-# (a function head or a distinctive comment) and opens a fixed window below
-# it, so the tour survives edits that shift the files.
+# Span anchors are DERIVED, not pinned. TS function heads come from
+# `type_entity` (the engine already found every function's declaration line);
+# the .mjs build step isn't TS-extracted, and the tokenize effect is an
+# anonymous closure, so those two stay regex pins. A fixed window sets the span
+# height, so the tour survives edits that shift the files.
+# scan-sourced pins (the .mjs build step, the anonymous tokenize closure) live
+# in their own rel: a rel that mixes a scan() rule with a derived-rel rule drops
+# the scanned rows, so type_entity function pins go in `fpin` and the two are
+# unioned downstream in span_of (which has no scan atom).
 rel pin(name: text, path: file, line: int).
-pin(name, path, line) <- scan("WORK", "src/**/*.{ts,tsx}", path, rev),
-  match(path, rev, /^(?:export )?function (?<name>[A-Za-z][A-Za-z0-9]*)/, line).
 pin(name, path, line) <- scan("WORK", "bin/*.mjs", path, rev),
   match(path, rev, /^(?:export )?function (?<name>[A-Za-z][A-Za-z0-9]*)/, line).
 pin("tokenize", path, line) <- scan("WORK", "src/CodeSpotlight.tsx", path, rev),
   match(path, rev, /tokenize per file/, line).
+
+rel fpin(name: text, file: file, line: int).
+fpin(name, file, line) <- type_entity(sym, name, "function", parent, file, line).
 
 rel win(name: text, len: int).
 win("resolveIdent", 16).
@@ -71,6 +80,7 @@ win("rowsFromDb", 36).
 
 rel span_of(name: text, path: file, lo: int, hi: int).
 span_of(name, path, line, line + len) <- pin(name, path, line), win(name, len).
+span_of(name, file, line, line + len) <- fpin(name, file, line), win(name, len).
 
 rel tour(id: text, title: text).
 tour("today", "the deck tours its own diff").

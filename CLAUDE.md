@@ -180,6 +180,32 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       matches (`ref` is reserved — the span spine), tour/tour_step/card/view as
       facts. anim's `atlas-db` fence reads the rel_* tables straight from
       anim/data/sprefa.sqlite.
+- [x] **TS function edges** (main, local, cfa48d0): ts_edges treats functions +
+      arrow consts as type_edge owners — `param` (input types), `returns` (the
+      output type), `uses` (TSTypeReference in the body). The kind vocabulary is
+      now field|variant|impl|generic|param|returns|uses.
+- [x] **TypeLang common interface + sem entities + SCIP-like resolution** (main,
+      local, 030d114): the three extractors sit behind `trait TypeLang { name,
+      matches, extract -> TypeFacts }` + `type_langs()` registry (engine asks the
+      registry, not the extension; order fixes .kts-before-.ts). New
+      `TypeEntity { sym, name, kind, parent, file, line, ty }` is sem's
+      SemanticEntity trimmed; `EntityKind` = struct|enum|trait|class|interface|
+      alias|function|method|const; a function IS a type via `TypeExpr`
+      `[...A] => B`. Three additive rels (type_edge/_rev stay name-keyed):
+      **type_entity**(sym,name,kind,parent,file,line) — kills the deck's regex
+      decl; **type_sig**(sym,slot,pos,ref) — the arrow exploded, refs resolved;
+      **type_link**(src,dst,kind) — the SCIP-resolved sym→sym graph. Resolution
+      is hybrid: prefer `scip_ref`'s def_file when an index.scip exists, else
+      syntactic name-unique → sym (`scip_name_defs` + `scip_descriptor_name`).
+      Reserved-name guard + TYPE_RELS now cover all five. Lines: proc-macro2
+      span-locations (Rust), byte-offset index (oxc), node row (tree-sitter).
+      Rust emits fn/method entities (self dropped); Kotlin emits type + fn
+      entities. Tests: typegraph units, type_graph_ts e2e (entity+sig+resolved
+      links), type_entity_xlang e2e (one query finds every "network" interface +
+      function across TS and Kotlin). NOT pushed (default-branch push needs Chris).
+      Known: entity pass re-parses (double parse per file); a rel mixing a
+      `scan()` rule with a derived-rel rule drops the scanned rows (anim-self.dl
+      keeps `pin` scan-only, `fpin` type_entity-only, unions in `span_of`).
 
 ### Style notes for this repo
 - N+1: never a per-row write. Collect the set, call `Db::insert_rows` once. The tick counter screams if you don't.
