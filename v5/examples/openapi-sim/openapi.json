@@ -1,7 +1,10 @@
 {
+  "openapi": "3.0.0",
+  "info": { "title": "codegen demo", "version": "1" },
   "paths": {
-    "/users":      { "get":  { "operationId": "listUsers" } },
-    "/users/{id}": { "get":  { "operationId": "getUser" } },
-    "/orders":     { "post": { "operationId": "createOrder" } }
+    "/users":         { "get":    { "operationId": "listUsers" } },
+    "/users/{id}":    { "get":    { "operationId": "getUser" } },
+    "/orders":        { "post":   { "operationId": "createOrder" } },
+    "/orders/{id}":   { "delete": { "operationId": "deleteOrder" } }
   }
 }
