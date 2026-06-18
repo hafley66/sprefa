@@ -3461,6 +3461,32 @@ fn parse_file(
                 }
                 binds = next;
             }
+            BodyItem::AstYaml { lang, yaml, line, col, end_line, end_col, .. } => {
+                let slv = var_of(line)?;
+                let clv = col.as_ref().map(var_of).transpose()?;
+                let ellv = end_line.as_ref().map(var_of).transpose()?;
+                let eclv = end_col.as_ref().map(var_of).transpose()?;
+                // No literal-prefilter (the YAML body is structural, not a
+                // plain token set like a pattern); the RuleCore matcher is
+                // already cheap on a non-matching file.
+                let hits = crate::sg::run_ast_yaml(&content, lang, yaml)?;
+                let mut next: Vec<Bind> = Vec::new();
+                for b in &binds {
+                    for (ln, c, eln, ec, caps) in &hits {
+                        let mut ext = b.clone();
+                        ext.insert(slv.clone(), Value::Int(*ln));
+                        if let Some(v) = &clv { ext.insert(v.clone(), Value::Int(*c)); }
+                        if let Some(v) = &ellv { ext.insert(v.clone(), Value::Int(*eln)); }
+                        if let Some(v) = &eclv { ext.insert(v.clone(), Value::Int(*ec)); }
+                        for (n, t, lo, hi) in caps {
+                            ext.insert(n.clone(), Value::Text(t.clone()));
+                            push_span(t, *lo, *hi, &mut where_bytes);
+                        }
+                        next.push(ext);
+                    }
+                }
+                binds = next;
+            }
             BodyItem::Cmd { template, line, out, .. } => {
                 let lv = var_of(line)?;
                 let ov = var_of(out)?;

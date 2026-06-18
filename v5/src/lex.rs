@@ -75,6 +75,20 @@ pub fn lex(src: &str) -> Result<Vec<Tok>> {
             b'#' => { while i < b.len() && b[i] != b'\n' { i += 1; } }
             b'(' => { out.push(Tok::LParen); i += 1; }
             b')' => { out.push(Tok::RParen); i += 1; }
+            b'`' => {
+                // Standalone fenced string: raw, multiline, only the closing
+                // backtick terminates. Same Tok::Str as "...", so it flows
+                // through term() and the sg()/ast_yaml() body arms unchanged.
+                // Used for multiline YAML bodies (ast_yaml) and any literal
+                // with quotes/newlines the "..." form would need to escape.
+                i += 1;
+                let start = i;
+                while i < b.len() && b[i] != b'`' { i += 1; }
+                if i >= b.len() { bail!("unterminated backtick string"); }
+                let body = src[start..i].to_string();
+                i += 1;
+                out.push(Tok::Str(body));
+            }
             b',' => { out.push(Tok::Comma); i += 1; }
             b'.' => { out.push(Tok::Dot); i += 1; }
             b':' => { out.push(Tok::Colon); i += 1; }

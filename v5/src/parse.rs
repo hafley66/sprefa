@@ -299,6 +299,7 @@ impl Parser {
             if s == "match" { return self.match_(); }
             if s == "ast" { return self.ast(); }
             if s == "sg" { return self.sg(); }
+            if s == "ast_yaml" { return self.ast_yaml(); }
             if s == "json" { return self.json(); }
             if s == "cmd" { return self.cmd(); }
             if s == "comment" { return self.comment(); }
@@ -400,6 +401,32 @@ impl Parser {
         let end_col = if end_line.is_some() && matches!(self.peek(), Some(Tok::Comma)) { self.next()?; Some(self.term()?) } else { None };
         self.expect(Tok::RParen)?;
         Ok(BodyItem::Sg { path, rev, lang, pattern, line, col, end_line, end_col })
+    }
+
+    /// `ast_yaml(path, rev, :lang, `yaml body`, line, ...)` — mirrors `sg()`
+    /// but the 4th arg is a (usually backtick, multiline) ast-grep RuleCore
+    /// YAML body instead of a pattern string. The body lexes as a normal
+    /// `Tok::Str` (the backtick form is multiline + raw), so only the field
+    /// name differs from `sg()`.
+    fn ast_yaml(&mut self) -> Result<BodyItem> {
+        self.ident()?; // ast_yaml
+        self.expect(Tok::LParen)?;
+        let path = self.term()?; self.expect(Tok::Comma)?;
+        let rev = self.term()?; self.expect(Tok::Comma)?;
+        self.expect(Tok::Colon)?;
+        let lang = self.ident()?;
+        self.expect(Tok::Comma)?;
+        let yaml = match self.next()? {
+            Tok::Str(s) => s,
+            other => bail!("expected ast_yaml body string in ast_yaml(), got {:?}", other),
+        };
+        self.expect(Tok::Comma)?;
+        let line = self.term()?;
+        let col = if matches!(self.peek(), Some(Tok::Comma)) { self.next()?; Some(self.term()?) } else { None };
+        let end_line = if col.is_some() && matches!(self.peek(), Some(Tok::Comma)) { self.next()?; Some(self.term()?) } else { None };
+        let end_col = if end_line.is_some() && matches!(self.peek(), Some(Tok::Comma)) { self.next()?; Some(self.term()?) } else { None };
+        self.expect(Tok::RParen)?;
+        Ok(BodyItem::AstYaml { path, rev, lang, yaml, line, col, end_line, end_col })
     }
 
     fn json(&mut self) -> Result<BodyItem> {

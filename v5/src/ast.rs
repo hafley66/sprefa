@@ -146,6 +146,13 @@ pub enum BodyItem {
     Ast { path: Term, rev: Term, lang: String, query: String, line: Term, end: Option<Term> },
     Sg { path: Term, rev: Term, lang: String, pattern: String, line: Term,
          col: Option<Term>, end_line: Option<Term>, end_col: Option<Term> },
+    /// ast-grep relational YAML rule (RuleCore: inside/has/any/all/not/kind/
+    /// regex/pattern). `yaml` is the (usually backtick, multiline) body; the
+    /// span + capture binds mirror `Sg`. Superset of `Sg` — a bare `pattern:`
+    /// body matches the same surface, but `inside:`/`has:` add the structural
+    /// relationships a pattern alone can't express.
+    AstYaml { path: Term, rev: Term, lang: String, yaml: String, line: Term,
+              col: Option<Term>, end_line: Option<Term>, end_col: Option<Term> },
     Json { path: Term, rev: Term, jpath: String, out: Term },
     /// Shell out per matched file: `cmd(p, rev, "tool {file}", line, out)` binds
     /// one row per stdout line. Cached like every source op: rows re-run only
@@ -181,8 +188,8 @@ impl Rule {
     pub fn is_source(&self) -> bool {
         self.body.iter().any(|b| matches!(b,
             BodyItem::Scan { .. } | BodyItem::Match { .. } | BodyItem::Ast { .. }
-            | BodyItem::Sg { .. } | BodyItem::Json { .. } | BodyItem::Cmd { .. }
-            | BodyItem::Comment { .. }))
+            | BodyItem::Sg { .. } | BodyItem::AstYaml { .. } | BodyItem::Json { .. }
+            | BodyItem::Cmd { .. } | BodyItem::Comment { .. }))
     }
 
     /// Some(edge) iff this rule is exactly `head(..) <- closure(edge).`
