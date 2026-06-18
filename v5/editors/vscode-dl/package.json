@@ -1,0 +1,67 @@
+{
+  "name": "dl-lsp",
+  "displayName": "dl LSP",
+  "description": "sprefa dl datalog linter. Drop a .dl file in .dl/, get live squiggles on rust/ts/py/go/kt and the .dl itself.",
+  "version": "0.1.0",
+  "publisher": "sprefa",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "categories": [
+    "Linters",
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "workspaceContains:**/*.dl"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "dl",
+        "extensions": [
+          ".dl"
+        ],
+        "aliases": [
+          "dl",
+          "datalog"
+        ]
+      }
+    ],
+    "configuration": {
+      "title": "dl LSP",
+      "properties": {
+        "dl.binaryPath": {
+          "type": "string",
+          "default": "dl",
+          "markdownDescription": "Path to the `dl` binary. Default `dl` resolves from PATH (`cargo install --path v5 --bin dl`)."
+        },
+        "dl.program": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Specific `.dl` program file. Empty = discovery mode (merge every `<root>/.dl/*.dl`)."
+        },
+        "dl.root": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Scan root passed to `dl --root`. Empty = the first workspace folder."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -p ./ --watch",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.82.0",
+    "@vscode/vsce": "^3.9.2",
+    "typescript": "^5.4.0"
+  }
+}
