@@ -1,0 +1,13 @@
+# Standard library: OpenAPI operation extraction.
+#
+# `use "std/parsers/openapi.dl".` brings `spec_op(op)` into scope, sourced from
+# the JSON path `paths.*.*.operationId`. A program joins its own per-call facts
+# against this to drive "which API has no client hook" or "which client call
+# has no API" antijoins (see examples/openapi.dl for the pattern, lifted to
+# compose from this lib).
+
+rel spec_op(op: text).
+
+spec_op(op) <-
+  scan("WORK", "**/openapi.{json,yaml,yml}", path, rev),
+  json(path, rev, "paths.*.*.operationId", op).

@@ -240,6 +240,36 @@ pub struct GenRule {
 #[derive(Clone, Debug)]
 pub enum Item { Rel(RelDecl), Rule(Rule), Query(Query), Anchor(AnchorDecl), Brand(BrandDecl), Gen(GenRule) }
 
+/// `use "path".` — module inclusion. The loader resolves `path` against the
+/// include roots (program dir, `$SPREFA_STD`, `<exe>/../std`), reads the file,
+/// parses its surface, and splices its Core items into the merge. Diamond
+/// imports load once (canonical-path dedup).
+#[derive(Clone, Debug)]
+pub struct Import { pub path: String }
+
+/// `def name(p1, p2) <- body.` — a parameterized rule template. The body is
+/// inlined at every call site (`name(args)` as a body atom) with the params
+/// substituted by the call's args and every non-param internal var
+/// alpha-renamed so two instantiations never capture each other. A `def` is
+/// not itself a rule: it emits zero rules on its own, only via call sites.
+#[derive(Clone, Debug)]
+pub struct RuleTemplate {
+    pub name: String,
+    pub params: Vec<String>,
+    pub body: Vec<BodyItem>,
+}
+
+/// One top-level form on the module surface. The frontend parses this; `expand`
+/// is the only place `Use` disappears (recursively loaded and spliced) and the
+/// only place `Def` disappears (collected into a template table, then inlined
+/// at every call site in the surrounding program).
+#[derive(Clone, Debug)]
+pub enum SurfaceItem {
+    Core(Item),
+    Use(Import),
+    Def(RuleTemplate),
+}
+
 /// Diagnostic severity for a `TypeDiag`. `Error` fails `--check` (non-zero exit);
 /// `Warn` prints but does not fail (the coerce grandfather case).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

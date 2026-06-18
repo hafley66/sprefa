@@ -1,0 +1,352 @@
+//! Module surface: `use` inclusion + canonical-path dedup. The smallest viable
+//! module system. The lexer needs no new keyword: `use "path".` lexes as
+//! `Ident("use") Str(p) Dot`, which `parse::parse_surface` recognizes and
+//! produces `SurfaceItem::Use(Import { path })`. `expand` is the only place
+//! sugar disappears: it recursively loads each `Use`, splices the Core items
+//! in file order, and dedups rel decls by name + cols. The resulting
+//! `ast::Program` flows into the unchanged engine.
+//!
+//! Include roots (first existing match wins). Each root is a *container* — a
+//! directory that modules resolve *against*, so `use "std/foo.dl"` joins to
+//! `<root>/std/foo.dl`. The root set:
+//!   1. The program file's directory (`use "lib.dl"` for a sibling, and
+//!      `use "std/foo.dl"` when the program lives next to a `std/` dir).
+//!   2. `$SPREFA_STD` (explicit override; the install / CI hand-lever).
+//!   3. `<crate>` (dev path: `v5/` ships a `std/` so `use "std/foo.dl"`
+//!      resolves from any test fixture without an install step).
+//!   4. `<exe>/..` (installed layout: `std/` sits next to the binary).
+//!
+//! Diamond imports load once: `loaded` is keyed by canonical path, so a `use`
+//! reached a second time is a cache hit. A rel decl with the same name and the
+//! same cols dedups across the merge; conflicting cols hard-error naming both
+//! source paths so a typo never silently shadows a library rel.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+use anyhow::{bail, Context, Result};
+
+use crate::ast::{self, BodyItem, Item, SurfaceItem, Term};
+use crate::{lex, parse};
+
+/// Resolve, load, and dedup the module surface for one program file. Returns
+/// the flat list of core items ready for `typecheck::check_and_normalize`. The
+/// entry path's own surface is the starting set; transitive `use`s splice in;
+/// `def` templates are collected into a table and inlined at every call site
+/// in the surrounding rules.
+pub fn load_program(entry: &Path) -> Result<Vec<Item>> {
+    let mut loader = ModuleLoader::new(entry);
+    let surface = loader.load_entry(entry)?;
+    let mut items = expand_program(surface, &mut loader)?;
+    dedup_rels(&mut items)?;
+    Ok(items)
+}
+
+/// Resolve and expand the multi-file discovery shape (a `<dir>/*.dl` set). Each
+/// file's surface is loaded with a shared loader so a `use` cached by file A is
+/// a hit from file B. The merged items splice in file (lexicographic) order.
+pub fn load_program_set(entry_paths: &[PathBuf]) -> Result<Vec<Item>> {
+    if entry_paths.is_empty() { bail!("no program files to load"); }
+    let mut loader = ModuleLoader::new(&entry_paths[0]);
+    let mut items = Vec::new();
+    let mut templates: HashMap<String, ast::RuleTemplate> = HashMap::new();
+    for p in entry_paths {
+        let surface = loader.load_entry(p)?;
+        items.extend(expand_with(surface, &mut loader, &mut templates)?);
+    }
+    cycle_check(&templates)?;
+    let mut counter = 0u32;
+    for item in &mut items {
+        if let Item::Rule(r) = item {
+            inline_template_calls(&mut r.body, &templates, &mut counter)?;
+        }
+    }
+    dedup_rels(&mut items)?;
+    Ok(items)
+}
+
+/// Top-level expand: same as `expand_with` but owns the templates table and
+/// runs the cycle check + inline pass once everything (including transitive
+/// `use`s) is collected.
+fn expand_program(
+    surface: Vec<SurfaceItem>,
+    loader: &mut ModuleLoader,
+) -> Result<Vec<Item>> {
+    let mut templates: HashMap<String, ast::RuleTemplate> = HashMap::new();
+    let mut items = expand_with(surface, loader, &mut templates)?;
+    cycle_check(&templates)?;
+    let mut counter = 0u32;
+    for item in &mut items {
+        if let Item::Rule(r) = item {
+            inline_template_calls(&mut r.body, &templates, &mut counter)?;
+        }
+    }
+    Ok(items)
+}
+
+/// Walk one surface, recursively expanding `Use`s and collecting `Def`s into
+/// the shared `templates` table. The table is shared across the whole program
+/// load so a `def` from an imported file is callable from the importer.
+fn expand_with(
+    items: Vec<SurfaceItem>,
+    loader: &mut ModuleLoader,
+    templates: &mut HashMap<String, ast::RuleTemplate>,
+) -> Result<Vec<Item>> {
+    let mut out: Vec<Item> = Vec::with_capacity(items.len());
+    for it in items {
+        match it {
+            SurfaceItem::Core(core) => out.push(core),
+            SurfaceItem::Use(imp) => {
+                let path = loader.resolve(&imp.path)?;
+                if loader.loaded.contains_key(&path) {
+                    continue; // diamond import: canonical-path dedup
+                }
+                let surface = loader.load_entry(&path)?;
+                let expanded = expand_with(surface, loader, templates)?;
+                out.extend(expanded);
+            }
+            SurfaceItem::Def(tpl) => {
+                let name = tpl.name.clone();
+                if templates.insert(name.clone(), tpl).is_some() {
+                    bail!("def {name} declared twice in the merge");
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// A template that transitively calls itself would inline forever. Reject up
+/// front; the inline-only contract keeps the model simple (no recursion, no
+/// fixed-point).
+fn cycle_check(templates: &HashMap<String, ast::RuleTemplate>) -> Result<()> {
+    for name in templates.keys() {
+        let mut stack = vec![name.clone()];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(cur) = stack.pop() {
+            if !seen.insert(cur.clone()) {
+                bail!("def cycle through {name}: recursion is not supported (inline-only)");
+            }
+            let Some(t) = templates.get(&cur) else { continue };
+            for b in &t.body {
+                if let BodyItem::Pos(a) = b {
+                    if templates.contains_key(&a.rel) {
+                        stack.push(a.rel.clone());
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Recursively inline template calls in a body. `counter` is a global per-call
+/// counter across the whole program so two instantiations of the same template
+/// (even siblings in the same body) get disjoint alpha-renamed vars. After
+/// inlining, no body atom's rel matches a template name.
+fn inline_template_calls(
+    body: &mut Vec<BodyItem>,
+    templates: &HashMap<String, ast::RuleTemplate>,
+    counter: &mut u32,
+) -> Result<()> {
+    let mut i = 0;
+    while i < body.len() {
+        // Only a Pos atom can be a template call. Negation, closure, and the
+        // source ops (`scan`, `match`, ...) are not call sites.
+        let BodyItem::Pos(atom) = &body[i] else { i += 1; continue };
+        let Some(tpl) = templates.get(&atom.rel) else { i += 1; continue };
+        if atom.terms.len() != tpl.params.len() {
+            bail!(
+                "def {} expects {} args, got {}",
+                tpl.name, tpl.params.len(), atom.terms.len(),
+            );
+        }
+        // Build the substitution: param name -> arg term (cloned, so the
+        // template body is left untouched for the next call site).
+        let mut sub: HashMap<String, Term> = HashMap::new();
+        for (p, a) in tpl.params.iter().zip(atom.terms.iter()) {
+            sub.insert(p.clone(), a.clone());
+        }
+        // Clone + rewrite the body. Alpha-rename every non-param var so two
+        // instantiations of the same template never share a binding. The
+        // namespace is `__<tplname>_<counter>_` so the rewritten body stays
+        // debuggable in error messages and SQLite traces; each call site
+        // bumps the counter so siblings stay disjoint.
+        let stamp = format!("__{}_{}_", tpl.name, *counter);
+        *counter += 1;
+        let mut inlined: Vec<BodyItem> = tpl.body.iter().map(|b| {
+            let mut cloned = b.clone();
+            rewrite_terms(&mut cloned, &sub, &tpl.params, &stamp);
+            cloned
+        }).collect();
+        // Recurse: the inlined body may itself contain template calls.
+        inline_template_calls(&mut inlined, templates, counter)?;
+        // Splice the inlined items where the call site was. The recursive call
+        // already expanded nested templates, so advance past the whole block.
+        let n = inlined.len();
+        body.splice(i..=i, inlined);
+        i += n;
+    }
+    Ok(())
+}
+
+/// Apply the substitution + alpha-rename to every Term in a BodyItem. A var
+/// that names a template param is replaced by its arg term; any other var is
+/// renamed with the stamp prefix so two instantiations stay disjoint.
+fn rewrite_terms(b: &mut BodyItem, sub: &HashMap<String, Term>, params: &[String], stamp: &str) {
+    let rewrite_term = |t: &mut Term| match t {
+        Term::Var(v) if params.iter().any(|p| p == v) => {
+            if let Some(arg) = sub.get(v) { *t = arg.clone(); }
+        }
+        Term::Var(v) => {
+            v.insert_str(0, stamp);
+        }
+        _ => {}
+    };
+    let rewrite_opt = |t: &mut Option<Term>| { if let Some(t) = t { rewrite_term(t); } };
+    match b {
+        BodyItem::Pos(a) | BodyItem::Neg(a) => {
+            for t in &mut a.terms { rewrite_term(t); }
+        }
+        BodyItem::Scan { repo, rev, glob, path, rev_out } => {
+            for t in [repo, rev, glob, path, rev_out] { rewrite_term(t); }
+        }
+        BodyItem::Match { path, rev, line, .. } => {
+            for t in [path, rev, line] { rewrite_term(t); }
+        }
+        BodyItem::Ast { path, rev, line, end, .. } => {
+            for t in [path, rev, line] { rewrite_term(t); }
+            rewrite_opt(end);
+        }
+        BodyItem::Sg { path, rev, line, col, end_line, end_col, .. } => {
+            for t in [path, rev, line] { rewrite_term(t); }
+            for t in [col, end_line, end_col].into_iter().flatten() { rewrite_term(t); }
+        }
+        BodyItem::Json { path, rev, out, .. } => {
+            for t in [path, rev, out] { rewrite_term(t); }
+        }
+        BodyItem::Cmd { path, rev, line, out, .. } => {
+            for t in [path, rev, line, out] { rewrite_term(t); }
+        }
+        BodyItem::Comment { path, rev, l0, l1, label, .. } => {
+            for t in [path, rev, l0, l1, label] { rewrite_term(t); }
+        }
+        BodyItem::Cmp(c) => {
+            rewrite_term(&mut c.lhs);
+            rewrite_term(&mut c.rhs);
+        }
+        BodyItem::Closure { .. } => {}
+    }
+}
+
+/// The module cache and root resolver. Lives for one compile (`load_program` ->
+/// `expand` -> `Program`), then dropped. Pure: no shared state across compiles.
+pub struct ModuleLoader {
+    roots: Vec<PathBuf>,
+    /// Canonical path -> that file's parsed surface. A second `use` of the same
+    /// canonical path is a cache hit (the dedup invariant for diamond imports).
+    loaded: HashMap<PathBuf, Vec<SurfaceItem>>,
+}
+
+impl ModuleLoader {
+    /// Roots derived from an entry path: see the module doc for the order.
+    pub fn new(entry: &Path) -> Self {
+        ModuleLoader {
+            roots: include_roots(entry),
+            loaded: HashMap::new(),
+        }
+    }
+
+    /// Resolve a `use` path against the configured roots. The first root whose
+    /// join exists wins. An absolute path bypasses the roots. Errors name the
+    /// path and every root tried so a missing module is debuggable.
+    fn resolve(&self, path: &str) -> Result<PathBuf> {
+        let p = Path::new(path);
+        if p.is_absolute() && p.exists() {
+            return p.canonicalize().with_context(|| format!("canonicalize {path}"));
+        }
+        for root in &self.roots {
+            let cand = root.join(path);
+            if cand.exists() {
+                return cand.canonicalize().with_context(|| format!("canonicalize {}", cand.display()));
+            }
+        }
+        let tried = self.roots.iter()
+            .map(|r| r.join(path).display().to_string())
+            .collect::<Vec<_>>().join(", ");
+        bail!("module {path:?} not found (tried: {tried})");
+    }
+
+    /// Read, lex, parse_surface, and cache one file. Caches by canonical path
+    /// so a second `use` is a no-op at the call site (see `expand`). Per-file
+    /// parse errors carry the file path via context.
+    fn load_entry(&mut self, path: &Path) -> Result<Vec<SurfaceItem>> {
+        let canon = path.canonicalize().with_context(|| format!("canonicalize {}", path.display()))?;
+        if let Some(s) = self.loaded.get(&canon) {
+            return Ok(s.clone());
+        }
+        let src = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+        let surface = lex::lex(&src)
+            .and_then(parse::parse_surface)
+            .with_context(|| format!("in {}", path.display()))?;
+        self.loaded.insert(canon, surface.clone());
+        Ok(surface)
+    }
+}
+
+/// The include-root search list. Each root is a *container* directory that
+/// `use` paths resolve against (so `use "std/foo.dl"` joins to
+/// `<root>/std/foo.dl`). The program dir is first (closest intent), then
+/// `$SPREFA_STD`, then the dev-time crate root, then the exe's parent.
+fn include_roots(entry: &Path) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(dir) = entry.parent() {
+        roots.push(dir.to_path_buf());
+    }
+    if let Some(p) = std::env::var_os("SPREFA_STD") {
+        roots.push(PathBuf::from(p));
+    }
+    // Dev path: the `v5/` crate root, which ships a `std/` subdir. Lets
+    // `use "std/callgraph.dl".` resolve from any test fixture or example
+    // without an install step. Compiled out under release builds where the
+    // source tree is gone and only the exe-adjacent layout remains.
+    roots.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            roots.push(dir.to_path_buf());
+        }
+    }
+    roots
+}
+
+/// Same-name same-cols dedups; conflicting cols hard-error naming both col
+/// vectors. Rules and queries splice verbatim. A typo'd col name or type
+/// silently shadowing a library rel would be the import story's worst failure
+/// mode, so the conflict case is loud.
+///
+/// The engine's `declare_all` runs the same check a second time as a defense
+/// (with the older "declared twice" message); the frontend catches it first
+/// because it sees the merge before the engine does.
+fn dedup_rels(items: &mut Vec<Item>) -> Result<()> {
+    let mut seen: HashMap<String, Vec<ast::Col>> = HashMap::new();
+    let mut drop: Vec<usize> = Vec::new();
+    for (i, item) in items.iter().enumerate() {
+        if let Item::Rel(decl) = item {
+            if let Some(prior) = seen.get(&decl.name) {
+                if prior == &decl.cols {
+                    drop.push(i);
+                    continue;
+                }
+                bail!(
+                    "rel {} declared twice with different columns:\n  prior:    {:?}\n  conflict: {:?}",
+                    decl.name, prior, decl.cols,
+                );
+            }
+            seen.insert(decl.name.clone(), decl.cols.clone());
+        }
+    }
+    for i in drop.iter().rev() {
+        items.remove(*i);
+    }
+    Ok(())
+}

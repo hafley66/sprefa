@@ -5,6 +5,7 @@ pub mod datapath;
 pub mod db;
 pub mod desc;
 pub mod engine;
+pub mod frontend;
 pub mod ktpath;
 pub mod lex;
 pub mod lower;
@@ -21,7 +22,7 @@ pub mod spine;
 pub mod typecheck;
 pub mod typegraph;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 /// Resolve the program file set: an explicit path, or with no positional the
@@ -47,14 +48,18 @@ pub fn resolve_programs(program: Option<&str>, root: &Path) -> Result<Vec<PathBu
 /// (the single file, or `<dir>/*.dl` for a discovered set — per-file
 /// attribution across a merge is a known coarseness). The engine never sees a
 /// `Term::PathLit`: the bail guards in lower/engine are defense only.
+///
+/// The frontend (`frontend::load_program` / `load_program_set`) handles `use`
+/// inclusion: it recursively resolves module paths against the include roots,
+/// splices Core items in source order, dedups rel decls by name+cols, and
+/// returns a flat core `Program`. With no `use` in any source file this is
+/// byte-for-byte identical to the old parse-only path.
 pub(crate) fn prepare_paths(paths: &[PathBuf]) -> Result<(ast::Program, Vec<ast::TypeDiag>, String)> {
-    let mut items = Vec::new();
-    for p in paths {
-        let src = std::fs::read_to_string(p).with_context(|| format!("read {}", p.display()))?;
-        let file_prog = lex::lex(&src).and_then(parse::parse)
-            .with_context(|| format!("in {}", p.display()))?;
-        items.extend(file_prog.items);
-    }
+    let items = if paths.len() == 1 {
+        frontend::load_program(&paths[0])
+    } else {
+        frontend::load_program_set(paths)
+    }?;
     let display = if paths.len() == 1 {
         paths[0].display().to_string()
     } else {

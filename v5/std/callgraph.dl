@@ -1,0 +1,41 @@
+# Standard library: a one-shot call-graph extractor over match + closure.
+#
+# This is the file-scoped co-occurrence heuristic (caller's file mentions a
+# known fn name), the same shape as examples/callgraph.dl but importable.
+# Compose from a program:
+#
+#   use "std/callgraph.dl".
+#   reaches("my_fn", dst).   # `def`, `use`, `calls`, `reaches`, `unused` are
+#                            # all in scope after the `use`.
+#
+# Two scanned rels (`def`, `use`) carry the path coordinate so a program can
+# join against its own per-file facts; the call graph proper (`calls`,
+# `reaches`) is name-only and language-agnostic.
+
+rel def(name: text, path: file, line: int).
+rel use(name: text, path: file, line: int).
+rel calls(caller: text, callee: text).
+rel reaches(src: text, dst: text).
+rel unused(name: text).
+
+# A caller is any fn defined in the scanned corpus; a callee is any name in the
+# same file that is itself defined somewhere. The two scans share the glob so a
+# program importing this controls the scope by overriding it after the use is
+# lowered (a `def` template, Phase A2; for now, edit the glob in this file).
+def(name, path, line) <-
+  scan("WORK", "**/*.rs", path, rev),
+  match(path, rev, /fn\s+(?<name>[a-z_][a-z0-9_]+)/, line).
+
+use(name, path, line) <-
+  scan("WORK", "**/*.rs", path, rev),
+  match(path, rev, /(?<name>[a-z_][a-z0-9_]+)\s*\(/, line).
+
+calls(caller, callee) <-
+  def(caller, p, _),
+  use(callee, p, _),
+  def(callee, _, _),
+  caller != callee.
+
+reaches(src, dst) <- closure(calls).
+
+unused(name) <- def(name, _, _), !calls(_, name).
