@@ -19,7 +19,7 @@ serde_json = "1"
 blake3 = "1"
 notify = "6"
 rayon = "1"
-syn = { version = "2", features = ["full"] }
+syn = { version = "2", features = ["full", "visit"] }
 # span-locations lets syn report 1-based line/col for declaration sites
 # (TypeEntity.line) when parsing a file outside a proc-macro context.
 proc-macro2 = { version = "1", features = ["span-locations"] }

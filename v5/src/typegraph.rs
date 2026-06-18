@@ -14,6 +14,7 @@ use syn::{
     AngleBracketedGenericArguments, Fields, GenericArgument, GenericParam, Generics, Item, Path,
     PathArguments, ReturnType, Type, TypeParamBound, WherePredicate,
 };
+use syn::spanned::Spanned;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TypeEdge {
@@ -119,6 +120,7 @@ pub struct CallFacts {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallDef {
     pub sym: String,        // file::function::name (free) or file::method::Parent.name
+    pub name: String,       // bare callable name, for callee resolution (not written)
     pub kind: CallKind,
     pub file: String,
     pub line: u32,
@@ -194,6 +196,17 @@ impl TypeLang for RustTypes {
         TypeFacts {
             entities: rust_entities_from(&parsed, file),
             edges: edges_from(&parsed),
+        }
+    }
+    // One syn parse feeds defs + sites; a follow-up folds this into `extract`
+    // so a file parses once per tick instead of twice.
+    fn extract_calls(&self, file: &str, content: &str) -> CallFacts {
+        let Ok(parsed) = syn::parse_file(content) else {
+            return CallFacts::default();
+        };
+        CallFacts {
+            defs: rust_call_defs_from(&parsed, file),
+            sites: rust_call_sites_from(&parsed, file),
         }
     }
 }
@@ -1274,6 +1287,94 @@ fn rust_fn_type(sig: &syn::Signature) -> TypeExpr {
         ReturnType::Default => Vec::new(),
     };
     TypeExpr { params, ret }
+}
+
+// --- Rust call-graph pass (syn): free functions and impl methods become
+// CallDefs (sym + body span for callsite containment), and every call
+// expression becomes a CallSite whose caller is left blank for the engine's
+// span-containment pass to fill. Closures are collected as anonymous defs in a
+// follow-up; the visitor still walks into them so calls inside a closure body
+// attribute to the enclosing named def. ---
+
+fn rust_call_defs_from(parsed: &syn::File, file: &str) -> Vec<CallDef> {
+    let mut out = Vec::new();
+    let push = |out: &mut Vec<CallDef>, sym: String, name: String, kind: CallKind, line: u32, end: u32| {
+        out.push(CallDef {
+            sym, name, kind, file: file.to_string(), line, end,
+        });
+    };
+    for item in &parsed.items {
+        match item {
+            Item::Fn(f) => {
+                let name = f.sig.ident.to_string();
+                let line = rust_line(f.sig.ident.span());
+                let end = f.block.span().end().line as u32;
+                push(&mut out, mint_sym(file, EntityKind::Function, &name, None), name, CallKind::Free, line, end);
+            }
+            Item::Impl(i) => {
+                let owner = primary_type(&i.self_ty);
+                for ii in &i.items {
+                    if let syn::ImplItem::Fn(m) = ii {
+                        let name = m.sig.ident.to_string();
+                        let line = rust_line(m.sig.ident.span());
+                        let end = m.block.span().end().line as u32;
+                        push(&mut out,
+                            mint_sym(file, EntityKind::Method, &name, owner.as_deref()),
+                            name, CallKind::Method, line, end);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The trailing identifier of a callee expression's source text: the last run
+/// of alnum/underscore. `helper` -> "helper", `Vec::new` -> "new",
+/// `self.foo.bar` -> "bar". Used to key the bare-name resolver the same way
+/// `type_link` resolves a type reference.
+fn rust_call_sites_from(parsed: &syn::File, file: &str) -> Vec<CallSite> {
+    let mut v = CallCollector { file, sites: Vec::new() };
+    syn::visit::visit_file(&mut v, parsed);
+    v.sites
+}
+
+struct CallCollector<'a> {
+    file: &'a str,
+    sites: Vec<CallSite>,
+}
+
+impl<'a> syn::visit::Visit<'a> for CallCollector<'a> {
+    fn visit_expr(&mut self, e: &'a syn::Expr) {
+        match e {
+            // `f(args)` / `Foo(args)`: callee is the path's trailing segment.
+            syn::Expr::Call(c) => {
+                if let syn::Expr::Path(p) = &*c.func {
+                    if let Some(seg) = p.path.segments.last() {
+                        self.sites.push(CallSite {
+                            caller_sym: None,
+                            callee: seg.ident.to_string(),
+                            file: self.file.to_string(),
+                            line: c.func.span().start().line as u32,
+                        });
+                    }
+                }
+                syn::visit::visit_expr(self, e);
+            }
+            // `recv.m(args)`: callee is the method ident.
+            syn::Expr::MethodCall(m) => {
+                self.sites.push(CallSite {
+                    caller_sym: None,
+                    callee: m.method.to_string(),
+                    file: self.file.to_string(),
+                    line: m.method.span().start().line as u32,
+                });
+                syn::visit::visit_expr(self, e);
+            }
+            _ => syn::visit::visit_expr(self, e),
+        }
+    }
 }
 
 // --- Kotlin entity pass (tree-sitter): declared types plus functions, the

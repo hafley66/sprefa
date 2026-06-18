@@ -2394,19 +2394,75 @@ impl Engine {
             Some((path.clone(), rev.clone(), lang.extract_calls(path, &content)))
         }).collect();
 
+        // Corpus-global def index: a barrier before any edge is emitted, same
+        // shape as refresh_type_rels. by_name resolves a bare callee to a def
+        // sym when exactly one callable declares it; sym_at backs the SCIP
+        // override; def_by_file drives span-containment caller resolution
+        // (innermost enclosing def wins, so calls inside a nested block attach
+        // to the nearest fn, not the outermost).
+        let mut by_name: HashMap<&str, Vec<&str>> = HashMap::new();
+        let mut sym_at: HashMap<(&str, &str), &str> = HashMap::new();
+        let mut def_by_file: HashMap<&str, Vec<(u32, u32, &str)>> = HashMap::new();
+        for (_, _, f) in &facts {
+            for d in &f.defs {
+                by_name.entry(d.name.as_str()).or_default().push(d.sym.as_str());
+                sym_at.insert((d.file.as_str(), d.name.as_str()), d.sym.as_str());
+                def_by_file.entry(d.file.as_str()).or_default().push((d.line, d.end, d.sym.as_str()));
+            }
+        }
+        let scip = self.scip_name_defs().unwrap_or_default();
+        let resolve_callee = |file: &str, callee: &str| -> Option<String> {
+            if let Some(def_file) = scip.get(&(file.to_string(), callee.to_string())) {
+                if let Some(sym) = sym_at.get(&(def_file.as_str(), callee)) {
+                    return Some(sym.to_string());
+                }
+            }
+            match by_name.get(callee) {
+                Some(v) if v.len() == 1 => Some(v[0].to_string()),
+                _ => None,
+            }
+        };
+        let resolve_caller = |file: &str, line: u32| -> Option<String> {
+            let mut best: Option<(u32, &str)> = None; // (span, sym); smallest containing span wins
+            for &(s, e, sym) in def_by_file.get(file).into_iter().flatten() {
+                if line >= s && line <= e {
+                    let span = e - s;
+                    match best {
+                        Some((bs, _)) if span >= bs => {}
+                        _ => best = Some((span, sym)),
+                    }
+                }
+            }
+            best.map(|(_, s)| s.to_string())
+        };
+
         let t = |s: &str| Value::Text(s.to_string());
         let i = |n: u32| Value::Int(n as i64);
         let mut def_rows: Vec<Vec<Value>> = Vec::new();
         let mut site_rows: Vec<Vec<Value>> = Vec::new();
         let mut edge_rev_rows: Vec<Vec<Value>> = Vec::new();
+        let mut seen_def: HashSet<&str> = HashSet::new();
+        let mut seen_edge: HashSet<(String, String, &str)> = HashSet::new();
         for (_path, rev, f) in &facts {
             for d in &f.defs {
-                def_rows.push(vec![t(&d.sym), t(d.kind.tag()), t(&d.file), i(d.line), i(d.end)]);
+                if seen_def.insert(d.sym.as_str()) {
+                    def_rows.push(vec![t(&d.sym), t(d.kind.tag()), t(&d.file), i(d.line), i(d.end)]);
+                }
             }
             for s in &f.sites {
-                let caller = s.caller_sym.clone().unwrap_or_default();
+                // call_site is the raw graph: every site, caller resolved when a
+                // def encloses it, callee as written.
+                let caller = resolve_caller(&s.file, s.line).unwrap_or_default();
                 site_rows.push(vec![t(&caller), t(&s.callee), t(&s.file), i(s.line)]);
-                edge_rev_rows.push(vec![t(&caller), t(&s.callee), t("call"), t(rev)]);
+                // call_edge is the resolved graph: emit only when both endpoints
+                // resolve to def syms, so closure(call_edge) walks one identity
+                // space (same contract as type_link). Unresolved calls stay in
+                // call_site with their bare callee.
+                if let Some(callee_sym) = resolve_callee(&s.file, &s.callee) {
+                    if !caller.is_empty() && seen_edge.insert((caller.clone(), callee_sym.clone(), rev)) {
+                        edge_rev_rows.push(vec![t(&caller), t(&callee_sym), t("call"), t(rev)]);
+                    }
+                }
             }
         }
 

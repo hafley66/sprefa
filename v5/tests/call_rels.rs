@@ -1,10 +1,12 @@
-//! Phase D scaffold: the CALL_RELS built-in family (call_def / call_site /
-//! call_edge / call_edge_rev) is wired as a lazy indexer alongside TYPE_RELS.
-//! Extractors return empty CallFacts today (the TypeLang default), so these
-//! tests prove the plumbing, not the data: the four relations are reserved,
-//! the lazy refresh runs against a real source file without error, and
-//! closure(call_edge) is a legal (empty) edge rel. Per-language extractor
-//! bodies fill the rows in follow-up commits.
+//! Phase D: the CALL_RELS built-in family (call_def / call_site / call_edge /
+//! call_edge_rev) wired as a lazy indexer alongside TYPE_RELS. The Rust
+//! extractor (syn) is live; Kotlin and TS still use the TypeLang default
+//! (empty CallFacts) until their extract_calls bodies land.
+//!
+//! Tests: (1) the four relations are reserved, (2) a language with no
+//! call extractor keeps the wiring live with zero rows, (3) the Rust
+//! extractor + the engine's caller/callee resolution pass produce a real
+//! resolved call graph and closure(call_edge) walks it transitively.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -55,20 +57,18 @@ fn call_rels_are_reserved() {
     }
 }
 
-/// Wiring is live even with empty extractors: scanning a real Rust file, the
-/// lazy indexer runs, the relations are queryable and empty, and
-/// closure(call_edge) is a legal edge rel. This is the Phase D no-op gate:
-/// every part of the plumbing runs, no rows are produced yet.
+/// A language whose extract_calls is still the empty default (Kotlin today)
+/// keeps the wiring live: the lazy indexer runs, the relations are queryable
+/// and empty, and closure(call_edge) is a legal (empty) edge rel. This is the
+/// no-op gate for any not-yet-implemented front-end.
 #[test]
-fn empty_extractors_keep_wiring_live() {
+fn empty_call_extractors_keep_wiring_live() {
     let d = sandbox("empty");
     fs::create_dir_all(d.join("src")).unwrap();
-    fs::write(
-        d.join("src/lib.rs"),
-        "fn main() { helper(1); }\nfn helper(x: i32) {}\n",
-    )
-    .unwrap();
+    fs::write(d.join("src/lib.kt"), "fun main() { helper(1) }\nfun helper(x: Int) {}\n").unwrap();
     let prog = concat!(
+        "rel seen(path: file).\n",
+        "seen(path) <- scan(\"WORK\", \"src/**/*.kt\", path, rev), match(path, rev, /./, line).\n",
         "rel reaches(a: text, b: text).\n",
         "reaches(a, b) <- closure(call_edge).\n",
         "? call_def(sym, kind, file, line, end).\n",
@@ -77,11 +77,57 @@ fn empty_extractors_keep_wiring_live() {
     );
     let (code, out, err) = run(&d, prog, &[]);
     assert_eq!(code, 0, "empty extractors must not error:\n{err}");
-    // Each query prints a "(N rows)" footer; with empty extractors all three
-    // are zero. No positive row count should appear anywhere in the output.
     assert!(out.contains("(0 rows)"), "expected zero-row footers:\n{out}");
     assert!(
         !out.contains("(1 rows)") && !out.contains("(2 rows)"),
-        "empty extractors produced rows:\n{out}"
+        "empty Kotlin extractors produced rows:\n{out}"
+    );
+}
+
+/// The Phase D gate: the Rust extractor emits call defs with body spans, the
+/// engine's resolution pass attaches each call site to its enclosing def and
+/// resolves bare callees to def syms, and closure(call_edge) walks the result
+/// transitively. `main -> helper -> leaf` must reach `main -> leaf`.
+#[test]
+fn rust_call_graph_extracts_resolves_and_closes() {
+    let d = sandbox("rust");
+    fs::create_dir_all(d.join("src")).unwrap();
+    fs::write(
+        d.join("src/lib.rs"),
+        "fn main() { helper(1); }\nfn helper(x: i32) { leaf(x); }\nfn leaf(x: i32) {}\n",
+    )
+    .unwrap();
+    let prog = concat!(
+        "rel seen(path: file).\n",
+        "seen(path) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /./, line).\n",
+        "rel reaches(a: text, b: text).\n",
+        "reaches(a, b) <- closure(call_edge).\n",
+        "? call_def(sym, kind, file, line, end).\n",
+        "? reaches(a, b).\n",
+    );
+    let (code, out, err) = run(&d, prog, &[]);
+    assert_eq!(code, 0, "Rust extraction must not error:\n{err}");
+
+    let main = "src/lib.rs::function::main";
+    let helper = "src/lib.rs::function::helper";
+    let leaf = "src/lib.rs::function::leaf";
+
+    // call_def: all three callables present.
+    assert!(out.contains(main), "main def missing:\n{out}");
+    assert!(out.contains(helper), "helper def missing:\n{out}");
+    assert!(out.contains(leaf), "leaf def missing:\n{out}");
+    assert!(
+        out.contains("(3 rows)"),
+        "expected exactly 3 call_def rows:\n{out}"
+    );
+
+    // closure(call_edge): direct main -> helper, plus transitive main -> leaf.
+    assert!(
+        out.contains(&format!("{main}\t{helper}")),
+        "direct edge main -> helper missing from closure:\n{out}"
+    );
+    assert!(
+        out.contains(&format!("{main}\t{leaf}")),
+        "transitive reach main -> leaf missing from closure:\n{out}"
     );
 }
