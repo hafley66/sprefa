@@ -40,6 +40,16 @@ fn cmd_budget() -> Option<u32> {
 /// rev string / content hash (no interning yet; that is Stage 2).
 const BUILTIN_RELS: [&str; 5] = ["repo", "rev", "content", "file", "true"];
 
+/// Tick-audit mode: `--tick-audit` or `DL_TICK_AUDIT=1`. After each tick,
+/// print every relation's row count so you can see the cardinality graph at a
+/// glance — dead extractors, blown-up joins, closure explosion.
+static TICK_AUDIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub fn set_tick_audit(on: bool) { TICK_AUDIT.store(on, std::sync::atomic::Ordering::Relaxed); }
+pub fn tick_audit() -> bool {
+    TICK_AUDIT.load(std::sync::atomic::Ordering::Relaxed)
+        || std::env::var("DL_TICK_AUDIT").is_ok_and(|v| !v.is_empty() && v != "0")
+}
+
 /// The module-graph relations (modgraph.rs). Reserved like BUILTIN_RELS, declared
 /// every tick, but populated by `refresh_module_rels` only when the program
 /// references one (resolution parses every file, so it is lazy). `module_edge` is
@@ -1099,6 +1109,17 @@ impl Engine {
         if self.dropped > 0 {
             eprintln!("[checked-type] dropped {} rows failing file/dir/path checks", self.dropped);
             self.dropped = 0;
+        }
+        if tick_audit() {
+            let mut counts: Vec<(String, i64)> = Vec::new();
+            for rel in self.rels.keys() {
+                let n: i64 = self.db.conn().query_row(
+                    &format!("SELECT COUNT(*) FROM {}", tbl(rel)), [], |r| r.get(0))?;
+                counts.push((rel.clone(), n));
+            }
+            counts.sort_by(|a, b| a.0.cmp(&b.0));
+            eprintln!("[audit] {} relation(s)", counts.len());
+            for (rel, n) in &counts { eprintln!("[audit]   {rel}: {n}"); }
         }
         self.db.tick_end();
         Ok(())

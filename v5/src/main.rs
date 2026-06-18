@@ -58,6 +58,9 @@ struct Cli {
     /// error, never a silent truncation. Default: unlimited.
     #[arg(long)]
     cmd_budget: Option<u32>,
+    /// After each tick, print every relation's row count (or DL_TICK_AUDIT=1).
+    #[arg(long)]
+    tick_audit: bool,
 }
 
 /// Explicit `--root` wins (canonicalized). Otherwise default to the repo the
@@ -78,6 +81,7 @@ fn resolve_root(cli: &Cli) -> Result<PathBuf> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     if cli.profile { sprefa_v5::db::set_profile(true); }
+    if cli.tick_audit { sprefa_v5::engine::set_tick_audit(true); }
     if let Some(n) = cli.cmd_budget { sprefa_v5::engine::set_cmd_budget(n); }
     let root = resolve_root(&cli)?;
     if !cli.move_.is_empty() {
