@@ -14,6 +14,21 @@ pub fn parse(toks: Vec<Tok>) -> Result<Program> {
     Ok(prog)
 }
 
+/// Parse the EXTENDED module surface. Same loop as `parse`, but a top-level
+/// `use "path".` produces `SurfaceItem::Use`; every other item is wrapped
+/// unchanged as `SurfaceItem::Core`. The frontend's `expand` is the only place
+/// the surface disappears into the frozen core IR. The lexer does not need a
+/// `use` keyword: it lexes as `Tok::Ident("use")` followed by `Tok::Str(p)`,
+/// which this loop recognizes.
+pub fn parse_surface(toks: Vec<Tok>) -> Result<Vec<SurfaceItem>> {
+    let mut p = Parser { toks, i: 0 };
+    let mut out = Vec::new();
+    while p.peek().is_some() {
+        out.push(p.surface_item()?);
+    }
+    Ok(out)
+}
+
 impl Parser {
     fn peek(&self) -> Option<&Tok> { self.toks.get(self.i) }
     fn peek2(&self) -> Option<&Tok> { self.toks.get(self.i + 1) }
@@ -32,6 +47,76 @@ impl Parser {
             Tok::Ident(s) => Ok(s),
             other => bail!("expected identifier, got {:?}", other),
         }
+    }
+
+    /// One surface-level form. `use "path".` -> `Use`; `def name(params) <- ...`
+    /// -> `Def`; everything else falls through to the core item parser and is
+    /// wrapped as `Core`. Lookaheads:
+    ///   - `use` followed by `Tok::Str` is the module import (`use "path".`).
+    ///     A `rel use(...)` still parses as a rel because the second token is
+    ///     `(`, not a string.
+    ///   - `def` followed by an ident is a template (`def name(p) <- ...`).
+    ///     A rule whose head rel is literally `def` (`def(...) <- ...`) still
+    ///     parses as a rule because the second token is `(`, not an ident.
+    fn surface_item(&mut self) -> Result<SurfaceItem> {
+        if let Some(Tok::Ident(s)) = self.peek() {
+            if s == "use" && matches!(self.peek2(), Some(Tok::Str(_))) {
+                let path = self.use_path()?;
+                return Ok(SurfaceItem::Use(Import { path }));
+            }
+            if s == "def" && matches!(self.peek2(), Some(Tok::Ident(_))) {
+                let tpl = self.def_template()?;
+                return Ok(SurfaceItem::Def(tpl));
+            }
+        }
+        Ok(SurfaceItem::Core(self.item()?))
+    }
+
+    /// `def name(p1, p2) <- body.` — a parameterized rule template. The body
+    /// is the same comma-separated form as a rule body; the params are idents
+    /// the body references by `Term::Var`. At each call site
+    /// (`name(args)` as a body atom) the frontend inlines a clone of the body
+    /// with params substituted by args and non-param internal vars
+    /// alpha-renamed.
+    fn def_template(&mut self) -> Result<RuleTemplate> {
+        self.ident()?; // "def"
+        let name = self.ident()?;
+        self.expect(Tok::LParen)?;
+        let mut params = Vec::new();
+        if !matches!(self.peek(), Some(Tok::RParen)) {
+            loop {
+                params.push(self.ident()?);
+                match self.next()? {
+                    Tok::Comma => continue,
+                    Tok::RParen => break,
+                    other => bail!("expected , or ) in def params, got {:?}", other),
+                }
+            }
+        }
+        self.expect(Tok::Arrow)?;
+        let mut body = Vec::new();
+        loop {
+            body.push(self.body_item()?);
+            match self.next()? {
+                Tok::Comma => continue,
+                Tok::Dot => break,
+                other => bail!("expected , or . in def body, got {:?}", other),
+            }
+        }
+        Ok(RuleTemplate { name, params, body })
+    }
+
+    /// `use "path".` — the string literal is the module path, resolved against
+    /// the loader's include roots. Stricter than the rest of the grammar: only
+    /// a literal string (not a var) is accepted, since `use` is compile-time.
+    fn use_path(&mut self) -> Result<String> {
+        self.ident()?; // "use"
+        let path = match self.next()? {
+            Tok::Str(s) => s,
+            other => bail!("`use` expects a string literal, got {:?}", other),
+        };
+        self.expect(Tok::Dot)?;
+        Ok(path)
     }
 
     fn item(&mut self) -> Result<Item> {
@@ -234,9 +319,11 @@ impl Parser {
     fn scan(&mut self) -> Result<BodyItem> {
         self.ident()?; // scan
         self.expect(Tok::LParen)?;
-        // Comma-separated terms. 4-ary `scan(rev, glob, path, rev_out)` defaults
-        // the repo to "." (self); 5-ary `scan(repo, rev, glob, path, rev_out)`
-        // names a repo coordinate (slug / path / ".") that flows as a value.
+        // Comma-separated terms. 3-ary `scan(glob, path, rev_out)` defaults the
+        // repo to "." (self) and rev to WORK (live disk); 4-ary
+        // `scan(rev, glob, path, rev_out)` defaults the repo to "."; 5-ary
+        // `scan(repo, rev, glob, path, rev_out)` names a repo coordinate
+        // (slug / path / ".") that flows as a value.
         let mut terms = vec![self.term()?];
         while matches!(self.peek(), Some(Tok::Comma)) {
             self.next()?; // ,
@@ -244,11 +331,13 @@ impl Parser {
         }
         self.expect(Tok::RParen)?;
         let (repo, rev, glob, path, rev_out) = match terms.len() {
+            3 => { let mut t = terms.into_iter();
+                (Term::Str(".".into()), Term::Str("WORK".into()), t.next().unwrap(), t.next().unwrap(), t.next().unwrap()) }
             4 => { let mut t = terms.into_iter();
                 (Term::Str(".".into()), t.next().unwrap(), t.next().unwrap(), t.next().unwrap(), t.next().unwrap()) }
             5 => { let mut t = terms.into_iter();
                 (t.next().unwrap(), t.next().unwrap(), t.next().unwrap(), t.next().unwrap(), t.next().unwrap()) }
-            n => bail!("scan expects 4 args (rev, glob, path, rev) or 5 (repo, rev, glob, path, rev), got {n}"),
+            n => bail!("scan expects 3 args (glob, path, rev), 4 (rev, glob, path, rev), or 5 (repo, rev, glob, path, rev), got {n}"),
         };
         Ok(BodyItem::Scan { repo, rev, glob, path, rev_out })
     }

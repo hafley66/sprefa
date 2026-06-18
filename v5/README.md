@@ -55,6 +55,8 @@ A `.dl` program is a sequence of items, each terminated by `.`:
 | gen (file) | `gen("docs/{x}.md", "row {y}") <- body.` | render rows to a file, grouped by rendered path |
 | gen (splice) | `gen(p, l0, l1, "row {y}") <- body.` | replace lines strictly between two marker lines (pair with `comment`) |
 | query | `? rel(a, b, "literal").` | print results; a literal pins that column |
+| module import | `use "std/callgraph.dl".` | splice another `.dl` file's items here; see [Modules](#modules) |
+| template decl | `def name(p1, p2) <- body, body.` | parameterized rule body, inlined at call sites; see [Templates](#templates-def) |
 | comment | `# ...` | to end of line |
 
 ### Types
@@ -92,7 +94,7 @@ Type errors surface as diagnostics under `--check` and in `--lsp`
 
 | op | signature | what it does |
 |---|---|---|
-| `scan` | `scan(rev, glob, path, rev_out)` or `scan(repo, rev, glob, path, rev_out)` | select files. `rev` ∈ `"WORK"` (worktree) \| `"HEAD"` \| any git rev. `repo` ∈ config slug \| `"."` (self, the 4-ary default) \| `"*"` (fan over every configured repo) |
+| `scan` | `scan(glob, path, rev_out)` or `scan(rev, glob, path, rev_out)` or `scan(repo, rev, glob, path, rev_out)` | select files. 3-ary defaults `repo="."` self and `rev="WORK"` worktree; 4-ary defaults `repo="."`; 5-ary names a repo coordinate. `rev` ∈ `"WORK"` (worktree) \| `"HEAD"` \| any git rev. `repo` ∈ config slug \| `"."` (self) \| `"*"` (fan over every configured repo) |
 | `match` | `match(path, rev, /re/, line)` | regex over file content, one row per match line. `(?<cap>..)` named groups bind dl vars of the same name; `$cap` is sugar for a lazy named group (`/TODO\($who\)/`); bare `$` stays the anchor |
 | `ast` | `ast(path, rev, :rust\|:c\|:kotlin, "(query) @cap", line[, end])` | tree-sitter query; `@cap` captures bind same-named vars |
 | `sg` | `sg(path, rev, :lang, "$X.unwrap()", line[, col, end_line, end_col])` | ast-grep pattern; metavar `$X` binds dl var `X`. Lines 1-based, columns 0-based byte offsets. `:lang` ∈ rust, ts, tsx, js, py, go, json, c, cpp, kotlin (see [src/sg.rs](src/sg.rs)) |
@@ -162,6 +164,93 @@ match (convergence = a second tick writes nothing). `gen` never runs under
 `--check` or `--lsp`. Splices across multiple rules into one file batch into a
 single bottom-up write. Worked loop: [examples/gen-type-table.dl](examples/gen-type-table.dl),
 cross-repo deck maintenance: [examples/anim-deck.dl](examples/anim-deck.dl).
+
+## Modules
+
+`use "path".` splices another `.dl` file's items at the import site. The
+smallest viable module system: file inclusion with canonical-path dedup, no
+separate namespace, no exports. A program with no `use` is byte-for-byte
+identical to one parsed by the older flat pipeline.
+
+```
+use "std/callgraph.dl".
+? reaches("Engine", dst).
+```
+
+**Include roots** (first existing match wins, each is a container dir that
+`use` paths resolve against):
+
+1. The program file's directory (`use "lib.dl"` for a sibling;
+   `use "std/foo.dl"` when the program lives next to a `std/` dir).
+2. `$SPREFA_STD` (explicit override; the install / CI hand-lever).
+3. The crate root (`v5/`), which ships a `std/` subdir. Lets examples and
+   tests use `use "std/foo.dl".` without an install step.
+4. The binary's parent directory (`<exe>/..`, the installed layout).
+
+**Diamond imports load once.** The canonical-path cache keys every loaded
+file, so a second `use` of an already-loaded module is a no-op (its items do
+not splice twice).
+
+**Rel dedup.** Two declarations of the same `rel` with the same cols collapse
+to one. The same name with conflicting cols is a hard error naming both col
+vectors (a typo silently shadowing a library rel is the import story's worst
+failure mode). Rules and queries splice verbatim.
+
+**Shipped stdlib** lives in [std/](std/):
+
+| file | exposes |
+|---|---|
+| [std/callgraph.dl](std/callgraph.dl) | `def`, `use`, `calls`, `reaches`, `unused` — the file-scoped call graph |
+| [std/parsers/openapi.dl](std/parsers/openapi.dl) | `spec_op(op)` — operationIds from any `openapi.{json,yaml,yml}` in scope |
+
+## Templates (`def`)
+
+`def name(p1, p2) <- body.` declares a parameterized rule body. A body atom
+`name(args)` is **inlined**: the template body is cloned, params are
+substituted by the args, and every non-param internal var is alpha-renamed so
+two instantiations of the same template never capture each other.
+
+```
+rel edge(a: int, b: int).
+rel four_hop(a: int, b: int).
+edge(1, 2). edge(2, 3). edge(3, 4). edge(4, 5).
+
+def via(x, z) <- edge(x, m), edge(m, z).
+
+four_hop(a, b) <- via(a, mid), via(mid, b).
+? four_hop(a, b).
+```
+
+The two `via` calls expand to disjoint internal vars
+(`__via_0_m` and `__via_1_m`) so the chain is four edges, not collapsed to two.
+
+**The arity-reuse layer.** The plan's motivating example is the qualified call
+graph (`fndef` + `callsite` + range containment). Without `def`, every program
+that wanted this join would copy-paste the three atoms. With `def`, a library
+ships the shape and programs call it with their own inputs:
+
+```
+def qcall(caller, callee) <-
+  fndef(caller, p, s, e),
+  callsite(callee, p, l),
+  s <= l, l <= e.
+
+calls(caller, callee) <- qcall(caller, callee).
+```
+
+**Contract.** Inline-only. No recursion, no fixed-point. A template that
+transitively calls itself is rejected at expand time. A `def` from an imported
+file is callable from the importer (the template table is scoped to the whole
+merge). A same-name second `def` is a conflict. A `def` with no call site
+emits zero rules (the template's own `rel` is undefined).
+
+**Forward references.** Templates may be declared after the rules that call
+them: the inline pass runs once the whole program (including transitive
+`use`s) is collected.
+
+**`def` as a rel name.** A rule whose head is literally `def(...)` still
+parses as a rule because the second token is `(`, not an ident. Mirrors the
+`use`-as-rel-name guard so existing programs keep parsing.
 
 ## Built-in relations
 
@@ -276,12 +365,40 @@ root = "/path/to/checkout-a"
 slug = "gamma/three"
 root = "/path/to/cache/gamma"
 url  = "git@github.com:org/gamma.git"   # cloned on first scan if root is absent
+
+[[repos]]
+slug = "delta/four"
+root = "/path/to/maybe-delta"
+allow_missing = true                    # missing root is non-fatal: scan yields
+                                        # zero rows, engine prints one stderr line.
+                                        # The slug is omitted from `repo(...)` so a
+                                        # program can derive `missing_repo(S)` via
+                                        # antijoin against its referenced set.
 ```
 
 `scan("alpha/one", "WORK", glob, p, rev)` targets one repo;
 `scan("*", "WORK", ...)` fans the rule over every configured repo. Or point
 `--root` at a parent directory and use root-relative globs
 (`"sprefa/v5/src/**/*.rs"`), as [examples/anim-deck.dl](examples/anim-deck.dl) does.
+
+**Progressive analysis.** A multi-repo program does not have to bail when one
+clone is missing. Mark the config row `allow_missing = true` and the engine
+prints one stderr line, omits the slug from the `repo` builtin, and proceeds.
+A program surfaces the miss for an agent or UI to route:
+
+```
+rel referenced(slug: text).
+rel candidate_url(slug: text, url: text).
+rel missing_repo(slug: text, hinted_url: text).
+
+referenced("dep-a").
+candidate_url("dep-a", "https://github.com/org/dep-a").
+
+missing_repo(s, u) <- referenced(s), !repo(s, _, _), candidate_url(s, u).
+? missing_repo(s, u).
+```
+
+Worked example: [examples/missing-repo.dl](examples/missing-repo.dl).
 
 ## Examples
 
@@ -304,12 +421,14 @@ All in [examples/](examples/), runnable as `dl examples/<name>.dl --root .`:
 | [anim-deck.dl](examples/anim-deck.dl) | cross-repo splice: aggregates + round tiers written into a slide deck's d2 fences |
 | [typegraph-anim.dl](examples/typegraph-anim.dl) | gen → d2 `steps:` boards, `d2 --animate-interval` |
 | [typeports.dl](examples/typeports.dl) | hub structs as d2 `sql_table` nodes, wires anchored to field rows |
+| [missing-repo.dl](examples/missing-repo.dl) | `allow_missing` config + antijoin-derived `missing_repo(slug, url)` for the clone prompt |
 
 ## Where things live
 
 | path | contents |
 |---|---|
 | [src/parse.rs](src/parse.rs) / [src/lex.rs](src/lex.rs) / [src/ast.rs](src/ast.rs) | DSL grammar; `ast.rs` is the syntax's single source of truth |
+| [src/frontend.rs](src/frontend.rs) | module surface: `use` inclusion + `def` inlining (`load_program`, `expand_with`, `inline_template_calls`) |
 | [src/engine.rs](src/engine.rs) | tick loop, fixpoint lowering, built-in relation refresh, gen writes |
 | [src/typecheck.rs](src/typecheck.rs) | brands, anchors, path-literal resolution, stratification diags |
 | [src/lower.rs](src/lower.rs) | rule → SQL |
