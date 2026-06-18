@@ -38,7 +38,7 @@ fn cmd_budget() -> Option<u32> {
 /// schemas and refreshed each tick from the `_file` change-detection cache, so
 /// any rule can join the file set without a `scan`. Stage 1: ids are the raw
 /// rev string / content hash (no interning yet; that is Stage 2).
-const BUILTIN_RELS: [&str; 4] = ["repo", "rev", "content", "file"];
+const BUILTIN_RELS: [&str; 5] = ["repo", "rev", "content", "file", "true"];
 
 /// The module-graph relations (modgraph.rs). Reserved like BUILTIN_RELS, declared
 /// every tick, but populated by `refresh_module_rels` only when the program
@@ -84,6 +84,7 @@ const SPINE_RELS: [&str; 2] = ["string", "ref"];
 fn builtin_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
+        RelDecl { name: "true".into(), cols: vec![] },
         RelDecl { name: "repo".into(), cols: vec![c("id", Type::Text), c("slug", Type::Text), c("root", Type::Path)] },
         RelDecl { name: "rev".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text), c("oid", Type::Text), c("ts", Type::Int)] },
         RelDecl { name: "content".into(), cols: vec![c("id", Type::Text), c("hash", Type::Text)] },
@@ -1748,13 +1749,20 @@ impl Engine {
     }
 
     fn declare(&mut self, d: &RelDecl) -> Result<()> {
-        let cols: Vec<String> = d.cols.iter()
-            .map(|c| format!("\"{}\" {}", c.name, c.ty.sql())).collect();
-        let pk: Vec<String> = d.cols.iter().map(|c| format!("\"{}\"", c.name)).collect();
-        let sql = format!(
-            "CREATE TABLE IF NOT EXISTS {} ({}, __src TEXT DEFAULT '', PRIMARY KEY ({}))",
-            tbl(&d.name), cols.join(", "), pk.join(", ")
-        );
+        let sql = if d.cols.is_empty() {
+            // Zero-column relation (the built-in `true()` singleton): one row,
+            // no user columns. SQLite needs at least one column, so the table
+            // carries only the universal `__src` sentinel.
+            format!("CREATE TABLE IF NOT EXISTS {} (__src TEXT DEFAULT '')", tbl(&d.name))
+        } else {
+            let cols: Vec<String> = d.cols.iter()
+                .map(|c| format!("\"{}\" {}", c.name, c.ty.sql())).collect();
+            let pk: Vec<String> = d.cols.iter().map(|c| format!("\"{}\"", c.name)).collect();
+            format!(
+                "CREATE TABLE IF NOT EXISTS {} ({}, __src TEXT DEFAULT '', PRIMARY KEY ({}))",
+                tbl(&d.name), cols.join(", "), pk.join(", ")
+            )
+        };
         self.db.conn().execute(&sql, [])?;
         self.rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone() });
         Ok(())
@@ -1787,7 +1795,7 @@ impl Engine {
                 }
                 seen.insert(d.name.clone(), d.cols.clone());
                 if BUILTIN_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in relation (repo/rev/content/file); pick another name", d.name);
+                    bail!("{} is a built-in relation (true/repo/rev/content/file); pick another name", d.name);
                 }
                 if MODULE_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in module-graph relation; pick another name", d.name);
@@ -1879,6 +1887,10 @@ impl Engine {
         self.refresh_rel("rev", &["id", "repo", "oid", "ts"], &revs)?;
         self.refresh_rel("content", &["id", "hash"], &contents)?;
         self.refresh_rel("file", &["repo", "rev", "path", "content"], &file_rows)?;
+        // The `true()` singleton: always exactly one zero-column row. The range
+        // anchor for negation-only rules (`diag(...) <- true(), !rel(_,_,_).`).
+        self.db.exec(&format!("DELETE FROM {}", tbl("true")))?;
+        self.db.exec(&format!("INSERT OR IGNORE INTO {} DEFAULT VALUES", tbl("true")))?;
         Ok(())
     }
 
