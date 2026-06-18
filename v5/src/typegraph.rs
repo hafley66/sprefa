@@ -105,6 +105,51 @@ pub struct TypeFacts {
     pub edges: Vec<TypeEdge>,
 }
 
+/// Phase D call-graph extraction: callable definitions + the raw call sites a
+/// file contains. Caller resolution (which def encloses a site) is a second
+/// pass in the engine, not the extractor's job; extractors emit sites with the
+/// callee text as it appears (bare or qualified), and the engine resolves to a
+/// def sym when unique, the same path `type_link` uses.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CallFacts {
+    pub defs: Vec<CallDef>,
+    pub sites: Vec<CallSite>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CallDef {
+    pub sym: String,        // file::function::name (free) or file::method::Parent.name
+    pub kind: CallKind,
+    pub file: String,
+    pub line: u32,
+    pub end: u32,           // body span end (1-based line), for callsite containment
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CallSite {
+    pub caller_sym: Option<String>,   // filled by the engine's span-containment pass
+    pub callee: String,               // bare/qualified text; resolved to a def sym when unique
+    pub file: String,
+    pub line: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallKind {
+    Free,
+    Method,
+    Closure,
+}
+
+impl CallKind {
+    pub fn tag(self) -> &'static str {
+        match self {
+            CallKind::Free => "function",
+            CallKind::Method => "method",
+            CallKind::Closure => "closure",
+        }
+    }
+}
+
 /// sem-style symbol id: `file::kind::name`, scoped by an optional parent for
 /// methods (`file::method::Class.name`). Stable, index-free, human-readable.
 pub fn mint_sym(file: &str, kind: EntityKind, name: &str, parent: Option<&str>) -> String {
@@ -121,6 +166,11 @@ pub trait TypeLang: Sync {
     fn name(&self) -> &'static str;
     fn matches(&self, path: &str) -> bool;
     fn extract(&self, file: &str, content: &str) -> TypeFacts;
+    /// Phase D call-graph extraction. The default returns empty `CallFacts` so
+    /// the lazy-indexer wiring (`CALL_RELS`) is live end to end with zero rows;
+    /// each front-end overrides this as its extractor lands. One parse can feed
+    /// both `extract` and `extract_calls`, but that join is a follow-up.
+    fn extract_calls(&self, _file: &str, _content: &str) -> CallFacts { CallFacts::default() }
 }
 
 /// Registry order matters: `.kts` matches before `.ts` would, so KotlinTypes

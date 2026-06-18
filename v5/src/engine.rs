@@ -72,6 +72,14 @@ const MODULE_RELS: [&str; 6] = [
 const TYPE_RELS: [&str; 5] =
     ["type_edge", "type_edge_rev", "type_entity", "type_sig", "type_link"];
 
+/// Phase D diet-SCIP call graph. `call_def` is each callable (sym, kind, file,
+/// span); `call_site` is each call occurrence (caller sym, callee text, file,
+/// line); `call_edge` is the resolved closure edge; `call_edge_rev` is the
+/// rev-aware source of truth (same split as type_edge / type_edge_rev).
+/// Symbols are `file::kind::name`, the same shape `type_entity` uses, so the
+/// call and type graphs share nodes and a join reaches both.
+const CALL_RELS: [&str; 4] = ["call_def", "call_site", "call_edge", "call_edge_rev"];
+
 /// Compiler-backed SCIP importer. `scip_edge` is file-to-file dependency data
 /// extracted from definition/reference occurrences in an existing index.scip.
 const SCIP_RELS: [&str; 3] = ["scip_def", "scip_ref", "scip_edge"];
@@ -131,6 +139,23 @@ fn type_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
+fn call_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "call_def".into(), cols: vec![
+            c("sym", Type::Text), c("kind", Type::Text),
+            c("file", Type::Path), c("line", Type::Int), c("end", Type::Int)] },
+        RelDecl { name: "call_site".into(), cols: vec![
+            c("caller", Type::Text), c("callee", Type::Text),
+            c("file", Type::Path), c("line", Type::Int)] },
+        RelDecl { name: "call_edge".into(), cols: vec![
+            c("caller", Type::Text), c("callee", Type::Text), c("kind", Type::Text)] },
+        RelDecl { name: "call_edge_rev".into(), cols: vec![
+            c("caller", Type::Text), c("callee", Type::Text),
+            c("kind", Type::Text), c("rev", Type::Text)] },
+    ]
+}
+
 fn scip_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -186,6 +211,8 @@ fn rels_used(prog: &Program, rels: &[&str]) -> bool {
 fn module_rels_used(prog: &Program) -> bool { rels_used(prog, &MODULE_RELS) }
 
 fn type_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_RELS) }
+
+fn call_rels_used(prog: &Program) -> bool { rels_used(prog, &CALL_RELS) }
 
 /// The trailing identifier of a SCIP symbol descriptor: `... Foo#` -> "Foo",
 /// `... bar().` -> "bar". Used to key the SCIP override by plain type name.
@@ -1088,6 +1115,11 @@ impl Engine {
             self.refresh_type_rels()?;
             phase("type-rels", t);
         }
+        if call_rels_used(prog) {
+            let t = std::time::Instant::now();
+            self.refresh_call_rels()?;
+            phase("call-rels", t);
+        }
         if scip_rels_used(prog) { changed |= self.refresh_scip_rels()?; }
         if spine_rels_used(prog) {
             let t = std::time::Instant::now();
@@ -1293,6 +1325,10 @@ impl Engine {
             if type_rels_used(prog) {
                 self.refresh_type_rels()?;
                 for t in TYPE_RELS { changed_source_rels.insert(t.to_string()); }
+            }
+            if call_rels_used(prog) {
+                self.refresh_call_rels()?;
+                for r in CALL_RELS { changed_source_rels.insert(r.to_string()); }
             }
             if spine_rels_used(prog) {
                 self.refresh_spine_rels()?;
@@ -1845,6 +1881,9 @@ impl Engine {
                 if TYPE_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in type-graph relation (type_edge / type_edge_rev / type_entity / type_sig / type_link); pick another name", d.name);
                 }
+                if CALL_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is a built-in call-graph relation (call_def / call_site / call_edge / call_edge_rev); pick another name", d.name);
+                }
                 if SCIP_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in SCIP relation; pick another name", d.name);
                 }
@@ -1872,6 +1911,7 @@ impl Engine {
         for d in builtin_rel_decls() { self.declare(&d)?; }
         for d in module_rel_decls() { self.declare(&d)?; }
         for d in type_rel_decls() { self.declare(&d)?; }
+        for d in call_rel_decls() { self.declare(&d)?; }
         for d in scip_rel_decls() { self.declare(&d)?; }
         for d in spine_rel_decls() { self.declare(&d)?; }
         for d in changed_rel_decls() { self.declare(&d)?; }
@@ -2325,6 +2365,69 @@ impl Engine {
         self.db.exec(&format!(
             "INSERT OR IGNORE INTO {edge} (\"from\", \"to\", \"kind\") \
              SELECT \"from\", \"to\", \"kind\" FROM {edge_rev}"
+        ))?;
+        Ok(())
+    }
+
+    /// Wholesale repopulation of the Phase D call-graph relations. Same shape
+    /// as `refresh_type_rels`: parallel per-file extraction via the language
+    /// registry, one write per relation. Extractors return empty `CallFacts`
+    /// today (the trait default), so this wires the lazy-indexer plumbing end
+    /// to end with zero rows; per-language extractor bodies fill it in next.
+    /// The caller-resolution second pass (span containment + bare-name resolve,
+    /// the type_link path) lands with the first real extractor body; the row
+    /// vecs already flow through it so the write path is exercised now.
+    fn refresh_call_rels(&self) -> Result<()> {
+        let mut files: Vec<(String, String)> = Vec::new();
+        {
+            let mut sel = self.db.conn().prepare(
+                "SELECT path, rev FROM _file WHERE path LIKE '%.rs' OR path LIKE '%.kt' OR path LIKE '%.kts' \
+                 OR path LIKE '%.ts' OR path LIKE '%.tsx'")?;
+            let rows = sel.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+            for row in rows.flatten() { files.push(row); }
+        }
+
+        let root = self.root.clone();
+        let facts: Vec<(String, String, typegraph::CallFacts)> = files.par_iter().filter_map(|(path, rev)| {
+            let lang = typegraph::type_langs().iter().find(|l| l.matches(path))?;
+            let content = read_content(&root, rev, path).unwrap_or_default();
+            Some((path.clone(), rev.clone(), lang.extract_calls(path, &content)))
+        }).collect();
+
+        let t = |s: &str| Value::Text(s.to_string());
+        let i = |n: u32| Value::Int(n as i64);
+        let mut def_rows: Vec<Vec<Value>> = Vec::new();
+        let mut site_rows: Vec<Vec<Value>> = Vec::new();
+        let mut edge_rev_rows: Vec<Vec<Value>> = Vec::new();
+        for (_path, rev, f) in &facts {
+            for d in &f.defs {
+                def_rows.push(vec![t(&d.sym), t(d.kind.tag()), t(&d.file), i(d.line), i(d.end)]);
+            }
+            for s in &f.sites {
+                let caller = s.caller_sym.clone().unwrap_or_default();
+                site_rows.push(vec![t(&caller), t(&s.callee), t(&s.file), i(s.line)]);
+                edge_rev_rows.push(vec![t(&caller), t(&s.callee), t("call"), t(rev)]);
+            }
+        }
+
+        self.refresh_rel("call_def", &["sym", "kind", "file", "line", "end"], &def_rows)?;
+        self.refresh_rel("call_site", &["caller", "callee", "file", "line"], &site_rows)?;
+        self.refresh_rel("call_edge_rev", &["caller", "callee", "kind", "rev"], &edge_rev_rows)?;
+        self.rebuild_legacy_call_rels()?;
+        Ok(())
+    }
+
+    /// Rebuild the convenient rev-less `call_edge(caller, callee, kind)` from
+    /// the rev-aware table, deduped across revs. Same shape as
+    /// `rebuild_legacy_type_rels`: `call_edge_rev` is the source of truth, the
+    /// legacy view is the simple closure target.
+    fn rebuild_legacy_call_rels(&self) -> Result<()> {
+        let edge = tbl("call_edge");
+        let edge_rev = tbl("call_edge_rev");
+        self.db.exec(&format!("DELETE FROM {edge}"))?;
+        self.db.exec(&format!(
+            "INSERT OR IGNORE INTO {edge} (\"caller\", \"callee\", \"kind\") \
+             SELECT \"caller\", \"callee\", \"kind\" FROM {edge_rev}"
         ))?;
         Ok(())
     }
