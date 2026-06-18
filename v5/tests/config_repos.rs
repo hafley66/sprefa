@@ -13,6 +13,10 @@ fn config_repos_populate_the_repo_relation() {
     let _ = fs::remove_dir_all(&d);
     fs::create_dir_all(d.join("src")).unwrap();
     fs::write(d.join("src/lib.rs"), "fn main() {}\n").unwrap();
+    // The `root`s must exist: a missing configured repo is omitted from the
+    // `repo` relation so programs can detect misses via `!repo(S, _, _)`.
+    fs::create_dir_all("/tmp/alpha").unwrap();
+    fs::create_dir_all("/tmp/beta").unwrap();
     fs::write(d.join("cfg.toml"), "\
         [[repos]]\n\
         slug = \"alpha/one\"\n\
@@ -186,4 +190,101 @@ fn byte_identical_files_across_repos_keep_distinct_located_rows() {
         .collect();
     assert_eq!(repos, vec!["ra".to_string(), "rb".to_string()],
         "one located row per repo, attributed by slug: got {repos:?}");
+}
+
+/// `allow_missing = true` on a config repo whose root is absent is non-fatal:
+/// the engine prints one stderr line, omits the missing slug from the `repo`
+/// relation (so `!repo(S, _, _)` detects it), and lets the program run to
+/// completion. Without the flag the same setup bails.
+#[test]
+fn allow_missing_repo_runs_to_completion_and_is_omitted_from_repo_rel() {
+    let d = std::env::temp_dir().join("cfg_allow_missing_test");
+    let _ = fs::remove_dir_all(&d);
+    fs::create_dir_all(d.join("present/src")).unwrap();
+    fs::write(d.join("present/src/lib.rs"), "fn here() {}\n").unwrap();
+
+    let cfg = format!("\
+        [[repos]]\n\
+        slug = \"present\"\n\
+        root = \"{present}\"\n\
+        [[repos]]\n\
+        slug = \"absent\"\n\
+        root = \"{absent}\"\n\
+        allow_missing = true\n",
+        present = d.join("present").display(),
+        absent = d.join("does-not-exist").display());
+    fs::write(d.join("cfg.toml"), cfg).unwrap();
+
+    // `referenced` is the author-defined inventory of slugs the program means
+    // to scan; `missing_repo` is its antijoin against the `repo` builtin. With
+    // `allow_missing`, the missing scan yields zero rows but does not bail; the
+    // present scan contributes one file. The `repo` rel omits the absent slug,
+    // so the antijoin surfaces it.
+    let prog = "\
+        rel src_present(p: file).\n\
+        rel src_absent(p: file).\n\
+        rel referenced(slug: text).\n\
+        rel missing_repo(slug: text).\n\
+        src_present(p) <- scan(\"present\", \"WORK\", \"src/**/*.rs\", p, rev).\n\
+        src_absent(p)  <- scan(\"absent\",  \"WORK\", \"src/**/*.rs\", p, rev).\n\
+        referenced(\"present\").\n\
+        referenced(\"absent\").\n\
+        missing_repo(s) <- referenced(s), !repo(s, _, _).\n";
+    let run_with = |query: &str| -> (String, String) {
+        fs::write(d.join("p.dl"), format!("{prog}\n{query}\n")).unwrap();
+        let out = Command::new(DL)
+            .arg(d.join("p.dl"))
+            .args(["--root", d.join("present").to_str().unwrap(), "--db", d.join("db").to_str().unwrap()])
+            .env("SPREFA_CONFIG", d.join("cfg.toml"))
+            .output().expect("run dl");
+        (String::from_utf8_lossy(&out.stdout).into_owned(),
+         String::from_utf8_lossy(&out.stderr).into_owned())
+    };
+
+    let (stdout, stderr) = run_with("? repo(s, _, _).");
+    assert!(stderr.contains("[missing]"), "stderr should note the missing repo: {stderr}");
+    assert!(stdout.contains("present"), "present slug in repo rel: {stdout}");
+    assert!(!stdout.contains("absent"), "missing slug omitted from repo rel: {stdout}");
+
+    let (stdout, _) = run_with("? missing_repo(s).");
+    assert!(stdout.contains("absent"), "missing slug surfaced by antijoin: {stdout}");
+    assert!(!stdout.contains("present"), "present slug must not appear as missing: {stdout}");
+
+    let (stdout, _) = run_with("? src_present(p).");
+    assert!(stdout.contains("lib.rs"), "present scan still produces rows: {stdout}");
+}
+
+/// Without `allow_missing`, the same absent root is fatal (engine bails). This
+/// guards against accidentally swallowing missing repos in the default path.
+#[test]
+fn missing_repo_without_flag_bails() {
+    let d = std::env::temp_dir().join("cfg_bail_test");
+    let _ = fs::remove_dir_all(&d);
+    fs::create_dir_all(d.join("present/src")).unwrap();
+    fs::write(d.join("present/src/lib.rs"), "fn here() {}\n").unwrap();
+
+    let cfg = format!("\
+        [[repos]]\n\
+        slug = \"present\"\n\
+        root = \"{present}\"\n\
+        [[repos]]\n\
+        slug = \"absent\"\n\
+        root = \"{absent}\"\n",
+        present = d.join("present").display(),
+        absent = d.join("does-not-exist").display());
+    fs::write(d.join("cfg.toml"), cfg).unwrap();
+    fs::write(d.join("p.dl"), "\
+        rel src(p: file).\n\
+        src(p) <- scan(\"*\", \"WORK\", \"src/**/*.rs\", p, rev).\n\
+        ? src(p).\n").unwrap();
+
+    let out = Command::new(DL)
+        .arg(d.join("p.dl"))
+        .args(["--root", d.join("present").to_str().unwrap(), "--db", d.join("db").to_str().unwrap()])
+        .env("SPREFA_CONFIG", d.join("cfg.toml"))
+        .output().expect("run dl");
+    assert!(!out.status.success(), "missing root without allow_missing must bail: {}",
+        String::from_utf8_lossy(&out.stdout));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("does not exist"), "bail message names the missing root: {stderr}");
 }

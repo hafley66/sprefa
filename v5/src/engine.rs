@@ -673,14 +673,15 @@ impl Engine {
     /// repo's stable identity in the `_file` cache and the `repo`/`rev`/`file`
     /// relations (the third coordinate alongside path+rev). "." / "" / "self" =
     /// this engine's own repo (slug = root dir name); a config slug names that
-    /// repo; otherwise an existing path (slug = its dir name). (Lazy clone of an
-    /// un-cloned repo is a later phase.)
+    /// repo; otherwise an existing path (slug = its dir name). A config slug
+    /// with `allow_missing = true` resolves even when its root is absent: the
+    /// caller's `scan` walks a missing dir and gets zero rows.
     fn resolve_repo(&self, repo: &str) -> Result<(String, PathBuf)> {
         if repo.is_empty() || repo == "." || repo == "self" {
             return Ok((self.self_slug(), self.root.clone()));
         }
         if let Some(rc) = self.repos.iter().find(|r| r.slug == repo) {
-            Self::ensure_cloned(rc)?;
+            self.ensure_cloned_or_missing(rc)?;
             return Ok((rc.slug.clone(), rc.root.clone()));
         }
         let p = PathBuf::from(repo);
@@ -690,6 +691,24 @@ impl Engine {
             return Ok((slug, p));
         }
         bail!("unknown repo {repo:?} (expected \".\", a config slug, or an existing path)")
+    }
+
+    /// `ensure_cloned` with the `allow_missing` escape hatch. A configured repo
+    /// whose root is absent AND `allow_missing = true` resolves to Ok: the
+    /// engine prints one stderr line and `scan` against it returns zero rows.
+    /// Without the flag, the underlying clone / missing-root error propagates.
+    fn ensure_cloned_or_missing(&self, rc: &crate::config::RepoConfig) -> Result<()> {
+        match Self::ensure_cloned(rc) {
+            Ok(()) => Ok(()),
+            Err(e) if rc.allow_missing && !rc.root.exists() => {
+                eprintln!(
+                    "[missing] repo {:?} (allow_missing); scan returns zero rows. details: {e}",
+                    rc.slug,
+                );
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Materialize a configured repo whose `root` is not yet on disk by cloning
@@ -715,7 +734,9 @@ impl Engine {
     /// Expand a `scan` repo coordinate into the concrete `(slug, root)` set to
     /// scan this tick. `"*"` / `"all"` fans out over every configured repo (the
     /// config-folder query: one program, the whole repo set), cloning any that
-    /// are not yet on disk; anything else resolves to a single repo.
+    /// are not yet on disk; anything else resolves to a single repo. A repo
+    /// marked `allow_missing = true` is included even when its root is absent;
+    /// its `scan` returns zero rows.
     fn resolve_scan_repos(&self, repo: &str) -> Result<Vec<(String, PathBuf)>> {
         if repo == "*" || repo == "all" {
             if self.repos.is_empty() {
@@ -723,7 +744,7 @@ impl Engine {
             }
             let mut out = Vec::with_capacity(self.repos.len());
             for rc in &self.repos {
-                Self::ensure_cloned(rc)?;
+                self.ensure_cloned_or_missing(rc)?;
                 out.push((rc.slug.clone(), rc.root.clone()));
             }
             return Ok(out);
@@ -1890,11 +1911,15 @@ impl Engine {
         }
         // `repo` lists the configured repos when a config is loaded; otherwise
         // every repo actually ingested into `_file`, or `--root` if nothing has
-        // been scanned yet.
+        // been scanned yet. A configured repo whose root is missing is omitted
+        // (the `allow_missing` flag keeps the engine alive past it; the absence
+        // here is what lets a program write `!repo(S, _, _)` to surface misses).
         let repo_rows: Vec<Vec<Value>> = if !self.repos.is_empty() {
-            self.repos.iter().map(|r| {
-                vec![t(&r.slug), t(&r.slug), t(&r.root.to_string_lossy())]
-            }).collect()
+            self.repos.iter()
+                .filter(|r| r.root.exists())
+                .map(|r| {
+                    vec![t(&r.slug), t(&r.slug), t(&r.root.to_string_lossy())]
+                }).collect()
         } else {
             if repo_slugs.is_empty() { repo_slugs.insert(self.self_slug()); }
             repo_slugs.iter().map(|slug| {

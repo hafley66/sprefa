@@ -1,0 +1,39 @@
+# Progressive multi-repo: a missing clone is non-fatal when its config row
+# carries `allow_missing = true`. The engine prints one stderr line and omits
+# the slug from the `repo` builtin; this program surfaces it as a derived row
+# for an agent or UI to route a clone prompt.
+#
+# Requires a $SPREFA_CONFIG like:
+#   [[repos]]
+#   slug = "dep-a"
+#   root = "/abs/path/dep-a"
+#   url  = "https://github.com/org/dep-a"
+#   allow_missing = true
+#
+#   [[repos]]
+#   slug = "dep-b"
+#   root = "/abs/path/dep-b"
+#   url  = "https://github.com/org/dep-b"
+#
+# Then:
+#   dl v5/examples/missing-repo.dl --root . --db ./db
+
+# The slugs this program intends to analyze. Author-declared; not built-in.
+rel referenced_repo(slug: text).
+referenced_repo("dep-a").
+referenced_repo("dep-b").
+
+# A hinted URL the agent layer can offer in a "want to clone?" prompt. Same
+# shape would feed from a manifest/lockfile crawler (Cargo/package.json/k8s)
+# by writing `candidate_url(slug, url)` rows there instead of these literals.
+rel candidate_url(slug: text, url: text).
+candidate_url("dep-a", "https://github.com/org/dep-a").
+candidate_url("dep-b", "https://github.com/org/dep-b").
+
+# A repo is missing when referenced but absent from the `repo` builtin. The
+# `repo` builtin lists only configured repos whose root exists on disk; a
+# missing-but-allow_missing slug is intentionally omitted.
+rel missing_repo(slug: text, hinted_url: text).
+missing_repo(s, u) <- referenced_repo(s), !repo(s, _, _), candidate_url(s, u).
+
+? missing_repo(s, u).

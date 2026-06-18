@@ -22,6 +22,13 @@
 //! slug = "gamma/three"
 //! root = "/path/to/cache/gamma"
 //! url  = "git@github.com:org/gamma.git"
+//!
+//! # A repo that may be absent: a missing root is non-fatal. scan yields zero
+//! # rows; the engine prints one stderr line and proceeds.
+//! [[repos]]
+//! slug = "delta/four"
+//! root = "/path/to/maybe-delta"
+//! allow_missing = true
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -31,12 +38,20 @@ use serde::Deserialize;
 
 /// One configured repository: a logical `slug`, its on-disk `root`, and an
 /// optional `url` to clone from when `root` does not yet exist.
+///
+/// `allow_missing = true` opts a repo into progressive analysis: a missing
+/// `root` (after the optional clone fails) is no longer fatal. The repo row
+/// stays absent; `scan` against the slug yields zero rows; the engine prints
+/// one stderr line and proceeds. Lets a multi-repo program run to completion
+/// before all clones exist.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct RepoConfig {
     pub slug: String,
     pub root: PathBuf,
     #[serde(default)]
     pub url: Option<String>,
+    #[serde(default)]
+    pub allow_missing: bool,
 }
 
 /// The whole config. Only `repos` for now; add sections as v5 needs them.
