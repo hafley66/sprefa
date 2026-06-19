@@ -434,9 +434,10 @@ pub fn check_and_normalize(prog: &mut Program, dl_path: &str) -> Vec<TypeDiag> {
             severity: Severity::Error, code: "unknown-anchor".into(), msg: e,
         });
     }
+    let rels = prog_rels(prog);
     for item in &prog.items {
         if let Item::Rule(r) = item {
-            diags.extend(check_rule_types(r, &prog_rels(prog), &brands, dl_path));
+            diags.extend(check_rule_types(r, &rels, &brands, dl_path));
         }
     }
     diags.extend(stratify_diags(prog, dl_path));
