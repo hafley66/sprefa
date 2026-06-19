@@ -7,6 +7,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 use crate::ast::*;
+use crate::ingest;
 use crate::lower::{lower_query, lower_rule, tbl};
 use crate::modgraph::{self, ProjectCx, Resolution};
 use crate::scc;
@@ -89,6 +90,14 @@ const CALL_RELS: [&str; 5] = ["call_def", "call_site", "call_edge", "call_edge_r
 /// enclosing loop nest, composing over `call_edge` into symbolic Big-O
 /// ("depth-N over C") without resolving trip counts. See `typegraph::DataflowFacts`.
 const DATAFLOW_RELS: [&str; 5] = ["df_node", "df_edge", "loop_over", "allocates", "nest"];
+
+/// Document structure from non-source text (markdown today; comments and other
+/// tree-sitter grammars to follow via `ingest::DocLang`). `doc_node` is one row
+/// per heading / code block / section: (file, line, kind, name, parent). The
+/// `parent` column is the enclosing heading text, so a rule can walk the section
+/// tree. Populated by the `ingest` registry over `_file`'s document-typed files
+/// (a source rule scanning `**/*.md` feeds `_file`, same as the source langs).
+const DOC_RELS: [&str; 1] = ["doc_node"];
 
 /// Compiler-backed SCIP importer. `scip_edge` is file-to-file dependency data
 /// extracted from definition/reference occurrences in an existing index.scip.
@@ -206,6 +215,18 @@ fn dataflow_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
+fn doc_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        // one row per document structural node (heading / code block / section).
+        // `parent` is the enclosing heading text ("" at top level), so a rule can
+        // walk the section tree. See `ingest::DocLang`.
+        RelDecl { name: "doc_node".into(), cols: vec![
+            c("file", Type::Path), c("line", Type::Int),
+            c("kind", Type::Text), c("name", Type::Text), c("parent", Type::Text)] },
+    ]
+}
+
 fn scip_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -273,6 +294,8 @@ fn type_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_RELS) }
 fn call_rels_used(prog: &Program) -> bool { rels_used(prog, &CALL_RELS) }
 
 fn dataflow_rels_used(prog: &Program) -> bool { rels_used(prog, &DATAFLOW_RELS) }
+
+fn doc_rels_used(prog: &Program) -> bool { rels_used(prog, &DOC_RELS) }
 
 /// The trailing identifier of a SCIP symbol descriptor: `... Foo#` -> "Foo",
 /// `... bar().` -> "bar". Used to key the SCIP override by plain type name.
@@ -1187,6 +1210,11 @@ impl Engine {
             self.refresh_dataflow_rels()?;
             phase("dataflow-rels", t);
         }
+        if doc_rels_used(prog) {
+            let t = std::time::Instant::now();
+            self.refresh_doc_rels()?;
+            phase("doc-rels", t);
+        }
         if scip_rels_used(prog) { changed |= self.refresh_scip_rels()?; }
         if spine_rels_used(prog) {
             let t = std::time::Instant::now();
@@ -1401,6 +1429,10 @@ impl Engine {
             if dataflow_rels_used(prog) {
                 self.refresh_dataflow_rels()?;
                 for r in DATAFLOW_RELS { changed_source_rels.insert(r.to_string()); }
+            }
+            if doc_rels_used(prog) {
+                self.refresh_doc_rels()?;
+                for r in DOC_RELS { changed_source_rels.insert(r.to_string()); }
             }
             if spine_rels_used(prog) {
                 self.refresh_spine_rels()?;
@@ -1963,6 +1995,9 @@ impl Engine {
                 if DATAFLOW_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in dataflow relation (df_node / df_edge / loop_over / allocates / nest); pick another name", d.name);
                 }
+                if DOC_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is a built-in document relation (doc_node); pick another name", d.name);
+                }
                 if SCIP_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in SCIP relation; pick another name", d.name);
                 }
@@ -1995,6 +2030,7 @@ impl Engine {
         for d in type_rel_decls() { self.declare(&d)?; }
         for d in call_rel_decls() { self.declare(&d)?; }
         for d in dataflow_rel_decls() { self.declare(&d)?; }
+        for d in doc_rel_decls() { self.declare(&d)?; }
         for d in scip_rel_decls() { self.declare(&d)?; }
         for d in spine_rel_decls() { self.declare(&d)?; }
         for d in changed_rel_decls() { self.declare(&d)?; }
@@ -2640,6 +2676,41 @@ impl Engine {
         self.refresh_rel("loop_over", &["file", "start", "end", "var", "collection", "fn"], &loop_rows)?;
         self.refresh_rel("allocates", &["fn"], &alloc_rows)?;
         self.refresh_rel("nest", &["call_id", "loop_id", "depth", "collection"], &nest_rows)?;
+        Ok(())
+    }
+
+    /// Refresh `doc_node` from the document-grammar registry. Same shape as the
+    /// source-lang refreshers but simpler: no corpus-global resolution pass, no
+    /// legacy mirror -- each DocNode is self-contained. Files come from `_file`
+    /// (a source rule scanning `**/*.md` feeds it, exactly as `**/*.rs` feeds
+    /// the type graph); the SQL prefilter narrows to document extensions, then
+    /// the registry's `matches` decides the real dispatch.
+    fn refresh_doc_rels(&self) -> Result<()> {
+        let mut files: Vec<(String, String)> = Vec::new();
+        {
+            let mut sel = self.db.conn().prepare(
+                "SELECT path, rev FROM _file WHERE path LIKE '%.md' OR path LIKE '%.markdown'")?;
+            let rows = sel.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+            for row in rows.flatten() { files.push(row); }
+        }
+        let root = self.root.clone();
+        let facts: Vec<(String, ingest::DocFacts)> = files.par_iter().filter_map(|(path, rev)| {
+            let lang = ingest::doc_langs().iter().find(|l| l.matches(path))?;
+            let content = read_content(&root, rev, path).unwrap_or_default();
+            Some((path.clone(), lang.extract_docs(path, &content)))
+        }).collect();
+        let t = |s: &str| Value::Text(s.to_string());
+        let i = |n: u32| Value::Int(n as i64);
+        let mut rows: Vec<Vec<Value>> = Vec::new();
+        let mut seen: HashSet<(String, u32, &str, String)> = HashSet::new();
+        for (path, f) in &facts {
+            for n in &f.nodes {
+                if seen.insert((path.clone(), n.line, n.kind, n.name.clone())) {
+                    rows.push(vec![t(path), i(n.line), t(n.kind), t(&n.name), t(&n.parent)]);
+                }
+            }
+        }
+        self.refresh_rel("doc_node", &["file", "line", "kind", "name", "parent"], &rows)?;
         Ok(())
     }
 

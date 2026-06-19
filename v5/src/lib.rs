@@ -6,6 +6,7 @@ pub mod db;
 pub mod desc;
 pub mod engine;
 pub mod frontend;
+pub mod ingest;
 pub mod ktpath;
 pub mod lex;
 pub mod lower;
