@@ -356,3 +356,83 @@ fn loop_invariant_call_flags_recomputation_per_iteration() {
         "expected lic on `work` flagging make_rels(prog) with var prog:\n{out}"
     );
 }
+
+/// THE PRECISION GATE. The broad rule (above) flags any loop-invariant arg; this
+/// rule excludes calls that ALSO take a loop-carried input, isolating calls whose
+/// EVERY input is loop-invariant — a pure recomputation of the same value each
+/// iteration, i.e. the exact prog_rels waste. On the buggy fixture it fires
+/// exactly once (make_rels in `work`); on a hoisted (fixed) version it fires zero
+/// times. That 1-vs-0 discrimination is the difference between a suspect list
+/// and a bug finder.
+#[test]
+fn strict_rule_isolates_pure_recomputation() {
+    let d = sandbox("strict");
+    fs::create_dir_all(d.join("src")).unwrap();
+    // Buggy: make_rels(prog) recomputed per iteration; prog is the sole input and
+    // is loop-invariant, so the call is fully loop-invariant -> flagged.
+    fs::write(
+        d.join("src/lib.rs"),
+        "fn make_rels(prog: &[i32]) -> Vec<i32> { Vec::new() }\n\
+         fn work(rules: &[i32], prog: &[i32]) {\n    \
+             for item in rules {\n        \
+                 let rels = make_rels(prog);\n        \
+                 let _ = rels;\n    \
+             }\n\
+         }\n",
+    )
+    .unwrap();
+    let prog = concat!(
+        "rel seen(path: file).\n",
+        "seen(path) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /./, line).\n",
+        // a call is loop-carried if any input derives from a def inside its loop.
+        "rel lcc(call_id: text).\n",
+        "lcc(c) <- df_edge(d, a), df_edge(a, c), df_node(d, _, _, fn, file, dl),\n",
+        "       loop_over(file, ls, le, _, _, fn), dl >= ls, dl <= le.\n",
+        // strict: allocating callee, call in loop, a loop-invariant input, and
+        // NO loop-carried input at all -> pure recomputation.
+        "rel lic_strict(file: path, fn: text, ls: int, cl: int, callee: text).\n",
+        "lic_strict(file, fn, ls, cl, csym) <-\n",
+        "    loop_over(file, ls, le, lvar, col, fn),\n",
+        "    df_node(call_id, \"call_res\", _, fn, file, cl), cl >= ls, cl <= le,\n",
+        "    call_site(caller, ctext, file, cl), call_name(csym, ctext), allocates(csym),\n",
+        "    df_edge(def, arg), df_edge(arg, call_id),\n",
+        "    df_node(def, _, _, fn, _, dl), dl < ls,\n",
+        "    !lcc(call_id).\n",
+        "? lic_strict(file, fn, ls, cl, callee).\n",
+    );
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "strict rule must not error:\n{err}");
+    let secs = sections(&out);
+    let hits = rows(&secs[0]);
+    // DECISIVE: exactly one suspect, make_rels in `work`. No false positives.
+    assert_eq!(
+        hits.len(),
+        1,
+        "strict rule must isolate make_rels(prog) as the ONLY fully-loop-invariant call:\n{out}"
+    );
+    assert!(
+        hits[0].len() >= 5 && hits[0][1].contains("::work") && hits[0][4].contains("make_rels"),
+        "the single hit must be make_rels in work:\n{out}"
+    );
+
+    // Hoisted (fixed): move make_rels out of the loop -> zero hits.
+    fs::write(
+        d.join("src/lib.rs"),
+        "fn make_rels(prog: &[i32]) -> Vec<i32> { Vec::new() }\n\
+         fn work(rules: &[i32], prog: &[i32]) {\n    \
+             let rels = make_rels(prog);\n    \
+             for item in rules {\n        \
+                 let _ = &rels;\n    \
+             }\n\
+         }\n",
+    )
+    .unwrap();
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "fixed version must not error:\n{err}");
+    let secs = sections(&out);
+    let hits = rows(&secs[0]);
+    assert!(
+        hits.is_empty(),
+        "after hoisting, no fully-loop-invariant allocating call should remain:\n{out}"
+    );
+}
