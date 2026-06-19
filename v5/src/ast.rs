@@ -144,15 +144,19 @@ pub enum BodyItem {
     Scan { repo: Term, rev: Term, glob: Term, path: Term, rev_out: Term },
     Match { path: Term, rev: Term, regex: String, line: Term, id: Option<Term> },
     Ast { path: Term, rev: Term, lang: String, query: String, line: Term, end: Option<Term> },
+    /// `line`/`col`/`end_line`/`end_col` are the match span (1-based lines,
+    /// 0-based byte columns). All four accept the kwarg/`_` form: positional in
+    /// order, `name: term` to bind a later slot, or unmentioned to bind nothing.
+    /// `Term::Wild` marks an unbound output; the engine arm skips it.
     Sg { path: Term, rev: Term, lang: String, pattern: String, line: Term,
-         col: Option<Term>, end_line: Option<Term>, end_col: Option<Term> },
+         col: Term, end_line: Term, end_col: Term },
     /// ast-grep relational YAML rule (RuleCore: inside/has/any/all/not/kind/
     /// regex/pattern). `yaml` is the (usually backtick, multiline) body; the
     /// span + capture binds mirror `Sg`. Superset of `Sg` — a bare `pattern:`
     /// body matches the same surface, but `inside:`/`has:` add the structural
     /// relationships a pattern alone can't express.
     AstYaml { path: Term, rev: Term, lang: String, yaml: String, line: Term,
-              col: Option<Term>, end_line: Option<Term>, end_col: Option<Term> },
+              col: Term, end_line: Term, end_col: Term },
     Json { path: Term, rev: Term, jpath: String, out: Term },
     /// Shell out per matched file: `cmd(p, rev, "tool {file}", line, out)` binds
     /// one row per stdout line. Cached like every source op: rows re-run only

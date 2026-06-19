@@ -3869,10 +3869,10 @@ fn parse_file(
                 binds = next;
             }
             BodyItem::Sg { lang, pattern, line, col, end_line, end_col, .. } => {
-                let slv = var_of(line)?;
-                let clv = col.as_ref().map(var_of).transpose()?;
-                let ellv = end_line.as_ref().map(var_of).transpose()?;
-                let eclv = end_col.as_ref().map(var_of).transpose()?;
+                let slv = opt_var(line)?;
+                let clv = opt_var(col)?;
+                let ellv = opt_var(end_line)?;
+                let eclv = opt_var(end_col)?;
                 // prefilter: a file lacking any literal token cannot match
                 let lits = pattern_literals(pattern);
                 if !lits.iter().all(|t| content.contains(t.as_str())) {
@@ -3884,7 +3884,7 @@ fn parse_file(
                 for b in &binds {
                     for (ln, c, eln, ec, caps) in &hits {
                         let mut ext = b.clone();
-                        ext.insert(slv.clone(), Value::Int(*ln));
+                        if let Some(v) = &slv { ext.insert(v.clone(), Value::Int(*ln)); }
                         if let Some(v) = &clv { ext.insert(v.clone(), Value::Int(*c)); }
                         if let Some(v) = &ellv { ext.insert(v.clone(), Value::Int(*eln)); }
                         if let Some(v) = &eclv { ext.insert(v.clone(), Value::Int(*ec)); }
@@ -3898,10 +3898,10 @@ fn parse_file(
                 binds = next;
             }
             BodyItem::AstYaml { lang, yaml, line, col, end_line, end_col, .. } => {
-                let slv = var_of(line)?;
-                let clv = col.as_ref().map(var_of).transpose()?;
-                let ellv = end_line.as_ref().map(var_of).transpose()?;
-                let eclv = end_col.as_ref().map(var_of).transpose()?;
+                let slv = opt_var(line)?;
+                let clv = opt_var(col)?;
+                let ellv = opt_var(end_line)?;
+                let eclv = opt_var(end_col)?;
                 // No literal-prefilter (the YAML body is structural, not a
                 // plain token set like a pattern); the RuleCore matcher is
                 // already cheap on a non-matching file.
@@ -3910,7 +3910,7 @@ fn parse_file(
                 for b in &binds {
                     for (ln, c, eln, ec, caps) in &hits {
                         let mut ext = b.clone();
-                        ext.insert(slv.clone(), Value::Int(*ln));
+                        if let Some(v) = &slv { ext.insert(v.clone(), Value::Int(*ln)); }
                         if let Some(v) = &clv { ext.insert(v.clone(), Value::Int(*c)); }
                         if let Some(v) = &ellv { ext.insert(v.clone(), Value::Int(*eln)); }
                         if let Some(v) = &eclv { ext.insert(v.clone(), Value::Int(*ec)); }

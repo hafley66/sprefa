@@ -9,6 +9,9 @@
         { "include": "#rule-arrow" },
         { "include": "#query-marker" },
         { "include": "#keywords" },
+        { "include": "#relation-call" },
+        { "include": "#rel-annotation" },
+        { "include": "#kwarg-name" },
         { "include": "#scheme-backtick" },
         { "include": "#scheme-plain" },
         { "include": "#regex" },
@@ -34,6 +37,26 @@
     "keywords": {
       "name": "keyword.other.dl",
       "match": "\\b(rel|scan|match|ast|sg|ast_yaml|json|cmd|comment|closure|gen|def|use|anchor|type)\\b"
+    },
+    "relation-call": {
+      "comment": "Any non-keyword ident immediately before ( is a relation name (head decl, rule head, body atom, query). Keywords fire first so scan(/sg(/etc. keep their keyword scope; this catches diag(/sec(/hit( and aggregate calls like count(.",
+      "name": "entity.name.function.dl",
+      "match": "\\b[a-z_]\\w*(?=\\()"
+    },
+    "rel-annotation": {
+      "comment": "rel-decl column type annotation: name: type. The space after the colon is the dl kwarg/annotation convention (lex.rs rejects the no-space form as an unknown scheme). Type set from Type::parse in ast.rs.",
+      "match": "\\b([a-z_]\\w*)\\s*:\\s+(text|int|path|file|dir|repo|rev)\\b",
+      "captures": {
+        "1": { "name": "variable.parameter.dl" },
+        "2": { "name": "storage.type.primitive.dl" }
+      }
+    },
+    "kwarg-name": {
+      "comment": "Op-call kwarg form: name: term (end_col: ec, label: lab). Catches everything rel-annotation misses (value is not a known type). Same space-after-colon convention.",
+      "match": "\\b([a-z_]\\w*)\\s*:\\s+",
+      "captures": {
+        "1": { "name": "variable.parameter.dl" }
+      }
     },
     "scheme-backtick": {
       "match": "(fs|glob):`[^`]*`",
@@ -79,6 +102,11 @@
         {
           "name": "constant.other.placeholder.dl",
           "match": "\\{[A-Za-z_][A-Za-z0-9_]*\\}"
+        },
+        {
+          "comment": "ast-grep metavariables inside pattern strings: $X (single) and $$$X (variadic). Mirrors the regex-literal $NAME sub-tokenizer.",
+          "name": "constant.other.placeholder.dl",
+          "match": "\\${3}[A-Za-z_][A-Za-z0-9_]*|\\$[A-Za-z_][A-Za-z0-9_]*"
         }
       ]
     },

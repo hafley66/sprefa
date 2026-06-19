@@ -400,22 +400,30 @@ impl Parser {
             Tok::Str(s) => s,
             other => bail!("expected pattern string in sg(), got {:?}", other),
         };
-        self.expect(Tok::Comma)?;
-        let line = self.term()?;
-        // optional trailing span binds: sg(.., line [, col [, end_line [, end_col]]]).
-        // 0-based byte columns, 1-based lines. Each only parsed if the prior is present.
-        let col = if matches!(self.peek(), Some(Tok::Comma)) { self.next()?; Some(self.term()?) } else { None };
-        let end_line = if col.is_some() && matches!(self.peek(), Some(Tok::Comma)) { self.next()?; Some(self.term()?) } else { None };
-        let end_col = if end_line.is_some() && matches!(self.peek(), Some(Tok::Comma)) { self.next()?; Some(self.term()?) } else { None };
+        // Trailing span outputs (line, col, end_line, end_col) accept the
+        // kwarg/`_` form: positional, `name: term`, or omitted entirely. Zero
+        // outputs is valid (a file-existence filter on the pattern). 0-based
+        // byte columns, 1-based lines.
+        let (pos, named) = if matches!(self.peek(), Some(Tok::Comma)) {
+            self.next()?;
+            self.parse_kwarg_terms()?
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        let outs = Self::assign_outputs(&["line", "col", "end_line", "end_col"], pos, named)?;
         self.expect(Tok::RParen)?;
-        Ok(BodyItem::Sg { path, rev, lang, pattern, line, col, end_line, end_col })
+        Ok(BodyItem::Sg {
+            path, rev, lang, pattern,
+            line: outs[0].clone(), col: outs[1].clone(),
+            end_line: outs[2].clone(), end_col: outs[3].clone(),
+        })
     }
 
     /// `ast_yaml(path, rev, :lang, `yaml body`, line, ...)` — mirrors `sg()`
     /// but the 4th arg is a (usually backtick, multiline) ast-grep RuleCore
     /// YAML body instead of a pattern string. The body lexes as a normal
     /// `Tok::Str` (the backtick form is multiline + raw), so only the field
-    /// name differs from `sg()`.
+    /// name differs from `sg()`. Span outputs share the kwarg/`_` form.
     fn ast_yaml(&mut self) -> Result<BodyItem> {
         self.ident()?; // ast_yaml
         self.expect(Tok::LParen)?;
@@ -428,13 +436,19 @@ impl Parser {
             Tok::Str(s) => s,
             other => bail!("expected ast_yaml body string in ast_yaml(), got {:?}", other),
         };
-        self.expect(Tok::Comma)?;
-        let line = self.term()?;
-        let col = if matches!(self.peek(), Some(Tok::Comma)) { self.next()?; Some(self.term()?) } else { None };
-        let end_line = if col.is_some() && matches!(self.peek(), Some(Tok::Comma)) { self.next()?; Some(self.term()?) } else { None };
-        let end_col = if end_line.is_some() && matches!(self.peek(), Some(Tok::Comma)) { self.next()?; Some(self.term()?) } else { None };
+        let (pos, named) = if matches!(self.peek(), Some(Tok::Comma)) {
+            self.next()?;
+            self.parse_kwarg_terms()?
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        let outs = Self::assign_outputs(&["line", "col", "end_line", "end_col"], pos, named)?;
         self.expect(Tok::RParen)?;
-        Ok(BodyItem::AstYaml { path, rev, lang, yaml, line, col, end_line, end_col })
+        Ok(BodyItem::AstYaml {
+            path, rev, lang, yaml,
+            line: outs[0].clone(), col: outs[1].clone(),
+            end_line: outs[2].clone(), end_col: outs[3].clone(),
+        })
     }
 
     fn json(&mut self) -> Result<BodyItem> {
