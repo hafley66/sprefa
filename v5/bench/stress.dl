@@ -1,0 +1,45 @@
+# stress.dl — full-pipeline e2e perf stress. Run against a large checkout:
+#   dl bench/stress.dl --root <fixture>
+# Exercises every heavy path: scan + match (source extraction), the type/call/
+# dataflow graph relations (corpus-global resolution), and closure (the Tarjan
+# transitive reachability that the recondensed counter instruments).
+#
+# The `?` queries print row counts so a bench run reports work done, not just
+# wall time. Pair with --profile for the per-phase breakdown.
+
+# Touch every .rs file so the type/call/dataflow refreshers run over the corpus.
+rel seen(path: file).
+seen(path) <- scan("WORK", "**/*.rs", path, rev), match(path, rev, /./, line).
+
+# Call-graph transitive reachability (2-col projection of call_edge). The
+# definition forces the SCC-condensed closure to materialize during tick — the
+# heaviest op (Tarjan). NOTE: closure relations can only be READ with a pinned
+# endpoint (literal-seeded), so there is no unpinned `count` over the closure
+# here; the materialization itself is the stress.
+rel call_pair(a: text, b: text).
+call_pair(a, b) <- call_edge(a, b, _).
+
+rel call_reaches(a: text, b: text).
+call_reaches(a, b) <- closure(call_pair).
+
+# Type-graph transitive reachability.
+rel type_pair(a: text, b: text).
+type_pair(a, b) <- type_edge(a, b, _).
+
+rel type_reaches(a: text, b: text).
+type_reaches(a, b) <- closure(type_pair).
+
+# Work report (the counts the engine prints). Closure sizes are not counted
+# here — reading a closure unpinned is blocked; pin a seed to size it.
+rel entity_count(n: int).
+entity_count(count(sym)) <- type_entity(sym, _, _, _, _, _).
+
+rel call_site_count(n: int).
+call_site_count(count(caller)) <- call_site(caller, _, _, _).
+
+rel df_count(n: int).
+df_count(count(id)) <- df_node(id, _, _, _, _, _).
+
+? entity_count(n).
+? call_site_count(n).
+? df_count(n).

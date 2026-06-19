@@ -236,3 +236,34 @@ v4-docs-generated: v4-architecture-audit v4-docs-toc
 v4-release-workflow: v4-test v4-lsp-test v4-release v4-lsp-release v4-vscode-package v4-render-markdown-examples v4-docs-generated
 
 v4-dogfood: v4-flow-smoke v4-lsp-build
+
+# -----------------------------------------------------------------------------
+# v5 perf stress fixture
+# -----------------------------------------------------------------------------
+# Mirrors v3/v4's linux fixture pattern. v5/tests/.fixtures/ holds large real-
+# repo checkouts, gitignored, provisioned once on demand (never re-cloned per
+# worktree, never tracked). The stress program is v5/bench/stress.dl (scan +
+# extract + the type/call/dataflow graphs + closure); the env-gated test is
+# tests/perf_stress.rs (skips cleanly when no fixture is present).
+#
+#   just v5-fixture-rust        # shallow-clone rust-lang/rust-analyzer (depth 1)
+#   just v5-bench-rust          # cold stress run, release binary, --profile
+#   just v5-bench-self          # no clone: stress against this repo's own .rs
+#   just v5-perf-test           # cargo test perf_stress (cold+incremental ratio)
+#
+# The C path reuses v3/v4's existing fixture: `just fixture-linux` then run the
+# v3/v4 bench targets. A C-focused v5 stress is a follow-up.
+
+v5-fixture-rust DIR="v5/tests/.fixtures/rust-analyzer":
+    test -n "$(find '{{DIR}}' -name '*.rs' -print -quit 2>/dev/null)" && echo "rust fixture present ($(find '{{DIR}}' -name '*.rs' | wc -l | tr -d ' ') .rs files)" || { echo "rust fixture missing — shallow-cloning rust-lang/rust-analyzer (depth 1)…"; rm -rf '{{DIR}}'; git clone --depth 1 https://github.com/rust-lang/rust-analyzer.git '{{DIR}}'; echo "provisioned ($(find '{{DIR}}' -name '*.rs' | wc -l | tr -d ' ') .rs files, gitignored)"; }
+
+v5-bench-rust DIR="v5/tests/.fixtures/rust-analyzer":
+    cargo build --manifest-path v5/Cargo.toml --release --bin dl
+    ./v5/target/release/dl v5/bench/stress.dl --root '{{DIR}}' --profile
+
+v5-bench-self:
+    cargo build --manifest-path v5/Cargo.toml --release --bin dl
+    ./v5/target/release/dl v5/bench/stress.dl --root . --profile
+
+v5-perf-test:
+    cargo test --manifest-path v5/Cargo.toml --test perf_stress -- --nocapture
