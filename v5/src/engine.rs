@@ -95,9 +95,11 @@ const DATAFLOW_RELS: [&str; 5] = ["df_node", "df_edge", "loop_over", "allocates"
 /// tree-sitter grammars to follow via `ingest::IngestLang`). `doc_node` is one row
 /// per heading / code block / section: (file, line, kind, name, parent). The
 /// `parent` column is the enclosing heading text, so a rule can walk the section
-/// tree. Populated by the `ingest` registry over `_file`'s document-typed files
-/// (a source rule scanning `**/*.md` feeds `_file`, same as the source langs).
-const DOC_RELS: [&str; 1] = ["doc_node"];
+/// tree. `doc_ref` is the doc→code bridge: (file, line, sym) where a heading's
+/// name matches a `type_entity` name. Populated by the `ingest` registry over
+/// `_file`'s document-typed files (a source rule scanning `**/*.md` feeds `_file`,
+/// same as the source langs).
+const DOC_RELS: [&str; 2] = ["doc_node", "doc_ref"];
 
 /// Compiler-backed SCIP importer. `scip_edge` is file-to-file dependency data
 /// extracted from definition/reference occurrences in an existing index.scip.
@@ -224,6 +226,10 @@ fn doc_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "doc_node".into(), cols: vec![
             c("file", Type::Path), c("line", Type::Int),
             c("kind", Type::Text), c("name", Type::Text), c("parent", Type::Text)] },
+        // doc→code bridge: (file, line, sym) where a heading's name matches a
+        // `type_entity` name. Empty unless the program also uses type relations.
+        RelDecl { name: "doc_ref".into(), cols: vec![
+            c("file", Type::Path), c("line", Type::Int), c("sym", Type::Text)] },
     ]
 }
 
@@ -1996,7 +2002,7 @@ impl Engine {
                     bail!("{} is a built-in dataflow relation (df_node / df_edge / loop_over / allocates / nest); pick another name", d.name);
                 }
                 if DOC_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in document relation (doc_node); pick another name", d.name);
+                    bail!("{} is a built-in document relation (doc_node / doc_ref); pick another name", d.name);
                 }
                 if SCIP_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in SCIP relation; pick another name", d.name);
@@ -2711,6 +2717,18 @@ impl Engine {
             }
         }
         self.refresh_rel("doc_node", &["file", "line", "kind", "name", "parent"], &rows)?;
+
+        // doc_ref bridge: name-match doc headings to type entities. Runs after both
+        // doc_node (above) and type_entity (earlier in the tick) are populated. A
+        // heading "Engine" joins to type_entity rows where name = "Engine", linking
+        // the doc position to every code symbol with that name. Empty if the program
+        // doesn't use type relations (type_entity table exists but is unpopulated).
+        let (dn, te, dr) = (tbl("doc_node"), tbl("type_entity"), tbl("doc_ref"));
+        self.db.exec(&format!("DELETE FROM {dr}"))?;
+        self.db.exec(&format!(
+            "INSERT OR IGNORE INTO {dr} (\"file\", \"line\", \"sym\") \
+             SELECT d.\"file\", d.\"line\", t.sym FROM {dn} d \
+             JOIN {te} t ON d.\"name\" = t.name"))?;
         Ok(())
     }
 

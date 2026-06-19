@@ -286,7 +286,8 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `loop_over` | `(file, start, end, var, collection, fn)` | one row per loop with its span, iter var, and collection |
 | `allocates` | `(fn)` | one row per fn whose body builds a collection (Vec/HashMap/String ctor, `.collect`/`.clone`/`.to_string`) |
 | `nest` | `(call_id, loop_id, depth, collection)` | one row per (call, enclosing loop); `depth` is nesting rank (1=outermost). Raw material for symbolic Big-O over `call_edge` |
-| `doc_node` | `(file, line, kind, name, parent)` | structural nodes from non-source text (markdown today: `heading`/`code_block`). `parent` is the enclosing heading. Emitted by the `ingest::IngestLang` registry; an island until the `doc_ref` bridge lands |
+| `doc_node` | `(file, line, kind, name, parent)` | structural nodes from non-source text (markdown today: `heading`/`code_block`). `parent` is the enclosing heading. Emitted by the `ingest::IngestLang` registry |
+| `doc_ref` | `(file, line, sym)` | doc→code bridge: name-matches `doc_node` headings to `type_entity` symbols. Empty unless the program also uses type relations |
 | `scip_def` | `(symbol, file)` | from an existing `index.scip` at root or `$SPREFA_SCIP_INDEX` |
 | `scip_ref` | `(file, symbol, def_file)` | compiler-backed references |
 | `scip_edge` | `(src, dst)` | file-to-file SCIP dependency edges |
@@ -484,10 +485,10 @@ design-recovery; the original coordinate model lives in
 - **Closure in a mixed rule body is literal-seeded only** — dynamic transitive
   closure is a seeded point query, not a fixpoint join. Recursive rules over
   the `_edge` relations substitute (see [examples/callgraph.dl](examples/callgraph.dl)).
-- **`doc_node` is an island** — markdown headings/code-blocks extract today, but
-  no `doc_ref(doc, sym)` edge links doc space to the code graphs yet. Comments
-  are not auto-extracted (syn strips them); the `comment` op pulls regions on
-  demand at query time instead.
+- **`doc_node` bridges to code via `doc_ref`** — markdown headings/code-blocks
+  extract today, and `doc_ref(file, line, sym)` name-matches those headings to
+  `type_entity` symbols. Comments are not auto-extracted (syn strips them); the
+  `comment` op pulls regions on demand at query time instead.
 - **No per-language symbol literal** — `rs:`/`kt:`/`ts:`/`md:` addressing is
   deferred. Symbols are reachable today via column conjunctions (`name = "tick"`
   + `file = fs:src/engine.rs`); a terse module-path literal would collapse that
