@@ -2059,11 +2059,10 @@ fn flow_block(
             syn::Stmt::Local(loc) => {
                 if let Some(init) = loc.init.as_ref() {
                     let rhs = flow_expr(&init.expr, file, fn_sym, scope, out);
-                    if let syn::Pat::Ident(pi) = &loc.pat {
-                        let (l, c) = (pi.ident.span().start().line as u32, pi.ident.span().start().column as u32);
-                        let bind = push_node(out, file, l, c, "let_bind", &pi.ident.to_string(), fn_sym);
-                        out.edges.push(DfEdge { from: rhs, to: bind.clone() });
-                        scope.insert(pi.ident.to_string(), bind);
+                    // bind every ident in the pattern (handles `let (a, b) = pair`),
+                    // each tainted by the rhs conservatively.
+                    for (_, bid) in bind_pat(&loc.pat, file, fn_sym, scope, out) {
+                        out.edges.push(DfEdge { from: rhs.clone(), to: bid });
                     }
                 }
             }
@@ -2208,21 +2207,22 @@ fn flow_expr(
         // it, then walk the body. Each element taints the loop var conservatively.
         syn::Expr::ForLoop(f) => {
             let coll = flow_expr(&f.expr, file, fn_sym, scope, out);
-            let lvar = bind_pat(&f.pat, file, fn_sym, scope, out);
-            if let Some(v) = &lvar {
-                if let Some(b) = scope.get(v) {
-                    out.edges.push(DfEdge { from: coll.clone(), to: b.clone() });
-                }
+            let binds = bind_pat(&f.pat, file, fn_sym, scope, out);
+            // the whole collection taints each bound element conservatively
+            // (a tuple element derives from the iterator's yield value).
+            for (_, bid) in &binds {
+                out.edges.push(DfEdge { from: coll.clone(), to: bid.clone() });
             }
+            let lvar = binds.first().map(|(n, _)| n.clone()).unwrap_or_default();
             let end = f.body.span().end().line as u32;
             out.loops.push(LoopFact {
                 file: file.into(), start: line, end,
-                var: lvar.clone().unwrap_or_default(),
+                var: lvar.clone(),
                 collection: String::new(),
                 fn_sym: fn_sym.into(),
             });
             flow_block(&f.body, file, fn_sym, scope, out);
-            push_node(out, file, line, col, "loop", &lvar.unwrap_or_default(), fn_sym)
+            push_node(out, file, line, col, "loop", &lvar, fn_sym)
         }
         // `while cond { body }`: `while let` is ExprWhile with cond = Expr::Let.
         // No collection, but the span is still recorded so calls in the body can
@@ -2250,10 +2250,16 @@ fn flow_expr(
             }
             push_node(out, file, line, col, "if", "", fn_sym)
         }
-        // `match scrut { arms }`: scrut + each arm body; guards too.
+        // `match scrut { arms }`: scrut + each arm body; guards too. Arm-bound
+        // patterns (`Stmt::Expr(e) => ...`) derive from the scrutinee, so each is
+        // tainted by it — this is what makes match-bound vars track as loop-carried
+        // when the scrutinee is the loop variable.
         syn::Expr::Match(m) => {
-            let _ = flow_expr(&m.expr, file, fn_sym, scope, out);
+            let scrut = flow_expr(&m.expr, file, fn_sym, scope, out);
             for arm in &m.arms {
+                for (_, bid) in bind_pat(&arm.pat, file, fn_sym, scope, out) {
+                    out.edges.push(DfEdge { from: scrut.clone(), to: bid });
+                }
                 if let Some((_, g)) = &arm.guard { let _ = flow_expr(g, file, fn_sym, scope, out); }
                 let _ = flow_expr(&arm.body, file, fn_sym, scope, out);
             }
@@ -2288,22 +2294,53 @@ fn flow_expr(
     }
 }
 
-/// Bind a pattern into scope: mint a `let_bind`/`param` slot for the common
-/// single-ident case and return the name. Destructuring falls through (no bind).
+/// Bind every identifier in a pattern into scope, returning `(name, bind_id)`
+/// for each. Handles the common single-ident case plus tuple / tuple-struct /
+/// struct / reference / paren destructuring — so `for (r, cs) in iter` and
+/// `let (a, b) = pair` bind both elements, not just the outer pattern. Wildcards
+/// and literals in patterns bind nothing.
 fn bind_pat(
     pat: &syn::Pat,
     file: &str,
     fn_sym: &str,
     scope: &mut std::collections::HashMap<String, String>,
     out: &mut DataflowFacts,
-) -> Option<String> {
-    if let syn::Pat::Ident(pi) = pat {
-        let (l, c) = (pi.ident.span().start().line as u32, pi.ident.span().start().column as u32);
-        let bind = push_node(out, file, l, c, "let_bind", &pi.ident.to_string(), fn_sym);
-        scope.insert(pi.ident.to_string(), bind);
-        Some(pi.ident.to_string())
-    } else {
-        None
+) -> Vec<(String, String)> {
+    let mut acc = Vec::new();
+    bind_pat_rec(pat, file, fn_sym, scope, out, &mut acc);
+    acc
+}
+
+fn bind_pat_rec(
+    pat: &syn::Pat,
+    file: &str,
+    fn_sym: &str,
+    scope: &mut std::collections::HashMap<String, String>,
+    out: &mut DataflowFacts,
+    acc: &mut Vec<(String, String)>,
+) {
+    match pat {
+        syn::Pat::Ident(pi) => {
+            let (l, c) = (pi.ident.span().start().line as u32, pi.ident.span().start().column as u32);
+            let bind = push_node(out, file, l, c, "let_bind", &pi.ident.to_string(), fn_sym);
+            scope.insert(pi.ident.to_string(), bind.clone());
+            acc.push((pi.ident.to_string(), bind));
+        }
+        syn::Pat::Tuple(t) => {
+            for e in &t.elems { bind_pat_rec(e, file, fn_sym, scope, out, acc); }
+        }
+        syn::Pat::TupleStruct(ts) => {
+            for e in &ts.elems { bind_pat_rec(e, file, fn_sym, scope, out, acc); }
+        }
+        syn::Pat::Struct(s) => {
+            for f in &s.fields { bind_pat_rec(&f.pat, file, fn_sym, scope, out, acc); }
+        }
+        syn::Pat::Reference(r) => bind_pat_rec(&r.pat, file, fn_sym, scope, out, acc),
+        syn::Pat::Paren(p) => bind_pat_rec(&p.pat, file, fn_sym, scope, out, acc),
+        syn::Pat::Slice(s) => {
+            for e in &s.elems { bind_pat_rec(e, file, fn_sym, scope, out, acc); }
+        }
+        _ => {}
     }
 }
 
