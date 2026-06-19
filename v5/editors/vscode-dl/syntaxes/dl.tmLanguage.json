@@ -1,0 +1,110 @@
+{
+  "scopeName": "source.dl",
+  "name": "dl",
+  "patterns": [{ "include": "#main" }],
+  "repository": {
+    "main": {
+      "patterns": [
+        { "include": "#comment" },
+        { "include": "#rule-arrow" },
+        { "include": "#query-marker" },
+        { "include": "#keywords" },
+        { "include": "#scheme-backtick" },
+        { "include": "#scheme-plain" },
+        { "include": "#regex" },
+        { "include": "#string" },
+        { "include": "#lang-tag" },
+        { "include": "#number" },
+        { "include": "#operators" },
+        { "include": "#variable" }
+      ]
+    },
+    "comment": {
+      "name": "comment.line.number-sign.dl",
+      "match": "#.*$"
+    },
+    "rule-arrow": {
+      "name": "keyword.operator.arrow.dl",
+      "match": "<-"
+    },
+    "query-marker": {
+      "name": "keyword.operator.other.dl",
+      "match": "(^|\\s)\\?(\\s|$)"
+    },
+    "keywords": {
+      "name": "keyword.other.dl",
+      "match": "\\b(rel|scan|match|ast|sg|ast_yaml|json|cmd|comment|closure|gen|def|use|anchor|type)\\b"
+    },
+    "scheme-backtick": {
+      "match": "(fs|glob):`[^`]*`",
+      "captures": {
+        "1": { "name": "support.type.dl" },
+        "2": { "name": "string.interpolated.dl" }
+      }
+    },
+    "scheme-plain": {
+      "match": "(fs|glob):([^\\s,)\\.]+)",
+      "captures": {
+        "1": { "name": "support.type.dl" },
+        "2": { "name": "string.interpolated.dl" }
+      }
+    },
+    "regex": {
+      "match": "/((?:\\\\/|[^/\\n])*)/",
+      "captures": {
+        "0": { "name": "string.regexp.dl" },
+        "1": {
+          "patterns": [
+            {
+              "name": "constant.other.placeholder.dl",
+              "match": "\\?<[A-Za-z_][A-Za-z0-9_]*>|\\$[A-Za-z_][A-Za-z0-9_]*|\\$"
+            }
+          ]
+        }
+      }
+    },
+    "string": {
+      "name": "string.quoted.double.dl",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.dl",
+          "match": "\\\\."
+        },
+        {
+          "name": "punctuation.definition.interpolated.dl",
+          "match": "\\$\\{[^}]*\\}"
+        },
+        {
+          "name": "constant.other.placeholder.dl",
+          "match": "\\{[A-Za-z_][A-Za-z0-9_]*\\}"
+        }
+      ]
+    },
+    "lang-tag": {
+      "name": "support.constant.language.dl",
+      "match": ":(rust|c|kotlin|ts|tsx|js|py|go|json|toml|yaml|cpp)\\b"
+    },
+    "number": {
+      "name": "constant.numeric.dl",
+      "match": "\\b\\d+\\b"
+    },
+    "operators": {
+      "name": "keyword.operator.comparison.dl",
+      "match": "=~|~~|!=|<=|>=|=|<|>"
+    },
+    "variable": {
+      "patterns": [
+        {
+          "name": "variable.other.constant.dl",
+          "match": "\\b[A-Z_][A-Za-z0-9_]*\\b"
+        },
+        {
+          "name": "variable.other.readwrite.dl",
+          "match": "\\b[a-z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    }
+  }
+}

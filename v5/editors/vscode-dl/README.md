@@ -5,11 +5,15 @@ Minimal VSCode shim that runs the `dl` datalog engine as a language server. Drop
 ## Setup (the neat path)
 
 1. Install the engine: `cargo install --path v5 --bin dl` (puts `dl` on PATH).
-2. Install the extension: `code --install-extension dl-lsp-0.1.0.vsix`.
+2. Install the extension: `code --install-extension dl-lsp-0.2.0.vsix`.
 3. Add rules: create `<repo>/.dl/lint.dl`.
 4. Open any file the rule scans. Squiggles appear on save (the engine reads disk).
 
 No other config. The extension starts `dl --root <workspace> --lsp` and proxies LSP over stdio. definition/references work over the engine's `ref(id,string,file,lo,hi)` spine, so a capture in one language links to the same string in another.
+
+## Syntax highlighting
+
+A TextMate grammar (`syntaxes/dl.tmLanguage.json`) colors `.dl` files: comments (`#`), keywords (`rel`/`scan`/`match`/`gen`/...), the `<-` rule arrow, string literals with `${}`/`{}` interpolation, regex literals (`/.../` with `(?<name>)`/`$hole` sub-highlighting), `fs:`/`glob:` scheme literals (plain and backtick-fenced), `:lang` tags, numbers, and comparison operators. The `#` line comment is wired for `Ctrl+/` toggling; `BEGIN:`/`END:` marker pairs fold.
 
 ## Settings
 
@@ -30,7 +34,7 @@ Point `dl.program` at a single example to try it without the `.dl/` convention:
 cd v5/editors/vscode-dl
 npm install
 npm run compile
-npx @vscode/vsce package     # -> dl-lsp-0.1.0.vsix
+npx @vscode/vsce package     # -> dl-lsp-0.2.0.vsix
 ```
 
-No grammar contribution yet (`.dl` renders as plain text). Syntax highlighting inside `.dl` op bodies is the DslBodyLsp port, tracked separately.
+To iterate on the grammar without reinstalling: `code --extensionDevelopmentPath v5/editors/vscode-dl`.
