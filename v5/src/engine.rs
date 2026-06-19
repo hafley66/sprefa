@@ -101,6 +101,13 @@ const SCIP_RELS: [&str; 3] = ["scip_def", "scip_ref", "scip_edge"];
 /// what an edit session touched never fires on pre-existing repo debt.
 const CHANGED_RELS: [&str; 1] = ["changed"];
 
+/// Line-level worktree diff: `(path, line)` for every new-side line of every
+/// hunk in `git diff -U0 HEAD`, plus every line of untracked files (which the
+/// diff omits). Lets a rail scope to the touched lines, not the touched path:
+/// `diag(p, l, ...) <- hit(p, l), changed_line(p, l).` instead of `changed(p)`,
+/// so a touch on engine.rs surfaces only the `.conn()` calls on edited lines.
+const CHANGED_LINE_RELS: [&str; 1] = ["changed_line"];
+
 /// Ref-spine query relations: thin views over the `_strings` / `_where_bytes`
 /// meta tables. `string(id, text, norm)` resolves an interned StringId to its
 /// content; `ref(id, string, file, lo, hi)` locates each interned string's byte
@@ -215,6 +222,14 @@ fn changed_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
+fn changed_line_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "changed_line".into(),
+                  cols: vec![c("path", Type::Path), c("line", Type::Int)] },
+    ]
+}
+
 fn spine_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -285,6 +300,8 @@ fn scip_rels_used(prog: &Program) -> bool { rels_used(prog, &SCIP_RELS) }
 fn spine_rels_used(prog: &Program) -> bool { rels_used(prog, &SPINE_RELS) }
 
 fn changed_rels_used(prog: &Program) -> bool { rels_used(prog, &CHANGED_RELS) }
+
+fn changed_line_rels_used(prog: &Program) -> bool { rels_used(prog, &CHANGED_LINE_RELS) }
 
 fn module_manifest_path(path: &str) -> bool {
     path.ends_with("Cargo.toml") || path.ends_with("package.json") || path.ends_with("tsconfig.json")
@@ -1180,6 +1197,7 @@ impl Engine {
         // HEAD under an identical worktree), so the refresh result feeds
         // `changed` directly rather than riding the reconcile delta.
         if changed_rels_used(prog) { changed |= self.refresh_changed_rel()?; }
+        if changed_line_rels_used(prog) { changed |= self.refresh_changed_line_rel()?; }
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
 
         let t_der = std::time::Instant::now();
@@ -1408,6 +1426,10 @@ impl Engine {
         // on the common no-op, keeping the rebuild scope tight.
         if changed_rels_used(prog) && self.refresh_changed_rel()? {
             changed_source_rels.insert("changed".to_string());
+            changed_facts = true;
+        }
+        if changed_line_rels_used(prog) && self.refresh_changed_line_rel()? {
+            changed_source_rels.insert("changed_line".to_string());
             changed_facts = true;
         }
         if changed_source_rels.is_empty() { changed_facts = false; }
@@ -1950,6 +1972,9 @@ impl Engine {
                 if CHANGED_RELS.contains(&d.name.as_str()) {
                     bail!("{} is the built-in worktree-diff relation; pick another name", d.name);
                 }
+                if CHANGED_LINE_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is the built-in line-diff relation; pick another name", d.name);
+                }
                 match closures.get(&d.name) {
                     Some(edge) => self.declare_closure(d, edge)?,
                     None => self.declare(d)?,
@@ -1973,6 +1998,7 @@ impl Engine {
         for d in scip_rel_decls() { self.declare(&d)?; }
         for d in spine_rel_decls() { self.declare(&d)?; }
         for d in changed_rel_decls() { self.declare(&d)?; }
+        for d in changed_line_rel_decls() { self.declare(&d)?; }
         Ok(())
     }
 
@@ -2685,6 +2711,103 @@ impl Engine {
         let rows: Vec<Vec<Value>> = paths.into_iter().map(|p| vec![Value::Text(p)]).collect();
         self.refresh_rel("changed", &["path"], &rows)?;
         Ok(true)
+    }
+
+    /// Refresh `changed_line(path, line)` from the worktree diff. Two sources:
+    ///   1. `git diff -U0 HEAD` new-side hunks: parse `@@ -a,b +c,d @@`, emit
+    ///      lines `c..c+d-1` for each hunk (the lines that exist in the worktree
+    ///      and differ from HEAD). A pure-deletion hunk has `d=0` -> no lines.
+    ///   2. Untracked files (the `??` rows of `git status --porcelain -uall`),
+    ///      which `git diff HEAD` omits entirely: emit every line 1..=N.
+    /// Paths are canonicalized to repo-relative exactly like `refresh_changed_rel`
+    /// so a `changed_line(p, l)` row joins `call_site(_, _, p, l)` on equal text.
+    fn refresh_changed_line_rel(&self) -> Result<bool> {
+        let top = Command::new("git").arg("-C").arg(&self.root)
+            .args(["rev-parse", "--show-toplevel"]).output();
+        let mut rows: Vec<(String, i64)> = Vec::new();
+        if let Ok(out) = top {
+            if out.status.success() {
+                let toplevel = PathBuf::from(
+                    String::from_utf8_lossy(&out.stdout).trim().to_string());
+                // Canonicalize for prefix-stripping: git prints the physical
+                // toplevel (macOS /private/var) while --root may be the symlink.
+                let root = std::fs::canonicalize(&self.root)
+                    .unwrap_or_else(|_| self.root.clone());
+                let canon = |p: &str| -> Option<String> {
+                    toplevel.join(p).strip_prefix(&root)
+                        .ok().map(|r| r.to_string_lossy().replace('\\', "/"))
+                };
+                // (1) tracked modifications via context-free hunks.
+                let diff = Command::new("git").arg("-C").arg(&self.root)
+                    .args(["diff", "-U0", "HEAD"]).output();
+                if let Ok(d) = diff {
+                    if d.status.success() {
+                        let stdout = String::from_utf8_lossy(&d.stdout);
+                        let mut cur: Option<String> = None;
+                        for line in stdout.lines() {
+                            if let Some(rest) = line.strip_prefix("+++ ") {
+                                cur = if rest == "/dev/null" { None }
+                                      else { canon(rest.strip_prefix("b/").unwrap_or(rest)) };
+                            } else if line.starts_with("@@") {
+                                if let (Some(path), Some((c, n))) = (&cur, Self::hunk_new_range(line)) {
+                                    for ln in c..c + n {
+                                        rows.push((path.clone(), ln));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // (2) untracked files: emit every line; git diff HEAD omits them.
+                let status = Command::new("git").arg("-C").arg(&self.root)
+                    .args(["status", "--porcelain", "-uall"]).output()?;
+                if status.status.success() {
+                    for line in String::from_utf8_lossy(&status.stdout).lines() {
+                        if line.len() < 4 || &line[..2] != "??" { continue; }
+                        let p = line[3..].rsplit(" -> ").next().unwrap_or(&line[3..])
+                            .trim_matches('"');
+                        if let Some(rel) = canon(p) {
+                            if let Ok(s) = std::fs::read_to_string(self.root.join(&rel)) {
+                                for ln in 1..=(s.lines().count() as i64) {
+                                    rows.push((rel.clone(), ln));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        rows.sort();
+        rows.dedup();
+        let existing: Vec<(String, i64)> = {
+            let conn = self.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"path\", \"line\" FROM {} ORDER BY \"path\", \"line\"",
+                tbl("changed_line")))?;
+            let rs = s.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+            })?;
+            rs.filter_map(|x| x.ok()).collect()
+        };
+        if existing == rows { return Ok(false); }
+        let out: Vec<Vec<Value>> = rows.into_iter()
+            .map(|(p, l)| vec![Value::Text(p), Value::Int(l)]).collect();
+        self.refresh_rel("changed_line", &["path", "line"], &out)?;
+        Ok(true)
+    }
+
+    /// Parse the new-side range `+c,d` out of an `@@ -a,b +c,d @@` hunk header.
+    /// The count defaults to 1 when omitted (`@@ -a +c @@`); a deletion-only
+    /// hunk carries `d=0`. Returns `(start, count)` on the new side.
+    fn hunk_new_range(line: &str) -> Option<(i64, i64)> {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        // ["@@", "-a,b", "+c,d", "@@", <optional fn label>...]
+        let new = f.get(2)?.strip_prefix('+')?;
+        let (c, n) = match new.split_once(',') {
+            Some((c, n)) => (c.parse::<i64>().ok()?, n.parse::<i64>().ok()?),
+            None => (new.parse::<i64>().ok()?, 1),
+        };
+        Some((c, n))
     }
 
     /// Read the Cargo.toml / package.json manifests above the file set, at this
