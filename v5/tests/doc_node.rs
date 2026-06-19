@@ -1,5 +1,5 @@
 //! The built-in `doc_node(file, line, kind, name, parent)` document-structure
-//! relation, populated by the `ingest::DocLang` registry (markdown is the first
+//! relation, populated by the `ingest::IngestLang` registry (markdown is the first
 //! customer). A source rule scanning `**/*.md` feeds `_file` exactly as `**/*.rs`
 //! feeds the type graph; `refresh_doc_rels` walks the registry over those files
 //! and emits one row per heading / code block, with `parent` naming the enclosing
