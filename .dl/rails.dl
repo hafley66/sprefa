@@ -15,15 +15,77 @@ banned_hit(p, l, w) <-
 diag(p, l, "error", "banned-word", "banned identifier `${w}` (use source/base/mode)") <-
     banned_hit(p, l, w), changed(p).
 
-# ---- no new raw conn() outside the Db seam ------------------------------------
-rel conn_hit(p: file, l: int).
-conn_hit(p, l) <-
-    scan("WORK", "v5/src/**/*.rs", p, rev),
-    match(p, rev, /\.conn\(\)/, l).
+# ---- no .conn() reachable from a loop outside the Db seam ----------------------
+# The signal is GRAPH reachability, not syntax. A .conn() site resolves to its
+# enclosing fn via call_site(caller, "conn", p, l); then we ask whether that fn
+# is transitively reachable from any fn containing a call inside a loop nest
+# (nest > 0). A leaf fn with no loop-reachable path stays silent; a fn called
+# per-iteration fires. The .conn() regex is just the seed; the badness is the
+# graph property. db.rs stays exempt because .conn() there IS the seam, not a
+# bypass. Ported from a too-blunt regex-only rule whose path-scope fired on
+# every .conn() in a touched file.
 
-diag(p, l, "warn", "conn-outside-db", "raw .conn() in a changed file outside the Db seam") <-
-    conn_hit(p, l), changed(p),
+# Seed: raw .conn() call sites, excluding db.rs (the seam itself).
+rel conn_site(p: file, l: int).
+conn_site(p, l) <-
+    scan("WORK", "v5/src/**/*.rs", p, rev),
+    match(p, rev, /\.conn\(\)/, l),
     p != fs:`v5/src/db.rs`.
+
+# Resolve each .conn() site to its enclosing fn via the call-site extractor.
+# `caller` is the resolved fn sym; "conn" is the method name (self.db.conn()).
+rel conn_fn(fn: text, p: file, l: int).
+conn_fn(fn, p, l) <-
+    conn_site(p, l),
+    call_site(fn, "conn", p, l).
+
+# A fn is loop-hot if any of its call_res nodes sits inside a loop nest. The
+# depth is retained for downstream severity cuts but not used by the basic
+# warning; depth>=2 ("doubly-nested") is the stronger cost signal.
+rel loop_hot_fn(fn: text, depth: int).
+loop_hot_fn(fn, depth) <-
+    nest(call_id, _, depth, _),
+    df_node(call_id, "call_res", _, fn, _, _).
+
+# 2-col view of call_edge. (We do not use closure(call_pair) here because the
+# engine blocks unpinned closure reads in rule bodies; recursive rules over
+# call_edge run on the semi-naive fixpoint and produce the same transitive
+# reach. For a call graph of hundreds of fns the cost is negligible.)
+rel call_pair(a: text, b: text).
+call_pair(a, b) <- call_edge(a, b, _).
+
+# Loop-reachable = the fn itself is loop-hot OR another loop-reachable fn calls
+# it. Recursive transitive closure starting from loop_hot_fn, walking call_pair.
+# Catches both shapes: a fn with its own internal loop plus a .conn() (base
+# case) and a leaf fn called from inside a loop several hops up (inductive).
+rel loop_reachable_fn(fn: text).
+loop_reachable_fn(fn) <- loop_hot_fn(fn, _).
+loop_reachable_fn(fn) <-
+    loop_reachable_fn(prev),
+    call_pair(prev, fn).
+
+# THE GRAPH PROPERTY: warn when a .conn() fn is loop-reachable. Each warning
+# is a real per-row-write risk (the .conn() executes inside a loop nest at
+# runtime), not "file was touched". Severity stays warn because the Db seam
+# does not yet expose prepare/query_row/execute_batch, so most sites have no
+# alternative today; the warnings are the worklist for that extension.
+# THE GRAPH PROPERTY: warn when a .conn() fn is loop-reachable AND its file is
+# in the worktree diff. Each warning is a real per-row-write risk (the .conn()
+# executes inside a loop nest at runtime), not "file was touched". Severity
+# stays warn because the Db seam does not yet expose prepare/query_row/
+# execute_batch, so most sites have no alternative today; the warnings are the
+# worklist for that extension.
+#
+# NOTE: `changed(p)` is path-scoped, so a touch on engine.rs still surfaces
+# many sites because most of engine.rs's .conn() calls are loop-reachable via
+# `tick`. Tightening to `changed_line(p, l)` is the remaining noise fix; the
+# graph property delivered here is the new capability the prior regex-only
+# rule could not express.
+diag(p, l, "warn", "conn-loop-reachable",
+     "raw .conn() reachable from a loop; per-row write risk") <-
+    conn_fn(fn, p, l),
+    loop_reachable_fn(fn),
+    changed(p).
 
 # ---- unwrap budget per changed file -------------------------------------------
 rel unwrap_hit(p: file, l: int).
