@@ -169,6 +169,33 @@ impl Db {
         Ok(self.conn.execute(sql, [])?)
     }
 
+    /// Counted prepare — wraps `Connection::prepare`. Call sites that need a
+    /// `Statement` (e.g. multi-row `query_map`) migrate off `conn().prepare(...)`.
+    pub fn prepare(&self, sql: &str) -> Result<rusqlite::Statement<'_>> {
+        self.bump(sql);
+        Ok(self.conn.prepare(sql)?)
+    }
+
+    /// Counted query_row — single-row scalar lookup. Wraps
+    /// `Connection::query_row` so common `SELECT COUNT(*)` / metadata queries
+    /// don't bypass the counter.
+    pub fn query_row<T, P, F>(&self, sql: &str, params: P, f: F) -> Result<T>
+    where
+        P: rusqlite::Params,
+        F: FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+    {
+        self.bump(sql);
+        Ok(self.conn.query_row(sql, params, f)?)
+    }
+
+    /// Counted execute_batch — multi-statement SQL script (DDL like
+    /// `CREATE TABLE t (...); CREATE INDEX ...`). Wraps
+    /// `Connection::execute_batch`.
+    pub fn execute_batch(&self, sql: &str) -> Result<()> {
+        self.bump(sql);
+        Ok(self.conn.execute_batch(sql)?)
+    }
+
     /// Insert a set of rows in chunked multi-row `VALUES` statements — ONE logical
     /// op (a few executes for very large N), never one-per-row. `INSERT OR IGNORE`.
     /// The counter keys on `INSERT <table>`, so a caller that loops this with
@@ -239,5 +266,55 @@ mod tests {
         assert_eq!(n, 40_000, "duplicate ignored, everything else lands");
         let count: i64 = db.conn().query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
         assert_eq!(count, 40_000);
+    }
+
+    #[test]
+    fn prepare_and_query_map_works() {
+        let db = open(None).unwrap();
+        db.exec("CREATE TABLE t (a INTEGER, b TEXT)").unwrap();
+        let rows: Vec<Vec<Value>> = (0..5)
+            .map(|i| vec![Value::Int(i), Value::Text(format!("r{i}"))])
+            .collect();
+        db.insert_rows("t", &["a", "b"], &rows).unwrap();
+        db.tick_begin();
+        let mut stmt = db.prepare("SELECT a, b FROM t ORDER BY a").unwrap();
+        let got: Vec<(i64, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert!(db.tick_end().is_none());
+        assert_eq!(got.len(), 5);
+        assert_eq!(got[0], (0, "r0".to_string()));
+        assert_eq!(got[4], (4, "r4".to_string()));
+    }
+
+    #[test]
+    fn query_row_returns_scalar() {
+        let db = open(None).unwrap();
+        db.exec("CREATE TABLE t (a INTEGER)").unwrap();
+        let rows: Vec<Vec<Value>> = (0..7).map(|i| vec![Value::Int(i)]).collect();
+        db.insert_rows("t", &["a"], &rows).unwrap();
+        db.tick_begin();
+        let count: i64 = db
+            .query_row("SELECT COUNT(*) FROM t", [], |r| r.get::<_, i64>(0))
+            .unwrap();
+        assert!(db.tick_end().is_none());
+        assert_eq!(count, 7);
+    }
+
+    #[test]
+    fn execute_batch_runs_multi_statement_ddl() {
+        let db = open(None).unwrap();
+        db.tick_begin();
+        db.execute_batch(
+            "CREATE TABLE a (x INTEGER); CREATE TABLE b (y TEXT);",
+        )
+        .unwrap();
+        assert!(db.tick_end().is_none());
+        let na: i64 = db.conn().query_row("SELECT COUNT(*) FROM a", [], |r| r.get(0)).unwrap();
+        let nb: i64 = db.conn().query_row("SELECT COUNT(*) FROM b", [], |r| r.get(0)).unwrap();
+        assert_eq!(na, 0);
+        assert_eq!(nb, 0);
     }
 }
