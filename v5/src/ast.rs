@@ -142,7 +142,7 @@ pub enum BodyItem {
     Pos(Atom),
     Neg(Atom),
     Scan { repo: Term, rev: Term, glob: Term, path: Term, rev_out: Term },
-    Match { path: Term, rev: Term, regex: String, line: Term },
+    Match { path: Term, rev: Term, regex: String, line: Term, id: Option<Term> },
     Ast { path: Term, rev: Term, lang: String, query: String, line: Term, end: Option<Term> },
     Sg { path: Term, rev: Term, lang: String, pattern: String, line: Term,
          col: Option<Term>, end_line: Option<Term>, end_col: Option<Term> },

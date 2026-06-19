@@ -251,3 +251,42 @@ fn cursor_two_regions_apply_right_to_left() {
     let got = fs::read_to_string(d.join("data.txt")).unwrap();
     assert_eq!(got, "A###DE__H");
 }
+
+/// End-to-end: `match`'s optional 5th arg (the whole-match spine id) joins
+/// `ref(id, _, _, lo, hi)` to recover the byte offsets, which feed
+/// `gen(:replace, ...)` -- no literal offsets in the rule. On "xxTARGETxx" the
+/// /TARGET/ match resolves to [2, 8); :replace with "REPLACED" yields
+/// "xxREPLACEDxx". This is the match -> byte-cursor loop the cursor port's
+/// literal-offset gate tests deferred: the spine now carries the offsets.
+#[test]
+fn match_id_feeds_cursor_replace_end_to_end() {
+    let d = sandbox("match_id");
+    fs::write(d.join("data.txt"), "xxTARGETxx").unwrap();
+    let prog = concat!(
+        "rel hit(p: file, l: int, id: text).\n",
+        "hit(p, l, id) <- scan(\"data.txt\", p, rev), match(p, rev, /TARGET/, l, id).\n",
+        "gen(:replace, p, lo, hi, \"REPLACED\") <- hit(p, _, id), ref(id, _, _, lo, hi).\n",
+    );
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "stderr: {err}\nstdout: {out}");
+    let got = fs::read_to_string(d.join("data.txt")).unwrap();
+    assert_eq!(got, "xxREPLACEDxx", "match id -> ref lo,hi -> cursor :replace");
+}
+
+/// Same loop with :wrap to prove the offsets are the true [lo, hi) of the match
+/// (wrap touches both ends; a wrong span would corrupt one side). On "xxTARGETxx"
+/// the [2, 8) match wrapped with "<w>" yields "xx<w>TARGET<w>xx".
+#[test]
+fn match_id_feeds_cursor_wrap_end_to_end() {
+    let d = sandbox("match_id_wrap");
+    fs::write(d.join("data.txt"), "xxTARGETxx").unwrap();
+    let prog = concat!(
+        "rel hit(p: file, l: int, id: text).\n",
+        "hit(p, l, id) <- scan(\"data.txt\", p, rev), match(p, rev, /TARGET/, l, id).\n",
+        "gen(:wrap, p, lo, hi, \"<w>\") <- hit(p, _, id), ref(id, _, _, lo, hi).\n",
+    );
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "stderr: {err}\nstdout: {out}");
+    let got = fs::read_to_string(d.join("data.txt")).unwrap();
+    assert_eq!(got, "xx<w>TARGET<w>xx", "match id -> ref lo,hi -> cursor :wrap");
+}

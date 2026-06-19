@@ -3723,8 +3723,11 @@ fn parse_file(
 
     for item in &rule.body {
         match item {
-            BodyItem::Match { regex, line, .. } => {
+            BodyItem::Match { regex, line, id, .. } => {
                 let mlv = var_of(line)?;
+                // The optional 5th arg is the whole-match span's spine id; joins
+                // `ref(id, _, _, lo, hi)` to feed `gen(:mode, p, lo, hi, ...)`.
+                let idv = id.as_ref().map(var_of).transpose()?;
                 if !re_cache.contains_key(regex) { re_cache.insert(regex.clone(), Regex::new(regex)?); }
                 let re = &re_cache[regex];
                 let names: Vec<&str> = re.capture_names().flatten().collect();
@@ -3736,6 +3739,32 @@ fn parse_file(
                         for caps in re.captures_iter(ln) {
                             let mut ext = b.clone();
                             ext.insert(mlv.clone(), Value::Int((lineno + 1) as i64));
+                            // Bind the whole-match spine id and push the span, but
+                            // only when `id` is requested (5-arg form): the id is
+                            // the same WhereBytesId `insert_spine_where_bytes`
+                            // assigns, so `ref(id, _, f, lo, hi)` resolves to this
+                            // exact match. The 4-arg form keeps named-capture-only
+                            // spine behavior, so existing rules are unchanged.
+                            if let Some(idv) = &idv {
+                                if let Some(file) = where_file {
+                                    if let Some(m0) = caps.get(0) {
+                                        let text = m0.as_str();
+                                        let lo = line_off + m0.start();
+                                        let hi = line_off + m0.end();
+                                        if !text.is_empty() {
+                                            let wb = spine::WhereBytes {
+                                                string: spine::StringId::of(text), file,
+                                                lo: lo as u32, hi: hi as u32,
+                                                ..Default::default()
+                                            };
+                                            ext.insert(idv.clone(), Value::Text(
+                                                spine::WhereBytesId::of_located(wb, repo, path)
+                                                    .to_string()));
+                                            push_span(text, lo, hi, &mut where_bytes);
+                                        }
+                                    }
+                                }
+                            }
                             for n in &names {
                                 if let Some(m) = caps.name(n) {
                                     let text = m.as_str();

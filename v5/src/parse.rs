@@ -354,8 +354,16 @@ impl Parser {
         };
         self.expect(Tok::Comma)?;
         let line = self.term()?;
+        // Optional 5th arg: the spine id of the whole-match span. A rule joins
+        // `ref(id, _, _, lo, hi)` off it to feed `gen(:mode, p, lo, hi, ...)`,
+        // closing match -> byte-cursor without literal offsets. The 4-arg form
+        // keeps its old spine behavior (named captures only).
+        let id = if matches!(self.peek(), Some(Tok::Comma)) {
+            self.next()?; // ,
+            Some(self.term()?)
+        } else { None };
         self.expect(Tok::RParen)?;
-        Ok(BodyItem::Match { path, rev, regex, line })
+        Ok(BodyItem::Match { path, rev, regex, line, id })
     }
 
     fn ast(&mut self) -> Result<BodyItem> {
