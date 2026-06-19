@@ -1,7 +1,7 @@
 # gen-doc-index.dl — dogfoods the doc tools on v5's own docs + source.
 #
 # Three tools exercised together in one program:
-#   doc_node — the markdown-structure relation (headings, via ingest::DocLang)
+#   doc_node — the markdown-structure relation (headings, via ingest::IngestLang)
 #   comment  — rule-driven region extractor over Rust //! module docs
 #   gen      — splice the derived index back between the markers below
 #
@@ -109,7 +109,7 @@
 # - rs  v5/src/v5cozokuzu/src/lib.rs:1  Shared fixture: the same call graph the `dl` examples build, so the Cozo
 # END:
 
-# Scan markdown into _file so refresh_doc_rels runs the DocLang registry over it.
+# Scan markdown into _file so refresh_doc_rels runs the IngestLang registry over it.
 # (doc_node is populated lazily only for files a source rule has touched.)
 rel md(path: file).
 md(path) <- scan("WORK", "v5/**/*.md", path, rev), match(path, rev, /./, line).

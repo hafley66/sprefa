@@ -92,7 +92,7 @@ const CALL_RELS: [&str; 5] = ["call_def", "call_site", "call_edge", "call_edge_r
 const DATAFLOW_RELS: [&str; 5] = ["df_node", "df_edge", "loop_over", "allocates", "nest"];
 
 /// Document structure from non-source text (markdown today; comments and other
-/// tree-sitter grammars to follow via `ingest::DocLang`). `doc_node` is one row
+/// tree-sitter grammars to follow via `ingest::IngestLang`). `doc_node` is one row
 /// per heading / code block / section: (file, line, kind, name, parent). The
 /// `parent` column is the enclosing heading text, so a rule can walk the section
 /// tree. Populated by the `ingest` registry over `_file`'s document-typed files
@@ -220,7 +220,7 @@ fn doc_rel_decls() -> Vec<RelDecl> {
     vec![
         // one row per document structural node (heading / code block / section).
         // `parent` is the enclosing heading text ("" at top level), so a rule can
-        // walk the section tree. See `ingest::DocLang`.
+        // walk the section tree. See `ingest::IngestLang`.
         RelDecl { name: "doc_node".into(), cols: vec![
             c("file", Type::Path), c("line", Type::Int),
             c("kind", Type::Text), c("name", Type::Text), c("parent", Type::Text)] },
@@ -2695,7 +2695,7 @@ impl Engine {
         }
         let root = self.root.clone();
         let facts: Vec<(String, ingest::DocFacts)> = files.par_iter().filter_map(|(path, rev)| {
-            let lang = ingest::doc_langs().iter().find(|l| l.matches(path))?;
+            let lang = ingest::ingest_langs().iter().find(|l| l.matches(path))?;
             let content = read_content(&root, rev, path).unwrap_or_default();
             Some((path.clone(), lang.extract_docs(path, &content)))
         }).collect();

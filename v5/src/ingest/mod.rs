@@ -2,15 +2,15 @@
 //! (headings, code blocks, sections) from non-source text. The first customer
 //! is markdown; comment regions and other tree-sitter grammars follow the same
 //! shape. Mirrors `typegraph::TypeLang`'s registry pattern but for documents:
-//! a `DocLang` declares the extensions it owns and returns `DocFacts`, which the
-//! engine projects into the `doc_node` relation.
+//! an `IngestLang` declares the extensions it owns and returns `DocFacts`, which
+//! the engine projects into the `doc_node` relation.
 //!
 //! v1 markdown is hand-rolled (line-prefix headings, fenced code blocks) so the
 //! first customer needs no new grammar dependency; a tree-sitter-markdown
 //! grammar can replace it for richer structure (inline links, lists) later.
-//! Once a second concrete customer exists, `DocLang` and `TypeLang` fold into a
-//! single `IngestLang` whose methods all default empty -- the two shapes already
-//! agree on (file, line, kind, name, parent).
+//! Once a second concrete customer exists, `IngestLang` and `TypeLang` fold
+//! into a single trait whose methods all default empty -- the two shapes
+//! already agree on (file, line, kind, name, parent).
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DocNode {
@@ -28,14 +28,14 @@ pub struct DocFacts {
 
 /// A document grammar: declares the file extensions it owns and extracts
 /// structural nodes. `: Sync` for rayon, matching `typegraph::TypeLang`.
-pub trait DocLang: Sync {
+pub trait IngestLang: Sync {
     fn name(&self) -> &'static str;
     fn matches(&self, path: &str) -> bool;
     fn extract_docs(&self, file: &str, content: &str) -> DocFacts;
 }
 
 /// The registry. Extension overlap is resolved by order, as with `type_langs`.
-pub fn doc_langs() -> &'static [&'static dyn DocLang] {
+pub fn ingest_langs() -> &'static [&'static dyn IngestLang] {
     &[&MarkdownDoc]
 }
 
@@ -43,7 +43,7 @@ pub fn doc_langs() -> &'static [&'static dyn DocLang] {
 
 struct MarkdownDoc;
 
-impl DocLang for MarkdownDoc {
+impl IngestLang for MarkdownDoc {
     fn name(&self) -> &'static str { "markdown" }
 
     fn matches(&self, p: &str) -> bool {

@@ -286,7 +286,7 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `loop_over` | `(file, start, end, var, collection, fn)` | one row per loop with its span, iter var, and collection |
 | `allocates` | `(fn)` | one row per fn whose body builds a collection (Vec/HashMap/String ctor, `.collect`/`.clone`/`.to_string`) |
 | `nest` | `(call_id, loop_id, depth, collection)` | one row per (call, enclosing loop); `depth` is nesting rank (1=outermost). Raw material for symbolic Big-O over `call_edge` |
-| `doc_node` | `(file, line, kind, name, parent)` | structural nodes from non-source text (markdown today: `heading`/`code_block`). `parent` is the enclosing heading. Emitted by the `ingest::DocLang` registry; an island until the `doc_ref` bridge lands |
+| `doc_node` | `(file, line, kind, name, parent)` | structural nodes from non-source text (markdown today: `heading`/`code_block`). `parent` is the enclosing heading. Emitted by the `ingest::IngestLang` registry; an island until the `doc_ref` bridge lands |
 | `scip_def` | `(symbol, file)` | from an existing `index.scip` at root or `$SPREFA_SCIP_INDEX` |
 | `scip_ref` | `(file, symbol, def_file)` | compiler-backed references |
 | `scip_edge` | `(src, dst)` | file-to-file SCIP dependency edges |
@@ -457,7 +457,7 @@ All in [examples/](examples/), runnable as `dl examples/<name>.dl --root .`:
 | [src/comment.rs](src/comment.rs) | comment-marker region scanner |
 | [src/modgraph.rs](src/modgraph.rs) | Rust+TS import resolver |
 | [src/typegraph.rs](src/typegraph.rs) | type graph: Rust (syn) + Kotlin (tree-sitter) + TS (oxc) type-edge extractor; the `TypeLang` registry |
-| [src/ingest/mod.rs](src/ingest/mod.rs) | document ingestion: the `DocLang` registry + `doc_node` extractor (markdown first) |
+| [src/ingest/mod.rs](src/ingest/mod.rs) | document ingestion: the `IngestLang` registry + `doc_node` extractor (markdown first) |
 | [src/scc.rs](src/scc.rs) | closure / SCC condensation |
 | [src/spine.rs](src/spine.rs) / [src/datapath.rs](src/datapath.rs) | ref-spine IDs, located spans |
 | [src/lsp.rs](src/lsp.rs) | the LSP server |
