@@ -64,28 +64,19 @@ loop_reachable_fn(fn) <-
     loop_reachable_fn(prev),
     call_pair(prev, fn).
 
-# THE GRAPH PROPERTY: warn when a .conn() fn is loop-reachable. Each warning
-# is a real per-row-write risk (the .conn() executes inside a loop nest at
-# runtime), not "file was touched". Severity stays warn because the Db seam
-# does not yet expose prepare/query_row/execute_batch, so most sites have no
-# alternative today; the warnings are the worklist for that extension.
-# THE GRAPH PROPERTY: warn when a .conn() fn is loop-reachable AND its file is
-# in the worktree diff. Each warning is a real per-row-write risk (the .conn()
-# executes inside a loop nest at runtime), not "file was touched". Severity
-# stays warn because the Db seam does not yet expose prepare/query_row/
-# execute_batch, so most sites have no alternative today; the warnings are the
-# worklist for that extension.
-#
-# NOTE: `changed(p)` is path-scoped, so a touch on engine.rs still surfaces
-# many sites because most of engine.rs's .conn() calls are loop-reachable via
-# `tick`. Tightening to `changed_line(p, l)` is the remaining noise fix; the
-# graph property delivered here is the new capability the prior regex-only
-# rule could not express.
+# THE GRAPH PROPERTY: warn when a .conn() fn is loop-reachable AND the .conn()
+# call itself is on an edited line (line-scoped diff, not path-scoped). Each
+# warning is a real per-row-write risk (the .conn() executes inside a loop nest
+# at runtime), not "file was touched". A touch on engine.rs surfaces only the
+# .conn() calls on the lines you actually edited, not all 40+ loop-reachable
+# sites in the file. Severity stays warn because the Db seam does not yet expose
+# prepare/query_row/execute_batch, so most sites have no alternative today; the
+# warnings are the worklist for that extension.
 diag(p, l, "warn", "conn-loop-reachable",
      "raw .conn() reachable from a loop; per-row write risk") <-
     conn_fn(fn, p, l),
     loop_reachable_fn(fn),
-    changed(p).
+    changed_line(p, l).
 
 # ---- unwrap budget per changed file -------------------------------------------
 rel unwrap_hit(p: file, l: int).
