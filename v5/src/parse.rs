@@ -543,8 +543,62 @@ impl Parser {
         Ok(GenRule { target, row_tmpl, body })
     }
 
-    /// `comment(p, rev, /open/[, /close/], l0, l1, label)` — one regex is
-    /// sequential mode, two is paired. Both regexes take `$NAME` holes.
+    /// Parse trailing op output args, each a bare `term` (positional) or
+    /// `name: term` (named). The kwarg form requires a space after the colon
+    /// (`label: x`) — `label:x` collides with the scheme-literal lexer, which
+    /// rejects unknown `word:` adjacencies. Stops at RParen.
+    fn parse_kwarg_terms(&mut self) -> Result<(Vec<Term>, Vec<(String, Term)>)> {
+        let mut pos = Vec::new();
+        let mut named = Vec::new();
+        if matches!(self.peek(), Some(Tok::RParen)) { return Ok((pos, named)); }
+        loop {
+            if let (Some(Tok::Ident(name)), Some(Tok::Colon)) =
+                (self.peek().cloned(), self.peek2().cloned()) {
+                self.next()?; // ident
+                self.next()?; // colon
+                named.push((name, self.term()?));
+            } else {
+                pos.push(self.term()?);
+            }
+            match self.peek() {
+                Some(Tok::Comma) => {
+                    self.next()?;
+                    if matches!(self.peek(), Some(Tok::RParen)) { break; }
+                }
+                Some(Tok::RParen) => break,
+                other => bail!("expected , or ) in arg list, got {:?}", other),
+            }
+        }
+        Ok((pos, named))
+    }
+
+    /// Assign positional + named args to a fixed set of output field names.
+    /// Positional fill in order; named fill by name; unassigned default to `_`
+    /// (Term::Wild), so `comment(p, rev, /re/, label: lab)` skips l0/l1. A named
+    /// arg with an unknown name is a parse error (catches typos early).
+    fn assign_outputs(names: &[&str], pos: Vec<Term>, named: Vec<(String, Term)>) -> Result<Vec<Term>> {
+        let mut out: Vec<Option<Term>> = vec![None; names.len()];
+        for (i, t) in pos.into_iter().enumerate() {
+            if i >= names.len() {
+                bail!("too many positional output args (expected one of: {})", names.join(", "));
+            }
+            out[i] = Some(t);
+        }
+        for (name, t) in named {
+            let i = match names.iter().position(|n| *n == name.as_str()) {
+                Some(i) => i,
+                None => bail!("unknown output arg `{name}` (known: {})", names.join(", ")),
+            };
+            out[i] = Some(t);
+        }
+        Ok(out.into_iter().map(|o| o.unwrap_or(Term::Wild)).collect())
+    }
+
+    /// `comment(p, rev, /open/[, /close/], l0: .., l1: .., label: ..)` — one
+    /// regex is sequential mode, two is paired. Both regexes take `$NAME` holes.
+    /// The three outputs (l0, l1, label) accept the kwarg form: positional
+    /// (current), `_` for an unwanted slot, or `name: term` to bind only what
+    /// you need and default the rest to `_`.
     fn comment(&mut self) -> Result<BodyItem> {
         self.ident()?; // comment
         self.expect(Tok::LParen)?;
@@ -560,11 +614,13 @@ impl Parser {
             self.expect(Tok::Comma)?;
             Some(desugar_regex_holes(&r))
         } else { None };
-        let l0 = self.term()?; self.expect(Tok::Comma)?;
-        let l1 = self.term()?; self.expect(Tok::Comma)?;
-        let label = self.term()?;
+        let (pos, named) = self.parse_kwarg_terms()?;
+        let outs = Self::assign_outputs(&["l0", "l1", "label"], pos, named)?;
         self.expect(Tok::RParen)?;
-        Ok(BodyItem::Comment { path, rev, open, close, l0, l1, label })
+        Ok(BodyItem::Comment {
+            path, rev, open, close,
+            l0: outs[0].clone(), l1: outs[1].clone(), label: outs[2].clone(),
+        })
     }
 
     fn closure(&mut self) -> Result<BodyItem> {

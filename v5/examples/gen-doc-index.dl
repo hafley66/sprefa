@@ -123,7 +123,7 @@ doc_title(path, title) <- doc_node(path, _, "heading", title, "").
 # and plain `//` (-> the comment text). One region per //! line in sequential mode.
 rel mod_doc(path: file, line: int, summary: text).
 mod_doc(path, l0, summary) <- scan("WORK", "v5/src/**/*.rs", path, rev),
-  comment(path, rev, /^!\s?(?<s>.+)/, l0, l1, summary).
+  comment(path, rev, /^!\s?(?<s>.+)/, l0, label: summary).
 
 # First //! line per file: aggregate to the min line, then join back for its text.
 # (Source rules can't join derived rels; this is the extract-then-join split.)
@@ -136,7 +136,7 @@ mod_first(path, line, summary) <- mod_first_line(path, line), mod_doc(path, line
 # Re-locate this file's own marker pair every tick.
 rel block(p: file, l0: int, l1: int).
 block(p, l0, l1) <- scan("WORK", "v5/examples/gen-doc-index.dl", p, rev),
-  comment(p, rev, /BEGIN: docmap/, /END:/, l0, l1, lab).
+  comment(p, rev, /BEGIN: docmap/, /END:/, l0, l1).
 
 gen(p, l0, l1, "# - md  {title}  ({path})") <- block(p, l0, l1), doc_title(path, title).
 gen(p, l0, l1, "# - rs  {path}:{line}  {summary}") <- block(p, l0, l1), mod_first(path, line, summary).

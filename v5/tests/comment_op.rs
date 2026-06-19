@@ -75,3 +75,65 @@ fn regions_join_other_relations_by_line_interval() {
     assert!(out.contains("prod\t2"), "{out}");
     assert!(out.contains("dev\t4"), "{out}");
 }
+
+/// `comment(p, rev, /re/, label: name)` — the kwarg form binds only the named
+/// output and defaults the rest to `_`. No throwaway l0/l1 vars needed.
+#[test]
+fn kwarg_binds_only_the_named_output() {
+    let d = sandbox("kwarg");
+    fs::write(d.join("deploy.sh"),
+        "# SECTION: build\nstep a\n# SECTION: ship\nstep b\n").unwrap();
+    let (code, out, err) = run(&d, concat!(
+        "rel named(p: file, name: text).\n",
+        "named(p, name) <- scan(\"WORK\", \"*.sh\", p, rev), ",
+        "comment(p, rev, /SECTION: $name/, label: name).\n",
+        "? named(p, name).\n"));
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("build"), "kwarg label must bind build:\n{out}");
+    assert!(out.contains("ship"), "kwarg label must bind ship:\n{out}");
+}
+
+/// `comment(p, rev, /re/, _, _, name)` — wildcard form drops the unwanted slots.
+#[test]
+fn wildcard_outputs_drop_unwanted_slots() {
+    let d = sandbox("wild");
+    fs::write(d.join("deploy.sh"),
+        "# SECTION: build\nstep a\n# SECTION: ship\nstep b\n").unwrap();
+    let (code, out, err) = run(&d, concat!(
+        "rel named(p: file, name: text).\n",
+        "named(p, name) <- scan(\"WORK\", \"*.sh\", p, rev), ",
+        "comment(p, rev, /SECTION: $name/, _, _, name).\n",
+        "? named(p, name).\n"));
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("build") && out.contains("ship"), "{out}");
+}
+
+/// `comment(p, rev, /re/, l0, label: name)` — positional prefix then kwarg skips
+/// the middle (l1) output. The form used in gen-doc-index.dl.
+#[test]
+fn mixed_positional_then_kwarg_skips_middle() {
+    let d = sandbox("mixed");
+    fs::write(d.join("deploy.sh"),
+        "# SECTION: build\nstep a\n# SECTION: ship\nstep b\n").unwrap();
+    let (code, out, err) = run(&d, concat!(
+        "rel first(p: file, l0: int, name: text).\n",
+        "first(p, l0, name) <- scan(\"WORK\", \"*.sh\", p, rev), ",
+        "comment(p, rev, /SECTION: $name/, l0, label: name).\n",
+        "? first(p, l0, name).\n"));
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("\t1\tbuild"), "l0 positional + label kwarg:\n{out}");
+    assert!(out.contains("\t3\tship"), "{out}");
+}
+
+/// A typo'd output name is a parse error, caught at parse time.
+#[test]
+fn unknown_kwarg_name_is_a_parse_error() {
+    let d = sandbox("badkwarg");
+    fs::write(d.join("a.sh"), "# x\n").unwrap();
+    let (code, _out, err) = run(&d, concat!(
+        "rel x(p: file).\n",
+        "x(p) <- scan(\"WORK\", \"*.sh\", p, rev), ",
+        "comment(p, rev, /./, bogus: y).\n"));
+    assert_ne!(code, 0, "expected parse failure");
+    assert!(err.contains("unknown output arg"), "expected unknown-arg diagnostic:\n{err}");
+}

@@ -3976,9 +3976,9 @@ fn parse_file(
                 binds = next;
             }
             BodyItem::Comment { open, close, l0, l1, label, .. } => {
-                let l0v = var_of(l0)?;
-                let l1v = var_of(l1)?;
-                let labv = var_of(label)?;
+                let l0v = opt_var(l0)?;
+                let l1v = opt_var(l1)?;
+                let labv = opt_var(label)?;
                 if !re_cache.contains_key(open) { re_cache.insert(open.clone(), Regex::new(open)?); }
                 if let Some(c) = close {
                     if !re_cache.contains_key(c) { re_cache.insert(c.clone(), Regex::new(c)?); }
@@ -3990,9 +3990,9 @@ fn parse_file(
                 for b in &binds {
                     for r in &regions {
                         let mut ext = b.clone();
-                        ext.insert(l0v.clone(), Value::Int(r.l0));
-                        ext.insert(l1v.clone(), Value::Int(r.l1));
-                        ext.insert(labv.clone(), Value::Text(r.label.clone()));
+                        if let Some(v) = &l0v { ext.insert(v.clone(), Value::Int(r.l0)); }
+                        if let Some(v) = &l1v { ext.insert(v.clone(), Value::Int(r.l1)); }
+                        if let Some(v) = &labv { ext.insert(v.clone(), Value::Text(r.label.clone())); }
                         if let Some((lo, hi)) = r.label_span {
                             push_span(&r.label, lo, hi, &mut where_bytes);
                         }
@@ -4059,6 +4059,17 @@ fn str_of(t: &Term) -> Result<String> {
 }
 fn var_of(t: &Term) -> Result<String> {
     match t { Term::Var(v) => Ok(v.clone()), _ => bail!("expected variable, got {t:?}") }
+}
+
+/// Like `var_of` but accepts `Term::Wild` (`_`) — returns None so the caller
+/// skips binding that output. Backs the kwarg/`_` output forms: an unmentioned
+/// or `_` op output produces its row value but binds nothing.
+fn opt_var(t: &Term) -> Result<Option<String>> {
+    match t {
+        Term::Var(v) => Ok(Some(v.clone())),
+        Term::Wild => Ok(None),
+        other => bail!("expected variable or `_`, got {other:?}"),
+    }
 }
 
 /// Build an interpolated string from bindings: `"${ty}::${name}"` -> "Foo::bar".
