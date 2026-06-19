@@ -83,7 +83,7 @@ fn rows(sec: &str) -> Vec<Vec<String>> {
 #[test]
 fn dataflow_rels_are_reserved() {
     let d = sandbox("reserved");
-    for rel in ["df_node", "df_edge", "loop_over"] {
+    for rel in ["df_node", "df_edge", "loop_over", "allocates"] {
         let prog = format!("rel {rel}(a: text).\n? {rel}(\"x\").\n");
         let (code, _out, err) = run(&d, &prog);
         assert_ne!(code, 0, "{rel} must be reserved (expected error):\n{err}");

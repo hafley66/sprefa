@@ -165,6 +165,7 @@ pub struct DataflowFacts {
     pub nodes: Vec<DfNode>,
     pub edges: Vec<DfEdge>,
     pub loops: Vec<LoopFact>,
+    pub allocators: std::collections::HashSet<String>, // fn syms whose body builds a collection
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -2101,6 +2102,35 @@ fn push_node(
     id
 }
 
+/// A call whose callee is a collection constructor (`Vec::new`, `HashMap::new`,
+/// `String::new`, ...) marks its enclosing fn as allocating — the cost signal
+/// for the loop-invariant-call flag. Conservative: catches the common shapes,
+/// may miss ad-hoc allocators behind wrappers or macros.
+fn is_allocator_call(e: &syn::Expr) -> bool {
+    if let syn::Expr::Path(p) = e {
+        let segs: Vec<String> = p.path.segments.iter().map(|s| s.ident.to_string()).collect();
+        let full = segs.join("::");
+        if full.ends_with("::new") {
+            return segs.iter().any(|s| matches!(s.as_str(),
+                "Vec" | "HashMap" | "BTreeMap" | "HashSet" | "BTreeSet" | "VecDeque"
+                | "String" | "LinkedList"));
+        }
+        if matches!(full.as_str(), "Vec::with_capacity" | "HashMap::with_capacity" | "String::with_capacity") {
+            return true;
+        }
+    }
+    false
+}
+
+/// A method that builds a fresh owned value per call: `.collect()`, `.to_vec()`,
+/// `.to_string()`, `.to_owned()`, `.clone()`. Conservative — `.clone()` of a
+/// cheap-Copy type does not allocate, but the false positive is benign for a
+/// suspect-list filter.
+fn is_allocator_method(ident: &syn::Ident) -> bool {
+    matches!(ident.to_string().as_str(),
+        "collect" | "to_vec" | "to_string" | "to_owned" | "clone" | "format")
+}
+
 /// Post-order value flow for one expression. Returns the node id for `e` and
 /// emits every internal edge as a side effect.
 fn flow_expr(
@@ -2126,6 +2156,7 @@ fn flow_expr(
         // f(args): each argument flows into the call result. The callee path is
         // the target, not a value in, so it gets no flow edge.
         syn::Expr::Call(c) => {
+            if is_allocator_call(&c.func) { out.allocators.insert(fn_sym.to_string()); }
             let mut children = Vec::new();
             for arg in &c.args {
                 children.push(flow_expr(arg, file, fn_sym, scope, out));
@@ -2138,6 +2169,7 @@ fn flow_expr(
         }
         // recv.m(args): receiver + args flow into the result; method name skipped.
         syn::Expr::MethodCall(m) => {
+            if is_allocator_method(&m.method) { out.allocators.insert(fn_sym.to_string()); }
             let mut children = vec![flow_expr(&m.receiver, file, fn_sym, scope, out)];
             for arg in &m.args {
                 children.push(flow_expr(arg, file, fn_sym, scope, out));

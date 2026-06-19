@@ -78,14 +78,14 @@ const TYPE_RELS: [&str; 5] =
 /// rev-aware source of truth (same split as type_edge / type_edge_rev).
 /// Symbols are `file::kind::name`, the same shape `type_entity` uses, so the
 /// call and type graphs share nodes and a join reaches both.
-const CALL_RELS: [&str; 4] = ["call_def", "call_site", "call_edge", "call_edge_rev"];
+const CALL_RELS: [&str; 5] = ["call_def", "call_site", "call_edge", "call_edge_rev", "call_name"];
 
 /// Intra-procedural dataflow lift: `df_node(id, kind, var, fn, file, line)` is a
 /// value-bearing program point, `df_edge(from, to)` is local value flow. A rule
 /// `df_reaches(a,b) <- closure(df_edge)` walks the lifted graph on the shared SCC
 /// engine. See `typegraph::DataflowFacts`. Approximate (no SSA / aliasing /
 /// interprocedural stitching) but live end to end.
-const DATAFLOW_RELS: [&str; 3] = ["df_node", "df_edge", "loop_over"];
+const DATAFLOW_RELS: [&str; 4] = ["df_node", "df_edge", "loop_over", "allocates"];
 
 /// Compiler-backed SCIP importer. `scip_edge` is file-to-file dependency data
 /// extracted from definition/reference occurrences in an existing index.scip.
@@ -160,6 +160,10 @@ fn call_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "call_edge_rev".into(), cols: vec![
             c("caller", Type::Text), c("callee", Type::Text),
             c("kind", Type::Text), c("rev", Type::Text)] },
+        // def sym -> bare callable name, so rules can resolve a call_site's
+        // callee text to the set of candidate def syms (then filter, e.g. by
+        // allocates). One row per def; a bare name may map to several syms.
+        RelDecl { name: "call_name".into(), cols: vec![c("sym", Type::Text), c("name", Type::Text)] },
     ]
 }
 
@@ -177,6 +181,10 @@ fn dataflow_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "loop_over".into(), cols: vec![
             c("file", Type::Path), c("start", Type::Int), c("end", Type::Int),
             c("var", Type::Text), c("collection", Type::Text), c("fn", Type::Text)] },
+        // one row per fn whose body builds a collection (Vec/HashMap/String ctor
+        // or .collect/.clone/.to_string). The cost signal that cuts the
+        // loop-invariant-call suspect list down to recomputation candidates.
+        RelDecl { name: "allocates".into(), cols: vec![c("fn", Type::Text)] },
     ]
 }
 
@@ -2480,12 +2488,14 @@ impl Engine {
         let mut def_rows: Vec<Vec<Value>> = Vec::new();
         let mut site_rows: Vec<Vec<Value>> = Vec::new();
         let mut edge_rev_rows: Vec<Vec<Value>> = Vec::new();
+        let mut name_rows: Vec<Vec<Value>> = Vec::new();
         let mut seen_def: HashSet<&str> = HashSet::new();
         let mut seen_edge: HashSet<(String, String, &str)> = HashSet::new();
         for (_path, rev, f) in &facts {
             for d in &f.defs {
                 if seen_def.insert(d.sym.as_str()) {
                     def_rows.push(vec![t(&d.sym), t(d.kind.tag()), t(&d.file), i(d.line), i(d.end)]);
+                    name_rows.push(vec![t(&d.sym), t(&d.name)]);
                 }
             }
             for s in &f.sites {
@@ -2508,6 +2518,7 @@ impl Engine {
         self.refresh_rel("call_def", &["sym", "kind", "file", "line", "end"], &def_rows)?;
         self.refresh_rel("call_site", &["caller", "callee", "file", "line"], &site_rows)?;
         self.refresh_rel("call_edge_rev", &["caller", "callee", "kind", "rev"], &edge_rev_rows)?;
+        self.refresh_rel("call_name", &["sym", "name"], &name_rows)?;
         self.rebuild_legacy_call_rels()?;
         Ok(())
     }
@@ -2555,6 +2566,7 @@ impl Engine {
         let mut node_rows: Vec<Vec<Value>> = Vec::new();
         let mut edge_rows: Vec<Vec<Value>> = Vec::new();
         let mut loop_rows: Vec<Vec<Value>> = Vec::new();
+        let mut alloc_rows: Vec<Vec<Value>> = Vec::new();
         let mut seen_node: HashSet<&str> = HashSet::new();
         let mut seen_edge: HashSet<(&str, &str)> = HashSet::new();
         let mut seen_loop: HashSet<(&str, u32)> = HashSet::new();
@@ -2574,11 +2586,15 @@ impl Engine {
                     loop_rows.push(vec![t(&l.file), i(l.start), i(l.end), t(&l.var), t(&l.collection), t(&l.fn_sym)]);
                 }
             }
+            for fn_sym in &f.allocators {
+                alloc_rows.push(vec![t(fn_sym)]);
+            }
         }
 
         self.refresh_rel("df_node", &["id", "kind", "var", "fn", "file", "line"], &node_rows)?;
         self.refresh_rel("df_edge", &["from", "to"], &edge_rows)?;
         self.refresh_rel("loop_over", &["file", "start", "end", "var", "collection", "fn"], &loop_rows)?;
+        self.refresh_rel("allocates", &["fn"], &alloc_rows)?;
         Ok(())
     }
 
