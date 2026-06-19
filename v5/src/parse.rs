@@ -461,36 +461,66 @@ impl Parser {
         Ok(BodyItem::Cmd { path, rev, template, line, out })
     }
 
-    /// `gen("path", "tmpl") <- body.` (file form) or
-    /// `gen(p, l0, l1, "tmpl") <- body.` (splice form). `gen` is a reserved
-    /// head; the body parses like any rule body.
+    /// `gen("path", "tmpl") <- body.` (file form),
+    /// `gen(p, l0, l1, "tmpl") <- body.` (line-splice form), or
+    /// `gen(:mode, p, lo, hi, "tmpl") <- body.` (byte-splice form, port of v4
+    /// `write_cursor`). `gen` is a reserved head; the body parses like any rule body.
     fn gen_rule(&mut self) -> Result<GenRule> {
         self.ident()?; // gen
         self.expect(Tok::LParen)?;
-        let mut args: Vec<Term> = vec![self.term()?];
-        while matches!(self.peek(), Some(Tok::Comma)) {
-            self.next()?;
-            args.push(self.term()?);
-        }
-        self.expect(Tok::RParen)?;
-        let tmpl_of = |t: Term| -> Result<String> {
-            match t {
-                Term::Str(s) => Ok(s),
+        // The byte-splice form leads with a `:mode` atom (`:replace`/`:append`/
+        // `:prepend`/`:wrap`); peek for Tok::Colon to dispatch before falling
+        // back to the term-list parser used by the file/line-splice forms.
+        let (target, row_tmpl) = if matches!(self.peek(), Some(Tok::Colon)) {
+            self.next()?; // colon
+            let mode_ident = self.ident()?;
+            let mode = match mode_ident.as_str() {
+                "replace" => SpliceMode::Replace,
+                "append" => SpliceMode::Append,
+                "prepend" => SpliceMode::Prepend,
+                "wrap" => SpliceMode::Wrap,
+                other => bail!("unknown splice mode :{other}; expected :replace|:append|:prepend|:wrap"),
+            };
+            self.expect(Tok::Comma)?;
+            let path = self.term()?;
+            self.expect(Tok::Comma)?;
+            let lo = self.term()?;
+            self.expect(Tok::Comma)?;
+            let hi = self.term()?;
+            self.expect(Tok::Comma)?;
+            let tmpl_term = self.term()?;
+            self.expect(Tok::RParen)?;
+            let row_tmpl = match tmpl_term {
+                Term::Str(s) => s,
                 other => bail!("gen expects a template string here, got {other:?}"),
+            };
+            (GenTarget::Cursor { mode, path, lo, hi }, row_tmpl)
+        } else {
+            let mut args: Vec<Term> = vec![self.term()?];
+            while matches!(self.peek(), Some(Tok::Comma)) {
+                self.next()?;
+                args.push(self.term()?);
             }
-        };
-        let (target, row_tmpl) = match args.len() {
-            2 => {
-                let mut it = args.into_iter();
-                let path_tmpl = tmpl_of(it.next().unwrap())?;
-                (GenTarget::File { path_tmpl }, tmpl_of(it.next().unwrap())?)
+            self.expect(Tok::RParen)?;
+            let tmpl_of = |t: Term| -> Result<String> {
+                match t {
+                    Term::Str(s) => Ok(s),
+                    other => bail!("gen expects a template string here, got {other:?}"),
+                }
+            };
+            match args.len() {
+                2 => {
+                    let mut it = args.into_iter();
+                    let path_tmpl = tmpl_of(it.next().unwrap())?;
+                    (GenTarget::File { path_tmpl }, tmpl_of(it.next().unwrap())?)
+                }
+                4 => {
+                    let mut it = args.into_iter();
+                    let (path, l0, l1) = (it.next().unwrap(), it.next().unwrap(), it.next().unwrap());
+                    (GenTarget::Splice { path, l0, l1 }, tmpl_of(it.next().unwrap())?)
+                }
+                n => bail!("gen expects 2 args (\"path\", \"tmpl\"), 4 (p, l0, l1, \"tmpl\"), or 5 (:mode, p, lo, hi, \"tmpl\"); got {n}"),
             }
-            4 => {
-                let mut it = args.into_iter();
-                let (path, l0, l1) = (it.next().unwrap(), it.next().unwrap(), it.next().unwrap());
-                (GenTarget::Splice { path, l0, l1 }, tmpl_of(it.next().unwrap())?)
-            }
-            n => bail!("gen expects 2 args (\"path\", \"tmpl\") or 4 (p, l0, l1, \"tmpl\"), got {n}"),
         };
         self.expect(Tok::Arrow)?;
         let mut body = Vec::new();

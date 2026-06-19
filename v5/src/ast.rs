@@ -230,6 +230,31 @@ pub enum GenTarget {
     /// (exclusive of both), the `comment` op's paired coordinates. Rows group
     /// by (path, l0, l1).
     Splice { path: Term, l0: Term, l1: Term },
+    /// `gen(:mode, p, lo, hi, ...)`: byte-accurate splice into a WORK file at
+    /// `[lo, hi)` driven by `mode`. The port of v4's `write_cursor` to v5: lo/hi
+    /// come from the ref spine (`ref(id, _, path, lo, hi)`), so spine-captured
+    /// sites are editable in place. One read-modify-write per file, regions
+    /// applied right-to-left so earlier offsets stay valid across the batch.
+    Cursor { mode: SpliceMode, path: Term, lo: Term, hi: Term },
+}
+
+/// Mode for `GenTarget::Cursor`, ported from v4's `WriteMode`:
+///   `:replace`  splice value into [lo, hi)              (the only line-Splice mode)
+///   `:append`   insert value at hi                       (lo ignored at apply time)
+///   `:prepend`  insert value at lo                       (hi ignored at apply time)
+///   `:wrap`     insert value at lo AND hi                (surrounds [lo, hi))
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SpliceMode { Replace, Append, Prepend, Wrap }
+
+impl SpliceMode {
+    pub fn tag(self) -> &'static str {
+        match self {
+            SpliceMode::Replace => "replace",
+            SpliceMode::Append => "append",
+            SpliceMode::Prepend => "prepend",
+            SpliceMode::Wrap => "wrap",
+        }
+    }
 }
 
 /// `gen(<target>, "row template") <- body.` — the codegen sink. The body is an

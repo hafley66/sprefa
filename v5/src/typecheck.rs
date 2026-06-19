@@ -174,8 +174,14 @@ pub fn normalize_program(prog: &mut Program, dl_path: &str) -> Vec<TypeDiag> {
             }
             Item::Query(q) => normalize_atom(&mut q.head, dl_path, &mut diags),
             Item::Gen(g) => {
-                if let GenTarget::Splice { path, l0, l1 } = &mut g.target {
-                    for t in [path, l0, l1] { normalize_term(t, dl_path, &mut diags); }
+                match &mut g.target {
+                    GenTarget::Splice { path, l0, l1 } => {
+                        for t in [path, l0, l1] { normalize_term(t, dl_path, &mut diags); }
+                    }
+                    GenTarget::Cursor { path, lo, hi, .. } => {
+                        for t in [path, lo, hi] { normalize_term(t, dl_path, &mut diags); }
+                    }
+                    GenTarget::File { .. } => {}
                 }
                 for b in &mut g.body { normalize_body_item(b, dl_path, &mut diags); }
             }

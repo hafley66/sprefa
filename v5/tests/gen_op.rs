@@ -153,3 +153,101 @@ fn splice_form_rewrites_between_markers_and_converges() {
     let (code, _, err) = run(&d, prog);
     assert_eq!(code, 0, "warm splice must converge without writing: {err}");
 }
+
+// ─── byte-cursor mode (gen(:mode, p, lo, hi, ...)) ──────────────────────
+// Port of v4's `write_cursor`. The four modes (replace/append/prepend/wrap)
+// splice at byte offsets [lo, hi) sourced from the ref spine. The gate tests
+// below drive the cursor from a literal fact with known offsets so they prove
+// the mode dispatch and right-to-left batching in isolation; a follow-up test
+// wires the spine (match -> ref) once match emits an id column.
+
+/// `:replace` splices the rendered rows into [lo, hi). One row at [1, 4) of
+/// "ABCDE" yields "AXYZE". That's the mode that line-splice already does at
+/// line granularity; proving it at byte granularity is the floor.
+#[test]
+fn cursor_replace_splices_into_byte_window() {
+    let d = sandbox("cursor_replace");
+    fs::write(d.join("data.txt"), "ABCDE").unwrap();
+    let prog = concat!(
+        "rel hit(p: file, lo: int, hi: int).\n",
+        "hit(\"data.txt\", 1, 4).\n",
+        "gen(:replace, p, lo, hi, \"XYZ\") <- hit(p, lo, hi).\n",
+    );
+    let (code, _, err) = run(&d, prog);
+    assert_eq!(code, 0, "{err}");
+    let got = fs::read_to_string(d.join("data.txt")).unwrap();
+    assert_eq!(got, "AXYZE");
+}
+
+/// `:append` inserts the payload at `hi` (leaving [lo, hi) intact). On
+/// "ABCDE" with [0, 3) -> "ABC", append at hi=3 yields "ABC<<A>>DEF".
+#[test]
+fn cursor_append_inserts_at_hi() {
+    let d = sandbox("cursor_append");
+    fs::write(d.join("data.txt"), "ABCDEF").unwrap();
+    let prog = concat!(
+        "rel hit(p: file, lo: int, hi: int).\n",
+        "hit(\"data.txt\", 0, 3).\n",
+        "gen(:append, p, lo, hi, \"<<A>>\") <- hit(p, lo, hi).\n",
+    );
+    let (code, _, err) = run(&d, prog);
+    assert_eq!(code, 0, "{err}");
+    let got = fs::read_to_string(d.join("data.txt")).unwrap();
+    assert_eq!(got, "ABC<<A>>DEF");
+}
+
+/// `:prepend` inserts the payload at `lo` (leaving [lo, hi) intact). On
+/// "ABCDEF" with [3, 6) -> "DEF", prepend at lo=3 yields "ABC<<P>>DEF".
+#[test]
+fn cursor_prepend_inserts_at_lo() {
+    let d = sandbox("cursor_prepend");
+    fs::write(d.join("data.txt"), "ABCDEF").unwrap();
+    let prog = concat!(
+        "rel hit(p: file, lo: int, hi: int).\n",
+        "hit(\"data.txt\", 3, 6).\n",
+        "gen(:prepend, p, lo, hi, \"<<P>>\") <- hit(p, lo, hi).\n",
+    );
+    let (code, _, err) = run(&d, prog);
+    assert_eq!(code, 0, "{err}");
+    let got = fs::read_to_string(d.join("data.txt")).unwrap();
+    assert_eq!(got, "ABC<<P>>DEF");
+}
+
+/// `:wrap` inserts the payload at BOTH lo and hi, surrounding [lo, hi). On
+/// "ABCDEF" with [1, 5), wrap yields "A<W>BCDE<W>F". This is the mode that
+/// line-splice cannot express.
+#[test]
+fn cursor_wrap_surrounds_byte_window() {
+    let d = sandbox("cursor_wrap");
+    fs::write(d.join("data.txt"), "ABCDEF").unwrap();
+    let prog = concat!(
+        "rel hit(p: file, lo: int, hi: int).\n",
+        "hit(\"data.txt\", 1, 5).\n",
+        "gen(:wrap, p, lo, hi, \"<W>\") <- hit(p, lo, hi).\n",
+    );
+    let (code, _, err) = run(&d, prog);
+    assert_eq!(code, 0, "{err}");
+    let got = fs::read_to_string(d.join("data.txt")).unwrap();
+    assert_eq!(got, "A<W>BCDE<W>F");
+}
+
+/// Two `:replace` regions in one file must batch into a single write with
+/// regions applied right-to-left so the earlier offset stays valid. On
+/// "ABCDEFGH" replace [1, 3) and [5, 7): right-to-left does [5, 7) first
+/// ("ABCDE__GH") then [1, 3) ("A###DE__GH"). Left-to-right would corrupt the
+/// second offset, producing "A###DE^---^H" or worse.
+#[test]
+fn cursor_two_regions_apply_right_to_left() {
+    let d = sandbox("cursor_order");
+    fs::write(d.join("data.txt"), "ABCDEFGH").unwrap();
+    let prog = concat!(
+        "rel hit(p: file, lo: int, hi: int, payload: text).\n",
+        "hit(\"data.txt\", 1, 3, \"###\").\n",
+        "hit(\"data.txt\", 5, 7, \"__\").\n",
+        "gen(:replace, p, lo, hi, \"{payload}\") <- hit(p, lo, hi, payload).\n",
+    );
+    let (code, _, err) = run(&d, prog);
+    assert_eq!(code, 0, "{err}");
+    let got = fs::read_to_string(d.join("data.txt")).unwrap();
+    assert_eq!(got, "A###DE__H");
+}

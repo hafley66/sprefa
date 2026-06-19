@@ -3099,22 +3099,27 @@ impl Engine {
         // content, so a second rule splicing the same file must not re-read a
         // file an earlier rule already grew.
         let mut splices = Splices::default();
+        // Byte cursors (gen(:mode, ...)) accumulate the same way, separate from
+        // line splices because their coordinates and apply semantics differ.
+        let mut cursors = Cursors::default();
         for item in &prog.items {
-            if let Item::Gen(g) = item { self.run_gen(g, &mut written, &mut splices)?; }
+            if let Item::Gen(g) = item { self.run_gen(g, &mut written, &mut splices, &mut cursors)?; }
         }
         self.apply_splices(&splices, &mut written)?;
+        self.apply_cursors(&cursors, &mut written)?;
         if !written.is_empty() && !quiet {
             eprintln!("[gen] wrote {}", written.join(", "));
         }
         Ok(())
     }
 
-    fn run_gen(&mut self, g: &GenRule, written: &mut Vec<String>, splices: &mut Splices) -> Result<()> {
+    fn run_gen(&mut self, g: &GenRule, written: &mut Vec<String>, splices: &mut Splices, cursors: &mut Cursors) -> Result<()> {
         // Target vars lead the SELECT so grouping reads prefix columns; the
         // ORDER BY over all vars makes render order deterministic.
         let target_vars: Vec<String> = match &g.target {
             GenTarget::File { path_tmpl } => tmpl_holes(path_tmpl),
             GenTarget::Splice { path, l0, l1 } => vec![var_of(path)?, var_of(l0)?, var_of(l1)?],
+            GenTarget::Cursor { path, lo, hi, .. } => vec![var_of(path)?, var_of(lo)?, var_of(hi)?],
         };
         let mut vars = target_vars.clone();
         for v in tmpl_holes(&g.row_tmpl) {
@@ -3181,6 +3186,25 @@ impl Engine {
                     splices.groups.entry(key).or_default().push(render_tmpl(&g.row_tmpl, m));
                 }
             }
+            GenTarget::Cursor { mode, .. } => {
+                // Byte-accurate splice into [lo, hi); rows group by (path, lo,
+                // hi, mode) but apply per-file across the union of regions. lo
+                // and hi come from the ref spine, so a typical rule joins match
+                // -> ref(id, _, path, lo, hi) -> gen(:mode, path, lo, hi, ...).
+                for m in &rows {
+                    let path = m[&vars[0]].clone();
+                    let lo: i64 = m[&vars[1]].parse()
+                        .map_err(|_| anyhow::anyhow!("gen :{} lo must be an int, got `{}`", mode.tag(), m[&vars[1]]))?;
+                    let hi: i64 = m[&vars[2]].parse()
+                        .map_err(|_| anyhow::anyhow!("gen :{} hi must be an int, got `{}`", mode.tag(), m[&vars[2]]))?;
+                    if hi < lo {
+                        bail!("gen :{} needs hi >= lo, got {lo}..{hi} in {path}", mode.tag());
+                    }
+                    let key = (path.clone(), lo, hi, *mode);
+                    if !cursors.groups.contains_key(&key) { cursors.keys.push(key.clone()); }
+                    cursors.groups.entry(key).or_default().push(render_tmpl(&g.row_tmpl, m));
+                }
+            }
         }
         Ok(())
     }
@@ -3214,6 +3238,55 @@ impl Engine {
         }
         Ok(())
     }
+
+    /// Apply byte-accurate gen(:mode, ...) cursors per file. Port of v4's
+    /// `WriteCursorComponent::render_batch`: group by path, sort regions
+    /// right-to-left by lo so earlier offsets stay valid as the buffer grows,
+    /// then dispatch on mode. :wrap inserts at both endpoints; the other three
+    /// modes splice into the [lo, hi) window, at lo, at hi, or replace it
+    /// outright. One read-modify-write per file. Skipped silently if the
+    /// resulting bytes match the original.
+    fn apply_cursors(&self, cursors: &Cursors, written: &mut Vec<String>) -> Result<()> {
+        let mut files: Vec<&str> = Vec::new();
+        for (p, _, _, _) in &cursors.keys { if !files.contains(&p.as_str()) { files.push(p); } }
+        for p in files {
+            let full = self.root.join(p);
+            let original = std::fs::read(&full)
+                .map_err(|e| anyhow::anyhow!("gen :mode target {p}: {e}"))?;
+            let mut regions: Vec<&(String, i64, i64, SpliceMode)> =
+                cursors.keys.iter().filter(|k| k.0 == p).collect();
+            // Right-to-left by lo so prior inserts don't shift later offsets.
+            regions.sort_by_key(|k| std::cmp::Reverse(k.1));
+            let mut buf: Vec<u8> = original.clone();
+            for k in regions {
+                let (lo, hi, mode) = (k.1 as usize, k.2 as usize, k.3);
+                let lo = lo.min(buf.len());
+                let hi = hi.min(buf.len()).max(lo);
+                // Each row in the group becomes one insertion/splice. Rows
+                // already share (path, lo, hi, mode); render their templates in
+                // order and concatenate so multi-row groups behave like
+                // line-splice (rows join into one payload).
+                let payload: Vec<u8> = cursors.groups[k].iter()
+                    .flat_map(|s| s.as_bytes().iter().copied())
+                    .collect();
+                match mode {
+                    SpliceMode::Replace => { buf.splice(lo..hi, payload); }
+                    SpliceMode::Append  => { buf.splice(hi..hi, payload); }
+                    SpliceMode::Prepend => { buf.splice(lo..lo, payload); }
+                    SpliceMode::Wrap    => {
+                        // Insert at hi first so the lo offset stays valid, then lo.
+                        buf.splice(hi..hi, payload.clone());
+                        buf.splice(lo..lo, payload);
+                    }
+                }
+            }
+            if buf != original {
+                std::fs::write(&full, &buf)?;
+                written.push(p.to_string());
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Splice regions collected across every gen rule in a tick: key order is
@@ -3222,6 +3295,17 @@ impl Engine {
 struct Splices {
     keys: Vec<(String, i64, i64)>,
     groups: HashMap<(String, i64, i64), Vec<String>>,
+}
+
+/// Byte-cursor regions collected across every gen(:mode, ...) rule in a tick.
+/// The key is (path, lo, hi, mode); rows per key join into one payload at
+/// apply time. Separate from `Splices` because the coordinates and apply
+/// semantics differ (byte offsets vs line numbers, four modes vs implicit
+/// replace). Ported from v4's `WriteCursorComponent` accumulator.
+#[derive(Default)]
+struct Cursors {
+    keys: Vec<(String, i64, i64, SpliceMode)>,
+    groups: HashMap<(String, i64, i64, SpliceMode), Vec<String>>,
 }
 
 /// `{var}` holes in a gen template, first-appearance order, deduped. A brace
