@@ -83,9 +83,12 @@ const CALL_RELS: [&str; 5] = ["call_def", "call_site", "call_edge", "call_edge_r
 /// Intra-procedural dataflow lift: `df_node(id, kind, var, fn, file, line)` is a
 /// value-bearing program point, `df_edge(from, to)` is local value flow. A rule
 /// `df_reaches(a,b) <- closure(df_edge)` walks the lifted graph on the shared SCC
-/// engine. See `typegraph::DataflowFacts`. Approximate (no SSA / aliasing /
-/// interprocedural stitching) but live end to end.
-const DATAFLOW_RELS: [&str; 4] = ["df_node", "df_edge", "loop_over", "allocates"];
+/// engine. `loop_over` records each loop's span + variable for the
+/// loop-invariant-call flag; `allocates` marks fns whose body builds a
+/// collection; `nest(call_id, loop_id, depth, collection)` records each call's
+/// enclosing loop nest, composing over `call_edge` into symbolic Big-O
+/// ("depth-N over C") without resolving trip counts. See `typegraph::DataflowFacts`.
+const DATAFLOW_RELS: [&str; 5] = ["df_node", "df_edge", "loop_over", "allocates", "nest"];
 
 /// Compiler-backed SCIP importer. `scip_edge` is file-to-file dependency data
 /// extracted from definition/reference occurrences in an existing index.scip.
@@ -185,6 +188,14 @@ fn dataflow_rel_decls() -> Vec<RelDecl> {
         // or .collect/.clone/.to_string). The cost signal that cuts the
         // loop-invariant-call suspect list down to recomputation candidates.
         RelDecl { name: "allocates".into(), cols: vec![c("fn", Type::Text)] },
+        // one row per (call, enclosing loop) pair: `call_id` is the call_res
+        // node, `loop_id` joins back to loop_over via "{file}:{start}", `depth`
+        // is the loop's nesting rank (1 = outermost), `collection` is the inner
+        // loop's iterated collection text ("" until extractors fill it). The
+        // raw material for symbolic Big-O composed over call_edge.
+        RelDecl { name: "nest".into(), cols: vec![
+            c("call_id", Type::Text), c("loop_id", Type::Text),
+            c("depth", Type::Int), c("collection", Type::Text)] },
     ]
 }
 
@@ -1928,7 +1939,7 @@ impl Engine {
                     bail!("{} is a built-in call-graph relation (call_def / call_site / call_edge / call_edge_rev); pick another name", d.name);
                 }
                 if DATAFLOW_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in dataflow relation (df_node / df_edge); pick another name", d.name);
+                    bail!("{} is a built-in dataflow relation (df_node / df_edge / loop_over / allocates / nest); pick another name", d.name);
                 }
                 if SCIP_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in SCIP relation; pick another name", d.name);
@@ -2567,9 +2578,11 @@ impl Engine {
         let mut edge_rows: Vec<Vec<Value>> = Vec::new();
         let mut loop_rows: Vec<Vec<Value>> = Vec::new();
         let mut alloc_rows: Vec<Vec<Value>> = Vec::new();
+        let mut nest_rows: Vec<Vec<Value>> = Vec::new();
         let mut seen_node: HashSet<&str> = HashSet::new();
         let mut seen_edge: HashSet<(&str, &str)> = HashSet::new();
         let mut seen_loop: HashSet<(&str, u32)> = HashSet::new();
+        let mut seen_nest: HashSet<(&str, &str)> = HashSet::new();
         for f in &facts {
             for n in &f.nodes {
                 if seen_node.insert(n.id.as_str()) {
@@ -2589,12 +2602,18 @@ impl Engine {
             for fn_sym in &f.allocators {
                 alloc_rows.push(vec![t(fn_sym)]);
             }
+            for ns in &f.nests {
+                if seen_nest.insert((ns.call_id.as_str(), ns.loop_id.as_str())) {
+                    nest_rows.push(vec![t(&ns.call_id), t(&ns.loop_id), i(ns.depth), t(&ns.collection)]);
+                }
+            }
         }
 
         self.refresh_rel("df_node", &["id", "kind", "var", "fn", "file", "line"], &node_rows)?;
         self.refresh_rel("df_edge", &["from", "to"], &edge_rows)?;
         self.refresh_rel("loop_over", &["file", "start", "end", "var", "collection", "fn"], &loop_rows)?;
         self.refresh_rel("allocates", &["fn"], &alloc_rows)?;
+        self.refresh_rel("nest", &["call_id", "loop_id", "depth", "collection"], &nest_rows)?;
         Ok(())
     }
 

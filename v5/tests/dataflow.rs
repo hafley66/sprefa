@@ -83,7 +83,7 @@ fn rows(sec: &str) -> Vec<Vec<String>> {
 #[test]
 fn dataflow_rels_are_reserved() {
     let d = sandbox("reserved");
-    for rel in ["df_node", "df_edge", "loop_over", "allocates"] {
+    for rel in ["df_node", "df_edge", "loop_over", "allocates", "nest"] {
         let prog = format!("rel {rel}(a: text).\n? {rel}(\"x\").\n");
         let (code, _out, err) = run(&d, &prog);
         assert_ne!(code, 0, "{rel} must be reserved (expected error):\n{err}");
@@ -434,5 +434,77 @@ fn strict_rule_isolates_pure_recomputation() {
     assert!(
         hits.is_empty(),
         "after hoisting, no fully-loop-invariant allocating call should remain:\n{out}"
+    );
+}
+
+/// THE NEST GATE. A call inside two nested loops must produce exactly two
+/// `nest` rows for that call: depth 1 (outer loop) and depth 2 (inner loop).
+/// The outer loop starts earlier in the source so it sorts first; the rank is
+/// the depth. The shape is what `nest ⨝ call_edge` composes into symbolic
+/// Big-O ("depth-2 over C") without resolving trip counts. Asserting the
+/// 1+2 depth pair on a single doubly-nested call is the decisive check that
+/// the post-pass correctly walks (call_res, enclosing loops).
+#[test]
+fn nest_depth_records_loop_nesting_per_call() {
+    let d = sandbox("nest");
+    fs::create_dir_all(d.join("src")).unwrap();
+    // Two nested loops in `go`, one call `make(o)` in the inner body. `make`
+    // itself calls `Vec::new()` but that call sits in no loop -> zero nest rows
+    // for it. So total nest rows = 2, both for the inner call.
+    fs::write(
+        d.join("src/lib.rs"),
+        "fn make(x: i32) -> Vec<i32> { Vec::new() }\n\
+         fn go(outer: &[i32], inner: &[i32]) {\n    \
+             for o in outer {\n        \
+                 for i in inner {\n            \
+                     let v = make(o);\n            \
+                     let _ = v;\n        \
+                 }\n    \
+             }\n\
+         }\n",
+    )
+    .unwrap();
+    let prog = concat!(
+        "rel seen(path: file).\n",
+        "seen(path) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /./, line).\n",
+        "? nest(call_id, loop_id, depth, collection).\n",
+    );
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "nest extraction must not error:\n{err}");
+
+    let secs = sections(&out);
+    assert!(secs.len() >= 1, "expected nest section:\n{out}");
+    let nests = rows(&secs[0]);
+
+    // DECISIVE: exactly two nest rows, both for the inner call, depths {1, 2}.
+    assert_eq!(
+        nests.len(),
+        2,
+        "expected exactly 2 nest rows (depth 1 + depth 2 for make(o) in the nested loop):\n{out}"
+    );
+    let depths: HashSet<&str> = nests.iter()
+        .filter_map(|r| r.get(2).map(|s| s.as_str()))
+        .collect();
+    assert!(
+        depths.contains("1") && depths.contains("2"),
+        "expected depths {{1, 2}} for the doubly-nested call, got {depths:?}:\n{out}"
+    );
+    // both rows share the same call_id (one call site, two enclosing loops)
+    let call_ids: HashSet<&str> = nests.iter()
+        .filter_map(|r| r.get(0).map(|s| s.as_str()))
+        .collect();
+    assert_eq!(
+        call_ids.len(),
+        1,
+        "both nest rows must reference the same call_id:\n{out}"
+    );
+    // and the loop_ids differ (outer vs inner)
+    let loop_ids: HashSet<&str> = nests.iter()
+        .filter_map(|r| r.get(1).map(|s| s.as_str()))
+        .collect();
+    assert_eq!(
+        loop_ids.len(),
+        2,
+        "nest rows must reference two distinct loop_ids (outer + inner):\n{out}"
     );
 }

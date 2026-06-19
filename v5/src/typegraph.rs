@@ -166,6 +166,7 @@ pub struct DataflowFacts {
     pub edges: Vec<DfEdge>,
     pub loops: Vec<LoopFact>,
     pub allocators: std::collections::HashSet<String>, // fn syms whose body builds a collection
+    pub nests: Vec<NestFact>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -176,6 +177,19 @@ pub struct LoopFact {
     pub var: String,       // loop variable name, "" when none (while/loop)
     pub collection: String, // textual form of the iterated collection, "" when none
     pub fn_sym: String,
+}
+
+/// One row of the `nest` relation: a `call_res` node, the loop it sits in, the
+/// loop's depth in the surrounding nest (1 = outermost), and that loop's
+/// iterated collection. Composed over `call_edge` this gives the symbolic
+/// cost shape "depth-N over C" without resolving trip counts. Emitted by the
+/// post-pass `compute_nests` from already-extracted `DfNode`/`LoopFact` rows.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NestFact {
+    pub call_id: String,
+    pub loop_id: String,    // "{file}:{start}", joins back to loop_over by (file, start)
+    pub depth: u32,         // 1 = outermost enclosing loop
+    pub collection: String, // the inner loop's collection text ("" until extractors fill it)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -311,6 +325,7 @@ fn kt_first_child<'a>(node: tree_sitter::Node<'a>, kind: &str) -> Option<tree_si
 fn kotlin_dataflow_from(root: tree_sitter::Node, src: &[u8], file: &str) -> DataflowFacts {
     let mut out = DataflowFacts::default();
     kt_walk_fns(root, src, file, &mut out);
+    out.nests = compute_nests(&out.nodes, &out.loops);
     out
 }
 
@@ -556,6 +571,7 @@ fn ts_dataflow_from(program: &ts_ast::Program, file: &str, content: &str) -> Dat
     for stmt in &program.body {
         ts_flow_stmt(stmt, file, &starts, &mut out);
     }
+    out.nests = compute_nests(&out.nodes, &out.loops);
     out
 }
 
@@ -2018,6 +2034,35 @@ fn rust_dataflow_from(parsed: &syn::File, file: &str) -> DataflowFacts {
                 }
             }
             _ => {}
+        }
+    }
+    out.nests = compute_nests(&out.nodes, &out.loops);
+    out
+}
+
+/// Post-pass over the lifted graph: for every `call_res` node, find each
+/// enclosing loop in the same fn (by span containment against `LoopFact`) and
+/// emit one `NestFact` per (call, loop) pair. `depth` is the loop's rank in the
+/// nesting: 1 for the outermost enclosing loop, 2 for the next, etc. Structured
+/// loops cannot partially overlap, so sorting the enclosing set by start gives
+/// the nesting order without a separate containment check. The relation
+/// `nest(call_id, loop_id, depth, collection)` then composes over `call_edge`
+/// to give symbolic Big-O ("depth-N over C") without resolving trip counts.
+fn compute_nests(nodes: &[DfNode], loops: &[LoopFact]) -> Vec<NestFact> {
+    let mut out = Vec::new();
+    for n in nodes {
+        if n.kind != "call_res" { continue; }
+        let mut enclosing: Vec<&LoopFact> = loops.iter()
+            .filter(|l| l.fn_sym == n.fn_sym && n.line >= l.start && n.line <= l.end)
+            .collect();
+        enclosing.sort_by_key(|l| l.start);
+        for (i, l) in enclosing.iter().enumerate() {
+            out.push(NestFact {
+                call_id: n.id.clone(),
+                loop_id: format!("{}:{}", l.file, l.start),
+                depth: (i + 1) as u32,
+                collection: l.collection.clone(),
+            });
         }
     }
     out
