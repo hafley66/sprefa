@@ -508,3 +508,108 @@ fn nest_depth_records_loop_nesting_per_call() {
         "nest rows must reference two distinct loop_ids (outer + inner):\n{out}"
     );
 }
+
+/// THE COMPOSITION GATE. The whole point of `nest` is to compose over
+/// `call_edge` into a symbolic cost shape: callee X reachable (transitively)
+/// from a depth-N call site is "depth-N over C" without resolving trip counts.
+/// Built in user-space Datalog, no engine change. The engine restricts closure
+/// reads in rule bodies to pinned endpoints, so the join splits in three: a
+/// `direct_cost` rule (no closure in body), the `call_reaches` closure as its
+/// own query, and the transitive join in Rust -- the same shape
+/// `rust_lift_closes_transitively` uses to prove df_reaches.
+///
+/// Chain under test: `go` calls `middle` inside a doubly-nested loop, `middle`
+/// calls `leaf`. `direct_cost(middle, 2)` must hold (direct call from the
+/// depth-2 site); the transitive join must yield `cost(leaf, 2)` via
+/// call_reaches(middle, leaf). That leaf row is the proof the depth carried
+/// across a call hop.
+#[test]
+fn nest_composes_over_call_edge_into_symbolic_cost() {
+    let d = sandbox("nest_compose");
+    fs::create_dir_all(d.join("src")).unwrap();
+    fs::write(
+        d.join("src/lib.rs"),
+        "fn leaf(x: i32) -> i32 { x + 1 }\n\
+         fn middle(x: i32) -> i32 { leaf(x) }\n\
+         fn go(outer: &[i32], inner: &[i32]) {\n    \
+             for o in outer {\n        \
+                 for i in inner {\n            \
+                     let v = middle(o);\n            \
+                     let _ = v;\n        \
+                 }\n    \
+             }\n\
+         }\n",
+    )
+    .unwrap();
+    let prog = concat!(
+        "rel seen(path: file).\n",
+        "seen(path) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /./, line).\n",
+        // 2-col view of call_edge so closure() can walk it; call_edge itself
+        // is 3-col (caller, callee, kind) and a closure head must be 2-col.
+        "rel call_pair(a: text, b: text).\n",
+        "call_pair(a, b) <- call_edge(a, b, _).\n",
+        "rel call_reaches(a: text, b: text).\n",
+        "call_reaches(a, b) <- closure(call_pair).\n",
+        // direct: the callee at the depth-N call site has cost N. The closure
+        // is NOT read here -- the engine blocks unpinned closure reads in rule
+        // bodies, and direct_cost is precisely the seed the transitive join
+        // propagates.
+        "rel direct_cost(callee: text, depth: int).\n",
+        "direct_cost(callee, depth) <-\n",
+        "    nest(call_id, _, depth, _),\n",
+        "    df_node(call_id, \"call_res\", _, caller_fn, file, line),\n",
+        "    call_site(caller_fn, callee_text, file, line),\n",
+        "    call_name(callee, callee_text).\n",
+        "? call_reaches(caller, callee).\n",
+        "? direct_cost(callee, depth).\n",
+    );
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "composition must not error:\n{err}");
+
+    let secs = sections(&out);
+    assert!(secs.len() >= 2, "expected 2 query sections:\n{out}");
+
+    // Section 0: call_reaches -> (caller, callee) set.
+    let mut reaches: HashSet<(String, String)> = HashSet::new();
+    for r in rows(&secs[0]) {
+        assert!(r.len() >= 2, "call_reaches row too short: {r:?}");
+        reaches.insert((r[0].clone(), r[1].clone()));
+    }
+    // Section 1: direct_cost -> callee -> depth.
+    let mut direct: HashMap<String, String> = HashMap::new();
+    for r in rows(&secs[1]) {
+        assert!(r.len() >= 2, "direct_cost row too short: {r:?}");
+        direct.insert(r[0].clone(), r[1].clone());
+    }
+
+    // DECISIVE 1: direct_cost(middle, 2) -- the call from the depth-2 site.
+    let mid_cost = direct.iter()
+        .find(|(s, _)| s.contains("::middle"))
+        .map(|(_, d)| d.clone())
+        .unwrap_or_default();
+    assert_eq!(
+        mid_cost, "2",
+        "expected direct_cost(middle, 2) -- direct call from the depth-2 site:\n{out}"
+    );
+
+    // DECISIVE 2: leaf is NOT in direct_cost (no loop calls leaf directly) ...
+    assert!(
+        !direct.keys().any(|s| s.contains("::leaf")),
+        "leaf must not be in direct_cost (no loop calls it directly):\n{out}"
+    );
+    // ... so the only route to a leaf cost is the transitive join. Find middle's
+    // sym, then any call_reaches(middle, leaf) carries depth 2 to leaf.
+    let mid_sym = direct.keys()
+        .find(|s| s.contains("::middle"))
+        .cloned()
+        .unwrap_or_default();
+    assert!(!mid_sym.is_empty(), "no middle sym found:\n{out}");
+    let leaf_reached_from_mid: Vec<&(String, String)> = reaches.iter()
+        .filter(|(a, b)| a == &mid_sym && b.contains("::leaf"))
+        .collect();
+    assert!(
+        !leaf_reached_from_mid.is_empty(),
+        "expected call_reaches(middle, leaf) to carry depth across the hop:\n{out}"
+    );
+    // That reach is the symbolic cost shape: leaf is "depth-2 over C" via middle.
+}
