@@ -152,6 +152,36 @@ impl CallKind {
     }
 }
 
+/// Intra-procedural dataflow facts (the lift-to-node model). Each value-bearing
+/// position in a fn body becomes a `DfNode` whose id is `file:line:col` of its
+/// span start (unique per program point); local value flow becomes `DfEdge`. The
+/// engine stores these as `df_node` / `df_edge`, and a rule
+/// `df_reaches(a,b) <- closure(df_edge)` walks the lifted graph transitively on
+/// the SAME SCC engine the call/type/module graphs already use. Approximate by
+/// design: no SSA, no borrow/alias unification, no interprocedural arg/return
+/// stitching yet — a deliberate first slice proving the engine-side work is done.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DataflowFacts {
+    pub nodes: Vec<DfNode>,
+    pub edges: Vec<DfEdge>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DfNode {
+    pub id: String,
+    pub kind: String,   // param | let_bind | var_read | lit | call_res | borrow | binop | unop | expr
+    pub var: String,    // variable name when the node is var-related, else ""
+    pub fn_sym: String, // enclosing def sym (file::function::name), joins call_def
+    pub file: String,
+    pub line: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DfEdge {
+    pub from: String,
+    pub to: String,
+}
+
 /// sem-style symbol id: `file::kind::name`, scoped by an optional parent for
 /// methods (`file::method::Class.name`). Stable, index-free, human-readable.
 pub fn mint_sym(file: &str, kind: EntityKind, name: &str, parent: Option<&str>) -> String {
@@ -173,6 +203,10 @@ pub trait TypeLang: Sync {
     /// each front-end overrides this as its extractor lands. One parse can feed
     /// both `extract` and `extract_calls`, but that join is a follow-up.
     fn extract_calls(&self, _file: &str, _content: &str) -> CallFacts { CallFacts::default() }
+    /// Intra-procedural dataflow lift (see `DataflowFacts`). Default empty so the
+    /// lazy `DATAFLOW_RELS` wiring is live end to end with zero rows; each
+    /// front-end overrides as its extractor lands.
+    fn extract_dataflow(&self, _file: &str, _content: &str) -> DataflowFacts { DataflowFacts::default() }
 }
 
 /// Registry order matters: `.kts` matches before `.ts` would, so KotlinTypes
@@ -209,6 +243,14 @@ impl TypeLang for RustTypes {
             sites: rust_call_sites_from(&parsed, file),
         }
     }
+    // One syn parse feeds the node + edge lift. Same `parse_file` cost as
+    // extract/extract_calls; folding all three into one parse is a follow-up.
+    fn extract_dataflow(&self, file: &str, content: &str) -> DataflowFacts {
+        let Ok(parsed) = syn::parse_file(content) else {
+            return DataflowFacts::default();
+        };
+        rust_dataflow_from(&parsed, file)
+    }
 }
 
 impl TypeLang for KotlinTypes {
@@ -230,6 +272,424 @@ impl TypeLang for KotlinTypes {
         walk_kotlin_entities(root, src, file, &mut entities);
         TypeFacts { entities, edges: kotlin_edges_from(root, src) }
     }
+    fn extract_dataflow(&self, file: &str, content: &str) -> DataflowFacts {
+        let mut parser = tree_sitter::Parser::new();
+        let lang = tree_sitter::Language::new(tree_sitter_kotlin_sg::LANGUAGE);
+        if parser.set_language(&lang).is_err() { return DataflowFacts::default(); }
+        let Some(tree) = parser.parse(content, None) else { return DataflowFacts::default(); };
+        kotlin_dataflow_from(tree.root_node(), content.as_bytes(), file)
+    }
+}
+
+// --- Kotlin intra-procedural dataflow lift (tree-sitter). Same two-rule model
+// as the Rust syn lift: value-bearing children flow into their parent, and a
+// `val/var x = rhs` binds rhs -> x_slot with later reads flowing slot -> read.
+// Node id is `file:row:col` from the tree-sitter start position (0-based). A
+// `simple_identifier`'s role is decided by its parent: under variable_declaration
+// it's a binding target, under parameter it's a param, under call_expression it's
+// the callee (skipped), otherwise it's a var_read. Conservative on unsupported
+// constructs: may miss flows, never invents.
+
+fn kt_first_child<'a>(node: tree_sitter::Node<'a>, kind: &str) -> Option<tree_sitter::Node<'a>> {
+    let mut cur = node.walk();
+    let kids: Vec<tree_sitter::Node<'a>> = node.children(&mut cur).collect();
+    kids.into_iter().find(|c| c.kind() == kind)
+}
+
+fn kotlin_dataflow_from(root: tree_sitter::Node, src: &[u8], file: &str) -> DataflowFacts {
+    let mut out = DataflowFacts::default();
+    kt_walk_fns(root, src, file, &mut out);
+    out
+}
+
+fn kt_walk_fns(node: tree_sitter::Node, src: &[u8], file: &str, out: &mut DataflowFacts) {
+    let mut cur = node.walk();
+    for c in node.children(&mut cur) {
+        if c.kind() == "function_declaration" {
+            kt_flow_fn(c, src, file, out);
+        }
+        kt_walk_fns(c, src, file, out);
+    }
+}
+
+fn kt_flow_fn(fn_node: tree_sitter::Node, src: &[u8], file: &str, out: &mut DataflowFacts) {
+    let name = kt_first_child(fn_node, "simple_identifier")
+        .map(|n| n.utf8_text(src).unwrap_or("").to_string())
+        .unwrap_or_default();
+    let fn_sym = mint_sym(file, EntityKind::Function, &name, None);
+    let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    if let Some(params) = kt_first_child(fn_node, "function_value_parameters") {
+        let mut cur = params.walk();
+        for p in params.children(&mut cur).filter(|n| n.kind() == "parameter") {
+            if let Some(idn) = kt_first_child(p, "simple_identifier") {
+                let pos = idn.start_position();
+                let v = idn.utf8_text(src).unwrap_or("").to_string();
+                let id = push_node(out, file, pos.row as u32, pos.column as u32, "param", &v, &fn_sym);
+                scope.insert(v, id);
+            }
+        }
+    }
+    if let Some(body) = kt_first_child(fn_node, "function_body") {
+        flow_kt(body, src, file, &fn_sym, &mut scope, out);
+    }
+}
+
+/// Returns the node id carrying the value of this subtree, or None when the
+/// subtree is not value-bearing (statements, wrappers, bindings handled inline).
+fn flow_kt(
+    node: tree_sitter::Node,
+    src: &[u8],
+    file: &str,
+    fn_sym: &str,
+    scope: &mut std::collections::HashMap<String, String>,
+    out: &mut DataflowFacts,
+) -> Option<String> {
+    let pos = node.start_position();
+    match node.kind() {
+        // a name in expression position is a read; role decided by parent.
+        "simple_identifier" => {
+            let parent_kind = node.parent().map(|p| p.kind());
+            match parent_kind.as_deref() {
+                Some("variable_declaration") | Some("parameter") | Some("call_expression") => None,
+                _ => {
+                    let v = node.utf8_text(src).unwrap_or("").to_string();
+                    let id = push_node(out, file, pos.row as u32, pos.column as u32, "var_read", &v, fn_sym);
+                    if let Some(b) = scope.get(&v) {
+                        out.edges.push(DfEdge { from: b.clone(), to: id.clone() });
+                    }
+                    Some(id)
+                }
+            }
+        }
+        // f(args): every argument value flows into the call result. The callee
+        // ident (parent == call_expression) is skipped above. Descend through
+        // call_suffix -> value_arguments -> value_argument so multi-arg calls
+        // taint the result from every arg, not just the last.
+        "call_expression" => {
+            let mut child_ids = Vec::new();
+            if let Some(suffix) = kt_first_child(node, "call_suffix") {
+                if let Some(vargs) = kt_first_child(suffix, "value_arguments") {
+                    let mut cur = vargs.walk();
+                    for va in vargs.children(&mut cur).filter(|n| n.kind() == "value_argument") {
+                        if let Some(id) = flow_kt(va, src, file, fn_sym, scope, out) {
+                            child_ids.push(id);
+                        }
+                    }
+                }
+            }
+            let id = push_node(out, file, pos.row as u32, pos.column as u32, "call_res", "", fn_sym);
+            for cid in child_ids {
+                out.edges.push(DfEdge { from: cid, to: id.clone() });
+            }
+            Some(id)
+        }
+        // val/var x = rhs: mint the binding slot, flow rhs -> slot, register.
+        "property_declaration" => {
+            let mut bind: Option<(String, String)> = None;
+            let mut rhs_id: Option<String> = None;
+            let mut cur = node.walk();
+            for c in node.children(&mut cur) {
+                match c.kind() {
+                    "variable_declaration" => {
+                        if let Some(si) = kt_first_child(c, "simple_identifier") {
+                            let sp = si.start_position();
+                            let v = si.utf8_text(src).unwrap_or("").to_string();
+                            let id = push_node(out, file, sp.row as u32, sp.column as u32, "let_bind", &v, fn_sym);
+                            bind = Some((v, id));
+                        }
+                    }
+                    "=" | "binding_pattern_kind" | "val" | "var" => {}
+                    _ => {
+                        if let Some(id) = flow_kt(c, src, file, fn_sym, scope, out) {
+                            rhs_id = Some(id);
+                        }
+                    }
+                }
+            }
+            if let (Some((v, bid)), Some(rhs)) = (bind, rhs_id) {
+                out.edges.push(DfEdge { from: rhs, to: bid.clone() });
+                scope.insert(v, bid);
+            }
+            None
+        }
+        // wrappers / statements: flow the last value-bearing child through.
+        "value_argument" | "statements" | "function_body" | "source_file" => {
+            let mut last = None;
+            let mut cur = node.walk();
+            for c in node.children(&mut cur) {
+                if let Some(id) = flow_kt(c, src, file, fn_sym, scope, out) {
+                    last = Some(id);
+                }
+            }
+            last
+        }
+        // return EXPR: the returned value is the expression's node.
+        "jump_expression" => {
+            let mut inner = None;
+            let mut cur = node.walk();
+            for c in node.children(&mut cur) {
+                if c.kind() != "return" {
+                    if let Some(id) = flow_kt(c, src, file, fn_sym, scope, out) {
+                        inner = Some(id);
+                    }
+                }
+            }
+            inner
+        }
+        // a OP b: both operands taint the result. This is the taint-vs-dataflow
+        // distinction in one arm — exact dataflow would say `a + 1` is not `a`,
+        // taint propagates `a` through the operation into the result. Kotlin
+        // splits operators across additive/multiplicative/infix expression kinds
+        // (no named fields), so take the first and last named children as the
+        // two operands and skip the anonymous operator token between them.
+        "additive_expression" | "multiplicative_expression" | "infix_expression" => {
+            let mut cur = node.walk();
+            let kids: Vec<tree_sitter::Node> = node.named_children(&mut cur).collect();
+            let l = kids.first().and_then(|n| flow_kt(*n, src, file, fn_sym, scope, out));
+            let r = kids.last().and_then(|n| flow_kt(*n, src, file, fn_sym, scope, out));
+            let id = push_node(out, file, pos.row as u32, pos.column as u32, "binop", "", fn_sym);
+            if let Some(lid) = l { out.edges.push(DfEdge { from: lid, to: id.clone() }); }
+            if let Some(rid) = r { out.edges.push(DfEdge { from: rid, to: id.clone() }); }
+            Some(id)
+        }
+        "string_literal" | "integer_literal" | "real_literal" | "boolean_literal" | "character_literal" | "long_literal" => {
+            Some(push_node(out, file, pos.row as u32, pos.column as u32, "lit", "", fn_sym))
+        }
+        // anything else (control flow, when-arms, lambda bodies, etc.): recurse
+        // conservatively, surface the last value if any. May miss, never invents.
+        _ => {
+            let mut last = None;
+            let mut cur = node.walk();
+            for c in node.children(&mut cur) {
+                if let Some(id) = flow_kt(c, src, file, fn_sym, scope, out) {
+                    last = Some(id);
+                }
+            }
+            last
+        }
+    }
+}
+
+// --- TypeScript/JavaScript intra-procedural dataflow lift (oxc). Same two-rule
+// model: value-bearing children flow into their parent, and `const/let/var x =
+// rhs` binds rhs -> x_slot with later reads flowing slot -> read. Node id is
+// `file:<byte_off>` (oxc's native byte-offset span); `line_at` recovers the
+// 1-based line for the `line` column. Conservative on unsupported constructs.
+
+fn ts_push(out: &mut DataflowFacts, file: &str, starts: &[usize], byte_off: u32, kind: &str, var: &str, fn_sym: &str) -> String {
+    // kind suffix disambiguates a parent from its first child where spans share
+    // a start byte (see push_node); byte_off alone is not unique for `a + 1`.
+    let id = format!("{file}:{byte_off}:{kind}");
+    let line = line_at(starts, byte_off as usize);
+    out.nodes.push(DfNode {
+        id: id.clone(),
+        kind: kind.into(),
+        var: var.into(),
+        fn_sym: fn_sym.into(),
+        file: file.into(),
+        line,
+    });
+    id
+}
+
+/// Extract the binding identifier name from a pattern (handles the common
+/// `const x = ...` single-ident case; destructuring falls through to None).
+fn ts_binding_name(p: &ts_ast::BindingPattern) -> Option<String> {
+    match p {
+        ts_ast::BindingPattern::BindingIdentifier(b) => Some(b.name.to_string()),
+        _ => None,
+    }
+}
+
+fn ts_dataflow_from(program: &ts_ast::Program, file: &str, content: &str) -> DataflowFacts {
+    let starts = line_index(content);
+    let mut out = DataflowFacts::default();
+    for stmt in &program.body {
+        ts_flow_stmt(stmt, file, &starts, &mut out);
+    }
+    out
+}
+
+fn ts_flow_stmt(stmt: &ts_ast::Statement, file: &str, starts: &[usize], out: &mut DataflowFacts) {
+    use ts_ast::Statement as S;
+    match stmt {
+        S::FunctionDeclaration(f) => {
+            if let Some(body) = f.body.as_deref() {
+                let name = f.id.as_ref().map(|i| i.name.to_string()).unwrap_or_default();
+                let fn_sym = mint_sym(file, EntityKind::Function, &name, None);
+                let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+                for p in &f.params.items {
+                    if let Some(name) = ts_binding_name(&p.pattern) {
+                        let off = p.span.start;
+                        let id = ts_push(out, file, starts, off, "param", &name, &fn_sym);
+                        scope.insert(name, id);
+                    }
+                }
+                ts_flow_body(body, file, starts, &fn_sym, &mut scope, out);
+            }
+        }
+        S::ExportNamedDeclaration(e) => {
+            if let Some(d) = &e.declaration {
+                ts_flow_decl(d, file, starts, out);
+            }
+        }
+        S::VariableDeclaration(_) | S::ExpressionStatement(_) | S::ReturnStatement(_) => {
+            let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+            let fn_sym = mint_sym(file, EntityKind::Function, "<top>", None);
+            ts_flow_body_stmt(stmt, file, starts, &fn_sym, &mut scope, out);
+        }
+        _ => {}
+    }
+}
+
+fn ts_flow_decl(d: &ts_ast::Declaration, file: &str, starts: &[usize], out: &mut DataflowFacts) {
+    use ts_ast::Declaration as D;
+    match d {
+        D::FunctionDeclaration(f) => {
+            if let Some(body) = f.body.as_deref() {
+                let name = f.id.as_ref().map(|i| i.name.to_string()).unwrap_or_default();
+                let fn_sym = mint_sym(file, EntityKind::Function, &name, None);
+                let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+                for p in &f.params.items {
+                    if let Some(name) = ts_binding_name(&p.pattern) {
+                        let off = p.span.start;
+                        let id = ts_push(out, file, starts, off, "param", &name, &fn_sym);
+                        scope.insert(name, id);
+                    }
+                }
+                ts_flow_body(body, file, starts, &fn_sym, &mut scope, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn ts_flow_body(
+    body: &ts_ast::FunctionBody,
+    file: &str,
+    starts: &[usize],
+    fn_sym: &str,
+    scope: &mut std::collections::HashMap<String, String>,
+    out: &mut DataflowFacts,
+) {
+    for stmt in &body.statements {
+        ts_flow_body_stmt(stmt, file, starts, fn_sym, scope, out);
+    }
+}
+
+fn ts_flow_body_stmt(
+    stmt: &ts_ast::Statement,
+    file: &str,
+    starts: &[usize],
+    fn_sym: &str,
+    scope: &mut std::collections::HashMap<String, String>,
+    out: &mut DataflowFacts,
+) {
+    use ts_ast::Statement as S;
+    match stmt {
+        S::VariableDeclaration(v) => {
+            for d in &v.declarations {
+                let rhs_id = d.init.as_ref().map(|init| ts_flow_expr(init, file, starts, fn_sym, scope, out));
+                if let Some(name) = ts_binding_name(&d.id) {
+                    let off = d.span.start;
+                    let bind = ts_push(out, file, starts, off, "let_bind", &name, fn_sym);
+                    if let Some(rhs) = rhs_id {
+                        out.edges.push(DfEdge { from: rhs, to: bind.clone() });
+                    }
+                    scope.insert(name, bind);
+                }
+            }
+        }
+        S::ExpressionStatement(e) => {
+            let _ = ts_flow_expr(&e.expression, file, starts, fn_sym, scope, out);
+        }
+        S::ReturnStatement(r) => {
+            if let Some(arg) = &r.argument {
+                let _ = ts_flow_expr(arg, file, starts, fn_sym, scope, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Post-order value flow for one TS expression. Returns the node id carrying
+/// its value, or a generic node when the variant isn't chased (conservative).
+fn ts_flow_expr(
+    e: &ts_ast::Expression,
+    file: &str,
+    starts: &[usize],
+    fn_sym: &str,
+    scope: &mut std::collections::HashMap<String, String>,
+    out: &mut DataflowFacts,
+) -> String {
+    use ts_ast::Expression as E;
+    let off = span_off(e);
+    match e {
+        // a read of a variable: flow from its binding slot.
+        E::Identifier(id) => {
+            let name = id.name.to_string();
+            let node = ts_push(out, file, starts, off, "var_read", &name, fn_sym);
+            if let Some(b) = scope.get(&name) {
+                out.edges.push(DfEdge { from: b.clone(), to: node.clone() });
+            }
+            node
+        }
+        E::StringLiteral(_)
+        | E::NumericLiteral(_)
+        | E::BooleanLiteral(_)
+        | E::NullLiteral(_)
+        | E::BigIntLiteral(_)
+        | E::RegExpLiteral(_) => ts_push(out, file, starts, off, "lit", "", fn_sym),
+        // f(args): each argument flows into the call result. The callee is the
+        // target, not a value in, so it is skipped.
+        E::CallExpression(c) => {
+            let mut child_ids = Vec::new();
+            for arg in &c.arguments {
+                if let Some(id) = arg.as_expression() {
+                    child_ids.push(ts_flow_expr(id, file, starts, fn_sym, scope, out));
+                }
+            }
+            let id = ts_push(out, file, starts, off, "call_res", "", fn_sym);
+            for cid in child_ids {
+                out.edges.push(DfEdge { from: cid, to: id.clone() });
+            }
+            id
+        }
+        // recv.prop / recv[prop]: the receiver flows through; the property is
+        // a name, not a value in (skipped). oxc flattens MemberExpression into
+        // StaticMemberExpression / ComputedMemberExpression on Expression.
+        E::StaticMemberExpression(m) => {
+            let obj = ts_flow_expr(&m.object, file, starts, fn_sym, scope, out);
+            let id = ts_push(out, file, starts, off, "member", "", fn_sym);
+            out.edges.push(DfEdge { from: obj, to: id.clone() });
+            id
+        }
+        E::ComputedMemberExpression(m) => {
+            let obj = ts_flow_expr(&m.object, file, starts, fn_sym, scope, out);
+            let id = ts_push(out, file, starts, off, "member", "", fn_sym);
+            out.edges.push(DfEdge { from: obj, to: id.clone() });
+            id
+        }
+        E::BinaryExpression(b) => {
+            let l = ts_flow_expr(&b.left, file, starts, fn_sym, scope, out);
+            let r = ts_flow_expr(&b.right, file, starts, fn_sym, scope, out);
+            let id = ts_push(out, file, starts, off, "binop", "", fn_sym);
+            out.edges.push(DfEdge { from: l, to: id.clone() });
+            out.edges.push(DfEdge { from: r, to: id.clone() });
+            id
+        }
+        // arrow/function values, template strings, control flow: mint a node,
+        // don't chase. Conservative — may miss, never invents.
+        _ => ts_push(out, file, starts, off, "expr", "", fn_sym),
+    }
+}
+
+/// Byte offset of an expression's span start. oxc nodes expose their span via
+/// the matched inner struct; the Expression enum carries a `.span()` through
+/// the GetSpan impl, which we reach via this thin shim.
+fn span_off(e: &ts_ast::Expression) -> u32 {
+    use oxc_span::GetSpan;
+    e.span().start
 }
 
 impl TypeLang for TsTypes {
@@ -248,6 +708,19 @@ impl TypeLang for TsTypes {
             entities: ts_entities_from(&ret.program, file, content),
             edges: ts_edges_from(&ret.program),
         }
+    }
+    // One oxc parse feeds the node + edge lift. Byte-offset spans (oxc's native
+    // shape) become node ids `file:<byte_off>`; `line_at` recovers the 1-based
+    // line for the `line` column.
+    fn extract_dataflow(&self, file: &str, content: &str) -> DataflowFacts {
+        let tsx = path_is_tsx(file);
+        let alloc = oxc_allocator::Allocator::default();
+        let st = if tsx { oxc_span::SourceType::tsx() } else { oxc_span::SourceType::ts() };
+        let ret = oxc_parser::Parser::new(&alloc, content, st).parse();
+        if ret.panicked {
+            return DataflowFacts::default();
+        }
+        ts_dataflow_from(&ret.program, file, content)
     }
 }
 
@@ -1374,6 +1847,196 @@ impl<'a> syn::visit::Visit<'a> for CallCollector<'a> {
             }
             _ => syn::visit::visit_expr(self, e),
         }
+    }
+}
+
+// --- Rust intra-procedural dataflow lift (syn). The lift is two rules:
+//   (1) post-order, every value-bearing child expression flows into its
+//       value-bearing parent (args into a call, operands into a binop, the
+//       referent into a borrow);
+//   (2) storage — `let x = rhs` binds rhs -> x_slot, and a later read of x
+//       flows slot -> read. Params seed the scope as pre-bound slots.
+// Macros, control-flow arms, and anything syn doesn't expose as a child Expr
+// get a node but no chased edges (conservative: may miss flows, never invents
+// them). `df_reaches <- closure(df_edge)` does the rest on the shared SCC engine.
+
+fn rust_dataflow_from(parsed: &syn::File, file: &str) -> DataflowFacts {
+    let mut out = DataflowFacts::default();
+    for item in &parsed.items {
+        match item {
+            Item::Fn(f) => {
+                let sym = mint_sym(file, EntityKind::Function, &f.sig.ident.to_string(), None);
+                flow_fn_body(&sym, &f.sig, &f.block, file, &mut out);
+            }
+            Item::Impl(i) => {
+                let owner = primary_type(&i.self_ty);
+                for ii in &i.items {
+                    if let syn::ImplItem::Fn(m) = ii {
+                        let sym = match &owner {
+                            Some(o) => mint_sym(file, EntityKind::Method, &m.sig.ident.to_string(), Some(o)),
+                            None => mint_sym(file, EntityKind::Function, &m.sig.ident.to_string(), None),
+                        };
+                        flow_fn_body(&sym, &m.sig, &m.block, file, &mut out);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Seed the scope with param nodes, then walk the body. The scope maps a var
+/// name to the id of its binding node (param or `let`); a read looks it up and
+/// emits slot -> read. Flat function-level scope (no block shadowing) is the
+/// v0 approximation.
+fn flow_fn_body(
+    fn_sym: &str,
+    sig: &syn::Signature,
+    block: &syn::Block,
+    file: &str,
+    out: &mut DataflowFacts,
+) {
+    let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for arg in &sig.inputs {
+        if let syn::FnArg::Typed(pt) = arg {
+            if let syn::Pat::Ident(pi) = &*pt.pat {
+                let (l, c) = (pi.ident.span().start().line as u32, pi.ident.span().start().column as u32);
+                let id = push_node(out, file, l, c, "param", &pi.ident.to_string(), fn_sym);
+                scope.insert(pi.ident.to_string(), id);
+            }
+        }
+    }
+    flow_block(block, file, fn_sym, &mut scope, out);
+}
+
+fn flow_block(
+    b: &syn::Block,
+    file: &str,
+    fn_sym: &str,
+    scope: &mut std::collections::HashMap<String, String>,
+    out: &mut DataflowFacts,
+) {
+    for stmt in &b.stmts {
+        match stmt {
+            syn::Stmt::Local(loc) => {
+                if let Some(init) = loc.init.as_ref() {
+                    let rhs = flow_expr(&init.expr, file, fn_sym, scope, out);
+                    if let syn::Pat::Ident(pi) = &loc.pat {
+                        let (l, c) = (pi.ident.span().start().line as u32, pi.ident.span().start().column as u32);
+                        let bind = push_node(out, file, l, c, "let_bind", &pi.ident.to_string(), fn_sym);
+                        out.edges.push(DfEdge { from: rhs, to: bind.clone() });
+                        scope.insert(pi.ident.to_string(), bind);
+                    }
+                }
+            }
+            syn::Stmt::Expr(e, _) => {
+                let _ = flow_expr(e, file, fn_sym, scope, out);
+            }
+            syn::Stmt::Item(_) => {}
+            syn::Stmt::Macro(_) => {}
+        }
+    }
+}
+
+/// Mint a node and return its id. Free helper (not a closure) so the recursive
+/// `flow_expr` calls can borrow `out` without holding a second `&mut` alive. The
+/// id is `file:line:col:kind`: a parent expression and its first child share a
+/// start position (e.g. `a + 1` starts where `a` starts), so the kind suffix
+/// disambiguates them — every lifted node is a distinct (position, kind) pair.
+fn push_node(
+    out: &mut DataflowFacts,
+    file: &str,
+    line: u32,
+    col: u32,
+    kind: &str,
+    var: &str,
+    fn_sym: &str,
+) -> String {
+    let id = format!("{file}:{line}:{col}:{kind}");
+    out.nodes.push(DfNode {
+        id: id.clone(),
+        kind: kind.into(),
+        var: var.into(),
+        fn_sym: fn_sym.into(),
+        file: file.into(),
+        line,
+    });
+    id
+}
+
+/// Post-order value flow for one expression. Returns the node id for `e` and
+/// emits every internal edge as a side effect.
+fn flow_expr(
+    e: &syn::Expr,
+    file: &str,
+    fn_sym: &str,
+    scope: &mut std::collections::HashMap<String, String>,
+    out: &mut DataflowFacts,
+) -> String {
+    let start = e.span().start();
+    let (line, col) = (start.line as u32, start.column as u32);
+    match e {
+        // a read of a variable: flow from its binding slot to this read.
+        syn::Expr::Path(p) => {
+            let name = p.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+            let id = push_node(out, file, line, col, "var_read", &name, fn_sym);
+            if let Some(b) = scope.get(&name) {
+                out.edges.push(DfEdge { from: b.clone(), to: id.clone() });
+            }
+            id
+        }
+        syn::Expr::Lit(_) => push_node(out, file, line, col, "lit", "", fn_sym),
+        // f(args): each argument flows into the call result. The callee path is
+        // the target, not a value in, so it gets no flow edge.
+        syn::Expr::Call(c) => {
+            let mut children = Vec::new();
+            for arg in &c.args {
+                children.push(flow_expr(arg, file, fn_sym, scope, out));
+            }
+            let id = push_node(out, file, line, col, "call_res", "", fn_sym);
+            for child in children {
+                out.edges.push(DfEdge { from: child, to: id.clone() });
+            }
+            id
+        }
+        // recv.m(args): receiver + args flow into the result; method name skipped.
+        syn::Expr::MethodCall(m) => {
+            let mut children = vec![flow_expr(&m.receiver, file, fn_sym, scope, out)];
+            for arg in &m.args {
+                children.push(flow_expr(arg, file, fn_sym, scope, out));
+            }
+            let id = push_node(out, file, line, col, "call_res", "", fn_sym);
+            for child in children {
+                out.edges.push(DfEdge { from: child, to: id.clone() });
+            }
+            id
+        }
+        syn::Expr::Paren(p) => flow_expr(&p.expr, file, fn_sym, scope, out),
+        syn::Expr::Reference(r) => {
+            let inner = flow_expr(&r.expr, file, fn_sym, scope, out);
+            let id = push_node(out, file, line, col, "borrow", "", fn_sym);
+            out.edges.push(DfEdge { from: inner, to: id.clone() });
+            id
+        }
+        syn::Expr::Binary(b) => {
+            let l = flow_expr(&b.left, file, fn_sym, scope, out);
+            let r = flow_expr(&b.right, file, fn_sym, scope, out);
+            let id = push_node(out, file, line, col, "binop", "", fn_sym);
+            out.edges.push(DfEdge { from: l, to: id.clone() });
+            out.edges.push(DfEdge { from: r, to: id.clone() });
+            id
+        }
+        syn::Expr::Unary(u) => {
+            let inner = flow_expr(&u.expr, file, fn_sym, scope, out);
+            let id = push_node(out, file, line, col, "unop", "", fn_sym);
+            out.edges.push(DfEdge { from: inner, to: id.clone() });
+            id
+        }
+        // macros (format!/println!), if/match/loop arms, etc.: syn exposes
+        // these as token streams or non-Expr children, so mint a node but don't
+        // chase. Conservative — may miss flows into macro args, never invents.
+        _ => push_node(out, file, line, col, "expr", "", fn_sym),
     }
 }
 

@@ -80,6 +80,13 @@ const TYPE_RELS: [&str; 5] =
 /// call and type graphs share nodes and a join reaches both.
 const CALL_RELS: [&str; 4] = ["call_def", "call_site", "call_edge", "call_edge_rev"];
 
+/// Intra-procedural dataflow lift: `df_node(id, kind, var, fn, file, line)` is a
+/// value-bearing program point, `df_edge(from, to)` is local value flow. A rule
+/// `df_reaches(a,b) <- closure(df_edge)` walks the lifted graph on the shared SCC
+/// engine. See `typegraph::DataflowFacts`. Approximate (no SSA / aliasing /
+/// interprocedural stitching) but live end to end.
+const DATAFLOW_RELS: [&str; 2] = ["df_node", "df_edge"];
+
 /// Compiler-backed SCIP importer. `scip_edge` is file-to-file dependency data
 /// extracted from definition/reference occurrences in an existing index.scip.
 const SCIP_RELS: [&str; 3] = ["scip_def", "scip_ref", "scip_edge"];
@@ -156,6 +163,16 @@ fn call_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
+fn dataflow_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "df_node".into(), cols: vec![
+            c("id", Type::Text), c("kind", Type::Text), c("var", Type::Text),
+            c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int)] },
+        RelDecl { name: "df_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text)] },
+    ]
+}
+
 fn scip_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -213,6 +230,8 @@ fn module_rels_used(prog: &Program) -> bool { rels_used(prog, &MODULE_RELS) }
 fn type_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_RELS) }
 
 fn call_rels_used(prog: &Program) -> bool { rels_used(prog, &CALL_RELS) }
+
+fn dataflow_rels_used(prog: &Program) -> bool { rels_used(prog, &DATAFLOW_RELS) }
 
 /// The trailing identifier of a SCIP symbol descriptor: `... Foo#` -> "Foo",
 /// `... bar().` -> "bar". Used to key the SCIP override by plain type name.
@@ -1120,6 +1139,11 @@ impl Engine {
             self.refresh_call_rels()?;
             phase("call-rels", t);
         }
+        if dataflow_rels_used(prog) {
+            let t = std::time::Instant::now();
+            self.refresh_dataflow_rels()?;
+            phase("dataflow-rels", t);
+        }
         if scip_rels_used(prog) { changed |= self.refresh_scip_rels()?; }
         if spine_rels_used(prog) {
             let t = std::time::Instant::now();
@@ -1329,6 +1353,10 @@ impl Engine {
             if call_rels_used(prog) {
                 self.refresh_call_rels()?;
                 for r in CALL_RELS { changed_source_rels.insert(r.to_string()); }
+            }
+            if dataflow_rels_used(prog) {
+                self.refresh_dataflow_rels()?;
+                for r in DATAFLOW_RELS { changed_source_rels.insert(r.to_string()); }
             }
             if spine_rels_used(prog) {
                 self.refresh_spine_rels()?;
@@ -1884,6 +1912,9 @@ impl Engine {
                 if CALL_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in call-graph relation (call_def / call_site / call_edge / call_edge_rev); pick another name", d.name);
                 }
+                if DATAFLOW_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is a built-in dataflow relation (df_node / df_edge); pick another name", d.name);
+                }
                 if SCIP_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in SCIP relation; pick another name", d.name);
                 }
@@ -1912,6 +1943,7 @@ impl Engine {
         for d in module_rel_decls() { self.declare(&d)?; }
         for d in type_rel_decls() { self.declare(&d)?; }
         for d in call_rel_decls() { self.declare(&d)?; }
+        for d in dataflow_rel_decls() { self.declare(&d)?; }
         for d in scip_rel_decls() { self.declare(&d)?; }
         for d in spine_rel_decls() { self.declare(&d)?; }
         for d in changed_rel_decls() { self.declare(&d)?; }
@@ -2485,6 +2517,53 @@ impl Engine {
             "INSERT OR IGNORE INTO {edge} (\"caller\", \"callee\", \"kind\") \
              SELECT \"caller\", \"callee\", \"kind\" FROM {edge_rev}"
         ))?;
+        Ok(())
+    }
+
+    /// Intra-procedural dataflow lift over the corpus. Each `.rs/.kt/.kts/.ts/.tsx`
+    /// file in `_file` is parsed once by the matching front-end's
+    /// `extract_dataflow`; nodes and edges are corpus-deduped by id (the
+    /// `file:line:col` start span is already unique across files). No resolution
+    /// pass is needed — node ids and the enclosing `fn` sym are self-contained,
+    /// so this is a straight extract + bulk write.
+    fn refresh_dataflow_rels(&self) -> Result<()> {
+        let mut files: Vec<(String, String)> = Vec::new();
+        {
+            let mut sel = self.db.conn().prepare(
+                "SELECT path, rev FROM _file WHERE path LIKE '%.rs' OR path LIKE '%.kt' OR path LIKE '%.kts' \
+                 OR path LIKE '%.ts' OR path LIKE '%.tsx'")?;
+            let rows = sel.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+            for row in rows.flatten() { files.push(row); }
+        }
+
+        let root = self.root.clone();
+        let facts: Vec<typegraph::DataflowFacts> = files.par_iter().filter_map(|(path, rev)| {
+            let lang = typegraph::type_langs().iter().find(|l| l.matches(path))?;
+            let content = read_content(&root, rev, path).unwrap_or_default();
+            Some(lang.extract_dataflow(path, &content))
+        }).collect();
+
+        let t = |s: &str| Value::Text(s.to_string());
+        let i = |n: u32| Value::Int(n as i64);
+        let mut node_rows: Vec<Vec<Value>> = Vec::new();
+        let mut edge_rows: Vec<Vec<Value>> = Vec::new();
+        let mut seen_node: HashSet<&str> = HashSet::new();
+        let mut seen_edge: HashSet<(&str, &str)> = HashSet::new();
+        for f in &facts {
+            for n in &f.nodes {
+                if seen_node.insert(n.id.as_str()) {
+                    node_rows.push(vec![t(&n.id), t(&n.kind), t(&n.var), t(&n.fn_sym), t(&n.file), i(n.line)]);
+                }
+            }
+            for e in &f.edges {
+                if seen_edge.insert((e.from.as_str(), e.to.as_str())) {
+                    edge_rows.push(vec![t(&e.from), t(&e.to)]);
+                }
+            }
+        }
+
+        self.refresh_rel("df_node", &["id", "kind", "var", "fn", "file", "line"], &node_rows)?;
+        self.refresh_rel("df_edge", &["from", "to"], &edge_rows)?;
         Ok(())
     }
 
