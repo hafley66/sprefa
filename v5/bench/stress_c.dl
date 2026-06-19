@@ -1,0 +1,26 @@
+# stress_c.dl — C-focused e2e perf stress. Run against a large C checkout:
+#   dl bench/stress_c.dl --root <fixture>
+# Exercises the scan + sg/ast extract paths over C source. C has no type/call/
+# dataflow graph support (those are rust/kt/ts only), so this isolates the
+# source-extraction cost at scale.
+#
+# The `?` queries print row counts so a bench run reports work done, not just
+# wall time. Pair with --profile for the per-phase breakdown.
+
+# Touch every .c and .h file so the scan path walks the corpus. globset expands
+# the {c,h} brace alternation by default (its parser treats `{`/`}` as
+# alternates; examples/lint-imports.dl already relies on this over .{rs,ts,...}).
+rel seen(path: file).
+seen(path) <- scan("WORK", "**/*.{c,h}", path, rev), match(path, rev, /./, line).
+
+# ast-grep structural patterns over C (function definitions). C is a registered
+# ast-grep language (src/sg.rs: `"c" => SupportLang::C`); this exercises the sg
+# extract path. Void definitions are a stable, well-formed subset of the corpus.
+# The query's row count is the work report: aggregates (count/sum/...) compile
+# only over derived-rel reads, not over source-extraction bodies (scan/sg/match)
+# directly — see tests/agg.rs for the aggregate form, which needs a derived rel.
+rel void_fn(name: text, path: file, line: int).
+void_fn(NAME, path, line) <- scan("WORK", "**/*.c", path, rev), sg(path, rev, :c, "void $NAME($$$ARGS) { $$$BODY }", line).
+
+? seen(path).
+? void_fn(name, path, line).

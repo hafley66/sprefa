@@ -251,8 +251,8 @@ v4-dogfood: v4-flow-smoke v4-lsp-build
 #   just v5-bench-self          # no clone: stress against this repo's own .rs
 #   just v5-perf-test           # cargo test perf_stress (cold+incremental ratio)
 #
-# The C path reuses v3/v4's existing fixture: `just fixture-linux` then run the
-# v3/v4 bench targets. A C-focused v5 stress is a follow-up.
+#   just v5-fixture-c           # shallow-clone redis/redis (depth 1), pure C
+#   just v5-bench-c             # cold C stress run, release binary, --profile
 
 v5-fixture-rust DIR="v5/tests/.fixtures/rust-analyzer":
     test -n "$(find '{{DIR}}' -name '*.rs' -print -quit 2>/dev/null)" && echo "rust fixture present ($(find '{{DIR}}' -name '*.rs' | wc -l | tr -d ' ') .rs files)" || { echo "rust fixture missing — shallow-cloning rust-lang/rust-analyzer (depth 1)…"; rm -rf '{{DIR}}'; git clone --depth 1 https://github.com/rust-lang/rust-analyzer.git '{{DIR}}'; echo "provisioned ($(find '{{DIR}}' -name '*.rs' | wc -l | tr -d ' ') .rs files, gitignored)"; }
@@ -267,3 +267,11 @@ v5-bench-self:
 
 v5-perf-test:
     cargo test --manifest-path v5/Cargo.toml --test perf_stress -- --nocapture
+
+# C fixture: shallow-clone redis/redis (depth 1) into a gitignored dir.
+v5-fixture-c DIR="v5/tests/.fixtures/redis":
+    test -n "$(find '{{DIR}}' -name '*.c' -print -quit 2>/dev/null)" && echo "c fixture present ($(find '{{DIR}}' -name '*.c' | wc -l | tr -d ' ') .c files)" || { echo "c fixture missing — shallow-cloning redis/redis (depth 1)…"; rm -rf '{{DIR}}'; git clone --depth 1 https://github.com/redis/redis.git '{{DIR}}'; echo "provisioned ($(find '{{DIR}}' -name '*.c' | wc -l | tr -d ' ') .c files, gitignored)"; }
+
+v5-bench-c DIR="v5/tests/.fixtures/redis":
+    cargo build --manifest-path v5/Cargo.toml --release --bin dl
+    ./v5/target/release/dl v5/bench/stress_c.dl --root '{{DIR}}' --profile
