@@ -85,7 +85,7 @@ const CALL_RELS: [&str; 4] = ["call_def", "call_site", "call_edge", "call_edge_r
 /// `df_reaches(a,b) <- closure(df_edge)` walks the lifted graph on the shared SCC
 /// engine. See `typegraph::DataflowFacts`. Approximate (no SSA / aliasing /
 /// interprocedural stitching) but live end to end.
-const DATAFLOW_RELS: [&str; 2] = ["df_node", "df_edge"];
+const DATAFLOW_RELS: [&str; 3] = ["df_node", "df_edge", "loop_over"];
 
 /// Compiler-backed SCIP importer. `scip_edge` is file-to-file dependency data
 /// extracted from definition/reference occurrences in an existing index.scip.
@@ -170,6 +170,13 @@ fn dataflow_rel_decls() -> Vec<RelDecl> {
             c("id", Type::Text), c("kind", Type::Text), c("var", Type::Text),
             c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int)] },
         RelDecl { name: "df_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text)] },
+        // one row per loop, with its source span + loop variable. The flag rule
+        // joins this against df_node/df_edge to find loop-invariant calls: a
+        // call whose line falls in [start,end] taking an argument that is a
+        // function param (not the loop variable).
+        RelDecl { name: "loop_over".into(), cols: vec![
+            c("file", Type::Path), c("start", Type::Int), c("end", Type::Int),
+            c("var", Type::Text), c("collection", Type::Text), c("fn", Type::Text)] },
     ]
 }
 
@@ -2547,8 +2554,10 @@ impl Engine {
         let i = |n: u32| Value::Int(n as i64);
         let mut node_rows: Vec<Vec<Value>> = Vec::new();
         let mut edge_rows: Vec<Vec<Value>> = Vec::new();
+        let mut loop_rows: Vec<Vec<Value>> = Vec::new();
         let mut seen_node: HashSet<&str> = HashSet::new();
         let mut seen_edge: HashSet<(&str, &str)> = HashSet::new();
+        let mut seen_loop: HashSet<(&str, u32)> = HashSet::new();
         for f in &facts {
             for n in &f.nodes {
                 if seen_node.insert(n.id.as_str()) {
@@ -2560,10 +2569,16 @@ impl Engine {
                     edge_rows.push(vec![t(&e.from), t(&e.to)]);
                 }
             }
+            for l in &f.loops {
+                if seen_loop.insert((l.file.as_str(), l.start)) {
+                    loop_rows.push(vec![t(&l.file), i(l.start), i(l.end), t(&l.var), t(&l.collection), t(&l.fn_sym)]);
+                }
+            }
         }
 
         self.refresh_rel("df_node", &["id", "kind", "var", "fn", "file", "line"], &node_rows)?;
         self.refresh_rel("df_edge", &["from", "to"], &edge_rows)?;
+        self.refresh_rel("loop_over", &["file", "start", "end", "var", "collection", "fn"], &loop_rows)?;
         Ok(())
     }
 

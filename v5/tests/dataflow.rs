@@ -83,7 +83,7 @@ fn rows(sec: &str) -> Vec<Vec<String>> {
 #[test]
 fn dataflow_rels_are_reserved() {
     let d = sandbox("reserved");
-    for rel in ["df_node", "df_edge"] {
+    for rel in ["df_node", "df_edge", "loop_over"] {
         let prog = format!("rel {rel}(a: text).\n? {rel}(\"x\").\n");
         let (code, _out, err) = run(&d, &prog);
         assert_ne!(code, 0, "{rel} must be reserved (expected error):\n{err}");
@@ -278,4 +278,81 @@ fn single(nodes: &HashMap<String, (String, String)>, kind: &str, var: &str, out:
         .collect();
     assert_eq!(hits.len(), 1, "[{lang}] expected one {kind}/{var:?} node, got {}:\n{out}", hits.len());
     hits[0].clone()
+}
+
+/// THE CONTROL-FLOW GATE. T1 closed the loop/branch/closure holes so the lift
+/// walks into loop bodies; T2 adds the `loop_over` relation and a flag rule that
+/// joins loop spans against the lifted graph. This test reproduces the prog_rels
+/// shape that cost us a real O(F*R) regression: a helper called once per loop
+/// iteration with an argument that is a function parameter (loop-invariant), not
+/// the loop variable. The flag rule must surface exactly that call.
+///
+/// The rule is a 2-hop join over plain `df_edge` (no closure needed): the param
+/// node feeds a `var_read`, which feeds the `call_res`. A function parameter is
+/// loop-invariant by definition, so param -> var_read -> call_res inside a loop
+/// span, with the param name != loop variable, is the cheap proxy for the real
+/// reaching-defs test we deliberately did not build.
+#[test]
+fn loop_invariant_call_flags_recomputation_per_iteration() {
+    let d = sandbox("loopinv");
+    fs::create_dir_all(d.join("src")).unwrap();
+    // The prog_rels bug shape, distilled. `make_rels(prog)` is called inside the
+    // loop over `rules`; `prog` is a param of `work` (loop-invariant), not the
+    // loop variable `item`. T1 makes the loop body walkable; without it this
+    // call_res would not exist at all.
+    fs::write(
+        d.join("src/lib.rs"),
+        "fn make_rels(prog: &[i32]) -> Vec<i32> { Vec::new() }\n\
+         fn work(rules: &[i32], prog: &[i32]) {\n    \
+             for item in rules {\n        \
+                 let rels = make_rels(prog);\n        \
+                 let _ = rels;\n    \
+             }\n\
+         }\n",
+    )
+    .unwrap();
+    let prog = concat!(
+        "rel seen(path: file).\n",
+        "seen(path) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /./, line).\n",
+        // the flag rule: a call_res inside a loop span whose direct argument is
+        // a function param (2-hop path param -> var_read -> call_res), where the
+        // param is not the loop variable.
+        "rel lic(file: path, fn: text, loop_start: int, call_line: int, var: text).\n",
+        "lic(file, fn, ls, cl, pname) <-\n",
+        "    loop_over(file, ls, le, lvar, col, fn),\n",
+        "    df_node(call_id, \"call_res\", _, fn, file, cl),\n",
+        "    cl >= ls, cl <= le,\n",
+        "    df_edge(vr, call_id),\n",
+        "    df_edge(param, vr),\n",
+        "    df_node(param, \"param\", pname, fn, _, _),\n",
+        "    df_node(vr, \"var_read\", _, fn, _, _),\n",
+        "    pname != lvar.\n",
+        "? loop_over(file, start, end, var, collection, fn).\n",
+        "? lic(file, fn, loop_start, call_line, var).\n",
+    );
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "loop flag rule must not error:\n{err}");
+
+    let secs = sections(&out);
+    assert!(secs.len() >= 2, "expected 2 query sections:\n{out}");
+
+    // loop_over: exactly one loop, in `work`, with loop variable `item`.
+    let loops = rows(&secs[0]);
+    assert!(!loops.is_empty(), "expected a loop_over row — T1 must record the loop:\n{out}");
+    assert!(
+        loops.iter().any(|r| r.len() >= 6 && r[3] == "item" && r[5].contains("::work")),
+        "expected one loop in `work` with var item:\n{out}"
+    );
+
+    // DECISIVE: the flag rule fires on `make_rels(prog)` inside the loop, with
+    // var prog (the loop-invariant param). This is the prog_rels shape.
+    let lics = rows(&secs[1]);
+    assert!(
+        !lics.is_empty(),
+        "loop_invariant_call must fire — without T1 the loop body was a hole:\n{out}"
+    );
+    assert!(
+        lics.iter().any(|r| r.len() >= 5 && r[1].contains("::work") && r[4] == "prog"),
+        "expected lic on `work` flagging make_rels(prog) with var prog:\n{out}"
+    );
 }

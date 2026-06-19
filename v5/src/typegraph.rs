@@ -164,12 +164,23 @@ impl CallKind {
 pub struct DataflowFacts {
     pub nodes: Vec<DfNode>,
     pub edges: Vec<DfEdge>,
+    pub loops: Vec<LoopFact>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LoopFact {
+    pub file: String,
+    pub start: u32,        // start line of the loop header
+    pub end: u32,          // close line of the loop body (span end)
+    pub var: String,       // loop variable name, "" when none (while/loop)
+    pub collection: String, // textual form of the iterated collection, "" when none
+    pub fn_sym: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DfNode {
     pub id: String,
-    pub kind: String,   // param | let_bind | var_read | lit | call_res | borrow | binop | unop | expr
+    pub kind: String,   // param | let_bind | var_read | var_write | lit | call_res | borrow | binop | unop | loop | if | match | block | closure | try | expr
     pub var: String,    // variable name when the node is var-related, else ""
     pub fn_sym: String, // enclosing def sym (file::function::name), joins call_def
     pub file: String,
@@ -455,19 +466,56 @@ fn flow_kt(
         "string_literal" | "integer_literal" | "real_literal" | "boolean_literal" | "character_literal" | "long_literal" => {
             Some(push_node(out, file, pos.row as u32, pos.column as u32, "lit", "", fn_sym))
         }
-        // anything else (control flow, when-arms, lambda bodies, etc.): recurse
-        // conservatively, surface the last value if any. May miss, never invents.
-        _ => {
-            let mut last = None;
-            let mut cur = node.walk();
-            for c in node.children(&mut cur) {
-                if let Some(id) = flow_kt(c, src, file, fn_sym, scope, out) {
-                    last = Some(id);
-                }
-            }
-            last
+        // `for (x in coll) body`: record the span + loop var so loop_over can flag
+        // loop-invariant calls inside the body. The body is then walked by the
+        // conservative recursion below (Kotlin has no named fields on for_statement).
+        "for_statement" => {
+            let lvar = {
+                let mut cur = node.walk();
+                let kids: Vec<tree_sitter::Node> = node.named_children(&mut cur).collect();
+                kids.iter().find(|c| c.kind() == "simple_identifier")
+                    .map(|n| n.utf8_text(src).unwrap_or("").to_string())
+                    .unwrap_or_default()
+            };
+            let end = node.end_position();
+            out.loops.push(LoopFact {
+                file: file.into(), start: pos.row as u32, end: end.row as u32,
+                var: lvar, collection: String::new(), fn_sym: fn_sym.into(),
+            });
+            kt_recurse_children(node, src, file, fn_sym, scope, out)
+        }
+        "while_statement" | "do_while_statement" => {
+            let end = node.end_position();
+            out.loops.push(LoopFact {
+                file: file.into(), start: pos.row as u32, end: end.row as u32,
+                var: String::new(), collection: String::new(), fn_sym: fn_sym.into(),
+            });
+            kt_recurse_children(node, src, file, fn_sym, scope, out)
+        }
+        // anything else (when-arms, lambda bodies, etc.): recurse conservatively,
+        // surface the last value if any. May miss, never invents.
+        _ => kt_recurse_children(node, src, file, fn_sym, scope, out),
+    }
+}
+
+/// Walk all children of a node conservatively, surfacing the last value-bearing
+/// child's id. Factored out of the flow_kt default arm so loop arms reuse it.
+fn kt_recurse_children(
+    node: tree_sitter::Node,
+    src: &[u8],
+    file: &str,
+    fn_sym: &str,
+    scope: &mut std::collections::HashMap<String, String>,
+    out: &mut DataflowFacts,
+) -> Option<String> {
+    let mut last = None;
+    let mut cur = node.walk();
+    for c in node.children(&mut cur) {
+        if let Some(id) = flow_kt(c, src, file, fn_sym, scope, out) {
+            last = Some(id);
         }
     }
+    last
 }
 
 // --- TypeScript/JavaScript intra-procedural dataflow lift (oxc). Same two-rule
@@ -608,8 +656,96 @@ fn ts_flow_body_stmt(
                 let _ = ts_flow_expr(arg, file, starts, fn_sym, scope, out);
             }
         }
+        // `{ stmts }`: walk each inner statement so flow continues through blocks.
+        S::BlockStatement(b) => {
+            for s in &b.body {
+                ts_flow_body_stmt(s, file, starts, fn_sym, scope, out);
+            }
+        }
+        // `if (test) consequent else alternate`: taint is the union of branches.
+        S::IfStatement(i) => {
+            let _ = ts_flow_expr(&i.test, file, starts, fn_sym, scope, out);
+            ts_flow_body_stmt(&i.consequent, file, starts, fn_sym, scope, out);
+            if let Some(alt) = &i.alternate {
+                ts_flow_body_stmt(alt, file, starts, fn_sym, scope, out);
+            }
+        }
+        // C-style `for (init; test; update) body`: record the span, flow each.
+        S::ForStatement(f) => {
+            if let Some(ts_ast::ForStatementInit::VariableDeclaration(v)) = &f.init {
+                for d in &v.declarations {
+                    let rhs_id = d.init.as_ref().map(|init| ts_flow_expr(init, file, starts, fn_sym, scope, out));
+                    if let Some(name) = ts_binding_name(&d.id) {
+                        let bind = ts_push(out, file, starts, d.span.start, "let_bind", &name, fn_sym);
+                        if let Some(rhs) = rhs_id { out.edges.push(DfEdge { from: rhs, to: bind.clone() }); }
+                        scope.insert(name, bind);
+                    }
+                }
+            }
+            if let Some(test) = &f.test { let _ = ts_flow_expr(test, file, starts, fn_sym, scope, out); }
+            if let Some(upd) = &f.update { let _ = ts_flow_expr(upd, file, starts, fn_sym, scope, out); }
+            ts_loop_fact(out, file, starts, f.span.start, f.span.end, "", fn_sym);
+            ts_flow_body_stmt(&f.body, file, starts, fn_sym, scope, out);
+        }
+        // `for (x of/in coll) body`: bind x, flow coll, record span, walk body.
+        S::ForOfStatement(f) => ts_for_in_of(&f.left, &f.right, &f.body, f.span.start, f.span.end, file, starts, fn_sym, scope, out),
+        S::ForInStatement(f) => ts_for_in_of(&f.left, &f.right, &f.body, f.span.start, f.span.end, file, starts, fn_sym, scope, out),
+        S::WhileStatement(w) => {
+            let _ = ts_flow_expr(&w.test, file, starts, fn_sym, scope, out);
+            ts_loop_fact(out, file, starts, w.span.start, w.span.end, "", fn_sym);
+            ts_flow_body_stmt(&w.body, file, starts, fn_sym, scope, out);
+        }
+        S::DoWhileStatement(d) => {
+            let _ = ts_flow_expr(&d.test, file, starts, fn_sym, scope, out);
+            ts_loop_fact(out, file, starts, d.span.start, d.span.end, "", fn_sym);
+            ts_flow_body_stmt(&d.body, file, starts, fn_sym, scope, out);
+        }
         _ => {}
     }
+}
+
+/// Record a loop fact from byte-offset span endpoints. `var` is the loop
+/// variable name when known (for-of/for-in), else "".
+fn ts_loop_fact(out: &mut DataflowFacts, file: &str, starts: &[usize], start_off: u32, end_off: u32, var: &str, fn_sym: &str) {
+    out.loops.push(LoopFact {
+        file: file.into(),
+        start: line_at(starts, start_off as usize),
+        end: line_at(starts, end_off as usize),
+        var: var.into(),
+        collection: String::new(),
+        fn_sym: fn_sym.into(),
+    });
+}
+
+/// Shared handling for `for (x of/in coll) body`: bind the loop variable, flow
+/// the collection, record the span, then walk the body.
+fn ts_for_in_of(
+    left: &ts_ast::ForStatementLeft,
+    right: &ts_ast::Expression,
+    body: &ts_ast::Statement,
+    start_off: u32,
+    end_off: u32,
+    file: &str,
+    starts: &[usize],
+    fn_sym: &str,
+    scope: &mut std::collections::HashMap<String, String>,
+    out: &mut DataflowFacts,
+) {
+    let coll = ts_flow_expr(right, file, starts, fn_sym, scope, out);
+    let var = match left {
+        ts_ast::ForStatementLeft::VariableDeclaration(v) => {
+            v.declarations.first().and_then(|d| {
+                let name = ts_binding_name(&d.id)?;
+                let bind = ts_push(out, file, starts, d.span.start, "let_bind", &name, fn_sym);
+                out.edges.push(DfEdge { from: coll.clone(), to: bind.clone() });
+                scope.insert(name.clone(), bind);
+                Some(name)
+            }).unwrap_or_default()
+        }
+        _ => String::new(),
+    };
+    ts_loop_fact(out, file, starts, start_off, end_off, &var, fn_sym);
+    ts_flow_body_stmt(body, file, starts, fn_sym, scope, out);
 }
 
 /// Post-order value flow for one TS expression. Returns the node id carrying
@@ -2033,11 +2169,135 @@ fn flow_expr(
             out.edges.push(DfEdge { from: inner, to: id.clone() });
             id
         }
-        // macros (format!/println!), if/match/loop arms, etc.: syn exposes
+        // transparent pass-through: the ? operator does not alter value flow.
+        syn::Expr::Try(t) => flow_expr(&t.expr, file, fn_sym, scope, out),
+        // `for pat in coll { body }`: bind the loop variable from the collection,
+        // record the loop span so loop_over can flag loop-invariant calls inside
+        // it, then walk the body. Each element taints the loop var conservatively.
+        syn::Expr::ForLoop(f) => {
+            let coll = flow_expr(&f.expr, file, fn_sym, scope, out);
+            let lvar = bind_pat(&f.pat, file, fn_sym, scope, out);
+            if let Some(v) = &lvar {
+                if let Some(b) = scope.get(v) {
+                    out.edges.push(DfEdge { from: coll.clone(), to: b.clone() });
+                }
+            }
+            let end = f.body.span().end().line as u32;
+            out.loops.push(LoopFact {
+                file: file.into(), start: line, end,
+                var: lvar.clone().unwrap_or_default(),
+                collection: String::new(),
+                fn_sym: fn_sym.into(),
+            });
+            flow_block(&f.body, file, fn_sym, scope, out);
+            push_node(out, file, line, col, "loop", &lvar.unwrap_or_default(), fn_sym)
+        }
+        // `while cond { body }`: `while let` is ExprWhile with cond = Expr::Let.
+        // No collection, but the span is still recorded so calls in the body can
+        // be flagged.
+        syn::Expr::While(w) => {
+            let _ = flow_expr(&w.cond, file, fn_sym, scope, out);
+            if let syn::Expr::Let(l) = &*w.cond { let _ = bind_pat(&l.pat, file, fn_sym, scope, out); }
+            let end = w.body.span().end().line as u32;
+            out.loops.push(LoopFact { file: file.into(), start: line, end, var: String::new(), collection: String::new(), fn_sym: fn_sym.into() });
+            flow_block(&w.body, file, fn_sym, scope, out);
+            push_node(out, file, line, col, "loop", "", fn_sym)
+        }
+        syn::Expr::Loop(l) => {
+            let end = l.body.span().end().line as u32;
+            out.loops.push(LoopFact { file: file.into(), start: line, end, var: String::new(), collection: String::new(), fn_sym: fn_sym.into() });
+            flow_block(&l.body, file, fn_sym, scope, out);
+            push_node(out, file, line, col, "loop", "", fn_sym)
+        }
+        // `if cond { then } else { els }`: flow each branch; taint is the union.
+        syn::Expr::If(i) => {
+            let _ = flow_expr(&i.cond, file, fn_sym, scope, out);
+            flow_block(&i.then_branch, file, fn_sym, scope, out);
+            if let Some((_, els)) = &i.else_branch {
+                let _ = flow_expr(els, file, fn_sym, scope, out);
+            }
+            push_node(out, file, line, col, "if", "", fn_sym)
+        }
+        // `match scrut { arms }`: scrut + each arm body; guards too.
+        syn::Expr::Match(m) => {
+            let _ = flow_expr(&m.expr, file, fn_sym, scope, out);
+            for arm in &m.arms {
+                if let Some((_, g)) = &arm.guard { let _ = flow_expr(g, file, fn_sym, scope, out); }
+                let _ = flow_expr(&arm.body, file, fn_sym, scope, out);
+            }
+            push_node(out, file, line, col, "match", "", fn_sym)
+        }
+        // `{ stmts }` as an expression: reuse the block walker.
+        syn::Expr::Block(b) => {
+            flow_block(&b.block, file, fn_sym, scope, out);
+            push_node(out, file, line, col, "block", "", fn_sym)
+        }
+        // `|params| body`: bind params (in-scope for the body), walk the body.
+        // Closures are everywhere in real Rust (`let t = |s| ...`); without this
+        // the body was a total hole.
+        syn::Expr::Closure(c) => {
+            for inp in &c.inputs {
+                let _ = bind_pat(inp, file, fn_sym, scope, out);
+            }
+            match c.body.as_ref() {
+                syn::Expr::Block(b) => flow_block(&b.block, file, fn_sym, scope, out),
+                other => { let _ = flow_expr(other, file, fn_sym, scope, out); }
+            }
+            push_node(out, file, line, col, "closure", "", fn_sym)
+        }
+        // `lhs = rhs`: flow rhs, rebind a write slot so later reads see the new
+        // value (taint-correct for reassignment). Compound assignment (`+=`) and
+        // macros fall through to the conservative default below.
+        syn::Expr::Assign(a) => assign_flow(&a.left, &a.right, file, line, col, fn_sym, scope, out),
+        // macros (format!/println!), verbatim, and remaining variants: syn exposes
         // these as token streams or non-Expr children, so mint a node but don't
         // chase. Conservative — may miss flows into macro args, never invents.
         _ => push_node(out, file, line, col, "expr", "", fn_sym),
     }
+}
+
+/// Bind a pattern into scope: mint a `let_bind`/`param` slot for the common
+/// single-ident case and return the name. Destructuring falls through (no bind).
+fn bind_pat(
+    pat: &syn::Pat,
+    file: &str,
+    fn_sym: &str,
+    scope: &mut std::collections::HashMap<String, String>,
+    out: &mut DataflowFacts,
+) -> Option<String> {
+    if let syn::Pat::Ident(pi) = pat {
+        let (l, c) = (pi.ident.span().start().line as u32, pi.ident.span().start().column as u32);
+        let bind = push_node(out, file, l, c, "let_bind", &pi.ident.to_string(), fn_sym);
+        scope.insert(pi.ident.to_string(), bind);
+        Some(pi.ident.to_string())
+    } else {
+        None
+    }
+}
+
+/// `lhs = rhs`: flow the rhs; if the lhs is a bare path, mint a var_write slot,
+/// edge rhs -> slot, and rebind in scope so later reads pick up the new reaching
+/// def (taint-correct under reassignment).
+fn assign_flow(
+    lhs: &syn::Expr,
+    rhs: &syn::Expr,
+    file: &str,
+    line: u32,
+    col: u32,
+    fn_sym: &str,
+    scope: &mut std::collections::HashMap<String, String>,
+    out: &mut DataflowFacts,
+) -> String {
+    let r = flow_expr(rhs, file, fn_sym, scope, out);
+    if let syn::Expr::Path(p) = lhs {
+        if let Some(name) = p.path.segments.last().map(|s| s.ident.to_string()) {
+            let id = push_node(out, file, line, col, "var_write", &name, fn_sym);
+            out.edges.push(DfEdge { from: r.clone(), to: id.clone() });
+            scope.insert(name, id.clone());
+            return id;
+        }
+    }
+    r
 }
 
 // --- Kotlin entity pass (tree-sitter): declared types plus functions, the
