@@ -1,0 +1,142 @@
+# gen-doc-index.dl — dogfoods the doc tools on v5's own docs + source.
+#
+# Three tools exercised together in one program:
+#   doc_node — the markdown-structure relation (headings, via ingest::DocLang)
+#   comment  — rule-driven region extractor over Rust //! module docs
+#   gen      — splice the derived index back between the markers below
+#
+# This is the query-time unification of doc space and code space: doc_node
+# reads markdown structure, comment reads source comment regions, and both feed
+# one gen splice. No doc_ref edge relation needed; the two ops share a rule.
+#
+# Run from the repo root:  dl examples/gen-doc-index.dl
+# Rerun converges (no write when the bytes already match). The block below is live.
+#
+# BEGIN: docmap
+# - md  0. A calmer frame (read this when you are in the pit)  (v5/book/00-a-calmer-frame.md)
+# - md  1. Facts, rules, and queries  (v5/book/01-facts-and-rules.md)
+# - md  1. Order and lattices  (v5/book/math/01-order-and-lattices.md)
+# - md  1. The six bodies  (v5/book/beyond-manual-paging/01-the-six-bodies.md)
+# - md  1. The six languages  (v5/book/logic-language-survey/01-the-six-languages.md)
+# - md  2. Fixpoints  (v5/book/math/02-fixpoints.md)
+# - md  2. Recursion and the fixpoint  (v5/book/02-recursion-and-fixpoint.md)
+# - md  3. Semirings  (v5/book/math/03-semirings.md)
+# - md  3. The cycle problem  (v5/book/03-the-cycle-problem.md)
+# - md  4. Datalog on lattices  (v5/book/math/04-datalog-on-lattices.md)
+# - md  4. Incremental maintenance  (v5/book/04-incremental-maintenance.md)
+# - md  5. Evaluation  (v5/book/math/05-evaluation.md)
+# - md  5. Where the bytes live  (v5/book/05-where-bytes-live.md)
+# - md  6. Gold standards, and your engine  (v5/book/06-gold-standards-and-your-engine.md)
+# - md  6. Graph cores  (v5/book/math/06-graph-cores.md)
+# - md  7. Incremental  (v5/book/math/07-incremental.md)
+# - md  7. The fast paths: the loops that make it scale  (v5/book/07-the-fast-paths.md)
+# - md  8. Annotated bibliography  (v5/book/math/08-annotated-bibliography.md)
+# - md  Agent rails: dl as a guardrail loop for coding agents  (v5/docs/rails.md)
+# - md  Anim in the repo: dl relations → animated graphs → node-editor ports  (v5/plans/2026-06-11-anim-and-ports.md)
+# - md  Auto-refactor track (parallel, OFF the critical path)  (v5/plans/2026-06-01-programmable-lsp-ops-frontend-arc.md)
+# - md  Beyond Manual Paging  (v5/book/beyond-manual-paging/README.md)
+# - md  Beyond code: dl as a personal datalog/sqlite/rust monster  (v5/plans/2026-06-11-beyond-code-domains.md)
+# - md  CozoDB storage-backend abstraction (for sprefa `RelStore`)  (v5/docs/ext-cozo-storage-trait.md)
+# - md  Cycles  (v5/anim/src/deck/02-cycles.md)
+# - md  DBSP (Feldera) as a reuse target for sprefa v5's incremental-retraction layer  (v5/docs/ext-dbsp-incremental.md)
+# - md  Filesystem  (v5/anim/src/deck/04-filesystem.md)
+# - md  Further study  (v5/book/further-study.md)
+# - md  Glossary  (v5/anim/src/glossary.md)
+# - md  Graph-Viz / Exploration Layer — Atlas + Build Plan  (v5/plans/2026-06-06-graph-viz-atlas.md)
+# - md  History  (v5/anim/src/deck/05-history.md)
+# - md  Incremental / Reactive Datalog + SQL: prior-art landscape  (v5/research/2026-05-21-incremental-reactive-datalog-landscape.md)
+# - md  Kill `where`; make nesting the one way to filter (incl. seeded closures)  (v5/plans/2026-06-02-kill-where-seed-closures-by-nesting.md)
+# - md  Kotlin Import Resolution Hazards: Tool Assessment Matrix  (v5/kotlin-import-hazards-research.md)
+# - md  LSP mode: declarative diagnostics  (v5/docs/lsp.md)
+# - md  LSP-via-state: the reactive/redux model as the LSP implementation mechanism  (v5/plans/2026-06-02-lsp-via-state-research-plan.md)
+# - md  Logic Language Survey  (v5/book/logic-language-survey/README.md)
+# - md  Making an LSP server easy, not a labyrinth — three Rust approaches  (v5/docs/ext-lsp-made-easy.md)
+# - md  North star: types, modules, parsers, and the LSP/info channel  (v5/plans/2026-06-18-north-star-types-modules-parsers.md)
+# - md  Open questions (resolve before coding each phase)  (v5/plans/2026-06-01-programmable-lsp-ops-frontend-arc.md)
+# - md  Perf variant analysis: overfitting a rule to a bug  (v5/docs/perf-variant-analysis.md)
+# - md  Phase 0 — Lowering contract (1 doc, no code)  (v5/plans/2026-06-01-programmable-lsp-ops-frontend-arc.md)
+# - md  Phase A — Ops authoring frontend + lint std-lib (THE KEYSTONE)  (v5/plans/2026-06-01-programmable-lsp-ops-frontend-arc.md)
+# - md  Phase A1 - `use` only (module inclusion)  (v5/plans/2026-06-18-north-star-types-modules-parsers.md)
+# - md  Phase A2 - `def` templates (arity-reuse layer)  (v5/plans/2026-06-18-north-star-types-modules-parsers.md)
+# - md  Phase B - `allow_missing` config flag + missing_repo rel  (v5/plans/2026-06-18-north-star-types-modules-parsers.md)
+# - md  Phase B — Incremental closures (pure engine, zero language risk)  (v5/plans/2026-06-01-programmable-lsp-ops-frontend-arc.md)
+# - md  Phase C - LSP `info` rel + hover handler  (v5/plans/2026-06-18-north-star-types-modules-parsers.md)
+# - md  Phase C — Real LSP on the op surface (rides A + B)  (v5/plans/2026-06-01-programmable-lsp-ops-frontend-arc.md)
+# - md  Phase D - Diet SCIP completion: CALL_RELS + unified symbol identity  (v5/plans/2026-06-18-north-star-types-modules-parsers.md)
+# - md  Phase E - Programmable go-to-def / find-references  (v5/plans/2026-06-18-north-star-types-modules-parsers.md)
+# - md  Phase F - Full SCIP descriptor unpack (deferred, on demand)  (v5/plans/2026-06-18-north-star-types-modules-parsers.md)
+# - md  Phase G - CSS/XPath selector op + `rs:` symbol scheme (candidates)  (v5/plans/2026-06-18-north-star-types-modules-parsers.md)
+# - md  Piloting haiku from dl: the model as a cached per-file UDF  (v5/plans/2026-06-11-haiku-blade.md)
+# - md  Portable reactive/retraction core — does v5 have one, what would it cost  (v5/docs/research-portable-reactive-core.md)
+# - md  Programmable-LSP arc: ops authoring frontend + incremental closures + real LSP  (v5/plans/2026-06-01-programmable-lsp-ops-frontend-arc.md)
+# - md  Reachability  (v5/anim/src/deck/01-reachability.md)
+# - md  Reactive Facts  (v5/book/README.md)
+# - md  Relations  (v5/anim/src/deck/03-relations.md)
+# - md  Round 2 deep dives (2026-05-21)  (v5/research/2026-05-21-incremental-reactive-datalog-landscape.md)
+# - md  SQLite × Graph / Datalog / Reactive Query Engines — Landscape for sprefa v5  (v5/docs/research-sqlite-graph-landscape.md)
+# - md  Sequencing + the no-6th-rewrite property  (v5/plans/2026-06-01-programmable-lsp-ops-frontend-arc.md)
+# - md  Sequencing summary  (v5/plans/2026-06-18-north-star-types-modules-parsers.md)
+# - md  Starter lint pack — ast-grep → LSP  (v5/examples/lints/README.md)
+# - md  The data model (the contract)  (v5/docs/data-model.md)
+# - md  The math behind the engine  (v5/book/math/README.md)
+# - md  This session  (v5/anim/src/deck/06-this-session.md)
+# - md  Typed path literals + agg + LSP routing — implementation contract  (v5/plans/2026-06-11-typed-paths-impl.md)
+# - md  datafrog as a `MemStore` backend behind a `RelStore` seam  (v5/docs/ext-datafrog-memstore.md)
+# - md  dl LSP  (v5/editors/vscode-dl/README.md)
+# - md  frame-anim  (v5/anim/README.md)
+# - md  petgraph swap for scc.rs  (v5/docs/ext-petgraph-scc-swap.md)
+# - md  sprefa v5 (`dl`)  (v5/README.md)
+# - md  v5 study tracker (`ls -la`)  (v5/research/STUDY.md)
+# - md  v5cozokuzu  (v5/src/v5cozokuzu/README.md)
+# - rs  v5/src/bin/scc_reach.rs:1  E4 proof: SCC-condensed transitive closure over `rel_calls` in a SQLite db.
+# - rs  v5/src/comment.rs:1  Comment-marker regions: `comment(p, rev, /open/[, /close/], l0, l1, label)`.
+# - rs  v5/src/config.rs:1  Turnkey multi-repo config. A single TOML file lists the checkouts to analyze
+# - rs  v5/src/datapath.rs:1  Dotted-path extraction over data files: the `json` op's evaluator. The op
+# - rs  v5/src/desc.rs:1  Descriptors: the canonical value a typed path literal (`fs:`/`glob:`) resolves
+# - rs  v5/src/frontend.rs:1  Module surface: `use` inclusion + canonical-path dedup. The smallest viable
+# - rs  v5/src/ingest/mod.rs:1  Document ingestion: a registry of grammars that emit structural relations
+# - rs  v5/src/ktpath.rs:1  Kotlin move-refactor path math. A Kotlin import is `package.Decl` and the
+# - rs  v5/src/lsp.rs:1  LSP server mode: turn a `.dl` program's `diag` relation into live editor
+# - rs  v5/src/modgraph.rs:1  Cross-language module dependency graph: "the filesystem from language, as
+# - rs  v5/src/refactor.rs:1  The auto-refactor edit sink (Route A). Turns located `use`-path spans into
+# - rs  v5/src/repo.rs:1  Repo-root discovery for `.dl` programs: `nearest_git` walks up from a path
+# - rs  v5/src/rspath.rs:1  Rust `use`-path rewrite arithmetic for the auto-refactor sink (Route A).
+# - rs  v5/src/scc.rs:1  SCC-condensed transitive closure. Pure graph: no SQL, no engine types.
+# - rs  v5/src/typecheck.rs:1  Lower-time path-literal normalization and rule type checking (spec T2).
+# - rs  v5/src/typegraph.rs:1  Diet type graph extractors. Intentionally syntax-only: parse a file (`syn`
+# - rs  v5/src/v5cozokuzu/src/bin/cozo_demo.rs:1  Cozo: embeddable Datalog + built-in graph algorithms, written in Rust.
+# - rs  v5/src/v5cozokuzu/src/bin/kuzu_demo.rs:1  Kuzu: embeddable property graph, queried in Cypher (Neo4j's language),
+# - rs  v5/src/v5cozokuzu/src/lib.rs:1  Shared fixture: the same call graph the `dl` examples build, so the Cozo
+# END:
+
+# Scan markdown into _file so refresh_doc_rels runs the DocLang registry over it.
+# (doc_node is populated lazily only for files a source rule has touched.)
+rel md(path: file).
+md(path) <- scan("WORK", "v5/**/*.md", path, rev), match(path, rev, /./, line).
+
+# Each markdown doc's title = its top-level heading (parent = "").
+rel doc_title(path: file, title: text).
+doc_title(path, title) <- doc_node(path, _, "heading", title, "").
+
+# Rust //! module docs. comment.rs strips the leading `//` marker, so a `//! x`
+# line survives as `! x`; /^!/ picks module docs apart from item `///` (-> `/ x`)
+# and plain `//` (-> the comment text). One region per //! line in sequential mode.
+rel mod_doc(path: file, line: int, summary: text).
+mod_doc(path, l0, summary) <- scan("WORK", "v5/src/**/*.rs", path, rev),
+  comment(path, rev, /^!\s?(?<s>.+)/, l0, l1, summary).
+
+# First //! line per file: aggregate to the min line, then join back for its text.
+# (Source rules can't join derived rels; this is the extract-then-join split.)
+rel mod_first_line(path: file, line: int).
+mod_first_line(path, min(line)) <- mod_doc(path, line, _).
+
+rel mod_first(path: file, line: int, summary: text).
+mod_first(path, line, summary) <- mod_first_line(path, line), mod_doc(path, line, summary).
+
+# Re-locate this file's own marker pair every tick.
+rel block(p: file, l0: int, l1: int).
+block(p, l0, l1) <- scan("WORK", "v5/examples/gen-doc-index.dl", p, rev),
+  comment(p, rev, /BEGIN: docmap/, /END:/, l0, l1, lab).
+
+gen(p, l0, l1, "# - md  {title}  ({path})") <- block(p, l0, l1), doc_title(path, title).
+gen(p, l0, l1, "# - rs  {path}:{line}  {summary}") <- block(p, l0, l1), mod_first(path, line, summary).

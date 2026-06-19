@@ -4,7 +4,7 @@ Datalog over code, in repo/rev/time space. Extract facts from source files with
 `scan` + located matchers, write recursive rules, and the engine lowers them to
 a SQLite fixpoint. Sinks turn result rows into query output (`?`), editor
 diagnostics (`diag` + `--lsp`/`--check`), or generated/spliced files (`gen`).
-~9k LOC, sync-tick, no compiler dependency.
+~14k LOC, sync-tick, no compiler dependency.
 
 This file is the reference for humans and agents alike: full DSL syntax, type
 system, built-in relations, CLI, hook/LSP installation, and pointers to every
@@ -95,7 +95,7 @@ Type errors surface as diagnostics under `--check` and in `--lsp`
 | op | signature | what it does |
 |---|---|---|
 | `scan` | `scan(glob, path, rev_out)` or `scan(rev, glob, path, rev_out)` or `scan(repo, rev, glob, path, rev_out)` | select files. 3-ary defaults `repo="."` self and `rev="WORK"` worktree; 4-ary defaults `repo="."`; 5-ary names a repo coordinate. `rev` ∈ `"WORK"` (worktree) \| `"HEAD"` \| any git rev. `repo` ∈ config slug \| `"."` (self) \| `"*"` (fan over every configured repo) |
-| `match` | `match(path, rev, /re/, line)` | regex over file content, one row per match line. `(?<cap>..)` named groups bind dl vars of the same name; `$cap` is sugar for a lazy named group (`/TODO\($who\)/`); bare `$` stays the anchor |
+| `match` | `match(path, rev, /re/, line[, id])` | regex over file content, one row per match line. `(?<cap>..)` named groups bind dl vars of the same name; `$cap` is sugar for a lazy named group (`/TODO\($who\)/`); bare `$` stays the anchor. Optional `id` binds the whole-match span's spine id (deterministic from span+source, equals `insert_spine_where_bytes`'s id), so `ref(id, _, _, lo, hi)` resolves to the exact match and feeds `gen(:mode, path, lo, hi, ...)`. When `id` is present the whole-match span is pushed; the 4-arg form pushes named captures only |
 | `ast` | `ast(path, rev, :rust\|:c\|:kotlin, "(query) @cap", line[, end])` | tree-sitter query; `@cap` captures bind same-named vars |
 | `sg` | `sg(path, rev, :lang, "$X.unwrap()", line[, col, end_line, end_col])` | ast-grep pattern; metavar `$X` binds dl var `X`. Lines 1-based, columns 0-based byte offsets. `:lang` ∈ rust, ts, tsx, js, py, go, json, c, cpp, kotlin (see [src/sg.rs](src/sg.rs)) |
 | `json` | `json(path, rev, "a.*.b", out)` | dotted path over json/yaml/toml (dispatched by extension; `*` = any key/element). Value is located |
@@ -263,22 +263,38 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `content` | `(id, hash)` | content addresses |
 | `file` | `(repo, rev, path, content)` | scanned files |
 | `changed` | `(path)` | `git status --porcelain -uall` vs HEAD: modified, added, renamed, untracked. Empty outside git. The rails join |
+| `changed_line` | `(path, line)` | new-side lines of `git diff -U0 HEAD` hunks (`@@ -a,b +c,d @@` -> c..c+d-1) plus every line of untracked files (omitted by the diff). Pure-deletion hunks (d=0) emit nothing. Line-scoped rails precision |
+| `true` | `()` | zero-arity singleton; the always- succeeds atom |
 | `module_import` | `(file, rev, specifier, kind, line)` | import statements, Rust + TS + Kotlin. Kotlin adds `kind="same-package"` rows for bare uses of another file's column-0 decl, and an expect/actual decl fans edges to all declaring files |
 | `module_edge` | `(src, dst)` | resolved file-to-file import graph (rev-deduped union) |
 | `module_edge_rev` | `(src, dst, rev)` | rev-aware form |
 | `module_unresolved` | `(file, specifier, reason, line)` | broken imports (the linter question) |
 | `module_unresolved_rev` | `(file, rev, specifier, reason, line)` | rev-aware form |
 | `crate_edge` | `(src, dst, kind, rev)` | workspace-internal Cargo dependency edges |
-| `type_edge` | `(from, to, kind)` | type graph, Rust (syn) + Kotlin (tree-sitter); `kind` ∈ `field`\|`variant`\|`impl`\|`generic`. Kotlin: an interface's supertypes are `generic` (mirrors Rust supertraits), a class/object's are `impl`, val/var constructor params + body properties are `field`, enum entries are `variant` |
+| `type_edge` | `(from, to, kind)` | type graph, Rust (syn) + Kotlin (tree-sitter) + TS (oxc); `kind` ∈ `field`\|`variant`\|`impl`\|`generic`. Kotlin: an interface's supertypes are `generic` (mirrors Rust supertraits), a class/object's are `impl`, val/var constructor params + body properties are `field`, enum entries are `variant` |
 | `type_edge_rev` | `(from, to, kind, rev)` | rev-aware form (WORK-vs-HEAD type diff) |
+| `type_entity` | `(sym, name, kind, parent, file, line)` | every declared type; `sym` is `file::kind::name` (the join key across graphs). When a SCIP index is present, `scip_ref` overrides name resolution |
+| `type_sig` | `(sym, slot, pos, ref)` | type signature slots (params, fields) per sym |
+| `type_link` | `(src, dst, kind)` | cross-type links not carried by `type_edge` |
+| `call_def` | `(sym, kind, file, line, end)` | every callable; `sym` is `file::kind::name` |
+| `call_site` | `(caller, callee, file, line)` | each call occurrence; `caller` is the resolved fn sym, `callee` is the bare callable text. `changed_line(p, l)` joins here for line-scoped rails |
+| `call_edge` | `(caller, callee, kind)` | resolved caller-sym -> callee-sym edge; callee resolved via single-def or SCIP override |
+| `call_edge_rev` | `(caller, callee, kind, rev)` | rev-aware form |
+| `call_name` | `(sym, name)` | def sym -> bare callable name; resolves a `call_site` callee to candidate def syms |
+| `df_node` | `(id, kind, var, fn, file, line)` | intra-procedural dataflow node (`call_res`/`assign`/...); `id` is `file::line::kind` |
+| `df_edge` | `(from, to)` | dataflow dependency |
+| `loop_over` | `(file, start, end, var, collection, fn)` | one row per loop with its span, iter var, and collection |
+| `allocates` | `(fn)` | one row per fn whose body builds a collection (Vec/HashMap/String ctor, `.collect`/`.clone`/`.to_string`) |
+| `nest` | `(call_id, loop_id, depth, collection)` | one row per (call, enclosing loop); `depth` is nesting rank (1=outermost). Raw material for symbolic Big-O over `call_edge` |
+| `doc_node` | `(file, line, kind, name, parent)` | structural nodes from non-source text (markdown today: `heading`/`code_block`). `parent` is the enclosing heading. Emitted by the `ingest::DocLang` registry; an island until the `doc_ref` bridge lands |
 | `scip_def` | `(symbol, file)` | from an existing `index.scip` at root or `$SPREFA_SCIP_INDEX` |
 | `scip_ref` | `(file, symbol, def_file)` | compiler-backed references |
 | `scip_edge` | `(src, dst)` | file-to-file SCIP dependency edges |
 | `string` | `(id, text, norm)` | interned strings (ref spine) |
 | `ref` | `(id, string, file, lo, hi)` | byte span per interned string; `id` is the rewrite coordinate. "Where does Foo occur": `string(s, "Foo", _), ref(_, s, f, lo, hi)` |
 
-Declarations live at [src/engine.rs:25](src/engine.rs) (`BUILTIN_RELS` through
-`SPINE_RELS`).
+Declarations live in [src/engine.rs](src/engine.rs) (the `BUILTIN_RELS`
+through `SPINE_RELS` const families + their `*_rel_decls` functions).
 
 ## CLI
 
@@ -418,6 +434,7 @@ All in [examples/](examples/), runnable as `dl examples/<name>.dl --root .`:
 | [module-history.dl](examples/module-history.dl) | rev-aware module graph |
 | [repo-nearest.dl](examples/repo-nearest.dl) | multi-repo queries |
 | [gen-type-table.dl](examples/gen-type-table.dl) | the marker-splice codegen loop: `comment` + `gen` keep a table fresh inside the program's own comments |
+| [gen-doc-index.dl](examples/gen-doc-index.dl) | dogfoods the doc tools together: `doc_node` (markdown titles) + `comment` (Rust `//!` module docs) → one `gen` splice. Query-time doc/code unification |
 | [anim-deck.dl](examples/anim-deck.dl) | cross-repo splice: aggregates + round tiers written into a slide deck's d2 fences |
 | [typegraph-anim.dl](examples/typegraph-anim.dl) | gen → d2 `steps:` boards, `d2 --animate-interval` |
 | [typeports.dl](examples/typeports.dl) | hub structs as d2 `sql_table` nodes, wires anchored to field rows |
@@ -435,7 +452,8 @@ All in [examples/](examples/), runnable as `dl examples/<name>.dl --root .`:
 | [src/db.rs](src/db.rs) | the plural-only SQL chokepoint (`insert_rows`); per-row writes are counted and screamed about |
 | [src/comment.rs](src/comment.rs) | comment-marker region scanner |
 | [src/modgraph.rs](src/modgraph.rs) | Rust+TS import resolver |
-| [src/typegraph.rs](src/typegraph.rs) | syn type-edge extractor |
+| [src/typegraph.rs](src/typegraph.rs) | type graph: Rust (syn) + Kotlin (tree-sitter) + TS (oxc) type-edge extractor; the `TypeLang` registry |
+| [src/ingest/mod.rs](src/ingest/mod.rs) | document ingestion: the `DocLang` registry + `doc_node` extractor (markdown first) |
 | [src/scc.rs](src/scc.rs) | closure / SCC condensation |
 | [src/spine.rs](src/spine.rs) / [src/datapath.rs](src/datapath.rs) | ref-spine IDs, located spans |
 | [src/lsp.rs](src/lsp.rs) | the LSP server |
@@ -460,4 +478,13 @@ design-recovery; the original coordinate model lives in
 - **String manipulation is thin** — `${}` concat and the constraints above;
   no split/replace/substr, no regex over an already-bound value.
 - **Closure in a mixed rule body is literal-seeded only** — dynamic transitive
-  closure is a seeded point query, not a fixpoint join.
+  closure is a seeded point query, not a fixpoint join. Recursive rules over
+  the `_edge` relations substitute (see [examples/callgraph.dl](examples/callgraph.dl)).
+- **`doc_node` is an island** — markdown headings/code-blocks extract today, but
+  no `doc_ref(doc, sym)` edge links doc space to the code graphs yet. Comments
+  are not auto-extracted (syn strips them); the `comment` op pulls regions on
+  demand at query time instead.
+- **No per-language symbol literal** — `rs:`/`kt:`/`ts:`/`md:` addressing is
+  deferred. Symbols are reachable today via column conjunctions (`name = "tick"`
+  + `file = fs:src/engine.rs`); a terse module-path literal would collapse that
+  but needs a resolver/UDF choice (see chat_log session 4).
