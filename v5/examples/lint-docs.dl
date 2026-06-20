@@ -1,0 +1,140 @@
+# Documentation hygiene lints. Two warnings:
+#
+#   1. needs-doc      A type-defined symbol whose definition line is in the
+#                     worktree diff (changed_line) AND that has >2 distinct
+#                     referrers (call_site callers + type_link srcs) AND that
+#                     has no doc_ref row. The "this is new and load-bearing,
+#                     please write a real doc" warning.
+#
+#   2. chat-comment   A function whose /// block immediately above the def
+#                     exceeds the budget derived from its input arity. Catches
+#                     AI-generated "chat comments" that paraphrase the signature
+#                     instead of saying anything new. Budget = 2*arity + 2.
+#
+# Both rules emit `diag` rows; render via the usual surfaces:
+#
+#   dl examples/lint-docs.dl --root .            # stdout
+#   dl examples/lint-docs.dl --root . --check    # human, exit 1 on any row
+#   dl examples/lint-docs.dl --root . --lsp      # squiggles in the editor
+
+rel diag(path: file, line: int, col: int, end_line: int, end_col: int,
+         severity: text, code: text, msg: text).
+
+# ---- Rule 1: needs-doc -------------------------------------------------------
+#
+# Three positive conditions + one negative:
+#   - is_new:           type_entity.line is on a changed_line in the same file
+#   - total_refs > 2:   sum of (callers via call_name) + (type refs via type_link)
+#   - not documented:   no doc_ref row for this sym
+#
+# Note: needs-doc is type-only today (doc_ref bridges markdown headings/code
+# blocks to type_entity names, not to call_def symbols). A function variant
+# would need a different "documented" signal -- e.g. /// block exists at all.
+
+# Callers per def sym. call_site.callee is bare text; call_name resolves it to
+# the def syms that own that name (handles overloaded names: one row per def).
+rel call_refs(sym: text, n: int).
+call_refs(s, count(caller)) <-
+  call_name(s, name), call_site(caller, name, _, _).
+
+# Type references per sym. type_link.dst mixes bare names ("Option") and
+# file-prefixed syms ("v5/src/ast.rs::enum::Term"); cover both. Bare names join
+# via type_entity.name; prefixed syms join via type_entity.sym directly.
+rel type_refs(sym: text, n: int).
+type_refs(s, count(src)) <- type_entity(s, name, _, _, _, _), type_link(src, name, _).
+type_refs(s, count(src)) <- type_entity(s, _, _, _, _, _), type_link(src, s, _).
+
+# Total refs per sym = sum of call_refs + type_refs. Functions usually only have
+# call_refs; types usually only have type_refs; summing via a union avoids the
+# inner-join trap where syms with only one signal would drop out.
+rel ref_signal(sym: text, n: int).
+ref_signal(s, n) <- call_refs(s, n).
+ref_signal(s, n) <- type_refs(s, n).
+
+rel total_refs(sym: text, n: int).
+total_refs(s, sum(n)) <- ref_signal(s, n).
+
+# Documented iff any doc_ref row mentions the sym.
+rel documented(sym: text).
+documented(s) <- doc_ref(_, _, s, _, _).
+
+rel needs_doc(sym: text, file: file, line: int, refs: int).
+needs_doc(s, f, l, n) <-
+  type_entity(s, _, _, _, f, l),
+  changed_line(f, l),
+  total_refs(s, n), n > 2,
+  !documented(s).
+
+diag(f, l, 1, l, 1, "warn", "needs-doc",
+     "${s} is new and has ${n} refs but no doc; please document this large and important component") <-
+  needs_doc(s, f, l, n).
+
+# ---- Rule 2: chat-comment ----------------------------------------------------
+#
+# For each function, count the contiguous /// block immediately above its def
+# line. `block_top` finds the closest non_doc line below the def; the block is
+# all doc_lines between them. We count actual rows (not arithmetic on the gap)
+# so empty lines between two /// blocks don't inflate the total.
+#
+# Budget: 2*arity + 2. Tune by editing the `budget` rule below.
+
+rel fn_arity(sym: text, n: int).
+fn_arity(s, count(p)) <- call_def(s, _, _, _, _), type_sig(s, "param", p, _).
+
+# Every non-empty line in any scanned Rust file. Acts as a spine so we can mark
+# which lines are doc lines and which aren't.
+rel file_line(file: file, line: int).
+file_line(p, l) <- scan("WORK", "v5/src/**/*.rs", p, rev), match(p, rev, /./, l).
+
+# One row per /// line in any scanned Rust file. `^\/\s?(?<x>.*)` matches the
+# "/ ..." text the comment op sees after stripping "//" from "///"; `.*` (not
+# `.+`) so a bare `///` paragraph-break line still counts as part of the block.
+rel doc_line(path: file, line: int).
+doc_line(p, l0) <-
+  scan("WORK", "v5/src/**/*.rs", p, rev),
+  comment(p, rev, /^\/\s?(?<x>.*)/, l0, label: lab).
+
+# Lines that aren't doc lines (per file).
+rel non_doc(file: file, line: int).
+non_doc(f, l) <- file_line(f, l), !doc_line(f, l).
+
+# For each def, the closest non_doc line below it. Block above def = all
+# doc_lines strictly between this line and the def.
+rel block_top(file: file, def_line: int, top: int).
+block_top(f, dl, max(l)) <-
+  call_def(_, _, f, dl, _),
+  non_doc(f, l),
+  l < dl.
+
+rel fn_doc_count(sym: text, file: file, def_line: int, k: int).
+fn_doc_count(s, f, dl, count(l)) <-
+  call_def(s, _, f, dl, _),
+  block_top(f, dl, top),
+  doc_line(f, l),
+  l > top,
+  l < dl.
+# Top-of-file case: no non_doc line below the def (def at top of file with only
+# /// above). Count every doc_line above the def.
+fn_doc_count(s, f, dl, count(l)) <-
+  call_def(s, _, f, dl, _),
+  !block_top(f, dl, _),
+  doc_line(f, l),
+  l < dl.
+
+# Budget = 2*arity + 2. Lets a 0-arg fn have a 2-line summary, scales 2 lines
+# per input (one for the arg name, one for what it constrains).
+rel budget(sym: text, n: int).
+budget(s, ar * 2 + 2) <- fn_arity(s, ar).
+
+rel chat_comment(sym: text, file: file, line: int, actual: int, bud: int).
+chat_comment(s, f, l, actual, bud) <-
+  call_def(s, _, f, l, _),
+  fn_doc_count(s, f, l, actual),
+  budget(s, bud),
+  actual > bud.
+
+diag(f, l, 1, l, 1, "warn", "chat-comment",
+     "${s}: ${actual} /// lines for ${ar} inputs (budget ${bud}); trim the chat comment") <-
+  chat_comment(s, f, l, actual, bud), fn_arity(s, ar).
+
+? diag(path, line, col, end_line, end_col, severity, code, msg).

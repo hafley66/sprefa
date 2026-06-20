@@ -286,8 +286,8 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `loop_over` | `(file, start, end, var, collection, fn)` | one row per loop with its span, iter var, and collection |
 | `allocates` | `(fn)` | one row per fn whose body builds a collection (Vec/HashMap/String ctor, `.collect`/`.clone`/`.to_string`) |
 | `nest` | `(call_id, loop_id, depth, collection)` | one row per (call, enclosing loop); `depth` is nesting rank (1=outermost). Raw material for symbolic Big-O over `call_edge` |
-| `doc_node` | `(file, line, kind, name, parent)` | structural nodes from non-source text (markdown today: `heading`/`code_block`). `parent` is the enclosing heading. Emitted by the `ingest::IngestLang` registry |
-| `doc_ref` | `(file, line, sym)` | doc→code bridge: name-matches `doc_node` headings to `type_entity` symbols. Empty unless the program also uses type relations |
+| `doc_node` | `(file, line, kind, name, parent)` | structural nodes from non-source text (markdown: `heading`/`code_block`, via `tree-sitter-md` block grammar; ATX + setext headings, fenced + indented code blocks). `parent` is the enclosing heading. Emitted by the `ingest::IngestLang` registry |
+| `doc_ref` | `(file, line, sym, kind, matched_name)` | doc→code bridge: name-matches `doc_node` headings to `type_entity` symbols (exact + normalized: articles/kind-words stripped), and scans code-block text for identifier mentions. `kind` is the doc_node kind (`heading`/`code_block`); `matched_name` is the doc-side string that matched. Empty unless the program also uses type relations |
 | `scip_def` | `(symbol, file)` | from an existing `index.scip` at root or `$SPREFA_SCIP_INDEX` |
 | `scip_ref` | `(file, symbol, def_file)` | compiler-backed references |
 | `scip_edge` | `(src, dst)` | file-to-file SCIP dependency edges |
@@ -432,6 +432,7 @@ All in [examples/](examples/), runnable as `dl examples/<name>.dl --root .`:
 | [typegraph.dl](examples/typegraph.dl) | `type_edge` + closure: type blast radius |
 | [lint-unwrap.dl](examples/lint-unwrap.dl) | `sg` spans → tight LSP squiggles |
 | [lint-imports.dl](examples/lint-imports.dl) | `module_unresolved` as a check |
+| [lint-docs.dl](examples/lint-docs.dl) | doc hygiene as agent rails: `needs-doc` (new + >2 refs + no `doc_ref`) + `chat-comment` (`///` block over an arity-derived budget). Patterns: sum-aggregate over a union, `max` for contiguous-block detection |
 | [rails.dl](examples/rails.dl) | diff-scoped agent rails: banned words, exemptions via `fs:` literals, aggregate budgets |
 | [ban.dl](examples/ban.dl) | minimal banned-pattern check |
 | [openapi.dl](examples/openapi.dl) | `json` op + anti-join over a spec |
@@ -458,7 +459,7 @@ All in [examples/](examples/), runnable as `dl examples/<name>.dl --root .`:
 | [src/comment.rs](src/comment.rs) | comment-marker region scanner |
 | [src/modgraph.rs](src/modgraph.rs) | Rust+TS import resolver |
 | [src/typegraph.rs](src/typegraph.rs) | type graph: Rust (syn) + Kotlin (tree-sitter) + TS (oxc) type-edge extractor; the `TypeLang` registry |
-| [src/ingest/mod.rs](src/ingest/mod.rs) | document ingestion: the `IngestLang` registry + `doc_node` extractor (markdown first) |
+| [src/ingest/mod.rs](src/ingest/mod.rs) | document ingestion: the `IngestLang` registry + `doc_node` extractor (markdown via `tree-sitter-md` block grammar) |
 | [src/scc.rs](src/scc.rs) | closure / SCC condensation |
 | [src/spine.rs](src/spine.rs) / [src/datapath.rs](src/datapath.rs) | ref-spine IDs, located spans |
 | [src/lsp.rs](src/lsp.rs) | the LSP server |
@@ -486,9 +487,10 @@ design-recovery; the original coordinate model lives in
   closure is a seeded point query, not a fixpoint join. Recursive rules over
   the `_edge` relations substitute (see [examples/callgraph.dl](examples/callgraph.dl)).
 - **`doc_node` bridges to code via `doc_ref`** — markdown headings/code-blocks
-  extract today, and `doc_ref(file, line, sym)` name-matches those headings to
-  `type_entity` symbols. Comments are not auto-extracted (syn strips them); the
-  `comment` op pulls regions on demand at query time instead.
+  extract today, and `doc_ref(file, line, sym, kind, matched_name)` matches those
+  headings to `type_entity` symbols (exact + normalized), plus scans code-block
+  text for identifier mentions. Comments are not auto-extracted (syn strips
+  them); the `comment` op pulls regions on demand at query time instead.
 - **No per-language symbol literal** — `rs:`/`kt:`/`ts:`/`md:` addressing is
   deferred. Symbols are reachable today via column conjunctions (`name = "tick"`
   + `file = fs:src/engine.rs`); a terse module-path literal would collapse that

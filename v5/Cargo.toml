@@ -30,6 +30,11 @@ tree-sitter-json = "0.24"
 # ast-grep's kotlin grammar fork; already in the tree via ast-grep-language,
 # so a direct dep adds no new transitive build.
 tree-sitter-kotlin-sg = "0.4"
+# MDeiml/tree-sitter-grammars markdown grammar. Two-parser split (block +
+# inline); we use the block language for headings + fenced code blocks. The
+# hand-rolled extractor it replaced lives in git history (commit preceding
+# 730819a -> here).
+tree-sitter-md = "0.5"
 streaming-iterator = "0.1"
 ast-grep-core = "0.38"
 ast-grep-language = "0.38"

@@ -226,10 +226,17 @@ fn doc_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "doc_node".into(), cols: vec![
             c("file", Type::Path), c("line", Type::Int),
             c("kind", Type::Text), c("name", Type::Text), c("parent", Type::Text)] },
-        // doc→code bridge: (file, line, sym) where a heading's name matches a
-        // `type_entity` name. Empty unless the program also uses type relations.
+        // doc→code bridge: (file, line, sym, kind, matched_name). For each row,
+        // `kind` is the doc_node kind that produced it ("heading" or
+        // "code_block") and `matched_name` is the doc-side string that matched a
+        // type_entity name (the heading text for `heading`, the matching
+        // identifier token for `code_block`). Heading names are normalized
+        // before the join (articles + trailing kind words stripped) so "The
+        // Engine struct" bridges to `Engine`. Empty unless the program also uses
+        // type relations.
         RelDecl { name: "doc_ref".into(), cols: vec![
-            c("file", Type::Path), c("line", Type::Int), c("sym", Type::Text)] },
+            c("file", Type::Path), c("line", Type::Int), c("sym", Type::Text),
+            c("kind", Type::Text), c("matched_name", Type::Text)] },
     ]
 }
 
@@ -2718,17 +2725,87 @@ impl Engine {
         }
         self.refresh_rel("doc_node", &["file", "line", "kind", "name", "parent"], &rows)?;
 
-        // doc_ref bridge: name-match doc headings to type entities. Runs after both
-        // doc_node (above) and type_entity (earlier in the tick) are populated. A
-        // heading "Engine" joins to type_entity rows where name = "Engine", linking
-        // the doc position to every code symbol with that name. Empty if the program
-        // doesn't use type relations (type_entity table exists but is unpopulated).
-        let (dn, te, dr) = (tbl("doc_node"), tbl("type_entity"), tbl("doc_ref"));
-        self.db.exec(&format!("DELETE FROM {dr}"))?;
-        self.db.exec(&format!(
-            "INSERT OR IGNORE INTO {dr} (\"file\", \"line\", \"sym\") \
-             SELECT d.\"file\", d.\"line\", t.sym FROM {dn} d \
-             JOIN {te} t ON d.\"name\" = t.name"))?;
+        // doc_ref bridge: doc_node -> type_entity, three sources.
+        //   (1) heading exact:    doc_node.name == type_entity.name
+        //   (2) heading norm:     normalize(doc_node.name) == type_entity.name
+        //       (strips leading articles + trailing kind words; lowercase).
+        //   (3) code_block text:  identifiers in doc_node.text matched against
+        //       type_entity.name (lowercase). The whole block counts as one
+        //       doc position (the fence line); dedup collapses repeats.
+        //
+        // Normalization lives in `normalize_doc_name` (below). type_entity names
+        // are already clean identifiers, so the symbol side only lowercases.
+        // Empty if the program doesn't use type relations (type_entity table
+        // exists but is unpopulated -> empty map -> no rows).
+        let type_rows: Vec<(String, String)> = {
+            let mut sel = self.db.prepare(
+                &format!("SELECT sym, name FROM {}", tbl("type_entity")))?;
+            let rows: Vec<(String, String)> = sel
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+                .filter_map(|x| x.ok()).collect();
+            rows
+        };
+        // Map lowercase type name -> Vec of (sym, original_name) so multiple
+        // symbols of the same name all bridge (e.g. two `Engine` in different
+        // files).
+        let mut by_name: HashMap<String, Vec<(String, String)>> = HashMap::new();
+        for (sym, name) in &type_rows {
+            by_name.entry(name.to_ascii_lowercase())
+                .or_default()
+                .push((sym.clone(), name.clone()));
+        }
+        let mut ref_rows: Vec<Vec<Value>> = Vec::new();
+        let mut ref_seen: HashSet<(String, u32, String, &'static str, String)> = HashSet::new();
+        let push_ref = |file: &str, line: u32, sym: &str, kind: &'static str,
+                        matched: &str, rows: &mut Vec<Vec<Value>>,
+                        seen: &mut HashSet<(String, u32, String, &'static str, String)>| {
+            if seen.insert((file.to_string(), line, sym.to_string(), kind, matched.to_string())) {
+                rows.push(vec![t(file), i(line), t(sym), t(kind), t(matched)]);
+            }
+        };
+        for (path, f) in &facts {
+            for n in &f.nodes {
+                match n.kind {
+                    "heading" => {
+                        // Try exact name first, then normalized. The original
+                        // heading text is recorded as matched_name so a rule
+                        // can cross-reference doc_node directly.
+                        let exact = by_name.get(&n.name.to_ascii_lowercase());
+                        if let Some(hits) = exact {
+                            for (sym, _orig) in hits {
+                                push_ref(path, n.line, sym, "heading", &n.name,
+                                         &mut ref_rows, &mut ref_seen);
+                            }
+                            continue;
+                        }
+                        let norm = normalize_doc_name(&n.name);
+                        if !norm.is_empty() {
+                            if let Some(hits) = by_name.get(&norm) {
+                                for (sym, _orig) in hits {
+                                    push_ref(path, n.line, sym, "heading", &n.name,
+                                             &mut ref_rows, &mut ref_seen);
+                                }
+                            }
+                        }
+                    }
+                    "code_block" => {
+                        // Scan the block body for identifiers that match a type
+                        // name. Each unique (sym, token) pair emits one row.
+                        for tok in identifiers_in(&n.text) {
+                            if let Some(hits) = by_name.get(&tok.to_ascii_lowercase()) {
+                                for (sym, _orig) in hits {
+                                    push_ref(path, n.line, sym, "code_block", tok,
+                                             &mut ref_rows, &mut ref_seen);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        self.refresh_rel("doc_ref",
+            &["file", "line", "sym", "kind", "matched_name"], &ref_rows)?;
         Ok(())
     }
 
@@ -3601,6 +3678,75 @@ fn read_content(root: &Path, rev: &str, path: &str) -> Result<String> {
     } else {
         git_batch_read(root, rev, path)
     }
+}
+
+/// Normalize a doc heading name for joining against `type_entity.name`. Strips
+/// at most one leading token (an article OR a kind word) and at most one
+/// trailing kind word, collapses internal whitespace, lowercases. Empty in,
+/// empty out. Used only on the doc side: type names are already clean
+/// identifiers, so the symbol side only lowercases.
+///
+///   "The Engine struct" -> "engine"   (leading article + trailing kind)
+///   "A Widget"           -> "widget"  (leading article)
+///   "fn do_thing"        -> "do_thing" (leading kind word)
+///   "struct Engine"      -> "engine"  (leading kind word)
+///   "Engine struct"      -> "engine"  (trailing kind word)
+///   "Items"              -> "items"   (single word, untouched)
+fn normalize_doc_name(s: &str) -> String {
+    const ARTICLES: &[&str] = &["the", "a", "an"];
+    const KIND: &[&str] = &[
+        "struct", "enum", "trait", "class", "interface", "const",
+        "module", "mod", "type", "item", "macro", "function",
+        "fn", "method", "alias", "def",
+    ];
+    let words: Vec<&str> = s.split_whitespace().collect();
+    if words.is_empty() { return String::new(); }
+    let mut start = 0;
+    let mut end = words.len();
+    // Strip one leading token: an article, or (if no article) a kind word.
+    // Both forms appear in practice ("The Engine struct" vs "fn do_thing").
+    if end - start > 1 {
+        let first = words[start].to_ascii_lowercase();
+        if ARTICLES.contains(&first.as_str()) || KIND.contains(&first.as_str()) {
+            start += 1;
+        }
+    }
+    // Strip one trailing kind word. Independent of the leading strip so
+    // "The Engine struct" loses both the article and the trailing classifier.
+    if end - start > 1 {
+        let last = words[end - 1].to_ascii_lowercase();
+        if KIND.contains(&last.as_str()) {
+            end -= 1;
+        }
+    }
+    if start >= end { return String::new(); }
+    words[start..end].join(" ").to_ascii_lowercase()
+}
+
+/// Pull identifier-shaped tokens out of arbitrary source text. An identifier is
+/// `[A-Za-z_][A-Za-z0-9_]*`; everything else is a separator. Order preserved;
+/// duplicates NOT removed (the caller dedups via `ref_seen`). Used by the
+/// `doc_ref` bridge to find symbol mentions inside a markdown code block.
+fn identifiers_in(s: &str) -> Vec<&str> {
+    let mut out: Vec<&str> = Vec::new();
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        let start_ok = b.is_ascii_alphabetic() || b == b'_';
+        if start_ok {
+            let start = i;
+            i += 1;
+            while i < bytes.len() {
+                let c = bytes[i];
+                if c.is_ascii_alphanumeric() || c == b'_' { i += 1; } else { break; }
+            }
+            out.push(&s[start..i]);
+        } else {
+            i += 1;
+        }
+    }
+    out
 }
 
 /// One long-lived `git cat-file --batch` process per repo root, shared across
