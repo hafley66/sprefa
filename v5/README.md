@@ -370,6 +370,12 @@ consumes the published diagnostics with no extra integration. Tight squiggles:
 bind `sg`'s span outputs (`line, col, end_line, end_col`) straight into the
 matching `diag` columns — [examples/lint-unwrap.dl](examples/lint-unwrap.dl).
 
+`textDocument/hover` auto-synthesizes a markdown summary from `type_entity` +
+`call_def` (no rel to declare; opt in by referencing those rels).
+`textDocument/definition` consults a program-declared `def_target(name, file,
+line, kind)` rel first — go-to-def lands on real definition lines, not just
+import-specifier module edges. See [docs/lsp.md](docs/lsp.md).
+
 The [vscode-dl extension](editors/vscode-dl/) also ships a TextMate grammar
 (comments, keywords, the `<-` arrow, regex/string/scheme-literal coloring) so
 `.dl` files render with syntax highlighting, not plain text.

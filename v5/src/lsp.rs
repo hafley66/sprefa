@@ -63,6 +63,7 @@ pub fn run_lsp(program: Option<&str>, db_path: Option<&str>, root: PathBuf) -> R
         })),
         definition_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
+        hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
         ..Default::default()
     };
     connection.initialize(serde_json::to_value(caps)?)?;
@@ -89,6 +90,10 @@ pub fn run_lsp(program: Option<&str>, db_path: Option<&str>, root: PathBuf) -> R
                     }
                     "textDocument/references" => {
                         let resp = handle_references(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
+                    "textDocument/hover" => {
+                        let resp = handle_hover(&eng, &root, &req);
                         connection.sender.send(Message::Response(resp))?;
                     }
                     _ => { if connection.handle_shutdown(&req)? { break; } }
@@ -160,10 +165,11 @@ fn publish_program(connection: &Connection, prog_abs: &Path, diags: &[DiagRow]) 
 }
 
 /// textDocument/definition over the ref spine: cursor -> innermost located span
-/// -> its string text -> `module_edge` targets paired by specifier segment
-/// (engine `definition_targets`). Result is each target file at 0:0 (a module
-/// edge is file-level; the spine carries no in-target symbol position). Null
-/// when the cursor is not on a located string or nothing pairs.
+/// -> its string text -> engine `definition_targets`. Two paths in the engine:
+/// (1) Phase E rule-driven `def_target(name, file, line, kind)` if the program
+/// declares it, landing at the real definition line; (2) module-edge fallback
+/// (import specifiers) landing at 0:0. Null when the cursor is not on a located
+/// string or nothing pairs.
 fn handle_definition(eng: &Engine, root: &Path, req: &Request) -> Response {
     let params: GotoDefinitionParams = match serde_json::from_value(req.params.clone()) {
         Ok(p) => p,
@@ -174,8 +180,13 @@ fn handle_definition(eng: &Engine, root: &Path, req: &Request) -> Response {
         Some((path, _id, text, _lo, _hi)) => eng.definition_targets(&path, &text)
             .unwrap_or_default()
             .into_iter()
-            .filter_map(|dst| path_to_uri(&root.join(&dst)))
-            .map(|uri| Location { uri, range: Range::default() })
+            .filter_map(|(dst, line)| {
+                let uri = path_to_uri(&root.join(&dst))?;
+                // line is 1-based from the rels; LSP wants 0-based. Clamp.
+                let line0 = (line - 1).max(0) as u32;
+                let range = Range::new(Position::new(line0, 0), Position::new(line0, 0));
+                Some(Location { uri, range })
+            })
             .collect(),
         None => Vec::new(),
     };
@@ -183,6 +194,36 @@ fn handle_definition(eng: &Engine, root: &Path, req: &Request) -> Response {
         return Response::new_ok(req.id.clone(), serde_json::Value::Null);
     }
     Response::new_ok(req.id.clone(), serde_json::to_value(locations).unwrap_or_default())
+}
+
+/// textDocument/hover over the ref spine: cursor -> innermost located span ->
+/// its string text -> engine `hover` (auto-synthesizes markdown from
+/// type_entity + call_def). Returns a Hover with the span's range and the
+/// markdown content, or null when no entity/callable matches the bare name.
+fn handle_hover(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let params: TextDocumentPositionParams = match serde_json::from_value(req.params.clone()) {
+        Ok(p) => p,
+        Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
+    };
+    let hit = resolve_span(eng, root, &params);
+    let Some((path, _id, text, lo, hi)) = hit else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    let md = match eng.hover(&path, &text).unwrap_or(None) {
+        Some(m) => m,
+        None => return Response::new_ok(req.id.clone(), serde_json::Value::Null),
+    };
+    // Range is the located span so the editor highlights what the hover resolves.
+    let content = std::fs::read_to_string(root.join(&path)).unwrap_or_default();
+    let range = span_to_range(&content, lo, hi);
+    let hover = lsp_types::Hover {
+        range: Some(range),
+        contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
+            kind: lsp_types::MarkupKind::Markdown,
+            value: md,
+        }),
+    };
+    Response::new_ok(req.id.clone(), serde_json::to_value(hover).unwrap_or_default())
 }
 
 /// textDocument/references over the ref spine: cursor -> innermost located span

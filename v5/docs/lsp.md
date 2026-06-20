@@ -31,6 +31,43 @@ the whole line is underlined. For a tight squiggle, bind the span off the match:
 and 0-based byte columns (== char/UTF-16 for ASCII source), which the `diag` rule
 forwards to the `col`/`end_col` columns. See `examples/lint-unwrap.dl`.
 
+## The `def_target` convention (go-to-def)
+
+A program-declared rel that drives `textDocument/definition`. When the engine
+sees `def_target` declared, it queries it by the bare text under the cursor and
+returns each `(file, line)` as a jump target. Falls back to module-edge
+resolution (import specifiers) when the rel is absent or the name has no row.
+
+```
+rel def_target(name: text, file: file, line: int, kind: text).
+def_target(name, f, l, "fn") <- type_entity(_, name, "function", _, f, l).
+def_target(name, f, l, "type") <- type_entity(_, name, _, _, f, l).
+```
+
+| column | required | meaning |
+|---|---|---|
+| `name` | yes | the bare text under the cursor (matched by equality) |
+| `file` | yes | the definition file (1-based line lands at the real def) |
+| `line` | yes | 1-based definition line |
+| `kind` | no | carried for future use (decorations); not required for the jump |
+
+Multiple rows for the same name (overloads, distinct modules) produce multiple
+locations; the editor shows a picker. Without `def_target`, go-to-def resolves
+only import specifiers via `module_edge`.
+
+## The hover handler
+
+`textDocument/hover` auto-synthesizes a markdown summary from the type and call
+graphs — no rel to declare. The cursor's located span resolves to bare text,
+then the engine joins:
+
+- `type_entity(_, name, kind, parent, file, line)` — entities by bare name
+- `call_name(sym, name)` -> `call_def(sym, kind, file, line, _)` — callables
+
+Each match renders as one markdown block (`**kind** \`sym\`` + `file:line`),
+separated by `---`. The program opts in by referencing `type_entity` or
+`call_def` (the lazy indexers populate those tables only when referenced).
+
 ## How it ticks
 
 | event | action |

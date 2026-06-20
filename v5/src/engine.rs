@@ -1019,11 +1019,43 @@ impl Engine {
     }
 
     /// Definition targets for the located string `text` under a cursor in
-    /// `file`: the `module_edge(file, dst)` rows where a segment of `text`
-    /// names dst's module stem (`mod.rs`/`index.*`/`lib.rs`/`main.rs` take the
-    /// parent dir). A single outgoing edge wins even without a stem match.
-    /// Empty when the span is not an import ref or the import did not resolve.
-    pub fn definition_targets(&self, file: &str, text: &str) -> Result<Vec<String>> {
+    /// `file`. Two paths, tried in order:
+    ///
+    /// 1. **Phase E (rule-driven):** if the program declares a `def_target`
+    ///    relation, query it by the cursor's text. The program writes rules
+    ///    like `def_target(name, f, l, "fn") <- call_def(sym, _, f, l, _),
+    ///    call_name(sym, name).` so go-to-def lands on real symbol definitions,
+    ///    not just module edges. Returns `(file, line)` pairs.
+    ///
+    /// 2. **Fallback (module-edge):** the `module_edge(file, dst)` rows where a
+    ///    segment of `text` names dst's module stem. Lands at line 0 (a module
+    ///    edge is file-level; the spine carries no in-target symbol position).
+    ///
+    /// Empty when the span is not an import ref, no `def_target` match, and no
+    /// module edge resolves. Drives the LSP `textDocument/definition` handler.
+    pub fn definition_targets(&self, file: &str, text: &str) -> Result<Vec<(String, i64)>> {
+        // Phase E: rule-driven def_target. Same pattern as `diags`: read by
+        // column name so the program's column ordering/naming is flexible as
+        // long as `name`, `file`, `line` are present.
+        if let Some(meta) = self.rels.get("def_target") {
+            let idx: HashMap<&str, usize> =
+                meta.cols.iter().enumerate().map(|(i, c)| (c.name.as_str(), i)).collect();
+            if let (Some(ni), Some(fi), Some(li)) = (idx.get("name"), idx.get("file"), idx.get("line")) {
+                let cols: Vec<String> = meta.cols.iter().map(|c| format!("\"{}\"", c.name)).collect();
+                let sql = format!(
+                    "SELECT DISTINCT \"{}\", \"{}\" FROM {} WHERE \"{}\" = ?1",
+                    meta.cols[*fi].name, meta.cols[*li].name, tbl("def_target"), meta.cols[*ni].name);
+                let conn = self.db.conn();
+                let mut s = conn.prepare(&sql)?;
+                let rows = s.query_map(rusqlite::params![text], |r|
+                    Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+                let out: Vec<(String, i64)> = rows.filter_map(|x| x.ok()).collect();
+                let _ = cols; // (kept for symmetry with diags; unused today)
+                if !out.is_empty() { return Ok(out); }
+            }
+        }
+
+        // Fallback: module_edge by specifier-segment match. Line 0 (file-level).
         let dsts: Vec<String> = {
             let conn = self.db.conn();
             let mut s = conn.prepare(&format!(
@@ -1038,8 +1070,73 @@ impl Engine {
         let matched: Vec<String> = dsts.iter()
             .filter(|d| segs.contains(module_stem(d)))
             .cloned().collect();
-        if matched.is_empty() && dsts.len() == 1 { return Ok(dsts); }
-        Ok(matched)
+        if matched.is_empty() && dsts.len() == 1 { return Ok(dsts.into_iter().map(|f| (f, 0)).collect()); }
+        Ok(matched.into_iter().map(|f| (f, 0)).collect())
+    }
+
+    /// Hover info for the located string `text` under a cursor. Auto-synthesizes
+    /// a markdown summary by joining the type graph (`type_entity` by name) and
+    /// the call graph (`call_name` -> `call_def`). No new builtin rel: the
+    /// program opts in by referencing `type_entity` / `call_def` (the lazy
+    /// indexers populate those tables when referenced). Returns None when no
+    /// entity or callable shares the bare name.
+    ///
+    /// Drives the LSP `textDocument/hover` handler. One markdown block per
+    /// match (a name may resolve to several entities/callables across modules).
+    pub fn hover(&self, _file: &str, text: &str) -> Result<Option<String>> {
+        // (kind, sym, file, line); deduped by sym so a callable that also has a
+        // type_entity row (same sym shape) appears once.
+        let mut entries: Vec<(String, String, String, i64)> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+
+        // type_entity(_, name=text, kind, parent, file, line) -> one row per
+        // entity whose bare name matches.
+        let te = tbl("type_entity");
+        let te_rows: Vec<(String, String, String, i64)> = {
+            let conn = self.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"sym\", \"kind\", \"file\", \"line\" FROM {te} WHERE \"name\" = ?1"))?;
+            let rows = s.query_map(rusqlite::params![text], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?, r.get::<_, i64>(3)?)))?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        for (sym, kind, file, line) in te_rows {
+            if seen.insert(sym.clone()) {
+                entries.push((kind, sym, file, line));
+            }
+        }
+
+        // call_name(sym, text) -> call_def(sym, kind, file, line, _). The
+        // intermediate join resolves the bare callee text to def syms; a bare
+        // name may map to several defs (overloads, distinct modules).
+        let cd = tbl("call_def");
+        let cn = tbl("call_name");
+        let cd_rows: Vec<(String, String, String, i64)> = {
+            let conn = self.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT d.\"sym\", d.\"kind\", d.\"file\", d.\"line\" \
+                 FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" \
+                 WHERE n.\"name\" = ?1"))?;
+            let rows = s.query_map(rusqlite::params![text], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?, r.get::<_, i64>(3)?)))?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        for (sym, kind, file, line) in cd_rows {
+            if seen.insert(sym.clone()) {
+                entries.push((kind, sym, file, line));
+            }
+        }
+
+        if entries.is_empty() { return Ok(None); }
+        entries.sort();
+        let mut md = String::new();
+        for (i, (kind, sym, file, line)) in entries.into_iter().enumerate() {
+            if i > 0 { md.push_str("\n\n---\n\n"); }
+            md.push_str(&format!("**{kind}** `{sym}`  \n{file}:{line}"));
+        }
+        Ok(Some(md))
     }
 
     /// Distinct WORK source paths from the `_file` cache. Feeds crate-root

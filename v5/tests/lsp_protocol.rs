@@ -369,6 +369,90 @@ fn definition_jumps_to_module_edge_target() {
     s.shutdown();
 }
 
+/// Gate (5, Phase E): textDocument/definition driven by a program-declared
+/// `def_target(name, file, line, kind)` rel. A regex captures the bare fn name
+/// `alpha` (locating the span); a def_target rule resolves the name to its
+/// `type_entity` row. Cursor on the captured span lands on the real definition
+/// line, not 0:0 — the signature that Phase E closed. Without def_target, a fn
+/// name has no module_edge match, so go-to-def would return null here.
+#[test]
+fn definition_via_def_target_lands_at_real_line() {
+    let root = sandbox("def_target");
+    fs::create_dir_all(root.join("src")).unwrap();
+    // `alpha` defined on line 2 (0-based 1) of lib.rs.
+    fs::write(root.join("src/lib.rs"), "// comment\nfn alpha() {}\nfn beta() {}\n").unwrap();
+    let prog = root.join("p.dl");
+    fs::write(&prog, concat!(
+        // Locate `alpha` / `beta` spans via regex capture.
+        "rel sym(name: text, f: file, l: int).\n",
+        "sym(name, f, l) <- scan(\"WORK\", \"src/**/*.rs\", f, rev), ",
+        "match(f, rev, /fn (?<name>[a-z_]+)/, l).\n",
+        // Phase E: the program drives go-to-def. type_entity populates because
+        // the rule references it; def_target resolves each name to its def row.
+        "rel def_target(name: text, file: file, line: int, kind: text).\n",
+        "def_target(name, f, l, \"fn\") <- type_entity(_, name, \"function\", _, f, l).\n",
+    )).unwrap();
+
+    let mut s = Session::spawn(&prog, &root, &root.join("def_target.db"));
+    initialize(&mut s, &root);
+
+    // Cursor inside `alpha` on line 2 (0-based 1), char 5 (inside the name).
+    let result = s.request(2, "textDocument/definition",
+        position_params(&root.join("src/lib.rs"), 1, 5));
+    let locs = result.as_array().unwrap_or_else(|| panic!(
+        "expected a location array, got: {result}\nstderr: {}", drain_stderr(&mut s.child)));
+    assert_eq!(locs.len(), 1, "one def_target row for alpha: {locs:?}");
+    let uri = locs[0]["uri"].as_str().unwrap();
+    assert!(uri.ends_with("src/lib.rs"), "target is lib.rs: {locs:?}");
+    // alpha is on line 2 (1-based) = 0-based 1. NOT 0:0 (the module_edge fallback).
+    assert_eq!(locs[0]["range"]["start"]["line"].as_i64(), Some(1),
+        "Phase E lands at the real def line (0-based 1), not 0:0: {locs:?}");
+
+    s.shutdown();
+}
+
+/// Gate (6, Phase C): textDocument/hover auto-synthesizes a markdown summary
+/// from type_entity + call_def. The program references type_entity (populating
+/// the indexer); a regex capture locates the `alpha` span. Hovering over it
+/// returns markdown naming the entity. Null when the cursor is on whitespace.
+#[test]
+fn hover_returns_entity_summary() {
+    let root = sandbox("hover");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/lib.rs"), "fn alpha() {}\nfn beta() {}\n").unwrap();
+    let prog = root.join("p.dl");
+    fs::write(&prog, concat!(
+        // Locate the fn-name spans.
+        "rel sym(name: text, f: file, l: int).\n",
+        "sym(name, f, l) <- scan(\"WORK\", \"src/**/*.rs\", f, rev), ",
+        "match(f, rev, /fn (?<name>[a-z_]+)/, l).\n",
+        // Reference type_entity so the type indexer populates (lazy gate).
+        "rel te(name: text).\n",
+        "te(name) <- type_entity(_, name, _, _, _, _).\n",
+    )).unwrap();
+
+    let mut s = Session::spawn(&prog, &root, &root.join("hover.db"));
+    initialize(&mut s, &root);
+
+    // Cursor inside `alpha` (line 0, char 5 — inside the captured bytes 3..8).
+    let result = s.request(2, "textDocument/hover",
+        position_params(&root.join("src/lib.rs"), 0, 5));
+    let hover = result.as_object().unwrap_or_else(|| panic!(
+        "expected a hover object, got: {result}\nstderr: {}", drain_stderr(&mut s.child)));
+    let md = hover.get("contents").and_then(|c| c.get("value")).and_then(|v| v.as_str())
+        .unwrap_or_else(|| panic!("expected markdown contents: {result}"));
+    assert!(md.contains("alpha"), "hover names the entity: {md}");
+    assert!(md.contains("function"), "hover names the kind: {md}");
+    assert!(md.contains("src/lib.rs"), "hover locates the file: {md}");
+
+    // Cursor on whitespace (before `fn`): no located span -> null.
+    let result = s.request(3, "textDocument/hover",
+        position_params(&root.join("src/lib.rs"), 0, 0));
+    assert!(result.is_null(), "no located span at col 0: {result}");
+
+    s.shutdown();
+}
+
 /// Gate (2b): a literal-bearing TypeDiag lands at its real line, proving the
 /// byte->line resolver fixes the T2 line-1 bug. An `fs:` literal in a plain-text
 /// column coerces (warn) and the diagnostic points at the literal's actual line,
