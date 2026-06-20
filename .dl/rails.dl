@@ -64,17 +64,19 @@ loop_reachable_fn(fn) <-
     loop_reachable_fn(prev),
     call_pair(prev, fn).
 
-# THE GRAPH PROPERTY: warn when a .conn() fn is loop-reachable AND the .conn()
-# call itself is on an edited line (line-scoped diff, not path-scoped). Each
-# warning is a real per-row-write risk (the .conn() executes inside a loop nest
-# at runtime), not "file was touched". A touch on engine.rs surfaces only the
-# .conn() calls on the lines you actually edited, not all 40+ loop-reachable
-# sites in the file. Severity stays warn because the Db seam does not yet expose
-# prepare/query_row/execute_batch, so most sites have no alternative today; the
-# warnings are the worklist for that extension.
+# THE GRAPH PROPERTY: warn when a .conn() fn is loop-reachable, the fn actually
+# contains a write-kind call (call_kind join — the read/write precision cut:
+# a fn that only reads through its .conn() does not fire), AND the .conn() call
+# itself is on an edited line (line-scoped diff, not path-scoped). Each warning
+# is a real per-row-write risk (the .conn() executes inside a loop nest at
+# runtime, and the fn really does writes), not "file was touched" or "fn reads
+# from db in a loop". The call_kind table is keyed by bare callee name
+# (execute/insert/update/... -> write; prepare/query_row/query_map -> read);
+# see classify_call_kind in engine.rs for the table.
 diag(p, l, "warn", "conn-loop-reachable",
      "raw .conn() reachable from a loop; per-row write risk") <-
     conn_fn(fn, p, l),
+    call_kind(fn, "write"),
     loop_reachable_fn(fn),
     changed_line(p, l).
 

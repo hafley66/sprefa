@@ -41,12 +41,12 @@ fn run(dir: &Path, prog: &str, extra: &[&str]) -> (i32, String, String) {
     )
 }
 
-/// The four CALL_RELS are reserved: a program that declares one by hand errors
+/// The CALL_RELS are reserved: a program that declares one by hand errors
 /// out, matching the TYPE_RELS / MODULE_RELS contract.
 #[test]
 fn call_rels_are_reserved() {
     let d = sandbox("reserved");
-    for rel in ["call_def", "call_site", "call_edge", "call_edge_rev"] {
+    for rel in ["call_def", "call_site", "call_edge", "call_edge_rev", "call_name", "call_kind"] {
         let prog = format!("rel {rel}(a: text).\n? {rel}(\"x\").\n");
         let (code, _out, err) = run(&d, &prog, &[]);
         assert_ne!(code, 0, "{rel} must be reserved (expected error):\n{err}");
@@ -130,4 +130,63 @@ fn rust_call_graph_extracts_resolves_and_closes() {
         out.contains(&format!("{main}\t{leaf}")),
         "transitive reach main -> leaf missing from closure:\n{out}"
     );
+}
+
+/// `call_kind(fn, kind)` classifies each fn by the read/write shape of its
+/// callees: bare method name -> kind (execute/insert -> write; prepare/
+/// query_row/query_map -> read; everything else -> no row). One row per
+/// (fn, kind) pair, so a fn with both a write and a read call emits two rows.
+/// Drives the conn-loop-reachable rail's precision cut (read-only fns stay
+/// silent).
+#[test]
+fn call_kind_classifies_read_and_write() {
+    let d = sandbox("kind");
+    fs::create_dir_all(d.join("src")).unwrap();
+    fs::write(
+        d.join("src/lib.rs"),
+        [
+            "fn writer() { let c = conn(); c.execute(\"INSERT\", ()); }",
+            "fn reader() { let c = conn(); c.query_row(\"SELECT\", (), |_| 1); }",
+            "fn mixed() { let c = conn(); c.execute(\"A\", ()); c.query_row(\"B\", (), |_| 1); }",
+            "fn neither() { helper(); }",
+            "fn conn() -> i32 { 0 }",
+            "fn helper() {}",
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let prog = concat!(
+        "rel seen(path: file).\n",
+        "seen(path) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /./, line).\n",
+        "? call_kind(fn, kind).\n",
+    );
+    let (code, out, err) = run(&d, prog, &[]);
+    assert_eq!(code, 0, "call_kind extraction must not error:\n{err}");
+
+    let writer = "src/lib.rs::function::writer";
+    let reader = "src/lib.rs::function::reader";
+    let mixed = "src/lib.rs::function::mixed";
+
+    // writer -> write, reader -> read, mixed -> both.
+    assert!(
+        out.contains(&format!("{writer}\twrite")),
+        "writer must classify as write:\n{out}"
+    );
+    assert!(
+        out.contains(&format!("{reader}\tread")),
+        "reader must classify as read:\n{out}"
+    );
+    assert!(
+        out.contains(&format!("{mixed}\twrite")) && out.contains(&format!("{mixed}\tread")),
+        "mixed must classify as both write and read:\n{out}"
+    );
+
+    // neither / conn / helper have no classified calls -> no rows.
+    assert!(
+        !out.contains("neither") && !out.contains("helper"),
+        "fns with no classified calls must have no call_kind row:\n{out}"
+    );
+
+    // Exactly 4 rows: writer:write, reader:read, mixed:write, mixed:read.
+    assert!(out.contains("(4 rows)"), "expected exactly 4 call_kind rows:\n{out}");
 }

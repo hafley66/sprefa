@@ -77,9 +77,12 @@ const TYPE_RELS: [&str; 5] =
 /// span); `call_site` is each call occurrence (caller sym, callee text, file,
 /// line); `call_edge` is the resolved closure edge; `call_edge_rev` is the
 /// rev-aware source of truth (same split as type_edge / type_edge_rev).
-/// Symbols are `file::kind::name`, the same shape `type_entity` uses, so the
-/// call and type graphs share nodes and a join reaches both.
-const CALL_RELS: [&str; 5] = ["call_def", "call_site", "call_edge", "call_edge_rev", "call_name"];
+/// `call_kind` is the per-fn read/write classification of those call sites,
+/// keyed by the bare callee name (execute/query_row/etc.) so a rail can join
+/// on `write` only. Symbols are `file::kind::name`, the same shape
+/// `type_entity` uses, so the call and type graphs share nodes and a join
+/// reaches both.
+const CALL_RELS: [&str; 6] = ["call_def", "call_site", "call_edge", "call_edge_rev", "call_name", "call_kind"];
 
 /// Intra-procedural dataflow lift: `df_node(id, kind, var, fn, file, line)` is a
 /// value-bearing program point, `df_edge(from, to)` is local value flow. A rule
@@ -185,6 +188,13 @@ fn call_rel_decls() -> Vec<RelDecl> {
         // callee text to the set of candidate def syms (then filter, e.g. by
         // allocates). One row per def; a bare name may map to several syms.
         RelDecl { name: "call_name".into(), cols: vec![c("sym", Type::Text), c("name", Type::Text)] },
+        // Per-fn read/write classification of the fn's call sites. `fn` is the
+        // caller sym (same shape as call_site.caller); `kind` is `read` or
+        // `write`, classified from the bare callee name (execute/
+        // execute_batch -> write; prepare/query_row/query_map -> read). Lets a
+        // rail ask "does this fn contain any write?" via `call_kind(fn, "write")`
+        // without re-declaring the method-name table per program.
+        RelDecl { name: "call_kind".into(), cols: vec![c("fn", Type::Text), c("kind", Type::Text)] },
     ]
 }
 
@@ -298,6 +308,26 @@ fn rels_used(prog: &Program, rels: &[&str]) -> bool {
         }
     }
     false
+}
+
+/// Classify a call site's bare callee name as `read` or `write`. Heuristic by
+/// method name only (no receiver type); rail-side joins (`conn_fn` for the
+/// .conn() rail) narrow to db-shaped sites, so a `HashMap::insert` false
+/// positive in an unrelated fn never reaches a diag because that fn has no
+/// `.conn()` site. The table is deliberately rusqlite-shaped: `insert`/
+/// `update`/`delete`/`replace`/`commit` are dropped because they collide with
+/// collection methods (`HashMap::insert`) and would pollute the table for
+/// little gain — the rail's `conn_fn` join already gates on `.conn()`, so the
+/// only writes that matter are the ones chained off a `.conn()` or `Db::` call,
+/// which in rusqlite are `execute`/`execute_batch`/`execute_returning`.
+/// `None` for anything not clearly a db read or write.
+fn classify_call_kind(callee: &str) -> Option<&'static str> {
+    Some(match callee {
+        "execute" | "execute_batch" | "execute_returning" => "write",
+        "prepare" | "prepare_cached"
+        | "query_row" | "query_map" | "query_and_then" | "query_named" => "read",
+        _ => return None,
+    })
 }
 
 fn module_rels_used(prog: &Program) -> bool { rels_used(prog, &MODULE_RELS) }
@@ -2003,7 +2033,7 @@ impl Engine {
                     bail!("{} is a built-in type-graph relation (type_edge / type_edge_rev / type_entity / type_sig / type_link); pick another name", d.name);
                 }
                 if CALL_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in call-graph relation (call_def / call_site / call_edge / call_edge_rev); pick another name", d.name);
+                    bail!("{} is a built-in call-graph relation (call_def / call_site / call_edge / call_edge_rev / call_name / call_kind); pick another name", d.name);
                 }
                 if DATAFLOW_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in dataflow relation (df_node / df_edge / loop_over / allocates / nest); pick another name", d.name);
@@ -2575,6 +2605,10 @@ impl Engine {
         let mut site_rows: Vec<Vec<Value>> = Vec::new();
         let mut edge_rev_rows: Vec<Vec<Value>> = Vec::new();
         let mut name_rows: Vec<Vec<Value>> = Vec::new();
+        // call_kind is keyed by (caller, kind); a fn with both a read and a
+        // write emits two rows. Accumulate in a set so multiple write sites in
+        // the same fn collapse to one (fn, "write") row.
+        let mut kind_set: HashSet<(String, &'static str)> = HashSet::new();
         let mut seen_def: HashSet<&str> = HashSet::new();
         let mut seen_edge: HashSet<(String, String, &str)> = HashSet::new();
         for (_path, rev, f) in &facts {
@@ -2589,6 +2623,16 @@ impl Engine {
                 // def encloses it, callee as written.
                 let caller = resolve_caller(&s.file, s.line).unwrap_or_default();
                 site_rows.push(vec![t(&caller), t(&s.callee), t(&s.file), i(s.line)]);
+                // call_kind: classify the callee's bare name as read/write. The
+                // fn-aggregate is the precision axis the conn-loop-reachable
+                // rail needs (a fn that only reads through its .conn() does not
+                // fire). Heuristic by name: $R.execute(...) is a write on any
+                // receiver; the rail's conn_fn join narrows to db-shaped sites.
+                if !caller.is_empty() {
+                    if let Some(k) = classify_call_kind(&s.callee) {
+                        kind_set.insert((caller.clone(), k));
+                    }
+                }
                 // call_edge is the resolved graph: emit only when both endpoints
                 // resolve to def syms, so closure(call_edge) walks one identity
                 // space (same contract as type_link). Unresolved calls stay in
@@ -2601,10 +2645,18 @@ impl Engine {
             }
         }
 
+        let mut kind_pairs: Vec<(String, &'static str)> = kind_set.into_iter().collect();
+        kind_pairs.sort();
+        let kind_rows: Vec<Vec<Value>> = kind_pairs
+            .into_iter()
+            .map(|(f, k)| vec![t(&f), t(k)])
+            .collect();
+
         self.refresh_rel("call_def", &["sym", "kind", "file", "line", "end"], &def_rows)?;
         self.refresh_rel("call_site", &["caller", "callee", "file", "line"], &site_rows)?;
         self.refresh_rel("call_edge_rev", &["caller", "callee", "kind", "rev"], &edge_rev_rows)?;
         self.refresh_rel("call_name", &["sym", "name"], &name_rows)?;
+        self.refresh_rel("call_kind", &["fn", "kind"], &kind_rows)?;
         self.rebuild_legacy_call_rels()?;
         Ok(())
     }

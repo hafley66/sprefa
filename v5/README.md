@@ -281,6 +281,7 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `call_edge` | `(caller, callee, kind)` | resolved caller-sym -> callee-sym edge; callee resolved via single-def or SCIP override |
 | `call_edge_rev` | `(caller, callee, kind, rev)` | rev-aware form |
 | `call_name` | `(sym, name)` | def sym -> bare callable name; resolves a `call_site` callee to candidate def syms |
+| `call_kind` | `(fn, kind)` | per-fn read/write classification of its call sites; `kind` is `read` or `write`, classified from the bare callee name (execute/execute_batch/execute_returning -> write; prepare/query_row/query_map/query_and_then/query_named -> read). Join on `call_kind(fn, "write")` to ask "does this fn write". Table is rusqlite-shaped on purpose — collection-shaped names (insert/update/delete) are dropped to avoid false positives |
 | `df_node` | `(id, kind, var, fn, file, line)` | intra-procedural dataflow node (`call_res`/`assign`/...); `id` is `file::line::kind` |
 | `df_edge` | `(from, to)` | dataflow dependency |
 | `loop_over` | `(file, start, end, var, collection, fn)` | one row per loop with its span, iter var, and collection |
