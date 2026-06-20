@@ -39,13 +39,22 @@ conn_fn(fn, p, l) <-
     conn_site(p, l),
     call_site(fn, "conn", p, l).
 
-# A fn is loop-hot if any of its call_res nodes sits inside a loop nest. The
-# depth is retained for downstream severity cuts but not used by the basic
-# warning; depth>=2 ("doubly-nested") is the stronger cost signal.
-rel loop_hot_fn(fn: text, depth: int).
-loop_hot_fn(fn, depth) <-
-    nest(call_id, _, depth, _),
-    df_node(call_id, "call_res", _, fn, _, _).
+# A fn is loop-entry if at least one call TO IT originates from a call site
+# inside a loop nest. Tighter than the old "fn contains any call in a loop"
+# (loop_hot_fn): a per-tick one-shot called from `tick`'s call tree but NOT
+# from inside a loop no longer fires. The join chain is: nest pins a
+# loop-nested call_res node -> df_node gives its (caller, file, line) ->
+# call_site at that exact site gives the callee TEXT -> call_name resolves
+# the text to a def sym. df_node's call_res line is the expression start
+# (receiver line); call_site's line is the method-name line. Same for
+# single-line calls (the common case); multi-line chains may miss, which is
+# conservative (false negatives, never false positives).
+rel loop_entry_fn(fn: text).
+loop_entry_fn(fn) <-
+    nest(call_id, _, _, _),
+    df_node(call_id, "call_res", _, caller, p, l),
+    call_site(caller, callee_text, p, l),
+    call_name(fn, callee_text).
 
 # 2-col view of call_edge. (We do not use closure(call_pair) here because the
 # engine blocks unpinned closure reads in rule bodies; recursive rules over
@@ -54,25 +63,28 @@ loop_hot_fn(fn, depth) <-
 rel call_pair(a: text, b: text).
 call_pair(a, b) <- call_edge(a, b, _).
 
-# Loop-reachable = the fn itself is loop-hot OR another loop-reachable fn calls
-# it. Recursive transitive closure starting from loop_hot_fn, walking call_pair.
-# Catches both shapes: a fn with its own internal loop plus a .conn() (base
-# case) and a leaf fn called from inside a loop several hops up (inductive).
+# Loop-reachable = the fn itself is loop-entry (directly called from inside a
+# loop) OR another loop-reachable fn calls it. Recursive transitive closure
+# starting from loop_entry_fn, walking call_pair. Catches both shapes: a fn
+# invoked per-iteration by an in-loop call site (base case) and a leaf fn
+# called from that callee several hops down (inductive).
 rel loop_reachable_fn(fn: text).
-loop_reachable_fn(fn) <- loop_hot_fn(fn, _).
+loop_reachable_fn(fn) <- loop_entry_fn(fn).
 loop_reachable_fn(fn) <-
     loop_reachable_fn(prev),
     call_pair(prev, fn).
 
-# THE GRAPH PROPERTY: warn when a .conn() fn is loop-reachable, the fn actually
-# contains a write-kind call (call_kind join — the read/write precision cut:
-# a fn that only reads through its .conn() does not fire), AND the .conn() call
-# itself is on an edited line (line-scoped diff, not path-scoped). Each warning
-# is a real per-row-write risk (the .conn() executes inside a loop nest at
-# runtime, and the fn really does writes), not "file was touched" or "fn reads
-# from db in a loop". The call_kind table is keyed by bare callee name
-# (execute/insert/update/... -> write; prepare/query_row/query_map -> read);
-# see classify_call_kind in engine.rs for the table.
+# THE GRAPH PROPERTY: warn when a .conn() fn is loop-reachable (now grounded on
+# loop_entry_fn — directly called from a loop-nested site, not just transitively
+# reachable from a fn that has a loop), the fn actually contains a write-kind
+# call (call_kind join — the read/write precision cut: a fn that only reads
+# through its .conn() does not fire), AND the .conn() call itself is on an
+# edited line (line-scoped diff, not path-scoped). Each warning is a real
+# per-row-write risk (the .conn() executes inside a loop nest at runtime, and
+# the fn really does writes), not "file was touched" or "fn reads from db in a
+# loop". The call_kind table is keyed by bare callee name (execute/
+# execute_batch -> write; prepare/query_row/query_map -> read); see
+# classify_call_kind in engine.rs for the table.
 diag(p, l, "warn", "conn-loop-reachable",
      "raw .conn() reachable from a loop; per-row write risk") <-
     conn_fn(fn, p, l),
