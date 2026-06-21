@@ -1,6 +1,7 @@
 pub mod ast;
 pub mod comment;
 pub mod config;
+pub mod daemon;
 pub mod datapath;
 pub mod db;
 pub mod desc;
@@ -13,6 +14,7 @@ pub mod lower;
 pub mod lsp;
 pub mod modgraph;
 pub mod parse;
+pub mod rpc;
 pub mod refactor;
 pub mod repo;
 pub mod rspath;
@@ -55,7 +57,7 @@ pub fn resolve_programs(program: Option<&str>, root: &Path) -> Result<Vec<PathBu
 /// splices Core items in source order, dedups rel decls by name+cols, and
 /// returns a flat core `Program`. With no `use` in any source file this is
 /// byte-for-byte identical to the old parse-only path.
-pub(crate) fn prepare_paths(paths: &[PathBuf]) -> Result<(ast::Program, Vec<ast::TypeDiag>, String)> {
+pub fn prepare_paths(paths: &[PathBuf]) -> Result<(ast::Program, Vec<ast::TypeDiag>, String)> {
     let items = if paths.len() == 1 {
         frontend::load_program(&paths[0])
     } else {
@@ -71,13 +73,82 @@ pub(crate) fn prepare_paths(paths: &[PathBuf]) -> Result<(ast::Program, Vec<ast:
     Ok((prog, diags, display))
 }
 
+/// Public so `daemon::run_daemon` can surface the same `path:line: sev[code]:
+/// msg` rendering as the foreground tick path.
+pub fn render_type_diags_eprintln(diags: &[ast::TypeDiag]) {
+    for d in diags {
+        eprintln!("{}:1: {}[{}]: {}", d.path, d.severity.as_str(), d.code, d.msg);
+    }
+}
+
 pub fn run_file(program: Option<&str>, db_path: Option<&str>, root: PathBuf, query_json: bool) -> Result<()> {
+    if daemon::enabled_for(&root) && db_path.is_none() {
+        // Daemon owns the db; if the caller passed --db explicitly they want the
+        // in-process path against that file (the daemon owns its own db).
+        match run_file_via_daemon(program, &root, query_json) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                // Daemon path failed; fall through to in-process so a transient
+                // socket error never blocks the user. Tests opt out via
+                // DL_NO_DAEMON=1 and never hit this branch.
+                eprintln!("[daemon] attach failed, falling back to in-process: {e}");
+            }
+        }
+    }
+    run_file_inproc(program, db_path, root, query_json)
+}
+
+/// Daemon path: ensure the daemon is up, send `query` + `diag` RPCs, render the
+/// results in the same shape as `run_file_inproc` prints.
+fn run_file_via_daemon(program: Option<&str>, root: &Path, query_json: bool) -> Result<()> {
+    daemon::ensure_daemon(root, program)?;
+    let mut s = daemon::connect(root)?;
+    let req = rpc::Request::new(1, "query", serde_json::json!({}));
+    let resp = daemon::rpc_call(&mut s, &req)?;
+    if let Some(e) = resp.error { anyhow::bail!("daemon query: {}", e.message); }
+    let results = resp.result.and_then(|v| v.get("results").cloned()).unwrap_or(serde_json::Value::Array(vec![]));
+    if query_json {
+        // Emit one JSON-lines object per query, same shape as --query-json.
+        if let Some(arr) = results.as_array() {
+            for r in arr {
+                println!("{}", serde_json::to_string(r)?);
+            }
+        }
+    } else {
+        if let Some(arr) = results.as_array() {
+            for r in arr {
+                let rel = r.get("rel").and_then(|v| v.as_str()).unwrap_or("?");
+                let cols: Vec<String> = r.get("columns").and_then(|v| v.as_array())
+                    .map(|a| a.iter().filter_map(|c| c.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                let rows = r.get("rows").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                println!("? {} => {}", rel, if cols.is_empty() { "(count)".into() } else { cols.join("\t") });
+                for cells in rows.iter().filter_map(|r| r.as_array()) {
+                    let s: Vec<String> = cells.iter().map(json_cell_tsv_render).collect();
+                    println!("  {}", s.join("\t"));
+                }
+                println!("  ({} rows)\n", rows.len());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn json_cell_tsv_render(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+/// The pre-daemon `run_file` body, in-process. Kept for the no-daemon fallback
+/// and the test path (`DL_NO_DAEMON=1`).
+fn run_file_inproc(program: Option<&str>, db_path: Option<&str>, root: PathBuf, query_json: bool) -> Result<()> {
     let files = resolve_programs(program, &root)?;
     let (prog, type_diags, _) = prepare_paths(&files)?;
     render_type_diags(&type_diags, false);
     let n_errors = type_diags.iter().filter(|d| d.severity == ast::Severity::Error).count();
-    // On a lower-time error, skip evaluation: the program is ill-defined and the
-    // engine would either bail (stratify defense) or hit a SQLite datatype error.
     if n_errors == 0 {
         let conn = db::open(db_path)?;
         let mut eng = engine::Engine::new(conn, root);
@@ -98,9 +169,7 @@ pub fn run_file(program: Option<&str>, db_path: Option<&str>, root: PathBuf, que
 /// the `--diag-json` path which folds these into the JSON array there.
 fn render_type_diags(diags: &[ast::TypeDiag], json: bool) {
     if json { return; }
-    for d in diags {
-        eprintln!("{}:1: {}[{}]: {}", d.path, d.severity.as_str(), d.code, d.msg);
-    }
+    render_type_diags_eprintln(diags);
 }
 
 /// Load the turnkey config's repos, logging the source/count. A malformed
@@ -127,6 +196,45 @@ fn load_repos() -> Vec<config::RepoConfig> {
 /// (parse/type error) -> Err -> 1, user-facing only. A rails bug must read as
 /// "fix the rails", never as agent feedback.
 pub fn run_check(program: Option<&str>, db_path: Option<&str>, root: PathBuf, json: bool) -> Result<usize> {
+    if daemon::enabled_for(&root) && db_path.is_none() {
+        match run_check_via_daemon(program, &root, json) {
+            Ok(n) => return Ok(n),
+            Err(e) => eprintln!("[daemon] check attach failed, falling back to in-process: {e}"),
+        }
+    }
+    run_check_inproc(program, db_path, root, json)
+}
+
+/// Daemon check path: ensure daemon up, send `diag` RPC, render same as
+/// `run_check_inproc`. Returns the error-severity count for the exit contract.
+fn run_check_via_daemon(program: Option<&str>, root: &Path, json: bool) -> Result<usize> {
+    daemon::ensure_daemon(root, program)?;
+    let mut s = daemon::connect(root)?;
+    let req = rpc::Request::new(1, "diag", serde_json::json!({}));
+    let resp = daemon::rpc_call(&mut s, &req)?;
+    if let Some(e) = resp.error { anyhow::bail!("daemon diag: {}", e.message); }
+    let arr = resp.result.and_then(|v| v.get("rows").cloned()).and_then(|v| v.as_array().cloned())
+        .unwrap_or_default();
+    if json {
+        println!("{}", serde_json::to_string_pretty(&serde_json::Value::Array(arr.clone()))?);
+    } else {
+        for d in &arr {
+            let path = d.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            let line = d.get("line").and_then(|v| v.as_i64()).unwrap_or(0);
+            let sev = d.get("severity").and_then(|v| v.as_str()).unwrap_or("");
+            let code = d.get("code").and_then(|v| v.as_str()).unwrap_or("");
+            let msg = d.get("message").and_then(|v| v.as_str()).unwrap_or("");
+            let code_s = if code.is_empty() { String::new() } else { format!("[{code}]") };
+            eprintln!("{path}:{line}: {sev}{code_s}: {msg}");
+            if let Some(h) = d.get("hint").and_then(|v| v.as_str()) {
+                if !h.is_empty() { eprintln!("    hint: {h}"); }
+            }
+        }
+    }
+    Ok(arr.iter().filter(|d| d.get("severity").and_then(|v| v.as_str()) == Some("error")).count())
+}
+
+fn run_check_inproc(program: Option<&str>, db_path: Option<&str>, root: PathBuf, json: bool) -> Result<usize> {
     let files = resolve_programs(program, &root)?;
     // Drop `?` queries so their stdout rows don't mix with --diag-json output.
     let (mut prog, type_diags, _) = prepare_paths(&files)?;

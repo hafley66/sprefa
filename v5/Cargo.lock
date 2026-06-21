@@ -1441,6 +1441,7 @@ dependencies = [
  "ast-grep-language",
  "blake3",
  "clap",
+ "crossbeam-channel",
  "globset",
  "ignore",
  "lsp-server",

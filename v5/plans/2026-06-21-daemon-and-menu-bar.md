@@ -1,6 +1,6 @@
 # Daemon mode + menu bar (cross-platform)
 
-Date: 2026-06-21. Status: PLAN.
+Date: 2026-06-21. Status: PHASE 1 LANDED.
 
 One binary (`dl`), one long-lived daemon per workspace, file watchers
 running inside it, one menu-bar/status-tray item per platform. Subsequent
@@ -382,16 +382,28 @@ grid) but is out of scope for the first cut.
 
 ## Phase ordering
 
-**Phase 1 — daemon without tray.** The gradle win.
+**Phase 1 — daemon without tray.** The gradle win. LANDED 2026-06-21.
 - `dl --daemon` (foreground, no tray, logs to stderr). Same loop as
   `run_watch` today (`lib.rs:194`), plus a listener thread on the
   socket.
-- Wire protocol: `ping`, `query`, `diag`, `shutdown`.
-- `dl prog.dl` (no flag) auto-spawns-or-attaches.
+- Wire protocol: `ping`, `query`, `diag`, `definition`, `hover`,
+  `subscribe`, `shutdown`. JSON-RPC 2.0 framed LSP-style over
+  `<root>/.dl/daemon.sock`.
+- `dl prog.dl` (no flag) auto-spawns-or-attaches when `<root>/.dl/`
+  exists (the gradle shape). `dl --check` likewise. `DL_NO_DAEMON=1`
+  opts out (tests).
 - PID + socket files at `<root>/.dl/`.
-- Idle timeout.
+- Idle timeout (default 30 min; `DL_DAEMON_IDLE_SECS` overrides).
 - `--stop` flag.
-- Test: 1st run = cold tick; 2nd run inside idle window = sub-50ms.
+- LSP push integration: `dl --lsp` shares `<root>/.dl/cache.db` and
+  subscribes to the daemon's `diag_changed`; watcher ticks re-publish
+  live squiggles without an editor save. Full LSP RPC bridge
+  (definition/hover via daemon) deferred to Phase 4 v2.
+- Test: `tests/daemon.rs` — ping/query/diag/shutdown round-trip,
+  `--stop` flag, `DL_NO_DAEMON=1` opt-out.
+- Known limits: shutdown exits the process directly (the accept loop
+  is blocked on `incoming()`; graceful wake is the v1.1 polish);
+  unix-only socket (windows named-pipe swap is mechanical when needed).
 
 **Phase 2 — tray icon.**
 - `tray-icon` integration; daemon spawns the tray thread.

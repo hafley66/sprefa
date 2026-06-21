@@ -401,6 +401,16 @@ pub struct DiagRow {
     pub hint: Option<String>,
 }
 
+/// One `?` query result, captured for the daemon RPC `query` path. Same shape
+/// as `--query-json` per-row objects; the foreground path prints via `run_query`
+/// instead.
+#[derive(Clone, Debug)]
+pub struct QueryResult {
+    pub rel: String,
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<serde_json::Value>>,
+}
+
 /// Carry set for `refresh_spine_rels_delta`. Accumulates the new rows produced
 /// during a single tick so the incremental Some() path can replay only those rows
 /// rather than projecting the full `_strings` / `_where_bytes` tables.
@@ -3505,7 +3515,24 @@ impl Engine {
                 }
             }
         }
-        let (sql, headers) = lower_query(q, &self.rels)?;
+        let res = self.query_one_sql(q)?;
+        if self.query_json {
+            emit_query_json(&res.rel, &res.columns, &res.rows);
+        } else {
+            println!("? {} => {}", res.rel, if res.columns.is_empty() { "(count)".into() } else { res.columns.join("\t") });
+            for cells in &res.rows {
+                println!("  {}", cells.iter().map(json_cell_tsv).collect::<Vec<_>>().join("\t"));
+            }
+            println!("  ({} rows)\n", res.rows.len());
+        }
+        Ok(())
+    }
+
+    /// Run one `?` query through the SQL view path only (no closure-cache
+    /// optimization). Used by the daemon RPC `query` path, which needs the
+    /// rows without capturing stdout.
+    fn query_one_sql(&self, q: &Query) -> Result<QueryResult> {
+        let (sql, columns) = lower_query(q, &self.rels)?;
         let mut stmt = self.db.conn().prepare(&sql)?;
         let ncols = stmt.column_count();
         let mut rows = stmt.query([])?;
@@ -3516,16 +3543,19 @@ impl Engine {
                 .collect();
             out.push(cells);
         }
-        if self.query_json {
-            emit_query_json(&q.head.rel, &headers, &out);
-        } else {
-            println!("? {} => {}", q.head.rel, if headers.is_empty() { "(count)".into() } else { headers.join("\t") });
-            for cells in &out {
-                println!("  {}", cells.iter().map(json_cell_tsv).collect::<Vec<_>>().join("\t"));
-            }
-            println!("  ({} rows)\n", out.len());
+        Ok(QueryResult { rel: q.head.rel.clone(), columns, rows: out })
+    }
+
+    /// Run every `?` query in `prog`, returning rows. Used by the daemon RPC
+    /// `query` (the foreground path goes through `run_query` which prints). The
+    /// closure-cache optimization is skipped; the SQL view is always used, so
+    /// results are correct but a path query on a large graph pays the SQL cost.
+    pub fn run_queries_capture(&self, prog: &Program) -> Result<Vec<QueryResult>> {
+        let mut out = Vec::new();
+        for item in &prog.items {
+            if let Item::Query(q) = item { out.push(self.query_one_sql(q)?); }
         }
-        Ok(())
+        Ok(out)
     }
 
     /// Run every `gen` item after the fixpoint: evaluate the body, render the

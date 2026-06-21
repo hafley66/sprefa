@@ -61,6 +61,18 @@ struct Cli {
     /// After each tick, print every relation's row count (or DL_TICK_AUDIT=1).
     #[arg(long)]
     tick_audit: bool,
+    /// Run as the long-lived daemon foreground (logs to stderr, ignores idle
+    /// timeout). Usually invoked internally by spawn-if-missing; passing this
+    /// flag explicitly is the debug path. See plans/2026-06-21-daemon-and-menu-bar.md.
+    #[arg(long)]
+    daemon: bool,
+    /// Send `shutdown` to the daemon on `<root>/.dl/daemon.sock` and exit.
+    #[arg(long)]
+    stop: bool,
+    /// Force the in-process path this invocation (do not auto-attach). Same as
+    /// `DL_NO_DAEMON=1`. Useful when the daemon socket is wedged.
+    #[arg(long)]
+    no_daemon: bool,
 }
 
 /// Explicit `--root` wins (canonicalized). Otherwise default to the repo the
@@ -83,17 +95,31 @@ fn main() -> Result<()> {
     if cli.profile { sprefa_v5::db::set_profile(true); }
     if cli.tick_audit { sprefa_v5::engine::set_tick_audit(true); }
     if let Some(n) = cli.cmd_budget { sprefa_v5::engine::set_cmd_budget(n); }
+    if cli.no_daemon {
+        // Propagate to children + the daemon module's enabled() check.
+        std::env::set_var("DL_NO_DAEMON", "1");
+    }
     let root = resolve_root(&cli)?;
     if !cli.move_.is_empty() {
         return sprefa_v5::run_move(cli.db.as_deref(), root, cli.repo, cli.move_, cli.fix);
     }
+    if cli.stop {
+        return sprefa_v5::daemon::stop(&root);
+    }
+    if cli.daemon {
+        return sprefa_v5::daemon::run_daemon(cli.program.as_deref(), cli.db.as_deref(), root, true);
+    }
     // Discovery mode (no positional) defaults the db to <root>/.dl/cache.db so
     // repeated hook/check invocations get warm incremental ticks instead of a
-    // cold in-memory rescan. A generated .gitignore keeps the cache out of git.
+    // cold in-memory rescan. With the daemon enabled, every mode (incl. --lsp)
+    // defaults to the same cache so the daemon's writes are visible to the LSP
+    // process via SQLite WAL. A generated .gitignore keeps the cache out of git.
     let mut db = cli.db;
-    if cli.program.is_none() && db.is_none() {
+    if db.is_none() {
         let dir = root.join(".dl");
-        if dir.is_dir() {
+        let daemon_on = sprefa_v5::daemon::enabled();
+        let want_default = cli.program.is_none() || (daemon_on && (cli.lsp || cli.check || cli.diag_json));
+        if want_default && dir.is_dir() {
             let gi = dir.join(".gitignore");
             if !gi.exists() { let _ = std::fs::write(&gi, "cache.db*\n"); }
             db = Some(dir.join("cache.db").to_string_lossy().into_owned());

@@ -80,7 +80,30 @@ pub fn run_lsp(program: Option<&str>, db_path: Option<&str>, root: PathBuf) -> R
     }
     publish(&connection, &eng, &root, None)?;
 
+    // Daemon subscription (best-effort): when daemon mode is enabled and the
+    // daemon on this root is up, subscribe to `diag_changed` so a watcher tick
+    // (file save from anywhere, git ref move, config edit) re-publishes live
+    // squiggles without waiting for the next editor save. The subscriber thread
+    // forwards each push as a synthetic LSP Notification (`dl/diagChanged`)
+    // through the connection's sender; the main loop recognizes it and re-
+    // publishes from this engine's current view of the shared db.
+    if crate::daemon::enabled_for(&root) {
+        let root_clone = root.clone();
+        let push_sender = connection.sender.clone();
+        std::thread::Builder::new().name("dl-lsp-subscriber".into())
+            .spawn(move || spawn_daemon_subscriber(root_clone, push_sender))?;
+    }
+
     for msg in &connection.receiver {
+        // Synthetic internal notification: daemon pushed diag_changed.
+        if let Message::Notification(ref n) = msg {
+            if n.method == "dl/diagChanged" {
+                if let Err(e) = publish(&connection, &eng, &root, None) {
+                    eprintln!("[lsp] daemon-push republish failed: {e}");
+                }
+                continue;
+            }
+        }
         match msg {
             Message::Request(req) => {
                 match req.method.as_str() {
@@ -118,6 +141,34 @@ pub fn run_lsp(program: Option<&str>, db_path: Option<&str>, root: PathBuf) -> R
     drop(connection);
     io_threads.join()?;
     Ok(())
+}
+
+/// Best-effort daemon subscription thread. Tries to attach, send `subscribe`,
+/// and read framed notifications forever. Each `diag_changed` is forwarded as
+/// a synthetic LSP Notification (`dl/diagChanged`) through the connection's
+/// sender; the main loop recognizes the method name and re-publishes. Returns
+/// silently on any failure (no daemon = no push; the LSP still works save-driven).
+fn spawn_daemon_subscriber(root: PathBuf, sender: crossbeam_channel::Sender<lsp_server::Message>) {
+    use crate::{daemon, rpc};
+    if !daemon::enabled_for(&root) { return; }
+    if !daemon::is_running(&root) {
+        let _ = daemon::ensure_daemon(&root, None);
+    }
+    let mut s = match daemon::connect(&root) { Ok(s) => s, Err(_) => return };
+    let req = rpc::Request::new(0, "subscribe",
+        serde_json::json!({"events": ["diag_changed"]}));
+    if daemon::rpc_call(&mut s, &req).is_err() { return; }
+    loop {
+        match rpc::read_frame(&mut s) {
+            Ok(Some(_body)) => {
+                let _ = sender.send(lsp_server::Message::Notification(lsp_server::Notification {
+                    method: "dl/diagChanged".into(),
+                    params: serde_json::Value::Null,
+                }));
+            }
+            _ => return,
+        }
+    }
 }
 
 /// Query `diag` (optionally for one file), group by path, and send one
