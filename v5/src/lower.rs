@@ -39,6 +39,19 @@ fn term_sql(t: &Term, canon: &HashMap<String, String>) -> Result<String> {
         Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
         Term::Arith { op, lhs, rhs } => Ok(format!(
             "({} {} {})", term_sql(lhs, canon)?, op.sql(), term_sql(rhs, canon)?)),
+        Term::Call { name, args } => {
+            let arg_sqls: Vec<String> = args.iter()
+                .map(|a| term_sql(a, canon)).collect::<Result<_>>()?;
+            match name.as_str() {
+                // SQLite native: replace(X, Y, Z) replaces all Y in X with Z.
+                "replace" if args.len() == 3 =>
+                    Ok(format!("replace({})", arg_sqls.join(", "))),
+                // Registered UDF (db.rs): sprf_split(text, sep, idx).
+                "split" if args.len() == 3 =>
+                    Ok(format!("sprf_split({})", arg_sqls.join(", "))),
+                other => bail!("unknown or mis-arity function `{other}` (known: split/3, replace/3)"),
+            }
+        }
     }
 }
 
@@ -72,6 +85,7 @@ fn body_sql(body: &[BodyItem], rels: &Rels)
                     Term::Interp(_) => bail!("interpolated string only allowed in a rule head, not a body atom"),
                     Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
                     Term::Arith { .. } => bail!("arithmetic only allowed in a rule head or comparison, not a body atom"),
+                    Term::Call { .. } => bail!("function call only allowed in a rule head or comparison, not a body atom"),
                     Term::Wild => {}
                 }
             }
@@ -105,6 +119,7 @@ fn body_sql(body: &[BodyItem], rels: &Rels)
                     Term::Interp(_) => bail!("interpolated string only allowed in a rule head, not a body atom"),
                     Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
                     Term::Arith { .. } => bail!("arithmetic only allowed in a rule head or comparison, not a body atom"),
+                    Term::Call { .. } => bail!("function call only allowed in a rule head or comparison, not a body atom"),
                     Term::Wild => {}
                 }
             }
@@ -116,6 +131,28 @@ fn body_sql(body: &[BodyItem], rels: &Rels)
 
     for item in body {
         if let BodyItem::Cmp(c) = item {
+            // Computed binding: `var = expr` where the var is unbound and the
+            // other side is a Call/Arith (a value-producing expression, not a
+            // literal/var). Bind the var to the expr's SQL so later body items
+            // and the head see the computed value. Same canon slot a Pos atom
+            // fills; the expr is inlined at each use (SQLite re-evals, cheap
+            // for split/replace). Literal `x = "foo"` stays a WHERE filter.
+            if c.op == CmpOp::Eq {
+                let bound = match (&c.lhs, &c.rhs) {
+                    (Term::Var(v), rhs) if v != "_" && !canon.contains_key(v) && has_computation(rhs) => {
+                        let e = term_sql(rhs, &canon)?;
+                        canon.insert(v.clone(), e);
+                        true
+                    }
+                    (lhs, Term::Var(v)) if v != "_" && !canon.contains_key(v) && has_computation(lhs) => {
+                        let e = term_sql(lhs, &canon)?;
+                        canon.insert(v.clone(), e);
+                        true
+                    }
+                    _ => false,
+                };
+                if bound { continue; }
+            }
             let l = term_sql(&c.lhs, &canon)?;
             let r = term_sql(&c.rhs, &canon)?;
             wheres.push(format!("{l} {} {r}", c.op.sql()));
@@ -127,7 +164,7 @@ fn body_sql(body: &[BodyItem], rels: &Rels)
 
 /// Lower a derived rule (Pos/Neg/Cmp only) to one `INSERT OR IGNORE ... SELECT`.
 pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
-    let (canon, froms, wheres) = body_sql(&rule.body, rels)?;
+    let (canon, froms, mut wheres) = body_sql(&rule.body, rels)?;
 
     // a ground fact (empty body) lowers to a FROM-less SELECT of literals;
     // a non-empty body still needs a positive atom to range over
@@ -178,9 +215,20 @@ pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
     }
 
     let mut exprs = Vec::new();
-    for term in &rule.head.terms { exprs.push(term_sql(term, &canon)?); }
+    for term in &rule.head.terms {
+        let e = term_sql(term, &canon)?;
+        // A head term containing a Call (split/replace) may evaluate to NULL
+        // when the function misses (split out-of-range). A NULL row inserted
+        // into the derived table never dedups in the fixpoint delta (NULL !=
+        // NULL), so convergence breaks. Guard: filter NULL-producing head
+        // expressions out of the SELECT entirely. The row drops, which is the
+        // intended "no match" semantics.
+        if has_call(term) { wheres.push(format!("{e} IS NOT NULL")); }
+        exprs.push(e);
+    }
 
     let from_sql = if froms.is_empty() { String::new() } else { format!(" FROM {}", froms.join(", ")) };
+    let where_sql = if wheres.is_empty() { String::new() } else { format!(" WHERE {}", wheres.join(" AND ")) };
     Ok(format!(
         "INSERT OR IGNORE INTO {} ({}) SELECT {}{}{}",
         tbl(&rule.head.rel),
@@ -189,6 +237,24 @@ pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
         from_sql,
         where_sql
     ))
+}
+
+/// Does a term contain a `Term::Call` anywhere? Used to decide whether the
+/// lowered SQL expression may return NULL (split out-of-range), requiring an
+/// `IS NOT NULL` guard on the SELECT.
+fn has_call(t: &Term) -> bool {
+    match t {
+        Term::Call { args, .. } => true || args.iter().any(has_call),
+        Term::Arith { lhs, rhs, .. } => has_call(lhs) || has_call(rhs),
+        _ => false,
+    }
+}
+
+/// Is this term a value-producing computation (Call or Arith)? Used by
+/// `body_sql`'s computed-binding path to distinguish `x = split(...)` (bind x
+/// to the computed expr) from `x = "literal"` (filter WHERE).
+fn has_computation(t: &Term) -> bool {
+    matches!(t, Term::Call { .. } | Term::Arith { .. })
 }
 
 /// Lower a gen body to a deterministic row source:
@@ -242,6 +308,7 @@ pub fn lower_query(q: &Query, rels: &Rels) -> Result<(String, Vec<String>)> {
             Term::Interp(_) => bail!("interpolated string not supported in a query head"),
             Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
             Term::Arith { .. } => bail!("arithmetic not supported in a query head (derive a relation with the computed column and query that)"),
+            Term::Call { .. } => bail!("function call not supported in a query head (derive a relation with the computed column and query that)"),
             Term::Wild => {}
         }
     }

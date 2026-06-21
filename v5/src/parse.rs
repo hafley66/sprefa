@@ -693,6 +693,40 @@ impl Parser {
     }
 
     fn term(&mut self) -> Result<Term> {
+        // Unary minus: `-1` desugars to `0 - 1` (Arith). Lets split's negative
+        // idx read naturally: `split(path, "/", -1)`. Only triggers when `-` is
+        // the first token of a term, so binary `a - 1` still parses as subtraction.
+        if matches!(self.peek(), Some(Tok::Minus)) {
+            self.next()?;
+            let inner = self.term()?;
+            return Ok(Term::Arith {
+                op: ArithOp::Sub, lhs: Box::new(Term::Int(0)), rhs: Box::new(inner)
+            });
+        }
+        // Function call: `ident(args)` in term position. Body-leading atoms are
+        // routed to `atom()` by `body_item` before term() runs, so this only
+        // fires in head args, comparison sides, arithmetic operands, and nested
+        // call args — everywhere a value expression is wanted, not a binding.
+        if let Some(Tok::Ident(s)) = self.peek().cloned() {
+            if s != "_" && matches!(self.peek2(), Some(Tok::LParen)) {
+                self.next()?; // ident
+                self.expect(Tok::LParen)?;
+                let mut args = Vec::new();
+                if !matches!(self.peek(), Some(Tok::RParen)) {
+                    loop {
+                        args.push(self.expr()?);
+                        match self.next()? {
+                            Tok::Comma => continue,
+                            Tok::RParen => break,
+                            other => bail!("expected , or ) in call args, got {:?}", other),
+                        }
+                    }
+                } else {
+                    self.next()?; // RParen
+                }
+                return Ok(Term::Call { name: s, args });
+            }
+        }
         match self.next()? {
             Tok::Ident(s) => Ok(if s == "_" { Term::Wild } else { Term::Var(s) }),
             Tok::Str(s) => Ok(Term::Str(s)),

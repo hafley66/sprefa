@@ -3464,7 +3464,8 @@ impl Engine {
             Term::Wild => bail!("'_' not allowed in a seeded closure rule head"),
             Term::Interp(_) => bail!("interpolation not supported in a seeded closure rule head"),
             Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
-            Term::Arith { .. } => bail!("arithmetic not supported in a seeded closure rule head"),
+                Term::Arith { .. } => bail!("arithmetic not supported in a seeded closure rule head"),
+                Term::Call { .. } => bail!("function call not supported in a seeded closure rule head"),
         }).collect();
         let template = cells?;
         let free_positions: Vec<usize> = rule.head.terms.iter().enumerate()
@@ -4349,6 +4350,7 @@ fn parse_file(
                 Term::Wild => bail!("'_' in head not allowed"),
                 Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
                 Term::Arith { .. } => val_of(term, &b)?,
+                Term::Call { .. } => val_of(term, &b)?,
             };
             if !check_type(head_meta.cols[i].ty, &v, repo, rev, root, rev_index) { dropped += 1; continue 'bind; }
             row.push(v);
@@ -4424,6 +4426,32 @@ fn val_of(t: &Term, b: &Bind) -> Result<Value> {
                     a % c
                 }
             }))
+        }
+        Term::Call { name, args } => {
+            let vals: Vec<Value> = args.iter().map(|a| val_of(a, b)).collect::<Result<_>>()?;
+            let str_at = |i: usize| vals.get(i).and_then(|v| match v {
+                Value::Text(s) => Some(s.as_str()), _ => None,
+            }).ok_or_else(|| anyhow::anyhow!("function `{name}` arg {i} must be text"));
+            let int_at = |i: usize| vals.get(i).and_then(|v| match v {
+                Value::Int(n) => Some(*n), _ => None,
+            }).ok_or_else(|| anyhow::anyhow!("function `{name}` arg {i} must be int"));
+            match name.as_str() {
+                "replace" => {
+                    let (text, from, to) = (str_at(0)?, str_at(1)?, str_at(2)?);
+                    Ok(Value::Text(text.replace(from, to)))
+                }
+                "split" => {
+                    let (text, sep) = (str_at(0)?, str_at(1)?);
+                    let idx = int_at(2)?;
+                    if sep.is_empty() { bail!("function split: empty separator"); }
+                    let parts: Vec<&str> = text.split(sep).collect();
+                    let n = parts.len() as i64;
+                    let i = if idx >= 0 { idx } else { idx + n };
+                    if i < 0 || i >= n { bail!("function split: idx {idx} out of range ({n} parts)"); }
+                    Ok(Value::Text(parts[i as usize].to_string()))
+                }
+                other => bail!("unknown function `{other}` (known: split, replace)"),
+            }
         }
     }
 }

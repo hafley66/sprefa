@@ -116,6 +116,7 @@ needs both is two rules: extract, then join (see [Rails](#git-hook--claude-code-
 | glob constraint | `p ~~ "src/*"` (SQLite GLOB) |
 | closure | `closure(edge)` as the entire body — see below |
 | int arithmetic | `+ - * / %` in rule heads (derived AND source) and comparison sides: `rank(p, line + 1) <- fns(p, line).`, `line * 2 > 4`. Usual precedence, parens OK. Never in a body atom (binding position). `/` after a value is division; elsewhere it opens a `/regex/` |
+| string functions | `split(text, sep, idx)` and `replace(text, from, to)` in rule heads and comparison sides: `seg(path, split(path, "/", -1)) <- file(path).`, `kebab(w, replace(w, "_", "-")) <- name(w).`. `idx` is 0-based; negative counts from the end (`-1` = last segment). Out-of-range `split` drops the row (NULL filter). Unary minus parses (`-1` not `0 - 1`). A computed binding `ext = split(p, ".", -1)` binds `ext` for later use in the same body. `replace` is SQLite-native; `split` is the `sprf_split` UDF |
 
 **Aggregation** is head-position only: `count` `sum` `min` `max`.
 Non-aggregate head terms are the grouping key. `count`/`sum` produce `int`;
@@ -488,8 +489,10 @@ design-recovery; the original coordinate model lives in
 
 - **`Value` is `Text | Int`** — no float; `<` on text is lexical. Int
   arithmetic (`+ - * / %`) works in heads and comparisons.
-- **String manipulation is thin** — `${}` concat and the constraints above;
-  no split/replace/substr, no regex over an already-bound value.
+- **String manipulation** — `${}` concat; `split(text, sep, idx)` and
+  `replace(text, from, to)` in heads/comparisons (see Body constructs above);
+  no substr, no regex capture over an already-bound value (use the `match`
+  source op at scan time with `(?<name>...)` groups instead).
 - **Closure in a mixed rule body is literal-seeded only** — dynamic transitive
   closure is a seeded point query, not a fixpoint join. Recursive rules over
   the `_edge` relations substitute (see [examples/callgraph.dl](examples/callgraph.dl)).

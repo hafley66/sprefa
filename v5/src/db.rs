@@ -91,6 +91,7 @@ pub fn open(path: Option<&str>) -> Result<Db> {
     // across processes; a write collision should wait, not fail "locked".
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;")?;
     register_regexp(&conn)?;
+    register_split(&conn)?;
     if profiling() { conn.profile(Some(profile_hook)); }
     Ok(Db { conn, counts: RefCell::new(HashMap::new()) })
 }
@@ -123,6 +124,33 @@ fn register_regexp(conn: &Connection) -> Result<()> {
             };
             drop(map);
             Ok(re.is_match(&value))
+        },
+    )?;
+    Ok(())
+}
+
+/// Register the `sprf_split(text, sep, idx)` SQL function so the `split(...)`
+/// term lowers to a per-row SQL call. Idx is 0-based; negative counts from the
+/// end (`-1` = last segment). Out-of-range or empty sep returns NULL, which
+/// drops the row from a SELECT (the desired filter semantics — a split that
+/// misses is no row, not an empty string). `split` is the only caller today;
+/// the `sprf_` prefix avoids colliding with a user rel of the same name.
+fn register_split(conn: &Connection) -> Result<()> {
+    use rusqlite::functions::FunctionFlags;
+    conn.create_scalar_function(
+        "sprf_split",
+        3,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let text = ctx.get::<String>(0)?;
+            let sep = ctx.get::<String>(1)?;
+            let idx = ctx.get::<i64>(2)?;
+            if sep.is_empty() { return Ok(None); }
+            let parts: Vec<&str> = text.split(&sep).collect();
+            let n = parts.len() as i64;
+            let i = if idx >= 0 { idx } else { idx + n };
+            if i < 0 || i >= n { return Ok(None); }
+            Ok(Some(parts[i as usize].to_string()))
         },
     )?;
     Ok(())

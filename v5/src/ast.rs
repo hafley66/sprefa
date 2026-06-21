@@ -104,6 +104,12 @@ pub enum Term {
     /// body atoms reject it. Derived rules lower it to SQL arithmetic; source
     /// rules evaluate it on the bound row values.
     Arith { op: ArithOp, lhs: Box<Term>, rhs: Box<Term> },
+    /// Pure string function call `split(s, "/", -1)`, `replace(s, "_", "-")`.
+    /// Same positioning rules as `Arith`: head columns and comparison sides,
+    /// never a binding position. Derived rules lower to SQL (`replace` is
+    /// native; `split` is the `sprf_split` UDF); source rules evaluate via
+    /// `val_of`. The function set is whitelist-checked at lower/eval time.
+    Call { name: String, args: Vec<Term> },
 }
 
 #[derive(Clone, Debug)]

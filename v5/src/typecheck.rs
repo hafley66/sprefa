@@ -350,6 +350,42 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                         }
                     }
                 }
+                // A string function call (`split`/`replace`) produces text: the
+                // column it fills must be a text-base type. Arg vars unify as
+                // text too (split/replace take text operands today). The
+                // whitelist (split/replace) is enforced again at lower time.
+                Term::Call { name, args } => {
+                    if !matches!(name.as_str(), "split" | "replace") {
+                        diags.push(TypeDiag {
+                            path: dl_path.to_string(), span: (0, 0),
+                            severity: Severity::Error, code: "unknown-function".into(),
+                            msg: format!("unknown function `{name}` (known: split, replace)"),
+                        });
+                    }
+                    if args.len() != 3 {
+                        diags.push(TypeDiag {
+                            path: dl_path.to_string(), span: (0, 0),
+                            severity: Severity::Error, code: "arity".into(),
+                            msg: format!("function `{name}` expects 3 args, got {}", args.len()),
+                        });
+                    }
+                    if !is_path_base(cty.base) && cty.base != Type::Text {
+                        diags.push(TypeDiag {
+                            path: dl_path.to_string(), span: (0, 0),
+                            severity: Severity::Error, code: "brand-mismatch".into(),
+                            msg: format!("string function `{name}` cannot fill non-text column `{}`", meta.cols[i].name),
+                        });
+                    }
+                    let text_ty = ColTy { base: Type::Text, brand: None };
+                    for a in args {
+                        if let Term::Var(v) = a {
+                            if v != "_" { match seen.get(v).cloned() {
+                                None => { seen.insert(v.clone(), text_ty.clone()); }
+                                Some(prev) => unify(v, &prev, &text_ty, brands, dl_path, diags),
+                            }}
+                        }
+                    }
+                }
                 _ => {}
             }
         }
