@@ -255,7 +255,7 @@ parses as a rule because the second token is `(`, not an ident. Mirrors the
 
 ## Built-in relations
 
-Reserved names, populated lazily — a program pays only for what it references.
+Reserved names, populated lazily — a program pays only for what it references. The lazy indexers (`type_entity`, `call_def`, `call_kind`, `df_node`, `loop_over`, `nest`) populate only over files a `scan` rule in the program pulls in; referencing one without a scan yields zero rows. See `examples/lsp-def-target.dl` for the `index_over` bridge pattern.
 
 | relation | columns | source |
 |---|---|---|
@@ -442,13 +442,18 @@ All in [examples/](examples/), runnable as `dl examples/<name>.dl --root .`:
 | [lint-imports.dl](examples/lint-imports.dl) | `module_unresolved` as a check |
 | [lint-docs.dl](examples/lint-docs.dl) | doc hygiene as agent rails: `needs-doc` (new + >2 refs + no `doc_ref`) + `chat-comment` (`///` block over an arity-derived budget). Patterns: sum-aggregate over a union, `max` for contiguous-block detection |
 | [rails.dl](examples/rails.dl) | diff-scoped agent rails: banned words, exemptions via `fs:` literals, aggregate budgets |
+| [rails-call-kind.dl](examples/rails-call-kind.dl) | the `call_kind` write-precision cut: warn on `.conn()` only when the enclosing fn actually writes (execute/execute_batch), not just reads (prepare/query_row) |
 | [ban.dl](examples/ban.dl) | minimal banned-pattern check |
+| [string-fns.dl](examples/string-fns.dl) | `split` / `replace` / computed bindings / unary minus / NULL-drop over v5's own fns |
 | [openapi.dl](examples/openapi.dl) | `json` op + anti-join over a spec |
+| [openapi-lsp.dl](examples/openapi-lsp.dl) | OpenAPI ↔ code cross-link as `diag` rows (the spine joins across TS/RS by shared operationId string) |
+| [lsp-def-target.dl](examples/lsp-def-target.dl) | `def_target` declaration that drives go-to-def to real definition lines, with the `=~` regex literal routing type vs fn kinds |
 | [time.dl](examples/time.dl) | cross-rev diff (WORK vs HEAD) |
 | [module-history.dl](examples/module-history.dl) | rev-aware module graph |
 | [repo-nearest.dl](examples/repo-nearest.dl) | multi-repo queries |
 | [gen-type-table.dl](examples/gen-type-table.dl) | the marker-splice codegen loop: `comment` + `gen` keep a table fresh inside the program's own comments |
 | [gen-doc-index.dl](examples/gen-doc-index.dl) | dogfoods the doc tools together: `doc_node` (markdown titles) + `comment` (Rust `//!` module docs) → one `gen` splice. Query-time doc/code unification |
+| [auto-doc.dl](examples/auto-doc.dl) | the gen FILE-sink form: render `type_entity` rows to a fresh markdown reference (no marker pair, regenerated each tick, converges). The lexical indexer end-to-end as a doc generator |
 | [anim-deck.dl](examples/anim-deck.dl) | cross-repo splice: aggregates + round tiers written into a slide deck's d2 fences |
 | [typegraph-anim.dl](examples/typegraph-anim.dl) | gen → d2 `steps:` boards, `d2 --animate-interval` |
 | [typeports.dl](examples/typeports.dl) | hub structs as d2 `sql_table` nodes, wires anchored to field rows |

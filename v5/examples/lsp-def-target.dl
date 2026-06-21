@@ -1,0 +1,43 @@
+# lsp-def-target.dl — go-to-def driven by a program-declared relation.
+#
+# When `def_target` is declared, the LSP's textDocument/definition consults it
+# first (queried by the bare text under the cursor) and returns each (file,
+# line) as a jump target. Without it, go-to-def resolves only import
+# specifiers via module_edge — the module-graph edge, not the real def line.
+# With it, the jump lands at the definition line.
+#
+# Multiple rows for one name (overloads, distinct modules) yield multiple
+# locations; the editor shows a picker. The `kind` column is carried for
+# future decorations; it is not required for the jump.
+#
+# textDocument/hover is the other half of Phase C/E: it auto-synthesizes a
+# markdown summary from type_entity + call_def. No rel to declare — opt in
+# by referencing those rels (this program does, so hover works under --lsp).
+#
+# The type/call graphs are lazy indexers: they populate only over files a
+# `scan` rule in this program pulls in. The `index_over` rule below is the
+# interest declaration; without it, type_entity stays empty.
+#
+#   Run as LSP:   dl v5/examples/lsp-def-target.dl --root . --lsp
+#   See:          docs/lsp.md, README.md § LSP
+
+# Interest declaration: pull v5/src into the file set so the lazy type/call
+# graph indexers have something to chew on. Under --lsp, didSave re-ticks the
+# one changed path; the indexers reconcile incrementally.
+rel index_over(p: file).
+index_over(p) <- scan("WORK", "v5/src/**/*.rs", p, rev).
+
+# Type-defined targets: structs, enums, traits, aliases. The `=~` constraint
+# is the unified regex literal (same form `match` takes); a name can only be
+# one kind, so a row lands in at most one of the two def_target rules below.
+rel def_target(name: text, file: file, line: int, kind: text).
+def_target(name, f, l, "type") <- type_entity(_, name, k, _, f, l), k =~ /struct|enum|trait|alias/.
+
+# Function-defined targets: free fns and methods.
+def_target(name, f, l, "fn") <- type_entity(_, name, k, _, f, l), k =~ /function|method/.
+
+# Sanity queries — run without --lsp to see the rows the LSP would consult.
+# Under --lsp these are not queries; they're just the relations the
+# definition handler reads by column name.
+? def_target("Engine", f, l, k).
+? def_target("tick", f, l, k).

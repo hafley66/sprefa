@@ -1,0 +1,55 @@
+# rails-call-kind.dl — the call_kind write-precision cut, as a standalone rail.
+#
+# Sibling of rails.dl. The badness this rail catches is a per-row-write risk:
+# a .conn() inside a fn that (a) is loop-reachable and (b) actually writes
+# through its calls. The call_kind(fn, kind) builtin — populated from the
+# bare callee name at each call site — is the precision cut that drops fns
+# which only read. Table is rusqlite-shaped on purpose: execute/
+# execute_batch/execute_returning -> write; prepare/query_row/query_map/
+# query_and_then/query_named -> read. Collection-shaped names (insert/
+# update/delete) are dropped to avoid HashMap::insert false positives.
+#
+# This file shows the call_kind join on its own. The full rail in repo-root
+# .dl/rails.dl additionally tightens loop-reachability via loop_entry_fn
+# (fn is called FROM a loop-nested site, not just transitively reachable
+# from a fn that has a loop). Both cuts compose by joining on the same fn.
+#
+#   Run: dl v5/examples/rails-call-kind.dl --root . --check
+
+rel diag(path: file, line: int, severity: text, code: text, msg: text).
+
+# Seed: raw .conn() call sites, exempt the db.rs seam (that's where .conn()
+# belongs, not a bypass). The fs:`...` literal resolves at check time, so a
+# typo'd exemption path is itself a check error.
+rel conn_site(p: file, l: int).
+conn_site(p, l) <-
+    scan("WORK", "v5/src/**/*.rs", p, rev),
+    match(p, rev, /\.conn\(\)/, l),
+    p != fs:`v5/src/db.rs`.
+
+# Resolve each .conn() site to its enclosing fn via call_site.
+# `caller` is the resolved fn sym; "conn" is the bare method name.
+rel conn_fn(fn: text, p: file, l: int).
+conn_fn(fn, p, l) <- conn_site(p, l), call_site(fn, "conn", p, l).
+
+# THE CUT: keep only fns whose body actually writes. A fn that only prepares
+# or queries through its .conn() drops out — it touches the database but
+# cannot be a per-row write risk.
+rel conn_write_fn(fn: text, p: file, l: int).
+conn_write_fn(fn, p, l) <- conn_fn(fn, p, l), call_kind(fn, "write").
+
+# Diff-scoped warning. changed_line keeps the rail line-grain: a pre-existing
+# .conn() in an unchanged line stays silent. Path-grain (changed(p)) would
+# fire on any touch to the file; line-grain is stricter and matches only the
+# worktree diff hunks.
+diag(p, l, "warn", "conn-write-fn",
+     "raw .conn() in a write-kind fn — per-row write risk") <-
+    conn_write_fn(_, p, l), changed_line(p, l).
+
+# Under --check the diag is the live output. Without a worktree diff, every
+# line is unchanged so diag stays empty — that is the rail working as
+# designed (pre-existing debt never fires). The query below is a non-diff-
+# scoped view of the precision cut, so you can see which .conn() fns would
+# trip if their lines were touched:
+? conn_write_fn(fn, p, l).
+? diag(path, line, sev, code, msg).

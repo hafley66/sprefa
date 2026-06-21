@@ -40,8 +40,8 @@ resolution (import specifiers) when the rel is absent or the name has no row.
 
 ```
 rel def_target(name: text, file: file, line: int, kind: text).
-def_target(name, f, l, "fn") <- type_entity(_, name, "function", _, f, l).
-def_target(name, f, l, "type") <- type_entity(_, name, _, _, f, l).
+def_target(name, f, l, "type") <- type_entity(_, name, k, _, f, l), k =~ /struct|enum|trait|alias/.
+def_target(name, f, l, "fn")   <- type_entity(_, name, k, _, f, l), k =~ /function|method/.
 ```
 
 | column | required | meaning |

@@ -1,0 +1,38 @@
+# auto-doc.dl — generate a code reference doc from the lexical indexer.
+#
+# The two gen-* siblings (gen-type-table.dl, gen-doc-index.dl) use the splice
+# form: render rows between two marker lines in an existing file. This one uses
+# the FILE form — `gen("path", "row template")` — to write a fresh markdown
+# reference end to end. No marker pair to maintain, no in-place edit; the
+# output is regenerated each tick and skipped when the bytes already match
+# (convergence, so safe under --watch or CI).
+#
+# The input is the lexical indexer's output: `type_entity` rows from the
+# `TypeLang` registry (syn for Rust, tree-sitter for Kotlin, oxc for TS), one
+# row per declared type / fn / method. Two `=~` filters route by kind. The
+# `=~` literal is the unified regex form (same as `match` takes).
+#
+#   Run:     dl v5/examples/auto-doc.dl --root .
+#   Output:  v5/examples/_auto-doc/v5-reference.md
+#
+# Swap the path template to `"{file}.md"` (one doc per source file) or to a
+# `{parent}.md` grouping for per-module docs. The lowerer's ORDER BY over all
+# vars makes render order deterministic, so the file content is byte-stable
+# across runs.
+
+# Interest declaration: pull v5/src into the file set so the lazy type/call
+# graph indexers populate. type_entity stays empty without a scan.
+rel index_over(p: file).
+index_over(p) <- scan("WORK", "v5/src/**/*.rs", p, rev).
+
+# One row per declared entity, routed by kind. A name resolves to one kind, so
+# a row lands in at most one arm; no duplicate locations in the output.
+rel doc_row(file: text, line: int, kind: text, name: text).
+doc_row(file, line, "type", name) <- type_entity(_, name, k, _, file, line), k =~ /struct|enum|trait|alias/.
+doc_row(file, line, "fn", name)    <- type_entity(_, name, k, _, file, line), k =~ /function|method/.
+
+# The file-sink: every row renders through the template, all rows land in one
+# markdown file under v5/examples/_auto-doc/. The engine creates the dir if
+# missing and skips the write when bytes already match.
+gen("v5/examples/_auto-doc/v5-reference.md",
+    "- **{kind}** `{name}` - {file}:{line}") <- doc_row(file, line, kind, name).

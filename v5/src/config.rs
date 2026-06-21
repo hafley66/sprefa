@@ -29,6 +29,13 @@
 //! slug = "delta/four"
 //! root = "/path/to/maybe-delta"
 //! allow_missing = true
+//!
+//! # Top-level default_org prefixes any bare slug (one without a `/`). Lets a
+//! # multi-repo config share one org without repeating it per entry.
+//! default_org = "alpha"
+//! [[repos]]
+//! slug = "five"          # normalizes to "alpha/five"
+//! root = "/path/to/five"
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -59,6 +66,11 @@ pub struct RepoConfig {
 pub struct SprfConfig {
     #[serde(default)]
     pub repos: Vec<RepoConfig>,
+    /// Prefix applied to any bare slug (no `/`) at load time. `None` leaves
+    /// slugs untouched. Lets a multi-repo config share one org without
+    /// repeating it per `[[repos]]` entry.
+    #[serde(default)]
+    pub default_org: Option<String>,
 }
 
 impl SprfConfig {
@@ -100,7 +112,22 @@ impl SprfConfig {
     pub fn load_from_path(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("read config {}", path.display()))?;
-        toml::from_str(&text).with_context(|| format!("parse config {}", path.display()))
+        let mut cfg: SprfConfig =
+            toml::from_str(&text).with_context(|| format!("parse config {}", path.display()))?;
+        cfg.normalize_slugs();
+        Ok(cfg)
+    }
+
+    /// Prefix `default_org/` onto any bare slug. Idempotent: slugs already
+    /// containing `/` are left alone. No-op when `default_org` is `None`.
+    fn normalize_slugs(&mut self) {
+        if let Some(org) = &self.default_org {
+            for r in &mut self.repos {
+                if !r.slug.contains('/') {
+                    r.slug = format!("{org}/{}", r.slug);
+                }
+            }
+        }
     }
 }
 
@@ -148,5 +175,30 @@ mod tests {
         let paths = SprfConfig::search_paths();
         std::env::remove_var("SPREFA_CONFIG");
         assert_eq!(paths, vec![PathBuf::from("/custom/path.toml")]);
+    }
+
+    #[test]
+    fn default_org_prefixes_bare_slugs() {
+        let p = write_tmp("org", "\
+            default_org = \"alpha\"\n\
+            [[repos]]\n\
+            slug = \"one\"\n\
+            root = \"/tmp/one\"\n\
+            [[repos]]\n\
+            slug = \"beta/two\"\n\
+            root = \"/tmp/two\"\n");
+        let cfg = SprfConfig::load_from_path(&p).unwrap();
+        assert_eq!(cfg.repos[0].slug, "alpha/one");
+        assert_eq!(cfg.repos[1].slug, "beta/two");
+    }
+
+    #[test]
+    fn no_default_org_leaves_slugs_alone() {
+        let p = write_tmp("no_org", "\
+            [[repos]]\n\
+            slug = \"one\"\n\
+            root = \"/tmp/one\"\n");
+        let cfg = SprfConfig::load_from_path(&p).unwrap();
+        assert_eq!(cfg.repos[0].slug, "one");
     }
 }

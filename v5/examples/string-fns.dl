@@ -1,0 +1,50 @@
+# string-fns.dl — split / replace / computed binding / unary minus / NULL drop.
+#
+# Two functions, same positioning rules as int arithmetic:
+#   split(text, sep, idx)    idx is 0-based; negative counts from end (-1 = last)
+#   replace(text, from, to)  global
+#
+# Head columns and comparison sides only. Body-atom position is a parse error
+# (body atoms bind, they don't compute). Out-of-range split returns NULL and
+# the row drops via an IS NOT NULL guard, so "split then join" is a clean
+# existential check.
+#
+#   Run: dl v5/examples/string-fns.dl --root .
+
+# Every fn name + its file in v5/src.
+rel fn_at(file: text, name: text).
+fn_at(file, name) <-
+    scan("WORK", "v5/src/**/*.rs", file, rev),
+    match(file, rev, /fn (?<name>[a-z_][a-z0-9_]*)/, l).
+
+# 1. LAST PATH SEGMENT — split(file, "/", -1). Negative idx + unary minus
+#    (no parens around -1). "v5/src/engine.rs" -> "engine.rs".
+rel basename(file: text, last: text).
+basename(file, split(file, "/", -1)) <- fn_at(file, _).
+? basename(file, last).
+
+# 2. FIRST UNDERSCORE-WORD — split(name, "_", 0). Names with no `_` pass
+#    through (idx 0 of a one-element split is the whole string).
+#    "refresh_call_rels" -> "refresh".
+rel first_word(name: text, w: text).
+first_word(name, split(name, "_", 0)) <- fn_at(_, name).
+? first_word(name, w).
+
+# 3. NULL DROP — split(name, "_", 2) drops any name with fewer than 3 parts.
+#    The lowerer's IS NOT NULL guard turns this into "names with >= 3 parts".
+rel tripartite(name: text, third: text).
+tripartite(name, split(name, "_", 2)) <- fn_at(_, name).
+? tripartite(name, third).
+
+# 4. REPLACE — underscores to hyphens (kebab). Global; native SQLite replace.
+rel kebab(name: text, k: text).
+kebab(name, replace(name, "_", "-")) <- fn_at(_, name).
+? kebab(name, k).
+
+# 5. COMPUTED BINDING — bind `last` to a split call, then filter on it. Same
+#    canon slot a Pos atom fills; inlined at each use, no subquery. The LHS
+#    bare var was previously always an error if unbound; computed bindings
+#    lift that for any computation on the RHS.
+rel in_engine(file: text, last: text).
+in_engine(file, last) <- fn_at(file, _), last = split(file, "/", -1), last = "engine.rs".
+? in_engine(file, last).

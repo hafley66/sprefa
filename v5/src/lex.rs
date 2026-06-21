@@ -134,7 +134,17 @@ pub fn lex(src: &str) -> Result<Vec<Tok>> {
                         if i >= b.len() { bail!("unterminated ${{ in string"); }
                         parts.push(StrPart::Var(src[start..i].to_string()));
                         i += 1; // skip }
-                    } else { cur.push(b[i] as char); i += 1; }
+                    } else {
+                        // Push the run of boring bytes as a slice to keep UTF-8
+                        // sequences intact. Byte-by-byte `b[i] as char` would
+                        // independently Latin-1-promote each byte of a multibyte
+                        // sequence and double-encode it (e.g. `—` -> `ââ`).
+                        let start = i;
+                        while i < b.len() && b[i] != b'"' && b[i] != b'\\' && b[i] != b'$' {
+                            i += 1;
+                        }
+                        cur.push_str(&src[start..i]);
+                    }
                 }
                 if i >= b.len() { bail!("unterminated string"); }
                 i += 1;
@@ -163,7 +173,14 @@ pub fn lex(src: &str) -> Result<Vec<Tok>> {
                     while i < b.len() && b[i] != b'/' {
                         if b[i] == b'\\' && i + 1 < b.len() {
                             s.push(b[i] as char); s.push(b[i + 1] as char); i += 2;
-                        } else { s.push(b[i] as char); i += 1; }
+                        } else {
+                            // Slice-run preserves UTF-8 (see string-literal arm above).
+                            let start = i;
+                            while i < b.len() && b[i] != b'/' && b[i] != b'\\' {
+                                i += 1;
+                            }
+                            s.push_str(&src[start..i]);
+                        }
                     }
                     if i >= b.len() { bail!("unterminated regex"); }
                     i += 1;
