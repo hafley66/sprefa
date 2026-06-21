@@ -80,6 +80,12 @@ pub struct Daemon {
     pub last_activity: Mutex<Instant>,
     pub tick_count: AtomicU64,
     pub shutdown_requested: AtomicBool,
+    /// The paths touched by the most recent tick (absolute). Empty after a
+    /// full tick (paths unknown) — subscribers treat empty as "re-publish
+    /// everything". Targeted publish on incremental ticks is the v1.1
+    /// refinement: only files whose `diag` rows could have moved need a
+    /// re-publish, not the whole tree.
+    pub last_changed_paths: Mutex<Vec<PathBuf>>,
     /// Subscribers for pushed notifications. Each subscriber is a kept-open
     /// socket; the watcher writes one `diag_changed` notification per tick.
     /// Broken subscribers are reaped on the next broadcast.
@@ -97,6 +103,8 @@ impl Daemon {
         drop(eng);
         self.tick_count.fetch_add(1, Ordering::Relaxed);
         self.touch();
+        // Full tick: changed paths unknown, subscribers re-publish everything.
+        *self.last_changed_paths.lock().unwrap() = Vec::new();
         self.broadcast_diag_changed();
         Ok(())
     }
@@ -107,13 +115,21 @@ impl Daemon {
         drop(eng);
         self.tick_count.fetch_add(1, Ordering::Relaxed);
         self.touch();
+        // Incremental tick: only these paths' rows could have moved; subscribers
+        // can re-publish just these files.
+        *self.last_changed_paths.lock().unwrap() = paths.to_vec();
         self.broadcast_diag_changed();
         Ok(())
     }
 
     fn broadcast_diag_changed(&self) {
+        // Snapshot paths under the lock so write_frame (which can take time on a
+        // slow consumer) doesn't hold it.
+        let paths: Vec<String> = self.last_changed_paths.lock().unwrap().iter()
+            .map(|p| p.to_string_lossy().into_owned()).collect();
         let note = json!({"jsonrpc": "2.0", "method": "diag_changed", "params": {
-            "tick": self.tick_count.load(Ordering::Relaxed)
+            "tick": self.tick_count.load(Ordering::Relaxed),
+            "paths": paths,
         }});
         let body = match serde_json::to_string(&note) {
             Ok(s) => s,
@@ -168,6 +184,7 @@ pub fn run_daemon(
         last_activity: Mutex::new(Instant::now()),
         tick_count: AtomicU64::new(1),
         shutdown_requested: AtomicBool::new(false),
+        last_changed_paths: Mutex::new(Vec::new()),
         subscribers: Mutex::new(Vec::new()),
     });
 

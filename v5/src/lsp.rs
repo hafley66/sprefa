@@ -95,11 +95,28 @@ pub fn run_lsp(program: Option<&str>, db_path: Option<&str>, root: PathBuf) -> R
     }
 
     for msg in &connection.receiver {
-        // Synthetic internal notification: daemon pushed diag_changed.
+        // Synthetic internal notification: daemon pushed diag_changed. The
+        // `paths` field carries the watcher's changed paths (absolute); empty
+        // means "full tick, paths unknown" — re-publish everything. Otherwise
+        // re-publish only the touched files so an unrelated file's squiggles
+        // don't flicker.
         if let Message::Notification(ref n) = msg {
             if n.method == "dl/diagChanged" {
-                if let Err(e) = publish(&connection, &eng, &root, None) {
-                    eprintln!("[lsp] daemon-push republish failed: {e}");
+                let paths: Vec<String> = n.params.get("paths")
+                    .and_then(|p| p.as_array())
+                    .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                if paths.is_empty() {
+                    if let Err(e) = publish(&connection, &eng, &root, None) {
+                        eprintln!("[lsp] daemon-push republish failed: {e}");
+                    }
+                } else {
+                    for p in paths {
+                        let abs = PathBuf::from(&p);
+                        if let Err(e) = publish(&connection, &eng, &root, Some(&abs)) {
+                            eprintln!("[lsp] daemon-push republish failed for {p}: {e}");
+                        }
+                    }
                 }
                 continue;
             }
@@ -160,10 +177,19 @@ fn spawn_daemon_subscriber(root: PathBuf, sender: crossbeam_channel::Sender<lsp_
     if daemon::rpc_call(&mut s, &req).is_err() { return; }
     loop {
         match rpc::read_frame(&mut s) {
-            Ok(Some(_body)) => {
+            Ok(Some(body)) => {
+                // Forward the framed JSON-RPC notification's params through to
+                // the LSP main loop. The synthetic method name (`dl/diagChanged`)
+                // is what the main loop matches on; the params carry the
+                // changed-paths array.
+                let v: serde_json::Value = match serde_json::from_str(&body) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                let params = v.get("params").cloned().unwrap_or(serde_json::Value::Null);
                 let _ = sender.send(lsp_server::Message::Notification(lsp_server::Notification {
                     method: "dl/diagChanged".into(),
-                    params: serde_json::Value::Null,
+                    params,
                 }));
             }
             _ => return,
