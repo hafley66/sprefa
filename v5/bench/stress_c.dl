@@ -10,8 +10,11 @@
 # Touch every .c and .h file so the scan path walks the corpus. globset expands
 # the {c,h} brace alternation by default (its parser treats `{`/`}` as
 # alternates; examples/lint-imports.dl already relies on this over .{rs,ts,...}).
+# `/$/` matches the end of each line (zero-width) — one match per line, a
+# content-presence check. (Not `/./` — that matches every CHARACTER, ~30× the
+# line count, turning this into an N×chars bind explosion.)
 rel seen(path: file).
-seen(path) <- scan("WORK", "**/*.{c,h}", path, rev), match(path, rev, /./, line).
+seen(path) <- scan("WORK", "**/*.{c,h}", path, rev), match(path, rev, /$/, line).
 
 # ast-grep structural patterns over C (function definitions). C is a registered
 # ast-grep language (src/sg.rs: `"c" => SupportLang::C`); this exercises the sg

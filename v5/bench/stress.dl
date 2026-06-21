@@ -8,8 +8,11 @@
 # wall time. Pair with --profile for the per-phase breakdown.
 
 # Touch every .rs file so the type/call/dataflow refreshers run over the corpus.
+# `/$/` matches the end of each line (zero-width), so exactly one match per line
+# — a file-content presence check. (Do NOT use `/./`: it matches every CHARACTER,
+# which is ~30× the line count and turns this into an N×chars bind explosion.)
 rel seen(path: file).
-seen(path) <- scan("WORK", "**/*.rs", path, rev), match(path, rev, /./, line).
+seen(path) <- scan("WORK", "**/*.rs", path, rev), match(path, rev, /$/, line).
 
 # Call-graph transitive reachability (2-col projection of call_edge). The
 # definition forces the SCC-condensed closure to materialize during tick — the
