@@ -115,7 +115,7 @@ fn regex_filter_via_nested_rule() {
     write_corpus(&d);
     // filter the fndef relation by a regex constraint in a nested rule body.
     let prog = format!(
-        "{GRAPH}\nrel def(name: text).\ndef(n) <- fndef(n, _, _, _).\nrel just_a(name: text).\njust_a(n) <- def(n), n =~ \"^a$\".\n? just_a(name).\n");
+        "{GRAPH}\nrel def(name: text).\ndef(n) <- fndef(n, _, _, _).\nrel just_a(name: text).\njust_a(n) <- def(n), n =~ /^a$/.\n? just_a(name).\n");
     let (ok, out, err) = run(&d, &prog);
     assert!(ok, "stderr: {err}");
     assert!(out.contains("\n  a\n") || out.contains("  a\n  ("), "expected only 'a': {out}");

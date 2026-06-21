@@ -75,9 +75,9 @@ embedded_by(target, owner, kind) <- type_edge(owner, target, kind).
 #    Filtering is nesting: derive a filtered relation with the constraint in its
 #    body, then query that. (Constraints live in rule bodies, not in queries.)
 rel def_tick(name: text, path: file, line: int).
-def_tick(name, path, line) <- def(name, path, line), name =~ "::tick".      # every Type::tick* method
+def_tick(name, path, line) <- def(name, path, line), name =~ /::tick/.      # every Type::tick* method
 rel def_on_engine(name: text, path: file, line: int).
-def_on_engine(name, path, line) <- def(name, path, line), name =~ "^Engine::". # all methods on Engine
+def_on_engine(name, path, line) <- def(name, path, line), name =~ /^Engine::/. # all methods on Engine
 rel def_in_db_rs(name: text, path: file, line: int).
 def_in_db_rs(name, path, line) <- def(name, path, line), path ~~ "*db.rs".   # everything defined in db.rs
 ? def_tick(name, path, line).

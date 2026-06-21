@@ -654,7 +654,19 @@ impl Parser {
             Tok::Match => CmpOp::Match, Tok::Glob => CmpOp::Glob,
             other => bail!("expected comparison operator, got {:?}", other),
         };
-        let rhs = self.expr()?;
+        // `=~` takes a /regex/ literal (the unified regex syntax — same form
+        // match/comment/sg use). Strings no longer accepted; the old
+        // `x =~ "pat"` form was a second regex syntax that invited ambiguity.
+        // `~~` (glob) still takes a string because `/` is a path separator
+        // inside globs, not a delimiter.
+        let rhs = if op == CmpOp::Match {
+            match self.next()? {
+                Tok::Regex(r) => Term::Str(desugar_regex_holes(&r)),
+                other => bail!("expected /regex/ after =~ (not a string), got {:?}", other),
+            }
+        } else {
+            self.expr()?
+        };
         Ok(Constraint { lhs, op, rhs })
     }
 

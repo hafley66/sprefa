@@ -13,7 +13,7 @@ seen(path) <- scan("WORK", "sprefa/v5/src/**/*.rs", path, rev),
 # `Tok::Ident` are leaf noise and collide with d2 label syntax).
 rel edge0(f: text, t: text).
 edge0(f, t) <- type_edge(f, t, k), k != "variant",
-  f =~ "^[A-Za-z]+$", t =~ "^[A-Za-z]+$".
+  f =~ /^[A-Za-z]+$/, t =~ /^[A-Za-z]+$/.
 
 rel fan_out(f: text, n: int).
 fan_out(f, count(t)) <- edge0(f, t).

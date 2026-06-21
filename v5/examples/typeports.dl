@@ -11,7 +11,7 @@ seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, l
 
 rel edge0(f: text, t: text, k: text).
 edge0(f, t, k) <- type_edge(f, t, k), k != "variant",
-  f =~ "^[A-Za-z]+$", t =~ "^[A-Za-z]+$".
+  f =~ /^[A-Za-z]+$/, t =~ /^[A-Za-z]+$/.
 
 rel fan_out(f: text, n: int).
 fan_out(f, count(t)) <- edge0(f, t, _).

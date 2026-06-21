@@ -112,7 +112,7 @@ needs both is two rules: extract, then join (see [Rails](#git-hook--claude-code-
 | positive atom | `edge(f, t)` |
 | negation / anti-join | `!round(t, _)` |
 | comparison | `=` `!=` `<` `<=` `>` `>=` — `n >= 4`, `p != fs:src/db.rs` |
-| regex constraint | `f =~ "^[A-Za-z]+$"` (SQLite REGEXP) |
+| regex constraint | `f =~ /^[A-Za-z]+$/` (SQLite REGEXP; the `/.../` is the unified regex literal — same form `match`/`comment`/`sg` use) |
 | glob constraint | `p ~~ "src/*"` (SQLite GLOB) |
 | closure | `closure(edge)` as the entire body — see below |
 | int arithmetic | `+ - * / %` in rule heads (derived AND source) and comparison sides: `rank(p, line + 1) <- fns(p, line).`, `line * 2 > 4`. Usual precedence, parens OK. Never in a body atom (binding position). `/` after a value is division; elsewhere it opens a `/regex/` |

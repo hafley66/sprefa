@@ -37,8 +37,8 @@ const PROG: &str = r#"
 rel seen(path: file).
 seen(path) <- scan("WORK", "src/**/*.{ts,tsx,kt,kts}", path, rev), match(path, rev, /./, line).
 rel net(name: text, kind: text, file: file).
-net(name, kind, file) <- type_entity(sym, name, kind, parent, file, line), kind = "interface", name =~ "[Nn]etwork".
-net(name, kind, file) <- type_entity(sym, name, kind, parent, file, line), kind = "function", name =~ "[Nn]etwork".
+net(name, kind, file) <- type_entity(sym, name, kind, parent, file, line), kind = "interface", name =~ /[Nn]etwork/.
+net(name, kind, file) <- type_entity(sym, name, kind, parent, file, line), kind = "function", name =~ /[Nn]etwork/.
 ? net(name, kind, file).
 "#;
 

@@ -17,7 +17,7 @@ seen(path) <- scan("WORK", "src/**/*.{ts,tsx}", path, rev),
 # plumbing, not shape)
 rel edge0(f: text, t: text).
 edge0(f, t) <- type_edge(f, t, k), k != "variant",
-  f =~ "^[A-Za-z]+$", t =~ "^[A-Za-z]+$",
+  f =~ /^[A-Za-z]+$/, t =~ /^[A-Za-z]+$/,
   t != "Record", t != "Array", t != "Map", t != "Set", t != "Promise",
   t != "ReturnType", t != "Exclude", t != "Pick", t != "Omit", t != "Partial",
   t != "HTMLElement", t != "HTMLDivElement", t != "EventTarget", t != "Text".

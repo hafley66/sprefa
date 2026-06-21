@@ -40,9 +40,9 @@ rel fn_def(name: text, path: file).
 fn_def(name, path) <- scan("WORK","src/**/*.rs",path,rev),
   ast(path, rev, :rust, "(function_item name: (identifier) @name) @fn", line).
 rel tickish(name: text, path: file).
-tickish(name, path) <- fn_def(name, path), name =~ "tick".
+tickish(name, path) <- fn_def(name, path), name =~ /tick/.
 rel refreshes(name: text, path: file).
-refreshes(name, path) <- fn_def(name, path), name =~ "^refresh_".
+refreshes(name, path) <- fn_def(name, path), name =~ /^refresh_/.
 rel in_b(name: text, path: file).
 in_b(name, path) <- fn_def(name, path), path ~~ "*b.rs".
 ? tickish(name, path).
@@ -51,7 +51,7 @@ in_b(name, path) <- fn_def(name, path), path ~~ "*b.rs".
 "#;
     let out = run(&d, prog);
 
-    // `=~ "tick"` matches both tick and tick_paths, not `other`.
+    // `=~ /tick/` matches both tick and tick_paths, not `other`.
     assert!(out.contains("tick"), "regex substring match: {out}");
     assert!(out.contains("tick_paths"), "regex substring match: {out}");
     // anchored regex matches only refresh_rel.
