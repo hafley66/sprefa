@@ -1,0 +1,26 @@
+# Ban a code move with ast-grep + the CLI. Each rule is one banned pattern.
+# Run it as a gate (exits non-zero if any `error`-severity row exists):
+#
+#   dl examples/ban.dl --root . --check        # human output on stderr
+#   dl examples/ban.dl --root . --diag-json     # JSON for a hook / CI
+#
+# `diag` is a plain relation; --check is one renderer of it, --lsp is another.
+# Columns are mapped by name: path/line/msg required; severity/code/hint optional.
+
+rel diag(path: file, line: int, col: int, end_line: int, end_col: int,
+         severity: text, code: text, msg: text, hint: text).
+
+# Ban 1: a `dbg!(...)` left in committed code. $X captures the inner expr; the
+# trailing line/col/end_line/end_col bind the match span for a tight squiggle.
+diag(path, line, col, end_line, end_col, "error", "no-dbg", "dbg!() left in code: `dbg!(${X})`",
+     "remove the debug macro before committing") <-
+  scan("WORK", "v5/src/**/*.rs", path, rev),
+  sg(path, rev, :rust, "dbg!($X)", line, col, end_line, end_col).
+
+# Ban 2: a bare `panic!(...)` in library code. `$$$M` is the VARIADIC metavar:
+# it matches the whole argument list (zero or more nodes), so `panic!("x", y)`
+# matches too. A single `$M` would only match a one-argument panic!.
+diag(path, line, col, end_line, end_col, "error", "no-panic", "panic!() in library code",
+     "return a Result and let the caller decide") <-
+  scan("WORK", "v5/src/**/*.rs", path, rev),
+  sg(path, rev, :rust, "panic!($$$M)", line, col, end_line, end_col).

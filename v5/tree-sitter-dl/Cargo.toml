@@ -1,0 +1,18 @@
+[package]
+name = "tree-sitter-dl"
+version = "0.0.1"
+edition = "2021"
+description = "tree-sitter grammar for sprefa v5 .dl source"
+license = "MIT"
+build = "build.rs"
+categories = ["parser-implementations", "parsing", "text-editors"]
+keywords = ["tree-sitter", "datalog", "sprefa"]
+
+[dependencies]
+tree-sitter-language = "0.1"
+
+[dev-dependencies]
+tree-sitter = "0.25"
+
+[build-dependencies]
+cc = "1.0"

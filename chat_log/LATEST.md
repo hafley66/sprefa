@@ -1,1 +1,1 @@
-20260621.1.examples-lex-fix-daemon-menu-bar-plan.md
+20260622.1.daemon-ux-tray-grammar-lsp.md

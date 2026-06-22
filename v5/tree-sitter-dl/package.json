@@ -1,0 +1,18 @@
+{
+  "name": "tree-sitter-dl",
+  "version": "0.0.1",
+  "description": "tree-sitter grammar for sprefa v5 .dl source",
+  "main": "grammar.js",
+  "keywords": [
+    "tree-sitter",
+    "datalog",
+    "sprefa"
+  ],
+  "license": "MIT",
+  "tree-sitter": [
+    {
+      "scope": "source.dl",
+      "file-types": ["dl"]
+    }
+  ]
+}

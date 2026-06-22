@@ -66,6 +66,11 @@ struct Cli {
     /// flag explicitly is the debug path. See plans/2026-06-21-daemon-and-menu-bar.md.
     #[arg(long)]
     daemon: bool,
+    /// With --daemon: spawn the menu bar tray icon (macOS v1; Windows/Linux
+    /// deferred). The main thread runs the tray event loop; the accept loop
+    /// moves off-main. Implies --daemon.
+    #[arg(long)]
+    tray: bool,
     /// Send `shutdown` to the daemon on `<root>/.dl/daemon.sock` and exit.
     #[arg(long)]
     stop: bool,
@@ -75,12 +80,19 @@ struct Cli {
     no_daemon: bool,
 }
 
-/// Explicit `--root` wins (canonicalized). Otherwise default to the repo the
-/// program file lives in (nearest `.git` ancestor of its dir), falling back to
-/// the current directory. With `--move` (no program), use the current dir.
+/// Explicit `--root` wins (canonicalized). When `--tray` is on and no
+/// `--root` is given, walk up from cwd to find the nearest `.dl/`
+/// directory and use its parent — the tray auto-discovers its workspace.
+/// Otherwise default to the repo the program file lives in (nearest `.git`
+/// ancestor of its dir), falling back to the current directory.
 fn resolve_root(cli: &Cli) -> Result<PathBuf> {
     if let Some(r) = &cli.root {
         return Ok(r.canonicalize()?);
+    }
+    if cli.tray {
+        if let Some(root) = find_workspace_root() {
+            return Ok(root);
+        }
     }
     let base = cli.program.as_deref()
         .and_then(|p| std::fs::canonicalize(p).ok())
@@ -88,6 +100,19 @@ fn resolve_root(cli: &Cli) -> Result<PathBuf> {
         .map(Ok)
         .unwrap_or_else(std::env::current_dir)?;
     Ok(sprefa_v5::repo::nearest_git(&base).unwrap_or(base))
+}
+
+/// Walk up from cwd, looking for a `.dl/` directory. Return its parent
+/// (the workspace root) if found. This lets `dl --tray` work from any
+/// subdirectory of a workspace.
+fn find_workspace_root() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    for dir in cwd.ancestors() {
+        if dir.join(".dl").is_dir() {
+            return Some(dir.to_path_buf());
+        }
+    }
+    None
 }
 
 fn main() -> Result<()> {
@@ -106,8 +131,14 @@ fn main() -> Result<()> {
     if cli.stop {
         return sprefa_v5::daemon::stop(&root);
     }
-    if cli.daemon {
-        return sprefa_v5::daemon::run_daemon(cli.program.as_deref(), cli.db.as_deref(), root, true);
+    if cli.daemon || cli.tray {
+        return sprefa_v5::daemon::run_daemon(
+            cli.program.as_deref(),
+            cli.db.as_deref(),
+            root,
+            true,
+            cli.tray,
+        );
     }
     // Discovery mode (no positional) defaults the db to <root>/.dl/cache.db so
     // repeated hook/check invocations get warm incremental ticks instead of a

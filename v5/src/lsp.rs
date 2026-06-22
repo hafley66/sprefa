@@ -21,6 +21,8 @@ use std::collections::HashMap;
 use crate::engine::{DiagRow, Engine};
 use crate::{ast, db};
 
+use tree_sitter::Parser;
+
 pub fn run_lsp(program: Option<&str>, db_path: Option<&str>, root: PathBuf) -> Result<()> {
     let files = crate::resolve_programs(program, &root)?;
     // prepare_paths resolves typed path literals (`fs:`/`glob:`) to canonical
@@ -149,6 +151,11 @@ pub fn run_lsp(program: Option<&str>, db_path: Option<&str>, root: PathBuf) -> R
                 };
                 if let Some(abs) = touched {
                     eng.tick_paths(&prog, std::slice::from_ref(&abs), true)?;
+                    // .dl files get tree-sitter parse-error squigglies
+                    // alongside the engine's diag-relation rows.
+                    if abs.extension().and_then(|e| e.to_str()) == Some("dl") {
+                        publish_dl_parse_errors(&connection, &abs)?;
+                    }
                     publish(&connection, &eng, &root, Some(&abs))?;
                 }
             }
@@ -484,3 +491,90 @@ fn percent_encode(s: &str) -> String {
     }
     out
 }
+
+// ---------- tree-sitter .dl parse-error diagnostics ----------
+
+/// Parse `abs` (a `.dl` file) with tree-sitter-dl, collect ERROR / MISSING
+/// nodes, convert to LSP `Diagnostic` rows, and publish to the editor.
+fn publish_dl_parse_errors(connection: &Connection, abs: &Path) -> Result<()> {
+    let source_text = match std::fs::read_to_string(abs) {
+        Ok(s) => s,
+        Err(_) => return Ok(()),
+    };
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_dl::language().into())
+        .map_err(|e| anyhow::anyhow!("tree-sitter-dl language: {e}"))?;
+    let tree = match parser.parse(&source_text, None) {
+        Some(t) => t,
+        None => return Ok(()),
+    };
+    let errors = collect_parse_errors(tree.root_node(), &source_text);
+    let diags: Vec<Diagnostic> = errors
+        .iter()
+        .map(|(start_byte, end_byte, msg)| {
+            let (line, col) = byte_to_line_col(&source_text, *start_byte as u32);
+            let (end_line, end_col) = byte_to_line_col(&source_text, *end_byte as u32);
+            Diagnostic {
+                range: Range {
+                    start: Position { line, character: col },
+                    end: Position { line: end_line, character: end_col },
+                },
+                severity: Some(DiagnosticSeverity::ERROR),
+                source: Some("dl".to_string()),
+                message: msg.clone(),
+                ..Default::default()
+            }
+        })
+        .collect();
+    let file_uri =
+        Uri::from_str(&format!("file://{}", abs.display())).unwrap_or(Uri::from_str("file:///").unwrap());
+    let params = PublishDiagnosticsParams {
+        uri: file_uri,
+        diagnostics: diags,
+        version: None,
+    };
+    let note = Notification {
+        method: "textDocument/publishDiagnostics".to_string(),
+        params: serde_json::to_value(params)?,
+    };
+    connection.sender.send(Message::Notification(note))?;
+    Ok(())
+}
+
+/// Walk the tree-sitter parse tree and collect every ERROR and MISSING node
+/// as `(start_byte, end_byte, message)` triples.
+fn collect_parse_errors(node: tree_sitter::Node, source_text: &str) -> Vec<(usize, usize, String)> {
+    let mut errors = Vec::new();
+    let mut cursor = node.walk();
+    loop {
+        let current_node = cursor.node();
+        if current_node.is_error() {
+            let (start_byte, end_byte) = (current_node.start_byte(), current_node.end_byte());
+            let snippet = source_text
+                .get(start_byte..end_byte)
+                .unwrap_or("")
+                .trim();
+            let message = if snippet.is_empty() {
+                "unexpected end of input".to_string()
+            } else {
+                format!("unexpected: `{snippet}`")
+            };
+            errors.push((start_byte, end_byte, message));
+        } else if current_node.is_missing() {
+            let kind = current_node.kind();
+            let position = current_node.start_byte();
+            errors.push((position, position, format!("missing `{kind}`")));
+        }
+        if cursor.goto_first_child() {
+            continue;
+        }
+        while !cursor.goto_next_sibling() {
+            if !cursor.goto_parent() {
+                return errors;
+            }
+        }
+    }
+}
+
+

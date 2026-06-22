@@ -75,7 +75,23 @@ fn remove_pid_file(root: &Path) {
 pub struct Daemon {
     pub root: PathBuf,
     pub program_display: String,
-    pub prog: Program,
+    /// Canonicalized absolute paths the daemon parsed. Edit-exact detection
+    /// compares against this list, not "any .dl file under .dl/" (the v1
+    /// heuristic that fired on unrelated .dl edits and on residual FSEvents
+    /// from the spawning shell's recent file setup). Wrapped in a Mutex so
+    /// discovery-mode hot-reload can add/remove files after startup.
+    pub program_files: Mutex<Vec<PathBuf>>,
+    /// True when the daemon started without an explicit program file (discovery
+    /// mode: picks up every `<root>/.dl/*.dl` at startup). When true, new or
+    /// removed `.dl` files in `.dl/` trigger a re-discovery and re-merge.
+    pub discovery_mode: bool,
+    /// When true, program-file edits hot-reload instead of triggering respawn.
+    /// Tray mode sets this: the user wants the menu bar item to stay alive
+    /// across edits. The watcher re-parses the program files in place, swaps
+    /// the parsed `Program`, and re-ticks. A parse failure logs and keeps the
+    /// last good program.
+    pub no_respawn: bool,
+    pub prog: Mutex<Program>,
     pub eng: Mutex<Engine>,
     pub last_activity: Mutex<Instant>,
     pub tick_count: AtomicU64,
@@ -98,9 +114,11 @@ impl Daemon {
     }
 
     fn tick_full(&self, quiet: bool) -> Result<()> {
+        let prog = self.prog.lock().unwrap();
         let mut eng = self.eng.lock().unwrap();
-        eng.tick(&self.prog, quiet)?;
+        eng.tick(&prog, quiet)?;
         drop(eng);
+        drop(prog);
         self.tick_count.fetch_add(1, Ordering::Relaxed);
         self.touch();
         // Full tick: changed paths unknown, subscribers re-publish everything.
@@ -110,15 +128,84 @@ impl Daemon {
     }
 
     fn tick_paths(&self, paths: &[PathBuf], quiet: bool) -> Result<()> {
+        let prog = self.prog.lock().unwrap();
         let mut eng = self.eng.lock().unwrap();
-        eng.tick_paths(&self.prog, paths, quiet)?;
+        eng.tick_paths(&prog, paths, quiet)?;
         drop(eng);
+        drop(prog);
         self.tick_count.fetch_add(1, Ordering::Relaxed);
         self.touch();
         // Incremental tick: only these paths' rows could have moved; subscribers
         // can re-publish just these files.
         *self.last_changed_paths.lock().unwrap() = paths.to_vec();
         self.broadcast_diag_changed();
+        Ok(())
+    }
+
+    /// Re-parse the program files, swap the parsed `Program`, re-tick. Called
+    /// by the watcher when `no_respawn` is set and a program file changed.
+    /// A parse or type error keeps the last good program.
+    fn reload_program(&self) -> Result<()> {
+        let files = self.program_files.lock().unwrap().clone();
+        let (new_prog, type_diags, _display) = crate::prepare_paths(&files)?;
+        let n_err = type_diags
+            .iter()
+            .filter(|d| d.severity == crate::ast::Severity::Error)
+            .count();
+        if n_err > 0 {
+            bail!("{n_err} type error(s) in reloaded program; keeping old");
+        }
+        crate::render_type_diags_eprintln(&type_diags);
+        {
+            let mut p = self.prog.lock().unwrap();
+            *p = new_prog;
+        }
+        self.tick_full(false)?;
+        Ok(())
+    }
+
+    /// Re-discover `.dl` files under `<root>/.dl/`, re-merge the program
+    /// if the file set changed, re-tick. Called by the watcher when a new
+    /// `.dl` file appears in discovery mode (k8s-style add-a-file). If the
+    /// set is unchanged, returns immediately.
+    fn reload_discovery(&self) -> Result<()> {
+        if !self.discovery_mode {
+            return Ok(());
+        }
+        let files = crate::resolve_programs(None, &self.root)?;
+        let mut canon: Vec<PathBuf> = files
+            .iter()
+            .map(|f| std::fs::canonicalize(f).unwrap_or_else(|_| f.clone()))
+            .collect();
+        canon.sort();
+        {
+            let pf = self.program_files.lock().unwrap();
+            if canon == *pf {
+                return Ok(());
+            }
+        }
+        let (new_prog, type_diags, _display) = crate::prepare_paths(&files)?;
+        let n_err = type_diags
+            .iter()
+            .filter(|d| d.severity == crate::ast::Severity::Error)
+            .count();
+        if n_err > 0 {
+            crate::render_type_diags_eprintln(&type_diags);
+            eprintln!("[daemon] discovery reload: {n_err} type error(s); keeping old");
+            return Ok(());
+        }
+        crate::render_type_diags_eprintln(&type_diags);
+        {
+            let mut pf = self.program_files.lock().unwrap();
+            *pf = canon;
+        }
+        {
+            let mut p = self.prog.lock().unwrap();
+            *p = new_prog;
+        }
+        let n = self.program_files.lock().unwrap().len();
+        eprintln!("[daemon] discovery reload: {n} file(s)");
+        self.tick_full(false)?;
         Ok(())
     }
 
@@ -157,11 +244,17 @@ impl Daemon {
 /// does the cold tick, then drives the notify watcher + accept loop until
 /// shutdown. Ignores idle timeout when `foreground` is true (caller wants it
 /// alive for debugging); the spawn-if-missing path passes `foreground=false`.
+/// When `tray` is true, the main thread runs the menu bar event loop and the
+/// accept loop is moved to a worker thread (mac needs the main thread for
+/// CFRunLoop / NSApplication). Tray mode also disables program-edit respawn:
+/// the daemon stays alive until explicit `--stop` or tray Quit. Hot reload of
+/// an edited program file is the v1.2 polish item.
 pub fn run_daemon(
     program: Option<&str>,
     db_path: Option<&str>,
     root: PathBuf,
     foreground: bool,
+    tray: bool,
 ) -> Result<()> {
     let files = crate::resolve_programs(program, &root)?;
     let (prog, type_diags, display) = crate::prepare_paths(&files)?;
@@ -176,10 +269,17 @@ pub fn run_daemon(
     eprintln!("[daemon] cold tick done ({} type diag(s), program {})", type_diags.len(), display);
 
     let idle_secs = idle_timeout_secs();
+    let canon_files: Vec<PathBuf> = files
+        .iter()
+        .map(|f| std::fs::canonicalize(f).unwrap_or_else(|_| f.clone()))
+        .collect();
     let daemon = Arc::new(Daemon {
         root: root.clone(),
         program_display: display,
-        prog,
+        program_files: Mutex::new(canon_files),
+        discovery_mode: program.is_none(),
+        no_respawn: tray,
+        prog: Mutex::new(prog),
         eng: Mutex::new(eng),
         last_activity: Mutex::new(Instant::now()),
         tick_count: AtomicU64::new(1),
@@ -216,25 +316,52 @@ pub fn run_daemon(
             .spawn(move || idle_loop(d, idle_secs))?;
     }
 
-    // Accept loop. Main thread.
-    let mut next_id: u64 = 0;
-    for stream in listener.incoming() {
-        if daemon.shutdown_requested.load(Ordering::Relaxed) { break; }
-        match stream {
-            Ok(stream) => {
-                next_id += 1;
-                let d = daemon.clone();
-                std::thread::Builder::new().name(format!("dl-conn-{next_id}"))
-                    .spawn(move || handle_connection(d, stream))?;
-            }
-            Err(e) => eprintln!("[daemon] accept error: {e}"),
+    // Accept loop off-main so the main thread can drive the tray event loop
+    // (mac requires this; on other platforms it's harmless).
+    let d = daemon.clone();
+    std::thread::Builder::new()
+        .name("dl-accept".into())
+        .spawn(move || accept_loop(d, listener))?;
+
+    if tray {
+        crate::tray::run_tray(daemon.clone())?;
+    } else {
+        // No tray: park on the shutdown flag. The RPC shutdown handler, idle
+        // timeout, and watcher's program-edit exit all call process::exit(0)
+        // directly, so this loop is mostly a placeholder; it wakes if some
+        // future path sets the flag without exiting.
+        while !daemon.shutdown_requested.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(100));
         }
     }
     shutdown_cleanup(&daemon);
     Ok(())
 }
 
-fn shutdown_cleanup(d: &Daemon) {
+fn accept_loop(daemon: Arc<Daemon>, listener: UnixListener) {
+    let mut next_id: u64 = 0;
+    for stream in listener.incoming() {
+        if daemon.shutdown_requested.load(Ordering::Relaxed) {
+            break;
+        }
+        match stream {
+            Ok(stream) => {
+                next_id += 1;
+                let d = daemon.clone();
+                if std::thread::Builder::new()
+                    .name(format!("dl-conn-{next_id}"))
+                    .spawn(move || handle_connection(d, stream))
+                    .is_err()
+                {
+                    eprintln!("[daemon] thread spawn failed for connection {next_id}");
+                }
+            }
+            Err(e) => eprintln!("[daemon] accept error: {e}"),
+        }
+    }
+}
+
+pub(crate) fn shutdown_cleanup(d: &Daemon) {
     let sock = socket_path(&d.root);
     let _ = std::fs::remove_file(&sock);
     remove_pid_file(&d.root);
@@ -263,8 +390,11 @@ fn watcher_loop(d: Arc<Daemon>) {
             }
         }
     }
-    let scans_git = d.prog.items.iter().any(|i| matches!(i, crate::ast::Item::Rule(r)
-        if r.body.iter().any(|b| matches!(b, crate::ast::BodyItem::Scan { rev: crate::ast::Term::Str(s), .. } if s.as_str() != "WORK"))));
+    let scans_git = {
+        let prog = d.prog.lock().unwrap();
+        prog.items.iter().any(|i| matches!(i, crate::ast::Item::Rule(r)
+            if r.body.iter().any(|b| matches!(b, crate::ast::BodyItem::Scan { rev: crate::ast::Term::Str(s), .. } if s.as_str() != "WORK"))))
+    };
     let mut git_dir: Option<PathBuf> = None;
     if scans_git {
         if let Ok(out) = std::process::Command::new("git").arg("-C").arg(&d.root)
@@ -280,25 +410,65 @@ fn watcher_loop(d: Arc<Daemon>) {
     }
 
     eprintln!("[daemon] watcher ready ({})", d.root.display());
+    let watcher_start = std::time::Instant::now();
+    const STARTUP_GRACE: Duration = Duration::from_secs(1);
     while let Ok(first) = rx.recv() {
+        // Startup grace: drain residual FSEvents from the spawning shell's
+        // recent file activity (mkdir + write land in FSEvents after the
+        // watch registers, as CREATE or MODIFY). Anything that happened
+        // before the watcher was ready should not fire a tick or an exit.
+        if watcher_start.elapsed() < STARTUP_GRACE {
+            while rx.try_recv().is_ok() {}
+            std::thread::sleep(Duration::from_millis(50));
+            continue;
+        }
         let mut paths: Vec<PathBuf> = Vec::new();
-        if let Ok(ev) = first { paths.extend(ev.paths); }
+        if let Ok(ev) = first {
+            paths.extend(ev.paths);
+        }
         std::thread::sleep(Duration::from_millis(150));
         while let Ok(ev) = rx.try_recv() {
-            if let Ok(ev) = ev { paths.extend(ev.paths); }
+            if let Ok(ev) = ev {
+                paths.extend(ev.paths);
+            }
         }
         d.touch();  // any watcher event resets idle, even if no tick results
         let touches_cfg = cfg_path.as_ref().is_some_and(|c|
             paths.iter().any(|p| p.canonicalize().ok().as_deref() == Some(c) || p == c));
         let touches_git = git_dir.as_ref().is_some_and(|g| paths.iter().any(|p| p.starts_with(g)));
-        // A `.dl` program edit can't be hot-reloaded in v1; bail and let the
-        // next invocation respawn with the new program.
+        // A `.dl` program edit either respawns (cold path: re-parse from
+        // scratch via the spawn-if-missing dance) or hot-reloads (tray path:
+        // re-parse in place, swap the Mutex<Program>, re-tick).
         let touches_program = d.program_in_paths(&paths);
         if touches_program {
+            if d.no_respawn {
+                match d.reload_program() {
+                    Ok(()) => eprintln!("[daemon] program reloaded"),
+                    Err(e) => eprintln!("[daemon] reload failed, keeping old: {e}"),
+                }
+                continue;
+            }
             eprintln!("[daemon] program file changed; exiting for respawn");
             d.shutdown_requested.store(true, Ordering::Relaxed);
             // Closing the listener from another thread is awkward; just exit.
             std::process::exit(0);
+        }
+        // Discovery mode: a new or removed .dl file under .dl/ triggers
+        // re-discovery and re-merge (k8s-style add-a-file).
+        if d.discovery_mode {
+            let has_dl = paths.iter().any(|p| {
+                p.extension().and_then(|e| e.to_str()) == Some("dl")
+                    && p.strip_prefix(&d.root)
+                        .map(|r| r.starts_with(".dl"))
+                        .unwrap_or(false)
+            });
+            if has_dl {
+                match d.reload_discovery() {
+                    Ok(()) => {}
+                    Err(e) => eprintln!("[daemon] discovery reload: {e}"),
+                }
+                continue;
+            }
         }
         let result = if touches_cfg {
             let mut eng = d.eng.lock().unwrap();
@@ -318,16 +488,11 @@ fn watcher_loop(d: Arc<Daemon>) {
 
 impl Daemon {
     fn program_in_paths(&self, paths: &[PathBuf]) -> bool {
-        // Cheapest heuristic: any path whose extension is `.dl` under the root's
-        // `.dl/` dir, or matching the explicit program path. v1 trades precision
-        // (we can't distinguish the program file from other .dl files in
-        // discovery mode) for simplicity; a false-positive exit just respawns.
+        let pf = self.program_files.lock().unwrap();
         for p in paths {
-            if p.extension().and_then(|e| e.to_str()) == Some("dl") {
-                if let Ok(rel) = p.strip_prefix(&self.root) {
-                    if rel.starts_with(".dl") { return true; }
-                }
-                if self.program_display.contains(&*p.to_string_lossy()) { return true; }
+            let canon = p.canonicalize().unwrap_or_else(|_| p.clone());
+            if pf.iter().any(|f| f == &canon) {
+                return true;
             }
         }
         false
@@ -412,8 +577,9 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
             "program": d.program_display,
         })),
         "query" => {
+            let prog = d.prog.lock().unwrap();
             let eng = d.eng.lock().unwrap();
-            match eng.run_queries_capture(&d.prog) {
+            match eng.run_queries_capture(&prog) {
                 Ok(results) => Response::ok(req.id, json!({"results": results.iter().map(|r| json!({
                     "rel": r.rel, "columns": r.columns, "rows": r.rows,
                 })).collect::<Vec<_>>()})),

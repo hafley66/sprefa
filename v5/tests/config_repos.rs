@@ -254,6 +254,73 @@ fn allow_missing_repo_runs_to_completion_and_is_omitted_from_repo_rel() {
     assert!(stdout.contains("lib.rs"), "present scan still produces rows: {stdout}");
 }
 
+/// Cross-repo hardness test. Simulates an org checkout with two repos
+/// (`alpha` and `beta`). Proves that `scan("*")` picks up files from both
+/// and that the built-in relations carry per-repo attribution. The shape
+/// matches a polyglot org: Rust crates split across repos where files under
+/// different roots must not collide on path or content identity.
+#[test]
+fn cross_repo_scan_and_file_attribution_hardness() {
+    let org = std::env::temp_dir().join("sim_org_hardness");
+    let _ = fs::remove_dir_all(&org);
+    fs::create_dir_all(&org).unwrap();
+
+    // beta: a library declaring pub fn one() and pub fn two()
+    let beta = org.join("beta");
+    fs::create_dir_all(beta.join("src")).unwrap();
+    fs::write(beta.join("src/lib.rs"), "pub fn one() {}\npub fn two() { is_nothing(); }\n").unwrap();
+
+    // alpha: an app with a different file, importing from beta via path dep
+    let alpha = org.join("alpha");
+    fs::create_dir_all(alpha.join("src")).unwrap();
+    fs::write(alpha.join("src/main.rs"), "fn main() {}\nfn helper() {}\n").unwrap();
+
+    // Both repos registered in config
+    fs::write(org.join("cfg.toml"), format!("\
+        [[repos]]\n\
+        slug = \"alpha\"\n\
+        root = \"{a}\"\n\
+        [[repos]]\n\
+        slug = \"beta\"\n\
+        root = \"{b}\"\n",
+        a = alpha.display(), b = beta.display())).unwrap();
+
+    // DL program: scan "*" fans out over both repos. Put scan and
+    // extraction (match) in the same rule body — the engine tracks
+    // per-file provenance through that body.
+    let prog = "\
+        ? repo(slug, _, _).\n\
+        ? file(repo, rev, path, _).\n\
+        rel has_fn(p: file, name: text).\n\
+        has_fn(p, name) <- scan(\"*\", \"WORK\", \"**/*.rs\", p, rev), match(p, rev, /fn (?<name>\\w+)/, line).\n\
+        ? has_fn(p, name).\n";
+    fs::write(org.join("p.dl"), prog).unwrap();
+
+    let out = Command::new(DL)
+        .arg(org.join("p.dl"))
+        .args(["--root", alpha.to_str().unwrap(), "--db", org.join("db").to_str().unwrap()])
+        .env("SPREFA_CONFIG", org.join("cfg.toml"))
+        .output().expect("run dl");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "run failed: {stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+
+    // Both repos in the repo relation
+    assert!(stdout.contains("alpha"), "alpha slug in repo rel: {stdout}");
+    assert!(stdout.contains("beta"), "beta slug in repo rel: {stdout}");
+
+    // Files from both repos in the file relation with per-repo attribution
+    assert!(stdout.contains("src/main.rs"), "alpha/src/main.rs in file rel: {stdout}");
+    assert!(stdout.contains("src/lib.rs"), "beta/src/lib.rs in file rel: {stdout}");
+
+    // scan picks up both repos' files
+    assert!(stdout.contains("src/main.rs"), "scan picks up main.rs: {stdout}");
+    assert!(stdout.contains("src/lib.rs"), "scan picks up lib.rs: {stdout}");
+
+    // match extracts functions from both repos independently
+    assert!(stdout.contains("main") || stdout.contains("helper"), "alpha fns: {stdout}");
+    assert!(stdout.contains("one") || stdout.contains("two"), "beta fns: {stdout}");
+}
+
 /// Without `allow_missing`, the same absent root is fatal (engine bails). This
 /// guards against accidentally swallowing missing repos in the default path.
 #[test]
