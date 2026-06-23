@@ -436,21 +436,24 @@ fn watcher_loop(d: Arc<Daemon>) {
         let touches_cfg = cfg_path.as_ref().is_some_and(|c|
             paths.iter().any(|p| p.canonicalize().ok().as_deref() == Some(c) || p == c));
         let touches_git = git_dir.as_ref().is_some_and(|g| paths.iter().any(|p| p.starts_with(g)));
+        let touches_program = d.program_in_paths(&paths);
         // A `.dl` program edit either respawns (cold path: re-parse from
         // scratch via the spawn-if-missing dance) or hot-reloads (tray path:
         // re-parse in place, swap the Mutex<Program>, re-tick).
-        let touches_program = d.program_in_paths(&paths);
         if touches_program {
+            let names: Vec<String> = paths.iter()
+                .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(|s| s.to_string()))
+                .collect();
             if d.no_respawn {
+                eprintln!("[daemon] program edit ({}) — reloading", names.join(", "));
                 match d.reload_program() {
-                    Ok(()) => eprintln!("[daemon] program reloaded"),
+                    Ok(()) => {}
                     Err(e) => eprintln!("[daemon] reload failed, keeping old: {e}"),
                 }
                 continue;
             }
-            eprintln!("[daemon] program file changed; exiting for respawn");
+            eprintln!("[daemon] program file changed ({}); exiting for respawn", names.join(", "));
             d.shutdown_requested.store(true, Ordering::Relaxed);
-            // Closing the listener from another thread is awkward; just exit.
             std::process::exit(0);
         }
         // Discovery mode: a new or removed .dl file under .dl/ triggers
@@ -463,6 +466,7 @@ fn watcher_loop(d: Arc<Daemon>) {
                         .unwrap_or(false)
             });
             if has_dl {
+                eprintln!("[daemon] .dl discovery change — re-merging program");
                 match d.reload_discovery() {
                     Ok(()) => {}
                     Err(e) => eprintln!("[daemon] discovery reload: {e}"),
@@ -470,18 +474,28 @@ fn watcher_loop(d: Arc<Daemon>) {
                 continue;
             }
         }
+        let tick_label;
         let result = if touches_cfg {
+            tick_label = "config change";
             let mut eng = d.eng.lock().unwrap();
             eng.set_repos(load_repos_eager());
             drop(eng);
             d.tick_full(false)
-        } else if touches_git || paths.is_empty() {
+        } else if touches_git {
+            tick_label = "git change";
+            d.tick_full(false)
+        } else if paths.is_empty() {
+            tick_label = "empty event";
             d.tick_full(false)
         } else {
+            tick_label = "source change";
             d.tick_paths(&paths, false)
         };
-        if let Err(e) = result {
-            eprintln!("[daemon] tick error: {e}");
+        let n_paths = paths.len();
+        let tick_num = d.tick_count.load(Ordering::Relaxed);
+        match result {
+            Ok(()) => eprintln!("[daemon] tick #{tick_num} ({tick_label}, {n_paths} paths) ok"),
+            Err(e) => eprintln!("[daemon] tick #{tick_num} ({tick_label}, {n_paths} paths) error: {e}"),
         }
     }
 }
@@ -629,6 +643,43 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                 Response::ok(req.id, json!({"events": events, "ok": true}))
             } else {
                 Response::err(req.id, INVALID_PARAMS, "subscribe requires a kept-open socket")
+            }
+        }
+        "schema" => {
+            let eng = d.eng.lock().unwrap();
+            let mut relations: Vec<Value> = Vec::new();
+            for (name, meta) in eng.rels.iter() {
+                let cols: Vec<Value> = meta.cols.iter().map(|c| json!({
+                    "name": c.name, "ty": format!("{:?}", c.ty),
+                })).collect();
+                relations.push(json!({"name": name, "columns": cols}));
+            }
+            // Append built-in source relations visible in SQLite
+            let builtins: &[(&str, &[(&str, &str)])] = &[
+                ("_file", &[("repo", "text"), ("path", "text"), ("rev", "text"), ("hash", "text"), ("mtime", "int"), ("size", "int")]),
+                ("_files", &[("id", "int"), ("content_hash", "text"), ("path", "text"), ("size", "int")]),
+                ("_where_bytes", &[("id", "int"), ("repo", "text"), ("path", "text"), ("rev", "text"), ("byte", "int"), ("line", "int"), ("col", "int")]),
+                ("module_import", &[("file", "text"), ("rev", "text"), ("specifier", "text"), ("kind", "text"), ("line", "int")]),
+                ("module_edge_rev", &[("src", "text"), ("dst", "text"), ("rev", "text")]),
+                ("crate_edge", &[("src", "text"), ("dst", "text"), ("kind", "text"), ("rev", "text")]),
+            ];
+            for (name, cols) in builtins {
+                let cols_json: Vec<Value> = cols.iter().map(|(n, t)| json!({"name": n, "ty": t})).collect();
+                relations.push(json!({"name": name, "columns": cols_json, "builtin": true}));
+            }
+            Response::ok(req.id, json!({"relations": relations}))
+        }
+        "query_sql" => {
+            let sql_raw = match req.params.get("sql").and_then(|v| v.as_str()) {
+                Some(s) => s,
+                None => return Response::err(req.id, INVALID_PARAMS, "missing sql"),
+            };
+            let params: Vec<Value> = req.params.get("params")
+                .and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            let eng = d.eng.lock().unwrap();
+            match eng.query_sql(sql_raw, &params) {
+                Ok(rows) => Response::ok(req.id, json!({"rows": rows})),
+                Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
             }
         }
         "shutdown" => Response::ok(req.id, json!({"ok": true})),

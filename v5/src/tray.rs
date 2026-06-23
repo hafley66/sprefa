@@ -56,7 +56,10 @@ pub fn run_tray(d: Arc<Daemon>) -> Result<()> {
     menu.append(&quit)
         .map_err(|e| anyhow::anyhow!("menu quit: {e}"))?;
 
+    let icon = make_tray_icon();
+
     let _tray = TrayIconBuilder::new()
+        .with_icon(icon)
         .with_menu(Box::new(menu))
         .with_tooltip(format!("sprefa daemon — {}", d.root.display()))
         .build()
@@ -77,6 +80,35 @@ pub fn run_tray(d: Arc<Daemon>) -> Result<()> {
             }
         }
     });
+}
+
+fn make_tray_icon() -> tray_icon::Icon {
+    const SIZE: u32 = 32;
+    let half = SIZE as f32 / 2.0;
+    let outer_radius = half - 1.0;
+    let inner_radius = half - 5.0;
+    let mut rgba = Vec::with_capacity((SIZE * SIZE * 4) as usize);
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let dx = x as f32 - half + 0.5;
+            let dy = y as f32 - half + 0.5;
+            let d = (dx * dx + dy * dy).sqrt();
+            if d <= outer_radius && d >= inner_radius {
+                let edge = (d - inner_radius).min(outer_radius - d);
+                let a = if edge < 1.5 {
+                    ((edge / 1.5) * 255.0) as u8
+                } else {
+                    255
+                };
+                rgba.extend_from_slice(&[0x3b, 0x82, 0xf6, a]);
+            } else if d <= inner_radius {
+                rgba.extend_from_slice(&[0x3b, 0x82, 0xf6, 0xff]);
+            } else {
+                rgba.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+            }
+        }
+    }
+    tray_icon::Icon::from_rgba(rgba, SIZE, SIZE).expect("icon from rgba")
 }
 
 #[cfg(not(target_os = "macos"))]

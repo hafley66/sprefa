@@ -761,8 +761,8 @@ fn mtime_secs(md: &std::fs::Metadata) -> i64 {
 }
 
 pub struct Engine {
-    db: crate::db::Db,
-    rels: Rels,
+    pub(crate) db: crate::db::Db,
+    pub(crate) rels: Rels,
     root: PathBuf,
     pub dropped: usize,
     /// Diag-shaped rows for the extraction type-drops counted in `dropped`, one
@@ -1157,6 +1157,39 @@ impl Engine {
         let mut s = conn.prepare("SELECT DISTINCT path FROM _file WHERE rev = 'WORK'")?;
         let rows = s.query_map([], |r| r.get::<_, String>(0))?;
         Ok(rows.filter_map(|x| x.ok()).collect())
+    }
+
+    pub fn query_sql(&self, sql: &str, params: &[serde_json::Value]) -> Result<Vec<Vec<serde_json::Value>>> {
+        let conn = self.db.conn();
+        let mut stmt = conn.prepare(sql)?;
+        let col_count = stmt.column_count();
+        let param_vals: Vec<rusqlite::types::Value> = params.iter().map(|v| match v {
+            serde_json::Value::String(s) => rusqlite::types::Value::Text(s.clone()),
+            serde_json::Value::Number(n) => {
+                if let Some(i) = n.as_i64() { rusqlite::types::Value::Integer(i) }
+                else if let Some(f) = n.as_f64() { rusqlite::types::Value::Real(f) }
+                else { rusqlite::types::Value::Null }
+            }
+            serde_json::Value::Null => rusqlite::types::Value::Null,
+            _ => rusqlite::types::Value::Text(v.to_string()),
+        }).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = param_vals.iter()
+            .map(|v| v as &dyn rusqlite::types::ToSql).collect();
+        let rows_iter = stmt.query_map(param_refs.as_slice(), |row| {
+            let mut vals: Vec<serde_json::Value> = Vec::new();
+            for i in 0..col_count {
+                let v: rusqlite::types::Value = row.get_unwrap(i);
+                vals.push(match v {
+                    rusqlite::types::Value::Null => serde_json::Value::Null,
+                    rusqlite::types::Value::Integer(n) => serde_json::json!(n),
+                    rusqlite::types::Value::Real(f) => serde_json::json!(f),
+                    rusqlite::types::Value::Text(s) => serde_json::json!(s),
+                    rusqlite::types::Value::Blob(b) => serde_json::json!(format!("<blob {}B>", b.len())),
+                });
+            }
+            Ok(vals)
+        })?;
+        Ok(rows_iter.filter_map(|r| r.ok()).collect())
     }
 
     /// (file, specifier) for every `use`/`import` row in `module_import`. The
