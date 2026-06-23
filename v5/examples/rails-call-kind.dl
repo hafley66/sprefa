@@ -30,7 +30,7 @@ conn_site(p, l) <-
 # Resolve each .conn() site to its enclosing fn via call_site.
 # `caller` is the resolved fn sym; "conn" is the bare method name.
 rel conn_fn(fn: text, p: file, l: int).
-conn_fn(fn, p, l) <- conn_site(p, l), call_site(fn, "conn", p, l).
+conn_fn(fn, p, l) <- conn_site(p, l), call_site(_, fn, "conn", p, l).
 
 # THE CUT: keep only fns whose body actually writes. A fn that only prepares
 # or queries through its .conn() drops out — it touches the database but

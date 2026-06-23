@@ -40,10 +40,10 @@ tag(f, "tag", "hub") <- fan(f, n), n >= 5.
 # type OR function, with its exact line -- so the periscope and panel rows point
 # at real declaration sites and a function node carries kind = "function".
 rel node_ref(node: text, panel: text, locator: text).
-node_ref(n, "fs", "${file}:${line}") <- node(n, _, _), type_entity(sym, n, kind, parent, file, line).
+node_ref(n, "fs", "${file}:${line}") <- node(n, _, _), type_entity(_, sym, n, kind, parent, file, line).
 
 # tag function nodes so the deck can tell a function apart from a data type
-tag(n, "kind", k) <- node(n, _, _), type_entity(sym, n, k, parent, file, line).
+tag(n, "kind", k) <- node(n, _, _), type_entity(_, sym, n, k, parent, file, line).
 
 rel card(id: text, body: text).
 card("about.today", "every node here is a type from anim's own src/, extracted by the oxc producer written today").
@@ -70,7 +70,7 @@ pin("tokenize", path, line) <- scan("WORK", "src/CodeSpotlight.tsx", path, rev),
   match(path, rev, /tokenize per file/, line).
 
 rel fpin(name: text, file: file, line: int).
-fpin(name, file, line) <- type_entity(sym, name, "function", parent, file, line).
+fpin(name, file, line) <- type_entity(_, sym, name, "function", parent, file, line).
 
 rel win(name: text, len: int).
 win("resolveIdent", 16).

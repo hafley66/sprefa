@@ -116,7 +116,7 @@ md(path) <- scan("WORK", "v5/**/*.md", path, rev), match(path, rev, /./, line).
 
 # Each markdown doc's title = its top-level heading (parent = "").
 rel doc_title(path: file, title: text).
-doc_title(path, title) <- doc_node(path, _, "heading", title, "").
+doc_title(path, title) <- doc_node(_, path, _, "heading", title, "").
 
 # Rust //! module docs. comment.rs strips the leading `//` marker, so a `//! x`
 # line survives as `! x`; /^!/ picks module docs apart from item `///` (-> `/ x`)

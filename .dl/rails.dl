@@ -37,7 +37,7 @@ conn_site(p, l) <-
 rel conn_fn(fn: text, p: file, l: int).
 conn_fn(fn, p, l) <-
     conn_site(p, l),
-    call_site(fn, "conn", p, l).
+    call_site(_, fn, "conn", p, l).
 
 # A fn is loop-entry if at least one call TO IT originates from a call site
 # inside a loop nest. Tighter than the old "fn contains any call in a loop"
@@ -53,7 +53,7 @@ rel loop_entry_fn(fn: text).
 loop_entry_fn(fn) <-
     nest(call_id, _, _, _),
     df_node(call_id, "call_res", _, caller, p, l),
-    call_site(caller, callee_text, p, l),
+    call_site(_, caller, callee_text, p, l),
     call_name(fn, callee_text).
 
 # 2-col view of call_edge. (We do not use closure(call_pair) here because the

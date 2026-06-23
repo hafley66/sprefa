@@ -35,14 +35,14 @@ rel diag(path: file, line: int, col: int, end_line: int, end_col: int,
 # the def syms that own that name (handles overloaded names: one row per def).
 rel call_refs(sym: text, n: int).
 call_refs(s, count(caller)) <-
-  call_name(s, name), call_site(caller, name, _, _).
+  call_name(s, name), call_site(_, caller, name, _, _).
 
 # Type references per sym. type_link.dst mixes bare names ("Option") and
 # file-prefixed syms ("v5/src/ast.rs::enum::Term"); cover both. Bare names join
 # via type_entity.name; prefixed syms join via type_entity.sym directly.
 rel type_refs(sym: text, n: int).
-type_refs(s, count(src)) <- type_entity(s, name, _, _, _, _), type_link(src, name, _).
-type_refs(s, count(src)) <- type_entity(s, _, _, _, _, _), type_link(src, s, _).
+type_refs(s, count(src)) <- type_entity(_, s, name, _, _, _, _), type_link(src, name, _).
+type_refs(s, count(src)) <- type_entity(_, s, _, _, _, _, _), type_link(src, s, _).
 
 # Total refs per sym = sum of call_refs + type_refs. Functions usually only have
 # call_refs; types usually only have type_refs; summing via a union avoids the
@@ -56,11 +56,11 @@ total_refs(s, sum(n)) <- ref_signal(s, n).
 
 # Documented iff any doc_ref row mentions the sym.
 rel documented(sym: text).
-documented(s) <- doc_ref(_, _, s, _, _).
+documented(s) <- doc_ref(_, _, _, s, _, _).
 
 rel needs_doc(sym: text, file: file, line: int, refs: int).
 needs_doc(s, f, l, n) <-
-  type_entity(s, _, _, _, f, l),
+  type_entity(_, s, _, _, _, f, l),
   changed_line(f, l),
   total_refs(s, n), n > 2,
   !documented(s).
@@ -79,7 +79,7 @@ diag(f, l, 1, l, 1, "warn", "needs-doc",
 # Budget: 2*arity + 2. Tune by editing the `budget` rule below.
 
 rel fn_arity(sym: text, n: int).
-fn_arity(s, count(p)) <- call_def(s, _, _, _, _), type_sig(s, "param", p, _).
+fn_arity(s, count(p)) <- call_def(_, s, _, _, _, _), type_sig(s, "param", p, _).
 
 # Every non-empty line in any scanned Rust file. Acts as a spine so we can mark
 # which lines are doc lines and which aren't.
@@ -102,13 +102,13 @@ non_doc(f, l) <- file_line(f, l), !doc_line(f, l).
 # doc_lines strictly between this line and the def.
 rel block_top(file: file, def_line: int, top: int).
 block_top(f, dl, max(l)) <-
-  call_def(_, _, f, dl, _),
+  call_def(_, _, _, f, dl, _),
   non_doc(f, l),
   l < dl.
 
 rel fn_doc_count(sym: text, file: file, def_line: int, k: int).
 fn_doc_count(s, f, dl, count(l)) <-
-  call_def(s, _, f, dl, _),
+  call_def(_, s, _, f, dl, _),
   block_top(f, dl, top),
   doc_line(f, l),
   l > top,
@@ -116,7 +116,7 @@ fn_doc_count(s, f, dl, count(l)) <-
 # Top-of-file case: no non_doc line below the def (def at top of file with only
 # /// above). Count every doc_line above the def.
 fn_doc_count(s, f, dl, count(l)) <-
-  call_def(s, _, f, dl, _),
+  call_def(_, s, _, f, dl, _),
   !block_top(f, dl, _),
   doc_line(f, l),
   l < dl.
@@ -128,7 +128,7 @@ budget(s, ar * 2 + 2) <- fn_arity(s, ar).
 
 rel chat_comment(sym: text, file: file, line: int, actual: int, bud: int).
 chat_comment(s, f, l, actual, bud) <-
-  call_def(s, _, f, l, _),
+  call_def(_, s, _, f, l, _),
   fn_doc_count(s, f, l, actual),
   budget(s, bud),
   actual > bud.

@@ -162,7 +162,7 @@ fn type_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "type_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text)] },
         RelDecl { name: "type_edge_rev".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text), c("rev", Type::Text)] },
         RelDecl { name: "type_entity".into(), cols: vec![
-            c("sym", Type::Text), c("name", Type::Text), c("kind", Type::Text),
+            c("repo", Type::Text), c("sym", Type::Text), c("name", Type::Text), c("kind", Type::Text),
             c("parent", Type::Text), c("file", Type::Path), c("line", Type::Int)] },
         RelDecl { name: "type_sig".into(), cols: vec![
             c("sym", Type::Text), c("slot", Type::Text), c("pos", Type::Int), c("ref", Type::Text)] },
@@ -174,10 +174,10 @@ fn call_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "call_def".into(), cols: vec![
-            c("sym", Type::Text), c("kind", Type::Text),
+            c("repo", Type::Text), c("sym", Type::Text), c("kind", Type::Text),
             c("file", Type::Path), c("line", Type::Int), c("end", Type::Int)] },
         RelDecl { name: "call_site".into(), cols: vec![
-            c("caller", Type::Text), c("callee", Type::Text),
+            c("repo", Type::Text), c("caller", Type::Text), c("callee", Type::Text),
             c("file", Type::Path), c("line", Type::Int)] },
         RelDecl { name: "call_edge".into(), cols: vec![
             c("caller", Type::Text), c("callee", Type::Text), c("kind", Type::Text)] },
@@ -234,7 +234,7 @@ fn doc_rel_decls() -> Vec<RelDecl> {
         // `parent` is the enclosing heading text ("" at top level), so a rule can
         // walk the section tree. See `ingest::IngestLang`.
         RelDecl { name: "doc_node".into(), cols: vec![
-            c("file", Type::Path), c("line", Type::Int),
+            c("repo", Type::Text), c("file", Type::Path), c("line", Type::Int),
             c("kind", Type::Text), c("name", Type::Text), c("parent", Type::Text)] },
         // doc→code bridge: (file, line, sym, kind, matched_name). For each row,
         // `kind` is the doc_node kind that produced it ("heading" or
@@ -245,7 +245,7 @@ fn doc_rel_decls() -> Vec<RelDecl> {
         // Engine struct" bridges to `Engine`. Empty unless the program also uses
         // type relations.
         RelDecl { name: "doc_ref".into(), cols: vec![
-            c("file", Type::Path), c("line", Type::Int), c("sym", Type::Text),
+            c("repo", Type::Text), c("file", Type::Path), c("line", Type::Int), c("sym", Type::Text),
             c("kind", Type::Text), c("matched_name", Type::Text)] },
     ]
 }
@@ -2132,6 +2132,30 @@ impl Engine {
     }
 
     fn declare(&mut self, d: &RelDecl) -> Result<()> {
+        // Migrate a stale cached table whose column set no longer matches the
+        // decl (e.g. a release added a leading column). Rel tables are derived
+        // and rebuilt every tick, so dropping loses nothing — and it avoids
+        // `CREATE TABLE IF NOT EXISTS` silently keeping the old shape, which
+        // makes the next `refresh_rel` insert fail ("no column named ...").
+        if !d.cols.is_empty() {
+            let table = tbl(&d.name);
+            let want: Vec<String> = d.cols.iter().map(|c| c.name.clone()).collect();
+            let have: Vec<String> = {
+                let conn = self.db.conn();
+                let mut have = Vec::new();
+                if let Ok(mut s) = conn.prepare(&format!("PRAGMA table_info({table})")) {
+                    if let Ok(rows) = s.query_map([], |r| r.get::<_, String>(1)) {
+                        for c in rows.flatten() { if c != "__src" { have.push(c); } }
+                    }
+                }
+                have
+            };
+            if !have.is_empty() && have != want {
+                self.db.conn().execute(&format!("DROP TABLE IF EXISTS {table}"), [])?;
+                self.db.conn().execute(&format!("DELETE FROM _reldigest WHERE rel = ?1"),
+                    rusqlite::params![d.name])?;
+            }
+        }
         let sql = if d.cols.is_empty() {
             // Zero-column relation (the built-in `true()` singleton): one row,
             // no user columns. SQLite needs at least one column, so the table
@@ -2571,11 +2595,14 @@ impl Engine {
         // yields its declared entities + edge graph; collected before resolution
         // because name->def resolution is corpus-global (a barrier). Content is
         // read from the file's OWN repo root so config-repo files index too.
-        let facts: Vec<(String, String, typegraph::TypeFacts)> = files.par_iter().filter_map(|(repo, path, rev)| {
+        // facts carry the derived repo id (nearest `.git` of the file) so each
+        // entity/edge row is attributed to the folder it lives in.
+        let facts: Vec<(String, String, String, typegraph::TypeFacts)> = files.par_iter().filter_map(|(repo, path, rev)| {
             let lang = typegraph::type_langs().iter().find(|l| l.matches(path))?;
             let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
             let content = read_content(froot, rev, path).unwrap_or_default();
-            Some((path.clone(), rev.clone(), lang.extract(path, &content)))
+            let rid = repo_id_of(froot, path, repo);
+            Some((rid, path.clone(), rev.clone(), lang.extract(path, &content)))
         }).collect();
 
         // Resolver: a name maps to its definition symbol when exactly one entity
@@ -2583,7 +2610,7 @@ impl Engine {
         // overrides per (file, name) with the indexed def file (collision-proof).
         let mut by_name: HashMap<&str, Vec<&str>> = HashMap::new();
         let mut sym_at: HashMap<(&str, &str), &str> = HashMap::new();
-        for (_, _, f) in &facts {
+        for (_, _, _, f) in &facts {
             for e in &f.entities {
                 by_name.entry(e.name.as_str()).or_default().push(e.sym.as_str());
                 sym_at.insert((e.file.as_str(), e.name.as_str()), e.sym.as_str());
@@ -2608,9 +2635,12 @@ impl Engine {
         let mut entity_rows: Vec<Vec<Value>> = Vec::new();
         let mut sig_rows: Vec<Vec<Value>> = Vec::new();
         let mut link_rows: Vec<Vec<Value>> = Vec::new();
-        let mut seen_entity: HashSet<&str> = HashSet::new();
+        // Dedup keys carry the repo, so two folders in view that share a relative
+        // path + symbol name (e.g. both have `src/index.ts`) do NOT drop each
+        // other's rows — each repo's entity survives.
+        let mut seen_entity: HashSet<(&str, &str)> = HashSet::new();
         let mut seen_link: HashSet<(String, String, &str)> = HashSet::new();
-        for (path, rev, f) in &facts {
+        for (repo, path, rev, f) in &facts {
             // historic name-keyed edges, unchanged
             for edge in &f.edges {
                 edge_rev_rows.push(vec![t(&edge.from), t(&edge.to), t(edge.kind), t(rev)]);
@@ -2624,9 +2654,9 @@ impl Engine {
                 }
             }
             for ent in &f.entities {
-                if seen_entity.insert(ent.sym.as_str()) {
+                if seen_entity.insert((repo.as_str(), ent.sym.as_str())) {
                     entity_rows.push(vec![
-                        t(&ent.sym), t(&ent.name), t(ent.kind.tag()),
+                        t(repo), t(&ent.sym), t(&ent.name), t(ent.kind.tag()),
                         t(ent.parent.as_deref().unwrap_or("")), t(&ent.file), i(ent.line),
                     ]);
                 }
@@ -2646,7 +2676,7 @@ impl Engine {
             }
         }
         self.refresh_rel("type_edge_rev", &["from", "to", "kind", "rev"], &edge_rev_rows)?;
-        self.refresh_rel("type_entity", &["sym", "name", "kind", "parent", "file", "line"], &entity_rows)?;
+        self.refresh_rel("type_entity", &["repo", "sym", "name", "kind", "parent", "file", "line"], &entity_rows)?;
         self.refresh_rel("type_sig", &["sym", "slot", "pos", "ref"], &sig_rows)?;
         self.refresh_rel("type_link", &["src", "dst", "kind"], &link_rows)?;
         self.rebuild_legacy_type_rels()?;
@@ -2709,11 +2739,12 @@ impl Engine {
 
         let root = self.root.clone();
         let roots = self.repo_roots();
-        let facts: Vec<(String, String, typegraph::CallFacts)> = files.par_iter().filter_map(|(repo, path, rev)| {
+        let facts: Vec<(String, String, String, typegraph::CallFacts)> = files.par_iter().filter_map(|(repo, path, rev)| {
             let lang = typegraph::type_langs().iter().find(|l| l.matches(path))?;
             let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
             let content = read_content(froot, rev, path).unwrap_or_default();
-            Some((path.clone(), rev.clone(), lang.extract_calls(path, &content)))
+            let rid = repo_id_of(froot, path, repo);
+            Some((rid, path.clone(), rev.clone(), lang.extract_calls(path, &content)))
         }).collect();
 
         // Corpus-global def index: a barrier before any edge is emitted, same
@@ -2725,7 +2756,7 @@ impl Engine {
         let mut by_name: HashMap<&str, Vec<&str>> = HashMap::new();
         let mut sym_at: HashMap<(&str, &str), &str> = HashMap::new();
         let mut def_by_file: HashMap<&str, Vec<(u32, u32, &str)>> = HashMap::new();
-        for (_, _, f) in &facts {
+        for (_, _, _, f) in &facts {
             for d in &f.defs {
                 by_name.entry(d.name.as_str()).or_default().push(d.sym.as_str());
                 sym_at.insert((d.file.as_str(), d.name.as_str()), d.sym.as_str());
@@ -2768,12 +2799,12 @@ impl Engine {
         // write emits two rows. Accumulate in a set so multiple write sites in
         // the same fn collapse to one (fn, "write") row.
         let mut kind_set: HashSet<(String, &'static str)> = HashSet::new();
-        let mut seen_def: HashSet<&str> = HashSet::new();
+        let mut seen_def: HashSet<(&str, &str)> = HashSet::new();
         let mut seen_edge: HashSet<(String, String, &str)> = HashSet::new();
-        for (_path, rev, f) in &facts {
+        for (repo, _path, rev, f) in &facts {
             for d in &f.defs {
-                if seen_def.insert(d.sym.as_str()) {
-                    def_rows.push(vec![t(&d.sym), t(d.kind.tag()), t(&d.file), i(d.line), i(d.end)]);
+                if seen_def.insert((repo.as_str(), d.sym.as_str())) {
+                    def_rows.push(vec![t(repo), t(&d.sym), t(d.kind.tag()), t(&d.file), i(d.line), i(d.end)]);
                     name_rows.push(vec![t(&d.sym), t(&d.name)]);
                 }
             }
@@ -2781,7 +2812,7 @@ impl Engine {
                 // call_site is the raw graph: every site, caller resolved when a
                 // def encloses it, callee as written.
                 let caller = resolve_caller(&s.file, s.line).unwrap_or_default();
-                site_rows.push(vec![t(&caller), t(&s.callee), t(&s.file), i(s.line)]);
+                site_rows.push(vec![t(repo), t(&caller), t(&s.callee), t(&s.file), i(s.line)]);
                 // call_kind: classify the callee's bare name as read/write. The
                 // fn-aggregate is the precision axis the conn-loop-reachable
                 // rail needs (a fn that only reads through its .conn() does not
@@ -2811,8 +2842,8 @@ impl Engine {
             .map(|(f, k)| vec![t(&f), t(k)])
             .collect();
 
-        self.refresh_rel("call_def", &["sym", "kind", "file", "line", "end"], &def_rows)?;
-        self.refresh_rel("call_site", &["caller", "callee", "file", "line"], &site_rows)?;
+        self.refresh_rel("call_def", &["repo", "sym", "kind", "file", "line", "end"], &def_rows)?;
+        self.refresh_rel("call_site", &["repo", "caller", "callee", "file", "line"], &site_rows)?;
         self.refresh_rel("call_edge_rev", &["caller", "callee", "kind", "rev"], &edge_rev_rows)?;
         self.refresh_rel("call_name", &["sym", "name"], &name_rows)?;
         self.refresh_rel("call_kind", &["fn", "kind"], &kind_rows)?;
@@ -2919,24 +2950,25 @@ impl Engine {
         }
         let root = self.root.clone();
         let roots = self.repo_roots();
-        let facts: Vec<(String, ingest::DocFacts)> = files.par_iter().filter_map(|(repo, path, rev)| {
+        let facts: Vec<(String, String, ingest::DocFacts)> = files.par_iter().filter_map(|(repo, path, rev)| {
             let lang = ingest::ingest_langs().iter().find(|l| l.matches(path))?;
             let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
             let content = read_content(froot, rev, path).unwrap_or_default();
-            Some((path.clone(), lang.extract_docs(path, &content)))
+            let rid = repo_id_of(froot, path, repo);
+            Some((rid, path.clone(), lang.extract_docs(path, &content)))
         }).collect();
         let t = |s: &str| Value::Text(s.to_string());
         let i = |n: u32| Value::Int(n as i64);
         let mut rows: Vec<Vec<Value>> = Vec::new();
-        let mut seen: HashSet<(String, u32, &str, String)> = HashSet::new();
-        for (path, f) in &facts {
+        let mut seen: HashSet<(String, String, u32, &str, String)> = HashSet::new();
+        for (repo, path, f) in &facts {
             for n in &f.nodes {
-                if seen.insert((path.clone(), n.line, n.kind, n.name.clone())) {
-                    rows.push(vec![t(path), i(n.line), t(n.kind), t(&n.name), t(&n.parent)]);
+                if seen.insert((repo.clone(), path.clone(), n.line, n.kind, n.name.clone())) {
+                    rows.push(vec![t(repo), t(path), i(n.line), t(n.kind), t(&n.name), t(&n.parent)]);
                 }
             }
         }
-        self.refresh_rel("doc_node", &["file", "line", "kind", "name", "parent"], &rows)?;
+        self.refresh_rel("doc_node", &["repo", "file", "line", "kind", "name", "parent"], &rows)?;
 
         // doc_ref bridge: doc_node -> type_entity, three sources.
         //   (1) heading exact:    doc_node.name == type_entity.name
@@ -2969,14 +3001,14 @@ impl Engine {
         }
         let mut ref_rows: Vec<Vec<Value>> = Vec::new();
         let mut ref_seen: HashSet<(String, u32, String, &'static str, String)> = HashSet::new();
-        let push_ref = |file: &str, line: u32, sym: &str, kind: &'static str,
+        let push_ref = |repo: &str, file: &str, line: u32, sym: &str, kind: &'static str,
                         matched: &str, rows: &mut Vec<Vec<Value>>,
                         seen: &mut HashSet<(String, u32, String, &'static str, String)>| {
             if seen.insert((file.to_string(), line, sym.to_string(), kind, matched.to_string())) {
-                rows.push(vec![t(file), i(line), t(sym), t(kind), t(matched)]);
+                rows.push(vec![t(repo), t(file), i(line), t(sym), t(kind), t(matched)]);
             }
         };
-        for (path, f) in &facts {
+        for (repo, path, f) in &facts {
             for n in &f.nodes {
                 match n.kind {
                     "heading" => {
@@ -2986,7 +3018,7 @@ impl Engine {
                         let exact = by_name.get(&n.name.to_ascii_lowercase());
                         if let Some(hits) = exact {
                             for (sym, _orig) in hits {
-                                push_ref(path, n.line, sym, "heading", &n.name,
+                                push_ref(repo, path, n.line, sym, "heading", &n.name,
                                          &mut ref_rows, &mut ref_seen);
                             }
                             continue;
@@ -2995,7 +3027,7 @@ impl Engine {
                         if !norm.is_empty() {
                             if let Some(hits) = by_name.get(&norm) {
                                 for (sym, _orig) in hits {
-                                    push_ref(path, n.line, sym, "heading", &n.name,
+                                    push_ref(repo, path, n.line, sym, "heading", &n.name,
                                              &mut ref_rows, &mut ref_seen);
                                 }
                             }
@@ -3007,7 +3039,7 @@ impl Engine {
                         for tok in identifiers_in(&n.text) {
                             if let Some(hits) = by_name.get(&tok.to_ascii_lowercase()) {
                                 for (sym, _orig) in hits {
-                                    push_ref(path, n.line, sym, "code_block", tok,
+                                    push_ref(repo, path, n.line, sym, "code_block", tok,
                                              &mut ref_rows, &mut ref_seen);
                                 }
                             }
@@ -3018,7 +3050,7 @@ impl Engine {
             }
         }
         self.refresh_rel("doc_ref",
-            &["file", "line", "sym", "kind", "matched_name"], &ref_rows)?;
+            &["repo", "file", "line", "sym", "kind", "matched_name"], &ref_rows)?;
         Ok(())
     }
 
@@ -3912,6 +3944,18 @@ fn read_content(root: &Path, rev: &str, path: &str) -> Result<String> {
     } else {
         git_batch_read(root, rev, path)
     }
+}
+
+/// The repo identity a file answers to, derived from the file itself: the
+/// basename of its nearest ancestor `.git` directory. This makes repo a
+/// property of where a file LIVES, not of an explicit `--root` — the rootless
+/// model. `froot` is the on-disk root the file was scanned under, `path` its
+/// relative path; when no `.git` is found (a non-git folder in view) we fall
+/// back to `slug` (the scan slug, already the folder name).
+fn repo_id_of(froot: &Path, path: &str, slug: &str) -> String {
+    crate::repo::nearest_git(&froot.join(path))
+        .and_then(|g| g.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| slug.to_string())
 }
 
 /// Normalize a doc heading name for joining against `type_entity.name`. Strips

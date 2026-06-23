@@ -35,10 +35,10 @@ type_reaches(a, b) <- closure(type_pair).
 # Work report (the counts the engine prints). Closure sizes are not counted
 # here — reading a closure unpinned is blocked; pin a seed to size it.
 rel entity_count(n: int).
-entity_count(count(sym)) <- type_entity(sym, _, _, _, _, _).
+entity_count(count(sym)) <- type_entity(_, sym, _, _, _, _, _).
 
 rel call_site_count(n: int).
-call_site_count(count(caller)) <- call_site(caller, _, _, _).
+call_site_count(count(caller)) <- call_site(_, caller, _, _, _).
 
 rel df_count(n: int).
 df_count(count(id)) <- df_node(id, _, _, _, _, _).

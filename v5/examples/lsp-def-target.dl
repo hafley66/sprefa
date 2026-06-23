@@ -31,10 +31,10 @@ index_over(p) <- scan("WORK", "v5/src/**/*.rs", p, rev).
 # is the unified regex literal (same form `match` takes); a name can only be
 # one kind, so a row lands in at most one of the two def_target rules below.
 rel def_target(name: text, file: file, line: int, kind: text).
-def_target(name, f, l, "type") <- type_entity(_, name, k, _, f, l), k =~ /struct|enum|trait|alias/.
+def_target(name, f, l, "type") <- type_entity(_, _, name, k, _, f, l), k =~ /struct|enum|trait|alias/.
 
 # Function-defined targets: free fns and methods.
-def_target(name, f, l, "fn") <- type_entity(_, name, k, _, f, l), k =~ /function|method/.
+def_target(name, f, l, "fn") <- type_entity(_, _, name, k, _, f, l), k =~ /function|method/.
 
 # Sanity queries — run without --lsp to see the rows the LSP would consult.
 # Under --lsp these are not queries; they're just the relations the

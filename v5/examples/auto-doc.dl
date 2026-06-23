@@ -28,8 +28,8 @@ index_over(p) <- scan("WORK", "v5/src/**/*.rs", p, rev).
 # One row per declared entity, routed by kind. A name resolves to one kind, so
 # a row lands in at most one arm; no duplicate locations in the output.
 rel doc_row(file: text, line: int, kind: text, name: text).
-doc_row(file, line, "type", name) <- type_entity(_, name, k, _, file, line), k =~ /struct|enum|trait|alias/.
-doc_row(file, line, "fn", name)    <- type_entity(_, name, k, _, file, line), k =~ /function|method/.
+doc_row(file, line, "type", name) <- type_entity(_, _, name, k, _, file, line), k =~ /struct|enum|trait|alias/.
+doc_row(file, line, "fn", name)    <- type_entity(_, _, name, k, _, file, line), k =~ /function|method/.
 
 # The file-sink: every row renders through the template, all rows land in one
 # markdown file under v5/examples/_auto-doc/. The engine creates the dir if
