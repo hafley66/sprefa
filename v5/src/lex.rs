@@ -134,6 +134,12 @@ pub fn lex(src: &str) -> Result<Vec<Tok>> {
                         if i >= b.len() { bail!("unterminated ${{ in string"); }
                         parts.push(StrPart::Var(src[start..i].to_string()));
                         i += 1; // skip }
+                    } else if b[i] == b'$' {
+                        // A bare `$` not opening `${...}`: a literal dollar, as in
+                        // ast-grep metavars ($X, $$$A) inside an sg/ast pattern.
+                        // Without this arm the run-scanner below stops on `$`
+                        // without advancing and the outer loop spins forever.
+                        cur.push('$'); i += 1;
                     } else {
                         // Push the run of boring bytes as a slice to keep UTF-8
                         // sequences intact. Byte-by-byte `b[i] as char` would
