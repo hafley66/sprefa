@@ -2606,25 +2606,29 @@ impl Engine {
         }).collect();
 
         // Resolver: a name maps to its definition symbol when exactly one entity
-        // in the corpus declares it (syntactic). A SCIP index, when present,
-        // overrides per (file, name) with the indexed def file (collision-proof).
-        let mut by_name: HashMap<&str, Vec<&str>> = HashMap::new();
-        let mut sym_at: HashMap<(&str, &str), &str> = HashMap::new();
-        for (_, _, _, f) in &facts {
+        // in the SAME repo declares it (syntactic). Keying by repo keeps two
+        // folders in view that share a name from making each other ambiguous,
+        // and the resolved sym is repo-qualified (`{repo}::{sym}`) so the edge
+        // relations (type_link/type_sig — no repo column) stay distinct across
+        // identical-path repos. A SCIP index, when present, overrides per
+        // (file, name) with the indexed def file (collision-proof).
+        let mut by_name: HashMap<(&str, &str), Vec<&str>> = HashMap::new();
+        let mut sym_at: HashMap<(&str, &str, &str), &str> = HashMap::new();
+        for (repo, _, _, f) in &facts {
             for e in &f.entities {
-                by_name.entry(e.name.as_str()).or_default().push(e.sym.as_str());
-                sym_at.insert((e.file.as_str(), e.name.as_str()), e.sym.as_str());
+                by_name.entry((repo.as_str(), e.name.as_str())).or_default().push(e.sym.as_str());
+                sym_at.insert((repo.as_str(), e.file.as_str(), e.name.as_str()), e.sym.as_str());
             }
         }
         let scip = self.scip_name_defs().unwrap_or_default();
-        let resolve = |file: &str, name: &str| -> Option<String> {
+        let resolve = |repo: &str, file: &str, name: &str| -> Option<String> {
             if let Some(def_file) = scip.get(&(file.to_string(), name.to_string())) {
-                if let Some(sym) = sym_at.get(&(def_file.as_str(), name)) {
-                    return Some(sym.to_string());
+                if let Some(sym) = sym_at.get(&(repo, def_file.as_str(), name)) {
+                    return Some(format!("{repo}::{sym}"));
                 }
             }
-            match by_name.get(name) {
-                Some(v) if v.len() == 1 => Some(v[0].to_string()),
+            match by_name.get(&(repo, name)) {
+                Some(v) if v.len() == 1 => Some(format!("{repo}::{}", v[0])),
                 _ => None,
             }
         };
@@ -2646,31 +2650,36 @@ impl Engine {
                 edge_rev_rows.push(vec![t(&edge.from), t(&edge.to), t(edge.kind), t(rev)]);
                 // SCIP-resolved graph: owner sym -> resolved target sym (or the
                 // bare name when external/ambiguous, so leaf types still appear)
-                let src = sym_at.get(&(path.as_str(), edge.from.as_str()))
-                    .map(|s| s.to_string()).unwrap_or_else(|| edge.from.clone());
-                let dst = resolve(path, &edge.to).unwrap_or_else(|| edge.to.clone());
+                let src = sym_at.get(&(repo.as_str(), path.as_str(), edge.from.as_str()))
+                    .map(|s| format!("{repo}::{s}")).unwrap_or_else(|| edge.from.clone());
+                let dst = resolve(repo, path, &edge.to).unwrap_or_else(|| edge.to.clone());
                 if seen_link.insert((src.clone(), dst.clone(), edge.kind)) {
                     link_rows.push(vec![t(&src), t(&dst), t(edge.kind)]);
                 }
             }
             for ent in &f.entities {
+                // repo-qualified sym: globally unique even when two repos share a
+                // relative path, so sym-keyed rels (type_sig/type_link) and the
+                // cross-rel joins to call_def stay per-repo distinct.
+                let qsym = format!("{repo}::{}", ent.sym);
                 if seen_entity.insert((repo.as_str(), ent.sym.as_str())) {
+                    let qparent = ent.parent.as_deref().map(|p| format!("{repo}::{p}")).unwrap_or_default();
                     entity_rows.push(vec![
-                        t(repo), t(&ent.sym), t(&ent.name), t(ent.kind.tag()),
-                        t(ent.parent.as_deref().unwrap_or("")), t(&ent.file), i(ent.line),
+                        t(repo), t(&qsym), t(&ent.name), t(ent.kind.tag()),
+                        t(&qparent), t(&ent.file), i(ent.line),
                     ]);
                 }
                 // the arrow [...A] => B, one row per referenced type per slot
                 if let Some(ty) = &ent.ty {
                     for (pos, slot) in ty.params.iter().enumerate() {
                         for r in slot {
-                            let rf = resolve(path, r.name()).unwrap_or_else(|| r.name().to_string());
-                            sig_rows.push(vec![t(&ent.sym), t("param"), i(pos as u32), t(&rf)]);
+                            let rf = resolve(repo, path, r.name()).unwrap_or_else(|| r.name().to_string());
+                            sig_rows.push(vec![t(&qsym), t("param"), i(pos as u32), t(&rf)]);
                         }
                     }
                     for r in &ty.ret {
-                        let rf = resolve(path, r.name()).unwrap_or_else(|| r.name().to_string());
-                        sig_rows.push(vec![t(&ent.sym), t("ret"), i(0), t(&rf)]);
+                        let rf = resolve(repo, path, r.name()).unwrap_or_else(|| r.name().to_string());
+                        sig_rows.push(vec![t(&qsym), t("ret"), i(0), t(&rf)]);
                     }
                 }
             }
@@ -2753,31 +2762,34 @@ impl Engine {
         // override; def_by_file drives span-containment caller resolution
         // (innermost enclosing def wins, so calls inside a nested block attach
         // to the nearest fn, not the outermost).
-        let mut by_name: HashMap<&str, Vec<&str>> = HashMap::new();
-        let mut sym_at: HashMap<(&str, &str), &str> = HashMap::new();
-        let mut def_by_file: HashMap<&str, Vec<(u32, u32, &str)>> = HashMap::new();
-        for (_, _, _, f) in &facts {
+        // Repo-scoped, same as refresh_type_rels: a callee resolves within the
+        // referencing file's repo, and resolved syms are repo-qualified so the
+        // sym-keyed call rels (call_edge/call_name) stay per-repo distinct.
+        let mut by_name: HashMap<(&str, &str), Vec<&str>> = HashMap::new();
+        let mut sym_at: HashMap<(&str, &str, &str), &str> = HashMap::new();
+        let mut def_by_file: HashMap<(&str, &str), Vec<(u32, u32, &str)>> = HashMap::new();
+        for (repo, _, _, f) in &facts {
             for d in &f.defs {
-                by_name.entry(d.name.as_str()).or_default().push(d.sym.as_str());
-                sym_at.insert((d.file.as_str(), d.name.as_str()), d.sym.as_str());
-                def_by_file.entry(d.file.as_str()).or_default().push((d.line, d.end, d.sym.as_str()));
+                by_name.entry((repo.as_str(), d.name.as_str())).or_default().push(d.sym.as_str());
+                sym_at.insert((repo.as_str(), d.file.as_str(), d.name.as_str()), d.sym.as_str());
+                def_by_file.entry((repo.as_str(), d.file.as_str())).or_default().push((d.line, d.end, d.sym.as_str()));
             }
         }
         let scip = self.scip_name_defs().unwrap_or_default();
-        let resolve_callee = |file: &str, callee: &str| -> Option<String> {
+        let resolve_callee = |repo: &str, file: &str, callee: &str| -> Option<String> {
             if let Some(def_file) = scip.get(&(file.to_string(), callee.to_string())) {
-                if let Some(sym) = sym_at.get(&(def_file.as_str(), callee)) {
-                    return Some(sym.to_string());
+                if let Some(sym) = sym_at.get(&(repo, def_file.as_str(), callee)) {
+                    return Some(format!("{repo}::{sym}"));
                 }
             }
-            match by_name.get(callee) {
-                Some(v) if v.len() == 1 => Some(v[0].to_string()),
+            match by_name.get(&(repo, callee)) {
+                Some(v) if v.len() == 1 => Some(format!("{repo}::{}", v[0])),
                 _ => None,
             }
         };
-        let resolve_caller = |file: &str, line: u32| -> Option<String> {
+        let resolve_caller = |repo: &str, file: &str, line: u32| -> Option<String> {
             let mut best: Option<(u32, &str)> = None; // (span, sym); smallest containing span wins
-            for &(s, e, sym) in def_by_file.get(file).into_iter().flatten() {
+            for &(s, e, sym) in def_by_file.get(&(repo, file)).into_iter().flatten() {
                 if line >= s && line <= e {
                     let span = e - s;
                     match best {
@@ -2786,7 +2798,7 @@ impl Engine {
                     }
                 }
             }
-            best.map(|(_, s)| s.to_string())
+            best.map(|(_, s)| format!("{repo}::{s}"))
         };
 
         let t = |s: &str| Value::Text(s.to_string());
@@ -2804,14 +2816,15 @@ impl Engine {
         for (repo, _path, rev, f) in &facts {
             for d in &f.defs {
                 if seen_def.insert((repo.as_str(), d.sym.as_str())) {
-                    def_rows.push(vec![t(repo), t(&d.sym), t(d.kind.tag()), t(&d.file), i(d.line), i(d.end)]);
-                    name_rows.push(vec![t(&d.sym), t(&d.name)]);
+                    let qsym = format!("{repo}::{}", d.sym);
+                    def_rows.push(vec![t(repo), t(&qsym), t(d.kind.tag()), t(&d.file), i(d.line), i(d.end)]);
+                    name_rows.push(vec![t(&qsym), t(&d.name)]);
                 }
             }
             for s in &f.sites {
                 // call_site is the raw graph: every site, caller resolved when a
-                // def encloses it, callee as written.
-                let caller = resolve_caller(&s.file, s.line).unwrap_or_default();
+                // def encloses it (repo-qualified), callee as written.
+                let caller = resolve_caller(repo, &s.file, s.line).unwrap_or_default();
                 site_rows.push(vec![t(repo), t(&caller), t(&s.callee), t(&s.file), i(s.line)]);
                 // call_kind: classify the callee's bare name as read/write. The
                 // fn-aggregate is the precision axis the conn-loop-reachable
@@ -2827,7 +2840,7 @@ impl Engine {
                 // resolve to def syms, so closure(call_edge) walks one identity
                 // space (same contract as type_link). Unresolved calls stay in
                 // call_site with their bare callee.
-                if let Some(callee_sym) = resolve_callee(&s.file, &s.callee) {
+                if let Some(callee_sym) = resolve_callee(repo, &s.file, &s.callee) {
                     if !caller.is_empty() && seen_edge.insert((caller.clone(), callee_sym.clone(), rev)) {
                         edge_rev_rows.push(vec![t(&caller), t(&callee_sym), t("call"), t(rev)]);
                     }
