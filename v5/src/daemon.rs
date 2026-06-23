@@ -692,23 +692,28 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
         }
         "schema" => {
             let eng = d.eng.lock().unwrap();
+            let builtin = crate::engine::builtin_rel_names();
             let mut relations: Vec<Value> = Vec::new();
             for (name, meta) in eng.rels.iter() {
                 let cols: Vec<Value> = meta.cols.iter().map(|c| json!({
                     "name": c.name, "ty": format!("{:?}", c.ty),
                 })).collect();
-                relations.push(json!({"name": name, "columns": cols}));
+                let mut rel = json!({"name": name, "columns": cols});
+                if builtin.contains(name) {
+                    rel["builtin"] = Value::Bool(true);
+                }
+                relations.push(rel);
             }
-            // Append built-in source relations visible in SQLite
-            let builtins: &[(&str, &[(&str, &str)])] = &[
+            // SQLite source tables that back the engine but aren't declared rels
+            // (so they're absent from `eng.rels`); still queryable, so list them.
+            // module_import/module_edge_rev/crate_edge are declared rels above —
+            // do NOT re-list them here or they'd appear twice.
+            let extra: &[(&str, &[(&str, &str)])] = &[
                 ("_file", &[("repo", "text"), ("path", "text"), ("rev", "text"), ("hash", "text"), ("mtime", "int"), ("size", "int")]),
                 ("_files", &[("id", "int"), ("content_hash", "text"), ("path", "text"), ("size", "int")]),
                 ("_where_bytes", &[("id", "int"), ("repo", "text"), ("path", "text"), ("rev", "text"), ("byte", "int"), ("line", "int"), ("col", "int")]),
-                ("module_import", &[("file", "text"), ("rev", "text"), ("specifier", "text"), ("kind", "text"), ("line", "int")]),
-                ("module_edge_rev", &[("src", "text"), ("dst", "text"), ("rev", "text")]),
-                ("crate_edge", &[("src", "text"), ("dst", "text"), ("kind", "text"), ("rev", "text")]),
             ];
-            for (name, cols) in builtins {
+            for (name, cols) in extra {
                 let cols_json: Vec<Value> = cols.iter().map(|(n, t)| json!({"name": n, "ty": t})).collect();
                 relations.push(json!({"name": name, "columns": cols_json, "builtin": true}));
             }

@@ -141,6 +141,27 @@ fn builtin_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
+/// Names of every engine-emitted (built-in) relation: the union of all the
+/// `*_rel_decls()` groups that `declare_builtins` registers. The daemon's
+/// `schema` RPC flags relations against this so the count and the per-rel
+/// "emitted by the engine" label agree (a user `.dl` rule's relation is not in
+/// this set). Keep in sync with `declare_builtins`.
+pub fn builtin_rel_names() -> std::collections::HashSet<String> {
+    builtin_rel_decls()
+        .into_iter()
+        .chain(module_rel_decls())
+        .chain(type_rel_decls())
+        .chain(call_rel_decls())
+        .chain(dataflow_rel_decls())
+        .chain(doc_rel_decls())
+        .chain(scip_rel_decls())
+        .chain(spine_rel_decls())
+        .chain(changed_rel_decls())
+        .chain(changed_line_rel_decls())
+        .map(|d| d.name)
+        .collect()
+}
+
 fn module_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
