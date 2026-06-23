@@ -178,7 +178,7 @@ fn render_type_diags(diags: &[ast::TypeDiag], json: bool) {
 fn load_repos() -> Vec<config::RepoConfig> {
     match config::SprfConfig::load_default() {
         Ok(cfg) if !cfg.repos.is_empty() => {
-            eprintln!("[config] {} repo(s) registered (file ingestion: --root only so far)", cfg.repos.len());
+            eprintln!("[config] {} repo(s) registered (scan + type/call/doc ingestion)", cfg.repos.len());
             cfg.repos
         }
         Ok(_) => Vec::new(),
