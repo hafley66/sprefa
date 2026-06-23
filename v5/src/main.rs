@@ -124,21 +124,28 @@ fn main() -> Result<()> {
         // Propagate to children + the daemon module's enabled() check.
         std::env::set_var("DL_NO_DAEMON", "1");
     }
-    let root = resolve_root(&cli)?;
-    if !cli.move_.is_empty() {
-        return sprefa_v5::run_move(cli.db.as_deref(), root, cli.repo, cli.move_, cli.fix);
-    }
+    // The daemon and `--stop` take `--root` as an OPTION: omitted = the
+    // singleton rootless serving daemon at the XDG home, serving the config
+    // folders. Move + one-shots still resolve a concrete root.
+    let root_opt: Option<PathBuf> = match &cli.root {
+        Some(r) => Some(r.canonicalize()?),
+        None => None,
+    };
     if cli.stop {
-        return sprefa_v5::daemon::stop(&root);
+        return sprefa_v5::daemon::stop(root_opt.as_deref());
     }
     if cli.daemon || cli.tray {
         return sprefa_v5::daemon::run_daemon(
             cli.program.as_deref(),
             cli.db.as_deref(),
-            root,
+            root_opt,
             true,
             cli.tray,
         );
+    }
+    let root = resolve_root(&cli)?;
+    if !cli.move_.is_empty() {
+        return sprefa_v5::run_move(cli.db.as_deref(), root, cli.repo, cli.move_, cli.fix);
     }
     // Discovery mode (no positional) defaults the db to <root>/.dl/cache.db so
     // repeated hook/check invocations get warm incremental ticks instead of a

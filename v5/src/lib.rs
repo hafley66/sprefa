@@ -103,7 +103,7 @@ pub fn run_file(program: Option<&str>, db_path: Option<&str>, root: PathBuf, que
 /// results in the same shape as `run_file_inproc` prints.
 fn run_file_via_daemon(program: Option<&str>, root: &Path, query_json: bool) -> Result<()> {
     daemon::ensure_daemon(root, program)?;
-    let mut s = daemon::connect(root)?;
+    let mut s = daemon::connect(Some(root))?;
     let req = rpc::Request::new(1, "query", serde_json::json!({}));
     let resp = daemon::rpc_call(&mut s, &req)?;
     if let Some(e) = resp.error { anyhow::bail!("daemon query: {}", e.message); }
@@ -210,7 +210,7 @@ pub fn run_check(program: Option<&str>, db_path: Option<&str>, root: PathBuf, js
 /// `run_check_inproc`. Returns the error-severity count for the exit contract.
 fn run_check_via_daemon(program: Option<&str>, root: &Path, json: bool) -> Result<usize> {
     daemon::ensure_daemon(root, program)?;
-    let mut s = daemon::connect(root)?;
+    let mut s = daemon::connect(Some(root))?;
     let req = rpc::Request::new(1, "diag", serde_json::json!({}));
     let resp = daemon::rpc_call(&mut s, &req)?;
     if let Some(e) = resp.error { anyhow::bail!("daemon diag: {}", e.message); }

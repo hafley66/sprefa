@@ -175,10 +175,10 @@ pub fn run_lsp(program: Option<&str>, db_path: Option<&str>, root: PathBuf) -> R
 fn spawn_daemon_subscriber(root: PathBuf, sender: crossbeam_channel::Sender<lsp_server::Message>) {
     use crate::{daemon, rpc};
     if !daemon::enabled_for(&root) { return; }
-    if !daemon::is_running(&root) {
+    if !daemon::is_running(Some(&root)) {
         let _ = daemon::ensure_daemon(&root, None);
     }
-    let mut s = match daemon::connect(&root) { Ok(s) => s, Err(_) => return };
+    let mut s = match daemon::connect(Some(&root)) { Ok(s) => s, Err(_) => return };
     let req = rpc::Request::new(0, "subscribe",
         serde_json::json!({"events": ["diag_changed"]}));
     if daemon::rpc_call(&mut s, &req).is_err() { return; }

@@ -36,18 +36,42 @@ const CONNECT_TOTAL_TIMEOUT_SECS: u64 = 5;
 
 // ---------- path helpers ----------
 
-/// `<root>/.dl/daemon.sock`.
-pub fn socket_path(root: &Path) -> PathBuf {
-    root.join(".dl").join("daemon.sock")
+/// The rootless daemon's home: `$XDG_STATE_HOME/sprefa` (or `~/.local/state/
+/// sprefa`). One singleton serving daemon lives here, decoupled from any
+/// project root — the "folders in view" model. Created on demand.
+pub fn daemon_home() -> PathBuf {
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".local/state")))
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join("sprefa")
 }
 
-/// `<root>/.dl/daemon.pid`.
-pub fn pid_path(root: &Path) -> PathBuf {
-    root.join(".dl").join("daemon.pid")
+/// The control-file directory for a daemon. `Some(root)` is the per-root
+/// auto-attach daemon at `<root>/.dl` (spawn-if-missing for one-shots, keyed by
+/// the repo being queried). `None` is the singleton rootless serving daemon at
+/// the XDG home. Keeping the two namespaces distinct lets them coexist: a
+/// `dl <prog>` one-shot spawns its own per-root helper without colliding with
+/// the long-lived serving daemon.
+fn home_dir(root: Option<&Path>) -> PathBuf {
+    match root {
+        Some(r) => r.join(".dl"),
+        None => daemon_home(),
+    }
 }
 
-fn write_pid_file(root: &Path, program: Option<&str>) -> Result<()> {
-    let dir = root.join(".dl");
+/// `<home>/daemon.sock`.
+pub fn socket_path(root: Option<&Path>) -> PathBuf {
+    home_dir(root).join("daemon.sock")
+}
+
+/// `<home>/daemon.pid`.
+pub fn pid_path(root: Option<&Path>) -> PathBuf {
+    home_dir(root).join("daemon.pid")
+}
+
+fn write_pid_file(root: Option<&Path>, program: Option<&str>) -> Result<()> {
+    let dir = home_dir(root);
     std::fs::create_dir_all(&dir)?;
     let pid = std::process::id();
     let start = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
@@ -57,7 +81,7 @@ fn write_pid_file(root: &Path, program: Option<&str>) -> Result<()> {
 }
 
 #[allow(dead_code)]
-fn read_pid_file(root: &Path) -> Option<(u32, u64, String)> {
+fn read_pid_file(root: Option<&Path>) -> Option<(u32, u64, String)> {
     let txt = std::fs::read_to_string(pid_path(root)).ok()?;
     let mut lines = txt.lines();
     let pid: u32 = lines.next()?.parse().ok()?;
@@ -66,14 +90,19 @@ fn read_pid_file(root: &Path) -> Option<(u32, u64, String)> {
     Some((pid, start, prog))
 }
 
-fn remove_pid_file(root: &Path) {
+fn remove_pid_file(root: Option<&Path>) {
     let _ = std::fs::remove_file(pid_path(root));
 }
 
 // ---------- Daemon state ----------
 
 pub struct Daemon {
+    /// Engine/content/watch base. For a rootless serving daemon this is the XDG
+    /// home (a benign "self" that scans nothing); the view comes from config.
     pub root: PathBuf,
+    /// The `--root` the daemon was launched with, for CONTROL files only
+    /// (socket/pid). `None` = the singleton rootless daemon at the XDG home.
+    pub home: Option<PathBuf>,
     pub program_display: String,
     /// Canonicalized absolute paths the daemon parsed. Edit-exact detection
     /// compares against this list, not "any .dl file under .dl/" (the v1
@@ -252,19 +281,26 @@ impl Daemon {
 pub fn run_daemon(
     program: Option<&str>,
     db_path: Option<&str>,
-    root: PathBuf,
+    root: Option<PathBuf>,
     foreground: bool,
     tray: bool,
 ) -> Result<()> {
-    let files = crate::resolve_programs(program, &root)?;
+    // `home` selects the control-file location (Some(root) → per-root,
+    // None → singleton XDG). `eng_root` is the Engine/content/watch base: the
+    // given root, or the XDG home as a benign self when launched rootless (the
+    // view then comes entirely from config repos).
+    let home = root.clone();
+    let eng_root = root.clone().unwrap_or_else(daemon_home);
+    let files = crate::resolve_programs(program, &eng_root)?;
     let (prog, type_diags, display) = crate::prepare_paths(&files)?;
     crate::render_type_diags_eprintln(&type_diags);
     let n_err = type_diags.iter().filter(|d| d.severity == crate::ast::Severity::Error).count();
     if n_err > 0 { bail!("{n_err} type error(s) in program; daemon not started"); }
 
     let conn = db::open(db_path)?;
-    let mut eng = Engine::new(conn, root.clone());
-    eng.set_repos(load_repos_eager());
+    let mut eng = Engine::new(conn, eng_root.clone());
+    let repos = load_repos_eager();
+    eng.set_repos(repos.clone());
     eng.tick(&prog, false)?;
     eprintln!("[daemon] cold tick done ({} type diag(s), program {})", type_diags.len(), display);
 
@@ -274,7 +310,8 @@ pub fn run_daemon(
         .map(|f| std::fs::canonicalize(f).unwrap_or_else(|_| f.clone()))
         .collect();
     let daemon = Arc::new(Daemon {
-        root: root.clone(),
+        root: eng_root.clone(),
+        home: home.clone(),
         program_display: display,
         program_files: Mutex::new(canon_files),
         discovery_mode: program.is_none(),
@@ -289,7 +326,7 @@ pub fn run_daemon(
     });
 
     // Bind socket (reap stale first).
-    let sock = socket_path(&root);
+    let sock = socket_path(home.as_deref());
     if sock.exists() {
         // Stale socket file from a killed -9 daemon. The PID file may also be
         // stale; try connect first to confirm liveness, then unlink if dead.
@@ -302,7 +339,7 @@ pub fn run_daemon(
     std::fs::create_dir_all(sock.parent().unwrap())?;
     let listener = UnixListener::bind(&sock)?;
     std::fs::set_permissions(&sock, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
-    write_pid_file(&root, program)?;
+    write_pid_file(home.as_deref(), program)?;
     eprintln!("[daemon] listening on {} (pid {}, idle {}s)",
         sock.display(), std::process::id(), idle_secs);
 
@@ -362,9 +399,9 @@ fn accept_loop(daemon: Arc<Daemon>, listener: UnixListener) {
 }
 
 pub(crate) fn shutdown_cleanup(d: &Daemon) {
-    let sock = socket_path(&d.root);
+    let sock = socket_path(d.home.as_deref());
     let _ = std::fs::remove_file(&sock);
-    remove_pid_file(&d.root);
+    remove_pid_file(d.home.as_deref());
     eprintln!("[daemon] shut down cleanly");
 }
 
@@ -380,6 +417,14 @@ fn watcher_loop(d: Arc<Daemon>) {
     if let Err(e) = watcher.watch(&d.root, RecursiveMode::Recursive) {
         eprintln!("[daemon] watch root failed: {e}");
         return;
+    }
+    // Watch every folder in view (config repos), so a rootless serving daemon
+    // reacts to source edits across the whole view, not just its own root.
+    for rc in load_repos_eager() {
+        if rc.root.exists() && rc.root != d.root
+            && watcher.watch(&rc.root, RecursiveMode::Recursive).is_ok() {
+            eprintln!("[daemon] watching repo {} ({})", rc.slug, rc.root.display());
+        }
     }
     let cfg_path = config::SprfConfig::config_path()
         .and_then(|p| p.canonicalize().ok().or(Some(p)));
@@ -785,13 +830,14 @@ pub fn enabled_for(root: &Path) -> bool {
     enabled() && root.join(".dl").is_dir()
 }
 
-/// True iff a daemon is currently listening on `<root>/.dl/daemon.sock`.
-pub fn is_running(root: &Path) -> bool {
+/// True iff a daemon is listening at this home (`Some(root)` → per-root,
+/// `None` → the singleton XDG serving daemon).
+pub fn is_running(root: Option<&Path>) -> bool {
     UnixStream::connect(socket_path(root)).is_ok()
 }
 
 /// Connect (must be already running). Returns a framed stream.
-pub fn connect(root: &Path) -> Result<UnixStream> {
+pub fn connect(root: Option<&Path>) -> Result<UnixStream> {
     UnixStream::connect(socket_path(root))
         .with_context(|| format!("connect daemon socket {}", socket_path(root).display()))
 }
@@ -813,9 +859,9 @@ pub fn rpc_call(stream: &mut UnixStream, req: &Request) -> Result<Response> {
 /// detached (foreground=false so idle timeout applies) and poll-connects until
 /// the daemon responds to `ping` or the connect-time budget is exhausted.
 pub fn ensure_daemon(root: &Path, program: Option<&str>) -> Result<()> {
-    if is_running(root) {
+    if is_running(Some(root)) {
         // Ping to confirm it's our daemon and not a stale socket.
-        let mut s = connect(root)?;
+        let mut s = connect(Some(root))?;
         let req = Request::new(0, "ping", json!({}));
         match rpc_call(&mut s, &req) {
             Ok(r) if r.error.is_none() => return Ok(()),
@@ -856,7 +902,7 @@ fn wait_ready(root: &Path, _program: Option<&str>) -> Result<()> {
         if start.elapsed() > timeout {
             bail!("daemon did not become ready in {}s", CONNECT_TOTAL_TIMEOUT_SECS);
         }
-        if let Ok(mut s) = UnixStream::connect(socket_path(root)) {
+        if let Ok(mut s) = UnixStream::connect(socket_path(Some(root))) {
             let req = Request::new(0, "ping", json!({}));
             if let Ok(resp) = rpc_call(&mut s, &req) {
                 if resp.error.is_none() { return Ok(()); }
@@ -870,9 +916,10 @@ fn wait_ready(root: &Path, _program: Option<&str>) -> Result<()> {
     }
 }
 
-/// Send `shutdown` to the daemon on `<root>/.dl/daemon.sock`. Returns Ok if the
-/// daemon acknowledged or was not running. Used by `dl --stop`.
-pub fn stop(root: &Path) -> Result<()> {
+/// Send `shutdown` to the daemon at this home (`Some(root)` → per-root,
+/// `None` → the singleton XDG serving daemon). Ok if it acknowledged or was not
+/// running. Used by `dl --stop` / `dl --stop --root X`.
+pub fn stop(root: Option<&Path>) -> Result<()> {
     if !is_running(root) {
         // Stale files; clean up.
         let _ = std::fs::remove_file(socket_path(root));
