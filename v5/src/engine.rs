@@ -923,6 +923,20 @@ impl Engine {
             .unwrap_or_else(|| self.root.to_string_lossy().to_string())
     }
 
+    /// slug -> on-disk root for every nameable repo (self + config). The lazy
+    /// indexers (type / call / doc) read each file's content from its OWN repo
+    /// root via this map, not the single `self.root`, so `type_entity`, the call
+    /// graph, and `doc_node` populate for every folder in view — not just
+    /// `--root`. `_file.repo` is the key; an unknown repo falls back to root.
+    fn repo_roots(&self) -> HashMap<String, PathBuf> {
+        let mut m = HashMap::new();
+        m.insert(self.self_slug(), self.root.clone());
+        for rc in &self.repos {
+            m.insert(rc.slug.clone(), rc.root.clone());
+        }
+        m
+    }
+
     pub fn run(&mut self, prog: &Program) -> Result<()> {
         self.tick(prog, false)
     }
@@ -2538,12 +2552,12 @@ impl Engine {
     /// deterministic syntax extractor, flush one built-in relation through
     /// `refresh_rel`.
     fn refresh_type_rels(&self) -> Result<()> {
-        let mut files: Vec<(String, String)> = Vec::new();
+        let mut files: Vec<(String, String, String)> = Vec::new();
         {
             let mut sel = self.db.conn().prepare(
-                "SELECT path, rev FROM _file WHERE path LIKE '%.rs' OR path LIKE '%.kt' OR path LIKE '%.kts' \
+                "SELECT repo, path, rev FROM _file WHERE path LIKE '%.rs' OR path LIKE '%.kt' OR path LIKE '%.kts' \
                  OR path LIKE '%.ts' OR path LIKE '%.tsx'")?;
-            let rows = sel.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+            let rows = sel.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
             for row in rows.flatten() { files.push(row); }
         }
         // Parse + extract per file in parallel (same shape as module_rows_for_rev),
@@ -2551,13 +2565,16 @@ impl Engine {
         // by the rayon pool, not the corpus (peak-RSS invariant). Rows carry their
         // rev so the type graph is history-aware like module_edge_rev.
         let root = self.root.clone();
+        let roots = self.repo_roots();
         // Per-file extraction via the language registry (no extension if-chain;
         // registry order makes .kts match Kotlin before .ts would). Each file
         // yields its declared entities + edge graph; collected before resolution
-        // because name->def resolution is corpus-global (a barrier).
-        let facts: Vec<(String, String, typegraph::TypeFacts)> = files.par_iter().filter_map(|(path, rev)| {
+        // because name->def resolution is corpus-global (a barrier). Content is
+        // read from the file's OWN repo root so config-repo files index too.
+        let facts: Vec<(String, String, typegraph::TypeFacts)> = files.par_iter().filter_map(|(repo, path, rev)| {
             let lang = typegraph::type_langs().iter().find(|l| l.matches(path))?;
-            let content = read_content(&root, rev, path).unwrap_or_default();
+            let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
+            let content = read_content(froot, rev, path).unwrap_or_default();
             Some((path.clone(), rev.clone(), lang.extract(path, &content)))
         }).collect();
 
@@ -2681,19 +2698,21 @@ impl Engine {
     /// the type_link path) lands with the first real extractor body; the row
     /// vecs already flow through it so the write path is exercised now.
     fn refresh_call_rels(&self) -> Result<()> {
-        let mut files: Vec<(String, String)> = Vec::new();
+        let mut files: Vec<(String, String, String)> = Vec::new();
         {
             let mut sel = self.db.conn().prepare(
-                "SELECT path, rev FROM _file WHERE path LIKE '%.rs' OR path LIKE '%.kt' OR path LIKE '%.kts' \
+                "SELECT repo, path, rev FROM _file WHERE path LIKE '%.rs' OR path LIKE '%.kt' OR path LIKE '%.kts' \
                  OR path LIKE '%.ts' OR path LIKE '%.tsx'")?;
-            let rows = sel.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+            let rows = sel.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
             for row in rows.flatten() { files.push(row); }
         }
 
         let root = self.root.clone();
-        let facts: Vec<(String, String, typegraph::CallFacts)> = files.par_iter().filter_map(|(path, rev)| {
+        let roots = self.repo_roots();
+        let facts: Vec<(String, String, typegraph::CallFacts)> = files.par_iter().filter_map(|(repo, path, rev)| {
             let lang = typegraph::type_langs().iter().find(|l| l.matches(path))?;
-            let content = read_content(&root, rev, path).unwrap_or_default();
+            let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
+            let content = read_content(froot, rev, path).unwrap_or_default();
             Some((path.clone(), rev.clone(), lang.extract_calls(path, &content)))
         }).collect();
 
@@ -2891,17 +2910,19 @@ impl Engine {
     /// the type graph); the SQL prefilter narrows to document extensions, then
     /// the registry's `matches` decides the real dispatch.
     fn refresh_doc_rels(&self) -> Result<()> {
-        let mut files: Vec<(String, String)> = Vec::new();
+        let mut files: Vec<(String, String, String)> = Vec::new();
         {
             let mut sel = self.db.conn().prepare(
-                "SELECT path, rev FROM _file WHERE path LIKE '%.md' OR path LIKE '%.markdown'")?;
-            let rows = sel.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+                "SELECT repo, path, rev FROM _file WHERE path LIKE '%.md' OR path LIKE '%.markdown'")?;
+            let rows = sel.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
             for row in rows.flatten() { files.push(row); }
         }
         let root = self.root.clone();
-        let facts: Vec<(String, ingest::DocFacts)> = files.par_iter().filter_map(|(path, rev)| {
+        let roots = self.repo_roots();
+        let facts: Vec<(String, ingest::DocFacts)> = files.par_iter().filter_map(|(repo, path, rev)| {
             let lang = ingest::ingest_langs().iter().find(|l| l.matches(path))?;
-            let content = read_content(&root, rev, path).unwrap_or_default();
+            let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
+            let content = read_content(froot, rev, path).unwrap_or_default();
             Some((path.clone(), lang.extract_docs(path, &content)))
         }).collect();
         let t = |s: &str| Value::Text(s.to_string());
