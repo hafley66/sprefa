@@ -682,9 +682,83 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                 Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
             }
         }
+        "eval" => {
+            let text = match req.params.get("text").and_then(|v| v.as_str()) {
+                Some(s) => s,
+                None => return Response::err(req.id, INVALID_PARAMS, "missing text"),
+            };
+            match run_eval(d, text) {
+                Ok(v) => Response::ok(req.id, v),
+                Err((code, msg)) => Response::err(req.id, code, msg),
+            }
+        }
         "shutdown" => Response::ok(req.id, json!({"ok": true})),
         other => Response::err(req.id, METHOD_NOT_FOUND, format!("unknown method: {other}")),
     }
+}
+
+/// Evaluate a scratch `.dl` snippet without touching the live engine or db.
+///
+/// The snippet is parsed, spliced onto the loaded program (so it can reference
+/// the program's relations), type-checked, then ticked on a THROWAWAY in-memory
+/// engine that shares the daemon's root + repos. Only the snippet's own `?`
+/// queries are captured. Nothing persists: scratch relations never appear in
+/// `schema`, never hit the warm db. The cost is a cold tick per eval (the
+/// merged program's source rules re-run on the fresh db).
+fn run_eval(d: &Daemon, text: &str) -> Result<Value, (i64, String)> {
+    let toks = crate::lex::lex(text).map_err(|e| (INVALID_PARAMS, format!("lex: {e}")))?;
+    let snippet = crate::parse::parse(toks).map_err(|e| (INVALID_PARAMS, format!("parse: {e}")))?;
+    // Capture only the snippet's queries, evaluated against the ticked tables.
+    let snippet_queries: Vec<crate::ast::Item> = snippet
+        .items
+        .iter()
+        .filter(|i| matches!(i, crate::ast::Item::Query(_)))
+        .cloned()
+        .collect();
+
+    // Splice onto the loaded program so the snippet sees its relations.
+    let mut merged = {
+        let base = d.prog.lock().unwrap();
+        Program {
+            items: base.items.iter().cloned().chain(snippet.items).collect(),
+        }
+    };
+    let diags = crate::typecheck::check_and_normalize(&mut merged, "<scratch>");
+    let diag_json = |x: &crate::ast::TypeDiag| {
+        json!({"severity": x.severity.as_str(), "code": x.code, "message": x.msg})
+    };
+    let type_errs: Vec<Value> = diags
+        .iter()
+        .filter(|x| x.severity == crate::ast::Severity::Error)
+        .map(diag_json)
+        .collect();
+    if !type_errs.is_empty() {
+        return Ok(json!({"ok": false, "results": [], "diagnostics": type_errs}));
+    }
+
+    let conn = db::open(None).map_err(|e| (INTERNAL_ERROR, format!("db: {e}")))?;
+    let mut eng = Engine::new(conn, d.root.clone());
+    eng.set_repos(load_repos_eager());
+    eng.tick(&merged, true)
+        .map_err(|e| (INTERNAL_ERROR, format!("tick: {e}")))?;
+
+    let qprog = Program { items: snippet_queries };
+    let results = eng
+        .run_queries_capture(&qprog)
+        .map_err(|e| (INTERNAL_ERROR, format!("query: {e}")))?;
+    let rel_diags = eng.diags(None).unwrap_or_default();
+    let all_diags: Vec<Value> = diags
+        .iter()
+        .map(diag_json)
+        .chain(rel_diags.iter().map(diag_to_json))
+        .collect();
+    Ok(json!({
+        "ok": true,
+        "results": results.iter().map(|r| json!({
+            "rel": r.rel, "columns": r.columns, "rows": r.rows,
+        })).collect::<Vec<_>>(),
+        "diagnostics": all_diags,
+    }))
 }
 
 fn diag_to_json(d: &DiagRow) -> Value {
