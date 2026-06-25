@@ -4568,9 +4568,16 @@ fn parse_file(
                 }
                 binds = next;
             }
-            BodyItem::Ast { lang, query, line, end, .. } => {
+            BodyItem::Ast { lang, query, line, end, id, .. } => {
                 let alv = opt_var(line)?;
                 let elv = end.as_ref().map(opt_var).transpose()?.flatten();
+                // Optional 7th arg: the spine id of the WHOLE ast match span (the
+                // captures' min..max byte range). Joins `ref(id, _, _, lo, hi)`
+                // for the codemod anchor — the bytes this match covered — same
+                // located-id shape as `match`'s 5th arg (christmas #9). The text
+                // interned for both the id and the span is the literal source
+                // slice over that range, so `node`/`ref`/`string` all agree.
+                let idv = id.as_ref().map(var_of).transpose()?;
                 let hits = run_ts(&content, lang, query)?;
                 let mut next: Vec<Bind> = Vec::new();
                 for b in &binds {
@@ -4578,6 +4585,32 @@ fn parse_file(
                         let mut ext = b.clone();
                         if let Some(v) = &alv { ext.insert(v.clone(), Value::Int(*start)); }
                         if let Some(ev) = &elv { ext.insert(ev.clone(), Value::Int(*endln)); }
+                        // Whole-match span = the captures' min lo .. max hi. Push
+                        // it (interning the contiguous source slice) and bind its
+                        // located id before the per-capture spans, mirroring the
+                        // `match` arm. Skipped when no captures carry a span.
+                        if let Some(idv) = &idv {
+                            if let Some(file) = where_file {
+                                let lo = caps.iter().map(|(_, _, lo, _)| *lo).min();
+                                let hi = caps.iter().map(|(_, _, _, hi)| *hi).max();
+                                if let (Some(lo), Some(hi)) = (lo, hi) {
+                                    if hi > lo && hi <= content.len() {
+                                        let text = &content[lo..hi];
+                                        if !text.is_empty() {
+                                            let wb = spine::WhereBytes {
+                                                string: spine::StringId::of(text), file,
+                                                lo: lo as u32, hi: hi as u32,
+                                                ..Default::default()
+                                            };
+                                            ext.insert(idv.clone(), Value::Text(
+                                                spine::WhereBytesId::of_located(wb, repo, path)
+                                                    .to_string()));
+                                            push_span(text, lo, hi, &mut where_bytes);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         for (n, t, lo, hi) in caps {
                             ext.insert(n.clone(), Value::Text(t.clone()));
                             push_span(t, *lo, *hi, &mut where_bytes);

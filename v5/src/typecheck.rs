@@ -201,9 +201,10 @@ fn normalize_body_item(b: &mut BodyItem, dl_path: &str, diags: &mut Vec<TypeDiag
             for t in [path, rev, line] { normalize_term(t, dl_path, diags); }
             if let Some(t) = id { normalize_term(t, dl_path, diags); }
         }
-        BodyItem::Ast { path, rev, line, end, .. } => {
+        BodyItem::Ast { path, rev, line, end, id, .. } => {
             for t in [path, rev, line] { normalize_term(t, dl_path, diags); }
             if let Some(e) = end { normalize_term(e, dl_path, diags); }
+            if let Some(t) = id { normalize_term(t, dl_path, diags); }
         }
         BodyItem::Sg { path, rev, line, col, end_line, end_col, .. } => {
             for t in [path, rev, line, col, end_line, end_col] { normalize_term(t, dl_path, diags); }
