@@ -137,6 +137,38 @@ fn node_child_perf_on_v5_src() {
 
 
 #[test]
+fn point_containment_query_uses_span_index() {
+    // The optional `node_file_span_idx ON rel_node(file, lo, hi)` makes the
+    // LSP-common "innermost node covering byte C in file F" query a range scan,
+    // not a full table scan. Prove SQLite picks the index for the containment
+    // predicate `file = ?, lo <= ?, ? < hi`.
+    let dir = std::env::temp_dir().join("cst_node_perf_pointidx");
+    let _ = fs::remove_dir_all(&dir);
+    let src = dir.join("src");
+    fs::create_dir_all(&src).unwrap();
+    for i in 0..4 {
+        fs::write(src.join(format!("m{i}.rs")),
+            format!("fn f{i}() {{\n    let a = {i};\n    let b = a + 1;\n}}\n")).unwrap();
+    }
+
+    let prog = parse::parse(lex::lex(NODE_PROG).unwrap()).unwrap();
+    let conn = db::open(Some(dir.join("db").to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, dir.clone());
+    eng.tick(&prog, true).unwrap();
+
+    let plan = eng.query_sql(
+        "EXPLAIN QUERY PLAN SELECT id, kind FROM rel_node \
+         WHERE \"file\" = '0' AND \"lo\" <= 5 AND 5 < \"hi\"", &[]).unwrap();
+    let detail = plan.iter()
+        .filter_map(|row| row.last().and_then(|v| v.as_str()))
+        .collect::<Vec<_>>().join(" | ");
+    assert!(detail.contains("node_file_span_idx"),
+        "point-containment query did not use node_file_span_idx (plan: {detail})");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn incremental_node_tick_is_path_scoped() {
     // Cold-tick a 5-file fixture, edit ONE file, incremental-tick, and assert
     // the node walk parsed exactly 1 file — the machine-independent proof the

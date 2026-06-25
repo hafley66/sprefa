@@ -2453,6 +2453,14 @@ impl Engine {
         for d in scip_rel_decls() { self.declare(&d)?; }
         for d in spine_rel_decls() { self.declare(&d)?; }
         for d in node_rel_decls() { self.declare(&d)?; }
+        // Optional point/containment index: "innermost CST node covering byte C
+        // in file F" is `node(_, _, F, lo, hi, _), lo <= C, C < hi` — a range
+        // scan on (file, lo, hi) instead of a full `node` table scan. Mirrors
+        // `_where_bytes_file_span_idx`. The closure(child) path is still the
+        // pick for full-ancestry materialization (measured); this just makes
+        // the LSP-common point query first-class. Idempotent.
+        self.db.conn().execute(
+            &format!("CREATE INDEX IF NOT EXISTS node_file_span_idx ON {}(\"file\", \"lo\", \"hi\")", tbl("node")), [])?;
         for d in changed_rel_decls() { self.declare(&d)?; }
         for d in changed_line_rel_decls() { self.declare(&d)?; }
         for d in daemon_rel_decls() { self.declare(&d)?; }
