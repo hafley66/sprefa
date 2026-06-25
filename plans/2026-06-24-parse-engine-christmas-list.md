@@ -151,13 +151,34 @@ bytes, `Content-Length: 13`). Proven pre-existing by reverting the Phase-0 edits
 
 ## Phase 2 — CST-as-relation foundation (C)
 
-| # | Item | Effort | Dep |
-|---|------|--------|-----|
-| 3 | `node(id,kind,file,lo,hi,parent)` + `child` relation | L | — |
-| 9 | whole-match span as first-class located id | S | feeds #3/#4 |
-| 10 | scope-as-interval + binding/visibility (free-var analysis) | L | rides #3 |
+| # | Item | Effort | Dep | Status |
+|---|------|--------|-----|--------|
+| 3 | `node(id,kind,file,lo,hi,parent)` + `child` relation | L | — | **done** 110f2ea/28c2e1b/ce7adf5 |
+| 9 | whole-match span as first-class located id | S | feeds #3/#4 | **done** 3d77f47 (ast) + 2adf8dc (sg/json) |
+| 10 | scope-as-interval + binding/visibility (free-var analysis) | L | rides #3 | **partial** — interval predicate + point index landed; binding/free-var open |
 
 Codemod foundation: anchor-finding, innermost-containment, scope all become joins.
+
+Done this arc (CST-as-relation, merged to main):
+- **#3** (110f2ea, 28c2e1b): lazy built-in query rels `node(id,kind,file,lo,hi,parent)`
+  + `child(parent,child)`, gated on use, built by `refresh_node_rels` walking every
+  named tree-sitter node across all 11 `ts_lang` grammars; ids are `_where_bytes`
+  edit coordinates that round-trip through `ref` AND `string` (CST step 1, 2e6e02b).
+  `refresh_node_rels_delta` (28c2e1b) makes the `--changed` tick path-scoped — only
+  the edited file re-walks (`_node_path(id,path)` side table for the prune, structural
+  guard test `last_node_files_walked==1`). Cold ~5.8s / incremental ~0.82s, no N+1.
+- **#9** (3d77f47 ast, 2adf8dc sg/json): trailing optional located `id` arg on
+  `ast`/`sg`/`json`, so the whole-match span is a first-class located id (not just
+  positional byte outputs).
+- **#10 (partial)** (ce7adf5): the nested-set insight — a CST is a forest with
+  properly-nested spans, so ancestry/containment is a byte-span range join, not a
+  closure. Point/containment ("innermost node covering byte C in file F",
+  `node(_,_,F,lo,hi,_), lo<=C, C<hi`) is now a range scan via the optional
+  `node_file_span_idx ON rel_node(file,lo,hi)`. MEASURED: `closure(child)` still
+  WINS full-ancestry materialization (91ms vs 484ms unindexed range self-join at
+  1721 nodes), so it is NOT retired — the interval predicate wins only the
+  point/containment query (the LSP-common one). Binding/visibility + free-var
+  analysis (the rest of #10) remains open. See `reference_cst_ancestry_nested_set`.
 
 ## Phase 3 — edit algebra + sinks (D)
 
@@ -180,10 +201,17 @@ Most central, hardest. The "functional, no statements" core. Defer until B/C lan
 
 ## Phase 5 — grammars (E)
 
-| # | Item | Effort |
-|---|------|--------|
-| 5 | Go-template grammar + registry arm (also fixes config-value parser on `{{ }}`) | M |
-| 7 | HCL/Terraform + Dockerfile grammars | M each |
+| # | Item | Effort | Status |
+|---|------|--------|--------|
+| 5 | Go-template grammar + registry arm (also fixes config-value parser on `{{ }}`) | M | **grammar done** d04a711 (`gotmpl` in `ast`); config-value `{{ }}` parser fix open |
+| 7 | HCL/Terraform + Dockerfile grammars | M each | **done** d04a711 (`hcl`/`terraform`/`tf`, `dockerfile` in `ast`) |
+
+d04a711 wired 8 grammars into the raw `ast` backend's `ts_lang` dispatch —
+`python`/`bash`/`go`/`hcl`/`starlark`/`jsonnet` (crates.io) + `gotmpl`/`dockerfile`
+(vendored C via `cc` build.rs to dodge the tree-sitter 0.20 ABI conflict). All 11
+`ts_lang` grammars (these + rust/c/kotlin) also feed CST `node`/`child` (#3). The
+residual on #5 is the structured-config value parser choking on `{{ }}` holes, not
+the grammar itself.
 
 ## Phase 6 — shell-op ergonomics + perf + LSP
 
