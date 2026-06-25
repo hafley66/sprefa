@@ -1,4 +1,4 @@
-//! The built-in `doc_ref(file, line, sym, kind, matched_name)` doc→code bridge
+//! The built-in `doc_ref(_, file, line, sym, kind, matched_name)` doc→code bridge
 //! relation. A doc heading whose name matches a `type_entity` name links the doc
 //! position to the code symbol, making `doc_node` joinable to the type graphs.
 //! Three matching paths: exact heading name, normalized heading name (articles
@@ -68,9 +68,9 @@ fn doc_ref_bridges_headings_to_matching_type_entities() {
         "seen(path) <- scan(\"WORK\", \"**/*.rs\", path, rev), match(path, rev, /./, line).\n",
         // Force the type-graph refresh so type_entity is populated.
         "rel force_type(n: int).\n",
-        "force_type(count(sym)) <- type_entity(sym, _, _, _, _, _).\n",
+        "force_type(count(sym)) <- type_entity(_, sym, _, _, _, _, _).\n",
         "? force_type(n).\n",
-        "? doc_ref(file, line, sym, kind, matched_name).\n",
+        "? doc_ref(_, file, line, sym, kind, matched_name).\n",
     );
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "stderr: {err}\nstdout: {out}");
@@ -97,7 +97,7 @@ fn doc_ref_empty_without_type_relations() {
     let prog = concat!(
         "rel seen(path: file).\n",
         "seen(path) <- scan(\"WORK\", \"**/*.md\", path, rev), match(path, rev, /./, line).\n",
-        "? doc_ref(file, line, sym, kind, matched_name).\n",
+        "? doc_ref(_, file, line, sym, kind, matched_name).\n",
     );
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "stderr: {err}\nstdout: {out}");
@@ -138,9 +138,9 @@ fn doc_ref_normalizes_heading_articles_and_kind_words() {
         "seen(path) <- scan(\"WORK\", \"**/*.md\", path, rev), match(path, rev, /./, line).\n",
         "seen(path) <- scan(\"WORK\", \"**/*.rs\", path, rev), match(path, rev, /./, line).\n",
         "rel force_type(n: int).\n",
-        "force_type(count(sym)) <- type_entity(sym, _, _, _, _, _).\n",
+        "force_type(count(sym)) <- type_entity(_, sym, _, _, _, _, _).\n",
         "? force_type(n).\n",
-        "? doc_ref(file, line, sym, kind, matched_name).\n",
+        "? doc_ref(_, file, line, sym, kind, matched_name).\n",
     );
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "stderr: {err}\nstdout: {out}");
@@ -181,9 +181,9 @@ fn doc_ref_bridges_code_block_mentions() {
         "seen(path) <- scan(\"WORK\", \"**/*.md\", path, rev), match(path, rev, /./, line).\n",
         "seen(path) <- scan(\"WORK\", \"**/*.rs\", path, rev), match(path, rev, /./, line).\n",
         "rel force_type(n: int).\n",
-        "force_type(count(sym)) <- type_entity(sym, _, _, _, _, _).\n",
+        "force_type(count(sym)) <- type_entity(_, sym, _, _, _, _, _).\n",
         "? force_type(n).\n",
-        "? doc_ref(file, line, sym, kind, matched_name).\n",
+        "? doc_ref(_, file, line, sym, kind, matched_name).\n",
     );
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "stderr: {err}\nstdout: {out}");

@@ -390,7 +390,7 @@ fn definition_via_def_target_lands_at_real_line() {
         // Phase E: the program drives go-to-def. type_entity populates because
         // the rule references it; def_target resolves each name to its def row.
         "rel def_target(name: text, file: file, line: int, kind: text).\n",
-        "def_target(name, f, l, \"fn\") <- type_entity(_, name, \"function\", _, f, l).\n",
+        "def_target(name, f, l, \"fn\") <- type_entity(_, _, name, \"function\", _, f, l).\n",
     )).unwrap();
 
     let mut s = Session::spawn(&prog, &root, &root.join("def_target.db"));
@@ -428,7 +428,7 @@ fn hover_returns_entity_summary() {
         "match(f, rev, /fn (?<name>[a-z_]+)/, l).\n",
         // Reference type_entity so the type indexer populates (lazy gate).
         "rel te(name: text).\n",
-        "te(name) <- type_entity(_, name, _, _, _, _).\n",
+        "te(name) <- type_entity(_, _, name, _, _, _, _).\n",
     )).unwrap();
 
     let mut s = Session::spawn(&prog, &root, &root.join("hover.db"));

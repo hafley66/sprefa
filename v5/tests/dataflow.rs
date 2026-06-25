@@ -391,10 +391,15 @@ fn strict_rule_isolates_pure_recomputation() {
         // strict: allocating callee, call in loop, a loop-invariant input, and
         // NO loop-carried input at all -> pure recomputation.
         "rel lic_strict(file: path, fn: text, ls: int, cl: int, callee: text).\n",
+        // call_name/call_site syms are repo-qualified (364de80); allocates (a
+        // dataflow rel) stays bare. The bare sym `asym` is a suffix of the
+        // qualified `csym`, so bridge the two sym-spaces with a containment test
+        // (replace removes `asym` from `csym` iff it occurs).
         "lic_strict(file, fn, ls, cl, csym) <-\n",
         "    loop_over(file, ls, le, lvar, col, fn),\n",
         "    df_node(call_id, \"call_res\", _, fn, file, cl), cl >= ls, cl <= le,\n",
-        "    call_site(caller, ctext, file, cl), call_name(csym, ctext), allocates(csym),\n",
+        "    call_site(_, caller, ctext, file, cl), call_name(csym, ctext),\n",
+        "    allocates(asym), stripped = replace(csym, asym, \"\"), stripped != csym,\n",
         "    df_edge(def, arg), df_edge(arg, call_id),\n",
         "    df_node(def, _, _, fn, _, dl), dl < ls,\n",
         "    !lcc(call_id).\n",
@@ -555,10 +560,13 @@ fn nest_composes_over_call_edge_into_symbolic_cost() {
         // bodies, and direct_cost is precisely the seed the transitive join
         // propagates.
         "rel direct_cost(callee: text, depth: int).\n",
+        // df_node.fn is the bare sym; call_site.caller is repo-qualified
+        // (364de80), so the two no longer unify -- join the call_res node to its
+        // call_site on (file, line) instead.
         "direct_cost(callee, depth) <-\n",
         "    nest(call_id, _, depth, _),\n",
-        "    df_node(call_id, \"call_res\", _, caller_fn, file, line),\n",
-        "    call_site(caller_fn, callee_text, file, line),\n",
+        "    df_node(call_id, \"call_res\", _, _, file, line),\n",
+        "    call_site(_, _, callee_text, file, line),\n",
         "    call_name(callee, callee_text).\n",
         "? call_reaches(caller, callee).\n",
         "? direct_cost(callee, depth).\n",

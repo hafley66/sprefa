@@ -113,7 +113,7 @@ seen(path) <- scan("WORK", "src/**/*.kts", path, rev), match(path, rev, /./, lin
 const ENTITY_PROG: &str = r#"
 rel seen(path: file).
 seen(path) <- scan("WORK", "src/**/*.{ts,tsx}", path, rev), match(path, rev, /./, line).
-? type_entity(sym, name, kind, parent, file, line).
+? type_entity(_, sym, name, kind, parent, file, line).
 ? type_sig(sym, slot, pos, ref).
 ? type_link(src, dst, kind).
 "#;

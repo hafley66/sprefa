@@ -55,7 +55,7 @@ fn markdown_headings_and_code_blocks_become_doc_nodes() {
     let prog = concat!(
         "rel seen(path: file).\n",
         "seen(path) <- scan(\"WORK\", \"docs/**/*.md\", path, rev), match(path, rev, /./, line).\n",
-        "? doc_node(file, line, kind, name, parent).\n",
+        "? doc_node(_, file, line, kind, name, parent).\n",
     );
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "stderr: {err}\nstdout: {out}");
@@ -93,7 +93,7 @@ fn doc_node_joins_changed_to_scope_to_touched_docs() {
         "seen(path) <- scan(\"WORK\", \"docs/**/*.md\", path, rev), match(path, rev, /./, line).\n",
         "rel diag(path: text, line: int, severity: text, code: text, msg: text).\n",
         "diag(p, l, \"warn\", \"doc-touched\", \"heading in a changed doc\") <-\n",
-        "    doc_node(p, l, \"heading\", n, par), changed(p).\n",
+        "    doc_node(_, p, l, \"heading\", n, par), changed(p).\n",
         "? diag(p, l, s, c, m).\n",
     );
     let (code, out, err) = run(&d, prog);

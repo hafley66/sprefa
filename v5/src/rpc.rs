@@ -193,7 +193,7 @@ mod tests {
     #[test]
     fn extra_headers_ignored() {
         let raw = b"Content-Type: application/vscode-jsonrpc; charset=utf-8\r\n\
-                    Content-Length: 13\r\n\
+                    Content-Length: 11\r\n\
                     \r\n\
                     {\"hello\":1}";
         let mut cursor = std::io::Cursor::new(&raw[..]);

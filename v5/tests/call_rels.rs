@@ -71,8 +71,8 @@ fn empty_call_extractors_keep_wiring_live() {
         "seen(path) <- scan(\"WORK\", \"src/**/*.kt\", path, rev), match(path, rev, /./, line).\n",
         "rel reaches(a: text, b: text).\n",
         "reaches(a, b) <- closure(call_edge).\n",
-        "? call_def(sym, kind, file, line, end).\n",
-        "? call_site(caller, callee, file, line).\n",
+        "? call_def(_, sym, kind, file, line, end).\n",
+        "? call_site(_, caller, callee, file, line).\n",
         "? reaches(a, b).\n",
     );
     let (code, out, err) = run(&d, prog, &[]);
@@ -102,20 +102,22 @@ fn rust_call_graph_extracts_resolves_and_closes() {
         "seen(path) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /./, line).\n",
         "rel reaches(a: text, b: text).\n",
         "reaches(a, b) <- closure(call_edge).\n",
-        "? call_def(sym, kind, file, line, end).\n",
+        "? call_def(_, sym, kind, file, line, end).\n",
         "? reaches(a, b).\n",
     );
     let (code, out, err) = run(&d, prog, &[]);
     assert_eq!(code, 0, "Rust extraction must not error:\n{err}");
 
-    let main = "src/lib.rs::function::main";
-    let helper = "src/lib.rs::function::helper";
-    let leaf = "src/lib.rs::function::leaf";
+    // Syms are repo-qualified (364de80); the repo slug is the sandbox dir name.
+    let repo = d.file_name().unwrap().to_str().unwrap();
+    let main = format!("{repo}::src/lib.rs::function::main");
+    let helper = format!("{repo}::src/lib.rs::function::helper");
+    let leaf = format!("{repo}::src/lib.rs::function::leaf");
 
     // call_def: all three callables present.
-    assert!(out.contains(main), "main def missing:\n{out}");
-    assert!(out.contains(helper), "helper def missing:\n{out}");
-    assert!(out.contains(leaf), "leaf def missing:\n{out}");
+    assert!(out.contains(&main), "main def missing:\n{out}");
+    assert!(out.contains(&helper), "helper def missing:\n{out}");
+    assert!(out.contains(&leaf), "leaf def missing:\n{out}");
     assert!(
         out.contains("(3 rows)"),
         "expected exactly 3 call_def rows:\n{out}"
