@@ -123,6 +123,24 @@ impl WhereBytesId {
         h.update(path.as_bytes());
         Self(first_u64(h.finalize().as_bytes()))
     }
+
+    /// Salt a located id by a discriminator (a CST node `kind`). Two tree-sitter
+    /// nodes that share `(file, lo, hi)` but differ in kind — a wrapper and its
+    /// sole child — must NOT collapse to one id, or innermost-containment merges
+    /// them. The salt only perturbs the id; the underlying `_where_bytes` row
+    /// still carries the RAW slice's StringId, so `ref(id, sid, ..)` ->
+    /// `string(sid, text, ..)` resolves to the raw source bytes. The sentinel is
+    /// preserved.
+    pub fn salted(self, kind: &str) -> Self {
+        if self == Self::SYNTHETIC {
+            return self;
+        }
+        let mut h = blake3::Hasher::new();
+        h.update(&self.0.to_be_bytes());
+        h.update(&[1]); // separator distinct from of_located's [0]
+        h.update(kind.as_bytes());
+        Self(first_u64(h.finalize().as_bytes()))
+    }
 }
 
 impl From<RefId> for WhereBytesId {

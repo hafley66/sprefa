@@ -1,6 +1,7 @@
 pub mod ast;
 pub mod comment;
 pub mod config;
+pub mod cst;
 pub mod daemon;
 pub mod datapath;
 pub mod db;

@@ -138,6 +138,16 @@ const CHANGED_LINE_RELS: [&str; 1] = ["changed_line"];
 /// ref(_, s, f, lo, hi)`. Populated for regex/ast/sg captures and import refs.
 const SPINE_RELS: [&str; 2] = ["string", "ref"];
 
+/// CST-as-relation (christmas #3): every NAMED tree-sitter node of every scanned
+/// file as a row. `node(id, kind, file, lo, hi, parent)` — `id`/`parent` are
+/// kind-salted `_where_bytes` ids (so `ref(id, sid, _, lo, hi)` ->
+/// `string(sid, text, _)` recovers each node's source bytes); `file` is the
+/// content FileId, `kind` the tree-sitter node kind, `[lo, hi)` the byte span.
+/// `child(parent, child)` is the 2-col edge so `anc(a,b) <- closure(child).`
+/// gives ancestor/descendant with the engine's existing recursion. Populated by
+/// `refresh_node_rels` over the whole tree (no query) when the rels are used.
+const NODE_RELS: [&str; 2] = ["node", "child"];
+
 /// Daemon-state query relations: thin views over the persisted `_program` /
 /// `_ref` / `_rev_log` meta tables, so a dashboard can ask the warm engine what
 /// it loaded and which watched refs have moved. `program(path, hash, mtime)` is
@@ -174,6 +184,7 @@ pub fn builtin_rel_names() -> std::collections::HashSet<String> {
         .chain(doc_rel_decls())
         .chain(scip_rel_decls())
         .chain(spine_rel_decls())
+        .chain(node_rel_decls())
         .chain(changed_rel_decls())
         .chain(changed_line_rel_decls())
         .chain(daemon_rel_decls())
@@ -323,6 +334,18 @@ fn spine_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
+fn node_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "node".into(), cols: vec![
+            c("id", Type::Text), c("kind", Type::Text), c("file", Type::Text),
+            c("lo", Type::Int), c("hi", Type::Int), c("parent", Type::Text)] },
+        // EXACTLY 2 cols: `declare_closure` requires it, so `anc(a,b) <-
+        // closure(child).` works with zero new recursion code.
+        RelDecl { name: "child".into(), cols: vec![c("parent", Type::Text), c("child", Type::Text)] },
+    ]
+}
+
 fn daemon_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -416,6 +439,8 @@ fn scip_descriptor_name(symbol: &str) -> Option<String> {
 fn scip_rels_used(prog: &Program) -> bool { rels_used(prog, &SCIP_RELS) }
 
 fn spine_rels_used(prog: &Program) -> bool { rels_used(prog, &SPINE_RELS) }
+
+fn node_rels_used(prog: &Program) -> bool { rels_used(prog, &NODE_RELS) }
 
 fn changed_rels_used(prog: &Program) -> bool { rels_used(prog, &CHANGED_RELS) }
 
@@ -857,6 +882,11 @@ pub struct Engine {
     /// Emit `?` query results as JSON-lines (one object per query) instead of the
     /// human TSV block. For tools/editors consuming answers (`--query-json`).
     query_json: bool,
+    /// Test/bench instrumentation: the N+1 detector's verdict for the LAST tick
+    /// (`db.tick_end()`), so a test can assert no per-row write slipped through
+    /// the plural API. `None` = silent (good); `Some((stmt, count))` = a
+    /// statement ran past `N1_THRESHOLD`.
+    pub last_n1: Option<(String, u32)>,
 }
 
 impl Engine {
@@ -868,6 +898,7 @@ impl Engine {
             rev_index: std::collections::HashSet::new(),
             repos: Vec::new(),
             query_json: false,
+            last_n1: None,
         }
     }
 
@@ -1234,6 +1265,13 @@ impl Engine {
         Ok(rows.filter_map(|x| x.ok()).collect())
     }
 
+    /// Row count of a relation's backing table (`rel_<name>`). Test/bench
+    /// instrumentation; returns 0 when the table is empty, errors if absent.
+    pub fn count_rows(&self, rel: &str) -> Result<i64> {
+        let conn = self.db.conn();
+        Ok(conn.query_row(&format!("SELECT COUNT(*) FROM {}", tbl(rel)), [], |r| r.get(0))?)
+    }
+
     pub fn query_sql(&self, sql: &str, params: &[serde_json::Value]) -> Result<Vec<Vec<serde_json::Value>>> {
         let conn = self.db.conn();
         let mut stmt = conn.prepare(sql)?;
@@ -1474,6 +1512,14 @@ impl Engine {
             phase("doc-rels", t);
         }
         if scip_rels_used(prog) { changed |= self.refresh_scip_rels()?; }
+        // Node rels write into `_strings`/`_where_bytes` (the spine meta tables),
+        // so they must run BEFORE the spine projection or this tick's `ref`/
+        // `string` would miss the node spans.
+        if node_rels_used(prog) {
+            let t = std::time::Instant::now();
+            changed |= self.refresh_node_rels()?;
+            phase("node-rels", t);
+        }
         if spine_rels_used(prog) {
             let t = std::time::Instant::now();
             self.refresh_spine_rels()?;
@@ -1529,7 +1575,7 @@ impl Engine {
             eprintln!("[audit] {} relation(s)", counts.len());
             for (rel, n) in &counts { eprintln!("[audit]   {rel}: {n}"); }
         }
-        self.db.tick_end();
+        self.last_n1 = self.db.tick_end();
         Ok(())
     }
 
@@ -1693,6 +1739,12 @@ impl Engine {
                 self.refresh_doc_rels()?;
                 for r in DOC_RELS { changed_source_rels.insert(r.to_string()); }
             }
+            // Node rels write into the spine meta tables, so refresh them BEFORE
+            // the spine projection (else this tick's `ref`/`string` miss node spans).
+            if node_rels_used(prog) && self.refresh_node_rels()? {
+                for n in NODE_RELS { changed_source_rels.insert(n.to_string()); }
+                changed_facts = true;
+            }
             if spine_rels_used(prog) {
                 self.refresh_spine_rels()?;
                 for s in SPINE_RELS { changed_source_rels.insert(s.to_string()); }
@@ -1764,7 +1816,7 @@ impl Engine {
         for item in &prog.items { if let Item::Query(q) = item { self.run_query(q, &closures)?; } }
         self.run_gens(prog, quiet)?;
         if self.dropped > 0 { eprintln!("[checked-type] dropped {} rows", self.dropped); self.dropped = 0; }
-        self.db.tick_end();
+        self.last_n1 = self.db.tick_end();
         Ok(())
     }
 
@@ -2315,6 +2367,9 @@ impl Engine {
                 if SPINE_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in ref-spine relation (string / ref); pick another name", d.name);
                 }
+                if NODE_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is a built-in CST relation (node / child); pick another name", d.name);
+                }
                 if CHANGED_RELS.contains(&d.name.as_str()) {
                     bail!("{} is the built-in worktree-diff relation; pick another name", d.name);
                 }
@@ -2347,6 +2402,7 @@ impl Engine {
         for d in doc_rel_decls() { self.declare(&d)?; }
         for d in scip_rel_decls() { self.declare(&d)?; }
         for d in spine_rel_decls() { self.declare(&d)?; }
+        for d in node_rel_decls() { self.declare(&d)?; }
         for d in changed_rel_decls() { self.declare(&d)?; }
         for d in changed_line_rel_decls() { self.declare(&d)?; }
         for d in daemon_rel_decls() { self.declare(&d)?; }
@@ -2963,6 +3019,132 @@ impl Engine {
              SELECT \"from\", \"to\", \"kind\" FROM {edge_rev}"
         ))?;
         Ok(())
+    }
+
+    /// CST-as-relation (christmas #3): walk every NAMED tree-sitter node of every
+    /// scanned file (across all 11 `ts_lang` grammars) into `node`/`child`. Same
+    /// shape as `refresh_type_rels`: parallel per-file parse (CPU-bound, no DB),
+    /// then collect-then-flush (three batched writes: `_strings`/`_where_bytes`
+    /// for the spine, `node`, `child`). NO per-row write — the N+1 counter stays
+    /// quiet. Gated on `node_rels_used`, so a program that never asks pays
+    /// nothing (the full-tree walk is ~100x type_edge; christmas #19 chunked
+    /// flush is the later mitigation, NOT built here).
+    ///
+    /// Each node's id is a kind-salted `_where_bytes` id: `salted(of_located(
+    /// raw-slice WhereBytes, repo, path), kind)`. The salt keeps a wrapper node
+    /// and its sole identical-span child distinct (else innermost-containment
+    /// merges them), while the underlying `_where_bytes` row carries the RAW
+    /// slice's StringId, so `ref(id, sid, ..)` -> `string(sid, text, ..)` recovers
+    /// the node's source bytes (riding step 1's intern fix).
+    fn refresh_node_rels(&self) -> Result<bool> {
+        // The scanned file set, keyed by (repo, path, rev, hash). hash -> FileId.
+        let mut files: Vec<(String, String, String, String)> = Vec::new();
+        {
+            let mut sel = self.db.conn().prepare("SELECT repo, path, rev, hash FROM _file")?;
+            let rows = sel.query_map([], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?, r.get::<_, String>(3)?)))?;
+            for row in rows.flatten() { files.push(row); }
+        }
+        let root = self.root.clone();
+        let roots = self.repo_roots();
+
+        // Per-file parse + walk in parallel (no DB touch). Each yields the file's
+        // node records plus the repo id + path + FileId its spans key off.
+        struct FileNodes { repo: String, path: String, file: spine::FileId, content: String, nodes: Vec<crate::cst::CstNode> }
+        let parsed: Vec<FileNodes> = files.par_iter().filter_map(|(repo, path, rev, hash)| {
+            let label = crate::cst::lang_label_for_path(path)?;
+            let lang = ts_lang(label).ok()?;
+            let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
+            let content = read_content(froot, rev, path).unwrap_or_default();
+            let file = spine::FileId::from_content_address(hash, content.len() as i64)
+                .filter(|f| *f != spine::FileId::SYNTHETIC)?;
+            let nodes = crate::cst::walk_cst(&content, &lang).ok()?;
+            if nodes.is_empty() { return None; }
+            let rid = repo_id_of(froot, path, repo);
+            Some(FileNodes { repo: rid, path: path.clone(), file, content, nodes })
+        }).collect();
+
+        // Collect-then-flush. node_rows/child_rows for the rels; str_by_id/wb_by_id
+        // for the spine (kind-salted id, raw string_id).
+        let mut node_rows: Vec<Vec<Value>> = Vec::new();
+        let mut child_rows: Vec<Vec<Value>> = Vec::new();
+        let mut str_by_id: BTreeMap<String, (String, String)> = BTreeMap::new();
+        let mut wb_by_id: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+        for fln in &parsed {
+            let FileNodes { repo, path, file, content, nodes } = fln;
+            // Pre-compute each node's salted id (an index-aligned Vec) so the
+            // child edges reference the parent's id without recomputing.
+            let mut ids: Vec<String> = Vec::with_capacity(nodes.len());
+            for n in nodes {
+                let slice = content.get(n.lo..n.hi).unwrap_or("");
+                let raw_sid = spine::StringId::of(slice);
+                let raw_wb = spine::WhereBytes { string: raw_sid, file: *file, lo: n.lo as u32, hi: n.hi as u32, ..Default::default() };
+                let base = spine::WhereBytesId::of_located(raw_wb, repo, path);
+                let node_id = base.salted(&n.kind).to_string();
+                ids.push(node_id.clone());
+                // Spine rows: the `_where_bytes` row uses the SALTED id but the
+                // RAW StringId, so ref(node_id) -> string(raw_sid) = raw slice.
+                if !slice.is_empty() {
+                    str_by_id.entry(raw_sid.to_string())
+                        .or_insert_with(|| (slice.to_string(), spine::normalize(slice)));
+                    wb_by_id.entry(node_id.clone()).or_insert_with(|| vec![
+                        Value::Text(node_id.clone()),
+                        Value::Text(raw_sid.to_string()),
+                        Value::Text(file.to_string()),
+                        Value::Int(n.lo as i64),
+                        Value::Int(n.hi as i64),
+                        Value::Text(repo.clone()),
+                        Value::Text(spine::RevId::default().to_string()),
+                        Value::Text(path.clone()),
+                    ]);
+                }
+            }
+            for (ix, n) in nodes.iter().enumerate() {
+                let parent_id = n.parent_ix.map(|p| ids[p].clone()).unwrap_or_default();
+                node_rows.push(vec![
+                    Value::Text(ids[ix].clone()),
+                    Value::Text(n.kind.clone()),
+                    Value::Text(file.to_string()),
+                    Value::Int(n.lo as i64),
+                    Value::Int(n.hi as i64),
+                    Value::Text(parent_id),
+                ]);
+                if let Some(p) = n.parent_ix {
+                    child_rows.push(vec![Value::Text(ids[p].clone()), Value::Text(ids[ix].clone())]);
+                }
+            }
+        }
+
+        // Node ids are content-addressed and kind-salted, so each node row is
+        // already unique within a tick (a node can't appear twice in one walk;
+        // path folds into the id across files). Early-out by comparing the stored
+        // id set to the computed one — if identical, no file's tree moved.
+        let computed: std::collections::HashSet<String> = node_rows.iter()
+            .filter_map(|row| if let Value::Text(s) = &row[0] { Some(s.clone()) } else { None }).collect();
+        let stored: std::collections::HashSet<String> = {
+            let conn = self.db.conn();
+            let mut s = conn.prepare(&format!("SELECT id FROM {}", tbl("node")))?;
+            let set: std::collections::HashSet<String> =
+                s.query_map([], |r| r.get::<_, String>(0))?.filter_map(|x| x.ok()).collect();
+            set
+        };
+        if stored == computed { return Ok(false); }
+
+        // Flush: spine first (so node ids resolve), then the two rels.
+        if !str_by_id.is_empty() {
+            let string_rows: Vec<Vec<Value>> = std::mem::take(&mut str_by_id).into_iter()
+                .map(|(id, (content, norm))| vec![Value::Text(id), Value::Text(content), Value::Text(norm)])
+                .collect();
+            self.db.insert_rows("_strings", &["id", "content", "norm"], &string_rows)?;
+        }
+        if !wb_by_id.is_empty() {
+            let wb_rows: Vec<Vec<Value>> = std::mem::take(&mut wb_by_id).into_values().collect();
+            self.db.insert_rows("_where_bytes", &["id", "string_id", "file_id", "lo", "hi", "repo", "rev", "path"], &wb_rows)?;
+        }
+        self.refresh_rel("node", &["id", "kind", "file", "lo", "hi", "parent"], &node_rows)?;
+        self.refresh_rel("child", &["parent", "child"], &child_rows)?;
+        Ok(true)
     }
 
     /// Wholesale repopulation of the Phase D call-graph relations. Same shape
