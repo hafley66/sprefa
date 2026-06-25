@@ -155,7 +155,7 @@ pub enum BodyItem {
     /// order, `name: term` to bind a later slot, or unmentioned to bind nothing.
     /// `Term::Wild` marks an unbound output; the engine arm skips it.
     Sg { path: Term, rev: Term, lang: String, pattern: String, line: Term,
-         col: Term, end_line: Term, end_col: Term },
+         col: Term, end_line: Term, end_col: Term, id: Option<Term> },
     /// ast-grep relational YAML rule (RuleCore: inside/has/any/all/not/kind/
     /// regex/pattern). `yaml` is the (usually backtick, multiline) body; the
     /// span + capture binds mirror `Sg`. Superset of `Sg` — a bare `pattern:`
@@ -163,10 +163,11 @@ pub enum BodyItem {
     /// relationships a pattern alone can't express.
     AstYaml { path: Term, rev: Term, lang: String, yaml: String, line: Term,
               col: Term, end_line: Term, end_col: Term },
-    /// `jsonp(path, rev, "a.b.*", out)` — dotted-string evaluator over
+    /// `jsonp(path, rev, "a.b.*", out, id?)` — dotted-string evaluator over
     /// json/yaml/toml (dispatched by extension; `*` = any key/element). Renamed
-    /// from `json` to free the name for the declarative brace pattern.
-    JsonP { path: Term, rev: Term, jpath: String, out: Term },
+    /// from `json` to free the name for the declarative brace pattern. Trailing
+    /// optional `id` = the matched value's located span (christmas #9).
+    JsonP { path: Term, rev: Term, jpath: String, out: Term, id: Option<Term> },
     /// `json(path, rev, q:{ $k: $v })` — declarative brace pattern over a
     /// json/yaml/toml document (dispatched by extension, like jsonp). Each
     /// match binds N named captures (keys AND values) as rule vars, mirroring

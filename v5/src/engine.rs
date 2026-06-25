@@ -4826,11 +4826,16 @@ fn parse_file(
                 }
                 binds = next;
             }
-            BodyItem::Sg { lang, pattern, line, col, end_line, end_col, .. } => {
+            BodyItem::Sg { lang, pattern, line, col, end_line, end_col, id, .. } => {
                 let slv = opt_var(line)?;
                 let clv = opt_var(col)?;
                 let ellv = opt_var(end_line)?;
                 let eclv = opt_var(end_col)?;
+                // Optional trailing `id`: the spine id of the whole sg match span
+                // (captures' min lo .. max hi), same located-id shape as `ast`/
+                // `match` (christmas #9, decision 3). Resolves via `ref` AND
+                // `string` (rides step 1's intern of the slice text).
+                let idv = id.as_ref().map(var_of).transpose()?;
                 // prefilter: a file lacking any literal token cannot match
                 let lits = pattern_literals(pattern);
                 if !lits.iter().all(|t| content.contains(t.as_str())) {
@@ -4846,6 +4851,28 @@ fn parse_file(
                         if let Some(v) = &clv { ext.insert(v.clone(), Value::Int(*c)); }
                         if let Some(v) = &ellv { ext.insert(v.clone(), Value::Int(*eln)); }
                         if let Some(v) = &eclv { ext.insert(v.clone(), Value::Int(*ec)); }
+                        if let Some(idv) = &idv {
+                            if let Some(file) = where_file {
+                                let lo = caps.iter().map(|(_, _, lo, _)| *lo).min();
+                                let hi = caps.iter().map(|(_, _, _, hi)| *hi).max();
+                                if let (Some(lo), Some(hi)) = (lo, hi) {
+                                    if hi > lo && hi <= content.len() {
+                                        let text = &content[lo..hi];
+                                        if !text.is_empty() {
+                                            let wb = spine::WhereBytes {
+                                                string: spine::StringId::of(text), file,
+                                                lo: lo as u32, hi: hi as u32,
+                                                ..Default::default()
+                                            };
+                                            ext.insert(idv.clone(), Value::Text(
+                                                spine::WhereBytesId::of_located(wb, repo, path)
+                                                    .to_string()));
+                                            push_span(text, lo, hi, &mut where_bytes);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         for (n, t, lo, hi) in caps {
                             ext.insert(n.clone(), Value::Text(t.clone()));
                             push_span(t, *lo, *hi, &mut where_bytes);
@@ -4959,14 +4986,32 @@ fn parse_file(
                 }
                 binds = next;
             }
-            BodyItem::JsonP { jpath, out, .. } => {
+            BodyItem::JsonP { jpath, out, id, .. } => {
                 let ov = opt_var(out)?;
+                // Optional trailing `id`: the spine id of the matched value's byte
+                // span. For json the value span IS the whole match (christmas #9,
+                // decision 3). Resolves via `ref` AND `string`.
+                let idv = id.as_ref().map(var_of).transpose()?;
                 let vals = crate::datapath::run_data(path, &content, jpath);
                 let mut next: Vec<Bind> = Vec::new();
                 for b in &binds {
                     for (v, lo, hi) in &vals {
                         let mut ext = b.clone();
                         if let Some(ov) = &ov { ext.insert(ov.clone(), Value::Text(v.clone())); }
+                        if let Some(idv) = &idv {
+                            if let Some(file) = where_file {
+                                if !v.is_empty() {
+                                    let wb = spine::WhereBytes {
+                                        string: spine::StringId::of(v), file,
+                                        lo: *lo as u32, hi: *hi as u32,
+                                        ..Default::default()
+                                    };
+                                    ext.insert(idv.clone(), Value::Text(
+                                        spine::WhereBytesId::of_located(wb, repo, path)
+                                            .to_string()));
+                                }
+                            }
+                        }
                         push_span(v, *lo, *hi, &mut where_bytes);
                         next.push(ext);
                     }

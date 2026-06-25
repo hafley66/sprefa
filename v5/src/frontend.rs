@@ -220,14 +220,16 @@ fn rewrite_terms(b: &mut BodyItem, sub: &HashMap<String, Term>, params: &[String
             rewrite_opt(end);
             rewrite_opt(id);
         }
-        BodyItem::Sg { path, rev, line, col, end_line, end_col, .. } => {
+        BodyItem::Sg { path, rev, line, col, end_line, end_col, id, .. } => {
             for t in [path, rev, line, col, end_line, end_col] { rewrite_term(t); }
+            rewrite_opt(id);
         }
         BodyItem::AstYaml { path, rev, line, col, end_line, end_col, .. } => {
             for t in [path, rev, line, col, end_line, end_col] { rewrite_term(t); }
         }
-        BodyItem::JsonP { path, rev, out, .. } => {
+        BodyItem::JsonP { path, rev, out, id, .. } => {
             for t in [path, rev, out] { rewrite_term(t); }
+            rewrite_opt(id);
         }
         BodyItem::Json { path, rev, .. } => {
             for t in [path, rev] { rewrite_term(t); }

@@ -419,12 +419,18 @@ impl Parser {
         } else {
             (Vec::new(), Vec::new())
         };
-        let outs = Self::assign_outputs(&["line", "col", "end_line", "end_col"], pos, named)?;
+        // `id` is the trailing 5th output: the spine id of the WHOLE-match span
+        // (captures' min..max byte range), bound through the same located-id path
+        // as `ast`/`match` so a rule joins `ref(id, _, _, lo, hi)` for the codemod
+        // anchor (christmas #9, decision 3 — consistent across ast/sg/json).
+        let outs = Self::assign_outputs(&["line", "col", "end_line", "end_col", "id"], pos, named)?;
+        let id = match &outs[4] { Term::Wild => None, t => Some(t.clone()) };
         self.expect(Tok::RParen)?;
         Ok(BodyItem::Sg {
             path, rev, lang, pattern,
             line: outs[0].clone(), col: outs[1].clone(),
             end_line: outs[2].clone(), end_col: outs[3].clone(),
+            id,
         })
     }
 
@@ -471,8 +477,14 @@ impl Parser {
         };
         self.expect(Tok::Comma)?;
         let out = self.term()?;
+        // Trailing optional `id`: the spine id of the matched value's byte span,
+        // bound through the same located-id path as ast/sg/match (christmas #9,
+        // decision 3). Omitted = no id binding (existing 4-arg form unchanged).
+        let id = if matches!(self.peek(), Some(Tok::Comma)) {
+            self.next()?; Some(self.term()?)
+        } else { None };
         self.expect(Tok::RParen)?;
-        Ok(BodyItem::JsonP { path, rev, jpath, out })
+        Ok(BodyItem::JsonP { path, rev, jpath, out, id })
     }
 
     /// `json(path, rev, q:{ $k: $v })` — declarative brace pattern. The 3rd
@@ -498,7 +510,6 @@ impl Parser {
             bail!("json pattern error: {e}");
         }
         Ok(BodyItem::Json { path, rev, pat })
-    }
 
     fn cmd(&mut self) -> Result<BodyItem> {
         self.ident()?; // cmd
