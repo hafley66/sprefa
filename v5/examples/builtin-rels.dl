@@ -1,0 +1,28 @@
+# builtin-rels.dl — keep the core engine relations quick-reference fresh from
+# engine.rs's `refresh_rel` calls. Same twine as op-table.dl: match (source) +
+# comment (marker bounds) + gen (splice). Drift in a relation's columns shows
+# up here the next tick after engine.rs changes.
+#
+# Columns are captured verbatim from the refresh_rel array, so they carry their
+# source quotes ("slug", "root", "url") — accurate, if slightly cosmetic. The
+# hand-written prose table lower in the README stays the human-readable copy.
+#
+# Manual:  dl v5/examples/builtin-rels.dl --root .
+# Daemon:  dl --load v5/examples/builtin-rels.dl   (regens on engine.rs edits)
+# Rerun converges (gen writes only when bytes differ).
+
+# The four core engine relations and their column arrays, as populated by
+# refresh_builtin_rels. Restricting rel to this set avoids the many other
+# refresh_rel callers (type_entity, call_def, …) that belong to the prose table.
+rel core_rel(rel: text, cols: text).
+core_rel(rel, cols) <- scan("WORK", "v5/src/engine.rs", p, rev),
+  match(p, rev, /refresh_rel\("(?<rel>repo|rev|content|file)", &\[(?<cols>"[^"]+"(?:, "[^"]+")*)\]/, _).
+
+# The marker pair wrapping the quick-reference block in the README.
+rel block(p: file, l0: int, l1: int).
+block(p, l0, l1) <- scan("WORK", "v5/README.md", p, rev),
+  comment(p, rev, /BEGIN: builtin-rels/, /END: builtin-rels/, l0, l1).
+
+gen(p, l0, l1, "| relation | columns (from `engine.rs`) |") <- block(p, l0, l1).
+gen(p, l0, l1, "|---|---|") <- block(p, l0, l1).
+gen(p, l0, l1, "| `{rel}` | ({cols}) |") <- block(p, l0, l1), core_rel(rel, cols).

@@ -123,6 +123,42 @@ Workaround for OR today: multiple `json(...)` rules unioned at the head relation
       when line 1 changes. Consider reading the full `//!` block summary, or a
       lint that flags `//!` lines referencing renamed ops.
 
+## Christmas list — done this arc
+
+Reference: [`plans/2026-06-24-parse-engine-christmas-list.md`](plans/2026-06-24-parse-engine-christmas-list.md).
+
+- [x] **#1 (Phase 4, L)** Data-driven scan repo/rev. A scan's `repo`/`rev` may be a
+      `Term::Var` bound by a preceding body atom; `resolve_scan_bindings` compiles
+      the rule's Pos/Neg/Cmp atoms to a SELECT over last tick's coordinate
+      relation (1-tick latency, no fixpoint rewrite), enumerates per binding,
+      seeds `parse_file` with the coord values. Glob stays literal. Tests:
+      `tests/data_driven_scan.rs`. Foreground one-shot primes (`prime_tick`) so a
+      fresh `dl prog.dl` derives coords then scans in one run.
+      **Open:** variable glob; true semi-naive fixpoint (source→derived→source)
+      instead of the 1-tick read; #15 (shell op takes derived args) and #28
+      (rev-set fan) are the same family — reachable now but not separately built.
+- [x] **#6 (multi-root reactivity)** `tick_paths` falls back to the full tick when
+      a changed path isn't under `self.root` (#6a), so config + dynamically-pulled
+      repos react to source edits. Trade-off: lost incrementality for non-self
+      edits (was a silent drop — the #6 bug). Full per-repo incremental (#6b) open.
+- [x] **Repo-sink dynamic pulls.** `repo(slug, root, url)` is an insertable sink
+      (excluded from `derived_rels` so `rebuild_derived` never wipes it); drained
+      post-fixpoint via the `lower_gen` SELECT path; `parse_github_org` hard-checks
+      the `org(name)` allow-list; `ensure_cloned` + idempotent register into
+      `self.repos`. Daemon diffs `snapshot_repos()` after each tick and watches
+      pulled roots. Tests: `tests/repo_sink.rs`.
+- [x] **Structured tracing.** `tracing` + `tracing-subscriber`, off by default
+      (`DL_TRACE=<level>` / `RUST_LOG`). Span CLOSE carries durations; spans on
+      tick/tick_paths (info), reconcile/refresh/rebuild/gens/repo_pulls/
+      resolve_scan_bindings (debug), parse_file (trace). Reactivity conditions
+      logged (full-tick fallback reasons, watcher event classification).
+      Orthogonal to the older `DL_PROFILE` SQL/scan logging.
+- [x] **T20 wire-up (partial).** `examples/builtin-rels.dl` regenerates the README
+      core-relations block (`repo`/`rev`/`content`/`file` columns) from
+      `engine.rs`'s `refresh_rel` calls — same match+comment+gen twine as
+      `op-table.dl`. Caught the `repo` drift (`id,slug,root` → `slug,root,url`).
+      Usage doc: [`docs/dynamic-reaching.md`](v5/docs/dynamic-reaching.md).
+
 ## Decisions log (what we already chose)
 
 - Carrier = `q:` PathLit (structured/highlightable, not a string). `json` is the

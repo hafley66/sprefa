@@ -261,9 +261,20 @@ parses as a rule because the second token is `(`, not an ident. Mirrors the
 
 Reserved names, populated lazily — a program pays only for what it references. The lazy indexers (`type_entity`, `call_def`, `call_kind`, `df_node`, `loop_over`, `nest`) populate only over files a `scan` rule in the program pulls in; referencing one without a scan yields zero rows. See `examples/lsp-def-target.dl` for the `index_over` bridge pattern.
 
+<!-- BEGIN: builtin-rels -->
+| relation | columns (from `engine.rs`) |
+|---|---|
+| `repo` | ("slug", "root", "url") |
+| `rev` | ("id", "repo", "oid", "ts") |
+| `content` | ("id", "hash") |
+| `file` | ("repo", "rev", "path", "content") |
+<!-- END: builtin-rels -->
+
+Above block is auto-generated from `refresh_rel` calls by `examples/builtin-rels.dl` (run it or `dl --load` it). The prose table below is hand-maintained.
+
 | relation | columns | source |
 |---|---|---|
-| `repo` | `(id, slug, root)` | configured repos + self |
+| `repo` | `(slug, root, url)` | configured + dynamically-pulled repos whose root exists. Writable as a sink: a rule `repo(slug,root,url) <- …` clones+registers when the github org is in `org` (hard filter). See [docs/dynamic-reaching.md](docs/dynamic-reaching.md) |
 | `rev` | `(id, repo, oid, ts)` | git revs seen by scans |
 | `content` | `(id, hash)` | content addresses |
 | `file` | `(repo, rev, path, content)` | scanned files |
