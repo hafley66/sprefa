@@ -3907,8 +3907,17 @@ impl Engine {
         // Byte cursors (gen(:mode, ...)) accumulate the same way, separate from
         // line splices because their coordinates and apply semantics differ.
         let mut cursors = Cursors::default();
+        // File targets claimed by a gen rule this tick. A second gen rule
+        // rendering the SAME path would silently overwrite the first (the v0
+        // last-wins trap: file emits don't concatenate across rules), so the
+        // File arm bails loudly when a path is already claimed by another rule.
+        // Within one rule, rows to one path concat via `groups`; the claim is
+        // per rule, so that path stays legal.
+        let mut claimed: HashMap<String, ()> = HashMap::new();
         for item in &prog.items {
-            if let Item::Gen(g) = item { self.run_gen(g, &mut written, &mut splices, &mut cursors)?; }
+            if let Item::Gen(g) = item {
+                self.run_gen(g, &mut written, &mut splices, &mut cursors, &mut claimed)?;
+            }
         }
         self.apply_splices(&splices, &mut written)?;
         self.apply_cursors(&cursors, &mut written)?;
@@ -3918,7 +3927,7 @@ impl Engine {
         Ok(())
     }
 
-    fn run_gen(&mut self, g: &GenRule, written: &mut Vec<String>, splices: &mut Splices, cursors: &mut Cursors) -> Result<()> {
+    fn run_gen(&mut self, g: &GenRule, written: &mut Vec<String>, splices: &mut Splices, cursors: &mut Cursors, claimed: &mut HashMap<String, ()>) -> Result<()> {
         // Target vars lead the SELECT so grouping reads prefix columns; the
         // ORDER BY over all vars makes render order deterministic.
         let target_vars: Vec<String> = match &g.target {
@@ -3963,6 +3972,17 @@ impl Engine {
                     }
                     if !groups.contains_key(&path) { order.push(path.clone()); }
                     groups.entry(path).or_default().push(render_tmpl(&g.row_tmpl, m));
+                }
+                // A path another gen rule already wrote this tick would be
+                // clobbered, not concatenated. Bail loudly (mirrors the
+                // mixed-source/derived bail): union the rows into one relation
+                // and emit them from a single gen rule.
+                for p in &order {
+                    if claimed.insert(p.clone(), ()).is_some() {
+                        bail!("two gen rules write the same file `{p}`; file emits don't \
+                               concatenate across rules (last would win). Union the rows into \
+                               one relation and emit from a single gen rule.");
+                    }
                 }
                 for p in order {
                     let content = format!("{}\n", groups[&p].join("\n"));

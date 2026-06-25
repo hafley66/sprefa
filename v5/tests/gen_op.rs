@@ -73,6 +73,44 @@ fn matching_bytes_skip_the_write() {
     assert_eq!(code, 0, "second run must skip the write entirely: {err}");
 }
 
+/// Two separate gen File rules rendering the same path is the v0 last-wins
+/// trap: file emits don't concatenate across rules, so the engine bails loudly
+/// (mirrors the mixed-source/derived bail) instead of silently dropping the
+/// first rule's content. The fix is to union the rows into one relation.
+#[test]
+fn two_file_rules_same_path_bail_loudly() {
+    let d = sandbox("dup_path");
+    let prog = concat!(
+        "rel xs(x: text).\n",
+        "xs(\"a\").\n",
+        "rel ys(y: text).\n",
+        "ys(\"b\").\n",
+        "gen(\"out/r.txt\", \"x {x}\") <- xs(x).\n",
+        "gen(\"out/r.txt\", \"y {y}\") <- ys(y).\n");
+    let (code, _, err) = run(&d, prog);
+    assert_eq!(code, 1, "duplicate file-emit path must be a loud error: {err}");
+    assert!(err.contains("two gen rules write the same file"),
+        "error must name the collision: {err}");
+}
+
+/// Disjoint paths from two gen rules stay legal — the claim is per rendered
+/// path, not per rule.
+#[test]
+fn two_file_rules_disjoint_paths_ok() {
+    let d = sandbox("disjoint_path");
+    let prog = concat!(
+        "rel xs(x: text).\n",
+        "xs(\"a\").\n",
+        "rel ys(y: text).\n",
+        "ys(\"b\").\n",
+        "gen(\"out/x.txt\", \"{x}\") <- xs(x).\n",
+        "gen(\"out/y.txt\", \"{y}\") <- ys(y).\n");
+    let (code, _, err) = run(&d, prog);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(fs::read_to_string(d.join("out/x.txt")).unwrap(), "a\n");
+    assert_eq!(fs::read_to_string(d.join("out/y.txt")).unwrap(), "b\n");
+}
+
 #[test]
 fn escaping_path_is_rejected() {
     let d = sandbox("escape");

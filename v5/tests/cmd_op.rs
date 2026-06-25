@@ -66,6 +66,28 @@ fn broken_command_is_loud() {
     assert!(err.contains("no_such_tool_zzz"), "{err}");
 }
 
+/// christmas #17: a backtick raw-string shell body needs no double-quote
+/// escaping. The same command in the `"..."` form would have to escape every
+/// inner `"` (and `\t`/`\n` are ambiguous through the string lexer); the
+/// backtick form lexes to the same `Tok::Str` raw, so it flows into `cmd`
+/// unchanged. `{file}`-style template holes still interpolate (post-lex render).
+#[test]
+fn backtick_shell_body_skips_quote_escaping() {
+    let d = sandbox("raw_shell");
+    fs::write(d.join("a.txt"), "x\n").unwrap();
+    // Body in the .dl file is literally: printf "%s\there\n" "quoted value"
+    // — embedded double-quotes + a printf-interpreted tab, zero backslash
+    // escaping of the quotes.
+    let (code, out, err) = run(&d, concat!(
+        "rel f(p: file, l: int, v: text).\n",
+        "f(p, l, v) <- scan(\"WORK\", \"*.txt\", p, rev), ",
+        "cmd(p, rev, `printf \"%s\\there\\n\" \"quoted value\"`, l, v).\n",
+        "? f(p, l, v).\n"));
+    assert_eq!(code, 0, "raw backtick shell body must run unescaped:\n{err}");
+    assert!(out.contains("quoted value") && out.contains("here"),
+        "printf output with embedded quotes binds:\n{out}");
+}
+
 /// `--cmd-budget N`: more than N invocations in a tick is a loud error naming
 /// the command, never a silent truncation. Under budget runs clean.
 #[test]

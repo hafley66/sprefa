@@ -767,6 +767,13 @@ impl Parser {
 fn desugar_regex_holes(src: &str) -> String {
     let mut out = String::with_capacity(src.len());
     let mut chars = src.chars().peekable();
+    // Names already turned into a capture group in THIS pattern. A repeated hole
+    // would emit a second `(?P<name>...)`, which the regex crate rejects as a
+    // duplicate capture group (christmas #30). The first occurrence captures;
+    // repeats dedupe to a non-capturing `.*?` so the pattern compiles and the
+    // var binds once. (The crate has no backreferences, so "same value twice"
+    // can't be a regex constraint regardless.)
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     while let Some(c) = chars.next() {
         if c == '\\' {
             out.push(c);
@@ -779,10 +786,12 @@ fn desugar_regex_holes(src: &str) -> String {
             if name.is_empty() || name.as_bytes()[0].is_ascii_digit() {
                 out.push('$');
                 out.push_str(&name);
-            } else {
+            } else if seen.insert(name.clone()) {
                 out.push_str("(?P<");
                 out.push_str(&name);
                 out.push_str(">.*?)");
+            } else {
+                out.push_str("(?:.*?)");
             }
         } else {
             out.push(c);
@@ -806,5 +815,24 @@ mod tests {
         assert_eq!(desugar_regex_holes(r"$1"), r"$1");
         // Hand-written named groups pass through.
         assert_eq!(desugar_regex_holes(r"struct (?<name>\w+)"), r"struct (?<name>\w+)");
+    }
+
+    /// christmas #30 repro: a `$NAME` hole used twice in one pattern must not
+    /// emit two identical named groups (the regex crate rejects that as
+    /// "duplicate capture group name"). The first occurrence captures; repeats
+    /// dedupe to a non-capturing `.*?` so the pattern compiles and `NAME` binds
+    /// once (the crate has no backreferences, so "same value twice" isn't
+    /// expressible at the regex layer anyway — use two vars + a comparison).
+    #[test]
+    fn repeated_hole_dedupes_to_noncapturing() {
+        let desugared = desugar_regex_holes(r"$k=$k");
+        assert_eq!(desugared, r"(?P<k>.*?)=(?:.*?)");
+        // The desugared form must be a valid regex (no duplicate group).
+        assert!(regex::Regex::new(&desugared).is_ok(),
+            "desugared pattern must compile: {desugared}");
+        // Three uses: first captures, the next two are anonymous.
+        assert_eq!(desugar_regex_holes(r"$x.$x.$x"), r"(?P<x>.*?).(?:.*?).(?:.*?)");
+        // Distinct names each keep their own capture.
+        assert_eq!(desugar_regex_holes(r"$a=$b"), r"(?P<a>.*?)=(?P<b>.*?)");
     }
 }
