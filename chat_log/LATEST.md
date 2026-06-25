@@ -1,1 +1,1 @@
-20260622.1.daemon-ux-tray-grammar-lsp.md
+20260625.0.daemon-stateful-revs-phase0-complete-json-declarative-plan.md
