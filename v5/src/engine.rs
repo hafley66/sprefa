@@ -34,6 +34,14 @@ fn cmd_budget() -> Option<u32> {
     *CMD_BUDGET.get_or_init(|| std::env::var("DL_CMD_BUDGET").ok().and_then(|v| v.parse().ok()))
 }
 
+/// Per-file size cap for the walker, in bytes. `DL_MAX_FILESIZE` (e.g. 1048576),
+/// else no cap (legacy behavior). Files larger than this are skipped before any
+/// content read/hash, in both the WORK walk and the git-rev ls-tree listing.
+static MAX_FILESIZE: OnceLock<Option<u64>> = OnceLock::new();
+fn max_filesize() -> Option<u64> {
+    *MAX_FILESIZE.get_or_init(|| std::env::var("DL_MAX_FILESIZE").ok().and_then(|v| v.parse().ok()))
+}
+
 /// The built-in relations of the data-model contract (docs/data-model.md). A
 /// `.dl` program may not declare these names; they are registered with fixed
 /// schemas and refreshed each tick from the `_file` change-detection cache, so
@@ -130,6 +138,16 @@ const CHANGED_LINE_RELS: [&str; 1] = ["changed_line"];
 /// ref(_, s, f, lo, hi)`. Populated for regex/ast/sg captures and import refs.
 const SPINE_RELS: [&str; 2] = ["string", "ref"];
 
+/// Daemon-state query relations: thin views over the persisted `_program` /
+/// `_ref` / `_rev_log` meta tables, so a dashboard can ask the warm engine what
+/// it loaded and which watched refs have moved. `program(path, hash, mtime)` is
+/// the loaded `.dl` file set; `head(repo, name, oid)` is the last-seen oid of
+/// every watched ref (HEAD plus each program-scanned rev); `rev_advanced(repo,
+/// name, old, new)` is the advance log the daemon appends when a watched ref
+/// moves. Populated by `refresh_daemon_rels`; the daemon writes the underlying
+/// tables via `save_program_meta` / `save_repos_meta` / `observe_ref`.
+const DAEMON_RELS: [&str; 3] = ["program", "head", "rev_advanced"];
+
 fn builtin_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -158,6 +176,7 @@ pub fn builtin_rel_names() -> std::collections::HashSet<String> {
         .chain(spine_rel_decls())
         .chain(changed_rel_decls())
         .chain(changed_line_rel_decls())
+        .chain(daemon_rel_decls())
         .map(|d| d.name)
         .collect()
 }
@@ -304,6 +323,16 @@ fn spine_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
+fn daemon_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "program".into(), cols: vec![c("path", Type::Path), c("hash", Type::Text), c("mtime", Type::Int)] },
+        RelDecl { name: "head".into(), cols: vec![c("repo", Type::Text), c("name", Type::Text), c("oid", Type::Text)] },
+        RelDecl { name: "rev_advanced".into(), cols: vec![
+            c("repo", Type::Text), c("name", Type::Text), c("old", Type::Text), c("new", Type::Text)] },
+    ]
+}
+
 /// Does the program reference any relation in `rels` (body atom, closure edge,
 /// or query head)? Gates lazy built-in indexers so unrelated programs pay nothing.
 fn rels_used(prog: &Program, rels: &[&str]) -> bool {
@@ -360,6 +389,8 @@ fn call_rels_used(prog: &Program) -> bool { rels_used(prog, &CALL_RELS) }
 fn dataflow_rels_used(prog: &Program) -> bool { rels_used(prog, &DATAFLOW_RELS) }
 
 fn doc_rels_used(prog: &Program) -> bool { rels_used(prog, &DOC_RELS) }
+
+fn daemon_rels_used(prog: &Program) -> bool { rels_used(prog, &DAEMON_RELS) }
 
 /// The trailing identifier of a SCIP symbol descriptor: `... Foo#` -> "Foo",
 /// `... bar().` -> "bar". Used to key the SCIP override by plain type name.
@@ -777,6 +808,15 @@ struct ClosureCache {
 fn mtime_secs(md: &std::fs::Metadata) -> i64 {
     md.modified().ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Wall-clock seconds since the Unix epoch, for the daemon-state meta tables'
+/// `*_at` columns. Engine code may use std::time freely.
+fn unix_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
 }
@@ -1444,6 +1484,7 @@ impl Engine {
         // `changed` directly rather than riding the reconcile delta.
         if changed_rels_used(prog) { changed |= self.refresh_changed_rel()?; }
         if changed_line_rels_used(prog) { changed |= self.refresh_changed_line_rel()?; }
+        if daemon_rels_used(prog) { self.refresh_daemon_rels()?; }
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
 
         let t_der = std::time::Instant::now();
@@ -1682,6 +1723,7 @@ impl Engine {
             changed_source_rels.insert("changed_line".to_string());
             changed_facts = true;
         }
+        if daemon_rels_used(prog) { self.refresh_daemon_rels()?; }
         if changed_source_rels.is_empty() { changed_facts = false; }
 
         // Cold start (or empty derived/closure) needs a full rebuild; otherwise
@@ -1752,6 +1794,33 @@ impl Engine {
                  repo TEXT NOT NULL DEFAULT '0',
                  rev TEXT NOT NULL DEFAULT '0',
                  path TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE IF NOT EXISTS _program (
+                 path TEXT PRIMARY KEY,
+                 hash TEXT NOT NULL DEFAULT '',
+                 mtime INTEGER NOT NULL DEFAULT 0,
+                 loaded_at INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE IF NOT EXISTS _repo (
+                 slug TEXT PRIMARY KEY,
+                 root TEXT NOT NULL DEFAULT '',
+                 url TEXT NOT NULL DEFAULT '',
+                 registered_at INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE IF NOT EXISTS _ref (
+                 repo TEXT NOT NULL,
+                 name TEXT NOT NULL,
+                 oid TEXT NOT NULL DEFAULT '',
+                 observed_at INTEGER NOT NULL DEFAULT 0,
+                 PRIMARY KEY (repo, name)
+             );
+             CREATE TABLE IF NOT EXISTS _rev_log (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 repo TEXT NOT NULL,
+                 name TEXT NOT NULL,
+                 old TEXT NOT NULL DEFAULT '',
+                 new TEXT NOT NULL DEFAULT '',
+                 at INTEGER NOT NULL DEFAULT 0
              );
              CREATE INDEX IF NOT EXISTS _strings_norm_idx ON _strings(norm);
              CREATE INDEX IF NOT EXISTS _where_bytes_string_idx ON _where_bytes(string_id);
@@ -2252,6 +2321,9 @@ impl Engine {
                 if CHANGED_LINE_RELS.contains(&d.name.as_str()) {
                     bail!("{} is the built-in line-diff relation; pick another name", d.name);
                 }
+                if DAEMON_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is a built-in daemon-state relation (program / head / rev_advanced); pick another name", d.name);
+                }
                 match closures.get(&d.name) {
                     Some(edge) => self.declare_closure(d, edge)?,
                     None => self.declare(d)?,
@@ -2277,6 +2349,7 @@ impl Engine {
         for d in spine_rel_decls() { self.declare(&d)?; }
         for d in changed_rel_decls() { self.declare(&d)?; }
         for d in changed_line_rel_decls() { self.declare(&d)?; }
+        for d in daemon_rel_decls() { self.declare(&d)?; }
         Ok(())
     }
 
@@ -2397,6 +2470,149 @@ impl Engine {
         let table = tbl(rel);
         self.db.exec(&format!("DELETE FROM {table}"))?;
         self.db.insert_rows(&table, cols, rows)
+    }
+
+    /// Project the persisted daemon-state meta tables (`_program` / `_ref` /
+    /// `_rev_log`) into the `program` / `head` / `rev_advanced` query relations.
+    /// Wholesale wipe + repopulate, same shape as `refresh_spine_rels`; the
+    /// underlying tables are written out of band by the daemon, so this is a
+    /// pure read-back projection (cheap, bounded by the loaded program + watched
+    /// ref count).
+    pub fn refresh_daemon_rels(&self) -> Result<()> {
+        let conn = self.db.conn();
+        let mut p = conn.prepare("SELECT path, hash, mtime FROM _program")?;
+        let programs: Vec<Vec<Value>> = p
+            .query_map([], |r| Ok(vec![
+                Value::Text(r.get::<_, String>(0)?),
+                Value::Text(r.get::<_, String>(1)?),
+                Value::Int(r.get::<_, i64>(2)?),
+            ]))?
+            .filter_map(|x| x.ok()).collect();
+        let mut h = conn.prepare("SELECT repo, name, oid FROM _ref")?;
+        let heads: Vec<Vec<Value>> = h
+            .query_map([], |r| Ok(vec![
+                Value::Text(r.get::<_, String>(0)?),
+                Value::Text(r.get::<_, String>(1)?),
+                Value::Text(r.get::<_, String>(2)?),
+            ]))?
+            .filter_map(|x| x.ok()).collect();
+        let mut a = conn.prepare("SELECT repo, name, old, new FROM _rev_log ORDER BY id")?;
+        let advances: Vec<Vec<Value>> = a
+            .query_map([], |r| Ok(vec![
+                Value::Text(r.get::<_, String>(0)?),
+                Value::Text(r.get::<_, String>(1)?),
+                Value::Text(r.get::<_, String>(2)?),
+                Value::Text(r.get::<_, String>(3)?),
+            ]))?
+            .filter_map(|x| x.ok()).collect();
+        drop(p);
+        drop(h);
+        drop(a);
+        self.refresh_rel("program", &["path", "hash", "mtime"], &programs)?;
+        self.refresh_rel("head", &["repo", "name", "oid"], &heads)?;
+        self.refresh_rel("rev_advanced", &["repo", "name", "old", "new"], &advances)?;
+        Ok(())
+    }
+
+    /// Persist the loaded `.dl` program file set into `_program` (wipe + insert,
+    /// plural seam). Each row is (path, content hash, mtime); `loaded_at` stamps
+    /// the flush. Diffable on restart against the new file set. The daemon calls
+    /// this on cold tick and after a hot reload.
+    pub fn save_program_meta(&self, files: &[PathBuf]) -> Result<()> {
+        let now = unix_secs();
+        let mut rows: Vec<Vec<Value>> = Vec::with_capacity(files.len());
+        for f in files {
+            let (hash, mtime) = match std::fs::read(f) {
+                Ok(bytes) => {
+                    let mt = std::fs::metadata(f).ok().map(|m| mtime_secs(&m)).unwrap_or(0);
+                    (blake3::hash(&bytes).to_hex().to_string(), mt)
+                }
+                Err(_) => (String::new(), 0),
+            };
+            rows.push(vec![
+                Value::Text(f.to_string_lossy().into_owned()),
+                Value::Text(hash),
+                Value::Int(mtime),
+                Value::Int(now),
+            ]);
+        }
+        self.db.exec("DELETE FROM _program")?;
+        self.db.insert_rows("_program", &["path", "hash", "mtime", "loaded_at"], &rows)?;
+        Ok(())
+    }
+
+    /// Persist the registered repo set into `_repo` (wipe + insert). `registered_at`
+    /// stamps the flush; the daemon calls this when it loads or reloads config so
+    /// a restart can diff the previously-registered repos against the new set.
+    pub fn save_repos_meta(&self) -> Result<()> {
+        let now = unix_secs();
+        let rows: Vec<Vec<Value>> = self.repos.iter().map(|rc| vec![
+            Value::Text(rc.slug.clone()),
+            Value::Text(rc.root.to_string_lossy().into_owned()),
+            Value::Text(rc.url.clone().unwrap_or_default()),
+            Value::Int(now),
+        ]).collect();
+        self.db.exec("DELETE FROM _repo")?;
+        self.db.insert_rows("_repo", &["slug", "root", "url", "registered_at"], &rows)?;
+        Ok(())
+    }
+
+    /// Resolve `name` (HEAD or a ref) to an oid in `repo_root`, compare to the
+    /// last-seen oid stored in `_ref`, and persist the new value. Returns
+    /// `Some((old, new))` when the oid changed (old is `None` on first sight),
+    /// appending one row to `_rev_log`; `None` when unchanged. The single-event
+    /// write path: one ref observed per call, not an N+1 batch.
+    pub fn observe_ref(&self, repo: &str, repo_root: &Path, name: &str)
+        -> Result<Option<(Option<String>, String)>>
+    {
+        let out = Command::new("git").arg("-C").arg(repo_root)
+            .args(["rev-parse", name]).output()?;
+        if !out.status.success() { return Ok(None); }
+        let new = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if new.is_empty() { return Ok(None); }
+        let old: Option<String> = self.db.conn().query_row(
+            "SELECT oid FROM _ref WHERE repo = ?1 AND name = ?2",
+            rusqlite::params![repo, name], |r| r.get(0)).ok();
+        if old.as_deref() == Some(new.as_str()) { return Ok(None); }
+        let now = unix_secs();
+        self.db.conn().execute(
+            "INSERT INTO _ref(repo, name, oid, observed_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(repo, name) DO UPDATE SET oid=excluded.oid, observed_at=excluded.observed_at",
+            rusqlite::params![repo, name, new, now])?;
+        self.db.conn().execute(
+            "INSERT INTO _rev_log(repo, name, old, new, at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![repo, name, old.clone().unwrap_or_default(), new, now])?;
+        Ok(Some((old, new)))
+    }
+
+    /// Paths that differ between two revs in `repo_root`, intersected with the
+    /// `_file` path index for `repo` (so a rev advance only reports files the
+    /// engine actually tracks). `old` empty = first sight, every tracked path
+    /// for that repo is considered changed.
+    pub fn files_changed_between(&self, repo: &str, repo_root: &Path, old: &str, new: &str)
+        -> Result<Vec<String>>
+    {
+        let mut tracked = self.db.conn().prepare(
+            "SELECT DISTINCT path FROM _file WHERE repo = ?1")?;
+        let tracked: HashSet<String> = tracked
+            .query_map(rusqlite::params![repo], |r| r.get::<_, String>(0))?
+            .filter_map(|x| x.ok()).collect();
+        if old.is_empty() {
+            let mut v: Vec<String> = tracked.into_iter().collect();
+            v.sort();
+            return Ok(v);
+        }
+        let out = Command::new("git").arg("-C").arg(repo_root)
+            .args(["diff", "--name-only", old, new]).output()?;
+        if !out.status.success() { return Ok(Vec::new()); }
+        let mut changed: Vec<String> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|p| !p.is_empty() && tracked.contains(p))
+            .collect();
+        changed.sort();
+        changed.dedup();
+        Ok(changed)
     }
 
     fn module_files_by_rev(&self) -> Result<HashMap<String, Vec<(String, String)>>> {
@@ -4181,11 +4397,16 @@ fn module_stem(path: &str) -> &str {
 /// `hidden(false)` un-hides it, and crawling the object store made big-repo
 /// scans pathological.
 fn enumerate_with_hash(repo: &str, repo_root: &Path, rev: &str, union: &globset::GlobSet, prev: &FileMeta) -> Result<Vec<(String, String, i64, i64)>> {
+    let max_size = max_filesize();
     if rev == "WORK" {
         let mut files: Vec<(PathBuf, String, i64, i64)> = Vec::new();
-        let walk = ignore::WalkBuilder::new(repo_root).hidden(false)
-            .filter_entry(|e| e.file_name() != ".git")
-            .build();
+        let mut walk = ignore::WalkBuilder::new(repo_root);
+        walk.hidden(false).filter_entry(|e| e.file_name() != ".git");
+        // The walker crate caps oversized files itself (skips them before we ever
+        // hash), so a single minified/vendored blob can't blow RSS. Opt-in via
+        // `DL_MAX_FILESIZE` (bytes); unset = no cap (legacy behavior).
+        if let Some(cap) = max_size { walk.max_filesize(Some(cap)); }
+        let walk = walk.build();
         for entry in walk.flatten() {
             if !entry.path().is_file() { continue; }
             let rel = match entry.path().strip_prefix(repo_root) { Ok(r) => r, Err(_) => continue };
@@ -4222,6 +4443,8 @@ fn enumerate_with_hash(repo: &str, repo_root: &Path, rev: &str, union: &globset:
             if parts.get(1) != Some(&"blob") { continue; }
             let oid = parts.get(2).copied().unwrap_or_default();
             let size = parts.get(3).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+            // Same size cap as the WORK walker, applied to blob sizes from ls-tree.
+            if let Some(cap) = max_size { if size as u64 > cap { continue; } }
             if union.is_match(path) { out.push((path.to_string(), oid.to_string(), 0, size)); }
         }
         Ok(out)
@@ -4271,7 +4494,7 @@ fn parse_file(
     for item in &rule.body {
         match item {
             BodyItem::Match { regex, line, id, .. } => {
-                let mlv = var_of(line)?;
+                let mlv = opt_var(line)?;
                 // The optional 5th arg is the whole-match span's spine id; joins
                 // `ref(id, _, _, lo, hi)` to feed `gen(:mode, p, lo, hi, ...)`.
                 let idv = id.as_ref().map(var_of).transpose()?;
@@ -4285,7 +4508,7 @@ fn parse_file(
                         let line_off = ln.as_ptr() as usize - base;
                         for caps in re.captures_iter(ln) {
                             let mut ext = b.clone();
-                            ext.insert(mlv.clone(), Value::Int((lineno + 1) as i64));
+                            if let Some(v) = &mlv { ext.insert(v.clone(), Value::Int((lineno + 1) as i64)); }
                             // Bind the whole-match spine id and push the span, but
                             // only when `id` is requested (5-arg form): the id is
                             // the same WhereBytesId `insert_spine_where_bytes`
@@ -4326,14 +4549,14 @@ fn parse_file(
                 binds = next;
             }
             BodyItem::Ast { lang, query, line, end, .. } => {
-                let alv = var_of(line)?;
-                let elv = end.as_ref().map(var_of).transpose()?;
+                let alv = opt_var(line)?;
+                let elv = end.as_ref().map(opt_var).transpose()?.flatten();
                 let hits = run_ts(&content, lang, query)?;
                 let mut next: Vec<Bind> = Vec::new();
                 for b in &binds {
                     for (start, endln, caps) in &hits {
                         let mut ext = b.clone();
-                        ext.insert(alv.clone(), Value::Int(*start));
+                        if let Some(v) = &alv { ext.insert(v.clone(), Value::Int(*start)); }
                         if let Some(ev) = &elv { ext.insert(ev.clone(), Value::Int(*endln)); }
                         for (n, t, lo, hi) in caps {
                             ext.insert(n.clone(), Value::Text(t.clone()));
@@ -4400,8 +4623,8 @@ fn parse_file(
                 binds = next;
             }
             BodyItem::Cmd { template, line, out, .. } => {
-                let lv = var_of(line)?;
-                let ov = var_of(out)?;
+                let lv = opt_var(line)?;
+                let ov = opt_var(out)?;
                 // Budget guard: one cmd rule shells out once per matched file, so
                 // a broad glob is a subprocess storm. Over budget = a loud bail
                 // naming the command, never a silent truncation of the relation.
@@ -4444,8 +4667,8 @@ fn parse_file(
                 for b in &binds {
                     for (i, ln) in stdout.lines().enumerate() {
                         let mut ext = b.clone();
-                        ext.insert(lv.clone(), Value::Int((i + 1) as i64));
-                        ext.insert(ov.clone(), Value::Text(ln.to_string()));
+                        if let Some(v) = &lv { ext.insert(v.clone(), Value::Int((i + 1) as i64)); }
+                        if let Some(v) = &ov { ext.insert(v.clone(), Value::Text(ln.to_string())); }
                         next.push(ext);
                     }
                 }
@@ -4478,13 +4701,13 @@ fn parse_file(
                 binds = next;
             }
             BodyItem::Json { jpath, out, .. } => {
-                let ov = var_of(out)?;
+                let ov = opt_var(out)?;
                 let vals = crate::datapath::run_data(path, &content, jpath);
                 let mut next: Vec<Bind> = Vec::new();
                 for b in &binds {
                     for (v, lo, hi) in &vals {
                         let mut ext = b.clone();
-                        ext.insert(ov.clone(), Value::Text(v.clone()));
+                        if let Some(ov) = &ov { ext.insert(ov.clone(), Value::Text(v.clone())); }
                         push_span(v, *lo, *hi, &mut where_bytes);
                         next.push(ext);
                     }
@@ -4562,6 +4785,20 @@ fn interp_value(parts: &[InterpPart], b: &Bind) -> Result<Value> {
     Ok(Value::Text(s))
 }
 
+/// text -> int the way SQLite `CAST(x AS INTEGER)` does: skip leading whitespace,
+/// take an optional sign and the leading digit run, parse that; no digits -> 0.
+/// Keeps the source-rule (Rust) path identical to the derived (SQL) path.
+fn cast_int(s: &str) -> i64 {
+    let t = s.trim_start();
+    let bytes = t.as_bytes();
+    let mut i = 0;
+    if i < bytes.len() && (bytes[i] == b'-' || bytes[i] == b'+') { i += 1; }
+    let digits_start = i;
+    while i < bytes.len() && bytes[i].is_ascii_digit() { i += 1; }
+    if i == digits_start { return 0; }
+    t[..i].parse::<i64>().unwrap_or(0)
+}
+
 fn val_of(t: &Term, b: &Bind) -> Result<Value> {
     match t {
         Term::Var(v) => b.get(v).cloned().ok_or_else(|| anyhow::anyhow!("unbound var {v} in constraint")),
@@ -4612,7 +4849,10 @@ fn val_of(t: &Term, b: &Bind) -> Result<Value> {
                     if i < 0 || i >= n { bail!("function split: idx {idx} out of range ({n} parts)"); }
                     Ok(Value::Text(parts[i as usize].to_string()))
                 }
-                other => bail!("unknown function `{other}` (known: split, replace)"),
+                // text -> int, mirroring SQLite `CAST(.. AS INTEGER)`: leading
+                // optional sign + digit run, anything else (incl. garbage) -> 0.
+                "int" => Ok(Value::Int(cast_int(str_at(0)?))),
+                other => bail!("unknown function `{other}` (known: split, replace, int)"),
             }
         }
     }

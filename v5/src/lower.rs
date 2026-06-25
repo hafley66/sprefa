@@ -49,7 +49,12 @@ fn term_sql(t: &Term, canon: &HashMap<String, String>) -> Result<String> {
                 // Registered UDF (db.rs): sprf_split(text, sep, idx).
                 "split" if args.len() == 3 =>
                     Ok(format!("sprf_split({})", arg_sqls.join(", "))),
-                other => bail!("unknown or mis-arity function `{other}` (known: split/3, replace/3)"),
+                // SQLite native: text->int coercion (leading-int prefix, else 0),
+                // so a numeric shell/json string can fill an int column or be
+                // compared numerically instead of as text against "0".
+                "int" if args.len() == 1 =>
+                    Ok(format!("CAST({} AS INTEGER)", arg_sqls[0])),
+                other => bail!("unknown or mis-arity function `{other}` (known: split/3, replace/3, int/1)"),
             }
         }
     }

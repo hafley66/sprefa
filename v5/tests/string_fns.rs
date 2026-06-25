@@ -152,6 +152,62 @@ bad(s) <- f(s), g(split(s, "/", 0)).
     );
 }
 
+/// `int(text)` in a derived head: a numeric string fills an int column. Mirrors
+/// SQLite `CAST(.. AS INTEGER)` — leading int prefix, garbage -> 0.
+#[test]
+fn int_derived_head_casts_text() {
+    let d = sandbox("int_derived");
+    let prog = r#"
+rel n(s: text).
+n("42").
+n("7x").
+n("abc").
+rel num(s: text, v: int).
+num(s, int(s)) <- n(s).
+? num(s, v).
+"#;
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("42\t42"), "plain int: {out}");
+    assert!(out.contains("7x\t7"), "leading-int prefix: {out}");
+    assert!(out.contains("abc\t0"), "non-numeric -> 0: {out}");
+}
+
+/// `int(...)` on a comparison side in a SOURCE rule (evaluated via `val_of`):
+/// keep only matches whose captured number is positive. This is the papercut's
+/// exact shape — a numeric capture compared numerically, not as text against "0".
+#[test]
+fn int_in_source_comparison() {
+    let d = sandbox("int_cmp");
+    fs::write(d.join("src/v.txt"), "count=42\ncount=0\ncount=7\n").unwrap();
+    let prog = r#"
+rel pos(f: file, c: text).
+pos(f, c) <- scan("WORK", "src/*.txt", f, rev),
+    match(f, rev, /count=(?<c>\d+)/, l), 0 < int(c).
+? pos(f, c).
+"#;
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("\t42") && out.contains("\t7"), "positive counts kept: {out}");
+    assert!(!out.contains("\t0\n") && !out.contains("\t0\t"), "zero count filtered: {out}");
+}
+
+/// `int(..)` cannot fill a non-int column (it produces an int, not text).
+#[test]
+fn int_into_text_column_errors() {
+    let d = sandbox("int_text");
+    let prog = r#"
+rel n(s: text).
+n("5").
+rel bad(s: text, v: text).
+bad(s, int(s)) <- n(s).
+? bad(s, v).
+"#;
+    let (code, _out, err) = run(&d, prog);
+    assert_ne!(code, 0, "int() into a text column must fail");
+    assert!(err.contains("int") && err.contains("non-int column"), "got: {err}");
+}
+
 /// An unknown function name is rejected (whitelist is split/replace).
 #[test]
 fn unknown_function_errors() {

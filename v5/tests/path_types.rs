@@ -116,7 +116,9 @@ bad(x) <- a(x), b(x).
 }
 
 /// (5) A branded/path variable flowing into a plain `text` column is a coerce
-/// WARNING: it prints but the program still compiles and runs (exit 0).
+/// WARNING: the program still compiles and runs (exit 0). The warning is noise on
+/// a program that has accepted the coercion, so it is suppressed by default and
+/// only printed under `DL_COERCE_WARN=1`.
 #[test]
 fn coerce_text_path_warns_but_runs() {
     let d = sandbox("coerce");
@@ -129,12 +131,23 @@ seen(p) <- scan("WORK", "src/**/*.rs", p, rev).
 note(p) <- seen(p).
 ? note(p).
 "#;
-    // A `file` var (`p`) flowing into the plain-text `note.x` column warns but runs.
+    // Default: the row still flows and the coerce warning is suppressed (no noise).
     let (code, out, err) = run(&d, prog, &[]);
     assert_eq!(code, 0, "coerce is a warning, run must succeed: {err}");
     assert!(out.contains("src/x.rs"), "the row still flows: {out}");
-    assert!(err.contains("coerce-text-path"), "coerce warning must print: {err}");
-    assert!(!err.contains("error[coerce"), "coerce must be a warn, not an error: {err}");
+    assert!(!err.contains("coerce-text-path"), "coerce warning suppressed by default: {err}");
+
+    // Opt-in: `DL_COERCE_WARN=1` surfaces the warning (still a warn, not an error).
+    fs::write(d.join("p.dl"), prog).unwrap();
+    let out2 = Command::new(DL)
+        .arg(d.join("p.dl"))
+        .args(["--root", d.to_str().unwrap(), "--db", d.join("db2").to_str().unwrap()])
+        .env("DL_COERCE_WARN", "1")
+        .output().expect("run dl");
+    let err2 = String::from_utf8_lossy(&out2.stderr);
+    assert_eq!(out2.status.code().unwrap_or(-1), 0, "still runs under opt-in: {err2}");
+    assert!(err2.contains("coerce-text-path"), "coerce warning prints under DL_COERCE_WARN: {err2}");
+    assert!(!err2.contains("error[coerce"), "coerce must be a warn, not an error: {err2}");
 }
 
 /// (6) `scan(.., glob:src/**/*.rs, ..)` is byte-identical to the quoted form

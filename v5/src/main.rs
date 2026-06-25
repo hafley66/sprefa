@@ -5,10 +5,11 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "dl", about = "datalog over files in repo/rev/time space")]
 struct Cli {
-    /// The .dl program to run. When omitted, discovery: every `<root>/.dl/*.dl`
-    /// file (lexicographic) merges into one program. (--move synthesizes its own
-    /// and ignores this.)
-    program: Option<String>,
+    /// The .dl program(s) to run. Multiple files merge into one program (in the
+    /// given order, with `use` includes spliced). When omitted, discovery: every
+    /// `<root>/.dl/*.dl` file (lexicographic) merges instead. (--move synthesizes
+    /// its own and ignores this.)
+    programs: Vec<String>,
     #[arg(long)]
     db: Option<String>,
     /// Source root. When omitted, defaults to the nearest `.git` ancestor of
@@ -94,7 +95,7 @@ fn resolve_root(cli: &Cli) -> Result<PathBuf> {
             return Ok(root);
         }
     }
-    let base = cli.program.as_deref()
+    let base = cli.programs.first().map(|s| s.as_str())
         .and_then(|p| std::fs::canonicalize(p).ok())
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
         .map(Ok)
@@ -136,7 +137,7 @@ fn main() -> Result<()> {
     }
     if cli.daemon || cli.tray {
         return sprefa_v5::daemon::run_daemon(
-            cli.program.as_deref(),
+            &cli.programs,
             cli.db.as_deref(),
             root_opt,
             true,
@@ -156,14 +157,16 @@ fn main() -> Result<()> {
     if db.is_none() {
         let dir = root.join(".dl");
         let daemon_on = sprefa_v5::daemon::enabled();
-        let want_default = cli.program.is_none() || (daemon_on && (cli.lsp || cli.check || cli.diag_json));
+        let want_default = cli.programs.is_empty() || (daemon_on && (cli.lsp || cli.check || cli.diag_json));
         if want_default && dir.is_dir() {
             let gi = dir.join(".gitignore");
             if !gi.exists() { let _ = std::fs::write(&gi, "cache.db*\n"); }
             db = Some(dir.join("cache.db").to_string_lossy().into_owned());
         }
     }
-    let program = cli.program.as_deref();
+    // One-shot modes consume a single program (or discovery when empty); only
+    // the daemon merges multiple positionals today.
+    let program = cli.programs.first().map(|s| s.as_str());
     if cli.lsp {
         sprefa_v5::run_lsp(program, db.as_deref(), root)
     } else if cli.check || cli.diag_json {

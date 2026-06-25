@@ -189,6 +189,9 @@ impl Daemon {
             let mut p = self.prog.lock().unwrap();
             *p = new_prog;
         }
+        if let Err(e) = self.eng.lock().unwrap().save_program_meta(&files) {
+            eprintln!("[daemon] save_program_meta: {e}");
+        }
         self.tick_full(false)?;
         Ok(())
     }
@@ -232,6 +235,12 @@ impl Daemon {
             let mut p = self.prog.lock().unwrap();
             *p = new_prog;
         }
+        {
+            let pf = self.program_files.lock().unwrap().clone();
+            if let Err(e) = self.eng.lock().unwrap().save_program_meta(&pf) {
+                eprintln!("[daemon] save_program_meta: {e}");
+            }
+        }
         let n = self.program_files.lock().unwrap().len();
         eprintln!("[daemon] discovery reload: {n} file(s)");
         self.tick_full(false)?;
@@ -265,6 +274,99 @@ impl Daemon {
         // Reap broken subscribers (descending so indexes stay valid).
         for i in broken.into_iter().rev() { subs.swap_remove(i); }
     }
+
+    /// The git refs to watch for advance: always `HEAD`, plus every non-WORK rev
+    /// literal the loaded program scans (a `scan(... rev: "v1.2")` pins a tag, so
+    /// a retag should fire). Deduped, HEAD first.
+    fn watched_ref_names(&self) -> Vec<String> {
+        let mut names = vec!["HEAD".to_string()];
+        let prog = self.prog.lock().unwrap();
+        for item in &prog.items {
+            if let crate::ast::Item::Rule(r) = item {
+                for b in &r.body {
+                    if let crate::ast::BodyItem::Scan { rev: crate::ast::Term::Str(s), .. } = b {
+                        if s.as_str() != "WORK" && !names.contains(s) {
+                            names.push(s.clone());
+                        }
+                    }
+                }
+            }
+        }
+        names
+    }
+
+    /// React to a `.git` change: observe each watched ref's current oid against
+    /// the persisted cursor, and on advance diff old→new against the `_file`
+    /// index and broadcast a `rev_advanced` notification. Detect + emit only; no
+    /// re-tick. Returns the number of refs that advanced.
+    fn on_git_event(&self) -> usize {
+        let self_slug = self.root.file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.root.to_string_lossy().into_owned());
+        let mut repos: Vec<(String, PathBuf)> = vec![(self_slug, self.root.clone())];
+        for rc in load_repos_eager() {
+            if rc.root.exists() && !repos.iter().any(|(s, _)| s == &rc.slug) {
+                repos.push((rc.slug, rc.root));
+            }
+        }
+        let names = self.watched_ref_names();
+        let mut advances: Vec<(String, String, String, String, Vec<String>)> = Vec::new();
+        {
+            let eng = self.eng.lock().unwrap();
+            for (slug, root) in &repos {
+                for name in &names {
+                    match eng.observe_ref(slug, root, name) {
+                        Ok(Some((old, new))) => {
+                            let files = eng
+                                .files_changed_between(slug, root, old.as_deref().unwrap_or(""), &new)
+                                .unwrap_or_default();
+                            advances.push((slug.clone(), name.clone(),
+                                old.unwrap_or_default(), new, files));
+                        }
+                        Ok(None) => {}
+                        Err(e) => eprintln!("[daemon] observe_ref {slug}/{name}: {e}"),
+                    }
+                }
+            }
+            // Project the updated `_ref`/`_rev_log` into the query rels so a
+            // `query` RPC sees the advance without a re-tick.
+            if !advances.is_empty() {
+                if let Err(e) = eng.refresh_daemon_rels() {
+                    eprintln!("[daemon] refresh_daemon_rels: {e}");
+                }
+            }
+        }
+        self.touch();
+        if !advances.is_empty() {
+            self.broadcast_rev_advanced(&advances);
+        }
+        advances.len()
+    }
+
+    /// Push one `rev_advanced` notification per advanced ref to every subscriber.
+    /// Mirrors `broadcast_diag_changed`: snapshot, write outside the rel lock,
+    /// reap broken subscribers.
+    fn broadcast_rev_advanced(&self, advances: &[(String, String, String, String, Vec<String>)]) {
+        let mut subs = self.subscribers.lock().unwrap();
+        let mut broken: Vec<usize> = Vec::new();
+        for (repo, name, old, new, files) in advances {
+            let note = json!({"jsonrpc": "2.0", "method": "rev_advanced", "params": {
+                "repo": repo, "ref": name, "old": old, "new": new, "paths": files,
+            }});
+            let body = match serde_json::to_string(&note) { Ok(s) => s, Err(_) => continue };
+            for (i, s) in subs.iter().enumerate() {
+                let mut guard = match s.lock() {
+                    Ok(g) => g,
+                    Err(_) => { if !broken.contains(&i) { broken.push(i); } continue; }
+                };
+                if rpc::write_frame(&mut *guard, &body).is_err() && !broken.contains(&i) {
+                    broken.push(i);
+                }
+            }
+        }
+        broken.sort_unstable();
+        for i in broken.into_iter().rev() { subs.swap_remove(i); }
+    }
 }
 
 // ---------- daemon entry ----------
@@ -279,7 +381,7 @@ impl Daemon {
 /// the daemon stays alive until explicit `--stop` or tray Quit. Hot reload of
 /// an edited program file is the v1.2 polish item.
 pub fn run_daemon(
-    program: Option<&str>,
+    programs: &[String],
     db_path: Option<&str>,
     root: Option<PathBuf>,
     foreground: bool,
@@ -291,7 +393,14 @@ pub fn run_daemon(
     // view then comes entirely from config repos).
     let home = root.clone();
     let eng_root = root.clone().unwrap_or_else(daemon_home);
-    let files = crate::resolve_programs(program, &eng_root)?;
+    // Explicit positional files load as the program set (merged in order, with
+    // `use` includes spliced); no positionals falls back to `<root>/.dl/*.dl`
+    // discovery.
+    let files = if programs.is_empty() {
+        crate::resolve_programs(None, &eng_root)?
+    } else {
+        programs.iter().map(PathBuf::from).collect()
+    };
     let (prog, type_diags, display) = crate::prepare_paths(&files)?;
     crate::render_type_diags_eprintln(&type_diags);
     let n_err = type_diags.iter().filter(|d| d.severity == crate::ast::Severity::Error).count();
@@ -302,19 +411,23 @@ pub fn run_daemon(
     let repos = load_repos_eager();
     eng.set_repos(repos.clone());
     eng.tick(&prog, false)?;
-    eprintln!("[daemon] cold tick done ({} type diag(s), program {})", type_diags.len(), display);
-
-    let idle_secs = idle_timeout_secs();
     let canon_files: Vec<PathBuf> = files
         .iter()
         .map(|f| std::fs::canonicalize(f).unwrap_or_else(|_| f.clone()))
         .collect();
+    // Persist the repo set + loaded program into the db so a restart can diff
+    // them, and seed the rev cursor for every watched ref (HEAD + program revs).
+    if let Err(e) = eng.save_repos_meta() { eprintln!("[daemon] save_repos_meta: {e}"); }
+    if let Err(e) = eng.save_program_meta(&canon_files) { eprintln!("[daemon] save_program_meta: {e}"); }
+    eprintln!("[daemon] cold tick done ({} type diag(s), program {})", type_diags.len(), display);
+
+    let idle_secs = idle_timeout_secs();
     let daemon = Arc::new(Daemon {
         root: eng_root.clone(),
         home: home.clone(),
         program_display: display,
         program_files: Mutex::new(canon_files),
-        discovery_mode: program.is_none(),
+        discovery_mode: programs.is_empty(),
         no_respawn: tray,
         prog: Mutex::new(prog),
         eng: Mutex::new(eng),
@@ -339,7 +452,7 @@ pub fn run_daemon(
     std::fs::create_dir_all(sock.parent().unwrap())?;
     let listener = UnixListener::bind(&sock)?;
     std::fs::set_permissions(&sock, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
-    write_pid_file(home.as_deref(), program)?;
+    write_pid_file(home.as_deref(), programs.first().map(|s| s.as_str()))?;
     eprintln!("[daemon] listening on {} (pid {}, idle {}s)",
         sock.display(), std::process::id(), idle_secs);
 
@@ -435,23 +548,28 @@ fn watcher_loop(d: Arc<Daemon>) {
             }
         }
     }
-    let scans_git = {
-        let prog = d.prog.lock().unwrap();
-        prog.items.iter().any(|i| matches!(i, crate::ast::Item::Rule(r)
-            if r.body.iter().any(|b| matches!(b, crate::ast::BodyItem::Scan { rev: crate::ast::Term::Str(s), .. } if s.as_str() != "WORK"))))
-    };
-    let mut git_dir: Option<PathBuf> = None;
-    if scans_git {
-        if let Ok(out) = std::process::Command::new("git").arg("-C").arg(&d.root)
+    // Always watch the `.git` dir of the self root and every config repo, so a
+    // HEAD move (commit, checkout, pull) is observed even when the program only
+    // scans WORK. `git_dirs` = canonical git-dir paths; a watcher event under any
+    // of them routes to `on_git_event` (rev-cursor diff + broadcast, no re-tick).
+    let mut git_dirs: Vec<PathBuf> = Vec::new();
+    let mut watch_git = |root: &Path| {
+        if let Ok(out) = std::process::Command::new("git").arg("-C").arg(root)
             .args(["rev-parse", "--git-dir"]).output() {
             if out.status.success() {
                 let gd = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                let gdp = if Path::new(&gd).is_absolute() { PathBuf::from(&gd) } else { d.root.join(&gd) };
+                let gdp = if Path::new(&gd).is_absolute() { PathBuf::from(&gd) } else { root.join(&gd) };
                 if gdp.exists() && watcher.watch(&gdp, RecursiveMode::Recursive).is_ok() {
-                    git_dir = gdp.canonicalize().ok();
+                    if let Some(c) = gdp.canonicalize().ok() {
+                        if !git_dirs.contains(&c) { git_dirs.push(c); }
+                    }
                 }
             }
         }
+    };
+    watch_git(&d.root);
+    for rc in load_repos_eager() {
+        if rc.root.exists() { watch_git(&rc.root); }
     }
 
     eprintln!("[daemon] watcher ready ({})", d.root.display());
@@ -480,7 +598,8 @@ fn watcher_loop(d: Arc<Daemon>) {
         d.touch();  // any watcher event resets idle, even if no tick results
         let touches_cfg = cfg_path.as_ref().is_some_and(|c|
             paths.iter().any(|p| p.canonicalize().ok().as_deref() == Some(c) || p == c));
-        let touches_git = git_dir.as_ref().is_some_and(|g| paths.iter().any(|p| p.starts_with(g)));
+        let touches_git = !git_dirs.is_empty()
+            && paths.iter().any(|p| git_dirs.iter().any(|g| p.starts_with(g)));
         let touches_program = d.program_in_paths(&paths);
         // A `.dl` program edit either respawns (cold path: re-parse from
         // scratch via the spawn-if-missing dance) or hot-reloads (tray path:
@@ -519,15 +638,26 @@ fn watcher_loop(d: Arc<Daemon>) {
                 continue;
             }
         }
+        // A `.git` move (commit/checkout/pull) detects + emits + broadcasts the
+        // rev advance WITHOUT re-analysis (the locked design): observe each
+        // watched ref's new oid, diff against the `_file` index, push a
+        // `rev_advanced` notification. No tick, so subscribers decide whether to
+        // re-query. Routed before the tick branches and `continue`s past them.
+        if touches_git {
+            let n = d.on_git_event();
+            eprintln!("[daemon] git change — {n} ref(s) advanced");
+            continue;
+        }
         let tick_label;
         let result = if touches_cfg {
             tick_label = "config change";
             let mut eng = d.eng.lock().unwrap();
             eng.set_repos(load_repos_eager());
             drop(eng);
-            d.tick_full(false)
-        } else if touches_git {
-            tick_label = "git change";
+            // Re-persist the repo set so `_repo` tracks a config edit.
+            if let Err(e) = d.eng.lock().unwrap().save_repos_meta() {
+                eprintln!("[daemon] save_repos_meta: {e}");
+            }
             d.tick_full(false)
         } else if paths.is_empty() {
             tick_label = "empty event";
@@ -634,6 +764,8 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
             "root": d.root.to_string_lossy(),
             "tick_count": d.tick_count.load(Ordering::Relaxed),
             "program": d.program_display,
+            "program_files": d.program_files.lock().unwrap().iter()
+                .map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
         })),
         "query" => {
             let prog = d.prog.lock().unwrap();
@@ -712,6 +844,10 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                 ("_file", &[("repo", "text"), ("path", "text"), ("rev", "text"), ("hash", "text"), ("mtime", "int"), ("size", "int")]),
                 ("_files", &[("id", "int"), ("content_hash", "text"), ("path", "text"), ("size", "int")]),
                 ("_where_bytes", &[("id", "int"), ("repo", "text"), ("path", "text"), ("rev", "text"), ("byte", "int"), ("line", "int"), ("col", "int")]),
+                ("_program", &[("path", "text"), ("hash", "text"), ("mtime", "int"), ("loaded_at", "int")]),
+                ("_repo", &[("slug", "text"), ("root", "text"), ("url", "text"), ("registered_at", "int")]),
+                ("_ref", &[("repo", "text"), ("name", "text"), ("oid", "text"), ("observed_at", "int")]),
+                ("_rev_log", &[("id", "int"), ("repo", "text"), ("name", "text"), ("old", "text"), ("new", "text"), ("at", "int")]),
             ];
             for (name, cols) in extra {
                 let cols_json: Vec<Value> = cols.iter().map(|(n, t)| json!({"name": n, "ty": t})).collect();
@@ -741,6 +877,20 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                 Ok(v) => Response::ok(req.id, v),
                 Err((code, msg)) => Response::err(req.id, code, msg),
             }
+        }
+        "status" => {
+            let eng = d.eng.lock().unwrap();
+            let q = |sql: &str| eng.query_sql(sql, &[]).unwrap_or_default();
+            Response::ok(req.id, json!({
+                "root": d.root.to_string_lossy(),
+                "program": d.program_display,
+                "tick_count": d.tick_count.load(Ordering::Relaxed),
+                "subscribers": d.subscribers.lock().unwrap().len(),
+                "programs": q("SELECT path, hash, mtime, loaded_at FROM _program ORDER BY path"),
+                "repos": q("SELECT slug, root, url, registered_at FROM _repo ORDER BY slug"),
+                "refs": q("SELECT repo, name, oid, observed_at FROM _ref ORDER BY repo, name"),
+                "advances": q("SELECT repo, name, old, new, at FROM _rev_log ORDER BY id DESC LIMIT 50"),
+            }))
         }
         "shutdown" => Response::ok(req.id, json!({"ok": true})),
         other => Response::err(req.id, METHOD_NOT_FOUND, format!("unknown method: {other}")),

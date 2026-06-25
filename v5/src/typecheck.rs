@@ -355,21 +355,33 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                 // text too (split/replace take text operands today). The
                 // whitelist (split/replace) is enforced again at lower time.
                 Term::Call { name, args } => {
-                    if !matches!(name.as_str(), "split" | "replace") {
+                    // `int/1` produces an int (fills an int column); split/replace
+                    // produce text (fill a text-base column). Both take text args.
+                    let is_int = name == "int";
+                    if !matches!(name.as_str(), "split" | "replace" | "int") {
                         diags.push(TypeDiag {
                             path: dl_path.to_string(), span: (0, 0),
                             severity: Severity::Error, code: "unknown-function".into(),
-                            msg: format!("unknown function `{name}` (known: split, replace)"),
+                            msg: format!("unknown function `{name}` (known: split, replace, int)"),
                         });
                     }
-                    if args.len() != 3 {
+                    let want = if is_int { 1 } else { 3 };
+                    if args.len() != want {
                         diags.push(TypeDiag {
                             path: dl_path.to_string(), span: (0, 0),
                             severity: Severity::Error, code: "arity".into(),
-                            msg: format!("function `{name}` expects 3 args, got {}", args.len()),
+                            msg: format!("function `{name}` expects {want} args, got {}", args.len()),
                         });
                     }
-                    if !is_path_base(cty.base) && cty.base != Type::Text {
+                    if is_int {
+                        if cty.base != Type::Int {
+                            diags.push(TypeDiag {
+                                path: dl_path.to_string(), span: (0, 0),
+                                severity: Severity::Error, code: "brand-mismatch".into(),
+                                msg: format!("`int(..)` cannot fill non-int column `{}`", meta.cols[i].name),
+                            });
+                        }
+                    } else if !is_path_base(cty.base) && cty.base != Type::Text {
                         diags.push(TypeDiag {
                             path: dl_path.to_string(), span: (0, 0),
                             severity: Severity::Error, code: "brand-mismatch".into(),

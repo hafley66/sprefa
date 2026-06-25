@@ -77,7 +77,16 @@ pub fn prepare_paths(paths: &[PathBuf]) -> Result<(ast::Program, Vec<ast::TypeDi
 /// Public so `daemon::run_daemon` can surface the same `path:line: sev[code]:
 /// msg` rendering as the foreground tick path.
 pub fn render_type_diags_eprintln(diags: &[ast::TypeDiag]) {
+    // `coerce-text-path` is an intentional grandfather warning (a branded/path var
+    // flowing into a plain text column). It re-fires every run and is pure noise on
+    // a program that has accepted the coercion, so it is suppressed by default;
+    // `DL_COERCE_WARN=1` opts back in. Other codes always print. Identical lines are
+    // de-duped so one coercion does not print once per occurrence.
+    let show_coerce = std::env::var_os("DL_COERCE_WARN").is_some();
+    let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
     for d in diags {
+        if d.code == "coerce-text-path" && !show_coerce { continue; }
+        if !seen.insert((d.code.clone(), d.msg.clone())) { continue; }
         eprintln!("{}:1: {}[{}]: {}", d.path, d.severity.as_str(), d.code, d.msg);
     }
 }
