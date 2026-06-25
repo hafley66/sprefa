@@ -215,9 +215,10 @@ fn rewrite_terms(b: &mut BodyItem, sub: &HashMap<String, Term>, params: &[String
             for t in [path, rev, line] { rewrite_term(t); }
             if let Some(t) = id { rewrite_term(t); }
         }
-        BodyItem::Ast { path, rev, line, end, .. } => {
+        BodyItem::Ast { path, rev, line, end, id, .. } => {
             for t in [path, rev, line] { rewrite_term(t); }
             rewrite_opt(end);
+            rewrite_opt(id);
         }
         BodyItem::Sg { path, rev, line, col, end_line, end_col, .. } => {
             for t in [path, rev, line, col, end_line, end_col] { rewrite_term(t); }

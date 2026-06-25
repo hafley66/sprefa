@@ -384,8 +384,16 @@ impl Parser {
         let end = if matches!(self.peek(), Some(Tok::Comma)) {
             self.next()?; Some(self.term()?)
         } else { None };
+        // optional 7th term binds the spine id of the WHOLE-match span (the
+        // captures' min..max byte range). A rule joins `ref(id, _, _, lo, hi)`
+        // off it for the codemod anchor: the bytes this ast match covered.
+        // Mirrors `match`'s 5th-arg `id` (christmas #9). Omit `end` with `_` to
+        // bind only the id.
+        let id = if matches!(self.peek(), Some(Tok::Comma)) {
+            self.next()?; Some(self.term()?)
+        } else { None };
         self.expect(Tok::RParen)?;
-        Ok(BodyItem::Ast { path, rev, lang, query, line, end })
+        Ok(BodyItem::Ast { path, rev, lang, query, line, end, id })
     }
 
     fn sg(&mut self) -> Result<BodyItem> {

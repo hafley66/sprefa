@@ -149,7 +149,7 @@ pub enum BodyItem {
     Neg(Atom),
     Scan { repo: Term, rev: Term, glob: Term, path: Term, rev_out: Term },
     Match { path: Term, rev: Term, regex: String, line: Term, id: Option<Term> },
-    Ast { path: Term, rev: Term, lang: String, query: String, line: Term, end: Option<Term> },
+    Ast { path: Term, rev: Term, lang: String, query: String, line: Term, end: Option<Term>, id: Option<Term> },
     /// `line`/`col`/`end_line`/`end_col` are the match span (1-based lines,
     /// 0-based byte columns). All four accept the kwarg/`_` form: positional in
     /// order, `name: term` to bind a later slot, or unmentioned to bind nothing.
