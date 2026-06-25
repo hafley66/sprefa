@@ -397,11 +397,18 @@ pub fn run_daemon(
     // `use` includes spliced); no positionals falls back to `<root>/.dl/*.dl`
     // discovery.
     let files = if programs.is_empty() {
-        crate::resolve_programs(None, &eng_root)?
+        // Rootless serving daemon: tolerate an empty `.dl/` (no discovery
+        // files) so it starts empty and grows via the `load` RPC. A non-empty
+        // discovery or an explicit program file set still works as before.
+        crate::resolve_programs(None, &eng_root).unwrap_or_default()
     } else {
         programs.iter().map(PathBuf::from).collect()
     };
-    let (prog, type_diags, display) = crate::prepare_paths(&files)?;
+    let (prog, type_diags, display) = if files.is_empty() {
+        (crate::ast::Program { items: vec![] }, vec![], "<serving>".to_string())
+    } else {
+        crate::prepare_paths(&files)?
+    };
     crate::render_type_diags_eprintln(&type_diags);
     let n_err = type_diags.iter().filter(|d| d.severity == crate::ast::Severity::Error).count();
     if n_err > 0 { bail!("{n_err} type error(s) in program; daemon not started"); }
@@ -428,7 +435,11 @@ pub fn run_daemon(
         program_display: display,
         program_files: Mutex::new(canon_files),
         discovery_mode: programs.is_empty(),
-        no_respawn: tray,
+        // Hot-reload (not respawn) when the daemon is tray-driven OR a rootless
+        // serving daemon (no explicit program, grown via the `load` RPC). A
+        // respawn would re-resolve from empty discovery and lose every loaded
+        // script; the serving daemon has no startup program to respawn from.
+        no_respawn: tray || (programs.is_empty() && root.is_none()),
         prog: Mutex::new(prog),
         eng: Mutex::new(eng),
         last_activity: Mutex::new(Instant::now()),
@@ -575,6 +586,13 @@ fn watcher_loop(d: Arc<Daemon>) {
     eprintln!("[daemon] watcher ready ({})", d.root.display());
     let watcher_start = std::time::Instant::now();
     const STARTUP_GRACE: Duration = Duration::from_secs(1);
+    // Roots already watched (self + config + pulled). A successful tick may pull
+    // new repos into the engine's registered set; the loop diff below adds a
+    // notify watch for each new root so edits in a dynamically-reached repo
+    // react, not just the statically-configured ones.
+    let mut watched: std::collections::HashSet<PathBuf> = std::collections::HashSet::from_iter([
+        d.root.clone(),
+    ].into_iter().chain(load_repos_eager().into_iter().filter(|r| r.root.exists()).map(|r| r.root)));
     while let Ok(first) = rx.recv() {
         // Startup grace: drain residual FSEvents from the spawning shell's
         // recent file activity (mkdir + write land in FSEvents after the
@@ -668,9 +686,22 @@ fn watcher_loop(d: Arc<Daemon>) {
         };
         let n_paths = paths.len();
         let tick_num = d.tick_count.load(Ordering::Relaxed);
+        let tick_ok = result.is_ok();
         match result {
             Ok(()) => eprintln!("[daemon] tick #{tick_num} ({tick_label}, {n_paths} paths) ok"),
             Err(e) => eprintln!("[daemon] tick #{tick_num} ({tick_label}, {n_paths} paths) error: {e}"),
+        }
+        // A tick may have pulled new repos (a `repo`-sink drained). Watch any
+        // root not yet watched so the next edit there is reactive. Git-dir
+        // watching for pulled repos is deferred (commit reactivity follow-up).
+        if tick_ok {
+            for rc in d.eng.lock().unwrap().snapshot_repos() {
+                if rc.root.exists() && watched.insert(rc.root.clone()) {
+                    if watcher.watch(&rc.root, RecursiveMode::Recursive).is_ok() {
+                        eprintln!("[daemon] watching (pulled) {} ({})", rc.slug, rc.root.display());
+                    }
+                }
+            }
         }
     }
 }
@@ -893,6 +924,63 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
             }))
         }
         "shutdown" => Response::ok(req.id, json!({"ok": true})),
+        "load" => {
+            // Load a script into the running daemon. mode="once" evals it
+            // ephemerally (throwaway engine, run_eval); mode="watched" joins it
+            // to the loaded program (push program_files + reload_program) so its
+            // rules run on every tick and hot-reload on edit.
+            let path = match req.params.get("path").and_then(|v| v.as_str()) {
+                Some(s) => s.to_string(),
+                None => return Response::err(req.id, INVALID_PARAMS, "missing path"),
+            };
+            let mode = req.params.get("mode").and_then(|v| v.as_str()).unwrap_or("watched");
+            match mode {
+                "once" => {
+                    let text = match std::fs::read_to_string(&path) {
+                        Ok(t) => t,
+                        Err(e) => return Response::err(req.id, INVALID_PARAMS, format!("read {path}: {e}")),
+                    };
+                    match run_eval(d, &text) {
+                        Ok(v) => Response::ok(req.id, v),
+                        Err((code, msg)) => Response::err(req.id, code, msg),
+                    }
+                }
+                "watched" => {
+                    let canon = match std::fs::canonicalize(&path) {
+                        Ok(c) => c,
+                        Err(e) => return Response::err(req.id, INVALID_PARAMS, format!("canonicalize {path}: {e}")),
+                    };
+                    let already = {
+                        let mut pf = d.program_files.lock().unwrap();
+                        let dup = pf.iter().any(|f| f == &canon);
+                        if !dup { pf.push(canon.clone()); }
+                        dup
+                    };
+                    // reload_program re-parses ALL program_files, swaps the
+                    // Program, re-ticks. A parse/type error keeps the old
+                    // program (returns Err) — the push remains but is inert
+                    // until it parses clean.
+                    match d.reload_program() {
+                        Ok(()) => {
+                            if let Err(e) = d.eng.lock().unwrap()
+                                .save_program_meta(&d.program_files.lock().unwrap().clone()) {
+                                eprintln!("[daemon] save_program_meta: {e}");
+                            }
+                            let files: Vec<String> = d.program_files.lock().unwrap().iter()
+                                .map(|f| f.to_string_lossy().into_owned()).collect();
+                            Response::ok(req.id, json!({
+                                "loaded": canon.to_string_lossy(),
+                                "already_loaded": already,
+                                "program_files": files,
+                            }))
+                        }
+                        Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("reload: {e}")),
+                    }
+                }
+                other => Response::err(req.id, INVALID_PARAMS,
+                    format!("mode must be watched|once, got {other}")),
+            }
+        }
         other => Response::err(req.id, METHOD_NOT_FOUND, format!("unknown method: {other}")),
     }
 }
@@ -1093,6 +1181,16 @@ pub fn stop(root: Option<&Path>) -> Result<()> {
         std::thread::sleep(Duration::from_millis(20));
     }
     bail!("daemon did not close socket after shutdown")
+}
+
+/// Load a script into the daemon at this home. mode="watched" joins the program
+/// (persistent, reactive, hot-reloaded on edit); mode="once" evals it
+/// ephemerally on a throwaway engine and returns the query results.
+/// `root=None` targets the global rootless serving daemon.
+pub fn load(root: Option<&Path>, path: &str, mode: &str) -> Result<Response> {
+    let mut s = connect(root)?;
+    let req = Request::new(0, "load", json!({"path": path, "mode": mode}));
+    rpc_call(&mut s, &req)
 }
 
 // ---------- small helpers shared with lib.rs ----------

@@ -27,7 +27,7 @@ fn config_repos_populate_the_repo_relation() {
     fs::write(d.join("p.dl"), "\
         rel src(p: file).\n\
         src(p) <- scan(\"WORK\", \"src/**/*.rs\", p, rev).\n\
-        ? repo(id, slug, root).\n").unwrap();
+        ? repo(slug, root, url).\n").unwrap();
 
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
@@ -38,8 +38,8 @@ fn config_repos_populate_the_repo_relation() {
     assert!(out.status.success(), "run failed: {stdout}\n{}", String::from_utf8_lossy(&out.stderr));
 
     let block = stdout.split("? repo").nth(1).unwrap_or("");
-    assert!(block.contains("alpha/one\talpha/one\t/tmp/alpha"), "repo alpha from config: {stdout}");
-    assert!(block.contains("beta/two\tbeta/two\t/tmp/beta"), "repo beta from config: {stdout}");
+    assert!(block.contains("alpha/one\t/tmp/alpha"), "repo alpha from config: {stdout}");
+    assert!(block.contains("beta/two\t/tmp/beta"), "repo beta from config: {stdout}");
     assert!(block.contains("(2 rows)"), "exactly the two configured repos: {stdout}");
 
     // No config -> the single --root repo (one row), not the configured two.

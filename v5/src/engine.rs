@@ -171,7 +171,7 @@ fn builtin_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "true".into(), cols: vec![] },
-        RelDecl { name: "repo".into(), cols: vec![c("id", Type::Text), c("slug", Type::Text), c("root", Type::Path)] },
+        RelDecl { name: "repo".into(), cols: vec![c("slug", Type::Text), c("root", Type::Path), c("url", Type::Text)] },
         RelDecl { name: "rev".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text), c("oid", Type::Text), c("ts", Type::Int)] },
         RelDecl { name: "content".into(), cols: vec![c("id", Type::Text), c("hash", Type::Text)] },
         RelDecl { name: "file".into(), cols: vec![c("repo", Type::Text), c("rev", Type::Text), c("path", Type::Path), c("content", Type::Text)] },
@@ -1441,12 +1441,24 @@ impl Engine {
         self.ensure_meta()?;
 
         let source_rules: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_source()).collect();
+        // `repo`-sink rules: head rel `repo`. Drained post-fixpoint (clone +
+        // register), never inserted by reconcile/rebuild (which would wipe the
+        // engine-emitted registered set). Must be derived-style: the drain
+        // compiles the body as a SELECT, so a scan/match/... body is rejected.
+        let repo_sinks: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_repo_sink()).collect();
+        for r in &repo_sinks {
+            if r.is_source() {
+                bail!("repo-sink rule must be derived-style (no scan/match/ast/...); \
+                       its body is compiled as a SELECT over already-derived relations");
+            }
+        }
         // non-source, non-closure rules. A rule whose body reads a closure head in
         // the seedable shape is split out: it can't go through `lower_rule` (the
         // closure head is a VIEW that isn't populated mid-fixpoint), so it is
-        // evaluated by a seeded BFS in the query phase instead.
+        // evaluated by a seeded BFS in the query phase instead. Repo-sinks are
+        // excluded: they are drained, not derived.
         let all_derived: Vec<&Rule> = rules.iter().copied()
-            .filter(|r| !r.is_source() && r.closure_edge().is_none()).collect();
+            .filter(|r| !r.is_source() && !r.is_repo_sink() && r.closure_edge().is_none()).collect();
         check_stratification(&all_derived, &closures)?;
         let seed_rules: Vec<(&Rule, ClosureSeed)> = all_derived.iter().copied()
             .filter_map(|r| closure_seed_of(r, &closures).map(|cs| (r, cs))).collect();
@@ -1587,6 +1599,11 @@ impl Engine {
             if let Item::Query(q) = item { self.run_query(q, &closures)?; }
         }
         self.run_gens(prog, quiet)?;
+        // Drain `repo`-sinks AFTER the fixpoint + gens so their bodies see this
+        // tick's derived rows. A pull clones + registers into self.repos; the
+        // new repo is scannable / appears in the `repo` builtin on the NEXT tick
+        // (mid-tick registration would shift the repo set under derived rules).
+        self.run_repo_pulls(&repo_sinks)?;
         if self.dropped > 0 {
             eprintln!("[checked-type] dropped {} rows failing file/dir/path checks", self.dropped);
             self.dropped = 0;
@@ -1619,6 +1636,14 @@ impl Engine {
         let closures = closure_map(&rules);
         self.declare_all(prog, &closures)?;
         self.ensure_meta()?;
+
+        // A `repo`-sink program pulls dynamically; the drain runs only on the
+        // full-tick path, so an incremental tick defers to the full tick. (The
+        // sink's body depends on derived relations whose churn is otherwise
+        // invisible to the path-scoped reconcile.)
+        if rules.iter().any(|r| r.is_repo_sink()) {
+            return self.tick(prog, quiet);
+        }
 
         let source_rules: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_source()).collect();
         let all_derived: Vec<&Rule> = rules.iter().copied()
@@ -1658,6 +1683,13 @@ impl Engine {
         // rebuilds everything, which is the full tick's job.
         let der_digest = derived_program_digest(&derived_rules, &seed_rules, &edges);
         if self.load_rel_digest("derived:program")? != Some(der_digest) {
+            return self.tick(prog, quiet);
+        }
+        // A changed path outside self.root (a config or dynamically-registered
+        // repo's source edit) can't be reconciled by the path-scoped loop below,
+        // which strips against self.root only. Fall back to the full tick so
+        // every folder in view stays reactive, not just the self worktree.
+        if changed.iter().any(|p| !p.starts_with(&self.root)) {
             return self.tick(prog, quiet);
         }
 
@@ -2507,18 +2539,19 @@ impl Engine {
             self.repos.iter()
                 .filter(|r| r.root.exists())
                 .map(|r| {
-                    vec![t(&r.slug), t(&r.slug), t(&r.root.to_string_lossy())]
+                    vec![t(&r.slug), t(&r.root.to_string_lossy()),
+                         t(&r.url.clone().unwrap_or_default())]
                 }).collect()
         } else {
             if repo_slugs.is_empty() { repo_slugs.insert(self.self_slug()); }
             repo_slugs.iter().map(|slug| {
                 let root = root_of.get(slug).cloned().unwrap_or_default();
-                vec![t(slug), t(slug), t(&root)]
+                vec![t(slug), t(&root), t("")]
             }).collect()
         };
         let revs: Vec<Vec<Value>> = revs.into_values().collect();
         let contents: Vec<Vec<Value>> = contents.into_values().collect();
-        self.refresh_rel("repo", &["id", "slug", "root"], &repo_rows)?;
+        self.refresh_rel("repo", &["slug", "root", "url"], &repo_rows)?;
         self.refresh_rel("rev", &["id", "repo", "oid", "ts"], &revs)?;
         self.refresh_rel("content", &["id", "hash"], &contents)?;
         self.refresh_rel("file", &["repo", "rev", "path", "content"], &file_rows)?;
@@ -2669,6 +2702,132 @@ impl Engine {
         self.db.exec("DELETE FROM _repo")?;
         self.db.insert_rows("_repo", &["slug", "root", "url", "registered_at"], &rows)?;
         Ok(())
+    }
+
+    /// Snapshot of the registered repo set (config + dynamically pulled). The
+    /// daemon diffs this after a tick to add notify watches on newly-pulled
+    /// roots, so edits in a dynamically-reached repo react.
+    pub fn snapshot_repos(&self) -> Vec<crate::config::RepoConfig> {
+        self.repos.clone()
+    }
+
+    /// The query-facing `repo` relation (slug, root, url) as it stood after the
+    /// last tick's `refresh_builtin_rels` — the union of config and dynamically
+    /// pulled repos whose root exists. Diagnostics/tests.
+    pub fn repo_relation(&self) -> Vec<(String, String, String)> {
+        let conn = self.db.conn();
+        let mut s = match conn.prepare("SELECT slug, root, url FROM rel_repo ORDER BY slug") {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows = s.query_map([], |r|
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)));
+        rows.ok()
+            .map(|iter| iter.filter_map(|x| x.ok()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Drain `repo`-sink rules: compile each sink's body as a SELECT (the gen
+    /// lowering), collect `(slug, root, url)` rows, and for each row whose
+    /// github org is in the `org` allowlist, clone (if missing) + register the
+    /// repo into `self.repos`. Registered repos appear in the `repo` builtin and
+    /// `scan("*")` on the NEXT tick; idempotent (a slug/root already registered
+    /// is skipped, so re-asserting each tick is cheap).
+    ///
+    /// The `org` allowlist is a hard filter: a row pulls only when
+    /// `parse_github_org(url)` is `Some(org)` AND `org(name)` contains it. Rows
+    /// with no parseable github org, or whose org is not listed, are skipped
+    /// with a stderr line. A missing/empty `org` relation pulls nothing.
+    fn run_repo_pulls(&mut self, sinks: &[&Rule]) -> Result<()> {
+        if sinks.is_empty() { return Ok(()); }
+        let allowlist: HashSet<String> = if self.rels.contains_key("org") {
+            self.db.conn()
+                .prepare(&format!("SELECT DISTINCT \"name\" FROM {}", tbl("org")))?
+                .query_map([], |r| r.get::<_, String>(0))?
+                .filter_map(|x| x.ok()).collect()
+        } else {
+            HashSet::new()
+        };
+        let mut pulled = false;
+        for rule in sinks {
+            // The head must be all variables (slug, root, url), selected in
+            // order. A literal head term is a filter the gen lowering can't
+            // express; reject it loudly so the author fixes the shape.
+            let vars: Vec<String> = rule.head.terms.iter().filter_map(|t| match t {
+                Term::Var(v) => Some(v.clone()),
+                _ => None,
+            }).collect();
+            if vars.len() != rule.head.terms.len() {
+                eprintln!("[repo-sink] head must be all variables (slug, root, url); skipping");
+                continue;
+            }
+            let sql = crate::lower::lower_gen(&vars, &rule.body, &self.rels)?;
+            let rows: Vec<(String, String, String)> = self.db.conn().prepare(&sql)?
+                .query_map([], |r| Ok((r.get::<_, String>(0)?,
+                                       r.get::<_, String>(1)?,
+                                       r.get::<_, String>(2)?)))?
+                .filter_map(|x| x.ok()).collect();
+            for (slug, root_str, url) in rows {
+                if slug.is_empty() {
+                    eprintln!("[repo-sink] skip row with empty slug");
+                    continue;
+                }
+                if self.repos.iter().any(|r| r.slug == slug
+                    || (!root_str.is_empty() && r.root == PathBuf::from(&root_str)))
+                {
+                    continue; // already registered
+                }
+                let org = Self::parse_github_org(&url);
+                let allowed = org.as_ref().is_some_and(|o| allowlist.contains(o));
+                if !allowed {
+                    eprintln!("[repo-sink] skip {slug}: org {:?} not in allowlist ({} listed)",
+                        org, allowlist.len());
+                    continue;
+                }
+                let root = if root_str.is_empty() {
+                    crate::daemon::daemon_home().join("repos").join(&slug)
+                } else {
+                    PathBuf::from(&root_str)
+                };
+                let rc = crate::config::RepoConfig {
+                    slug: slug.clone(), root: root.clone(),
+                    url: Some(url.clone()), allow_missing: false,
+                };
+                match Self::ensure_cloned(&rc) {
+                    Ok(()) => {
+                        eprintln!("[repo-sink] pulled {slug} -> {} (org {org:?})",
+                            root.display());
+                        self.repos.push(rc);
+                        pulled = true;
+                    }
+                    Err(e) => eprintln!("[repo-sink] clone {slug} failed: {e}"),
+                }
+            }
+        }
+        if pulled { self.save_repos_meta()?; }
+        Ok(())
+    }
+
+    /// Parse the org from a github URL: `https://github.com/<org>/<repo>(.git)?`
+    /// (ssh `git@github.com:<org>/<repo>` accepted). `None` for non-github hosts
+    /// or a path too short to carry an org. This is the allowlist key: a pulled
+    /// repo's org must appear in the `org` relation.
+    fn parse_github_org(url: &str) -> Option<String> {
+        let u = url.trim();
+        let path = if let Some(rest) = u.strip_prefix("https://github.com/")
+            .or_else(|| u.strip_prefix("http://github.com/"))
+            .or_else(|| u.strip_prefix("git@github.com:"))
+        {
+            rest
+        } else {
+            return None;
+        };
+        let mut parts = path.split('/');
+        let org = parts.next()?;
+        if org.is_empty() { return None; }
+        let repo = parts.next()?;
+        if repo.is_empty() { return None; }
+        Some(org.to_string())
     }
 
     /// Resolve `name` (HEAD or a ref) to an oid in `repo_root`, compare to the

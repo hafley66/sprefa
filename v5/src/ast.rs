@@ -220,6 +220,13 @@ impl Rule {
             _ => None,
         }
     }
+
+    /// A `repo`-sink rule: head rel `repo`. Its body is compiled as a SELECT and
+    /// drained post-fixpoint to clone + register repos (the dynamic-pull path),
+    /// NOT inserted into the `repo` table by `rebuild_derived` (which would wipe
+    /// the engine-emitted registered set). Excluded from source/derived
+    /// classification so neither reconcile nor rebuild touches the `repo` table.
+    pub fn is_repo_sink(&self) -> bool { self.head.rel == "repo" }
 }
 
 /// A `? atom.` query. Filtering is done by nesting (a literal head term pins a

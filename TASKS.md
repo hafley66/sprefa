@@ -102,14 +102,22 @@ Workaround for OR today: multiple `json(...)` rules unioned at the head relation
       (`plans/2026-06-25-json-declarative-syntax.md`) status: Steps 1–7 done;
       record the deviations (`q:` carrier, dropped `$$sigil`/cross-ref/`$$${PATH}`,
       LeafPattern literal, shallow conjunctive).
-- [ ] **T20 (M)** Auto-generate the README op table from source (true dogfood).
-      Today the op table in `v5/README.md` is hand-maintained (edited twice during
-      the json/jsonp split). Add a `gen` rule that derives it from `parse.rs`'s
-      `body_item` dispatch arms (`if s == "json"{...}`) + each op fn's signature,
-      spliced into README between `BEGIN: op-table`/`END:` markers — so adding an
-      op updates the table on the next `dl` run. Mirror `gen-doc-index.dl`'s
-      marker-splice pattern. Companion: a `doc_node`/`comment`-based check that
-      the dispatch arms and the table stay in sync (lint-docs.dl style).
+- [~] **T20 (M)** Auto-generate the README op table from source (true dogfood).
+      **Rule built: `v5/examples/op-table.dl`.** Twines `match` (parse.rs
+      `body_item` dispatch arms, anchored on `{ return self.` to exclude item
+      keywords) + `comment` (`<!-- BEGIN/END: op-table -->` marker pair) +
+      `gen` (splice into README.md). Prose = README's own rows read verbatim
+      (byte-identical re-emit = converge); op names/order from parse.rs; an op
+      dispatched but undocumented auto-appears as a `| `op` | — | _undocumented_ |`
+      stub (surfaced `ast_yaml`, now filled). Converges (rerun = no write);
+      daemon-safe (writes README.md, a non-program file, so no respawn loop).
+      **Remaining: wire into the daemon's program** so it auto-updates on watch.
+      The live daemon (pid 27600) runs `.dl/rails.dl` (explicit, not discovery),
+      so either restart with both programs or have rails.dl `use`-include
+      `op-table.dl`. Note: `gen-doc-index.dl` writes its OWN `.dl` file →
+      tray-only (would respawn otherwise); op-table.dl has no such issue.
+- [ ] **T20a** The README op table is now alphabetical (gen's ORDER BY over vars).
+      If dispatch-order is preferred, impose it via a sort key — deferred.
 - [ ] **T21 (L)** The `//!` first-line drift exposed by gen-doc-index: the rule
       only reads line 1, so a stale summary (like datapath.rs had) updates only
       when line 1 changes. Consider reading the full `//!` block summary, or a

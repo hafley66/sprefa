@@ -1,0 +1,51 @@
+# op-table.dl — keep the README source-op table fresh from parse.rs dispatch.
+#
+# Twines match (parse.rs dispatch arms + README rows) + comment (marker bounds)
+# + gen (splice). No new convention: the prose is the README's own rows, read
+# verbatim and re-emitted byte-identical so the table converges. Op NAMES come
+# from parse.rs's body_item dispatch. An op dispatched but absent from the table
+# auto-appears as a stub row (ast_yaml today) so drift is visible in the doc;
+# a human fills the prose and the next tick preserves it verbatim.
+#
+# Manual:  dl v5/examples/op-table.dl --root .
+# Daemon:  dl --daemon v5/examples/op-table.dl --root .
+#          Writes README.md (a watched non-program file) → converges, no respawn.
+# Rerun converges (gen writes only when bytes differ).
+
+# Op names dispatched in body_item: parse.rs `if s == "scan" { return self.scan(); }`.
+# The `return self.` anchor excludes item-level keywords (`gen`/`anchor`/`def`/
+# `_`) that also match a bare `if s == "..."`. `closure` is a body construct, not
+# a source op (separate table) → excluded.
+rel dispatch_op(op: text).
+dispatch_op(op) <- scan("WORK", "v5/src/parse.rs", p, rev),
+  match(p, rev, /if s == "(?<op>\w+)" \{ return self\./, _),
+  op != "closure".
+
+# The marker pair wrapping the whole table (header + separator + rows).
+rel block(p: file, l0: int, l1: int).
+block(p, l0, l1) <- scan("WORK", "v5/README.md", p, rev),
+  comment(p, rev, /BEGIN: op-table/, /END: op-table/, l0, l1).
+
+# Extract every backtick-pipe row from README (SOURCE rule: scan+match only,
+# no derived join — the extract-then-join split source rules require).
+rel readme_row_raw(p: file, line: int, op: text, row: text).
+readme_row_raw(p, line, op, row) <- scan("WORK", "v5/README.md", p, rev),
+  match(p, rev, /(?<row>\| `(?<op>\w+)` .+)/, line).
+
+# Scope the rows to the block (DERIVED rule: may join block + compare). Verbatim
+# re-emit = byte-identical = converge. Joining on op keeps only rows whose op is
+# still dispatched, so a removed op drops out of the table.
+rel readme_op_row(op: text, row: text).
+readme_op_row(op, row) <- readme_row_raw(p, line, op, row), block(p, l0, l1),
+  line > l0, line < l1.
+
+# Header + separator (constant; body matches the block once).
+gen(p, l0, l1, "| op | signature | what it does |") <- block(p, l0, l1).
+gen(p, l0, l1, "|---|---|---|") <- block(p, l0, l1).
+
+# Pass-through: re-emit each row verbatim (alpha by row text via gen's ORDER BY).
+gen(p, l0, l1, "{row}") <- block(p, l0, l1), dispatch_op(op), readme_op_row(op, row).
+
+# Stub: dispatched op with no README row → drift made visible in the doc.
+gen(p, l0, l1, "| `{op}` | — | _undocumented_ |") <- block(p, l0, l1), dispatch_op(op),
+  !readme_op_row(op, _).

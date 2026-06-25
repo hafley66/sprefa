@@ -79,6 +79,15 @@ struct Cli {
     /// `DL_NO_DAEMON=1`. Useful when the daemon socket is wedged.
     #[arg(long)]
     no_daemon: bool,
+    /// Load a script into the running daemon as a WATCHED program: joins the
+    /// loaded set, runs on every tick, hot-reloads on edit. Omit `--root` to
+    /// target the global rootless serving daemon.
+    #[arg(long = "load")]
+    load: Option<String>,
+    /// Load a script ONE-TIME: eval it on a throwaway engine, print the `?`
+    /// query results, persist nothing. Same target rules as `--load`.
+    #[arg(long)]
+    load_once: Option<String>,
 }
 
 /// Explicit `--root` wins (canonicalized). When `--tray` is on and no
@@ -116,6 +125,19 @@ fn find_workspace_root() -> Option<PathBuf> {
     None
 }
 
+/// Print a `--load` / `--load-once` RPC response: the JSON result on success,
+/// the error message (exit 1) on failure.
+fn print_load_response(resp: sprefa_v5::rpc::Response) -> Result<()> {
+    if let Some(e) = resp.error {
+        eprintln!("{}", e.message);
+        std::process::exit(1);
+    }
+    if let Some(res) = resp.result {
+        println!("{}", serde_json::to_string_pretty(&res)?);
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     if cli.profile { sprefa_v5::db::set_profile(true); }
@@ -134,6 +156,16 @@ fn main() -> Result<()> {
     };
     if cli.stop {
         return sprefa_v5::daemon::stop(root_opt.as_deref());
+    }
+    // `--load` / `--load-once`: push a script to the running daemon and exit.
+    // watched joins the program (reactive); once evals ephemerally + prints.
+    if let Some(p) = cli.load_once.clone() {
+        let resp = sprefa_v5::daemon::load(root_opt.as_deref(), &p, "once")?;
+        return print_load_response(resp);
+    }
+    if let Some(p) = cli.load.clone() {
+        let resp = sprefa_v5::daemon::load(root_opt.as_deref(), &p, "watched")?;
+        return print_load_response(resp);
     }
     if cli.daemon || cli.tray {
         return sprefa_v5::daemon::run_daemon(
