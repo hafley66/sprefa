@@ -10,4 +10,4 @@ rel spec_op(op: text).
 
 spec_op(op) <-
   scan("WORK", "**/openapi.{json,yaml,yml}", path, rev),
-  json(path, rev, "paths.*.*.operationId", op).
+  jsonp(path, rev, "paths.*.*.operationId", op).

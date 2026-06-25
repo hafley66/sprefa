@@ -69,6 +69,11 @@ pub struct SchemeSpec {
 pub const SCHEMES: &[SchemeSpec] = &[
     SchemeSpec { name: "fs", concrete: true },
     SchemeSpec { name: "glob", concrete: false },
+    // `q:{ $k: $v }` — a structural brace-pattern literal (the declarative
+    // `json` op's carrier). Not a filesystem path; `concrete: false` keeps it
+    // out of descriptor materialization. The body is opaque to the lexer
+    // (balanced brackets) and parsed by datapath::parse_pattern.
+    SchemeSpec { name: "q", concrete: false },
 ];
 
 pub fn scheme_spec(name: &str) -> Option<&'static SchemeSpec> {

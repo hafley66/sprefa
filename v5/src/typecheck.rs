@@ -212,8 +212,11 @@ fn normalize_body_item(b: &mut BodyItem, dl_path: &str, diags: &mut Vec<TypeDiag
         BodyItem::AstYaml { path, rev, line, col, end_line, end_col, .. } => {
             for t in [path, rev, line, col, end_line, end_col] { normalize_term(t, dl_path, diags); }
         }
-        BodyItem::Json { path, rev, out, .. } => {
+        BodyItem::JsonP { path, rev, out, .. } => {
             for t in [path, rev, out] { normalize_term(t, dl_path, diags); }
+        }
+        BodyItem::Json { path, rev, .. } => {
+            for t in [path, rev] { normalize_term(t, dl_path, diags); }
         }
         BodyItem::Cmd { path, rev, line, out, .. } => {
             for t in [path, rev, line, out] { normalize_term(t, dl_path, diags); }

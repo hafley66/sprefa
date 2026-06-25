@@ -31,7 +31,7 @@ cwd in discovery mode). Multi-repo analysis is configured in
   content-addressed (blake3 for the working tree, blob OID for a git rev), so
   the same path at two revs or in two repos never collides. Contract pinned in
   [docs/data-model.md](docs/data-model.md).
-- **Facts.** `scan` selects files; a source op (`match`/`ast`/`sg`/`json`/
+- **Facts.** `scan` selects files; a source op (`match`/`ast`/`sg`/`json`/`jsonp`/
   `cmd`/`comment`) extracts rows from each. Source-op rows are cached by
   (file content hash, rule text) — a re-tick only re-runs what moved.
 - **Rules.** `head(..) <- body.` — ordinary datalog, recursion allowed,
@@ -98,7 +98,8 @@ Type errors surface as diagnostics under `--check` and in `--lsp`
 | `match` | `match(path, rev, /re/, line[, id])` | regex over file content, one row per match line. `(?<cap>..)` named groups bind dl vars of the same name; `$cap` is sugar for a lazy named group (`/TODO\($who\)/`); bare `$` stays the anchor. Optional `id` binds the whole-match span's spine id (deterministic from span+source, equals `insert_spine_where_bytes`'s id), so `ref(id, _, _, lo, hi)` resolves to the exact match and feeds `gen(:mode, path, lo, hi, ...)`. When `id` is present the whole-match span is pushed; the 4-arg form pushes named captures only |
 | `ast` | `ast(path, rev, :rust\|:c\|:kotlin, "(query) @cap", line[, end])` | tree-sitter query; `@cap` captures bind same-named vars |
 | `sg` | `sg(path, rev, :lang, "$X.unwrap()", line[, col, end_line, end_col])` | ast-grep pattern; metavar `$X` binds dl var `X`. Lines 1-based, columns 0-based byte offsets. `:lang` ∈ rust, ts, tsx, js, py, go, json, c, cpp, kotlin (see [src/sg.rs](src/sg.rs)) |
-| `json` | `json(path, rev, "a.*.b", out)` | dotted path over json/yaml/toml (dispatched by extension; `*` = any key/element). Value is located |
+| `json` | `json(path, rev, q:{ $k: $v })` | declarative brace pattern over json/yaml/toml (dispatched by extension). Each match binds N named captures (keys AND values) as dl vars, like match's named groups. The `q:{...}` arg is a structured `q:` literal (highlightable, not a string). `{ name: $n }` descends by exact key; `{ $k: $v }` iterates entries; `{ a: $a, b: $b }` is conjunctive; `{ **: { image: $i } }` recurses at any depth; `[...$x]` spreads arrays; `re:REGEX` / glob (`*id`) keys |
+| `jsonp` | `jsonp(path, rev, "a.*.b", out)` | dotted path over json/yaml/toml (dispatched by extension; `*` = any key/element). Value is located. The dotted-string form; the declarative brace pattern is `json` |
 | `cmd` | `cmd(path, rev, "tool {file}", line, out)` | shell out per matched file, one row per stdout line. Cached by (file hash, rule text). Nonzero exit + stdout = findings; nonzero + empty = error |
 | `comment` | `comment(path, rev, /open/[, /close/], l0, l1, label)` | comment-marker regions in ANY file type (marker detection by line prefix: `//`, `#`, `<!--`, `/*`, `--`, `*`). One regex = sequential dividers; two = paired BEGIN/END with LIFO nesting. `l0`/`l1` are 1-based marker lines; `label` is the open regex's first named group or the trimmed tail. The three outputs accept kwargs / `_`: bind only what you need (`comment(p, rev, /re/, label: name)`, defaulting the rest to `_`) or drop a slot with `_` (`comment(p, rev, /re/, l0, _, name)`). A typo'd name is a parse error. See [src/comment.rs](src/comment.rs) |
 
@@ -445,7 +446,7 @@ All in [examples/](examples/), runnable as `dl examples/<name>.dl --root .`:
 | [rails-call-kind.dl](examples/rails-call-kind.dl) | the `call_kind` write-precision cut: warn on `.conn()` only when the enclosing fn actually writes (execute/execute_batch), not just reads (prepare/query_row) |
 | [ban.dl](examples/ban.dl) | minimal banned-pattern check |
 | [string-fns.dl](examples/string-fns.dl) | `split` / `replace` / computed bindings / unary minus / NULL-drop over v5's own fns |
-| [openapi.dl](examples/openapi.dl) | `json` op + anti-join over a spec |
+| [openapi.dl](examples/openapi.dl) | `jsonp` op + anti-join over a spec |
 | [openapi-lsp.dl](examples/openapi-lsp.dl) | OpenAPI ↔ code cross-link as `diag` rows (the spine joins across TS/RS by shared operationId string) |
 | [lsp-def-target.dl](examples/lsp-def-target.dl) | `def_target` declaration that drives go-to-def to real definition lines, with the `=~` regex literal routing type vs fn kinds |
 | [time.dl](examples/time.dl) | cross-rev diff (WORK vs HEAD) |

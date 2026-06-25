@@ -30,7 +30,7 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
 fn prog(glob: &str, jpath: &str) -> String {
     format!(concat!(
         "rel val(p: file, v: text).\n",
-        "val(p, v) <- scan(\"WORK\", \"{}\", p, rev), json(p, rev, \"{}\", v).\n",
+        "val(p, v) <- scan(\"WORK\", \"{}\", p, rev), jsonp(p, rev, \"{}\", v).\n",
         "? val(p, v).\n"), glob, jpath)
 }
 
@@ -92,4 +92,107 @@ fn json_still_works() {
     let (code, out, err) = run(&d, &prog("*.json", "scripts.build"));
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("tsc -p ."), "{out}");
+}
+
+/// The declarative `json` brace pattern: `q:{ $k: $v }` binds both the key and
+/// the value as rule vars, one row per object entry. The 3rd arg is a `q:`
+/// PathLit (structured/highlightable), not a string.
+#[test]
+fn json_declarative_brace_pattern() {
+    let d = sandbox("json_decl");
+    fs::write(
+        d.join("pkg.json"),
+        r#"{"name":"app","version":"1.2.3","private":true}"#,
+    )
+    .unwrap();
+    let prog = concat!(
+        "rel kv(p: file, k: text, v: text).\n",
+        "kv(p, k, v) <- scan(\"WORK\", \"*.json\", p, rev),\n",
+        "               json(p, rev, q:{ $k: $v }).\n",
+        "? kv(p, k, v).\n",
+    );
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("name") && out.contains("app"), "key+value row:\n{out}");
+    assert!(out.contains("version") && out.contains("1.2.3"), "second entry:\n{out}");
+    assert!(out.contains("private") && out.contains("true"), "boolean value:\n{out}");
+}
+
+/// Nested + literal-key descent in the declarative `json` pattern.
+#[test]
+fn json_declarative_nested_and_exact() {
+    let d = sandbox("json_decl_nested");
+    fs::write(
+        d.join("pkg.json"),
+        r#"{"engines":{"node":">=18"},"name":"x"}"#,
+    )
+    .unwrap();
+    // `{ name: $N }` descends by exact key; `{ engines: { node: $V } }` nests.
+    let prog = concat!(
+        "rel p1(n: text).\n",
+        "rel p2(v: text).\n",
+        "p1(n) <- scan(\"WORK\", \"*.json\", p, rev), json(p, rev, q:{ name: $n }).\n",
+        "p2(v) <- scan(\"WORK\", \"*.json\", p, rev), json(p, rev, q:{ engines: { node: $v } }).\n",
+        "? p1(n).\n? p2(v).\n",
+    );
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("x"), "exact-key descent:\n{out}");
+    assert!(out.contains(">=18"), "nested descent:\n{out}");
+}
+
+/// A string passed to `json(` is redirected: it's a parse error pointing at jsonp.
+#[test]
+fn json_string_arg_redirects_to_jsonp() {
+    let d = sandbox("json_decl_err");
+    fs::write(d.join("pkg.json"), "{}").unwrap();
+    let prog = concat!(
+        "rel v(p: file, x: text).\n",
+        "v(p, x) <- scan(\"WORK\", \"*.json\", p, rev), json(p, rev, \"a.b\", x).\n",
+        "? v(p, x).\n",
+    );
+    let (code, _out, err) = run(&d, prog);
+    assert_ne!(code, 0, "expected a parse error, got success");
+    assert!(err.contains("jsonp") || err.contains("brace-pattern"), "redirect msg:\n{err}");
+}
+
+/// The declarative `json` pattern dispatches by file extension (the same
+/// tree-sitter substrate as jsonp). Christmas #6: the brace pattern is
+/// format-agnostic, so `{ $k: $v }` works over YAML and TOML too.
+#[test]
+fn json_declarative_over_yaml() {
+    let d = sandbox("json_decl_yaml");
+    fs::write(
+        d.join("svc.yaml"),
+        concat!("name: svc-a\n", "port: 8080\n"),
+    )
+    .unwrap();
+    let prog = concat!(
+        "rel kv(p: file, k: text, v: text).\n",
+        "kv(p, k, v) <- scan(\"WORK\", \"*.yaml\", p, rev), json(p, rev, q:{ $k: $v }).\n",
+        "? kv(p, k, v).\n",
+    );
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("svc-a"), "yaml scalar value:\n{out}");
+    assert!(out.contains("8080"), "yaml plain integer:\n{out}");
+}
+
+#[test]
+fn json_declarative_over_toml() {
+    let d = sandbox("json_decl_toml");
+    fs::write(
+        d.join("pkg.toml"),
+        concat!("name = \"app\"\n", "version = \"1.2.3\"\n"),
+    )
+    .unwrap();
+    let prog = concat!(
+        "rel kv(p: file, k: text, v: text).\n",
+        "kv(p, k, v) <- scan(\"WORK\", \"*.toml\", p, rev), json(p, rev, q:{ $k: $v }).\n",
+        "? kv(p, k, v).\n",
+    );
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("app"), "toml string value (quotes stripped):\n{out}");
+    assert!(out.contains("1.2.3"), "toml second pair:\n{out}");
 }

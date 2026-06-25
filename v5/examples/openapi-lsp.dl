@@ -13,7 +13,7 @@ rel diag(path: file, line: int, severity: text, code: text, msg: text).
 # The contract: every operation in the spec.
 rel spec_op(op: text).
 spec_op(op) <- scan("WORK", "v5/examples/openapi-sim/openapi.json", p, rev),
-               json(p, rev, "paths.*.*.operationId", op).
+               jsonp(p, rev, "paths.*.*.operationId", op).
 
 # TS call sites. One regex over the codegen convention; the spec_op join filters.
 rel call(p: file, l: int, op: text).
