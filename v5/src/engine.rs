@@ -1635,7 +1635,7 @@ impl Engine {
                 // Collect located spans across every matching rule for this file and
                 // flush once after the loop (one `bump()`), not per-rule. Per-rule
                 // flushing trips the N+1 screamer once enough files change.
-                let mut where_rows: Vec<(String, String, spine::WhereBytes)> = Vec::new();
+                let mut where_rows: Vec<(String, String, spine::WhereBytes, Option<String>)> = Vec::new();
                 for rule in &matching {
                     let (rows, where_bytes, dropped) = parse_file(rule, &slug, &rel, "WORK", &h, &self.root, &self.rels, &self.rev_index)?;
                     self.dropped += dropped;
@@ -1643,7 +1643,7 @@ impl Engine {
                     let meta = self.rels.get(&rule.head.rel)
                         .ok_or_else(|| anyhow::anyhow!("unknown relation {}", rule.head.rel))?.clone();
                     extracted += self.insert_source_rows(&rule.head.rel, &meta, &slug, &rel, &rows)?;
-                    where_rows.extend(where_bytes.into_iter().map(|w| (slug.clone(), rel.clone(), w)));
+                    where_rows.extend(where_bytes.into_iter().map(|(w, t)| (slug.clone(), rel.clone(), w, Some(t))));
                     changed_source_rels.insert(rule.head.rel.clone());
                 }
                 self.insert_spine_where_bytes(&where_rows)?;
@@ -2074,7 +2074,7 @@ impl Engine {
 
         // Parse + extract in parallel across files (CPU-bound, no DB touch),
         // then insert serially (SQLite is single-writer).
-        let results: Vec<Result<(String, String, Vec<Vec<Value>>, Vec<spine::WhereBytes>, usize)>> = {
+        let results: Vec<Result<(String, String, Vec<Vec<Value>>, Vec<(spine::WhereBytes, String)>, usize)>> = {
             let Engine { rels, rev_index, .. } = &*self;
             to_extract.par_iter().map(|(idx, repo, path, rev, hash)| {
                 let root = root_by_repo.get(repo)
@@ -2087,12 +2087,12 @@ impl Engine {
         };
 
         let mut by_rel: HashMap<String, Vec<(String, String, Vec<Value>)>> = HashMap::new();
-        let mut where_bytes: Vec<(String, String, spine::WhereBytes)> = Vec::new();
+        let mut where_bytes: Vec<(String, String, spine::WhereBytes, Option<String>)> = Vec::new();
         for (res, (_, repo, _, _, _)) in results.into_iter().zip(to_extract.iter()) {
             let (rel, path, rows, wheres, dropped) = res?;
             self.dropped += dropped;
             if dropped > 0 { self.record_extraction_drop(&path, &rel, dropped); }
-            where_bytes.extend(wheres.into_iter().map(|w| (repo.clone(), path.clone(), w)));
+            where_bytes.extend(wheres.into_iter().map(|(w, t)| (repo.clone(), path.clone(), w, Some(t))));
             by_rel.entry(rel).or_default()
                 .extend(rows.into_iter().map(|row| (repo.clone(), path.clone(), row)));
         }
@@ -2712,8 +2712,8 @@ impl Engine {
         let string_rows: Vec<(String, String, Vec<Value>)> = rows.spans.iter()
             .map(|(path, text, _)| (slug.clone(), path.clone(), vec![Value::Text(text.clone())])).collect();
         self.insert_spine_strings(&string_rows)?;
-        let where_rows: Vec<(String, String, spine::WhereBytes)> = rows.spans.iter()
-            .map(|(path, _, wb)| (slug.clone(), path.clone(), *wb)).collect();
+        let where_rows: Vec<(String, String, spine::WhereBytes, Option<String>)> = rows.spans.iter()
+            .map(|(path, _, wb)| (slug.clone(), path.clone(), *wb, None)).collect();
         self.insert_spine_where_bytes(&where_rows)?;
         Ok(())
     }
@@ -3670,10 +3670,17 @@ impl Engine {
     /// row is lost on `INSERT OR IGNORE` and retraction misfires). The `repo`
     /// column holds the real slug (matching `_file`/`_prov`), not the vestigial
     /// `w.repo` u32.
-    fn insert_spine_where_bytes(&self, wheres: &[(String, String, spine::WhereBytes)]) -> Result<usize> {
+    /// `text` (4th tuple slot) is the located source slice. When `Some`, it is
+    /// interned into `_strings` under `StringId::of(text)` — the SAME id this
+    /// WhereBytes already hashes — so EVERY located id round-trips through both
+    /// `ref(id,_,_,lo,hi)` (the span) and `string(id,text,norm)` (the text).
+    /// `None` is for callers that intern the text on a separate path (module
+    /// spans, which call `insert_spine_strings` first).
+    fn insert_spine_where_bytes(&self, wheres: &[(String, String, spine::WhereBytes, Option<String>)]) -> Result<usize> {
         if wheres.is_empty() { return Ok(0); }
         let mut by_id: BTreeMap<String, Vec<Value>> = BTreeMap::new();
-        for (repo, path, w) in wheres {
+        let mut str_by_id: BTreeMap<String, (String, String)> = BTreeMap::new();
+        for (repo, path, w, text) in wheres {
             let id = spine::WhereBytesId::of_located(*w, repo, path).to_string();
             by_id.entry(id.clone()).or_insert_with(|| vec![
                 Value::Text(id),
@@ -3685,6 +3692,18 @@ impl Engine {
                 Value::Text(w.rev.to_string()),
                 Value::Text(path.clone()),
             ]);
+            if let Some(t) = text {
+                if !t.is_empty() {
+                    str_by_id.entry(w.string.to_string())
+                        .or_insert_with(|| (t.clone(), spine::normalize(t)));
+                }
+            }
+        }
+        if !str_by_id.is_empty() {
+            let string_rows: Vec<Vec<Value>> = str_by_id.into_iter()
+                .map(|(id, (content, norm))| vec![Value::Text(id), Value::Text(content), Value::Text(norm)])
+                .collect();
+            self.db.insert_rows("_strings", &["id", "content", "norm"], &string_rows)?;
         }
         let rows: Vec<Vec<Value>> = by_id.into_values().collect();
         self.db.insert_rows("_where_bytes", &["id", "string_id", "file_id", "lo", "hi", "repo", "rev", "path"], &rows)
@@ -4476,7 +4495,7 @@ fn enumerate_with_hash(repo: &str, repo_root: &Path, rev: &str, union: &globset:
 fn parse_file(
     rule: &Rule, repo: &str, path: &str, rev: &str, hash: &str,
     root: &Path, rels: &Rels, rev_index: &HashSet<(String, String, String)>,
-) -> Result<(Vec<Vec<Value>>, Vec<spine::WhereBytes>, usize)> {
+) -> Result<(Vec<Vec<Value>>, Vec<(spine::WhereBytes, String)>, usize)> {
     let (_, _, _, pathvar, revvar) = scan_spec(rule)?;
     let cmps: Vec<&Constraint> = rule.body.iter()
         .filter_map(|i| if let BodyItem::Cmp(c) = i { Some(c) } else { None }).collect();
@@ -4486,17 +4505,22 @@ fn parse_file(
     // WORK, blob OID for a git rev), so located rows join `_files` for both.
     let where_file = spine::FileId::from_content_address(hash, content.len() as i64)
         .filter(|f| *f != spine::FileId::SYNTHETIC);
-    let mut where_bytes: Vec<spine::WhereBytes> = Vec::new();
-    let push_span = |text: &str, lo: usize, hi: usize, where_bytes: &mut Vec<spine::WhereBytes>| {
+    let mut where_bytes: Vec<(spine::WhereBytes, String)> = Vec::new();
+    let push_span = |text: &str, lo: usize, hi: usize, where_bytes: &mut Vec<(spine::WhereBytes, String)>| {
         if let Some(file) = where_file {
             if !text.is_empty() {
-                where_bytes.push(spine::WhereBytes {
+                // Carry the located text alongside its span so the flush interns
+                // BOTH `_where_bytes` (the span) AND `_strings` (the text, under
+                // the SAME StringId the WhereBytes hashes). Without the text, a
+                // located id (capture span, `match`/`ast` whole-match id) resolves
+                // through `ref(id,_,_,lo,hi)` but NOT `string(id,text,norm)`.
+                where_bytes.push((spine::WhereBytes {
                     string: spine::StringId::of(text),
                     file,
                     lo: lo as u32,
                     hi: hi as u32,
                     ..Default::default()
-                });
+                }, text.to_string()));
             }
         }
     };
