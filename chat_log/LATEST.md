@@ -1,1 +1,1 @@
-20260625.0.daemon-stateful-revs-phase0-complete-json-declarative-plan.md
+20260625.2.json-declarative-brace-pattern-merged.md

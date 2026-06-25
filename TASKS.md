@@ -102,6 +102,18 @@ Workaround for OR today: multiple `json(...)` rules unioned at the head relation
       (`plans/2026-06-25-json-declarative-syntax.md`) status: Steps 1–7 done;
       record the deviations (`q:` carrier, dropped `$$sigil`/cross-ref/`$$${PATH}`,
       LeafPattern literal, shallow conjunctive).
+- [ ] **T20 (M)** Auto-generate the README op table from source (true dogfood).
+      Today the op table in `v5/README.md` is hand-maintained (edited twice during
+      the json/jsonp split). Add a `gen` rule that derives it from `parse.rs`'s
+      `body_item` dispatch arms (`if s == "json"{...}`) + each op fn's signature,
+      spliced into README between `BEGIN: op-table`/`END:` markers — so adding an
+      op updates the table on the next `dl` run. Mirror `gen-doc-index.dl`'s
+      marker-splice pattern. Companion: a `doc_node`/`comment`-based check that
+      the dispatch arms and the table stay in sync (lint-docs.dl style).
+- [ ] **T21 (L)** The `//!` first-line drift exposed by gen-doc-index: the rule
+      only reads line 1, so a stale summary (like datapath.rs had) updates only
+      when line 1 changes. Consider reading the full `//!` block summary, or a
+      lint that flags `//!` lines referencing renamed ops.
 
 ## Decisions log (what we already chose)
 

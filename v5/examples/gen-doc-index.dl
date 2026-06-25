@@ -39,6 +39,7 @@
 # - md  CozoDB storage-backend abstraction (for sprefa `RelStore`)  (v5/docs/ext-cozo-storage-trait.md)
 # - md  Cycles  (v5/anim/src/deck/02-cycles.md)
 # - md  DBSP (Feldera) as a reuse target for sprefa v5's incremental-retraction layer  (v5/docs/ext-dbsp-incremental.md)
+# - md  Daemon mode + menu bar (cross-platform)  (v5/plans/2026-06-21-daemon-and-menu-bar.md)
 # - md  Filesystem  (v5/anim/src/deck/04-filesystem.md)
 # - md  Further study  (v5/book/further-study.md)
 # - md  Glossary  (v5/anim/src/glossary.md)
@@ -91,7 +92,8 @@
 # - rs  v5/src/bin/scc_reach.rs:1  E4 proof: SCC-condensed transitive closure over `rel_calls` in a SQLite db.
 # - rs  v5/src/comment.rs:1  Comment-marker regions: `comment(p, rev, /open/[, /close/], l0, l1, label)`.
 # - rs  v5/src/config.rs:1  Turnkey multi-repo config. A single TOML file lists the checkouts to analyze
-# - rs  v5/src/datapath.rs:1  Dotted-path extraction over data files: the `json` op's evaluator. The op
+# - rs  v5/src/daemon.rs:1  Long-lived daemon mode + spawn-if-missing client.
+# - rs  v5/src/datapath.rs:1  Data-file extraction over json/yaml/toml: `jsonp` is the dotted-path
 # - rs  v5/src/desc.rs:1  Descriptors: the canonical value a typed path literal (`fs:`/`glob:`) resolves
 # - rs  v5/src/frontend.rs:1  Module surface: `use` inclusion + canonical-path dedup. The smallest viable
 # - rs  v5/src/ingest/mod.rs:1  Document ingestion: a registry of grammars that emit structural relations
@@ -100,8 +102,10 @@
 # - rs  v5/src/modgraph.rs:1  Cross-language module dependency graph: "the filesystem from language, as
 # - rs  v5/src/refactor.rs:1  The auto-refactor edit sink (Route A). Turns located `use`-path spans into
 # - rs  v5/src/repo.rs:1  Repo-root discovery for `.dl` programs: `nearest_git` walks up from a path
+# - rs  v5/src/rpc.rs:1  JSON-RPC 2.0 over `Content-Length`-framed messages (LSP-style framing).
 # - rs  v5/src/rspath.rs:1  Rust `use`-path rewrite arithmetic for the auto-refactor sink (Route A).
 # - rs  v5/src/scc.rs:1  SCC-condensed transitive closure. Pure graph: no SQL, no engine types.
+# - rs  v5/src/tray.rs:1  Menu bar tray for the daemon. macOS-only in v1; Windows + Linux are
 # - rs  v5/src/typecheck.rs:1  Lower-time path-literal normalization and rule type checking (spec T2).
 # - rs  v5/src/typegraph.rs:1  Diet type graph extractors. Intentionally syntax-only: parse a file (`syn`
 # - rs  v5/src/v5cozokuzu/src/bin/cozo_demo.rs:1  Cozo: embeddable Datalog + built-in graph algorithms, written in Rust.

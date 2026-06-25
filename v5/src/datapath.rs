@@ -1,7 +1,7 @@
-//! Dotted-path extraction over data files: the `json` op's evaluator. The op
-//! keeps its name but dispatches on file extension (json / yaml,yml / toml),
-//! the v4 `AnyDataNode` behavior. Each format parses with its tree-sitter
-//! grammar so every extracted value carries a byte span for the ref spine.
+//! Data-file extraction over json/yaml/toml: `jsonp` is the dotted-path
+//! evaluator (`jsonp(p, rev, "a.b.*", out)`); `json` is the declarative
+//! brace-pattern walker (`json(p, rev, q:{ $k: $v })`). Both dispatch on file
+//! extension; each hit carries a byte span for the ref spine.
 //!
 //! `*` matches any object key or array index. A TOML dotted key (`a.b = 1`,
 //! `[a.b]`) consumes that many path segments. Multi-document YAML streams
