@@ -37,7 +37,8 @@ use crate::{lex, parse};
 pub fn load_program(entry: &Path) -> Result<Vec<Item>> {
     let mut loader = ModuleLoader::new(entry);
     let surface = loader.load_entry(entry)?;
-    let mut items = expand_program(surface, &mut loader)?;
+    let origin = entry.canonicalize().unwrap_or_else(|_| entry.to_path_buf());
+    let mut items = expand_program(surface, &mut loader, origin)?;
     dedup_rels(&mut items)?;
     Ok(items)
 }
@@ -52,7 +53,8 @@ pub fn load_program_set(entry_paths: &[PathBuf]) -> Result<Vec<Item>> {
     let mut templates: HashMap<String, ast::RuleTemplate> = HashMap::new();
     for p in entry_paths {
         let surface = loader.load_entry(p)?;
-        items.extend(expand_with(surface, &mut loader, &mut templates)?);
+        let origin = p.canonicalize().unwrap_or_else(|_| p.clone());
+        items.extend(expand_with(surface, &mut loader, &mut templates, origin)?);
     }
     cycle_check(&templates)?;
     let mut counter = 0u32;
@@ -71,9 +73,10 @@ pub fn load_program_set(entry_paths: &[PathBuf]) -> Result<Vec<Item>> {
 fn expand_program(
     surface: Vec<SurfaceItem>,
     loader: &mut ModuleLoader,
+    origin: PathBuf,
 ) -> Result<Vec<Item>> {
     let mut templates: HashMap<String, ast::RuleTemplate> = HashMap::new();
-    let mut items = expand_with(surface, loader, &mut templates)?;
+    let mut items = expand_with(surface, loader, &mut templates, origin)?;
     cycle_check(&templates)?;
     let mut counter = 0u32;
     for item in &mut items {
@@ -91,18 +94,25 @@ fn expand_with(
     items: Vec<SurfaceItem>,
     loader: &mut ModuleLoader,
     templates: &mut HashMap<String, ast::RuleTemplate>,
+    origin: PathBuf,
 ) -> Result<Vec<Item>> {
     let mut out: Vec<Item> = Vec::with_capacity(items.len());
     for it in items {
         match it {
-            SurfaceItem::Core(core) => out.push(core),
+            SurfaceItem::Core(mut core) => {
+                // Stamp the rule's source file so a self-form scan can resolve
+                // to this file's `.git` ancestor (loaded-script portability).
+                if let Item::Rule(r) = &mut core { r.origin = Some(origin.clone()); }
+                out.push(core);
+            }
             SurfaceItem::Use(imp) => {
                 let path = loader.resolve(&imp.path)?;
                 if loader.loaded.contains_key(&path) {
                     continue; // diamond import: canonical-path dedup
                 }
                 let surface = loader.load_entry(&path)?;
-                let expanded = expand_with(surface, loader, templates)?;
+                // The included items were authored in `path`, not the entry.
+                let expanded = expand_with(surface, loader, templates, path)?;
                 out.extend(expanded);
             }
             SurfaceItem::Def(tpl) => {

@@ -415,6 +415,9 @@ pub fn run_daemon(
 
     let conn = db::open(db_path)?;
     let mut eng = Engine::new(conn, eng_root.clone());
+    // Rootless serving: self.root is the XDG state dir, a placeholder. Self-form
+    // scans / gen writes in loaded scripts then target each rule's own repo.
+    if root.is_none() { eng.set_root_implicit(true); }
     let repos = load_repos_eager();
     eng.set_repos(repos.clone());
     eng.tick(&prog, false)?;

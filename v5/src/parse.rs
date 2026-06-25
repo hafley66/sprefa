@@ -198,7 +198,7 @@ impl Parser {
                 if aggs.iter().any(|a| a.is_some()) {
                     bail!("aggregate not allowed in a fact head");
                 }
-                return Ok(Rule { head, body: Vec::new(), aggs });
+                return Ok(Rule { head, body: Vec::new(), aggs, origin: None });
             }
             Tok::Arrow => {}
             other => bail!("expected <- or . after rule head, got {:?}", other),
@@ -212,7 +212,7 @@ impl Parser {
                 other => bail!("expected , or . in rule body, got {:?}", other),
             }
         }
-        Ok(Rule { head, body, aggs })
+        Ok(Rule { head, body, aggs, origin: None })
     }
 
     /// Parse a rule head, allowing aggregate calls in term positions:

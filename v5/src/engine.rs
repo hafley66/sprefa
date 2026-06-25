@@ -859,6 +859,14 @@ pub struct Engine {
     pub(crate) db: crate::db::Db,
     pub(crate) rels: Rels,
     root: PathBuf,
+    /// True only when `root` is a placeholder, not an explicit workspace —
+    /// i.e. the rootless daemon, whose `self.root` is the XDG state dir. Then a
+    /// self-form scan (`.`/`""`/`self`/`WORK`) and a gen write fall back to each
+    /// rule's own `.git` ancestor, so a script loaded into the daemon scans and
+    /// writes the repo it lives in. False for foreground (`--root`/cwd) and LSP
+    /// (`rootUri`): an explicit root always wins, and the script's location is
+    /// ignored. (The LSP sandbox + `--root` override tests pin this.)
+    root_implicit: bool,
     pub dropped: usize,
     /// Diag-shaped rows for the extraction type-drops counted in `dropped`, one
     /// per (file, head relation) that lost rows this tick. The stderr counter
@@ -939,6 +947,7 @@ impl Engine {
             repos: Vec::new(),
             query_json: false,
             prime_tick: false,
+            root_implicit: false,
             last_n1: None,
             last_node_files_walked: std::cell::Cell::new(0),
         }
@@ -949,6 +958,10 @@ impl Engine {
 
     /// Skip `?` evaluation on the next tick (the foreground priming pass).
     pub fn set_prime_tick(&mut self, on: bool) { self.prime_tick = on; }
+
+    /// Mark `root` as a placeholder (rootless daemon). Self-form scans and gen
+    /// writes then fall back to each rule's `.git` ancestor. See `root_implicit`.
+    pub fn set_root_implicit(&mut self, on: bool) { self.root_implicit = on; }
 
     /// Set the configured repos (from `SprfConfig`). Takes effect on the next
     /// tick via `refresh_builtin_rels`.
@@ -1070,12 +1083,27 @@ impl Engine {
         let glob = str_of(&spec.glob)?;
         let repo_var: Option<&str> = if let Term::Var(v) = &spec.repo { Some(v.as_str()) } else { None };
         let rev_var: Option<&str> = if let Term::Var(v) = &spec.rev { Some(v.as_str()) } else { None };
-        tracing::debug!(head = %rule.head.rel, repo_var = ?repo_var, rev_var = ?rev_var, "scan bindings");
+        tracing::debug!(head = %rule.head.rel, repo_var = ?repo_var, rev_var = ?rev_var,
+            origin = ?rule.origin.as_ref().map(|p| p.to_string_lossy().to_string()), "scan bindings");
         if repo_var.is_none() && rev_var.is_none() {
             let repo_lit = str_of(&spec.repo)?;
             let rev_lit = str_of(&spec.rev)?;
+            // A self-form scan (`scan("WORK", …)` / `.` / `""` / `self`) resolves
+            // to the rule's own `.git` ancestor when `root_implicit` is set —
+            // i.e. ONLY the rootless daemon, whose self.root is a placeholder.
+            // Foreground (`--root`/cwd) and LSP (`rootUri`) pass an explicit root
+            // that always wins; the script's location is irrelevant there.
+            let repo_coord = if self.root_implicit && matches!(repo_lit.as_str(), "." | "" | "self") {
+                rule.origin.as_deref()
+                    .and_then(crate::repo::nearest_git)
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or(repo_lit.clone())
+            } else {
+                repo_lit.clone()
+            };
+            tracing::debug!(head = %rule.head.rel, repo_coord = %repo_coord, rev_lit = %rev_lit, "resolved self-form scan");
             let mut out = Vec::new();
-            for (slug, root) in self.resolve_scan_repos(&repo_lit)? {
+            for (slug, root) in self.resolve_scan_repos(&repo_coord)? {
                 let rev = self.resolve_rev(&root, &rev_lit)?;
                 out.push(ScanBinding { slug, root, rev, glob: glob.clone(), head_binds: vec![] });
             }
@@ -4539,6 +4567,23 @@ impl Engine {
     #[tracing::instrument(skip_all, level = "debug")]
     fn run_gens(&mut self, prog: &Program, quiet: bool) -> Result<()> {
         let mut written: Vec<String> = Vec::new();
+        // Candidate write roots for gen targets: self.root plus the `.git`
+        // ancestor of every rule's origin — but ONLY when root_implicit (rootless
+        // daemon), since that's the one mode where self.root is a placeholder and
+        // a loaded script must write back to the repo it scans. Foreground/LSP
+        // honor the explicit self.root.
+        let mut write_roots: Vec<PathBuf> = vec![self.root.clone()];
+        if self.root_implicit {
+            for item in &prog.items {
+                if let Item::Rule(r) = item {
+                    if let Some(o) = &r.origin {
+                        if let Some(a) = crate::repo::nearest_git(o) {
+                            if !write_roots.contains(&a) { write_roots.push(a); }
+                        }
+                    }
+                }
+            }
+        }
         // Splice regions accumulate across ALL gen rules and apply per file in
         // one bottom-up write: the line coordinates come from the pre-tick file
         // content, so a second rule splicing the same file must not re-read a
@@ -4556,10 +4601,10 @@ impl Engine {
         let mut claimed: HashMap<String, ()> = HashMap::new();
         for item in &prog.items {
             if let Item::Gen(g) = item {
-                self.run_gen(g, &mut written, &mut splices, &mut cursors, &mut claimed)?;
+                self.run_gen(g, &mut written, &mut splices, &mut cursors, &mut claimed, &write_roots)?;
             }
         }
-        self.apply_splices(&splices, &mut written)?;
+        self.apply_splices(&splices, &mut written, &write_roots)?;
         self.apply_cursors(&cursors, &mut written)?;
         if !written.is_empty() && !quiet {
             eprintln!("[gen] wrote {}", written.join(", "));
@@ -4567,7 +4612,7 @@ impl Engine {
         Ok(())
     }
 
-    fn run_gen(&mut self, g: &GenRule, written: &mut Vec<String>, splices: &mut Splices, cursors: &mut Cursors, claimed: &mut HashMap<String, ()>) -> Result<()> {
+    fn run_gen(&mut self, g: &GenRule, written: &mut Vec<String>, splices: &mut Splices, cursors: &mut Cursors, claimed: &mut HashMap<String, ()>, write_roots: &[PathBuf]) -> Result<()> {
         // Target vars lead the SELECT so grouping reads prefix columns; the
         // ORDER BY over all vars makes render order deterministic.
         let target_vars: Vec<String> = match &g.target {
@@ -4626,7 +4671,7 @@ impl Engine {
                 }
                 for p in order {
                     let content = format!("{}\n", groups[&p].join("\n"));
-                    let full = self.root.join(&p);
+                    let full = resolve_write_full(write_roots, &p);
                     if std::fs::read(&full).ok().as_deref() == Some(content.as_bytes()) { continue; }
                     if let Some(dir) = full.parent() { std::fs::create_dir_all(dir)?; }
                     std::fs::write(&full, &content)?;
@@ -4677,11 +4722,11 @@ impl Engine {
     /// Replace the lines strictly between each region's marker lines; the
     /// markers stay. One read-modify-write per file, regions bottom-up so
     /// earlier line numbers stay valid across the whole batch.
-    fn apply_splices(&self, splices: &Splices, written: &mut Vec<String>) -> Result<()> {
+    fn apply_splices(&self, splices: &Splices, written: &mut Vec<String>, write_roots: &[PathBuf]) -> Result<()> {
         let mut files: Vec<&str> = Vec::new();
         for (p, _, _) in &splices.keys { if !files.contains(&p.as_str()) { files.push(p); } }
         for p in files {
-            let full = self.root.join(p);
+            let full = resolve_write_full(write_roots, p);
             let old = std::fs::read_to_string(&full)
                 .map_err(|e| anyhow::anyhow!("gen splice target {p}: {e}"))?;
             let mut lines: Vec<String> = old.lines().map(|s| s.to_string()).collect();
@@ -5135,6 +5180,20 @@ fn enumerate_with_hash(repo: &str, repo_root: &Path, rev: &str, union: &globset:
         }
         Ok(out)
     }
+}
+
+/// Resolve a gen write/splice target against the first candidate root where it
+/// already lives. Candidates are `self.root` plus each rule-origin's `.git`
+/// ancestor (collected by `run_gens`), so a gen rule splicing a file scanned
+/// from a loaded script's repo writes back to that repo. A new file (no candidate
+/// contains it) falls back to `self.root` (the first candidate), preserving the
+/// original behavior for foreground file-emits.
+fn resolve_write_full(write_roots: &[PathBuf], p: &str) -> PathBuf {
+    for r in write_roots {
+        let f = r.join(p);
+        if f.exists() { return f; }
+    }
+    write_roots.first().map(|r| r.join(p)).unwrap_or_else(|| PathBuf::from(p))
 }
 
 /// Parse one file for one source rule (no DB access); returns (rows, dropped).

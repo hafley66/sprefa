@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Type { Text, Int, Path, File, Dir, Repo, Rev }
@@ -199,6 +200,11 @@ pub struct Rule {
     /// Kept off `Atom` so query heads, body atoms, and source rules stay untouched;
     /// only a derived rule head ever carries aggs (see plan T4, head-position only).
     pub aggs: Vec<Option<AggFn>>,
+    /// The file this rule was parsed from (canonical). Lets a self-form scan
+    /// (`scan("WORK", …)` / `.` / `self`) resolve to the rule's own `.git`
+    /// ancestor instead of the engine's `self.root`, so a script loaded into a
+    /// rootless daemon scans the repo it lives in. Stamped by the frontend loader.
+    pub origin: Option<PathBuf>,
 }
 
 impl Rule {
