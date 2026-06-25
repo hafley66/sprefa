@@ -1,9 +1,24 @@
 # TASKS — `feat/json-declarative-pattern` follow-ups
 
-Open work from the json-declarative build (Steps 1–7 shipped, suite green).
-Grouped by theme. Priorities: **H**igh / **M**edium / **L**ow.
+Shipped: Steps 1–7, merged to `main` (c6b8d44) and pushed. Suite green.
+Open follow-ups below. Grouped by theme. Priorities: **H**igh / **M**edium / **L**ow.
 
-## Matching gaps (the live discussion)
+## Matching support (current)
+
+| shape | works? | note |
+|---|---|---|
+| `{ a: $x }` | yes | single exact key, leaf |
+| `{ $k: $v }` | yes | single capture key → iterates entries |
+| `{ a: { b: $x } }` | yes | single key, nested descent (any depth) |
+| `{ a: $a, b: $b }` | yes | conjunctive, **but only if every value is a capture leaf** |
+| `{ a: { b: $x }, c: $y }` | no | nested value in multi-entry → bails (T1) |
+| `{ $k: $v, kind: u }` | no | capture key mixed with exact in one object → bails (T3) |
+| `{ a: $x } OR { b: $x }` | no | no alternation in the grammar (T2) |
+| `{ a.b.c: $x }` | no | must nest; no key-path shorthand (T4) |
+
+Workaround for OR today: multiple `json(...)` rules unioned at the head relation.
+
+## Matching gaps
 
 - [ ] **T1 (H)** Nested + conjunctive combo: `{ a: { b: $x }, c: $y }` produces
       no match today. `walk_object`'s conjunctive arm requires every value to be
@@ -95,6 +110,8 @@ Grouped by theme. Priorities: **H**igh / **M**edium / **L**ow.
 - v4 host-grammar artifacts dropped: `$$sigil(...)` annotations, `${rule.$VAR}`
   cross-refs, `$$${PATH?}` recursive-capture key. `**` kept.
 - Capture vars bind lowercase (dl convention); `$NAME` matches a rule var of
-  the same name. Literal `$ref`-style keys must be quoted.
+  the same name. Literal `$ref`-style keys (OpenAPI/JSON-Schema) **must be
+  quoted** (`"$ref"`) — bare `$ref` binds a capture named `ref`. Quoted `"$ref"`
+  classifies as Glob → regex-escaped → matches the literal.
 - Evaluator is tree-descent over the existing tree-sitter parse (json/yaml/toml
   by extension). No new tables; spans flow to the existing ref spine.
