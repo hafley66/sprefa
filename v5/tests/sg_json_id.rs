@@ -71,14 +71,15 @@ fn json_value_id_resolves_through_ref_and_string() {
     let d = sandbox("json");
     fs::write(d.join("conf.yaml"), "spec:\n  image: \"registry.io/app:v3\"\n").unwrap();
 
-    // `id` is the trailing 5th json arg: json(path, rev, jpath, out, id). It
-    // binds the located id of the matched value's byte span.
+    // `id` is the trailing 5th jsonp arg: jsonp(path, rev, jpath, out, id). It
+    // binds the located id of the matched value's byte span. (The dotted-string
+    // evaluator is `jsonp` since the declarative brace form took the `json` name.)
     let prog = r#"
 rel hit(v: text, id: text).
 rel located(lo: int, hi: int).
 rel texted(t: text).
 hit(v, id) <- scan("WORK","*.yaml",path,rev),
-  json(path, rev, "spec.image", v, id).
+  jsonp(path, rev, "spec.image", v, id).
 located(lo, hi) <- hit(_v, id), ref(id, _s, _f, lo, hi).
 texted(t) <- hit(_v, id), ref(id, sid, _f, _lo, _hi), string(sid, t, _n).
 ? located(lo, hi).

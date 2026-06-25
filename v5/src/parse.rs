@@ -510,6 +510,7 @@ impl Parser {
             bail!("json pattern error: {e}");
         }
         Ok(BodyItem::Json { path, rev, pat })
+    }
 
     fn cmd(&mut self) -> Result<BodyItem> {
         self.ident()?; // cmd
