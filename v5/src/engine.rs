@@ -4905,12 +4905,33 @@ fn eval_cmp(c: &Constraint, b: &Bind) -> Result<bool> {
     })
 }
 
+// Vendored grammar entry points, compiled by build.rs from vendor/grammars/.
+// The C signature is `const TSLanguage *tree_sitter_X(void)`; declared here as
+// `*const ()` (opaque) so tree_sitter_language::LanguageFn::from_raw accepts
+// it. go-template has no crate; dockerfile's only crate pins tree-sitter 0.20.
+extern "C" {
+    fn tree_sitter_gotmpl() -> *const ();
+    fn tree_sitter_dockerfile() -> *const ();
+}
+
 fn ts_lang(lang: &str) -> Result<tree_sitter::Language> {
     match lang {
         "rust" | "rs" => Ok(tree_sitter::Language::new(tree_sitter_rust::LANGUAGE)),
         "c" => Ok(tree_sitter::Language::new(tree_sitter_c::LANGUAGE)),
         "kotlin" | "kt" => Ok(tree_sitter::Language::new(tree_sitter_kotlin_sg::LANGUAGE)),
-        other => bail!("no ast grammar for :{other} (compiled in: rust, c, kotlin)"),
+        "py" | "python" => Ok(tree_sitter::Language::new(tree_sitter_python::LANGUAGE)),
+        "sh" | "bash" | "shell" => Ok(tree_sitter::Language::new(tree_sitter_bash::LANGUAGE)),
+        "go" | "golang" => Ok(tree_sitter::Language::new(tree_sitter_go::LANGUAGE)),
+        "hcl" | "terraform" | "tf" => Ok(tree_sitter::Language::new(tree_sitter_hcl::LANGUAGE)),
+        "starlark" | "bzl" | "bazel" => Ok(tree_sitter::Language::new(tree_sitter_starlark::LANGUAGE)),
+        "jsonnet" => Ok(tree_sitter::Language::new(tree_sitter_jsonnet::LANGUAGE)),
+        "gotmpl" | "gotemplate" | "gohtml" => Ok(tree_sitter::Language::new(unsafe {
+            tree_sitter_language::LanguageFn::from_raw(tree_sitter_gotmpl)
+        })),
+        "dockerfile" | "docker" => Ok(tree_sitter::Language::new(unsafe {
+            tree_sitter_language::LanguageFn::from_raw(tree_sitter_dockerfile)
+        })),
+        other => bail!("no ast grammar for :{other} (compiled in: rust, c, kotlin, python, bash, go, hcl, starlark, jsonnet, gotmpl, dockerfile)"),
     }
 }
 

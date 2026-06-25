@@ -2,6 +2,11 @@
 name = "sprefa-v5"
 version = "0.1.0"
 edition = "2021"
+# build.rs cc-compiles the vendored tree-sitter grammars whose only published
+# crates pin an incompatible tree-sitter ABI (dockerfile 0.20) or ship no crate
+# at all (go-template). C sources live in vendor/grammars/; the extern fns are
+# declared and wrapped in src/engine.rs (ts_lang).
+build = "build.rs"
 
 [[bin]]
 name = "dl"
@@ -49,6 +54,17 @@ protobuf = "3.7"
 scip = "0.7.1"
 tree-sitter-yaml = "0.7"
 tree-sitter-toml-ng = "0.7"
+# Raw `ast` op grammars (ts_lang dispatch). All resolve against the 0.25 core
+# above. python/go close the ast-vs-sg gap; bash + hcl/terraform + starlark +
+# jsonnet are new coverage. tree-sitter-dockerfile is intentionally absent: its
+# only crate (0.2.0) pins tree-sitter 0.20 and its Language type won't unify
+# with our 0.25 core. go-template has no published crate at all.
+tree-sitter-python = "0.25"
+tree-sitter-bash = "0.25"
+tree-sitter-go = "0.25"
+tree-sitter-hcl = "1"
+tree-sitter-starlark = "1"
+tree-sitter-jsonnet = "0.0.1"
 oxc_allocator = "0.135.0"
 oxc_parser = "0.135.0"
 oxc_ast = "0.135.0"
@@ -58,3 +74,7 @@ tray-icon = "0.24"
 tao = "0.35"
 tree-sitter-dl = { path = "tree-sitter-dl" }
 tree-sitter-language = "0.1"
+
+[build-dependencies]
+# Compiles the vendored grammar C sources (vendor/grammars/) into the crate.
+cc = "1"
