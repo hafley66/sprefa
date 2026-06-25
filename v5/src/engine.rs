@@ -4720,7 +4720,7 @@ fn parse_file(
                 }
                 binds = next;
             }
-            BodyItem::Json { jpath, out, .. } => {
+            BodyItem::JsonP { jpath, out, .. } => {
                 let ov = opt_var(out)?;
                 let vals = crate::datapath::run_data(path, &content, jpath);
                 let mut next: Vec<Bind> = Vec::new();
@@ -4729,6 +4729,27 @@ fn parse_file(
                         let mut ext = b.clone();
                         if let Some(ov) = &ov { ext.insert(ov.clone(), Value::Text(v.clone())); }
                         push_span(v, *lo, *hi, &mut where_bytes);
+                        next.push(ext);
+                    }
+                }
+                binds = next;
+            }
+            BodyItem::Json { pat, .. } => {
+                // Declarative brace pattern. The body was validated at parse
+                // time; re-parse to get the Step tree (cheap; pattern is tiny)
+                // and walk it. Each match binds N captures by name into the
+                // row, like match's named groups.
+                let (steps, _) = crate::datapath::parse_pattern(pat)
+                    .map_err(|e| anyhow::anyhow!("json pattern error: {e}"))?;
+                let ms = crate::datapath::run_pattern(path, &content, &steps);
+                let mut next: Vec<Bind> = Vec::new();
+                for b in &binds {
+                    for m in &ms {
+                        let mut ext = b.clone();
+                        for (cap, text, lo, hi) in m {
+                            ext.insert(cap.clone(), Value::Text(text.clone()));
+                            push_span(text, *lo, *hi, &mut where_bytes);
+                        }
                         next.push(ext);
                     }
                 }

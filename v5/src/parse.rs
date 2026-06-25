@@ -300,6 +300,7 @@ impl Parser {
             if s == "ast" { return self.ast(); }
             if s == "sg" { return self.sg(); }
             if s == "ast_yaml" { return self.ast_yaml(); }
+            if s == "jsonp" { return self.jsonp(); }
             if s == "json" { return self.json(); }
             if s == "cmd" { return self.cmd(); }
             if s == "comment" { return self.comment(); }
@@ -451,19 +452,44 @@ impl Parser {
         })
     }
 
-    fn json(&mut self) -> Result<BodyItem> {
-        self.ident()?; // json
+    fn jsonp(&mut self) -> Result<BodyItem> {
+        self.ident()?; // jsonp
         self.expect(Tok::LParen)?;
         let path = self.term()?; self.expect(Tok::Comma)?;
         let rev = self.term()?; self.expect(Tok::Comma)?;
         let jpath = match self.next()? {
             Tok::Str(s) => s,
-            other => bail!("expected json path string in json(), got {:?}", other),
+            other => bail!("expected json path string in jsonp(), got {:?}", other),
         };
         self.expect(Tok::Comma)?;
         let out = self.term()?;
         self.expect(Tok::RParen)?;
-        Ok(BodyItem::Json { path, rev, jpath, out })
+        Ok(BodyItem::JsonP { path, rev, jpath, out })
+    }
+
+    /// `json(path, rev, q:{ $k: $v })` — declarative brace pattern. The 3rd
+    /// arg is a `q:{...}` PathLit (a structured, highlightable token), NOT a
+    /// string; a string here is the dotted-path form, redirected to `jsonp`.
+    fn json(&mut self) -> Result<BodyItem> {
+        self.ident()?; // json
+        self.expect(Tok::LParen)?;
+        let path = self.term()?; self.expect(Tok::Comma)?;
+        let rev = self.term()?; self.expect(Tok::Comma)?;
+        let pat = match self.term()? {
+            Term::PathLit { body, .. } => body,
+            Term::Str(_) => bail!(
+                "json takes a brace-pattern literal (`q:{{ $k: $v }}`); for the \
+                 dotted-string form use `jsonp(path, rev, \"a.b\", out)`"
+            ),
+            other => bail!("json 3rd arg must be a `q:{{...}}` brace-pattern literal, got {:?}", other),
+        };
+        self.expect(Tok::RParen)?;
+        // Validate at parse time so malformed bodies fail fast and capture
+        // names are discovered before the engine runs.
+        if let Err(e) = crate::datapath::parse_pattern(&pat) {
+            bail!("json pattern error: {e}");
+        }
+        Ok(BodyItem::Json { path, rev, pat })
     }
 
     fn cmd(&mut self) -> Result<BodyItem> {

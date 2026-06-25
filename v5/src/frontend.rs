@@ -225,8 +225,11 @@ fn rewrite_terms(b: &mut BodyItem, sub: &HashMap<String, Term>, params: &[String
         BodyItem::AstYaml { path, rev, line, col, end_line, end_col, .. } => {
             for t in [path, rev, line, col, end_line, end_col] { rewrite_term(t); }
         }
-        BodyItem::Json { path, rev, out, .. } => {
+        BodyItem::JsonP { path, rev, out, .. } => {
             for t in [path, rev, out] { rewrite_term(t); }
+        }
+        BodyItem::Json { path, rev, .. } => {
+            for t in [path, rev] { rewrite_term(t); }
         }
         BodyItem::Cmd { path, rev, line, out, .. } => {
             for t in [path, rev, line, out] { rewrite_term(t); }

@@ -163,7 +163,16 @@ pub enum BodyItem {
     /// relationships a pattern alone can't express.
     AstYaml { path: Term, rev: Term, lang: String, yaml: String, line: Term,
               col: Term, end_line: Term, end_col: Term },
-    Json { path: Term, rev: Term, jpath: String, out: Term },
+    /// `jsonp(path, rev, "a.b.*", out)` — dotted-string evaluator over
+    /// json/yaml/toml (dispatched by extension; `*` = any key/element). Renamed
+    /// from `json` to free the name for the declarative brace pattern.
+    JsonP { path: Term, rev: Term, jpath: String, out: Term },
+    /// `json(path, rev, q:{ $k: $v })` — declarative brace pattern over a
+    /// json/yaml/toml document (dispatched by extension, like jsonp). Each
+    /// match binds N named captures (keys AND values) as rule vars, mirroring
+    /// match's named groups. `pat` is the raw `q:` body (validated at parse
+    /// time; the engine re-parses it to walk the Step tree).
+    Json { path: Term, rev: Term, pat: String },
     /// Shell out per matched file: `cmd(p, rev, "tool {file}", line, out)` binds
     /// one row per stdout line. Cached like every source op: rows re-run only
     /// when the file content or the rule text moves (the docker-layer contract).
@@ -198,7 +207,8 @@ impl Rule {
     pub fn is_source(&self) -> bool {
         self.body.iter().any(|b| matches!(b,
             BodyItem::Scan { .. } | BodyItem::Match { .. } | BodyItem::Ast { .. }
-            | BodyItem::Sg { .. } | BodyItem::AstYaml { .. } | BodyItem::Json { .. }
+            | BodyItem::Sg { .. } | BodyItem::AstYaml { .. } | BodyItem::JsonP { .. }
+            | BodyItem::Json { .. }
             | BodyItem::Cmd { .. } | BodyItem::Comment { .. }))
     }
 

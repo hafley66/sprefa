@@ -9,7 +9,7 @@ rel missing_hook(op: text).
 
 spec_op(op) <-
   scan("WORK", "v5/examples/openapi-sim/openapi.json", path, rev),
-  json(path, rev, "paths.*.*.operationId", op).
+  jsonp(path, rev, "paths.*.*.operationId", op).
 
 hook(op) <-
   scan("WORK", "v5/examples/openapi-sim/hooks.ts", path, rev),
