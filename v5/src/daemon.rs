@@ -619,6 +619,8 @@ fn watcher_loop(d: Arc<Daemon>) {
         let touches_git = !git_dirs.is_empty()
             && paths.iter().any(|p| git_dirs.iter().any(|g| p.starts_with(g)));
         let touches_program = d.program_in_paths(&paths);
+        tracing::debug!(n_paths = paths.len(), program = touches_program,
+            cfg = touches_cfg, git = touches_git, "watcher event");
         // A `.dl` program edit either respawns (cold path: re-parse from
         // scratch via the spawn-if-missing dance) or hot-reloads (tray path:
         // re-parse in place, swap the Mutex<Program>, re-tick).

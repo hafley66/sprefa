@@ -24,6 +24,7 @@ pub mod scip_import;
 pub mod sg;
 pub mod spine;
 pub mod tray;
+pub mod trace;
 pub mod typecheck;
 pub mod typegraph;
 
@@ -165,6 +166,17 @@ fn run_file_inproc(program: Option<&str>, db_path: Option<&str>, root: PathBuf, 
         let mut eng = engine::Engine::new(conn, root);
         eng.set_query_json(query_json);
         eng.set_repos(load_repos());
+        // A data-driven scan (variable repo/rev) and a `repo`-sink both read
+        // LAST tick's coordinate/pull state. A fresh one-shot run has no prior
+        // tick, so prime once silently (derive coords / pull repos), then the
+        // real run reads them and prints answers.
+        let needs_prime = prog.items.iter().any(|i| matches!(i,
+            ast::Item::Rule(r) if engine::scan_has_var_coords(r) || r.is_repo_sink()));
+        if needs_prime {
+            eng.set_prime_tick(true);
+            eng.tick(&prog, true)?;
+            eng.set_prime_tick(false);
+        }
         eng.run(&prog)?;
     }
     if n_errors > 0 {

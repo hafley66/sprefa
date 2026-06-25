@@ -891,6 +891,12 @@ pub struct Engine {
     /// Emit `?` query results as JSON-lines (one object per query) instead of the
     /// human TSV block. For tools/editors consuming answers (`--query-json`).
     query_json: bool,
+    /// When true, skip the `?` query-evaluation pass at the end of a tick. Used
+    /// for the foreground one-shot's PRIMING tick: a data-driven scan or
+    /// repo-sink reads last tick's coordinate/pull state, so a fresh run has
+    /// nothing to read on tick 1. The priming tick derives the coordinates (and
+    /// pulls repos) silently; the follow-up tick reads them and prints answers.
+    prime_tick: bool,
     /// Test/bench instrumentation: the N+1 detector's verdict for the LAST tick
     /// (`db.tick_end()`), so a test can assert no per-row write slipped through
     /// the plural API. `None` = silent (good); `Some((stmt, count))` = a
@@ -902,6 +908,14 @@ pub struct Engine {
     /// it to the whole corpus. The structural proof the incremental path is
     /// path-scoped (and can't silently regress to full-corpus).
     pub last_node_files_walked: std::cell::Cell<usize>,
+}
+
+struct ScanSpec {
+    repo: Term,
+    rev: Term,
+    glob: Term,
+    path_var: String,
+    rev_out_var: String,
 }
 
 /// One parsed file's CST node records plus the repo id + path + content
@@ -924,6 +938,7 @@ impl Engine {
             rev_index: std::collections::HashSet::new(),
             repos: Vec::new(),
             query_json: false,
+            prime_tick: false,
             last_n1: None,
             last_node_files_walked: std::cell::Cell::new(0),
         }
@@ -931,6 +946,9 @@ impl Engine {
 
     /// Emit query results as JSON-lines instead of the human TSV block.
     pub fn set_query_json(&mut self, on: bool) { self.query_json = on; }
+
+    /// Skip `?` evaluation on the next tick (the foreground priming pass).
+    pub fn set_prime_tick(&mut self, on: bool) { self.prime_tick = on; }
 
     /// Set the configured repos (from `SprfConfig`). Takes effect on the next
     /// tick via `refresh_builtin_rels`.
@@ -1034,6 +1052,80 @@ impl Engine {
             return Ok(out);
         }
         Ok(vec![self.resolve_repo(repo)?])
+    }
+
+    /// Resolve a source rule's scan to its concrete coordinate bindings: one for
+    /// a literal-coord scan (the existing shape), or many for a data-driven scan
+    /// whose `repo`/`rev` are `Term::Var`. In the variable case the rule's
+    /// Pos/Neg/Cmp body atoms are compiled to a SELECT and run over the
+    /// previous tick's tables (the coordinate relation is derived, and derived
+    /// runs after source — so a data-driven scan reads last tick's coordinates,
+    /// one-tick latency, no fixpoint rewrite). Each binding seeds `head_binds`
+    /// with the variable slot's value so the rule head can reference the
+    /// repo/rev each row was scanned under. Glob stays literal (variable glob is
+    /// rejected): the file set varies per (repo, rev) but the pattern is fixed.
+    #[tracing::instrument(skip_all, level = "debug")]
+    fn resolve_scan_bindings(&mut self, rule: &Rule) -> Result<Vec<ScanBinding>> {
+        let spec = scan_spec_of(rule)?;
+        let glob = str_of(&spec.glob)?;
+        let repo_var: Option<&str> = if let Term::Var(v) = &spec.repo { Some(v.as_str()) } else { None };
+        let rev_var: Option<&str> = if let Term::Var(v) = &spec.rev { Some(v.as_str()) } else { None };
+        tracing::debug!(head = %rule.head.rel, repo_var = ?repo_var, rev_var = ?rev_var, "scan bindings");
+        if repo_var.is_none() && rev_var.is_none() {
+            let repo_lit = str_of(&spec.repo)?;
+            let rev_lit = str_of(&spec.rev)?;
+            let mut out = Vec::new();
+            for (slug, root) in self.resolve_scan_repos(&repo_lit)? {
+                let rev = self.resolve_rev(&root, &rev_lit)?;
+                out.push(ScanBinding { slug, root, rev, glob: glob.clone(), head_binds: vec![] });
+            }
+            return Ok(out);
+        }
+        let mut sel_vars: Vec<String> = Vec::new();
+        if let Some(v) = repo_var { sel_vars.push(v.to_string()); }
+        if let Some(v) = rev_var { sel_vars.push(v.to_string()); }
+        let binding_atoms: Vec<BodyItem> = rule.body.iter()
+            .filter(|b| matches!(b, BodyItem::Pos(_) | BodyItem::Neg(_) | BodyItem::Cmp(_)))
+            .cloned().collect();
+        if binding_atoms.is_empty() {
+            bail!("data-driven scan needs a coordinate-providing body atom (e.g. \
+                   pin(R,V)) binding the variable repo/rev in rule {}", rule.head.rel);
+        }
+        let sql = crate::lower::lower_gen(&sel_vars, &binding_atoms, &self.rels)?;
+        // Collect the coordinate tuples fully (drop the statement borrow) before
+        // the resolve loop: resolve_rev takes &mut self (rev_cache).
+        let tuples: Vec<Vec<String>> = {
+            let conn = self.db.conn();
+            let mut s = match conn.prepare(&sql) {
+                Ok(s) => s,
+                Err(_) => return Ok(Vec::new()),
+            };
+            let ncol = sel_vars.len();
+            let rows = s.query_map([], |r| {
+                let mut v = Vec::with_capacity(ncol);
+                for i in 0..ncol { v.push(r.get::<_, String>(i)?); }
+                Ok(v)
+            });
+            rows.map(|iter| iter.filter_map(|x| x.ok()).collect()).unwrap_or_default()
+        };
+        let mut out = Vec::new();
+        let repo_lit = str_of(&spec.repo).ok();
+        let rev_lit = str_of(&spec.rev).ok();
+        for row in tuples {
+            let mut col = 0usize;
+            let repo_val = if repo_var.is_some() { row[col].clone() } else { repo_lit.clone().unwrap() };
+            if repo_var.is_some() { col += 1; }
+            let rev_val = if rev_var.is_some() { row[col].clone() } else { rev_lit.clone().unwrap() };
+            let mut head_binds: Vec<(String, String)> = Vec::new();
+            if let Some(v) = repo_var { head_binds.push((v.to_string(), repo_val.clone())); }
+            if let Some(v) = rev_var { head_binds.push((v.to_string(), rev_val.clone())); }
+            for (slug, root) in self.resolve_scan_repos(&repo_val)? {
+                let rev = self.resolve_rev(&root, &rev_val)?;
+                out.push(ScanBinding { slug, root, rev, glob: glob.clone(),
+                    head_binds: head_binds.clone() });
+            }
+        }
+        Ok(out)
     }
 
     /// Stable slug for this engine's own repo: the `--root` directory name.
@@ -1428,6 +1520,7 @@ impl Engine {
 
     /// One reactive tick: declare, reconcile sources incrementally, rebuild
     /// derived only if a source fact changed, then run queries.
+    #[tracing::instrument(skip_all, level = "info")]
     pub fn tick(&mut self, prog: &Program, quiet: bool) -> Result<()> {
         self.rev_cache.clear();
         self.extraction_drops.clear();
@@ -1595,8 +1688,12 @@ impl Engine {
         let dirty: HashSet<&str> = if rebuilt_all { edges.iter().copied().collect() } else { HashSet::new() };
         self.refresh_cond_cache(&edges, &dirty)?;
         for (r, cs) in &seed_rules { self.eval_closure_seed_rule(r, cs)?; }
-        for item in &prog.items {
-            if let Item::Query(q) = item { self.run_query(q, &closures)?; }
+        // The priming tick skips `?` evaluation: it exists only to derive the
+        // coordinates a data-driven scan / repo-sink reads on the real tick.
+        if !self.prime_tick {
+            for item in &prog.items {
+                if let Item::Query(q) = item { self.run_query(q, &closures)?; }
+            }
         }
         self.run_gens(prog, quiet)?;
         // Drain `repo`-sinks AFTER the fixpoint + gens so their bodies see this
@@ -1626,6 +1723,7 @@ impl Engine {
     /// Reactive tick driven by a known set of changed paths (from the file
     /// watcher): reconciles only those paths, never walking or statting the
     /// tree. Only WORK source rules participate; route git-rev changes to `tick`.
+    #[tracing::instrument(skip_all, fields(n_changed = changed.len()), level = "info")]
     pub fn tick_paths(&mut self, prog: &Program, changed: &[PathBuf], quiet: bool) -> Result<()> {
         let _tick_started = std::time::Instant::now();
         self.rev_cache.clear();
@@ -1640,8 +1738,11 @@ impl Engine {
         // A `repo`-sink program pulls dynamically; the drain runs only on the
         // full-tick path, so an incremental tick defers to the full tick. (The
         // sink's body depends on derived relations whose churn is otherwise
-        // invisible to the path-scoped reconcile.)
-        if rules.iter().any(|r| r.is_repo_sink()) {
+        // invisible to the path-scoped reconcile.) A data-driven scan (variable
+        // repo/rev) reads last tick's coordinate relation at reconcile time too,
+        // so it also defers.
+        if rules.iter().any(|r| r.is_repo_sink() || scan_has_var_coords(r)) {
+            tracing::debug!("full-tick fallback: program has a repo-sink or data-driven scan");
             return self.tick(prog, quiet);
         }
 
@@ -1677,12 +1778,14 @@ impl Engine {
         // re-extracts the dirty relation's entire file set and persists the new
         // rule digests.
         if !self.source_rule_digests(&source_rules)?.0.is_empty() {
+            tracing::debug!("full-tick fallback: source rule edited");
             return self.tick(prog, quiet);
         }
         // Same for the derived layer: an edited derived rule or ground fact
         // rebuilds everything, which is the full tick's job.
         let der_digest = derived_program_digest(&derived_rules, &seed_rules, &edges);
         if self.load_rel_digest("derived:program")? != Some(der_digest) {
+            tracing::debug!("full-tick fallback: derived rule/ground-fact edited");
             return self.tick(prog, quiet);
         }
         // A changed path outside self.root (a config or dynamically-registered
@@ -1690,6 +1793,7 @@ impl Engine {
         // which strips against self.root only. Fall back to the full tick so
         // every folder in view stays reactive, not just the self worktree.
         if changed.iter().any(|p| !p.starts_with(&self.root)) {
+            tracing::debug!("full-tick fallback: changed path outside self.root (#6a)");
             return self.tick(prog, quiet);
         }
 
@@ -1698,7 +1802,10 @@ impl Engine {
         // (changed paths under self.root); non-self repos scan via the full tick.
         let mut work_rules: Vec<(&Rule, globset::GlobMatcher)> = Vec::new();
         for r in &source_rules {
-            let (repo, declared, glob, _, _) = scan_spec(r)?;
+            // Variable-coord scans defer to the full tick (guarded above), so
+            // every remaining source rule has a literal scan_spec here.
+            let spec = scan_spec_of(r)?;
+            let (repo, declared, glob) = (str_of(&spec.repo)?, str_of(&spec.rev)?, str_of(&spec.glob)?);
             let is_self = repo.is_empty() || repo == "." || repo == "self";
             if declared == "WORK" && is_self { work_rules.push((*r, globset::Glob::new(&glob)?.compile_matcher())); }
         }
@@ -1748,7 +1855,7 @@ impl Engine {
                 // flushing trips the N+1 screamer once enough files change.
                 let mut where_rows: Vec<(String, String, spine::WhereBytes, Option<String>)> = Vec::new();
                 for rule in &matching {
-                    let (rows, where_bytes, dropped) = parse_file(rule, &slug, &rel, "WORK", &h, &self.root, &self.rels, &self.rev_index)?;
+                    let (rows, where_bytes, dropped) = parse_file(rule, &slug, &rel, "WORK", &h, &self.root, &self.rels, &self.rev_index, &[])?;
                     self.dropped += dropped;
                     if dropped > 0 { self.record_extraction_drop(&rel, &rule.head.rel, dropped); }
                     let meta = self.rels.get(&rule.head.rel)
@@ -2109,6 +2216,7 @@ impl Engine {
         Ok(false)
     }
 
+    #[tracing::instrument(skip_all, fields(n_rules = source_rules.len()), level = "debug")]
     fn reconcile_sources(&mut self, source_rules: &[&Rule], source_rels: &[String]) -> Result<Reconcile> {
         // Load prior file metadata first so enumerate can use the mtime fast-path.
         let prev = self.load_file_meta()?;
@@ -2117,7 +2225,7 @@ impl Engine {
         // (rule idx, repo slug, path, rev, hash) for every enumerated file. A
         // single rule scanning `"*"` fans out to one batch of rows per config
         // repo, all carrying the same rule idx but distinct repo slugs.
-        let mut rule_files: Vec<(usize, String, String, String, String)> = Vec::new();
+        let mut rule_files: Vec<(usize, String, String, String, String, Vec<(String, String)>)> = Vec::new();
         // slug -> on-disk root for every repo touched this tick; parse_file reads
         // content from the matching root and the slug stamps `_file`/`_prov` so
         // two repos sharing a path stay distinct.
@@ -2126,22 +2234,23 @@ impl Engine {
         // matter how many rules scan it (the old shape re-walked per rule —
         // rules × repos walks across a big config). Clones + rev-parse stay in
         // this serial loop (rev_cache needs &mut self); the walks parallelize.
-        let mut groups: BTreeMap<(String, String), (PathBuf, Vec<(usize, String)>)> = BTreeMap::new();
+        // Each entry carries `head_binds`: the data-driven coord values that
+        // produced this (slug, rev), so the rule head can reference the repo/rev
+        // variable each file was scanned under (empty for a literal-coord scan).
+        let mut groups: BTreeMap<(String, String), (PathBuf, Vec<(usize, String, Vec<(String, String)>)>)> = BTreeMap::new();
         for (idx, rule) in source_rules.iter().enumerate() {
-            let (repo, declared, glob, _, _) = scan_spec(rule)?;
-            for (slug, repo_root) in self.resolve_scan_repos(&repo)? {
-                let rev = self.resolve_rev(&repo_root, &declared)?;
-                root_by_repo.insert(slug.clone(), repo_root.clone());
-                groups.entry((slug, rev)).or_insert_with(|| (repo_root, Vec::new()))
-                    .1.push((idx, glob.clone()));
+            for b in self.resolve_scan_bindings(rule)? {
+                root_by_repo.insert(b.slug.clone(), b.root.clone());
+                groups.entry((b.slug, b.rev)).or_insert_with(|| (b.root, Vec::new()))
+                    .1.push((idx, b.glob, b.head_binds));
             }
         }
-        let group_list: Vec<(&(String, String), &(PathBuf, Vec<(usize, String)>))> = groups.iter().collect();
+        let group_list: Vec<(&(String, String), &(PathBuf, Vec<(usize, String, Vec<(String, String)>)>))> = groups.iter().collect();
         let enumerated: Vec<Result<Vec<(String, String, i64, i64)>>> = group_list.par_iter()
             .map(|((slug, rev), (repo_root, rules))| {
                 let t = std::time::Instant::now();
                 let mut union = globset::GlobSetBuilder::new();
-                for (_, g) in rules { union.add(globset::Glob::new(g)?); }
+                for (_, g, _) in rules { union.add(globset::Glob::new(g)?); }
                 let files = enumerate_with_hash(slug, repo_root, rev, &union.build()?, &prev)?;
                 if crate::db::profiling() {
                     eprintln!("[scan {slug}@{}] {} file(s) in {:.1}ms",
@@ -2151,14 +2260,14 @@ impl Engine {
                 Ok(files)
             }).collect();
         for (((slug, rev), (_, rules)), files) in group_list.iter().zip(enumerated) {
-            let matchers: Vec<(usize, globset::GlobMatcher)> = rules.iter()
-                .map(|(idx, g)| Ok((*idx, globset::Glob::new(g)?.compile_matcher())))
+            let matchers: Vec<(usize, globset::GlobMatcher, Vec<(String, String)>)> = rules.iter()
+                .map(|(idx, g, hb)| Ok((*idx, globset::Glob::new(g)?.compile_matcher(), hb.clone())))
                 .collect::<Result<_>>()?;
             for (path, h, mt, sz) in files? {
                 current.insert((slug.clone(), path.clone(), rev.clone()), (h.clone(), mt, sz));
-                for (idx, m) in &matchers {
+                for (idx, m, hb) in &matchers {
                     if m.is_match(&path) {
-                        rule_files.push((*idx, slug.clone(), path.clone(), rev.clone(), h.clone()));
+                        rule_files.push((*idx, slug.clone(), path.clone(), rev.clone(), h.clone(), hb.clone()));
                     }
                 }
             }
@@ -2186,7 +2295,7 @@ impl Engine {
                 to_retract.insert((repo.clone(), path.clone()));
             }
         }
-        for (idx, repo, path, _rev, _h) in &rule_files {
+        for (idx, repo, path, _rev, _h, _hb) in &rule_files {
             if dirty_rels.contains(&source_rules[*idx].head.rel) {
                 to_retract.insert((repo.clone(), path.clone()));
             }
@@ -2199,10 +2308,10 @@ impl Engine {
         // Extract any file whose path was retracted, not just hash-moved ones:
         // retraction is path-grain across ALL source rels, so a clean rule
         // sharing a path with a dirty one must re-provide its rows too.
-        let to_extract: Vec<(usize, String, String, String, String)> = rule_files.iter()
-            .filter(|(_, repo, p, r, h)| hash_of(&prev, repo, p, r).as_ref() != Some(h)
+        let to_extract: Vec<(usize, String, String, String, String, Vec<(String, String)>)> = rule_files.iter()
+            .filter(|(_, repo, p, r, h, _)| hash_of(&prev, repo, p, r).as_ref() != Some(h)
                 || to_retract.contains(&(repo.clone(), p.clone())))
-            .map(|(idx, repo, p, r, h)| (*idx, repo.clone(), p.clone(), r.clone(), h.clone()))
+            .map(|(idx, repo, p, r, h, hb)| (*idx, repo.clone(), p.clone(), r.clone(), h.clone(), hb.clone()))
             .collect();
         let parsed = to_extract.len();
 
@@ -2210,11 +2319,11 @@ impl Engine {
         // then insert serially (SQLite is single-writer).
         let results: Vec<Result<(String, String, Vec<Vec<Value>>, Vec<(spine::WhereBytes, String)>, usize)>> = {
             let Engine { rels, rev_index, .. } = &*self;
-            to_extract.par_iter().map(|(idx, repo, path, rev, hash)| {
+            to_extract.par_iter().map(|(idx, repo, path, rev, hash, hb)| {
                 let root = root_by_repo.get(repo)
                     .ok_or_else(|| anyhow::anyhow!("no root for repo {repo}"))?;
                 let (rows, where_bytes, dropped) =
-                    parse_file(source_rules[*idx], repo, path, rev, hash, root, rels, rev_index)?;
+                    parse_file(source_rules[*idx], repo, path, rev, hash, root, rels, rev_index, hb)?;
                 let rel = source_rules[*idx].head.rel.clone();
                 Ok((rel, path.clone(), rows, where_bytes, dropped))
             }).collect()
@@ -2222,7 +2331,7 @@ impl Engine {
 
         let mut by_rel: HashMap<String, Vec<(String, String, Vec<Value>)>> = HashMap::new();
         let mut where_bytes: Vec<(String, String, spine::WhereBytes, Option<String>)> = Vec::new();
-        for (res, (_, repo, _, _, _)) in results.into_iter().zip(to_extract.iter()) {
+        for (res, (_, repo, _, _, _, _)) in results.into_iter().zip(to_extract.iter()) {
             let (rel, path, rows, wheres, dropped) = res?;
             self.dropped += dropped;
             if dropped > 0 { self.record_extraction_drop(&path, &rel, dropped); }
@@ -2503,6 +2612,7 @@ impl Engine {
     /// repopulate (bounded by repo size, one row per tracked file). Stage 1:
     /// repo = one row from `--root`; rev.id/file.rev = the raw rev string;
     /// content.id = the content hash. No interning (Stage 2).
+    #[tracing::instrument(skip_all, level = "debug")]
     fn refresh_builtin_rels(&self) -> Result<()> {
         let mut sel = self.db.conn().prepare("SELECT repo, path, rev, hash FROM _file")?;
         let files: Vec<(String, String, String, String)> = sel
@@ -2711,6 +2821,23 @@ impl Engine {
         self.repos.clone()
     }
 
+    /// Read a relation's table as positional String rows (test/diagnostic).
+    /// Returns empty if the relation isn't declared.
+    pub fn rel_rows(&self, rel: &str, ncols: usize) -> Vec<Vec<String>> {
+        if !self.rels.contains_key(rel) { return Vec::new(); }
+        let conn = self.db.conn();
+        let mut s = match conn.prepare(&format!("SELECT * FROM {}", tbl(rel))) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows = s.query_map([], |r| {
+            let mut v = Vec::with_capacity(ncols);
+            for i in 0..ncols { v.push(r.get::<_, String>(i)?); }
+            Ok(v)
+        });
+        rows.map(|iter| iter.filter_map(|x| x.ok()).collect()).unwrap_or_default()
+    }
+
     /// The query-facing `repo` relation (slug, root, url) as it stood after the
     /// last tick's `refresh_builtin_rels` — the union of config and dynamically
     /// pulled repos whose root exists. Diagnostics/tests.
@@ -2738,6 +2865,7 @@ impl Engine {
     /// `parse_github_org(url)` is `Some(org)` AND `org(name)` contains it. Rows
     /// with no parseable github org, or whose org is not listed, are skipped
     /// with a stderr line. A missing/empty `org` relation pulls nothing.
+    #[tracing::instrument(skip_all, fields(n_sinks = sinks.len()), level = "debug")]
     fn run_repo_pulls(&mut self, sinks: &[&Rule]) -> Result<()> {
         if sinks.is_empty() { return Ok(()); }
         let allowlist: HashSet<String> = if self.rels.contains_key("org") {
@@ -4020,6 +4148,7 @@ impl Engine {
     }
 
     /// Wipe derived tables and run the semi-naive fixpoint to convergence.
+    #[tracing::instrument(skip_all, fields(n_rules = derived_rules.len(), n_rels = derived_rels.len()), level = "debug")]
     fn rebuild_derived(&self, derived_rules: &[&Rule], derived_rels: &[String]) -> Result<()> {
         for rel in derived_rels { self.db.conn().execute(&format!("DELETE FROM {}", tbl(rel)), [])?; }
         // Evaluate stratum by stratum: each runs a positive (monotone) semi-naive
@@ -4407,6 +4536,7 @@ impl Engine {
     /// Run every `gen` item after the fixpoint: evaluate the body, render the
     /// templates, write the targets. A write is skipped when the target bytes
     /// already match, so a converged tick leaves the tree untouched.
+    #[tracing::instrument(skip_all, level = "debug")]
     fn run_gens(&mut self, prog: &Program, quiet: bool) -> Result<()> {
         let mut written: Vec<String> = Vec::new();
         // Splice regions accumulate across ALL gen rules and apply per file in
@@ -4709,13 +4839,39 @@ fn emit_query_json(rel: &str, columns: &[String], rows: &[Vec<serde_json::Value>
 /// (repo, rev, glob, pathvar, revvar) of a source rule's `scan`. `repo` is the
 /// repo coordinate ("." = self repo); resolve it to a root via
 /// `Engine::resolve_repo_root`.
-fn scan_spec(rule: &Rule) -> Result<(String, String, String, String, String)> {
+/// The scan atom of a source rule, with its coordinate Terms intact (a `Term::Var`
+/// in `repo`/`rev` is a data-driven coordinate — see `Engine::resolve_scan_bindings`).
+fn scan_spec_of(rule: &Rule) -> Result<ScanSpec> {
     for item in &rule.body {
         if let BodyItem::Scan { repo, rev, glob, path, rev_out } = item {
-            return Ok((str_of(repo)?, str_of(rev)?, str_of(glob)?, var_of(path)?, var_of(rev_out)?));
+            return Ok(ScanSpec {
+                repo: repo.clone(), rev: rev.clone(), glob: glob.clone(),
+                path_var: var_of(path)?, rev_out_var: var_of(rev_out)?,
+            });
         }
     }
     bail!("source rule {} missing scan", rule.head.rel)
+}
+
+/// One resolved scan coordinate: a (slug, root, rev, glob) plus the variable
+/// bindings that produced it (so the rule head can reference the data-driven
+/// repo/rev the file was scanned under). Literal scans carry empty `head_binds`.
+#[derive(Clone)]
+struct ScanBinding {
+    slug: String,
+    root: PathBuf,
+    rev: String,
+    glob: String,
+    head_binds: Vec<(String, String)>,
+}
+
+/// Does a rule's scan carry a variable repo or rev (a data-driven coordinate)?
+/// Used by `tick_paths` to defer to the full tick (the binding relation is read
+/// at reconcile time, not in the path-scoped loop).
+pub fn scan_has_var_coords(rule: &Rule) -> bool {
+    rule.body.iter().any(|b| matches!(b,
+        BodyItem::Scan { repo: Term::Var(_), .. } |
+        BodyItem::Scan { rev: Term::Var(_), .. }))
 }
 
 fn read_content(root: &Path, rev: &str, path: &str) -> Result<String> {
@@ -4983,11 +5139,15 @@ fn enumerate_with_hash(repo: &str, repo_root: &Path, rev: &str, union: &globset:
 
 /// Parse one file for one source rule (no DB access); returns (rows, dropped).
 /// Safe to call in parallel: reads file content, runs extractors, builds rows.
+#[tracing::instrument(skip_all, fields(repo = repo, path = path), level = "trace")]
 fn parse_file(
     rule: &Rule, repo: &str, path: &str, rev: &str, hash: &str,
     root: &Path, rels: &Rels, rev_index: &HashSet<(String, String, String)>,
+    head_binds: &[(String, String)],
 ) -> Result<(Vec<Vec<Value>>, Vec<(spine::WhereBytes, String)>, usize)> {
-    let (_, _, _, pathvar, revvar) = scan_spec(rule)?;
+    let spec = scan_spec_of(rule)?;
+    let pathvar = spec.path_var;
+    let revvar = spec.rev_out_var;
     let cmps: Vec<&Constraint> = rule.body.iter()
         .filter_map(|i| if let BodyItem::Cmp(c) = i { Some(c) } else { None }).collect();
     let content = read_content(root, rev, path).unwrap_or_default();
@@ -5023,6 +5183,9 @@ fn parse_file(
         let mut b = Bind::new();
         b.insert(pathvar.clone(), Value::Text(path.to_string()));
         b.insert(revvar.clone(), Value::Text(rev.to_string()));
+        // Data-driven coordinate values (the variable repo/rev this file was
+        // scanned under): seed them so the rule head can reference them.
+        for (k, v) in head_binds { b.insert(k.clone(), Value::Text(v.clone())); }
         b
     }];
 

@@ -139,6 +139,7 @@ fn print_load_response(resp: sprefa_v5::rpc::Response) -> Result<()> {
 }
 
 fn main() -> Result<()> {
+    sprefa_v5::trace::init();
     let cli = Cli::parse();
     if cli.profile { sprefa_v5::db::set_profile(true); }
     if cli.tick_audit { sprefa_v5::engine::set_tick_audit(true); }

@@ -72,6 +72,10 @@ oxc_span = "0.135.0"
 oxc_ast_visit = "0.135.0"
 tray-icon = "0.24"
 tao = "0.35"
+# Structured tracing off by default; `RUST_LOG` or `DL_TRACE=<level>` enables.
+# Span-CLOSE formatting surfaces per-phase durations so hotspots need no recompile.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tree-sitter-dl = { path = "tree-sitter-dl" }
 tree-sitter-language = "0.1"
 
