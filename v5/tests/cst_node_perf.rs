@@ -134,3 +134,48 @@ fn node_child_perf_on_v5_src() {
     // Sanity: the real corpus produced a meaningful node count.
     assert!(nodes > 1000, "v5/src should yield thousands of nodes (got {nodes})");
 }
+
+
+#[test]
+fn incremental_node_tick_is_path_scoped() {
+    // Cold-tick a 5-file fixture, edit ONE file, incremental-tick, and assert
+    // the node walk parsed exactly 1 file — the machine-independent proof the
+    // CST refresh is path-scoped (can't silently regress to full-corpus).
+    let dir = std::env::temp_dir().join("cst_node_perf_pathscope");
+    let _ = fs::remove_dir_all(&dir);
+    let src = dir.join("src");
+    fs::create_dir_all(&src).unwrap();
+    for i in 0..5 {
+        fs::write(src.join(format!("m{i}.rs")),
+            format!("fn f{i}() {{\n    let a = {i};\n    let b = a + 1;\n}}\n")).unwrap();
+    }
+
+    let prog = parse::parse(lex::lex(NODE_PROG).unwrap()).unwrap();
+    let conn = db::open(Some(dir.join("db").to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, dir.clone());
+
+    // COLD: full walk over all 5 files.
+    eng.tick(&prog, true).unwrap();
+    assert_eq!(eng.last_node_files_walked.get(), 5,
+        "cold tick should walk every file (got {})", eng.last_node_files_walked.get());
+    let nodes_before = row_count(&eng, "node");
+    assert!(nodes_before > 0);
+
+    // INCREMENTAL: edit ONE file (real body change so its node set moves).
+    let target = src.join("m2.rs");
+    fs::write(&target, "fn f2() {\n    let a = 2;\n    let b = a + 1;\n    let c = b * 9;\n}\n").unwrap();
+    eng.tick_paths(&prog, std::slice::from_ref(&target), true).unwrap();
+
+    // THE PROOF: only the one edited file was re-walked, NOT all 5.
+    assert_eq!(eng.last_node_files_walked.get(), 1,
+        "incremental tick must walk ONLY the edited file (got {} — regressed to full-corpus?)",
+        eng.last_node_files_walked.get());
+    assert!(eng.last_n1.is_none(),
+        "incremental node delta tripped N+1: {:?}", eng.last_n1);
+
+    // The other 4 files' node rows survived; the corpus didn't get wiped.
+    let nodes_after = row_count(&eng, "node");
+    assert!(nodes_after > 0, "node rows survived the delta (got {nodes_after})");
+
+    let _ = fs::remove_dir_all(&dir);
+}

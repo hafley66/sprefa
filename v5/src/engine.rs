@@ -42,6 +42,15 @@ fn max_filesize() -> Option<u64> {
     *MAX_FILESIZE.get_or_init(|| std::env::var("DL_MAX_FILESIZE").ok().and_then(|v| v.parse().ok()))
 }
 
+/// Slow-tick log threshold in ms. A `tick_paths` slower than this prints a
+/// `[tick]` line to stderr (the LSP server log), so live dogfooding catches a
+/// perf regression. `DL_TICK_LOG_MS` overrides; default 250ms. 0 logs every tick.
+static TICK_LOG_MS: OnceLock<f64> = OnceLock::new();
+fn tick_log_ms() -> f64 {
+    *TICK_LOG_MS.get_or_init(|| std::env::var("DL_TICK_LOG_MS").ok()
+        .and_then(|v| v.parse().ok()).unwrap_or(250.0))
+}
+
 /// The built-in relations of the data-model contract (docs/data-model.md). A
 /// `.dl` program may not declare these names; they are registered with fixed
 /// schemas and refreshed each tick from the `_file` change-detection cache, so
@@ -887,6 +896,23 @@ pub struct Engine {
     /// the plural API. `None` = silent (good); `Some((stmt, count))` = a
     /// statement ran past `N1_THRESHOLD`.
     pub last_n1: Option<(String, u32)>,
+    /// Test/bench instrumentation: how many files `refresh_node_rels`/
+    /// `refresh_node_rels_delta` actually parsed+walked on the LAST node tick.
+    /// A delta tick over one edited file sets this to 1; a full cold walk sets
+    /// it to the whole corpus. The structural proof the incremental path is
+    /// path-scoped (and can't silently regress to full-corpus).
+    pub last_node_files_walked: std::cell::Cell<usize>,
+}
+
+/// One parsed file's CST node records plus the repo id + path + content
+/// `FileId` its spans key off. Produced by `Engine::node_walk`, consumed by
+/// `Engine::node_rows_from_walk` (the full and delta CST refresh share both).
+struct FileNodes {
+    repo: String,
+    path: String,
+    file: spine::FileId,
+    content: String,
+    nodes: Vec<crate::cst::CstNode>,
 }
 
 impl Engine {
@@ -899,6 +925,7 @@ impl Engine {
             repos: Vec::new(),
             query_json: false,
             last_n1: None,
+            last_node_files_walked: std::cell::Cell::new(0),
         }
     }
 
@@ -1583,6 +1610,7 @@ impl Engine {
     /// watcher): reconciles only those paths, never walking or statting the
     /// tree. Only WORK source rules participate; route git-rev changes to `tick`.
     pub fn tick_paths(&mut self, prog: &Program, changed: &[PathBuf], quiet: bool) -> Result<()> {
+        let _tick_started = std::time::Instant::now();
         self.rev_cache.clear();
         self.extraction_drops.clear();
         CMD_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
@@ -1648,6 +1676,10 @@ impl Engine {
         let mut changed_source_rels: HashSet<String> = HashSet::new();
         let mut module_delta_paths: HashSet<String> = HashSet::new();
         let mut module_full_work = false;
+        // Files whose `_file` row changed this tick (modified or deleted),
+        // for the path-scoped CST `node`/`child` refresh. A file that the
+        // digest prune skipped (content unchanged) is NOT added.
+        let mut node_delta_paths: HashSet<String> = HashSet::new();
         let mut scip_changed = false;
         let (mut extracted, mut retracted, mut npaths) = (0usize, 0usize, 0usize);
         let mut seen: HashSet<String> = HashSet::new();
@@ -1677,6 +1709,7 @@ impl Engine {
                 } else {
                     module_full_work = true;
                 }
+                node_delta_paths.insert(rel.clone());
                 retracted += self.retract_path(&slug, &rel, &source_rels)?;
                 // Collect located spans across every matching rule for this file and
                 // flush once after the loop (one `bump()`), not per-rule. Per-rule
@@ -1701,6 +1734,7 @@ impl Engine {
                 changed_facts = true;
             } else {
                 if prev.contains_key(&(slug.clone(), rel.clone(), "WORK".to_string())) { module_full_work = true; }
+                node_delta_paths.insert(rel.clone());
                 retracted += self.retract_path(&slug, &rel, &source_rels)?;
                 self.db.conn().execute("DELETE FROM _file WHERE repo = ?1 AND path = ?2 AND rev = 'WORK'", [&slug, &rel])?;
                 for rule in &matching { changed_source_rels.insert(rule.head.rel.clone()); }
@@ -1741,7 +1775,9 @@ impl Engine {
             }
             // Node rels write into the spine meta tables, so refresh them BEFORE
             // the spine projection (else this tick's `ref`/`string` miss node spans).
-            if node_rels_used(prog) && self.refresh_node_rels()? {
+            // Path-scoped: re-walk ONLY this tick's changed files; the other
+            // files' node/child rows are untouched.
+            if node_rels_used(prog) && self.refresh_node_rels_delta(&node_delta_paths)? {
                 for n in NODE_RELS { changed_source_rels.insert(n.to_string()); }
                 changed_facts = true;
             }
@@ -1817,6 +1853,14 @@ impl Engine {
         self.run_gens(prog, quiet)?;
         if self.dropped > 0 { eprintln!("[checked-type] dropped {} rows", self.dropped); self.dropped = 0; }
         self.last_n1 = self.db.tick_end();
+        // Surface a slow incremental tick in the LSP server log so live
+        // dogfooding catches a perf regression (e.g. a CST refresh that
+        // silently went full-corpus). Gated on `tick_log_ms()` (env
+        // `DL_TICK_LOG_MS`, default 250ms) so a normal fast tick is silent.
+        let tick_ms = _tick_started.elapsed().as_secs_f64() * 1000.0;
+        if tick_ms >= tick_log_ms() {
+            eprintln!("[tick] incremental tick took {tick_ms:.1}ms over {} changed path(s)", changed.len());
+        }
         Ok(())
     }
 
@@ -1826,6 +1870,12 @@ impl Engine {
                  mtime INTEGER DEFAULT 0, size INTEGER DEFAULT 0, PRIMARY KEY (repo, path, rev));
              CREATE TABLE IF NOT EXISTS _prov (rel TEXT, repo TEXT NOT NULL DEFAULT '', path TEXT, src TEXT, PRIMARY KEY (rel, repo, path, src));
              CREATE TABLE IF NOT EXISTS _reldigest (rel TEXT PRIMARY KEY, digest TEXT);
+             -- CST node path attribution (not a public rel column): maps a
+             -- node id to its source path so the delta refresh can prune one
+             -- file's `node` rows. The `node.file` column is a content FileId
+             -- shared by byte-identical files, so it cannot key the prune.
+             CREATE TABLE IF NOT EXISTS _node_path (id TEXT PRIMARY KEY, path TEXT NOT NULL);
+             CREATE INDEX IF NOT EXISTS _node_path_path_idx ON _node_path(path);
              CREATE TABLE IF NOT EXISTS _strings (
                  id TEXT PRIMARY KEY,
                  content TEXT NOT NULL,
@@ -3037,22 +3087,115 @@ impl Engine {
     /// slice's StringId, so `ref(id, sid, ..)` -> `string(sid, text, ..)` recovers
     /// the node's source bytes (riding step 1's intern fix).
     fn refresh_node_rels(&self) -> Result<bool> {
-        // The scanned file set, keyed by (repo, path, rev, hash). hash -> FileId.
-        let mut files: Vec<(String, String, String, String)> = Vec::new();
-        {
-            let mut sel = self.db.conn().prepare("SELECT repo, path, rev, hash FROM _file")?;
-            let rows = sel.query_map([], |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?, r.get::<_, String>(3)?)))?;
-            for row in rows.flatten() { files.push(row); }
+        // Whole-corpus walk: read every scanned file from `_file`.
+        let files = self.node_file_set(None)?;
+        let parsed = self.node_walk(&files);
+        self.last_node_files_walked.set(parsed.len());
+        let (node_rows, child_rows, path_by_id, str_by_id, wb_by_id) = self.node_rows_from_walk(&parsed);
+
+        // Node ids are content-addressed and kind-salted, so each node row is
+        // already unique within a tick (a node can't appear twice in one walk;
+        // path folds into the id across files). Early-out by comparing the stored
+        // id set to the computed one — if identical, no file's tree moved.
+        let computed: std::collections::HashSet<String> = node_rows.iter()
+            .filter_map(|row| if let Value::Text(s) = &row[0] { Some(s.clone()) } else { None }).collect();
+        let stored: std::collections::HashSet<String> = {
+            let conn = self.db.conn();
+            let mut s = conn.prepare(&format!("SELECT id FROM {}", tbl("node")))?;
+            let set: std::collections::HashSet<String> =
+                s.query_map([], |r| r.get::<_, String>(0))?.filter_map(|x| x.ok()).collect();
+            set
+        };
+        if stored == computed { return Ok(false); }
+
+        // Full replace: spine first (so node ids resolve), then a whole-table
+        // wipe + reinsert of node/child via refresh_rel. `_node_path` (id->path
+        // attribution, not a public rel column) is rebuilt wholesale too so the
+        // delta refresh can later prune one file's rows.
+        self.flush_node_spine(str_by_id, wb_by_id)?;
+        self.refresh_rel("node", &["id", "kind", "file", "lo", "hi", "parent"], &node_rows)?;
+        self.refresh_rel("child", &["parent", "child"], &child_rows)?;
+        self.db.exec("DELETE FROM _node_path")?;
+        self.db.insert_rows("_node_path", &["id", "path"], &path_by_id)?;
+        Ok(true)
+    }
+
+    /// Path-scoped CST refresh for the incremental tick: re-walk ONLY the changed
+    /// files, prune their OLD node/child + spine rows, insert the new walk. The
+    /// OTHER files' node/child rows are untouched. Mirrors
+    /// `refresh_module_rels_for_paths`. The `_where_bytes`/`_strings` node spans
+    /// for the changed files were already pruned by `retract_path` (keyed by
+    /// (repo, path)); this re-inserts the fresh spans. Returns true if any node
+    /// row changed.
+    fn refresh_node_rels_delta(&self, paths: &HashSet<String>) -> Result<bool> {
+        if paths.is_empty() { return Ok(false); }
+        let files = self.node_file_set(Some(paths))?;
+        let parsed = self.node_walk(&files);
+        self.last_node_files_walked.set(parsed.len());
+        let (node_rows, child_rows, path_by_id, str_by_id, wb_by_id) = self.node_rows_from_walk(&parsed);
+
+        // Prune this tick's changed files' OLD rows: `node` rows whose id is
+        // attributed to a changed path (via `_node_path`), plus the `_node_path`
+        // rows themselves. `node.file` is a content FileId shared by
+        // byte-identical files, so it can't key the prune; `_node_path` keys by
+        // the real source path. Other files' node rows stay untouched.
+        self.db.exec("CREATE TEMP TABLE IF NOT EXISTS _node_refresh_path(path TEXT PRIMARY KEY)")?;
+        self.db.exec("DELETE FROM _node_refresh_path")?;
+        let path_rows: Vec<Vec<Value>> = paths.iter().map(|p| vec![Value::Text(p.clone())]).collect();
+        self.db.insert_rows("_node_refresh_path", &["path"], &path_rows)?;
+        let node_tbl = tbl("node");
+        let child_tbl = tbl("child");
+        let changed_ids_sql =
+            "SELECT id FROM _node_path WHERE path IN (SELECT path FROM _node_refresh_path)";
+        // child edges of the changed files: their `child` endpoint id is in the
+        // changed-path id set (CST is per-file, so an edge never crosses files).
+        // Delete BEFORE pruning `_node_path` so the id subquery still resolves.
+        self.db.exec(&format!(
+            "DELETE FROM {child_tbl} WHERE \"child\" IN ({changed_ids_sql})"))?;
+        self.db.exec(&format!("DELETE FROM {node_tbl} WHERE \"id\" IN ({changed_ids_sql})"))?;
+        self.db.exec("DELETE FROM _node_path WHERE path IN (SELECT path FROM _node_refresh_path)")?;
+
+        // Spine first (so the new node ids resolve through `ref`/`string`), then
+        // the node rows + their `_node_path` attribution, then re-derive `child`
+        // so it never references a node id that no longer exists.
+        self.flush_node_spine(str_by_id, wb_by_id)?;
+        let nodes_changed = !node_rows.is_empty();
+        if nodes_changed {
+            self.db.insert_rows(&node_tbl, &["id", "kind", "file", "lo", "hi", "parent"], &node_rows)?;
+            self.db.insert_rows("_node_path", &["id", "path"], &path_by_id)?;
         }
+        // Re-insert the fresh walk's child edges (the stale ones were deleted
+        // above by the changed-path id set). One plural write; other files'
+        // edges untouched (no whole-corpus child rebuild).
+        if !child_rows.is_empty() {
+            self.db.insert_rows(&child_tbl, &["parent", "child"], &child_rows)?;
+        }
+        Ok(nodes_changed)
+    }
+
+    /// The scanned file set for a node walk, keyed by (repo, path, rev, hash).
+    /// `only` restricts to a changed-path subset (the delta refresh); `None`
+    /// reads every `_file` row (the cold/full refresh).
+    fn node_file_set(&self, only: Option<&HashSet<String>>) -> Result<Vec<(String, String, String, String)>> {
+        let mut files: Vec<(String, String, String, String)> = Vec::new();
+        let conn = self.db.conn();
+        let mut sel = conn.prepare("SELECT repo, path, rev, hash FROM _file")?;
+        let rows = sel.query_map([], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?, r.get::<_, String>(3)?)))?;
+        for row in rows.flatten() {
+            if let Some(set) = only { if !set.contains(&row.1) { continue; } }
+            files.push(row);
+        }
+        Ok(files)
+    }
+
+    /// Per-file parse + tree-sitter walk in parallel (no DB touch). Each yields
+    /// the file's node records plus the repo id + path + FileId its spans key off.
+    fn node_walk(&self, files: &[(String, String, String, String)]) -> Vec<FileNodes> {
         let root = self.root.clone();
         let roots = self.repo_roots();
-
-        // Per-file parse + walk in parallel (no DB touch). Each yields the file's
-        // node records plus the repo id + path + FileId its spans key off.
-        struct FileNodes { repo: String, path: String, file: spine::FileId, content: String, nodes: Vec<crate::cst::CstNode> }
-        let parsed: Vec<FileNodes> = files.par_iter().filter_map(|(repo, path, rev, hash)| {
+        files.par_iter().filter_map(|(repo, path, rev, hash)| {
             let label = crate::cst::lang_label_for_path(path)?;
             let lang = ts_lang(label).ok()?;
             let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
@@ -3063,15 +3206,21 @@ impl Engine {
             if nodes.is_empty() { return None; }
             let rid = repo_id_of(froot, path, repo);
             Some(FileNodes { repo: rid, path: path.clone(), file, content, nodes })
-        }).collect();
+        }).collect()
+    }
 
-        // Collect-then-flush. node_rows/child_rows for the rels; str_by_id/wb_by_id
-        // for the spine (kind-salted id, raw string_id).
+    /// Build the node/child rel rows + the spine (`_strings`/`_where_bytes`)
+    /// interns from a parsed walk. Collect-then-flush; no DB touch.
+    fn node_rows_from_walk(&self, parsed: &[FileNodes])
+        -> (Vec<Vec<Value>>, Vec<Vec<Value>>, Vec<Vec<Value>>, BTreeMap<String, (String, String)>, BTreeMap<String, Vec<Value>>)
+    {
         let mut node_rows: Vec<Vec<Value>> = Vec::new();
         let mut child_rows: Vec<Vec<Value>> = Vec::new();
+        // (node id, path) attribution rows for the `_node_path` side table.
+        let mut path_by_id: Vec<Vec<Value>> = Vec::new();
         let mut str_by_id: BTreeMap<String, (String, String)> = BTreeMap::new();
         let mut wb_by_id: BTreeMap<String, Vec<Value>> = BTreeMap::new();
-        for fln in &parsed {
+        for fln in parsed {
             let FileNodes { repo, path, file, content, nodes } = fln;
             // Pre-compute each node's salted id (an index-aligned Vec) so the
             // child edges reference the parent's id without recomputing.
@@ -3110,41 +3259,34 @@ impl Engine {
                     Value::Int(n.hi as i64),
                     Value::Text(parent_id),
                 ]);
+                path_by_id.push(vec![Value::Text(ids[ix].clone()), Value::Text(path.clone())]);
                 if let Some(p) = n.parent_ix {
                     child_rows.push(vec![Value::Text(ids[p].clone()), Value::Text(ids[ix].clone())]);
                 }
             }
         }
+        (node_rows, child_rows, path_by_id, str_by_id, wb_by_id)
+    }
 
-        // Node ids are content-addressed and kind-salted, so each node row is
-        // already unique within a tick (a node can't appear twice in one walk;
-        // path folds into the id across files). Early-out by comparing the stored
-        // id set to the computed one — if identical, no file's tree moved.
-        let computed: std::collections::HashSet<String> = node_rows.iter()
-            .filter_map(|row| if let Value::Text(s) = &row[0] { Some(s.clone()) } else { None }).collect();
-        let stored: std::collections::HashSet<String> = {
-            let conn = self.db.conn();
-            let mut s = conn.prepare(&format!("SELECT id FROM {}", tbl("node")))?;
-            let set: std::collections::HashSet<String> =
-                s.query_map([], |r| r.get::<_, String>(0))?.filter_map(|x| x.ok()).collect();
-            set
-        };
-        if stored == computed { return Ok(false); }
-
-        // Flush: spine first (so node ids resolve), then the two rels.
+    /// Flush the node walk's spine interns: `_strings` then `_where_bytes`
+    /// (both INSERT OR IGNORE, content-addressed), so a node id resolves through
+    /// `ref`/`string`. One plural write each.
+    fn flush_node_spine(
+        &self,
+        str_by_id: BTreeMap<String, (String, String)>,
+        wb_by_id: BTreeMap<String, Vec<Value>>,
+    ) -> Result<()> {
         if !str_by_id.is_empty() {
-            let string_rows: Vec<Vec<Value>> = std::mem::take(&mut str_by_id).into_iter()
+            let string_rows: Vec<Vec<Value>> = str_by_id.into_iter()
                 .map(|(id, (content, norm))| vec![Value::Text(id), Value::Text(content), Value::Text(norm)])
                 .collect();
             self.db.insert_rows("_strings", &["id", "content", "norm"], &string_rows)?;
         }
         if !wb_by_id.is_empty() {
-            let wb_rows: Vec<Vec<Value>> = std::mem::take(&mut wb_by_id).into_values().collect();
+            let wb_rows: Vec<Vec<Value>> = wb_by_id.into_values().collect();
             self.db.insert_rows("_where_bytes", &["id", "string_id", "file_id", "lo", "hi", "repo", "rev", "path"], &wb_rows)?;
         }
-        self.refresh_rel("node", &["id", "kind", "file", "lo", "hi", "parent"], &node_rows)?;
-        self.refresh_rel("child", &["parent", "child"], &child_rows)?;
-        Ok(true)
+        Ok(())
     }
 
     /// Wholesale repopulation of the Phase D call-graph relations. Same shape
