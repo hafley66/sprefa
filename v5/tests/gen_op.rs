@@ -328,3 +328,64 @@ fn match_id_feeds_cursor_wrap_end_to_end() {
     let got = fs::read_to_string(d.join("data.txt")).unwrap();
     assert_eq!(got, "xx<w>TARGET<w>xx", "match id -> ref lo,hi -> cursor :wrap");
 }
+
+// ─── overlap gate (multi-edit safety) ──────────────────────────────────
+// The right-to-left apply assumes every region's window refers to the ORIGINAL
+// buffer. Two regions whose windows intersect would see the second operate on
+// already-mutated bytes (silent corruption), so both cursor and line-splice
+// forms bail loudly. Adjacent (touching) windows are allowed.
+
+/// Two :replace cursor regions whose [lo,hi) windows intersect must bail
+/// loudly rather than corrupt. [1,5) and [3,7) share [3,5); the file is left
+/// untouched because the gate fires before any write.
+#[test]
+fn cursor_overlapping_windows_bail_loudly() {
+    let d = sandbox("cursor_overlap");
+    fs::write(d.join("data.txt"), "ABCDEFGH").unwrap();
+    let prog = concat!(
+        "rel hit(p: file, lo: int, hi: int, payload: text).\n",
+        "hit(\"data.txt\", 1, 5, \"###\").\n",
+        "hit(\"data.txt\", 3, 7, \"@@@\").\n",
+        "gen(:replace, p, lo, hi, \"{payload}\") <- hit(p, lo, hi, payload).\n",
+    );
+    let (code, _, err) = run(&d, prog);
+    assert_ne!(code, 0, "overlapping cursor regions must bail");
+    assert!(err.contains("overlap"), "expected overlap message, got: {err}");
+    assert_eq!(fs::read_to_string(d.join("data.txt")).unwrap(), "ABCDEFGH",
+        "the overlap gate must fire before any write");
+}
+
+/// Adjacent (touching) windows — [1,3) and [3,6), hi == next lo — must NOT
+/// trip the gate: they touch but don't overlap. On "ABCDEFGH" replace both,
+/// right-to-left: [3,6)->"$$" then [1,3)->"##" yields "A##$$GH".
+#[test]
+fn cursor_adjacent_windows_do_not_bail() {
+    let d = sandbox("cursor_adjacent");
+    fs::write(d.join("data.txt"), "ABCDEFGH").unwrap();
+    let prog = concat!(
+        "rel hit(p: file, lo: int, hi: int, payload: text).\n",
+        "hit(\"data.txt\", 1, 3, \"##\").\n",
+        "hit(\"data.txt\", 3, 6, \"$$\").\n",
+        "gen(:replace, p, lo, hi, \"{payload}\") <- hit(p, lo, hi, payload).\n",
+    );
+    let (code, _, err) = run(&d, prog);
+    assert_eq!(code, 0, "adjacent (touching) windows must not bail: {err}");
+    assert_eq!(fs::read_to_string(d.join("data.txt")).unwrap(), "A##$$GH");
+}
+
+/// Line-splice form has the same gate. Regions [1,4) and [3,6) share lines, so
+/// bail loudly.
+#[test]
+fn splice_overlapping_windows_bail_loudly() {
+    let d = sandbox("splice_overlap");
+    fs::write(d.join("data.txt"), "0\n1\n2\n3\n4\n5\n6\n").unwrap();
+    let prog = concat!(
+        "rel hit(p: file, l0: int, l1: int).\n",
+        "hit(\"data.txt\", 1, 4).\n",
+        "hit(\"data.txt\", 3, 6).\n",
+        "gen(p, l0, l1, \"X\") <- hit(p, l0, l1).\n",
+    );
+    let (code, _, err) = run(&d, prog);
+    assert_ne!(code, 0, "overlapping splice regions must bail");
+    assert!(err.contains("overlap"), "expected overlap message, got: {err}");
+}

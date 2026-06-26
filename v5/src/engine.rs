@@ -4676,7 +4676,7 @@ impl Engine {
             }
         }
         self.apply_splices(&splices, &mut written, &write_roots)?;
-        self.apply_cursors(&cursors, &mut written)?;
+        self.apply_cursors(&cursors, &mut written, &write_roots)?;
         if !written.is_empty() && !quiet {
             eprintln!("[gen] wrote {}", written.join(", "));
         }
@@ -4793,6 +4793,11 @@ impl Engine {
     /// Replace the lines strictly between each region's marker lines; the
     /// markers stay. One read-modify-write per file, regions bottom-up so
     /// earlier line numbers stay valid across the whole batch.
+    ///
+    /// Overlap gate (same stance as `apply_cursors`): the bottom-up apply
+    /// assumes every region's line window refers to the ORIGINAL line list.
+    /// Two regions whose [l0, l1) windows intersect would corrupt, so bail
+    /// loudly.
     fn apply_splices(&self, splices: &Splices, written: &mut Vec<String>, write_roots: &[PathBuf]) -> Result<()> {
         let mut files: Vec<&str> = Vec::new();
         for (p, _, _) in &splices.keys { if !files.contains(&p.as_str()) { files.push(p); } }
@@ -4803,6 +4808,16 @@ impl Engine {
             let mut lines: Vec<String> = old.lines().map(|s| s.to_string()).collect();
             let mut regions: Vec<&(String, i64, i64)> =
                 splices.keys.iter().filter(|k| k.0 == p).collect();
+            // Disjointness gate: ascending by l0, require each region's l1 <=
+            // the next region's l0.
+            regions.sort_by_key(|k| k.1);
+            for w in regions.windows(2) {
+                if w[0].2 > w[1].1 {
+                    bail!("gen splice regions overlap in {p}: lines [{},{}) and [{},{}) \
+                          collide; merge into one rule or disjoint the windows",
+                          w[0].1, w[0].2, w[1].1, w[1].2);
+                }
+            }
             regions.sort_by_key(|k| std::cmp::Reverse(k.1));
             for k in regions {
                 let (l0, l1) = (k.1 as usize, k.2 as usize);
@@ -4826,16 +4841,37 @@ impl Engine {
     /// then dispatch on mode. :wrap inserts at both endpoints; the other three
     /// modes splice into the [lo, hi) window, at lo, at hi, or replace it
     /// outright. One read-modify-write per file. Skipped silently if the
-    /// resulting bytes match the original.
-    fn apply_cursors(&self, cursors: &Cursors, written: &mut Vec<String>) -> Result<()> {
+    /// resulting bytes match the original. `write_roots` resolves the target
+    /// per file (parity with `apply_splices`): under `root_implicit` a cursor
+    /// rule from a loaded script writes back to that script's repo, not the
+    /// placeholder root.
+    ///
+    /// Overlap gate: the right-to-left apply assumes every region's window
+    /// refers to the ORIGINAL buffer. Two regions whose [lo, hi) windows
+    /// intersect would see the second operate on already-mutated bytes (silent
+    /// corruption), so bail loudly — same stance as the file-emit claimed-path
+    /// bail. Regions keyed identically (same path/lo/hi/mode) already concat
+    /// their rows into one payload, so this only fires across DISTINCT windows.
+    fn apply_cursors(&self, cursors: &Cursors, written: &mut Vec<String>, write_roots: &[PathBuf]) -> Result<()> {
         let mut files: Vec<&str> = Vec::new();
         for (p, _, _, _) in &cursors.keys { if !files.contains(&p.as_str()) { files.push(p); } }
         for p in files {
-            let full = self.root.join(p);
+            let full = resolve_write_full(write_roots, p);
             let original = std::fs::read(&full)
                 .map_err(|e| anyhow::anyhow!("gen :mode target {p}: {e}"))?;
             let mut regions: Vec<&(String, i64, i64, SpliceMode)> =
                 cursors.keys.iter().filter(|k| k.0 == p).collect();
+            // Disjointness gate: ascending by lo, require each region's hi <=
+            // the next region's lo. Adjacent-equal (hi == next lo) is allowed
+            // (windows touch but don't overlap).
+            regions.sort_by_key(|k| k.1);
+            for w in regions.windows(2) {
+                if w[0].2 > w[1].1 {
+                    bail!("gen :{} and :{} regions overlap in {p}: [{},{}) and [{},{}) \
+                          collide; merge into one rule or disjoint the windows",
+                          w[0].3.tag(), w[1].3.tag(), w[0].1, w[0].2, w[1].1, w[1].2);
+                }
+            }
             // Right-to-left by lo so prior inserts don't shift later offsets.
             regions.sort_by_key(|k| std::cmp::Reverse(k.1));
             let mut buf: Vec<u8> = original.clone();
