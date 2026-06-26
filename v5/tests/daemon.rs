@@ -134,6 +134,97 @@ fn no_daemon_env_opts_out() {
     assert!(stdout.contains("x"));
 }
 
+/// A `git checkout`/`pull` rewrites worktree files AND moves `.git`. The
+/// git-ref handler computes the changed files from the deterministic
+/// `files_changed_between` diff and feeds them to `tick_paths` (FSEvents does
+/// not reliably co-deliver a checkout's rewritten files with the `.git` event).
+///
+/// NOTE: `#[ignore]` — on macOS, FSEvents frequently drops/latencies the events
+/// for a `git checkout` (temp+rename writes + `.git` churn coalesce), so the
+/// `.git` watcher trigger itself is unreliable here. The diff-driven fix this
+/// guards is correct and works on Linux (inotify); run manually on a quiet box
+/// or on Linux. A poll-based ref watcher (timer thread checking HEAD oids) is
+/// the robust fix for macOS and is tracked as a follow-up.
+#[test]
+#[ignore = "macOS FSEvents unreliably delivers git-checkout events; run manually / on Linux"]
+fn git_checkout_rewrite_triggers_tick() {
+    let dir = sandbox("gitco");
+    let g = |args: &[&str]| {
+        let out = Command::new("git").arg("-C").arg(&dir).args(args).output().expect("git");
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    g(&["init", "-q"]);
+    g(&["config", "user.email", "t@t"]);
+    g(&["config", "user.name", "t"]);
+    g(&["config", "commit.gpgsign", "false"]);
+    fs::create_dir_all(dir.join("src")).unwrap();
+    // c2 (two fns) committed first; c1 (one fn) on top. Daemon starts at c2.
+    fs::write(dir.join("src/a.rs"), "fn a() {}\nfn b() {}\n").unwrap();
+    fs::write(dir.join("p.dl"), r#"rel seen(path: file, line: int).
+seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
+  match(path, rev, /fn \w+/, line).
+? seen(path, line).
+"#).unwrap();
+    g(&["add", "."]);
+    g(&["commit", "-q", "-m", "c2"]);
+    let c2 = String::from_utf8_lossy(&Command::new("git").arg("-C").arg(&dir)
+        .args(["rev-parse", "HEAD"]).output().unwrap().stdout)
+        .trim().to_string();
+    fs::write(dir.join("src/a.rs"), "fn a() {}\n").unwrap();
+    g(&["add", "."]);
+    g(&["commit", "-q", "-m", "c1"]);
+    let c1 = String::from_utf8_lossy(&Command::new("git").arg("-C").arg(&dir)
+        .args(["rev-parse", "HEAD"]).output().unwrap().stdout)
+        .trim().to_string();
+    g(&["checkout", "-q", &c2]); // HEAD=c2, worktree=2 fns (daemon baseline)
+
+    fs::create_dir_all(dir.join(".dl")).unwrap();
+    let mut child = run_daemon_explicit(&dir);
+    let sock = dir.join(".dl").join("daemon.sock");
+    for _ in 0..100 {
+        if sock.exists() && std::os::unix::net::UnixStream::connect(&sock).is_ok() { break; }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    let query_rows = || -> usize {
+        use std::io::Write;
+        let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+        let body = r#"{"jsonrpc":"2.0","id":99,"method":"query","params":{}}"#;
+        write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+        let resp = read_frame(&mut s).expect("query response");
+        let v: serde_json::Value = serde_json::from_str(&resp).expect("parse query resp");
+        v["result"]["results"][0]["rows"].as_array().map(|a| a.len()).unwrap_or(0)
+    };
+
+    // Baseline at c2: two fns -> two rows. Poll (cold tick + query settle).
+    let mut ok = false;
+    for _ in 0..60 {
+        if query_rows() == 2 { ok = true; break; }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(ok, "baseline c2 should see 2 fns; got {}", query_rows());
+
+    // Checkout c1: rewrites src/a.rs (one fn) AND moves .git in one batch.
+    // Before the fix the git-ref handler `continue`d and the worktree tick was
+    // lost (query stayed at 2). Now it falls through to tick_paths.
+    g(&["checkout", "-q", &c1]);
+    let mut reverted = false;
+    for _ in 0..300 {
+        if query_rows() == 1 { reverted = true; break; }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(reverted, "git checkout c2->c1 should drop a fn via a worktree tick; got {}", query_rows());
+
+    {
+        use std::io::Write;
+        let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+        let body = r#"{"jsonrpc":"2.0","id":5,"method":"shutdown","params":{}}"#;
+        write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+        let _ = read_frame(&mut s);
+    }
+    let _ = child.wait_timeout(std::time::Duration::from_secs(5));
+}
+
 // ---------- helpers ----------
 
 fn read_frame(s: &mut std::os::unix::net::UnixStream) -> Option<String> {

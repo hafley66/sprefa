@@ -297,9 +297,12 @@ impl Daemon {
 
     /// React to a `.git` change: observe each watched ref's current oid against
     /// the persisted cursor, and on advance diff old→new against the `_file`
-    /// index and broadcast a `rev_advanced` notification. Detect + emit only; no
-    /// re-tick. Returns the number of refs that advanced.
-    fn on_git_event(&self) -> usize {
+    /// index and broadcast a `rev_advanced` notification. Returns the number of
+    /// refs that advanced AND the union of worktree files the diff says changed
+    /// (absolute paths), so the watcher can re-analyze them. Driving the tick
+    /// from the diff is deterministic — FSEvents does not reliably co-deliver a
+    /// checkout's rewritten files with the `.git` event that accompanied them.
+    fn on_git_event(&self) -> (usize, Vec<PathBuf>) {
         let self_slug = self.root.file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| self.root.to_string_lossy().into_owned());
@@ -311,6 +314,7 @@ impl Daemon {
         }
         let names = self.watched_ref_names();
         let mut advances: Vec<(String, String, String, String, Vec<String>)> = Vec::new();
+        let mut changed: Vec<PathBuf> = Vec::new();
         {
             let eng = self.eng.lock().unwrap();
             for (slug, root) in &repos {
@@ -320,6 +324,14 @@ impl Daemon {
                             let files = eng
                                 .files_changed_between(slug, root, old.as_deref().unwrap_or(""), &new)
                                 .unwrap_or_default();
+                            // Collect absolute worktree paths for the watcher's
+                            // follow-up tick (deduped across refs/repos).
+                            for f in &files {
+                                let abs = root.join(f);
+                                if abs.exists() && !changed.contains(&abs) {
+                                    changed.push(abs);
+                                }
+                            }
                             advances.push((slug.clone(), name.clone(),
                                 old.unwrap_or_default(), new, files));
                         }
@@ -332,7 +344,7 @@ impl Daemon {
             // `query` RPC sees the advance without a re-tick.
             if !advances.is_empty() {
                 if let Err(e) = eng.refresh_daemon_rels() {
-                    eprintln!("[daemon] refresh_daemon_rels: {e}");
+                    eprintln!("[daemon] refresh_daemon_rels: {e}"); 
                 }
             }
         }
@@ -340,7 +352,7 @@ impl Daemon {
         if !advances.is_empty() {
             self.broadcast_rev_advanced(&advances);
         }
-        advances.len()
+        (advances.len(), changed)
     }
 
     /// Push one `rev_advanced` notification per advanced ref to every subscriber.
@@ -661,15 +673,17 @@ fn watcher_loop(d: Arc<Daemon>) {
                 continue;
             }
         }
-        // A `.git` move (commit/checkout/pull) detects + emits + broadcasts the
-        // rev advance WITHOUT re-analysis (the locked design): observe each
-        // watched ref's new oid, diff against the `_file` index, push a
-        // `rev_advanced` notification. No tick, so subscribers decide whether to
-        // re-query. Routed before the tick branches and `continue`s past them.
+        // A `.git` move (commit/checkout/pull/reset): broadcast the rev advance,
+        // then re-analyze the worktree files the git diff says changed. The tick
+        // is driven from the deterministic `files_changed_between` diff, not the
+        // notify batch — FSEvents does not reliably co-deliver a checkout's
+        // rewritten files with the `.git` event that accompanied them. Pure
+        // metadata churn (no ref advance → empty diff) continues without a tick.
         if touches_git {
-            let n = d.on_git_event();
-            eprintln!("[daemon] git change — {n} ref(s) advanced");
-            continue;
+            let (n, changed) = d.on_git_event();
+            eprintln!("[daemon] git change — {n} ref(s) advanced, {} worktree file(s)", changed.len());
+            if changed.is_empty() { continue; }
+            paths = changed;
         }
         let tick_label;
         let result = if touches_cfg {
