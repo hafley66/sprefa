@@ -37,41 +37,37 @@ automatic.
 
 ### 1. Clustering / cohesion (the "who groups with whom" question)
 
-**Most of this is free today** — the earlier draft over-stated #12's role. Concretely:
+**Empirically tested** (`v5/examples/refactor-discovery.dl`, run on sprefa). The
+earlier draft over-stated what `closure` gives. Corrected:
 
-- **SCCs (mutually-recursive clusters)** are two `closure` reads, no builtin:
-  ```
-  reaches(a, b) <- closure("call_edge").
-  scc(a, b) <- reaches(a, b), reaches(b, a).
-  ```
-- **Cluster id** (a canonical rep per SCC) is the `min` aggregate, which exists:
-  ```
-  cluster(rep, member) <- scc(member, other), rep = min(other).
-  ```
-  (`min`/`max`/`count` are all first-class: `fan_out(f, count(t)) <- edge(f, t).`,
-  see `gen-type-table.dl:21`.)
-- **Fan-in / fan-out** are `count` per group — also already in examples
-  (`lint-docs.dl:37 call_refs(s, count(caller))`).
-- **Boundary edges** (an edge whose endpoints sit in different clusters):
-  ```
-  boundary(caller, callee) <- call_edge(caller, callee, _),
-      cluster(ca, caller), cluster(cb, callee), ca != cb.
-  ```
-- **Edge weight** (call count) is `count` over `call_site(caller, callee, file, line)`.
+**FREE today (verified, real signal on sprefa):**
+- **fan-in / fan-out** via `count` over `call_edge`:
+  `fan_out(caller, count(callee)) <- call_edge(caller, callee, _).`
+  Surfaced `tick_paths` (69 fan-out), `typegraph::push` (174 fan-in) — real
+  orchestrator-vs-utility split.
+- **move candidates** (fn called from exactly one site → fold into caller):
+  `single_caller(callee, caller) <- call_edge(caller, callee, _), fan_in(callee, 1).`
+  Surfaced ~30 real single-call-site helpers.
+- **seeded reachability** (one endpoint pinned — the only allowed closure read):
+  `reaches_from_tick(b) <- reaches(a, b), a = "<full sym>".` Returned the 615-fn
+  transitive closure of `Engine.tick`. Blast-radius / call-tree analysis works.
+- **1-hop mutual** pairs: `mutual(a,b) <- call_edge(a,b,_), call_edge(b,a,_)`.
 
-So an **extraction-candidate report** ("SCCs whose internal edge count dwarfs their
-boundary — cohesive islands with a narrow surface") is writable as a pure `.dl`
-program right now, dogfooded on sprefa itself. **#12 (rank/row_number/nth) is NOT
-the blocker for clustering** — `count`/`min`/`max` cover it. #12 only matters for
-fresh-name generation ("-2"/"-3" suffix collision) and "Nth occurrence / keep-first",
-which are edit-side concerns (#4), not discovery.
+**BLOCKED (the correction):** all-pairs SCC is NOT expressible. The naive
+`scc(a,b) <- reaches(a,b), reaches(b,a)` reads the closure relation `reaches`
+**unpinned** in a rule body, which the engine forbids ("would materialize the
+full closure"). So:
+- **Global SCC / connected-components need a new builtin**: `comp(id, node)` —
+  Tarjan over a named edge, exactly mirroring `closure`. This is the missing
+  engine piece for the "cluster" step. (Per-seed SCC works — both endpoints
+  effectively pinned via the seed — but enumerating ALL SCCs in one pass needs
+  the builtin or an external driver.)
+- **#12 (window aggregates) is still NOT the blocker** — count/min/max cover
+  fan-in/out and would cover cluster metrics once `comp` exists.
 
-What `closure` + aggregates genuinely can't do:
-- **Community detection** (Louvain / label propagation) — non-monotonic, iterative,
-  not a Datalog fold. Out of scope as a builtin; a `cmd` shell pass (dump
-  `call_edge` → run a clusterer → read back `cluster(node, id)`) is the escape
-  hatch, and is now reachable end-to-end via the data-driven scan + repo-sink
-  (#1, done).
+**Community detection** (Louvain / label propagation) remains out of scope as a
+builtin (non-monotonic, iterative); a `cmd` shell pass is the escape hatch and is
+now reachable end-to-end via the data-driven scan + repo-sink (#1, done).
 
 ### 2. Scope and binding (the "what does this see / own" question)
 
@@ -129,24 +125,27 @@ edit       : edit algebra (#4) over the located spans, multi-edit txn
 verify     : scratch worktree + checker (#14), keep-if-pass
 ```
 
-Each layer is a christmas-list item; the substrate is done. **Discovery is free
-today** (closure×2 + count/min, see §1) — the first useful increment is a pure
-`.dl` program that emits extraction-candidate clusters from `call_edge`, no new
-engine code. Acting on a candidate is where the open items land:
+Each layer is a christmas-list item; the substrate is done. **The per-fn
+discovery signals are free today** (fan-in/out, move-candidates, seeded blast
+radius — verified in `refactor-discovery.dl`). **Global clustering (all SCCs /
+components) is NOT** — it needs a new `comp(id, node)` Tarjan builtin over a
+named edge, mirroring `closure` (the unpinned-closure-read restriction blocks the
+naive `scc <- reaches, reaches` form). Acting on a candidate:
 
 | step | needs | status |
 |---|---|---|
-| discover (SCC + fan-in/out + boundary) | `closure`, `count`, `min` | **free now** |
+| per-fn signals (hubs, move-candidates, blast radius) | `count`, pinned `closure` | **free now** |
+| global clusters (all SCCs / components) | `comp(id,node)` builtin | **open — new ask** |
 | propose (emit a report / TODO list) | `gen` (splice) | **free now** |
 | cut + paste a fn (delete span, insert into dest) | #4 edit algebra | open |
 | new file for the extract | #13 file sinks | open |
 | fix imports at the destination | `type_edge` + `module_edge` (coarse) | **free now** (MVP); #10 for precision |
 | keep-if-it-compiles | #14 verify-rollback | open |
 
-So the **minimal auto-refactor that actually moves code** = discovery (now) + #4
-+ #13. Import-fix leans on existing type/module edges. #10 (scope binding) and
-#12 (window aggregates) are NOT on the critical path — they refine, they don't
-gate.
+So the **minimal auto-refactor that actually moves code** = per-fn discovery
+(now) + #4 + #13. Import-fix leans on existing type/module edges. Global
+clustering adds `comp()`; #10 (scope binding) and #12 (window aggregates) are
+NOT on the critical path — they refine, they don't gate.
 
 ## Ties to the christmas list
 

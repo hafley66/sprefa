@@ -156,6 +156,7 @@ bytes, `Content-Length: 13`). Proven pre-existing by reverting the Phase-0 edits
 | 3 | `node(id,kind,file,lo,hi,parent)` + `child` relation | L | — | **done** 110f2ea/28c2e1b/ce7adf5 |
 | 9 | whole-match span as first-class located id | S | feeds #3/#4 | **done** 3d77f47 (ast) + 2adf8dc (sg/json) |
 | 10 | scope-as-interval + binding/visibility (free-var analysis) | L | rides #3 | **partial** — interval predicate + point index landed; binding/free-var open |
+| 33 | `comp(id, node)` Tarjan-over-edge builtin (mirror `closure`) — all SCCs / connected components as a query relation | M | rides `call_edge`/`type_edge` | **open** — unblocks global clustering for auto-refactor (verified blocked: `scc <- reaches, reaches` hits the unpinned-closure-read restriction, see `examples/refactor-discovery.dl`) |
 
 Codemod foundation: anchor-finding, innermost-containment, scope all become joins.
 
