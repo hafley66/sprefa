@@ -7,10 +7,18 @@ edition = "2021"
 # at all (go-template). C sources live in vendor/grammars/; the extern fns are
 # declared and wrapped in src/engine.rs (ts_lang).
 build = "build.rs"
+# All integration tests compile into ONE binary => ONE link step instead of 58
+# (each tests/*.rs used to be its own crate, re-linking the full dep graph).
+# tests/it.rs `mod`s in every file under tests/it/; subdir files aren't targets.
+autotests = false
 
 [[bin]]
 name = "dl"
 path = "src/main.rs"
+
+[[test]]
+name = "it"
+path = "tests/it/main.rs"
 
 [dependencies]
 rusqlite = { version = "0.31", features = ["bundled", "functions", "trace"] }
@@ -82,3 +90,12 @@ tree-sitter-language = "0.1"
 [build-dependencies]
 # Compiles the vendored grammar C sources (vendor/grammars/) into the crate.
 cc = "1"
+
+# Faster dev/test builds: line-tables-only debuginfo. Strips the variable/type
+# debuginfo that bloats the link step (the per-test-crate link is the long pole
+# on macOS), keeps panic line numbers. Full strip = debug = 0.
+[profile.dev]
+debug = 1
+
+[profile.test]
+debug = 1

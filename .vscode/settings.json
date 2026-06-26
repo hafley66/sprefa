@@ -1,3 +1,7 @@
 {
-    "git.ignoreLimitWarning": true
+    "git.ignoreLimitWarning": true,
+    // RA builds into target/rust-analyzer/ so its `cargo check` never shares the
+    // target/debug lock with a terminal `cargo test`/`cargo build`. Stops the
+    // "Blocking waiting for file lock" stall when both run at once.
+    "rust-analyzer.cargo.targetDir": true
 }

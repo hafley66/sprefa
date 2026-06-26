@@ -4,4 +4,7 @@
 rustc-wrapper = ""
 # Parallel frontend: rustc splits type/borrow checking across threads.
 # Requires nightly toolchain (set via `rustup override set nightly`).
-rustflags = ["-Z", "threads=8"]
+# -fuse-ld=lld: link with LLVM lld (ld64.lld flavor on mach-o) instead of Apple
+# ld. Big win on the 54MB test/dist binaries; lld is at /opt/homebrew/bin.
+# If a sandbox lacks lld on PATH this errors loudly — drop the link-arg there.
+rustflags = ["-Z", "threads=8", "-C", "link-arg=-fuse-ld=lld"]
