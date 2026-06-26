@@ -37,19 +37,41 @@ automatic.
 
 ### 1. Clustering / cohesion (the "who groups with whom" question)
 
-`closure` gives reachability (a binary can-reach). It does not give:
+**Most of this is free today** — the earlier draft over-stated #12's role. Concretely:
 
-- **Connected components / SCCs as first-class sets** — `closure` walks them but
-  doesn't expose the component id. A `comp(id, node)` relation over an edge would
-  let a program ask "what's the island this fn lives on."
-- **Cohesion / coupling metrics** — fan-in/fan-out per node, edge weight by call
-  count, the cluster's internal edge density vs. its boundary. Christmas #12
-  (window aggregates: rank/row_number/nth) is the blocker — these need
-  per-group ranking and counts the store has but the language doesn't surface.
-- **Community detection** — Louvain / label propagation over the weighted graph
-  to find natural clusters. Out of scope as a builtin; but a `cmd`-driven shell
-  pass (dump `call_edge` → run a clusterer → read back `cluster(node, id)`) is the
-  escape hatch until #1 (data-driven coords) lands for real.
+- **SCCs (mutually-recursive clusters)** are two `closure` reads, no builtin:
+  ```
+  reaches(a, b) <- closure("call_edge").
+  scc(a, b) <- reaches(a, b), reaches(b, a).
+  ```
+- **Cluster id** (a canonical rep per SCC) is the `min` aggregate, which exists:
+  ```
+  cluster(rep, member) <- scc(member, other), rep = min(other).
+  ```
+  (`min`/`max`/`count` are all first-class: `fan_out(f, count(t)) <- edge(f, t).`,
+  see `gen-type-table.dl:21`.)
+- **Fan-in / fan-out** are `count` per group — also already in examples
+  (`lint-docs.dl:37 call_refs(s, count(caller))`).
+- **Boundary edges** (an edge whose endpoints sit in different clusters):
+  ```
+  boundary(caller, callee) <- call_edge(caller, callee, _),
+      cluster(ca, caller), cluster(cb, callee), ca != cb.
+  ```
+- **Edge weight** (call count) is `count` over `call_site(caller, callee, file, line)`.
+
+So an **extraction-candidate report** ("SCCs whose internal edge count dwarfs their
+boundary — cohesive islands with a narrow surface") is writable as a pure `.dl`
+program right now, dogfooded on sprefa itself. **#12 (rank/row_number/nth) is NOT
+the blocker for clustering** — `count`/`min`/`max` cover it. #12 only matters for
+fresh-name generation ("-2"/"-3" suffix collision) and "Nth occurrence / keep-first",
+which are edit-side concerns (#4), not discovery.
+
+What `closure` + aggregates genuinely can't do:
+- **Community detection** (Louvain / label propagation) — non-monotonic, iterative,
+  not a Datalog fold. Out of scope as a builtin; a `cmd` shell pass (dump
+  `call_edge` → run a clusterer → read back `cluster(node, id)`) is the escape
+  hatch, and is now reachable end-to-end via the data-driven scan + repo-sink
+  (#1, done).
 
 ### 2. Scope and binding (the "what does this see / own" question)
 
@@ -65,6 +87,15 @@ free-variable analysis are open.** That's what you need to answer:
 Needs: #3 (CST, done) + binding rules (an external index or a per-language
 decl/use walker) + the interval index (done). The free-var set is the input to
 any "extract this range and fix its imports" refactor.
+
+**MVP shortcut (avoids #10):** a move's import-fix does not strictly need name
+resolution. "What does fn F reference that lives elsewhere?" is answerable from
+the already-built coarse relations: `type_edge(F, T, _)` gives the types F
+references, `module_edge(M, T)` (or the decl's file) gives where T lives, and the
+fix is a synthesized `use M::T;` insert into the destination. This is imprecise
+(unused imports may slip in; fully-qualified paths aren't handled) but it makes a
+first move-and-fix loop runnable WITHOUT #10. True scope/binding retires the
+imprecision and unlocks local-variable moves, not the first cut.
 
 ### 3. Edit algebra (the "act on it" question)
 
@@ -98,27 +129,45 @@ edit       : edit algebra (#4) over the located spans, multi-edit txn
 verify     : scratch worktree + checker (#14), keep-if-pass
 ```
 
-Each layer is a christmas-list item; the substrate is done. The first useful
-increment is probably **(1) component + fan-in/out over `call_edge`**, because it
-needs only #12 (window aggregates) and immediately surfaces "the island of fns
-that only talk to each other" — the extraction candidates — without touching the
-edit side.
+Each layer is a christmas-list item; the substrate is done. **Discovery is free
+today** (closure×2 + count/min, see §1) — the first useful increment is a pure
+`.dl` program that emits extraction-candidate clusters from `call_edge`, no new
+engine code. Acting on a candidate is where the open items land:
+
+| step | needs | status |
+|---|---|---|
+| discover (SCC + fan-in/out + boundary) | `closure`, `count`, `min` | **free now** |
+| propose (emit a report / TODO list) | `gen` (splice) | **free now** |
+| cut + paste a fn (delete span, insert into dest) | #4 edit algebra | open |
+| new file for the extract | #13 file sinks | open |
+| fix imports at the destination | `type_edge` + `module_edge` (coarse) | **free now** (MVP); #10 for precision |
+| keep-if-it-compiles | #14 verify-rollback | open |
+
+So the **minimal auto-refactor that actually moves code** = discovery (now) + #4
++ #13. Import-fix leans on existing type/module edges. #10 (scope binding) and
+#12 (window aggregates) are NOT on the critical path — they refine, they don't
+gate.
 
 ## Ties to the christmas list
 
-- #1 data-driven scan — **done** (this arc).
+- #1 data-driven scan — **done** (8240126). Makes the `cmd` shell-pass escape
+  hatch (dump edges → external clusterer → read back) reachable end-to-end.
 - #3 CST-as-relation — done. #9 whole-match span — done.
 - #10 scope — partial (interval + point index landed; binding/free-var open).
-- #12 window aggregates — open. **Unlocks clustering metrics.**
-- #4 edit algebra — open. **Unlocks acting on clusters.**
+  **NOT on the auto-refactor critical path** — type_edge/module_edge cover the
+  MVP import-fix; #10 adds precision + local-var moves.
+- #12 window aggregates — open. **NOT the clustering blocker** (count/min/max
+  suffice for SCC + fan-in/out); only blocks fresh-name suffixing + keep-first.
+- #4 edit algebra — open. **The real gate for moving code.**
 - #13 file sinks — open. #14 verify-rollback — open.
-- `closure(edge)` — the reachability primitive, already in tree.
 
 ## Open questions
 
-- Is a `comp(id, node)` relation worth a builtin (Tarjan over a named edge, like
-  `closure`), or does `closure` + a thin derived rule suffice today?
-- Cohesion metrics: surface via #12 aggregates, or a dedicated `cohesion(cluster,
-  internal, boundary)` builtin?
-- Community detection: defer to a `cmd` shell pass until the in-engine aggregate
-  story (#12) lands?
+- SCC-pairwise (`scc(a,b) <- reaches(a,b), reaches(b,a)`) materializes O(n²) pairs
+  for a big cluster — fine for sprefa-scale, maybe not for rust-analyzer-scale.
+  A `comp(id, node)` builtin (Tarjan, like `closure`) may pay off later; not now.
+- Rust path resolution after a move: `mod.rs` vs `mod/`, re-exports, `crate::`
+  paths. The coarse type_edge/module_edge fix handles `use` insertion; deeper
+  path rewriting is #10-territory or a language-specific pass.
+- When two proposed edits overlap the same span, bail loudly (mirror the gen
+  two-writers rule, christmas #27) — the multi-edit txn in #4.

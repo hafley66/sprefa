@@ -191,13 +191,14 @@ Done this arc (CST-as-relation, merged to main):
 
 ## Phase 4 — coordinate dataflow (A)
 
-| # | Item | Effort | Dep |
-|---|------|--------|-----|
-| 1 | derived row drives a scan (coordinates beyond literal) | L | core |
-| 15 | shell op takes derived data as args (same root as #1) | M | #1 |
-| 28 | scan fans over a rev set (collapse per-branch rule repetition) | M | #1 |
+| # | Item | Effort | Dep | Status |
+|---|------|--------|-----|--------|
+| 1 | derived row drives a scan (coordinates beyond literal) | L | core | **done** 8240126 — `scan(R,V,glob,p,rout) <- pin(R,V)`; `resolve_scan_bindings` compiles the coord atoms to a SELECT over last-tick's coordinate table (1-tick latency, no fixpoint rewrite); `prime_tick` for the one-shot CLI |
+| 15 | shell op takes derived data as args (same root as #1) | M | #1 | open |
+| 28 | scan fans over a rev set (collapse per-branch rule repetition) | M | #1 | open |
 
-Most central, hardest. The "functional, no statements" core. Defer until B/C land.
+Most central, hardest. The "functional, no statements" core. #1 landed; #15/#28
+are the same family (a derived value feeding an op) and are now unblocked.
 
 ## Phase 5 — grammars (E)
 
