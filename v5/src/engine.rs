@@ -375,6 +375,7 @@ fn rels_used(prog: &Program, rels: &[&str]) -> bool {
                 match b {
                     BodyItem::Pos(a) | BodyItem::Neg(a) => if hit(&a.rel) { return true; },
                     BodyItem::Closure { rel } => if hit(rel) { return true; },
+                    BodyItem::Scc { rel } => if hit(rel) { return true; },
                     _ => {}
                 }
             },
@@ -383,6 +384,7 @@ fn rels_used(prog: &Program, rels: &[&str]) -> bool {
                 match b {
                     BodyItem::Pos(a) | BodyItem::Neg(a) => if hit(&a.rel) { return true; },
                     BodyItem::Closure { rel } => if hit(rel) { return true; },
+                    BodyItem::Scc { rel } => if hit(rel) { return true; },
                     _ => {}
                 }
             },
@@ -525,6 +527,20 @@ fn closure_map(rules: &[&Rule]) -> HashMap<String, String> {
 }
 
 /// Unique edge relations across all closure heads (one condensation per graph).
+/// Unique edge relations across closure heads AND scc heads. `refresh_cond_cache`
+/// condenses every edge either operator needs; closure-view rebuild
+/// (`any_closure_empty`/`rebuild_closures`) stays closure-only (the scc_node
+/// SQL tables exist only for closure edges — scc reads the in-memory cond).
+fn cond_edges_for<'a>(closure_edges: &[&'a str], scc_rules: &[&'a Rule]) -> Vec<&'a str> {
+    let mut out: Vec<&'a str> = closure_edges.to_vec();
+    for r in scc_rules {
+        if let Some(e) = r.scc_edge() {
+            if !out.contains(&e) { out.push(e); }
+        }
+    }
+    out
+}
+
 fn dedup_edges(closures: &HashMap<String, String>) -> Vec<&str> {
     let mut out: Vec<&str> = Vec::new();
     for e in closures.values() { if !out.contains(&e.as_str()) { out.push(e.as_str()); } }
@@ -1579,7 +1595,14 @@ impl Engine {
         // evaluated by a seeded BFS in the query phase instead. Repo-sinks are
         // excluded: they are drained, not derived.
         let all_derived: Vec<&Rule> = rules.iter().copied()
-            .filter(|r| !r.is_source() && !r.is_repo_sink() && r.closure_edge().is_none()).collect();
+            .filter(|r| !r.is_source() && !r.is_repo_sink()
+                && r.closure_edge().is_none() && r.scc_edge().is_none()).collect();
+        // `head(..) <- scc(edge).` rules: materialize (rep, member) from the
+        // closure condensation in the query phase (after refresh_cond_cache).
+        // Excluded from all_derived — the Scc body item can't lower to SQL, and
+        // the head is filled from the already-computed Tarjan condensation.
+        let scc_rules: Vec<&Rule> = rules.iter().copied()
+            .filter(|r| r.scc_edge().is_some()).collect();
         check_stratification(&all_derived, &closures)?;
         let seed_rules: Vec<(&Rule, ClosureSeed)> = all_derived.iter().copied()
             .filter_map(|r| closure_seed_of(r, &closures).map(|cs| (r, cs))).collect();
@@ -1714,8 +1737,10 @@ impl Engine {
         // Full tick: every edge is potentially dirty when we rebuilt; the digest
         // check inside still skips the Tarjan for edges whose rows didn't move.
         let dirty: HashSet<&str> = if rebuilt_all { edges.iter().copied().collect() } else { HashSet::new() };
-        self.refresh_cond_cache(&edges, &dirty)?;
+        let cond_edges = cond_edges_for(&edges, &scc_rules);
+        self.refresh_cond_cache(&cond_edges, &dirty)?;
         for (r, cs) in &seed_rules { self.eval_closure_seed_rule(r, cs)?; }
+        for r in &scc_rules { self.eval_scc_rule(r)?; }
         // The priming tick skips `?` evaluation: it exists only to derive the
         // coordinates a data-driven scan / repo-sink reads on the real tick.
         if !self.prime_tick {
@@ -1776,7 +1801,9 @@ impl Engine {
 
         let source_rules: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_source()).collect();
         let all_derived: Vec<&Rule> = rules.iter().copied()
-            .filter(|r| !r.is_source() && r.closure_edge().is_none()).collect();
+            .filter(|r| !r.is_source() && r.closure_edge().is_none() && r.scc_edge().is_none()).collect();
+        let scc_rules: Vec<&Rule> = rules.iter().copied()
+            .filter(|r| r.scc_edge().is_some()).collect();
         check_stratification(&all_derived, &closures)?;
         let seed_rules: Vec<(&Rule, ClosureSeed)> = all_derived.iter().copied()
             .filter_map(|r| closure_seed_of(r, &closures).map(|cs| (r, cs))).collect();
@@ -2014,8 +2041,10 @@ impl Engine {
                        else { rebuilt.join(",") };
             eprintln!("[tick] {npaths} path(s) changed, +{extracted} -{retracted} source facts, rebuilt derived: {what}");
         }
-        self.refresh_cond_cache(&edges, &dirty_edges)?;
+        let cond_edges = cond_edges_for(&edges, &scc_rules);
+        self.refresh_cond_cache(&cond_edges, &dirty_edges)?;
         for (r, cs) in &seed_rules { self.eval_closure_seed_rule(r, cs)?; }
+        for r in &scc_rules { self.eval_scc_rule(r)?; }
         for item in &prog.items { if let Item::Query(q) = item { self.run_query(q, &closures)?; } }
         self.run_gens(prog, quiet)?;
         if self.dropped > 0 { eprintln!("[checked-type] dropped {} rows", self.dropped); self.dropped = 0; }
@@ -4494,6 +4523,48 @@ impl Engine {
                 let mut row = template.clone();
                 for &p in &free_positions { row[p] = Value::Text(name.clone()); }
                 rows.push(row);
+            }
+        }
+        let cols: Vec<&str> = head_meta.cols.iter().map(|c| c.name.as_str()).collect();
+        self.db.insert_rows(&tbl(head), &cols, &rows)?; // one flush, never N+1
+        Ok(())
+    }
+
+    /// Evaluate `head(rep, member) <- scc(edge).` — materialize SCC membership
+    /// from `edge`'s already-computed condensation. One row per node: (component
+    /// representative, node), where the representative is the lexicographically-min
+    /// member name in the component (a stable, readable cluster id). Shares
+    /// `closure(edge)`'s condensation cache — no second Tarjan run. Binds
+    /// positionally: head col 0 = rep, col 1 = member. Runs in the query phase
+    /// after `refresh_cond_cache`, so the cond is ready; the head is otherwise
+    /// excluded from `rebuild_derived` (the Scc body item can't lower to SQL).
+    fn eval_scc_rule(&self, rule: &Rule) -> Result<()> {
+        let edge = rule.scc_edge()
+            .ok_or_else(|| anyhow::anyhow!("eval_scc_rule on a non-scc rule"))?;
+        let head = &rule.head.rel;
+        let head_meta = self.rels.get(head)
+            .ok_or_else(|| anyhow::anyhow!("unknown head relation {head}"))?;
+        if rule.head.terms.len() != 2 || head_meta.cols.len() != 2 {
+            bail!("scc head '{head}' must have exactly 2 columns (rep, member); got {}",
+                  head_meta.cols.len());
+        }
+        self.db.exec(&format!("DELETE FROM {}", tbl(head)))?;
+        let Some(cc) = self.closure_cache.get(edge) else {
+            return Ok(()); // edge not condensed this tick (e.g. empty) -> head empty
+        };
+        let mut rows: Vec<Vec<Value>> = Vec::new();
+        for c in 0..cc.cond.ncomp {
+            let members = &cc.cond.members[c];
+            if members.is_empty() { continue; }
+            let rep = members.iter()
+                .map(|&i| cc.names[i as usize].as_str())
+                .min()
+                .unwrap_or("");
+            for &m in members {
+                rows.push(vec![
+                    Value::Text(rep.to_string()),
+                    Value::Text(cc.names[m as usize].clone()),
+                ]);
             }
         }
         let cols: Vec<&str> = head_meta.cols.iter().map(|c| c.name.as_str()).collect();

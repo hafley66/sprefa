@@ -1,13 +1,11 @@
 # refactor-discovery.dl — refactor signals from the engine's resolved call graph.
-# PURE query, no engine change. Run:  dl v5/examples/refactor-discovery.dl --root .
+# PURE query. Run:  dl v5/examples/refactor-discovery.dl --root .
 #
-# THEORY TEST RESULT (this file's first purpose): the concept doc claimed SCC
-# clustering is free via `scc(a,b) <- reaches(a,b), reaches(b,a)`. It is NOT:
-# `reaches` is a closure relation, and the engine forbids reading a closure
-# unpinned in a rule body (would materialize the full closure). So all-pairs SCC
-# and connected-components are BLOCKED without a `comp(id,node)` Tarjan builtin.
-# What IS free: fan-in/fan-out (count over call_edge), 1-hop mutual calls, and
-# per-seed reachability (one endpoint pinned). This file exercises the free half.
+# Originally a theory test: is "discovery free"? The per-fn signals (fan-in/out,
+# move-candidates, seeded blast radius) always were. SCC clustering was BLOCKED
+# (the naive scc<-reaches,reaches hits the unpinned-closure-read restriction),
+# which motivated the `scc(edge)` builtin — now built, mirroring `closure(edge)`
+# and reusing its Tarjan condensation. This file exercises all of it.
 
 rel seen(path: file).
 seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /fn \w+/, line).
@@ -22,16 +20,22 @@ rel reaches_from_tick(b: text).
 fan_out(caller, count(callee)) <- call_edge(caller, callee, _).
 fan_in(callee, count(caller)) <- call_edge(caller, callee, _).
 
-# closure relation: readable only with one endpoint pinned (see theory note above).
+# closure relation: readable only with one endpoint pinned.
 reaches(a, b) <- closure(call_edge).
 
-# Tightly-coupled pairs: A calls B and B calls A (1-hop, no transitive closure).
+# SCC membership: (component rep, member). rep = min member name in the component.
+# A non-trivial cluster (size > 1) shows as multiple rows sharing a rep, some with
+# rep != member. Reuses closure's Tarjan condensation — no second run.
+rel cluster(rep: text, member: text).
+cluster(rep, member) <- scc(call_edge).
+
+# Tightly-coupled pairs: A calls B and B calls A (1-hop).
 mutual(a, b) <- call_edge(a, b, _), call_edge(b, a, _).
 
 # Move candidate: a fn called from exactly one site -> fold into its caller.
 single_caller(callee, caller) <- call_edge(caller, callee, _), fan_in(callee, 1).
 
-# Seeded reachability (pinned endpoint is allowed): everything Engine.tick can reach.
+# Seeded reachability (pinned endpoint is allowed): everything Engine.tick reaches.
 reaches_from_tick(b) <- reaches(a, b), a = "sprefa::v5/src/engine.rs::method::Engine.tick".
 
 rel hub_out(caller: text, n: int).
@@ -39,6 +43,7 @@ hub_out(caller, n) <- fan_out(caller, n), n >= 8.
 rel hub_in(callee: text, n: int).
 hub_in(callee, n) <- fan_in(callee, n), n >= 8.
 
+? cluster(rep, member).
 ? hub_out(caller, n).
 ? hub_in(callee, n).
 ? single_caller(callee, caller).

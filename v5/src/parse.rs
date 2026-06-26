@@ -305,6 +305,7 @@ impl Parser {
             if s == "cmd" { return self.cmd(); }
             if s == "comment" { return self.comment(); }
             if s == "closure" { return self.closure(); }
+            if s == "scc" { return self.scc(); }
             // An aggregate call in body position is a parse error: aggregation is
             // head-only (`fan_out(F, count(T)) <- type_edge(F, T, _).`).
             if AggFn::parse(s).is_some() && matches!(self.peek2(), Some(Tok::LParen)) {
@@ -689,6 +690,14 @@ impl Parser {
         let rel = self.ident()?;
         self.expect(Tok::RParen)?;
         Ok(BodyItem::Closure { rel })
+    }
+
+    fn scc(&mut self) -> Result<BodyItem> {
+        self.ident()?; // scc
+        self.expect(Tok::LParen)?;
+        let rel = self.ident()?;
+        self.expect(Tok::RParen)?;
+        Ok(BodyItem::Scc { rel })
     }
 
     fn constraint(&mut self) -> Result<Constraint> {

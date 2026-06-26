@@ -254,7 +254,7 @@ fn rewrite_terms(b: &mut BodyItem, sub: &HashMap<String, Term>, params: &[String
             rewrite_term(&mut c.lhs);
             rewrite_term(&mut c.rhs);
         }
-        BodyItem::Closure { .. } => {}
+        BodyItem::Closure { .. } | BodyItem::Scc { .. } => {}
     }
 }
 

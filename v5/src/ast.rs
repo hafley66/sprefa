@@ -188,6 +188,11 @@ pub enum BodyItem {
     Cmp(Constraint),
     /// Transitive closure of an edge relation, e.g. `reaches(a,b) <- closure(calls).`
     Closure { rel: String },
+    /// SCC membership of an edge relation, e.g. `g(rep, member) <- scc(calls).`
+    /// One row per node: (component representative, node). The representative is
+    /// the min member name in the component. Reuses the closure condensation
+    /// (Tarjan) — shares `closure(edge)`'s per-edge cache, no second Tarjan run.
+    Scc { rel: String },
 }
 
 #[derive(Clone, Debug)]
@@ -223,6 +228,14 @@ impl Rule {
     pub fn closure_edge(&self) -> Option<&str> {
         match self.body.as_slice() {
             [BodyItem::Closure { rel }] => Some(rel),
+            _ => None,
+        }
+    }
+
+    /// Some(edge) iff this rule is exactly `head(..) <- scc(edge).`
+    pub fn scc_edge(&self) -> Option<&str> {
+        match self.body.as_slice() {
+            [BodyItem::Scc { rel }] => Some(rel),
             _ => None,
         }
     }
