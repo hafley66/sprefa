@@ -1,0 +1,61 @@
+# oracle-check.dl — RA (SCIP) vs sprefa (syn) at file granularity.
+#
+# Validates sprefa's call extraction against rust-analyzer's resolved SCIP
+# index. RA is the oracle: full name/trait/macro resolution. sprefa's
+# `call_edge` is a syn-based heuristic. The delta quantifies the undercount.
+#
+# NOTE: sprefa's SCIP ingestion (scip_import.rs) currently emits only FILE-level
+# edges (scip_edge(src_file, dst_file)), so this comparison is per-FILE, not
+# per-function. A function-level oracle (validate Engine.tick's fan_out=57)
+# needs scip_import extended to map each occurrence's range to its enclosing
+# def symbol -> fn->fn edges. Tracked as the follow-up.
+#
+# This runs ONLY when a SCIP index is present (index.scip or SPREFA_SCIP_INDEX).
+# Without it scip_edge is empty and every sprefa edge shows as "spurious" —
+# meaningless. Generate the index when the tree is quiet:
+#   rustup component add rust-analyzer
+#   rust-analyzer scip ./v5 -o index.scip     # (confirm exact flags via --help)
+#
+# Manual:  dl v5/examples/oracle-check.dl --root v5 --db /tmp/oracle.db
+#          (SPREFA_SCIP_INDEX=<repo>/index.scip if the index lives outside --root)
+# Run with --root v5 so sprefa's file paths (src/…) match RA's SCIP paths
+# (also src/…, since RA indexed v5 as the project root). A repo-root --root
+# gives sprefa `v5/src/…` keys that won't join against scip_edge's `src/…`.
+
+rel seen(path: file).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev).
+
+# sprefa's file-level graph: project the fn->fn call_edge through each fn's
+# home file (from call_def). Relations are sets, so (src,dst) dedups.
+rel fn_file(sym: text, file: file).
+fn_file(sym, file) <- call_def(_, sym, _, file, _, _).
+rel sprf_edge(src: file, dst: file).
+sprf_edge(src, dst) <- call_edge(caller, callee, _), fn_file(caller, src), fn_file(callee, dst), src != dst.
+
+# RA's resolved file-level graph (empty without a SCIP index).
+rel ra_edge(src: file, dst: file).
+ra_edge(src, dst) <- scip_edge(src, dst).
+
+# ── the delta ───────────────────────────────────────────────────────────
+rel missed(src: file, dst: file).     # RA resolves a dep sprefa's heuristic misses = UNDERCOUNT
+missed(src, dst) <- ra_edge(src, dst), !sprf_edge(src, dst).
+rel spurious(src: file, dst: file).   # sprefa sees one RA doesn't (macro/test-only, or stale)
+spurious(src, dst) <- sprf_edge(src, dst), !ra_edge(src, dst).
+
+# ── tallies ─────────────────────────────────────────────────────────────
+rel ra_total(n: int).
+rel sprf_total(n: int).
+rel missed_n(n: int).
+rel spurious_n(n: int).
+ra_total(count(src))     <- ra_edge(src, dst).
+sprf_total(count(src))   <- sprf_edge(src, dst).
+missed_n(count(src))     <- missed(src, dst).
+spurious_n(count(src))   <- spurious(src, dst).
+
+# report: tallies first, then samples of each delta for manual triage.
+? ra_total(n).
+? sprf_total(n).
+? missed_n(n).
+? spurious_n(n).
+? missed(src, dst).
+? spurious(src, dst).

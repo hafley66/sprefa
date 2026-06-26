@@ -1,0 +1,95 @@
+# symbol-profile.dl — the "ask about one symbol" view. Pin a symbol in
+# `target(sym)` and get its full multi-graph neighborhood: callers/callees,
+# mutual-recursion cohort (SCC), forward blast radius, REVERSE dependents
+# (who reaches it — the move-safety set), type + dataflow footprint, and its
+# definition + every call site.
+#
+# This is the zoomed-in complement to refactor-discovery.dl (the global view).
+# Same relations, one node. The pinned-endpoint closure restriction is what
+# makes "ask about one symbol" a one-liner per dimension: pin S, read the row.
+#
+# Manual:  dl v5/examples/symbol-profile.dl --root .
+# Edit the target fact below to x-ray a different symbol. Sym format is the
+# resolved call-graph key, e.g. "sprefa::v5/src/engine.rs::method::Engine.tick"
+# (run refactor-discovery.dl ? cluster(...) to find one).
+
+rel target(sym: text).
+target("sprefa::v5/src/engine.rs::method::Engine.tick").
+
+# Ingest the engine source so the call/type/df builtins populate. These
+# relations fill from the scan-driven ingestion pass — without a scan the
+# program reads empty builtins. (A fresh `--db` also avoids daemon cache.)
+rel seen(path: file).
+seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev).
+
+# ── call dimension ──────────────────────────────────────────────────────
+rel caller_of(sym: text).
+rel callee_of(sym: text).
+caller_of(c)  <- target(s), call_edge(c, s, _).
+callee_of(c)  <- target(s), call_edge(s, c, _).
+
+# Direct fan counts (aggregate in the head column, group-by is the pinned s).
+rel fan_in(n: int).
+rel fan_out(n: int).
+fan_in(count(c))  <- target(s), call_edge(c, s, _).
+fan_out(count(c)) <- target(s), call_edge(s, c, _).
+
+# ── mutual-recursion cohort (SCC): the cluster that can't move without S ─
+# scc(call_edge) gives head(rep, member); S's rep, then its siblings.
+rel cohort(mate: text).
+cohort(mate) <- target(s), cluster(rep, s), cluster(rep, mate), mate != s.
+rel cluster(rep: text, member: text).
+cluster(rep, member) <- scc(call_edge).
+
+# ── forward blast radius: everything S reaches (closure pinned at S) ─────
+# NOTE: the closure-read restriction requires a LITERAL endpoint, so the sym
+# is inlined here (and in breaks_if_moved below), not joined off target(s).
+# Keep these two literals in sync with the target() fact above.
+rel reaches(a: text, b: text).
+reaches(a, b) <- closure(call_edge).
+rel forward_reach(x: text).
+forward_reach(x) <- reaches(a, x), a = "sprefa::v5/src/engine.rs::method::Engine.tick", x != a.
+
+# ── REVERSE dependents: everyone who reaches S = the move-safety set ────
+# closure over a reversed-edge derived rel. rev_reaches(s, x) means x reaches
+# s in the ORIGINAL graph, i.e. x would break if s relocates.
+rel rev_call(a: text, b: text).
+rev_call(a, b) <- call_edge(b, a, _).
+rel rev_reaches(a: text, b: text).
+rev_reaches(a, b) <- closure(rev_call).
+rel breaks_if_moved(x: text).
+breaks_if_moved(x) <- rev_reaches(a, x), a = "sprefa::v5/src/engine.rs::method::Engine.tick", x != a.
+
+# ── type dimension ──────────────────────────────────────────────────────
+# NOTE: the type_* relations key on TYPE-entity syms (type→type edges), not on
+# function syms. These populate when `target` is a type; for a function target
+# they're empty. Function→referenced-type needs a location-proximity join
+# (christmas #2 territory), deferred.
+rel type_neighbor(t: text).
+type_neighbor(t) <- target(s), type_link(s, t, _).
+
+# ── dataflow dimension ──────────────────────────────────────────────────
+rel df_var(v: text).
+df_var(v) <- target(s), df_node(_, _, v, s, _, _).
+rel does_alloc(flag: text).
+does_alloc("yes") <- target(s), allocates(s).
+
+# ── definition + call sites + size ──────────────────────────────────────
+rel def_at(file: file, line: int, end: int, len: int).
+def_at(file, line, end, len) <- target(s), call_def(_, s, _, file, line, end), len = end - line.
+rel called_from(caller: text, file: file, line: int).
+called_from(caller, file, line) <- target(s), call_site(_, caller, s, file, line).
+
+# ── report ──────────────────────────────────────────────────────────────
+? fan_in(n).
+? fan_out(n).
+? def_at(file, line, end, len).
+? caller_of(c).
+? callee_of(c).
+? cohort(mate).
+? forward_reach(x).
+? breaks_if_moved(x).
+? type_neighbor(t).
+? df_var(v).
+? does_alloc(flag).
+? called_from(caller, file, line).
