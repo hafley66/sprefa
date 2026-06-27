@@ -1,0 +1,41 @@
+# dup-collapse.dl — RECOMMENDER, bootstrapped from measured tuples #1 and #2.
+#
+# Both reward-positive moves we measured had the same state-shape: the same
+# fn-name (or trait-impl) defined multiple times in parallel, which a later
+# commit collapsed into one. render_message ×3 → 0; span_from_cursor ×3 → 0;
+# the duplicated seed-classification block ×2 → 1. So:
+#
+#   state-pattern: a fn-name defined >= THR distinct times  =>  collapse candidate
+#   reward(known): negative (duplication removed), 2/2 measured.
+#
+# This recipe finds that pattern in the CURRENT tree and recommends each hit
+# as a "next move to investigate." It does not claim the move is correct — it
+# surfaces candidates whose state-shape matched past reward-positive collapses.
+#
+# Manual:  dl v5/examples/dup-collapse.dl --root . --db /tmp/dl-dc.db --no-daemon
+
+# Every fn-name defined in v5 src, with its file + line.
+rel fn_def(file: file, line: int, name: text).
+fn_def(file, line, name) <-
+    scan("WORK", "v5/src/**/*.rs", file, rev),
+    match(file, rev, /\s*(pub\s+)?(async\s+)?fn (?<name>[a-z_][a-z0-9_]*)\s*\(/, line).
+
+# How many distinct sites define each name WITHIN ONE FILE. The reward-positive
+# tuples were intra-file: render_message ×3 in lsp.rs across 3 impls; the
+# seed-classification block ×2 (tick + tick_paths) in engine.rs. Cross-file
+# recurrence of `new`/`parse`/`run` is normal per-type methods, not a smell —
+# group by (file, name), not by name alone.
+rel name_per_file(file: file, name: text, n: int).
+name_per_file(file, name, count(line)) <- fn_def(file, line, name).
+
+# >= THR same-named defs in one file => collapse candidate.
+rel collapse_candidate(file: file, name: text, n: int).
+collapse_candidate(file, name, n) <- name_per_file(file, name, n), n >= 2.
+
+# sanity totals
+rel n_fns(n: int).        n_fns(count(l))     <- fn_def(file, l, name).
+rel n_candidates(n: int). n_candidates(count(name)) <- collapse_candidate(file, name, _).
+
+? n_fns(n).
+? n_candidates(n).
+? collapse_candidate(file, name, n).

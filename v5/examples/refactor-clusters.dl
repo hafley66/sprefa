@@ -1,0 +1,41 @@
+# refactor-clusters.dl — refactor starting points from the RA-oracle graph,
+# PLUS the "overfit" test: does unioning module-decl edges into sprefa's
+# heuristic file-graph recover the lib.rs bucket?
+
+rel seen(path: file).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev).
+
+rel ra_edge(src: file, dst: file).
+ra_edge(src, dst) <- scip_edge(src, dst).
+
+# ── B: clusters from the ORACLE (scip_edge) ─────────────────────────────
+# Cyclic file clusters = partitioning blockers (files that must cohabit or be
+# decoupled before a clean split). Fan hubs = locality centers / god-files.
+rel file_cluster(rep: file, member: file).
+file_cluster(rep, member) <- scc(scip_edge).
+rel ra_fan_in(f: file, n: int).
+rel ra_fan_out(f: file, n: int).
+ra_fan_in(f, count(src))  <- ra_edge(src, f).
+ra_fan_out(f, count(dst)) <- ra_edge(f, dst).
+
+# ── A: overfit test — heuristic ∪ module-edge vs oracle ─────────────────
+rel fn_file(sym: text, file: file).
+fn_file(sym, file) <- call_def(_, sym, _, file, _, _).
+rel call_file_edge(src: file, dst: file).
+call_file_edge(src, dst) <- call_edge(caller, callee, _), fn_file(caller, src), fn_file(callee, dst), src != dst.
+# sprefa's file graph UNION module-decl edges (the hypothesized cheap fix)
+rel sprf2_edge(src: file, dst: file).
+sprf2_edge(src, dst) <- call_file_edge(src, dst).
+sprf2_edge(src, dst) <- module_edge(src, dst).
+
+rel ra_total(n: int). rel sprf2_total(n: int). rel shared2(n: int).
+ra_total(count(src))    <- ra_edge(src, dst).
+sprf2_total(count(src)) <- sprf2_edge(src, dst).
+shared2(count(src))     <- ra_edge(src, dst), sprf2_edge(src, dst).
+
+? ra_total(n).
+? sprf2_total(n).
+? shared2(n).
+? file_cluster(rep, member).
+? ra_fan_in(f, n).
+? ra_fan_out(f, n).

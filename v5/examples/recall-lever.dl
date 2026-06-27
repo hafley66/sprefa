@@ -1,0 +1,40 @@
+# recall-lever.dl — how much would a NAME-RESOLUTION pass over the ref spine
+# recover? For each miss (RA edge sprefa's union misses), test whether src has
+# a located ref whose text names a def/type in dst. High ratio => a name-based
+# resolver over the existing ref spine is the biggest diet lever.
+
+rel seen(path: file).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev).
+
+rel ra_edge(src: file, dst: file).
+ra_edge(src, dst) <- scip_edge(src, dst).
+
+rel fn_file(sym: text, file: file).
+fn_file(sym, file) <- call_def(_, sym, _, file, _, _).
+rel call_f(src: file, dst: file).
+call_f(src, dst) <- call_edge(caller, callee, _), fn_file(caller, src), fn_file(callee, dst), src != dst.
+rel mod_f(src: file, dst: file).
+mod_f(src, dst) <- module_edge(src, dst), src != dst.
+rel diet(src: file, dst: file).
+diet(src, dst) <- call_f(src, dst).
+diet(src, dst) <- mod_f(src, dst).
+
+rel miss(src: file, dst: file).
+miss(src, dst) <- ra_edge(src, dst), !diet(src, dst).
+
+# name-resolution over the ref spine: src has a ref whose text == a type def's
+# name in dst (type_entity carries a name column).
+rel name_type(src: file, dst: file).
+name_type(src, dst) <- ref(_, sid, src, _, _), string(sid, name, _),
+                       type_entity(_, _, name, _, _, dst, _), src != dst.
+
+# misses a name-pass would recover
+rel recovered(src: file, dst: file).
+recovered(src, dst) <- miss(src, dst), name_type(src, dst).
+
+rel miss_n(n: int).   miss_n(count(src))    <- miss(src, dst).
+rel rec_n(n: int).    rec_n(count(src))     <- recovered(src, dst).
+
+? miss_n(n).
+? rec_n(n).
+? recovered(src, dst).

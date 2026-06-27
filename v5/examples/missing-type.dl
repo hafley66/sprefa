@@ -1,0 +1,46 @@
+# missing-type.dl — auto-detect "missing type" smells from local-name repetition.
+#
+# Hypothesis: a long identifier name that appears as a local in many fns/files
+# but is not itself a defined type/struct/fn is the signature of a missing
+# abstraction. Humans introduce a local with an evocative name repeatedly
+# because the concept it points at has no first-class representation. Each
+# repetition is a small reinvention; the union is a strong extraction signal.
+#
+# READ-ONLY analysis. Surfaces hints; does not refactor.
+#
+# Manual:  dl v5/examples/missing-type.dl --root . --db /tmp/dl-mt.db --no-daemon
+#          (SPREFA_SCIP_INDEX=<repo>/index.scip; needs `just oracle-index` first)
+
+# ── Length filter: names >= 10 chars, snake_case (Rust local convention) ────
+rel long_local(name: text).
+long_local(name) <- scip_local(fn, name), name =~ /^[a-z_][a-z_0-9]{9,}$/.
+
+# ── Per-name tallies ───────────────────────────────────────────────────────
+# distinct fns declaring this name
+rel local_in_fns(name: text, n_fns: int).
+local_in_fns(name, count(fn)) <- scip_local(fn, name).
+
+# distinct files containing a fn that declares this name
+rel fn_file(fn: text, file: file).
+fn_file(fn, file) <- scip_def(fn, file).
+
+rel local_in_files(name: text, n_files: int).
+local_in_files(name, count(f)) <- scip_local(fn, name), fn_file(fn, f).
+
+# ── THE SMELL ──────────────────────────────────────────────────────────────
+# Long name + appears in >=5 fns + appears in >=3 files. Tunable.
+rel missing_type(name: text, n_fns: int, n_files: int).
+missing_type(name, n_fns, n_files) <-
+    long_local(name),
+    local_in_fns(name, n_fns), n_fns >= 5,
+    local_in_files(name, n_files), n_files >= 3.
+
+# ── Sanity: total locals extracted; total distinct long names; total hits ──
+rel n_locals(n: int).       n_locals(count(name))    <- scip_local(_, name).
+rel n_long(n: int).         n_long(count(name))      <- long_local(name).
+rel n_missing(n: int).      n_missing(count(name))   <- missing_type(name, _, _).
+
+? n_locals(n).
+? n_long(n).
+? n_missing(n).
+? missing_type(name, n_fns, n_files).

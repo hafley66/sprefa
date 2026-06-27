@@ -1,0 +1,32 @@
+# refactor-init.dl — from the 100%-recall SCIP oracle: where to START.
+# (1) the one cyclic cluster's internal edges -> minimal break set;
+# (2) engine.rs out-neighbors -> candidate extraction groups.
+
+rel seen(path: file).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev).
+
+rel ra_edge(src: file, dst: file).
+ra_edge(src, dst) <- scip_edge(src, dst).
+
+rel cl(rep: file, m: file).
+cl(rep, m) <- scc(scip_edge).
+
+# cycle members (members of a cluster that has another distinct member)
+rel cyc_member(m: file).
+cyc_member(m) <- cl(rep, a), cl(rep, m), a != m.
+
+# internal edges of the cycle (cutting these makes it a DAG)
+rel cycle_edge(src: file, dst: file).
+cycle_edge(src, dst) <- ra_edge(src, dst), cyc_member(src), cyc_member(dst).
+
+# engine.rs direct out-neighbors (god-file split candidates)
+rel eng_out(dst: file).
+eng_out(dst) <- ra_edge(src, dst), src = "src/engine.rs".
+
+rel cycle_edge_n(n: int). cycle_edge_n(count(src)) <- cycle_edge(src, dst).
+rel eng_out_n(n: int).   eng_out_n(count(dst))   <- eng_out(dst).
+
+? cycle_edge_n(n).
+? cycle_edge(src, dst).
+? eng_out_n(n).
+? eng_out(dst).

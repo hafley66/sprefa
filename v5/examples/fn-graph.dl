@@ -1,0 +1,43 @@
+# fn-graph.dl — the 100%-recall function-level call graph from the RA oracle.
+#
+# `scip_fn_edge(caller, callee)` holds RA-resolved fn→fn edges. Both endpoints
+# are full SCIP monikers (`rust-analyzer cargo sprefa-v5 0.1.0 engine/impl#[Engine]tick().`).
+# The caller is the innermost enclosing fn def of each reference (attributed via
+# predecessor search on def start positions); the callee is the referenced
+# symbol, resolved by RA to its definition. No heuristic name resolution: RA did
+# the work, so trait/impl/macro/dyn paths are all correct.
+#
+# This is the function-level ground truth sprefa's diet `call_edge` (a syn-based
+# heuristic) is measured against. At file granularity diet recall was 97.5%;
+# here you see the fn-level delta directly (Engine.tick's true fan_out below vs
+# the diet count).
+#
+# Manual:  dl v5/examples/fn-graph.dl --root v5 --db /tmp/dl-fn.db --no-daemon
+#          (SPREFA_SCIP_INDEX=<repo>/index.scip; needs `just oracle-index` first)
+# Recipe:  just fn
+
+# ── Engine.tick: the headline number ──────────────────────────────────────
+# The prior diet heuristic counted 57 callees for Engine.tick. The oracle's
+# count is ground truth. The gap = fn-level undercount of the diet extractor.
+rel tick_out(n: int).
+tick_out(count(callee)) <- scip_fn_edge(caller, callee), caller =~ /Engine\]tick\(\)\.$/.
+
+# ── fn-level fan_out ranking (god-functions = extraction targets) ─────────
+rel fan_out(fn: text, n: int).
+fan_out(fn, count(callee)) <- scip_fn_edge(fn, callee).
+
+# ── fn-level mutual-recursion clusters (the move-blockers) ───────────────
+# scc(scip_fn_edge) condenses the fn graph; clusters with >1 member are
+# mutually-recursive fns that can't be cleanly separated without breaking the
+# cycle. These are the function-granularity refactor priorities.
+rel fn_cl(rep: text, m: text).
+fn_cl(rep, m) <- scc(scip_fn_edge).
+rel fn_cyc(m: text).
+fn_cyc(m) <- fn_cl(rep, a), fn_cl(rep, m), a != m.
+rel fn_cyc_n(n: int).
+fn_cyc_n(count(m)) <- fn_cyc(m).
+
+? tick_out(n).
+? fn_cyc_n(n).
+? fn_cyc(m).
+? fan_out(fn, n).

@@ -1,0 +1,41 @@
+# recall.dl — fair recall of sprefa's FULL diet extraction vs RA's oracle.
+# RA's scip_edge = any cross-file symbol reference (fns + types + consts + …).
+# sprefa splits references across call_edge + module_edge + type_edge; union
+# them all, project to file->file, then measure shared/ra_total.
+
+rel seen(path: file).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev).
+
+rel ra_edge(src: file, dst: file).
+ra_edge(src, dst) <- scip_edge(src, dst).
+
+rel fn_file(sym: text, file: file).
+fn_file(sym, file) <- call_def(_, sym, _, file, _, _).
+rel call_f(src: file, dst: file).
+call_f(src, dst) <- call_edge(caller, callee, _), fn_file(caller, src), fn_file(callee, dst), src != dst.
+
+rel mod_f(src: file, dst: file).
+mod_f(src, dst) <- module_edge(src, dst), src != dst.
+
+rel type_sym_file(sym: text, file: file).
+type_sym_file(sym, file) <- type_entity(_, sym, _, _, _, file, _).
+rel type_f(src: file, dst: file).
+type_f(src, dst) <- type_edge(a, b, _), type_sym_file(a, src), type_sym_file(b, dst), src != dst.
+
+# progressive unions
+rel u_call(src: file, dst: file).   u_call(src, dst) <- call_f(src, dst).
+rel u_cm(src: file, dst: file).     u_cm(src, dst) <- call_f(src, dst).
+u_cm(src, dst) <- mod_f(src, dst).
+rel u_cmt(src: file, dst: file).    u_cmt(src, dst) <- call_f(src, dst).
+u_cmt(src, dst) <- mod_f(src, dst).
+u_cmt(src, dst) <- type_f(src, dst).
+
+rel ra_n(n: int).   ra_n(count(src)) <- ra_edge(src, dst).
+rel s_call(n: int). s_call(count(src)) <- ra_edge(src, dst), u_call(src, dst).
+rel s_cm(n: int).   s_cm(count(src))   <- ra_edge(src, dst), u_cm(src, dst).
+rel s_cmt(n: int).  s_cmt(count(src))  <- ra_edge(src, dst), u_cmt(src, dst).
+
+? ra_n(n).
+? s_call(n).
+? s_cm(n).
+? s_cmt(n).

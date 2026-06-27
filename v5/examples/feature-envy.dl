@@ -1,0 +1,47 @@
+# feature-envy.dl — automatic refactor hints from the RA oracle.
+#
+# Feature envy (Marinescu/Fowler): a method that calls more features on another
+# type than on its own probably belongs on that other type. The strong, cheap
+# signal: count, per fn, how many of its callees live on each receiver type,
+# then flag the (fn, type) pairs where the fn is NOT itself on that type.
+#
+# This is "input drilling" detection — a fn reaching deep into one type's
+# method set is coupled to that type and is a move/extract candidate.
+#
+# Free fns (no own type) that concentrate calls on one type are the strongest
+# envy signal: they aren't on ANY type yet, and they clearly belong on the one
+# they drill into.
+#
+# READ-ONLY analysis. Surfaces hints; does not refactor.
+#
+# Manual:  dl v5/examples/feature-envy.dl --root v5 --db /tmp/dl-envy.db --no-daemon
+#          (SPREFA_SCIP_INDEX=<repo>/index.scip; needs `just oracle-index` first)
+# Recipe:  just envy
+
+# A fn's own receiver type (None for free fns — they have no impl holder).
+rel own_type(fn: text, ty: text).
+own_type(fn, ty) <- scip_callee_type(fn, ty).
+
+# Per fn, per receiver-type: how many distinct callees of `fn` live on `ty`.
+rel call_type(fn: text, ty: text, n: int).
+call_type(fn, ty, count(callee)) <-
+    scip_fn_edge(fn, callee), scip_callee_type(callee, ty).
+
+# FEATURE ENVY: fn calls methods on `ty` but is not itself on `ty`.
+# (For free fns own_type(fn, ty) never holds, so every type they call is envied
+#  — correct, since a free fn drilling into one type is the strongest signal.)
+rel envied(fn: text, ty: text, n: int).
+envied(fn, ty, n) <- call_type(fn, ty, n), !own_type(fn, ty).
+
+# Total distinct callees per fn (the denominator for concentration).
+rel call_total(fn: text, n: int).
+call_total(fn, count(callee)) <- scip_fn_edge(fn, callee).
+
+# Tallies.
+rel envied_pairs(n: int).  envied_pairs(count(fn)) <- envied(fn, ty, n).
+rel types_known(n: int).   types_known(count(sym)) <- scip_callee_type(sym, ty).
+
+? types_known(n).
+? envied_pairs(n).
+? envied(fn, ty, n).
+? call_total(fn, n).

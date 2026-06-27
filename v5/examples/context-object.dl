@@ -1,0 +1,70 @@
+# context-object.dl — detect missing structs from local-name co-occurrence.
+#
+# Hypothesis: when >=2 long local names are repeatedly declared together in
+# the same fns, they are fields of a concept that has no first-class type.
+# Each co-occurring cluster is a candidate struct extraction.
+#
+# Method: build a name co-occurrence graph (names paired by shared fn),
+# keep edges above a weight threshold, cluster via scc, and report each
+# connected cluster as a candidate struct + the fns that justify it.
+#
+# READ-ONLY. Surfaces candidates; does not refactor.
+#
+# Manual:  dl v5/examples/context-object.dl --root . --db /tmp/dl-co.db --no-daemon
+#          (needs SPREFA_SCIP_INDEX=<repo>/index.scip; `just oracle-index` first)
+
+# ── 1. long-name locals (cut short-name noise: db, ctx, etc.) ───────────────
+rel long_local(name: text).
+long_local(name) <- scip_local(fn, name), name =~ /^[a-z_][a-z_0-9]{9,}$/.
+
+# ── 2. co-occurrence: two long names declared in the same fn ───────────────
+rel cooccur(fn: text, n1: text, n2: text).
+cooccur(fn, n1, n2) <-
+    scip_local(fn, n1), scip_local(fn, n2),
+    long_local(n1), long_local(n2),
+    n1 < n2.
+
+# ── 3. edge weight = distinct fns where both names appear ──────────────────
+rel pair_weight(n1: text, n2: text, k: int).
+pair_weight(n1, n2, count(fn)) <- cooccur(fn, n1, n2).
+
+# ── 4. strong edges: co-declared in >= MIN_COFNS fns (tunable) ─────────────
+rel strong_pair(n1: text, n2: text).
+strong_pair(n1, n2) <- pair_weight(n1, n2, k), k >= 3.
+
+# symmetrize so scc yields connected components, not just directed cycles
+rel coedge(a: text, b: text).
+coedge(a, b) <- strong_pair(a, b).
+coedge(a, b) <- strong_pair(b, a).
+
+# ── 5. cluster the name graph: each component = candidate struct ───────────
+rel name_cluster(rep: text, member: text).
+name_cluster(rep, member) <- scc(coedge).
+
+# ── 6. per-cluster reporting: members + supporting fns + total weight ──────
+rel cluster_member(rep: text, member: text).
+cluster_member(rep, member) <- name_cluster(rep, member).
+
+# fns that touch >=1 member of the cluster
+rel cluster_fn(rep: text, fn: text).
+cluster_fn(rep, fn) <-
+    name_cluster(rep, m), scip_local(fn, m).
+
+rel cluster_size(rep: text, n_members: int, n_fns: int).
+cluster_size(rep, count(m), count(fn)) <-
+    name_cluster(rep, m), cluster_fn(rep, fn).
+
+# ── sanity totals ──────────────────────────────────────────────────────────
+rel n_long(n: int).
+n_long(count(name)) <- long_local(name).
+rel n_pairs(n: int).
+n_pairs(count(n1)) <- pair_weight(n1, n2, k), k >= 3.
+rel n_clusters(n: int).
+n_clusters(count(rep)) <- name_cluster(rep, _).
+
+? n_long(n).
+? n_pairs(n).
+? n_clusters(n).
+? cluster_size(rep, n_members, n_fns).
+? name_cluster(rep, member).
+? pair_weight(n1, n2, k).

@@ -1,0 +1,87 @@
+# dag-layers.dl — longest-path topological tiering of the RA oracle file graph.
+#
+# Input: scip_edge(src, dst) where src depends on dst (src calls into dst).
+#
+# The oracle graph is NOT a clean DAG — it has mutual edges between the five
+# core runtime files {daemon, engine, lib, lsp, tray} (8 two-cycle edges; the
+# SCC builtin confirms one cyclic cluster). Longest-path layering requires a
+# DAG, so we collapse the cyclic cluster to a single representative and layer
+# the CONDENSATION, which is a DAG by construction. Cluster members share a tier.
+#
+# Tier meaning (dependency-depth from the foundations):
+#   tier 0 = foundations: depended-on by others, depend on nothing themselves.
+#           ast.rs, lex.rs — the leaves of the dep DAG.
+#   tier t = 1 + max(tier of dependencies). Entry points (main.rs, the daemon
+#           cluster) land at the top because their dependency chains are longest.
+#   The cyclic cluster's tier reflects its deepest external dependency chain.
+#
+# Cycle detection here is 2-cycle (mutual edges: ra_edge(a,b) AND ra_edge(b,a)).
+# That captures the full SCC of THIS oracle graph (verified: the only cyclic
+# cluster is {daemon,engine,lib,lsp,tray}, all pairwise mutual). A 3+-cycle with
+# no mutual pair would slip past; the SCC builtin would catch it but its result
+# can't be read unpinned in a derived rule (engine.rs:653 seeded-read gate), so
+# 2-cycle detection is the pragmatic in-language choice.
+#
+# Two-phase layering to respect "aggregation inside a recursive cycle is
+# unstratifiable" (engine.rs:790):
+#   phase 1 — pure positive recursion enumerates every dependency-chain length
+#             in the condensation (arithmetic only in the head: t + 1).
+#   phase 2 — a stratified max(t) collapses the lengths to the longest per rep.
+#
+# Manual:  dl v5/examples/dag-layers.dl --root v5 --db /tmp/dl-dag.db --no-daemon
+#          (SPREFA_SCIP_INDEX=<repo>/index.scip; needs `just oracle-index` first)
+# Recipe:  just dag
+
+rel ra_edge(src: file, dst: file).
+ra_edge(src, dst) <- scip_edge(src, dst).
+
+# ── cycle collapse ───────────────────────────────────────────────────────
+# Files in a mutual pair. Set semantics dedups; cyclic(f) is the layering
+# blocker set — these can't be cleanly tiered without breaking the cycle.
+rel cyclic(f: file).
+cyclic(f) <- ra_edge(f, g), ra_edge(g, f).
+
+# Cluster rep = alphabetically smallest cyclic file. Non-cyclic files are their
+# own rep. (min over text = lexicographic, SQLite-native.)
+rel cl_rep(rep: file).
+cl_rep(min(f)) <- cyclic(f).
+rel rep_of(f: file, rep: file).
+rep_of(f, rep) <- cyclic(f), cl_rep(rep).
+rep_of(f, f)   <- !cyclic(f), ra_edge(f, _).
+rep_of(f, f)   <- !cyclic(f), ra_edge(_, f).
+
+# Condensation: inter-rep edges only (set-deduped; cluster-internal edges drop).
+rel cond_edge(a: file, b: file).
+cond_edge(a, b) <- ra_edge(x, y), rep_of(x, a), rep_of(y, b), a != b.
+
+# ── longest-path layering of the condensation (a DAG by construction) ─────
+rel path_len(rep: file, t: int).
+path_len(rep, 0)      <- cond_edge(_, rep), !cond_edge(rep, _).
+path_len(rep, t + 1)  <- cond_edge(rep, d), path_len(d, t).
+
+rel cl_layer(rep: file, t: int).
+cl_layer(rep, max(t)) <- path_len(rep, t).
+
+# Map tier back to every file. Cyclic-cluster members all share the rep's tier.
+rel tier(f: file, t: int).
+tier(f, t) <- rep_of(f, rep), cl_layer(rep, t).
+
+# ── reporting ────────────────────────────────────────────────────────────
+rel cyclic_n(n: int).     cyclic_n(count(f))    <- cyclic(f).
+rel edge_n(n: int).       edge_n(count(src))    <- ra_edge(src, dst).
+rel cond_edge_n(n: int).  cond_edge_n(count(a)) <- cond_edge(a, b).
+
+# tier histogram: files per tier.
+rel tier_count(tier: int, n: int).
+tier_count(tier, count(f)) <- tier(f, tier).
+
+# the cyclic cluster — the refactor's first target (break these mutual deps).
+rel cyclic_cluster(f: file).
+cyclic_cluster(f) <- cyclic(f).
+
+? cyclic_n(n).
+? edge_n(n).
+? cond_edge_n(n).
+? tier_count(tier, n).
+? cyclic_cluster(f).
+? tier(f, t).

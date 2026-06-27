@@ -81,15 +81,37 @@ oracle-index:
 # run the file-level RA-vs-sprefa comparison. Requires `just oracle-index` first
 # (produces {{repo}}/index.scip). --root . (v5) so sprefa's paths (src/…) match
 # RA's SCIP paths (also src/…); a repo-root --root yields v5/src/… keys that
-# don't join. SPREFA_SCIP_INDEX points at the index outside --root. Isolated
-# --db so a running daemon can't intercept the one-shot run.
+# don't join. SPREFA_SCIP_INDEX points at the index outside --root. --no-daemon
+# forces the in-process path; a running daemon must never serve a stale cached
+# program on a one-shot oracle run (this once manufactured a phantom cycle).
 oracle:
-    SPREFA_SCIP_INDEX={{repo}}/index.scip cargo run --bin dl -- examples/oracle-check.dl --root . --db /tmp/dl-oracle.db
+    SPREFA_SCIP_INDEX={{repo}}/index.scip cargo run --bin dl -- examples/oracle-check.dl --root . --db /tmp/dl-oracle.db --no-daemon
 
 # x-ray one symbol's full multi-graph neighborhood: callers/callees, fan counts,
 # SCC cohort (mutual-recursion mates), forward blast radius, reverse dependents
 # (the move-safety set), def span + call sites. Edit the `target(sym)` fact
 # (and the two inlined literals in the reachability rules) to change symbol.
-# Isolated --db to dodge the daemon.
+# --no-daemon forces the in-process path so a running daemon can't serve stale.
 profile:
-    cargo run --bin dl -- examples/symbol-profile.dl --root {{repo}} --db /tmp/dl-profile.db
+    cargo run --bin dl -- examples/symbol-profile.dl --root {{repo}} --db /tmp/dl-profile.db --no-daemon
+
+# longest-path topological tiering of the RA oracle file graph. Requires
+# `just oracle-index` first. Tier 0 = foundations (depended-on, depend on
+# nothing); top tier = entry points with the longest dependency chains. The
+# proposed module hierarchy for the refactor. --no-daemon + isolated --db so a
+# running daemon can't serve a stale cached program.
+dag:
+    SPREFA_SCIP_INDEX={{repo}}/index.scip cargo run --bin dl -- examples/dag-layers.dl --root . --db /tmp/dl-dag.db --no-daemon
+
+# the 100%-recall function-level call graph (scip_fn_edge). fn-level fan_out
+# ranking, Engine.tick's true callee count, and mutual-recursion clusters.
+# Requires `just oracle-index` first. --no-daemon + isolated --db.
+fn:
+    SPREFA_SCIP_INDEX={{repo}}/index.scip cargo run --bin dl -- examples/fn-graph.dl --root . --db /tmp/dl-fn.db --no-daemon
+
+# feature-envy refactor hints: per fn, which foreign type does it drill into
+# most (calls many of that type's methods but isn't itself on it). Read-only
+# analysis — surfaces move/extract candidates, does not refactor. Requires
+# `just oracle-index` first. --no-daemon + isolated --db.
+envy:
+    SPREFA_SCIP_INDEX={{repo}}/index.scip cargo run --bin dl -- examples/feature-envy.dl --root . --db /tmp/dl-envy.db --no-daemon

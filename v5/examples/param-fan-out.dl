@@ -1,0 +1,31 @@
+# param-fan-out.dl — god-fn signal: fns that declare many locals.
+#
+# Hypothesis: a fn declaring >= N distinct local names is doing too much
+# (long parameter list, or many intermediate lets). High local count is a
+# cheap proxy for "split me" / "extract helper" / "introduce a parameter
+# object". It is the structural cousin of the missing-type recipe: the
+# missing-type recipe looks ACROSS fns for repeated names; this looks WITHIN
+# one fn for an oversized name set.
+#
+# READ-ONLY. Surfaces candidates; does not refactor.
+#
+# Manual:  dl v5/examples/param-fan-out.dl --root . --db /tmp/dl-pf.db --no-daemon
+#          (needs SPREFA_SCIP_INDEX=<repo>/index.scip; `just oracle-index` first)
+
+# ── distinct locals declared per fn ────────────────────────────────────────
+rel fn_file(fn: text, file: file).
+fn_file(fn, file) <- scip_def(fn, file).
+
+rel fn_locals(fn: text, n: int).
+fn_locals(fn, count(name)) <- scip_local(fn, name).
+
+# ── the smell: >= MIN locals (tunable) ─────────────────────────────────────
+rel god_fn(fn: text, file: file, n: int).
+god_fn(fn, file, n) <- fn_locals(fn, n), fn_file(fn, file), n >= 25.
+
+# ── distribution: how many fns at each local-count bucket ──────────────────
+rel bucket(n: int, k: int).
+bucket(n, count(fn)) <- fn_locals(fn, n), n >= 15.
+
+? bucket(n, k).
+? god_fn(fn, file, n).

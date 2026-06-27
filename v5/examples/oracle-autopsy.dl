@@ -1,0 +1,27 @@
+# oracle-autopsy.dl — where does sprefa's heuristic fail vs RA, in-scope?
+# Isolates REAL resolution misses (both endpoints under src/) from scope
+# artifacts (build.rs, tests/it), and ranks files by miss count to find where
+# the diet-scip extractor breaks worst. Inspect those files to bucket causes
+# (trait method, re-export, macro, dyn, fully-qualified path).
+
+rel seen(path: file).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev).
+
+rel fn_file(sym: text, file: file).
+fn_file(sym, file) <- call_def(_, sym, _, file, _, _).
+rel sprf_edge(src: file, dst: file).
+sprf_edge(src, dst) <- call_edge(caller, callee, _), fn_file(caller, src), fn_file(callee, dst), src != dst.
+rel ra_edge(src: file, dst: file).
+ra_edge(src, dst) <- scip_edge(src, dst).
+
+rel missed(src: file, dst: file).
+missed(src, dst) <- ra_edge(src, dst), !sprf_edge(src, dst).
+rel spurious(src: file, dst: file).
+spurious(src, dst) <- sprf_edge(src, dst), !ra_edge(src, dst).
+
+# per-source-file miss count: where does the heuristic fail most?
+rel miss_per_src(src: file, n: int).
+miss_per_src(src, count(dst)) <- missed(src, dst).
+
+? miss_per_src(src, n).
+? missed(src, dst).
