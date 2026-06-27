@@ -1530,8 +1530,45 @@ impl Engine {
         for (i, (kind, sym, file, line)) in entries.into_iter().enumerate() {
             if i > 0 { md.push_str("\n\n---\n\n"); }
             md.push_str(&format!("**{kind}** `{sym}`  \n{file}:{line}"));
+            // Type-profile overlay for data types: Ca, Ce, fields, variants.
+            // Callable kinds (function/method) don't have field/variant edges,
+            // so the overlay is data-type-only. Cheap (4 COUNT queries on an
+            // indexed column); no-op when type_edge isn't populated.
+            if matches!(kind.as_str(), "struct" | "enum" | "trait" | "class" | "interface" | "alias") {
+                if let Some(profile) = self.type_profile_overlay(&sym) {
+                    md.push_str(&format!("  \n{profile}"));
+                }
+            }
         }
         Ok(Some(md))
+    }
+
+    /// One-line type profile for `sym`: `Ca=N Ce=M fields=F variants=V impls=I`.
+    /// `sym` is the type_entity sym; type_edge is name-keyed, so the trailing
+    /// identifier of the sym (the bare name) is the join key. Returns None if
+    /// type_edge is empty (program didn't opt into type rels) or all counts
+    /// are zero (the type has no structural edges).
+    fn type_profile_overlay(&self, sym: &str) -> Option<String> {
+        let name = sym.rsplit("::").next()?;
+        let edge = tbl("type_edge");
+        let conn = self.db.conn();
+        let q = |sql: String| -> Option<i64> {
+            conn.query_row(&sql, rusqlite::params![name], |r| r.get::<_, i64>(0)).ok()
+        };
+        let ca = q(format!(
+            "SELECT COUNT(DISTINCT \"from\") FROM {edge} WHERE \"to\" = ?1"))?;
+        let ce = q(format!(
+            "SELECT COUNT(DISTINCT \"to\") FROM {edge} WHERE \"from\" = ?1"))?;
+        let fields = q(format!(
+            "SELECT COUNT(DISTINCT \"to\") FROM {edge} WHERE \"from\" = ?1 AND \"kind\" = 'field'"))?;
+        let variants = q(format!(
+            "SELECT COUNT(DISTINCT \"to\") FROM {edge} WHERE \"from\" = ?1 AND \"kind\" = 'variant'"))?;
+        let impls = q(format!(
+            "SELECT COUNT(DISTINCT \"to\") FROM {edge} WHERE \"from\" = ?1 AND \"kind\" = 'impl'"))?;
+        if ca == 0 && ce == 0 && fields == 0 && variants == 0 && impls == 0 {
+            return None;
+        }
+        Some(format!("Ca={ca} Ce={ce} fields={fields} variants={variants} impls={impls}"))
     }
 
     /// Distinct WORK source paths from the `_file` cache. Feeds crate-root

@@ -453,6 +453,49 @@ fn hover_returns_entity_summary() {
     s.shutdown();
 }
 
+/// Hover on a struct includes the type-profile overlay line (Ca/Ce/fields/...).
+/// The overlay only fires for data types (struct/enum/trait/...) and only when
+/// type_edge has rows for the name. The hovered struct has one field type
+/// (Beta), so the overlay should mention `fields=1`.
+#[test]
+fn hover_includes_type_profile_overlay_for_data_types() {
+    let root = sandbox("hover-profile");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/lib.rs"), concat!(
+        "pub struct Alpha { beta: Beta, other: Beta }\n",
+        "pub struct Beta {}\n",
+        "pub fn use_it(a: Alpha) {}\n",
+    )).unwrap();
+    let prog = root.join("p.dl");
+    fs::write(&prog, concat!(
+        "rel sym(name: text, f: file, l: int).\n",
+        "sym(name, f, l) <- scan(\"WORK\", \"src/**/*.rs\", f, rev), ",
+        "match(f, rev, /(?<name>[A-Z][a-zA-Z_]*)/, l).\n",
+        // Opt into type rels so type_entity + type_edge populate.
+        "rel te(name: text).\n",
+        "te(name) <- type_entity(_, _, name, _, _, _, _).\n",
+    )).unwrap();
+
+    let mut s = Session::spawn(&prog, &root, &root.join("hover-profile.db"));
+    initialize(&mut s, &root);
+
+    // Cursor inside `Alpha` (line 0, char 14 — inside the captured bytes 11..16).
+    let result = s.request(2, "textDocument/hover",
+        position_params(&root.join("src/lib.rs"), 0, 14));
+    let hover = result.as_object().unwrap_or_else(|| panic!(
+        "expected a hover object, got: {result}\nstderr: {}", drain_stderr(&mut s.child)));
+    let md = hover.get("contents").and_then(|c| c.get("value")).and_then(|v| v.as_str())
+        .unwrap_or_else(|| panic!("expected markdown contents: {result}"));
+    assert!(md.contains("struct"), "hover names the kind: {md}");
+    assert!(md.contains("Alpha"), "hover names the entity: {md}");
+    // The overlay line: Alpha has 2 field edges (both Beta; dedup'd to 1 in
+    // DISTINCT). Either way the field count is present.
+    assert!(md.contains("fields="), "overlay present: {md}");
+    assert!(md.contains("Ca="), "overlay has Ca: {md}");
+
+    s.shutdown();
+}
+
 /// Gate (2b): a literal-bearing TypeDiag lands at its real line, proving the
 /// byte->line resolver fixes the T2 line-1 bug. An `fs:` literal in a plain-text
 /// column coerces (warn) and the diagnostic points at the literal's actual line,
