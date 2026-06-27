@@ -167,6 +167,14 @@ const PROPOSE_CLONE_RELS: [&str; 1] = ["propose_clone"];
 /// first since it reads the edge set from the DB.
 const TYPE_SHAPE_RELS: [&str; 1] = ["type_shape"];
 
+/// Anti-unification (Plotkin LGG) per type pair: `type_lgg(a, b, vars)`. For
+/// every canonical pair (a < b) of distinct type names, `vars` is the count of
+/// fresh variables the LGG introduces — 0 for identical (filtered), 1 for a
+/// single-leaf difference, higher for more divergence. Two types with low vars
+/// are "near shape-iso": they generalize to a shared structure with few holes,
+/// candidates for a missing generic or shared abstraction. Lazy on type_edge.
+const TYPE_LGG_RELS: [&str; 1] = ["type_lgg"];
+
 /// Ref-spine query relations: thin views over the `_strings` / `_where_bytes`
 /// meta tables. `string(id, text, norm)` resolves an interned StringId to its
 /// content; `ref(id, string, file, lo, hi)` locates each interned string's byte
@@ -227,6 +235,7 @@ pub fn builtin_rel_names() -> std::collections::HashSet<String> {
         .chain(propose_extract_rel_decls())
         .chain(propose_clone_rel_decls())
         .chain(type_shape_rel_decls())
+        .chain(type_lgg_rel_decls())
         .chain(daemon_rel_decls())
         .map(|d| d.name)
         .collect()
@@ -395,6 +404,14 @@ fn type_shape_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
+fn type_lgg_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "type_lgg".into(),
+                  cols: vec![c("a", Type::Text), c("b", Type::Text), c("vars", Type::Int)] },
+    ]
+}
+
 fn spine_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -523,6 +540,8 @@ fn propose_extract_rels_used(prog: &Program) -> bool { rels_used(prog, &PROPOSE_
 fn propose_clone_rels_used(prog: &Program) -> bool { rels_used(prog, &PROPOSE_CLONE_RELS) }
 
 fn type_shape_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_SHAPE_RELS) }
+
+fn type_lgg_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_LGG_RELS) }
 
 fn module_manifest_path(path: &str) -> bool {
     path.ends_with("Cargo.toml") || path.ends_with("package.json") || path.ends_with("tsconfig.json")
@@ -1754,7 +1773,7 @@ impl Engine {
             self.refresh_module_rels()?;
             phase("module-rels", t);
         }
-        if type_rels_used(prog) || type_shape_rels_used(prog) {
+        if type_rels_used(prog) || type_shape_rels_used(prog) || type_lgg_rels_used(prog) {
             let t = std::time::Instant::now();
             self.refresh_type_rels()?;
             phase("type-rels", t);
@@ -1796,6 +1815,7 @@ impl Engine {
         if propose_extract_rels_used(prog) { changed |= self.refresh_propose_extract_rel()?; }
         if propose_clone_rels_used(prog) { changed |= self.refresh_propose_clone_rel()?; }
         if type_shape_rels_used(prog) { changed |= self.refresh_type_shape_rel()?; }
+        if type_lgg_rels_used(prog) { changed |= self.refresh_type_lgg_rel()?; }
         if daemon_rels_used(prog) { self.refresh_daemon_rels()?; }
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
 
@@ -2019,7 +2039,7 @@ impl Engine {
         if files_changed {
             self.refresh_builtin_rels()?;
             for b in BUILTIN_RELS { changed_source_rels.insert(b.to_string()); }
-            if type_rels_used(prog) || type_shape_rels_used(prog) {
+            if type_rels_used(prog) || type_shape_rels_used(prog) || type_lgg_rels_used(prog) {
                 self.refresh_type_rels()?;
                 for t in TYPE_RELS { changed_source_rels.insert(t.to_string()); }
             }
@@ -2083,6 +2103,10 @@ impl Engine {
         }
         if type_shape_rels_used(prog) && self.refresh_type_shape_rel()? {
             changed_source_rels.insert("type_shape".to_string());
+            changed_facts = true;
+        }
+        if type_lgg_rels_used(prog) && self.refresh_type_lgg_rel()? {
+            changed_source_rels.insert("type_lgg".to_string());
             changed_facts = true;
         }
         if daemon_rels_used(prog) { self.refresh_daemon_rels()?; }
@@ -2713,6 +2737,9 @@ impl Engine {
                 if TYPE_SHAPE_RELS.contains(&d.name.as_str()) {
                     bail!("{} is the built-in type-shape relation; pick another name", d.name);
                 }
+                if TYPE_LGG_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is the built-in type-lgg relation; pick another name", d.name);
+                }
                 if DAEMON_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in daemon-state relation (program / head / rev_advanced); pick another name", d.name);
                 }
@@ -2753,6 +2780,7 @@ impl Engine {
         for d in propose_extract_rel_decls() { self.declare(&d)?; }
         for d in propose_clone_rel_decls() { self.declare(&d)?; }
         for d in type_shape_rel_decls() { self.declare(&d)?; }
+        for d in type_lgg_rel_decls() { self.declare(&d)?; }
         for d in daemon_rel_decls() { self.declare(&d)?; }
         Ok(())
     }
@@ -4330,6 +4358,47 @@ impl Engine {
             .map(|(n, h)| vec![Value::Text(n), Value::Text(h)])
             .collect();
         self.refresh_rel("type_shape", &["name", "hash"], &rows)?;
+        Ok(true)
+    }
+
+    /// Rebuild `type_lgg(a, b, vars)` from the current `type_edge` rows.
+    /// Reads the edge set, computes Plotkin LGG var count per canonical pair,
+    /// writes one row per pair with vars >= 1. Returns false if unchanged.
+    fn refresh_type_lgg_rel(&self) -> Result<bool> {
+        let edges: Vec<(String, String, String)> = {
+            let conn = self.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"from\",\"to\",\"kind\" FROM {}", tbl("type_edge")
+            ))?;
+            let rows = s.query_map([], |r| Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            )))?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        let computed: Vec<(String, String, i64)> = typegraph::type_lgg_pairs(&edges);
+        let stored: Vec<(String, String, i64)> = {
+            let conn = self.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"a\",\"b\",\"vars\" FROM {} ORDER BY \"a\",\"b\",\"vars\"",
+                tbl("type_lgg")
+            ))?;
+            let rows = s.query_map([], |r| Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+            )))?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        if stored == computed {
+            return Ok(false);
+        }
+        let rows: Vec<Vec<Value>> = computed
+            .into_iter()
+            .map(|(a, b, v)| vec![Value::Text(a), Value::Text(b), Value::Int(v)])
+            .collect();
+        self.refresh_rel("type_lgg", &["a", "b", "vars"], &rows)?;
         Ok(true)
     }
 

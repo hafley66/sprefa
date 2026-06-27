@@ -2616,6 +2616,124 @@ fn hex_string(bytes: &[u8; 32]) -> String {
     s
 }
 
+/// Anti-unification (Plotkin's LGG, Least General Generalization) for type trees.
+///
+/// For each ordered pair of distinct type names `(a, b)` with `a < b`, computes
+/// how many "fresh variables" the LGG introduces. Two identical types produce 0.
+/// Two types that differ only in N leaf positions produce N. Two unrelated types
+/// produce a number bounded by their combined tree size.
+///
+/// Algorithm (simplified; treats type_edge as a tree, ignores sharing/cycles
+/// via memoization that treats a revisit as opaque):
+///   - `lgg(a, a)`         → 0 vars (identical)
+///   - `lgg(leaf_a, leaf_b)` → 1 var  (distinct leaves)
+///   - `lgg(a, b)` when both have field/variant children, same arity, same
+///     kind sequence (after sorting by (kind, name)) → recurse pairwise,
+///     sum the var counts.
+///   - otherwise → 1 var (shape diverges; generalize the whole node away).
+///
+/// `edges` is the engine's full `type_edge` row set; only field/variant edges
+/// contribute (impl/generic are excluded, same as `type_shape_hashes`).
+///
+/// Output: one `(a, b, vars)` per canonical pair with `a < b` and `vars >= 1`.
+/// Pairs with `vars == 0` are identical and covered by `type_shape` already.
+/// Sorted for deterministic output.
+pub fn type_lgg_pairs(edges: &[(String, String, String)]) -> Vec<(String, String, i64)> {
+    use std::collections::BTreeMap;
+
+    // Build adjacency: name -> sorted Vec<(kind, child_name)>. field/variant only.
+    let mut adj: BTreeMap<String, Vec<(&'static str, String)>> = BTreeMap::new();
+    for (a, b, k) in edges {
+        let kind: Option<&'static str> = match k.as_str() {
+            "field" => Some("field"),
+            "variant" => Some("variant"),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            adj.entry(a.clone()).or_default().push((kind, b.clone()));
+        }
+    }
+    for v in adj.values_mut() {
+        v.sort();
+        // Don't dedup: a struct with two fields of the same type has shape
+        // {T, T}, distinct from {T}. Keep multiplicity.
+    }
+
+    // All distinct names (including leaves that only appear as `to`).
+    let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for (a, b, _) in edges {
+        names.insert(a.clone());
+        names.insert(b.clone());
+    }
+    let names: Vec<String> = names.into_iter().collect();
+
+    // Pair cache: (a, b) -> var count. Memoizes to handle DAG sharing and
+    // breaks cycles (a revisit mid-recursion returns the cached value, which
+    // is conservative — it pretends the recursion already terminated).
+    let mut cache: BTreeMap<(String, String), i64> = BTreeMap::new();
+
+    let mut out: Vec<(String, String, i64)> = Vec::new();
+    for i in 0..names.len() {
+        for j in (i + 1)..names.len() {
+            let a = &names[i];
+            let b = &names[j];
+            // a < b lexicographically because names is sorted.
+            let vars = lgg_var_count(a, b, &adj, &mut cache);
+            if vars >= 1 {
+                out.push((a.clone(), b.clone(), vars));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+fn lgg_var_count(
+    a: &str,
+    b: &str,
+    adj: &std::collections::BTreeMap<String, Vec<(&'static str, String)>>,
+    cache: &mut std::collections::BTreeMap<(String, String), i64>,
+) -> i64 {
+    if a == b {
+        return 0;
+    }
+    // Canonicalize the cache key so (a,b) and (b,a) share.
+    let key = if a < b {
+        (a.to_string(), b.to_string())
+    } else {
+        (b.to_string(), a.to_string())
+    };
+    if let Some(&v) = cache.get(&key) {
+        return v;
+    }
+    // Tentative 1 to break cycles: a recursive revisit returns 1 (conservative).
+    cache.insert(key.clone(), 1);
+
+    let ca = adj.get(a);
+    let cb = adj.get(b);
+    let result = match (ca, cb) {
+        (None, None) => 1, // two distinct leaves
+        (Some(ca), Some(cb)) if ca.len() == cb.len() => {
+            // Same arity. Pairwise-align children by sorted position. If the
+            // kind sequence matches, recurse and sum; else diverge.
+            let kinds_match = ca.iter().zip(cb.iter()).all(|((ka, _), (kb, _))| ka == kb);
+            if kinds_match {
+                let mut sum = 0i64;
+                for ((_, na), (_, nb)) in ca.iter().zip(cb.iter()) {
+                    sum += lgg_var_count(na, nb, adj, cache);
+                }
+                sum
+            } else {
+                1
+            }
+        }
+        _ => 1, // arity differs or one is leaf
+    };
+
+    cache.insert(key, result);
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2969,5 +3087,57 @@ function helper(raw: Raw) {}
         ];
         assert_eq!(shape_hash_of(&type_shape_hashes(&a), "Action"),
                    shape_hash_of(&type_shape_hashes(&b), "Wrapper"));
+    }
+
+    #[test]
+    fn lgg_identical_types_zero_vars() {
+        // Two types with identical field structure but distinct names. A and A2
+        // have 2 fields each pointing at distinct leaves (a, b vs c, d), so
+        // var_count(A, A2) = 2 (two slots each generalizing to a fresh var).
+        let edges = vec![
+            edge("A", "a", "field"), edge("A", "b", "field"),
+            edge("A2", "c", "field"), edge("A2", "d", "field"),
+        ];
+        let pairs = type_lgg_pairs(&edges);
+        let aa2 = pairs.iter().find(|(x, y, _)| x == "A" && y == "A2").map(|(_, _, v)| *v);
+        assert_eq!(aa2, Some(2));
+        // Every emitted pair has var_count >= 1 (vars == 0 is filtered).
+        assert!(pairs.iter().all(|(_, _, v)| *v >= 1));
+        // And no pair has identical names.
+        assert!(pairs.iter().all(|(a, b, _)| a != b));
+    }
+
+    #[test]
+    fn lgg_completely_identical_zero_skipped() {
+        // Identical type names: lgg(A, A) returns 0, not emitted.
+        let edges = vec![edge("A", "x", "field")];
+        // Only one type name with edges + x; no a<b pair where a==b.
+        let pairs = type_lgg_pairs(&edges);
+        assert!(pairs.iter().all(|(a, b, _)| a != b));
+    }
+
+    #[test]
+    fn lgg_different_arity_one_var() {
+        // A has 2 fields, B has 1. Arity differs → opaque generalization.
+        let edges = vec![
+            edge("A", "x", "field"), edge("A", "y", "field"),
+            edge("B", "z", "field"),
+        ];
+        let pairs = type_lgg_pairs(&edges);
+        let ab = pairs.iter().find(|(p, q, _)| p == "A" && q == "B").map(|(_, _, v)| *v);
+        assert_eq!(ab, Some(1));
+    }
+
+    #[test]
+    fn lgg_shared_child_zero_vars_for_that_slot() {
+        // A and B both have a field of the SAME type C. The C/C slot is 0 vars.
+        // The other slot differs (X vs Y) → 1 var. Total = 1.
+        let edges = vec![
+            edge("A", "C", "field"), edge("A", "X", "field"),
+            edge("B", "C", "field"), edge("B", "Y", "field"),
+        ];
+        let pairs = type_lgg_pairs(&edges);
+        let ab = pairs.iter().find(|(p, q, _)| p == "A" && q == "B").map(|(_, _, v)| *v);
+        assert_eq!(ab, Some(1));
     }
 }
