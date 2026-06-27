@@ -41,6 +41,7 @@ mod oracle_rust;
 mod path_types;
 mod perf_stress;
 mod perf_stress_c;
+mod propose_extract;
 mod query_json;
 mod regex_glob_filter;
 mod regex_sugar;
