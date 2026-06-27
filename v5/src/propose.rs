@@ -229,6 +229,85 @@ fn ast_shape_tokens(tree: &tree_sitter::Tree, content: &str) -> Vec<(String, usi
     out
 }
 
+/// Symbol-shape (Type-2 + semantic) detector. Like AST-shape but each
+/// identifier is normalized to its RESOLVED SCIP symbol (not a uniform `ID`),
+/// so two regions match only if they reference the same entities in the same
+/// structure — a CST⨝symbol join. The "type-shape" kernel's feasible form: RA
+/// resolves types/fns/methods to stable monikers (locals stay opaque `local N`,
+/// folded back to `ID`). `occ_spans` is `(line0, col0, symbol)` for ONE file.
+const SYM_SEED: usize = 12;
+
+pub fn symbol_shape_proposals(content: &str, occ_spans: &[(i32, i32, &str)]) -> Vec<Proposal> {
+    let mut parser = Parser::new();
+    if parser.set_language(&lang()).is_err() {
+        return Vec::new();
+    }
+    let Some(tree) = parser.parse(content, None) else {
+        return Vec::new();
+    };
+    let sym_at: HashMap<(i32, i32), &str> =
+        occ_spans.iter().map(|(l, c, s)| ((*l, *c), *s)).collect();
+    let toks = symbol_shape_tokens(&tree, content, &sym_at);
+    let kinds: Vec<&str> = toks.iter().map(|(k, _)| k.as_str()).collect();
+    let line_start = line_start_bytes(content);
+    let root = tree.root_node();
+    let mut out = Vec::new();
+    for (a, n, occ) in matching_runs(&kinds, SYM_SEED) {
+        let lo_line = toks[a].1;
+        let hi_line = toks[a + n - 1].1;
+        if hi_line <= lo_line {
+            continue;
+        }
+        let lo_byte = line_start[lo_line - 1];
+        let hi_byte = line_start.get(hi_line).copied().unwrap_or(content.len());
+        let params = free_vars(root, content, lo_byte, hi_byte);
+        out.push(Proposal {
+            lo: lo_line, hi: hi_line, occurrences: occ,
+            gain: n * occ.saturating_sub(1),
+            params,
+        });
+    }
+    out.sort_by(|x, y| y.gain.cmp(&x.gain));
+    out
+}
+
+fn symbol_shape_tokens(
+    tree: &tree_sitter::Tree,
+    content: &str,
+    sym_at: &HashMap<(i32, i32), &str>,
+) -> Vec<(String, usize)> {
+    let mut out = Vec::new();
+    let mut stack = vec![tree.root_node()];
+    while let Some(n) = stack.pop() {
+        if n.child_count() == 0 {
+            let txt = &content[n.start_byte()..n.end_byte()];
+            if txt.starts_with("//") || txt.starts_with("/*") {
+                continue;
+            }
+            let pos = n.start_position();
+            let k = match n.kind() {
+                "identifier" | "metavariable" => {
+                    match sym_at.get(&(pos.row as i32, pos.column as i32)) {
+                        // opaque local monikers carry no entity info -> fold to ID
+                        Some(s) if !s.starts_with("local ") => s.to_string(),
+                        _ => "ID".to_string(),
+                    }
+                }
+                kk if kk.ends_with("_literal") => "LIT".to_string(),
+                kk => kk.to_string(),
+            };
+            out.push((k, pos.row + 1));
+        } else {
+            let mut cur = n.walk();
+            let ch: Vec<Node> = n.children(&mut cur).collect();
+            for c in ch.into_iter().rev() {
+                stack.push(c);
+            }
+        }
+    }
+    out
+}
+
 fn is_keyword(s: &str) -> bool {
     matches!(s,
         "self" | "Self" | "super" | "crate" | "return" | "if" | "else" | "for"

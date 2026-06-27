@@ -25,6 +25,12 @@ pub struct ScipRows {
     /// disambiguators (`foo#1`) are stripped. Drives the missing-type /
     /// context-object / param-fan-out recipes.
     pub locals: Vec<(String, String)>,
+    /// Per-occurrence spans `(file, line0, col0, symbol)`, 0-based, every
+    /// occurrence (def + ref, local + global). The CST⨝symbol join: lets a
+    /// detector normalize each identifier to its resolved symbol (or `ID` for
+    /// opaque locals) instead of erasing all names uniformly — the basis of the
+    /// symbol/type-shape clone kernel.
+    pub occ_spans: Vec<(String, i32, i32, String)>,
 }
 
 pub fn index_path(root: &Path) -> Option<PathBuf> {
@@ -80,10 +86,14 @@ pub fn rows(index: &Index) -> ScipRows {
     let mut edges: HashSet<(String, String)> = HashSet::new();
     let mut fn_edges: HashSet<(String, String)> = HashSet::new();
     let mut locals: HashSet<(String, String)> = HashSet::new();
+    let mut occ_spans: HashSet<(String, i32, i32, String)> = HashSet::new();
     let disp_names = display_names(index);
     for doc in &index.documents {
         let fns = fn_defs.get(&doc.relative_path);
         for occ in &doc.occurrences {
+            if let Some(((sl, sc), (_el, _ec))) = parse_range(&occ.range) {
+                occ_spans.insert((doc.relative_path.clone(), sl, sc, occ.symbol.clone()));
+            }
             // Local symbols (params + lets) are filtered from the main path by
             // `usable_symbol`. They get their own collection: a local DEF is the
             // binding site; attribute it to the enclosing fn via the same
@@ -133,6 +143,7 @@ pub fn rows(index: &Index) -> ScipRows {
         fn_edges: fn_edges.into_iter().collect(),
         callee_types: callee_types.into_iter().collect(),
         locals: locals.into_iter().collect(),
+        occ_spans: occ_spans.into_iter().collect(),
     };
     rows.defs.sort();
     rows.refs.sort();
@@ -140,6 +151,7 @@ pub fn rows(index: &Index) -> ScipRows {
     rows.fn_edges.sort();
     rows.callee_types.sort();
     rows.locals.sort();
+    rows.occ_spans.sort();
     rows
 }
 
