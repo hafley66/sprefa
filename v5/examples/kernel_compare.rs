@@ -38,9 +38,16 @@ fn main() {
         Ok(rows) => {
             let rel = path.strip_prefix(&format!("{}/", env!("CARGO_MANIFEST_DIR")))
                 .unwrap_or(&path).to_string();
+            let suffix = std::path::Path::new(&rel)
+                .components().rev().take(4)
+                .collect::<Vec<_>>()
+                .into_iter().rev()
+                .collect::<std::path::PathBuf>()
+                .to_string_lossy().to_string();
             let spans: Vec<(i32, i32, &str)> = rows.occ_spans.iter()
-                .filter(|(f, _, _, _)| f == &rel)
+                .filter(|(f, _, _, _)| f == &rel || f.ends_with(&suffix))
                 .map(|(_, l, c, s)| (*l, *c, s.as_str())).collect();
+            eprintln!("[scip] {} occurrences matched (suffix={})", spans.len(), suffix);
             let s = sprefa_v5::propose::symbol_shape_proposals(&content, &spans);
             let c = sprefa_v5::propose::call_seq_proposals(&content, &spans);
             (s, c)
