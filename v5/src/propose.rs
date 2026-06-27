@@ -308,6 +308,110 @@ fn symbol_shape_tokens(
     out
 }
 
+/// Tree-iso (graph-isomorphism) kernel. Each statement's full CST subtree is
+/// Merkle-hashed: `hash(kind, [child_hashes…])`. Identifiers and literals are
+/// anonymous holes (constant hash) — they are EDGES in the dependency graph,
+/// not nodes; graph isomorphism matches node types and edge structure, not
+/// edge labels. Two statements match iff their expression shape is identical
+/// (same call arity, same field-access depth, same branch structure), regardless
+/// of the names involved. Finds duplicated statement-sequences the leaf-stream
+/// kernels miss (the leaf stream flattens tree depth, losing grouping).
+const TREE_SEED: usize = 3;
+
+pub fn tree_shape_proposals(content: &str) -> Vec<Proposal> {
+    let mut parser = Parser::new();
+    if parser.set_language(&lang()).is_err() {
+        return Vec::new();
+    }
+    let Some(tree) = parser.parse(content, None) else {
+        return Vec::new();
+    };
+    let stmts = block_statements(&tree, content);
+    let hashes: Vec<u64> = stmts.iter().map(|(h, _, _)| *h).collect();
+    let line_start = line_start_bytes(content);
+    let root = tree.root_node();
+    let mut out = Vec::new();
+    for (a, n, occ) in matching_runs(&hashes, TREE_SEED) {
+        let lo_line = stmts[a].1;
+        let hi_line = stmts[a + n - 1].2;
+        if hi_line <= lo_line {
+            continue;
+        }
+        let lo_byte = line_start[lo_line - 1];
+        let hi_byte = line_start.get(hi_line).copied().unwrap_or(content.len());
+        let params = free_vars(root, content, lo_byte, hi_byte);
+        out.push(Proposal {
+            lo: lo_line,
+            hi: hi_line,
+            occurrences: occ,
+            gain: (hi_line - lo_line + 1) * occ.saturating_sub(1),
+            params,
+        });
+    }
+    out.sort_by(|x, y| y.gain.cmp(&x.gain));
+    out
+}
+
+/// Per-statement Merkle hash for every direct named child of any `block` node.
+/// `(hash, start_line, end_line)` all 1-based. Collected from ALL blocks
+/// (including nested) and sorted into source order so matching_runs sees a
+/// faithful statement sequence. Braces are excluded (named_children skips
+/// anonymous tokens); comments are excluded by kind.
+fn block_statements(tree: &tree_sitter::Tree, src: &str) -> Vec<(u64, usize, usize)> {
+    let mut out = Vec::new();
+    let mut stack = vec![tree.root_node()];
+    while let Some(n) = stack.pop() {
+        let mut cur = n.walk();
+        let children: Vec<Node> = n.named_children(&mut cur).collect();
+        if n.kind() == "block" {
+            for child in &children {
+                let k = child.kind();
+                if k == "line_comment" || k == "block_comment" {
+                    continue;
+                }
+                let h = subtree_hash(*child, src);
+                let lo = child.start_position().row + 1;
+                let hi = child.end_position().row + 1;
+                out.push((h, lo, hi));
+            }
+        }
+        for c in children.into_iter().rev() {
+            stack.push(c);
+        }
+    }
+    out.sort_by_key(|(_, lo, _)| *lo);
+    out
+}
+
+/// Recursive Merkle hash of a CST subtree. Leaf identifiers → anonymous hole
+/// (1), leaf literals → anonymous hole (2); all other leaves hash their kind;
+/// interior nodes hash `kind ⨁ child_hashes`. Comments are skipped entirely
+/// (do not contribute to the parent hash) so two statements differing only in
+/// trailing comments hash identically.
+fn subtree_hash(node: Node, src: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    match node.kind() {
+        "identifier" | "metavariable" => {
+            1u64.hash(&mut h);
+        }
+        k if k.ends_with("_literal") => {
+            2u64.hash(&mut h);
+        }
+        k => {
+            k.hash(&mut h);
+            let mut cur = node.walk();
+            for child in node.children(&mut cur) {
+                let ck = child.kind();
+                if ck != "line_comment" && ck != "block_comment" {
+                    subtree_hash(child, src).hash(&mut h);
+                }
+            }
+        }
+    }
+    h.finish()
+}
+
 fn is_keyword(s: &str) -> bool {
     matches!(s,
         "self" | "Self" | "super" | "crate" | "return" | "if" | "else" | "for"

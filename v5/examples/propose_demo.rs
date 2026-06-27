@@ -23,6 +23,7 @@ fn main() {
 
     let verbatim = sprefa_v5::propose::extract_proposals(&content);
     let ast = sprefa_v5::propose::ast_shape_proposals(&content);
+    let tree = sprefa_v5::propose::tree_shape_proposals(&content);
 
     // symbol-shape needs the SCIP index; resolve it the same way the engine does.
     let repo_root = format!("{}/..", env!("CARGO_MANIFEST_DIR"));
@@ -45,12 +46,13 @@ fn main() {
         }
     };
 
-    println!("== {} ==\n   verbatim (Type-1):        {} blocks\n   ast-shape (Type-2):       {} blocks\n   symbol-shape (Type-2+sem): {} blocks\n",
-             base, verbatim.len(), ast.len(), sym_count);
+    println!("== {} ==\n   verbatim (Type-1):        {} blocks\n   ast-shape (Type-2):       {} blocks\n   tree-iso (graph-iso):     {} blocks\n   symbol-shape (Type-2+sem): {} blocks\n",
+             base, verbatim.len(), ast.len(), tree.len(), sym_count);
 
     let shown = match kernel {
         "verbatim" => &verbatim,
         "ast" => &ast,
+        "tree" => &tree,
         _ => &sym,
     };
     if shown.is_empty() {
