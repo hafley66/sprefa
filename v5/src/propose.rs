@@ -326,8 +326,8 @@ pub fn tree_shape_proposals(content: &str) -> Vec<Proposal> {
     let Some(tree) = parser.parse(content, None) else {
         return Vec::new();
     };
-    let stmts = block_statements(&tree, content);
-    let hashes: Vec<u64> = stmts.iter().map(|(h, _, _)| *h).collect();
+    let stmts = statement_ranges(&tree);
+    let hashes: Vec<u64> = stmts.iter().map(|(n, _, _)| subtree_hash(*n, content)).collect();
     let line_start = line_start_bytes(content);
     let root = tree.root_node();
     let mut out = Vec::new();
@@ -357,7 +357,7 @@ pub fn tree_shape_proposals(content: &str) -> Vec<Proposal> {
 /// (including nested) and sorted into source order so matching_runs sees a
 /// faithful statement sequence. Braces are excluded (named_children skips
 /// anonymous tokens); comments are excluded by kind.
-fn block_statements(tree: &tree_sitter::Tree, src: &str) -> Vec<(u64, usize, usize)> {
+fn statement_ranges<'a>(tree: &'a tree_sitter::Tree) -> Vec<(Node<'a>, usize, usize)> {
     let mut out = Vec::new();
     let mut stack = vec![tree.root_node()];
     while let Some(n) = stack.pop() {
@@ -369,10 +369,9 @@ fn block_statements(tree: &tree_sitter::Tree, src: &str) -> Vec<(u64, usize, usi
                 if k == "line_comment" || k == "block_comment" {
                     continue;
                 }
-                let h = subtree_hash(*child, src);
                 let lo = child.start_position().row + 1;
                 let hi = child.end_position().row + 1;
-                out.push((h, lo, hi));
+                out.push((*child, lo, hi));
             }
         }
         for c in children.into_iter().rev() {
@@ -432,7 +431,7 @@ pub fn call_seq_proposals(content: &str, occ_spans: &[(i32, i32, &str)]) -> Vec<
     let Some(tree) = parser.parse(content, None) else {
         return Vec::new();
     };
-    let stmts = block_statements(&tree, content);
+    let stmts = statement_ranges(&tree);
 
     let mut syms_by_line: HashMap<i32, Vec<&str>> = HashMap::new();
     for &(l, _c, s) in occ_spans {
@@ -483,6 +482,80 @@ pub fn call_seq_proposals(content: &str, occ_spans: &[(i32, i32, &str)]) -> Vec<
     }
     out.sort_by(|x, y| y.gain.cmp(&x.gain));
     out
+}
+
+/// CFG-shape (control-flow topology) kernel. Each statement is hashed by its
+/// control-flow skeleton: the pre-order sequence of branch/loop node kinds
+/// (if/for/while/loop/match/match_arm/break/continue/return) found in its
+/// subtree. Two statements match iff they have the same control-flow rhythm.
+/// matching_runs then finds blocks whose consecutive statements share the same
+/// branching topology.
+///
+/// Unlike tree-iso (which hashes the FULL subtree including expressions), this
+/// collapses body content to anonymous operations. `if cond { foo(bar); }` and
+/// `if guard { baz(qux); }` hash the same — same branch shape, different ops.
+/// Catches "same algorithm structure" (iterate-then-conditional-then-iterate)
+/// that expression-aware kernels miss when the operations differ.
+const CFG_SEED: usize = 3;
+
+pub fn cfg_shape_proposals(content: &str) -> Vec<Proposal> {
+    let mut parser = Parser::new();
+    if parser.set_language(&lang()).is_err() {
+        return Vec::new();
+    }
+    let Some(tree) = parser.parse(content, None) else {
+        return Vec::new();
+    };
+    let stmts = statement_ranges(&tree);
+    let hashes: Vec<u64> = stmts.iter().map(|(n, _, _)| cfg_skeleton_hash(*n)).collect();
+    let line_start = line_start_bytes(content);
+    let root = tree.root_node();
+    let mut out = Vec::new();
+    for (a, n, occ) in matching_runs(&hashes, CFG_SEED) {
+        let lo_line = stmts[a].1;
+        let hi_line = stmts[a + n - 1].2;
+        if hi_line <= lo_line {
+            continue;
+        }
+        let lo_byte = line_start[lo_line - 1];
+        let hi_byte = line_start.get(hi_line).copied().unwrap_or(content.len());
+        let params = free_vars(root, content, lo_byte, hi_byte);
+        out.push(Proposal {
+            lo: lo_line,
+            hi: hi_line,
+            occurrences: occ,
+            gain: (hi_line - lo_line + 1) * occ.saturating_sub(1),
+            params,
+        });
+    }
+    out.sort_by(|x, y| y.gain.cmp(&x.gain));
+    out
+}
+
+/// Hash of a statement's control-flow skeleton. Walks the subtree and collects
+/// control-flow node kinds in source order (pre-order DFS), then hashes the
+/// sequence. `match_arm` is included so different arm counts produce different
+/// hashes.
+fn cfg_skeleton_hash(node: Node) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let mut stack = vec![node];
+    while let Some(n) = stack.pop() {
+        match n.kind() {
+            "if_expression" | "for_expression" | "while_expression" | "loop_expression"
+            | "match_expression" | "match_arm" | "break_expression"
+            | "continue_expression" | "return_expression" => {
+                n.kind().hash(&mut h);
+            }
+            _ => {}
+        }
+        let mut cur = n.walk();
+        let children: Vec<Node> = n.children(&mut cur).collect();
+        for c in children.into_iter().rev() {
+            stack.push(c);
+        }
+    }
+    h.finish()
 }
 
 fn is_keyword(s: &str) -> bool {
