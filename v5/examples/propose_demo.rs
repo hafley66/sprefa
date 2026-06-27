@@ -25,34 +25,35 @@ fn main() {
     let ast = sprefa_v5::propose::ast_shape_proposals(&content);
     let tree = sprefa_v5::propose::tree_shape_proposals(&content);
 
-    // symbol-shape needs the SCIP index; resolve it the same way the engine does.
+    // symbol-shape + call-seq need the SCIP index; resolve it the same way the engine does.
     let repo_root = format!("{}/..", env!("CARGO_MANIFEST_DIR"));
     let idx = std::path::PathBuf::from(env::var("SPREFA_SCIP_INDEX")
         .unwrap_or_else(|_| format!("{repo_root}/index.scip")));
-    let (sym_count, sym) = match sprefa_v5::scip_import::load(&idx) {
+    let (sym_count, sym, call_count, call) = match sprefa_v5::scip_import::load(&idx) {
         Ok(rows) => {
-            // SCIP paths are relative to the v5 root (src/engine.rs); map our path.
             let rel = path.strip_prefix(&format!("{}/", env!("CARGO_MANIFEST_DIR")))
                 .unwrap_or(&path).to_string();
             let spans: Vec<(i32, i32, &str)> = rows.occ_spans.iter()
                 .filter(|(f, _, _, _)| f == &rel)
                 .map(|(_, l, c, s)| (*l, *c, s.as_str())).collect();
-            let count = sprefa_v5::propose::symbol_shape_proposals(&content, &spans);
-            (count.len(), count)
+            let s = sprefa_v5::propose::symbol_shape_proposals(&content, &spans);
+            let c = sprefa_v5::propose::call_seq_proposals(&content, &spans);
+            (s.len(), s, c.len(), c)
         }
         Err(e) => {
-            eprintln!("[symbol] no SCIP index at {}: {e}; skipping symbol kernel", idx.display());
-            (0, Vec::new())
+            eprintln!("[scip] no index at {}: {e}; skipping symbol + call-seq kernels", idx.display());
+            (0, Vec::new(), 0, Vec::new())
         }
     };
 
-    println!("== {} ==\n   verbatim (Type-1):        {} blocks\n   ast-shape (Type-2):       {} blocks\n   tree-iso (graph-iso):     {} blocks\n   symbol-shape (Type-2+sem): {} blocks\n",
-             base, verbatim.len(), ast.len(), tree.len(), sym_count);
+    println!("== {} ==\n   verbatim (Type-1):        {} blocks\n   ast-shape (Type-2):       {} blocks\n   tree-iso (graph-iso):     {} blocks\n   symbol-shape (Type-2+sem): {} blocks\n   call-seq (dataflow):      {} blocks\n",
+             base, verbatim.len(), ast.len(), tree.len(), sym_count, call_count);
 
     let shown = match kernel {
         "verbatim" => &verbatim,
         "ast" => &ast,
         "tree" => &tree,
+        "call" => &call,
         _ => &sym,
     };
     if shown.is_empty() {

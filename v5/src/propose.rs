@@ -412,6 +412,79 @@ fn subtree_hash(node: Node, src: &str) -> u64 {
     h.finish()
 }
 
+/// Call-seq (dataflow fingerprint) kernel. Each statement is hashed by the
+/// SORTED SET of resolved non-local symbols it references (fns, methods, types,
+/// globals — everything SCIP resolves, minus opaque locals). Two statements
+/// match iff they reference the same entities; matching_runs then finds blocks
+/// whose consecutive statements touch the same symbols in the same order.
+///
+/// This is the coarsest semantic kernel: it ignores structure entirely (a
+/// `foo(bar)` and `if bar { foo() }` hash the same if both reference {foo, bar}).
+/// Catches repeated dataflow patterns — same API surface used in the same
+/// sequence — that syntactic kernels miss when the surrounding code differs.
+const CALL_SEED: usize = 3;
+
+pub fn call_seq_proposals(content: &str, occ_spans: &[(i32, i32, &str)]) -> Vec<Proposal> {
+    let mut parser = Parser::new();
+    if parser.set_language(&lang()).is_err() {
+        return Vec::new();
+    }
+    let Some(tree) = parser.parse(content, None) else {
+        return Vec::new();
+    };
+    let stmts = block_statements(&tree, content);
+
+    let mut syms_by_line: HashMap<i32, Vec<&str>> = HashMap::new();
+    for &(l, _c, s) in occ_spans {
+        if !s.starts_with("local ") {
+            syms_by_line.entry(l).or_default().push(s);
+        }
+    }
+
+    let hashes: Vec<u64> = stmts
+        .iter()
+        .map(|(_, lo, hi)| {
+            let mut syms: Vec<&str> = Vec::new();
+            for line in (*lo as i32 - 1)..=(*hi as i32 - 1) {
+                if let Some(ss) = syms_by_line.get(&line) {
+                    syms.extend_from_slice(ss);
+                }
+            }
+            syms.sort();
+            syms.dedup();
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            for s in &syms {
+                s.hash(&mut h);
+            }
+            h.finish()
+        })
+        .collect();
+
+    let line_start = line_start_bytes(content);
+    let root = tree.root_node();
+    let mut out = Vec::new();
+    for (a, n, occ) in matching_runs(&hashes, CALL_SEED) {
+        let lo_line = stmts[a].1;
+        let hi_line = stmts[a + n - 1].2;
+        if hi_line <= lo_line {
+            continue;
+        }
+        let lo_byte = line_start[lo_line - 1];
+        let hi_byte = line_start.get(hi_line).copied().unwrap_or(content.len());
+        let params = free_vars(root, content, lo_byte, hi_byte);
+        out.push(Proposal {
+            lo: lo_line,
+            hi: hi_line,
+            occurrences: occ,
+            gain: (hi_line - lo_line + 1) * occ.saturating_sub(1),
+            params,
+        });
+    }
+    out.sort_by(|x, y| y.gain.cmp(&x.gain));
+    out
+}
+
 fn is_keyword(s: &str) -> bool {
     matches!(s,
         "self" | "Self" | "super" | "crate" | "return" | "if" | "else" | "for"
