@@ -95,7 +95,7 @@ cc = "1"
 # debuginfo that bloats the link step (the per-test-crate link is the long pole
 # on macOS), keeps panic line numbers. Full strip = debug = 0.
 [profile.dev]
-debug = 1
+debug = 0
 
 [profile.test]
-debug = 1
+debug = 0
