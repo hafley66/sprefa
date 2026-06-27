@@ -710,4 +710,133 @@ mod tests {
             assert_eq!(got, exp, "fn {name}: got {:?} expected {:?}", got, exp);
         }
     }
+
+    // --- matching_runs (kernel-agnostic matcher) ---
+
+    #[test]
+    fn matching_runs_finds_exact_dup() {
+        let items = ["a", "b", "c", "x", "a", "b", "c"];
+        let runs = matching_runs(&items, 2);
+        assert!(
+            runs.iter().any(|&(s, n, occ)| s == 0 && n == 3 && occ == 2),
+            "expected (0,3,2) in {:?}", runs
+        );
+    }
+
+    #[test]
+    fn matching_runs_drops_subsumed() {
+        let items = ["a", "b", "c", "d", "a", "b", "c", "d"];
+        let runs = matching_runs(&items, 2);
+        assert_eq!(runs.len(), 1, "one maximal run, got {:?}", runs);
+        assert_eq!(runs[0], (0, 4, 2));
+    }
+
+    #[test]
+    fn matching_runs_requires_min_distinct() {
+        let items = ["x", "x", "x", "x", "x", "x"];
+        let runs = matching_runs(&items, 2);
+        assert!(runs.is_empty(), "trivial repetition filtered: {:?}", runs);
+    }
+
+    // --- subtree_hash (graph-isomorphism hasher) ---
+
+    fn first_node_of_kind<'a>(tree: &'a tree_sitter::Tree, kind: &str) -> Node<'a> {
+        let mut stack = vec![tree.root_node()];
+        while let Some(n) = stack.pop() {
+            if n.kind() == kind {
+                return n;
+            }
+            let mut cur = n.walk();
+            for c in n.children(&mut cur) {
+                stack.push(c);
+            }
+        }
+        panic!("no {kind} found in tree");
+    }
+
+    #[test]
+    fn subtree_hash_erases_identifier_names() {
+        let mut parser = Parser::new();
+        parser.set_language(&lang()).unwrap();
+        let s1 = "fn f() { foo(bar); }";
+        let s2 = "fn f() { baz(qux); }";
+        let t1 = parser.parse(s1, None).unwrap();
+        let t2 = parser.parse(s2, None).unwrap();
+        let h1 = subtree_hash(first_node_of_kind(&t1, "call_expression"), s1);
+        let h2 = subtree_hash(first_node_of_kind(&t2, "call_expression"), s2);
+        assert_eq!(h1, h2, "same structure, different names must hash equal");
+    }
+
+    #[test]
+    fn subtree_hash_distinguishes_structure() {
+        let mut parser = Parser::new();
+        parser.set_language(&lang()).unwrap();
+        let s1 = "fn f() { foo(bar); }";
+        let s2 = "fn f() { foo.bar; }";
+        let t1 = parser.parse(s1, None).unwrap();
+        let t2 = parser.parse(s2, None).unwrap();
+        let h1 = subtree_hash(first_node_of_kind(&t1, "call_expression"), s1);
+        let h2 = subtree_hash(first_node_of_kind(&t2, "field_expression"), s2);
+        assert_ne!(h1, h2, "call vs field-access must hash differently");
+    }
+
+    // --- verbatim kernel ---
+
+    #[test]
+    fn verbatim_finds_exact_dup_block() {
+        let src = "fn a() {\n    let x = one();\n    let y = two();\n    let z = three();\n    foo(x);\n    bar(y);\n    baz(z);\n}\nfn b() {\n    let x = one();\n    let y = two();\n    let z = three();\n    foo(x);\n    bar(y);\n    baz(z);\n}\n";
+        let p = extract_proposals(src);
+        assert!(p.iter().any(|p| p.occurrences >= 2), "exact dup found: {:?}", p);
+    }
+
+    // --- ast-shape kernel ---
+
+    #[test]
+    fn ast_shape_finds_renamed_var_dup() {
+        let src = "fn alpha() {\n    let result = compute(input);\n    map.insert(key, result);\n    return verify(result);\n}\nfn beta() {\n    let value = compute(input);\n    map.insert(key, value);\n    return verify(value);\n}\n";
+        let p = ast_shape_proposals(src);
+        assert!(!p.is_empty(), "renamed-var dup caught by AST shape");
+    }
+
+    // --- tree-iso kernel ---
+
+    #[test]
+    fn tree_shape_finds_renamed_var_dup() {
+        let src = "fn alpha() {\n    let result = compute(input);\n    map.insert(key, result);\n    return verify(result);\n}\nfn beta() {\n    let value = compute(input);\n    map.insert(key, value);\n    return verify(value);\n}\n";
+        let p = tree_shape_proposals(src);
+        assert!(!p.is_empty(), "tree-iso catches renamed-var structural dup");
+        assert!(p.iter().any(|p| p.occurrences >= 2));
+    }
+
+    #[test]
+    fn tree_shape_rejects_different_structure() {
+        let src = "fn alpha() {\n    let result = compute(input);\n    map.insert(key, result);\n    return verify(result);\n}\nfn beta() {\n    if input.is_valid() {\n        handle(input);\n    }\n}\n";
+        let p = tree_shape_proposals(src);
+        assert!(p.is_empty(), "structurally different blocks do not match: {:?}", p);
+    }
+
+    // --- call-seq kernel ---
+
+    #[test]
+    fn call_seq_finds_matching_symbol_pattern() {
+        let src = "fn a() {\n    x();\n    y();\n    z();\n}\nfn b() {\n    x();\n    y();\n    z();\n}\n";
+        let spans: Vec<(i32, i32, &str)> = vec![
+            (1, 4, "pkg/x()."), (2, 4, "pkg/y()."), (3, 4, "pkg/z()."),
+            (6, 4, "pkg/x()."), (7, 4, "pkg/y()."), (8, 4, "pkg/z()."),
+        ];
+        let p = call_seq_proposals(src, &spans);
+        assert_eq!(p.len(), 1, "one matching symbol-set block: {:?}", p);
+        assert_eq!(p[0].occurrences, 2);
+    }
+
+    #[test]
+    fn call_seq_rejects_different_symbols() {
+        let src = "fn a() {\n    x();\n    y();\n    z();\n}\nfn b() {\n    p();\n    q();\n    r();\n}\n";
+        let spans: Vec<(i32, i32, &str)> = vec![
+            (1, 4, "pkg/x()."), (2, 4, "pkg/y()."), (3, 4, "pkg/z()."),
+            (6, 4, "pkg/p()."), (7, 4, "pkg/q()."), (8, 4, "pkg/r()."),
+        ];
+        let p = call_seq_proposals(src, &spans);
+        assert!(p.is_empty(), "different symbols do not match: {:?}", p);
+    }
 }
