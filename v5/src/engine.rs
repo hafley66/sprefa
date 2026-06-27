@@ -123,7 +123,12 @@ const DOC_RELS: [&str; 2] = ["doc_node", "doc_ref"];
 
 /// Compiler-backed SCIP importer. `scip_edge` is file-to-file dependency data
 /// extracted from definition/reference occurrences in an existing index.scip.
-const SCIP_RELS: [&str; 3] = ["scip_def", "scip_ref", "scip_edge"];
+/// `scip_fn_edge` is the function-level analogue (caller_fn → callee moniker),
+/// resolved by RA and attributed via the reference's enclosing fn-def range.
+/// `scip_callee_type` maps each method moniker to its receiver type (parsed
+/// from the `impl#[Type]` segment), so dl can read both a fn's own type and its
+/// callees' types from one relation — the basis for feature-envy detection.
+const SCIP_RELS: [&str; 6] = ["scip_def", "scip_ref", "scip_edge", "scip_fn_edge", "scip_callee_type", "scip_local"];
 
 /// Worktree diff relation. `changed(path)` holds every path `git status` says
 /// differs from HEAD in the self repo: modified, added, renamed (new side),
@@ -316,6 +321,9 @@ fn scip_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "scip_def".into(), cols: vec![c("symbol", Type::Text), c("file", Type::Path)] },
         RelDecl { name: "scip_ref".into(), cols: vec![c("file", Type::Path), c("symbol", Type::Text), c("def_file", Type::Path)] },
         RelDecl { name: "scip_edge".into(), cols: vec![c("src", Type::Path), c("dst", Type::Path)] },
+        RelDecl { name: "scip_fn_edge".into(), cols: vec![c("caller", Type::Text), c("callee", Type::Text)] },
+        RelDecl { name: "scip_callee_type".into(), cols: vec![c("sym", Type::Text), c("type", Type::Text)] },
+        RelDecl { name: "scip_local".into(), cols: vec![c("fn", Type::Text), c("name", Type::Text)] },
     ]
 }
 
@@ -670,6 +678,36 @@ fn check_stratification(derived_rules: &[&Rule], closures: &HashMap<String, Stri
                full closure; query '{}' directly instead.", r.head.rel, name, name, name);
     }
     Ok(())
+}
+
+/// Split the non-closure derived rules into seeded-closure rules (evaluated by
+/// seeded BFS in the query phase) and ordinary derived rules (lowered to SQL),
+/// then reject any ordinary derived rule that reads a seeded-closure head: that
+/// head is filled only in the query phase, so a tier-0 rule reading it would
+/// see it empty. Hoisted out of `tick` and `tick_paths`, which carried
+/// identical copies of this split + validation loop (surfaced by the
+/// repeated `seed_rules` / `derived_rules` locals).
+fn split_seed_and_derived<'a>(
+    all_derived: &[&'a Rule],
+    closures: &HashMap<String, String>,
+) -> Result<(Vec<(&'a Rule, ClosureSeed)>, Vec<&'a Rule>)> {
+    let seed_rules: Vec<(&Rule, ClosureSeed)> = all_derived.iter().copied()
+        .filter_map(|r| closure_seed_of(r, closures).map(|cs| (r, cs))).collect();
+    let derived_rules: Vec<&Rule> = all_derived.iter().copied()
+        .filter(|r| closure_seed_of(r, closures).is_none()).collect();
+    let seed_heads: HashSet<&str> = seed_rules.iter().map(|(r, _)| r.head.rel.as_str()).collect();
+    for r in &derived_rules {
+        for it in &r.body {
+            if let BodyItem::Pos(a) | BodyItem::Neg(a) = it {
+                if seed_heads.contains(a.rel.as_str()) {
+                    bail!("relation '{}' is seeded from a closure and cannot feed another \
+                           derived rule ('{}') in the same tick; query it directly.",
+                          a.rel, r.head.rel);
+                }
+            }
+        }
+    }
+    Ok((seed_rules, derived_rules))
 }
 
 // Auto-index. A derived rule joins relations on a shared variable; that variable
@@ -1604,24 +1642,7 @@ impl Engine {
         let scc_rules: Vec<&Rule> = rules.iter().copied()
             .filter(|r| r.scc_edge().is_some()).collect();
         check_stratification(&all_derived, &closures)?;
-        let seed_rules: Vec<(&Rule, ClosureSeed)> = all_derived.iter().copied()
-            .filter_map(|r| closure_seed_of(r, &closures).map(|cs| (r, cs))).collect();
-        let derived_rules: Vec<&Rule> = all_derived.iter().copied()
-            .filter(|r| closure_seed_of(r, &closures).is_none()).collect();
-        // A seeded-closure head must not feed another derived rule (it is filled
-        // only in the query phase, so a tier-0 rule reading it would see it empty).
-        let seed_heads: HashSet<&str> = seed_rules.iter().map(|(r, _)| r.head.rel.as_str()).collect();
-        for r in &derived_rules {
-            for it in &r.body {
-                if let BodyItem::Pos(a) | BodyItem::Neg(a) = it {
-                    if seed_heads.contains(a.rel.as_str()) {
-                        bail!("relation '{}' is seeded from a closure and cannot feed another \
-                               derived rule ('{}') in the same tick; query it directly.",
-                              a.rel, r.head.rel);
-                    }
-                }
-            }
-        }
+        let (seed_rules, derived_rules) = split_seed_and_derived(&all_derived, &closures)?;
 
         // source rels are heads of source rules; they get incremental retraction.
         let mut source_rels: Vec<String> = Vec::new();
@@ -1805,22 +1826,7 @@ impl Engine {
         let scc_rules: Vec<&Rule> = rules.iter().copied()
             .filter(|r| r.scc_edge().is_some()).collect();
         check_stratification(&all_derived, &closures)?;
-        let seed_rules: Vec<(&Rule, ClosureSeed)> = all_derived.iter().copied()
-            .filter_map(|r| closure_seed_of(r, &closures).map(|cs| (r, cs))).collect();
-        let derived_rules: Vec<&Rule> = all_derived.iter().copied()
-            .filter(|r| closure_seed_of(r, &closures).is_none()).collect();
-        let seed_heads: HashSet<&str> = seed_rules.iter().map(|(r, _)| r.head.rel.as_str()).collect();
-        for r in &derived_rules {
-            for it in &r.body {
-                if let BodyItem::Pos(a) | BodyItem::Neg(a) = it {
-                    if seed_heads.contains(a.rel.as_str()) {
-                        bail!("relation '{}' is seeded from a closure and cannot feed another \
-                               derived rule ('{}') in the same tick; query it directly.",
-                              a.rel, r.head.rel);
-                    }
-                }
-            }
-        }
+        let (seed_rules, derived_rules) = split_seed_and_derived(&all_derived, &closures)?;
         let mut source_rels: Vec<String> = Vec::new();
         for r in &source_rules { if !source_rels.contains(&r.head.rel) { source_rels.push(r.head.rel.clone()); } }
         let mut derived_rels: Vec<String> = Vec::new();
@@ -3989,6 +3995,9 @@ impl Engine {
             self.refresh_rel("scip_def", &["symbol", "file"], &[])?;
             self.refresh_rel("scip_ref", &["file", "symbol", "def_file"], &[])?;
             self.refresh_rel("scip_edge", &["src", "dst"], &[])?;
+            self.refresh_rel("scip_fn_edge", &["caller", "callee"], &[])?;
+            self.refresh_rel("scip_callee_type", &["sym", "type"], &[])?;
+            self.refresh_rel("scip_local", &["fn", "name"], &[])?;
             return Ok(true);
         };
         let rows = scip_import::load(&path)?;
@@ -3996,9 +4005,18 @@ impl Engine {
         let refs: Vec<Vec<Value>> = rows.refs.iter()
             .map(|(file, sym, def)| vec![t(file), t(sym), t(def)]).collect();
         let edges: Vec<Vec<Value>> = rows.edges.iter().map(|(src, dst)| vec![t(src), t(dst)]).collect();
+        let fn_edges: Vec<Vec<Value>> = rows.fn_edges.iter()
+            .map(|(caller, callee)| vec![t(caller), t(callee)]).collect();
+        let callee_types: Vec<Vec<Value>> = rows.callee_types.iter()
+            .map(|(sym, ty)| vec![t(sym), t(ty)]).collect();
+        let locals: Vec<Vec<Value>> = rows.locals.iter()
+            .map(|(fn_, name)| vec![t(fn_), t(name)]).collect();
         self.refresh_rel("scip_def", &["symbol", "file"], &defs)?;
         self.refresh_rel("scip_ref", &["file", "symbol", "def_file"], &refs)?;
         self.refresh_rel("scip_edge", &["src", "dst"], &edges)?;
+        self.refresh_rel("scip_fn_edge", &["caller", "callee"], &fn_edges)?;
+        self.refresh_rel("scip_callee_type", &["sym", "type"], &callee_types)?;
+        self.refresh_rel("scip_local", &["fn", "name"], &locals)?;
         Ok(true)
     }
 
@@ -5306,6 +5324,125 @@ fn resolve_write_full(write_roots: &[PathBuf], p: &str) -> PathBuf {
 /// Parse one file for one source rule (no DB access); returns (rows, dropped).
 /// Safe to call in parallel: reads file content, runs extractors, builds rows.
 #[tracing::instrument(skip_all, fields(repo = repo, path = path), level = "trace")]
+/// Bind the spine id of a whole-match span (captures' min lo .. max hi) and
+/// intern the slice. Shared by the `ast` and `sg` arms of `parse_file`, which
+/// carried identical copies; extracted as the first measured refactor of the
+/// reward-validated consolidation policy (verbatim block dup → one helper).
+/// Mirrors `match`'s 5th-arg id binding. No-op when the id var is absent, the
+/// file has no content-addressed id, or the span is empty/invalid.
+fn bind_whole_match_span(
+    ext: &mut Bind,
+    idv: &Option<String>,
+    caps: &[(String, String, usize, usize)],
+    content: &str,
+    where_file: Option<spine::FileId>,
+    repo: &str,
+    path: &str,
+    where_bytes: &mut Vec<(spine::WhereBytes, String)>,
+) {
+    if let Some(idv) = idv {
+        if let Some(file) = where_file {
+            let lo = caps.iter().map(|(_, _, lo, _)| *lo).min();
+            let hi = caps.iter().map(|(_, _, _, hi)| *hi).max();
+            if let (Some(lo), Some(hi)) = (lo, hi) {
+                if hi > lo && hi <= content.len() {
+                    let text = &content[lo..hi];
+                    if !text.is_empty() {
+                        let wb = spine::WhereBytes {
+                            string: spine::StringId::of(text), file,
+                            lo: lo as u32, hi: hi as u32,
+                            ..Default::default()
+                        };
+                        ext.insert(idv.clone(), Value::Text(
+                            spine::WhereBytesId::of_located(wb, repo, path)
+                                .to_string()));
+                        where_bytes.push((spine::WhereBytes {
+                            string: spine::StringId::of(text), file,
+                            lo: lo as u32, hi: hi as u32,
+                            ..Default::default()
+                        }, text.to_string()));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// `match(regex, line, [id])` body op. For each input bind, scan every line of
+/// `content`; for each regex capture set produce an extended bind: the line
+/// number (into `line`), each named capture (into its name), and — when `id`
+/// is requested (5-arg form) — a whole-match spine id plus its span. Extracted
+/// from `parse_file`'s Match arm (iteration-2 god-fn split). `re_cache`
+/// memoizes compiled regexes across items. `push_span`'s guard (only when the
+/// file has a content-addressed id and the text is non-empty) is inlined.
+fn bind_match_op(
+    binds: &[Bind],
+    regex: &str,
+    mlv: &Option<String>,
+    idv: &Option<String>,
+    content: &str,
+    where_file: Option<spine::FileId>,
+    re_cache: &mut HashMap<String, Regex>,
+    where_bytes: &mut Vec<(spine::WhereBytes, String)>,
+    repo: &str,
+    path: &str,
+) -> Result<Vec<Bind>> {
+    if !re_cache.contains_key(regex) { re_cache.insert(regex.to_string(), Regex::new(regex)?); }
+    let re = &re_cache[regex];
+    let names: Vec<&str> = re.capture_names().flatten().collect();
+    let mut next: Vec<Bind> = Vec::new();
+    let base = content.as_ptr() as usize;
+    for b in binds {
+        for (lineno, ln) in content.lines().enumerate() {
+            let line_off = ln.as_ptr() as usize - base;
+            for caps in re.captures_iter(ln) {
+                let mut ext = b.clone();
+                if let Some(v) = mlv { ext.insert(v.clone(), Value::Int((lineno + 1) as i64)); }
+                if let Some(idv) = idv {
+                    if let Some(file) = where_file {
+                        if let Some(m0) = caps.get(0) {
+                            let text = m0.as_str();
+                            let lo = line_off + m0.start();
+                            let hi = line_off + m0.end();
+                            if !text.is_empty() {
+                                let wb = spine::WhereBytes {
+                                    string: spine::StringId::of(text), file,
+                                    lo: lo as u32, hi: hi as u32,
+                                    ..Default::default()
+                                };
+                                ext.insert(idv.clone(), Value::Text(
+                                    spine::WhereBytesId::of_located(wb, repo, path).to_string()));
+                                where_bytes.push((spine::WhereBytes {
+                                    string: spine::StringId::of(text), file,
+                                    lo: lo as u32, hi: hi as u32,
+                                    ..Default::default()
+                                }, text.to_string()));
+                            }
+                        }
+                    }
+                }
+                for n in &names {
+                    if let Some(m) = caps.name(n) {
+                        let text = m.as_str();
+                        ext.insert((*n).to_string(), Value::Text(text.to_string()));
+                        if let Some(file) = where_file {
+                            if !text.is_empty() {
+                                where_bytes.push((spine::WhereBytes {
+                                    string: spine::StringId::of(text), file,
+                                    lo: (line_off + m.start()) as u32, hi: (line_off + m.end()) as u32,
+                                    ..Default::default()
+                                }, text.to_string()));
+                            }
+                        }
+                    }
+                }
+                next.push(ext);
+            }
+        }
+    }
+    Ok(next)
+}
+
 fn parse_file(
     rule: &Rule, repo: &str, path: &str, rev: &str, hash: &str,
     root: &Path, rels: &Rels, rev_index: &HashSet<(String, String, String)>,
@@ -5341,6 +5478,14 @@ fn parse_file(
             }
         }
     };
+    let bind_captures = |ext: &mut Bind,
+                         caps: &[(String, String, usize, usize)],
+                         where_bytes: &mut Vec<(spine::WhereBytes, String)>| {
+        for (n, t, lo, hi) in caps {
+            ext.insert(n.clone(), Value::Text(t.clone()));
+            push_span(t, *lo, *hi, where_bytes);
+        }
+    };
     let head_meta = rels.get(&rule.head.rel)
         .ok_or_else(|| anyhow::anyhow!("unknown head relation {}", rule.head.rel))?;
     let mut re_cache: HashMap<String, Regex> = HashMap::new();
@@ -5359,58 +5504,9 @@ fn parse_file(
         match item {
             BodyItem::Match { regex, line, id, .. } => {
                 let mlv = opt_var(line)?;
-                // The optional 5th arg is the whole-match span's spine id; joins
-                // `ref(id, _, _, lo, hi)` to feed `gen(:mode, p, lo, hi, ...)`.
                 let idv = id.as_ref().map(var_of).transpose()?;
-                if !re_cache.contains_key(regex) { re_cache.insert(regex.clone(), Regex::new(regex)?); }
-                let re = &re_cache[regex];
-                let names: Vec<&str> = re.capture_names().flatten().collect();
-                let mut next: Vec<Bind> = Vec::new();
-                let base = content.as_ptr() as usize;
-                for b in &binds {
-                    for (lineno, ln) in content.lines().enumerate() {
-                        let line_off = ln.as_ptr() as usize - base;
-                        for caps in re.captures_iter(ln) {
-                            let mut ext = b.clone();
-                            if let Some(v) = &mlv { ext.insert(v.clone(), Value::Int((lineno + 1) as i64)); }
-                            // Bind the whole-match spine id and push the span, but
-                            // only when `id` is requested (5-arg form): the id is
-                            // the same WhereBytesId `insert_spine_where_bytes`
-                            // assigns, so `ref(id, _, f, lo, hi)` resolves to this
-                            // exact match. The 4-arg form keeps named-capture-only
-                            // spine behavior, so existing rules are unchanged.
-                            if let Some(idv) = &idv {
-                                if let Some(file) = where_file {
-                                    if let Some(m0) = caps.get(0) {
-                                        let text = m0.as_str();
-                                        let lo = line_off + m0.start();
-                                        let hi = line_off + m0.end();
-                                        if !text.is_empty() {
-                                            let wb = spine::WhereBytes {
-                                                string: spine::StringId::of(text), file,
-                                                lo: lo as u32, hi: hi as u32,
-                                                ..Default::default()
-                                            };
-                                            ext.insert(idv.clone(), Value::Text(
-                                                spine::WhereBytesId::of_located(wb, repo, path)
-                                                    .to_string()));
-                                            push_span(text, lo, hi, &mut where_bytes);
-                                        }
-                                    }
-                                }
-                            }
-                            for n in &names {
-                                if let Some(m) = caps.name(n) {
-                                    let text = m.as_str();
-                                    ext.insert((*n).to_string(), Value::Text(text.to_string()));
-                                    push_span(text, line_off + m.start(), line_off + m.end(), &mut where_bytes);
-                                }
-                            }
-                            next.push(ext);
-                        }
-                    }
-                }
-                binds = next;
+                binds = bind_match_op(&binds, regex, &mlv, &idv, &content, where_file,
+                                      &mut re_cache, &mut where_bytes, repo, path)?;
             }
             BodyItem::Ast { lang, query, line, end, id, .. } => {
                 let alv = opt_var(line)?;
@@ -5433,32 +5529,8 @@ fn parse_file(
                         // it (interning the contiguous source slice) and bind its
                         // located id before the per-capture spans, mirroring the
                         // `match` arm. Skipped when no captures carry a span.
-                        if let Some(idv) = &idv {
-                            if let Some(file) = where_file {
-                                let lo = caps.iter().map(|(_, _, lo, _)| *lo).min();
-                                let hi = caps.iter().map(|(_, _, _, hi)| *hi).max();
-                                if let (Some(lo), Some(hi)) = (lo, hi) {
-                                    if hi > lo && hi <= content.len() {
-                                        let text = &content[lo..hi];
-                                        if !text.is_empty() {
-                                            let wb = spine::WhereBytes {
-                                                string: spine::StringId::of(text), file,
-                                                lo: lo as u32, hi: hi as u32,
-                                                ..Default::default()
-                                            };
-                                            ext.insert(idv.clone(), Value::Text(
-                                                spine::WhereBytesId::of_located(wb, repo, path)
-                                                    .to_string()));
-                                            push_span(text, lo, hi, &mut where_bytes);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        for (n, t, lo, hi) in caps {
-                            ext.insert(n.clone(), Value::Text(t.clone()));
-                            push_span(t, *lo, *hi, &mut where_bytes);
-                        }
+                        bind_whole_match_span(&mut ext, &idv, caps, &content, where_file, repo, path, &mut where_bytes);
+                        bind_captures(&mut ext, caps, &mut where_bytes);
                         next.push(ext);
                     }
                 }
@@ -5489,32 +5561,8 @@ fn parse_file(
                         if let Some(v) = &clv { ext.insert(v.clone(), Value::Int(*c)); }
                         if let Some(v) = &ellv { ext.insert(v.clone(), Value::Int(*eln)); }
                         if let Some(v) = &eclv { ext.insert(v.clone(), Value::Int(*ec)); }
-                        if let Some(idv) = &idv {
-                            if let Some(file) = where_file {
-                                let lo = caps.iter().map(|(_, _, lo, _)| *lo).min();
-                                let hi = caps.iter().map(|(_, _, _, hi)| *hi).max();
-                                if let (Some(lo), Some(hi)) = (lo, hi) {
-                                    if hi > lo && hi <= content.len() {
-                                        let text = &content[lo..hi];
-                                        if !text.is_empty() {
-                                            let wb = spine::WhereBytes {
-                                                string: spine::StringId::of(text), file,
-                                                lo: lo as u32, hi: hi as u32,
-                                                ..Default::default()
-                                            };
-                                            ext.insert(idv.clone(), Value::Text(
-                                                spine::WhereBytesId::of_located(wb, repo, path)
-                                                    .to_string()));
-                                            push_span(text, lo, hi, &mut where_bytes);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        for (n, t, lo, hi) in caps {
-                            ext.insert(n.clone(), Value::Text(t.clone()));
-                            push_span(t, *lo, *hi, &mut where_bytes);
-                        }
+                        bind_whole_match_span(&mut ext, &idv, caps, &content, where_file, repo, path, &mut where_bytes);
+                        bind_captures(&mut ext, caps, &mut where_bytes);
                         next.push(ext);
                     }
                 }
@@ -5537,10 +5585,7 @@ fn parse_file(
                         if let Some(v) = &clv { ext.insert(v.clone(), Value::Int(*c)); }
                         if let Some(v) = &ellv { ext.insert(v.clone(), Value::Int(*eln)); }
                         if let Some(v) = &eclv { ext.insert(v.clone(), Value::Int(*ec)); }
-                        for (n, t, lo, hi) in caps {
-                            ext.insert(n.clone(), Value::Text(t.clone()));
-                            push_span(t, *lo, *hi, &mut where_bytes);
-                        }
+                        bind_captures(&mut ext, caps, &mut where_bytes);
                         next.push(ext);
                     }
                 }
