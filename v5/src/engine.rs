@@ -158,6 +158,15 @@ const PROPOSE_EXTRACT_RELS: [&str; 1] = ["propose_extract"];
 /// index.scip; they emit no rows if the index is absent.
 const PROPOSE_CLONE_RELS: [&str; 1] = ["propose_clone"];
 
+/// Field-tree Merkle hash per type name: `type_shape(name, hash)`. Two types
+/// with the same hash are field-tree-isomorphic — same arity, depth, and leaf
+/// shape, regardless of names. Built from `type_edge` (field/variant only);
+/// impl/generic excluded as cross-cutting. Fixpoint-iterated so recursive
+/// types (`struct List { tail: Box<List> }`) converge. Lazy: populates only
+/// when the program references `type_shape`, but forces `type_edge` to refresh
+/// first since it reads the edge set from the DB.
+const TYPE_SHAPE_RELS: [&str; 1] = ["type_shape"];
+
 /// Ref-spine query relations: thin views over the `_strings` / `_where_bytes`
 /// meta tables. `string(id, text, norm)` resolves an interned StringId to its
 /// content; `ref(id, string, file, lo, hi)` locates each interned string's byte
@@ -217,6 +226,7 @@ pub fn builtin_rel_names() -> std::collections::HashSet<String> {
         .chain(changed_line_rel_decls())
         .chain(propose_extract_rel_decls())
         .chain(propose_clone_rel_decls())
+        .chain(type_shape_rel_decls())
         .chain(daemon_rel_decls())
         .map(|d| d.name)
         .collect()
@@ -377,6 +387,14 @@ fn propose_clone_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
+fn type_shape_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "type_shape".into(),
+                  cols: vec![c("name", Type::Text), c("hash", Type::Text)] },
+    ]
+}
+
 fn spine_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -503,6 +521,8 @@ fn changed_line_rels_used(prog: &Program) -> bool { rels_used(prog, &CHANGED_LIN
 fn propose_extract_rels_used(prog: &Program) -> bool { rels_used(prog, &PROPOSE_EXTRACT_RELS) }
 
 fn propose_clone_rels_used(prog: &Program) -> bool { rels_used(prog, &PROPOSE_CLONE_RELS) }
+
+fn type_shape_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_SHAPE_RELS) }
 
 fn module_manifest_path(path: &str) -> bool {
     path.ends_with("Cargo.toml") || path.ends_with("package.json") || path.ends_with("tsconfig.json")
@@ -1734,7 +1754,7 @@ impl Engine {
             self.refresh_module_rels()?;
             phase("module-rels", t);
         }
-        if type_rels_used(prog) {
+        if type_rels_used(prog) || type_shape_rels_used(prog) {
             let t = std::time::Instant::now();
             self.refresh_type_rels()?;
             phase("type-rels", t);
@@ -1775,6 +1795,7 @@ impl Engine {
         if changed_line_rels_used(prog) { changed |= self.refresh_changed_line_rel()?; }
         if propose_extract_rels_used(prog) { changed |= self.refresh_propose_extract_rel()?; }
         if propose_clone_rels_used(prog) { changed |= self.refresh_propose_clone_rel()?; }
+        if type_shape_rels_used(prog) { changed |= self.refresh_type_shape_rel()?; }
         if daemon_rels_used(prog) { self.refresh_daemon_rels()?; }
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
 
@@ -1998,7 +2019,7 @@ impl Engine {
         if files_changed {
             self.refresh_builtin_rels()?;
             for b in BUILTIN_RELS { changed_source_rels.insert(b.to_string()); }
-            if type_rels_used(prog) {
+            if type_rels_used(prog) || type_shape_rels_used(prog) {
                 self.refresh_type_rels()?;
                 for t in TYPE_RELS { changed_source_rels.insert(t.to_string()); }
             }
@@ -2058,6 +2079,10 @@ impl Engine {
         }
         if propose_clone_rels_used(prog) && self.refresh_propose_clone_rel()? {
             changed_source_rels.insert("propose_clone".to_string());
+            changed_facts = true;
+        }
+        if type_shape_rels_used(prog) && self.refresh_type_shape_rel()? {
+            changed_source_rels.insert("type_shape".to_string());
             changed_facts = true;
         }
         if daemon_rels_used(prog) { self.refresh_daemon_rels()?; }
@@ -2685,6 +2710,9 @@ impl Engine {
                 if PROPOSE_CLONE_RELS.contains(&d.name.as_str()) {
                     bail!("{} is the built-in clone-detection relation; pick another name", d.name);
                 }
+                if TYPE_SHAPE_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is the built-in type-shape relation; pick another name", d.name);
+                }
                 if DAEMON_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in daemon-state relation (program / head / rev_advanced); pick another name", d.name);
                 }
@@ -2724,6 +2752,7 @@ impl Engine {
         for d in changed_line_rel_decls() { self.declare(&d)?; }
         for d in propose_extract_rel_decls() { self.declare(&d)?; }
         for d in propose_clone_rel_decls() { self.declare(&d)?; }
+        for d in type_shape_rel_decls() { self.declare(&d)?; }
         for d in daemon_rel_decls() { self.declare(&d)?; }
         Ok(())
     }
@@ -4259,6 +4288,48 @@ impl Engine {
             })
             .collect();
         self.refresh_rel("propose_clone", &["kernel", "path", "lo", "hi", "param"], &rows)?;
+        Ok(true)
+    }
+
+    /// Rebuild `type_shape(name, hash)` from the current `type_edge` rows.
+    /// Reads the edge set out of the DB, hands it to `typegraph::type_shape_hashes`
+    /// (fixpoint Merkle), and writes one row per name. Returns false if the
+    /// computed set matches what's already stored.
+    fn refresh_type_shape_rel(&self) -> Result<bool> {
+        // Read the full edge set: (from, to, kind).
+        let edges: Vec<(String, String, String)> = {
+            let conn = self.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"from\",\"to\",\"kind\" FROM {}", tbl("type_edge")
+            ))?;
+            let rows = s.query_map([], |r| Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            )))?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        let computed: Vec<(String, String)> = typegraph::type_shape_hashes(&edges);
+        let stored: Vec<(String, String)> = {
+            let conn = self.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"name\",\"hash\" FROM {} ORDER BY \"name\",\"hash\"",
+                tbl("type_shape")
+            ))?;
+            let rows = s.query_map([], |r| Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+            )))?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        if stored == computed {
+            return Ok(false);
+        }
+        let rows: Vec<Vec<Value>> = computed
+            .into_iter()
+            .map(|(n, h)| vec![Value::Text(n), Value::Text(h)])
+            .collect();
+        self.refresh_rel("type_shape", &["name", "hash"], &rows)?;
         Ok(true)
     }
 

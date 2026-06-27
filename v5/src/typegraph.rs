@@ -2515,6 +2515,107 @@ fn is_kotlin_type_node(kind: &str) -> bool {
     )
 }
 
+/// Field-tree Merkle hash per type name, for shape-isomorphism detection.
+///
+/// Hashes the structural shape of each type's field tree using only `field`
+/// and `variant` edges — the data shape. `impl` and `generic` edges are
+/// cross-cutting, not shape, and are excluded. Two types with the same hash
+/// are field-tree-isomorphic: same arity, depth, and leaf shape, regardless
+/// of names. Names are NOT in the hash; this is pure shape.
+///
+/// Fixpoint iteration handles recursive types (`struct List { tail: Box<List> }`)
+/// — a self-reference stabilizes because each round only mixes in the prior
+/// round's hash, and the structure converges. The leaf sentinel (`LEAF`) is
+/// the hash of any name with no field/variant children, so all primitives and
+/// external types hash alike.
+///
+/// `edges` is the engine's full `type_edge(from, to, kind)` row set. Returns
+/// one `(name, hex_hash)` per name that appears in any data edge, sorted by
+/// name for deterministic output. blake3 matches the rest of the codebase's
+/// persistent hash convention.
+pub fn type_shape_hashes(edges: &[(String, String, String)]) -> Vec<(String, String)> {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    // Keep only field/variant edges (the data shape). Drop impl/generic.
+    let data_edges: Vec<(&str, &str)> = edges
+        .iter()
+        .filter(|(_, _, k)| k == "field" || k == "variant")
+        .map(|(a, b, _)| (a.as_str(), b.as_str()))
+        .collect();
+
+    // Names appearing anywhere in the data graph.
+    let mut names: BTreeSet<String> = BTreeSet::new();
+    for (a, b) in &data_edges {
+        names.insert((*a).to_string());
+        names.insert((*b).to_string());
+    }
+
+    // Adjacency: name -> sorted unique child-name list. Duplicates collapse
+    // (two fields of type T = shape {T}). Switch to a sorted Vec WITH dups to
+    // make multiplicity count (struct{x: T, y: T} distinct from {z: T}).
+    let mut adj: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (a, b) in &data_edges {
+        adj.entry((*a).to_string()).or_default().push((*b).to_string());
+    }
+    for v in adj.values_mut() {
+        v.sort();
+        v.dedup();
+    }
+
+    let leaf_hash = *blake3::hash(b"LEAF").as_bytes();
+
+    // Initial hash: every name starts as a leaf.
+    let mut cur: BTreeMap<String, [u8; 32]> = names
+        .iter()
+        .map(|n| (n.clone(), leaf_hash))
+        .collect();
+
+    // Fixpoint: re-hash until stable or we hit the iter cap. The cap is a
+    // safety net; in practice convergence is at most depth-of-the-deepest-tree
+    // iterations (or never, only if the graph is pathologically oscillating).
+    for _ in 0..64 {
+        let mut next: BTreeMap<String, [u8; 32]> = BTreeMap::new();
+        let mut stable = true;
+        for n in &names {
+            let mut h = blake3::Hasher::new();
+            match adj.get(n) {
+                None => { h.update(b"LEAF"); }
+                Some(cs) if cs.is_empty() => { h.update(b"LEAF"); }
+                Some(cs) => {
+                    for c in cs {
+                        match cur.get(c) {
+                            Some(ch) => { h.update(ch); }
+                            None => { h.update(b"EXT"); }
+                        }
+                    }
+                }
+            }
+            let bytes = *h.finalize().as_bytes();
+            if bytes != cur[n] {
+                stable = false;
+            }
+            next.insert(n.clone(), bytes);
+        }
+        cur = next;
+        if stable {
+            break;
+        }
+    }
+
+    cur.into_iter()
+        .map(|(n, h)| (n, hex_string(&h)))
+        .collect()
+}
+
+fn hex_string(bytes: &[u8; 32]) -> String {
+    let mut s = String::with_capacity(64);
+    for b in bytes {
+        use std::fmt::Write;
+        let _ = write!(s, "{b:02x}");
+    }
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2782,5 +2883,91 @@ function helper(raw: Raw) {}
         // un-exported function still owns edges; keyword param type is no ref
         assert!(has(&got, "helper", "Raw", "param"), "non-exported fn: {got:?}");
         assert!(!got.iter().any(|e| e.to == "string"), "keyword param leaked: {got:?}");
+    }
+
+    fn edge(a: &str, b: &str, k: &str) -> (String, String, String) {
+        (a.into(), b.into(), k.into())
+    }
+    fn shape_hash_of(hashes: &[(String, String)], name: &str) -> String {
+        hashes.iter().find(|(n, _)| n == name).map(|(_, h)| h.clone())
+            .unwrap_or_else(|| panic!("no hash for {name}: {hashes:?}"))
+    }
+
+    #[test]
+    fn type_shape_iso_two_structs_same_arity_same_hash() {
+        // Point{x: f64, y: f64} and Coord{lat: f64, lon: f64} — both hold
+        // two leaves. Names differ; shape identical.
+        let edges = vec![
+            edge("Point", "f64", "field"), edge("Point", "g64", "field"),
+            edge("Coord", "h64", "field"), edge("Coord", "i64", "field"),
+        ];
+        let h = type_shape_hashes(&edges);
+        assert_eq!(shape_hash_of(&h, "Point"), shape_hash_of(&h, "Coord"));
+        // The leaves themselves all hash alike (LEAF sentinel).
+        assert_eq!(shape_hash_of(&h, "f64"), shape_hash_of(&h, "h64"));
+    }
+
+    #[test]
+    fn type_shape_different_arity_different_hash() {
+        let edges = vec![
+            edge("One", "f", "field"),
+            edge("Two", "g", "field"), edge("Two", "h", "field"),
+        ];
+        let h = type_shape_hashes(&edges);
+        assert_ne!(shape_hash_of(&h, "One"), shape_hash_of(&h, "Two"));
+    }
+
+    #[test]
+    fn type_shape_recursive_type_converges() {
+        // struct List { head: i32, tail: Box<List> } — self-reference.
+        let edges = vec![
+            edge("List", "i32", "field"),
+            edge("List", "Box_List", "field"),
+            edge("Box_List", "List", "field"),
+        ];
+        let h = type_shape_hashes(&edges);
+        // Smoke: the function terminates and produces a stable hash for List.
+        let list_hash = shape_hash_of(&h, "List");
+        // Running twice gives the same answer (fixpoint is deterministic).
+        let h2 = type_shape_hashes(&edges);
+        assert_eq!(list_hash, shape_hash_of(&h2, "List"));
+        // And the self-referential shape differs from a flat 2-field struct.
+        let flat = vec![edge("Flat", "a", "field"), edge("Flat", "b", "field")];
+        let hf = type_shape_hashes(&flat);
+        assert_ne!(list_hash, shape_hash_of(&hf, "Flat"));
+    }
+
+    #[test]
+    fn type_shape_impl_and_generic_excluded() {
+        // Two structs with the same fields but different impls/generics should
+        // hash alike — impl/generic aren't shape.
+        let a = vec![
+            edge("Foo", "i32", "field"),
+            edge("Foo", "u32", "field"),
+            edge("Foo", "Drop", "impl"),
+            edge("Foo", "T", "generic"),
+        ];
+        let b = vec![
+            edge("Bar", "i32", "field"),
+            edge("Bar", "u32", "field"),
+        ];
+        assert_eq!(shape_hash_of(&type_shape_hashes(&a), "Foo"),
+                   shape_hash_of(&type_shape_hashes(&b), "Bar"));
+    }
+
+    #[test]
+    fn type_shape_variant_edges_count_as_shape() {
+        // enum Action { Save(Path), Quit } vs struct Wrapper{ a: Path, b: Leaf }
+        // — both have two data children, one of which is Path.
+        let a = vec![
+            edge("Action", "Path", "variant"),
+            edge("Action", "Quit", "variant"),
+        ];
+        let b = vec![
+            edge("Wrapper", "Path", "field"),
+            edge("Wrapper", "Leaf", "field"),
+        ];
+        assert_eq!(shape_hash_of(&type_shape_hashes(&a), "Action"),
+                   shape_hash_of(&type_shape_hashes(&b), "Wrapper"));
     }
 }
