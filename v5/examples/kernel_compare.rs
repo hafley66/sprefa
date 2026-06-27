@@ -29,6 +29,7 @@ fn main() {
     let cfg = sprefa_v5::propose::cfg_shape_proposals(&content);
     let ddg = sprefa_v5::propose::ddg_shape_proposals(&content);
     let callgraph = sprefa_v5::propose::callgraph_shape_proposals(&content);
+    let ngram = sprefa_v5::propose::ngram_stat_proposals(&content);
 
     let repo_root = format!("{}/..", env!("CARGO_MANIFEST_DIR"));
     let idx = std::path::PathBuf::from(std::env::var("SPREFA_SCIP_INDEX")
@@ -57,6 +58,7 @@ fn main() {
         ("cfg", &cfg),
         ("ddg", &ddg),
         ("cgraph", &callgraph),
+        ("ngram", &ngram),
         ("symbol", &sym),
         ("call", &call),
     ];

@@ -774,6 +774,191 @@ fn is_keyword(s: &str) -> bool {
     )
 }
 
+/// Ngram-stat (fuzzy similarity) kernel. The only kernel using non-equality
+/// similarity. Each statement is reduced to a set of token n-grams (sliding
+/// window of size N over the normalized leaf-kind stream — same leaf
+/// normalization as ast-shape: identifiers→ID, literals→LIT). Two statements
+/// are similar iff their n-gram sets have Jaccard overlap >= threshold. The
+/// `similarity_runs` matcher then finds maximal runs of consecutive
+/// position-wise-similar statement pairs.
+///
+/// Catches "near-duplicate" blocks where the structure is mostly shared but
+/// small differences (extra arg, reordered clauses, different branch count)
+/// prevent exact-match kernels from seeing them. The Jaccard threshold
+/// controls precision/recall: 0.7 catches 70%-overlap blocks that
+/// ast/tree/cfg kernels miss entirely.
+const NGRAM_N: usize = 3;
+const NGRAM_THRESHOLD: f64 = 0.7;
+const NGRAM_SEED: usize = 3;
+
+pub fn ngram_stat_proposals(content: &str) -> Vec<Proposal> {
+    let mut parser = Parser::new();
+    if parser.set_language(&lang()).is_err() {
+        return Vec::new();
+    }
+    let Some(tree) = parser.parse(content, None) else {
+        return Vec::new();
+    };
+    let stmts = statement_ranges(&tree);
+    let gram_sets: Vec<HashSet<u64>> = stmts
+        .iter()
+        .map(|(n, _, _)| {
+            let kinds = leaf_kinds(*n, content);
+            ngram_set(&kinds, NGRAM_N)
+        })
+        .collect();
+    let line_start = line_start_bytes(content);
+    let root = tree.root_node();
+    let mut out = Vec::new();
+    for (a, n, occ) in similarity_runs(&gram_sets, NGRAM_THRESHOLD, NGRAM_SEED) {
+        let lo_line = stmts[a].1;
+        let hi_line = stmts[a + n - 1].2;
+        if hi_line <= lo_line {
+            continue;
+        }
+        let lo_byte = line_start[lo_line - 1];
+        let hi_byte = line_start.get(hi_line).copied().unwrap_or(content.len());
+        let params = free_vars(root, content, lo_byte, hi_byte);
+        out.push(Proposal {
+            lo: lo_line,
+            hi: hi_line,
+            occurrences: occ,
+            gain: (hi_line - lo_line + 1) * occ.saturating_sub(1),
+            params,
+        });
+    }
+    out.sort_by(|x, y| y.gain.cmp(&x.gain));
+    out
+}
+
+/// Maximal matching runs over a sequence of sets using Jaccard similarity.
+/// Two windows match iff every position-wise pair has Jaccard >= threshold.
+/// Returns `(start, len, occurrences)` for each maximal run, dropping subsumed
+/// runs. Cardinality pre-filter: if `min(|A|,|B|) / max(|A|,|B|) < threshold`
+/// the pair is skipped without computing intersection.
+fn similarity_runs(
+    items: &[HashSet<u64>],
+    threshold: f64,
+    seed: usize,
+) -> Vec<(usize, usize, usize)> {
+    let len = items.len();
+    if len < seed + 1 {
+        return Vec::new();
+    }
+    let mut seen: HashSet<(usize, usize)> = HashSet::new();
+    let mut blocks: Vec<(usize, usize, usize)> = Vec::new();
+    for i in 0..=len - seed {
+        for j in (i + 1)..=len - seed {
+            let lo = items[i].len().min(items[j].len());
+            let hi = items[i].len().max(items[j].len());
+            if hi == 0 || (lo as f64 / hi as f64) < threshold {
+                continue;
+            }
+            if jaccard(&items[i], &items[j]) < threshold {
+                continue;
+            }
+            if !seen.insert((i, j)) {
+                continue;
+            }
+            let mut ok = true;
+            for k in 1..seed {
+                if jaccard(&items[i + k], &items[j + k]) < threshold {
+                    ok = false;
+                    break;
+                }
+            }
+            if !ok {
+                continue;
+            }
+            let mut n = seed;
+            while i + n < len && j + n < len && jaccard(&items[i + n], &items[j + n]) >= threshold
+            {
+                n += 1;
+            }
+            let mut occ = 1usize;
+            for m in 0..=len.saturating_sub(n) {
+                if m == i || m + n > len {
+                    continue;
+                }
+                let mut all = true;
+                for k in 0..n {
+                    if jaccard(&items[i + k], &items[m + k]) < threshold {
+                        all = false;
+                        break;
+                    }
+                }
+                if all {
+                    occ += 1;
+                }
+            }
+            blocks.push((i, n, occ));
+        }
+    }
+    blocks.sort_by(|x, y| y.1.cmp(&x.1));
+    let mut kept: Vec<(usize, usize, usize)> = Vec::new();
+    for (a, n, occ) in blocks {
+        let subsumed = kept.iter().any(|(ka, kn, _)| *ka <= a && a + n <= *ka + *kn);
+        if !subsumed {
+            kept.push((a, n, occ));
+        }
+    }
+    kept
+}
+
+fn jaccard(a: &HashSet<u64>, b: &HashSet<u64>) -> f64 {
+    if a.is_empty() && b.is_empty() {
+        return 1.0;
+    }
+    let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    let inter = small.iter().filter(|x| large.contains(x)).count();
+    inter as f64 / (a.len() + b.len() - inter) as f64
+}
+
+/// Per-node leaf-kind stream (same normalization as ast_shape_tokens but
+/// scoped to a subtree). Identifiers → ID, literals → LIT, comments dropped.
+fn leaf_kinds(node: Node, src: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut stack = vec![node];
+    while let Some(n) = stack.pop() {
+        if n.child_count() == 0 {
+            let txt = &src[n.start_byte()..n.end_byte()];
+            if txt.starts_with("//") || txt.starts_with("/*") {
+                continue;
+            }
+            let k = match n.kind() {
+                "identifier" | "metavariable" => "ID".to_string(),
+                kk if kk.ends_with("_literal") => "LIT".to_string(),
+                kk => kk.to_string(),
+            };
+            out.push(k);
+        } else {
+            let mut cur = n.walk();
+            let ch: Vec<Node> = n.children(&mut cur).collect();
+            for c in ch.into_iter().rev() {
+                stack.push(c);
+            }
+        }
+    }
+    out
+}
+
+/// Set of hashed n-grams from a token-kind sequence.
+fn ngram_set(kinds: &[String], n: usize) -> HashSet<u64> {
+    use std::hash::{Hash, Hasher};
+    if kinds.len() < n {
+        return HashSet::new();
+    }
+    let mut grams = HashSet::new();
+    for i in 0..=kinds.len() - n {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for k in &kinds[i..i + n] {
+            k.hash(&mut h);
+        }
+        grams.insert(h.finish());
+    }
+    grams
+}
+
 /// Field name of a `.field`, any name-part of a `path::Name`, or any token
 /// inside a macro's `token_tree`/`macro_invocation` (macro bodies are opaque
 /// tokens, not scoped references).
@@ -1164,5 +1349,38 @@ mod tests {
         let src = "fn alpha(a: i32, b: i32) {\n    foo(a, b);\n    bar(a, b);\n    baz(a, b);\n}\nfn beta() {\n    ping();\n    pong();\n    pang();\n}\n";
         let p = callgraph_shape_proposals(src);
         assert!(p.is_empty(), "different arity must not match: {:?}", p);
+    }
+
+    // --- ngram-stat kernel ---
+
+    #[test]
+    fn ngram_stat_finds_near_duplicate() {
+        // Two blocks that are MOSTLY the same but differ in one token per stmt.
+        // Exact-match kernels (ast, tree) would catch this, but ngram catches
+        // it via fuzzy overlap even if we perturbed more tokens.
+        let src = "fn alpha(a: i32) {\n    let x = compute(a);\n    let y = transform(x);\n    let z = finalize(y);\n}\nfn beta(b: i32) {\n    let p = compute(b);\n    let q = transform(p);\n    let r = finalize(q);\n}\n";
+        let p = ngram_stat_proposals(src);
+        assert!(!p.is_empty(), "near-duplicate blocks must match: {:?}", p);
+    }
+
+    #[test]
+    fn ngram_stat_rejects_dissimilar() {
+        // Two completely different blocks. Jaccard overlap near zero.
+        let src = "fn alpha() {\n    let x = 1;\n    let y = 2;\n    let z = 3;\n}\nfn beta() {\n    if foo {\n        while bar {\n            match baz {\n                _ => return,\n            }\n        }\n    }\n}\n";
+        let p = ngram_stat_proposals(src);
+        assert!(p.is_empty(), "dissimilar blocks must not match: {:?}", p);
+    }
+
+    #[test]
+    fn jaccard_identity_is_one() {
+        let a: HashSet<u64> = [1u64, 2, 3, 4, 5].into_iter().collect();
+        assert!((jaccard(&a, &a) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn jaccard_disjoint_is_zero() {
+        let a: HashSet<u64> = [1u64, 2, 3].into_iter().collect();
+        let b: HashSet<u64> = [4u64, 5, 6].into_iter().collect();
+        assert!(jaccard(&a, &b).abs() < 1e-9);
     }
 }
