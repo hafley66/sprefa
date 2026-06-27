@@ -1,0 +1,87 @@
+# graph_score.dl — TurboMQ (Mitchell & Mancoridis 2002) modularity scoring.
+#
+# TurboMQ is the standard objective function for software module decomposition:
+#   μ_cid  = # edges with both endpoints in cid       (intra-cluster)
+#   ε_cid  = # edges with exactly one endpoint in cid (inter-cluster)
+#   MF_cid = μ_cid / (μ_cid + ε_cid / 2)              (Module Factor)
+#   TurboMQ = Σ_cid MF_cid
+#
+# A good partition has high TurboMQ: dense inside clusters, sparse across.
+# Compared to flat SCC clustering (cycles only), TurboMQ rewards ANY dense cut,
+# not just cycle-free ones — it scores how well a partition isolates coupling.
+#
+# INPUT:
+#   cluster_of(cid, node)  — the partition to score (any text id)
+#   edge(a, b)             — directed graph (call_edge, type_edge, ...)
+#
+# Default partition here is FILE-LEVEL: every fn declared in the same file is
+# one cluster. That answers "is the current file decomposition good?" If a
+# file split would raise TurboMQ, the file boundary is in the wrong place.
+#
+# To score a different partition, replace the cluster_of rule. To get the
+# SCC-based partition, run `? cluster(rep, member).` in refactor-discovery.dl,
+# save the rows, and feed them back as facts here.
+#
+# Permille scaling (int arithmetic): MF_permille = 2000 * μ / (2μ + ε).
+# Max MF per cluster = 1000 (perfectly isolated: ε=0).
+#
+# Reference: Mitchell, Mancoridis. "Modularity and the MOOSE suite of tools."
+# IEE Proceedings — Software, 2002.
+#
+# Manual:  dl v5/examples/graph_score.dl --root . --db /tmp/dl-gs.db --no-daemon
+
+rel seen(path: file).
+seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
+
+# ── INPUT PARTITION: file-level ───────────────────────────────────────────
+# call_def(repo, sym, kind, file, line, end) gives every callable's home file.
+rel cluster_of(cid: text, node: text).
+cluster_of(file, sym) <- call_def(_, sym, _, file, _, _).
+
+# ── INPUT EDGE: call graph (caller → callee) ──────────────────────────────
+rel edge(a: text, b: text).
+edge(a, b) <- call_edge(a, b, _).
+
+# ── TALLY EDGES BY CLUSTER ────────────────────────────────────────────────
+# Intra: both endpoints in cid.
+rel intra_pair(cid: text, a: text, b: text).
+intra_pair(cid, a, b) <- cluster_of(cid, a), cluster_of(cid, b), edge(a, b).
+rel intra_count(cid: text, n: int).
+intra_count(cid, count(a)) <- intra_pair(cid, a, b).
+
+# Inter: exactly one endpoint in cid. An edge a→b with a in cid, b not in cid
+# counts once for cid (and a separate row counts it for b's cluster).
+rel inter_pair(cid: text, a: text, b: text).
+inter_pair(cid, a, b) <- cluster_of(cid, a), edge(a, b), !cluster_of(cid, b).
+inter_pair(cid, a, b) <- cluster_of(cid, b), edge(a, b), !cluster_of(cid, a).
+rel inter_count(cid: text, n: int).
+inter_count(cid, count(a)) <- inter_pair(cid, a, b).
+
+# ── MODULE FACTOR PER CLUSTER ─────────────────────────────────────────────
+# Two cases: clusters with no inter edges (perfectly isolated; MF=1000) and
+# the general case. Without the isolated rule, MF would silently drop clusters
+# with zero boundary edges (inter_count emits no row, the join fails).
+rel isolated(cid: text).
+isolated(cid) <- intra_count(cid, _), !inter_count(cid, _).
+
+rel mf(cid: text, score: int).
+mf(cid, 1000) <- isolated(cid).
+mf(cid, intra * 2000 / (2 * intra + inter)) <-
+    intra_count(cid, intra), inter_count(cid, inter).
+
+# Cluster size + boundary summary for context.
+rel cluster_size(cid: text, n: int).
+cluster_size(cid, count(node)) <- cluster_of(cid, node).
+
+# ── OVERALL TurboMQ ───────────────────────────────────────────────────────
+rel turbomq(total: int).
+turbomq(sum(s)) <- mf(_, s).
+
+rel active_clusters(n: int).
+active_clusters(count(cid)) <- mf(cid, _).
+
+# ── REPORTS ───────────────────────────────────────────────────────────────
+? turbomq(total).
+? active_clusters(n).
+? mf(cid, score).
+? cluster_size(cid, n).

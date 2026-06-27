@@ -198,7 +198,17 @@ pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
                         Term::Wild => "*".to_string(),
                         _ => term_sql(term, &canon)?,
                     };
-                    exprs.push(format!("{}({arg})", f.sql()));
+                    // SUM over zero rows is SQL NULL; INSERT OR IGNORE never
+                    // dedups NULLs (NULL != NULL), so the fixpoint loop would
+                    // diverge re-inserting the same NULL each iteration. Pin
+                    // empty-sum to 0. COUNT/MIN/MAX don't need it (COUNT is
+                    // never NULL; MIN/MAX of nothing being NULL is the
+                    // intended "no value" semantics).
+                    if matches!(f, crate::ast::AggFn::Sum) {
+                        exprs.push(format!("COALESCE({}({arg}), 0)", f.sql()));
+                    } else {
+                        exprs.push(format!("{}({arg})", f.sql()));
+                    }
                 }
                 None => {
                     let g = term_sql(term, &canon)?;
