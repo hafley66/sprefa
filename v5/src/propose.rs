@@ -99,6 +99,26 @@ pub fn render_proposal(p: &Proposal, content: &str) -> String {
     )
 }
 
+/// Minimum-line filter: drops proposals whose block is shorter than `min_lines`.
+/// Addresses the "gain over-ranks short shapes" problem: a 2-line RelDecl
+/// boilerplate appearing 24× has gain=46 but extracting it saves nothing
+/// meaningful. `min_lines=5` is a practical floor for extract-fn value.
+pub fn min_lines_filter(proposals: Vec<Proposal>, min_lines: usize) -> Vec<Proposal> {
+    proposals
+        .into_iter()
+        .filter(|p| p.hi - p.lo + 1 >= min_lines)
+        .collect()
+}
+
+/// Length-weighted gain: `lines² × (occurrences − 1)`. Rebalances ranking
+/// away from short high-frequency shapes toward long consolidation targets.
+/// A 20-line × 2-occ block (weighted=400) outranks a 2-line × 24-occ block
+/// (weighted=92), even though raw gain favors the short block (46 vs 20).
+pub fn weighted_gain(p: &Proposal) -> usize {
+    let lines = p.hi - p.lo + 1;
+    lines * lines * p.occurrences.saturating_sub(1)
+}
+
 fn lang() -> tree_sitter::Language {
     tree_sitter::Language::new(tree_sitter_rust::LANGUAGE)
 }
@@ -1397,6 +1417,30 @@ mod tests {
         let a: HashSet<u64> = [1u64, 2, 3].into_iter().collect();
         let b: HashSet<u64> = [4u64, 5, 6].into_iter().collect();
         assert!(jaccard(&a, &b).abs() < 1e-9);
+    }
+
+    // --- length-weighted ranking utilities ---
+
+    #[test]
+    fn min_lines_filter_drops_short_blocks() {
+        let proposals = vec![
+            Proposal { lo: 1, hi: 2, occurrences: 24, gain: 46, params: vec![] },
+            Proposal { lo: 10, hi: 30, occurrences: 2, gain: 20, params: vec![] },
+        ];
+        let filtered = min_lines_filter(proposals, 5);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].lo, 10);
+    }
+
+    #[test]
+    fn weighted_gain_favors_long_blocks() {
+        let short = Proposal { lo: 1, hi: 2, occurrences: 24, gain: 46, params: vec![] };
+        let long = Proposal { lo: 1, hi: 20, occurrences: 2, gain: 20, params: vec![] };
+        assert!(
+            weighted_gain(&long) > weighted_gain(&short),
+            "long block should outweigh short: {} vs {}",
+            weighted_gain(&long), weighted_gain(&short)
+        );
     }
 
     // --- refinement hierarchy property tests ---
