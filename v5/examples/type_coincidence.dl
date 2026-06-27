@@ -1,0 +1,78 @@
+# type_coincidence.dl — which types co-occur in fn signatures.
+#
+# Hypothesis: types that share fns are coupled. If Foo and Bar both appear as
+# params/returns of f(), g(), h(), then f/g/h are the seam where Foo and Bar
+# meet. Repeated coincidence across many fns is the signal of a missing
+# abstraction (the third type that mediates them, or an extract-struct around
+# the pair).
+#
+# Three views:
+#   1. PAIRS  — (a, b) and the fns they share. Asymmetric: a < b canonicalizes.
+#   2. HUBS   — types ranked by partner count (distinct other types they share
+#      a fn with). High hub = boundary type.
+#   3. FN-USE — per type, how many distinct fns reference it in their sig.
+#      single_use = appears in exactly one fn (local helper type).
+#
+# Pure dl on type_sig. Companion to type_profile.dl (per-type scalar view) and
+# feature-envy.dl (per-fn call-receiver view).
+#
+# Manual: dl v5/examples/type_coincidence.dl --root . --db /tmp/dl-tc.db --no-daemon
+
+rel seen(path: file).
+seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
+
+# A fn "uses" a type if the type appears anywhere in its arrow type (param or
+# ret slot). Normalized to the trailing identifier so bare and fully-qualified
+# spellings count together (see type_profile.dl for the same trick).
+rel uses(fn: text, t: text).
+uses(fn, t) <- type_sig(fn, _, _, r), t = split(r, "::", -1).
+
+# ── FN-USE: per-type tally ────────────────────────────────────────────────
+rel fn_count(t: text, n: int).
+fn_count(t, count(fn)) <- uses(fn, t).
+
+# single_use: type appears in exactly one fn signature. Often a one-off helper
+# struct or a parameter specialized to one call site.
+rel single_use(t: text).
+single_use(t) <- fn_count(t, 1).
+
+# ── PAIRS: fns where two distinct types both appear ───────────────────────
+# Canonicalize via a < b (textual). Each (a, b, fn) row is one coincidence.
+rel pair_fn(a: text, b: text, fn: text).
+pair_fn(a, b, fn) <- uses(fn, a), uses(fn, b), a < b.
+
+# Coincidence strength per pair: # distinct fns they share.
+rel pair(a: text, b: text, n: int).
+pair(a, b, count(fn)) <- pair_fn(a, b, fn).
+
+# Strong pairs: share >=3 fns. The repeated coincidence signal.
+rel strong_pair(a: text, b: text, n: int).
+strong_pair(a, b, n) <- pair(a, b, n), n >= 3.
+
+# ── HUBS: types by partner count ──────────────────────────────────────────
+# Partner set is symmetric: b is a partner of a whether a < b or b < a.
+rel partner(t: text, other: text).
+partner(t, other) <- pair_fn(t, other, _).
+partner(t, other) <- pair_fn(other, t, _).
+
+rel hub(t: text, n: int).
+hub(t, count(other)) <- partner(t, other).
+
+# Boundary types: share fns with >=10 distinct other types.
+rel boundary(t: text, n: int).
+boundary(t, n) <- hub(t, n), n >= 10.
+
+# ── Tallies ───────────────────────────────────────────────────────────────
+rel n_types(n: int).     n_types(count(t))       <- uses(_, t).
+rel n_pairs(n: int).     n_pairs(count(a))       <- pair(a, _, _).
+rel n_strong(n: int).    n_strong(count(a))      <- strong_pair(a, _, _).
+rel n_single(n: int).    n_single(count(t))      <- single_use(t).
+
+? n_types(n).
+? n_pairs(n).
+? n_strong(n).
+? n_single(n).
+? strong_pair(a, b, n).
+? boundary(t, n).
+? single_use(t).
+? hub(t, n).
