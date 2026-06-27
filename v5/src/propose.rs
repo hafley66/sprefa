@@ -26,11 +26,16 @@ use tree_sitter::{Node, Parser};
 pub struct Proposal {
     pub lo: usize,
     pub hi: usize,
+    pub occurrences: usize,
+    pub gain: usize,
     pub params: Vec<String>,
 }
 
 /// One extract-fn proposal per verbatim-duplicated block in `content`.
 /// `lo`/`hi` are 1-based line numbers of the block's first occurrence.
+/// `occurrences` is how many times the maximal run appears; `gain` is the
+/// predicted dup-removal reward (`lines × (occurrences − 1)` — the structural
+/// signal that validated 97% vs raw LOC's 50%). Sorted by `gain` desc.
 pub fn extract_proposals(content: &str) -> Vec<Proposal> {
     let lines: Vec<&str> = content.lines().collect();
     let mut parser = Parser::new();
@@ -45,13 +50,38 @@ pub fn extract_proposals(content: &str) -> Vec<Proposal> {
     let line_start = line_start_bytes(content);
 
     let mut out = Vec::new();
-    for (a, _b, n) in dup_blocks(&lines, 6) {
+    for (a, n, occ) in dup_blocks(&lines, 6) {
         let lo_byte = line_start[a];
         let hi_byte = line_start.get(a + n).copied().unwrap_or(content.len());
         let params = free_vars(root, content, lo_byte, hi_byte);
-        out.push(Proposal { lo: a + 1, hi: a + n, params });
+        out.push(Proposal {
+            lo: a + 1, hi: a + n, occurrences: occ,
+            gain: n * occ.saturating_sub(1),
+            params,
+        });
     }
+    out.sort_by(|x, y| y.gain.cmp(&x.gain));
     out
+}
+
+/// Render a proposal as Rust source: the inferred signature (params untyped —
+/// a sketch to read, not yet compile) wrapping the verbatim block. The body is
+/// the duplicated text as-is; a human (or a later typed codegen pass) applies it.
+pub fn render_proposal(p: &Proposal, content: &str) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    let body: String = lines[p.lo - 1..p.hi].iter()
+        .map(|l| format!("    {l}")).collect::<Vec<_>>().join("\n");
+    let dedup_note = if p.occurrences > 2 {
+        format!("\n  // removes {} duplicated copies", p.occurrences - 1)
+    } else {
+        String::new()
+    };
+    format!(
+        "// gain: {} ({} lines x {} occurrences)\nfn extracted_{}({}) {{\n{}\n}}{}",
+        p.gain, p.hi - p.lo + 1, p.occurrences,
+        p.lo, p.params.join(", "), body,
+        dedup_note,
+    )
 }
 
 fn lang() -> tree_sitter::Language {
@@ -72,8 +102,9 @@ fn line_start_bytes(content: &str) -> Vec<usize> {
 }
 
 /// Maximal verbatim duplicated consecutive-line runs of length >= `seed`.
-/// Returns `(a, b, n)`: two start indices (0-based) and the run length. Keeps
-/// only maximal runs (drops runs subsumed by a longer one sharing start `a`).
+/// Returns `(a, n, occ)`: first start index (0-based), run length, and how many
+/// times the maximal run appears in the file. Keeps only maximal runs (drops
+/// runs subsumed by a longer one sharing start `a`).
 fn dup_blocks(lines: &[&str], seed: usize) -> Vec<(usize, usize, usize)> {
     use std::collections::HashMap;
     let mut buckets: HashMap<&[&str], Vec<usize>> = HashMap::new();
@@ -101,14 +132,18 @@ fn dup_blocks(lines: &[&str], seed: usize) -> Vec<(usize, usize, usize)> {
         if distinct.len() < 3 {
             continue;
         }
-        blocks.push((a, b, n));
+        // Occurrences: every start index whose maximal run equals lines[a..a+n].
+        let occ = idxs.iter().filter(|&&i| {
+            i + n <= lines.len() && lines[i..i + n] == lines[a..a + n]
+        }).count();
+        blocks.push((a, n, occ));
     }
-    blocks.sort_by(|x, y| y.2.cmp(&x.2));
+    blocks.sort_by(|x, y| y.1.cmp(&x.1));
     let mut kept: Vec<(usize, usize, usize)> = Vec::new();
-    for (a, b, n) in blocks {
-        let subsumed = kept.iter().any(|(ka, _kb, kn)| *ka <= a && a + n <= *ka + *kn);
+    for (a, n, occ) in blocks {
+        let subsumed = kept.iter().any(|(ka, kn, _)| *ka <= a && a + n <= *ka + *kn);
         if !subsumed {
-            kept.push((a, b, n));
+            kept.push((a, n, occ));
         }
     }
     kept
