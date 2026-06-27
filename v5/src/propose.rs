@@ -9,6 +9,21 @@
 //! relation `propose_extract(path, lo, hi, param)` — one row per (block, param)
 //! — so a dl rule can query refactor recommendations.
 //!
+//! Nine clone-detection kernels, all sharing one matching engine:
+//!   - verbatim (Type-1): raw source lines
+//!   - ast-shape (Type-2): normalized CST leaf stream
+//!   - tree-iso (graph-iso): CST subtree Merkle hash, idents as holes
+//!   - cfg-shape (ctrl-flow): pre-order branch/loop node-kind skeleton
+//!   - ddg-shape (data-deps): per-statement def/use count pair
+//!   - callgraph-iso: call_expression (callee_type, arity) multiset
+//!   - ngram-stat (fuzzy): token 3-gram Jaccard similarity (non-equality)
+//!   - symbol-shape (Type-2+sem): CST leaf ⨝ resolved SCIP moniker
+//!   - call-seq (dataflow): per-statement sorted SCIP symbol set hash
+//!
+//! The type-shape kernel (per-expression Rust types) is blocked: RA's SCIP
+//! index carries zero type data (signature_documentation empty, syntax_kind
+//! all 0). Needs LSP hover or analysis-stats to populate.
+//!
 //! Two stages, mirroring the prototype:
 //!   1. `dup_blocks`: maximal verbatim duplicated consecutive-line runs (lexical).
 //!   2. `free_vars`: scope-aware walk. A read is free iff no enclosing scope
@@ -1382,5 +1397,120 @@ mod tests {
         let a: HashSet<u64> = [1u64, 2, 3].into_iter().collect();
         let b: HashSet<u64> = [4u64, 5, 6].into_iter().collect();
         assert!(jaccard(&a, &b).abs() < 1e-9);
+    }
+
+    // --- refinement hierarchy property tests ---
+    // Formalize: tree-iso ⊆ ast-shape, symbol-shape ⊆ ast-shape.
+    // The feature-level invariant is exact; the proposal-level containment
+    // is empirical (window/seed boundary effects cause a few % of misses).
+
+    fn proposals_overlap(a: &Proposal, b: &Proposal) -> bool {
+        a.lo <= b.hi && b.lo <= a.hi
+    }
+
+    fn containment_pct(subset: &[Proposal], superset: &[Proposal]) -> f64 {
+        if subset.is_empty() {
+            return 1.0;
+        }
+        let hit = subset
+            .iter()
+            .filter(|s| superset.iter().any(|p| proposals_overlap(s, p)))
+            .count();
+        hit as f64 / subset.len() as f64
+    }
+
+    #[test]
+    fn subtree_hash_implies_leaf_kind_equality() {
+        // Formal invariant: if two statements have equal subtree_hash (same
+        // CST structure with identifiers erased), their leaf_kind sequences
+        // must also be equal. This means tree-iso is a strict refinement of
+        // ast-shape at the feature level.
+        let src = "fn a() {\n    let x = foo(bar);\n    let y = baz(qux);\n}\n";
+        let mut parser = Parser::new();
+        parser.set_language(&lang()).unwrap();
+        let tree = parser.parse(src, None).unwrap();
+        let stmts = statement_ranges(&tree);
+        let let_stmts: Vec<Node> = stmts
+            .iter()
+            .filter(|(n, _, _)| n.kind() == "let_declaration")
+            .map(|(n, _, _)| *n)
+            .collect();
+        assert_eq!(let_stmts.len(), 2, "need exactly two let-statements");
+        let h1 = subtree_hash(let_stmts[0], src);
+        let h2 = subtree_hash(let_stmts[1], src);
+        assert_eq!(h1, h2, "structurally identical statements must hash equal");
+        let k1 = leaf_kinds(let_stmts[0], src);
+        let k2 = leaf_kinds(let_stmts[1], src);
+        assert_eq!(
+            k1, k2,
+            "equal subtree hash must imply equal leaf kinds (tree refines ast)"
+        );
+    }
+
+    #[test]
+    fn tree_iso_ranges_subset_of_ast_on_engine_rs() {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/engine.rs"),
+        )
+        .unwrap();
+        let tree_p = tree_shape_proposals(&src);
+        let ast_p = ast_shape_proposals(&src);
+        assert!(!tree_p.is_empty(), "tree-iso should find proposals on engine.rs");
+        let pct = containment_pct(&tree_p, &ast_p);
+        assert!(
+            pct > 0.85,
+            "tree-iso ranges should be ≥85% contained in ast ranges: {:.0}% ({} of {})",
+            pct * 100.0,
+            tree_p
+                .iter()
+                .filter(|s| ast_p.iter().any(|p| proposals_overlap(s, p)))
+                .count(),
+            tree_p.len()
+        );
+    }
+
+    #[test]
+    #[ignore = "slow: SCIP load + symbol kernel in debug mode (~80s). Run with --ignored or --release"]
+    fn symbol_ranges_subset_of_ast_on_engine_rs() {
+        // symbol-shape is a CST⨝symbol join: it refines ast-shape by
+        // distinguishing identifiers that ast-shape erases to "ID". Every
+        // symbol match implies an ast match at the feature level. At the
+        // proposal level, containment should be ≥90% (some boundary effects
+        // from different seed windows). Uses the SCIP index if available.
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/engine.rs"),
+        )
+        .unwrap();
+        let repo_root = format!("{}/..", env!("CARGO_MANIFEST_DIR"));
+        let idx = std::path::PathBuf::from(format!("{repo_root}/index.scip"));
+        let occ_owned: Vec<(i32, i32, String)>;
+        let spans: Vec<(i32, i32, &str)>;
+        match crate::scip_import::load(&idx) {
+            Ok(rows) => {
+                occ_owned = rows
+                    .occ_spans
+                    .iter()
+                    .filter(|(f, _, _, _)| f == "src/engine.rs")
+                    .map(|(_, l, c, s)| (*l, *c, s.clone()))
+                    .collect();
+                spans = occ_owned
+                    .iter()
+                    .map(|(l, c, s)| (*l, *c, s.as_str()))
+                    .collect();
+            }
+            Err(_) => {
+                eprintln!("[scip] no index; skipping symbol-⊆-ast property test");
+                return;
+            }
+        }
+        let sym_p = symbol_shape_proposals(&src, &spans);
+        let ast_p = ast_shape_proposals(&src);
+        assert!(!sym_p.is_empty(), "symbol should find proposals on engine.rs");
+        let pct = containment_pct(&sym_p, &ast_p);
+        assert!(
+            pct > 0.90,
+            "symbol ranges should be ≥90% contained in ast ranges: {:.0}%",
+            pct * 100.0
+        );
     }
 }
