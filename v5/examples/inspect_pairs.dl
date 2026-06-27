@@ -1,0 +1,45 @@
+# inspect_pairs.dl — dump the field structure of specific LGG pairs
+rel seen(path: file).
+seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
+
+rel fields_of(t: text, to: text).
+fields_of(t, to) <- type_edge(t, to, "field").
+
+# The Dollar/Resolved/Severity/Value cluster (vars=2 pairs)
+rel dollar(t: text).
+dollar(to) <- type_edge("Dollar", to, "field").
+rel resolved(t: text).
+resolved(to) <- type_edge("Resolved", to, "field").
+rel severity(t: text).
+severity(to) <- type_edge("Severity", to, "field").
+rel value_t(t: text).
+value_t(to) <- type_edge("Value", to, "field").
+
+# CallDef / TypeExpr (vars=4)
+rel calldef(t: text).
+calldef(to) <- type_edge("CallDef", to, "field").
+rel typeexpr(t: text).
+typeexpr(to) <- type_edge("TypeExpr", to, "field").
+
+# Item::Rel / SurfaceItem::Def (vars=2)
+rel item_rel(t: text).
+item_rel(to) <- type_edge("Item::Rel", to, "field").
+rel surface_def(t: text).
+surface_def(to) <- type_edge("SurfaceItem::Def", to, "field").
+
+# ClosureCache / Desc (vars=4)
+rel cc(t: text).
+cc(to) <- type_edge("ClosureCache", to, "field").
+rel desc(t: text).
+desc(to) <- type_edge("Desc", to, "field").
+
+? dollar(t).
+? resolved(t).
+? severity(t).
+? value_t(t).
+? calldef(t).
+? typeexpr(t).
+? item_rel(t).
+? surface_def(t).
+? cc(t).
+? desc(t).

@@ -4398,14 +4398,19 @@ impl Engine {
         Ok(true)
     }
 
-    /// Rebuild `type_lgg(a, b, vars)` from the current `type_edge` rows.
-    /// Reads the edge set, computes Plotkin LGG var count per canonical pair,
-    /// writes one row per pair with vars >= 1. Returns false if unchanged.
+    /// Rebuild `type_lgg(a, b, vars)` from the resolved type graph.
+    ///
+    /// Uses `type_link` (SCIP-resolved syms) instead of `type_edge` (bare names)
+    /// so the LGG can recurse into resolved local types. Unresolved types
+    /// (std/external: `HashMap`, `Vec`, `String`) stay as leaves — correct,
+    /// since they have no local structure to compare. Two fields that resolve
+    /// to the same local type sym now produce 0 vars instead of 1, eliminating
+    /// the leaf-noise that drowned the bare-name LGG.
     fn refresh_type_lgg_rel(&self) -> Result<bool> {
         let edges: Vec<(String, String, String)> = {
             let conn = self.db.conn();
             let mut s = conn.prepare(&format!(
-                "SELECT \"from\",\"to\",\"kind\" FROM {}", tbl("type_edge")
+                "SELECT \"src\",\"dst\",\"kind\" FROM {}", tbl("type_link")
             ))?;
             let rows = s.query_map([], |r| Ok((
                 r.get::<_, String>(0)?,

@@ -1,0 +1,47 @@
+# type_lgg_query.dl — filtered for actionable signal.
+#
+# The raw type_lgg/type_shape produce thousands of leaf-leaf noise pairs.
+# This recipe filters to pairs where BOTH sides have ≥2 field children
+# (real structs with multiple fields), and reports:
+#   1. shape_dup: exact field-tree iso (merge candidates)
+#   2. near_iso: 1-var LGG (one field type differs)
+#   3. mild_div: 2-3 var LGG (shared structure, few holes)
+#
+# Manual:  dl v5/examples/type_lgg_query.dl --root . --db /tmp/dl-lgg.db --no-daemon
+
+rel seen(path: file).
+seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
+
+# Struct filter: has ≥2 field children (not unit variants, not 1-field wrappers).
+rel struct2(t: text).
+struct2(t) <- type_edge(t, _, "field"),
+    type_edge(t, _, "field"),
+    type_edge(t, a, "field"),
+    type_edge(t, b, "field"),
+    a != b.
+
+# Exact shape-iso among real structs.
+rel shape_merge(a: text, b: text).
+shape_merge(a, b) <- type_shape(a, h), type_shape(b, h2),
+    h = h2, a < b, struct2(a), struct2(b).
+
+# LGG among real structs.
+rel struct_lgg(a: text, b: text, vars: int).
+struct_lgg(a, b, vars) <- type_lgg(a, b, vars), struct2(a), struct2(b).
+
+rel near_iso(a: text, b: text).
+near_iso(a, b) <- struct_lgg(a, b, 1).
+
+rel mild_div(a: text, b: text, vars: int).
+mild_div(a, b, vars) <- struct_lgg(a, b, vars), vars >= 2, vars <= 3.
+
+rel n_shape(n: int).       n_shape(count(a))    <- shape_merge(a, _).
+rel n_near(n: int).         n_near(count(a))     <- near_iso(a, _).
+rel n_mild(n: int).         n_mild(count(a))     <- mild_div(a, _, _).
+
+? n_shape(n).
+? n_near(n).
+? n_mild(n).
+? shape_merge(a, b).
+? near_iso(a, b).
+? mild_div(a, b, vars).

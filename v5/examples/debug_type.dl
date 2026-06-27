@@ -1,0 +1,16 @@
+# debug_type.dl — check what's in type_edge and type_entity
+rel seen(path: file).
+seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
+
+rel n_edge(n: int).
+n_edge(count(from)) <- type_edge(from, _, _).
+
+rel n_entity(n: int).
+n_entity(count(sym)) <- type_entity(_, sym, _, _, _, _, _).
+
+rel n_shape(n: int).
+n_shape(count(name)) <- type_shape(name, _).
+
+? n_edge(n).
+? n_entity(n).
+? n_shape(n).

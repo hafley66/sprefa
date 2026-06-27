@@ -1,0 +1,26 @@
+# Extract the Engine method×field incidence matrix for spectral co-clustering.
+# Each row = Engine method, each col = Engine field it references.
+# Output as TSV for Python SVD.
+
+rel seen(path: file).
+seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
+
+rel eng_method(fn: text).
+eng_method(fn) <- scip_fn_edge(fn, callee), callee =~ /Engine\]/, fn =~ /Engine\]/.
+
+rel eng_field_ref(fn: text, field: text).
+eng_field_ref(fn, field) <-
+    eng_method(fn),
+    scip_fn_edge(fn, callee),
+    callee =~ /Engine#\w+/,
+    field = split(callee, "#", -1).
+
+rel field_name(field: text).
+field_name(field) <- eng_field_ref(_, field).
+
+rel method_name(fn: text).
+method_name(fn) <- eng_method(fn).
+
+? method_name(fn).
+? field_name(field).
+? eng_field_ref(fn, field).
