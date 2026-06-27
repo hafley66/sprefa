@@ -1,1 +1,1 @@
-20260627.0.kernel-space-6-detectors-validation.md
+20260627.1.from-clone-kernels-to-type-intelligence.md

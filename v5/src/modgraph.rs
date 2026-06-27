@@ -69,21 +69,38 @@ pub struct ProjectCx<'a> {
 }
 
 impl<'a> ProjectCx<'a> {
-    pub fn new(root: &'a Path, files: &'a HashSet<String>, manifests: &'a HashMap<String, String>) -> Self {
-        ProjectCx { root, files, manifests, reader: None,
-            rust_crates: OnceLock::new(), ts_packages: OnceLock::new(), kotlin: OnceLock::new() }
+    pub fn new(
+        root: &'a Path,
+        files: &'a HashSet<String>,
+        manifests: &'a HashMap<String, String>,
+    ) -> Self {
+        ProjectCx {
+            root,
+            files,
+            manifests,
+            reader: None,
+            rust_crates: OnceLock::new(),
+            ts_packages: OnceLock::new(),
+            kotlin: OnceLock::new(),
+        }
     }
 
-    pub fn with_reader(mut self, reader: &'a (dyn Fn(&str) -> Option<String> + Send + Sync)) -> Self {
-        self.reader = Some(reader); self
+    pub fn with_reader(
+        mut self,
+        reader: &'a (dyn Fn(&str) -> Option<String> + Send + Sync),
+    ) -> Self {
+        self.reader = Some(reader);
+        self
     }
 
     fn kotlin_index(&self) -> &KotlinIndex {
-        self.kotlin.get_or_init(|| KotlinIndex::build(self.files, self.reader))
+        self.kotlin
+            .get_or_init(|| KotlinIndex::build(self.files, self.reader))
     }
 
     fn rust_crates(&self) -> &RustCrates {
-        self.rust_crates.get_or_init(|| RustCrates::build(self.files, self.manifests))
+        self.rust_crates
+            .get_or_init(|| RustCrates::build(self.files, self.manifests))
     }
 
     /// npm/pnpm workspace package name -> the package's directory (manifest parent).
@@ -91,7 +108,9 @@ impl<'a> ProjectCx<'a> {
         self.ts_packages.get_or_init(|| {
             let mut m = HashMap::new();
             for (path, content) in self.manifests {
-                if !path.ends_with("package.json") { continue; }
+                if !path.ends_with("package.json") {
+                    continue;
+                }
                 if let Some(name) = json_name(content) {
                     let dir = parent_dir(path);
                     m.insert(name, dir);
@@ -110,7 +129,9 @@ pub trait ModuleResolver: Send + Sync {
 /// Map a file's extension to its resolver. Built per refresh (root-scoped for TS).
 pub fn resolvers(root: &Path) -> Vec<Box<dyn ModuleResolver + Send + Sync>> {
     let mut v: Vec<Box<dyn ModuleResolver + Send + Sync>> = vec![Box::new(RustResolver)];
-    if let Some(ts) = TsResolver::new(root) { v.push(Box::new(ts)); }
+    if let Some(ts) = TsResolver::new(root) {
+        v.push(Box::new(ts));
+    }
     v.push(Box::new(KotlinResolver));
     v
 }
@@ -129,58 +150,122 @@ fn strip_noise(src: &str, rust: bool) -> String {
     let mut out = Vec::with_capacity(n);
     let mut i = 0;
     let blank_to = |out: &mut Vec<u8>, b: &[u8], from: usize, to: usize, blank: bool| {
-        for k in from..to { out.push(if b[k] == b'\n' { b'\n' } else if blank { b' ' } else { b[k] }); }
+        for k in from..to {
+            out.push(if b[k] == b'\n' {
+                b'\n'
+            } else if blank {
+                b' '
+            } else {
+                b[k]
+            });
+        }
     };
     while i < n {
         let c = b[i];
         // line comment
         if c == b'/' && i + 1 < n && b[i + 1] == b'/' {
-            let s = i; while i < n && b[i] != b'\n' { i += 1; }
-            blank_to(&mut out, b, s, i, true); continue;
+            let s = i;
+            while i < n && b[i] != b'\n' {
+                i += 1;
+            }
+            blank_to(&mut out, b, s, i, true);
+            continue;
         }
         // block comment (nested when rust)
         if c == b'/' && i + 1 < n && b[i + 1] == b'*' {
-            let s = i; let mut depth = 1; i += 2;
+            let s = i;
+            let mut depth = 1;
+            i += 2;
             while i < n && depth > 0 {
-                if b[i] == b'/' && i + 1 < n && b[i + 1] == b'*' { if rust { depth += 1; } i += 2; }
-                else if b[i] == b'*' && i + 1 < n && b[i + 1] == b'/' { depth -= 1; i += 2; }
-                else { i += 1; }
+                if b[i] == b'/' && i + 1 < n && b[i + 1] == b'*' {
+                    if rust {
+                        depth += 1;
+                    }
+                    i += 2;
+                } else if b[i] == b'*' && i + 1 < n && b[i + 1] == b'/' {
+                    depth -= 1;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
             }
-            blank_to(&mut out, b, s, i, true); continue;
+            blank_to(&mut out, b, s, i, true);
+            continue;
         }
         // rust raw string: r"..." / r#"..."# / br#"..."#
         if rust {
             let mut j = i;
-            if b[j] == b'b' && j + 1 < n { j += 1; }
+            if b[j] == b'b' && j + 1 < n {
+                j += 1;
+            }
             if b[j] == b'r' {
-                let mut k = j + 1; let mut hashes = 0;
-                while k < n && b[k] == b'#' { hashes += 1; k += 1; }
+                let mut k = j + 1;
+                let mut hashes = 0;
+                while k < n && b[k] == b'#' {
+                    hashes += 1;
+                    k += 1;
+                }
                 if k < n && b[k] == b'"' {
-                    let s = i; k += 1;
+                    let s = i;
+                    k += 1;
                     // closing = '"' followed by `hashes` '#'
                     loop {
-                        if k >= n { break; }
+                        if k >= n {
+                            break;
+                        }
                         if b[k] == b'"' {
-                            let mut h = 0; while k + 1 + h < n && b[k + 1 + h] == b'#' { h += 1; }
-                            if h >= hashes { k += 1 + hashes; break; }
+                            let mut h = 0;
+                            while k + 1 + h < n && b[k + 1 + h] == b'#' {
+                                h += 1;
+                            }
+                            if h >= hashes {
+                                k += 1 + hashes;
+                                break;
+                            }
                         }
                         k += 1;
                     }
-                    blank_to(&mut out, b, s, k.min(n), true); i = k.min(n); continue;
+                    blank_to(&mut out, b, s, k.min(n), true);
+                    i = k.min(n);
+                    continue;
                 }
             }
         }
         // normal double-quoted string
         if c == b'"' {
-            let s = i; i += 1;
-            while i < n { if b[i] == b'\\' { i += 2; continue; } if b[i] == b'"' { i += 1; break; } i += 1; }
-            blank_to(&mut out, b, s, i.min(n), rust); continue;
+            let s = i;
+            i += 1;
+            while i < n {
+                if b[i] == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                if b[i] == b'"' {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            blank_to(&mut out, b, s, i.min(n), rust);
+            continue;
         }
         // backtick template (TS)
         if !rust && c == b'`' {
-            let s = i; i += 1;
-            while i < n { if b[i] == b'\\' { i += 2; continue; } if b[i] == b'`' { i += 1; break; } i += 1; }
-            blank_to(&mut out, b, s, i.min(n), false); continue;
+            let s = i;
+            i += 1;
+            while i < n {
+                if b[i] == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                if b[i] == b'`' {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            blank_to(&mut out, b, s, i.min(n), false);
+            continue;
         }
         // single quote: rust char (lifetime-safe heuristic) vs TS string
         if c == b'\'' {
@@ -189,29 +274,58 @@ fn strip_noise(src: &str, rust: bool) -> String {
                 let is_char = (i + 2 < n && b[i + 1] == b'\\')
                     || (i + 2 < n && b[i + 1] != b'\\' && b[i + 2] == b'\'');
                 if is_char {
-                    let s = i; i += 1;
-                    if i < n && b[i] == b'\\' { i += 1; }
-                    i += 1; if i < n && b[i] == b'\'' { i += 1; }
-                    blank_to(&mut out, b, s, i.min(n), true); continue;
+                    let s = i;
+                    i += 1;
+                    if i < n && b[i] == b'\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                    if i < n && b[i] == b'\'' {
+                        i += 1;
+                    }
+                    blank_to(&mut out, b, s, i.min(n), true);
+                    continue;
                 }
-                out.push(c); i += 1; continue; // lifetime
+                out.push(c);
+                i += 1;
+                continue; // lifetime
             } else {
-                let s = i; i += 1;
-                while i < n { if b[i] == b'\\' { i += 2; continue; } if b[i] == b'\'' { i += 1; break; } i += 1; }
-                blank_to(&mut out, b, s, i.min(n), false); continue;
+                let s = i;
+                i += 1;
+                while i < n {
+                    if b[i] == b'\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if b[i] == b'\'' {
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+                blank_to(&mut out, b, s, i.min(n), false);
+                continue;
             }
         }
-        out.push(c); i += 1;
+        out.push(c);
+        i += 1;
     }
     String::from_utf8(out).unwrap_or_else(|_| src.to_string())
 }
 
 fn line_of(content: &str, byte: usize) -> u32 {
-    content[..byte.min(content.len())].bytes().filter(|&b| b == b'\n').count() as u32 + 1
+    content[..byte.min(content.len())]
+        .bytes()
+        .filter(|&b| b == b'\n')
+        .count() as u32
+        + 1
 }
 
 fn parent_dir(path: &str) -> String {
-    Path::new(path).parent().map(|d| d.to_string_lossy().replace('\\', "/")).unwrap_or_default()
+    Path::new(path)
+        .parent()
+        .map(|d| d.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default()
 }
 
 /// `"name": "x"` from a package.json (first match; diet, no full JSON parse).
@@ -227,7 +341,12 @@ pub struct RustResolver;
 
 fn rust_mod_re() -> &'static Regex {
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"(?m)^[ \t]*(?:pub[ \t]*(?:\([^)]*\)[ \t]*)?)?mod[ \t]+(?:r#)?([A-Za-z_]\w*)[ \t]*;").unwrap())
+    RE.get_or_init(|| {
+        Regex::new(
+            r"(?m)^[ \t]*(?:pub[ \t]*(?:\([^)]*\)[ \t]*)?)?mod[ \t]+(?:r#)?([A-Za-z_]\w*)[ \t]*;",
+        )
+        .unwrap()
+    })
 }
 
 fn rust_use_re() -> &'static Regex {
@@ -243,7 +362,9 @@ fn rust_path_mod_re() -> &'static Regex {
 }
 
 impl ModuleResolver for RustResolver {
-    fn exts(&self) -> &'static [&'static str] { &["rs"] }
+    fn exts(&self) -> &'static [&'static str] {
+        &["rs"]
+    }
 
     fn edges(&self, file: &str, content: &str, cx: &ProjectCx) -> Vec<ModuleRef> {
         let mut out = Vec::new();
@@ -259,9 +380,18 @@ impl ModuleResolver for RustResolver {
             path_mods.insert(name.clone());
             let line = line_of(content, c.get(0).unwrap().start());
             let cand = normalize_join(&base, rel);
-            let target = if cx.files.contains(&cand) { Resolution::File(cand) }
-                         else { Resolution::Unresolved(format!("#[path] {rel}: no file")) };
-            out.push(ModuleRef { specifier: format!("#[path] mod {name}"), kind: "mod", line, span: None, target });
+            let target = if cx.files.contains(&cand) {
+                Resolution::File(cand)
+            } else {
+                Resolution::Unresolved(format!("#[path] {rel}: no file"))
+            };
+            out.push(ModuleRef {
+                specifier: format!("#[path] mod {name}"),
+                kind: "mod",
+                line,
+                span: None,
+                target,
+            });
         }
 
         let clean = strip_noise(content, true);
@@ -269,14 +399,24 @@ impl ModuleResolver for RustResolver {
         // `mod foo;` — submodule file by filesystem convention (skip #[path] ones).
         for c in rust_mod_re().captures_iter(&clean) {
             let name = &c[1];
-            if path_mods.contains(name) { continue; }
+            if path_mods.contains(name) {
+                continue;
+            }
             let line = line_of(&clean, c.get(0).unwrap().start());
-            let target = match mod_child_candidates(file, name).into_iter()
-                .find(|cand| cx.files.contains(cand)) {
+            let target = match mod_child_candidates(file, name)
+                .into_iter()
+                .find(|cand| cx.files.contains(cand))
+            {
                 Some(f) => Resolution::File(f),
                 None => Resolution::Unresolved(format!("mod {name}: no child file")),
             };
-            out.push(ModuleRef { specifier: format!("mod {name}"), kind: "mod", line, span: None, target });
+            out.push(ModuleRef {
+                specifier: format!("mod {name}"),
+                kind: "mod",
+                line,
+                span: None,
+                target,
+            });
         }
 
         // `use path;` — intra- and cross-crate references. `expand_use` returns
@@ -287,8 +427,13 @@ impl ModuleResolver for RustResolver {
             let body_start = c.get(1).unwrap().start() as u32;
             for (cand, lo, hi) in expand_use(&c[1]) {
                 let target = crates.resolve_use(file, &cand);
-                out.push(ModuleRef { specifier: cand, kind: "use", line,
-                    span: Some((body_start + lo, body_start + hi)), target });
+                out.push(ModuleRef {
+                    specifier: cand,
+                    kind: "use",
+                    line,
+                    span: Some((body_start + lo, body_start + hi)),
+                    target,
+                });
             }
         }
         out
@@ -301,25 +446,41 @@ fn mod_base_dir(file: &str) -> String {
     let p = Path::new(file);
     let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
     let dir = parent_dir(file);
-    if matches!(stem, "mod" | "lib" | "main") { dir }
-    else if dir.is_empty() { stem.to_string() }
-    else { format!("{dir}/{stem}") }
+    if matches!(stem, "mod" | "lib" | "main") {
+        dir
+    } else if dir.is_empty() {
+        stem.to_string()
+    } else {
+        format!("{dir}/{stem}")
+    }
 }
 
 /// Candidate child-module files for `mod <name>;` in `file`.
 fn mod_child_candidates(file: &str, name: &str) -> Vec<String> {
     let base = mod_base_dir(file);
-    let j = |suffix: &str| if base.is_empty() { suffix.to_string() } else { format!("{base}/{suffix}") };
+    let j = |suffix: &str| {
+        if base.is_empty() {
+            suffix.to_string()
+        } else {
+            format!("{base}/{suffix}")
+        }
+    };
     vec![j(&format!("{name}.rs")), j(&format!("{name}/mod.rs"))]
 }
 
 /// Join a `#[path]` value onto a base dir and normalize `.`/`..`/leading `./`.
 fn normalize_join(base: &str, rel: &str) -> String {
-    let mut segs: Vec<&str> = if base.is_empty() { Vec::new() } else { base.split('/').collect() };
+    let mut segs: Vec<&str> = if base.is_empty() {
+        Vec::new()
+    } else {
+        base.split('/').collect()
+    };
     for s in rel.split('/') {
         match s {
             "" | "." => {}
-            ".." => { segs.pop(); }
+            ".." => {
+                segs.pop();
+            }
             other => segs.push(other),
         }
     }
@@ -353,28 +514,39 @@ pub struct UseLeaf {
 /// won't prefix-match the head; the move sink's leaf-level second pass
 /// (`use_leaves`) covers it.
 fn expand_use(body: &str) -> Vec<(String, u32, u32)> {
-    expand_use_leaves(body).into_iter().map(|l| {
-        let (lo, hi) = l.head.unwrap_or(l.leaf);
-        (l.full, lo, hi)
-    }).collect()
+    expand_use_leaves(body)
+        .into_iter()
+        .map(|l| {
+            let (lo, hi) = l.head.unwrap_or(l.leaf);
+            (l.full, lo, hi)
+        })
+        .collect()
 }
 
 /// The full per-leaf expansion behind `expand_use` — same recursion, nothing
 /// projected away.
 pub fn expand_use_leaves(body: &str) -> Vec<UseLeaf> {
-    fn rec(prefix: &str, raw: &str, raw_off: usize, head_span: Option<(u32, u32)>,
-           out: &mut Vec<UseLeaf>) {
+    fn rec(
+        prefix: &str,
+        raw: &str,
+        raw_off: usize,
+        head_span: Option<(u32, u32)>,
+        out: &mut Vec<UseLeaf>,
+    ) {
         let lead = raw.len() - raw.trim_start().len();
         let seg = raw.trim();
-        if seg.is_empty() { return; }
+        if seg.is_empty() {
+            return;
+        }
         let seg_off = raw_off + lead; // absolute (body-relative) start of trimmed seg
         if let Some(bi) = seg.find('{') {
             let head = seg[..bi].trim().trim_end_matches(':');
             let np = join(prefix, head);
             // The first (outermost) brace fixes the head coordinate; deeper braces
             // inherit it. `head` starts at seg_off (seg is already left-trimmed).
-            let this_head = head_span.or_else(||
-                (!head.is_empty()).then(|| (seg_off as u32, (seg_off + head.len()) as u32)));
+            let this_head = head_span.or_else(|| {
+                (!head.is_empty()).then(|| (seg_off as u32, (seg_off + head.len()) as u32))
+            });
             let close = matching_brace(seg, bi).unwrap_or(seg.len());
             for (item, item_off) in split_top_commas(&seg[bi + 1..close]) {
                 rec(&np, &item, seg_off + bi + 1 + item_off, this_head, out);
@@ -383,7 +555,11 @@ pub fn expand_use_leaves(body: &str) -> Vec<UseLeaf> {
             // The contiguous leaf is the path before any ` as ` alias.
             let leaf = seg.split(" as ").next().unwrap_or(seg).trim_end();
             let collapsed = leaf == "self" || leaf == "*" || leaf.is_empty();
-            let full = if collapsed { prefix.to_string() } else { join(prefix, leaf) };
+            let full = if collapsed {
+                prefix.to_string()
+            } else {
+                join(prefix, leaf)
+            };
             if !full.is_empty() {
                 out.push(UseLeaf {
                     full: full.replace("r#", ""),
@@ -419,16 +595,29 @@ pub fn rust_use_leaves(content: &str) -> Vec<UseLeaf> {
 
 fn join(prefix: &str, head: &str) -> String {
     let head = head.trim_start_matches(':');
-    if prefix.is_empty() { head.to_string() }
-    else if head.is_empty() { prefix.to_string() }
-    else { format!("{prefix}::{head}") }
+    if prefix.is_empty() {
+        head.to_string()
+    } else if head.is_empty() {
+        prefix.to_string()
+    } else {
+        format!("{prefix}::{head}")
+    }
 }
 
 fn matching_brace(s: &str, open: usize) -> Option<usize> {
     let b = s.as_bytes();
     let mut depth = 0;
     for i in open..b.len() {
-        match b[i] { b'{' => depth += 1, b'}' => { depth -= 1; if depth == 0 { return Some(i); } }, _ => {} }
+        match b[i] {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
     }
     None
 }
@@ -436,13 +625,17 @@ fn matching_brace(s: &str, open: usize) -> Option<usize> {
 /// Split on top-level commas, returning each item with its start offset in `s`.
 fn split_top_commas(s: &str) -> Vec<(String, usize)> {
     let mut out = Vec::new();
-    let mut depth = 0; let mut start = 0;
+    let mut depth = 0;
+    let mut start = 0;
     let b = s.as_bytes();
     for i in 0..b.len() {
         match b[i] {
             b'{' => depth += 1,
             b'}' => depth -= 1,
-            b',' if depth == 0 => { out.push((s[start..i].to_string(), start)); start = i + 1; }
+            b',' if depth == 0 => {
+                out.push((s[start..i].to_string(), start));
+                start = i + 1;
+            }
             _ => {}
         }
     }
@@ -454,8 +647,8 @@ fn split_top_commas(s: &str) -> Vec<(String, usize)> {
 /// name -> src root, and file -> owning crate. Solves the multi-crate `crate::`
 /// collision and enables cross-crate `use othercrate::..`.
 struct RustCrates {
-    name_to_src: HashMap<String, String>,    // crate name -> "<dir>/src"
-    roots: Vec<(String, String)>,            // (src root, crate name), longest first
+    name_to_src: HashMap<String, String>, // crate name -> "<dir>/src"
+    roots: Vec<(String, String)>,         // (src root, crate name), longest first
     index: HashMap<(String, String), String>, // (crate name, mod path) -> file
     renames: HashMap<(String, String), String>, // (owner crate, code name) -> real package
 }
@@ -466,37 +659,56 @@ impl RustCrates {
         let mut roots: Vec<(String, String)> = Vec::new();
         let mut renames: HashMap<(String, String), String> = HashMap::new();
         for (path, content) in manifests {
-            if !path.ends_with("Cargo.toml") { continue; }
+            if !path.ends_with("Cargo.toml") {
+                continue;
+            }
             let (name, rns) = parse_cargo(content);
             let Some(name) = name else { continue };
             let dir = parent_dir(path);
-            let src = if dir.is_empty() { "src".to_string() } else { format!("{dir}/src") };
+            let src = if dir.is_empty() {
+                "src".to_string()
+            } else {
+                format!("{dir}/src")
+            };
             name_to_src.insert(name.clone(), src.clone());
             roots.push((src, name.clone()));
             // `renamed = { package = "real" }`: code uses `renamed`, crate is `real`.
-            for (code, real) in rns { renames.insert((name.clone(), code), real); }
+            for (code, real) in rns {
+                renames.insert((name.clone(), code), real);
+            }
         }
         roots.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
 
         let owner = |file: &str| -> String {
             for (src, name) in &roots {
-                if file == src || file.starts_with(&format!("{src}/")) { return name.clone(); }
+                if file == src || file.starts_with(&format!("{src}/")) {
+                    return name.clone();
+                }
             }
             String::new() // no manifest: single anonymous crate
         };
         let mut index = HashMap::new();
         for f in files {
-            if !f.ends_with(".rs") { continue; }
+            if !f.ends_with(".rs") {
+                continue;
+            }
             if let Some(mp) = file_to_mod_path(f) {
                 index.entry((owner(f), mp)).or_insert_with(|| f.clone());
             }
         }
-        RustCrates { name_to_src, roots, index, renames }
+        RustCrates {
+            name_to_src,
+            roots,
+            index,
+            renames,
+        }
     }
 
     fn owner(&self, file: &str) -> String {
         for (src, name) in &self.roots {
-            if file == src || file.starts_with(&format!("{src}/")) { return name.clone(); }
+            if file == src || file.starts_with(&format!("{src}/")) {
+                return name.clone();
+            }
         }
         String::new()
     }
@@ -505,7 +717,9 @@ impl RustCrates {
         let segs: Vec<&str> = abs.split("::").collect();
         for len in (1..=segs.len()).rev() {
             let p = segs[..len].join("::");
-            if let Some(f) = self.index.get(&(crate_name.to_string(), p)) { return Some(f.clone()); }
+            if let Some(f) = self.index.get(&(crate_name.to_string(), p)) {
+                return Some(f.clone());
+            }
         }
         None
     }
@@ -526,11 +740,17 @@ impl RustCrates {
         let real = if self.name_to_src.contains_key(first) {
             Some(first.to_string())
         } else {
-            self.renames.get(&(owner.clone(), first.to_string())).cloned()
+            self.renames
+                .get(&(owner.clone(), first.to_string()))
+                .cloned()
         };
         if let Some(pkg) = real {
             let rest: Vec<&str> = segs.collect();
-            let abs2 = if rest.is_empty() { "crate".to_string() } else { format!("crate::{}", rest.join("::")) };
+            let abs2 = if rest.is_empty() {
+                "crate".to_string()
+            } else {
+                format!("crate::{}", rest.join("::"))
+            };
             return match self.lookup(&pkg, &abs2) {
                 Some(f) => Resolution::File(f),
                 None => Resolution::Unresolved(format!("{use_path}: no file in crate '{pkg}'")),
@@ -545,15 +765,28 @@ impl RustCrates {
 /// used in `use code::..` differs from the actual crate. Uses the `toml` crate so
 /// inline tables, `[dependencies.x]` sections, and quoted keys all parse correctly.
 fn parse_cargo(content: &str) -> (Option<String>, Vec<(String, String)>) {
-    let Ok(val) = toml::from_str::<toml::Value>(content) else { return (None, Vec::new()); };
-    let name = val.get("package").and_then(|p| p.get("name"))
-        .and_then(|n| n.as_str()).map(|s| s.to_string());
+    let Ok(val) = toml::from_str::<toml::Value>(content) else {
+        return (None, Vec::new());
+    };
+    let name = val
+        .get("package")
+        .and_then(|p| p.get("name"))
+        .and_then(|n| n.as_str())
+        .map(|s| s.to_string());
     let mut renames = Vec::new();
     for sec in ["dependencies", "dev-dependencies", "build-dependencies"] {
-        let Some(deps) = val.get(sec).and_then(|d| d.as_table()) else { continue };
+        let Some(deps) = val.get(sec).and_then(|d| d.as_table()) else {
+            continue;
+        };
         for (code, spec) in deps {
-            if let Some(pkg) = spec.as_table().and_then(|t| t.get("package")).and_then(|p| p.as_str()) {
-                if pkg != code { renames.push((code.clone(), pkg.to_string())); }
+            if let Some(pkg) = spec
+                .as_table()
+                .and_then(|t| t.get("package"))
+                .and_then(|p| p.as_str())
+            {
+                if pkg != code {
+                    renames.push((code.clone(), pkg.to_string()));
+                }
             }
         }
     }
@@ -565,19 +798,32 @@ pub fn crate_edges(manifests: &HashMap<String, String>) -> Vec<CrateEdge> {
     let mut packages = HashSet::new();
     let mut deps: Vec<(String, String, &'static str)> = Vec::new();
     for (path, content) in manifests {
-        if !path.ends_with("Cargo.toml") { continue; }
-        let Ok(val) = toml::from_str::<toml::Value>(content) else { continue };
-        let Some(src) = val.get("package").and_then(|p| p.get("name"))
-            .and_then(|n| n.as_str()).map(|s| s.to_string()) else { continue };
+        if !path.ends_with("Cargo.toml") {
+            continue;
+        }
+        let Ok(val) = toml::from_str::<toml::Value>(content) else {
+            continue;
+        };
+        let Some(src) = val
+            .get("package")
+            .and_then(|p| p.get("name"))
+            .and_then(|n| n.as_str())
+            .map(|s| s.to_string())
+        else {
+            continue;
+        };
         packages.insert(src.clone());
         for (sec, kind) in [
             ("dependencies", "dependencies"),
             ("dev-dependencies", "dev-dependencies"),
             ("build-dependencies", "build-dependencies"),
         ] {
-            let Some(table) = val.get(sec).and_then(|d| d.as_table()) else { continue };
+            let Some(table) = val.get(sec).and_then(|d| d.as_table()) else {
+                continue;
+            };
             for (code, spec) in table {
-                let dst = spec.as_table()
+                let dst = spec
+                    .as_table()
                     .and_then(|t| t.get("package"))
                     .and_then(|p| p.as_str())
                     .unwrap_or(code)
@@ -588,7 +834,9 @@ pub fn crate_edges(manifests: &HashMap<String, String>) -> Vec<CrateEdge> {
     }
     let mut out = BTreeSet::new();
     for (src, dst, kind) in deps {
-        if packages.contains(&dst) && src != dst { out.insert(CrateEdge { src, dst, kind }); }
+        if packages.contains(&dst) && src != dst {
+            out.insert(CrateEdge { src, dst, kind });
+        }
     }
     out.into_iter().collect()
 }
@@ -596,21 +844,32 @@ pub fn crate_edges(manifests: &HashMap<String, String>) -> Vec<CrateEdge> {
 /// File path -> Rust module path. None if the path has no `src/` segment.
 pub fn file_to_mod_path(file_path: &str) -> Option<String> {
     let path = Path::new(file_path);
-    let components: Vec<&str> = path.components()
-        .map(|c| c.as_os_str().to_str().unwrap_or("")).collect();
+    let components: Vec<&str> = path
+        .components()
+        .map(|c| c.as_os_str().to_str().unwrap_or(""))
+        .collect();
     let src_idx = components.iter().rposition(|c| *c == "src")?;
     let after_src: Vec<&str> = components[src_idx + 1..].to_vec();
-    if after_src.is_empty() { return None; }
+    if after_src.is_empty() {
+        return None;
+    }
     let last = *after_src.last().unwrap();
-    let stem = Path::new(last).file_stem().and_then(|s| s.to_str()).unwrap_or(last);
+    let stem = Path::new(last)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(last);
     if after_src.len() == 1 && (stem == "lib" || stem == "main") {
         return Some("crate".to_string());
     }
     let mut segments = vec!["crate"];
     if stem == "mod" {
-        for dir in &after_src[..after_src.len() - 1] { segments.push(dir); }
+        for dir in &after_src[..after_src.len() - 1] {
+            segments.push(dir);
+        }
     } else {
-        for dir in &after_src[..after_src.len() - 1] { segments.push(dir); }
+        for dir in &after_src[..after_src.len() - 1] {
+            segments.push(dir);
+        }
         segments.push(stem);
     }
     Some(segments.join("::"))
@@ -625,7 +884,9 @@ pub fn resolve_to_absolute(use_path: &str, from_mod: &str) -> Option<String> {
     if let Some(rest) = use_path.strip_prefix("self::") {
         return Some(format!("{from_mod}::{rest}"));
     }
-    if use_path == "self" { return Some(from_mod.to_string()); }
+    if use_path == "self" {
+        return Some(from_mod.to_string());
+    }
     if use_path.starts_with("super::") {
         let mut current = from_mod.to_string();
         let mut path = use_path;
@@ -652,23 +913,32 @@ fn ts_spec_re() -> &'static Regex {
     // import/export ... from "..."  |  bare import "..."  |  import("...")  |  require("...")
     // quote class includes the backtick so a static template literal is caught.
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(
-        r#"(?m)(?:\bfrom|\bimport|\brequire)[ \t]*\(?[ \t]*['"`]([^'"`]+)['"`]"#).unwrap())
+    RE.get_or_init(|| {
+        Regex::new(r#"(?m)(?:\bfrom|\bimport|\brequire)[ \t]*\(?[ \t]*['"`]([^'"`]+)['"`]"#)
+            .unwrap()
+    })
 }
 
 impl TsResolver {
     fn new(root: &Path) -> Option<Self> {
         use oxc_resolver::{ResolveOptions, Resolver, TsconfigDiscovery};
         let options = ResolveOptions {
-            extensions: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".json"]
-                .iter().map(|s| s.to_string()).collect(),
+            extensions: [
+                ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".json",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
             main_fields: vec!["module".into(), "main".into()],
             condition_names: vec!["import".into(), "require".into(), "default".into()],
             // Auto = discover the nearest tsconfig.json per importing file (monorepo).
             tsconfig: Some(TsconfigDiscovery::Auto),
             ..ResolveOptions::default()
         };
-        Some(TsResolver { resolver: Resolver::new(options), root: root.to_path_buf() })
+        Some(TsResolver {
+            resolver: Resolver::new(options),
+            root: root.to_path_buf(),
+        })
     }
 
     /// Workspace package.json fallback for a bare specifier oxc could not find
@@ -683,14 +953,26 @@ impl TsResolver {
         };
         let dir = cx.ts_packages().get(&pkg)?.clone();
         let sub = spec[pkg.len()..].trim_start_matches('/');
-        let stem = if sub.is_empty() { dir.clone() } else { format!("{dir}/{sub}") };
+        let stem = if sub.is_empty() {
+            dir.clone()
+        } else {
+            format!("{dir}/{sub}")
+        };
         for cand in [
             stem.clone(),
-            format!("{stem}.ts"), format!("{stem}.tsx"), format!("{stem}.js"),
-            format!("{stem}/index.ts"), format!("{stem}/index.tsx"), format!("{stem}/index.js"),
-            format!("{dir}/index.ts"), format!("{dir}/index.tsx"), format!("{dir}/index.js"),
+            format!("{stem}.ts"),
+            format!("{stem}.tsx"),
+            format!("{stem}.js"),
+            format!("{stem}/index.ts"),
+            format!("{stem}/index.tsx"),
+            format!("{stem}/index.js"),
+            format!("{dir}/index.ts"),
+            format!("{dir}/index.tsx"),
+            format!("{dir}/index.js"),
         ] {
-            if cx.files.contains(&cand) { return Some(cand); }
+            if cx.files.contains(&cand) {
+                return Some(cand);
+            }
         }
         None
     }
@@ -712,8 +994,13 @@ impl ModuleResolver for TsResolver {
             let span = Some((m.start() as u32, m.end() as u32));
             // a template literal with interpolation cannot be resolved statically
             if spec.contains("${") {
-                out.push(ModuleRef { specifier: spec.clone(), kind: "import", line, span: None,
-                    target: Resolution::Unresolved(format!("{spec}: dynamic")) });
+                out.push(ModuleRef {
+                    specifier: spec.clone(),
+                    kind: "import",
+                    line,
+                    span: None,
+                    target: Resolution::Unresolved(format!("{spec}: dynamic")),
+                });
                 continue;
             }
             // resolve_file (not resolve) so TsconfigDiscovery::Auto finds the nearest
@@ -721,20 +1008,31 @@ impl ModuleResolver for TsResolver {
             let target = match self.resolver.resolve_file(&abs, &spec) {
                 Ok(r) => {
                     let full = r.full_path();
-                    match full.strip_prefix(&self.root).ok()
+                    match full
+                        .strip_prefix(&self.root)
+                        .ok()
                         .map(|p| p.to_string_lossy().replace('\\', "/"))
-                        .filter(|rel| cx.files.contains(rel)) {
+                        .filter(|rel| cx.files.contains(rel))
+                    {
                         Some(rel) => Resolution::File(rel),
                         None => Resolution::External(spec.clone()),
                     }
                 }
                 Err(_) => match self.workspace_fallback(&spec, cx) {
                     Some(f) => Resolution::File(f),
-                    None if spec.starts_with('.') => Resolution::Unresolved(format!("{spec}: unresolved")),
+                    None if spec.starts_with('.') => {
+                        Resolution::Unresolved(format!("{spec}: unresolved"))
+                    }
                     None => Resolution::External(spec.clone()),
                 },
             };
-            out.push(ModuleRef { specifier: spec, kind: "import", line, span, target });
+            out.push(ModuleRef {
+                specifier: spec,
+                kind: "import",
+                line,
+                span,
+                target,
+            });
         }
         out
     }
@@ -795,34 +1093,56 @@ pub(crate) fn strip_kotlin(src: &str) -> String {
     while i < b.len() {
         if b[i] == b'"' && b.get(i + 1) == Some(&b'"') && b.get(i + 2) == Some(&b'"') {
             let mut j = i + 3;
-            while j < b.len() && !(b[j] == b'"' && b.get(j + 1) == Some(&b'"') && b.get(j + 2) == Some(&b'"')) { j += 1; }
+            while j < b.len()
+                && !(b[j] == b'"' && b.get(j + 1) == Some(&b'"') && b.get(j + 2) == Some(&b'"'))
+            {
+                j += 1;
+            }
             let end = (j + 3).min(b.len());
-            for k in i..end { out.push(if b[k] == b'\n' { b'\n' } else { b' ' }); }
+            for k in i..end {
+                out.push(if b[k] == b'\n' { b'\n' } else { b' ' });
+            }
             i = end;
         } else {
-            out.push(b[i]); i += 1;
+            out.push(b[i]);
+            i += 1;
         }
     }
-    strip_noise(&String::from_utf8(out).unwrap_or_else(|_| src.to_string()), true)
+    strip_noise(
+        &String::from_utf8(out).unwrap_or_else(|_| src.to_string()),
+        true,
+    )
 }
 
 impl KotlinIndex {
-    fn build(files: &HashSet<String>, reader: Option<&(dyn Fn(&str) -> Option<String> + Send + Sync)>) -> Self {
+    fn build(
+        files: &HashSet<String>,
+        reader: Option<&(dyn Fn(&str) -> Option<String> + Send + Sync)>,
+    ) -> Self {
         let mut packages: HashMap<String, Vec<String>> = HashMap::new();
         let mut decls = HashMap::new();
-        let Some(read) = reader else { return KotlinIndex { packages, decls } };
-        let mut kt: Vec<&String> = files.iter().filter(|f| f.ends_with(".kt") || f.ends_with(".kts")).collect();
+        let Some(read) = reader else {
+            return KotlinIndex { packages, decls };
+        };
+        let mut kt: Vec<&String> = files
+            .iter()
+            .filter(|f| f.ends_with(".kt") || f.ends_with(".kts"))
+            .collect();
         kt.sort();
         for f in kt {
             let Some(content) = read(f) else { continue };
             let clean = strip_kotlin(&content);
-            let pkg = kotlin_package_re().captures(&clean)
-                .map(|c| c[1].replace('`', "")).unwrap_or_default();
+            let pkg = kotlin_package_re()
+                .captures(&clean)
+                .map(|c| c[1].replace('`', ""))
+                .unwrap_or_default();
             packages.entry(pkg.clone()).or_default().push(f.clone());
             for c in kotlin_decl_re().captures_iter(&clean) {
                 let name = c[1].trim_matches('`').to_string();
                 let files = decls.entry((pkg.clone(), name)).or_insert_with(Vec::new);
-                if !files.contains(f) { files.push(f.clone()); }
+                if !files.contains(f) {
+                    files.push(f.clone());
+                }
             }
         }
         KotlinIndex { packages, decls }
@@ -842,8 +1162,11 @@ impl KotlinIndex {
         }
         for len in (1..segs.len()).rev() {
             if self.packages.contains_key(&segs[..len].join(".")) {
-                return vec![Resolution::Unresolved(
-                    format!("{spec}: no column-0 decl `{}` in package {}", segs[len], segs[..len].join(".")))];
+                return vec![Resolution::Unresolved(format!(
+                    "{spec}: no column-0 decl `{}` in package {}",
+                    segs[len],
+                    segs[..len].join(".")
+                ))];
             }
         }
         vec![Resolution::External(spec.to_string())]
@@ -862,14 +1185,18 @@ fn word_boundary_find(text: &str, name: &str) -> Option<usize> {
         let end = start + name.len();
         let left_ok = start == 0 || !is_ident(bytes[start - 1]);
         let right_ok = end >= bytes.len() || !is_ident(bytes[end]);
-        if left_ok && right_ok { return Some(start); }
+        if left_ok && right_ok {
+            return Some(start);
+        }
         from = start + 1;
     }
     None
 }
 
 impl ModuleResolver for KotlinResolver {
-    fn exts(&self) -> &'static [&'static str] { &["kt", "kts"] }
+    fn exts(&self) -> &'static [&'static str] {
+        &["kt", "kts"]
+    }
 
     fn edges(&self, file: &str, content: &str, cx: &ProjectCx) -> Vec<ModuleRef> {
         let clean = strip_kotlin(content);
@@ -883,26 +1210,48 @@ impl ModuleResolver for KotlinResolver {
             if let Some(pkg) = spec.strip_suffix(".*") {
                 match idx.packages.get(pkg) {
                     // a wildcard import depends on every file of the package
-                    Some(fs) => for f in fs.iter().filter(|f| f.as_str() != file) {
-                        out.push(ModuleRef { specifier: spec.clone(), kind: "import", line, span,
-                            target: Resolution::File(f.clone()) });
-                    },
-                    None => out.push(ModuleRef { specifier: spec.clone(), kind: "import", line, span,
-                        target: Resolution::External(spec.clone()) }),
+                    Some(fs) => {
+                        for f in fs.iter().filter(|f| f.as_str() != file) {
+                            out.push(ModuleRef {
+                                specifier: spec.clone(),
+                                kind: "import",
+                                line,
+                                span,
+                                target: Resolution::File(f.clone()),
+                            });
+                        }
+                    }
+                    None => out.push(ModuleRef {
+                        specifier: spec.clone(),
+                        kind: "import",
+                        line,
+                        span,
+                        target: Resolution::External(spec.clone()),
+                    }),
                 }
                 continue;
             }
             for target in idx.resolve(&spec) {
-                out.push(ModuleRef { specifier: spec.clone(), kind: "import", line, span, target });
+                out.push(ModuleRef {
+                    specifier: spec.clone(),
+                    kind: "import",
+                    line,
+                    span,
+                    target,
+                });
             }
         }
 
         // Same-package implicit refs: another file's column-0 decl name used
         // with no import. A name this file also declares is skipped (local
         // wins, expect/actual twins would self-match every keyword hit).
-        let pkg = kotlin_package_re().captures(&clean)
-            .map(|c| c[1].replace('`', "")).unwrap_or_default();
-        let mut hits: Vec<(&str, usize, &Vec<String>)> = idx.decls.iter()
+        let pkg = kotlin_package_re()
+            .captures(&clean)
+            .map(|c| c[1].replace('`', ""))
+            .unwrap_or_default();
+        let mut hits: Vec<(&str, usize, &Vec<String>)> = idx
+            .decls
+            .iter()
             .filter(|((p, _), fs)| *p == pkg && !fs.iter().any(|f| f == file))
             .filter_map(|((_, name), fs)| {
                 word_boundary_find(&clean, name).map(|pos| (name.as_str(), pos, fs))
@@ -912,8 +1261,13 @@ impl ModuleResolver for KotlinResolver {
         for (name, pos, fs) in hits {
             let line = line_of(&clean, pos);
             for f in fs.iter().filter(|f| f.as_str() != file) {
-                out.push(ModuleRef { specifier: name.to_string(), kind: "same-package", line,
-                    span: None, target: Resolution::File(f.clone()) });
+                out.push(ModuleRef {
+                    specifier: name.to_string(),
+                    kind: "same-package",
+                    line,
+                    span: None,
+                    target: Resolution::File(f.clone()),
+                });
             }
         }
         out
@@ -924,24 +1278,44 @@ impl ModuleResolver for KotlinResolver {
 mod tests {
     use super::*;
 
-    fn cx<'a>(root: &'a Path, files: &'a HashSet<String>, manifests: &'a HashMap<String, String>) -> ProjectCx<'a> {
+    fn cx<'a>(
+        root: &'a Path,
+        files: &'a HashSet<String>,
+        manifests: &'a HashMap<String, String>,
+    ) -> ProjectCx<'a> {
         ProjectCx::new(root, files, manifests)
     }
-    fn set(paths: &[&str]) -> HashSet<String> { paths.iter().map(|s| s.to_string()).collect() }
-    fn no_manifests() -> HashMap<String, String> { HashMap::new() }
+    fn set(paths: &[&str]) -> HashSet<String> {
+        paths.iter().map(|s| s.to_string()).collect()
+    }
+    fn no_manifests() -> HashMap<String, String> {
+        HashMap::new()
+    }
 
     #[test]
     fn mod_path_basics() {
         assert_eq!(file_to_mod_path("src/lib.rs").as_deref(), Some("crate"));
-        assert_eq!(file_to_mod_path("src/foo/bar.rs").as_deref(), Some("crate::foo::bar"));
-        assert_eq!(file_to_mod_path("src/foo/mod.rs").as_deref(), Some("crate::foo"));
+        assert_eq!(
+            file_to_mod_path("src/foo/bar.rs").as_deref(),
+            Some("crate::foo::bar")
+        );
+        assert_eq!(
+            file_to_mod_path("src/foo/mod.rs").as_deref(),
+            Some("crate::foo")
+        );
         assert_eq!(file_to_mod_path("lib/foo.rs"), None);
     }
 
     #[test]
     fn resolve_absolute() {
-        assert_eq!(resolve_to_absolute("self::b::C", "crate::a").as_deref(), Some("crate::a::b::C"));
-        assert_eq!(resolve_to_absolute("super::b::C", "crate::a::consumer").as_deref(), Some("crate::a::b::C"));
+        assert_eq!(
+            resolve_to_absolute("self::b::C", "crate::a").as_deref(),
+            Some("crate::a::b::C")
+        );
+        assert_eq!(
+            resolve_to_absolute("super::b::C", "crate::a::consumer").as_deref(),
+            Some("crate::a::b::C")
+        );
         assert_eq!(resolve_to_absolute("std::io::Read", "crate::a"), None);
     }
 
@@ -950,13 +1324,19 @@ mod tests {
         let files = set(&["src/lib.rs", "src/parser.rs", "src/parser/expr.rs"]);
         let m = no_manifests();
         let c = cx(Path::new("/repo"), &files, &m);
-        assert_eq!(RustResolver.edges("src/lib.rs", "mod parser;\n", &c)[0].target,
-            Resolution::File("src/parser.rs".into()));
-        assert_eq!(RustResolver.edges("src/parser.rs", "mod expr;\n", &c)[0].target,
-            Resolution::File("src/parser/expr.rs".into()));
+        assert_eq!(
+            RustResolver.edges("src/lib.rs", "mod parser;\n", &c)[0].target,
+            Resolution::File("src/parser.rs".into())
+        );
+        assert_eq!(
+            RustResolver.edges("src/parser.rs", "mod expr;\n", &c)[0].target,
+            Resolution::File("src/parser/expr.rs".into())
+        );
         let e = RustResolver.edges("src/lib.rs", "use crate::parser::expr::Foo;\n", &c);
-        assert_eq!(e.iter().find(|r| r.kind == "use").unwrap().target,
-            Resolution::File("src/parser/expr.rs".into()));
+        assert_eq!(
+            e.iter().find(|r| r.kind == "use").unwrap().target,
+            Resolution::File("src/parser/expr.rs".into())
+        );
     }
 
     #[test]
@@ -982,7 +1362,10 @@ mod tests {
         assert_eq!(v.len(), 1);
         let (path, lo, hi) = &v[0];
         assert_eq!(path, "crate::parser::expr::Foo");
-        assert_eq!(&body[*lo as usize..*hi as usize], "crate::parser::expr::Foo");
+        assert_eq!(
+            &body[*lo as usize..*hi as usize],
+            "crate::parser::expr::Foo"
+        );
     }
 
     #[test]
@@ -994,8 +1377,10 @@ mod tests {
         let e = RustResolver.edges("src/lib.rs", "mod r#match;\n", &c);
         assert!(e.iter().any(|r| r.kind == "mod"));
         let v = expand_use("crate::r#match::X");
-        assert_eq!(v.iter().map(|(p, _, _)| p.clone()).collect::<Vec<_>>(),
-            vec!["crate::match::X".to_string()]);
+        assert_eq!(
+            v.iter().map(|(p, _, _)| p.clone()).collect::<Vec<_>>(),
+            vec!["crate::match::X".to_string()]
+        );
     }
 
     #[test]
@@ -1005,9 +1390,14 @@ mod tests {
         let c = cx(Path::new("/repo"), &files, &m);
         let src = "// use crate::commented::X;\nlet s = \"use crate::instring::Y;\";\nmod real;\n";
         let e = RustResolver.edges("src/lib.rs", src, &c);
-        assert!(e.iter().all(|r| !r.specifier.contains("commented") && !r.specifier.contains("instring")),
-            "comment/string uses must not produce edges: {e:?}");
-        assert!(e.iter().any(|r| r.kind == "mod" && r.target == Resolution::File("src/real.rs".into())));
+        assert!(
+            e.iter()
+                .all(|r| !r.specifier.contains("commented") && !r.specifier.contains("instring")),
+            "comment/string uses must not produce edges: {e:?}"
+        );
+        assert!(e
+            .iter()
+            .any(|r| r.kind == "mod" && r.target == Resolution::File("src/real.rs".into())));
     }
 
     #[test]
@@ -1017,33 +1407,56 @@ mod tests {
         let c = cx(Path::new("/repo"), &files, &m);
         let e = RustResolver.edges("src/lib.rs", "#[path = \"weird/place.rs\"]\nmod foo;\n", &c);
         let mods: Vec<&ModuleRef> = e.iter().filter(|r| r.kind == "mod").collect();
-        assert_eq!(mods.len(), 1, "exactly one mod edge (no double-count): {e:?}");
-        assert_eq!(mods[0].target, Resolution::File("src/weird/place.rs".into()));
+        assert_eq!(
+            mods.len(),
+            1,
+            "exactly one mod edge (no double-count): {e:?}"
+        );
+        assert_eq!(
+            mods[0].target,
+            Resolution::File("src/weird/place.rs".into())
+        );
     }
 
     #[test]
     fn multi_crate_namespace_and_cross_crate() {
         let files = set(&[
-            "crateA/src/lib.rs", "crateA/src/foo.rs",
-            "crateB/src/lib.rs", "crateB/src/foo.rs",
+            "crateA/src/lib.rs",
+            "crateA/src/foo.rs",
+            "crateB/src/lib.rs",
+            "crateB/src/foo.rs",
         ]);
         let mut m = HashMap::new();
-        m.insert("crateA/Cargo.toml".to_string(), "[package]\nname = \"crate_a\"\n".to_string());
-        m.insert("crateB/Cargo.toml".to_string(), "[package]\nname = \"crate_b\"\n".to_string());
+        m.insert(
+            "crateA/Cargo.toml".to_string(),
+            "[package]\nname = \"crate_a\"\n".to_string(),
+        );
+        m.insert(
+            "crateB/Cargo.toml".to_string(),
+            "[package]\nname = \"crate_b\"\n".to_string(),
+        );
         let c = cx(Path::new("/repo"), &files, &m);
         // crateA's `use crate::foo` must resolve to crateA's foo, NOT crateB's.
         let e = RustResolver.edges("crateA/src/lib.rs", "use crate::foo::A;\n", &c);
-        assert_eq!(e.iter().find(|r| r.kind == "use").unwrap().target,
-            Resolution::File("crateA/src/foo.rs".into()), "crate:: must stay in-crate: {e:?}");
+        assert_eq!(
+            e.iter().find(|r| r.kind == "use").unwrap().target,
+            Resolution::File("crateA/src/foo.rs".into()),
+            "crate:: must stay in-crate: {e:?}"
+        );
         // cross-crate `use crate_b::foo::B` resolves into crateB.
         let e2 = RustResolver.edges("crateA/src/lib.rs", "use crate_b::foo::B;\n", &c);
-        assert_eq!(e2.iter().find(|r| r.kind == "use").unwrap().target,
-            Resolution::File("crateB/src/foo.rs".into()), "cross-crate use must resolve: {e2:?}");
+        assert_eq!(
+            e2.iter().find(|r| r.kind == "use").unwrap().target,
+            Resolution::File("crateB/src/foo.rs".into()),
+            "cross-crate use must resolve: {e2:?}"
+        );
     }
 
     fn kt_reader(contents: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + Send + Sync {
-        let m: HashMap<String, String> =
-            contents.iter().map(|(p, c)| (p.to_string(), c.to_string())).collect();
+        let m: HashMap<String, String> = contents
+            .iter()
+            .map(|(p, c)| (p.to_string(), c.to_string()))
+            .collect();
         move |p: &str| m.get(p).cloned()
     }
 
@@ -1052,8 +1465,14 @@ mod tests {
         // B.kt lives in a directory that does NOT match its package; the
         // declaration is truth, so the import still resolves.
         let contents = [
-            ("weird/spot/B.kt", "package com.foo\n\nclass Bar(val n: Int)\nfun topLevel() = 1\n"),
-            ("app/Main.kt", "package com.app\n\nimport com.foo.Bar\nimport com.foo.topLevel\n"),
+            (
+                "weird/spot/B.kt",
+                "package com.foo\n\nclass Bar(val n: Int)\nfun topLevel() = 1\n",
+            ),
+            (
+                "app/Main.kt",
+                "package com.app\n\nimport com.foo.Bar\nimport com.foo.topLevel\n",
+            ),
         ];
         let files = set(&["weird/spot/B.kt", "app/Main.kt"]);
         let m = no_manifests();
@@ -1062,7 +1481,11 @@ mod tests {
         let e = KotlinResolver.edges("app/Main.kt", contents[1].1, &c);
         assert_eq!(e.len(), 2, "{e:?}");
         for r in &e {
-            assert_eq!(r.target, Resolution::File("weird/spot/B.kt".into()), "{r:?}");
+            assert_eq!(
+                r.target,
+                Resolution::File("weird/spot/B.kt".into()),
+                "{r:?}"
+            );
         }
     }
 
@@ -1082,31 +1505,54 @@ mod tests {
         let wild: Vec<_> = e.iter().filter(|r| r.specifier == "com.foo.*").collect();
         assert_eq!(wild.len(), 2, "{e:?}");
         // unknown package -> External, known package + missing decl -> Unresolved
-        assert!(e.iter().any(|r| matches!(&r.target, Resolution::External(s) if s == "kotlin.collections.List")), "{e:?}");
-        assert!(e.iter().any(|r| matches!(&r.target, Resolution::Unresolved(s) if s.contains("Missing"))), "{e:?}");
+        assert!(
+            e.iter().any(
+                |r| matches!(&r.target, Resolution::External(s) if s == "kotlin.collections.List")
+            ),
+            "{e:?}"
+        );
+        assert!(
+            e.iter()
+                .any(|r| matches!(&r.target, Resolution::Unresolved(s) if s.contains("Missing"))),
+            "{e:?}"
+        );
     }
 
     #[test]
     fn kotlin_nested_class_and_noise_immunity() {
         let contents = [
-            ("lib/A.kt", "package com.foo\nclass Outer {\n    class Inner\n}\n"),
-            ("app/Main.kt", concat!(
-                "package com.app\n",
-                "// import com.foo.Commented\n",
-                "val s = \"\"\"\nimport com.foo.InString\n\"\"\"\n",
-                "import com.foo.Outer.Inner\n")),
+            (
+                "lib/A.kt",
+                "package com.foo\nclass Outer {\n    class Inner\n}\n",
+            ),
+            (
+                "app/Main.kt",
+                concat!(
+                    "package com.app\n",
+                    "// import com.foo.Commented\n",
+                    "val s = \"\"\"\nimport com.foo.InString\n\"\"\"\n",
+                    "import com.foo.Outer.Inner\n"
+                ),
+            ),
         ];
         let files = set(&["lib/A.kt", "app/Main.kt"]);
         let m = no_manifests();
         let r = kt_reader(&contents);
         let c = cx(Path::new("/repo"), &files, &m).with_reader(&r);
         let e = KotlinResolver.edges("app/Main.kt", contents[1].1, &c);
-        assert_eq!(e.len(), 1, "comment/raw-string imports must not match: {e:?}");
+        assert_eq!(
+            e.len(),
+            1,
+            "comment/raw-string imports must not match: {e:?}"
+        );
         // `Outer.Inner` resolves through the (package, Outer) decl
         assert_eq!(e[0].target, Resolution::File("lib/A.kt".into()), "{e:?}");
         // span is the dotted path text (the rewrite coordinate)
         let (lo, hi) = e[0].span.unwrap();
-        assert_eq!(&contents[1].1[lo as usize..hi as usize], "com.foo.Outer.Inner");
+        assert_eq!(
+            &contents[1].1[lo as usize..hi as usize],
+            "com.foo.Outer.Inner"
+        );
     }
 
     #[test]
@@ -1125,16 +1571,28 @@ mod tests {
         let e = KotlinResolver.edges("app/Main.kt", contents[2].1, &c);
         let targets: Vec<_> = e.iter().map(|r| &r.target).collect();
         assert_eq!(e.len(), 2, "{e:?}");
-        assert!(targets.contains(&&Resolution::File("common/Clock.kt".into())), "{e:?}");
-        assert!(targets.contains(&&Resolution::File("jvm/Clock.kt".into())), "{e:?}");
+        assert!(
+            targets.contains(&&Resolution::File("common/Clock.kt".into())),
+            "{e:?}"
+        );
+        assert!(
+            targets.contains(&&Resolution::File("jvm/Clock.kt".into())),
+            "{e:?}"
+        );
     }
 
     #[test]
     fn kotlin_same_package_implicit_edges() {
         let contents = [
-            ("lib/Util.kt", "package com.app\nclass Util\nfun helper() = 1\n"),
+            (
+                "lib/Util.kt",
+                "package com.app\nclass Util\nfun helper() = 1\n",
+            ),
             ("lib/Other.kt", "package com.other\nclass Stray\n"),
-            ("app/Main.kt", "package com.app\n\nfun main() {\n    val u = Util()\n    val s = Strayed()\n}\n"),
+            (
+                "app/Main.kt",
+                "package com.app\n\nfun main() {\n    val u = Util()\n    val s = Strayed()\n}\n",
+            ),
         ];
         let files = set(&["lib/Util.kt", "lib/Other.kt", "app/Main.kt"]);
         let m = no_manifests();
@@ -1156,7 +1614,10 @@ mod tests {
         // `Util` use resolves locally, no same-package edge.
         let contents = [
             ("lib/Util.kt", "package com.app\nactual class Util\n"),
-            ("app/Main.kt", "package com.app\nexpect class Util\nval u = Util()\n"),
+            (
+                "app/Main.kt",
+                "package com.app\nexpect class Util\nval u = Util()\n",
+            ),
         ];
         let files = set(&["lib/Util.kt", "app/Main.kt"]);
         let m = no_manifests();
@@ -1168,16 +1629,26 @@ mod tests {
 
     #[test]
     fn cargo_dependency_rename() {
-        let files = set(&["crateA/src/lib.rs", "crateB/src/lib.rs", "crateB/src/foo.rs"]);
+        let files = set(&[
+            "crateA/src/lib.rs",
+            "crateB/src/lib.rs",
+            "crateB/src/foo.rs",
+        ]);
         let mut m = HashMap::new();
         // crateA depends on crate_b under the alias `renamed`.
         m.insert("crateA/Cargo.toml".to_string(),
             "[package]\nname = \"crate_a\"\n\n[dependencies]\nrenamed = { package = \"crate_b\", path = \"../crateB\" }\n".to_string());
-        m.insert("crateB/Cargo.toml".to_string(), "[package]\nname = \"crate_b\"\n".to_string());
+        m.insert(
+            "crateB/Cargo.toml".to_string(),
+            "[package]\nname = \"crate_b\"\n".to_string(),
+        );
         let c = cx(Path::new("/repo"), &files, &m);
         // `use renamed::foo::B` must resolve through the rename to crate_b's foo.
         let e = RustResolver.edges("crateA/src/lib.rs", "use renamed::foo::B;\n", &c);
-        assert_eq!(e.iter().find(|r| r.kind == "use").unwrap().target,
-            Resolution::File("crateB/src/foo.rs".into()), "package= rename must resolve: {e:?}");
+        assert_eq!(
+            e.iter().find(|r| r.kind == "use").unwrap().target,
+            Resolution::File("crateB/src/foo.rs".into()),
+            "package= rename must resolve: {e:?}"
+        );
     }
 }
