@@ -144,6 +144,13 @@ const CHANGED_RELS: [&str; 1] = ["changed"];
 /// so a touch on engine.rs surfaces only the `.conn()` calls on edited lines.
 const CHANGED_LINE_RELS: [&str; 1] = ["changed_line"];
 
+/// Extract-function proposals: one row `(path, lo, hi, param)` per free var of
+/// each verbatim-duplicated block found in a scanned Rust file. `lo`/`hi` bound
+/// the block's first occurrence (1-based lines); the param set is the inferred
+/// extract-fn signature (free vars = read in the block, not bound inside it).
+/// The proposer is the `propose` module; this relation is its queryable output.
+const PROPOSE_EXTRACT_RELS: [&str; 1] = ["propose_extract"];
+
 /// Ref-spine query relations: thin views over the `_strings` / `_where_bytes`
 /// meta tables. `string(id, text, norm)` resolves an interned StringId to its
 /// content; `ref(id, string, file, lo, hi)` locates each interned string's byte
@@ -201,6 +208,7 @@ pub fn builtin_rel_names() -> std::collections::HashSet<String> {
         .chain(node_rel_decls())
         .chain(changed_rel_decls())
         .chain(changed_line_rel_decls())
+        .chain(propose_extract_rel_decls())
         .chain(daemon_rel_decls())
         .map(|d| d.name)
         .collect()
@@ -342,6 +350,15 @@ fn changed_line_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
+fn propose_extract_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "propose_extract".into(),
+                  cols: vec![c("path", Type::Path), c("lo", Type::Int),
+                             c("hi", Type::Int), c("param", Type::Text)] },
+    ]
+}
+
 fn spine_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -464,6 +481,8 @@ fn node_rels_used(prog: &Program) -> bool { rels_used(prog, &NODE_RELS) }
 fn changed_rels_used(prog: &Program) -> bool { rels_used(prog, &CHANGED_RELS) }
 
 fn changed_line_rels_used(prog: &Program) -> bool { rels_used(prog, &CHANGED_LINE_RELS) }
+
+fn propose_extract_rels_used(prog: &Program) -> bool { rels_used(prog, &PROPOSE_EXTRACT_RELS) }
 
 fn module_manifest_path(path: &str) -> bool {
     path.ends_with("Cargo.toml") || path.ends_with("package.json") || path.ends_with("tsconfig.json")
@@ -1734,6 +1753,7 @@ impl Engine {
         // `changed` directly rather than riding the reconcile delta.
         if changed_rels_used(prog) { changed |= self.refresh_changed_rel()?; }
         if changed_line_rels_used(prog) { changed |= self.refresh_changed_line_rel()?; }
+        if propose_extract_rels_used(prog) { changed |= self.refresh_propose_extract_rel()?; }
         if daemon_rels_used(prog) { self.refresh_daemon_rels()?; }
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
 
@@ -2009,6 +2029,10 @@ impl Engine {
         }
         if changed_line_rels_used(prog) && self.refresh_changed_line_rel()? {
             changed_source_rels.insert("changed_line".to_string());
+            changed_facts = true;
+        }
+        if propose_extract_rels_used(prog) && self.refresh_propose_extract_rel()? {
+            changed_source_rels.insert("propose_extract".to_string());
             changed_facts = true;
         }
         if daemon_rels_used(prog) { self.refresh_daemon_rels()?; }
@@ -2630,6 +2654,9 @@ impl Engine {
                 if CHANGED_LINE_RELS.contains(&d.name.as_str()) {
                     bail!("{} is the built-in line-diff relation; pick another name", d.name);
                 }
+                if PROPOSE_EXTRACT_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is the built-in extract-proposal relation; pick another name", d.name);
+                }
                 if DAEMON_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in daemon-state relation (program / head / rev_advanced); pick another name", d.name);
                 }
@@ -2667,6 +2694,7 @@ impl Engine {
             &format!("CREATE INDEX IF NOT EXISTS node_file_span_idx ON {}(\"file\", \"lo\", \"hi\")", tbl("node")), [])?;
         for d in changed_rel_decls() { self.declare(&d)?; }
         for d in changed_line_rel_decls() { self.declare(&d)?; }
+        for d in propose_extract_rel_decls() { self.declare(&d)?; }
         for d in daemon_rel_decls() { self.declare(&d)?; }
         Ok(())
     }
@@ -4065,6 +4093,45 @@ impl Engine {
         if existing == paths { return Ok(false); }
         let rows: Vec<Vec<Value>> = paths.into_iter().map(|p| vec![Value::Text(p)]).collect();
         self.refresh_rel("changed", &["path"], &rows)?;
+        Ok(true)
+    }
+
+    /// Refresh `propose_extract(path, lo, hi, param)` — for every scanned Rust
+    /// file, run the proposer (verbatim dup-block detection + lexical-scope
+    /// free-var inference) and store one row per (block, param). Whole-corpus:
+    /// recompute all, compare to stored, early-out if equal. Reuses `node_file_set`
+    /// for the file list and `propose::extract_proposals` for the analysis.
+    fn refresh_propose_extract_rel(&self) -> Result<bool> {
+        let roots = self.repo_roots();
+        let root = self.root.clone();
+        let files = self.node_file_set(None)?;
+        let mut computed: Vec<(String, i64, i64, String)> = Vec::new();
+        for (repo, path, rev, _hash) in files {
+            if crate::cst::lang_label_for_path(&path) != Some("rust") { continue; }
+            let froot = roots.get(&repo).map(|p| p.as_path()).unwrap_or(&root);
+            let content = read_content(froot, &rev, &path).unwrap_or_default();
+            for prop in crate::propose::extract_proposals(&content) {
+                for p in prop.params {
+                    computed.push((path.clone(), prop.lo as i64, prop.hi as i64, p));
+                }
+            }
+        }
+        computed.sort(); computed.dedup();
+        let stored: Vec<(String, i64, i64, String)> = {
+            let conn = self.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"path\",\"lo\",\"hi\",\"param\" FROM {} ORDER BY \"path\",\"lo\",\"hi\",\"param\"",
+                tbl("propose_extract")))?;
+            let rows = s.query_map([], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?, r.get::<_, String>(3)?)))?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        if stored == computed { return Ok(false); }
+        let rows: Vec<Vec<Value>> = computed.into_iter()
+            .map(|(p, lo, hi, pm)| vec![Value::Text(p), Value::Int(lo), Value::Int(hi), Value::Text(pm)])
+            .collect();
+        self.refresh_rel("propose_extract", &["path", "lo", "hi", "param"], &rows)?;
         Ok(true)
     }
 

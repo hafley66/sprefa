@@ -15,6 +15,7 @@ pub mod lower;
 pub mod lsp;
 pub mod modgraph;
 pub mod parse;
+pub mod propose;
 pub mod rpc;
 pub mod refactor;
 pub mod repo;
