@@ -1,0 +1,150 @@
+# type_profile.dl — per-type intelligence profile.
+#
+# Pure dl on type_entity / type_edge / type_sig / scip_ref / closure.
+# Zero new Rust. Companion to symbol-profile.dl (the per-FUNCTION view).
+#
+# Two sections:
+#   1. TRIAGE — per-type scalar metrics, one row per type name. Sortable
+#      coupling/cardinality/reach/isolation overview.
+#   2. DEEP   — pin one type name, read its forward + reverse transitive
+#      closure. Closure reads need a literal endpoint (see symbol-profile.dl),
+#      so the pin lives inline in section 2 — edit the literal to switch type.
+#
+# Manual:  dl v5/examples/type_profile.dl --root . --db /tmp/dl-tp.db --no-daemon
+#          SCIP index optional: export SPREFA_SCIP_INDEX to also populate
+#          scip_ref/scip_fn_edge (not yet consumed by this recipe — file reach
+#          needs the descriptor->name bridge, deferred).
+
+# Ingest v5 Rust so type_* and scip_* relations populate.
+rel seen(path: file).
+seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
+
+# ══════════════════════════════════════════════════════════════════════════
+# SECTION 1 — TRIAGE: per-type scalar metrics
+# ══════════════════════════════════════════════════════════════════════════
+
+# Kind vocabulary for data types (callable syms function/method/const aren't).
+rel data_kind(kind: text).
+data_kind("struct"). data_kind("enum").   data_kind("trait").
+data_kind("class").  data_kind("interface"). data_kind("alias").
+
+# Name spine: every data-type name (the type_edge namespace). Multiple decl
+# sites across repos collapse to one row per name.
+rel type_name(t: text).
+type_name(t) <- type_entity(_, _, t, kind, _, _, _), data_kind(kind).
+
+# ── Cardinality ───────────────────────────────────────────────────────────
+rel fields(t: text, n: int).
+fields(t, count(to))   <- type_edge(t, to, "field").
+rel variants(t: text, n: int).
+variants(t, count(to)) <- type_edge(t, to, "variant").
+rel impls(t: text, n: int).
+impls(t, count(to))    <- type_edge(t, to, "impl").
+rel generics(t: text, n: int).
+generics(t, count(to)) <- type_edge(t, to, "generic").
+
+# ── Coupling (Ca / Ce on name-keyed type_edge) ────────────────────────────
+# Project kind out first so count() is over DISTINCT neighbor names, not edge
+# rows (A can reach B via field AND impl; that's still one coupled neighbor).
+rel edge(a: text, b: text).
+edge(a, b) <- type_edge(a, b, _).
+
+# Ca = afferent: # distinct types pointing TO me (incoming, any kind).
+rel ca(t: text, n: int).
+ca(t, count(from)) <- edge(from, t).
+# Ce = efferent: # distinct types I point TO (outgoing, any kind).
+rel ce(t: text, n: int).
+ce(t, count(to))   <- edge(t, to).
+
+# God-type score (Martin): Ca * Ce. High when bidirectionally painful —
+# the type both depends on many things and is depended on by many things.
+rel god(t: text, score: int).
+god(t, a * b) <- ca(t, a), ce(t, b).
+
+# Instability I = Ce / (Ca + Ce), permille (int arithmetic; / truncates).
+# 1000 = pure leaf (only outgoing), 0 = pure root (only incoming).
+# ca/ce only emit rows for types with edges, so (a + b) > 0 always.
+rel instability(t: text, ipm: int).
+instability(t, b * 1000 / (a + b)) <- ca(t, a), ce(t, b).
+
+# ── Signature participation (across all callable arrow types) ─────────────
+# How often this type appears as a parameter or return across fn signatures.
+# type_sig(sym, slot, pos, ref) — slot is "param" or "ret"; ref is the bare
+# type name when unresolved/external, or a fully-qualified sym when resolved.
+# Normalize to the trailing identifier so both spellings count together.
+rel param_uses(t: text, n: int).
+param_uses(t, count(fn)) <- type_sig(fn, "param", _, r), t = split(r, "::", -1).
+rel ret_uses(t: text, n: int).
+ret_uses(t, count(fn))   <- type_sig(fn, "ret",  _, r), t = split(r, "::", -1).
+
+# ── Structural reach (no SCIP index needed) ───────────────────────────────
+# A type name is "structurally referenced" if it appears as the far endpoint
+# of any type_edge (someone has a field/variant/impl/generic of it), or as a
+# type_sig ref (someone takes it as a param or returns it). Covers field type,
+# variant payload, impl target, generic bound, fn param, fn return — the six
+# structural ways a type enters another type's contract.
+rel referenced(t: text).
+referenced(t) <- type_edge(_, t, _).
+referenced(t) <- type_sig(_, _, _, r), t = split(r, "::", -1).
+
+# Sym bridge: only data types (struct/enum/trait/class/interface/alias).
+rel type_sym(sym: text, name: text).
+type_sym(sym, name) <- type_entity(_, sym, name, kind, _, _, _), data_kind(kind).
+
+# Resolved afferent / efferent in sym space (the unambiguous subset of type_edge).
+rel link_ca(name: text, n: int).
+link_ca(name, count(src)) <- type_sym(sym, name), type_link(src, sym, _).
+rel link_ce(name: text, n: int).
+link_ce(name, count(dst)) <- type_sym(sym, name), type_link(sym, dst, _).
+
+# ── Isolation ─────────────────────────────────────────────────────────────
+# Dead-type: a data type that no OTHER data type structurally references —
+# not a field type, variant payload, impl target, generic bound, or fn param/
+# return. These are leaves of the type graph (often used only as locals or
+# transient values, not as members of other types). Antijoin against `referenced`.
+rel dead_type(sym: text, name: text).
+dead_type(sym, name) <- type_sym(sym, name), !referenced(name).
+
+# Single-edge: only one structural edge touches this type (very narrow coupling).
+rel single_edge(t: text).
+single_edge(t) <- ca(t, 1), ce(t, 1).
+
+# ══════════════════════════════════════════════════════════════════════════
+# SECTION 2 — DEEP: per-target transitive coupling
+# Edit PIN below AND the two `a = "..."` literals in fwd/rev to switch type.
+# (Closure reads need a literal endpoint; see symbol-profile.dl christmas #2.)
+# ══════════════════════════════════════════════════════════════════════════
+rel pin(name: text).
+pin("Engine").
+
+rel type_reaches(a: text, b: text).
+type_reaches(a, b) <- closure(type_edge).
+
+# Forward transitive closure from the pinned type name.
+rel fwd(x: text).
+fwd(x) <- type_reaches(a, x), a = "Engine", x != a.
+
+rel type_rev_edge(a: text, b: text).
+type_rev_edge(a, b) <- type_edge(b, a, _).
+rel type_reached_by(a: text, b: text).
+type_reached_by(a, b) <- closure(type_rev_edge).
+rel rev_reach(x: text).
+rev_reach(x) <- type_reached_by(a, x), a = "Engine", x != a.
+
+# ══════════════════════════════════════════════════════════════════════════
+# REPORTS
+# ══════════════════════════════════════════════════════════════════════════
+? ca(t, n).
+? ce(t, n).
+? god(t, score).
+? instability(t, ipm).
+? fields(t, n).
+? variants(t, n).
+? param_uses(t, n).
+? ret_uses(t, n).
+? link_ca(t, n).
+? link_ce(t, n).
+? single_edge(t).
+? dead_type(sym, name).
+? fwd(x).
+? rev_reach(x).
