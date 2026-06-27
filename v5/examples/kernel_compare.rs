@@ -27,6 +27,7 @@ fn main() {
     let ast = sprefa_v5::propose::ast_shape_proposals(&content);
     let tree = sprefa_v5::propose::tree_shape_proposals(&content);
     let cfg = sprefa_v5::propose::cfg_shape_proposals(&content);
+    let ddg = sprefa_v5::propose::ddg_shape_proposals(&content);
 
     let repo_root = format!("{}/..", env!("CARGO_MANIFEST_DIR"));
     let idx = std::path::PathBuf::from(std::env::var("SPREFA_SCIP_INDEX")
@@ -53,6 +54,7 @@ fn main() {
         ("ast", &ast),
         ("tree", &tree),
         ("cfg", &cfg),
+        ("ddg", &ddg),
         ("symbol", &sym),
         ("call", &call),
     ];

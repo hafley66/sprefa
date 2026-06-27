@@ -558,6 +558,131 @@ fn cfg_skeleton_hash(node: Node) -> u64 {
     h.finish()
 }
 
+/// DDG-shape (data-dependency topology) kernel. Each statement is hashed by
+/// its def/use footprint: how many new names it BINDS (let-patterns, for-loop
+/// vars, closure params, match-arm patterns) and how many names it READS
+/// (identifier references not in binding position, not keywords, not field
+/// names). Two statements match iff they have the same (defs, uses) counts —
+/// the same local dataflow rhythm. matching_runs then finds blocks whose
+/// consecutive statements share the same def/use shape.
+///
+/// Distinct from call-seq (which fingerprints external symbol sets): ddg-shape
+/// is purely LOCAL — it ignores which functions are called, only counting how
+/// many names flow in and out. `let x = foo(a, b);` and `let y = a + b;` hash
+/// the same (1 def, 2 uses). Catches "same variable-threading structure"
+/// regardless of the operations involved.
+const DDG_SEED: usize = 3;
+
+pub fn ddg_shape_proposals(content: &str) -> Vec<Proposal> {
+    let mut parser = Parser::new();
+    if parser.set_language(&lang()).is_err() {
+        return Vec::new();
+    }
+    let Some(tree) = parser.parse(content, None) else {
+        return Vec::new();
+    };
+    let stmts = statement_ranges(&tree);
+    let hashes: Vec<u64> = stmts.iter().map(|(n, _, _)| ddg_hash(*n, content)).collect();
+    let line_start = line_start_bytes(content);
+    let root = tree.root_node();
+    let mut out = Vec::new();
+    for (a, n, occ) in matching_runs(&hashes, DDG_SEED) {
+        let lo_line = stmts[a].1;
+        let hi_line = stmts[a + n - 1].2;
+        if hi_line <= lo_line {
+            continue;
+        }
+        let lo_byte = line_start[lo_line - 1];
+        let hi_byte = line_start.get(hi_line).copied().unwrap_or(content.len());
+        let params = free_vars(root, content, lo_byte, hi_byte);
+        out.push(Proposal {
+            lo: lo_line,
+            hi: hi_line,
+            occurrences: occ,
+            gain: (hi_line - lo_line + 1) * occ.saturating_sub(1),
+            params,
+        });
+    }
+    out.sort_by(|x, y| y.gain.cmp(&x.gain));
+    out
+}
+
+/// Per-statement dataflow fingerprint. Counts names DEFINED (binding-position
+/// identifiers) and names USED (reference-position identifiers outside any
+/// binding pattern subtree, excluding keywords and field-path segments). The
+/// pair `(defs, uses)` is hashed: two statements with identical def/use
+/// counts share a dataflow shape.
+fn ddg_hash(node: Node, src: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut bind_ranges: Vec<(usize, usize)> = Vec::new();
+    let mut defs = 0u64;
+    let mut stack = vec![node];
+    while let Some(n) = stack.pop() {
+        let pat = match n.kind() {
+            "let_declaration" | "let_condition" => n.child_by_field_name("pattern"),
+            "for_expression" => n.child_by_field_name("pattern"),
+            "closure_expression" => n.child_by_field_name("parameters"),
+            _ => None,
+        };
+        if let Some(p) = pat {
+            bind_ranges.push((p.start_byte(), p.end_byte()));
+            defs += count_idents_in(p);
+        }
+        if n.kind() == "match_arm" {
+            let mut cur = n.walk();
+            let children: Vec<Node> = n.children(&mut cur).collect();
+            if let Some(idx) = children.iter().position(|c| c.kind() == "=>") {
+                for c in &children[..idx] {
+                    bind_ranges.push((c.start_byte(), c.end_byte()));
+                    defs += count_idents_in(*c);
+                }
+            }
+        }
+        let mut cur = n.walk();
+        let children: Vec<Node> = n.children(&mut cur).collect();
+        for c in children.into_iter().rev() {
+            stack.push(c);
+        }
+    }
+    let mut uses = 0u64;
+    let mut stack = vec![node];
+    while let Some(n) = stack.pop() {
+        if n.child_count() == 0 && n.kind() == "identifier" {
+            let in_bind = bind_ranges
+                .iter()
+                .any(|(lo, hi)| *lo <= n.start_byte() && n.start_byte() < *hi);
+            let txt = text(n, src);
+            if !in_bind && !is_keyword(txt) && !should_skip(n) {
+                uses += 1;
+            }
+        }
+        let mut cur = n.walk();
+        let children: Vec<Node> = n.children(&mut cur).collect();
+        for c in children.into_iter().rev() {
+            stack.push(c);
+        }
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    defs.hash(&mut h);
+    uses.hash(&mut h);
+    h.finish()
+}
+
+fn count_idents_in(n: Node) -> u64 {
+    let mut count = 0u64;
+    let mut stack = vec![n];
+    while let Some(n) = stack.pop() {
+        if n.kind() == "identifier" {
+            count += 1;
+        }
+        let mut cur = n.walk();
+        for c in n.children(&mut cur) {
+            stack.push(c);
+        }
+    }
+    count
+}
+
 fn is_keyword(s: &str) -> bool {
     matches!(s,
         "self" | "Self" | "super" | "crate" | "return" | "if" | "else" | "for"
@@ -911,5 +1036,29 @@ mod tests {
         ];
         let p = call_seq_proposals(src, &spans);
         assert!(p.is_empty(), "different symbols do not match: {:?}", p);
+    }
+
+    // --- ddg-shape kernel ---
+
+    #[test]
+    fn ddg_shape_finds_matching_def_use_rhythm() {
+        // Two blocks with the same per-statement def/use rhythm but different
+        // operations and names. Each window has 3 distinct hash values so the
+        // trivial-repetition filter passes.
+        //   H(1,1) H(1,2) H(0,2)  — 1 def+1 use, 1 def+2 uses, 0 def+2 uses
+        let src = "fn alpha(a: i32) {\n    let x = a;\n    let y = combine(x);\n    result(y);\n}\nfn beta(p: i32) {\n    let s = p;\n    let t = merge(s);\n    output(t);\n}\n";
+        let p = ddg_shape_proposals(src);
+        assert!(!p.is_empty(), "same def/use rhythm must match: {:?}", p);
+        assert!(p.iter().any(|p| p.occurrences >= 2));
+    }
+
+    #[test]
+    fn ddg_shape_rejects_different_def_use_counts() {
+        // alpha: every statement defines 1 var and reads 3 names (H(1,3)).
+        // beta: every statement reads 1 name, defines nothing (H(0,1)).
+        // No window matches across the two groups.
+        let src = "fn alpha(a: i32, b: i32) {\n    let x = combine(a, b);\n    let y = combine(x, a);\n    let z = combine(y, x);\n}\nfn beta() {\n    do_thing();\n    do_other();\n    do_more();\n}\n";
+        let p = ddg_shape_proposals(src);
+        assert!(p.is_empty(), "different def/use counts must not match: {:?}", p);
     }
 }
