@@ -22,6 +22,12 @@ struct Cli {
     /// live editor diagnostics (lint on open/save). See docs/lsp.md.
     #[arg(long)]
     lsp: bool,
+    /// Ignored no-op alias for `--lsp`. vscode-languageclient, coc.nvim, and
+    /// neovim's lspconfig all append `--stdio` when spawning an LSP server;
+    /// accept it so `dl` drops into any client without extension-specific
+    /// arg gymnastics. Stdio is the only transport either way.
+    #[arg(long)]
+    stdio: bool,
     /// Lint/ban mode: render the `diag` relation to stderr. Exit 0 clean, 2 if
     /// any `error`-severity row exists (Claude Code's blocking-hook code), 1 on
     /// a broken program. For pre-commit / CI / Claude Code hooks. See docs/rails.md.
@@ -200,7 +206,7 @@ fn main() -> Result<()> {
     // One-shot modes consume a single program (or discovery when empty); only
     // the daemon merges multiple positionals today.
     let program = cli.programs.first().map(|s| s.as_str());
-    if cli.lsp {
+    if cli.lsp || cli.stdio {
         sprefa_v5::run_lsp(program, db.as_deref(), root)
     } else if cli.check || cli.diag_json {
         // Exit contract: 0 clean, 2 rail violations (Claude Code's blocking-hook
