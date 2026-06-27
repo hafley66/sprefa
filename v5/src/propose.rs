@@ -18,7 +18,7 @@
 //!      Only bindings and reads inside the block's byte window count, so an
 //!      enclosing `let` correctly stays a free var (param) for the block.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use tree_sitter::{Node, Parser};
 
@@ -101,18 +101,22 @@ fn line_start_bytes(content: &str) -> Vec<usize> {
     v
 }
 
-/// Maximal verbatim duplicated consecutive-line runs of length >= `seed`.
-/// Returns `(a, n, occ)`: first start index (0-based), run length, and how many
-/// times the maximal run appears in the file. Keeps only maximal runs (drops
-/// runs subsumed by a longer one sharing start `a`).
-fn dup_blocks(lines: &[&str], seed: usize) -> Vec<(usize, usize, usize)> {
-    use std::collections::HashMap;
-    let mut buckets: HashMap<&[&str], Vec<usize>> = HashMap::new();
-    if lines.len() < seed {
+/// Maximal matching runs over ANY equatable sequence: used by the verbatim
+/// detector (over raw lines) and the AST-shape detector (over normalized token
+/// kinds). Returns `(start, len, occurrences)` for each maximal run, dropping
+/// runs subsumed by a longer one sharing the same start. This is the
+/// kernel-agnostic matcher; the feature extractor is the only thing that
+/// differs between detectors.
+fn matching_runs<T>(items: &[T], seed: usize) -> Vec<(usize, usize, usize)>
+where
+    T: Eq + std::hash::Hash,
+{
+    let mut buckets: HashMap<&[T], Vec<usize>> = HashMap::new();
+    if items.len() < seed {
         return Vec::new();
     }
-    for i in 0..=lines.len() - seed {
-        buckets.entry(&lines[i..i + seed]).or_default().push(i);
+    for i in 0..=items.len() - seed {
+        buckets.entry(&items[i..i + seed]).or_default().push(i);
     }
     let mut seen: HashSet<(usize, usize)> = HashSet::new();
     let mut blocks: Vec<(usize, usize, usize)> = Vec::new();
@@ -125,16 +129,15 @@ fn dup_blocks(lines: &[&str], seed: usize) -> Vec<(usize, usize, usize)> {
             continue;
         }
         let mut n = seed;
-        while a + n < lines.len() && b + n < lines.len() && lines[a + n] == lines[b + n] {
+        while a + n < items.len() && b + n < items.len() && items[a + n] == items[b + n] {
             n += 1;
         }
-        let distinct: HashSet<&str> = lines[a..a + n].iter().copied().filter(|l| !l.trim().is_empty()).collect();
+        let distinct: HashSet<&T> = items[a..a + n].iter().collect();
         if distinct.len() < 3 {
             continue;
         }
-        // Occurrences: every start index whose maximal run equals lines[a..a+n].
         let occ = idxs.iter().filter(|&&i| {
-            i + n <= lines.len() && lines[i..i + n] == lines[a..a + n]
+            i + n <= items.len() && items[i..i + n] == items[a..a + n]
         }).count();
         blocks.push((a, n, occ));
     }
@@ -147,6 +150,83 @@ fn dup_blocks(lines: &[&str], seed: usize) -> Vec<(usize, usize, usize)> {
         }
     }
     kept
+}
+
+/// Maximal verbatim duplicated consecutive-line runs of length >= `seed`
+/// (the verbatim detector's feature extractor + the generic matcher).
+/// `(a, n, occ)`: first start index (0-based), run length, occurrence count.
+fn dup_blocks(lines: &[&str], seed: usize) -> Vec<(usize, usize, usize)> {
+    matching_runs(lines, seed)
+}
+
+/// AST-shape (Type-2 clone) detector. Normalizes the CST leaf stream — every
+/// identifier becomes `ID`, every literal `LIT`, punctuation/keywords kept — so
+/// two regions with the same structure but different names match. Catches what
+/// the verbatim detector misses (`for x in y` vs `for a in b`, `ext.insert` vs
+/// `map.insert`). Same matcher (`matching_runs`), different feature extractor.
+const AST_SEED: usize = 12;
+
+pub fn ast_shape_proposals(content: &str) -> Vec<Proposal> {
+    let mut parser = Parser::new();
+    if parser.set_language(&lang()).is_err() {
+        return Vec::new();
+    }
+    let Some(tree) = parser.parse(content, None) else {
+        return Vec::new();
+    };
+    let toks = ast_shape_tokens(&tree, content);
+    let kinds: Vec<&str> = toks.iter().map(|(k, _)| k.as_str()).collect();
+    let line_start = line_start_bytes(content);
+    let root = tree.root_node();
+    let mut out = Vec::new();
+    for (a, n, occ) in matching_runs(&kinds, AST_SEED) {
+        let lo_line = toks[a].1;
+        let hi_line = toks[a + n - 1].1;
+        if hi_line <= lo_line {
+            continue; // require a multi-line shape, not a one-liner idiom
+        }
+        let lo_byte = line_start[lo_line - 1];
+        let hi_byte = line_start.get(hi_line).copied().unwrap_or(content.len());
+        let params = free_vars(root, content, lo_byte, hi_byte);
+        out.push(Proposal {
+            lo: lo_line, hi: hi_line, occurrences: occ,
+            gain: n * occ.saturating_sub(1),
+            params,
+        });
+    }
+    out.sort_by(|x, y| y.gain.cmp(&x.gain));
+    out
+}
+
+/// Pre-order leaf stream of the CST as `(normalized_kind, 1-based_line)`. Leaf
+/// tokens only (child_count 0): identifiers -> `ID`, literals -> `LIT`, all
+/// punctuation/keyword leaves keep their kind (the structural skeleton).
+/// Comments are dropped by source-text check (robust to the grammar's comment
+/// node naming) — they repeat shape but aren't code structure.
+fn ast_shape_tokens(tree: &tree_sitter::Tree, content: &str) -> Vec<(String, usize)> {
+    let mut out = Vec::new();
+    let mut stack = vec![tree.root_node()];
+    while let Some(n) = stack.pop() {
+        if n.child_count() == 0 {
+            let txt = &content[n.start_byte()..n.end_byte()];
+            if txt.starts_with("//") || txt.starts_with("/*") {
+                continue;
+            }
+            let k = match n.kind() {
+                "identifier" | "metavariable" => "ID".to_string(),
+                kk if kk.ends_with("_literal") => "LIT".to_string(),
+                kk => kk.to_string(),
+            };
+            out.push((k, n.start_position().row + 1));
+        } else {
+            let mut cur = n.walk();
+            let ch: Vec<Node> = n.children(&mut cur).collect();
+            for c in ch.into_iter().rev() {
+                stack.push(c);
+            }
+        }
+    }
+    out
 }
 
 fn is_keyword(s: &str) -> bool {
