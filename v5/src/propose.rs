@@ -110,6 +110,27 @@ pub fn min_lines_filter(proposals: Vec<Proposal>, min_lines: usize) -> Vec<Propo
         .collect()
 }
 
+/// Maximum-param filter: drops proposals with more free variables than
+/// `max_params`. Addresses the ngram noise floor on test-heavy files:
+/// extract_function.rs produces 11/47 ngram proposals with >10 params
+/// (test-fixture boilerplate threading 15+ vars). An extract-fn with >10
+/// params is extraction-infeasible — the "extracted" signature would be
+/// longer than the duplicated block. `max_params=10` is the practical ceiling.
+pub fn max_params_filter(proposals: Vec<Proposal>, max_params: usize) -> Vec<Proposal> {
+    proposals
+        .into_iter()
+        .filter(|p| p.params.len() <= max_params)
+        .collect()
+}
+
+/// Combined feasibility filter: min_lines AND max_params in one pass.
+/// The recommended default for extract-fn proposal ranking: blocks >=5
+/// lines with <=10 params. Filters test-boilerplate noise (high param
+/// count) and trivial repetition (short blocks) simultaneously.
+pub fn feasibility_filter(proposals: Vec<Proposal>) -> Vec<Proposal> {
+    max_params_filter(min_lines_filter(proposals, 5), 10)
+}
+
 /// Length-weighted gain: `lines² × (occurrences − 1)`. Rebalances ranking
 /// away from short high-frequency shapes toward long consolidation targets.
 /// A 20-line × 2-occ block (weighted=400) outranks a 2-line × 24-occ block
@@ -1441,6 +1462,32 @@ mod tests {
             "long block should outweigh short: {} vs {}",
             weighted_gain(&long), weighted_gain(&short)
         );
+    }
+
+    #[test]
+    fn max_params_filter_drops_infeasible() {
+        let many: Vec<String> = (0..15).map(|i| format!("p{i}")).collect();
+        let proposals = vec![
+            Proposal { lo: 1, hi: 20, occurrences: 3, gain: 40, params: vec!["a".into()] },
+            Proposal { lo: 1, hi: 30, occurrences: 2, gain: 30, params: many },
+        ];
+        let filtered = max_params_filter(proposals, 10);
+        assert_eq!(filtered.len(), 1, "only the <=10-param proposal survives");
+        assert_eq!(filtered[0].params.len(), 1);
+    }
+
+    #[test]
+    fn feasibility_filter_combines_both() {
+        let many: Vec<String> = (0..12).map(|i| format!("p{i}")).collect();
+        let proposals = vec![
+            Proposal { lo: 1, hi: 2, occurrences: 5, gain: 8, params: vec![] },      // too short
+            Proposal { lo: 1, hi: 40, occurrences: 3, gain: 80, params: many },       // too many params
+            Proposal { lo: 1, hi: 20, occurrences: 3, gain: 40, params: vec!["x".into()] }, // OK
+        ];
+        let filtered = feasibility_filter(proposals);
+        assert_eq!(filtered.len(), 1, "only the feasible proposal survives");
+        assert_eq!(filtered[0].lo, 1);
+        assert_eq!(filtered[0].hi, 20);
     }
 
     // --- refinement hierarchy property tests ---

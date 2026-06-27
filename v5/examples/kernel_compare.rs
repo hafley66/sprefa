@@ -87,17 +87,16 @@ fn main() {
         }
     }
 
-    // Effect of min_lines=5 filter + weighted-gain ranking.
-    println!("\n== min_lines=5 filter + weighted-gain (lines²×occ) impact ==");
+    // Effect of feasibility filter (min_lines=5 + max_params=10) + weighted-gain.
+    println!("\n== feasibility filter (≥5 lines, ≤10 params) + weighted-gain impact ==");
     println!("{:<10} {:>8} {:>8} {:>12} {:>12}",
-        "kernel", "raw_blk", ">=5lines", "raw_top_gain", "wgt_top_gain");
+        "kernel", "raw_blk", "feasible", "raw_top_gain", "wgt_top_gain");
     for (name, props) in &kernels {
-        let filtered = sprefa_v5::propose::min_lines_filter(props.to_vec(), 5);
+        let filtered = sprefa_v5::propose::feasibility_filter(props.to_vec());
         let raw_top = props.iter().map(|p| p.gain).max().unwrap_or(0);
-        let wgt_top = props.iter().map(|p| sprefa_v5::propose::weighted_gain(p)).max().unwrap_or(0);
-        let wgt_top_filt = filtered.iter().map(|p| sprefa_v5::propose::weighted_gain(p)).max().unwrap_or(0);
+        let wgt_top = filtered.iter().map(|p| sprefa_v5::propose::weighted_gain(p)).max().unwrap_or(0);
         println!("{:<10} {:>8} {:>8} {:>12} {:>12}",
-            name, props.len(), filtered.len(), raw_top, wgt_top_filt);
+            name, props.len(), filtered.len(), raw_top, wgt_top);
     }
 
     // Pairwise overlap matrix.
