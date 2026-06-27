@@ -683,6 +683,86 @@ fn count_idents_in(n: Node) -> u64 {
     count
 }
 
+/// Callgraph-iso (call topology) kernel. Each statement is hashed by the
+/// multiset of calls in its subtree: for each `call_expression`, record
+/// `(callee_type, arity)` where callee_type distinguishes function calls
+/// (callee is an identifier) from method calls (callee is a field_expression).
+/// Two statements match iff they make the same calls with the same arities.
+///
+/// Call nesting is captured indirectly: `foo(bar())` produces entries
+/// `[(fn,1), (fn,0)]` (foo has 1 arg, bar has 0), while `foo(); bar()`
+/// produces `[(fn,0), (fn,0)]`. Distinct from tree-iso: ignores all non-call
+/// structure (control flow, assignments, literals) so that two statements
+/// wrapping the same calls in different syntactic scaffolding still match.
+const CALLGRAPH_SEED: usize = 3;
+
+pub fn callgraph_shape_proposals(content: &str) -> Vec<Proposal> {
+    let mut parser = Parser::new();
+    if parser.set_language(&lang()).is_err() {
+        return Vec::new();
+    }
+    let Some(tree) = parser.parse(content, None) else {
+        return Vec::new();
+    };
+    let stmts = statement_ranges(&tree);
+    let hashes: Vec<u64> = stmts.iter().map(|(n, _, _)| callgraph_hash(*n)).collect();
+    let line_start = line_start_bytes(content);
+    let root = tree.root_node();
+    let mut out = Vec::new();
+    for (a, n, occ) in matching_runs(&hashes, CALLGRAPH_SEED) {
+        let lo_line = stmts[a].1;
+        let hi_line = stmts[a + n - 1].2;
+        if hi_line <= lo_line {
+            continue;
+        }
+        let lo_byte = line_start[lo_line - 1];
+        let hi_byte = line_start.get(hi_line).copied().unwrap_or(content.len());
+        let params = free_vars(root, content, lo_byte, hi_byte);
+        out.push(Proposal {
+            lo: lo_line,
+            hi: hi_line,
+            occurrences: occ,
+            gain: (hi_line - lo_line + 1) * occ.saturating_sub(1),
+            params,
+        });
+    }
+    out.sort_by(|x, y| y.gain.cmp(&x.gain));
+    out
+}
+
+/// Per-statement call topology fingerprint. Walks the subtree collecting
+/// `(callee_type, arity)` for every `call_expression`: type 1 = function call
+/// (callee is an identifier or path), type 2 = method call (callee is a
+/// field_expression). The sorted multiset is hashed.
+fn callgraph_hash(node: Node) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut entries: Vec<(u8, usize)> = Vec::new();
+    let mut stack = vec![node];
+    while let Some(n) = stack.pop() {
+        if n.kind() == "call_expression" {
+            let callee_type = match n.child_by_field_name("function") {
+                Some(f) if f.kind() == "field_expression" => 2u8,
+                Some(_) => 1u8,
+                None => 0u8,
+            };
+            let arity = n
+                .child_by_field_name("arguments")
+                .map(|a| a.named_child_count())
+                .unwrap_or(0);
+            entries.push((callee_type, arity));
+        }
+        let mut cur = n.walk();
+        let children: Vec<Node> = n.children(&mut cur).collect();
+        for c in children.into_iter().rev() {
+            stack.push(c);
+        }
+    }
+    entries.sort();
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    entries.hash(&mut h);
+    h.finish()
+}
+
 fn is_keyword(s: &str) -> bool {
     matches!(s,
         "self" | "Self" | "super" | "crate" | "return" | "if" | "else" | "for"
@@ -1060,5 +1140,29 @@ mod tests {
         let src = "fn alpha(a: i32, b: i32) {\n    let x = combine(a, b);\n    let y = combine(x, a);\n    let z = combine(y, x);\n}\nfn beta() {\n    do_thing();\n    do_other();\n    do_more();\n}\n";
         let p = ddg_shape_proposals(src);
         assert!(p.is_empty(), "different def/use counts must not match: {:?}", p);
+    }
+
+    // --- callgraph-iso kernel ---
+
+    #[test]
+    fn callgraph_finds_matching_call_topology() {
+        // Two blocks: same call topology per statement, different names and
+        // non-call structure. Each statement has a distinct call multiset so
+        // the trivial-repetition filter passes.
+        //   stmt 1: [(fn,2)]           — foo(a, b)     / bar(x, y)
+        //   stmt 2: [(fn,1),(fn,0)]   — outer(inner()) / quux(corge())
+        //   stmt 3: [(method,1)]      — obj.method(z)  / inst.send(w)
+        let src = "fn alpha(a: i32, b: i32, obj: T) {\n    foo(a, b);\n    outer(inner());\n    obj.method(a);\n}\nfn beta(x: i32, y: i32, inst: T) {\n    bar(x, y);\n    quux(corge());\n    inst.send(x);\n}\n";
+        let p = callgraph_shape_proposals(src);
+        assert!(!p.is_empty(), "same call topology must match: {:?}", p);
+        assert!(p.iter().any(|p| p.occurrences >= 2));
+    }
+
+    #[test]
+    fn callgraph_rejects_different_arity() {
+        // alpha: [(fn,2)] per stmt. beta: [(fn,0)] per stmt. Different topology.
+        let src = "fn alpha(a: i32, b: i32) {\n    foo(a, b);\n    bar(a, b);\n    baz(a, b);\n}\nfn beta() {\n    ping();\n    pong();\n    pang();\n}\n";
+        let p = callgraph_shape_proposals(src);
+        assert!(p.is_empty(), "different arity must not match: {:?}", p);
     }
 }
