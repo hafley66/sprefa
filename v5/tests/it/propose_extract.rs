@@ -71,3 +71,34 @@ fn propose_extract_is_reserved() {
     assert_ne!(code, 0);
     assert!(err.contains("built-in"), "reserved-name error expected:\n{err}");
 }
+
+/// (4) `propose_clone(kernel, path, lo, hi, param)` runs all 9 kernels.
+/// The ast-shape kernel finds renamed-variable duplication that verbatim misses.
+#[test]
+fn propose_clone_runs_multiple_kernels() {
+    let d = sandbox("clone");
+    fs::create_dir_all(d.join("src")).unwrap();
+    let rust = "fn alpha() {\n    let result = compute(input);\n    map.insert(key, result);\n    return verify(result);\n}\nfn beta() {\n    let value = compute(input);\n    map.insert(key, value);\n    return verify(value);\n}\n";
+    fs::write(d.join("src/dup.rs"), rust).unwrap();
+    let prog = concat!(
+        "rel touch(p: file).\n",
+        "touch(p) <- scan(\"WORK\", \"src/**/*.rs\", p, rev).\n",
+        "? propose_clone(kernel, p, lo, hi, param).\n",
+    );
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "stderr: {err}");
+    assert!(out.contains("src/dup.rs"), "path must appear:\n{out}");
+    assert!(
+        out.contains("ast") || out.contains("tree") || out.contains("ddg"),
+        "at least one structural kernel must find the renamed-var dup:\n{out}"
+    );
+}
+
+/// (5) `propose_clone` is a reserved name.
+#[test]
+fn propose_clone_is_reserved() {
+    let d = sandbox("clone_reserved");
+    let (code, _out, err) = run(&d, "rel propose_clone(k: text, p: text).\n");
+    assert_ne!(code, 0);
+    assert!(err.contains("built-in"), "reserved-name error expected:\n{err}");
+}

@@ -151,6 +151,13 @@ const CHANGED_LINE_RELS: [&str; 1] = ["changed_line"];
 /// The proposer is the `propose` module; this relation is its queryable output.
 const PROPOSE_EXTRACT_RELS: [&str; 1] = ["propose_extract"];
 
+/// Multi-kernel clone-detection relation: `propose_clone(kernel, path, lo, hi,
+/// param)`. Runs all 9 clone-detection kernels (verbatim, ast, tree, cfg, ddg,
+/// cgraph, ngram, symbol, call) on every scanned Rust file. The `kernel` column
+/// selects which detector produced the row. Symbol and call kernels need
+/// index.scip; they emit no rows if the index is absent.
+const PROPOSE_CLONE_RELS: [&str; 1] = ["propose_clone"];
+
 /// Ref-spine query relations: thin views over the `_strings` / `_where_bytes`
 /// meta tables. `string(id, text, norm)` resolves an interned StringId to its
 /// content; `ref(id, string, file, lo, hi)` locates each interned string's byte
@@ -209,6 +216,7 @@ pub fn builtin_rel_names() -> std::collections::HashSet<String> {
         .chain(changed_rel_decls())
         .chain(changed_line_rel_decls())
         .chain(propose_extract_rel_decls())
+        .chain(propose_clone_rel_decls())
         .chain(daemon_rel_decls())
         .map(|d| d.name)
         .collect()
@@ -359,6 +367,16 @@ fn propose_extract_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
+fn propose_clone_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "propose_clone".into(),
+                  cols: vec![c("kernel", Type::Text), c("path", Type::Path),
+                             c("lo", Type::Int), c("hi", Type::Int),
+                             c("param", Type::Text)] },
+    ]
+}
+
 fn spine_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -483,6 +501,8 @@ fn changed_rels_used(prog: &Program) -> bool { rels_used(prog, &CHANGED_RELS) }
 fn changed_line_rels_used(prog: &Program) -> bool { rels_used(prog, &CHANGED_LINE_RELS) }
 
 fn propose_extract_rels_used(prog: &Program) -> bool { rels_used(prog, &PROPOSE_EXTRACT_RELS) }
+
+fn propose_clone_rels_used(prog: &Program) -> bool { rels_used(prog, &PROPOSE_CLONE_RELS) }
 
 fn module_manifest_path(path: &str) -> bool {
     path.ends_with("Cargo.toml") || path.ends_with("package.json") || path.ends_with("tsconfig.json")
@@ -1754,6 +1774,7 @@ impl Engine {
         if changed_rels_used(prog) { changed |= self.refresh_changed_rel()?; }
         if changed_line_rels_used(prog) { changed |= self.refresh_changed_line_rel()?; }
         if propose_extract_rels_used(prog) { changed |= self.refresh_propose_extract_rel()?; }
+        if propose_clone_rels_used(prog) { changed |= self.refresh_propose_clone_rel()?; }
         if daemon_rels_used(prog) { self.refresh_daemon_rels()?; }
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
 
@@ -2033,6 +2054,10 @@ impl Engine {
         }
         if propose_extract_rels_used(prog) && self.refresh_propose_extract_rel()? {
             changed_source_rels.insert("propose_extract".to_string());
+            changed_facts = true;
+        }
+        if propose_clone_rels_used(prog) && self.refresh_propose_clone_rel()? {
+            changed_source_rels.insert("propose_clone".to_string());
             changed_facts = true;
         }
         if daemon_rels_used(prog) { self.refresh_daemon_rels()?; }
@@ -2657,6 +2682,9 @@ impl Engine {
                 if PROPOSE_EXTRACT_RELS.contains(&d.name.as_str()) {
                     bail!("{} is the built-in extract-proposal relation; pick another name", d.name);
                 }
+                if PROPOSE_CLONE_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is the built-in clone-detection relation; pick another name", d.name);
+                }
                 if DAEMON_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in daemon-state relation (program / head / rev_advanced); pick another name", d.name);
                 }
@@ -2695,6 +2723,7 @@ impl Engine {
         for d in changed_rel_decls() { self.declare(&d)?; }
         for d in changed_line_rel_decls() { self.declare(&d)?; }
         for d in propose_extract_rel_decls() { self.declare(&d)?; }
+        for d in propose_clone_rel_decls() { self.declare(&d)?; }
         for d in daemon_rel_decls() { self.declare(&d)?; }
         Ok(())
     }
@@ -4132,6 +4161,104 @@ impl Engine {
             .map(|(p, lo, hi, pm)| vec![Value::Text(p), Value::Int(lo), Value::Int(hi), Value::Text(pm)])
             .collect();
         self.refresh_rel("propose_extract", &["path", "lo", "hi", "param"], &rows)?;
+        Ok(true)
+    }
+
+    /// Refresh `propose_clone(kernel, path, lo, hi, param)` — for every scanned
+    /// Rust file, run all 9 clone-detection kernels and store one row per
+    /// (kernel, block, param). Symbol and call-seq kernels need index.scip;
+    /// they emit no rows if the index is absent.
+    fn refresh_propose_clone_rel(&self) -> Result<bool> {
+        let roots = self.repo_roots();
+        let root = self.root.clone();
+        let files = self.node_file_set(None)?;
+        let scip_spans: HashMap<String, Vec<(i32, i32, String)>> =
+            if let Some(idx) = scip_import::index_path(&root) {
+                match scip_import::load(&idx) {
+                    Ok(rows) => {
+                        let mut map: HashMap<String, Vec<(i32, i32, String)>> = HashMap::new();
+                        for (file, l, c, sym) in rows.occ_spans {
+                            map.entry(file).or_default().push((l, c, sym));
+                        }
+                        map
+                    }
+                    Err(_) => HashMap::new(),
+                }
+            } else {
+                HashMap::new()
+            };
+        let mut computed: Vec<(String, String, i64, i64, String)> = Vec::new();
+        for (repo, path, rev, _hash) in files {
+            if crate::cst::lang_label_for_path(&path) != Some("rust") {
+                continue;
+            }
+            let froot = roots.get(&repo).map(|p| p.as_path()).unwrap_or(&root);
+            let content = read_content(froot, &rev, &path).unwrap_or_default();
+            let spans_owned = scip_spans.get(&path).cloned().unwrap_or_default();
+            let spans: Vec<(i32, i32, &str)> = spans_owned
+                .iter()
+                .map(|(l, c, s)| (*l, *c, s.as_str()))
+                .collect();
+            let kernels: Vec<(&str, Vec<crate::propose::Proposal>)> = vec![
+                ("verbatim", crate::propose::extract_proposals(&content)),
+                ("ast", crate::propose::ast_shape_proposals(&content)),
+                ("tree", crate::propose::tree_shape_proposals(&content)),
+                ("cfg", crate::propose::cfg_shape_proposals(&content)),
+                ("ddg", crate::propose::ddg_shape_proposals(&content)),
+                ("cgraph", crate::propose::callgraph_shape_proposals(&content)),
+                ("ngram", crate::propose::ngram_stat_proposals(&content)),
+                ("symbol", crate::propose::symbol_shape_proposals(&content, &spans)),
+                ("call", crate::propose::call_seq_proposals(&content, &spans)),
+            ];
+            for (kname, props) in kernels {
+                for prop in props {
+                    for p in &prop.params {
+                        computed.push((
+                            kname.to_string(),
+                            path.clone(),
+                            prop.lo as i64,
+                            prop.hi as i64,
+                            p.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+        computed.sort();
+        computed.dedup();
+        let stored: Vec<(String, String, i64, i64, String)> = {
+            let conn = self.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"kernel\",\"path\",\"lo\",\"hi\",\"param\" FROM {} ORDER BY \"kernel\",\"path\",\"lo\",\"hi\",\"param\"",
+                tbl("propose_clone")
+            ))?;
+            let rows = s.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            })?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        if stored == computed {
+            return Ok(false);
+        }
+        let rows: Vec<Vec<Value>> = computed
+            .into_iter()
+            .map(|(k, p, lo, hi, pm)| {
+                vec![
+                    Value::Text(k),
+                    Value::Text(p),
+                    Value::Int(lo),
+                    Value::Int(hi),
+                    Value::Text(pm),
+                ]
+            })
+            .collect();
+        self.refresh_rel("propose_clone", &["kernel", "path", "lo", "hi", "param"], &rows)?;
         Ok(true)
     }
 
