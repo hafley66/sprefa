@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod ast;
 pub mod comment;
 pub mod config;

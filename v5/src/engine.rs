@@ -137,6 +137,18 @@ const SCIP_RELS: [&str; 6] = ["scip_def", "scip_ref", "scip_edge", "scip_fn_edge
 /// what an edit session touched never fires on pre-existing repo debt.
 const CHANGED_RELS: [&str; 1] = ["changed"];
 
+/// Agent-harness relations (agent.rs). Reserved like CHANGED_RELS, declared each
+/// tick, populated by `refresh_agent_rels` only when the program references one.
+/// `agent_edit(harness, session, idx, path)` = every file edit in the newest
+/// session per detected harness (Claude Code JSONL, opencode SQLite), paths
+/// repo-relative. `agent_touch(harness, session, path)` = the latest turn's
+/// edits (rows at `max(idx)` per session). Both stay keyed by (harness,
+/// session): the cross-harness set is a TAGGED union, not a broadcast — a
+/// consumer filters to one session, or projects the labels away to treat any
+/// agent uniformly: `diag(p,...) <- changed(p), agent_touch(_, _, p).` ACP is
+/// the live tier (deferred).
+const AGENT_RELS: [&str; 2] = ["agent_edit", "agent_touch"];
+
 /// Line-level worktree diff: `(path, line)` for every new-side line of every
 /// hunk in `git diff -U0 HEAD`, plus every line of untracked files (which the
 /// diff omits). Lets a rail scope to the touched lines, not the touched path:
@@ -231,6 +243,7 @@ pub fn builtin_rel_names() -> std::collections::HashSet<String> {
         .chain(spine_rel_decls())
         .chain(node_rel_decls())
         .chain(changed_rel_decls())
+        .chain(agent_rel_decls())
         .chain(changed_line_rel_decls())
         .chain(propose_extract_rel_decls())
         .chain(propose_clone_rel_decls())
@@ -366,6 +379,16 @@ fn changed_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "changed".into(), cols: vec![c("path", Type::Path)] },
+    ]
+}
+
+fn agent_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "agent_edit".into(), cols: vec![
+            c("harness", Type::Text), c("session", Type::Text), c("idx", Type::Int), c("path", Type::Path)] },
+        RelDecl { name: "agent_touch".into(), cols: vec![
+            c("harness", Type::Text), c("session", Type::Text), c("path", Type::Path)] },
     ]
 }
 
@@ -532,6 +555,7 @@ fn spine_rels_used(prog: &Program) -> bool { rels_used(prog, &SPINE_RELS) }
 fn node_rels_used(prog: &Program) -> bool { rels_used(prog, &NODE_RELS) }
 
 fn changed_rels_used(prog: &Program) -> bool { rels_used(prog, &CHANGED_RELS) }
+fn agent_rels_used(prog: &Program) -> bool { rels_used(prog, &AGENT_RELS) }
 
 fn changed_line_rels_used(prog: &Program) -> bool { rels_used(prog, &CHANGED_LINE_RELS) }
 
@@ -1855,6 +1879,7 @@ impl Engine {
         // HEAD under an identical worktree), so the refresh result feeds
         // `changed` directly rather than riding the reconcile delta.
         if changed_rels_used(prog) { changed |= self.refresh_changed_rel()?; }
+        if agent_rels_used(prog) { changed |= self.refresh_agent_rels()?; }
         if changed_line_rels_used(prog) { changed |= self.refresh_changed_line_rel()?; }
         if propose_extract_rels_used(prog) { changed |= self.refresh_propose_extract_rel()?; }
         if propose_clone_rels_used(prog) { changed |= self.refresh_propose_clone_rel()?; }
@@ -2131,6 +2156,10 @@ impl Engine {
         // on the common no-op, keeping the rebuild scope tight.
         if changed_rels_used(prog) && self.refresh_changed_rel()? {
             changed_source_rels.insert("changed".to_string());
+            changed_facts = true;
+        }
+        if agent_rels_used(prog) && self.refresh_agent_rels()? {
+            for a in AGENT_RELS { changed_source_rels.insert(a.to_string()); }
             changed_facts = true;
         }
         if changed_line_rels_used(prog) && self.refresh_changed_line_rel()? {
@@ -2769,6 +2798,9 @@ impl Engine {
                 if CHANGED_RELS.contains(&d.name.as_str()) {
                     bail!("{} is the built-in worktree-diff relation; pick another name", d.name);
                 }
+                if AGENT_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is a built-in agent-harness relation (agent_edit / agent_touch); pick another name", d.name);
+                }
                 if CHANGED_LINE_RELS.contains(&d.name.as_str()) {
                     bail!("{} is the built-in line-diff relation; pick another name", d.name);
                 }
@@ -2820,6 +2852,7 @@ impl Engine {
         self.db.conn().execute(
             &format!("CREATE INDEX IF NOT EXISTS node_file_span_idx ON {}(\"file\", \"lo\", \"hi\")", tbl("node")), [])?;
         for d in changed_rel_decls() { self.declare(&d)?; }
+        for d in agent_rel_decls() { self.declare(&d)?; }
         for d in changed_line_rel_decls() { self.declare(&d)?; }
         for d in propose_extract_rel_decls() { self.declare(&d)?; }
         for d in propose_clone_rel_decls() { self.declare(&d)?; }
@@ -4223,6 +4256,54 @@ impl Engine {
         if existing == paths { return Ok(false); }
         let rows: Vec<Vec<Value>> = paths.into_iter().map(|p| vec![Value::Text(p)]).collect();
         self.refresh_rel("changed", &["path"], &rows)?;
+        Ok(true)
+    }
+
+    /// Refresh `agent_edit` / `agent_touch` from the at-rest harness stores
+    /// (agent.rs). For each detected harness, read the newest session for this
+    /// repo and emit one `agent_edit` row per file edit (repo-relative, tagged
+    /// with harness + session + per-session turn idx); `agent_touch` is the rows
+    /// at `max(idx)` per session — the latest turn, still tagged (no broadcast).
+    /// Best-effort: a missing store yields no rows. Whole-set recompute compared
+    /// to stored, early-out when unchanged so an incremental tick rebuilds only
+    /// when the latest turn moved.
+    fn refresh_agent_rels(&self) -> Result<bool> {
+        let root = std::fs::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone());
+        let mut edits: Vec<(String, String, i64, String)> = Vec::new(); // harness, session, idx, path
+        let mut touch: Vec<(String, String, String)> = Vec::new();      // harness, session, path @ max idx
+        for h in crate::agent::agent_harnesses() {
+            let hn = h.name().to_string();
+            for sess in h.sessions_for(&root) {
+                let maxidx = sess.edits.iter().map(|e| e.idx).max();
+                for e in &sess.edits {
+                    edits.push((hn.clone(), sess.id.clone(), e.idx, e.path.clone()));
+                    if Some(e.idx) == maxidx {
+                        touch.push((hn.clone(), sess.id.clone(), e.path.clone()));
+                    }
+                }
+            }
+        }
+        edits.sort(); edits.dedup();
+        touch.sort(); touch.dedup();
+        // Early-out: compare agent_edit (the superset) against what is stored.
+        let existing: Vec<(String, String, i64, String)> = {
+            let conn = self.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"harness\", \"session\", \"idx\", \"path\" FROM {} ORDER BY 1,2,3,4",
+                tbl("agent_edit")))?;
+            let rows = s.query_map([], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?)))?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        if existing == edits { return Ok(false); }
+        let edit_rows: Vec<Vec<Value>> = edits.into_iter()
+            .map(|(h, s, i, p)| vec![Value::Text(h), Value::Text(s), Value::Int(i), Value::Text(p)])
+            .collect();
+        self.refresh_rel("agent_edit", &["harness", "session", "idx", "path"], &edit_rows)?;
+        let touch_rows: Vec<Vec<Value>> = touch.into_iter()
+            .map(|(h, s, p)| vec![Value::Text(h), Value::Text(s), Value::Text(p)])
+            .collect();
+        self.refresh_rel("agent_touch", &["harness", "session", "path"], &touch_rows)?;
         Ok(true)
     }
 

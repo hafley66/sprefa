@@ -105,11 +105,14 @@ every transport is a one-liner.
 | opencode (terminal) | plugin API (`~/.config/opencode`) | plugin calls `dl --agent-check`, surfaces the message |
 
 ## 6. Build order
-1. `src/agent.rs` trait + the two at-rest adapters + `agent_harnesses()` (unit
-   tests vs a jsonl fixture and a temp sqlite). Ship first — no new deps, covers
-   terminal runs today.
-2. Register `agent_edit`/`latest_touch`, gate, `refresh_agent_rels` in tick. e2e
-   test = the `latest-turn-guardrail` fixture, now with zero adapter dl.
+1. [x] `src/agent.rs` trait + the two at-rest adapters + `agent_harnesses()`
+   (unit tests vs a jsonl fixture and a temp sqlite). DONE — no new deps.
+2. [x] Register `agent_edit`/`agent_touch` (NOT `latest_touch` — that name stays
+   free for the DIY example), gate, `refresh_agent_rels` in tick (both full +
+   incremental paths). Both rels stay tagged `(harness, session)` — a TAGGED
+   union, not a broadcast. e2e = `tests/it/agent_rels.rs` (intersection +
+   tagging + reserved + empty-store), full suite green; verified live on this
+   repo against both a Claude Code and an opencode session simultaneously.
 3. `dl --agent-check` CLI mode (ticks, emits diag JSON).
 4. Acp adapter over `agent-client-protocol` + `acpx` (proxy via `conductor`).
    This is the new-dependency tier; lands after the at-rest tier proves the

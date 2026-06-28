@@ -1,6 +1,7 @@
 // Single integration-test binary: one link step for all of tests/it/*.rs.
 // This file is the `it` test target's crate root (Cargo.toml [[test]],
 // autotests=false), so `mod foo;` resolves to its sibling tests/it/foo.rs.
+mod agent_rels;
 mod agg;
 mod arith;
 mod ast_grammars;

@@ -1,0 +1,26 @@
+# Live probe for the built-in agent-harness relations (agent.rs).
+#
+# Run from the repo root after any turn where the agent edited a file:
+#   v5/target/debug/dl v5/examples/agent-live.dl --root . --no-daemon
+# (rebuild first if needed: cd v5 && cargo build)
+#
+# agent_edit  = every file edit in the newest session per detected harness,
+#               tagged (harness, session, idx, path), repo-relative.
+# agent_touch = the LATEST editing turn's files, still tagged (harness, session).
+# diag        = agent_touch INTERSECT changed — what the latest turn changed in
+#               the worktree (the rails shape, LSP-ready). A file drops out of
+#               diag once you commit it (no longer in `changed`).
+#
+# Coming back to THIS Claude Code session: the transcript keeps growing, so the
+# claude-code row tracks the most recent turn that touched a file. If opencode
+# also has a session for this directory, you'll see a second, separately-tagged
+# row — a tagged union, never a broadcast.
+
+rel diag(path: file, line: int, col: int, end_col: int,
+         severity: text, code: text, msg: text).
+diag(p, 0, 0, 0, "info", "latest-turn-change", "changed in the latest agent turn") <-
+    changed(p), agent_touch(_, _, p).
+
+? agent_edit(harness, session, idx, path).
+? agent_touch(harness, session, path).
+? diag(path, line, col, end_col, severity, code, msg).
