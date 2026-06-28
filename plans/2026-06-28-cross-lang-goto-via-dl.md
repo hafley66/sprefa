@@ -109,3 +109,64 @@ ARE the bespoke part — but they live in dl, per codegen convention, not in Rus
 5. Closure overlay in hover + a d2/atlas of the xref graph.
 6. Oracle: SCIP (scip-typescript / scip-java / rust-analyzer) confirms the
    cross-lang def/ref/impl hits — precision (our hits subset of SCIP) + recall.
+
+---
+
+## Captured ideas (2026-06-28, scoped, not yet scheduled)
+
+### I1 — case / rhythm normalization (`get_users` ~ `getUser`)
+Codegen spells the same op differently per lang: spec/TS `getUser` (camel), Rust
+`get_user` (snake), Kotlin `getUser` (camel). Matching needs a canonical key.
+- Add a dl string builtin `canon(s)` = lowercase + strip non-alphanumeric
+  (`getUser`/`get_user` -> `getuser`). Sits beside the existing `split`/`replace`/
+  `int` builtins (engine.rs ~6304). Small, generic, reusable.
+- The page keys `xref`/`def_target`/`impl_target` by `canon(name)`.
+- For the LSP lookup to be case-insensitive, `definition_targets` /
+  `implementation_targets` must `canon` the cursor `text` before the
+  `WHERE name = ?` query (~3 lines Rust each). Until then, prove at the relation
+  level via CLI `?` queries.
+- Plural/stem drift (`getUsers` vs `getUser`) is NOT covered by canon (different
+  letters); leave fuzzy stemming out of v1, flag if the real corpus needs it.
+
+### I2 — proof fixture: Kotlin interface-hiding + N impls + delegation
+The validation target. One spec op `getUser`; clients/impls spread as:
+- spec `openapi.{yaml,json}` with `operationId: getUser`
+- TS frontend client call site `getUser(...)`
+- Kotlin `interface Api { fun getUser(...) }` + TWO impls (one direct, one via a
+  Kotlin `by` delegate) — the "interface hiding / DI-style soup" shape
+- a Rust `fn get_user(...)` impl (exercises I1 snake-case folding)
+Prove (CLI `?` first, LSP after): refs cross all langs on the canon key;
+`impl_target(Api.getUser)` returns BOTH Kotlin impls (the interface-hiding goto);
+`def_target` jumps a TS call site -> the backend impl; canon matches the Rust
+`get_user`. This is the e2e that guards the whole cross-lang nav story; pair with
+the scip-java/scip-ts oracle once it lands.
+
+### I3 — multi-checkout / worktree identity
+A user may have N checkouts of ONE repo, plus M worktrees off those checkouts.
+Current model: `_file` keyed on (repo, path, rev); `repo` is a slug from the
+nearest `.git`/config; the ref spine is content-addressed (`FileId` = blake3), so
+byte-identical files across checkouts collapse to ONE `FileId`. Consequences to
+decide:
+- references via `string_spans` would MERGE spans across identical checkouts (find
+  every occurrence everywhere) — feature for "all refs", hazard for "which
+  checkout am I in". Goto should prefer the cursor's own checkout root.
+- repo slug collision: two checkouts of the same repo at different roots — same
+  slug (merge) or distinct (per-root)? Worktrees share `.git` (linked) — detect
+  via `git rev-parse --git-common-dir` to group worktrees under one logical repo.
+- The cross-repo path-resolution work (item 3 above) must pick the RIGHT root per
+  result; the `repo` column on `def_target`/the spine is the lever. Decision still
+  open: thread `repo` through, or hand the LSP absolute paths.
+
+### I4 — DSL-driven hover sections (LSP control from a dl page)
+Generalize the hover overlay the same way `diag` and `def_target` already work:
+a convention relation the page populates, the handler appends. Today `hover`
+(engine.rs:1488) hard-synthesizes from `type_entity`/`call_def`. Add a seam:
+- `hover_section(name: text, title: text, body: text)` (or per-kind
+  `ref_section`/`type_section`/`impl_section`) — read by `eng.hover` by column
+  name, appended as markdown blocks (links + lists) after the auto sections.
+- Then a page adds, e.g., a "Participates in flows" / "Implementations" /
+  "Contract" section purely in dl — no Rust per section. This is the same
+  convention-rel decision as `flow_member`; unify them: hover reads any
+  `*_section(name, title, body)` rels the program declares.
+- Composes with the OpenAPI flow overlay (`flow_member`) and the impl/def nav:
+  one hover shows refs + impls + flows + contract link, all dl-authored.
