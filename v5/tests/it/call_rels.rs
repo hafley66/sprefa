@@ -57,18 +57,19 @@ fn call_rels_are_reserved() {
     }
 }
 
-/// A language whose extract_calls is still the empty default (Kotlin today)
-/// keeps the wiring live: the lazy indexer runs, the relations are queryable
-/// and empty, and closure(call_edge) is a legal (empty) edge rel. This is the
-/// no-op gate for any not-yet-implemented front-end.
+/// A corpus with no callable source files keeps the wiring live: the lazy
+/// indexer runs, the relations are queryable and empty, and closure(call_edge)
+/// is a legal (empty) edge rel. The no-op gate (Rust/Kotlin/TS all implement
+/// extract_calls now; this exercises the genuinely-empty path).
 #[test]
 fn empty_call_extractors_keep_wiring_live() {
     let d = sandbox("empty");
     fs::create_dir_all(d.join("src")).unwrap();
-    fs::write(d.join("src/lib.kt"), "fun main() { helper(1) }\nfun helper(x: Int) {}\n").unwrap();
+    // a non-callable source file: scanned, but no language extracts calls from it.
+    fs::write(d.join("src/notes.txt"), "no callables here\n").unwrap();
     let prog = concat!(
         "rel seen(path: file).\n",
-        "seen(path) <- scan(\"WORK\", \"src/**/*.kt\", path, rev), match(path, rev, /./, line).\n",
+        "seen(path) <- scan(\"WORK\", \"src/**/*.txt\", path, rev), match(path, rev, /./, line).\n",
         "rel reaches(a: text, b: text).\n",
         "reaches(a, b) <- closure(call_edge).\n",
         "? call_def(_, sym, kind, file, line, end).\n",
@@ -80,7 +81,7 @@ fn empty_call_extractors_keep_wiring_live() {
     assert!(out.contains("(0 rows)"), "expected zero-row footers:\n{out}");
     assert!(
         !out.contains("(1 rows)") && !out.contains("(2 rows)"),
-        "empty Kotlin extractors produced rows:\n{out}"
+        "empty corpus produced call rows:\n{out}"
     );
 }
 
@@ -124,6 +125,92 @@ fn rust_call_graph_extracts_resolves_and_closes() {
     );
 
     // closure(call_edge): direct main -> helper, plus transitive main -> leaf.
+    assert!(
+        out.contains(&format!("{main}\t{helper}")),
+        "direct edge main -> helper missing from closure:\n{out}"
+    );
+    assert!(
+        out.contains(&format!("{main}\t{leaf}")),
+        "transitive reach main -> leaf missing from closure:\n{out}"
+    );
+}
+
+/// Kotlin parity: the tree-sitter extractor emits defs with body spans and call
+/// sites, the engine resolves and closes them just like Rust. `main -> helper ->
+/// leaf` must reach `main -> leaf`, and all three defs are present.
+#[test]
+fn kotlin_call_graph_extracts_resolves_and_closes() {
+    let d = sandbox("kotlin");
+    fs::create_dir_all(d.join("src")).unwrap();
+    fs::write(
+        d.join("src/lib.kt"),
+        "fun main() { helper() }\nfun helper() { leaf() }\nfun leaf() {}\n",
+    )
+    .unwrap();
+    let prog = concat!(
+        "rel seen(path: file).\n",
+        "seen(path) <- scan(\"WORK\", \"src/**/*.kt\", path, rev), match(path, rev, /./, line).\n",
+        "rel reaches(a: text, b: text).\n",
+        "reaches(a, b) <- closure(call_edge).\n",
+        "? call_def(_, sym, kind, file, line, end).\n",
+        "? reaches(a, b).\n",
+    );
+    let (code, out, err) = run(&d, prog, &[]);
+    assert_eq!(code, 0, "Kotlin extraction must not error:\n{err}");
+
+    let repo = d.file_name().unwrap().to_str().unwrap();
+    let main = format!("{repo}::src/lib.kt::function::main");
+    let helper = format!("{repo}::src/lib.kt::function::helper");
+    let leaf = format!("{repo}::src/lib.kt::function::leaf");
+
+    assert!(out.contains(&main), "main def missing:\n{out}");
+    assert!(out.contains(&helper), "helper def missing:\n{out}");
+    assert!(out.contains(&leaf), "leaf def missing:\n{out}");
+    assert!(out.contains("(3 rows)"), "expected exactly 3 call_def rows:\n{out}");
+
+    assert!(
+        out.contains(&format!("{main}\t{helper}")),
+        "direct edge main -> helper missing from closure:\n{out}"
+    );
+    assert!(
+        out.contains(&format!("{main}\t{leaf}")),
+        "transitive reach main -> leaf missing from closure:\n{out}"
+    );
+}
+
+/// TypeScript parity: the oxc extractor emits defs with body spans and call
+/// sites, the engine resolves and closes them just like Rust. `main -> helper ->
+/// leaf` must reach `main -> leaf`, and all three defs are present.
+#[test]
+fn ts_call_graph_extracts_resolves_and_closes() {
+    let d = sandbox("ts");
+    fs::create_dir_all(d.join("src")).unwrap();
+    fs::write(
+        d.join("src/lib.ts"),
+        "function main() { helper(); }\nfunction helper() { leaf(); }\nfunction leaf() {}\n",
+    )
+    .unwrap();
+    let prog = concat!(
+        "rel seen(path: file).\n",
+        "seen(path) <- scan(\"WORK\", \"src/**/*.ts\", path, rev), match(path, rev, /./, line).\n",
+        "rel reaches(a: text, b: text).\n",
+        "reaches(a, b) <- closure(call_edge).\n",
+        "? call_def(_, sym, kind, file, line, end).\n",
+        "? reaches(a, b).\n",
+    );
+    let (code, out, err) = run(&d, prog, &[]);
+    assert_eq!(code, 0, "TS extraction must not error:\n{err}");
+
+    let repo = d.file_name().unwrap().to_str().unwrap();
+    let main = format!("{repo}::src/lib.ts::function::main");
+    let helper = format!("{repo}::src/lib.ts::function::helper");
+    let leaf = format!("{repo}::src/lib.ts::function::leaf");
+
+    assert!(out.contains(&main), "main def missing:\n{out}");
+    assert!(out.contains(&helper), "helper def missing:\n{out}");
+    assert!(out.contains(&leaf), "leaf def missing:\n{out}");
+    assert!(out.contains("(3 rows)"), "expected exactly 3 call_def rows:\n{out}");
+
     assert!(
         out.contains(&format!("{main}\t{helper}")),
         "direct edge main -> helper missing from closure:\n{out}"

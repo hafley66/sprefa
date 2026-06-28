@@ -298,6 +298,24 @@ impl TypeLang for KotlinTypes {
         walk_kotlin_entities(root, src, file, &mut entities);
         TypeFacts { entities, edges: kotlin_edges_from(root, src) }
     }
+    // One tree-sitter parse feeds defs + sites, same shape as the Rust pass.
+    fn extract_calls(&self, file: &str, content: &str) -> CallFacts {
+        let mut parser = tree_sitter::Parser::new();
+        let lang = tree_sitter::Language::new(tree_sitter_kotlin_sg::LANGUAGE);
+        if parser.set_language(&lang).is_err() {
+            return CallFacts::default();
+        }
+        let Some(tree) = parser.parse(content, None) else {
+            return CallFacts::default();
+        };
+        let src = content.as_bytes();
+        let root = tree.root_node();
+        let mut defs = Vec::new();
+        kt_walk_call_defs(root, src, file, None, &mut defs);
+        let mut sites = Vec::new();
+        kt_walk_call_sites(root, src, file, &mut sites);
+        CallFacts { defs, sites }
+    }
     fn extract_dataflow(&self, file: &str, content: &str) -> DataflowFacts {
         let mut parser = tree_sitter::Parser::new();
         let lang = tree_sitter::Language::new(tree_sitter_kotlin_sg::LANGUAGE);
@@ -862,6 +880,22 @@ impl TypeLang for TsTypes {
             edges: ts_edges_from(&ret.program),
         }
     }
+    // One oxc parse feeds defs + sites, same shape as the Rust pass. `line_at`
+    // recovers 1-based lines from oxc's byte-offset spans.
+    fn extract_calls(&self, file: &str, content: &str) -> CallFacts {
+        let tsx = path_is_tsx(file);
+        let alloc = oxc_allocator::Allocator::default();
+        let st = if tsx { oxc_span::SourceType::tsx() } else { oxc_span::SourceType::ts() };
+        let ret = oxc_parser::Parser::new(&alloc, content, st).parse();
+        if ret.panicked {
+            return CallFacts::default();
+        }
+        let starts = line_index(content);
+        let defs = ts_call_defs_from(&ret.program, file, &starts);
+        let mut sites = TsCallSites { file, starts: &starts, sites: Vec::new() };
+        sites.visit_program(&ret.program);
+        CallFacts { defs, sites: sites.sites }
+    }
     // One oxc parse feeds the node + edge lift. Byte-offset spans (oxc's native
     // shape) become node ids `file:<byte_off>`; `line_at` recovers the 1-based
     // line for the `line` column.
@@ -1319,6 +1353,96 @@ fn is_noise_kotlin(name: &str) -> bool {
         "Int" | "Long" | "Short" | "Byte" | "Float" | "Double" | "Boolean" | "Char"
             | "String" | "Unit" | "Any" | "Nothing"
     )
+}
+
+// --- Kotlin call-graph pass (tree-sitter): `function_declaration` nodes become
+// CallDefs (a fn inside a class/object/interface body is a Method keyed to the
+// enclosing type, a top-level fun is Free), and every `call_expression` becomes
+// a CallSite whose callee is the called name as written. Caller resolution is
+// the engine's span-containment pass; mirror the Rust convention (bare callee
+// name, body span end line for containment). ---
+
+/// Walk for `function_declaration` defs, tracking the enclosing type name so a
+/// member fn keys to its owner. Descending into a class/object body carries the
+/// owner; descending into a fn body resets to None (a local fun is not a method
+/// of the surrounding type).
+fn kt_walk_call_defs(
+    node: tree_sitter::Node,
+    src: &[u8],
+    file: &str,
+    parent: Option<&str>,
+    out: &mut Vec<CallDef>,
+) {
+    let mut cur = node.walk();
+    for child in node.children(&mut cur) {
+        match child.kind() {
+            "class_declaration" | "object_declaration" => {
+                let owner = kt_first_child(child, "type_identifier")
+                    .map(|n| n.utf8_text(src).unwrap_or("").to_string());
+                kt_walk_call_defs(child, src, file, owner.as_deref(), out);
+            }
+            "function_declaration" => {
+                let name = kt_first_child(child, "simple_identifier")
+                    .map(|n| n.utf8_text(src).unwrap_or("").to_string())
+                    .unwrap_or_default();
+                let (kind, ekind) = match parent {
+                    Some(_) => (CallKind::Method, EntityKind::Method),
+                    None => (CallKind::Free, EntityKind::Function),
+                };
+                // body span end (1-based) bounds the def for callsite containment;
+                // abstract/interface fns have no body, so fall back to the decl end.
+                let end = kt_first_child(child, "function_body")
+                    .unwrap_or(child)
+                    .end_position()
+                    .row as u32
+                    + 1;
+                out.push(CallDef {
+                    sym: mint_sym(file, ekind, &name, parent),
+                    name,
+                    kind,
+                    file: file.to_string(),
+                    line: child.start_position().row as u32 + 1,
+                    end,
+                });
+                // a nested local fun is Free w.r.t. the enclosing scope.
+                kt_walk_call_defs(child, src, file, None, out);
+            }
+            _ => kt_walk_call_defs(child, src, file, parent, out),
+        }
+    }
+}
+
+/// Walk for `call_expression` sites. The callee is the call's leading child: a
+/// bare `simple_identifier`, or the trailing `simple_identifier` of a
+/// `navigation_expression` (`recv.qux()` -> "qux"), matching the Rust trailing-
+/// segment convention.
+fn kt_walk_call_sites(node: tree_sitter::Node, src: &[u8], file: &str, out: &mut Vec<CallSite>) {
+    let mut cur = node.walk();
+    for child in node.children(&mut cur) {
+        if child.kind() == "call_expression" {
+            if let Some((callee, line)) = kt_callee(child, src) {
+                out.push(CallSite { caller_sym: None, callee, file: file.to_string(), line });
+            }
+        }
+        kt_walk_call_sites(child, src, file, out);
+    }
+}
+
+/// (callee name, 1-based call line) for a `call_expression`, or None when the
+/// callee is not a plain/navigation name (e.g. an invoked lambda value).
+fn kt_callee(call: tree_sitter::Node, src: &[u8]) -> Option<(String, u32)> {
+    let mut cur = call.walk();
+    let lead = call.children(&mut cur).find(|c| c.kind() != "call_suffix")?;
+    let line = lead.start_position().row as u32 + 1;
+    match lead.kind() {
+        "simple_identifier" => Some((lead.utf8_text(src).unwrap_or("").to_string(), line)),
+        "navigation_expression" => {
+            let nav = kt_first_child(lead, "navigation_suffix")?;
+            let id = kt_first_child(nav, "simple_identifier")?;
+            Some((id.utf8_text(src).unwrap_or("").to_string(), line))
+        }
+        _ => None,
+    }
 }
 
 
@@ -1826,6 +1950,145 @@ fn push_entity(
         line: line_at(starts, span_start as usize),
         ty,
     });
+}
+
+// --- TypeScript call-graph pass (oxc): function declarations, exported/const
+// arrow + function-expression bindings, and class methods become CallDefs (Free
+// for standalone callables, Method for class members keyed to the class); every
+// `CallExpression` becomes a CallSite whose callee is the called name as written
+// (identifier, or the trailing property of a member expression). `end` is the
+// body span end converted to a 1-based line; caller resolution is the engine's
+// span-containment pass, same as Rust. ---
+
+fn ts_call_defs_from(program: &ts_ast::Program, file: &str, starts: &[usize]) -> Vec<CallDef> {
+    let mut out = Vec::new();
+    for stmt in &program.body {
+        use ts_ast::Statement as S;
+        match stmt {
+            S::FunctionDeclaration(f) => ts_fn_call_def(f, file, starts, &mut out),
+            S::ExportNamedDeclaration(e) => {
+                if let Some(d) = &e.declaration {
+                    ts_decl_call_def(d, file, starts, &mut out);
+                }
+            }
+            S::ExportDefaultDeclaration(e) => match &e.declaration {
+                ts_ast::ExportDefaultDeclarationKind::ClassDeclaration(c) => {
+                    ts_class_call_defs(c, file, starts, &mut out)
+                }
+                ts_ast::ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
+                    ts_fn_call_def(f, file, starts, &mut out)
+                }
+                _ => {}
+            },
+            S::ClassDeclaration(c) => ts_class_call_defs(c, file, starts, &mut out),
+            S::VariableDeclaration(v) => ts_var_call_defs(v, file, starts, &mut out),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn ts_decl_call_def(d: &ts_ast::Declaration, file: &str, starts: &[usize], out: &mut Vec<CallDef>) {
+    match d {
+        ts_ast::Declaration::FunctionDeclaration(f) => ts_fn_call_def(f, file, starts, out),
+        ts_ast::Declaration::ClassDeclaration(c) => ts_class_call_defs(c, file, starts, out),
+        ts_ast::Declaration::VariableDeclaration(v) => ts_var_call_defs(v, file, starts, out),
+        _ => {}
+    }
+}
+
+fn ts_fn_call_def(f: &ts_ast::Function, file: &str, starts: &[usize], out: &mut Vec<CallDef>) {
+    let Some(id) = &f.id else { return };
+    let Some(body) = f.body.as_deref() else { return };
+    let name = id.name.to_string();
+    out.push(CallDef {
+        sym: mint_sym(file, EntityKind::Function, &name, None),
+        name,
+        kind: CallKind::Free,
+        file: file.to_string(),
+        line: line_at(starts, id.span.start as usize),
+        end: line_at(starts, body.span.end as usize),
+    });
+}
+
+fn ts_class_call_defs(c: &ts_ast::Class, file: &str, starts: &[usize], out: &mut Vec<CallDef>) {
+    let Some(id) = &c.id else { return };
+    let owner = id.name.to_string();
+    for el in &c.body.body {
+        let ts_ast::ClassElement::MethodDefinition(m) = el else { continue };
+        // skip the constructor (no callable name) and computed/private keys.
+        if m.kind == ts_ast::MethodDefinitionKind::Constructor {
+            continue;
+        }
+        let ts_ast::PropertyKey::StaticIdentifier(k) = &m.key else { continue };
+        let Some(body) = m.value.body.as_deref() else { continue };
+        let name = k.name.to_string();
+        out.push(CallDef {
+            sym: mint_sym(file, EntityKind::Method, &name, Some(&owner)),
+            name,
+            kind: CallKind::Method,
+            file: file.to_string(),
+            line: line_at(starts, m.span.start as usize),
+            end: line_at(starts, body.span.end as usize),
+        });
+    }
+}
+
+fn ts_var_call_defs(v: &ts_ast::VariableDeclaration, file: &str, starts: &[usize], out: &mut Vec<CallDef>) {
+    for d in &v.declarations {
+        let ts_ast::BindingPattern::BindingIdentifier(name) = &d.id else { continue };
+        let body_end = match &d.init {
+            Some(ts_ast::Expression::ArrowFunctionExpression(a)) => a.body.span.end,
+            Some(ts_ast::Expression::FunctionExpression(f)) => match f.body.as_deref() {
+                Some(b) => b.span.end,
+                None => continue,
+            },
+            _ => continue,
+        };
+        let nm = name.name.to_string();
+        out.push(CallDef {
+            sym: mint_sym(file, EntityKind::Function, &nm, None),
+            name: nm,
+            kind: CallKind::Free,
+            file: file.to_string(),
+            line: line_at(starts, d.span.start as usize),
+            end: line_at(starts, body_end as usize),
+        });
+    }
+}
+
+/// Collect every `CallExpression` anywhere in the program (including method and
+/// nested bodies); the engine's containment pass attaches each to its caller.
+struct TsCallSites<'p> {
+    file: &'p str,
+    starts: &'p [usize],
+    sites: Vec<CallSite>,
+}
+
+impl<'a, 'p> OxcVisit<'a> for TsCallSites<'p> {
+    fn visit_call_expression(&mut self, c: &ts_ast::CallExpression<'a>) {
+        if let Some(callee) = ts_callee_name(&c.callee) {
+            self.sites.push(CallSite {
+                caller_sym: None,
+                callee,
+                file: self.file.to_string(),
+                line: line_at(self.starts, span_off(&c.callee) as usize),
+            });
+        }
+        oxc_ast_visit::walk::walk_call_expression(self, c);
+    }
+}
+
+/// The called name as written: a bare identifier, or the trailing property of a
+/// member expression (`a.b.c()` -> "c"), matching the Rust trailing-segment
+/// convention. Computed/other callee shapes resolve to nothing.
+fn ts_callee_name(e: &ts_ast::Expression) -> Option<String> {
+    use ts_ast::Expression as E;
+    match e {
+        E::Identifier(id) => Some(id.name.to_string()),
+        E::StaticMemberExpression(m) => Some(m.property.name.to_string()),
+        _ => None,
+    }
 }
 
 // --- Rust entity pass (syn): structs/enums/unions/traits as data types, free
