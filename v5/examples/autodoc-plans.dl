@@ -1,0 +1,25 @@
+# Autodoc: transclude tagged markdown comments from session logs into PLANS.md.
+#
+# Drop a comment ANYWHERE in a chat_log markdown file:
+#   <!-- @plan rewrite the resolver to be repo-aware -->
+#   <!-- @idea canon() builtin for getUser ~ get_user -->
+#   <!-- @gotcha gen bails if two rules write one path -->
+# and PLANS.md is regenerated as a flat, source-backlinked list. The tag is any
+# lowercase word (plan|idea|gotcha|todo|...); rows sort by tag so same-tag notes
+# group. PLANS.md is PURE transclusion -- no static header -- so it IS the
+# comments, nothing else.
+#
+# One-shot:  dl v5/examples/autodoc-plans.dl --root . --no-daemon
+# Autodoc:   copy into <root>/.dl/ ; the daemon regenerates PLANS.md on every save
+#            (gen skips the write when bytes are unchanged, so a no-change tick is
+#            a no-op).
+
+rel note(tag: text, msg: text, file: file, line: int).
+note(tag, msg, p, l) <-
+  scan("WORK", "chat_log/**/*.md", p, rev),
+  match(p, rev, /<!--\s*@(?P<tag>[a-z]+)\s+(?P<msg>.+?)\s*-->/, l).
+
+gen("PLANS.md", "- **{tag}** {msg}  <sub>({file}:{line})</sub>") <-
+  note(tag, msg, file, line).
+
+? note(tag, msg, file, line).
