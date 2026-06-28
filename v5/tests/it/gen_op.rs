@@ -389,3 +389,70 @@ fn splice_overlapping_windows_bail_loudly() {
     assert_ne!(code, 0, "overlapping splice regions must bail");
     assert!(err.contains("overlap"), "expected overlap message, got: {err}");
 }
+
+// ─── named mode aliases (:insert_after/:insert_before/:delete) ──────────
+// Sugar over the canonical modes: :insert_after == :append, :insert_before ==
+// :prepend, :delete == :replace with an empty payload and NO template arg.
+
+/// `:insert_after` is `:append` — payload at `hi`. Same fixture as the
+/// cursor_append test ([0,3) of "ABCDEF") yields "ABC<<A>>DEF".
+#[test]
+fn insert_after_aliases_append() {
+    let d = sandbox("insert_after");
+    fs::write(d.join("data.txt"), "ABCDEF").unwrap();
+    let prog = concat!(
+        "rel hit(p: file, lo: int, hi: int).\n",
+        "hit(\"data.txt\", 0, 3).\n",
+        "gen(:insert_after, p, lo, hi, \"<<A>>\") <- hit(p, lo, hi).\n",
+    );
+    let (code, _, err) = run(&d, prog);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(fs::read_to_string(d.join("data.txt")).unwrap(), "ABC<<A>>DEF");
+}
+
+/// `:insert_before` is `:prepend` — payload at `lo`. [3,6) of "ABCDEF" yields
+/// "ABC<<P>>DEF".
+#[test]
+fn insert_before_aliases_prepend() {
+    let d = sandbox("insert_before");
+    fs::write(d.join("data.txt"), "ABCDEF").unwrap();
+    let prog = concat!(
+        "rel hit(p: file, lo: int, hi: int).\n",
+        "hit(\"data.txt\", 3, 6).\n",
+        "gen(:insert_before, p, lo, hi, \"<<P>>\") <- hit(p, lo, hi).\n",
+    );
+    let (code, _, err) = run(&d, prog);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(fs::read_to_string(d.join("data.txt")).unwrap(), "ABC<<P>>DEF");
+}
+
+/// `:delete` removes [lo, hi) and takes NO template. [2,5) of "ABCDEF" (CDE)
+/// yields "ABF".
+#[test]
+fn delete_removes_window_no_template() {
+    let d = sandbox("delete");
+    fs::write(d.join("data.txt"), "ABCDEF").unwrap();
+    let prog = concat!(
+        "rel hit(p: file, lo: int, hi: int).\n",
+        "hit(\"data.txt\", 2, 5).\n",
+        "gen(:delete, p, lo, hi) <- hit(p, lo, hi).\n",
+    );
+    let (code, _, err) = run(&d, prog);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(fs::read_to_string(d.join("data.txt")).unwrap(), "ABF");
+}
+
+/// A stray template on `:delete` is a parse error (delete takes no payload).
+#[test]
+fn delete_with_template_is_a_parse_error() {
+    let d = sandbox("delete_bad");
+    fs::write(d.join("data.txt"), "ABCDEF").unwrap();
+    let prog = concat!(
+        "rel hit(p: file, lo: int, hi: int).\n",
+        "hit(\"data.txt\", 2, 5).\n",
+        "gen(:delete, p, lo, hi, \"oops\") <- hit(p, lo, hi).\n",
+    );
+    let (code, _, _err) = run(&d, prog);
+    assert_ne!(code, 0, ":delete must reject a trailing template");
+    assert_eq!(fs::read_to_string(d.join("data.txt")).unwrap(), "ABCDEF");
+}

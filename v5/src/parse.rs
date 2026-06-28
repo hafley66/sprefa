@@ -550,18 +550,22 @@ impl Parser {
     fn gen_rule(&mut self) -> Result<GenRule> {
         self.ident()?; // gen
         self.expect(Tok::LParen)?;
-        // The byte-splice form leads with a `:mode` atom (`:replace`/`:append`/
-        // `:prepend`/`:wrap`); peek for Tok::Colon to dispatch before falling
-        // back to the term-list parser used by the file/line-splice forms.
+        // The byte-splice form leads with a `:mode` atom; peek for Tok::Colon to
+        // dispatch before falling back to the term-list parser used by the
+        // file/line-splice forms. Canonical modes: :replace/:append/:prepend/
+        // :wrap. Aliases: :insert_after == :append, :insert_before == :prepend.
+        // :delete is :replace with an empty payload and takes NO template
+        // (`gen(:delete, p, lo, hi)`).
         let (target, row_tmpl) = if matches!(self.peek(), Some(Tok::Colon)) {
             self.next()?; // colon
             let mode_ident = self.ident()?;
-            let mode = match mode_ident.as_str() {
-                "replace" => SpliceMode::Replace,
-                "append" => SpliceMode::Append,
-                "prepend" => SpliceMode::Prepend,
-                "wrap" => SpliceMode::Wrap,
-                other => bail!("unknown splice mode :{other}; expected :replace|:append|:prepend|:wrap"),
+            let (mode, is_delete) = match mode_ident.as_str() {
+                "replace" => (SpliceMode::Replace, false),
+                "append" | "insert_after" => (SpliceMode::Append, false),
+                "prepend" | "insert_before" => (SpliceMode::Prepend, false),
+                "wrap" => (SpliceMode::Wrap, false),
+                "delete" => (SpliceMode::Replace, true),
+                other => bail!("unknown splice mode :{other}; expected :replace|:append|:prepend|:wrap|:insert_after|:insert_before|:delete"),
             };
             self.expect(Tok::Comma)?;
             let path = self.term()?;
@@ -569,12 +573,19 @@ impl Parser {
             let lo = self.term()?;
             self.expect(Tok::Comma)?;
             let hi = self.term()?;
-            self.expect(Tok::Comma)?;
-            let tmpl_term = self.term()?;
-            self.expect(Tok::RParen)?;
-            let row_tmpl = match tmpl_term {
-                Term::Str(s) => s,
-                other => bail!("gen expects a template string here, got {other:?}"),
+            // :delete omits the template (it removes [lo, hi)); all others
+            // require one trailing template string.
+            let row_tmpl = if is_delete {
+                self.expect(Tok::RParen)?;
+                String::new()
+            } else {
+                self.expect(Tok::Comma)?;
+                let tmpl_term = self.term()?;
+                self.expect(Tok::RParen)?;
+                match tmpl_term {
+                    Term::Str(s) => s,
+                    other => bail!("gen expects a template string here, got {other:?}"),
+                }
             };
             (GenTarget::Cursor { mode, path, lo, hi }, row_tmpl)
         } else {
