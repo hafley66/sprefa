@@ -1,1 +1,1 @@
-20260628.0.lint-spans-edit-algebra.md
+20260628.1.lint-spans-edit-algebra.md
