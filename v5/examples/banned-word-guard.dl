@@ -1,0 +1,42 @@
+# Flag a banned word in the agent's OWN output — turn text OR a plan-tool body —
+# by scanning the agent session transcripts. Complements the at-rest file-edit
+# built-ins (agent_edit / agent_touch): those track WHICH files a turn changed;
+# this scans WHAT the turn said.
+#
+# Run pointed at the harness transcript dir (Claude Code shown):
+#   v5/target/debug/dl v5/examples/banned-word-guard.dl \
+#     --root ~/.claude/projects/<repo-slug> --no-daemon
+#   ... or --lsp for squiggles (col/end_col are the exact byte span of the word).
+#
+# Banned set is hardcoded in the regex alternation (same shape as .dl/rails.dl:
+# identifiers concatenate, so substring + case-insensitive). Add words to the
+# group: /(?i)(?<w>nuke|<other>)/.
+
+rel asst(idx: int, file: file).
+asst(l, p) <- scan("WORK", "*.jsonl", p, rev), match(p, rev, /"type":\s*"assistant"/, l, _, _).
+
+# Plan-tool body: an ExitPlanMode tool_use record (the proposed plan text).
+rel plan_line(idx: int, file: file).
+plan_line(l, p) <- scan("WORK", "*.jsonl", p, rev), match(p, rev, /"name":\s*"ExitPlanMode"/, l, _, _).
+
+# Every banned-word occurrence, with its byte span.
+rel word(file: file, l: int, c: int, ec: int, w: text).
+word(p, l, c, ec, w) <- scan("WORK", "*.jsonl", p, rev), match(p, rev, /(?i)(?<w>nuke)/, l, c, ec).
+
+# Latest turn per session file (reactive scope: only the newest record yells, so
+# old turns aren't re-flagged forever). Drop this join to audit the whole history.
+rel last_turn(file: file, idx: int).
+last_turn(p, max(l)) <- asst(l, p).
+
+rel diag(path: file, line: int, col: int, end_col: int, severity: text, code: text, msg: text).
+
+# Banned word in the latest turn's text.
+diag(p, l, c, ec, "error", "banned-word-turn", "banned word `${w}` in agent output — rephrase") <-
+    word(p, l, c, ec, w), asst(l, p), last_turn(p, l).
+# Banned word in a plan-tool body.
+diag(p, l, c, ec, "error", "banned-word-plan", "banned word `${w}` in a plan body — rephrase") <-
+    word(p, l, c, ec, w), plan_line(l, p).
+
+# Whole-history audit view (ignored under --lsp/--check): every occurrence ever.
+? word(file, l, c, ec, w).
+? diag(path, line, col, end_col, severity, code, msg).
