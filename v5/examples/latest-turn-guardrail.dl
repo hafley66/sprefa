@@ -1,0 +1,85 @@
+# Latest agent turn ∩ worktree change -> diag (for the LSP).
+#
+# Surfaces, as live diagnostics, every file the MOST RECENT agent turn changed
+# in the worktree. The point is harness-INDEPENDENT: the policy is one rule over
+# an abstract relation; each agent harness is a swappable adapter that fills it.
+#
+#   THE TRAIT (contract every adapter satisfies):
+#       latest_touch(path: file)   -- files the latest agent turn wrote/edited
+#   THE POLICY (generic, harness-agnostic):
+#       diag(p,...) <- changed(p), latest_touch(p).
+#   THE IMPLS below: one per harness. Enable the one matching your agent (or run
+#       several -- they union into latest_touch, which is harmless).
+#
+# Run live (squiggles in the editor):
+#   dl v5/examples/latest-turn-guardrail.dl --root . --lsp
+# One-shot:
+#   dl v5/examples/latest-turn-guardrail.dl --root . --no-daemon
+#
+# CROSS-ROOT NOTE: an adapter's records usually live OUTSIDE the repo (a
+# transcript under ~/.claude, a db under ~/.local/share). Two ways to bridge:
+# (a) add that location as a second source root; (b) materialize the adapter's
+# output as a repo-relative artifact the page scans (the opencode block does
+# this). Either way the touched paths must be repo-relative to join changed().
+# The planned pull() source (plans/2026-06-28-polling-push-sources-activation-
+# state.md) folds the materialization step into dl natively.
+
+rel diag(path: file, line: int, col: int, end_col: int,
+         severity: text, code: text, msg: text).
+
+# ---- POLICY (generic) -------------------------------------------------------
+diag(p, 0, 0, 0, "info", "latest-turn-change",
+     "changed in the latest agent turn") <-
+    changed(p), latest_touch(p).
+
+rel latest_touch(path: file).
+
+# ====== IMPL A: Claude Code (JSONL transcript) ===============================
+# ~/.claude/projects/<slug>/<session>.jsonl, one record per physical line; the
+# latest turn = the highest-indexed assistant record; touched files = its
+# tool_use Edit/Write/MultiEdit file_path values. (json spacing varies, \s*.)
+rel cc_turn(idx: int).
+cc_turn(l) <-
+    scan("WORK", "*.jsonl", p, rev),
+    match(p, rev, /"type":\s*"assistant"/, l, _, _).
+
+rel cc_last(idx: int).
+cc_last(max(l)) <- cc_turn(l).
+
+rel cc_edit(idx: int, path: file).
+cc_edit(l, path) <-
+    scan("WORK", "*.jsonl", p, rev),
+    match(p, rev, /"file_path":\s*"(?<path>[^"]+)"/, l, _, _).
+
+rel cc_touch(path: file).
+cc_touch(path) <- cc_edit(l, path), cc_turn(l), cc_last(l).
+
+# ====== IMPL B: opencode (SQLite) ============================================
+# opencode keeps sessions in ~/.local/share/opencode/opencode.db. A part row's
+# data JSON is {type:"tool", tool:"edit"|"write", state:{input:{filePath}}}.
+# Materialize the latest editing turn's touched files (repo-relative) into a
+# scanned artifact, then read it. Export step (until pull() lands), with REPO =
+# the absolute repo root and SID the latest session for it:
+#
+#   sqlite3 ~/.local/share/opencode/opencode.db "
+#     SELECT DISTINCT REPLACE(json_extract(data,'\$.state.input.filePath'),'$REPO/','')
+#     FROM part
+#     WHERE message_id = (SELECT message_id FROM part
+#         WHERE session_id='$SID' AND json_extract(data,'\$.tool') IN ('edit','write')
+#         ORDER BY time_created DESC LIMIT 1)
+#       AND json_extract(data,'\$.tool') IN ('edit','write')
+#       AND json_extract(data,'\$.state.input.filePath') IS NOT NULL;
+#   " > .oc-latest-touch.txt
+#
+# One repo-relative path per line; bind the whole line as the touched path.
+rel oc_touch(path: file).
+oc_touch(path) <-
+    scan("WORK", ".oc-latest-touch.txt", p, rev),
+    match(p, rev, /(?<path>\S.*)/, l, _, _).
+
+# ---- union the adapters into the trait (derived-only, one rel one kind) ------
+latest_touch(path) <- cc_touch(path).
+latest_touch(path) <- oc_touch(path).
+
+? latest_touch(path).
+? diag(path, line, col, end_col, severity, code, msg).
