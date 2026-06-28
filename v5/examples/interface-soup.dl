@@ -1,0 +1,51 @@
+# Interface composition soup + over-abstraction smell, cross-language.
+#
+# Built entirely on the existing `type_edge` / `type_entity` type graph (Rust syn,
+# Kotlin tree-sitter, TS oxc) -- no new engine code. The edge direction is
+# `type_edge(implementor, interface, "impl")`; interface supertypes come in as
+# "generic". We keep only edges whose target is a DECLARED trait/interface, count
+# implementors per interface, and flag the smell: an interface with exactly one
+# implementor (the "evil singleton abstraction" -- a layer that never earned its
+# keep).
+#
+# Run on this repo (dogfood -- finds IngestLang = 1 impl):
+#   dl v5/examples/interface-soup.dl --root . --no-daemon
+# Point at a Kotlin/Java-biased repo to see the real soup:
+#   dl v5/examples/interface-soup.dl --root /path/to/kotlin/repo --no-daemon
+# Then render the emitted graph:
+#   d2 v5/examples/interface-soup.d2 /tmp/soup.svg && open /tmp/soup.svg
+
+# Touch the corpus so the lazy type graph populates (any source glob works; widen
+# for a real repo, e.g. "**/*.{rs,kt,ts}").
+rel seen(path: file).
+seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
+
+# Declared interfaces/traits, by bare name (the type_edge node key).
+rel iface(name: text).
+iface(n) <- type_entity(_, _, n, "trait", _, _, _).
+iface(n) <- type_entity(_, _, n, "interface", _, _, _).
+
+# implementor -> interface, restricted to real interface targets.
+rel impl_of(impl: text, iface: text).
+impl_of(c, i) <- type_edge(c, i, "impl"), iface(i).
+impl_of(c, i) <- type_edge(c, i, "generic"), iface(i).
+
+# Implementor count per interface.
+rel iface_count(iface: text, n: int).
+iface_count(i, count(c)) <- impl_of(c, i).
+
+# THE SMELL: an interface with exactly one implementor.
+rel singleton(iface: text, impl: text).
+singleton(i, c) <- impl_of(c, i), iface_count(i, 1).
+
+# Blast radius hook: who is downstream of an interface in the type graph
+# (fields/variants too, not just impls). `reaches(I, X)` = everything I touches.
+rel type_reaches(src: text, dst: text).
+type_reaches(s, d) <- closure(type_edge).
+
+# Visual: the whole interface->impl soup as a d2 digraph (one gen rule, file form).
+gen("v5/examples/interface-soup.d2", "{impl} -> {iface}") <- impl_of(impl, iface).
+
+# Reports.
+? iface_count(iface, n).      # ranked by hand; eyeball the high-fan-in hubs
+? singleton(iface, impl).     # the over-abstraction smell list
