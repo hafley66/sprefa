@@ -13,42 +13,49 @@
 # Source rules (scan + match) extract per file and cannot join relations, so
 # each rail is one extraction rule plus one derived rule joining `changed`.
 
-rel diag(path: text, line: int, severity: text, code: text, msg: text).
+# `col`/`end_col` are 0-based byte columns of the offending span within `line`
+# (match's +2 trailing args bind the whole-match span). The LSP renders a
+# sub-line squiggle when they are set; --check ignores them. end_line defaults
+# to line, so each diagnostic stays single-line.
+rel diag(path: text, line: int, col: int, end_col: int, severity: text, code: text, msg: text).
 
 # ---- banned identifiers ------------------------------------------------------
-rel banned_hit(p: file, l: int, w: text).
-banned_hit(p, l, w) <-
+rel banned_hit(p: file, l: int, c: int, ec: int, w: text).
+banned_hit(p, l, c, ec, w) <-
     scan("WORK", "**/*.rs", p, rev),
-    match(p, rev, /\b(?<w>provenance|substrate|regime)\b/, l).
+    match(p, rev, /\b(?<w>provenance|substrate|regime)\b/, l, c, ec).
 
-diag(p, l, "error", "banned-word", "banned identifier `${w}`") <-
-    banned_hit(p, l, w), changed(p).
+diag(p, l, c, ec, "error", "banned-word", "banned identifier `${w}`") <-
+    banned_hit(p, l, c, ec, w), changed(p).
 
 # ---- no new raw conn() outside the Db seam ------------------------------------
 # The fenced typed literal fs:`src/db.rs` resolves against the scan root at
 # check time, so a typo'd exemption path is itself a --check error instead of
 # a silently never-matching string.
-rel conn_hit(p: file, l: int).
-conn_hit(p, l) <-
+rel conn_hit(p: file, l: int, c: int, ec: int).
+conn_hit(p, l, c, ec) <-
     scan("WORK", "src/**/*.rs", p, rev),
-    match(p, rev, /\.conn\(\)/, l).
+    match(p, rev, /\.conn\(\)/, l, c, ec).
 
-diag(p, l, "warn", "conn-outside-db", "raw .conn() in a changed file outside the Db seam") <-
-    conn_hit(p, l), changed(p),
+diag(p, l, c, ec, "warn", "conn-outside-db", "raw .conn() in a changed file outside the Db seam") <-
+    conn_hit(p, l, c, ec), changed(p),
     p != fs:`src/db.rs`.
 
 # ---- unwrap budget per changed file -------------------------------------------
 # Head-position aggregation: count(l) groups by p, so the budget is a number,
 # not a boolean. Only changed files are counted.
-rel unwrap_hit(p: file, l: int).
-unwrap_hit(p, l) <-
+rel unwrap_hit(p: file, l: int, c: int, ec: int).
+unwrap_hit(p, l, c, ec) <-
     scan("WORK", "src/**/*.rs", p, rev),
-    match(p, rev, /\.unwrap\(\)/, l).
+    match(p, rev, /\.unwrap\(\)/, l, c, ec).
 
 rel unwrap_count(p: text, n: int).
-unwrap_count(p, count(l)) <- unwrap_hit(p, l), changed(p).
+unwrap_count(p, count(l)) <- unwrap_hit(p, l, _, _), changed(p).
 
-diag(p, 1, "warn", "unwrap-budget", "${n} unwraps in a changed file") <-
-    unwrap_count(p, n), n > 10.
+# Squiggle the exact `.unwrap()` span on every over-budget line, not line 1.
+# Join the per-line hits back against the file count so each offending span
+# carries the budget message. `unwrap_count` stays the per-file gate.
+diag(p, l, c, ec, "warn", "unwrap-budget", "unwrap in a changed file over budget (${n} > 10)") <-
+    unwrap_hit(p, l, c, ec), changed(p), unwrap_count(p, n), n > 10.
 
-? diag(path, line, sev, code, msg).
+? diag(path, line, col, end_col, sev, code, msg).

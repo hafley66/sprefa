@@ -1,1 +1,1 @@
-20260627.1.from-clone-kernels-to-type-intelligence.md
+20260628.0.lint-spans-edit-algebra.md

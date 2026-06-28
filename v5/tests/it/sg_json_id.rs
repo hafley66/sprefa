@@ -1,8 +1,10 @@
 //! christmas #9 / decision 3: the trailing optional `id` arg on `sg` and `json`,
 //! consistent with `ast`'s 7th-arg id. The id binds the located spine id of the
-//! whole match (sg: captures' min..max byte range; json: the value's byte span),
-//! and resolves through BOTH `ref(id, sid, file, lo, hi)` AND `string(sid, text,
-//! norm)` to the matched source bytes (rides the step-1 intern fix).
+//! whole match (sg: the TRUE match-node byte range, literal text included; json:
+//! the value's byte span), and resolves through BOTH `ref(id, sid, file, lo, hi)`
+//! AND `string(sid, text, norm)` to the matched source bytes (rides the step-1
+//! intern fix). The sg id covers the entire pattern so a `gen(:replace, ref(id))`
+//! codemod rewrites the whole match, not just the captures' bounding box.
 
 use std::fs;
 use std::path::PathBuf;
@@ -40,9 +42,9 @@ fn sg_whole_match_id_resolves_through_ref_and_string() {
     fs::write(d.join("src/a.rs"), "fn alpha() {}\n").unwrap();
 
     // `id` is the trailing 5th sg output (line, col, end_line, end_col, id),
-    // bound to the captures' min-lo..max-hi byte range (decision 3). The pattern
-    // `fn $N() {}` captures only `$N` (= `alpha`, bytes 3..8), so the id's span
-    // is that metavar range — and resolves to its text `alpha`.
+    // bound to the TRUE whole-match byte range. The pattern `fn $N() {}` matches
+    // `fn alpha() {}` (bytes 0..13) — literal text included, not just the `$N`
+    // capture — so the id resolves to the full match source.
     let prog = r#"
 rel hit(id: text).
 rel located(lo: int, hi: int).
@@ -57,13 +59,13 @@ texted(t) <- hit(id), ref(id, sid, _f, _lo, _hi), string(sid, t, _n).
     let recs = run_json(&d, prog);
     let loc = q(&recs, "located");
     assert_eq!(loc["count"], 1, "sg id resolves through ref: {loc}");
-    assert_eq!(loc["rows"][0][0].as_i64().unwrap(), 3, "lo (captures' min = $N start)");
-    assert_eq!(loc["rows"][0][1].as_i64().unwrap(), 8, "hi (captures' max = $N end)");
+    assert_eq!(loc["rows"][0][0].as_i64().unwrap(), 0, "lo (whole match start)");
+    assert_eq!(loc["rows"][0][1].as_i64().unwrap(), 13, "hi (whole match end)");
 
     let txt = q(&recs, "texted");
     assert_eq!(txt["count"], 1, "sg id resolves through string: {txt}");
-    assert_eq!(txt["rows"][0][0], "alpha",
-        "sg id -> ref -> string recovers the captures' span source bytes: {txt}");
+    assert_eq!(txt["rows"][0][0], "fn alpha() {}",
+        "sg id -> ref -> string recovers the whole-match source bytes: {txt}");
 }
 
 #[test]

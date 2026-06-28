@@ -1048,6 +1048,12 @@ pub struct Engine {
     /// it to the whole corpus. The structural proof the incremental path is
     /// path-scoped (and can't silently regress to full-corpus).
     pub last_node_files_walked: std::cell::Cell<usize>,
+    /// Verify-rollback journal (christmas #14). `None` = not in verify mode (gen
+    /// writes go straight to disk, no capture). `Some(...)` = every gen write
+    /// first stashes the target's original bytes (`None` entry = the file did not
+    /// exist) so `rollback_writes` can restore the tree if a checker fails. One
+    /// entry per path, first-write wins (the pre-tick state).
+    gen_journal: std::cell::RefCell<Option<Vec<(String, Option<Vec<u8>>)>>>,
 }
 
 struct ScanSpec {
@@ -1082,6 +1088,7 @@ impl Engine {
             root_implicit: false,
             last_n1: None,
             last_node_files_walked: std::cell::Cell::new(0),
+            gen_journal: std::cell::RefCell::new(None),
         }
     }
 
@@ -5028,6 +5035,49 @@ impl Engine {
 
     /// Run every `gen` item after the fixpoint: evaluate the body, render the
     /// templates, write the targets. A write is skipped when the target bytes
+    /// Arm the verify-rollback journal (christmas #14): subsequent gen writes
+    /// stash each target's pre-tick bytes so `rollback_writes` can undo them if a
+    /// checker rejects the edit. Call before `tick`/`run`.
+    pub fn begin_verify(&self) {
+        *self.gen_journal.borrow_mut() = Some(Vec::new());
+    }
+
+    /// Restore every file a gen write touched since `begin_verify` to its
+    /// pre-tick bytes (deleting files that did not exist before). Returns the
+    /// number of paths restored and disarms the journal. Used when a verify
+    /// checker fails: keep-if-pass means roll-back-if-fail.
+    pub fn rollback_writes(&self) -> Result<usize> {
+        let journal = self.gen_journal.borrow_mut().take().unwrap_or_default();
+        let n = journal.len();
+        for (path, original) in journal.into_iter().rev() {
+            let full = self.root.join(&path);
+            match original {
+                Some(bytes) => std::fs::write(&full, &bytes)?,
+                None => { let _ = std::fs::remove_file(&full); }
+            }
+        }
+        Ok(n)
+    }
+
+    /// Disarm the journal without restoring (keep the writes). Returns how many
+    /// paths were written under verify. Used when the checker passes.
+    pub fn commit_writes(&self) -> usize {
+        self.gen_journal.borrow_mut().take().map_or(0, |j| j.len())
+    }
+
+    /// `std::fs::write`, but when the verify journal is armed, stash the target's
+    /// original bytes first (first write per path wins, so the stash is always
+    /// the pre-tick state). All gen apply paths route writes through here.
+    fn journaled_write(&self, full: &Path, rel: &str, bytes: &[u8]) -> Result<()> {
+        if let Some(journal) = self.gen_journal.borrow_mut().as_mut() {
+            if !journal.iter().any(|(p, _)| p == rel) {
+                journal.push((rel.to_string(), std::fs::read(full).ok()));
+            }
+        }
+        std::fs::write(full, bytes)?;
+        Ok(())
+    }
+
     /// already match, so a converged tick leaves the tree untouched.
     #[tracing::instrument(skip_all, level = "debug")]
     fn run_gens(&mut self, prog: &Program, quiet: bool) -> Result<()> {
@@ -5139,7 +5189,7 @@ impl Engine {
                     let full = resolve_write_full(write_roots, &p);
                     if std::fs::read(&full).ok().as_deref() == Some(content.as_bytes()) { continue; }
                     if let Some(dir) = full.parent() { std::fs::create_dir_all(dir)?; }
-                    std::fs::write(&full, &content)?;
+                    self.journaled_write(&full, &p, content.as_bytes())?;
                     written.push(p);
                 }
             }
@@ -5222,7 +5272,7 @@ impl Engine {
             }
             let content = format!("{}\n", lines.join("\n"));
             if content != old {
-                std::fs::write(&full, &content)?;
+                self.journaled_write(&full, p, content.as_bytes())?;
                 written.push(p.to_string());
             }
         }
@@ -5292,7 +5342,7 @@ impl Engine {
                 }
             }
             if buf != original {
-                std::fs::write(&full, &buf)?;
+                self.journaled_write(&full, p, &buf)?;
                 written.push(p.to_string());
             }
         }
@@ -5716,28 +5766,47 @@ fn bind_whole_match_span(
     path: &str,
     where_bytes: &mut Vec<(spine::WhereBytes, String)>,
 ) {
+    let lo = caps.iter().map(|(_, _, lo, _)| *lo).min();
+    let hi = caps.iter().map(|(_, _, _, hi)| *hi).max();
+    if let (Some(lo), Some(hi)) = (lo, hi) {
+        bind_span_id(ext, idv, lo, hi, content, where_file, repo, path, where_bytes);
+    }
+}
+
+/// Bind `idv` to the located spine id of `[lo, hi)` in `content` and intern the
+/// slice. The byte-range core of `bind_whole_match_span`; the `sg` arm calls it
+/// with the TRUE match-node range (literal text included) so a `gen(:replace)`
+/// keyed off the id rewrites the whole pattern, not just the captures' bbox.
+#[allow(clippy::too_many_arguments)]
+fn bind_span_id(
+    ext: &mut Bind,
+    idv: &Option<String>,
+    lo: usize,
+    hi: usize,
+    content: &str,
+    where_file: Option<spine::FileId>,
+    repo: &str,
+    path: &str,
+    where_bytes: &mut Vec<(spine::WhereBytes, String)>,
+) {
     if let Some(idv) = idv {
         if let Some(file) = where_file {
-            let lo = caps.iter().map(|(_, _, lo, _)| *lo).min();
-            let hi = caps.iter().map(|(_, _, _, hi)| *hi).max();
-            if let (Some(lo), Some(hi)) = (lo, hi) {
-                if hi > lo && hi <= content.len() {
-                    let text = &content[lo..hi];
-                    if !text.is_empty() {
-                        let wb = spine::WhereBytes {
-                            string: spine::StringId::of(text), file,
-                            lo: lo as u32, hi: hi as u32,
-                            ..Default::default()
-                        };
-                        ext.insert(idv.clone(), Value::Text(
-                            spine::WhereBytesId::of_located(wb, repo, path)
-                                .to_string()));
-                        where_bytes.push((spine::WhereBytes {
-                            string: spine::StringId::of(text), file,
-                            lo: lo as u32, hi: hi as u32,
-                            ..Default::default()
-                        }, text.to_string()));
-                    }
+            if hi > lo && hi <= content.len() {
+                let text = &content[lo..hi];
+                if !text.is_empty() {
+                    let wb = spine::WhereBytes {
+                        string: spine::StringId::of(text), file,
+                        lo: lo as u32, hi: hi as u32,
+                        ..Default::default()
+                    };
+                    ext.insert(idv.clone(), Value::Text(
+                        spine::WhereBytesId::of_located(wb, repo, path)
+                            .to_string()));
+                    where_bytes.push((spine::WhereBytes {
+                        string: spine::StringId::of(text), file,
+                        lo: lo as u32, hi: hi as u32,
+                        ..Default::default()
+                    }, text.to_string()));
                 }
             }
         }
@@ -5756,6 +5825,8 @@ fn bind_match_op(
     regex: &str,
     mlv: &Option<String>,
     idv: &Option<String>,
+    colv: &Option<String>,
+    ecv: &Option<String>,
     content: &str,
     where_file: Option<spine::FileId>,
     re_cache: &mut HashMap<String, Regex>,
@@ -5774,6 +5845,13 @@ fn bind_match_op(
             for caps in re.captures_iter(ln) {
                 let mut ext = b.clone();
                 if let Some(v) = mlv { ext.insert(v.clone(), Value::Int((lineno + 1) as i64)); }
+                if colv.is_some() || ecv.is_some() {
+                    if let Some(m0) = caps.get(0) {
+                        // Whole-match span, 0-based byte columns within the line.
+                        if let Some(v) = colv { ext.insert(v.clone(), Value::Int(m0.start() as i64)); }
+                        if let Some(v) = ecv { ext.insert(v.clone(), Value::Int(m0.end() as i64)); }
+                    }
+                }
                 if let Some(idv) = idv {
                     if let Some(file) = where_file {
                         if let Some(m0) = caps.get(0) {
@@ -5878,10 +5956,12 @@ fn parse_file(
 
     for item in &rule.body {
         match item {
-            BodyItem::Match { regex, line, id, .. } => {
+            BodyItem::Match { regex, line, id, col, end_col, .. } => {
                 let mlv = opt_var(line)?;
                 let idv = id.as_ref().map(var_of).transpose()?;
-                binds = bind_match_op(&binds, regex, &mlv, &idv, &content, where_file,
+                let colv = col.as_ref().map(opt_var).transpose()?.flatten();
+                let ecv = end_col.as_ref().map(opt_var).transpose()?.flatten();
+                binds = bind_match_op(&binds, regex, &mlv, &idv, &colv, &ecv, &content, where_file,
                                       &mut re_cache, &mut where_bytes, repo, path)?;
             }
             BodyItem::Ast { lang, query, line, end, id, .. } => {
@@ -5931,13 +6011,15 @@ fn parse_file(
                 let hits = crate::sg::run_sg(&content, lang, pattern)?;
                 let mut next: Vec<Bind> = Vec::new();
                 for b in &binds {
-                    for (ln, c, eln, ec, caps) in &hits {
+                    for (ln, c, eln, ec, mlo, mhi, caps) in &hits {
                         let mut ext = b.clone();
                         if let Some(v) = &slv { ext.insert(v.clone(), Value::Int(*ln)); }
                         if let Some(v) = &clv { ext.insert(v.clone(), Value::Int(*c)); }
                         if let Some(v) = &ellv { ext.insert(v.clone(), Value::Int(*eln)); }
                         if let Some(v) = &eclv { ext.insert(v.clone(), Value::Int(*ec)); }
-                        bind_whole_match_span(&mut ext, &idv, caps, &content, where_file, repo, path, &mut where_bytes);
+                        // id = the TRUE whole-match byte range (literal text incl.),
+                        // so gen(:replace, ref(id)) rewrites the entire pattern.
+                        bind_span_id(&mut ext, &idv, *mlo, *mhi, &content, where_file, repo, path, &mut where_bytes);
                         bind_captures(&mut ext, caps, &mut where_bytes);
                         next.push(ext);
                     }
@@ -5955,7 +6037,7 @@ fn parse_file(
                 let hits = crate::sg::run_ast_yaml(&content, lang, yaml)?;
                 let mut next: Vec<Bind> = Vec::new();
                 for b in &binds {
-                    for (ln, c, eln, ec, caps) in &hits {
+                    for (ln, c, eln, ec, _mlo, _mhi, caps) in &hits {
                         let mut ext = b.clone();
                         if let Some(v) = &slv { ext.insert(v.clone(), Value::Int(*ln)); }
                         if let Some(v) = &clv { ext.insert(v.clone(), Value::Int(*c)); }

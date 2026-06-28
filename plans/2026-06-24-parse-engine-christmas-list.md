@@ -12,7 +12,7 @@ Source: 6 photos of `Untitled-1` taken 2026-06-24, transcribed verbatim. This li
 
 3. 🎁 CST as a relation (`node(id, kind, file, lo, hi, parent)` + `child`). No parent/child/ancestor relation; structure is reachable only through ast-grep `inside`/`has`. This is the codemod foundation: anchor-finding, innermost-containment, and scope all become joins.
 
-4. 🎁 Edit algebra. The edit/fix sink is replace-one-span only. No `insert_before`/`insert_after`/`delete`/`wrap`, no multi-edit transaction with overlap detection.
+4. 🎁 Edit algebra. **DONE** (note was stale): the byte-cursor `gen(:mode, p, lo, hi, "tmpl")` op already provides it — `:replace` / `:append` (insert_after) / `:prepend` (insert_before) / `:wrap`, delete = `:replace ""`, plus an overlap-safe multi-edit transaction (the `Cursors` accumulator, engine.rs:5270-5300). Ported from v4's `WriteCursorComponent`; fed by the `ref` span coordinate (#9). Residual: no named `delete`/`insert_*` aliases. Real follow-ons: #14 (safe-apply gate) and sg-metavar→template substitution (full ast-grep codemod).
 
 ## Parsers
 
@@ -183,12 +183,12 @@ Done this arc (CST-as-relation, merged to main):
 
 ## Phase 3 — edit algebra + sinks (D)
 
-| # | Item | Effort | Dep |
-|---|------|--------|-----|
-| 4 | insert_before/after/delete/wrap + multi-edit txn w/ overlap detection | M | #9 |
-| 12 | window aggregates (rank/row_number/nth) — store already has them | S | — |
-| 13 | file-level sinks (create/rename/delete) beyond move hardcode | M | — |
-| 14 | verify-rollback harness (scratch worktree + checker + keep-if-pass) | M | #4, shell op |
+| # | Item | Effort | Dep | Status |
+|---|------|--------|-----|--------|
+| 4 | insert_before/after/delete/wrap + multi-edit txn w/ overlap detection | M | #9 | **done** — `gen(:mode, p, lo, hi, "tmpl")` byte-cursor: replace/append/prepend/wrap + overlap-safe `Cursors` multi-edit (engine.rs:5270-5300), v4 `WriteCursorComponent` port, fed by `ref` (#9) |
+| 12 | window aggregates (rank/row_number/nth) — store already has them | S | — | open |
+| 13 | file-level sinks (create/rename/delete) beyond move hardcode | M | — | open |
+| 14 | verify-rollback harness (scratch worktree + checker + keep-if-pass) | M | #4, shell op | **done** — `--verify "<cmd>"`: gen edits apply through a write journal (`Engine::begin_verify`/`journaled_write`), then the checker runs in root; pass → `commit_writes` (exit 0), fail → `rollback_writes` restores pre-run bytes (exit 1). In-process snapshot-restore, not a git worktree (no committed-state dependency). tests/it/verify_rollback.rs |
 
 ## Phase 4 — coordinate dataflow (A)
 

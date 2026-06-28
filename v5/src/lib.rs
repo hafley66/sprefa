@@ -219,6 +219,44 @@ fn load_repos() -> Vec<config::RepoConfig> {
 /// Code blocking-hook code whose stderr feeds the agent; a broken program
 /// (parse/type error) -> Err -> 1, user-facing only. A rails bug must read as
 /// "fix the rails", never as agent feedback.
+/// Verify-rollback codemod (christmas #14): run the program with the gen-write
+/// journal armed, then run `checker` (a shell command) in `root`. Keep the edits
+/// if it exits 0; otherwise restore every touched file to its pre-run bytes.
+/// Returns `true` if kept (checker passed), `false` if rolled back. Always
+/// in-process (never the daemon) — a verify run owns the tree transactionally.
+pub fn run_verify(program: Option<&str>, db_path: Option<&str>, root: PathBuf, checker: &str)
+    -> Result<bool>
+{
+    let files = resolve_programs(program, &root)?;
+    let (prog, type_diags, _) = prepare_paths(&files)?;
+    render_type_diags(&type_diags, false);
+    let n_errors = type_diags.iter().filter(|d| d.severity == ast::Severity::Error).count();
+    if n_errors > 0 {
+        anyhow::bail!("{n_errors} type error(s) in path literals / brands / stratification");
+    }
+    let conn = db::open(db_path)?;
+    let mut eng = engine::Engine::new(conn, root.clone());
+    eng.set_repos(load_repos());
+    eng.begin_verify();
+    eng.run(&prog)?;
+
+    eprintln!("[verify] checker: {checker}");
+    let status = std::process::Command::new("sh")
+        .arg("-c").arg(checker)
+        .current_dir(&root)
+        .status()?;
+    if status.success() {
+        let n = eng.commit_writes();
+        eprintln!("[verify] checker passed — kept {n} edited file(s)");
+        Ok(true)
+    } else {
+        let n = eng.rollback_writes()?;
+        eprintln!("[verify] checker failed (exit {}) — rolled back {n} file(s)",
+            status.code().map_or("signal".into(), |c| c.to_string()));
+        Ok(false)
+    }
+}
+
 pub fn run_check(program: Option<&str>, db_path: Option<&str>, root: PathBuf, json: bool) -> Result<usize> {
     if daemon::enabled_for(&root) && db_path.is_none() {
         match run_check_via_daemon(program, &root, json) {

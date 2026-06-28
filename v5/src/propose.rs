@@ -1192,9 +1192,11 @@ fn walk(
 mod tests {
     use super::*;
 
-    /// Oracle: the two hand-extracted fns' free vars must equal their params.
-    /// `bind_whole_match_span`'s body reads exactly its 8 params; `bind_match_op`'s
-    /// body reads exactly its 10. Regression for the proposer's inference core.
+    /// Oracle: the two hand-extracted fns' free vars must equal their params
+    /// (plus any module-level helper they call, which `free_vars` sees as a bare
+    /// identifier). `bind_whole_match_span` reads its 8 params and delegates the
+    /// intern to `bind_span_id`; `bind_match_op` reads exactly its 12 params.
+    /// Regression for the proposer's inference core.
     #[test]
     fn oracle_extracted_fn_signatures() {
         let src = std::fs::read_to_string(
@@ -1206,9 +1208,10 @@ mod tests {
         let tree = parser.parse(&src, None).unwrap();
         let cases: &[(&str, &[&str])] = &[
             ("bind_whole_match_span",
-             &["ext", "idv", "caps", "content", "where_file", "repo", "path", "where_bytes"]),
+             &["ext", "idv", "caps", "content", "where_file", "repo", "path", "where_bytes",
+               "bind_span_id"]),
             ("bind_match_op",
-             &["binds", "regex", "mlv", "idv", "content", "where_file",
+             &["binds", "regex", "mlv", "idv", "colv", "ecv", "content", "where_file",
               "re_cache", "where_bytes", "repo", "path"]),
         ];
         for (name, expected) in cases {

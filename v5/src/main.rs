@@ -56,6 +56,12 @@ struct Cli {
     /// With --move, write the rewritten files instead of previewing.
     #[arg(long)]
     fix: bool,
+    /// Verify-rollback: run the program (applying `gen` edits), then run this
+    /// shell command as a checker in the root. Keep the edits only if it exits
+    /// 0; otherwise restore every touched file to its pre-run state and exit 1.
+    /// Transactional codemod — apply, test, keep-if-pass. See christmas #14.
+    #[arg(long)]
+    verify: Option<String>,
     /// Profile mode (or DL_PROFILE=1): log slow SQL statements (threshold
     /// DL_PROFILE_SQL_MS, default 25), per-repo scan times, tick phase
     /// breakdown, and per-tick statement counts.
@@ -216,6 +222,11 @@ fn main() -> Result<()> {
             eprintln!("{errors} error-severity diagnostic(s) found");
             std::process::exit(2);
         }
+        Ok(())
+    } else if let Some(cmd) = cli.verify.as_deref() {
+        // Transactional codemod: apply gen edits, run the checker, keep-if-pass.
+        let kept = sprefa_v5::run_verify(program, db.as_deref(), root, cmd)?;
+        if !kept { std::process::exit(1); }
         Ok(())
     } else if !cli.changed.is_empty() {
         sprefa_v5::run_changed(program, db.as_deref(), root, cli.changed)

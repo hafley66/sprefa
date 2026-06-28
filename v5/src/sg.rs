@@ -29,13 +29,18 @@ fn metavar_names(pattern: &str) -> Vec<String> {
     seen
 }
 
+/// One ast-grep match: 1-based start/end lines, 0-based byte columns
+/// (tree-sitter's convention, == char/UTF-16 for ASCII), the whole-match node's
+/// absolute byte range `[mlo, mhi)` in `content`, and the metavar captures. Each
+/// capture is `(name, text, lo, hi)` where `[lo, hi)` is the metavar node's byte
+/// range. `mlo`/`mhi` cover the ENTIRE match (literal text included), so a
+/// `gen(:replace, …)` keyed off the match `id` rewrites the whole pattern — not
+/// just the captures' bounding box.
+pub type SgHit = (i64, i64, i64, i64, usize, usize, Vec<(String, String, usize, usize)>);
+
 /// Match an ast-grep pattern (target-language syntax with `$META` vars) over
-/// file content. Returns `(line, col, end_line, end_col, captures)` per match:
-/// 1-based lines, 0-based byte columns (tree-sitter's convention, == char/UTF-16
-/// for ASCII source). Each capture is `(name, text, lo, hi)` where `[lo, hi)` is
-/// the metavar node's byte range in `content` (ref-spine located span).
-pub fn run_sg(content: &str, lang: &str, pattern_str: &str)
-    -> Result<Vec<(i64, i64, i64, i64, Vec<(String, String, usize, usize)>)>> {
+/// file content. One `SgHit` per match.
+pub fn run_sg(content: &str, lang: &str, pattern_str: &str) -> Result<Vec<SgHit>> {
     let l = sg_lang(lang)?;
     let grep = AstGrep::new(content, l);
     let pattern = Pattern::new(pattern_str, l);
@@ -50,9 +55,10 @@ pub fn run_sg(content: &str, lang: &str, pattern_str: &str)
                 caps.push((n.clone(), node.text().to_string(), r.start, r.end));
             }
         }
+        let mr = m.range();
         let (sl, sc) = m.start_pos().byte_point();
         let (el, ec) = m.end_pos().byte_point();
-        out.push((sl as i64 + 1, sc as i64, el as i64 + 1, ec as i64, caps));
+        out.push((sl as i64 + 1, sc as i64, el as i64 + 1, ec as i64, mr.start, mr.end, caps));
     }
     Ok(out)
 }
@@ -71,8 +77,7 @@ pub fn run_sg(content: &str, lang: &str, pattern_str: &str)
 /// or wrapped under a top-level `rule:`. A bare body is the common case and
 /// matches ast-grep's own RuleCore serde model directly; the `rule:`-wrapped
 /// form is accepted for parity with v3/v4 `ast_yaml` programs.
-pub fn run_ast_yaml(content: &str, lang: &str, yaml: &str)
-    -> Result<Vec<(i64, i64, i64, i64, Vec<(String, String, usize, usize)>)>>
+pub fn run_ast_yaml(content: &str, lang: &str, yaml: &str) -> Result<Vec<SgHit>>
 {
     let l = sg_lang(lang)?;
     let value: serde_yaml::Value = serde_yaml::from_str(yaml)
@@ -112,9 +117,10 @@ pub fn run_ast_yaml(content: &str, lang: &str, yaml: &str)
                 caps.push((n.clone(), node.text().to_string(), r.start, r.end));
             }
         }
+        let mr = m.range();
         let (sl, sc) = m.start_pos().byte_point();
         let (el, ec) = m.end_pos().byte_point();
-        out.push((sl as i64 + 1, sc as i64, el as i64 + 1, ec as i64, caps));
+        out.push((sl as i64 + 1, sc as i64, el as i64 + 1, ec as i64, mr.start, mr.end, caps));
     }
     Ok(out)
 }

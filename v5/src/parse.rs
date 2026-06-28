@@ -356,16 +356,29 @@ impl Parser {
         };
         self.expect(Tok::Comma)?;
         let line = self.term()?;
-        // Optional 5th arg: the spine id of the whole-match span. A rule joins
-        // `ref(id, _, _, lo, hi)` off it to feed `gen(:mode, p, lo, hi, ...)`,
-        // closing match -> byte-cursor without literal offsets. The 4-arg form
-        // keeps its old spine behavior (named captures only).
-        let id = if matches!(self.peek(), Some(Tok::Comma)) {
+        // Optional trailing args after `line`, disambiguated by count:
+        //   1 ⇒ `id`        — the spine id of the whole-match span; a rule joins
+        //                     `ref(id, _, _, lo, hi)` to feed `gen(...)`.
+        //   2 ⇒ `col, end_col` — the whole-match span's 0-based byte columns in
+        //                     `line`, for sub-line diagnostic spans.
+        //   3 ⇒ `id, col, end_col` — both.
+        // The 4-arg (zero-trailing) form keeps named-captures-only spine behavior.
+        let mut trailing = Vec::new();
+        while matches!(self.peek(), Some(Tok::Comma)) {
             self.next()?; // ,
-            Some(self.term()?)
-        } else { None };
+            trailing.push(self.term()?);
+        }
         self.expect(Tok::RParen)?;
-        Ok(BodyItem::Match { path, rev, regex, line, id })
+        let (id, col, end_col) = match trailing.len() {
+            0 => (None, None, None),
+            1 => (Some(trailing.remove(0)), None, None),
+            2 => (None, Some(trailing.remove(0)), Some(trailing.remove(0))),
+            3 => { let id = trailing.remove(0);
+                   (Some(id), Some(trailing.remove(0)), Some(trailing.remove(0))) }
+            n => bail!("match expects 4 args (path, rev, /re/, line), +1 (id), \
+                        +2 (col, end_col), or +3 (id, col, end_col), got {} trailing", n),
+        };
+        Ok(BodyItem::Match { path, rev, regex, line, id, col, end_col })
     }
 
     fn ast(&mut self) -> Result<BodyItem> {

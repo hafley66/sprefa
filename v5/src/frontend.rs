@@ -221,9 +221,9 @@ fn rewrite_terms(b: &mut BodyItem, sub: &HashMap<String, Term>, params: &[String
         BodyItem::Scan { repo, rev, glob, path, rev_out } => {
             for t in [repo, rev, glob, path, rev_out] { rewrite_term(t); }
         }
-        BodyItem::Match { path, rev, line, id, .. } => {
+        BodyItem::Match { path, rev, line, id, col, end_col, .. } => {
             for t in [path, rev, line] { rewrite_term(t); }
-            if let Some(t) = id { rewrite_term(t); }
+            for t in [id, col, end_col].into_iter().flatten() { rewrite_term(t); }
         }
         BodyItem::Ast { path, rev, line, end, id, .. } => {
             for t in [path, rev, line] { rewrite_term(t); }

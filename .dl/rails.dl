@@ -2,18 +2,21 @@
 # Run by the PostToolUse hook in .claude/settings.json (see v5/docs/rails.md).
 # error severity blocks the agent (exit 2); warn reports without failing.
 
-rel diag(path: file, line: int, severity: text, code: text, msg: text).
+# `col`/`end_col` are 0-based byte columns of the offending span within `line`
+# (match's +2 trailing args bind the whole-match span). The LSP renders a
+# sub-line squiggle when set; --check ignores them. end_line defaults to line.
+rel diag(path: file, line: int, col: int, end_col: int, severity: text, code: text, msg: text).
 
 # ---- banned identifiers (CLAUDE.md style rule) --------------------------------
-rel banned_hit(p: file, l: int, w: text).
-banned_hit(p, l, w) <-
+rel banned_hit(p: file, l: int, c: int, ec: int, w: text).
+banned_hit(p, l, c, ec, w) <-
     scan("WORK", "v5/src/**/*.rs", p, rev),
 # Substring + case-insensitive on purpose: identifiers concatenate
 # (ProvenanceRecord, substrate_id), so \b and exact case both leak.
-    match(p, rev, /(?i)(?<w>provenance|substrate|regime|load.?bearing)/, l).
+    match(p, rev, /(?i)(?<w>provenance|substrate|regime|load.?bearing)/, l, c, ec).
 
-diag(p, l, "error", "banned-word", "banned identifier `${w}` (use source/base/mode)") <-
-    banned_hit(p, l, w), changed(p).
+diag(p, l, c, ec, "error", "banned-word", "banned identifier `${w}` (use source/base/mode)") <-
+    banned_hit(p, l, c, ec, w), changed(p).
 
 # ---- no .conn() reachable from a loop outside the Db seam ----------------------
 # The signal is GRAPH reachability, not syntax. A .conn() site resolves to its
@@ -26,17 +29,17 @@ diag(p, l, "error", "banned-word", "banned identifier `${w}` (use source/base/mo
 # every .conn() in a touched file.
 
 # Seed: raw .conn() call sites, excluding db.rs (the seam itself).
-rel conn_site(p: file, l: int).
-conn_site(p, l) <-
+rel conn_site(p: file, l: int, c: int, ec: int).
+conn_site(p, l, c, ec) <-
     scan("WORK", "v5/src/**/*.rs", p, rev),
-    match(p, rev, /\.conn\(\)/, l),
+    match(p, rev, /\.conn\(\)/, l, c, ec),
     p != fs:`v5/src/db.rs`.
 
 # Resolve each .conn() site to its enclosing fn via the call-site extractor.
 # `caller` is the resolved fn sym; "conn" is the method name (self.db.conn()).
-rel conn_fn(fn: text, p: file, l: int).
-conn_fn(fn, p, l) <-
-    conn_site(p, l),
+rel conn_fn(fn: text, p: file, l: int, c: int, ec: int).
+conn_fn(fn, p, l, c, ec) <-
+    conn_site(p, l, c, ec),
     call_site(_, fn, "conn", p, l).
 
 # A fn is loop-entry if at least one call TO IT originates from a call site
@@ -85,21 +88,22 @@ loop_reachable_fn(fn) <-
 # loop". The call_kind table is keyed by bare callee name (execute/
 # execute_batch -> write; prepare/query_row/query_map -> read); see
 # classify_call_kind in engine.rs for the table.
-diag(p, l, "warn", "conn-loop-reachable",
+diag(p, l, c, ec, "warn", "conn-loop-reachable",
      "raw .conn() reachable from a loop; per-row write risk") <-
-    conn_fn(fn, p, l),
+    conn_fn(fn, p, l, c, ec),
     call_kind(fn, "write"),
     loop_reachable_fn(fn),
     changed_line(p, l).
 
 # ---- unwrap budget per changed file -------------------------------------------
-rel unwrap_hit(p: file, l: int).
-unwrap_hit(p, l) <-
+rel unwrap_hit(p: file, l: int, c: int, ec: int).
+unwrap_hit(p, l, c, ec) <-
     scan("WORK", "v5/src/**/*.rs", p, rev),
-    match(p, rev, /\.unwrap\(\)/, l).
+    match(p, rev, /\.unwrap\(\)/, l, c, ec).
 
 rel unwrap_count(p: file, n: int).
-unwrap_count(p, count(l)) <- unwrap_hit(p, l), changed(p).
+unwrap_count(p, count(l)) <- unwrap_hit(p, l, _, _), changed(p).
 
-diag(p, 1, "warn", "unwrap-budget", "${n} unwraps in a changed file") <-
-    unwrap_count(p, n), n > 10.
+# Squiggle the exact `.unwrap()` span on every over-budget line, not line 1.
+diag(p, l, c, ec, "warn", "unwrap-budget", "${n} unwraps in a changed file") <-
+    unwrap_hit(p, l, c, ec), changed(p), unwrap_count(p, n), n > 10.
