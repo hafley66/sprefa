@@ -156,6 +156,17 @@ const AGENT_RELS: [&str; 2] = ["agent_edit", "agent_touch"];
 /// so a touch on engine.rs surfaces only the `.conn()` calls on edited lines.
 const CHANGED_LINE_RELS: [&str; 1] = ["changed_line"];
 
+/// File-authorship relation. `created(path, name, email, ts)` is one row per
+/// tracked file: the author of the commit that ADDED it (its creation), from
+/// `git log --reverse --diff-filter=A --name-only`. `--reverse` orders
+/// oldest-first, so the first time a path appears is its add. Renames are `R`,
+/// not `A`, so a file moved with `git mv` keeps its original creation row only
+/// if history is followed (it is not here — the new path looks un-created until
+/// it is next added). Pairs with `changed` for "who wrote what": the literal
+/// "most-similar code in test files by author X" is
+/// `propose_clone(_, p, ...), created(p, _, "x@…", _), p ~ "*/tests/*"`.
+const CREATED_RELS: [&str; 1] = ["created"];
+
 /// Extract-function proposals: one row `(path, lo, hi, param)` per free var of
 /// each verbatim-duplicated block found in a scanned Rust file. `lo`/`hi` bound
 /// the block's first occurrence (1-based lines); the param set is the inferred
@@ -245,6 +256,7 @@ pub fn builtin_rel_names() -> std::collections::HashSet<String> {
         .chain(changed_rel_decls())
         .chain(agent_rel_decls())
         .chain(changed_line_rel_decls())
+        .chain(created_rel_decls())
         .chain(propose_extract_rel_decls())
         .chain(propose_clone_rel_decls())
         .chain(type_shape_rel_decls())
@@ -397,6 +409,15 @@ fn changed_line_rel_decls() -> Vec<RelDecl> {
     vec![
         RelDecl { name: "changed_line".into(),
                   cols: vec![c("path", Type::Path), c("line", Type::Int)] },
+    ]
+}
+
+fn created_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "created".into(),
+                  cols: vec![c("path", Type::Path), c("name", Type::Text),
+                             c("email", Type::Text), c("ts", Type::Int)] },
     ]
 }
 
@@ -558,6 +579,7 @@ fn changed_rels_used(prog: &Program) -> bool { rels_used(prog, &CHANGED_RELS) }
 fn agent_rels_used(prog: &Program) -> bool { rels_used(prog, &AGENT_RELS) }
 
 fn changed_line_rels_used(prog: &Program) -> bool { rels_used(prog, &CHANGED_LINE_RELS) }
+fn created_rels_used(prog: &Program) -> bool { rels_used(prog, &CREATED_RELS) }
 
 fn propose_extract_rels_used(prog: &Program) -> bool { rels_used(prog, &PROPOSE_EXTRACT_RELS) }
 
@@ -1881,6 +1903,7 @@ impl Engine {
         if changed_rels_used(prog) { changed |= self.refresh_changed_rel()?; }
         if agent_rels_used(prog) { changed |= self.refresh_agent_rels()?; }
         if changed_line_rels_used(prog) { changed |= self.refresh_changed_line_rel()?; }
+        if created_rels_used(prog) { changed |= self.refresh_created_rel()?; }
         if propose_extract_rels_used(prog) { changed |= self.refresh_propose_extract_rel()?; }
         if propose_clone_rels_used(prog) { changed |= self.refresh_propose_clone_rel()?; }
         if type_shape_rels_used(prog) { changed |= self.refresh_type_shape_rel()?; }
@@ -2164,6 +2187,10 @@ impl Engine {
         }
         if changed_line_rels_used(prog) && self.refresh_changed_line_rel()? {
             changed_source_rels.insert("changed_line".to_string());
+            changed_facts = true;
+        }
+        if created_rels_used(prog) && self.refresh_created_rel()? {
+            changed_source_rels.insert("created".to_string());
             changed_facts = true;
         }
         if propose_extract_rels_used(prog) && self.refresh_propose_extract_rel()? {
@@ -2804,6 +2831,9 @@ impl Engine {
                 if CHANGED_LINE_RELS.contains(&d.name.as_str()) {
                     bail!("{} is the built-in line-diff relation; pick another name", d.name);
                 }
+                if CREATED_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is the built-in file-authorship relation; pick another name", d.name);
+                }
                 if PROPOSE_EXTRACT_RELS.contains(&d.name.as_str()) {
                     bail!("{} is the built-in extract-proposal relation; pick another name", d.name);
                 }
@@ -2854,6 +2884,7 @@ impl Engine {
         for d in changed_rel_decls() { self.declare(&d)?; }
         for d in agent_rel_decls() { self.declare(&d)?; }
         for d in changed_line_rel_decls() { self.declare(&d)?; }
+        for d in created_rel_decls() { self.declare(&d)?; }
         for d in propose_extract_rel_decls() { self.declare(&d)?; }
         for d in propose_clone_rel_decls() { self.declare(&d)?; }
         for d in type_shape_rel_decls() { self.declare(&d)?; }
@@ -4256,6 +4287,68 @@ impl Engine {
         if existing == paths { return Ok(false); }
         let rows: Vec<Vec<Value>> = paths.into_iter().map(|p| vec![Value::Text(p)]).collect();
         self.refresh_rel("changed", &["path"], &rows)?;
+        Ok(true)
+    }
+
+    /// Refresh `created(path, name, email, ts)` — the author of the commit that
+    /// added each tracked file. One `git log --reverse --diff-filter=A
+    /// --name-only` walk: `--reverse` puts the oldest commit first, so the first
+    /// time a path appears is its creation; later re-adds (delete-then-add) are
+    /// ignored. The custom `--format` line carries the author fields delimited by
+    /// control bytes; name-only file lines follow until the next format line.
+    /// Whole-set recompute, compared to stored, early-out on no-op (history is
+    /// append-only, so this is almost always a no-op after the first tick).
+    fn refresh_created_rel(&self) -> Result<bool> {
+        let mut created: Vec<(String, String, String, i64)> = Vec::new(); // path, name, email, ts
+        let top = Command::new("git").arg("-C").arg(&self.root)
+            .args(["rev-parse", "--show-toplevel"]).output();
+        if let Ok(out) = top {
+            if out.status.success() {
+                let toplevel = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim().to_string());
+                // \x01 prefixes the per-commit author line; \x1f separates fields.
+                let log = Command::new("git").arg("-C").arg(&self.root)
+                    .args(["log", "--reverse", "--diff-filter=A", "--name-only",
+                           "--format=\x01%an\x1f%ae\x1f%at"]).output()?;
+                if log.status.success() {
+                    let root = std::fs::canonicalize(&self.root)
+                        .unwrap_or_else(|_| self.root.clone());
+                    let mut seen: HashSet<String> = HashSet::new();
+                    let (mut name, mut email, mut ts) = (String::new(), String::new(), 0i64);
+                    for line in String::from_utf8_lossy(&log.stdout).lines() {
+                        if let Some(hdr) = line.strip_prefix('\x01') {
+                            let mut it = hdr.split('\x1f');
+                            name = it.next().unwrap_or("").to_string();
+                            email = it.next().unwrap_or("").to_string();
+                            ts = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                        } else if !line.is_empty() {
+                            let p = line.trim_matches('"');
+                            if let Ok(rel) = toplevel.join(p).strip_prefix(&root) {
+                                let rel = rel.to_string_lossy().replace('\\', "/");
+                                if seen.insert(rel.clone()) {
+                                    created.push((rel, name.clone(), email.clone(), ts));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        created.sort();
+        let existing: Vec<(String, String, String, i64)> = {
+            let conn = self.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"path\",\"name\",\"email\",\"ts\" FROM {} ORDER BY 1,2,3,4",
+                tbl("created")))?;
+            let rows = s.query_map([], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?, r.get::<_, i64>(3)?)))?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        if existing == created { return Ok(false); }
+        let rows: Vec<Vec<Value>> = created.into_iter()
+            .map(|(p, n, e, t)| vec![Value::Text(p), Value::Text(n), Value::Text(e), Value::Int(t)])
+            .collect();
+        self.refresh_rel("created", &["path", "name", "email", "ts"], &rows)?;
         Ok(true)
     }
 

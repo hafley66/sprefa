@@ -1,0 +1,35 @@
+# "What is the most-used / most-similar code in the test files created by ONE
+# author?" — the literal query the `created` built-in unlocks. Three built-ins
+# join with no source rules of our own:
+#
+#   created(path, name, email, ts)        -- who added each file (git log -A)
+#   propose_clone(kernel, path, lo, hi, p) -- duplicated/near-dup blocks per file
+#   (a test-file filter on the path)
+#
+# Run:
+#   dl v5/examples/author-test-clones.dl --root . --no-daemon
+# Set AUTHOR below to the email you want to scope to (substring-exact via ==).
+
+# propose_clone runs over the SCANNED file set, so name the corpus. Scope the
+# scan to the test tree directly — the clone kernels are O(file size) per file,
+# so a repo-wide `*.rs` scan is the slow path; name only what you query.
+rel src(path: file).
+src(p) <- scan("WORK", "tests/**/*.rs", p, rev).
+
+# Clone blocks that live in a test file (path contains "tests/") AND whose file
+# was created by the target author. `split(path,"tests/",1)` is the part after
+# the first "tests/"; it is "" when the path has no tests/ segment.
+rel author_test_clone(kernel: text, path: file, lo: int, hi: int, email: text).
+author_test_clone(k, path, lo, hi, email) <-
+    propose_clone(k, path, lo, hi, _),
+    created(path, _, email, _),
+    suffix = split(path, "tests/", 1),
+    suffix != "".
+
+# Rank: how many dup blocks per (author, kernel) across their test files.
+# Highest count = the author whose tests carry the most repeated structure.
+rel clone_load(email: text, kernel: text, n: int).
+clone_load(email, k, count(path)) <- author_test_clone(k, path, _, _, email).
+
+? author_test_clone(kernel, path, lo, hi, email).
+? clone_load(email, kernel, n).

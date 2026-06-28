@@ -16,6 +16,7 @@ mod closure_incremental_bench;
 mod cmd_op;
 mod comment_op;
 mod config_repos;
+mod created_perf;
 mod cst_node_perf;
 mod cst_node_rel;
 mod daemon;
