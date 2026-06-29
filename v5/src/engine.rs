@@ -576,6 +576,16 @@ const DAEMON_RELS: [&str; 3] = ["program", "head", "rev_advanced"];
 /// (`every:N`), so the cadence is exact regardless of how often the daemon ticks.
 const EVERY_RELS: [&str; 1] = ["every"];
 
+/// The persistent clock relation. `clock(secs, bucket)` holds, on EVERY tick, the
+/// current bucket `now / secs` for each `secs` period the program names — a
+/// monotone integer that advances once per `secs` wall-clock seconds. Unlike the
+/// edge-triggered `every` (present only on the boundary tick), `clock` is always
+/// present, so a body atom `clock(300, b)` binds `b` to the live bucket and varies
+/// any join — or an `@async` request digest — exactly once per period. That is the
+/// dl-native cadence primitive: time as a fact you join against, no `@next`
+/// counter. Reuses `now_secs`; lazy per `clock_rels_used`.
+const CLOCK_RELS: [&str; 1] = ["clock"];
+
 /// The effect-drain audit view: a thin query rel over `pending_effect`, the job
 /// table @async/@stream requests land in. One row per distinct request (digest
 /// `id`), carrying its template `kind`, the `head` rel it rebuilds, the job
@@ -625,6 +635,7 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
         .chain(type_lgg_rel_decls())
         .chain(daemon_rel_decls())
         .chain(every_rel_decls())
+        .chain(clock_rel_decls())
         .chain(effect_rel_decls())
         .chain(catalog_rel_decls())
         .collect()
@@ -719,6 +730,7 @@ pub fn builtin_rel_docs() -> &'static [(&'static str, &'static str, &'static str
         ("rev_advanced", "daemon", "daemon signal that a repo ref advanced (repo, name, old oid, new oid)"),
         // clock: edge-triggered interval gate for @async polling.
         ("every", "clock", "holds interval N only on ticks that cross an N-second boundary (and the first tick); an every(30) body atom self-throttles its rule"),
+        ("clock", "clock", "the current time bucket now/secs per named period, present EVERY tick (not edge-triggered like every); clock(300,b) binds b to a monotone int advancing once per 300s — join it to vary a digest or gate on cadence, no @next counter"),
         // effect drain: the @async/@stream job queue as a query rel.
         ("effect_log", "effect", "the @async/@stream drain queue: one row per request (id, kind, head rel, state queued/running/done/failed, args JSON, req_tx); the dl-native call log, queryable live and parity-comparable to an external cache's call log"),
         // self: the catalog documents itself.
@@ -1047,6 +1059,39 @@ fn every_intervals(prog: &Program) -> Vec<i64> {
 }
 
 fn every_rels_used(prog: &Program) -> bool { rels_used(prog, &EVERY_RELS) }
+
+fn clock_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![RelDecl { name: "clock".into(), cols: vec![c("secs", Type::Int), c("bucket", Type::Int)] }]
+}
+
+/// The distinct `secs` periods the program names in a `clock(secs, bucket)` body
+/// atom (first arg an int literal). Mirrors `every_intervals`; each becomes one
+/// row in `refresh_clock`.
+fn clock_periods(prog: &Program) -> Vec<i64> {
+    let mut out: Vec<i64> = Vec::new();
+    let mut atoms = |body: &[BodyItem]| {
+        for b in body {
+            if let BodyItem::Pos(a) = b {
+                if a.rel == "clock" {
+                    if let [Term::Int(n), _] = a.terms.as_slice() {
+                        if *n > 0 && !out.contains(n) { out.push(*n); }
+                    }
+                }
+            }
+        }
+    };
+    for item in &prog.items {
+        match item {
+            Item::Rule(r) => atoms(&r.body),
+            Item::Gen(g) => atoms(&g.body),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn clock_rels_used(prog: &Program) -> bool { rels_used(prog, &CLOCK_RELS) }
 
 /// Does the program reference any relation in `rels` (body atom, closure edge,
 /// or query head)? Gates lazy built-in indexers so unrelated programs pay nothing.
@@ -2519,6 +2564,7 @@ impl Engine {
         // clear after one), so feed its change into `changed` — else the full tick
         // below skips rebuild_derived and a rule gated by `every` keeps stale rows.
         if every_rels_used(prog) { changed |= self.refresh_every(&every_intervals(prog))?; }
+        if clock_rels_used(prog) { changed |= self.refresh_clock(&clock_periods(prog))?; }
         if module_rels_used(prog) {
             let t = std::time::Instant::now();
             self.refresh_module_rels()?;
@@ -2864,6 +2910,10 @@ impl Engine {
         // quiet poll tick stays a no-op.
         if every_rels_used(prog) && self.refresh_every(&every_intervals(prog))? {
             changed_source_rels.insert("every".to_string());
+            changed_facts = true;
+        }
+        if clock_rels_used(prog) && self.refresh_clock(&clock_periods(prog))? {
+            changed_source_rels.insert("clock".to_string());
             changed_facts = true;
         }
         if wants_module_rels && (module_full_work || !module_delta_paths.is_empty()) {
@@ -3710,6 +3760,9 @@ impl Engine {
                 if EVERY_RELS.contains(&d.name.as_str()) {
                     bail!("{} is the built-in clock relation (every); pick another name", d.name);
                 }
+                if CLOCK_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is the built-in clock relation (clock); pick another name", d.name);
+                }
                 if CATALOG_RELS.contains(&d.name.as_str()) {
                     bail!("{} is the built-in self-describing relation catalog (rel_catalog); pick another name", d.name);
                 }
@@ -3757,6 +3810,7 @@ impl Engine {
         for d in type_lgg_rel_decls() { self.declare(&d)?; }
         for d in daemon_rel_decls() { self.declare(&d)?; }
         for d in every_rel_decls() { self.declare(&d)?; }
+        for d in clock_rel_decls() { self.declare(&d)?; }
         for d in effect_rel_decls() { self.declare(&d)?; }
         for d in catalog_rel_decls() { self.declare(&d)?; }
         Ok(())
@@ -3859,6 +3913,34 @@ impl Engine {
         let landed = rows.len();
         self.db.insert_rows(&tbl("every"), &["secs"], &rows)?;
         Ok(landed > 0 || before > 0)
+    }
+
+    /// Populate `clock(secs, bucket)` with the CURRENT bucket `now / secs` for each
+    /// named period — one persistent row per period, every tick (unlike `every`'s
+    /// edge-trigger). Skips the write when no bucket moved, returning whether the
+    /// content changed so the incremental path re-derives rules that join it.
+    fn refresh_clock(&self, periods: &[i64]) -> Result<bool> {
+        let now = now_secs();
+        let mut want: Vec<(i64, i64)> =
+            periods.iter().filter(|&&n| n > 0).map(|&n| (n, now / n)).collect();
+        want.sort();
+        want.dedup();
+        let have: Vec<(i64, i64)> = {
+            let conn = self.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"secs\", \"bucket\" FROM {} ORDER BY \"secs\", \"bucket\"",
+                tbl("clock")))?;
+            let v: Vec<(i64, i64)> = s
+                .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?
+                .filter_map(|x| x.ok())
+                .collect();
+            v
+        };
+        if have == want { return Ok(false); }
+        let rows: Vec<Vec<Value>> =
+            want.into_iter().map(|(s, b)| vec![Value::Int(s), Value::Int(b)]).collect();
+        self.refresh_rel("clock", &["secs", "bucket"], &rows)?;
+        Ok(true)
     }
 
     /// Project the durable `_strings` / `_where_bytes` meta tables into the

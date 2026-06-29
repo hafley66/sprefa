@@ -12,6 +12,7 @@ mod builtin_file_rel;
 mod call_rels;
 mod changed;
 mod changed_line;
+mod clock_lock;
 mod closure_incremental_bench;
 mod cmd_op;
 mod comment_op;

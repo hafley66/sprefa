@@ -17,11 +17,11 @@
 # parity-critical behavior).
 #
 # RATE SAFETY: two intervals, do not confuse them. DL_POLL_SECS is how often the
-# DAEMON re-ticks (cheap, in-process, no network). `every(300)` is how often a
-# watched endpoint is actually RE-FETCHED from GitHub. Between `every` boundaries
-# the request id is identical, so no call leaves the machine regardless of how
-# fast the daemon ticks. One endpoint at every(300) is <=12 conditional requests
-# per hour against a 5000/hour authed limit.
+# DAEMON re-ticks (cheap, in-process, no network). `clock(300, b)` is how often a
+# watched endpoint is actually RE-FETCHED from GitHub. Between clock-bucket
+# boundaries the request id is identical, so no call leaves the machine regardless
+# of how fast the daemon ticks. One endpoint at clock(300, _) is <=12 conditional
+# requests per hour against a 5000/hour authed limit.
 #
 # Run (daemon):  DL_POLL_SECS=5 dl --lsp examples/gh-cache.dl --root <repo>
 
@@ -38,32 +38,21 @@ watch("repos/cli/cli").
 rel etag(ep: text, tag: text).
 rel etag_next(ep: text, tag: text).
 
-# --- cadence: a monotone poll bucket (the rate cap AND the re-poll trigger) --
+# --- cadence: the rate cap AND the re-poll trigger, in one join ------------
 # The request id is content-addressed on (head, kind, args), and an already-fired
 # id is never re-fired (INSERT-OR-IGNORE). So a poll whose args never change fires
 # exactly once and then goes silent — it would never re-check the resource. The
-# fix is a coarse time bucket in the args. `every(N)` lands a row ONLY on the tick
-# that crosses an N-second boundary; a carried per-endpoint counter increments on
-# each boundary and holds otherwise. Folding that counter into the poll args makes
-# the request id advance at most once per N seconds: a re-poll fires on cadence,
-# and between boundaries the SAME (ep, etag, bucket) hashes to the same id, so
-# nothing re-hits GitHub. This single `N` IS the rate knob — lower it to poll more
-# often, and the worst case is one conditional (304-cheap) request per N seconds
-# per endpoint. (Mirrors the `etag` carry: seed via negation, advance via @next.)
-rel poll_bucket(ep: text, n: int).
-rel poll_bucket_next(ep: text, n: int).
-poll_bucket_next(ep, 0)     <- watch(ep), !poll_bucket(ep, _).
-poll_bucket_next(ep, n + 1) <- poll_bucket(ep, n), every(300).
-poll_bucket_next(ep, n)     <- poll_bucket(ep, n), !every(300).
-poll_bucket(ep, n) <- @next poll_bucket_next(ep, n).
-
-# The poll args: endpoint + prior etag ("" before any etag is carried) + the
-# cadence bucket. Two rules cover etag present-vs-absent (no outer join). The
-# etag makes a real change re-fire immediately; the bucket caps an unchanged
-# resource's re-checks to once per interval.
+# fix is a coarse time bucket in the args, and the engine already has one: the
+# built-in `clock(secs, bucket)` binds `bucket = now/secs`, a monotone integer
+# that advances once per `secs` wall-clock seconds and is present on every tick.
+# Join it and the request id advances at most once per N seconds: a re-poll fires
+# on cadence, and between boundaries the SAME (ep, etag, bucket) hashes to the
+# same id, so nothing re-hits GitHub. This single N IS the rate knob — the worst
+# case is one conditional (304-cheap) request per N seconds per endpoint. (Time
+# as a fact you join against; no @next counter, that is the whole sugar.)
 rel poll(ep: text, prev: text, bucket: int).
-poll(ep, prev, b) <- watch(ep), etag(ep, prev), poll_bucket(ep, b).
-poll(ep, "",   b) <- watch(ep), !etag(ep, _),   poll_bucket(ep, b).
+poll(ep, prev, b) <- watch(ep), etag(ep, prev), clock(300, b).
+poll(ep, "",   b) <- watch(ep), !etag(ep, _),   clock(300, b).
 
 # Fire the conditional GET. `status`/`tag`/`body` are the response columns the
 # executor fills; `ep` echoes from the request; `prev`/`bucket` are request-only

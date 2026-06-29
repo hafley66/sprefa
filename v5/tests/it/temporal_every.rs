@@ -7,7 +7,6 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::time::Instant;
 
 use anyhow::Result;
@@ -17,14 +16,7 @@ use sprefa_v5::db;
 use sprefa_v5::engine::{Engine, EffectExec};
 use sprefa_v5::prepare_paths;
 
-/// `DL_NOW_SECS` is process-global env; only clock tests read it (via
-/// `now_secs`, reached only when a program uses `every`). Serialize them so the
-/// injected time of one test never leaks into another running in parallel.
-static CLOCK_LOCK: Mutex<()> = Mutex::new(());
-
-fn set_now(secs: i64) {
-    std::env::set_var("DL_NOW_SECS", secs.to_string());
-}
+use crate::clock_lock::{clear_now, set_now, CLOCK_LOCK};
 
 fn sandbox(tag: &str) -> PathBuf {
     let p = std::env::temp_dir().join(format!("dl_every_{tag}_{}", std::process::id()));
@@ -166,4 +158,49 @@ fn every_gated_async_fanout_under_load() {
     );
     std::env::remove_var("DL_NOW_SECS");
     let _ = HashMap::<String, usize>::new(); // keep import set stable
+}
+
+/// `clock(secs, bucket)` is the PERSISTENT sibling of `every`: it holds the
+/// current bucket `now/secs` on EVERY tick (not only on the boundary), so a join
+/// `clock(30, b)` binds `b` to the live time bucket and that value advances only
+/// when a boundary is crossed. This is the cadence primitive — a varying token to
+/// fold into a request digest, no `@next` counter. Contrast `every`, which clears
+/// inside the bucket.
+#[test]
+fn clock_holds_current_bucket_persistently() {
+    let _g = CLOCK_LOCK.lock().unwrap();
+    let d = sandbox("clockrel");
+    let dbp = d.join("db");
+    fs::write(
+        d.join("p.dl"),
+        "rel cbucket(b: int).\n\
+         cbucket(b) <- clock(30, b).\n",
+    )
+    .unwrap();
+    let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+
+    let bucket = |dbp: &Path| -> Vec<i64> {
+        let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
+        let mut s = conn.prepare("SELECT b FROM rel_cbucket ORDER BY b").unwrap();
+        s.query_map([], |r| r.get::<_, i64>(0)).unwrap().filter_map(|x| x.ok()).collect()
+    };
+
+    // t=1000: bucket 1000/30 = 33, present.
+    set_now(1000);
+    eng.tick(&prog, true).unwrap();
+    assert_eq!(bucket(&dbp), vec![33], "clock binds now/secs");
+
+    // t=1010: same bucket — STILL present (every would have cleared here).
+    set_now(1010);
+    eng.tick(&prog, true).unwrap();
+    assert_eq!(bucket(&dbp), vec![33], "clock persists inside the bucket");
+
+    // t=1020: 1020/30 = 34 — the bucket advanced.
+    set_now(1020);
+    eng.tick(&prog, true).unwrap();
+    assert_eq!(bucket(&dbp), vec![34], "clock advances on a boundary");
+
+    clear_now();
 }
