@@ -1,0 +1,32 @@
+# Repo-HEAD watcher: poll each watched repo's git HEAD on an interval, cache the
+# oid idempotently, derive over it. This is the ghcacher shape in three rules —
+# an interval clock (`every`), an effect (`@async`), and a content-addressed cache
+# (`pending_effect`'s digest id dedups re-fired requests for free).
+#
+# How it runs: the daemon's poll loop ticks this program, drains the queued
+# effects off-tick through a ShellEffectExec it builds from the `effect_cmd` rows,
+# and lands each response in `head_at` for the next tick to read. The drain runs
+# the subprocesses across the rayon pool, so N watched repos poll in parallel.
+#
+# Run (daemon):  DL_POLL_SECS=1 dl --lsp examples/poll-head.dl --root <repo>
+# The poll_head_demo integration test drives the same program against live git.
+
+# What to watch, and the shell command that reads its head. Add a row per repo.
+rel watch(name: str, cmd: str).
+watch("self", "git rev-parse HEAD").
+
+# The effect-command template, keyed by the @async head rel name (`head_at`).
+# `{cmd}` is filled from the request args; stdout is the single output slot (oid).
+rel effect_cmd(kind: str, template: str).
+effect_cmd("head_at", "{cmd}").
+
+# Every 2 seconds, fire each watched command. `name` echoes from the request;
+# `oid` is the unbound output slot the executor fills with the command's stdout.
+# To poll repos in different directories from one effect kind, bind a `cwd` arg
+# (reserved): the runtime runs each request in that dir (relative to --root, or
+# absolute). Derive it in dl, e.g. `cwd = parent(file)`, then pass it through.
+rel head_at(name: str, oid: str).
+head_at(name, oid) <- @async watch(name, cmd), every(2).
+
+# Read the cache: surface the current head per repo.
+? head_at(name, oid).

@@ -71,6 +71,7 @@ mod sg_kwargs;
 mod sg_span;
 mod spine_meta;
 mod string_fns;
+mod poll_head_demo;
 mod temporal_async;
 mod temporal_carry;
 mod temporal_every;

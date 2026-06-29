@@ -188,6 +188,7 @@ fn shell_effect_exec_runs_real_subprocess() {
             "printf '200\\n%s-body' '{url}'".to_string(),
         )]),
         n_out: arity,
+        cwd: std::path::PathBuf::new(),
     };
     let n = eng.drain_effects(&prog, &exec).unwrap();
     assert_eq!(n, 1);

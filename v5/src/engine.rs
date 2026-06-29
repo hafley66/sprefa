@@ -65,6 +65,11 @@ pub trait EffectExec: Sync {
 pub struct ShellEffectExec {
     pub templates: HashMap<String, String>,
     pub n_out: HashMap<String, usize>,
+    /// Default working directory for the spawned command — the engine root, so a
+    /// `git rev-parse HEAD` / `gh ...` effect resolves against the watched repo
+    /// (mirrors the `cmd` source op's `.current_dir(root)`). `Default` is the
+    /// process cwd. A per-row `cwd` arg overrides this (see `run`).
+    pub cwd: PathBuf,
 }
 
 impl EffectExec for ShellEffectExec {
@@ -79,7 +84,22 @@ impl EffectExec for ShellEffectExec {
             };
             cmdline = cmdline.replace(&format!("{{{k}}}"), &s);
         }
-        let output = Command::new("sh").arg("-c").arg(&cmdline).output()?;
+        // Per-row working directory: a `cwd` arg the rule binds wins over the
+        // engine root, so one effect kind can run each request in its own repo
+        // (poll repo A in dir A, repo B in dir B). A relative `cwd` resolves
+        // against the engine root; absolute is used as-is. The dir is computed in
+        // dl (e.g. `cwd = parent(file)`), bound in the @async body like any arg.
+        let run_in = match args.get("cwd").and_then(|v| v.as_str()) {
+            Some(d) if !d.is_empty() => {
+                let p = std::path::Path::new(d);
+                if p.is_absolute() { p.to_path_buf() } else { self.cwd.join(p) }
+            }
+            _ => self.cwd.clone(),
+        };
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c").arg(&cmdline);
+        if run_in.as_os_str().len() > 0 { cmd.current_dir(&run_in); }
+        let output = cmd.output()?;
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
         // nonzero exit WITH stdout is the findings-exist convention (the `cmd` op
         // shares it); nonzero with empty stdout is a broken command — be loud.
@@ -1653,6 +1673,10 @@ impl Engine {
         }
         Ok(out)
     }
+
+    /// This engine's root directory (`--root`). The working dir an `@async`
+    /// shell effect runs in, so `git`/`gh` commands resolve against the repo.
+    pub fn root(&self) -> PathBuf { self.root.clone() }
 
     /// Stable slug for this engine's own repo: the `--root` directory name.
     fn self_slug(&self) -> String {

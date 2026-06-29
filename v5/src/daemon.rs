@@ -262,7 +262,7 @@ impl Daemon {
             crate::engine::async_effect_arity(&prog)
         };
         if arity.is_empty() { return Ok(0); }
-        let templates = {
+        let (templates, cwd) = {
             let eng = self.eng.lock().unwrap();
             let mut m = std::collections::HashMap::new();
             if let Ok(rows) = eng.query_sql("SELECT kind, template FROM rel_effect_cmd", &[]) {
@@ -273,9 +273,9 @@ impl Daemon {
                     }
                 }
             }
-            m
+            (m, eng.root())
         };
-        let exec = crate::engine::ShellEffectExec { templates, n_out: arity };
+        let exec = crate::engine::ShellEffectExec { templates, n_out: arity, cwd };
         let n = {
             let prog = self.prog.lock().unwrap();
             let mut eng = self.eng.lock().unwrap();
