@@ -2472,12 +2472,13 @@ impl Engine {
         // live table BEFORE reconcile/derive, so same-tick rules read the carried
         // state as an ordinary relation. tx stays at `cur_tx` until staging.
         let cur_tx = self.current_tx()?;
+        let mut carry_changed = false;
         for rel in &next_rels {
             let meta = self.rels.get(rel)
                 .ok_or_else(|| anyhow::anyhow!("@next relation {rel} is not declared (add `rel {rel}(...)`)"))?
                 .clone();
             self.ensure_carry_table(rel, &meta)?;
-            self.load_carry(rel, &meta, cur_tx)?;
+            carry_changed |= self.load_carry(rel, &meta, cur_tx)?;
         }
         let edges: Vec<&str> = dedup_edges(&closures);
         self.create_auto_indexes(&derived_rules, &closures)?;
@@ -2493,7 +2494,9 @@ impl Engine {
         let t = std::time::Instant::now();
         let recon = self.reconcile_sources(&source_rules, &source_rels)?;
         phase("reconcile-sources", t);
-        let mut changed = recon.changed;
+        // A carried-in @next rel that moved is an EDB change for this tick's
+        // derived rules (e.g. a `poll` rule that reads the carried `etag`).
+        let mut changed = recon.changed || carry_changed;
         // Baseline each source relation's content digest so the next incremental
         // tick can skip a rebuild when bytes move but rows don't (see tick_paths).
         self.seed_rel_digests(&source_rels)?;
@@ -3199,6 +3202,41 @@ impl Engine {
             if let Ok(bytes) = hex_to_32(&src) {
                 for (a, b) in acc.iter_mut().zip(bytes.iter()) { *a ^= *b; }
             }
+        }
+        Ok(acc)
+    }
+
+    /// Order-independent content digest of a rel's LIVE table over its declared
+    /// columns (not `__src`, which carry-loaded rows leave blank). Per-row blake3,
+    /// XOR-folded so row order does not matter; relations are sets (PK-deduped) so
+    /// no two rows are identical and the XOR never self-cancels. Used by
+    /// `load_carry` to tell whether a carried rel actually moved this tick.
+    fn rel_content_digest(&self, rel: &str, meta: &RelMeta) -> Result<[u8; 32]> {
+        let mut acc = [0u8; 32];
+        let sql = if meta.cols.is_empty() {
+            format!("SELECT COUNT(*) FROM {}", tbl(rel))
+        } else {
+            let cl = meta.cols.iter().map(|c| format!("\"{}\"", c.name))
+                .collect::<Vec<_>>().join(", ");
+            format!("SELECT {cl} FROM {}", tbl(rel))
+        };
+        let mut stmt = self.db.conn().prepare(&sql)?;
+        let ncol = stmt.column_count();
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let mut h = blake3::Hasher::new();
+            for i in 0..ncol {
+                match row.get::<_, rusqlite::types::Value>(i)? {
+                    rusqlite::types::Value::Integer(n) => { h.update(b"i"); h.update(&n.to_le_bytes()); }
+                    rusqlite::types::Value::Real(f) => { h.update(b"r"); h.update(&f.to_le_bytes()); }
+                    rusqlite::types::Value::Text(s) => { h.update(b"t"); h.update(s.as_bytes()); }
+                    rusqlite::types::Value::Blob(b) => { h.update(b"b"); h.update(&b); }
+                    rusqlite::types::Value::Null => { h.update(b"n"); }
+                }
+                h.update(&[0]);
+            }
+            let d = h.finalize();
+            for (a, b) in acc.iter_mut().zip(d.as_bytes().iter()) { *a ^= *b; }
         }
         Ok(acc)
     }
@@ -5962,7 +6000,13 @@ impl Engine {
     }
 
     /// Replace the live rel with the carry rows staged for generation `tx`.
-    fn load_carry(&self, rel: &str, meta: &RelMeta, tx: i64) -> Result<()> {
+    /// Load the carry rows staged for `tx` into the live rel table. Returns whether
+    /// the loaded content DIFFERS from what the live table held before — a carry
+    /// rel that advances is an EDB input change, so the caller must rebuild the
+    /// derived rules that read it (a derived rule over a carried-in rel was
+    /// otherwise frozen at its first value, since nothing flipped `changed`).
+    fn load_carry(&self, rel: &str, meta: &RelMeta, tx: i64) -> Result<bool> {
+        let before = self.rel_content_digest(rel, meta)?;
         let cl = meta.cols.iter().map(|c| format!("\"{}\"", c.name))
             .collect::<Vec<_>>().join(", ");
         self.db.conn().execute(&format!("DELETE FROM {}", tbl(rel)), [])?;
@@ -5970,7 +6014,8 @@ impl Engine {
             &format!("INSERT OR IGNORE INTO {dst} ({cl}) SELECT {cl} FROM {src} WHERE tx = ?1",
                 dst = tbl(rel), src = carry_tbl(rel)),
             [tx])?;
-        Ok(())
+        let after = self.rel_content_digest(rel, meta)?;
+        Ok(before != after)
     }
 
     /// Stage each @next rule's body (evaluated over the converged tick-T state)
