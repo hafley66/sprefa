@@ -31,6 +31,16 @@ pub struct ScipRows {
     /// opaque locals) instead of erasing all names uniformly — the basis of the
     /// symbol/type-shape clone kernel.
     pub occ_spans: Vec<(String, i32, i32, String)>,
+    /// Interface/supertype dispatch edges from SCIP
+    /// `SymbolInformation.relationships` (the `is_implementation` flag). Each row
+    /// is (impl_sym, iface_sym): the implementing/overriding symbol declares a
+    /// relationship to the symbol it implements — a Kotlin/TS interface method →
+    /// its concrete override, a class → its supertype. Occurrences alone don't
+    /// carry the virtual-dispatch hop, so this is the only place the
+    /// interface→impl path lives. (Per the SCIP doc example, `Dog#sound()` has an
+    /// `is_implementation` relationship to `Animal#sound()`, so the row is
+    /// (`Dog#sound()`, `Animal#sound()`) = (impl, iface).)
+    pub impls: Vec<(String, String)>,
 }
 
 pub fn index_path(root: &Path) -> Option<PathBuf> {
@@ -136,6 +146,25 @@ pub fn rows(index: &Index) -> ScipRows {
         }
     }
 
+    // Interface/supertype dispatch edges. SCIP attaches these to the
+    // SymbolInformation of the IMPLEMENTING symbol (per-document in doc.symbols,
+    // plus index.external_symbols for out-of-workspace targets), as a
+    // relationship to the symbol it implements with `is_implementation` set.
+    let mut impls: HashSet<(String, String)> = HashSet::new();
+    let sym_infos = index
+        .documents
+        .iter()
+        .flat_map(|d| d.symbols.iter())
+        .chain(index.external_symbols.iter());
+    for si in sym_infos {
+        if si.symbol.is_empty() { continue; }
+        for rel in &si.relationships {
+            if rel.is_implementation && !rel.symbol.is_empty() {
+                impls.insert((si.symbol.clone(), rel.symbol.clone()));
+            }
+        }
+    }
+
     let mut rows = ScipRows {
         defs: defs.into_iter().collect(),
         refs: refs.into_iter().collect(),
@@ -144,6 +173,7 @@ pub fn rows(index: &Index) -> ScipRows {
         callee_types: callee_types.into_iter().collect(),
         locals: locals.into_iter().collect(),
         occ_spans: occ_spans.into_iter().collect(),
+        impls: impls.into_iter().collect(),
     };
     rows.defs.sort();
     rows.refs.sort();
@@ -152,6 +182,7 @@ pub fn rows(index: &Index) -> ScipRows {
     rows.callee_types.sort();
     rows.locals.sort();
     rows.occ_spans.sort();
+    rows.impls.sort();
     rows
 }
 
@@ -369,6 +400,39 @@ mod tests {
         index.documents = vec![doc];
         let rows = rows(&index);
         assert_eq!(rows.locals.len(), 1, "only def collected: {:?}", rows.locals);
+    }
+
+    #[test]
+    fn impl_relationship_yields_dispatch_edge() {
+        // SCIP attaches the dispatch hop to the IMPLEMENTING symbol: the impl
+        // method `Dog#sound()` carries an `is_implementation` relationship to the
+        // interface method `Animal#sound()`. The row is (impl, iface). A plain
+        // `is_reference` relationship (no implementation) is NOT a dispatch edge.
+        use scip::types::{Relationship, SymbolInformation};
+        let iface = "scip-kotlin . . Animal#sound().";
+        let impl_m = "scip-kotlin . . Dog#sound().";
+        let other = "scip-kotlin . . Cat#purr().";
+        let mut rel_impl = Relationship::new();
+        rel_impl.symbol = iface.to_string();
+        rel_impl.is_implementation = true;
+        let mut si_impl = SymbolInformation::new();
+        si_impl.symbol = impl_m.to_string();
+        si_impl.relationships = vec![rel_impl];
+        // a reference-only relationship that must NOT become a dispatch edge.
+        let mut rel_ref = Relationship::new();
+        rel_ref.symbol = iface.to_string();
+        rel_ref.is_reference = true;
+        let mut si_ref = SymbolInformation::new();
+        si_ref.symbol = other.to_string();
+        si_ref.relationships = vec![rel_ref];
+        let mut doc = Document::new();
+        doc.relative_path = "Dog.kt".to_string();
+        doc.symbols = vec![si_impl, si_ref];
+        let mut index = Index::new();
+        index.documents = vec![doc];
+        let rows = rows(&index);
+        assert_eq!(rows.impls, vec![(impl_m.to_string(), iface.to_string())],
+            "only the is_implementation edge, oriented impl→iface: {:?}", rows.impls);
     }
 
     #[test]

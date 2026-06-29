@@ -128,7 +128,7 @@ const DOC_RELS: [&str; 2] = ["doc_node", "doc_ref"];
 /// `scip_callee_type` maps each method moniker to its receiver type (parsed
 /// from the `impl#[Type]` segment), so dl can read both a fn's own type and its
 /// callees' types from one relation — the basis for feature-envy detection.
-const SCIP_RELS: [&str; 7] = ["scip_def", "scip_name", "scip_ref", "scip_edge", "scip_fn_edge", "scip_callee_type", "scip_local"];
+const SCIP_RELS: [&str; 8] = ["scip_def", "scip_name", "scip_ref", "scip_edge", "scip_fn_edge", "scip_callee_type", "scip_local", "scip_impl"];
 
 /// Worktree diff relation. `changed(path)` holds every path `git status` says
 /// differs from HEAD in the self repo: modified, added, renamed (new side),
@@ -399,6 +399,7 @@ fn scip_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "scip_fn_edge".into(), cols: vec![c("caller", Type::Text), c("callee", Type::Text)] },
         RelDecl { name: "scip_callee_type".into(), cols: vec![c("sym", Type::Text), c("type", Type::Text)] },
         RelDecl { name: "scip_local".into(), cols: vec![c("fn", Type::Text), c("name", Type::Text)] },
+        RelDecl { name: "scip_impl".into(), cols: vec![c("impl", Type::Text), c("iface", Type::Text)] },
     ]
 }
 
@@ -4267,6 +4268,7 @@ impl Engine {
             self.refresh_rel("scip_fn_edge", &["caller", "callee"], &[])?;
             self.refresh_rel("scip_callee_type", &["sym", "type"], &[])?;
             self.refresh_rel("scip_local", &["fn", "name"], &[])?;
+            self.refresh_rel("scip_impl", &["impl", "iface"], &[])?;
             return Ok(true);
         };
         let rows = scip_import::load(&path)?;
@@ -4291,6 +4293,8 @@ impl Engine {
             .map(|(sym, ty)| vec![t(sym), t(ty)]).collect();
         let locals: Vec<Vec<Value>> = rows.locals.iter()
             .map(|(fn_, name)| vec![t(fn_), t(name)]).collect();
+        let impls: Vec<Vec<Value>> = rows.impls.iter()
+            .map(|(im, iface)| vec![t(im), t(iface)]).collect();
         self.refresh_rel("scip_def", &["symbol", "file"], &defs)?;
         self.refresh_rel("scip_name", &["symbol", "name"], &names)?;
         self.refresh_rel("scip_ref", &["file", "symbol", "def_file"], &refs)?;
@@ -4298,6 +4302,7 @@ impl Engine {
         self.refresh_rel("scip_fn_edge", &["caller", "callee"], &fn_edges)?;
         self.refresh_rel("scip_callee_type", &["sym", "type"], &callee_types)?;
         self.refresh_rel("scip_local", &["fn", "name"], &locals)?;
+        self.refresh_rel("scip_impl", &["impl", "iface"], &impls)?;
         Ok(true)
     }
 

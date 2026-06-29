@@ -1,0 +1,50 @@
+# Kotlin interface dispatch + multi-op participation. The OpenAPI spec is the
+# source of op names. A generated client interface exposes one method per op;
+# concrete impls override those methods, and the override bodies fan into shared
+# helpers. The question: which functions sit on the call-graph path of >= 2
+# distinct ops, where the path crosses the interface -> impl virtual-dispatch hop
+# that occurrences (scip_ref / scip_fn_edge) alone can't see. That hop is
+# scip_impl, loaded from SCIP's is_implementation relationship.
+
+rel spec_op(op: text).
+spec_op(op) <- scan("WORK", "**/openapi.yaml", p, rev),
+  jsonp(p, rev, "paths.*.*.operationId", op).
+
+# Call edges: direct calls (scip_fn_edge) UNION the interface->impl dispatch hop.
+# The dispatch edge runs from the interface method to its concrete override
+# (scip_impl impl -> iface, read backwards): this is the "hidden path" a static
+# occurrence graph never has, because the call site only names the interface.
+# Both arms head ONE rel.
+rel calls(src: text, dst: text).
+calls(a, b) <- scip_fn_edge(a, b).
+calls(iface, impl) <- scip_impl(impl, iface).
+
+# Full transitive reachability, written as explicit recursion rather than the
+# `closure(calls)` builtin. A closure relation can only be READ from another
+# rule's body when one endpoint is pinned to a literal (seeded reachability); the
+# op entries are a SET, not a literal, so op_path below could not join a closure.
+# A plain recursive rel materializes every (src,dst) pair AND is freely joinable.
+rel reach(src: text, dst: text).
+reach(a, b) <- calls(a, b).
+reach(a, b) <- calls(a, m), reach(m, b).
+
+# The entry point for an op = the generated INTERFACE method whose descriptor
+# name is the operationId. It is an interface method because it is the iface
+# target of some impl (scip_impl _ -> m).
+rel op_entry(op: text, entry: text).
+op_entry(op, m) <- spec_op(op), scip_name(m, op), scip_impl(_, m).
+
+# Functions on the call path of an op: the entry itself, plus everything the
+# entry reaches (through direct calls and the dispatch hop).
+rel op_path(op: text, fn: text).
+op_path(op, e) <- op_entry(op, e).
+op_path(op, f) <- op_entry(op, e), reach(e, f).
+
+# The answer: a function on the call-graph path of at least TWO distinct ops.
+# The shared helper behind the interface dispatch is the canonical hit.
+rel multi_op(fn: text).
+multi_op(f) <- op_path(o1, f), op_path(o2, f), o1 != o2.
+
+? spec_op(op).
+? op_entry(op, entry).
+? multi_op(fn).

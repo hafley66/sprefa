@@ -31,6 +31,7 @@ mod doc_ref;
 mod embed_similar;
 mod facts;
 mod flow_breaking;
+mod flow_kotlin_dispatch;
 mod flow_xlang;
 mod flow_xlang_scip;
 mod flow_xlang_scip_real;
