@@ -250,12 +250,11 @@ fn builtin_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
-/// Names of every engine-emitted (built-in) relation: the union of all the
-/// `*_rel_decls()` groups that `declare_builtins` registers. The daemon's
-/// `schema` RPC flags relations against this so the count and the per-rel
-/// "emitted by the engine" label agree (a user `.dl` rule's relation is not in
-/// this set). Keep in sync with `declare_builtins`.
-pub fn builtin_rel_names() -> std::collections::HashSet<String> {
+/// Every engine-emitted (built-in) relation declaration, in documentation order.
+/// One list so `builtin_rel_names`, the self-describing `rel_catalog`, and the
+/// doc-completeness check all read the SAME source. Keep in sync with
+/// `declare_builtins` (which declares the same set).
+pub fn all_builtin_decls() -> Vec<RelDecl> {
     builtin_rel_decls()
         .into_iter()
         .chain(module_rel_decls())
@@ -276,9 +275,127 @@ pub fn builtin_rel_names() -> std::collections::HashSet<String> {
         .chain(type_shape_rel_decls())
         .chain(type_lgg_rel_decls())
         .chain(daemon_rel_decls())
-        .map(|d| d.name)
+        .chain(catalog_rel_decls())
         .collect()
 }
+
+/// Names of every engine-emitted (built-in) relation. The daemon's `schema` RPC
+/// flags relations against this so the count and the per-rel "emitted by the
+/// engine" label agree (a user `.dl` rule's relation is not in this set).
+pub fn builtin_rel_names() -> std::collections::HashSet<String> {
+    all_builtin_decls().into_iter().map(|d| d.name).collect()
+}
+
+/// One-line documentation for every built-in relation, as `(name, group,
+/// summary)`. THIS is the single source of relation docs: `rel_catalog` projects
+/// it (joined to the decls for columns) and `examples/builtin-rels.dl` renders it
+/// into the README, so a generated doc table can never drift from the engine. A
+/// new built-in is forced to appear here by `undocumented_builtins` (a test fails
+/// until it does), so the doc standard is mechanical, not a review checklist.
+/// Summaries avoid `|` so they render inside a markdown table cell.
+pub fn builtin_rel_docs() -> &'static [(&'static str, &'static str, &'static str)] {
+    &[
+        // core: the repo/rev/content/file spine + the always-true atom.
+        ("true", "core", "zero-arity singleton; the always-succeeds atom"),
+        ("repo", "core", "configured + dynamically-pulled repos whose root exists; writable as a clone+register sink"),
+        ("rev", "core", "git revs seen by scans"),
+        ("content", "core", "content addresses"),
+        ("file", "core", "scanned files, keyed by (repo, rev, path, content)"),
+        // module graph: imports + resolved file-to-file edges.
+        ("module_import", "module", "import statements (Rust + TS + Kotlin); Kotlin adds same-package + expect/actual rows"),
+        ("module_edge", "module", "resolved file-to-file import graph (rev-deduped union)"),
+        ("module_edge_rev", "module", "rev-aware module_edge"),
+        ("module_unresolved", "module", "broken imports: a reference that resolved to no project file"),
+        ("module_unresolved_rev", "module", "rev-aware module_unresolved"),
+        ("crate_edge", "module", "workspace-internal Cargo dependency edges"),
+        // type graph: entities, edges, signatures.
+        ("type_edge", "type", "type-graph edges (field/variant/impl/generic) across Rust, Kotlin, TS"),
+        ("type_edge_rev", "type", "rev-aware type_edge (WORK-vs-HEAD type diff)"),
+        ("type_entity", "type", "every declared type; sym is file::kind::name, the cross-graph join key"),
+        ("type_sig", "type", "type signature slots (params, fields) per sym"),
+        ("type_link", "type", "cross-type links not carried by type_edge (SCIP-resolved sym to sym)"),
+        // call graph: defs, sites, resolved edges, classification.
+        ("call_def", "call", "every callable; sym is file::kind::name"),
+        ("call_site", "call", "each call occurrence; caller is the resolved fn sym, callee the bare text"),
+        ("call_edge", "call", "resolved caller-sym to callee-sym edge (single-def or SCIP override)"),
+        ("call_edge_rev", "call", "rev-aware call_edge"),
+        ("call_name", "call", "def sym to bare callable name; resolves a call_site callee to candidate defs"),
+        ("call_kind", "call", "per-fn read/write classification of its call sites (rusqlite-shaped)"),
+        // intra-procedural dataflow + loop/alloc material for Big-O.
+        ("df_node", "dataflow", "intra-procedural dataflow node (call_res/assign/...); id is file::line::kind"),
+        ("df_edge", "dataflow", "intra-procedural dataflow dependency edge"),
+        ("loop_over", "dataflow", "one row per loop with its span, iter var, and collection"),
+        ("allocates", "dataflow", "one row per fn whose body builds a collection"),
+        ("nest", "dataflow", "one row per (call, enclosing loop) with nesting depth; raw material for Big-O"),
+        // doc-to-code bridge.
+        ("doc_node", "doc", "structural nodes from non-source text (markdown headings/code blocks)"),
+        ("doc_ref", "doc", "doc-to-code bridge: name-matches doc_node headings to type_entity symbols"),
+        // SCIP: compiler-backed facts from an index.scip.
+        ("scip_def", "scip", "symbol defs from an existing index.scip (root or $SPREFA_SCIP_INDEX)"),
+        ("scip_name", "scip", "descriptor name (last identifier run) of a moniker, computed in-engine"),
+        ("scip_ref", "scip", "compiler-backed references (ref file, symbol, def file)"),
+        ("scip_edge", "scip", "file-to-file SCIP dependency edges"),
+        ("scip_fn_edge", "scip", "function-level call edge; caller is the innermost enclosing fn def"),
+        ("scip_callee_type", "scip", "receiver type parsed from a method moniker's impl/for segment"),
+        ("scip_local", "scip", "local-variable + parameter declarations attributed to their enclosing fn"),
+        ("scip_impl", "scip", "interface/supertype dispatch edge from SCIP is_implementation (impl to iface)"),
+        // working-tree change rails.
+        ("changed", "changed", "git status vs HEAD: modified/added/renamed/untracked; the rails join. Empty outside git"),
+        ("changed_line", "changed", "new-side lines of git diff -U0 HEAD hunks plus untracked files; line-scoped rails"),
+        // agent-harness rails (from the at-rest session store).
+        ("agent_edit", "agent", "every file edit in the latest agent turn, tagged harness+session+turn idx"),
+        ("agent_touch", "agent", "the latest agent turn's edited files (harness, session, path)"),
+        // misc derived sources.
+        ("created", "created", "files added since their first appearance, with author name/email/timestamp"),
+        ("similar", "embed", "content-addressed nearest-neighbor pairs from the embedding backend, with score"),
+        ("propose_extract", "propose", "proposed extract-function refactor spans (path, lo, hi, param)"),
+        ("propose_clone", "propose", "proposed clone/near-duplicate groups keyed by a shared kernel"),
+        ("type_shape", "type-shape", "structural type-shape fingerprint per type (shape-iso experiment)"),
+        ("type_lgg", "type-shape", "least-general generalization of two type shapes (shape-iso experiment)"),
+        // ref spine: interned strings + located byte spans.
+        ("string", "spine", "interned strings (ref spine): id, text, normalized text"),
+        ("ref", "spine", "byte span per interned string; id is the rewrite coordinate"),
+        // CST nested-set nodes for ancestry/containment.
+        ("node", "node", "CST nodes (nested-set spans): id, kind, file, lo, hi, parent"),
+        ("child", "node", "CST parent-child edges (exactly 2 cols, so closure(child) gives ancestry)"),
+        // daemon bookkeeping.
+        ("program", "daemon", "dl programs the daemon tracks (path, content hash, mtime)"),
+        ("head", "daemon", "git HEAD per repo (repo, ref name, oid)"),
+        ("rev_advanced", "daemon", "daemon signal that a repo ref advanced (repo, name, old oid, new oid)"),
+        // self: the catalog documents itself.
+        ("rel_catalog", "meta", "this table: every built-in relation with its group, columns, and one-line doc"),
+    ]
+}
+
+/// Built-in relation names that have no entry in `builtin_rel_docs`. The
+/// doc-completeness invariant: this must be empty. A test asserts it, so adding a
+/// built-in without documenting it fails CI rather than silently shipping a blank
+/// row in the generated table.
+pub fn undocumented_builtins() -> Vec<String> {
+    let documented: std::collections::HashSet<&str> =
+        builtin_rel_docs().iter().map(|(n, _, _)| *n).collect();
+    let mut missing: Vec<String> = builtin_rel_names()
+        .into_iter()
+        .filter(|n| !documented.contains(n.as_str()))
+        .collect();
+    missing.sort();
+    missing
+}
+
+/// The self-describing catalog relation: one row per built-in relation. Lazy like
+/// every other built-in group, so a program that never reads it pays nothing.
+const CATALOG_RELS: [&str; 1] = ["rel_catalog"];
+
+fn catalog_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "rel_catalog".into(), cols: vec![
+            c("name", Type::Text), c("group", Type::Text),
+            c("cols", Type::Text), c("doc", Type::Text)] },
+    ]
+}
+
+fn catalog_rels_used(prog: &Program) -> bool { rels_used(prog, &CATALOG_RELS) }
 
 fn module_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
@@ -1935,6 +2052,7 @@ impl Engine {
         if type_shape_rels_used(prog) { changed |= self.refresh_type_shape_rel()?; }
         if type_lgg_rels_used(prog) { changed |= self.refresh_type_lgg_rel()?; }
         if daemon_rels_used(prog) { self.refresh_daemon_rels()?; }
+        if catalog_rels_used(prog) { changed |= self.refresh_catalog_rel()?; }
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
 
         let t_der = std::time::Instant::now();
@@ -2240,6 +2358,10 @@ impl Engine {
             changed_facts = true;
         }
         if daemon_rels_used(prog) { self.refresh_daemon_rels()?; }
+        if catalog_rels_used(prog) && self.refresh_catalog_rel()? {
+            changed_source_rels.insert("rel_catalog".to_string());
+            changed_facts = true;
+        }
         if changed_source_rels.is_empty() { changed_facts = false; }
 
         // Cold start (or empty derived/closure) needs a full rebuild; otherwise
@@ -2895,6 +3017,9 @@ impl Engine {
                 if DAEMON_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in daemon-state relation (program / head / rev_advanced); pick another name", d.name);
                 }
+                if CATALOG_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is the built-in self-describing relation catalog (rel_catalog); pick another name", d.name);
+                }
                 match closures.get(&d.name) {
                     Some(edge) => self.declare_closure(d, edge)?,
                     None => self.declare(d)?,
@@ -2937,6 +3062,7 @@ impl Engine {
         for d in type_shape_rel_decls() { self.declare(&d)?; }
         for d in type_lgg_rel_decls() { self.declare(&d)?; }
         for d in daemon_rel_decls() { self.declare(&d)?; }
+        for d in catalog_rel_decls() { self.declare(&d)?; }
         Ok(())
     }
 
@@ -3059,6 +3185,26 @@ impl Engine {
         let table = tbl(rel);
         self.db.exec(&format!("DELETE FROM {table}"))?;
         self.db.insert_rows(&table, cols, rows)
+    }
+
+    /// Populate the self-describing `rel_catalog`: one row per built-in relation,
+    /// joining the declarations (for the column list) with `builtin_rel_docs`
+    /// (for group + summary). Static — independent of any scanned file — so it is
+    /// the same every tick; emitted only when a program reads it. The columns are
+    /// rendered as `(a, b, c)` so a generator can splice them straight into a doc
+    /// table. Returns true (rows always present) to match the refresh-gate shape.
+    fn refresh_catalog_rel(&self) -> Result<bool> {
+        let docs: std::collections::HashMap<&str, (&str, &str)> =
+            builtin_rel_docs().iter().map(|(n, g, s)| (*n, (*g, *s))).collect();
+        let rows: Vec<Vec<Value>> = all_builtin_decls().iter().map(|d| {
+            let cols = format!("({})",
+                d.cols.iter().map(|c| c.name.clone()).collect::<Vec<_>>().join(", "));
+            let (group, summary) = docs.get(d.name.as_str()).copied().unwrap_or(("", ""));
+            vec![Value::Text(d.name.clone()), Value::Text(group.to_string()),
+                 Value::Text(cols), Value::Text(summary.to_string())]
+        }).collect();
+        self.refresh_rel("rel_catalog", &["name", "group", "cols", "doc"], &rows)?;
+        Ok(true)
     }
 
     /// Project the persisted daemon-state meta tables (`_program` / `_ref` /
