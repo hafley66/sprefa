@@ -1,0 +1,42 @@
+# Tier-1 cross-language flow: same OpenAPI source of truth as flow.dl, but the
+# participants are SCIP-symbol-keyed, not name-keyed. The Rust getPet handler and
+# the TS getPet stub are DISTINCT symbols, so the handler/stub conflation in the
+# tier-0 page (flow.dl, where both tagged "impl") is gone. Requires an index.scip
+# at the scan root (populates scip_def/scip_ref); without one those rels are empty
+# and flow_sym is empty.
+
+rel src(p: file).
+src(p) <- scan("WORK", "**/*.rs", p, rev).
+src(p) <- scan("WORK", "**/*.ts", p, rev).
+
+# the contract: every operationId declared in the spec (source of truth).
+rel spec_op(op: text).
+spec_op(op) <- scan("WORK", "**/openapi.yaml", p, rev),
+  jsonp(p, rev, "paths.*.*.operationId", op).
+
+# a SCIP symbol's descriptor name: last "/"-segment, drop the "()." call suffix.
+# `…/getPet().` -> `getPet().` -> `getPet`.
+rel sym_seg(sym: text, seg: text).
+sym_seg(sym, split(sym, "/", -1)) <- scip_def(sym, _).
+rel sym_name(sym: text, name: text).
+sym_name(sym, split(seg, "(", 0)) <- sym_seg(sym, seg).
+
+# backend implementor: a DEF whose descriptor IS an operationId, in a Rust file.
+# The .rs filter is the role (the spec doesn't say "backend"; the repo does).
+rel impl_sym(op: text, sym: text, file: file).
+impl_sym(op, sym, f) <- spec_op(op), sym_name(sym, op), scip_def(sym, f),
+  ext = split(f, ".", -1), ext = "rs".
+
+# consumer: a REF whose descriptor IS an operationId. SCIP resolves it to the def
+# it truly binds to (def_file), so the TS call binds the TS stub, not the Rust
+# handler — the cross-language tie stays the operationId, never a resolved edge.
+rel client_sym(op: text, file: file, def_file: file).
+client_sym(op, f, df) <- spec_op(op), scip_ref(f, sym, df), sym_name(sym, op).
+
+rel flow_sym(op: text, role: text, file: file).
+flow_sym(op, "impl", f) <- impl_sym(op, _, f).
+flow_sym(op, "client", f) <- client_sym(op, f, _).
+
+? impl_sym(op, sym, file).
+? client_sym(op, file, def_file).
+? flow_sym(op, role, file).
