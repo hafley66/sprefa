@@ -344,28 +344,104 @@ fn body_effect_call_site_drains_with_full_env() {
     );
 }
 
-/// `@stream` (`sh*`) parses and desugars but the runtime is Phase 4: the tick
-/// bails loudly rather than silently producing nothing.
+/// A `sh*` stream executor: `run_stream` yields MANY rows per drain (one per
+/// output line), unlike `run` (one response). Models a subscription returning a
+/// batch of events.
+struct StreamMock {
+    out_rows: Vec<Vec<String>>,
+}
+
+impl EffectExec for StreamMock {
+    fn run(&self, _kind: &str, _args: &Map<String, Json>) -> Result<Vec<String>> {
+        Ok(self.out_rows.first().cloned().unwrap_or_default())
+    }
+    fn run_stream(&self, _kind: &str, _args: &Map<String, Json>) -> Result<Vec<Vec<String>>> {
+        Ok(self.out_rows.clone())
+    }
+}
+
+/// Phase 4: a `@stream` (`sh*`) subscription drains through `drain_streams`,
+/// fanning each output line into its own head row, and the job STAYS 'running'
+/// (a stream is long-lived). The bound body var (`repo`) echoes into every row;
+/// the out vars (`kind`,`at`) come from the line.
 #[test]
-fn stream_rule_parses_but_runtime_bails() {
+fn stream_subscription_fans_lines_and_stays_running() {
     let d = sandbox("stream");
+    let dbp = d.join("db");
     fs::write(
         d.join("p.dl"),
-        "rel watch(repo: str).\n\
+        "rel watch(repo: text).\n\
          watch(\"octo\").\n\
-         sh* events(repo) -> (kind: str, at: str) = `printf 'push\\n2026'`.\n\
-         rel event(repo: str, kind: str, at: str).\n\
+         sh* events(repo) -> (kind: text, at: text) = `printf '%s' '{repo}'`.\n\
+         rel event(repo: text, kind: text, at: text).\n\
          event(repo, kind, at) <- @stream watch(repo), events(repo) -> (kind, at).\n",
     )
     .unwrap();
     let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
-    let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
+    let conn = db::open(dbp.to_str()).unwrap();
     let mut eng = Engine::new(conn, d.clone());
-    let err = eng.tick(&prog, true).unwrap_err();
-    assert!(
-        err.to_string().contains("not yet wired"),
-        "expected a Phase-4 deferral bail: {err}"
-    );
+    eng.tick(&prog, true).unwrap();
+    // The stream queued one pending request (one watch row).
+    assert_eq!(rows(&dbp, "SELECT COUNT(*) FROM pending_effect"), vec![vec!["1".to_string()]]);
+
+    let exec = StreamMock {
+        out_rows: vec![
+            vec!["push".to_string(), "2026-01".to_string()],
+            vec!["pr".to_string(), "2026-02".to_string()],
+        ],
+    };
+    let n = eng.drain_streams(&prog, &exec).unwrap();
+    assert_eq!(n, 2, "two event lines fanned into two head rows");
+    eng.tick(&prog, true).unwrap();
+    let mut got = rows(&dbp, "SELECT repo, kind, at FROM rel_event ORDER BY kind");
+    got.sort();
+    assert_eq!(got, vec![
+        vec!["octo".to_string(), "pr".to_string(), "2026-02".to_string()],
+        vec!["octo".to_string(), "push".to_string(), "2026-01".to_string()],
+    ]);
+    // The subscription persists: the job is still 'running', never flipped 'done'.
+    assert_eq!(rows(&dbp, "SELECT state FROM pending_effect"), vec![vec!["running".to_string()]]);
+    // A second drain re-runs the live stream; identical lines OR IGNORE-dedup, so
+    // the head rel does not grow, and the job stays running.
+    assert_eq!(eng.drain_streams(&prog, &exec).unwrap(), 2);
+    eng.tick(&prog, true).unwrap();
+    assert_eq!(rows(&dbp, "SELECT COUNT(*) FROM rel_event"), vec![vec!["2".to_string()]]);
+    assert_eq!(rows(&dbp, "SELECT state FROM pending_effect"), vec![vec!["running".to_string()]]);
+}
+
+/// Phase 4 real-IO: `ShellEffectExec::run_stream` splits a subprocess's stdout
+/// into LINES x tab-separated slots (the `@tsv` convention, D-7). A two-line
+/// printf yields two head rows.
+#[test]
+fn shell_stream_splits_tsv_lines() {
+    let d = sandbox("stream_sh");
+    let dbp = d.join("db");
+    fs::write(
+        d.join("p.dl"),
+        "rel watch(repo: text).\n\
+         watch(\"octo\").\n\
+         sh* events(repo) -> (kind: text, at: text) = `printf 'push\\t2026-01\\npr\\t2026-02\\n'`.\n\
+         rel event(repo: text, kind: text, at: text).\n\
+         event(repo, kind, at) <- @stream watch(repo), events(repo) -> (kind, at).\n",
+    )
+    .unwrap();
+    let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let conn = db::open(dbp.to_str()).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    eng.tick(&prog, true).unwrap();
+    let exec = ShellEffectExec {
+        templates: sprefa_v5::engine::shell_templates(&prog),
+        n_out: async_effect_arity(&prog),
+        cwd: PathBuf::new(),
+    };
+    assert_eq!(eng.drain_streams(&prog, &exec).unwrap(), 2);
+    eng.tick(&prog, true).unwrap();
+    let mut got = rows(&dbp, "SELECT repo, kind, at FROM rel_event ORDER BY kind");
+    got.sort();
+    assert_eq!(got, vec![
+        vec!["octo".to_string(), "pr".to_string(), "2026-02".to_string()],
+        vec!["octo".to_string(), "push".to_string(), "2026-01".to_string()],
+    ]);
 }
 
 /// `check_effect`: an explicit body-effect call whose out-arity disagrees with

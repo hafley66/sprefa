@@ -51,6 +51,14 @@ fn async_bound_vars(rule: &Rule) -> Vec<String> {
 /// the slow part; the DB writes stay serial and batched).
 pub trait EffectExec: Sync {
     fn run(&self, kind: &str, args: &serde_json::Map<String, serde_json::Value>) -> Result<Vec<String>>;
+    /// A streaming/batch executor: each OUTPUT LINE becomes one response row,
+    /// split into the kind's output slots (a `@tsv` row, D-7). A `sh*` (`@stream`)
+    /// effect drains through this so one subprocess yields N head rows; the
+    /// default wraps `run` as a single row, so a plain mock exec still drives a
+    /// stream in tests. See `drain_streams`.
+    fn run_stream(&self, kind: &str, args: &serde_json::Map<String, serde_json::Value>) -> Result<Vec<Vec<String>>> {
+        Ok(vec![self.run(kind, args)?])
+    }
 }
 
 /// An `EffectExec` that shells out per request. `templates` keys on the effect
@@ -70,8 +78,10 @@ pub struct ShellEffectExec {
     pub cwd: PathBuf,
 }
 
-impl EffectExec for ShellEffectExec {
-    fn run(&self, kind: &str, args: &serde_json::Map<String, serde_json::Value>) -> Result<Vec<String>> {
+impl ShellEffectExec {
+    /// Render the template, spawn `sh -c`, return stdout. Shared by `run` (one
+    /// response, line-slotted) and `run_stream` (N responses, one per line).
+    fn spawn_stdout(&self, kind: &str, args: &serde_json::Map<String, serde_json::Value>) -> Result<String> {
         let tmpl = self.templates.get(kind)
             .ok_or_else(|| anyhow::anyhow!("no effect command registered for kind `{kind}`"))?;
         let mut cmdline = tmpl.clone();
@@ -105,9 +115,41 @@ impl EffectExec for ShellEffectExec {
             bail!("effect `{cmdline}` failed (exit {:?}): {}",
                   output.status.code(), String::from_utf8_lossy(&output.stderr).trim());
         }
+        Ok(stdout)
+    }
+}
+
+impl EffectExec for ShellEffectExec {
+    fn run(&self, kind: &str, args: &serde_json::Map<String, serde_json::Value>) -> Result<Vec<String>> {
+        let stdout = self.spawn_stdout(kind, args)?;
         let nout = self.n_out.get(kind).copied().unwrap_or(1);
         Ok(split_outputs(&stdout, nout))
     }
+
+    fn run_stream(&self, kind: &str, args: &serde_json::Map<String, serde_json::Value>) -> Result<Vec<Vec<String>>> {
+        let stdout = self.spawn_stdout(kind, args)?;
+        let nout = self.n_out.get(kind).copied().unwrap_or(1);
+        // Each non-empty line is one response row; its columns are tab-separated
+        // (the `@tsv` convention). A line short of `nout` tabs pads with empties;
+        // the last slot absorbs any extra tabs (so a body with tabs stays whole).
+        Ok(stdout.lines().filter(|l| !l.is_empty())
+            .map(|l| split_tsv(l, nout)).collect())
+    }
+}
+
+/// Split one stdout LINE into `nout` tab-separated slots (the per-row form of
+/// `split_outputs`, which splits a whole stdout by newline). The last slot
+/// absorbs any trailing tab-separated fields.
+fn split_tsv(line: &str, nout: usize) -> Vec<String> {
+    if nout == 0 { return Vec::new(); }
+    if nout == 1 { return vec![line.to_string()]; }
+    let fields: Vec<&str> = line.split('\t').collect();
+    let mut out: Vec<String> = (0..nout - 1)
+        .map(|i| fields.get(i).copied().unwrap_or("").to_string())
+        .collect();
+    let rest = if fields.len() > nout - 1 { fields[nout - 1..].join("\t") } else { String::new() };
+    out.push(rest);
+    out
 }
 
 /// Split shell stdout into `nout` response values: one per line, the last slot
@@ -131,7 +173,7 @@ pub fn async_effect_arity(prog: &Program) -> HashMap<String, usize> {
     let mut m = HashMap::new();
     for item in &prog.items {
         let Item::Rule(r) = item else { continue };
-        if !r.is_async() { continue; }
+        if !r.is_async() && !r.is_stream() { continue; }
         // After desugar every @async rule carries a body-effect; its `outs` are
         // the response columns (the stdout slots the executor fills). A rule
         // loaded without the frontend desugar (raw parse) falls back to the
@@ -2208,21 +2250,20 @@ impl Engine {
         // the executor and lands the response in the head rel at a later tick.
         // Neither is derived this tick (both excluded from all_derived below).
         let next_rules: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_next()).collect();
-        let async_rules: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_async()).collect();
-        // `@stream` (`sh*`) subscriptions parse and desugar to the body-effect
-        // model, but the long-lived reader-thread runtime is Phase 4. Bail loudly
-        // rather than silently produce nothing (the plan sequences streaming after
-        // the job table). Lifting this bail is the Phase 4 entry point.
-        if rules.iter().any(|r| r.is_stream()) {
-            bail!("@stream / sh* subscriptions parse but are not yet wired at runtime \
-                   (Phase 4: job table + reader thread); only @async effects run today");
-        }
-        // An @async body fires an effect over already-derived relations; a source
-        // op (scan/match/...) in the body has no meaning here (the effect, not the
+        // `@async` (one-shot request/response) and `@stream` (`sh*` subscription)
+        // share the emission path: both bind request args over the converged tick
+        // and queue a `pending_effect` row. They diverge at DRAIN time — an @async
+        // row runs once (`drain_effects`), a @stream row stays 'running' and fans
+        // output lines into the head rel each drain (`drain_streams`). `is_effect`
+        // is the union used for emission and the response-rel conflict checks.
+        let async_rules: Vec<&Rule> = rules.iter().copied()
+            .filter(|r| r.is_async() || r.is_stream()).collect();
+        // An effect body fires over already-derived relations; a source op
+        // (scan/match/...) in the body has no meaning here (the effect, not the
         // file system, is the IO). Reject it like a repo-sink.
         for r in &async_rules {
             if r.is_source() {
-                bail!("@async rule (rel `{}`) must be derived-style (no scan/match/ast/...); \
+                bail!("@async/@stream rule (rel `{}`) must be derived-style (no scan/match/ast/...); \
                        its body binds the request args over already-derived relations", r.head.rel);
             }
         }
@@ -5818,6 +5859,118 @@ impl Engine {
             tx.commit()?;
         }
         Ok(done_ids.len())
+    }
+
+    /// Drain `@stream` (`sh*`) subscriptions. Unlike `drain_effects` (one row per
+    /// request, then done), a stream effect produces MANY head rows per drain (one
+    /// per output line, D-7) and the job STAYS 'running' so it keeps yielding on
+    /// later drains. The cursor that advances a stream between drains is an
+    /// ordinary `@next` fact in the rule body (no special machinery here). Output
+    /// rows are batched into one `insert_rows` per head rel (the N+1 ban holds);
+    /// `OR IGNORE` dedups a line already seen, so a re-emitted cursor is harmless.
+    /// Returns the number of head rows appended. The daemon calls this alongside
+    /// `drain_effects` between ticks.
+    pub fn drain_streams(&mut self, prog: &Program, exec: &dyn EffectExec) -> Result<usize> {
+        // Head reassembly plan per @stream head rel: (head terms, response outs).
+        let mut plans: HashMap<String, (Vec<Term>, Vec<String>)> = HashMap::new();
+        for item in &prog.items {
+            let Item::Rule(r) = item else { continue };
+            if !r.is_stream() { continue; }
+            let (_, _, outs) = r.effect()
+                .ok_or_else(|| anyhow::anyhow!("@stream rule (rel `{}`) was not desugared to a \
+                    body-effect (frontend bug)", r.head.rel))?;
+            let out_vars: Vec<String> = outs.iter().map(|t| match t {
+                Term::Var(v) => Ok(v.clone()),
+                other => Err(anyhow::anyhow!("@stream effect output {other:?} (rel `{}`) must be a \
+                    fresh variable", r.head.rel)),
+            }).collect::<Result<_>>()?;
+            plans.insert(r.head.rel.clone(), (r.head.terms.clone(), out_vars));
+        }
+        if plans.is_empty() { return Ok(0); }
+        let kinds = shell_kinds(prog);
+
+        // Pending stream rows: queued (just subscribed) or running (live). Only a
+        // kind declared `sh*` is a stream; anything else is a one-shot (handled by
+        // `drain_effects`) and skipped here.
+        let pending: Vec<(String, String, String, String, String)> = {
+            let mut stmt = self.db.conn().prepare(
+                "SELECT id, kind, head_rel, args_json, full_json \
+                 FROM pending_effect WHERE state IN ('queued','running')")?;
+            let v = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
+                .filter_map(|x| x.ok()).collect();
+            v
+        };
+
+        // Subscribe a freshly-queued stream (queued -> running); a stream never
+        // returns to 'done' on its own (it is long-lived). Build the run set.
+        let mut work: Vec<(String, String,
+            serde_json::Map<String, serde_json::Value>,
+            serde_json::Map<String, serde_json::Value>)> = Vec::new();
+        for (id, kind, head_rel, args_json, full_json) in pending {
+            if kinds.get(&kind).copied() != Some(ShellKind::Stream) { continue; }
+            let head_rel = if head_rel.is_empty() { kind.clone() } else { head_rel };
+            if !plans.contains_key(&head_rel) { continue; }
+            self.db.conn().execute(
+                "UPDATE pending_effect SET state = 'running' WHERE id = ?1 AND state = 'queued'", [&id])?;
+            let args = match serde_json::from_str::<serde_json::Value>(&args_json)? {
+                serde_json::Value::Object(m) => m,
+                _ => bail!("pending_effect.args_json for `{kind}` is not a JSON object"),
+            };
+            let full = if full_json.is_empty() {
+                args.clone()
+            } else {
+                match serde_json::from_str::<serde_json::Value>(&full_json)? {
+                    serde_json::Value::Object(m) => m,
+                    _ => bail!("pending_effect.full_json for `{kind}` is not a JSON object"),
+                }
+            };
+            work.push((kind, head_rel, args, full));
+        }
+
+        // Each stream yields N rows (one per output line). Assemble head rows the
+        // same way `drain_effects` does, but fan over the line set.
+        let assembled: Vec<(String, Vec<Value>)> = work.par_iter()
+            .map(|(kind, head_rel, args, full)| {
+                let (head_terms, out_vars) = &plans[head_rel];
+                let lines = exec.run_stream(kind, args)?;
+                let mut rows = Vec::with_capacity(lines.len());
+                for out in lines {
+                    if out.len() != out_vars.len() {
+                        bail!("@stream executor for `{kind}` produced a row of {} value(s), expected \
+                               {} (one per effect output)", out.len(), out_vars.len());
+                    }
+                    let mut env = full.clone();
+                    for (v, o) in out_vars.iter().zip(out.iter()) {
+                        env.insert(v.clone(), serde_json::json!(o));
+                    }
+                    let row: Vec<Value> = head_terms.iter().map(|t| match t {
+                        Term::Str(s) => Value::Text(s.clone()),
+                        Term::Int(n) => Value::Int(*n),
+                        Term::Var(v) => json_to_value(env.get(v)),
+                        other => unreachable!("@stream head term {other:?} survived parse"),
+                    }).collect();
+                    rows.push((head_rel.clone(), row));
+                }
+                Ok(rows)
+            })
+            .collect::<Result<Vec<_>>>()?
+            .into_iter().flatten().collect();
+
+        if assembled.is_empty() { return Ok(0); }
+        let mut by_rel: HashMap<String, Vec<Vec<Value>>> = HashMap::new();
+        for (head_rel, row) in &assembled {
+            by_rel.entry(head_rel.clone()).or_default().push(row.clone());
+        }
+        for (head_rel, rows) in &by_rel {
+            let cols: Vec<String> = {
+                let meta = self.rels.get(head_rel)
+                    .ok_or_else(|| anyhow::anyhow!("@stream response relation `{head_rel}` is not declared"))?;
+                meta.cols.iter().map(|c| c.name.clone()).collect()
+            };
+            let col_refs: Vec<&str> = cols.iter().map(|s| s.as_str()).collect();
+            self.db.insert_rows(&tbl(head_rel), &col_refs, rows)?;
+        }
+        Ok(assembled.len())
     }
 
     /// Wipe derived tables and run the semi-naive fixpoint to convergence.

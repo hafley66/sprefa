@@ -285,7 +285,11 @@ impl Daemon {
         let n = {
             let prog = self.prog.lock().unwrap();
             let mut eng = self.eng.lock().unwrap();
-            eng.drain_effects(&prog, &exec)?
+            // One-shot @async requests, then long-lived @stream subscriptions: a
+            // stream yields N head rows per drain and stays 'running'.
+            let a = eng.drain_effects(&prog, &exec)?;
+            let s = eng.drain_streams(&prog, &exec)?;
+            a + s
         };
         self.touch();
         if n > 0 {
