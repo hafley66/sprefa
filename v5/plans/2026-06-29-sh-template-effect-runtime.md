@@ -438,7 +438,7 @@ removed its reason to exist.
 | 3 job-state machine + sh! exactly-once claim | LANDED | 7f7aef1 |
 | 4 @stream / sh* line fan-out (drain_streams) | LANDED | 6b504d1 |
 | 1b.2 collect(x) aggregate batch | LANDED | 7254a32 |
-| 1b.1 json/jsonp over a bound term | DEFERRED (see below) | — |
+| 1b.1 json/jsonp over a bound term (hybrid join+extract) | LANDED | d469631 |
 | 5 native http delegate-wrapper | DEFERRED (plan-optional) | — |
 
 `pending_effect` is now `(id, kind, head_rel, args_json, full_json, req_tx, done,
@@ -448,17 +448,19 @@ long-lived (`drain_streams`, stays running). `EffectExec::run_stream` +
 `split_tsv` make a stdout line = a response row (D-7); a `collect` batch and a
 `sh*` stream share that line fan-out.
 
-**1b.1 DEFERRED — needs a new hybrid evaluator, and D-7's shell-jq path now
-covers the case.** `json`/`jsonp` run only in the file-scan source evaluator
-(`parse_file`), which requires a scan. The headline term-source use
-(`page(repo,200,_,body), jsonp(body,"stargazerCount",n)`) reads `body` from a
-RELATION JOIN — a derived SQL-lowered rule, where tree-sitter can't run. It needs
-a post-join extraction arm (run the join, then per joined row parse the bound
-string and fan out), which the engine does not have. Per D-7 the designated
-response-extraction route is the CLI's own jq/`-q`/`--query` emitting `@tsv`
-(stdout line = response row), and that path is fully wired now (`run_stream` +
-`split_tsv` + `collect` fan-out). In-engine term-json is the convenience "no
-shell-jq" case; build it only if the hybrid evaluator is wanted for its own sake.
+**1b.1 LANDED — the hybrid join+extract evaluator (d469631).** `JsonP`/`Json`
+carry `src: Term` + `rev: Option<Term>`: `rev=Some` is the file form (span-located,
+unchanged), `rev=None` is the term form (src is a bound `str` value). The parser
+disambiguates by where the jpath/pattern sits, so both coexist unambiguously. A
+term-form rule (`page(repo,200,_,body), jsonp(body,"stars",n)`) is NOT a source
+(is_source excludes rev=None); `eval_extract_rules` projects the relational join
+to SQL (binding the content var), runs `run_data`/`run_pattern` over each bound
+string, fans extracted bindings into head rows (Cmp-post-filtered), one
+insert_rows per head rel. It runs AFTER the derived fixpoint (inputs populated),
+then a second fixpoint pass lets consumers re-derive when the extraction moved.
+v1 limits: one extract op per rule, json format only for term sources, no span
+id, wired in the full tick (the daemon's effect re-tick), not the `--changed`
+incremental path. D-7's shell-jq route still covers the no-engine-parse case.
 
 **5 DEFERRED — plan-sanctioned.** Bulk graphql (`collect`, now landed) collapsed
 N requests to one, which removed native http's reason to exist; curl/gh cover the
