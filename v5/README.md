@@ -281,8 +281,11 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `created` | created | `(path, name, email, ts)` | files added since their first appearance, with author name/email/timestamp |
 | `df_edge` | dataflow | `(from, to)` | intra-procedural dataflow dependency edge |
 | `df_node` | dataflow | `(id, kind, var, fn, file, line)` | intra-procedural dataflow node (call_res/assign/...); id is file::line::kind |
+| `df_param` | dataflow | `(id, pos)` | (param df_node id, positional index); index counts typed params only (self skipped) so it aligns with type_sig.pos for node-level type joins |
+| `doc_comment` | type | `(repo, sym, line, text)` | doc comment per type_entity sym: (repo, sym, line, text); AST-located per language (Rust #[doc] attrs, Kotlin KDoc sibling, TS leading /** */) |
 | `doc_node` | doc | `(repo, file, line, kind, name, parent)` | structural nodes from non-source text (markdown headings + code blocks via tree-sitter-md: ATX/setext headings, fenced/indented blocks); parent is the enclosing heading |
 | `doc_ref` | doc | `(repo, file, line, sym, kind, matched_name)` | doc-to-code bridge: name-matches doc_node headings to type_entity symbols (exact + normalized) and scans code blocks for identifier mentions; empty unless the program also uses type relations |
+| `doc_tag` | type | `(repo, sym, tag, arg, text)` | structured doc tags per sym: (repo, sym, tag, arg, text); @param/@returns/@deprecated for JSDoc/KDoc, # Section headings for rustdoc |
 | `file` | core | `(repo, rev, path, content)` | scanned files, keyed by (repo, rev, path, content) |
 | `head` | daemon | `(repo, name, oid)` | git HEAD per repo (repo, ref name, oid) |
 | `loop_over` | dataflow | `(file, start, end, var, collection, fn)` | one row per loop with its span, iter var, and collection |
@@ -325,22 +328,48 @@ The table above is generated from the engine's self-describing `rel_catalog` by 
 
 ## CLI
 
+Two usage forms, then the flag reference:
+
 | invocation | effect |
 |---|---|
 | `dl prog.dl` | run; print `?` queries as TSV |
 | `dl` (no positional) | discovery: merge every `<root>/.dl/*.dl` (filename order, shared `rel` decls dedupe); auto-cache at `.dl/cache.db` (gitignored automatically) |
-| `--root <dir>` | source root (default: nearest `.git` ancestor) |
-| `--db <path>` | persist to SQLite (default: in-memory; discovery mode defaults to the cache). Derived tables land as plain-TEXT `rel_<name>` tables, queryable by anything that reads SQLite |
-| `--check` | render `diag` to stderr. Exit 0 clean, 2 on any `error`-severity row, 1 broken program |
-| `--diag-json` | `--check` with diagnostics as a JSON array on stdout |
-| `--query-json` | `?` results as JSON-lines `{query, columns, rows, count}` |
-| `--lsp` | LSP server over stdio; `diag` rows become live squiggles |
-| `--watch` | re-tick on file changes |
-| `--changed <path>` | one incremental tick for changed paths (repeatable) |
-| `--verify "<cmd>"` | transactional codemod (christmas #14): run the program (applying `gen` edits through a write journal), then run `<cmd>` as a checker in the root. Keep the edits if it exits 0; otherwise restore every touched file to its pre-run bytes and exit 1. Apply, test, keep-if-pass — pair with an sg-metavar `gen(:replace)` rewrite to safely roll a structural codemod across a tree |
-| `--move OLD=NEW [--repo slug\|*] [--fix]` | full file move; dry-run prints the plan unless `--fix`. `.rs`: `use`-path rewriting against discovered crate roots — bare uses, brace heads, AND brace-inner leaves (`use crate::{old::A, b}`); the moved file's own `super::` imports re-anchor; `--fix` renames on disk and re-homes the `mod` decl (creating the parent-module chain, promoting a private decl to `pub(crate)` when it leaves the crate root). `.kt`: import rewriting from the package delta under the file's source root; `--fix` renames and rewrites the moved file's `package` decl (wildcard imports and same-package bare uses are counted loudly, not rewritten). A moved file's child `mod x;` decls do not follow — counted loudly |
-| `--profile` (or `DL_PROFILE=1`) | log slow SQL statements (threshold `DL_PROFILE_SQL_MS`, default 25ms), per-repo×rev scan times, tick phase breakdown, per-tick statement counts, slow `cmd` invocations (≥250ms) |
-| `--cmd-budget N` (or `DL_CMD_BUDGET`) | cap `cmd` invocations per tick; over budget errors loudly (never silent truncation). Default unlimited |
+
+The flag table below is generated from the clap `Cli` struct (each flag's
+`///` doc-comment) by [examples/cli-doc.dl](examples/cli-doc.dl) via `dl
+--cli-md`, so it can't drift from the parser: every flag auto-appears, and a
+flag with no doc-comment renders an empty cell (visible drift). Do not
+hand-edit between the markers; to change a row, edit the doc-comment in
+[src/main.rs](src/main.rs), rebuild, and rerun the generator. Daemon
+lifecycle, the two-daemon model (per-root vs rootless serving), the RPC
+surface, and env vars: [docs/daemon.md](docs/daemon.md).
+
+<!-- BEGIN: cli -->
+| flag | effect |
+|---|---|
+| `--changed <CHANGED>` | Drive one incremental tick for these changed paths (the delta path the watcher uses), instead of a full run. Repeatable |
+| `--check` | Lint/ban mode: render the `diag` relation to stderr. Exit 0 clean, 2 if any `error`-severity row exists (Claude Code's blocking-hook code), 1 on a broken program. For pre-commit / CI / Claude Code hooks. See docs/rails.md |
+| `--cmd-budget <CMD_BUDGET>` | Cap `cmd` invocations per tick (or DL_CMD_BUDGET); over budget is a loud error, never a silent truncation. Default: unlimited |
+| `--daemon` | Run as the long-lived daemon foreground (logs to stderr, ignores idle timeout). Usually invoked internally by spawn-if-missing; passing this flag explicitly is the debug path. See plans/2026-06-21-daemon-and-menu-bar.md |
+| `--db <DB>` | Persist derived tables to a SQLite db at this path (default: in-memory; discovery mode defaults to `<root>/.dl/cache.db`). Derived relations land as plain-TEXT `rel_<name>` tables, queryable by anything that reads SQLite |
+| `--diag-json` | Like --check but emit the diagnostics as a JSON array on stdout |
+| `--fix` | With --move, write the rewritten files instead of previewing |
+| `--load <LOAD>` | Load a script into the running daemon as a WATCHED program: joins the loaded set, runs on every tick, hot-reloads on edit. Omit `--root` to target the global rootless serving daemon |
+| `--load-once <LOAD_ONCE>` | Load a script ONE-TIME: eval it on a throwaway engine, print the `?` query results, persist nothing. Same target rules as `--load` |
+| `--lsp` | Run as an LSP server over stdio: the program's `diag` relation becomes live editor diagnostics (lint on open/save). See docs/lsp.md |
+| `--move <MOVE>` | Auto-refactor: rewrite `use`-path references for a module move `OLD_FILE=NEW_FILE` (repo-relative Rust paths). Dry-run unless --fix. Repeatable. Ignores the `program` positional |
+| `--no-daemon` | Force the in-process path this invocation (do not auto-attach). Same as `DL_NO_DAEMON=1`. Useful when the daemon socket is wedged |
+| `--profile` | Profile mode (or DL_PROFILE=1): log slow SQL statements (threshold DL_PROFILE_SQL_MS, default 25), per-repo scan times, tick phase breakdown, and per-tick statement counts |
+| `--query-json` | Emit `?` query results as JSON-lines (one object per query: {query, columns, rows, count}) instead of the human TSV block |
+| `--repo <REPO>` | With --move, which repo to rewrite: a config slug, or `*`/`all` for every configured repo. Omitted = the --root repo (self) |
+| `--root <ROOT>` | Source root. When omitted, defaults to the nearest `.git` ancestor of the program file (the repo it lives in), else the current directory |
+| `--stdio` | Ignored no-op alias for `--lsp`. vscode-languageclient, coc.nvim, and neovim's lspconfig all append `--stdio` when spawning an LSP server; accept it so `dl` drops into any client without extension-specific arg gymnastics. Stdio is the only transport either way |
+| `--stop` | Send `shutdown` to the daemon on `<root>/.dl/daemon.sock` and exit |
+| `--tick-audit` | After each tick, print every relation's row count (or DL_TICK_AUDIT=1) |
+| `--tray` | With --daemon: spawn the menu bar tray icon (macOS v1; Windows/Linux deferred). The main thread runs the tray event loop; the accept loop moves off-main. Implies --daemon |
+| `--verify <VERIFY>` | Verify-rollback: run the program (applying `gen` edits), then run this shell command as a checker in the root. Keep the edits only if it exits 0; otherwise restore every touched file to its pre-run state and exit 1. Transactional codemod — apply, test, keep-if-pass. See christmas #14 |
+| `--watch` | Re-tick on file changes in the source root (in-process watcher, the pre-daemon path). For the warm long-lived watcher, use `--daemon` |
+<!-- END: cli -->
 
 ## Git hook / Claude Code hook
 
@@ -501,6 +530,7 @@ All in [examples/](examples/), runnable as `dl examples/<name>.dl --root .`:
 | [src/scc.rs](src/scc.rs) | closure / SCC condensation |
 | [src/spine.rs](src/spine.rs) / [src/datapath.rs](src/datapath.rs) | ref-spine IDs, located spans |
 | [src/lsp.rs](src/lsp.rs) | the LSP server |
+| [src/daemon.rs](src/daemon.rs) / [src/rpc.rs](src/rpc.rs) / [src/tray.rs](src/tray.rs) | warm-state daemon + spawn-if-missing client, JSON-RPC codec, menu-bar tray (see [docs/daemon.md](docs/daemon.md)) |
 | [src/rspath.rs](src/rspath.rs) / [src/ktpath.rs](src/ktpath.rs) / [src/refactor.rs](src/refactor.rs) | `--move` rewriting (Rust use-paths / Kotlin imports) |
 | [src/scip_import.rs](src/scip_import.rs) | SCIP index ingestion |
 | [docs/data-model.md](docs/data-model.md) | the (repo, path, rev) coordinate contract |

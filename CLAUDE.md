@@ -222,6 +222,43 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       silently losing rows. Test: `tests/mixed_source_derived.rs`. anim-self.dl's
       pin/fpin -> span_of split IS the sanctioned shape.
 
+- [x] **doc-comment spine (Tier 1/2 doc gen)** (main, local, uncommitted): two
+      new builtin rels riding the `TypeFacts` extractor (one parse, populated in
+      `refresh_type_rels`): **doc_comment**(repo, sym, line, text) = the cleaned
+      doc block per `type_entity` sym; **doc_tag**(repo, sym, tag, arg, text) =
+      structured split. Per-language AST locators in typegraph.rs: Rust =
+      syn `#[doc]` attrs (so `#[derive]` between doc and decl is a non-issue),
+      Kotlin = tree-sitter preceding KDoc sibling, TS = oxc byte-association
+      (`/** */` → nearest anchor with whitespace-only gap; top-level + class
+      methods + var-fns, decorated classes skipped). Tags: shared `parse_jsdoc_tags`
+      (`@param`/`@returns`/`@deprecated`, `{type}` dropped, name→arg) for JSDoc/KDoc;
+      `parse_rust_sections` (`# Panics`/`# Examples` → section tags) for rustdoc.
+      `DOC_TEXT_RELS` gate + reserved-name guard; `doc_text_rels_used` triggers
+      `refresh_type_rels` so a doc-only program works. Tests: doc_comment.rs e2e
+      (all 3 langs, both tiers). Example: `examples/doc-coverage.dl` (undocumented-
+      API rail via `!doc_comment`). NOT a CI gate (docs). Survey of cross-lang doc
+      conventions in chat_log; Python/Go need their own TypeLang first (SCIP-only
+      today). See [[project_doc_comment_spine]].
+
+- [x] **interprocedural value flow (typed, SCIP-resolved)** (main, local,
+      uncommitted): `examples/flow-interproc.dl` + `tests/it/flow_interproc.rs`.
+      Unions the intra-proc `df_edge` lift with interprocedural hops into one
+      `flow_edge`; `closure(flow_edge)` walks value flow ACROSS fns — the join the
+      df_* lift and the scip_*/call_* graph couldn't make alone. FORWARD hop: an
+      arg feeding a `call_res` flows into the resolved callee's params. BACKWARD
+      hop: new `ret` df_node kind (Rust `Expr::Return` + block tail; Kotlin
+      jump_expression + body tail; TS ReturnStatement + arrow expr-body) lets a
+      value passed in, transformed, returned reach the caller's call_res end to
+      end. Resolution rides `call_edge` (SCIP-preferred already; dodges the
+      df_node line-base gotcha — Rust 1-based vs Kotlin/TS 0-based). TS arrow /
+      fn-expression consts now lifted as their own fn scope (`ts_lift_fn`). New
+      builtin rel `df_param(id, pos)` (typed-param index, self-skipped to align
+      with `type_sig.pos`) powers the node-level `flow_node_type` view. Limits
+      (honest, in the .dl header): positional-blind forward hop,
+      context-insensitive. Line-base normalization deliberately skipped (would
+      desync loop_over/nest spans). Suite green: it 306/0/3, lib 162/0/1. See
+      [[project_interproc_flow]].
+
 ### Open (sprefa type graph)
 - [ ] Optional: migrate the deck graph (`examples/anim-self.dl` + anim AtlasPanel)
       from name-keyed `type_edge` to sym-keyed `type_link` + `type_entity` kinds

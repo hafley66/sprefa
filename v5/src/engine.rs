@@ -109,7 +109,7 @@ const CALL_RELS: [&str; 6] = ["call_def", "call_site", "call_edge", "call_edge_r
 /// collection; `nest(call_id, loop_id, depth, collection)` records each call's
 /// enclosing loop nest, composing over `call_edge` into symbolic Big-O
 /// ("depth-N over C") without resolving trip counts. See `typegraph::DataflowFacts`.
-const DATAFLOW_RELS: [&str; 5] = ["df_node", "df_edge", "loop_over", "allocates", "nest"];
+const DATAFLOW_RELS: [&str; 6] = ["df_node", "df_edge", "loop_over", "allocates", "nest", "df_param"];
 
 /// Document structure from non-source text (markdown today; comments and other
 /// tree-sitter grammars to follow via `ingest::IngestLang`). `doc_node` is one row
@@ -120,6 +120,14 @@ const DATAFLOW_RELS: [&str; 5] = ["df_node", "df_edge", "loop_over", "allocates"
 /// `_file`'s document-typed files (a source rule scanning `**/*.md` feeds `_file`,
 /// same as the source langs).
 const DOC_RELS: [&str; 2] = ["doc_node", "doc_ref"];
+
+/// Doc comments attached to declared entities (Tier 1/2 doc gen). `doc_comment`
+/// is one row per documented `type_entity`: (repo, sym, line, text), the cleaned
+/// block bound to the same sym. `doc_tag` is the structured split: (repo, sym,
+/// tag, arg, text) where tag is `param`/`returns`/`deprecated`/`section`/... .
+/// Both are populated in `refresh_type_rels` from the one parse that already
+/// builds `type_entity`, by the per-language AST locators in `typegraph`.
+const DOC_TEXT_RELS: [&str; 2] = ["doc_comment", "doc_tag"];
 
 /// Compiler-backed SCIP importer. `scip_edge` is file-to-file dependency data
 /// extracted from definition/reference occurrences in an existing index.scip.
@@ -259,6 +267,7 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
         .into_iter()
         .chain(module_rel_decls())
         .chain(type_rel_decls())
+        .chain(doc_text_rel_decls())
         .chain(call_rel_decls())
         .chain(dataflow_rel_decls())
         .chain(doc_rel_decls())
@@ -314,6 +323,9 @@ pub fn builtin_rel_docs() -> &'static [(&'static str, &'static str, &'static str
         ("type_entity", "type", "every declared type; sym is file::kind::name, the cross-graph join key; scip_ref overrides name resolution when a SCIP index is present"),
         ("type_sig", "type", "type signature slots (params, fields) per sym"),
         ("type_link", "type", "cross-type links not carried by type_edge (SCIP-resolved sym to sym)"),
+        // doc comments attached to entities (Tier 1/2 doc gen).
+        ("doc_comment", "type", "doc comment per type_entity sym: (repo, sym, line, text); AST-located per language (Rust #[doc] attrs, Kotlin KDoc sibling, TS leading /** */)"),
+        ("doc_tag", "type", "structured doc tags per sym: (repo, sym, tag, arg, text); @param/@returns/@deprecated for JSDoc/KDoc, # Section headings for rustdoc"),
         // call graph: defs, sites, resolved edges, classification.
         ("call_def", "call", "every callable; sym is file::kind::name"),
         ("call_site", "call", "each call occurrence; caller is the resolved fn sym, callee the bare text; changed_line joins here for line-scoped rails"),
@@ -327,6 +339,7 @@ pub fn builtin_rel_docs() -> &'static [(&'static str, &'static str, &'static str
         ("loop_over", "dataflow", "one row per loop with its span, iter var, and collection"),
         ("allocates", "dataflow", "one row per fn whose body builds a collection (Vec/HashMap/String ctor, .collect/.clone/.to_string)"),
         ("nest", "dataflow", "one row per (call, enclosing loop); depth is nesting rank (1=outermost); raw material for symbolic Big-O over call_edge"),
+        ("df_param", "dataflow", "(param df_node id, positional index); index counts typed params only (self skipped) so it aligns with type_sig.pos for node-level type joins"),
         // doc-to-code bridge.
         ("doc_node", "doc", "structural nodes from non-source text (markdown headings + code blocks via tree-sitter-md: ATX/setext headings, fenced/indented blocks); parent is the enclosing heading"),
         ("doc_ref", "doc", "doc-to-code bridge: name-matches doc_node headings to type_entity symbols (exact + normalized) and scans code blocks for identifier mentions; empty unless the program also uses type relations"),
@@ -426,6 +439,17 @@ fn type_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
+fn doc_text_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "doc_comment".into(), cols: vec![
+            c("repo", Type::Text), c("sym", Type::Text), c("line", Type::Int), c("text", Type::Text)] },
+        RelDecl { name: "doc_tag".into(), cols: vec![
+            c("repo", Type::Text), c("sym", Type::Text), c("tag", Type::Text),
+            c("arg", Type::Text), c("text", Type::Text)] },
+    ]
+}
+
 fn call_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -480,6 +504,11 @@ fn dataflow_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "nest".into(), cols: vec![
             c("call_id", Type::Text), c("loop_id", Type::Text),
             c("depth", Type::Int), c("collection", Type::Text)] },
+        // (param df_node id, positional index) — the index counts only typed
+        // params (the Rust receiver `self` is skipped), so it aligns with
+        // type_sig's `pos`. Lets a query bind a specific param node to its
+        // declared type at node granularity, not just per-fn.
+        RelDecl { name: "df_param".into(), cols: vec![c("id", Type::Text), c("pos", Type::Int)] },
     ]
 }
 
@@ -680,6 +709,8 @@ fn classify_call_kind(callee: &str) -> Option<&'static str> {
 fn module_rels_used(prog: &Program) -> bool { rels_used(prog, &MODULE_RELS) }
 
 fn type_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_RELS) }
+
+fn doc_text_rels_used(prog: &Program) -> bool { rels_used(prog, &DOC_TEXT_RELS) }
 
 fn call_rels_used(prog: &Program) -> bool { rels_used(prog, &CALL_RELS) }
 
@@ -2005,7 +2036,7 @@ impl Engine {
             self.refresh_module_rels()?;
             phase("module-rels", t);
         }
-        if type_rels_used(prog) || type_shape_rels_used(prog) || type_lgg_rels_used(prog) {
+        if type_rels_used(prog) || type_shape_rels_used(prog) || type_lgg_rels_used(prog) || doc_text_rels_used(prog) {
             let t = std::time::Instant::now();
             self.refresh_type_rels()?;
             phase("type-rels", t);
@@ -2275,9 +2306,10 @@ impl Engine {
         if files_changed {
             self.refresh_builtin_rels()?;
             for b in BUILTIN_RELS { changed_source_rels.insert(b.to_string()); }
-            if type_rels_used(prog) || type_shape_rels_used(prog) || type_lgg_rels_used(prog) {
+            if type_rels_used(prog) || type_shape_rels_used(prog) || type_lgg_rels_used(prog) || doc_text_rels_used(prog) {
                 self.refresh_type_rels()?;
                 for t in TYPE_RELS { changed_source_rels.insert(t.to_string()); }
+                for t in DOC_TEXT_RELS { changed_source_rels.insert(t.to_string()); }
             }
             if call_rels_used(prog) {
                 self.refresh_call_rels()?;
@@ -2969,11 +3001,14 @@ impl Engine {
                 if TYPE_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in type-graph relation (type_edge / type_edge_rev / type_entity / type_sig / type_link); pick another name", d.name);
                 }
+                if DOC_TEXT_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is a built-in doc relation (doc_comment / doc_tag); pick another name", d.name);
+                }
                 if CALL_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in call-graph relation (call_def / call_site / call_edge / call_edge_rev / call_name / call_kind); pick another name", d.name);
                 }
                 if DATAFLOW_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in dataflow relation (df_node / df_edge / loop_over / allocates / nest); pick another name", d.name);
+                    bail!("{} is a built-in dataflow relation (df_node / df_edge / loop_over / allocates / nest / df_param); pick another name", d.name);
                 }
                 if DOC_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in document relation (doc_node / doc_ref); pick another name", d.name);
@@ -3038,6 +3073,7 @@ impl Engine {
         for d in builtin_rel_decls() { self.declare(&d)?; }
         for d in module_rel_decls() { self.declare(&d)?; }
         for d in type_rel_decls() { self.declare(&d)?; }
+        for d in doc_text_rel_decls() { self.declare(&d)?; }
         for d in call_rel_decls() { self.declare(&d)?; }
         for d in dataflow_rel_decls() { self.declare(&d)?; }
         for d in doc_rel_decls() { self.declare(&d)?; }
@@ -3760,6 +3796,9 @@ impl Engine {
         // other's rows — each repo's entity survives.
         let mut seen_entity: HashSet<(&str, &str)> = HashSet::new();
         let mut seen_link: HashSet<(String, String, &str)> = HashSet::new();
+        let mut doc_rows: Vec<Vec<Value>> = Vec::new();
+        let mut tag_rows: Vec<Vec<Value>> = Vec::new();
+        let mut seen_doc: HashSet<(&str, &str)> = HashSet::new();
         for (repo, path, rev, f) in &facts {
             // historic name-keyed edges, unchanged
             for edge in &f.edges {
@@ -3799,11 +3838,24 @@ impl Engine {
                     }
                 }
             }
+            // Doc comments per entity (Tier 1) + their structured tags (Tier 2).
+            // Same repo-qualified sym + first-seen dedup as the entity rows, so a
+            // file present at two revs doesn't duplicate (doc_comment has no rev).
+            for doc in &f.docs {
+                if !seen_doc.insert((repo.as_str(), doc.sym.as_str())) { continue; }
+                let qsym = format!("{repo}::{}", doc.sym);
+                doc_rows.push(vec![t(repo), t(&qsym), i(doc.line), t(&doc.text)]);
+                for tag in &doc.tags {
+                    tag_rows.push(vec![t(repo), t(&qsym), t(&tag.tag), t(&tag.arg), t(&tag.text)]);
+                }
+            }
         }
         self.refresh_rel("type_edge_rev", &["from", "to", "kind", "rev"], &edge_rev_rows)?;
         self.refresh_rel("type_entity", &["repo", "sym", "name", "kind", "parent", "file", "line"], &entity_rows)?;
         self.refresh_rel("type_sig", &["sym", "slot", "pos", "ref"], &sig_rows)?;
         self.refresh_rel("type_link", &["src", "dst", "kind"], &link_rows)?;
+        self.refresh_rel("doc_comment", &["repo", "sym", "line", "text"], &doc_rows)?;
+        self.refresh_rel("doc_tag", &["repo", "sym", "tag", "arg", "text"], &tag_rows)?;
         self.rebuild_legacy_type_rels()?;
         Ok(())
     }
@@ -4243,6 +4295,8 @@ impl Engine {
         let mut loop_rows: Vec<Vec<Value>> = Vec::new();
         let mut alloc_rows: Vec<Vec<Value>> = Vec::new();
         let mut nest_rows: Vec<Vec<Value>> = Vec::new();
+        let mut param_rows: Vec<Vec<Value>> = Vec::new();
+        let mut seen_param: HashSet<&str> = HashSet::new();
         let mut seen_node: HashSet<&str> = HashSet::new();
         let mut seen_edge: HashSet<(&str, &str)> = HashSet::new();
         let mut seen_loop: HashSet<(&str, u32)> = HashSet::new();
@@ -4271,6 +4325,11 @@ impl Engine {
                     nest_rows.push(vec![t(&ns.call_id), t(&ns.loop_id), i(ns.depth), t(&ns.collection)]);
                 }
             }
+            for (id, pos) in &f.param_pos {
+                if seen_param.insert(id.as_str()) {
+                    param_rows.push(vec![t(id), i(*pos)]);
+                }
+            }
         }
 
         self.refresh_rel("df_node", &["id", "kind", "var", "fn", "file", "line"], &node_rows)?;
@@ -4278,6 +4337,7 @@ impl Engine {
         self.refresh_rel("loop_over", &["file", "start", "end", "var", "collection", "fn"], &loop_rows)?;
         self.refresh_rel("allocates", &["fn"], &alloc_rows)?;
         self.refresh_rel("nest", &["call_id", "loop_id", "depth", "collection"], &nest_rows)?;
+        self.refresh_rel("df_param", &["id", "pos"], &param_rows)?;
         Ok(())
     }
 

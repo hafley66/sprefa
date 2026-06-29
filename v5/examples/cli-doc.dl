@@ -1,0 +1,56 @@
+# cli-doc.dl — keep the README CLI flag table fresh from the clap `Cli` struct
+# in src/main.rs. Same shape as op-table.dl: flag NAMES come from the source
+# (the struct fields under an `#[arg(long...)]`), the prose is the README's own
+# rows re-emitted verbatim, and a flag with no row auto-appears as a stub so
+# drift is visible. Reacts to a main.rs edit directly — no compiled binary, no
+# rebuild — because the watcher re-ticks when the scanned source file changes.
+#
+# Manual:  dl v5/examples/cli-doc.dl --root .
+# Daemon:  dl --daemon v5/examples/cli-doc.dl --root .
+#          Writes README.md (a watched non-program file) → converges, no respawn.
+# Rerun converges (gen writes only when bytes differ).
+
+# A clap arg attribute line: `#[arg(long)]` / `#[arg(long = "move")]` / `#[arg(long, hide = true)]`.
+rel arg_attr(line: int).
+arg_attr(line) <- scan("WORK", "v5/src/main.rs", p, rev),
+  match(p, rev, /#\[arg\(long/, line).
+
+# A struct field decl: `    fieldname: Type`. Trailing `_` (raw-ident workaround,
+# e.g. `move_`) is dropped so the kebab name matches clap's derived long flag.
+rel field_decl(line: int, fname: text).
+field_decl(line, fname) <- scan("WORK", "v5/src/main.rs", p, rev),
+  match(p, rev, /^    (?<fname>[a-z0-9]+(?:_[a-z0-9]+)*)_*: /, line).
+
+# A flag = a field whose immediately-preceding line is an `#[arg(long...)]`. That
+# adjacency excludes the bare `programs` positional (no attr above it) and any
+# stray `name: Type` line elsewhere in the file. Field name → kebab long flag.
+rel flag(name: text).
+flag(name) <- arg_attr(la), field_decl(lf, fname), lf = la + 1,
+  name = replace(fname, "_", "-").
+
+# The marker pair wrapping the whole table (header + separator + rows).
+rel block(p: file, l0: int, l1: int).
+block(p, l0, l1) <- scan("WORK", "v5/README.md", p, rev),
+  comment(p, rev, /BEGIN: cli/, /END: cli/, l0, l1).
+
+# Every README flag row, with its `--flag` name (SOURCE rule: scan+match only).
+rel readme_row_raw(p: file, line: int, flag: text, row: text).
+readme_row_raw(p, line, flag, row) <- scan("WORK", "v5/README.md", p, rev),
+  match(p, rev, /(?<row>\| `--(?<flag>[a-z][a-z0-9-]*)[^|]*\| .+)/, line).
+
+# Scope the rows to the block. Joining on the flag name keeps only rows whose
+# flag still exists in main.rs, so a removed flag drops out of the table.
+rel readme_flag_row(flag: text, row: text).
+readme_flag_row(flag, row) <- readme_row_raw(p, line, flag, row), block(p, l0, l1),
+  line > l0, line < l1.
+
+# Header + separator (constant; body matches the block once).
+gen(p, l0, l1, "| flag | effect |") <- block(p, l0, l1).
+gen(p, l0, l1, "|---|---|") <- block(p, l0, l1).
+
+# Pass-through: re-emit each documented flag's row verbatim (alpha by row text).
+gen(p, l0, l1, "{row}") <- block(p, l0, l1), flag(name), readme_flag_row(name, row).
+
+# Stub: a flag in main.rs with no README row → drift made visible in the doc.
+gen(p, l0, l1, "| `--{name}` | _undocumented_ |") <- block(p, l0, l1), flag(name),
+  !readme_flag_row(name, _).

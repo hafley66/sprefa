@@ -1,0 +1,23 @@
+# doc-coverage.dl — the "undocumented API" rail, built on the doc spine. A
+# declared entity (type_entity) with no doc_comment row is flagged. Because
+# doc_comment is AST-located per language (rustdoc `///`, JSDoc `/** */`, KDoc),
+# this one rule fires across Rust, Kotlin, and TS without naming a language.
+#
+#   dl examples/doc-coverage.dl --root .          # stdout
+#   dl examples/doc-coverage.dl --root . --check  # exit 1 on any finding
+#   dl examples/doc-coverage.dl --root . --lsp    # squiggles
+#
+# Tier 2 bonus: a function documented but missing an @param/section for an arg
+# is a sharper lint — join doc_tag instead. Left as an exercise; this is the
+# Tier-1 coverage gate.
+
+rel diag(path: file, line: int, severity: text, code: text, msg: text).
+
+# Populate _file. Adjust the glob to the tree you want graded.
+rel src(p: file).
+src(p) <- scan("WORK", "src/**/*.{rs,ts,kt,kts,tsx}", p, rev), match(p, rev, /./, l).
+
+# Every declared entity with no doc comment bound to its sym.
+diag(file, line, "warning", "undocumented", "${kind} `${name}` has no doc comment") <-
+  type_entity(_, sym, name, kind, _, file, line),
+  !doc_comment(_, sym, _, _).

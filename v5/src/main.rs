@@ -10,12 +10,17 @@ struct Cli {
     /// `<root>/.dl/*.dl` file (lexicographic) merges instead. (--move synthesizes
     /// its own and ignores this.)
     programs: Vec<String>,
+    /// Persist derived tables to a SQLite db at this path (default: in-memory;
+    /// discovery mode defaults to `<root>/.dl/cache.db`). Derived relations land
+    /// as plain-TEXT `rel_<name>` tables, queryable by anything that reads SQLite.
     #[arg(long)]
     db: Option<String>,
     /// Source root. When omitted, defaults to the nearest `.git` ancestor of
     /// the program file (the repo it lives in), else the current directory.
     #[arg(long)]
     root: Option<PathBuf>,
+    /// Re-tick on file changes in the source root (in-process watcher, the
+    /// pre-daemon path). For the warm long-lived watcher, use `--daemon`.
     #[arg(long)]
     watch: bool,
     /// Run as an LSP server over stdio: the program's `diag` relation becomes

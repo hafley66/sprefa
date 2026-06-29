@@ -1,0 +1,108 @@
+# flow-interproc.dl — cross-function, SCIP-resolved value flow.
+#
+# Two graphs the engine already builds never touched each other:
+#   - df_edge   : the intra-procedural value lift (syn / oxc / tree-sitter). Real
+#                 typed nodes (param / var_read / binop / call_res / ...), but it
+#                 STOPS at the function boundary.
+#   - call_edge : the resolved caller-sym -> callee-sym graph. Cross-function and
+#                 cross-language, SCIP-preferred (engine resolves a callee through
+#                 scip_ref's def_file when an index.scip is present, single-def
+#                 name resolution otherwise), but it walks SYMBOLS, not values.
+#
+# This program unions them into ONE edge relation so closure(flow_edge) walks
+# value flow ACROSS calls. The interprocedural hop: an argument value that feeds
+# a call result flows into the resolved callee's parameters.
+#
+#   dl examples/flow-interproc.dl --root .
+#   SPREFA_SCIP_INDEX=index.scip dl examples/flow-interproc.dl --root .   # SCIP-resolved
+#
+# Precision notes (honest):
+#   - The argument -> parameter hop is positional-blind: every arg feeding a call
+#     reaches every parameter of the callee. Taint analysis is an over-
+#     approximation by nature; this is that, made explicit.
+#   - The RETURN hop (callee result -> call_res) IS modelled: the lift mints a
+#     `ret` node per return point (explicit `return EXPR`, plus the implicit tail
+#     expression in Rust/Kotlin), and the backward rule connects it to the
+#     caller's call_res. A value passed in, transformed, and returned flows end to
+#     end. TS arrow / function-expression consts (`const f = (x) => ...`) are
+#     lifted as their own fn scope, so they participate too.
+#   - Node-level types are not bound: type_sig is keyed by parameter POSITION,
+#     df_node params by NAME, and df_node has no position column. The typed view
+#     below is therefore function-level (callee sym + slot position + type).
+
+rel src(p: file).
+src(p) <- scan("WORK", "src/**/*.{rs,ts,kt}", p, rev), match(p, rev, /./, l).
+
+# The unified value-flow edge relation: intra ∪ inter procedural. All-derived
+# (no source rule heads it), so closure() may walk it.
+rel flow_edge(from: text, to: text).
+
+# Intra-procedural: the local lift, as-is.
+flow_edge(a, b) <- df_edge(a, b).
+
+# Interprocedural: an argument that feeds a call result flows into each parameter
+# of the resolved callee. Resolution rides call_edge — the SCIP-preferred
+# caller-sym -> callee-sym graph (scip_ref def_file when an index.scip is present,
+# single-def name resolution otherwise). df_node.fn is the BARE sym
+# (file::kind::name) and call_edge's endpoints are repo-qualified, so bridge the
+# two sym spaces with the suffix-containment idiom: removing the bare fn sym from
+# the qualified sym must change it (i.e. the bare sym is a suffix of the qualified).
+# This is context-insensitive (per caller, not per call site) and positional-blind
+# (every arg of a caller's call reaches every parameter of every callee it
+# resolves to) — both the conventional taint over-approximation.
+flow_edge(arg, param) <-
+    df_node(call_id, "call_res", _, caller_bare, _, _),
+    df_edge(arg, call_id),
+    call_edge(caller_q, callee_q, _),
+    cstrip = replace(caller_q, caller_bare, ""), cstrip != caller_q,
+    df_node(param, "param", _, callee_bare, _, _),
+    estrip = replace(callee_q, callee_bare, ""), estrip != callee_q.
+
+# Interprocedural, backward: the callee's returned value flows back OUT to the
+# caller's call result. The `ret` node is minted per return point (explicit
+# `return EXPR` and the implicit tail expression in Rust/Kotlin); the callee's
+# param-to-ret path inside its body then carries taint end to end: a value passed
+# IN as an argument, transformed, and returned, reaches the caller's call_res.
+flow_edge(callee_ret, call_id) <-
+    df_node(call_id, "call_res", _, caller_bare, _, _),
+    call_edge(caller_q, callee_q, _),
+    cstrip = replace(caller_q, caller_bare, ""), cstrip != caller_q,
+    df_node(callee_ret, "ret", _, callee_bare, _, _),
+    estrip = replace(callee_q, callee_bare, ""), estrip != callee_q.
+
+# Transitive value reachability across function boundaries.
+rel flow_reach(from: text, to: text).
+flow_reach(a, b) <- closure(flow_edge).
+
+# Typed view (function-level): every callee that is an interprocedural sink, with
+# the declared types of its parameter slots, pulled from the resolved type
+# signature. This is the "type-carrying" axis — coarse (per slot, not per node)
+# until the lift emits a parameter position.
+rel sink_callee(callee_sym: text).
+sink_callee(callee_q) <-
+    df_node(_, "call_res", _, caller_bare, _, _),
+    call_edge(caller_q, callee_q, _),
+    cstrip = replace(caller_q, caller_bare, ""), cstrip != caller_q.
+
+rel flow_param_type(callee_sym: text, pos: int, ty: text).
+flow_param_type(callee_sym, pos, ty) <-
+    sink_callee(callee_sym),
+    type_sig(callee_sym, "param", pos, ty).
+
+# Node-level typed view: bind a specific param df_node to its declared type. The
+# df_param positional index counts only typed params (self skipped) so it aligns
+# with type_sig's pos; the suffix bridge ties the bare df_node.fn to the
+# qualified callee sym. This is the per-node "type-carrying" form the
+# function-level view above approximates.
+rel flow_node_type(node: text, callee_sym: text, ty: text).
+flow_node_type(param, callee_q, ty) <-
+    sink_callee(callee_q),
+    df_node(param, "param", _, callee_bare, _, _),
+    estrip = replace(callee_q, callee_bare, ""), estrip != callee_q,
+    df_param(param, pos),
+    type_sig(callee_q, "param", pos, ty).
+
+? flow_edge(from, to).
+? flow_reach(from, to).
+? flow_param_type(callee_sym, pos, ty).
+? flow_node_type(node, callee_sym, ty).

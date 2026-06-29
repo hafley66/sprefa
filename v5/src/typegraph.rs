@@ -99,11 +99,112 @@ pub struct TypeEntity {
     pub ty: Option<TypeExpr>,
 }
 
-/// One language's extraction of a file: declared entities + the flat edge graph.
+/// One language's extraction of a file: declared entities + the flat edge graph
+/// + the doc comment attached to each entity (Tier 1/2 doc gen).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TypeFacts {
     pub entities: Vec<TypeEntity>,
     pub edges: Vec<TypeEdge>,
+    pub docs: Vec<DocFact>,
+}
+
+/// The doc comment bound to one declared entity. `sym` is the same
+/// `file::kind::name` minted for the entity, so `doc_comment` joins `type_entity`
+/// 1:1. `text` is the cleaned block (markers + per-line `*`/`///` stripped, leading
+/// space dropped). `tags` is the structured split (Tier 2). The locator is
+/// per-language and AST-anchored: Rust reads `#[doc]` attrs, Kotlin the preceding
+/// KDoc sibling, TS the `/** */` block that immediately precedes the decl.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DocFact {
+    pub sym: String,
+    pub line: u32,
+    pub text: String,
+    pub tags: Vec<DocTag>,
+}
+
+/// One structured doc tag. `tag` is the bare tag word (`param`, `returns`,
+/// `deprecated`, `throws`, or `section` for a rustdoc `# Heading`). `arg` is the
+/// name a `@param name` / `@property name` carries, else "". `text` is the
+/// description body.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DocTag {
+    pub tag: String,
+    pub arg: String,
+    pub text: String,
+}
+
+/// The first non-empty line of a doc block — the Tier-0 summary.
+pub fn doc_summary(text: &str) -> &str {
+    text.lines().map(|l| l.trim()).find(|l| !l.is_empty()).unwrap_or("")
+}
+
+/// Strip a `/** ... */` (or `/* ... */`) block down to its prose: drop the
+/// delimiters, the leading `*` and one space on each inner line, and the blank
+/// leading/trailing lines. Shared by the Kotlin (KDoc) and TS (JSDoc) locators.
+fn clean_block_comment(raw: &str) -> String {
+    let inner = raw.trim();
+    let inner = inner.strip_prefix("/**").or_else(|| inner.strip_prefix("/*")).unwrap_or(inner);
+    let inner = inner.strip_suffix("*/").unwrap_or(inner);
+    let mut lines: Vec<String> = inner.lines().map(|l| {
+        let t = l.trim_start();
+        let t = t.strip_prefix('*').unwrap_or(t);
+        t.strip_prefix(' ').unwrap_or(t).to_string()
+    }).collect();
+    while lines.first().is_some_and(|s| s.trim().is_empty()) { lines.remove(0); }
+    while lines.last().is_some_and(|s| s.trim().is_empty()) { lines.pop(); }
+    lines.join("\n")
+}
+
+/// Split a JSDoc/KDoc block into `@tag` rows: `@tag [{type}] [name] description`.
+/// `@param`/`@property`/`@throws`/type-param tags carry a leading name into `arg`;
+/// others put the whole body in `text`. A leading `{type}` annotation is dropped
+/// (the type graph already carries types via `type_sig`).
+fn parse_jsdoc_tags(text: &str) -> Vec<DocTag> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let l = line.trim_start();
+        let Some(rest) = l.strip_prefix('@') else { continue };
+        let mut it = rest.splitn(2, char::is_whitespace);
+        let tag = it.next().unwrap_or("").to_string();
+        let mut body = it.next().unwrap_or("").trim_start();
+        if body.starts_with('{') {
+            if let Some(end) = body.find('}') { body = body[end + 1..].trim_start(); }
+        }
+        let named = matches!(tag.as_str(),
+            "param" | "arg" | "argument" | "property" | "prop" | "throws" | "exception" | "typeparam" | "tparam");
+        let (arg, desc) = if named {
+            let mut bi = body.splitn(2, char::is_whitespace);
+            (bi.next().unwrap_or("").to_string(), bi.next().unwrap_or("").trim().to_string())
+        } else {
+            (String::new(), body.trim().to_string())
+        };
+        out.push(DocTag { tag, arg, text: desc });
+    }
+    out
+}
+
+/// Split a rustdoc body into its markdown `# Heading` sections (`# Panics`,
+/// `# Safety`, `# Examples`, ...). rustdoc has no `@`-tags; sections ARE the
+/// structure. Each heading becomes a `section` tag whose `arg` is the heading
+/// text and `text` is the lines until the next heading.
+fn parse_rust_sections(text: &str) -> Vec<DocTag> {
+    let mut out = Vec::new();
+    let mut cur: Option<(String, Vec<&str>)> = None;
+    let flush = |cur: Option<(String, Vec<&str>)>, out: &mut Vec<DocTag>| {
+        if let Some((name, body)) = cur {
+            out.push(DocTag { tag: "section".into(), arg: name, text: body.join("\n").trim().to_string() });
+        }
+    };
+    for line in text.lines() {
+        if let Some(rest) = line.trim_start().strip_prefix("# ") {
+            flush(cur.take(), &mut out);
+            cur = Some((rest.trim().to_string(), Vec::new()));
+        } else if let Some((_, body)) = cur.as_mut() {
+            body.push(line);
+        }
+    }
+    flush(cur, &mut out);
+    out
 }
 
 /// Phase D call-graph extraction: callable definitions + the raw call sites a
@@ -167,6 +268,7 @@ pub struct DataflowFacts {
     pub loops: Vec<LoopFact>,
     pub allocators: std::collections::HashSet<String>, // fn syms whose body builds a collection
     pub nests: Vec<NestFact>,
+    pub param_pos: Vec<(String, u32)>, // (param node id, positional index) for node-level type joins
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -195,7 +297,7 @@ pub struct NestFact {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DfNode {
     pub id: String,
-    pub kind: String,   // param | let_bind | var_read | var_write | lit | call_res | borrow | binop | unop | loop | if | match | block | closure | try | expr
+    pub kind: String,   // param | let_bind | var_read | var_write | lit | call_res | ret | borrow | binop | unop | loop | if | match | block | closure | try | expr
     pub var: String,    // variable name when the node is var-related, else ""
     pub fn_sym: String, // enclosing def sym (file::function::name), joins call_def
     pub file: String,
@@ -256,6 +358,7 @@ impl TypeLang for RustTypes {
         TypeFacts {
             entities: rust_entities_from(&parsed, file),
             edges: edges_from(&parsed),
+            docs: rust_docs_from(&parsed, file),
         }
     }
     // One syn parse feeds defs + sites; a follow-up folds this into `extract`
@@ -296,7 +399,9 @@ impl TypeLang for KotlinTypes {
         let root = tree.root_node();
         let mut entities = Vec::new();
         walk_kotlin_entities(root, src, file, &mut entities);
-        TypeFacts { entities, edges: kotlin_edges_from(root, src) }
+        let mut docs = Vec::new();
+        walk_kotlin_docs(root, src, file, &mut docs);
+        TypeFacts { entities, edges: kotlin_edges_from(root, src), docs }
     }
     // One tree-sitter parse feeds defs + sites, same shape as the Rust pass.
     fn extract_calls(&self, file: &str, content: &str) -> CallFacts {
@@ -365,17 +470,25 @@ fn kt_flow_fn(fn_node: tree_sitter::Node, src: &[u8], file: &str, out: &mut Data
     let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     if let Some(params) = kt_first_child(fn_node, "function_value_parameters") {
         let mut cur = params.walk();
-        for p in params.children(&mut cur).filter(|n| n.kind() == "parameter") {
+        for (pos, p) in params.children(&mut cur).filter(|n| n.kind() == "parameter").enumerate() {
             if let Some(idn) = kt_first_child(p, "simple_identifier") {
-                let pos = idn.start_position();
+                let ppos = idn.start_position();
                 let v = idn.utf8_text(src).unwrap_or("").to_string();
-                let id = push_node(out, file, pos.row as u32, pos.column as u32, "param", &v, &fn_sym);
+                let id = push_node(out, file, ppos.row as u32, ppos.column as u32, "param", &v, &fn_sym);
+                out.param_pos.push((id.clone(), pos as u32));
                 scope.insert(v, id);
             }
         }
     }
     if let Some(body) = kt_first_child(fn_node, "function_body") {
-        flow_kt(body, src, file, &fn_sym, &mut scope, out);
+        // The body's tail value is the implicit return (block tail, or the
+        // expression of `fun f() = expr`): flow it into the fn's `ret` node.
+        // Explicit `return EXPR` is handled in the jump_expression arm.
+        if let Some(tail) = flow_kt(body, src, file, &fn_sym, &mut scope, out) {
+            let bpos = body.start_position();
+            let ret = push_node(out, file, bpos.row as u32, bpos.column as u32, "ret", "", &fn_sym);
+            out.edges.push(DfEdge { from: tail, to: ret });
+        }
     }
 }
 
@@ -468,7 +581,8 @@ fn flow_kt(
             }
             last
         }
-        // return EXPR: the returned value is the expression's node.
+        // return EXPR: the returned value flows into the fn's `ret` node — the
+        // sink the interprocedural backward hop reads.
         "jump_expression" => {
             let mut inner = None;
             let mut cur = node.walk();
@@ -479,7 +593,9 @@ fn flow_kt(
                     }
                 }
             }
-            inner
+            let id = push_node(out, file, pos.row as u32, pos.column as u32, "ret", "", fn_sym);
+            if let Some(v) = inner { out.edges.push(DfEdge { from: v, to: id.clone() }); }
+            Some(id)
         }
         // a OP b: both operands taint the result. This is the taint-vs-dataflow
         // distinction in one arm — exact dataflow would say `a + 1` is not `a`,
@@ -601,10 +717,11 @@ fn ts_flow_stmt(stmt: &ts_ast::Statement, file: &str, starts: &[usize], out: &mu
                 let name = f.id.as_ref().map(|i| i.name.to_string()).unwrap_or_default();
                 let fn_sym = mint_sym(file, EntityKind::Function, &name, None);
                 let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-                for p in &f.params.items {
+                for (pos, p) in f.params.items.iter().enumerate() {
                     if let Some(name) = ts_binding_name(&p.pattern) {
                         let off = p.span.start;
                         let id = ts_push(out, file, starts, off, "param", &name, &fn_sym);
+                        out.param_pos.push((id.clone(), pos as u32));
                         scope.insert(name, id);
                     }
                 }
@@ -633,10 +750,11 @@ fn ts_flow_decl(d: &ts_ast::Declaration, file: &str, starts: &[usize], out: &mut
                 let name = f.id.as_ref().map(|i| i.name.to_string()).unwrap_or_default();
                 let fn_sym = mint_sym(file, EntityKind::Function, &name, None);
                 let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-                for p in &f.params.items {
+                for (pos, p) in f.params.items.iter().enumerate() {
                     if let Some(name) = ts_binding_name(&p.pattern) {
                         let off = p.span.start;
                         let id = ts_push(out, file, starts, off, "param", &name, &fn_sym);
+                        out.param_pos.push((id.clone(), pos as u32));
                         scope.insert(name, id);
                     }
                 }
@@ -660,6 +778,41 @@ fn ts_flow_body(
     }
 }
 
+/// Lift a function value (arrow or function expression) as its own fn scope:
+/// seed param nodes, then walk the body. For an expression-body arrow
+/// (`(x) => expr`, `expression == true`) oxc wraps the expr as a single
+/// ExpressionStatement — that is the implicit return, so it flows into a `ret`
+/// node. Block bodies handle returns via the ReturnStatement arm.
+fn ts_lift_fn(
+    params: &ts_ast::FormalParameters,
+    body: &ts_ast::FunctionBody,
+    expression: bool,
+    fn_sym: &str,
+    file: &str,
+    starts: &[usize],
+    out: &mut DataflowFacts,
+) {
+    let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for (pos, p) in params.items.iter().enumerate() {
+        if let Some(name) = ts_binding_name(&p.pattern) {
+            let id = ts_push(out, file, starts, p.span.start, "param", &name, fn_sym);
+            out.param_pos.push((id.clone(), pos as u32));
+            scope.insert(name, id);
+        }
+    }
+    if expression {
+        if let Some(ts_ast::Statement::ExpressionStatement(es)) = body.statements.first() {
+            let v = ts_flow_expr(&es.expression, file, starts, fn_sym, &mut scope, out);
+            let ret = ts_push(out, file, starts, es.span.start, "ret", "", fn_sym);
+            out.edges.push(DfEdge { from: v, to: ret });
+        }
+    } else {
+        for stmt in &body.statements {
+            ts_flow_body_stmt(stmt, file, starts, fn_sym, &mut scope, out);
+        }
+    }
+}
+
 fn ts_flow_body_stmt(
     stmt: &ts_ast::Statement,
     file: &str,
@@ -672,6 +825,27 @@ fn ts_flow_body_stmt(
     match stmt {
         S::VariableDeclaration(v) => {
             for d in &v.declarations {
+                // A const-bound arrow / function expression is a function
+                // definition, not a value: lift it as its own fn scope (params +
+                // body + ret) keyed by the binding name, so its params and
+                // returns join the interprocedural graph like a top-level fn.
+                if let ts_ast::BindingPattern::BindingIdentifier(bn) = &d.id {
+                    match &d.init {
+                        Some(ts_ast::Expression::ArrowFunctionExpression(a)) => {
+                            let sym = mint_sym(file, EntityKind::Function, &bn.name, None);
+                            ts_lift_fn(&a.params, &a.body, a.expression, &sym, file, starts, out);
+                            continue;
+                        }
+                        Some(ts_ast::Expression::FunctionExpression(f)) => {
+                            if let Some(body) = f.body.as_deref() {
+                                let sym = mint_sym(file, EntityKind::Function, &bn.name, None);
+                                ts_lift_fn(&f.params, body, false, &sym, file, starts, out);
+                            }
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
                 let rhs_id = d.init.as_ref().map(|init| ts_flow_expr(init, file, starts, fn_sym, scope, out));
                 if let Some(name) = ts_binding_name(&d.id) {
                     let off = d.span.start;
@@ -686,9 +860,14 @@ fn ts_flow_body_stmt(
         S::ExpressionStatement(e) => {
             let _ = ts_flow_expr(&e.expression, file, starts, fn_sym, scope, out);
         }
+        // `return EXPR`: the returned value flows into the fn's `ret` node — the
+        // sink the interprocedural backward hop reads. (Arrow expression-body
+        // returns, `(x) => expr`, are not yet lifted; explicit return only.)
         S::ReturnStatement(r) => {
+            let id = ts_push(out, file, starts, r.span.start, "ret", "", fn_sym);
             if let Some(arg) = &r.argument {
-                let _ = ts_flow_expr(arg, file, starts, fn_sym, scope, out);
+                let v = ts_flow_expr(arg, file, starts, fn_sym, scope, out);
+                out.edges.push(DfEdge { from: v, to: id });
             }
         }
         // `{ stmts }`: walk each inner statement so flow continues through blocks.
@@ -878,6 +1057,7 @@ impl TypeLang for TsTypes {
         TypeFacts {
             entities: ts_entities_from(&ret.program, file, content),
             edges: ts_edges_from(&ret.program),
+            docs: ts_docs_from(&ret.program, file, content),
         }
     }
     // One oxc parse feeds defs + sites, same shape as the Rust pass. `line_at`
@@ -1901,6 +2081,111 @@ fn ts_var_fn_entity(v: &ts_ast::VariableDeclaration, file: &str, starts: &[usize
     }
 }
 
+/// Doc-comment pass (oxc): oxc keeps comments out of the AST, so each `/** */`
+/// block in the source is associated with the entity it documents by byte
+/// position — the nearest anchor at or after the block's end, with only
+/// whitespace between (so an `export`/`default` prefix, which sits before the
+/// anchored statement start, is fine; a decorator or another statement is not,
+/// and the block is dropped). Syms match `ts_entities_from` exactly so
+/// `doc_comment` joins `type_entity`.
+fn ts_docs_from(program: &ts_ast::Program, file: &str, content: &str) -> Vec<DocFact> {
+    let anchors = ts_doc_anchors(program, file);
+    if anchors.is_empty() { return Vec::new(); }
+    let starts = line_index(content);
+    let mut out = Vec::new();
+    for (cstart, cend) in ts_block_comments(content) {
+        let raw = &content[cstart..cend];
+        if !raw.trim_start().starts_with("/**") { continue; }
+        let Some((sym, at)) = anchors.iter().filter(|(_, s)| (*s as usize) >= cend).min_by_key(|(_, s)| *s) else { continue };
+        if !content[cend..*at as usize].trim().is_empty() { continue; }
+        let text = clean_block_comment(raw);
+        out.push(DocFact { sym: sym.clone(), line: line_at(&starts, *at as usize), tags: parse_jsdoc_tags(&text), text });
+    }
+    out
+}
+
+/// `(sym, byte)` for every entity `ts_entities_from` emits. Top-level decls
+/// anchor at the STATEMENT start; class methods at the method span start.
+fn ts_doc_anchors(program: &ts_ast::Program, file: &str) -> Vec<(String, u32)> {
+    use oxc_span::GetSpan;
+    let mut out = Vec::new();
+    for stmt in &program.body {
+        use ts_ast::Statement as S;
+        let at = stmt.span().start;
+        match stmt {
+            S::ExportNamedDeclaration(e) => { if let Some(d) = &e.declaration { ts_decl_anchor(d, file, at, &mut out); } }
+            S::ExportDefaultDeclaration(e) => match &e.declaration {
+                ts_ast::ExportDefaultDeclarationKind::ClassDeclaration(c) => ts_class_anchor(c, file, at, &mut out),
+                ts_ast::ExportDefaultDeclarationKind::TSInterfaceDeclaration(i) => out.push((mint_sym(file, EntityKind::Interface, &i.id.name, None), at)),
+                ts_ast::ExportDefaultDeclarationKind::FunctionDeclaration(f) => { if let Some(id) = &f.id { out.push((mint_sym(file, EntityKind::Function, &id.name, None), at)); } }
+                _ => {}
+            },
+            S::ClassDeclaration(c) => ts_class_anchor(c, file, at, &mut out),
+            S::TSInterfaceDeclaration(i) => out.push((mint_sym(file, EntityKind::Interface, &i.id.name, None), at)),
+            S::TSTypeAliasDeclaration(a) => out.push((mint_sym(file, EntityKind::Alias, &a.id.name, None), at)),
+            S::TSEnumDeclaration(en) => out.push((mint_sym(file, EntityKind::Enum, &en.id.name, None), at)),
+            S::FunctionDeclaration(f) => { if let Some(id) = &f.id { out.push((mint_sym(file, EntityKind::Function, &id.name, None), at)); } }
+            S::VariableDeclaration(v) => ts_var_anchor(v, file, at, &mut out),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn ts_decl_anchor(d: &ts_ast::Declaration, file: &str, at: u32, out: &mut Vec<(String, u32)>) {
+    match d {
+        ts_ast::Declaration::ClassDeclaration(c) => ts_class_anchor(c, file, at, out),
+        ts_ast::Declaration::TSInterfaceDeclaration(i) => out.push((mint_sym(file, EntityKind::Interface, &i.id.name, None), at)),
+        ts_ast::Declaration::TSTypeAliasDeclaration(a) => out.push((mint_sym(file, EntityKind::Alias, &a.id.name, None), at)),
+        ts_ast::Declaration::TSEnumDeclaration(en) => out.push((mint_sym(file, EntityKind::Enum, &en.id.name, None), at)),
+        ts_ast::Declaration::FunctionDeclaration(f) => { if let Some(id) = &f.id { out.push((mint_sym(file, EntityKind::Function, &id.name, None), at)); } }
+        ts_ast::Declaration::VariableDeclaration(v) => ts_var_anchor(v, file, at, out),
+        _ => {}
+    }
+}
+
+fn ts_class_anchor(c: &ts_ast::Class, file: &str, at: u32, out: &mut Vec<(String, u32)>) {
+    let Some(id) = &c.id else { return };
+    let owner = id.name.to_string();
+    out.push((mint_sym(file, EntityKind::Class, &id.name, None), at));
+    for el in &c.body.body {
+        if let ts_ast::ClassElement::MethodDefinition(m) = el {
+            if m.kind == ts_ast::MethodDefinitionKind::Constructor { continue; }
+            if let ts_ast::PropertyKey::StaticIdentifier(k) = &m.key {
+                out.push((mint_sym(file, EntityKind::Method, &k.name, Some(&owner)), m.span.start));
+            }
+        }
+    }
+}
+
+fn ts_var_anchor(v: &ts_ast::VariableDeclaration, file: &str, at: u32, out: &mut Vec<(String, u32)>) {
+    for d in &v.declarations {
+        let ts_ast::BindingPattern::BindingIdentifier(name) = &d.id else { continue };
+        if matches!(&d.init, Some(ts_ast::Expression::ArrowFunctionExpression(_)) | Some(ts_ast::Expression::FunctionExpression(_))) {
+            out.push((mint_sym(file, EntityKind::Function, &name.name, None), at));
+        }
+    }
+}
+
+/// Byte ranges of every `/* ... */` block comment, including delimiters. A naive
+/// scan: good enough for doc association (non-`/**` blocks are filtered by the
+/// caller, and `/*` inside a string is rare and harmless here).
+fn ts_block_comments(content: &str) -> Vec<(usize, usize)> {
+    let b = content.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 1 < b.len() {
+        if b[i] == b'/' && b[i + 1] == b'*' {
+            match content[i + 2..].find("*/") {
+                Some(rel) => { let end = i + 2 + rel + 2; out.push((i, end)); i = end; continue; }
+                None => break,
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
 /// Build the arrow `[...A] => B` for a function form. Each param slot collects
 /// its referenced type names (declared type-param names excluded); the return
 /// slot likewise. Keyword/primitive slots come back empty.
@@ -2159,6 +2444,66 @@ fn rust_item_entity(item: &Item, file: &str, out: &mut Vec<TypeEntity>) {
     }
 }
 
+/// Doc-comment pass (syn): every `#[doc]` attribute on an item — the desugared
+/// form of `///` / `//!` / `/** */` — becomes a `DocFact` keyed by the same sym
+/// `rust_item_entity` mints. Reading attrs (not scanning lines above the decl)
+/// is what makes a `#[derive(..)]` between the doc and the `struct` keyword a
+/// non-issue. Tags are the rustdoc `# Section` headings.
+fn rust_docs_from(parsed: &syn::File, file: &str) -> Vec<DocFact> {
+    let mut out = Vec::new();
+    for item in &parsed.items {
+        rust_item_docs(item, file, &mut out);
+    }
+    out
+}
+
+fn rust_item_docs(item: &Item, file: &str, out: &mut Vec<DocFact>) {
+    match item {
+        Item::Struct(s) => push_doc(out, file, &s.attrs, &s.ident.to_string(), rust_line(s.ident.span()), EntityKind::Struct, None),
+        Item::Enum(en) => push_doc(out, file, &en.attrs, &en.ident.to_string(), rust_line(en.ident.span()), EntityKind::Enum, None),
+        Item::Union(u) => push_doc(out, file, &u.attrs, &u.ident.to_string(), rust_line(u.ident.span()), EntityKind::Struct, None),
+        Item::Trait(t) => push_doc(out, file, &t.attrs, &t.ident.to_string(), rust_line(t.ident.span()), EntityKind::Trait, None),
+        Item::Fn(f) => push_doc(out, file, &f.attrs, &f.sig.ident.to_string(), rust_line(f.sig.ident.span()), EntityKind::Function, None),
+        Item::Impl(i) => {
+            let owner = primary_type(&i.self_ty);
+            for ii in &i.items {
+                if let syn::ImplItem::Fn(m) = ii {
+                    push_doc(out, file, &m.attrs, &m.sig.ident.to_string(), rust_line(m.sig.ident.span()), EntityKind::Method, owner.as_deref());
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn push_doc(out: &mut Vec<DocFact>, file: &str, attrs: &[syn::Attribute], name: &str, line: u32, kind: EntityKind, parent: Option<&str>) {
+    let lines = rust_doc_lines(attrs);
+    if lines.is_empty() { return; }
+    let text = lines.join("\n");
+    out.push(DocFact {
+        sym: mint_sym(file, kind, name, parent),
+        line,
+        tags: parse_rust_sections(&text),
+        text,
+    });
+}
+
+/// Collect the string values of an item's `#[doc = "..."]` attributes, one per
+/// `///` line, dropping the single leading space syn keeps from `/// foo`.
+fn rust_doc_lines(attrs: &[syn::Attribute]) -> Vec<String> {
+    let mut lines = Vec::new();
+    for a in attrs {
+        if !a.path().is_ident("doc") { continue; }
+        if let syn::Meta::NameValue(nv) = &a.meta {
+            if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) = &nv.value {
+                let v = s.value();
+                lines.push(v.strip_prefix(' ').unwrap_or(&v).to_string());
+            }
+        }
+    }
+    lines
+}
+
 fn rust_fn_type(sig: &syn::Signature) -> TypeExpr {
     let named = |refs: Vec<String>| refs.into_iter().map(TypeRef::Named).collect::<Vec<_>>();
     // `self` receivers are not value params; drop them so positions line up
@@ -2343,26 +2688,44 @@ fn flow_fn_body(
     out: &mut DataflowFacts,
 ) {
     let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    // Position counts only typed params (the receiver `self` is skipped), so the
+    // index aligns with `type_sig`, which also drops self.
+    let mut pos: u32 = 0;
     for arg in &sig.inputs {
         if let syn::FnArg::Typed(pt) = arg {
             if let syn::Pat::Ident(pi) = &*pt.pat {
                 let (l, c) = (pi.ident.span().start().line as u32, pi.ident.span().start().column as u32);
                 let id = push_node(out, file, l, c, "param", &pi.ident.to_string(), fn_sym);
+                out.param_pos.push((id.clone(), pos));
                 scope.insert(pi.ident.to_string(), id);
             }
+            pos += 1;
         }
     }
-    flow_block(block, file, fn_sym, &mut scope, out);
+    // The block's tail expression (last stmt, no semicolon) is the fn's implicit
+    // return value: mint a `ret` node and flow the tail into it. `return EXPR`
+    // anywhere in the body is handled in `flow_expr` (Expr::Return). The `ret`
+    // node is the interprocedural sink the backward flow hop reads — a callee's
+    // returned value reaches the caller's `call_res`.
+    if let Some((tail, l, c)) = flow_block(block, file, fn_sym, &mut scope, out) {
+        let ret = push_node(out, file, l, c, "ret", "", fn_sym);
+        out.edges.push(DfEdge { from: tail, to: ret });
+    }
 }
 
+/// Walk a block. Returns the (id, line, col) of the block's tail value — the last
+/// statement when it is a no-semicolon expression — so a caller (a fn body) can
+/// treat it as an implicit return. Nested-block callers ignore the result.
 fn flow_block(
     b: &syn::Block,
     file: &str,
     fn_sym: &str,
     scope: &mut std::collections::HashMap<String, String>,
     out: &mut DataflowFacts,
-) {
-    for stmt in &b.stmts {
+) -> Option<(String, u32, u32)> {
+    let mut tail = None;
+    let n = b.stmts.len();
+    for (idx, stmt) in b.stmts.iter().enumerate() {
         match stmt {
             syn::Stmt::Local(loc) => {
                 if let Some(init) = loc.init.as_ref() {
@@ -2374,13 +2737,18 @@ fn flow_block(
                     }
                 }
             }
-            syn::Stmt::Expr(e, _) => {
-                let _ = flow_expr(e, file, fn_sym, scope, out);
+            syn::Stmt::Expr(e, semi) => {
+                let start = e.span().start();
+                let id = flow_expr(e, file, fn_sym, scope, out);
+                if idx + 1 == n && semi.is_none() {
+                    tail = Some((id, start.line as u32, start.column as u32));
+                }
             }
             syn::Stmt::Item(_) => {}
             syn::Stmt::Macro(_) => {}
         }
     }
+    tail
 }
 
 /// Mint a node and return its id. Free helper (not a closure) so the recursive
@@ -2510,6 +2878,16 @@ fn flow_expr(
         }
         // transparent pass-through: the ? operator does not alter value flow.
         syn::Expr::Try(t) => flow_expr(&t.expr, file, fn_sym, scope, out),
+        // `return EXPR`: the returned value flows into the fn's `ret` node — the
+        // sink the interprocedural backward hop reads.
+        syn::Expr::Return(r) => {
+            let id = push_node(out, file, line, col, "ret", "", fn_sym);
+            if let Some(inner) = &r.expr {
+                let v = flow_expr(inner, file, fn_sym, scope, out);
+                out.edges.push(DfEdge { from: v, to: id.clone() });
+            }
+            id
+        }
         // `for pat in coll { body }`: bind the loop variable from the collection,
         // record the loop span so loop_over can flag loop-invariant calls inside
         // it, then walk the body. Each element taints the loop var conservatively.
@@ -2586,7 +2964,7 @@ fn flow_expr(
                 let _ = bind_pat(inp, file, fn_sym, scope, out);
             }
             match c.body.as_ref() {
-                syn::Expr::Block(b) => flow_block(&b.block, file, fn_sym, scope, out),
+                syn::Expr::Block(b) => { let _ = flow_block(&b.block, file, fn_sym, scope, out); }
                 other => { let _ = flow_expr(other, file, fn_sym, scope, out); }
             }
             push_node(out, file, line, col, "closure", "", fn_sym)
@@ -2725,6 +3103,58 @@ fn walk_kotlin_entities(node: tree_sitter::Node, src: &[u8], file: &str, out: &m
         }
         walk_kotlin_entities(child, src, file, out);
     }
+}
+
+/// Doc-comment pass (tree-sitter): the KDoc `/** */` that immediately precedes a
+/// class/object/function declaration is its previous sibling (annotations and
+/// modifiers are children of the decl, so they don't sit between). Same sym as
+/// `walk_kotlin_entities`. Tags via the shared JSDoc/KDoc splitter.
+fn walk_kotlin_docs(node: tree_sitter::Node, src: &[u8], file: &str, out: &mut Vec<DocFact>) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        let named = if matches!(child.kind(), "class_declaration" | "object_declaration") {
+            let mut c = child.walk();
+            let kids: Vec<tree_sitter::Node> = child.children(&mut c).collect();
+            kids.iter().find(|n| n.kind() == "type_identifier").map(|id| {
+                let kind = if kids.iter().any(|n| n.kind() == "interface") {
+                    EntityKind::Interface
+                } else if kids.iter().any(|n| n.kind() == "enum") {
+                    EntityKind::Enum
+                } else {
+                    EntityKind::Class
+                };
+                (id.utf8_text(src).unwrap_or("").to_string(), kind)
+            })
+        } else if child.kind() == "function_declaration" {
+            let mut c = child.walk();
+            let kids: Vec<tree_sitter::Node> = child.children(&mut c).collect();
+            kids.iter().find(|n| n.kind() == "simple_identifier")
+                .map(|id| (id.utf8_text(src).unwrap_or("").to_string(), EntityKind::Function))
+        } else {
+            None
+        };
+        if let Some((name, kind)) = named {
+            if let Some(text) = kotlin_leading_kdoc(child, src) {
+                out.push(DocFact {
+                    sym: mint_sym(file, kind, &name, None),
+                    line: (child.start_position().row + 1) as u32,
+                    tags: parse_jsdoc_tags(&text),
+                    text,
+                });
+            }
+        }
+        walk_kotlin_docs(child, src, file, out);
+    }
+}
+
+/// The cleaned KDoc block directly above `node`, or None. A KDoc is a
+/// `*comment*` previous sibling whose text opens with `/**`.
+fn kotlin_leading_kdoc(node: tree_sitter::Node, src: &[u8]) -> Option<String> {
+    let prev = node.prev_sibling()?;
+    if !prev.kind().contains("comment") { return None; }
+    let raw = prev.utf8_text(src).ok()?;
+    if !raw.trim_start().starts_with("/**") { return None; }
+    Some(clean_block_comment(raw))
 }
 
 /// Build the arrow `[...A] => B` for a `fun`: each `parameter` under
