@@ -199,6 +199,14 @@ pub enum BodyItem {
     Scc { rel: String },
 }
 
+/// A temporal rule modifier, written `@next` / `@async` after the `<-` neck.
+/// `Next`: the head is staged into the next tick's seed (carry state) instead of
+/// this tick's fixpoint. `Async`: the body fires an effect whose response lands as
+/// a fact at a later tick (non-blocking IO). `None` on the `Rule` = today's
+/// same-tick deductive rule. See docs/research-reactive-effectful-datalog.md §8.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Temporal { Next, Async }
+
 #[derive(Clone, Debug)]
 pub struct Rule {
     pub head: Atom,
@@ -214,11 +222,20 @@ pub struct Rule {
     /// ancestor instead of the engine's `self.root`, so a script loaded into a
     /// rootless daemon scans the repo it lives in. Stamped by the frontend loader.
     pub origin: Option<PathBuf>,
+    /// `@next` / `@async` modifier after the neck, if any. `None` = the ordinary
+    /// same-tick deductive rule (every rule today). See `Temporal`.
+    pub temporal: Option<Temporal>,
 }
 
 impl Rule {
     /// Does any head term carry an aggregate?
     pub fn has_agg(&self) -> bool { self.aggs.iter().any(|a| a.is_some()) }
+
+    /// `@next` carry rule: head staged for the next tick's seed.
+    pub fn is_next(&self) -> bool { self.temporal == Some(Temporal::Next) }
+
+    /// `@async` effect rule: body emits a request, response lands later.
+    pub fn is_async(&self) -> bool { self.temporal == Some(Temporal::Async) }
 
     pub fn is_source(&self) -> bool {
         self.body.iter().any(|b| matches!(b,

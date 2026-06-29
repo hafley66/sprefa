@@ -16,6 +16,10 @@ pub enum Tok {
     /// is the (start, end) byte offset of the whole literal in the source, for
     /// diagnostics. The body is the raw (still-escaped) text after the colon.
     Scheme { scheme: String, body: String, span: (u32, u32) },
+    /// A temporal rule modifier after the `<-` neck: `@next` / `@async`. The
+    /// string is the bare word after `@` (validated to a known modifier in the
+    /// parser, not here). `@` is otherwise unused punctuation.
+    At(String),
     LParen, RParen, Comma, Dot, Colon, Bang, Question, Arrow,
     Lt2, // `<:` brand subtype operator
     Eq, Ne, Lt, Le, Gt, Ge, Match, Glob,
@@ -160,6 +164,17 @@ pub fn lex(src: &str) -> Result<Vec<Tok>> {
                 } else {
                     out.push(Tok::Str(cur));
                 }
+            }
+            b'@' => {
+                // A temporal rule modifier `@next` / `@async` after the `<-`
+                // neck. Lex the bare word; the parser validates it and rejects
+                // `@` in any other position. Independent of the `<-` (Arrow)
+                // token, so `<-@next` and `<- @next` lex identically.
+                i += 1;
+                let start = i;
+                while i < b.len() && (b[i] == b'_' || b[i].is_ascii_alphanumeric()) { i += 1; }
+                if i == start { bail!("lone '@' (expected @next/@async after a rule neck)"); }
+                out.push(Tok::At(src[start..i].to_string()));
             }
             b'+' => { out.push(Tok::Plus); i += 1; }
             b'-' => { out.push(Tok::Minus); i += 1; }

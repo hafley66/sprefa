@@ -198,11 +198,24 @@ impl Parser {
                 if aggs.iter().any(|a| a.is_some()) {
                     bail!("aggregate not allowed in a fact head");
                 }
-                return Ok(Rule { head, body: Vec::new(), aggs, origin: None });
+                return Ok(Rule { head, body: Vec::new(), aggs, origin: None, temporal: None });
             }
             Tok::Arrow => {}
             other => bail!("expected <- or . after rule head, got {:?}", other),
         }
+        // Optional temporal modifier immediately after the neck: `<- @next ...`.
+        let temporal = if matches!(self.peek(), Some(Tok::At(_))) {
+            match self.next()? {
+                Tok::At(w) => Some(match w.as_str() {
+                    "next"  => Temporal::Next,
+                    "async" => Temporal::Async,
+                    other => bail!("unknown rule modifier `@{other}` (known: @next, @async)"),
+                }),
+                _ => unreachable!(),
+            }
+        } else {
+            None
+        };
         let mut body = Vec::new();
         loop {
             body.push(self.body_item()?);
@@ -212,7 +225,7 @@ impl Parser {
                 other => bail!("expected , or . in rule body, got {:?}", other),
             }
         }
-        Ok(Rule { head, body, aggs, origin: None })
+        Ok(Rule { head, body, aggs, origin: None, temporal })
     }
 
     /// Parse a rule head, allowing aggregate calls in term positions:
@@ -913,5 +926,38 @@ mod tests {
         assert_eq!(desugar_regex_holes(r"$x.$x.$x"), r"(?P<x>.*?).(?:.*?).(?:.*?)");
         // Distinct names each keep their own capture.
         assert_eq!(desugar_regex_holes(r"$a=$b"), r"(?P<a>.*?)=(?P<b>.*?)");
+    }
+
+    use crate::ast::{Item, Temporal};
+    use crate::lex::lex;
+
+    fn one_rule(src: &str) -> crate::ast::Rule {
+        let prog = super::parse(lex(src).unwrap()).unwrap();
+        match prog.items.into_iter().next().unwrap() {
+            Item::Rule(r) => r,
+            other => panic!("expected a rule, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn temporal_modifiers_parse() {
+        // No modifier: today's deductive rule.
+        assert_eq!(one_rule("p(X) <- q(X).").temporal, None);
+        // `@next` and `@async` after the neck, with and without a leading space.
+        assert_eq!(one_rule("p(X) <- @next q(X).").temporal, Some(Temporal::Next));
+        assert_eq!(one_rule("p(X) <-@next q(X).").temporal, Some(Temporal::Next));
+        assert_eq!(one_rule("p(X) <- @async q(X).").temporal, Some(Temporal::Async));
+        // A ground fact carries no modifier.
+        assert_eq!(one_rule("p(1).").temporal, None);
+    }
+
+    #[test]
+    fn unknown_modifier_and_lone_at_are_errors() {
+        // Unknown `@word` after a neck is a parse error.
+        let e = super::parse(lex("p(X) <- @soon q(X).").unwrap()).unwrap_err();
+        assert!(e.to_string().contains("unknown rule modifier `@soon`"), "{e}");
+        // A lone `@` is a lex error.
+        let e = lex("p(X) <- @ q(X).").unwrap_err();
+        assert!(e.to_string().contains("lone '@'"), "{e}");
     }
 }

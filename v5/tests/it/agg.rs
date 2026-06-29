@@ -75,12 +75,12 @@ fan_out(f, count(t)) <- type_edge(f, t, _).
         rows.iter().find(|(f, _)| f == name).map(|(_, n)| n.parse().unwrap())
             .unwrap_or_else(|| panic!("no fan_out row for {name}\nout={out}"))
     };
-    // Live values: Tok is the unambiguous top (28). Below it the counts sit in a
-    // tight band that drifts as src/ evolves (BodyItem=12, Daemon=12 tie;
-    // ProjectCx=11; Engine=10), so the assertions below pin Tok exactly and the
-    // rest as a stable high-fan-out band + membership rather than a brittle strict
-    // total order through the 12-tie.
-    assert_eq!(get("Tok"), 28, "Tok fan-out drifted again: {out}");
+    // Live values: Tok is the unambiguous top (29 after the `Tok::At` temporal
+    // modifier token). Below it the counts sit in a tight band that drifts as src/
+    // evolves (BodyItem=12, Daemon=12 tie; ProjectCx=11; Engine=10), so the
+    // assertions below pin Tok exactly and the rest as a stable high-fan-out band +
+    // membership rather than a brittle strict total order through the 12-tie.
+    assert_eq!(get("Tok"), 29, "Tok fan-out drifted again: {out}");
     // The recurring high-fan-out aggregates each clear a floor; exact ties among
     // them are not asserted (the 12-tie shifts as src/ changes).
     assert!(get("BodyItem") >= 12, "BodyItem fan-out dropped below 12: {out}");
