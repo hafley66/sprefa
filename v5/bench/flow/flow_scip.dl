@@ -1,9 +1,9 @@
-# Tier-1 cross-language flow: same OpenAPI source of truth as flow.dl, but the
-# participants are SCIP-symbol-keyed, not name-keyed. The Rust getPet handler and
-# the TS getPet stub are DISTINCT symbols, so the handler/stub conflation in the
-# tier-0 page (flow.dl, where both tagged "impl") is gone. Requires an index.scip
-# at the scan root (populates scip_def/scip_ref); without one those rels are empty
-# and flow_sym is empty.
+# Cross-language operation flow, SCIP-resolved. The OpenAPI spec is codegen'd into
+# a client library (one exported symbol per operationId); a codebase imports that
+# library. The blast radius of an operation is every resolved ref / import /
+# callsite of its generated symbol — compiler-resolved across the package
+# boundary, not name-matched. The operationId is needed only to label the one
+# generated def; SCIP carries the rest.
 
 rel src(p: file).
 src(p) <- scan("WORK", "**/*.rs", p, rev).
@@ -14,24 +14,36 @@ rel spec_op(op: text).
 spec_op(op) <- scan("WORK", "**/openapi.yaml", p, rev),
   jsonp(p, rev, "paths.*.*.operationId", op).
 
-# backend implementor: a DEF whose descriptor name IS an operationId, in a Rust
-# file. scip_name(sym, name) is the symbol's descriptor name computed in-engine
-# (last identifier run) — a pure-dl split chain leaks `impl#[Type]` on methods.
-# The .rs filter is the role (the spec doesn't say "backend"; the repo does).
+# a generated file carries the codegen banner (how you really detect generated
+# code: the banner, not a path convention).
+rel gen_file(file: file).
+gen_file(f) <- scan("WORK", "**/*.ts", f, rev), match(f, rev, /GENERATED from openapi/, l).
+gen_file(f) <- scan("WORK", "**/*.rs", f, rev), match(f, rev, /GENERATED from openapi/, l).
+
+# the generated symbol for an operation: a def in a generated file whose
+# descriptor name IS the operationId. scip_name is the in-engine descriptor (a
+# pure-dl split leaks `impl#[Type]` on methods).
+rel gen_def(op: text, sym: text, file: file).
+gen_def(op, sym, f) <- spec_op(op), scip_name(sym, op), scip_def(sym, f), gen_file(f).
+
+# backend implementor: a def whose descriptor IS the operationId, in a Rust file
+# (the handwritten handler the spec is implemented by). The .rs filter is the
+# role; the spec doesn't say "backend", the repo does.
 rel impl_sym(op: text, sym: text, file: file).
 impl_sym(op, sym, f) <- spec_op(op), scip_name(sym, op), scip_def(sym, f),
   ext = split(f, ".", -1), ext = "rs".
 
-# consumer: a REF whose descriptor name IS an operationId. SCIP resolves it to
-# the def it truly binds to (def_file), so the TS call binds the TS stub, not the
-# Rust handler — the cross-language tie stays the operationId, not a resolved edge.
-rel client_sym(op: text, file: file, def_file: file).
-client_sym(op, f, df) <- spec_op(op), scip_ref(f, sym, df), scip_name(sym, op).
+# consumer: every resolved ref to a generated symbol — the import line and each
+# callsite, resolved across the package boundary by SCIP. This is the blast
+# radius of the operation in the consuming codebase.
+rel consumer(op: text, file: file).
+consumer(op, rf) <- gen_def(op, sym, _), scip_ref(rf, sym, _).
 
 rel flow_sym(op: text, role: text, file: file).
-flow_sym(op, "impl", f) <- impl_sym(op, _, f).
-flow_sym(op, "client", f) <- client_sym(op, f, _).
+flow_sym(op, "impl", f)      <- impl_sym(op, _, f).
+flow_sym(op, "generated", f) <- gen_def(op, _, f).
+flow_sym(op, "consumer", f)  <- consumer(op, f).
 
-? impl_sym(op, sym, file).
-? client_sym(op, file, def_file).
+? gen_def(op, sym, file).
+? consumer(op, file).
 ? flow_sym(op, role, file).

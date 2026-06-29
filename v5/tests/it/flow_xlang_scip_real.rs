@@ -106,30 +106,32 @@ fn real_merged_index_disambiguates_handler_from_stub() {
     let mut eng = Engine::new(conn, root);
     eng.tick(&prog, true).unwrap();
 
-    // both getPet defs present as distinct symbols.
-    let defs: Vec<(String, String)> = eng
-        .query_sql("SELECT \"symbol\",\"file\" FROM rel_scip_def", &[]).unwrap()
-        .into_iter().map(|r| (s(&r[0]), s(&r[1]))).collect();
-    let getpet_defs: Vec<_> = defs.iter()
-        .filter(|(sym, _)| sym.ends_with("getPet().")).collect();
-    assert_eq!(getpet_defs.len(), 2, "two distinct getPet symbols expected: {getpet_defs:?}");
+    // gen_def: the generated lib symbol for getPet lives in the generated TS lib.
+    let gens: Vec<(String, String, String)> = eng
+        .query_sql("SELECT \"op\",\"sym\",\"file\" FROM rel_gen_def", &[]).unwrap()
+        .into_iter().map(|r| (s(&r[0]), s(&r[1]), s(&r[2]))).collect();
+    let getpet_gen: Vec<_> = gens.iter().filter(|(op, _, _)| op == "getPet").collect();
+    assert_eq!(getpet_gen.len(), 1, "getPet has exactly one generated symbol: {gens:?}");
+    assert_eq!(getpet_gen[0].2, "ts/lib/petclient.ts", "generated symbol is in the lib: {gens:?}");
 
-    // impl_sym: only the Rust handler (the .rs role filter), keyed by symbol.
+    // impl_sym: the handwritten Rust backend handler (the .rs role filter).
     let impls: Vec<(String, String, String)> = eng
         .query_sql("SELECT \"op\",\"sym\",\"file\" FROM rel_impl_sym", &[]).unwrap()
         .into_iter().map(|r| (s(&r[0]), s(&r[1]), s(&r[2]))).collect();
     let getpet_impls: Vec<_> = impls.iter().filter(|(op, _, _)| op == "getPet").collect();
     assert_eq!(getpet_impls.len(), 1, "getPet has exactly one impl (the Rust handler): {impls:?}");
     assert_eq!(getpet_impls[0].2, "rust/src/handler.rs", "impl is the Rust file: {impls:?}");
-    assert!(!impls.iter().any(|(_, _, f)| f == "ts/client.ts"),
-        "TS stub must not tag as impl on real monikers: {impls:?}");
 
-    // client_sym: the TS getPet call resolves to the TS stub (def_file ts/...),
-    // never the Rust handler — the cross-lang tie is the operationId, not an edge.
-    let clients: Vec<(String, String, String)> = eng
-        .query_sql("SELECT \"op\",\"file\",\"def_file\" FROM rel_client_sym", &[]).unwrap()
-        .into_iter().map(|r| (s(&r[0]), s(&r[1]), s(&r[2]))).collect();
-    assert!(clients.iter().any(|(op, f, df)|
-        op == "getPet" && f == "ts/client.ts" && df == "ts/client.ts"),
-        "TS getPet call resolves within TS to the stub: {clients:?}");
+    // consumer: the blast radius — every resolved ref to the generated symbol.
+    // The consuming app file must light up (its callsites + import resolve across
+    // the package boundary to the lib def).
+    let consumers: Vec<(String, String)> = eng
+        .query_sql("SELECT \"op\",\"file\" FROM rel_consumer", &[]).unwrap()
+        .into_iter().map(|r| (s(&r[0]), s(&r[1]))).collect();
+    assert!(consumers.iter().any(|(op, f)| op == "getPet" && f == "ts/app/pages.ts"),
+        "getPet blast radius must include the consuming app: {consumers:?}");
+    // a consumer is a ref to a GENERATED symbol only: the Rust handler's internal
+    // getPet call (handler.rs is not generated) is NOT a consumer.
+    assert!(!consumers.iter().any(|(op, f)| op == "getPet" && f == "rust/src/handler.rs"),
+        "non-generated internal calls are not consumers: {consumers:?}");
 }

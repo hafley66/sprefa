@@ -37,15 +37,16 @@ fn occ(line0: i32, col0: i32, end_col: i32, symbol: &str, def: bool) -> Occurren
 }
 
 /// A two-document index: the Rust handler crate and the TS client. Each `getPet`
-/// is its OWN symbol (different scheme/package/file), plus the internal call
-/// occurrences so `scip_ref` resolves each call to its true def.
+/// is its OWN symbol; the consumer's callsites reference the GENERATED lib symbol
+/// (cross-file), so `scip_ref` resolves each call back to the lib def.
 fn build_index() -> Index {
-    // distinct symbols for the same descriptor name across the two languages.
+    // backend handler (handwritten Rust), the generated TS lib symbols, and the
+    // consuming app — the app's refs carry the LIB's symbols (resolved imports).
     let rs_get = "rust-analyzer cargo flow_handler 0.1.0 handler/getPet().";
     let rs_create = "rust-analyzer cargo flow_handler 0.1.0 handler/createPet().";
-    let ts_get = "scip-typescript npm flow-client 1.0.0 ts/`client.ts`/getPet().";
-    let ts_create = "scip-typescript npm flow-client 1.0.0 ts/`client.ts`/createPet().";
-    let ts_load = "scip-typescript npm flow-client 1.0.0 ts/`client.ts`/loadPetPage().";
+    let lib_get = "scip-typescript npm . . lib/`petclient.ts`/getPet().";
+    let lib_create = "scip-typescript npm . . lib/`petclient.ts`/createPet().";
+    let app_load = "scip-typescript npm . . app/`pages.ts`/loadPetPage().";
 
     let rust = Document {
         language: "rust".into(),
@@ -57,18 +58,29 @@ fn build_index() -> Index {
         ],
         ..Default::default()
     };
-    let ts = Document {
+    let lib = Document {
         language: "typescript".into(),
-        relative_path: "ts/client.ts".into(),
+        relative_path: "ts/lib/petclient.ts".into(),
         occurrences: vec![
-            occ(3, 9, 15, ts_get, true),         // function getPet (line 4)
-            occ(7, 9, 18, ts_create, true),      // function createPet (line 8)
-            occ(12, 16, 27, ts_load, true),      // function loadPetPage (line 13)
-            occ(13, 9, 15, ts_get, false),       // loadPetPage body calls getPet (line 14)
+            occ(4, 16, 22, lib_get, true),       // export function getPet
+            occ(8, 16, 25, lib_create, true),    // export function createPet
         ],
         ..Default::default()
     };
-    Index { documents: vec![rust, ts], ..Default::default() }
+    let app = Document {
+        language: "typescript".into(),
+        relative_path: "ts/app/pages.ts".into(),
+        occurrences: vec![
+            occ(5, 9, 15, lib_get, false),       // import { getPet, createPet }
+            occ(5, 17, 26, lib_create, false),
+            occ(7, 16, 27, app_load, true),      // export function loadPetPage
+            occ(8, 9, 15, lib_get, false),       // loadPetPage calls getPet
+            occ(11, 9, 15, lib_get, false),      // refreshPet calls getPet (2nd)
+            occ(15, 9, 18, lib_create, false),   // onCreateClicked calls createPet
+        ],
+        ..Default::default()
+    };
+    Index { documents: vec![rust, lib, app], ..Default::default() }
 }
 
 fn run() -> Engine {
@@ -89,41 +101,38 @@ fn run() -> Engine {
 fn s(v: &serde_json::Value) -> String { v.as_str().unwrap_or_default().to_string() }
 
 #[test]
-fn scip_disambiguates_handler_from_client_stub() {
+fn scip_resolves_generated_symbol_and_its_consumers() {
     let eng = run();
 
-    // sanity: both getPet symbols are present as distinct scip_def rows.
-    let defs: Vec<(String, String)> = eng
-        .query_sql("SELECT \"symbol\",\"file\" FROM rel_scip_def", &[]).unwrap()
-        .into_iter().map(|r| (s(&r[0]), s(&r[1]))).collect();
-    let getpet_defs: Vec<_> = defs.iter().filter(|(sym, _)| sym.contains("getPet")).collect();
-    assert_eq!(getpet_defs.len(), 2, "two distinct getPet symbols expected: {getpet_defs:?}");
+    // gen_def: the generated lib symbol for getPet, keyed by symbol + banner.
+    let gens: Vec<(String, String, String)> = eng
+        .query_sql("SELECT \"op\",\"sym\",\"file\" FROM rel_gen_def", &[]).unwrap()
+        .into_iter().map(|r| (s(&r[0]), s(&r[1]), s(&r[2]))).collect();
+    let getpet_gen: Vec<_> = gens.iter().filter(|(op, _, _)| op == "getPet").collect();
+    assert_eq!(getpet_gen.len(), 1, "getPet has exactly one generated symbol: {gens:?}");
+    assert_eq!(getpet_gen[0].2, "ts/lib/petclient.ts", "generated symbol is in the lib: {gens:?}");
 
-    // impl_sym: ONLY the Rust handler, keyed by symbol + .rs role filter.
+    // impl_sym: the handwritten Rust backend handler (distinct symbol, .rs role).
     let impls: Vec<(String, String, String)> = eng
         .query_sql("SELECT \"op\",\"sym\",\"file\" FROM rel_impl_sym", &[]).unwrap()
         .into_iter().map(|r| (s(&r[0]), s(&r[1]), s(&r[2]))).collect();
     let getpet_impls: Vec<_> = impls.iter().filter(|(op, _, _)| op == "getPet").collect();
-    assert_eq!(getpet_impls.len(), 1, "getPet must have exactly one impl (the Rust handler): {impls:?}");
-    let (_, sym, file) = getpet_impls[0];
-    assert_eq!(file, "rust/src/handler.rs", "impl is the Rust file: {impls:?}");
-    assert!(sym.starts_with("rust-analyzer"), "impl symbol is the Rust moniker: {sym}");
-    // the conflation fix: the TS stub is NOT an impl.
-    assert!(!impls.iter().any(|(_, _, f)| f == "ts/client.ts"),
-        "TS stub must not tag as impl (tier-0 conflation): {impls:?}");
+    assert_eq!(getpet_impls.len(), 1, "getPet has exactly one impl (the Rust handler): {impls:?}");
+    assert_eq!(getpet_impls[0].2, "rust/src/handler.rs", "impl is the Rust file: {impls:?}");
+    // the generated lib symbol is NOT a backend impl (it's a .ts file).
+    assert!(!impls.iter().any(|(_, _, f)| f.ends_with(".ts")),
+        "generated TS lib must not tag as backend impl: {impls:?}");
 
-    // client_sym: SCIP resolves each call to its TRUE def. The TS loadPetPage
-    // call to getPet binds the TS stub (def_file == ts/client.ts), NOT the Rust
-    // handler — the cross-lang tie is the operationId, never a resolved edge.
-    let clients: Vec<(String, String, String)> = eng
-        .query_sql("SELECT \"op\",\"file\",\"def_file\" FROM rel_client_sym", &[]).unwrap()
-        .into_iter().map(|r| (s(&r[0]), s(&r[1]), s(&r[2]))).collect();
-    let ts_call = clients.iter().find(|(op, f, _)| op == "getPet" && f == "ts/client.ts");
-    let (_, _, def_file) = ts_call.unwrap_or_else(|| panic!("TS getPet call site missing: {clients:?}"));
-    assert_eq!(def_file, "ts/client.ts",
-        "TS getPet call resolves to the TS stub, not the Rust handler: {clients:?}");
-    // and the Rust internal createPet->getPet call resolves within Rust.
-    assert!(clients.iter().any(|(op, f, df)|
-        op == "getPet" && f == "rust/src/handler.rs" && df == "rust/src/handler.rs"),
-        "Rust internal getPet call resolves within Rust: {clients:?}");
+    // consumer: the blast radius — every resolved ref to the generated symbol.
+    // The app's import + two callsites all reference the LIB's getPet symbol, so
+    // the consuming file lights up (deduped to one file-level row by the loader).
+    let consumers: Vec<(String, String)> = eng
+        .query_sql("SELECT \"op\",\"file\" FROM rel_consumer", &[]).unwrap()
+        .into_iter().map(|r| (s(&r[0]), s(&r[1]))).collect();
+    assert!(consumers.iter().any(|(op, f)| op == "getPet" && f == "ts/app/pages.ts"),
+        "getPet blast radius includes the consuming app: {consumers:?}");
+    // the Rust handler's internal getPet call references the HANDLER symbol, not
+    // the generated lib symbol, so it is not a consumer of the operation.
+    assert!(!consumers.iter().any(|(op, f)| op == "getPet" && f == "rust/src/handler.rs"),
+        "non-generated internal calls are not consumers: {consumers:?}");
 }

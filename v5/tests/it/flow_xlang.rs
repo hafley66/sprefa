@@ -51,6 +51,6 @@ fn spec_op_resolves_across_languages() {
 
     // ...AND a TS consumer call site. Cross-language: one spec op, two langs.
     let ts_client = rows.iter().any(|(op, role, f)|
-        op == "getPet" && role == "client" && f.ends_with("ts/client.ts"));
+        op == "getPet" && role == "client" && f.ends_with("ts/app/pages.ts"));
     assert!(ts_client, "getPet has no TS client in flow: {rows:?}");
 }
