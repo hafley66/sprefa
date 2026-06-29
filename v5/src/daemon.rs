@@ -247,6 +247,60 @@ impl Daemon {
         Ok(())
     }
 
+    /// One poll cycle (the clock source for `@async`): advance the tick (which
+    /// re-emits steady `@async` requests, idempotent), then drain every
+    /// outstanding `pending_effect` through a `ShellEffectExec` built from the
+    /// program's `effect_cmd(kind, template)` rows. On any drained response,
+    /// re-tick so the new facts propagate and notify subscribers. Returns the
+    /// number of effects drained. Kinds with no `effect_cmd` template stay queued.
+    fn poll_tick(&self) -> Result<usize> {
+        // Advance the clock + re-stage requests. tick_full takes its own locks,
+        // so hold none here.
+        self.tick_full(true)?;
+        let arity = {
+            let prog = self.prog.lock().unwrap();
+            crate::engine::async_effect_arity(&prog)
+        };
+        if arity.is_empty() { return Ok(0); }
+        let (templates, cwd) = {
+            // Typed `sh` decls supply the base registry; the dynamic
+            // `effect_cmd(kind, template)` relation overlays them (a data-driven
+            // fallback for templates not declared at parse time).
+            let mut m = {
+                let prog = self.prog.lock().unwrap();
+                crate::engine::shell_templates(&prog)
+            };
+            let eng = self.eng.lock().unwrap();
+            if let Ok(rows) = eng.query_sql("SELECT kind, template FROM rel_effect_cmd", &[]) {
+                for row in rows {
+                    if let (Some(k), Some(t)) = (row.first().and_then(|v| v.as_str()),
+                                                 row.get(1).and_then(|v| v.as_str())) {
+                        m.insert(k.to_string(), t.to_string());
+                    }
+                }
+            }
+            (m, eng.root())
+        };
+        let exec = crate::engine::ShellEffectExec { templates, n_out: arity, cwd };
+        let n = {
+            let prog = self.prog.lock().unwrap();
+            let mut eng = self.eng.lock().unwrap();
+            // One-shot @async requests, then long-lived @stream subscriptions: a
+            // stream yields N head rows per drain and stays 'running'.
+            let a = eng.drain_effects(&prog, &exec)?;
+            let s = eng.drain_streams(&prog, &exec)?;
+            a + s
+        };
+        self.touch();
+        if n > 0 {
+            // Responses landed in their rel; re-tick so downstream derived rules
+            // see them, then republish.
+            self.tick_full(true)?;
+            self.broadcast_diag_changed();
+        }
+        Ok(n)
+    }
+
     fn broadcast_diag_changed(&self) {
         // Snapshot paths under the lock so write_frame (which can take time on a
         // slow consumer) doesn't hold it.
@@ -490,6 +544,13 @@ pub fn run_daemon(
         let d = daemon.clone();
         std::thread::Builder::new().name("dl-idle".into())
             .spawn(move || idle_loop(d, idle_secs))?;
+    }
+
+    // @async clock: poll-drive the effect drain when DL_POLL_SECS is set.
+    if let Some(secs) = poll_interval_secs() {
+        let d = daemon.clone();
+        std::thread::Builder::new().name("dl-poll".into())
+            .spawn(move || poll_loop(d, secs))?;
     }
 
     // Accept loop off-main so the main thread can drive the tray event loop
@@ -756,6 +817,29 @@ fn idle_timeout_secs() -> u64 {
     std::env::var("DL_DAEMON_IDLE_SECS").ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_IDLE_SECS)
+}
+
+// ---------- poll thread (the @async clock source) ----------
+
+/// `DL_POLL_SECS=N` drives `@async` polling: every N seconds the daemon advances
+/// the tick and drains outstanding effects. Unset / 0 = no polling (the default;
+/// a program with no @async rules never needs it). A DSL `every(secs)` clock
+/// source that lets the program declare its own cadence is the follow-up.
+fn poll_interval_secs() -> Option<u64> {
+    std::env::var("DL_POLL_SECS").ok().and_then(|s| s.parse().ok()).filter(|&n| n > 0)
+}
+
+fn poll_loop(d: Arc<Daemon>, secs: u64) {
+    eprintln!("[daemon] poll loop every {secs}s (@async clock)");
+    loop {
+        std::thread::sleep(Duration::from_secs(secs));
+        if d.shutdown_requested.load(Ordering::Relaxed) { return; }
+        match d.poll_tick() {
+            Ok(n) if n > 0 => eprintln!("[daemon] poll: drained {n} effect(s)"),
+            Ok(_) => {}
+            Err(e) => eprintln!("[daemon] poll error: {e}"),
+        }
+    }
 }
 
 // ---------- per-connection handler ----------

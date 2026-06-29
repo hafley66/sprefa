@@ -172,13 +172,18 @@ pub enum BodyItem {
     /// json/yaml/toml (dispatched by extension; `*` = any key/element). Renamed
     /// from `json` to free the name for the declarative brace pattern. Trailing
     /// optional `id` = the matched value's located span (christmas #9).
-    JsonP { path: Term, rev: Term, jpath: String, out: Term, id: Option<Term> },
+    /// `rev: Some` = the FILE form (`src` is a path read at `rev`, span-located);
+    /// `rev: None` = the TERM form (`src` is a bound `str` content value — a
+    /// response body / column / stdout — parsed directly, no file, no span). The
+    /// term form runs in the join+extract hybrid pass, not the file scan.
+    JsonP { src: Term, rev: Option<Term>, jpath: String, out: Term, id: Option<Term> },
     /// `json(path, rev, q:{ $k: $v })` — declarative brace pattern over a
     /// json/yaml/toml document (dispatched by extension, like jsonp). Each
     /// match binds N named captures (keys AND values) as rule vars, mirroring
     /// match's named groups. `pat` is the raw `q:` body (validated at parse
-    /// time; the engine re-parses it to walk the Step tree).
-    Json { path: Term, rev: Term, pat: String },
+    /// time; the engine re-parses it to walk the Step tree). `rev: None` = the
+    /// term form (`src` is bound content), like `JsonP`.
+    Json { src: Term, rev: Option<Term>, pat: String },
     /// Shell out per matched file: `cmd(p, rev, "tool {file}", line, out)` binds
     /// one row per stdout line. Cached like every source op: rows re-run only
     /// when the file content or the rule text moves (the docker-layer contract).
@@ -204,7 +209,24 @@ pub enum BodyItem {
     /// persist in `_node_embeddings` keyed by the edge rel name. The graph sibling
     /// of the text `similar` rel.
     Node2vec { rel: String },
+    /// An effect CALL inside an `@async`/`@stream` rule body: `gh(repo, path) ->
+    /// (status, body)`. `name` resolves to a `ShellFn` (the effect kind/template);
+    /// `args` fill the template `{hole}`s (param-positional); `outs` are fresh
+    /// vars bound to the executor's response columns, in order. The body-effect
+    /// form D-3 desugars to; the runtime sees ONE model. Not a lowerable relation
+    /// (`body_sql` ignores it); the engine reads it via `Rule::effect()`.
+    Effect { name: String, args: Vec<Term>, outs: Vec<Term> },
 }
+
+/// A temporal rule modifier, written `@next` / `@async` / `@stream` after the
+/// `<-` neck. `Next`: the head is staged into the next tick's seed (carry state)
+/// instead of this tick's fixpoint. `Async`: the body fires a one-shot effect
+/// whose response lands as a fact at a later tick (non-blocking IO). `Stream`: the
+/// body opens a long-lived subscription (`sh*`) whose rows append over many ticks
+/// (Phase 4, runtime not yet wired). `None` on the `Rule` = today's same-tick
+/// deductive rule. See docs/research-reactive-effectful-datalog.md §8.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Temporal { Next, Async, Stream }
 
 #[derive(Clone, Debug)]
 pub struct Rule {
@@ -221,18 +243,54 @@ pub struct Rule {
     /// ancestor instead of the engine's `self.root`, so a script loaded into a
     /// rootless daemon scans the repo it lives in. Stamped by the frontend loader.
     pub origin: Option<PathBuf>,
+    /// `@next` / `@async` modifier after the neck, if any. `None` = the ordinary
+    /// same-tick deductive rule (every rule today). See `Temporal`.
+    pub temporal: Option<Temporal>,
 }
 
 impl Rule {
     /// Does any head term carry an aggregate?
     pub fn has_agg(&self) -> bool { self.aggs.iter().any(|a| a.is_some()) }
 
+    /// `@next` carry rule: head staged for the next tick's seed.
+    pub fn is_next(&self) -> bool { self.temporal == Some(Temporal::Next) }
+
+    /// `@async` effect rule: body emits a request, response lands later.
+    pub fn is_async(&self) -> bool { self.temporal == Some(Temporal::Async) }
+
+    /// `@stream` subscription rule: body opens a long-lived `sh*` source whose
+    /// rows append over many ticks. Runtime is Phase 4 (the engine bails today).
+    pub fn is_stream(&self) -> bool { self.temporal == Some(Temporal::Stream) }
+
+    /// The single `BodyItem::Effect` of an `@async`/`@stream` rule, if present.
+    /// After the frontend desugar every effectful rule carries exactly one (the
+    /// head-response form synthesizes it). Returns `(kind, args, outs)`.
+    pub fn effect(&self) -> Option<(&str, &[Term], &[Term])> {
+        self.body.iter().find_map(|b| match b {
+            BodyItem::Effect { name, args, outs } => Some((name.as_str(), &args[..], &outs[..])),
+            _ => None,
+        })
+    }
+
     pub fn is_source(&self) -> bool {
-        self.body.iter().any(|b| matches!(b,
+        self.body.iter().any(|b| match b {
             BodyItem::Scan { .. } | BodyItem::Match { .. } | BodyItem::Ast { .. }
-            | BodyItem::Sg { .. } | BodyItem::AstYaml { .. } | BodyItem::JsonP { .. }
-            | BodyItem::Json { .. }
-            | BodyItem::Cmd { .. } | BodyItem::Comment { .. }))
+            | BodyItem::Sg { .. } | BodyItem::AstYaml { .. }
+            | BodyItem::Cmd { .. } | BodyItem::Comment { .. } => true,
+            // A FILE-form json/jsonp (rev=Some) scans a file = a source op. The
+            // TERM form (rev=None) reads a bound value, so it is NOT a source —
+            // it runs in the join+extract hybrid pass over already-derived rels.
+            BodyItem::JsonP { rev, .. } | BodyItem::Json { rev, .. } => rev.is_some(),
+            _ => false,
+        })
+    }
+
+    /// True iff the body has a TERM-form `json`/`jsonp` (`rev=None`): the source
+    /// is a bound `str` value, not a file. Such a rule joins relations (the Pos
+    /// atoms bind the content var) and then extracts — the hybrid evaluator.
+    pub fn has_term_extract(&self) -> bool {
+        self.body.iter().any(|b| matches!(b,
+            BodyItem::JsonP { rev: None, .. } | BodyItem::Json { rev: None, .. }))
     }
 
     /// Some(edge) iff this rule is exactly `head(..) <- closure(edge).`
@@ -336,7 +394,30 @@ pub struct GenRule {
 }
 
 #[derive(Clone, Debug)]
-pub enum Item { Rel(RelDecl), Rule(Rule), Query(Query), Anchor(AnchorDecl), Brand(BrandDecl), Gen(GenRule) }
+pub enum Item { Rel(RelDecl), Rule(Rule), Query(Query), Anchor(AnchorDecl), Brand(BrandDecl), Gen(GenRule), Shell(ShellFn) }
+
+/// The read/mutate/stream axis of a `sh` decl: `sh` = `Read` (cached, deduped,
+/// at-least-once, retryable), `sh!` = `Mutate` (idempotency-keyed, exactly-once,
+/// never cached), `sh*` = `Stream` (long-lived, many rows over time). The bang/
+/// star is the only thing that distinguishes the three at parse time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShellKind { Read, Mutate, Stream }
+
+/// `sh name(p1, p2) -> (c1: t1, c2: t2) = `cmd {p1}`.` — a named, typed,
+/// shell-callable effect template. `name` IS the effect kind (it matches the
+/// `@async` head rel in the head-response form). `params` are the `{hole}`
+/// names filled from the request args; `outs` are the typed response columns the
+/// executor fills from stdout. `body` is the raw shell (a backtick `Tok::Str`),
+/// `{param}` holes replaced per request. The typed sibling of `effect_cmd`; the
+/// daemon builds a `ShellEffectExec` from the registry of these.
+#[derive(Clone, Debug)]
+pub struct ShellFn {
+    pub name: String,
+    pub params: Vec<String>,
+    pub outs: Vec<Col>,
+    pub body: String,
+    pub kind: ShellKind,
+}
 
 /// `use "path".` — module inclusion. The loader resolves `path` against the
 /// include roots (program dir, `$SPREFA_STD`, `<exe>/../std`), reads the file,

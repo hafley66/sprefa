@@ -39,8 +39,50 @@ pub fn load_program(entry: &Path) -> Result<Vec<Item>> {
     let surface = loader.load_entry(entry)?;
     let origin = entry.canonicalize().unwrap_or_else(|_| entry.to_path_buf());
     let mut items = expand_program(surface, &mut loader, origin)?;
+    desugar_effects(&mut items);
     dedup_rels(&mut items)?;
     Ok(items)
+}
+
+/// D-3: lower the head-response `@async`/`@stream` form to the canonical
+/// body-effect form so the runtime has ONE model. A rule already carrying an
+/// explicit `BodyItem::Effect` is left untouched (it is already canonical). For
+/// the head-response form the synthesized effect's `args` are ALL positive-body
+/// bound vars (the template hole map, keyed by var name — the legacy
+/// `effect_cmd`/`sh` convention), and `outs` are the head vars NOT bound by the
+/// body (the response columns, in head order). Head literals are neither arg nor
+/// out; they reconstruct directly at drain time. Runs after `use`/`def` expansion
+/// so the body is final (a `def` could contribute the binding atoms).
+fn desugar_effects(items: &mut [Item]) {
+    for item in items.iter_mut() {
+        let Item::Rule(r) = item else { continue };
+        if !(r.is_async() || r.is_stream()) { continue; }
+        if r.effect().is_some() { continue; }
+        let bound = pos_bound_vars(&r.body);
+        let args: Vec<Term> = bound.iter().cloned().map(Term::Var).collect();
+        let outs: Vec<Term> = r.head.terms.iter().filter_map(|t| match t {
+            Term::Var(v) if !bound.contains(v) => Some(Term::Var(v.clone())),
+            _ => None,
+        }).collect();
+        let name = r.head.rel.clone();
+        r.body.push(BodyItem::Effect { name, args, outs });
+    }
+}
+
+/// Distinct variables bound by the positive (`Pos`) body atoms, first-appearance
+/// order. Mirrors `engine::async_bound_vars` — the head-response request args.
+fn pos_bound_vars(body: &[BodyItem]) -> Vec<String> {
+    let mut seen = Vec::new();
+    for b in body {
+        if let BodyItem::Pos(a) = b {
+            for t in &a.terms {
+                if let Term::Var(v) = t {
+                    if !seen.contains(v) { seen.push(v.clone()); }
+                }
+            }
+        }
+    }
+    seen
 }
 
 /// Resolve and expand the multi-file discovery shape (a `<dir>/*.dl` set). Each
@@ -63,6 +105,7 @@ pub fn load_program_set(entry_paths: &[PathBuf]) -> Result<Vec<Item>> {
             inline_template_calls(&mut r.body, &templates, &mut counter)?;
         }
     }
+    desugar_effects(&mut items);
     dedup_rels(&mut items)?;
     Ok(items)
 }
@@ -237,12 +280,14 @@ fn rewrite_terms(b: &mut BodyItem, sub: &HashMap<String, Term>, params: &[String
         BodyItem::AstYaml { path, rev, line, col, end_line, end_col, .. } => {
             for t in [path, rev, line, col, end_line, end_col] { rewrite_term(t); }
         }
-        BodyItem::JsonP { path, rev, out, id, .. } => {
-            for t in [path, rev, out] { rewrite_term(t); }
+        BodyItem::JsonP { src, rev, out, id, .. } => {
+            for t in [src, out] { rewrite_term(t); }
+            if let Some(r) = rev { rewrite_term(r); }
             rewrite_opt(id);
         }
-        BodyItem::Json { path, rev, .. } => {
-            for t in [path, rev] { rewrite_term(t); }
+        BodyItem::Json { src, rev, .. } => {
+            rewrite_term(src);
+            if let Some(r) = rev { rewrite_term(r); }
         }
         BodyItem::Cmd { path, rev, line, out, .. } => {
             for t in [path, rev, line, out] { rewrite_term(t); }
@@ -253,6 +298,9 @@ fn rewrite_terms(b: &mut BodyItem, sub: &HashMap<String, Term>, params: &[String
         BodyItem::Cmp(c) => {
             rewrite_term(&mut c.lhs);
             rewrite_term(&mut c.rhs);
+        }
+        BodyItem::Effect { args, outs, .. } => {
+            for t in args.iter_mut().chain(outs.iter_mut()) { rewrite_term(t); }
         }
         BodyItem::Closure { .. } | BodyItem::Scc { .. } | BodyItem::Node2vec { .. } => {}
     }

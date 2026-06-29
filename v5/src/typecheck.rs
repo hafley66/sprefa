@@ -185,7 +185,7 @@ pub fn normalize_program(prog: &mut Program, dl_path: &str) -> Vec<TypeDiag> {
                 }
                 for b in &mut g.body { normalize_body_item(b, dl_path, &mut diags); }
             }
-            Item::Rel(_) | Item::Anchor(_) | Item::Brand(_) => {}
+            Item::Rel(_) | Item::Anchor(_) | Item::Brand(_) | Item::Shell(_) => {}
         }
     }
     diags
@@ -213,12 +213,14 @@ fn normalize_body_item(b: &mut BodyItem, dl_path: &str, diags: &mut Vec<TypeDiag
         BodyItem::AstYaml { path, rev, line, col, end_line, end_col, .. } => {
             for t in [path, rev, line, col, end_line, end_col] { normalize_term(t, dl_path, diags); }
         }
-        BodyItem::JsonP { path, rev, out, id, .. } => {
-            for t in [path, rev, out] { normalize_term(t, dl_path, diags); }
+        BodyItem::JsonP { src, rev, out, id, .. } => {
+            for t in [src, out] { normalize_term(t, dl_path, diags); }
+            if let Some(t) = rev { normalize_term(t, dl_path, diags); }
             if let Some(t) = id { normalize_term(t, dl_path, diags); }
         }
-        BodyItem::Json { path, rev, .. } => {
-            for t in [path, rev] { normalize_term(t, dl_path, diags); }
+        BodyItem::Json { src, rev, .. } => {
+            normalize_term(src, dl_path, diags);
+            if let Some(t) = rev { normalize_term(t, dl_path, diags); }
         }
         BodyItem::Cmd { path, rev, line, out, .. } => {
             for t in [path, rev, line, out] { normalize_term(t, dl_path, diags); }
@@ -229,6 +231,9 @@ fn normalize_body_item(b: &mut BodyItem, dl_path: &str, diags: &mut Vec<TypeDiag
         BodyItem::Cmp(c) => {
             normalize_term(&mut c.lhs, dl_path, diags);
             normalize_term(&mut c.rhs, dl_path, diags);
+        }
+        BodyItem::Effect { args, outs, .. } => {
+            for t in args.iter_mut().chain(outs.iter_mut()) { normalize_term(t, dl_path, diags); }
         }
         BodyItem::Closure { .. } | BodyItem::Scc { .. } | BodyItem::Node2vec { .. } => {}
     }
@@ -467,6 +472,88 @@ fn coerce_base(var: &str, base: Type, dl_path: &str, diags: &mut Vec<TypeDiag>) 
     });
 }
 
+/// Bind a rule's `BodyItem::Effect` to its `sh` decl and the temporal modifier.
+/// Runs after `desugar_effects`, so the head-response form already carries a
+/// synthesized Effect named for its head rel. Checks, in order:
+///   - at most one effect per rule (a second is a hard error);
+///   - an effect requires `@async`/`@stream` (effects fire off-tick);
+///   - an explicit call (`name != head.rel`) must resolve to a declared `sh`;
+///     a head-response effect with no matching decl is the legacy `effect_cmd`
+///     path and binds at the daemon, so it is left alone;
+///   - when the decl is known: arg arity = params, out arity = decl outs, every
+///     `{param}` hole appears in the body text, and the temporal axis agrees with
+///     the `sh` kind (`@async`↔`sh`/`sh!`, `@stream`↔`sh*`).
+fn check_effect(rule: &Rule, fns: &HashMap<&str, &ShellFn>, dl_path: &str, diags: &mut Vec<TypeDiag>) {
+    let err = |code: &str, msg: String, diags: &mut Vec<TypeDiag>| {
+        diags.push(TypeDiag {
+            path: dl_path.to_string(), span: (0, 0),
+            severity: Severity::Error, code: code.into(), msg,
+        });
+    };
+    let n_eff = rule.body.iter().filter(|b| matches!(b, BodyItem::Effect { .. })).count();
+    if n_eff == 0 { return; }
+    if n_eff > 1 {
+        err("multiple-effects",
+            format!("rule `{}` has {n_eff} effect calls; at most one effect per rule (split into separate @async rules)", rule.head.rel),
+            diags);
+    }
+    if !matches!(rule.temporal, Some(Temporal::Async) | Some(Temporal::Stream)) {
+        err("effect-needs-async",
+            format!("effect call in rule `{}` requires `@async` or `@stream`; effects fire off-tick", rule.head.rel),
+            diags);
+    }
+    let Some((name, args, outs)) = rule.effect() else { return; };
+    let Some(f) = fns.get(name) else {
+        // No declared `sh`. Legal only as the head-response/legacy form, where the
+        // synthesized effect is named for the head rel; an explicit call to an
+        // undeclared `sh` is a typo.
+        if name != rule.head.rel {
+            err("unknown-sh",
+                format!("effect call `{name}(..)` in rule `{}` resolves to no `sh` decl", rule.head.rel),
+                diags);
+        }
+        return;
+    };
+    if args.len() != f.params.len() {
+        err("effect-arity",
+            format!("`sh {name}` takes {} arg(s), called with {}", f.params.len(), args.len()),
+            diags);
+    }
+    if outs.len() != f.outs.len() {
+        err("effect-arity",
+            format!("`sh {name}` returns {} value(s), bound to {}", f.outs.len(), outs.len()),
+            diags);
+    }
+    for p in &f.params {
+        if !f.body.contains(&format!("{{{p}}}")) {
+            err("unused-hole",
+                format!("`sh {name}` param `{p}` never appears as `{{{p}}}` in the template"),
+                diags);
+        }
+    }
+    let crossed = match (rule.temporal, f.kind) {
+        (Some(Temporal::Stream), ShellKind::Stream) => false,
+        (Some(Temporal::Async), ShellKind::Read | ShellKind::Mutate) => false,
+        _ => true,
+    };
+    if crossed {
+        let want = match f.kind { ShellKind::Stream => "@stream", _ => "@async" };
+        err("temporal-kind-mismatch",
+            format!("`sh {name}` is `{}`; call it from {want}, not {}",
+                shell_kind_word(f.kind),
+                rule.temporal.map(temporal_word).unwrap_or("a bare rule")),
+            diags);
+    }
+}
+
+fn shell_kind_word(k: ShellKind) -> &'static str {
+    match k { ShellKind::Read => "sh", ShellKind::Mutate => "sh!", ShellKind::Stream => "sh*" }
+}
+
+fn temporal_word(t: Temporal) -> &'static str {
+    match t { Temporal::Next => "@next", Temporal::Async => "@async", Temporal::Stream => "@stream" }
+}
+
 /// Run both passes for a program: validate brands/anchors, check every rule, then
 /// normalize the literals in place. Returns all diagnostics. The engine calls this
 /// once at the start of a tick (before declare/lower). On a brand/anchor structural
@@ -490,9 +577,13 @@ pub fn check_and_normalize(prog: &mut Program, dl_path: &str) -> Vec<TypeDiag> {
         });
     }
     let rels = prog_rels(prog);
+    let shell_fns: HashMap<&str, &ShellFn> = prog.items.iter()
+        .filter_map(|it| if let Item::Shell(f) = it { Some((f.name.as_str(), f)) } else { None })
+        .collect();
     for item in &prog.items {
         if let Item::Rule(r) = item {
             diags.extend(check_rule_types(r, &rels, &brands, dl_path));
+            check_effect(r, &shell_fns, dl_path, &mut diags);
         }
     }
     diags.extend(stratify_diags(prog, dl_path));

@@ -125,6 +125,12 @@ impl Parser {
             Some(Tok::Ident(s)) if s == "anchor" => Ok(Item::Anchor(self.anchor_decl()?)),
             Some(Tok::Ident(s)) if s == "type" => Ok(Item::Brand(self.brand_decl()?)),
             Some(Tok::Ident(s)) if s == "gen" => Ok(Item::Gen(self.gen_rule()?)),
+            // `sh`/`sh!`/`sh*` heading an ident (the fn name) is a shell-fn decl;
+            // a rule/rel literally named `sh` (`sh(...)`) still parses as such
+            // because its second token is `(`, not an ident/bang/star.
+            Some(Tok::Ident(s)) if s == "sh"
+                && matches!(self.peek2(), Some(Tok::Ident(_) | Tok::Bang | Tok::Star)) =>
+                Ok(Item::Shell(self.shell_fn()?)),
             Some(Tok::Question) => Ok(Item::Query(self.query()?)),
             _ => Ok(Item::Rule(self.rule()?)),
         }
@@ -189,6 +195,60 @@ impl Parser {
         Ok(RelDecl { name, cols })
     }
 
+    /// `sh[!|*] name(p1, p2) -> (c1: t1, c2: t2) = `cmd {p1}`.` — a shell-fn
+    /// decl. The bang/star (already consumed-as-tokens) selects the kind; params
+    /// are bare idents (the `{hole}` names); outs are typed columns like a rel
+    /// decl; the body is a backtick string (`= `...`.`). The brace `{ shell }`
+    /// body form is deferred (the lexer tokenizes inside braces).
+    fn shell_fn(&mut self) -> Result<ShellFn> {
+        self.ident()?; // "sh"
+        let kind = match self.peek() {
+            Some(Tok::Bang) => { self.next()?; ShellKind::Mutate }
+            Some(Tok::Star) => { self.next()?; ShellKind::Stream }
+            _ => ShellKind::Read,
+        };
+        let name = self.ident()?;
+        self.expect(Tok::LParen)?;
+        let mut params = Vec::new();
+        if matches!(self.peek(), Some(Tok::RParen)) {
+            self.next()?;
+        } else {
+            loop {
+                params.push(self.ident()?);
+                match self.next()? {
+                    Tok::Comma => continue,
+                    Tok::RParen => break,
+                    other => bail!("expected , or ) in sh params, got {:?}", other),
+                }
+            }
+        }
+        self.expect(Tok::ThinArrow)?;
+        self.expect(Tok::LParen)?;
+        let mut outs = Vec::new();
+        loop {
+            let cname = self.ident()?;
+            self.expect(Tok::Colon)?;
+            let tname = self.ident()?;
+            let col = match Type::parse(&tname) {
+                Some(ty) => Col { name: cname, ty, brand: None },
+                None => Col { name: cname, ty: Type::Text, brand: Some(tname) },
+            };
+            outs.push(col);
+            match self.next()? {
+                Tok::Comma => continue,
+                Tok::RParen => break,
+                other => bail!("expected , or ) in sh outs, got {:?}", other),
+            }
+        }
+        self.expect(Tok::Eq)?;
+        let body = match self.next()? {
+            Tok::Str(s) => s,
+            other => bail!("sh `{}`: expected a `backtick` body after =, got {:?}", name, other),
+        };
+        self.expect(Tok::Dot)?;
+        Ok(ShellFn { name, params, outs, body, kind })
+    }
+
     fn rule(&mut self) -> Result<Rule> {
         let (head, aggs) = self.head_atom()?;
         // ground fact: `slide(1, "intro").` is a rule with an empty body; the
@@ -198,11 +258,25 @@ impl Parser {
                 if aggs.iter().any(|a| a.is_some()) {
                     bail!("aggregate not allowed in a fact head");
                 }
-                return Ok(Rule { head, body: Vec::new(), aggs, origin: None });
+                return Ok(Rule { head, body: Vec::new(), aggs, origin: None, temporal: None });
             }
             Tok::Arrow => {}
             other => bail!("expected <- or . after rule head, got {:?}", other),
         }
+        // Optional temporal modifier immediately after the neck: `<- @next ...`.
+        let temporal = if matches!(self.peek(), Some(Tok::At(_))) {
+            match self.next()? {
+                Tok::At(w) => Some(match w.as_str() {
+                    "next"   => Temporal::Next,
+                    "async"  => Temporal::Async,
+                    "stream" => Temporal::Stream,
+                    other => bail!("unknown rule modifier `@{other}` (known: @next, @async, @stream)"),
+                }),
+                _ => unreachable!(),
+            }
+        } else {
+            None
+        };
         let mut body = Vec::new();
         loop {
             body.push(self.body_item()?);
@@ -212,7 +286,7 @@ impl Parser {
                 other => bail!("expected , or . in rule body, got {:?}", other),
             }
         }
-        Ok(Rule { head, body, aggs, origin: None })
+        Ok(Rule { head, body, aggs, origin: None, temporal })
     }
 
     /// Parse a rule head, allowing aggregate calls in term positions:
@@ -314,10 +388,40 @@ impl Parser {
             }
             // relation atom vs constraint: lookahead for '('
             if matches!(self.peek2(), Some(Tok::LParen)) {
-                return Ok(BodyItem::Pos(self.atom()?));
+                let atom = self.atom()?;
+                // An effect call: `name(args) -> (outs)`. The trailing `->` after
+                // the arg list is the only disambiguator from a plain Pos atom.
+                // `args` fill the `sh` template holes; `outs` are fresh response
+                // vars. Resolves to a `ShellFn` at typecheck; fires off-tick.
+                if matches!(self.peek(), Some(Tok::ThinArrow)) {
+                    self.next()?; // ->
+                    let outs = self.paren_terms()?;
+                    return Ok(BodyItem::Effect { name: atom.rel, args: atom.terms, outs });
+                }
+                return Ok(BodyItem::Pos(atom));
             }
         }
         Ok(BodyItem::Cmp(self.constraint()?))
+    }
+
+    /// Parse a parenthesized, comma-separated term list `(a, b, c)` (or `()`).
+    /// Used for an effect call's response binds (`-> (status, body)`).
+    fn paren_terms(&mut self) -> Result<Vec<Term>> {
+        self.expect(Tok::LParen)?;
+        let mut terms = Vec::new();
+        if !matches!(self.peek(), Some(Tok::RParen)) {
+            loop {
+                terms.push(self.term()?);
+                match self.next()? {
+                    Tok::Comma => continue,
+                    Tok::RParen => break,
+                    other => bail!("expected , or ) in effect outputs, got {:?}", other),
+                }
+            }
+        } else {
+            self.next()?; // RParen
+        }
+        Ok(terms)
     }
 
     fn scan(&mut self) -> Result<BodyItem> {
@@ -481,42 +585,77 @@ impl Parser {
         })
     }
 
+    /// FILE form `jsonp(path, rev, "a.b", out, id?)` vs TERM form
+    /// `jsonp(src, "a.b", out, id?)` (a bound `str` content value, no rev). The
+    /// jpath is the string literal immediately followed by the `out` var (never a
+    /// string), so a string in the SECOND slot followed by a non-string is the
+    /// term form; a string in the second slot followed by another string is a
+    /// string-literal `rev` (file form). A non-string second is `rev` (file form).
     fn jsonp(&mut self) -> Result<BodyItem> {
         self.ident()?; // jsonp
         self.expect(Tok::LParen)?;
-        let path = self.term()?; self.expect(Tok::Comma)?;
-        let rev = self.term()?; self.expect(Tok::Comma)?;
-        let jpath = match self.next()? {
-            Tok::Str(s) => s,
-            other => bail!("expected json path string in jsonp(), got {:?}", other),
-        };
+        let first = self.term()?;
         self.expect(Tok::Comma)?;
-        let out = self.term()?;
+        let second = self.term()?;
+        let (src, rev, jpath, out) = match second {
+            Term::Str(jp) => {
+                self.expect(Tok::Comma)?;
+                match self.term()? {
+                    // file form: first=path, second=rev(str literal), third=jpath.
+                    Term::Str(jp2) => {
+                        self.expect(Tok::Comma)?;
+                        (first, Some(Term::Str(jp)), jp2, self.term()?)
+                    }
+                    // term form: first=src, second=jpath, third=out.
+                    out => (first, None, jp, out),
+                }
+            }
+            rev => {
+                // file form: first=path, second=rev (non-string), then jpath, out.
+                self.expect(Tok::Comma)?;
+                let jpath = match self.next()? {
+                    Tok::Str(s) => s,
+                    other => bail!("expected json path string in jsonp(), got {:?}", other),
+                };
+                self.expect(Tok::Comma)?;
+                (first, Some(rev), jpath, self.term()?)
+            }
+        };
         // Trailing optional `id`: the spine id of the matched value's byte span,
-        // bound through the same located-id path as ast/sg/match (christmas #9,
-        // decision 3). Omitted = no id binding (existing 4-arg form unchanged).
+        // bound through the same located-id path as ast/sg/match (christmas #9).
+        // Only the FILE form locates (the term source has no file); an id on a
+        // term-form jsonp is rejected in the engine.
         let id = if matches!(self.peek(), Some(Tok::Comma)) {
             self.next()?; Some(self.term()?)
         } else { None };
         self.expect(Tok::RParen)?;
-        Ok(BodyItem::JsonP { path, rev, jpath, out, id })
+        Ok(BodyItem::JsonP { src, rev, jpath, out, id })
     }
 
-    /// `json(path, rev, q:{ $k: $v })` — declarative brace pattern. The 3rd
-    /// arg is a `q:{...}` PathLit (a structured, highlightable token), NOT a
-    /// string; a string here is the dotted-path form, redirected to `jsonp`.
+    /// FILE form `json(path, rev, q:{...})` vs TERM form `json(src, q:{...})`.
+    /// The pattern is always a `q:{...}` PathLit; a PathLit in the SECOND slot is
+    /// the term form (src then pattern), otherwise the second slot is `rev` and
+    /// the pattern is third (file form). A `rev` may be a string literal.
     fn json(&mut self) -> Result<BodyItem> {
         self.ident()?; // json
         self.expect(Tok::LParen)?;
-        let path = self.term()?; self.expect(Tok::Comma)?;
-        let rev = self.term()?; self.expect(Tok::Comma)?;
-        let pat = match self.term()? {
-            Term::PathLit { body, .. } => body,
-            Term::Str(_) => bail!(
-                "json takes a brace-pattern literal (`q:{{ $k: $v }}`); for the \
-                 dotted-string form use `jsonp(path, rev, \"a.b\", out)`"
-            ),
-            other => bail!("json 3rd arg must be a `q:{{...}}` brace-pattern literal, got {:?}", other),
+        let first = self.term()?;
+        self.expect(Tok::Comma)?;
+        let second = self.term()?;
+        let (src, rev, pat) = match second {
+            Term::PathLit { body, .. } => (first, None, body),
+            rev => {
+                self.expect(Tok::Comma)?;
+                let pat = match self.term()? {
+                    Term::PathLit { body, .. } => body,
+                    Term::Str(_) => bail!(
+                        "json takes a brace-pattern literal (`q:{{ $k: $v }}`); for the \
+                         dotted-string form use `jsonp(...)`"
+                    ),
+                    other => bail!("json pattern arg must be a `q:{{...}}` brace-pattern literal, got {:?}", other),
+                };
+                (first, Some(rev), pat)
+            }
         };
         self.expect(Tok::RParen)?;
         // Validate at parse time so malformed bodies fail fast and capture
@@ -524,7 +663,7 @@ impl Parser {
         if let Err(e) = crate::datapath::parse_pattern(&pat) {
             bail!("json pattern error: {e}");
         }
-        Ok(BodyItem::Json { path, rev, pat })
+        Ok(BodyItem::Json { src, rev, pat })
     }
 
     fn cmd(&mut self) -> Result<BodyItem> {
@@ -922,5 +1061,38 @@ mod tests {
         assert_eq!(desugar_regex_holes(r"$x.$x.$x"), r"(?P<x>.*?).(?:.*?).(?:.*?)");
         // Distinct names each keep their own capture.
         assert_eq!(desugar_regex_holes(r"$a=$b"), r"(?P<a>.*?)=(?P<b>.*?)");
+    }
+
+    use crate::ast::{Item, Temporal};
+    use crate::lex::lex;
+
+    fn one_rule(src: &str) -> crate::ast::Rule {
+        let prog = super::parse(lex(src).unwrap()).unwrap();
+        match prog.items.into_iter().next().unwrap() {
+            Item::Rule(r) => r,
+            other => panic!("expected a rule, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn temporal_modifiers_parse() {
+        // No modifier: today's deductive rule.
+        assert_eq!(one_rule("p(X) <- q(X).").temporal, None);
+        // `@next` and `@async` after the neck, with and without a leading space.
+        assert_eq!(one_rule("p(X) <- @next q(X).").temporal, Some(Temporal::Next));
+        assert_eq!(one_rule("p(X) <-@next q(X).").temporal, Some(Temporal::Next));
+        assert_eq!(one_rule("p(X) <- @async q(X).").temporal, Some(Temporal::Async));
+        // A ground fact carries no modifier.
+        assert_eq!(one_rule("p(1).").temporal, None);
+    }
+
+    #[test]
+    fn unknown_modifier_and_lone_at_are_errors() {
+        // Unknown `@word` after a neck is a parse error.
+        let e = super::parse(lex("p(X) <- @soon q(X).").unwrap()).unwrap_err();
+        assert!(e.to_string().contains("unknown rule modifier `@soon`"), "{e}");
+        // A lone `@` is a lex error.
+        let e = lex("p(X) <- @ q(X).").unwrap_err();
+        assert!(e.to_string().contains("lone '@'"), "{e}");
     }
 }
