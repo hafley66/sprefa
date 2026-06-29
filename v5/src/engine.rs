@@ -52,6 +52,73 @@ pub trait EffectExec {
     fn run(&self, kind: &str, args: &serde_json::Map<String, serde_json::Value>) -> Result<Vec<String>>;
 }
 
+/// An `EffectExec` that shells out per request. `templates` keys on the effect
+/// kind (the `@async` head rel name); `{var}` placeholders in the template are
+/// filled from the request args. stdout lines fill the output slots in order; if
+/// there are more lines than slots the LAST slot absorbs the remainder (so a
+/// `status\nbody...` response maps to `[status, body]`). `n_out` is the slot
+/// count per kind (from `async_effect_arity`). Same trust + `sh -c` model as the
+/// `cmd` source op. This is the real-IO executor the daemon runs off-tick.
+pub struct ShellEffectExec {
+    pub templates: HashMap<String, String>,
+    pub n_out: HashMap<String, usize>,
+}
+
+impl EffectExec for ShellEffectExec {
+    fn run(&self, kind: &str, args: &serde_json::Map<String, serde_json::Value>) -> Result<Vec<String>> {
+        let tmpl = self.templates.get(kind)
+            .ok_or_else(|| anyhow::anyhow!("no effect command registered for kind `{kind}`"))?;
+        let mut cmdline = tmpl.clone();
+        for (k, v) in args {
+            let s = match v {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            cmdline = cmdline.replace(&format!("{{{k}}}"), &s);
+        }
+        let output = Command::new("sh").arg("-c").arg(&cmdline).output()?;
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        // nonzero exit WITH stdout is the findings-exist convention (the `cmd` op
+        // shares it); nonzero with empty stdout is a broken command — be loud.
+        if !output.status.success() && stdout.trim().is_empty() {
+            bail!("effect `{cmdline}` failed (exit {:?}): {}",
+                  output.status.code(), String::from_utf8_lossy(&output.stderr).trim());
+        }
+        let nout = self.n_out.get(kind).copied().unwrap_or(1);
+        Ok(split_outputs(&stdout, nout))
+    }
+}
+
+/// Split shell stdout into `nout` response values: one per line, the last slot
+/// absorbing any trailing lines (so a multi-line body stays one value).
+fn split_outputs(stdout: &str, nout: usize) -> Vec<String> {
+    if nout == 0 { return Vec::new(); }
+    if nout == 1 { return vec![stdout.trim_end_matches('\n').to_string()]; }
+    let lines: Vec<&str> = stdout.lines().collect();
+    let mut out: Vec<String> = (0..nout - 1)
+        .map(|i| lines.get(i).copied().unwrap_or("").to_string())
+        .collect();
+    let rest = if lines.len() > nout - 1 { lines[nout - 1..].join("\n") } else { String::new() };
+    out.push(rest);
+    out
+}
+
+/// Each `@async` rule's effect kind (its head rel name) and the number of unbound
+/// head slots its executor must fill. The daemon uses this to size `ShellEffectExec`
+/// and to know how to split a command's stdout. See `drain_effects`.
+pub fn async_effect_arity(prog: &Program) -> HashMap<String, usize> {
+    let mut m = HashMap::new();
+    for item in &prog.items {
+        let Item::Rule(r) = item else { continue };
+        if !r.is_async() { continue; }
+        let vars = async_bound_vars(r);
+        let nout = r.head.terms.iter()
+            .filter(|t| matches!(t, Term::Var(v) if !vars.contains(v))).count();
+        m.insert(r.head.rel.clone(), nout);
+    }
+    m
+}
+
 /// Coerce a JSON arg value (from `pending_effect.args_json`) into a db cell.
 fn json_to_value(v: Option<&serde_json::Value>) -> Value {
     match v {

@@ -14,7 +14,7 @@ use anyhow::Result;
 use serde_json::{Map, Value as Json};
 
 use sprefa_v5::db;
-use sprefa_v5::engine::{EffectExec, Engine};
+use sprefa_v5::engine::{async_effect_arity, EffectExec, Engine, ShellEffectExec};
 use sprefa_v5::prepare_paths;
 
 fn sandbox(tag: &str) -> PathBuf {
@@ -155,6 +155,45 @@ fn async_request_is_idempotent_across_ticks() {
         rows(&dbp, "SELECT COUNT(*) FROM pending_effect"),
         vec![vec!["1".to_string()]],
         "the same request emitted on three ticks queues exactly once"
+    );
+}
+
+/// The real-IO path: `ShellEffectExec` runs an actual subprocess per request,
+/// fills `{var}` from the args, and splits stdout into the two output slots
+/// (`status`, `body`). The status column takes the string by int affinity.
+#[test]
+fn shell_effect_exec_runs_real_subprocess() {
+    let d = sandbox("shell");
+    let dbp = d.join("db");
+    fs::write(
+        d.join("p.dl"),
+        "rel want(key: str, url: str).\n\
+         want(\"home\", \"api/home\").\n\
+         rel resp(key: str, status: int, body: str).\n\
+         resp(key, status, body) <- @async want(key, url).\n",
+    )
+    .unwrap();
+    let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    eng.tick(&prog, true).unwrap();
+
+    let arity = async_effect_arity(&prog);
+    assert_eq!(arity.get("resp"), Some(&2), "status + body are the two unbound slots");
+    let exec = ShellEffectExec {
+        templates: HashMap::from([(
+            "resp".to_string(),
+            "printf '200\\n%s-body' '{url}'".to_string(),
+        )]),
+        n_out: arity,
+    };
+    let n = eng.drain_effects(&prog, &exec).unwrap();
+    assert_eq!(n, 1);
+
+    eng.tick(&prog, true).unwrap();
+    assert_eq!(
+        rows(&dbp, "SELECT key, status, body FROM rel_resp"),
+        vec![vec!["home".to_string(), "200".to_string(), "api/home-body".to_string()]]
     );
 }
 

@@ -314,9 +314,17 @@ Grounded in `src/engine.rs` `tick()` (1916), `src/ast.rs` `Rule` (203). Follows 
 four-layer protocol: signatures, pseudo-body, instance lifetimes, then storage / read-write
 order / uniqueness.
 
-**Status: built.** `@next` carry (commit bd7eb6e) and `@async` effect seam land the
-`pending_effect` queue, `EffectExec` trait, and off-tick `drain_effects`. Tests:
-`tests/it/temporal_carry.rs`, `tests/it/temporal_async.rs`.
+**Status: built.** `@next` carry (commit bd7eb6e) and `@async` effect seam (89fc8d7) land the
+`pending_effect` queue, `EffectExec` trait, and off-tick `drain_effects`. The daemon clock +
+real-IO executor follow: `ShellEffectExec` (kind -> `sh -c` template, `{var}` filled from the
+request args, stdout split into the output slots) and a `DL_POLL_SECS=N` poll loop that
+advances the tick and drains effects every N seconds. The command map is declarative: the
+daemon reads `effect_cmd(kind, template)` rows from the program each poll. So the ghcacher
+poll loop is: `effect_cmd` facts name the shell call, an `@async` rule fans it over the
+targets, and the clock drives the drain. Tests: `tests/it/temporal_carry.rs`,
+`tests/it/temporal_async.rs` (incl. a real subprocess). Still open: a DSL `every(secs)` clock
+source (lets the program own its cadence vs the env knob), the `delta` change-feed, and the
+etag/304 conditional-request guard.
 
 **One simplification vs the §8.2 sketch below.** The sketch wrote the effect as a body op
 `gh:get(EP, OLD) -> (S, B, E)`. The built form has no effect op: an `@async` rule body is an
