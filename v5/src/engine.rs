@@ -184,6 +184,22 @@ fn shell_fn_params(prog: &Program) -> HashMap<String, Vec<String>> {
     m
 }
 
+/// Each declared `sh` decl's read/mutate/stream kind, keyed by name (== effect
+/// kind). A head-response effect with no matching `sh` decl (the legacy
+/// `effect_cmd` path) is absent here and the drain treats it as `Read` (the
+/// cached, re-runnable default). Drives the Phase 3 exactly-once claim: a
+/// `Mutate` (`sh!`) effect is claimed before it runs so a crash mid-flight
+/// cannot double-fire it.
+fn shell_kinds(prog: &Program) -> HashMap<String, ShellKind> {
+    let mut m = HashMap::new();
+    for item in &prog.items {
+        if let Item::Shell(f) = item {
+            m.insert(f.name.clone(), f.kind);
+        }
+    }
+    m
+}
+
 /// Evaluate an effect-arg/head term against a body solution object: a var reads
 /// the solution cell, a literal is itself. Builds the effect hole map (and, with
 /// the response outs folded in, the head row) in the async runtime.
@@ -2869,7 +2885,8 @@ impl Engine {
                  id TEXT PRIMARY KEY, kind TEXT NOT NULL,
                  head_rel TEXT NOT NULL DEFAULT '', args_json TEXT NOT NULL,
                  full_json TEXT NOT NULL DEFAULT '',
-                 req_tx INTEGER NOT NULL, done INTEGER NOT NULL DEFAULT 0);"
+                 req_tx INTEGER NOT NULL, done INTEGER NOT NULL DEFAULT 0,
+                 state TEXT NOT NULL DEFAULT 'queued', idem_key TEXT);"
         )?;
         // tolerate a pending_effect created before the body-effect columns existed.
         // The pre-migration default for head_rel is `kind` (head-response 1:1), set
@@ -2878,6 +2895,17 @@ impl Engine {
             "ALTER TABLE pending_effect ADD COLUMN head_rel TEXT NOT NULL DEFAULT ''", []);
         let _ = self.db.conn().execute(
             "ALTER TABLE pending_effect ADD COLUMN full_json TEXT NOT NULL DEFAULT ''", []);
+        // Phase 3 job state machine: `state` (queued|running|done|failed) is the
+        // reconcile axis; `idem_key` records the `sh!` exactly-once claim. Legacy
+        // rows migrate with state derived from `done` below.
+        let _ = self.db.conn().execute(
+            "ALTER TABLE pending_effect ADD COLUMN state TEXT NOT NULL DEFAULT 'queued'", []);
+        let _ = self.db.conn().execute(
+            "ALTER TABLE pending_effect ADD COLUMN idem_key TEXT", []);
+        // A db whose rows predate `state` carry the column default 'queued' even
+        // when already drained (done=1); reconcile their state from `done` once.
+        let _ = self.db.conn().execute(
+            "UPDATE pending_effect SET state = 'done' WHERE done = 1 AND state = 'queued'", []);
         // tolerate dbs created before mtime/size existed
         let _ = self.db.conn().execute("ALTER TABLE _file ADD COLUMN mtime INTEGER DEFAULT 0", []);
         let _ = self.db.conn().execute("ALTER TABLE _file ADD COLUMN size INTEGER DEFAULT 0", []);
@@ -5662,13 +5690,35 @@ impl Engine {
             plans.insert(r.head.rel.clone(), (r.head.terms.clone(), out_vars));
         }
 
-        // (id, kind = executor/template key, head_rel = reconstruction key).
-        let pending: Vec<(String, String, String, String, String)> = {
+        // Phase 3 reconcile axis: `kind` -> read/mutate/stream. A `Mutate` (`sh!`)
+        // effect is claimed exactly once (a crash mid-flight must not double-POST);
+        // a `Read` (`sh`) is cached/re-runnable; a `Stream` (`sh*`) is owned by the
+        // Phase 4 reader, not this one-shot drain.
+        let kinds = shell_kinds(prog);
+        let kind_of = |k: &str| kinds.get(k).copied().unwrap_or(ShellKind::Read);
+
+        // A `Read` row is drained from queued OR a crash-orphaned running; a
+        // `Mutate` row is drained ONLY from queued and atomically claimed below, so
+        // a row left 'running' by a crash is quarantined (never silently re-fired).
+        // A `Stream` row is skipped here (Phase 4 owns it).
+        // (id, kind = executor/template key, head_rel = reconstruction key, state).
+        let pending: Vec<(String, String, String, String, String, String)> = {
             let mut stmt = self.db.conn().prepare(
-                "SELECT id, kind, head_rel, args_json, full_json FROM pending_effect WHERE done = 0")?;
-            let v = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
+                "SELECT id, kind, head_rel, args_json, full_json, state \
+                 FROM pending_effect WHERE state IN ('queued','running')")?;
+            let v = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))?
                 .filter_map(|x| x.ok()).collect();
             v
+        };
+        // The exactly-once claim for `sh!`: flip queued -> running under the row's
+        // own conditional UPDATE (changes()==1 wins the claim). A row not claimed
+        // (already running/done, or a concurrent drainer took it) is dropped from
+        // this drain. `Read`/`Stream` rows pass through unclaimed.
+        let claim = |id: &str| -> Result<bool> {
+            let n = self.db.conn().execute(
+                "UPDATE pending_effect SET state = 'running', idem_key = id \
+                 WHERE id = ?1 AND state = 'queued'", [id])?;
+            Ok(n == 1)
         };
 
         // Parse the hole map AND the full head env serially (cheap, and a bad JSON
@@ -5678,10 +5728,21 @@ impl Engine {
         let mut work: Vec<(String, String, String,
             serde_json::Map<String, serde_json::Value>,
             serde_json::Map<String, serde_json::Value>)> = Vec::new();
-        for (id, kind, head_rel, args_json, full_json) in pending {
+        for (id, kind, head_rel, args_json, full_json, state) in pending {
             // Pre-migration rows have head_rel='' (head-response 1:1 with kind).
             let head_rel = if head_rel.is_empty() { kind.clone() } else { head_rel };
             if !plans.contains_key(&head_rel) { continue; }
+            match kind_of(&kind) {
+                // A `sh*` subscription is run by the Phase 4 reader, not the
+                // one-shot drain; never execute it here.
+                ShellKind::Stream => continue,
+                // `sh!` is exactly-once: claim queued->running or skip. A row found
+                // already 'running' (crash orphan) is left quarantined, not re-run.
+                ShellKind::Mutate => { if state != "queued" || !claim(&id)? { continue; } }
+                // `sh` is cached/re-runnable: a crash-orphaned 'running' row is fair
+                // game; no claim needed (re-firing a read is harmless).
+                ShellKind::Read => {}
+            }
             let args = match serde_json::from_str::<serde_json::Value>(&args_json)? {
                 serde_json::Value::Object(m) => m,
                 _ => bail!("pending_effect.args_json for `{kind}` is not a JSON object"),
@@ -5752,7 +5813,7 @@ impl Engine {
             let conn = self.db.conn();
             let tx = conn.unchecked_transaction()?;
             for id in &done_ids {
-                tx.execute("UPDATE pending_effect SET done = 1 WHERE id = ?1", [id])?;
+                tx.execute("UPDATE pending_effect SET done = 1, state = 'done' WHERE id = ?1", [id])?;
             }
             tx.commit()?;
         }

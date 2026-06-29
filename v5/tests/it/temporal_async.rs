@@ -432,6 +432,91 @@ fn effect_temporal_kind_must_agree() {
     );
 }
 
+/// Counts every `run` and returns a fixed single-column output. Used to assert
+/// how many times the executor actually fired across drains.
+struct CountExec {
+    calls: AtomicUsize,
+    out: Vec<String>,
+}
+
+impl EffectExec for CountExec {
+    fn run(&self, _kind: &str, _args: &Map<String, Json>) -> Result<Vec<String>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(self.out.clone())
+    }
+}
+
+/// Phase 3 exactly-once: a `sh!` (Mutate) effect that a crash left in `running`
+/// (claimed but not committed) is NOT re-fired on the next drain — a mutating
+/// effect must never double-POST. The drain claims `queued -> running` atomically
+/// and only runs the row it claimed; a row already `running` is quarantined.
+#[test]
+fn mutating_effect_fires_exactly_once_across_a_crash() {
+    let d = sandbox("mut_once");
+    let dbp = d.join("db");
+    fs::write(
+        d.join("p.dl"),
+        "rel want(key: text).\n\
+         want(\"k1\").\n\
+         sh! post(k) -> (ok: text) = `printf 'done' '{k}'`.\n\
+         rel resp(key: text, ok: text).\n\
+         resp(key, ok) <- @async want(key), post(key) -> (ok).\n",
+    )
+    .unwrap();
+    let (prog, diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    // sh! with @async must NOT cross the temporal axis (Mutate <-> @async is fine).
+    assert!(!diags.iter().any(|x| x.code == "temporal-kind-mismatch"),
+        "sh! is callable from @async: {diags:?}");
+    let conn = db::open(dbp.to_str()).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    eng.tick(&prog, true).unwrap();
+
+    let exec = CountExec { calls: AtomicUsize::new(0), out: vec!["done".into()] };
+    assert_eq!(eng.drain_effects(&prog, &exec).unwrap(), 1, "first drain runs it");
+    assert_eq!(exec.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(rows(&dbp, "SELECT state FROM pending_effect"), vec![vec!["done".to_string()]]);
+
+    // Simulate a crash mid-flight: the claim landed (state='running') but the run
+    // never committed (done=0). The reconcile must leave it alone.
+    {
+        let c = db::open(dbp.to_str()).unwrap();
+        c.conn().execute("UPDATE pending_effect SET state = 'running', done = 0", []).unwrap();
+    }
+    assert_eq!(eng.drain_effects(&prog, &exec).unwrap(), 0, "a running sh! is not re-fired");
+    assert_eq!(exec.calls.load(Ordering::SeqCst), 1, "exactly once across the crash");
+}
+
+/// Phase 3 contrast: a `sh` (Read) effect IS re-runnable. A crash-orphaned
+/// `running` read row is fair game on the next drain (re-firing a cached read is
+/// harmless), so the executor runs again.
+#[test]
+fn read_effect_reruns_after_a_crash() {
+    let d = sandbox("read_rerun");
+    let dbp = d.join("db");
+    fs::write(
+        d.join("p.dl"),
+        "rel want(key: text).\n\
+         want(\"k1\").\n\
+         sh get(k) -> (ok: text) = `printf 'v' '{k}'`.\n\
+         rel resp(key: text, ok: text).\n\
+         resp(key, ok) <- @async want(key), get(key) -> (ok).\n",
+    )
+    .unwrap();
+    let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let conn = db::open(dbp.to_str()).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    eng.tick(&prog, true).unwrap();
+
+    let exec = CountExec { calls: AtomicUsize::new(0), out: vec!["v".into()] };
+    assert_eq!(eng.drain_effects(&prog, &exec).unwrap(), 1);
+    {
+        let c = db::open(dbp.to_str()).unwrap();
+        c.conn().execute("UPDATE pending_effect SET state = 'running', done = 0", []).unwrap();
+    }
+    assert_eq!(eng.drain_effects(&prog, &exec).unwrap(), 1, "a running sh read re-runs");
+    assert_eq!(exec.calls.load(Ordering::SeqCst), 2, "read fired twice");
+}
+
 /// A response relation may not be headed by a source/derived rule too: it is
 /// written only by the effect drain.
 #[test]
