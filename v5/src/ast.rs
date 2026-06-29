@@ -197,6 +197,13 @@ pub enum BodyItem {
     /// the min member name in the component. Reuses the closure condensation
     /// (Tarjan) — shares `closure(edge)`'s per-edge cache, no second Tarjan run.
     Scc { rel: String },
+    /// Structural node embedding of an edge relation, e.g.
+    /// `node_sim(a, b, score) <- node2vec(g).` Reads the 2-col edge rel `g`,
+    /// learns one vector per node (random walks + skip-gram, src/embed/node2vec.rs),
+    /// and emits top-k cosine-nearest node pairs into the 3-col head. Vectors
+    /// persist in `_node_embeddings` keyed by the edge rel name. The graph sibling
+    /// of the text `similar` rel.
+    Node2vec { rel: String },
 }
 
 #[derive(Clone, Debug)]
@@ -240,6 +247,14 @@ impl Rule {
     pub fn scc_edge(&self) -> Option<&str> {
         match self.body.as_slice() {
             [BodyItem::Scc { rel }] => Some(rel),
+            _ => None,
+        }
+    }
+
+    /// Some(edge) iff this rule is exactly `head(..) <- node2vec(edge).`
+    pub fn node2vec_edge(&self) -> Option<&str> {
+        match self.body.as_slice() {
+            [BodyItem::Node2vec { rel }] => Some(rel),
             _ => None,
         }
     }

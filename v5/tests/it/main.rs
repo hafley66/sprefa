@@ -45,6 +45,7 @@ mod lex_utf8;
 mod lint_no_touch;
 mod lsp_protocol;
 mod match_col_span;
+mod node2vec;
 mod sg_rewrite;
 mod verify_rollback;
 mod mixed_source_derived;

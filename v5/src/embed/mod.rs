@@ -32,6 +32,8 @@ pub trait Embedder: Send + Sync {
 mod stub;
 pub use stub::Stub;
 
+pub mod node2vec;
+
 #[cfg(feature = "embed-fastembed")]
 mod fastembed_be;
 #[cfg(feature = "embed-candle")]

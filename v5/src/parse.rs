@@ -306,6 +306,7 @@ impl Parser {
             if s == "comment" { return self.comment(); }
             if s == "closure" { return self.closure(); }
             if s == "scc" { return self.scc(); }
+            if s == "node2vec" { return self.node2vec(); }
             // An aggregate call in body position is a parse error: aggregation is
             // head-only (`fan_out(F, count(T)) <- type_edge(F, T, _).`).
             if AggFn::parse(s).is_some() && matches!(self.peek2(), Some(Tok::LParen)) {
@@ -722,6 +723,14 @@ impl Parser {
         let rel = self.ident()?;
         self.expect(Tok::RParen)?;
         Ok(BodyItem::Scc { rel })
+    }
+
+    fn node2vec(&mut self) -> Result<BodyItem> {
+        self.ident()?; // node2vec
+        self.expect(Tok::LParen)?;
+        let rel = self.ident()?;
+        self.expect(Tok::RParen)?;
+        Ok(BodyItem::Node2vec { rel })
     }
 
     fn constraint(&mut self) -> Result<Constraint> {

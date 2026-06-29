@@ -18,6 +18,28 @@ use crate::typegraph;
 fn scc_node_tbl(edge: &str) -> String { format!("scc_node_{edge}") }
 fn scc_edge_tbl(edge: &str) -> String { format!("scc_edge_{edge}") }
 
+/// Brute-force top-k cosine neighbors over an L2-normalized vector pool, emitted
+/// as `(a, b, score)` rows with `score = round(cosine * 1e6)` as Int. Shared by
+/// the text `similar` rel and the structural `node2vec` rel — both reduce to
+/// "nearest neighbors over a `Vec<(id, vec)>`", only the vectors differ.
+fn knn_rows(pool: &[(String, Vec<f32>)], k: usize) -> Vec<Vec<Value>> {
+    let mut rows: Vec<Vec<Value>> = Vec::new();
+    for (i, (a, va)) in pool.iter().enumerate() {
+        let mut scored: Vec<(f32, &str)> = Vec::with_capacity(pool.len().saturating_sub(1));
+        for (j, (b, vb)) in pool.iter().enumerate() {
+            if i == j { continue; }
+            scored.push((crate::embed::cosine(va, vb), b.as_str()));
+        }
+        scored.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap_or(std::cmp::Ordering::Equal));
+        for (sc, b) in scored.into_iter().take(k) {
+            rows.push(vec![
+                Value::Text(a.clone()), Value::Text(b.to_string()),
+                Value::Int((sc * 1_000_000.0).round() as i64)]);
+        }
+    }
+    rows
+}
+
 /// Per-tick `cmd` invocation counter (parse_file runs across rayon, hence
 /// atomic; process-global like the profile stats — one engine per process in
 /// real use, e2e tests get their own subprocess).
@@ -668,6 +690,7 @@ fn rels_used(prog: &Program, rels: &[&str]) -> bool {
                     BodyItem::Pos(a) | BodyItem::Neg(a) => if hit(&a.rel) { return true; },
                     BodyItem::Closure { rel } => if hit(rel) { return true; },
                     BodyItem::Scc { rel } => if hit(rel) { return true; },
+                    BodyItem::Node2vec { rel } => if hit(rel) { return true; },
                     _ => {}
                 }
             },
@@ -677,6 +700,7 @@ fn rels_used(prog: &Program, rels: &[&str]) -> bool {
                     BodyItem::Pos(a) | BodyItem::Neg(a) => if hit(&a.rel) { return true; },
                     BodyItem::Closure { rel } => if hit(rel) { return true; },
                     BodyItem::Scc { rel } => if hit(rel) { return true; },
+                    BodyItem::Node2vec { rel } => if hit(rel) { return true; },
                     _ => {}
                 }
             },
@@ -1975,13 +1999,19 @@ impl Engine {
         // excluded: they are drained, not derived.
         let all_derived: Vec<&Rule> = rules.iter().copied()
             .filter(|r| !r.is_source() && !r.is_repo_sink()
-                && r.closure_edge().is_none() && r.scc_edge().is_none()).collect();
+                && r.closure_edge().is_none() && r.scc_edge().is_none()
+                && r.node2vec_edge().is_none()).collect();
         // `head(..) <- scc(edge).` rules: materialize (rep, member) from the
         // closure condensation in the query phase (after refresh_cond_cache).
         // Excluded from all_derived — the Scc body item can't lower to SQL, and
         // the head is filled from the already-computed Tarjan condensation.
         let scc_rules: Vec<&Rule> = rules.iter().copied()
             .filter(|r| r.scc_edge().is_some()).collect();
+        // `head(..) <- node2vec(edge).` rules: same exclusion shape as scc. The
+        // edge rel is an ordinary derived rel; after it materializes we read its
+        // rows, learn node vectors, and fill the head with KNN pairs.
+        let node2vec_rules: Vec<&Rule> = rules.iter().copied()
+            .filter(|r| r.node2vec_edge().is_some()).collect();
         check_stratification(&all_derived, &closures)?;
         let (seed_rules, derived_rules) = split_seed_and_derived(&all_derived, &closures)?;
 
@@ -2111,6 +2141,7 @@ impl Engine {
         self.refresh_cond_cache(&cond_edges, &dirty)?;
         for (r, cs) in &seed_rules { self.eval_closure_seed_rule(r, cs)?; }
         for r in &scc_rules { self.eval_scc_rule(r)?; }
+        for r in &node2vec_rules { self.eval_node2vec_rule(r)?; }
         // The priming tick skips `?` evaluation: it exists only to derive the
         // coordinates a data-driven scan / repo-sink reads on the real tick.
         if !self.prime_tick {
@@ -2171,9 +2202,12 @@ impl Engine {
 
         let source_rules: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_source()).collect();
         let all_derived: Vec<&Rule> = rules.iter().copied()
-            .filter(|r| !r.is_source() && r.closure_edge().is_none() && r.scc_edge().is_none()).collect();
+            .filter(|r| !r.is_source() && r.closure_edge().is_none() && r.scc_edge().is_none()
+                && r.node2vec_edge().is_none()).collect();
         let scc_rules: Vec<&Rule> = rules.iter().copied()
             .filter(|r| r.scc_edge().is_some()).collect();
+        let node2vec_rules: Vec<&Rule> = rules.iter().copied()
+            .filter(|r| r.node2vec_edge().is_some()).collect();
         check_stratification(&all_derived, &closures)?;
         let (seed_rules, derived_rules) = split_seed_and_derived(&all_derived, &closures)?;
         let mut source_rels: Vec<String> = Vec::new();
@@ -2433,6 +2467,7 @@ impl Engine {
         self.refresh_cond_cache(&cond_edges, &dirty_edges)?;
         for (r, cs) in &seed_rules { self.eval_closure_seed_rule(r, cs)?; }
         for r in &scc_rules { self.eval_scc_rule(r)?; }
+        for r in &node2vec_rules { self.eval_node2vec_rule(r)?; }
         for item in &prog.items { if let Item::Query(q) = item { self.run_query(q, &closures)?; } }
         self.run_gens(prog, quiet)?;
         if self.dropped > 0 { eprintln!("[checked-type] dropped {} rows", self.dropped); self.dropped = 0; }
@@ -2521,6 +2556,19 @@ impl Engine {
                  PRIMARY KEY (sid, backend)
              );
              CREATE INDEX IF NOT EXISTS _embeddings_backend_idx ON _embeddings(backend);
+             -- Structural node embeddings (node2vec): one vector per node, keyed
+             -- by `graph` = the edge rel name a `node2vec(edge)` rule consumed, so
+             -- multiple graphs coexist (the `backend` analog for the text path).
+             -- `node` is the node id verbatim (a sym / file / whatever the edge
+             -- rel carries). `vec` is comma-joined f32 TEXT, same as _embeddings.
+             CREATE TABLE IF NOT EXISTS _node_embeddings (
+                 node TEXT NOT NULL,
+                 graph TEXT NOT NULL,
+                 dim INTEGER NOT NULL,
+                 vec TEXT NOT NULL,
+                 PRIMARY KEY (node, graph)
+             );
+             CREATE INDEX IF NOT EXISTS _node_embeddings_graph_idx ON _node_embeddings(graph);
              CREATE INDEX IF NOT EXISTS _strings_norm_idx ON _strings(norm);
              CREATE INDEX IF NOT EXISTS _where_bytes_string_idx ON _where_bytes(string_id);
              CREATE INDEX IF NOT EXISTS _where_bytes_file_span_idx ON _where_bytes(file_id, lo, hi);
@@ -4695,21 +4743,71 @@ impl Engine {
             eprintln!("[similar] brute-force KNN over {} vectors (O(n^2)); \
                        cap with SPREFA_EMBED_MAX or wire sqlite-vec", pool.len());
         }
-        let mut rows: Vec<Vec<Value>> = Vec::new();
-        for (i, (a, va)) in pool.iter().enumerate() {
-            let mut scored: Vec<(f32, &str)> = Vec::with_capacity(pool.len().saturating_sub(1));
-            for (j, (b, vb)) in pool.iter().enumerate() {
-                if i == j { continue; }
-                scored.push((crate::embed::cosine(va, vb), b.as_str()));
-            }
-            scored.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap_or(std::cmp::Ordering::Equal));
-            for (sc, b) in scored.into_iter().take(k) {
-                rows.push(vec![
-                    Value::Text(a.clone()), Value::Text(b.to_string()),
-                    Value::Int((sc * 1_000_000.0).round() as i64)]);
-            }
-        }
+        let rows = knn_rows(&pool, k);
         self.refresh_rel("similar", &["a", "b", "score"], &rows)?;
+        Ok(())
+    }
+
+    /// Materialize `head(a, b, score) <- node2vec(edge).`: read the 2-col edge
+    /// rel, learn one structural vector per node (random walks + skip-gram), store
+    /// the vectors in `_node_embeddings` keyed by the edge rel name, and fill the
+    /// 3-col head with each node's top-k cosine-nearest neighbors. Excluded from
+    /// `rebuild_derived` (the Node2vec body item can't lower to SQL); runs after
+    /// the edge rel has materialized. Recomputes each tick (no incremental reuse
+    /// yet — the embed is the cost; cap the graph or run on demand).
+    fn eval_node2vec_rule(&self, rule: &Rule) -> Result<()> {
+        let edge = rule.node2vec_edge()
+            .ok_or_else(|| anyhow::anyhow!("eval_node2vec_rule on a non-node2vec rule"))?;
+        let head = &rule.head.rel;
+        let head_meta = self.rels.get(head)
+            .ok_or_else(|| anyhow::anyhow!("unknown head relation {head}"))?;
+        if rule.head.terms.len() != 3 || head_meta.cols.len() != 3 {
+            bail!("node2vec head '{head}' must have exactly 3 columns (a, b, score); got {}",
+                  head_meta.cols.len());
+        }
+        let edge_meta = self.rels.get(edge)
+            .ok_or_else(|| anyhow::anyhow!("node2vec edge relation '{edge}' is not declared"))?;
+        if edge_meta.cols.len() < 2 {
+            bail!("node2vec edge relation '{edge}' must have at least 2 columns (src, dst); got {}",
+                  edge_meta.cols.len());
+        }
+        // Read the first two columns as the directed edge list.
+        let (c0, c1) = (edge_meta.cols[0].name.clone(), edge_meta.cols[1].name.clone());
+        let edges: Vec<(String, String)> = {
+            let conn = self.db.conn();
+            let mut s = conn.prepare(&format!("SELECT {c0}, {c1} FROM {}", tbl(edge)))?;
+            let v: Vec<(String, String)> = s.query_map([], |r|
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+                .filter_map(|x| x.ok()).collect();
+            v
+        };
+
+        // Always clear the head + this graph's vectors so an emptied edge set
+        // produces an empty head (steady-state correctness over speed).
+        self.db.exec(&format!("DELETE FROM {}", tbl(head)))?;
+        self.db.conn().execute("DELETE FROM _node_embeddings WHERE graph = ?1", [edge])?;
+        if edges.is_empty() { return Ok(()); }
+
+        let cfg = crate::embed::node2vec::N2vConfig::from_env();
+        let pool = crate::embed::node2vec::embed_graph(&edges, &cfg);
+        if pool.len() > 2000 {
+            eprintln!("[node2vec] brute-force KNN over {} nodes (O(n^2)); \
+                       shrink the edge rel or cap SPREFA_N2V_*", pool.len());
+        }
+
+        // Persist vectors (one flush, never N+1).
+        let dim = cfg.dim as i64;
+        let emb_rows: Vec<Vec<Value>> = pool.iter().map(|(node, v)| vec![
+            Value::Text(node.clone()), Value::Text(edge.to_string()),
+            Value::Int(dim), Value::Text(crate::embed::encode_vec(v))]).collect();
+        self.db.insert_rows("_node_embeddings", &["node", "graph", "dim", "vec"], &emb_rows)?;
+
+        // Fill the head with KNN pairs (reuses the text path's cosine top-k).
+        let k: usize = std::env::var("SPREFA_NODE_SIM_K").ok()
+            .and_then(|s| s.parse().ok()).unwrap_or(8);
+        let rows = knn_rows(&pool, k);
+        let cols: Vec<&str> = head_meta.cols.iter().map(|c| c.name.as_str()).collect();
+        self.db.insert_rows(&tbl(head), &cols, &rows)?;
         Ok(())
     }
 

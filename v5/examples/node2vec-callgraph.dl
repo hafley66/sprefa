@@ -1,0 +1,13 @@
+# structural embedding of the v5 call graph
+rel seg(p: file).
+seg(p) <- scan("WORK", "src/**/*.rs", p, rev), match(p, rev, /./, l).
+
+# undirected call graph: both directions so walks traverse either way
+rel g(a: text, b: text).
+g(a, b) <- call_edge(a, b, _).
+g(b, a) <- call_edge(a, b, _).
+
+rel node_sim(a: text, b: text, score: int).
+node_sim(a, b, score) <- node2vec(g).
+
+? node_sim(a, b, score).
