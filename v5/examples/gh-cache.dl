@@ -9,11 +9,19 @@
 # `jsonp`), and a `@next`-accumulated `change_log`.
 #
 # The cache IS the content-addressed `pending_effect` digest plus the etag carry:
-# a request is keyed by (head, kind, args), and `args` includes the prior etag, so
-# the SAME (endpoint, etag) pair fires at most once. When the resource changes the
-# server returns a NEW etag, which changes the args, which re-fires — the change
-# itself is what advances the cache. A 304 carries the old etag forward and lands
-# no entity rows, so `change_log` is untouched (the parity-critical behavior).
+# a request is keyed by (head, kind, args), and `args` includes the prior etag and
+# a cadence bucket, so the SAME (endpoint, etag, bucket) fires at most once. When
+# the resource changes the server returns a NEW etag, which changes the args,
+# which re-fires — the change itself is what advances the cache. A 304 carries the
+# old etag forward and lands no entity rows, so `change_log` is untouched (the
+# parity-critical behavior).
+#
+# RATE SAFETY: two intervals, do not confuse them. DL_POLL_SECS is how often the
+# DAEMON re-ticks (cheap, in-process, no network). `every(300)` is how often a
+# watched endpoint is actually RE-FETCHED from GitHub. Between `every` boundaries
+# the request id is identical, so no call leaves the machine regardless of how
+# fast the daemon ticks. One endpoint at every(300) is <=12 conditional requests
+# per hour against a 5000/hour authed limit.
 #
 # Run (daemon):  DL_POLL_SECS=5 dl --lsp examples/gh-cache.dl --root <repo>
 
@@ -30,18 +38,39 @@ watch("repos/cli/cli").
 rel etag(ep: text, tag: text).
 rel etag_next(ep: text, tag: text).
 
-# The poll args: the endpoint plus the prior etag ("" on the first poll, before
-# any etag is carried). Two rules cover present-vs-absent (no outer join).
-rel poll(ep: text, prev: text).
-poll(ep, prev) <- watch(ep), etag(ep, prev).
-poll(ep, "")   <- watch(ep), !etag(ep, _).
+# --- cadence: a monotone poll bucket (the rate cap AND the re-poll trigger) --
+# The request id is content-addressed on (head, kind, args), and an already-fired
+# id is never re-fired (INSERT-OR-IGNORE). So a poll whose args never change fires
+# exactly once and then goes silent — it would never re-check the resource. The
+# fix is a coarse time bucket in the args. `every(N)` lands a row ONLY on the tick
+# that crosses an N-second boundary; a carried per-endpoint counter increments on
+# each boundary and holds otherwise. Folding that counter into the poll args makes
+# the request id advance at most once per N seconds: a re-poll fires on cadence,
+# and between boundaries the SAME (ep, etag, bucket) hashes to the same id, so
+# nothing re-hits GitHub. This single `N` IS the rate knob — lower it to poll more
+# often, and the worst case is one conditional (304-cheap) request per N seconds
+# per endpoint. (Mirrors the `etag` carry: seed via negation, advance via @next.)
+rel poll_bucket(ep: text, n: int).
+rel poll_bucket_next(ep: text, n: int).
+poll_bucket_next(ep, 0)     <- watch(ep), !poll_bucket(ep, _).
+poll_bucket_next(ep, n + 1) <- poll_bucket(ep, n), every(300).
+poll_bucket_next(ep, n)     <- poll_bucket(ep, n), !every(300).
+poll_bucket(ep, n) <- @next poll_bucket_next(ep, n).
 
-# Fire the conditional GET on the interval. `status`/`tag`/`body` are the response
-# columns the executor fills; `ep` echoes from the request. `gh api -i` returns
-# the status line, the ETag header, and the JSON body — the effect_cmd template
-# formats them tab-separated (status<TAB>etag<TAB>body), the D-7 @tsv convention.
+# The poll args: endpoint + prior etag ("" before any etag is carried) + the
+# cadence bucket. Two rules cover etag present-vs-absent (no outer join). The
+# etag makes a real change re-fire immediately; the bucket caps an unchanged
+# resource's re-checks to once per interval.
+rel poll(ep: text, prev: text, bucket: int).
+poll(ep, prev, b) <- watch(ep), etag(ep, prev), poll_bucket(ep, b).
+poll(ep, "",   b) <- watch(ep), !etag(ep, _),   poll_bucket(ep, b).
+
+# Fire the conditional GET. `status`/`tag`/`body` are the response columns the
+# executor fills; `ep` echoes from the request; `prev`/`bucket` are request-only
+# inputs (the digest key). No `every` gate here — the bucket already throttles via
+# the request id, and a gate would stall the very first poll until a boundary.
 rel resp(ep: text, status: int, tag: text, body: text).
-resp(ep, status, tag, body) <- @async poll(ep, prev), every(300).
+resp(ep, status, tag, body) <- @async poll(ep, prev, bucket).
 
 # The shell template, keyed by the @async head rel. `{ep}` is raw text (a clean
 # path); `$prev` is the env-var form — the carried etag is `W/"..."`, whose quotes

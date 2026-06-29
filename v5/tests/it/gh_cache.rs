@@ -144,6 +144,125 @@ fn gh_cache_lands_entities_then_304_is_a_free_cache_hit() {
     assert_eq!(etag, vec![vec!["etagA".to_string()]], "etag carried from the 200");
 }
 
+/// The cadence cap, network-free. The poll args carry a `poll_bucket` counter
+/// that `every(N)` advances once per N-second boundary, so a re-poll fires on
+/// cadence and an unchanged resource between boundaries hashes to the SAME
+/// request id (INSERT-OR-IGNORE) — no new call leaves the machine no matter how
+/// often the daemon ticks. This is the "don't destroy GitHub" guarantee, proven
+/// by counting executor calls: many ticks inside one bucket add zero calls, and a
+/// single bucket advance adds exactly one conditional request. `every` is driven
+/// deterministically by resetting its `_carry_meta` bucket between ticks (no real
+/// time, no network).
+struct CountingGh {
+    calls: Mutex<Vec<(String, String)>>, // (prev etag, bucket) per request
+}
+impl EffectExec for CountingGh {
+    fn run(&self, _kind: &str, args: &Map<String, Json>) -> Result<Vec<String>> {
+        let prev = args.get("prev").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let bucket = args
+            .get("bucket")
+            .map(|v| v.to_string())
+            .unwrap_or_default();
+        self.calls.lock().unwrap().push((prev.clone(), bucket));
+        // First poll (no etag) -> 200 + body + fresh etag; any carried etag is a
+        // cache hit -> 304 (the resource never changes in this test).
+        Ok(if prev.is_empty() {
+            vec!["200".into(), "etagA".into(), r#"{"stargazers_count": 7}"#.into()]
+        } else {
+            vec!["304".into(), String::new(), String::new()]
+        })
+    }
+}
+
+/// Force `every(300)` to fire on the NEXT tick by clearing its stored bucket, so
+/// `refresh_every` sees a new bucket and lands the row (simulates 300s elapsing).
+fn advance_clock(db_path: &Path) {
+    let conn = db::open(Some(db_path.to_str().unwrap())).unwrap();
+    // `_carry_meta` is created on the engine's first tick; tolerate its absence
+    // when the clock is advanced before any tick has run.
+    let _ = conn.exec("DELETE FROM _carry_meta WHERE k = 'every:300'");
+}
+
+#[test]
+fn repolls_once_per_cadence_bucket_and_is_silent_between() {
+    let d = sandbox("cadence");
+    let dbp = d.join("db");
+    fs::write(
+        d.join("p.dl"),
+        "rel watch(ep: text).\n\
+         watch(\"repos/cli/cli\").\n\
+         rel etag(ep: text, tag: text).\n\
+         rel etag_next(ep: text, tag: text).\n\
+         rel poll_bucket(ep: text, n: int).\n\
+         rel poll_bucket_next(ep: text, n: int).\n\
+         poll_bucket_next(ep, 0)     <- watch(ep), !poll_bucket(ep, _).\n\
+         poll_bucket_next(ep, n + 1) <- poll_bucket(ep, n), every(300).\n\
+         poll_bucket_next(ep, n)     <- poll_bucket(ep, n), !every(300).\n\
+         poll_bucket(ep, n) <- @next poll_bucket_next(ep, n).\n\
+         rel poll(ep: text, prev: text, bucket: int).\n\
+         poll(ep, prev, b) <- watch(ep), etag(ep, prev), poll_bucket(ep, b).\n\
+         poll(ep, \"\",  b) <- watch(ep), !etag(ep, _),   poll_bucket(ep, b).\n\
+         rel resp(ep: text, status: int, tag: text, body: text).\n\
+         resp(ep, status, tag, body) <- @async poll(ep, prev, bucket).\n\
+         etag_next(ep, tag) <- resp(ep, 200, tag, _).\n\
+         etag_next(ep, old) <- resp(ep, 304, _, _), etag(ep, old).\n\
+         etag(ep, tag) <- @next etag_next(ep, tag).\n",
+    )
+    .unwrap();
+    let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    let exec = CountingGh { calls: Mutex::new(Vec::new()) };
+
+    // Bucket 0: the loop settles. The first tick seeds poll_bucket(0) via @next;
+    // subsequent ticks poll "" -> 200 (carry etagA) -> etagA -> 304, then go quiet
+    // (args stop changing). Ten cycles proves the quiet: no matter how many ticks,
+    // bucket 0 makes exactly two requests ("" and etagA).
+    for _ in 0..10 {
+        eng.tick(&prog, true).unwrap();
+        eng.drain_effects(&prog, &exec).unwrap();
+    }
+    let after_bucket0 = exec.calls.lock().unwrap().len();
+    assert_eq!(
+        after_bucket0, 2,
+        "bucket 0 makes exactly two calls then is silent across re-ticks: {:?}",
+        exec.calls.lock().unwrap()
+    );
+
+    // Advance the clock one boundary: poll_bucket 0 -> 1, the etagA poll re-fires
+    // under the new bucket id. Several ticks, but only ONE new call (a 304).
+    advance_clock(&dbp);
+    for _ in 0..5 {
+        eng.tick(&prog, true).unwrap();
+        eng.drain_effects(&prog, &exec).unwrap();
+    }
+    let after_bucket1 = exec.calls.lock().unwrap().len();
+    assert_eq!(
+        after_bucket1, 3,
+        "one cadence boundary adds exactly one conditional re-poll: {:?}",
+        exec.calls.lock().unwrap()
+    );
+
+    // A second boundary: again exactly one re-poll (bucket 2).
+    advance_clock(&dbp);
+    for _ in 0..5 {
+        eng.tick(&prog, true).unwrap();
+        eng.drain_effects(&prog, &exec).unwrap();
+    }
+    assert_eq!(
+        exec.calls.lock().unwrap().len(),
+        4,
+        "second boundary adds exactly one more: {:?}",
+        exec.calls.lock().unwrap()
+    );
+
+    // The carried etag never regressed; the bucket advanced to 2.
+    let etag = rows(&dbp, "SELECT tag FROM rel_etag");
+    assert_eq!(etag, vec![vec!["etagA".to_string()]], "etag stable across buckets");
+    let bucket = rows(&dbp, "SELECT n FROM rel_poll_bucket");
+    assert_eq!(bucket, vec![vec!["2".to_string()]], "bucket advanced once per boundary");
+}
+
 /// A gh LIST endpoint (`/pulls`) returns a JSON array; one `json` brace pattern
 /// normalizes it into one `pull_request` row per element, sibling fields
 /// correlated and the nested `user.login` descended in the same match. This is
@@ -211,11 +330,17 @@ fn gh_cache_live_against_github() {
              watch(\"repos/cli/cli\").\n\
              rel etag(ep: text, tag: text).\n\
              rel etag_next(ep: text, tag: text).\n\
-             rel poll(ep: text, prev: text).\n\
-             poll(ep, prev) <- watch(ep), etag(ep, prev).\n\
-             poll(ep, \"\")  <- watch(ep), !etag(ep, _).\n\
+             rel poll_bucket(ep: text, n: int).\n\
+             rel poll_bucket_next(ep: text, n: int).\n\
+             poll_bucket_next(ep, 0)     <- watch(ep), !poll_bucket(ep, _).\n\
+             poll_bucket_next(ep, n + 1) <- poll_bucket(ep, n), every(300).\n\
+             poll_bucket_next(ep, n)     <- poll_bucket(ep, n), !every(300).\n\
+             poll_bucket(ep, n) <- @next poll_bucket_next(ep, n).\n\
+             rel poll(ep: text, prev: text, bucket: int).\n\
+             poll(ep, prev, b) <- watch(ep), etag(ep, prev), poll_bucket(ep, b).\n\
+             poll(ep, \"\",  b) <- watch(ep), !etag(ep, _),   poll_bucket(ep, b).\n\
              rel resp(ep: text, status: int, tag: text, body: text).\n\
-             resp(ep, status, tag, body) <- @async poll(ep, prev).\n\
+             resp(ep, status, tag, body) <- @async poll(ep, prev, bucket).\n\
              rel effect_cmd(kind: text, template: text).\n\
              effect_cmd(\"resp\", {tmpl:?}).\n\
              etag_next(ep, tag) <- resp(ep, 200, tag, _).\n\
@@ -233,6 +358,10 @@ fn gh_cache_live_against_github() {
     let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, d.clone());
     for i in 0..4 {
+        // Cross a cadence boundary each cycle so the carried-etag poll re-fires
+        // (live: the 2nd+ cycle must produce a real 304). In the daemon this is
+        // wall-clock; here we force the bucket forward.
+        advance_clock(&dbp);
         eng.tick(&prog, true).unwrap();
         let exec = {
             let mut templates = HashMap::new();
