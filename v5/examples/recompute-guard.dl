@@ -1,0 +1,76 @@
+# Static recompute-guard rail (sprefa over its own source).
+#
+# A Rust fn that re-derives a relation FROM SCRATCH — a "recompute", marked here
+# by a call to the heavy global primitive `embed_graph` — must early-out when
+# the input is unchanged (a `load_rel_digest` digest skip), or carry a
+# `// @recompute unguarded: <reason>` waiver in its body. node2vec walks the
+# whole graph, so an unguarded recompute on a reactive rule re-embeds on every
+# git-checkout re-tick, under the daemon lock. This program turns that
+# anti-pattern into a build error: `dl --check` exits 2, `dl --lsp` squiggles
+# the offending call line while editing.
+#
+# The first thing it guards is `eval_node2vec_rule` itself (cleared by the W1
+# digest skip); the primitive's own unit test is cleared by a waiver.
+#
+# Run:  dl examples/recompute-guard.dl --root <repo> --check
+#       dl examples/recompute-guard.dl --root <repo> --lsp
+#
+# Attribution is line-based and self-contained: fn decls, call sites, guards and
+# waivers all come from `match` over the SAME scan, so they share one file key
+# and one line base. The enclosing fn of a line is the nearest fn decl at or
+# above it (no other fn decl in between).
+
+# --- fn declaration lines (multiline-anchored; name captured) ----------------
+rel fn_decl(file: file, line: int, name: text).
+fn_decl(f, l, n) <- scan("WORK", "src/**/*.rs", f, rev),
+    match(f, rev, /(?m)^\s*(?:pub(?:\([a-z_]+\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(?P<n>[A-Za-z_][A-Za-z0-9_]*)/, l).
+
+# --- recompute call sites: embed_graph( minus its own definition --------------
+rel embed_site(file: file, line: int).
+embed_site(f, l) <- scan("WORK", "src/**/*.rs", f, rev),
+    match(f, rev, /embed_graph\(/, l).
+rel embed_def(file: file, line: int).
+embed_def(f, l) <- scan("WORK", "src/**/*.rs", f, rev),
+    match(f, rev, /fn\s+embed_graph/, l).
+rel embed_call(file: file, line: int).
+embed_call(f, l) <- embed_site(f, l), !embed_def(f, l).
+
+# --- guard + waiver markers ---------------------------------------------------
+rel guard_site(file: file, line: int).
+guard_site(f, l) <- scan("WORK", "src/**/*.rs", f, rev),
+    match(f, rev, /load_rel_digest\(/, l).
+rel waive_site(file: file, line: int).
+waive_site(f, l) <- scan("WORK", "src/**/*.rs", f, rev),
+    match(f, rev, /@recompute unguarded/, l).
+
+# --- enclosing fn = nearest fn decl at or above a marker line -----------------
+# `_above` = every fn decl at/above the marker; `_closer` = one with another fn
+# decl strictly between; the enclosing fn is `_above` minus `_closer`.
+rel embed_above(file: file, fline: int, callline: int).
+embed_above(f, fl, cl) <- embed_call(f, cl), fn_decl(f, fl, _), fl <= cl.
+rel embed_closer(file: file, fline: int, callline: int).
+embed_closer(f, fl, cl) <- embed_above(f, fl, cl), fn_decl(f, mid, _), fl < mid, mid <= cl.
+rel enc_embed(file: file, fline: int, callline: int).
+enc_embed(f, fl, cl) <- embed_above(f, fl, cl), !embed_closer(f, fl, cl).
+
+rel guard_above(file: file, fline: int, gline: int).
+guard_above(f, fl, gl) <- guard_site(f, gl), fn_decl(f, fl, _), fl <= gl.
+rel guard_closer(file: file, fline: int, gline: int).
+guard_closer(f, fl, gl) <- guard_above(f, fl, gl), fn_decl(f, mid, _), fl < mid, mid <= gl.
+rel guarded_fn(file: file, fline: int).
+guarded_fn(f, fl) <- guard_above(f, fl, gl), !guard_closer(f, fl, gl).
+
+rel waive_above(file: file, fline: int, wline: int).
+waive_above(f, fl, wl) <- waive_site(f, wl), fn_decl(f, fl, _), fl <= wl.
+rel waive_closer(file: file, fline: int, wline: int).
+waive_closer(f, fl, wl) <- waive_above(f, fl, wl), fn_decl(f, mid, _), fl < mid, mid <= wl.
+rel waived_fn(file: file, fline: int).
+waived_fn(f, fl) <- waive_above(f, fl, wl), !waive_closer(f, fl, wl).
+
+# --- the diag: a recompute fn with neither a guard nor a waiver ---------------
+rel diag(path: text, line: int, severity: text, code: text, msg: text).
+diag(f, cl, "error", "unguarded-recompute",
+     "fn calls embed_graph without a digest skip (load_rel_digest) or a `// @recompute unguarded: <reason>` waiver") <-
+    enc_embed(f, fl, cl), !guarded_fn(f, fl), !waived_fn(f, fl).
+
+? diag(path, line, severity, code, msg).

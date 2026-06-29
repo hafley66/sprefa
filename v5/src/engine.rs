@@ -40,6 +40,23 @@ fn knn_rows(pool: &[(String, Vec<f32>)], k: usize) -> Vec<Vec<Value>> {
     rows
 }
 
+/// Order-independent content digest of a directed edge list: XOR-fold of
+/// `blake3(src "\0" dst)` over rows. The edge rel is a set (PK), so no row
+/// repeats and XOR cannot cancel a pair; XOR is commutative + associative, so
+/// the rel's row order across rebuilds is irrelevant. All-zero ⇒ empty graph.
+/// Mirrors `source_rule_digests`' fold (engine.rs); the node2vec digest-skip
+/// guard (W1) keys `_reldigest` on this so an unchanged graph skips re-embed.
+fn blake3_edges(edges: &[(String, String)]) -> [u8; 32] {
+    let mut acc = [0u8; 32];
+    for (a, b) in edges {
+        let mut buf = String::with_capacity(a.len() + b.len() + 1);
+        buf.push_str(a); buf.push('\0'); buf.push_str(b);
+        let h = blake3::hash(buf.as_bytes());
+        for (x, y) in acc.iter_mut().zip(h.as_bytes()) { *x ^= *y; }
+    }
+    acc
+}
+
 /// Per-tick `cmd` invocation counter (parse_file runs across rayon, hence
 /// atomic; process-global like the profile stats — one engine per process in
 /// real use, e2e tests get their own subprocess).
@@ -1254,6 +1271,10 @@ pub struct Engine {
     /// actually rebuilt (Tarjan invocations). A reused cond does not bump it, so
     /// a bench can assert "this edit recondensed 0 graphs".
     pub recondensed: usize,
+    /// Test/bench instrumentation: cumulative count of node2vec graphs actually
+    /// re-embedded (the W1 digest-skip leaves it unchanged when the edge set's
+    /// digest matched). A tick over an unchanged graph must not bump it.
+    pub node2vec_recomputed: usize,
     rev_cache: HashMap<String, String>,
     /// (repo slug, rev, path) of every tracked source file this tick — the
     /// existence oracle for `:file`/`:path`/`:dir` type checks against off-disk
@@ -1322,6 +1343,7 @@ impl Engine {
     pub fn new(db: crate::db::Db, root: PathBuf) -> Self {
         Engine {
             db, rels: HashMap::new(), root, dropped: 0, extraction_drops: Vec::new(), recondensed: 0,
+            node2vec_recomputed: 0,
             closure_cache: HashMap::new(),
             rev_cache: HashMap::new(),
             rev_index: std::collections::HashSet::new(),
@@ -4755,7 +4777,7 @@ impl Engine {
     /// `rebuild_derived` (the Node2vec body item can't lower to SQL); runs after
     /// the edge rel has materialized. Recomputes each tick (no incremental reuse
     /// yet — the embed is the cost; cap the graph or run on demand).
-    fn eval_node2vec_rule(&self, rule: &Rule) -> Result<()> {
+    fn eval_node2vec_rule(&mut self, rule: &Rule) -> Result<()> {
         let edge = rule.node2vec_edge()
             .ok_or_else(|| anyhow::anyhow!("eval_node2vec_rule on a non-node2vec rule"))?;
         let head = &rule.head.rel;
@@ -4765,6 +4787,10 @@ impl Engine {
             bail!("node2vec head '{head}' must have exactly 3 columns (a, b, score); got {}",
                   head_meta.cols.len());
         }
+        // Own the head cols now: the recompute path mutates `self`
+        // (`node2vec_recomputed`), which conflicts with holding `head_meta`'s
+        // immutable borrow of `self.rels` to the end.
+        let head_cols: Vec<String> = head_meta.cols.iter().map(|c| c.name.clone()).collect();
         let edge_meta = self.rels.get(edge)
             .ok_or_else(|| anyhow::anyhow!("node2vec edge relation '{edge}' is not declared"))?;
         if edge_meta.cols.len() < 2 {
@@ -4782,11 +4808,34 @@ impl Engine {
             v
         };
 
-        // Always clear the head + this graph's vectors so an emptied edge set
+        // W1 digest-skip: node2vec is a GLOBAL op (walks touch the whole graph),
+        // so it is not cheaply incrementalizable. Most git checkouts move file
+        // content without moving the call/type edge set, so an order-independent
+        // digest of the edge rows lets the common re-tick be a no-op. Same guard
+        // the scc/closure operators use (recondense only when rows moved). Skip
+        // only when the digest matched AND we already hold this graph's vectors
+        // (or it is legitimately empty and we recorded that all-zero digest).
+        let digest = blake3_edges(&edges);
+        let dkey = format!("node2vec:{edge}");
+        let have_vecs: i64 = self.db.conn().query_row(
+            "SELECT COUNT(*) FROM _node_embeddings WHERE graph = ?1", [edge], |r| r.get(0))?;
+        let trace = std::env::var("SPREFA_N2V_TRACE").is_ok();
+        if self.load_rel_digest(&dkey)? == Some(digest)
+            && (edges.is_empty() || have_vecs > 0) {
+            if trace { eprintln!("[node2vec] graph '{edge}': skip (digest unchanged)"); }
+            return Ok(());
+        }
+        if trace { eprintln!("[node2vec] graph '{edge}': re-embed ({} edges)", edges.len()); }
+
+        // Recompute. Clear the head + this graph's vectors so an emptied edge set
         // produces an empty head (steady-state correctness over speed).
         self.db.exec(&format!("DELETE FROM {}", tbl(head)))?;
         self.db.conn().execute("DELETE FROM _node_embeddings WHERE graph = ?1", [edge])?;
-        if edges.is_empty() { return Ok(()); }
+        if edges.is_empty() {
+            self.save_rel_digest(&dkey, &digest)?;
+            return Ok(());
+        }
+        self.node2vec_recomputed += 1;
 
         let cfg = crate::embed::node2vec::N2vConfig::from_env();
         let pool = crate::embed::node2vec::embed_graph(&edges, &cfg);
@@ -4806,8 +4855,9 @@ impl Engine {
         let k: usize = std::env::var("SPREFA_NODE_SIM_K").ok()
             .and_then(|s| s.parse().ok()).unwrap_or(8);
         let rows = knn_rows(&pool, k);
-        let cols: Vec<&str> = head_meta.cols.iter().map(|c| c.name.as_str()).collect();
+        let cols: Vec<&str> = head_cols.iter().map(|s| s.as_str()).collect();
         self.db.insert_rows(&tbl(head), &cols, &rows)?;
+        self.save_rel_digest(&dkey, &digest)?;
         Ok(())
     }
 

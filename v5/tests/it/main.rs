@@ -62,6 +62,7 @@ mod propose_extract;
 mod query_json;
 mod regex_glob_filter;
 mod regex_sugar;
+mod recompute_guard;
 mod rel_catalog;
 mod repo_sink;
 mod rule_edit;

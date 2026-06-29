@@ -34,8 +34,7 @@ fn edges_txt() -> String {
     lines.join("\n") + "\n"
 }
 
-fn run(dir: &Path) -> (i32, String, String) {
-    let prog = r#"
+const PROG: &str = r#"
 rel edge(src: text, dst: text).
 edge(src, dst) <- scan("WORK", "edges.txt", p, rev),
                   match(p, rev, /(?P<src>[a-z][0-9]) (?P<dst>[a-z][0-9])/, l).
@@ -45,8 +44,10 @@ node_sim(a, b, score) <- node2vec(edge).
 
 ? node_sim(a, b, score).
 "#;
+
+fn run(dir: &Path) -> (i32, String, String) {
     fs::write(dir.join("edges.txt"), edges_txt()).unwrap();
-    fs::write(dir.join("p.dl"), prog).unwrap();
+    fs::write(dir.join("p.dl"), PROG).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
         .args(["--root", dir.to_str().unwrap()])
@@ -107,4 +108,47 @@ fn node2vec_separates_two_clusters() {
         assert!(best.starts_with('a'),
             "{src}'s nearest neighbor was {best} (cross-cluster); embedding did not capture structure\nrows: {nbrs:?}");
     }
+}
+
+/// One `dl` run sharing a persistent `--db`, with the W1 digest trace on.
+/// Returns stderr (carries the `[node2vec] graph 'edge': ...` marker).
+fn run_db(dir: &Path, db: &Path) -> String {
+    let out = Command::new(DL)
+        .arg(dir.join("p.dl"))
+        .args(["--root", dir.to_str().unwrap(), "--db", db.to_str().unwrap()])
+        .env("SPREFA_N2V_DIM", "32")
+        .env("SPREFA_N2V_NUMWALKS", "40")
+        .env("SPREFA_N2V_WALKLEN", "20")
+        .env("SPREFA_N2V_EPOCHS", "3")
+        .env("SPREFA_N2V_SEED", "1")
+        .env("SPREFA_NODE_SIM_K", "7")
+        .env("SPREFA_N2V_TRACE", "1")
+        .output()
+        .expect("run dl");
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+/// W1 digest-skip: node2vec is a global op; an unchanged edge set must not
+/// re-embed. First run over a fresh db re-embeds and records the edge digest in
+/// `_reldigest`; a second run over the SAME db sees an identical graph, the
+/// digest hits, and the embed is skipped. The `_reldigest` baseline persisting
+/// across two processes is the same durable property `digest_skip` relies on.
+#[test]
+fn node2vec_digest_skip_on_unchanged_graph() {
+    let dir = sandbox("digest_skip");
+    fs::write(dir.join("edges.txt"), edges_txt()).unwrap();
+    fs::write(dir.join("p.dl"), PROG).unwrap();
+    let db = dir.join("db");
+
+    let first = run_db(&dir, &db);
+    assert!(first.contains("graph 'edge': re-embed"),
+        "first run over a fresh db must re-embed; stderr:\n{first}");
+    assert!(!first.contains("graph 'edge': skip"),
+        "first run cannot skip (no stored digest); stderr:\n{first}");
+
+    let second = run_db(&dir, &db);
+    assert!(second.contains("graph 'edge': skip (digest unchanged)"),
+        "second run over an unchanged graph must skip the embed; stderr:\n{second}");
+    assert!(!second.contains("graph 'edge': re-embed"),
+        "second run must not re-embed an unchanged graph; stderr:\n{second}");
 }

@@ -205,6 +205,7 @@ mod tests {
 
         let cfg = N2vConfig { dim: 32, walk_len: 20, num_walks: 40, window: 4,
                               neg: 5, epochs: 3, lr: 0.05, seed: 1 };
+        // @recompute unguarded: unit test of the primitive, not a reactive rule
         let pool = embed_graph(&edges, &cfg);
         let get = |name: &str| pool.iter().find(|(n, _)| n == name).map(|(_, v)| v.clone()).unwrap();
 
