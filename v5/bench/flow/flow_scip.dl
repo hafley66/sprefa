@@ -14,24 +14,19 @@ rel spec_op(op: text).
 spec_op(op) <- scan("WORK", "**/openapi.yaml", p, rev),
   jsonp(p, rev, "paths.*.*.operationId", op).
 
-# a SCIP symbol's descriptor name: last "/"-segment, drop the "()." call suffix.
-# `…/getPet().` -> `getPet().` -> `getPet`.
-rel sym_seg(sym: text, seg: text).
-sym_seg(sym, split(sym, "/", -1)) <- scip_def(sym, _).
-rel sym_name(sym: text, name: text).
-sym_name(sym, split(seg, "(", 0)) <- sym_seg(sym, seg).
-
-# backend implementor: a DEF whose descriptor IS an operationId, in a Rust file.
+# backend implementor: a DEF whose descriptor name IS an operationId, in a Rust
+# file. scip_name(sym, name) is the symbol's descriptor name computed in-engine
+# (last identifier run) — a pure-dl split chain leaks `impl#[Type]` on methods.
 # The .rs filter is the role (the spec doesn't say "backend"; the repo does).
 rel impl_sym(op: text, sym: text, file: file).
-impl_sym(op, sym, f) <- spec_op(op), sym_name(sym, op), scip_def(sym, f),
+impl_sym(op, sym, f) <- spec_op(op), scip_name(sym, op), scip_def(sym, f),
   ext = split(f, ".", -1), ext = "rs".
 
-# consumer: a REF whose descriptor IS an operationId. SCIP resolves it to the def
-# it truly binds to (def_file), so the TS call binds the TS stub, not the Rust
-# handler — the cross-language tie stays the operationId, never a resolved edge.
+# consumer: a REF whose descriptor name IS an operationId. SCIP resolves it to
+# the def it truly binds to (def_file), so the TS call binds the TS stub, not the
+# Rust handler — the cross-language tie stays the operationId, not a resolved edge.
 rel client_sym(op: text, file: file, def_file: file).
-client_sym(op, f, df) <- spec_op(op), scip_ref(f, sym, df), sym_name(sym, op).
+client_sym(op, f, df) <- spec_op(op), scip_ref(f, sym, df), scip_name(sym, op).
 
 rel flow_sym(op: text, role: text, file: file).
 flow_sym(op, "impl", f) <- impl_sym(op, _, f).

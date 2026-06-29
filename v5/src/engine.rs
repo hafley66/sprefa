@@ -128,7 +128,7 @@ const DOC_RELS: [&str; 2] = ["doc_node", "doc_ref"];
 /// `scip_callee_type` maps each method moniker to its receiver type (parsed
 /// from the `impl#[Type]` segment), so dl can read both a fn's own type and its
 /// callees' types from one relation — the basis for feature-envy detection.
-const SCIP_RELS: [&str; 6] = ["scip_def", "scip_ref", "scip_edge", "scip_fn_edge", "scip_callee_type", "scip_local"];
+const SCIP_RELS: [&str; 7] = ["scip_def", "scip_name", "scip_ref", "scip_edge", "scip_fn_edge", "scip_callee_type", "scip_local"];
 
 /// Worktree diff relation. `changed(path)` holds every path `git status` says
 /// differs from HEAD in the self repo: modified, added, renamed (new side),
@@ -393,6 +393,7 @@ fn scip_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "scip_def".into(), cols: vec![c("symbol", Type::Text), c("file", Type::Path)] },
+        RelDecl { name: "scip_name".into(), cols: vec![c("symbol", Type::Text), c("name", Type::Text)] },
         RelDecl { name: "scip_ref".into(), cols: vec![c("file", Type::Path), c("symbol", Type::Text), c("def_file", Type::Path)] },
         RelDecl { name: "scip_edge".into(), cols: vec![c("src", Type::Path), c("dst", Type::Path)] },
         RelDecl { name: "scip_fn_edge".into(), cols: vec![c("caller", Type::Text), c("callee", Type::Text)] },
@@ -4260,6 +4261,7 @@ impl Engine {
         let t = |s: &str| Value::Text(s.to_string());
         let Some(path) = scip_import::index_path(&self.root) else {
             self.refresh_rel("scip_def", &["symbol", "file"], &[])?;
+            self.refresh_rel("scip_name", &["symbol", "name"], &[])?;
             self.refresh_rel("scip_ref", &["file", "symbol", "def_file"], &[])?;
             self.refresh_rel("scip_edge", &["src", "dst"], &[])?;
             self.refresh_rel("scip_fn_edge", &["caller", "callee"], &[])?;
@@ -4269,6 +4271,17 @@ impl Engine {
         };
         let rows = scip_import::load(&path)?;
         let defs: Vec<Vec<Value>> = rows.defs.iter().map(|(sym, file)| vec![t(sym), t(file)]).collect();
+        // The symbol's descriptor name (last identifier run), computed where the
+        // SCIP moniker grammar lives. A pure-dl `split` chain can't isolate it:
+        // `…/impl#[Type]method().` needs the `[`/`]`/`#` separators that single-
+        // separator split can't all honor. One row per distinct (symbol, name).
+        let mut name_set: HashSet<(String, String)> = HashSet::new();
+        for (sym, _) in &rows.defs {
+            if let Some(name) = scip_descriptor_name(sym) {
+                name_set.insert((sym.clone(), name));
+            }
+        }
+        let names: Vec<Vec<Value>> = name_set.iter().map(|(sym, name)| vec![t(sym), t(name)]).collect();
         let refs: Vec<Vec<Value>> = rows.refs.iter()
             .map(|(file, sym, def)| vec![t(file), t(sym), t(def)]).collect();
         let edges: Vec<Vec<Value>> = rows.edges.iter().map(|(src, dst)| vec![t(src), t(dst)]).collect();
@@ -4279,6 +4292,7 @@ impl Engine {
         let locals: Vec<Vec<Value>> = rows.locals.iter()
             .map(|(fn_, name)| vec![t(fn_), t(name)]).collect();
         self.refresh_rel("scip_def", &["symbol", "file"], &defs)?;
+        self.refresh_rel("scip_name", &["symbol", "name"], &names)?;
         self.refresh_rel("scip_ref", &["file", "symbol", "def_file"], &refs)?;
         self.refresh_rel("scip_edge", &["src", "dst"], &edges)?;
         self.refresh_rel("scip_fn_edge", &["caller", "callee"], &fn_edges)?;
