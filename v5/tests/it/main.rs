@@ -32,6 +32,7 @@ mod embed_similar;
 mod facts;
 mod flow_xlang;
 mod flow_xlang_scip;
+mod flow_xlang_scip_real;
 mod gen_op;
 mod kotlin;
 mod lex_utf8;
