@@ -297,39 +297,39 @@ pub fn builtin_rel_docs() -> &'static [(&'static str, &'static str, &'static str
     &[
         // core: the repo/rev/content/file spine + the always-true atom.
         ("true", "core", "zero-arity singleton; the always-succeeds atom"),
-        ("repo", "core", "configured + dynamically-pulled repos whose root exists; writable as a clone+register sink"),
+        ("repo", "core", "configured + dynamically-pulled repos whose root exists; writable as a sink — a repo(...) rule clones+registers when the github org is in `org` (hard filter); see docs/dynamic-reaching.md"),
         ("rev", "core", "git revs seen by scans"),
         ("content", "core", "content addresses"),
         ("file", "core", "scanned files, keyed by (repo, rev, path, content)"),
         // module graph: imports + resolved file-to-file edges.
-        ("module_import", "module", "import statements (Rust + TS + Kotlin); Kotlin adds same-package + expect/actual rows"),
+        ("module_import", "module", "import statements (Rust + TS + Kotlin); Kotlin adds kind=same-package rows for bare uses of another file's column-0 decl, and an expect/actual decl fans edges to all declaring files"),
         ("module_edge", "module", "resolved file-to-file import graph (rev-deduped union)"),
         ("module_edge_rev", "module", "rev-aware module_edge"),
-        ("module_unresolved", "module", "broken imports: a reference that resolved to no project file"),
+        ("module_unresolved", "module", "broken imports: a reference that resolved to no project file (the linter question)"),
         ("module_unresolved_rev", "module", "rev-aware module_unresolved"),
         ("crate_edge", "module", "workspace-internal Cargo dependency edges"),
         // type graph: entities, edges, signatures.
-        ("type_edge", "type", "type-graph edges (field/variant/impl/generic) across Rust, Kotlin, TS"),
+        ("type_edge", "type", "type-graph edges across Rust (syn), Kotlin (tree-sitter), TS (oxc); kind is field/variant/impl/generic — Kotlin interface supertypes are generic, class/object impl, val/var ctor params + body properties field, enum entries variant"),
         ("type_edge_rev", "type", "rev-aware type_edge (WORK-vs-HEAD type diff)"),
-        ("type_entity", "type", "every declared type; sym is file::kind::name, the cross-graph join key"),
+        ("type_entity", "type", "every declared type; sym is file::kind::name, the cross-graph join key; scip_ref overrides name resolution when a SCIP index is present"),
         ("type_sig", "type", "type signature slots (params, fields) per sym"),
         ("type_link", "type", "cross-type links not carried by type_edge (SCIP-resolved sym to sym)"),
         // call graph: defs, sites, resolved edges, classification.
         ("call_def", "call", "every callable; sym is file::kind::name"),
-        ("call_site", "call", "each call occurrence; caller is the resolved fn sym, callee the bare text"),
+        ("call_site", "call", "each call occurrence; caller is the resolved fn sym, callee the bare text; changed_line joins here for line-scoped rails"),
         ("call_edge", "call", "resolved caller-sym to callee-sym edge (single-def or SCIP override)"),
         ("call_edge_rev", "call", "rev-aware call_edge"),
-        ("call_name", "call", "def sym to bare callable name; resolves a call_site callee to candidate defs"),
-        ("call_kind", "call", "per-fn read/write classification of its call sites (rusqlite-shaped)"),
+        ("call_name", "call", "def sym to bare callable name; resolves a call_site callee to candidate def syms"),
+        ("call_kind", "call", "per-fn read/write classification from the bare callee name (execute* -> write, query*/prepare -> read); rusqlite-shaped, collection names dropped to avoid false positives"),
         // intra-procedural dataflow + loop/alloc material for Big-O.
         ("df_node", "dataflow", "intra-procedural dataflow node (call_res/assign/...); id is file::line::kind"),
         ("df_edge", "dataflow", "intra-procedural dataflow dependency edge"),
         ("loop_over", "dataflow", "one row per loop with its span, iter var, and collection"),
-        ("allocates", "dataflow", "one row per fn whose body builds a collection"),
-        ("nest", "dataflow", "one row per (call, enclosing loop) with nesting depth; raw material for Big-O"),
+        ("allocates", "dataflow", "one row per fn whose body builds a collection (Vec/HashMap/String ctor, .collect/.clone/.to_string)"),
+        ("nest", "dataflow", "one row per (call, enclosing loop); depth is nesting rank (1=outermost); raw material for symbolic Big-O over call_edge"),
         // doc-to-code bridge.
-        ("doc_node", "doc", "structural nodes from non-source text (markdown headings/code blocks)"),
-        ("doc_ref", "doc", "doc-to-code bridge: name-matches doc_node headings to type_entity symbols"),
+        ("doc_node", "doc", "structural nodes from non-source text (markdown headings + code blocks via tree-sitter-md: ATX/setext headings, fenced/indented blocks); parent is the enclosing heading"),
+        ("doc_ref", "doc", "doc-to-code bridge: name-matches doc_node headings to type_entity symbols (exact + normalized) and scans code blocks for identifier mentions; empty unless the program also uses type relations"),
         // SCIP: compiler-backed facts from an index.scip.
         ("scip_def", "scip", "symbol defs from an existing index.scip (root or $SPREFA_SCIP_INDEX)"),
         ("scip_name", "scip", "descriptor name (last identifier run) of a moniker, computed in-engine"),
@@ -340,10 +340,10 @@ pub fn builtin_rel_docs() -> &'static [(&'static str, &'static str, &'static str
         ("scip_local", "scip", "local-variable + parameter declarations attributed to their enclosing fn"),
         ("scip_impl", "scip", "interface/supertype dispatch edge from SCIP is_implementation (impl to iface)"),
         // working-tree change rails.
-        ("changed", "changed", "git status vs HEAD: modified/added/renamed/untracked; the rails join. Empty outside git"),
-        ("changed_line", "changed", "new-side lines of git diff -U0 HEAD hunks plus untracked files; line-scoped rails"),
+        ("changed", "changed", "git status --porcelain -uall vs HEAD (modified/added/renamed/untracked); empty outside git; the rails join"),
+        ("changed_line", "changed", "new-side lines of git diff -U0 HEAD hunks plus every line of untracked files; pure-deletion hunks emit nothing; line-scoped rails precision"),
         // agent-harness rails (from the at-rest session store).
-        ("agent_edit", "agent", "every file edit in the latest agent turn, tagged harness+session+turn idx"),
+        ("agent_edit", "agent", "every file edit in the latest agent turn, tagged harness+session+turn idx (from the at-rest harness store)"),
         ("agent_touch", "agent", "the latest agent turn's edited files (harness, session, path)"),
         // misc derived sources.
         ("created", "created", "files added since their first appearance, with author name/email/timestamp"),
@@ -354,7 +354,7 @@ pub fn builtin_rel_docs() -> &'static [(&'static str, &'static str, &'static str
         ("type_lgg", "type-shape", "least-general generalization of two type shapes (shape-iso experiment)"),
         // ref spine: interned strings + located byte spans.
         ("string", "spine", "interned strings (ref spine): id, text, normalized text"),
-        ("ref", "spine", "byte span per interned string; id is the rewrite coordinate"),
+        ("ref", "spine", "byte span per interned string; id is the rewrite coordinate — 'where does Foo occur' is string(s, Foo, _), ref(_, s, f, lo, hi)"),
         // CST nested-set nodes for ancestry/containment.
         ("node", "node", "CST nodes (nested-set spans): id, kind, file, lo, hi, parent"),
         ("child", "node", "CST parent-child edges (exactly 2 cols, so closure(child) gives ancestry)"),
