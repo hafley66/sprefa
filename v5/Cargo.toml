@@ -20,6 +20,17 @@ path = "src/main.rs"
 name = "it"
 path = "tests/it/main.rs"
 
+[features]
+default = []
+# Real embedding backends, each a compile-time switch pulling in a module under
+# src/embed/. The seam (feature flag + cascade + runtime selection) ships now;
+# the model impl + heavy dep are wired per-backend when you want a real model.
+# To wire fastembed: add `fastembed = { version = "4", optional = true }` to
+# [dependencies], change this to `embed-fastembed = ["dep:fastembed"]`, and
+# implement src/embed/fastembed_be.rs::Fe. candle is analogous (see candle_be.rs).
+embed-fastembed = []
+embed-candle = []
+
 [dependencies]
 rusqlite = { version = "0.31", features = ["bundled", "functions", "trace"] }
 regex = "1"

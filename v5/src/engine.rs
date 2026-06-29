@@ -167,6 +167,19 @@ const CHANGED_LINE_RELS: [&str; 1] = ["changed_line"];
 /// `propose_clone(_, p, ...), created(p, _, "x@…", _), p ~ "*/tests/*"`.
 const CREATED_RELS: [&str; 1] = ["created"];
 
+/// Embedding-similarity relation. `similar(a, b, score)` is the top-k nearest
+/// neighbors of each embedded interned string by cosine; `score` is an Int =
+/// round(cosine * 1_000_000) in [-1_000_000, 1_000_000], so a `.dl` rule can
+/// threshold (`score > 800000`) in the engine's Int-only value space. Vectors
+/// are content-addressed: one row per (StringId, backend) in `_embeddings`, so
+/// identical content across repos embeds once and a `similar` hit fans out to
+/// every place that content lives via `ref`/`_file`. The backend is a
+/// compile-time feature (src/embed/), default the deterministic `stub`. Lazy
+/// like the other indexers; brute-force O(n^2) cosine over the embedded set
+/// (capped by SPREFA_EMBED_MAX, default 4096), the sqlite-vec ANN path is the
+/// scale follow-on. SPREFA_SIMILAR_K (default 8) sets neighbors per row.
+const EMBED_RELS: [&str; 1] = ["similar"];
+
 /// Extract-function proposals: one row `(path, lo, hi, param)` per free var of
 /// each verbatim-duplicated block found in a scanned Rust file. `lo`/`hi` bound
 /// the block's first occurrence (1-based lines); the param set is the inferred
@@ -257,6 +270,7 @@ pub fn builtin_rel_names() -> std::collections::HashSet<String> {
         .chain(agent_rel_decls())
         .chain(changed_line_rel_decls())
         .chain(created_rel_decls())
+        .chain(embed_rel_decls())
         .chain(propose_extract_rel_decls())
         .chain(propose_clone_rel_decls())
         .chain(type_shape_rel_decls())
@@ -421,6 +435,14 @@ fn created_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
+fn embed_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "similar".into(),
+                  cols: vec![c("a", Type::Text), c("b", Type::Text), c("score", Type::Int)] },
+    ]
+}
+
 fn propose_extract_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -580,6 +602,7 @@ fn agent_rels_used(prog: &Program) -> bool { rels_used(prog, &AGENT_RELS) }
 
 fn changed_line_rels_used(prog: &Program) -> bool { rels_used(prog, &CHANGED_LINE_RELS) }
 fn created_rels_used(prog: &Program) -> bool { rels_used(prog, &CREATED_RELS) }
+fn embed_rels_used(prog: &Program) -> bool { rels_used(prog, &EMBED_RELS) }
 
 fn propose_extract_rels_used(prog: &Program) -> bool { rels_used(prog, &PROPOSE_EXTRACT_RELS) }
 
@@ -1904,6 +1927,7 @@ impl Engine {
         if agent_rels_used(prog) { changed |= self.refresh_agent_rels()?; }
         if changed_line_rels_used(prog) { changed |= self.refresh_changed_line_rel()?; }
         if created_rels_used(prog) { changed |= self.refresh_created_rel()?; }
+        if embed_rels_used(prog) { changed |= self.refresh_embed_rels()?; }
         if propose_extract_rels_used(prog) { changed |= self.refresh_propose_extract_rel()?; }
         if propose_clone_rels_used(prog) { changed |= self.refresh_propose_clone_rel()?; }
         if type_shape_rels_used(prog) { changed |= self.refresh_type_shape_rel()?; }
@@ -2193,6 +2217,10 @@ impl Engine {
             changed_source_rels.insert("created".to_string());
             changed_facts = true;
         }
+        if embed_rels_used(prog) && self.refresh_embed_rels()? {
+            changed_source_rels.insert("similar".to_string());
+            changed_facts = true;
+        }
         if propose_extract_rels_used(prog) && self.refresh_propose_extract_rel()? {
             changed_source_rels.insert("propose_extract".to_string());
             changed_facts = true;
@@ -2324,6 +2352,19 @@ impl Engine {
                  new TEXT NOT NULL DEFAULT '',
                  at INTEGER NOT NULL DEFAULT 0
              );
+             -- Content-addressed embeddings: one vector per (StringId, backend).
+             -- `sid` joins `_strings.id`; `backend` namespaces the model so two
+             -- backends coexist without cross-space cosine. `vec` is comma-joined
+             -- f32 TEXT (the existing plural Value::Text insert path; the
+             -- sqlite-vec ANN mirror is the scale follow-on).
+             CREATE TABLE IF NOT EXISTS _embeddings (
+                 sid TEXT NOT NULL,
+                 backend TEXT NOT NULL,
+                 dim INTEGER NOT NULL,
+                 vec TEXT NOT NULL,
+                 PRIMARY KEY (sid, backend)
+             );
+             CREATE INDEX IF NOT EXISTS _embeddings_backend_idx ON _embeddings(backend);
              CREATE INDEX IF NOT EXISTS _strings_norm_idx ON _strings(norm);
              CREATE INDEX IF NOT EXISTS _where_bytes_string_idx ON _where_bytes(string_id);
              CREATE INDEX IF NOT EXISTS _where_bytes_file_span_idx ON _where_bytes(file_id, lo, hi);
@@ -2834,6 +2875,9 @@ impl Engine {
                 if CREATED_RELS.contains(&d.name.as_str()) {
                     bail!("{} is the built-in file-authorship relation; pick another name", d.name);
                 }
+                if EMBED_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is the built-in embedding-similarity relation (similar); pick another name", d.name);
+                }
                 if PROPOSE_EXTRACT_RELS.contains(&d.name.as_str()) {
                     bail!("{} is the built-in extract-proposal relation; pick another name", d.name);
                 }
@@ -2885,6 +2929,7 @@ impl Engine {
         for d in agent_rel_decls() { self.declare(&d)?; }
         for d in changed_line_rel_decls() { self.declare(&d)?; }
         for d in created_rel_decls() { self.declare(&d)?; }
+        for d in embed_rel_decls() { self.declare(&d)?; }
         for d in propose_extract_rel_decls() { self.declare(&d)?; }
         for d in propose_clone_rel_decls() { self.declare(&d)?; }
         for d in type_shape_rel_decls() { self.declare(&d)?; }
@@ -4350,6 +4395,97 @@ impl Engine {
             .collect();
         self.refresh_rel("created", &["path", "name", "email", "ts"], &rows)?;
         Ok(true)
+    }
+
+    /// Encode every interned `_strings` row lacking a vector for the active
+    /// backend (embed-once per (StringId, backend)), then materialize `similar`.
+    /// Returns true if the `similar` row set could have changed (new content was
+    /// embedded, or the table was empty), false on the steady-state no-op so the
+    /// derived rebuild stays scoped. Brute-force O(n^2) cosine; the embedded set
+    /// is capped by SPREFA_EMBED_MAX to keep a `similar` reference from hanging
+    /// on a large corpus (the sqlite-vec ANN path is the scale follow-on).
+    fn refresh_embed_rels(&self) -> Result<bool> {
+        let embedder = crate::embed::make(None)?;
+        let backend = embedder.name().to_string();
+        let max: usize = std::env::var("SPREFA_EMBED_MAX").ok()
+            .and_then(|s| s.parse().ok()).unwrap_or(4096);
+
+        // Content with no vector for THIS backend. Capped: only the first `max`
+        // un-embedded strings are encoded per tick (the rest catch up next tick).
+        let to_embed: Vec<(String, String)> = {
+            let conn = self.db.conn();
+            let mut s = conn.prepare(
+                "SELECT s.id, s.content FROM _strings s
+                 WHERE s.id != '0'
+                   AND NOT EXISTS (SELECT 1 FROM _embeddings e
+                                   WHERE e.sid = s.id AND e.backend = ?1)
+                 LIMIT ?2")?;
+            let v: Vec<(String, String)> = s.query_map(rusqlite::params![backend, max as i64], |r|
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+                .filter_map(|x| x.ok()).collect();
+            v
+        };
+        if !to_embed.is_empty() {
+            let texts: Vec<&str> = to_embed.iter().map(|(_, c)| c.as_str()).collect();
+            let vecs = embedder.encode(&texts)?;
+            let dim = embedder.dim() as i64;
+            // collect-then-flush: one insert_rows, never per-row (the spine rule).
+            let mut rows: Vec<Vec<Value>> = Vec::with_capacity(vecs.len());
+            for ((sid, _), mut v) in to_embed.iter().cloned().zip(vecs) {
+                crate::embed::l2_normalize(&mut v);
+                rows.push(vec![
+                    Value::Text(sid), Value::Text(backend.clone()),
+                    Value::Int(dim), Value::Text(crate::embed::encode_vec(&v))]);
+            }
+            self.db.insert_rows("_embeddings", &["sid", "backend", "dim", "vec"], &rows)?;
+        }
+
+        // Steady state: no new content AND `similar` already built -> no recompute.
+        let similar_rows: i64 = self.db.conn().query_row(
+            &format!("SELECT count(*) FROM {}", tbl("similar")), [], |r| r.get(0))?;
+        if to_embed.is_empty() && similar_rows > 0 { return Ok(false); }
+
+        self.refresh_similar_rel(&backend, max)?;
+        Ok(true)
+    }
+
+    /// Materialize `similar(a, b, score)`: top-k cosine neighbors of each
+    /// embedded string for `backend`. Brute-force pairwise over the (capped)
+    /// embedded pool; vectors are L2-normalized at store time so cosine is a dot
+    /// product. `score` = round(cosine * 1e6) as Int.
+    fn refresh_similar_rel(&self, backend: &str, max: usize) -> Result<()> {
+        let k: usize = std::env::var("SPREFA_SIMILAR_K").ok()
+            .and_then(|s| s.parse().ok()).unwrap_or(8);
+        let pool: Vec<(String, Vec<f32>)> = {
+            let conn = self.db.conn();
+            let mut s = conn.prepare("SELECT sid, vec FROM _embeddings WHERE backend = ?1 LIMIT ?2")?;
+            let v: Vec<(String, Vec<f32>)> = s.query_map(rusqlite::params![backend, max as i64], |r|
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+                .filter_map(|x| x.ok())
+                .map(|(sid, txt): (String, String)| (sid, crate::embed::parse_vec(&txt)))
+                .collect();
+            v
+        };
+        if pool.len() > 2000 {
+            eprintln!("[similar] brute-force KNN over {} vectors (O(n^2)); \
+                       cap with SPREFA_EMBED_MAX or wire sqlite-vec", pool.len());
+        }
+        let mut rows: Vec<Vec<Value>> = Vec::new();
+        for (i, (a, va)) in pool.iter().enumerate() {
+            let mut scored: Vec<(f32, &str)> = Vec::with_capacity(pool.len().saturating_sub(1));
+            for (j, (b, vb)) in pool.iter().enumerate() {
+                if i == j { continue; }
+                scored.push((crate::embed::cosine(va, vb), b.as_str()));
+            }
+            scored.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap_or(std::cmp::Ordering::Equal));
+            for (sc, b) in scored.into_iter().take(k) {
+                rows.push(vec![
+                    Value::Text(a.clone()), Value::Text(b.to_string()),
+                    Value::Int((sc * 1_000_000.0).round() as i64)]);
+            }
+        }
+        self.refresh_rel("similar", &["a", "b", "score"], &rows)?;
+        Ok(())
     }
 
     /// Refresh `agent_edit` / `agent_touch` from the at-rest harness stores

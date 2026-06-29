@@ -7,6 +7,7 @@ pub mod daemon;
 pub mod datapath;
 pub mod db;
 pub mod desc;
+pub mod embed;
 pub mod engine;
 pub mod frontend;
 pub mod ingest;

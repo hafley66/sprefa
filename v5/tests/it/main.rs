@@ -28,6 +28,7 @@ mod digest_skip;
 mod discover;
 mod doc_node;
 mod doc_ref;
+mod embed_similar;
 mod facts;
 mod gen_op;
 mod kotlin;
