@@ -40,6 +40,66 @@ cwd in discovery mode). Multi-repo analysis is configured in
   `string(id, text, norm)` + `ref(id, string, file, lo, hi)`. A match is a
   coordinate you can squiggle (LSP) or rewrite (`--move`).
 
+## How it runs (the tick)
+
+One tick is: refresh source facts → evaluate the fixpoint → fire sinks. The
+same Tarjan SCC pass shows up on three different graphs, which is most of the
+engine in one sentence.
+
+1. **Source vs derived — the basis for everything.** `scan` + a source op
+   extract SOURCE rows, each tagged with its file; rules derive the rest. A
+   source fact has exactly one support (its file), so an edit retracts exactly
+   the rows tagged that file and re-extracts them — no reference counting. A
+   derived fact has no home file, so it recomputes. This split is what makes
+   incrementality tractable (deleting derived facts under recursion is the hard
+   case; the design avoids it). See [book/04-incremental-maintenance.md](book/04-incremental-maintenance.md).
+2. **The fixpoint** (`rebuild_derived`, [src/engine.rs](src/engine.rs)). One
+   loop per stratum: apply every rule (`INSERT OR IGNORE ... SELECT`), repeat
+   until a pass adds nothing. Monotone growth in a finite universe settles at
+   the unique least fixpoint (Knaster–Tarski). Recursion is just a rule that
+   names itself in head and body; a converged tick writes zero rows.
+3. **Stratification** (`stratify`, engine.rs). `!rel` needs the negated relation
+   finished first, so the engine SCCs the *rule* dependency graph (Tarjan
+   again): a negative edge inside a cycle is rejected as not-stratifiable;
+   otherwise relations layer and evaluate bottom-up. (Temporal `@next` carries
+   read the *prior* tick, so they legitimately break a cycle the static checker
+   still reports — `--check` over-flags those programs; the tick runs them.)
+4. **Incremental re-tick.** A source rel whose `(content-hash, rule-text)`
+   digest is unchanged is pruned before evaluation; only moved files re-extract.
+   The derived layer is keyed on a digest of the whole derived program and skips
+   when nothing it reads changed (the recompute-guard rail enforces this for
+   from-scratch ops like graph embedding).
+5. **Closures as a condensed walk** (`src/scc.rs`). The full `reaches` relation
+   is Θ(V²) on a cyclic graph. Tarjan collapses each cycle to a super-node in
+   O(V+E); the remainder is a DAG, and a point query ("what does X reach?") is a
+   seeded BFS over the condensed edges (reverse edges answer "who reaches X?").
+6. **Auto-index** (`auto_indexes`, engine.rs). Every column a variable shares
+   across ≥2 body atoms is indexed, so a join seeks instead of scanning.
+
+Full derivations, citations, and exercises live in [book/](book/) (ch. 2
+fixpoint, 3 cycles, 4 incremental, 7 the fast paths).
+
+## Speed
+
+`dl` lowers to SQLite, so performance is "pick the right loop, then let the
+B-trees do the join." The shape that matters is which fast path a query hits,
+not raw constant factors. Measured on a Linux-kernel checkout (the stress
+fixture):
+
+| workload | naive | fast path | what changed |
+|---|---|---|---|
+| call-graph join (`fndef` F≈16k × `callsite` C≈96k) | 22s (~1.5e9 row touches) | 1.9s | auto-index on the shared join key (`path`) |
+| point query (what does X reach?) | ~2s (SQL recursive view) | 30µs | seeded BFS over condensed edges, not a full closure then filter |
+| condense the call graph (23k edges) | — | milliseconds | Tarjan SCC, one DFS, O(V+E) |
+
+The honest baseline this grew from: a correct-but-unindexed run of kernel
+reachability was 197s and the resolved call graph 30s before these paths went
+in. Two refinements are deliberately *not* taken yet: semi-naive is half-done
+(the loop re-joins the full relation each round and lets `INSERT OR IGNORE`
+discard duplicates, rather than joining only the new frontier), and indexes are
+single-column equality only (a range join such as `s <= l <= e` still scans).
+Both are documented in [book/07-the-fast-paths.md](book/07-the-fast-paths.md).
+
 ## Program structure
 
 A `.dl` program is a sequence of items, each terminated by `.`:
