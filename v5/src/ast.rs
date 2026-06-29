@@ -197,15 +197,24 @@ pub enum BodyItem {
     /// the min member name in the component. Reuses the closure condensation
     /// (Tarjan) — shares `closure(edge)`'s per-edge cache, no second Tarjan run.
     Scc { rel: String },
+    /// An effect CALL inside an `@async`/`@stream` rule body: `gh(repo, path) ->
+    /// (status, body)`. `name` resolves to a `ShellFn` (the effect kind/template);
+    /// `args` fill the template `{hole}`s (param-positional); `outs` are fresh
+    /// vars bound to the executor's response columns, in order. The body-effect
+    /// form D-3 desugars to; the runtime sees ONE model. Not a lowerable relation
+    /// (`body_sql` ignores it); the engine reads it via `Rule::effect()`.
+    Effect { name: String, args: Vec<Term>, outs: Vec<Term> },
 }
 
-/// A temporal rule modifier, written `@next` / `@async` after the `<-` neck.
-/// `Next`: the head is staged into the next tick's seed (carry state) instead of
-/// this tick's fixpoint. `Async`: the body fires an effect whose response lands as
-/// a fact at a later tick (non-blocking IO). `None` on the `Rule` = today's
-/// same-tick deductive rule. See docs/research-reactive-effectful-datalog.md §8.
+/// A temporal rule modifier, written `@next` / `@async` / `@stream` after the
+/// `<-` neck. `Next`: the head is staged into the next tick's seed (carry state)
+/// instead of this tick's fixpoint. `Async`: the body fires a one-shot effect
+/// whose response lands as a fact at a later tick (non-blocking IO). `Stream`: the
+/// body opens a long-lived subscription (`sh*`) whose rows append over many ticks
+/// (Phase 4, runtime not yet wired). `None` on the `Rule` = today's same-tick
+/// deductive rule. See docs/research-reactive-effectful-datalog.md §8.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Temporal { Next, Async }
+pub enum Temporal { Next, Async, Stream }
 
 #[derive(Clone, Debug)]
 pub struct Rule {
@@ -236,6 +245,20 @@ impl Rule {
 
     /// `@async` effect rule: body emits a request, response lands later.
     pub fn is_async(&self) -> bool { self.temporal == Some(Temporal::Async) }
+
+    /// `@stream` subscription rule: body opens a long-lived `sh*` source whose
+    /// rows append over many ticks. Runtime is Phase 4 (the engine bails today).
+    pub fn is_stream(&self) -> bool { self.temporal == Some(Temporal::Stream) }
+
+    /// The single `BodyItem::Effect` of an `@async`/`@stream` rule, if present.
+    /// After the frontend desugar every effectful rule carries exactly one (the
+    /// head-response form synthesizes it). Returns `(kind, args, outs)`.
+    pub fn effect(&self) -> Option<(&str, &[Term], &[Term])> {
+        self.body.iter().find_map(|b| match b {
+            BodyItem::Effect { name, args, outs } => Some((name.as_str(), &args[..], &outs[..])),
+            _ => None,
+        })
+    }
 
     pub fn is_source(&self) -> bool {
         self.body.iter().any(|b| matches!(b,

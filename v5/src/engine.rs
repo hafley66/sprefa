@@ -25,8 +25,6 @@ fn carry_tbl(rel: &str) -> String { format!("_carry_{rel}") }
 /// One head slot of an `@async` rule, classifying how its value is filled when
 /// the effect response lands: a literal constant, a body-bound request arg
 /// (echoed from the request), or the i-th value the executor returned.
-enum AsyncSlot { Const(Value), FromArg(String), FromOutput(usize) }
-
 /// The distinct variables a positive body atom binds, in first-appearance order.
 /// For an `@async` rule these are the request args passed to the executor.
 fn async_bound_vars(rule: &Rule) -> Vec<String> {
@@ -134,10 +132,24 @@ pub fn async_effect_arity(prog: &Program) -> HashMap<String, usize> {
     for item in &prog.items {
         let Item::Rule(r) = item else { continue };
         if !r.is_async() { continue; }
-        let vars = async_bound_vars(r);
-        let nout = r.head.terms.iter()
-            .filter(|t| matches!(t, Term::Var(v) if !vars.contains(v))).count();
-        m.insert(r.head.rel.clone(), nout);
+        // After desugar every @async rule carries a body-effect; its `outs` are
+        // the response columns (the stdout slots the executor fills). A rule
+        // loaded without the frontend desugar (raw parse) falls back to the
+        // unbound-head-var count, which is identical.
+        // Key by the EFFECT name (the executor's template key = the `sh` decl
+        // name), which equals the head rel in the head-response form but differs
+        // in the explicit `gh(..) -> (..)` form. The value is the response-column
+        // count (the stdout slots the executor must fill).
+        let (kind, nout) = match r.effect() {
+            Some((k, _, outs)) => (k.to_string(), outs.len()),
+            None => {
+                let vars = async_bound_vars(r);
+                let nout = r.head.terms.iter()
+                    .filter(|t| matches!(t, Term::Var(v) if !vars.contains(v))).count();
+                (r.head.rel.clone(), nout)
+            }
+        };
+        m.insert(kind, nout);
     }
     m
 }
@@ -155,6 +167,33 @@ pub fn shell_templates(prog: &Program) -> HashMap<String, String> {
         }
     }
     m
+}
+
+/// Each `sh` decl's parameter names, keyed by the decl name (== effect kind).
+/// In the explicit body-effect form `gh(repo, path) -> (..)`, the call args fill
+/// the `{param}` holes POSITIONALLY, so the hole map is keyed by these param
+/// names. The head-response form has no declared params and keys holes by the
+/// body var name instead (see `rebuild_async`).
+fn shell_fn_params(prog: &Program) -> HashMap<String, Vec<String>> {
+    let mut m = HashMap::new();
+    for item in &prog.items {
+        if let Item::Shell(f) = item {
+            m.insert(f.name.clone(), f.params.clone());
+        }
+    }
+    m
+}
+
+/// Evaluate an effect-arg/head term against a body solution object: a var reads
+/// the solution cell, a literal is itself. Builds the effect hole map (and, with
+/// the response outs folded in, the head row) in the async runtime.
+fn eval_term_json(t: &Term, sol: &serde_json::Map<String, serde_json::Value>) -> serde_json::Value {
+    match t {
+        Term::Var(v) => sol.get(v).cloned().unwrap_or(serde_json::Value::Null),
+        Term::Str(s) => serde_json::json!(s),
+        Term::Int(n) => serde_json::json!(n),
+        _ => serde_json::Value::Null,
+    }
 }
 
 /// Coerce a JSON arg value (from `pending_effect.args_json`) into a db cell.
@@ -2154,6 +2193,14 @@ impl Engine {
         // Neither is derived this tick (both excluded from all_derived below).
         let next_rules: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_next()).collect();
         let async_rules: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_async()).collect();
+        // `@stream` (`sh*`) subscriptions parse and desugar to the body-effect
+        // model, but the long-lived reader-thread runtime is Phase 4. Bail loudly
+        // rather than silently produce nothing (the plan sequences streaming after
+        // the job table). Lifting this bail is the Phase 4 entry point.
+        if rules.iter().any(|r| r.is_stream()) {
+            bail!("@stream / sh* subscriptions parse but are not yet wired at runtime \
+                   (Phase 4: job table + reader thread); only @async effects run today");
+        }
         // An @async body fires an effect over already-derived relations; a source
         // op (scan/match/...) in the body has no meaning here (the effect, not the
         // file system, is the IO). Reject it like a repo-sink.
@@ -2171,6 +2218,7 @@ impl Engine {
         // their head lands in the next tick's carry buffer, not this tick.
         let all_derived: Vec<&Rule> = rules.iter().copied()
             .filter(|r| !r.is_source() && !r.is_repo_sink() && !r.is_next() && !r.is_async()
+                && !r.is_stream()
                 && r.closure_edge().is_none() && r.scc_edge().is_none()).collect();
         // `head(..) <- scc(edge).` rules: materialize (rep, member) from the
         // closure condensation in the query phase (after refresh_cond_cache).
@@ -2392,7 +2440,7 @@ impl Engine {
         // (idempotent on its digest id). The daemon's `drain_effects` runs them
         // off-tick and the response surfaces in the head rel at a later tick.
         if !async_rules.is_empty() {
-            self.rebuild_async(&async_rules, cur_tx)?;
+            self.rebuild_async(prog, &async_rules, cur_tx)?;
         }
         // The carry clock advances once per tick that has any temporal rule, so
         // `req_tx` and the next carry generation track the same coordinate.
@@ -2809,10 +2857,27 @@ impl Engine {
              -- name; `args_json` = the bound-var object; `done` flips to 1 once
              -- the executor has run and the response row is inserted. Off-tick
              -- `drain_effects` is the only writer of `done`. See §8.
+             -- `kind` = the effect/`sh` template key (== head rel in the
+             -- head-response form, the `sh` decl name in the explicit body-effect
+             -- form). `head_rel` = the response rel the head is rebuilt into (they
+             -- differ when `gh(..) -> (..)` lands into a differently-named rel).
+             -- `full_json` (D-4) is the full body solution, the head-rebuild
+             -- payload: the head may mix body vars NOT in the effect args with the
+             -- response outs, so the digest keys on `args_json` (the hole map) but
+             -- the head is reconstructed from `full_json` ∪ outs in `drain_effects`.
              CREATE TABLE IF NOT EXISTS pending_effect (
-                 id TEXT PRIMARY KEY, kind TEXT NOT NULL, args_json TEXT NOT NULL,
+                 id TEXT PRIMARY KEY, kind TEXT NOT NULL,
+                 head_rel TEXT NOT NULL DEFAULT '', args_json TEXT NOT NULL,
+                 full_json TEXT NOT NULL DEFAULT '',
                  req_tx INTEGER NOT NULL, done INTEGER NOT NULL DEFAULT 0);"
         )?;
+        // tolerate a pending_effect created before the body-effect columns existed.
+        // The pre-migration default for head_rel is `kind` (head-response 1:1), set
+        // on read in `drain_effects` via the empty-string fallback.
+        let _ = self.db.conn().execute(
+            "ALTER TABLE pending_effect ADD COLUMN head_rel TEXT NOT NULL DEFAULT ''", []);
+        let _ = self.db.conn().execute(
+            "ALTER TABLE pending_effect ADD COLUMN full_json TEXT NOT NULL DEFAULT ''", []);
         // tolerate dbs created before mtime/size existed
         let _ = self.db.conn().execute("ALTER TABLE _file ADD COLUMN mtime INTEGER DEFAULT 0", []);
         let _ = self.db.conn().execute("ALTER TABLE _file ADD COLUMN size INTEGER DEFAULT 0", []);
@@ -5495,10 +5560,16 @@ impl Engine {
     /// digest of (kind, args) so re-emitting the same request across ticks before
     /// it runs does not double-fire (INSERT OR IGNORE on the PK). The executor
     /// runs off-tick in `drain_effects`; nothing here touches the network.
-    fn rebuild_async(&self, async_rules: &[&Rule], cur: i64) -> Result<()> {
+    fn rebuild_async(&self, prog: &Program, async_rules: &[&Rule], cur: i64) -> Result<()> {
+        let params_by_kind = shell_fn_params(prog);
         let mut rows: Vec<Vec<Value>> = Vec::new();
         for r in async_rules {
-            let kind = &r.head.rel;
+            let head_rel = &r.head.rel;
+            let (kind, eff_args, _outs) = r.effect()
+                .ok_or_else(|| anyhow::anyhow!("@async rule (rel `{}`) was not desugared to a \
+                    body-effect (frontend bug)", r.head.rel))?;
+            // The FULL body solution (all positive-atom-bound vars) is the head
+            // rebuild env (D-4); the effect args are a subset/expression over it.
             let vars = async_bound_vars(r);
             if vars.is_empty() {
                 bail!("@async rule (rel `{kind}`) binds no request args; its body must have \
@@ -5523,18 +5594,44 @@ impl Engine {
                 })?;
                 it.filter_map(|x| x.ok()).collect()
             };
-            for obj in solutions {
-                let args_json = serde_json::Value::Object(obj).to_string();
-                let id = blake3::hash(format!("{kind}\u{0}{args_json}").as_bytes()).to_hex().to_string();
+            // Hole-name resolution: in the explicit body-effect form the holes are
+            // the `sh` decl's params, filled positionally; in the head-response
+            // form (desugared, no matching params) they are the arg var names. Use
+            // declared params iff their arity matches the call args, else var names.
+            let hole_keys: Vec<String> = match params_by_kind.get(kind) {
+                Some(ps) if ps.len() == eff_args.len() => ps.clone(),
+                _ => eff_args.iter().map(|a| match a {
+                    Term::Var(v) => v.clone(),
+                    _ => String::new(),
+                }).collect(),
+            };
+            for sol in solutions {
+                // hole map (the template fill + the digest key): one entry per arg.
+                let mut hole = serde_json::Map::new();
+                for (i, a) in eff_args.iter().enumerate() {
+                    let key = &hole_keys[i];
+                    if key.is_empty() { continue; } // unnamed literal arg, head-only
+                    hole.insert(key.clone(), eval_term_json(a, &sol));
+                }
+                let args_json = serde_json::Value::Object(hole).to_string();
+                // The digest keys on (head rel, effect kind, hole map) — two rules
+                // may call the same `sh` fn with the same args but reconstruct
+                // different heads, so the head rel is part of the identity.
+                let id = blake3::hash(
+                    format!("{head_rel}\u{0}{kind}\u{0}{args_json}").as_bytes()
+                ).to_hex().to_string();
+                let full_json = serde_json::Value::Object(sol).to_string();
                 rows.push(vec![
-                    Value::Text(id), Value::Text(kind.clone()),
-                    Value::Text(args_json), Value::Int(cur),
+                    Value::Text(id), Value::Text(kind.to_string()),
+                    Value::Text(head_rel.clone()),
+                    Value::Text(args_json), Value::Text(full_json), Value::Int(cur),
                 ]);
             }
         }
         // `done` defaults to 0; INSERT OR IGNORE keeps an already-queued (or
         // already-run, done=1) request untouched.
-        self.db.insert_rows("pending_effect", &["id", "kind", "args_json", "req_tx"], &rows)?;
+        self.db.insert_rows("pending_effect",
+            &["id", "kind", "head_rel", "args_json", "full_json", "req_tx"], &rows)?;
         Ok(())
     }
 
@@ -5546,86 +5643,110 @@ impl Engine {
     /// order. The response rel persists (it is neither source nor derived), so the
     /// next tick reads it like any fact. Returns the number of requests drained.
     pub fn drain_effects(&mut self, prog: &Program, exec: &dyn EffectExec) -> Result<usize> {
-        // Per-kind head reassembly plan, keyed by the @async head rel name.
-        let mut plans: HashMap<String, (Vec<AsyncSlot>, usize)> = HashMap::new();
+        // Per-kind head reassembly plan, keyed by the @async head rel name. After
+        // desugar the head is rebuilt over (full body solution) ∪ (response outs):
+        // each head term resolves against that env (a body var, an out var, or a
+        // literal). `out_vars` are the effect's response columns, in order.
+        let mut plans: HashMap<String, (Vec<Term>, Vec<String>)> = HashMap::new();
         for item in &prog.items {
             let Item::Rule(r) = item else { continue };
             if !r.is_async() { continue; }
-            let vars = async_bound_vars(r);
-            let mut slots = Vec::new();
-            let mut nout = 0usize;
-            for t in &r.head.terms {
-                slots.push(match t {
-                    Term::Str(s) => AsyncSlot::Const(Value::Text(s.clone())),
-                    Term::Int(n) => AsyncSlot::Const(Value::Int(*n)),
-                    Term::Var(v) if vars.contains(v) => AsyncSlot::FromArg(v.clone()),
-                    Term::Var(_) => { let i = nout; nout += 1; AsyncSlot::FromOutput(i) }
-                    other => bail!("@async head term {other:?} (rel `{}`) must be a variable or literal", r.head.rel),
-                });
-            }
-            plans.insert(r.head.rel.clone(), (slots, nout));
+            let (_, _, outs) = r.effect()
+                .ok_or_else(|| anyhow::anyhow!("@async rule (rel `{}`) was not desugared to a \
+                    body-effect (frontend bug)", r.head.rel))?;
+            let out_vars: Vec<String> = outs.iter().map(|t| match t {
+                Term::Var(v) => Ok(v.clone()),
+                other => Err(anyhow::anyhow!("@async effect output {other:?} (rel `{}`) must be a \
+                    fresh variable", r.head.rel)),
+            }).collect::<Result<_>>()?;
+            plans.insert(r.head.rel.clone(), (r.head.terms.clone(), out_vars));
         }
 
-        let pending: Vec<(String, String, String)> = {
+        // (id, kind = executor/template key, head_rel = reconstruction key).
+        let pending: Vec<(String, String, String, String, String)> = {
             let mut stmt = self.db.conn().prepare(
-                "SELECT id, kind, args_json FROM pending_effect WHERE done = 0")?;
-            let v = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                "SELECT id, kind, head_rel, args_json, full_json FROM pending_effect WHERE done = 0")?;
+            let v = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
                 .filter_map(|x| x.ok()).collect();
             v
         };
 
-        // Parse args serially (cheap, and a bad JSON blob should bail before any
-        // subprocess spawns). Drop requests whose `@async` rule is not in the
-        // current program — a different program may own that kind, leave it queued.
-        let mut work: Vec<(String, String, serde_json::Map<String, serde_json::Value>)> = Vec::new();
-        for (id, kind, args_json) in pending {
-            if !plans.contains_key(&kind) { continue; }
+        // Parse the hole map AND the full head env serially (cheap, and a bad JSON
+        // blob should bail before any subprocess spawns). Drop requests whose head
+        // rel is not an @async rule in the current program — a different program
+        // may own it, leave it queued.
+        let mut work: Vec<(String, String, String,
+            serde_json::Map<String, serde_json::Value>,
+            serde_json::Map<String, serde_json::Value>)> = Vec::new();
+        for (id, kind, head_rel, args_json, full_json) in pending {
+            // Pre-migration rows have head_rel='' (head-response 1:1 with kind).
+            let head_rel = if head_rel.is_empty() { kind.clone() } else { head_rel };
+            if !plans.contains_key(&head_rel) { continue; }
             let args = match serde_json::from_str::<serde_json::Value>(&args_json)? {
                 serde_json::Value::Object(m) => m,
                 _ => bail!("pending_effect.args_json for `{kind}` is not a JSON object"),
             };
-            work.push((id, kind, args));
+            // `full_json` is empty only for rows queued before this column existed
+            // (migration default ''); treat it as the hole map (the legacy 1:1).
+            let full = if full_json.is_empty() {
+                args.clone()
+            } else {
+                match serde_json::from_str::<serde_json::Value>(&full_json)? {
+                    serde_json::Value::Object(m) => m,
+                    _ => bail!("pending_effect.full_json for `{kind}` is not a JSON object"),
+                }
+            };
+            work.push((id, kind, head_rel, args, full));
         }
 
         // Run the executors across the rayon pool: the shell spawn / network call
         // is the slow part, and one request never depends on another's response
         // (downstream rules join the landed rows on a LATER tick). Each closure
-        // assembles its head row; the DB writes below stay serial and batched.
+        // assembles its head row; the DB writes below stay serial and batched. The
+        // executor is keyed by `kind` (the `sh` template); the head is rebuilt by
+        // `head_rel` (the response rel).
         let assembled: Vec<(String, String, Vec<Value>)> = work.par_iter()
-            .map(|(id, kind, args)| {
-                let (slots, nout) = &plans[kind];
+            .map(|(id, kind, head_rel, args, full)| {
+                let (head_terms, out_vars) = &plans[head_rel];
                 let out = exec.run(kind, args)?;
-                if out.len() != *nout {
+                if out.len() != out_vars.len() {
                     bail!("@async executor for `{kind}` returned {} value(s), expected {} \
-                           (one per unbound head slot)", out.len(), nout);
+                           (one per effect output)", out.len(), out_vars.len());
                 }
-                let row: Vec<Value> = slots.iter().map(|s| match s {
-                    AsyncSlot::Const(v) => v.clone(),
-                    AsyncSlot::FromArg(v) => json_to_value(args.get(v)),
-                    AsyncSlot::FromOutput(i) => Value::Text(out[*i].clone()),
+                // env = full body solution ∪ {out_var -> out_value}; the head row
+                // is each head term evaluated against it (var, out, or literal).
+                let mut env = full.clone();
+                for (v, o) in out_vars.iter().zip(out.iter()) {
+                    env.insert(v.clone(), serde_json::json!(o));
+                }
+                let row: Vec<Value> = head_terms.iter().map(|t| match t {
+                    Term::Str(s) => Value::Text(s.clone()),
+                    Term::Int(n) => Value::Int(*n),
+                    Term::Var(v) => json_to_value(env.get(v)),
+                    other => unreachable!("@async head term {other:?} survived parse"),
                 }).collect();
-                Ok((id.clone(), kind.clone(), row))
+                Ok((id.clone(), head_rel.clone(), row))
             })
             .collect::<Result<Vec<_>>>()?;
 
         if assembled.is_empty() { return Ok(0); }
 
-        // Batch the response rows by kind (one `insert_rows` per response rel) and
-        // mark every drained request done in a single transaction.
-        let mut by_kind: HashMap<String, Vec<Vec<Value>>> = HashMap::new();
+        // Batch the response rows by head rel (one `insert_rows` per response rel)
+        // and mark every drained request done in a single transaction.
+        let mut by_rel: HashMap<String, Vec<Vec<Value>>> = HashMap::new();
         let mut done_ids: Vec<String> = Vec::with_capacity(assembled.len());
-        for (id, kind, row) in assembled {
-            by_kind.entry(kind).or_default().push(row);
+        for (id, head_rel, row) in assembled {
+            by_rel.entry(head_rel).or_default().push(row);
             done_ids.push(id);
         }
-        for (kind, rows) in &by_kind {
+        for (head_rel, rows) in &by_rel {
             let cols: Vec<String> = {
-                let meta = self.rels.get(kind)
-                    .ok_or_else(|| anyhow::anyhow!("@async response relation `{kind}` is not declared"))?;
+                let meta = self.rels.get(head_rel)
+                    .ok_or_else(|| anyhow::anyhow!("@async response relation `{head_rel}` is not declared"))?;
                 meta.cols.iter().map(|c| c.name.clone()).collect()
             };
             let col_refs: Vec<&str> = cols.iter().map(|s| s.as_str()).collect();
-            self.db.insert_rows(&tbl(kind), &col_refs, rows)?;
+            self.db.insert_rows(&tbl(head_rel), &col_refs, rows)?;
         }
         {
             let conn = self.db.conn();

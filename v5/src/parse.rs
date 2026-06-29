@@ -267,9 +267,10 @@ impl Parser {
         let temporal = if matches!(self.peek(), Some(Tok::At(_))) {
             match self.next()? {
                 Tok::At(w) => Some(match w.as_str() {
-                    "next"  => Temporal::Next,
-                    "async" => Temporal::Async,
-                    other => bail!("unknown rule modifier `@{other}` (known: @next, @async)"),
+                    "next"   => Temporal::Next,
+                    "async"  => Temporal::Async,
+                    "stream" => Temporal::Stream,
+                    other => bail!("unknown rule modifier `@{other}` (known: @next, @async, @stream)"),
                 }),
                 _ => unreachable!(),
             }
@@ -386,10 +387,40 @@ impl Parser {
             }
             // relation atom vs constraint: lookahead for '('
             if matches!(self.peek2(), Some(Tok::LParen)) {
-                return Ok(BodyItem::Pos(self.atom()?));
+                let atom = self.atom()?;
+                // An effect call: `name(args) -> (outs)`. The trailing `->` after
+                // the arg list is the only disambiguator from a plain Pos atom.
+                // `args` fill the `sh` template holes; `outs` are fresh response
+                // vars. Resolves to a `ShellFn` at typecheck; fires off-tick.
+                if matches!(self.peek(), Some(Tok::ThinArrow)) {
+                    self.next()?; // ->
+                    let outs = self.paren_terms()?;
+                    return Ok(BodyItem::Effect { name: atom.rel, args: atom.terms, outs });
+                }
+                return Ok(BodyItem::Pos(atom));
             }
         }
         Ok(BodyItem::Cmp(self.constraint()?))
+    }
+
+    /// Parse a parenthesized, comma-separated term list `(a, b, c)` (or `()`).
+    /// Used for an effect call's response binds (`-> (status, body)`).
+    fn paren_terms(&mut self) -> Result<Vec<Term>> {
+        self.expect(Tok::LParen)?;
+        let mut terms = Vec::new();
+        if !matches!(self.peek(), Some(Tok::RParen)) {
+            loop {
+                terms.push(self.term()?);
+                match self.next()? {
+                    Tok::Comma => continue,
+                    Tok::RParen => break,
+                    other => bail!("expected , or ) in effect outputs, got {:?}", other),
+                }
+            }
+        } else {
+            self.next()?; // RParen
+        }
+        Ok(terms)
     }
 
     fn scan(&mut self) -> Result<BodyItem> {

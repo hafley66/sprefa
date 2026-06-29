@@ -230,6 +230,9 @@ fn normalize_body_item(b: &mut BodyItem, dl_path: &str, diags: &mut Vec<TypeDiag
             normalize_term(&mut c.lhs, dl_path, diags);
             normalize_term(&mut c.rhs, dl_path, diags);
         }
+        BodyItem::Effect { args, outs, .. } => {
+            for t in args.iter_mut().chain(outs.iter_mut()) { normalize_term(t, dl_path, diags); }
+        }
         BodyItem::Closure { .. } | BodyItem::Scc { .. } => {}
     }
 }

@@ -290,6 +290,84 @@ fn sh_decl_supplies_effect_template() {
     );
 }
 
+/// The explicit body-effect call site: `gh(repo, path) -> (status, body)` in the
+/// rule body resolves to a `sh gh(r, p)` decl. Two things slice 2 adds are
+/// exercised here: (1) the `sh` decl's params (`r`, `p`) name the template holes
+/// POSITIONALLY, decoupled from the call-arg var names (`repo`, `path`); (2) a
+/// body var (`tag`) that is NOT an effect arg is carried through `full_json` and
+/// reconstructed into the head alongside the response outs. Same one drain model
+/// the head-response form desugars to.
+#[test]
+fn body_effect_call_site_drains_with_full_env() {
+    let d = sandbox("bodyeffect");
+    let dbp = d.join("db");
+    fs::write(
+        d.join("p.dl"),
+        "rel want(repo: str, path: str, tag: str).\n\
+         want(\"octo\", \"README\", \"v1\").\n\
+         sh gh(r, p) -> (status: int, body: str) = `printf '200\\n%s/%s' '{r}' '{p}'`.\n\
+         rel resp(repo: str, path: str, tag: str, status: int, body: str).\n\
+         resp(repo, path, tag, status, body) <- @async\n\
+             want(repo, path, tag), gh(repo, path) -> (status, body).\n",
+    )
+    .unwrap();
+    let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    eng.tick(&prog, true).unwrap();
+
+    // One pending request; kind is the `sh` name (`gh`), head_rel is the response
+    // rel (`resp`), and the hole map is param-keyed (`r`/`p`, not `repo`/`path`).
+    let pend = rows(&dbp, "SELECT kind, head_rel, args_json FROM pending_effect");
+    assert_eq!(pend.len(), 1, "one request for the single want row");
+    assert_eq!(pend[0][0], "gh", "kind = the sh decl name");
+    assert_eq!(pend[0][1], "resp", "head_rel = the response rel");
+    assert!(pend[0][2].contains("\"r\":\"octo\"") && pend[0][2].contains("\"p\":\"README\""),
+        "hole map keyed by sh params r/p: {}", pend[0][2]);
+
+    // arity is keyed by the sh name, not the head rel.
+    assert_eq!(async_effect_arity(&prog).get("gh"), Some(&2));
+    let exec = ShellEffectExec {
+        templates: sprefa_v5::engine::shell_templates(&prog),
+        n_out: async_effect_arity(&prog),
+        cwd: PathBuf::new(),
+    };
+    assert_eq!(eng.drain_effects(&prog, &exec).unwrap(), 1);
+
+    eng.tick(&prog, true).unwrap();
+    // `tag` (a body var, not an effect arg) reconstructs from full_json; status +
+    // body come from the executor; the template filled r=repo, p=path.
+    assert_eq!(
+        rows(&dbp, "SELECT repo, path, tag, status, body FROM rel_resp"),
+        vec![vec!["octo".to_string(), "README".to_string(), "v1".to_string(),
+                  "200".to_string(), "octo/README".to_string()]]
+    );
+}
+
+/// `@stream` (`sh*`) parses and desugars but the runtime is Phase 4: the tick
+/// bails loudly rather than silently producing nothing.
+#[test]
+fn stream_rule_parses_but_runtime_bails() {
+    let d = sandbox("stream");
+    fs::write(
+        d.join("p.dl"),
+        "rel watch(repo: str).\n\
+         watch(\"octo\").\n\
+         sh* events(repo) -> (kind: str, at: str) = `printf 'push\\n2026'`.\n\
+         rel event(repo: str, kind: str, at: str).\n\
+         event(repo, kind, at) <- @stream watch(repo), events(repo) -> (kind, at).\n",
+    )
+    .unwrap();
+    let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    let err = eng.tick(&prog, true).unwrap_err();
+    assert!(
+        err.to_string().contains("not yet wired"),
+        "expected a Phase-4 deferral bail: {err}"
+    );
+}
+
 /// A response relation may not be headed by a source/derived rule too: it is
 /// written only by the effect drain.
 #[test]
