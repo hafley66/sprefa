@@ -245,6 +245,20 @@ fn shell_kinds(prog: &Program) -> HashMap<String, ShellKind> {
 /// Evaluate an effect-arg/head term against a body solution object: a var reads
 /// the solution cell, a literal is itself. Builds the effect hole map (and, with
 /// the response outs folded in, the head row) in the async runtime.
+/// The `collect(x)` aggregate wrapper in an effect arg: returns the inner var
+/// name. `collect(x)` gathers `x` across ALL body solutions so the effect fires
+/// once with the whole set (the provider-native batch-by-id). Only a single bare
+/// var is supported inside `collect`.
+fn collect_inner_var(t: &Term) -> Option<&str> {
+    match t {
+        Term::Call { name, args } if name == "collect" && args.len() == 1 => match &args[0] {
+            Term::Var(v) => Some(v.as_str()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn eval_term_json(t: &Term, sol: &serde_json::Map<String, serde_json::Value>) -> serde_json::Value {
     match t {
         Term::Var(v) => sol.get(v).cloned().unwrap_or(serde_json::Value::Null),
@@ -2927,7 +2941,8 @@ impl Engine {
                  head_rel TEXT NOT NULL DEFAULT '', args_json TEXT NOT NULL,
                  full_json TEXT NOT NULL DEFAULT '',
                  req_tx INTEGER NOT NULL, done INTEGER NOT NULL DEFAULT 0,
-                 state TEXT NOT NULL DEFAULT 'queued', idem_key TEXT);"
+                 state TEXT NOT NULL DEFAULT 'queued', idem_key TEXT,
+                 batch INTEGER NOT NULL DEFAULT 0);"
         )?;
         // tolerate a pending_effect created before the body-effect columns existed.
         // The pre-migration default for head_rel is `kind` (head-response 1:1), set
@@ -2943,6 +2958,12 @@ impl Engine {
             "ALTER TABLE pending_effect ADD COLUMN state TEXT NOT NULL DEFAULT 'queued'", []);
         let _ = self.db.conn().execute(
             "ALTER TABLE pending_effect ADD COLUMN idem_key TEXT", []);
+        // Phase 1b.2 `collect(x)`: a batch request gathers `x` across ALL body
+        // solutions and fires ONE effect whose response fans back out (line per
+        // entity). `batch=1` tells the drain to split the response into N head
+        // rows (run_stream) like a stream, but one-shot (marked done).
+        let _ = self.db.conn().execute(
+            "ALTER TABLE pending_effect ADD COLUMN batch INTEGER NOT NULL DEFAULT 0", []);
         // A db whose rows predate `state` carry the column default 'queued' even
         // when already drained (done=1); reconcile their state from `done` once.
         let _ = self.db.conn().execute(
@@ -5674,6 +5695,65 @@ impl Engine {
                     _ => String::new(),
                 }).collect(),
             };
+            // `collect(x)` makes this an AGGREGATE effect: gather `x` over ALL
+            // solutions and fire ONE request whose response fans back out (one head
+            // row per output line, marked `batch=1`). The other (non-collected)
+            // args must be constant across solutions — collect batches a single
+            // request, so a varying arg is a loud split-this-rule error.
+            let collect_idx = eff_args.iter().position(|a| collect_inner_var(a).is_some());
+            if let Some(ci) = collect_idx {
+                let cvar = collect_inner_var(&eff_args[ci]).unwrap().to_string();
+                let mut base: Option<serde_json::Map<String, serde_json::Value>> = None;
+                let mut values: Vec<String> = Vec::new();
+                for sol in &solutions {
+                    // the non-collected holes (must agree across the batch).
+                    let mut h = serde_json::Map::new();
+                    for (i, a) in eff_args.iter().enumerate() {
+                        if i == ci { continue; }
+                        let key = &hole_keys[i];
+                        if key.is_empty() { continue; }
+                        h.insert(key.clone(), eval_term_json(a, sol));
+                    }
+                    match &base {
+                        None => base = Some(h),
+                        Some(b) if *b != h => bail!("collect effect `{kind}`: the non-collected \
+                            args vary across body solutions; collect batches ONE request — give the \
+                            varying arg its own rule"),
+                        _ => {}
+                    }
+                    if let Some(v) = sol.get(&cvar) {
+                        values.push(match v {
+                            serde_json::Value::String(s) => s.clone(),
+                            o => o.to_string(),
+                        });
+                    }
+                }
+                if values.is_empty() { continue; }
+                values.sort();
+                values.dedup();
+                let mut hole = base.unwrap_or_default();
+                let ckey = &hole_keys[ci];
+                if !ckey.is_empty() {
+                    // The batch list joins comma-separated (the common CLI form,
+                    // `--ids a,b,c`); the template controls how `{ids}` is consumed.
+                    hole.insert(ckey.clone(), serde_json::json!(values.join(",")));
+                }
+                let args_json = serde_json::Value::Object(hole).to_string();
+                let id = blake3::hash(
+                    format!("{head_rel}\u{0}{kind}\u{0}{args_json}").as_bytes()
+                ).to_hex().to_string();
+                // No single body solution keys the batch — the head rebuilds purely
+                // from the fanned-out response (`full_json` empty), so a batch head
+                // must read only response outs / the echoed id (not a per-row body
+                // var). `batch=1`.
+                rows.push(vec![
+                    Value::Text(id), Value::Text(kind.to_string()),
+                    Value::Text(head_rel.clone()),
+                    Value::Text(args_json), Value::Text(String::new()), Value::Int(cur),
+                    Value::Int(1),
+                ]);
+                continue;
+            }
             for sol in solutions {
                 // hole map (the template fill + the digest key): one entry per arg.
                 let mut hole = serde_json::Map::new();
@@ -5694,13 +5774,14 @@ impl Engine {
                     Value::Text(id), Value::Text(kind.to_string()),
                     Value::Text(head_rel.clone()),
                     Value::Text(args_json), Value::Text(full_json), Value::Int(cur),
+                    Value::Int(0),
                 ]);
             }
         }
         // `done` defaults to 0; INSERT OR IGNORE keeps an already-queued (or
         // already-run, done=1) request untouched.
         self.db.insert_rows("pending_effect",
-            &["id", "kind", "head_rel", "args_json", "full_json", "req_tx"], &rows)?;
+            &["id", "kind", "head_rel", "args_json", "full_json", "req_tx", "batch"], &rows)?;
         Ok(())
     }
 
@@ -5743,11 +5824,11 @@ impl Engine {
         // a row left 'running' by a crash is quarantined (never silently re-fired).
         // A `Stream` row is skipped here (Phase 4 owns it).
         // (id, kind = executor/template key, head_rel = reconstruction key, state).
-        let pending: Vec<(String, String, String, String, String, String)> = {
+        let pending: Vec<(String, String, String, String, String, String, i64)> = {
             let mut stmt = self.db.conn().prepare(
-                "SELECT id, kind, head_rel, args_json, full_json, state \
+                "SELECT id, kind, head_rel, args_json, full_json, state, batch \
                  FROM pending_effect WHERE state IN ('queued','running')")?;
-            let v = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))?
+            let v = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))?
                 .filter_map(|x| x.ok()).collect();
             v
         };
@@ -5768,8 +5849,8 @@ impl Engine {
         // may own it, leave it queued.
         let mut work: Vec<(String, String, String,
             serde_json::Map<String, serde_json::Value>,
-            serde_json::Map<String, serde_json::Value>)> = Vec::new();
-        for (id, kind, head_rel, args_json, full_json, state) in pending {
+            serde_json::Map<String, serde_json::Value>, bool)> = Vec::new();
+        for (id, kind, head_rel, args_json, full_json, state, batch) in pending {
             // Pre-migration rows have head_rel='' (head-response 1:1 with kind).
             let head_rel = if head_rel.is_empty() { kind.clone() } else { head_rel };
             if !plans.contains_key(&head_rel) { continue; }
@@ -5798,48 +5879,63 @@ impl Engine {
                     _ => bail!("pending_effect.full_json for `{kind}` is not a JSON object"),
                 }
             };
-            work.push((id, kind, head_rel, args, full));
+            work.push((id, kind, head_rel, args, full, batch != 0));
         }
 
         // Run the executors across the rayon pool: the shell spawn / network call
         // is the slow part, and one request never depends on another's response
         // (downstream rules join the landed rows on a LATER tick). Each closure
-        // assembles its head row; the DB writes below stay serial and batched. The
-        // executor is keyed by `kind` (the `sh` template); the head is rebuilt by
-        // `head_rel` (the response rel).
+        // assembles its head row(s); the DB writes below stay serial and batched.
+        // The executor is keyed by `kind` (the `sh` template); the head is rebuilt
+        // by `head_rel` (the response rel). A `collect` batch (`batch=true`) runs
+        // ONE request whose response fans into N rows (run_stream); a plain request
+        // is one row (run). Both mark `id` done once.
         let assembled: Vec<(String, String, Vec<Value>)> = work.par_iter()
-            .map(|(id, kind, head_rel, args, full)| {
+            .map(|(id, kind, head_rel, args, full, batch)| {
                 let (head_terms, out_vars) = &plans[head_rel];
-                let out = exec.run(kind, args)?;
-                if out.len() != out_vars.len() {
-                    bail!("@async executor for `{kind}` returned {} value(s), expected {} \
-                           (one per effect output)", out.len(), out_vars.len());
+                // Each response line -> the out slots. A batch fans many lines; a
+                // plain request is the single `run` row wrapped as one line.
+                let lines: Vec<Vec<String>> = if *batch {
+                    exec.run_stream(kind, args)?
+                } else {
+                    vec![exec.run(kind, args)?]
+                };
+                let mut out_rows = Vec::with_capacity(lines.len());
+                for out in &lines {
+                    if out.len() != out_vars.len() {
+                        bail!("@async executor for `{kind}` returned {} value(s), expected {} \
+                               (one per effect output)", out.len(), out_vars.len());
+                    }
+                    // env = full body solution ∪ {out_var -> out_value}; the head
+                    // row is each head term evaluated against it (var, out, literal).
+                    let mut env = full.clone();
+                    for (v, o) in out_vars.iter().zip(out.iter()) {
+                        env.insert(v.clone(), serde_json::json!(o));
+                    }
+                    let row: Vec<Value> = head_terms.iter().map(|t| match t {
+                        Term::Str(s) => Value::Text(s.clone()),
+                        Term::Int(n) => Value::Int(*n),
+                        Term::Var(v) => json_to_value(env.get(v)),
+                        other => unreachable!("@async head term {other:?} survived parse"),
+                    }).collect();
+                    out_rows.push((id.clone(), head_rel.clone(), row));
                 }
-                // env = full body solution ∪ {out_var -> out_value}; the head row
-                // is each head term evaluated against it (var, out, or literal).
-                let mut env = full.clone();
-                for (v, o) in out_vars.iter().zip(out.iter()) {
-                    env.insert(v.clone(), serde_json::json!(o));
-                }
-                let row: Vec<Value> = head_terms.iter().map(|t| match t {
-                    Term::Str(s) => Value::Text(s.clone()),
-                    Term::Int(n) => Value::Int(*n),
-                    Term::Var(v) => json_to_value(env.get(v)),
-                    other => unreachable!("@async head term {other:?} survived parse"),
-                }).collect();
-                Ok((id.clone(), head_rel.clone(), row))
+                Ok(out_rows)
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<Result<Vec<_>>>()?
+            .into_iter().flatten().collect::<Vec<_>>();
 
         if assembled.is_empty() { return Ok(0); }
 
         // Batch the response rows by head rel (one `insert_rows` per response rel)
-        // and mark every drained request done in a single transaction.
+        // and mark every drained request done in a single transaction. A `collect`
+        // batch produced N rows under ONE id, so `done_ids` dedups to mark the
+        // request done once (and return the request count, not the row count).
         let mut by_rel: HashMap<String, Vec<Vec<Value>>> = HashMap::new();
-        let mut done_ids: Vec<String> = Vec::with_capacity(assembled.len());
+        let mut done_ids: Vec<String> = Vec::new();
         for (id, head_rel, row) in assembled {
             by_rel.entry(head_rel).or_default().push(row);
-            done_ids.push(id);
+            if !done_ids.contains(&id) { done_ids.push(id); }
         }
         for (head_rel, rows) in &by_rel {
             let cols: Vec<String> = {

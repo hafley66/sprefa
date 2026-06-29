@@ -593,6 +593,55 @@ fn read_effect_reruns_after_a_crash() {
     assert_eq!(exec.calls.load(Ordering::SeqCst), 2, "read fired twice");
 }
 
+/// Phase 1b.2 `collect(x)`: an effect arg wrapped in `collect` gathers `x` across
+/// ALL body solutions and fires ONE request (the provider batch-by-id); the
+/// response fans back out, one head row per output line. Three `want` ids => one
+/// pending request with `ids="a,b,c"` => three `star` rows.
+#[test]
+fn collect_batches_one_request_and_fans_response() {
+    let d = sandbox("collect");
+    let dbp = d.join("db");
+    fs::write(
+        d.join("p.dl"),
+        "rel want(repo: text, id: text).\n\
+         want(\"octo\", \"a\").\n\
+         want(\"octo\", \"b\").\n\
+         want(\"octo\", \"c\").\n\
+         sh nodes(ids) -> (key: text, val: text) = `printf '%s' '{ids}'`.\n\
+         rel star(key: text, val: text).\n\
+         star(key, val) <- @async want(repo, id), nodes(collect(id)) -> (key, val).\n",
+    )
+    .unwrap();
+    let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let conn = db::open(dbp.to_str()).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    eng.tick(&prog, true).unwrap();
+    // ONE batch request for all three ids; the collected list is sorted+deduped.
+    assert_eq!(rows(&dbp, "SELECT COUNT(*) FROM pending_effect"), vec![vec!["1".to_string()]]);
+    assert_eq!(
+        rows(&dbp, "SELECT args_json, batch FROM pending_effect"),
+        vec![vec!["{\"ids\":\"a,b,c\"}".to_string(), "1".to_string()]]
+    );
+
+    // The batch response is three lines; each fans into a star row.
+    let exec = StreamMock {
+        out_rows: vec![
+            vec!["a".into(), "A".into()],
+            vec!["b".into(), "B".into()],
+            vec!["c".into(), "C".into()],
+        ],
+    };
+    assert_eq!(eng.drain_effects(&prog, &exec).unwrap(), 1, "one batch request drained");
+    eng.tick(&prog, true).unwrap();
+    let mut got = rows(&dbp, "SELECT key, val FROM rel_star ORDER BY key");
+    got.sort();
+    assert_eq!(got, vec![
+        vec!["a".to_string(), "A".to_string()],
+        vec!["b".to_string(), "B".to_string()],
+        vec!["c".to_string(), "C".to_string()],
+    ]);
+}
+
 /// A response relation may not be headed by a source/derived rule too: it is
 /// written only by the effect drain.
 #[test]
