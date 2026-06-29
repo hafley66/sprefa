@@ -77,6 +77,7 @@ mod sg_span;
 mod spine_meta;
 mod string_fns;
 mod gh_cache;
+mod ghcacher_parity;
 mod poll_head_demo;
 mod temporal_async;
 mod temporal_carry;
