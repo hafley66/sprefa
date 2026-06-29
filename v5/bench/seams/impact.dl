@@ -1,0 +1,15 @@
+# SEAM (integrator): blast radius of one symbol ACROSS seams at once. Editing
+# `PaymentClient` implicates its cross-language declarations AND the docs that
+# describe it. One discrete query spans the code<->code (xlang) seam and the
+# doc<->code seam — the "stitch meaning across invisible seams" demo, all exact.
+rel seen(path: file).
+seen(p) <- scan("WORK", "**/*.rs", p, rev), match(p, rev, /./, _).
+seen(p) <- scan("WORK", "**/*.ts", p, rev), match(p, rev, /./, _).
+seen(p) <- scan("WORK", "**/*.kt", p, rev), match(p, rev, /./, _).
+seen(p) <- scan("WORK", "**/*.md", p, rev), match(p, rev, /./, _).
+
+rel impact(file: file, seam: text).
+impact(f, "xlang") <- type_entity(_, _, "PaymentClient", _, _, f, _).
+impact(f, "doc")   <- doc_ref(_, f, _, _, _, "PaymentClient").
+
+? impact(file, seam).

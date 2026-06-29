@@ -53,6 +53,7 @@ mod regex_sugar;
 mod repo_sink;
 mod rule_edit;
 mod scc;
+mod seam_bench;
 mod scip_import;
 mod sg_json_id;
 mod sg_kwargs;

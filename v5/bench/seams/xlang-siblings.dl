@@ -1,0 +1,12 @@
+# SEAM: cross-language siblings. One symbol NAME, every file that declares it,
+# in any language. Stitches the Rust core, the TS gateway, and the Kotlin
+# client with zero embeddings — pure name-keyed join over the type graph.
+rel seen(path: file).
+seen(p) <- scan("WORK", "**/*.rs", p, rev), match(p, rev, /./, _).
+seen(p) <- scan("WORK", "**/*.ts", p, rev), match(p, rev, /./, _).
+seen(p) <- scan("WORK", "**/*.kt", p, rev), match(p, rev, /./, _).
+
+rel sibling(file: file, kind: text).
+sibling(f, k) <- type_entity(_, _, "PaymentClient", k, _, f, _).
+
+? sibling(file, kind).

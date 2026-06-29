@@ -1,0 +1,39 @@
+{
+  "xlang-siblings": {
+    "query": "sibling",
+    "key": ["file"],
+    "gold": [
+      ["payments/src/lib.rs"],
+      ["gateway/src/index.ts"],
+      ["mobile/src/Pay.kt"]
+    ]
+  },
+  "doc-drift": {
+    "query": "stale",
+    "key": ["name"],
+    "gold": [
+      ["oldCharge"]
+    ]
+  },
+  "authorship": {
+    "query": "author_file",
+    "key": ["email", "path"],
+    "gold": [
+      ["ada@org.test", "payments/src/lib.rs"],
+      ["ada@org.test", "payments/src/retry.rs"],
+      ["ada@org.test", "docs/payments.md"],
+      ["linus@org.test", "gateway/src/index.ts"],
+      ["grace@org.test", "mobile/src/Pay.kt"]
+    ]
+  },
+  "impact": {
+    "query": "impact",
+    "key": ["file"],
+    "gold": [
+      ["payments/src/lib.rs"],
+      ["gateway/src/index.ts"],
+      ["mobile/src/Pay.kt"],
+      ["docs/payments.md"]
+    ]
+  }
+}

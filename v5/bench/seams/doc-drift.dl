@@ -1,0 +1,17 @@
+# SEAM: doc -> code drift. A doc heading whose text resolves to NO code symbol
+# is stale. Anti-join (negation) of the doc section tree against the type graph.
+# This is the seam embeddings are tempting for ("find the doc about X") and the
+# one where discrete wins: staleness is an exact set, not a similarity.
+rel seen(path: file).
+seen(p) <- scan("WORK", "**/*.rs", p, rev), match(p, rev, /./, _).
+seen(p) <- scan("WORK", "**/*.ts", p, rev), match(p, rev, /./, _).
+seen(p) <- scan("WORK", "**/*.kt", p, rev), match(p, rev, /./, _).
+seen(p) <- scan("WORK", "**/*.md", p, rev), match(p, rev, /./, _).
+
+rel ent_name(name: text).
+ent_name(n) <- type_entity(_, _, n, _, _, _, _).
+
+rel stale(file: file, line: int, name: text).
+stale(f, l, n) <- doc_node(_, f, l, "heading", n, _), !ent_name(n).
+
+? stale(file, line, name).

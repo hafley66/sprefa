@@ -1,0 +1,7 @@
+# SEAM: who created what, across the whole tree (the "knowing when/who changed"
+# axis). `created` is the git add-history built-in; one row per file -> author.
+# Cross-repo by construction: the email is global, the path is repo-relative.
+rel author_file(email: text, path: file).
+author_file(e, p) <- created(p, _, e, _).
+
+? author_file(email, path).
