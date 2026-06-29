@@ -185,7 +185,7 @@ pub fn normalize_program(prog: &mut Program, dl_path: &str) -> Vec<TypeDiag> {
                 }
                 for b in &mut g.body { normalize_body_item(b, dl_path, &mut diags); }
             }
-            Item::Rel(_) | Item::Anchor(_) | Item::Brand(_) => {}
+            Item::Rel(_) | Item::Anchor(_) | Item::Brand(_) | Item::Shell(_) => {}
         }
     }
     diags

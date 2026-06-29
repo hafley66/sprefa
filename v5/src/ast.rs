@@ -338,7 +338,30 @@ pub struct GenRule {
 }
 
 #[derive(Clone, Debug)]
-pub enum Item { Rel(RelDecl), Rule(Rule), Query(Query), Anchor(AnchorDecl), Brand(BrandDecl), Gen(GenRule) }
+pub enum Item { Rel(RelDecl), Rule(Rule), Query(Query), Anchor(AnchorDecl), Brand(BrandDecl), Gen(GenRule), Shell(ShellFn) }
+
+/// The read/mutate/stream axis of a `sh` decl: `sh` = `Read` (cached, deduped,
+/// at-least-once, retryable), `sh!` = `Mutate` (idempotency-keyed, exactly-once,
+/// never cached), `sh*` = `Stream` (long-lived, many rows over time). The bang/
+/// star is the only thing that distinguishes the three at parse time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShellKind { Read, Mutate, Stream }
+
+/// `sh name(p1, p2) -> (c1: t1, c2: t2) = `cmd {p1}`.` — a named, typed,
+/// shell-callable effect template. `name` IS the effect kind (it matches the
+/// `@async` head rel in the head-response form). `params` are the `{hole}`
+/// names filled from the request args; `outs` are the typed response columns the
+/// executor fills from stdout. `body` is the raw shell (a backtick `Tok::Str`),
+/// `{param}` holes replaced per request. The typed sibling of `effect_cmd`; the
+/// daemon builds a `ShellEffectExec` from the registry of these.
+#[derive(Clone, Debug)]
+pub struct ShellFn {
+    pub name: String,
+    pub params: Vec<String>,
+    pub outs: Vec<Col>,
+    pub body: String,
+    pub kind: ShellKind,
+}
 
 /// `use "path".` — module inclusion. The loader resolves `path` against the
 /// include roots (program dir, `$SPREFA_STD`, `<exe>/../std`), reads the file,

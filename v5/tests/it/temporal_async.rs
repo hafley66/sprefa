@@ -255,6 +255,41 @@ fn drain_runs_executors_in_parallel() {
     assert_eq!(rows(&dbp, "SELECT done FROM pending_effect WHERE done = 0").len(), 0);
 }
 
+/// A typed `sh` decl supplies the effect template (replacing an `effect_cmd`
+/// row): `sh resp(url) -> (status, body) = `...`.` is keyed by the `@async`
+/// head rel name, so the head-response drain runs the declared command. The
+/// backtick body keeps `\n` literal (printf splits it into the two out slots).
+#[test]
+fn sh_decl_supplies_effect_template() {
+    let d = sandbox("shdecl");
+    let dbp = d.join("db");
+    fs::write(
+        d.join("p.dl"),
+        "rel want(key: str, url: str).\n\
+         want(\"home\", \"api/home\").\n\
+         sh resp(url) -> (status: int, body: str) = `printf '200\\n%s-body' '{url}'`.\n\
+         rel resp(key: str, status: int, body: str).\n\
+         resp(key, status, body) <- @async want(key, url).\n",
+    )
+    .unwrap();
+    let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    eng.tick(&prog, true).unwrap();
+
+    // The template comes from the `sh` registry, not an effect_cmd relation.
+    let templates = sprefa_v5::engine::shell_templates(&prog);
+    assert_eq!(templates.get("resp").map(String::as_str), Some("printf '200\\n%s-body' '{url}'"));
+    let exec = ShellEffectExec { templates, n_out: async_effect_arity(&prog), cwd: PathBuf::new() };
+    assert_eq!(eng.drain_effects(&prog, &exec).unwrap(), 1);
+
+    eng.tick(&prog, true).unwrap();
+    assert_eq!(
+        rows(&dbp, "SELECT key, status, body FROM rel_resp"),
+        vec![vec!["home".to_string(), "200".to_string(), "api/home-body".to_string()]]
+    );
+}
+
 /// A response relation may not be headed by a source/derived rule too: it is
 /// written only by the effect drain.
 #[test]

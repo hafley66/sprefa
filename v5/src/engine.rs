@@ -142,6 +142,21 @@ pub fn async_effect_arity(prog: &Program) -> HashMap<String, usize> {
     m
 }
 
+/// The program's `sh`/`sh!`/`sh*` declarations as a `kind -> template` map. The
+/// daemon builds a `ShellEffectExec` from this typed registry; the kind is the
+/// decl name, which matches the `@async` head rel in the head-response form. The
+/// dynamic `effect_cmd(kind, template)` relation overlays this (a data-driven
+/// fallback for templates not known at parse time).
+pub fn shell_templates(prog: &Program) -> HashMap<String, String> {
+    let mut m = HashMap::new();
+    for item in &prog.items {
+        if let Item::Shell(f) = item {
+            m.insert(f.name.clone(), f.body.clone());
+        }
+    }
+    m
+}
+
 /// Coerce a JSON arg value (from `pending_effect.args_json`) into a db cell.
 fn json_to_value(v: Option<&serde_json::Value>) -> Value {
     match v {
@@ -842,7 +857,7 @@ fn rels_used(prog: &Program, rels: &[&str]) -> bool {
                     _ => {}
                 }
             },
-            Item::Rel(_) | Item::Anchor(_) | Item::Brand(_) => {}
+            Item::Rel(_) | Item::Anchor(_) | Item::Brand(_) | Item::Shell(_) => {}
         }
     }
     false

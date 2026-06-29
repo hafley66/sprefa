@@ -125,6 +125,12 @@ impl Parser {
             Some(Tok::Ident(s)) if s == "anchor" => Ok(Item::Anchor(self.anchor_decl()?)),
             Some(Tok::Ident(s)) if s == "type" => Ok(Item::Brand(self.brand_decl()?)),
             Some(Tok::Ident(s)) if s == "gen" => Ok(Item::Gen(self.gen_rule()?)),
+            // `sh`/`sh!`/`sh*` heading an ident (the fn name) is a shell-fn decl;
+            // a rule/rel literally named `sh` (`sh(...)`) still parses as such
+            // because its second token is `(`, not an ident/bang/star.
+            Some(Tok::Ident(s)) if s == "sh"
+                && matches!(self.peek2(), Some(Tok::Ident(_) | Tok::Bang | Tok::Star)) =>
+                Ok(Item::Shell(self.shell_fn()?)),
             Some(Tok::Question) => Ok(Item::Query(self.query()?)),
             _ => Ok(Item::Rule(self.rule()?)),
         }
@@ -187,6 +193,60 @@ impl Parser {
         }
         self.expect(Tok::Dot)?;
         Ok(RelDecl { name, cols })
+    }
+
+    /// `sh[!|*] name(p1, p2) -> (c1: t1, c2: t2) = `cmd {p1}`.` — a shell-fn
+    /// decl. The bang/star (already consumed-as-tokens) selects the kind; params
+    /// are bare idents (the `{hole}` names); outs are typed columns like a rel
+    /// decl; the body is a backtick string (`= `...`.`). The brace `{ shell }`
+    /// body form is deferred (the lexer tokenizes inside braces).
+    fn shell_fn(&mut self) -> Result<ShellFn> {
+        self.ident()?; // "sh"
+        let kind = match self.peek() {
+            Some(Tok::Bang) => { self.next()?; ShellKind::Mutate }
+            Some(Tok::Star) => { self.next()?; ShellKind::Stream }
+            _ => ShellKind::Read,
+        };
+        let name = self.ident()?;
+        self.expect(Tok::LParen)?;
+        let mut params = Vec::new();
+        if matches!(self.peek(), Some(Tok::RParen)) {
+            self.next()?;
+        } else {
+            loop {
+                params.push(self.ident()?);
+                match self.next()? {
+                    Tok::Comma => continue,
+                    Tok::RParen => break,
+                    other => bail!("expected , or ) in sh params, got {:?}", other),
+                }
+            }
+        }
+        self.expect(Tok::ThinArrow)?;
+        self.expect(Tok::LParen)?;
+        let mut outs = Vec::new();
+        loop {
+            let cname = self.ident()?;
+            self.expect(Tok::Colon)?;
+            let tname = self.ident()?;
+            let col = match Type::parse(&tname) {
+                Some(ty) => Col { name: cname, ty, brand: None },
+                None => Col { name: cname, ty: Type::Text, brand: Some(tname) },
+            };
+            outs.push(col);
+            match self.next()? {
+                Tok::Comma => continue,
+                Tok::RParen => break,
+                other => bail!("expected , or ) in sh outs, got {:?}", other),
+            }
+        }
+        self.expect(Tok::Eq)?;
+        let body = match self.next()? {
+            Tok::Str(s) => s,
+            other => bail!("sh `{}`: expected a `backtick` body after =, got {:?}", name, other),
+        };
+        self.expect(Tok::Dot)?;
+        Ok(ShellFn { name, params, outs, body, kind })
     }
 
     fn rule(&mut self) -> Result<Rule> {

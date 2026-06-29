@@ -21,6 +21,7 @@ pub enum Tok {
     /// parser, not here). `@` is otherwise unused punctuation.
     At(String),
     LParen, RParen, Comma, Dot, Colon, Bang, Question, Arrow,
+    ThinArrow, // `->` effect-output arrow (sh fn outs; distinct from `<-` neck)
     Lt2, // `<:` brand subtype operator
     Eq, Ne, Lt, Le, Gt, Ge, Match, Glob,
     Plus, Minus, Star, Slash, Percent, // int arithmetic (heads + comparisons)
@@ -177,7 +178,10 @@ pub fn lex(src: &str) -> Result<Vec<Tok>> {
                 out.push(Tok::At(src[start..i].to_string()));
             }
             b'+' => { out.push(Tok::Plus); i += 1; }
-            b'-' => { out.push(Tok::Minus); i += 1; }
+            b'-' => {
+                if b.get(i + 1) == Some(&b'>') { out.push(Tok::ThinArrow); i += 2; }
+                else { out.push(Tok::Minus); i += 1; }
+            }
             b'*' => { out.push(Tok::Star); i += 1; }
             b'%' => { out.push(Tok::Percent); i += 1; }
             b'/' => {

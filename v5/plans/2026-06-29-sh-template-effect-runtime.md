@@ -175,6 +175,79 @@ the FULL body solution, not just the effect args. **Decision D-4.**
 
 ---
 
+## Phase 1b — `json`/`jsonp` over a bound term + `collect` aggregate effect
+
+Two small primitives that make the runtime PROVIDER-NEUTRAL (git/aws/gcp/jfrog, not just
+GitHub). Decided after the jsonpath/jq taste pass (D-6, D-7).
+
+### 1b.1 the `json`/`jsonp` source becomes a `Term` (not just a file)
+
+Today both read a file `(path, rev)` and tree-sitter-walk it, so every hit is SPAN-LOCATED
+(joins the ref spine — datapath.rs:4). Add one overload: the source may be a bound `str`
+term — a response body, a column, a `sh` fn's stdout. `run_data(&content, jpath)` already
+takes the content string; only the file read is skipped.
+
+```rust
+// ast.rs — source is a Term; a file-path value reads the file, a non-path str value
+// is parsed directly. SAME dotted/brace semantics, same json/yaml/toml dispatch.
+JsonP { src: Term, jpath: String, out: Term, id: Option<Term> }   // was { path, rev, .. }
+Json  { src: Term, pat: String }
+```
+
+```
+star(repo, n)        <- page(repo, 200, _, body), jsonp(body, "stargazerCount", n).
+issue(repo, num, st) <- page(repo, 200, _, body),
+                        json(body, q:{ number: $num, state: $st }).   # correlated fan-out
+```
+
+### 1b.2 `collect(var)` — the aggregate (batch) effect
+
+An effect arg wrapped in `collect(x)` gathers `x` across ALL body solutions; the effect fires
+ONCE with the list, and the response fans back out (one row per element via 1b.1). This is the
+provider-native batch-by-id, and it lives entirely in the template string:
+
+| provider | batch mechanism in the `sh` body | out |
+|---|---|---|
+| GitHub | `gh api graphql … nodes(ids: $ids){…}` | json |
+| git    | `git cat-file --batch` / `for-each-ref` / `ls-remote` (already in tree) | text/json |
+| AWS    | `aws ec2 describe-instances --instance-ids {ids} --output json` | json |
+| GCP    | `gcloud … --filter="id:({ids})" --format=json` | json |
+| JFrog  | `jf rt search --spec` (AQL id set) / `jf rt curl` | json |
+
+```rust
+// engine.rs — rebuild_async grows an AGGREGATE path. A collect(var) arg means the
+// effect args are a SET, so the kind emits ONE pending_effect for the whole tick.
+//   let list = sols.map(|s| s[collect_var]).sorted().dedup();   // order-stable digest
+//   id  = blake3(kind, list);                                   // ONE digest for the batch
+//   args_json = { ids: list };                                  // one row, one round trip
+// The head is rebuilt purely from the fanned-out response (it echoes the id), so the
+// bulk path needs no full-body-solution payload — the response is self-keying.
+```
+
+One round trip, one rate-limit hit, one process for N entities — beats both rayon-over-N and
+a native connection pool (see Phase 5).
+
+### D-6 — json/jsonp source is a `Term`. RESOLVED yes. One overload, reuses `run_data` whole.
+
+### D-7 — NOT jsonpath-as-standard, NOT inline jq. RESOLVED.
+
+The engine's json/jsonp are tree-sitter-walked, so hits are SPAN-LOCATED and join the ref
+spine (you can rewrite the file). jq / JSONPath-over-serde throw spans away. Split by SOURCE,
+not syntax:
+- FILES you may locate/rewrite (configs, manifests, lockfiles): the located dotted/brace form
+  stays. Keep dotted `a.b.*`; do NOT migrate to `$.a.b` (breaks examples; needs a
+  JSONPath-over-tree-sitter reimpl just to keep spans).
+- RESPONSE BODIES (ephemeral, never rewritten): push extraction to the CLI's OWN jq/query
+  (`gh -q`, `jq`, `aws --query`, `gcloud --format`), emit `@tsv`. The shell already ships jq;
+  inlining jaq duplicates it and loses the one edge (spans) the engine version has.
+- Net: a response row = a stdout line. Array fan-out = lines = the stream (Phase 4). The
+  in-engine term-source json (1b.1) stays for the simple no-shell-jq case.
+
+In-tree targets: `examples/poll-head.dl` (done) + a new `examples/poll-multi.dl` (a non-GitHub
+provider — aws or gcp — so the generality is exercised from the start).
+
+---
+
 ## Phase 2 — `every(N)` clock relation (per-stream cadence)
 
 ```rust
@@ -226,44 +299,109 @@ This phase is the precondition for streaming.
 
 ---
 
-## Phase 4 — `sh*` streaming generator (`@stream`, the coroutine shape)
+## Phase 4 — `sh*` streaming / tailing (`@stream`, the subscription form)
+
+The third temporal form. `every` is the discrete clock; `@stream` is the continuous source.
+The three:
+
+| form | shape | lands |
+|---|---|---|
+| `every(N)` | clock (pull) | one row each boundary tick |
+| `@async` `sh`/`sh!` | request -> response | one batch, a later tick |
+| `@stream` `sh*` | subscription (push) | many batches over many ticks; cursor via `@next` |
+
+Two ways to a stream:
+1. POLLED (pull): `every(N)` + `@async` + `changed <- prev × now`. The `changed` rel IS a
+   synthesized stream over any REST API. No new machinery (rides Phases 1/2/3).
+2. NATIVE (push): `@stream sh*` over `tail -f` / `kubectl get --watch` / `gh … --paginate` /
+   a webhook listener. A long-lived child; stdout lines append to the head rel between ticks.
+
+### 4.1 reader-thread + cursor (the native form)
 
 ```
-sh* events(repo) -> (kind: str, at: str) {
-    gh api "repos/{repo}/events" --paginate --jq '.[] | "\(.type)\t\(.created_at)"'
+sh* events(repo) -> (kind: str, at: str, cur: str) {
+    gh api "repos/{repo}/events" --paginate --jq '.[] | [.type,.created_at,.id] | @tsv'
 }
-event(repo, kind, at) <-@stream events(repo) -> (kind, at).
+seen(repo, cur)          <-@next  event(repo, _, _, cur).      # last event id / offset
+event(repo, kind, at, cur) <-@stream
+    watch(repo), seen(repo, prev), events(repo) -> (kind, at, cur).
 ```
 
 ```rust
-// ast.rs: Temporal::Stream;  a @stream rule carries a sh* Effect.
-// runtime: a sh* job stays state=running (never auto-done); its child is fed through a
-//   reader thread that batches stdout lines into the head rel between ticks. @next carries
-//   the read cursor / last-seen line so a restart resumes. Rides the Phase 3 job table.
+// ast.rs: Temporal::Stream; a @stream rule carries a sh* Effect.
+// runtime: a sh* job stays state='running' (never auto-done). A reader thread reads stdout
+//   lines, batches them, and inserts (ONE insert_rows per drain — the N+1 ban holds) into
+//   the head rel between ticks. @next carries the cursor (byte offset / last id) so a
+//   restart resumes (`tail -c +{cur}` / `--since {cur}`). Rides the Phase 3 job table:
+//   input retracted -> kill the stream (reconcile by digest); a liveness check replaces the
+//   @async timeout (streams are meant to be long-lived). A response row = a stdout line
+//   (D-7), so the array fan-out and the stream are the SAME mechanism.
 ```
 
-The genuinely new primitive (Bloom has @next/@async, not this). The "yield + coroutines"
-direction, kept on the tx spine.
+### 4.2 tailing the OUTPUT (a follow query)
+
+`? rel` re-evaluates every tick already (the daemon/LSP republishes). A CLI `? rel --follow`
+prints rows as ticks produce them — the same subscription, on stdout. The stream on the input
+(`sh*`) and the live query on the output are the two ends of one pipe.
+
+The genuinely new primitive (Bloom has @next/@async, not a streaming source). Kept on the tx
+spine: the cursor is a carried fact, the stream is a job-table row.
 
 ---
 
-## Phase 5 — native `HttpEffectExec` + etag/304 (the last ghcacher piece)
+## Phase 5 — native http: OPTIONAL, a delegate-wrapper (off the critical path)
 
-Sibling `EffectExec` impl (ureq/reqwest) returning `(status, headers_json, body)`; dispatch by
-the `sh`-fn body scheme or an attribute. The etag/304 guard is an `@async` reading last tick's
-etag carry (`@next`) to skip an unchanged fetch — clean native, awkward in shell. This closes
-the conditional-request cache: the point where the poller becomes an actual cache.
+Bulk graphql (`nodes(ids:[…])`, §1b.2) collapses N requests to ONE, so the connection-reuse
+case that justified a native `HttpEffectExec` mostly evaporates. curl/gh already cover the
+functional surface — status, headers, body, and etag/304 via the `@next` carry (the cache
+lives in the db, NOT in curl's `--etag-save` sidecar files; transport is curl, the cache is
+the engine). So:
+
+- Native http is NOT a feature gate and NOT on the build line. The ghcacher shape closes on
+  `sh` + `every` + `@next` + curl/gh.
+- The Router (sniff the body's first token to pick a lane) is STRUCK. Dispatch-by-body-text is
+  fragile (`env X=1 …`, comments, `gh api graphql`) and there is ONE lane for v1.
+- IF profiling ever demands native http (sub-minute cadence, secret hygiene, a non-batch API),
+  it DELEGATES, it does not route — a wrapper that handles http-shaped fns and hands the rest
+  to the shell exec. No central classifier; the choice is a field on `ShellFn` computed once at
+  parse, not re-sniffed per call.
+
+```rust
+struct HttpThenShell { http: HttpExec, shell: ShellEffectExec }
+impl EffectExec for HttpThenShell {
+    fn run(&self, kind, args) -> Result<Vec<String>> {
+        match self.http.try_run(kind, args)? {     // None = "not an http-shaped fn"
+            Some(out) => Ok(out),
+            None      => self.shell.run(kind, args),
+        }
+    }
+}
+```
+
+The etag/304 conditional-request loop (the point where the poller becomes a cache) is the
+SAME `@next` rule whether transport is curl or native:
+
+```
+etag_now(key, etag) <-@next page(key, _, etag, _).            # cache on the tx spine
+page(key, status, etag, body) <-@async
+    want(key, url), etag_now(key, prev),                       # prev empty on first poll
+    fetch(url, prev) -> (status, etag, body),                  # sends If-None-Match: {prev}
+    every(60).                                                 # 304 -> reuse the carried body
+```
 
 ---
 
 ## Build order
 
-`Phase 0 (parallel drain)` -> `Phase 2 (every)` -> `Phase 1 (sh decl)` -> `Phase 3 (job
-table + guards)` -> `Phase 4 (sh* stream)` -> `Phase 5 (http/etag)`.
+`Phase 0 (parallel drain)` ✓ -> `Phase 2 (every)` ✓ -> `Phase 1 (sh decl)` ->
+`Phase 1b (json-term + collect)` -> `Phase 3 (job table + guards)` ->
+`Phase 4 (sh* stream / tail)` -> `Phase 5 (native http: optional delegate-wrapper)`.
 
-Phases 0 and 2 are small, independent, and ship value alone. Phase 1 is the taste-defining
-surface (decide D-1..D-5 first). Phase 3 is where the §10 guards must be designed in. Phases 4
-and 5 ride Phase 3.
+Phases 0 and 2 are LANDED (commits 204b9ba / 6dceab6; per-row cwd + live demo d5d2449).
+Phase 1 is the taste-defining surface (D-1..D-7 resolved). Phase 1b makes it provider-neutral
+(git/aws/gcp/jfrog, not just GitHub) and is small. Phase 3 carries the §10 guards AND the
+stream job rows. Phase 4 rides 3. Phase 5 is OPTIONAL and off the critical path — bulk graphql
+removed its reason to exist.
 
 ---
 

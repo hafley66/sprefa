@@ -263,8 +263,14 @@ impl Daemon {
         };
         if arity.is_empty() { return Ok(0); }
         let (templates, cwd) = {
+            // Typed `sh` decls supply the base registry; the dynamic
+            // `effect_cmd(kind, template)` relation overlays them (a data-driven
+            // fallback for templates not declared at parse time).
+            let mut m = {
+                let prog = self.prog.lock().unwrap();
+                crate::engine::shell_templates(&prog)
+            };
             let eng = self.eng.lock().unwrap();
-            let mut m = std::collections::HashMap::new();
             if let Ok(rows) = eng.query_sql("SELECT kind, template FROM rel_effect_cmd", &[]) {
                 for row in rows {
                     if let (Some(k), Some(t)) = (row.first().and_then(|v| v.as_str()),
