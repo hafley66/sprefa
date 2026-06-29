@@ -143,3 +143,44 @@ fn gh_cache_lands_entities_then_304_is_a_free_cache_hit() {
     let etag = rows(&dbp, "SELECT tag FROM rel_etag");
     assert_eq!(etag, vec![vec!["etagA".to_string()]], "etag carried from the 200");
 }
+
+/// A gh LIST endpoint (`/pulls`) returns a JSON array; one `json` brace pattern
+/// normalizes it into one `pull_request` row per element, sibling fields
+/// correlated and the nested `user.login` descended in the same match. This is
+/// the whole "API JSON -> normalized SQLite tables, in pure dl" claim, on the
+/// real shape (array of objects with nesting). No effect needed — the body is a
+/// bound column, so the hybrid join+extract pass does it on an ordinary tick.
+#[test]
+fn list_endpoint_body_normalizes_into_entity_rows() {
+    let d = sandbox("list");
+    let dbp = d.join("db");
+    let body = r#"[{"number": 1, "title": "fix bug", "state": "open", "user": {"login": "alice"}}, {"number": 2, "title": "add feat", "state": "closed", "user": {"login": "bob"}}]"#;
+    fs::write(
+        d.join("p.dl"),
+        format!(
+            "rel resp(ep: text, body: text).\n\
+             resp(\"cli/cli\", {body:?}).\n\
+             rel pull_request(ep: text, num: text, title: text, state: text, author: text).\n\
+             pull_request(ep, num, title, state, author) <-\n\
+                 resp(ep, body),\n\
+                 json(body, q:[... {{ number: $num, title: $title, state: $state, user: {{ login: $author }} }} ]).\n\
+             ? pull_request(ep, num, title, state, author).\n"
+        ),
+    )
+    .unwrap();
+    let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    eng.tick(&prog, true).unwrap();
+
+    let mut got = rows(&dbp, "SELECT num, title, state, author FROM rel_pull_request ORDER BY num");
+    got.sort();
+    assert_eq!(
+        got,
+        vec![
+            vec!["1".to_string(), "fix bug".into(), "open".into(), "alice".into()],
+            vec!["2".to_string(), "add feat".into(), "closed".into(), "bob".into()],
+        ],
+        "each array element is one row, flat + nested fields correlated"
+    );
+}

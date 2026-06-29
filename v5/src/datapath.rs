@@ -767,16 +767,69 @@ fn walk_object<'a>(
         }
         return;
     }
-    // Conjunctive: every entry is an Exact key with a bare capture-leaf value.
-    let mut b = binds;
+    // Conjunctive multi-entry, continuation-passing: thread binding-sets through
+    // each entry's value pattern. A frontier of partial binding-sets starts at
+    // `binds`; each entry walks its sub-pattern (a leaf capture, a NESTED object,
+    // an array spread, a glob/regex key, ...) over every key it matches via the
+    // general `walk_steps`, extending each frontier binding into the next
+    // frontier (a cartesian product when an entry fans). A required entry that
+    // matches nothing empties the frontier and the whole object fails. This is
+    // the general form the single-entry arm above is the fast path of — so a
+    // mix like `{ number: $n, user: { login: $a } }` now binds both.
+    let mut frontier = vec![binds];
     for (km, vpat) in entries {
-        let key = match km { KeyMatcher::Exact(s) => s, _ => return };
-        let Some((_, _, v)) = kds.iter().find(|(kt, _, _)| kt == key) else { return };
-        let Some(Step::Leaf { capture: Some(name) }) = vpat.first() else { return };
-        let (t, lo, hi) = value_text_span(fmt, *v, content);
-        b.push((name.clone(), t, lo, hi));
+        let mut next = Vec::new();
+        for b in &frontier {
+            walk_object_entry(fmt, &kds, km, vpat, src, content, b.clone(), &mut next);
+        }
+        if next.is_empty() { return; }
+        frontier = next;
     }
-    out.push(b);
+    out.extend(frontier);
+}
+
+/// Walk one object entry (a key matcher + its value sub-pattern) against a node's
+/// key/value list, emitting one extended binding-set per match. Factors the
+/// per-key descent the single-entry arm does, so the multi-entry conjunctive fold
+/// can recurse into nested objects/arrays (not just leaf captures).
+fn walk_object_entry<'a>(
+    fmt: Fmt,
+    kds: &[(String, (usize, usize), tree_sitter::Node<'a>)],
+    km: &KeyMatcher, vpat: &[Step],
+    src: &'a [u8], content: &str,
+    binds: Vec<Binding>, out: &mut Vec<Vec<Binding>>,
+) {
+    match km {
+        KeyMatcher::Capture(name) => {
+            for (kt, ks, v) in kds {
+                let mut b = binds.clone();
+                b.push((name.clone(), kt.clone(), ks.0, ks.1));
+                walk_steps(fmt, *v, vpat, src, content, b, out);
+            }
+        }
+        KeyMatcher::Wildcard => {
+            for (_, _, v) in kds {
+                walk_steps(fmt, *v, vpat, src, content, binds.clone(), out);
+            }
+        }
+        KeyMatcher::Exact(s) => {
+            for (kt, _, v) in kds {
+                if kt == s {
+                    walk_steps(fmt, *v, vpat, src, content, binds.clone(), out);
+                    break;
+                }
+            }
+        }
+        KeyMatcher::Glob(g) => {
+            let Some(re) = compile_key_matcher(g) else { return };
+            for (kt, _, v) in kds {
+                if re.is_match(kt) {
+                    walk_steps(fmt, *v, vpat, src, content, binds.clone(), out);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Whether `node` is an object/map for `fmt` (so `{}` matches it).
@@ -1127,6 +1180,28 @@ mod run_pattern_tests {
         let ms = run_json("{ **: { image: $i } }", json);
         let images: Vec<_> = ms.iter().map(|m| m["i"].clone()).collect();
         assert!(images.contains(&"deep".to_string()), "{:?}", images);
+    }
+
+    #[test]
+    fn object_mixes_flat_and_nested_captures() {
+        // A multi-entry object with a flat leaf capture AND a nested-object
+        // descent in the same `{}` binds BOTH (was leaf-only, dropped the match).
+        let json = r#"{"number": 7, "user": {"login": "alice"}}"#;
+        let ms = run_json("{ number: $n, user: { login: $a } }", json);
+        assert_eq!(ms.len(), 1, "{ms:?}");
+        assert_eq!(ms[0]["n"], "7");
+        assert_eq!(ms[0]["a"], "alice");
+    }
+
+    #[test]
+    fn array_of_objects_with_nested_descent() {
+        // The gh list-endpoint shape: an array of objects, each normalized into a
+        // row of flat fields plus a nested descent (user.login), correlated.
+        let json = r#"[{"number":1,"user":{"login":"a"}},{"number":2,"user":{"login":"b"}}]"#;
+        let mut got: Vec<(String, String)> = run_json("[... { number: $n, user: { login: $u } }]", json)
+            .into_iter().map(|m| (m["n"].clone(), m["u"].clone())).collect();
+        got.sort();
+        assert_eq!(got, vec![("1".into(), "a".into()), ("2".into(), "b".into())]);
     }
 
     #[test]
