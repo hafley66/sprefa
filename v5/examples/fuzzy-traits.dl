@@ -1,0 +1,93 @@
+# Fuzzy latent traits over a Rust file (defaults to src/engine.rs). Last session's
+# signal was EXACT signature buckets: methods with an identical (slot,pos,type) bag
+# collapse to one trait. This widens that to ONE EDIT: two methods are fuzzy-samey
+# if they have the same arity and share all-but-one slot (a single type swap). The
+# one-edit pairs ARE the trait normalization decisions — the arg/return you'd unify
+# to fold a near-miss member into the trait.
+#
+# Signature facts come from type_sig (the arrow exploded, refs resolved). `self` is
+# dropped by the extractor, so this is the param/return shape, not the receiver.
+#
+#   dl examples/fuzzy-traits.dl --root . --no-daemon
+#
+# Read: `decision` (each near-miss pair + the slot that differs), `exact_bucket`
+# (identical-shape groups = the exact traits), `ftrait` (one-edit-connected groups
+# = the FUZZY traits, wider than exact). NOTE: ftrait is an scc head; it is filled
+# in the query phase, so a derived rule CANNOT read it in the same tick (query it
+# directly). exact_bucket/decision are plain derived rels and aggregate fine.
+
+rel f0(f: file). f0(f) <- scan("WORK", "src/engine.rs", f, rev).
+
+# one row per (method, slot, pos, type-ref)
+rel sigfact(sym: text, slot: text, pos: int, ref: text).
+sigfact(s, sl, p, r) <- type_sig(s, sl, p, r).
+
+rel mname(sym: text, name: text).
+mname(s, n) <- type_entity(_, s, n, "function", _, _, _).
+
+# DF GATE (the real discriminant, not bag size). A bag-size cutoff drops genuine
+# short-signature traits (`-> Vec<RelDecl>` is 2 facts). The thing that separates a
+# trait from noise is type RARITY: `*_rel_decls` cluster on the rare `RelDecl`
+# (df 24 = a real trait); a `-> Result<()>` bucket clusters on ubiquitous `Result`
+# (df 124 = noise). type_sig explodes `Vec<RelDecl>` into BOTH `Vec` and `RelDecl`,
+# so dropping high-df types = "match on the element type, ignore the container".
+# GENERIC_CAP: a type referenced by > CAP methods is boilerplate; drop those facts.
+rel uses(ref: text, sym: text).
+uses(r, s) <- sigfact(s, sl, p, r).
+rel df(ref: text, n: int).
+df(r, count(s)) <- uses(r, s).
+rel generic(ref: text).
+generic(r) <- df(r, n), n > 30.        # Result, String, Vec, ... (tune the cap)
+
+# distinctive facts only: the trait-bearing slots
+rel dfact(sym: text, slot: text, pos: int, ref: text).
+dfact(s, sl, p, r) <- sigfact(s, sl, p, r), !generic(r).
+
+# bag size = number of DISTINCTIVE facts; a method with none has no trait signal
+rel ntok(sym: text, n: int).
+ntok(s, count(p)) <- dfact(s, sl, p, r).
+
+# facts two distinct methods share, and the shared count (over distinctive facts)
+rel bothhave(a: text, b: text, slot: text, pos: int, ref: text).
+bothhave(a, b, sl, p, r) <- dfact(a, sl, p, r), dfact(b, sl, p, r), a != b.
+rel shared(a: text, b: text, n: int).
+shared(a, b, count(p)) <- bothhave(a, b, sl, p, r).
+
+# ── EXACT buckets: share ALL k distinctive facts. Bucket id = min name.
+rel samebucket(a: text, b: text).
+samebucket(a, b) <- shared(a, b, k), ntok(a, k), ntok(b, k).
+rel peer(a: text, b: text).
+peer(a, b) <- samebucket(a, b).
+peer(a, a) <- ntok(a, n).
+rel brep(sym: text, rep: text).
+brep(a, min(b)) <- peer(a, b).
+rel exact_bucket(rep: text, member: text).
+exact_bucket(rep, member) <- brep(member, rep).
+rel exact_size(rep: text, size: int).
+exact_size(rep, count(member)) <- brep(member, rep).
+
+# ── FUZZY one-edit: same size k, share k-1 facts -> exactly one slot differs.
+rel adj(a: text, b: text).
+adj(a, b) <- shared(a, b, sh), ntok(a, k), ntok(b, k), k = sh + 1.
+
+# the normalization decision: a<->b are one edit apart; a's differing distinctive
+# slot value (the fact b lacks) is the type you'd reconcile to fold them together.
+rel decision(a: text, b: text, slot: text, pos: int, a_type: text).
+decision(an, bn, sl, p, r) <- adj(a, b), dfact(a, sl, p, r),
+    !bothhave(a, b, sl, p, r), mname(a, an), mname(b, bn).
+
+# fuzzy trait = connected component of the one-edit graph (adj is symmetric).
+# scc head: query directly, do not consume in a derived rule this tick.
+rel ftrait(rep: text, member: text).
+ftrait(rep, member) <- scc(adj).
+
+# how many distinct methods sit on at least one one-edit bridge
+rel touched(sym: text).
+touched(a) <- adj(a, b).
+rel fuzzy_touched(n: int).
+fuzzy_touched(count(a)) <- touched(a).
+
+? exact_size(rep, size).
+? decision(a, b, slot, pos, a_type).
+? fuzzy_touched(n).
+? ftrait(rep, member).
