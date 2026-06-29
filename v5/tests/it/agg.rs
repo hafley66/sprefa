@@ -195,6 +195,51 @@ b(x) <- a(x, _).
     assert!(err.contains("not-stratified"), "expected not-stratified: {err}");
 }
 
+/// (4b) A `@next` carry edge crosses a tick boundary, so it must NOT count toward
+/// the same-tick SCC: the gh-cache cache loop (`poll` negates `etag`, `etag` is
+/// carried `@next` from a rel `poll` feeds) is correctly stratified — the tick
+/// boundary IS the stratification. Before the fix the static checker false-flagged
+/// it as not-stratified even though the tick engine ran it fine.
+#[test]
+fn next_carry_with_negation_is_stratified() {
+    let d = sandbox("nextstrat");
+    let prog = r#"
+rel watch(ep: text).
+watch("a").
+rel etag(ep: text, tag: text).
+rel etag_next(ep: text, tag: text).
+rel poll(ep: text, prev: text).
+poll(ep, prev) <- watch(ep), etag(ep, prev).
+poll(ep, "")   <- watch(ep), !etag(ep, _).
+etag_next(ep, "x") <- poll(ep, _).
+etag(ep, tag) <- @next etag_next(ep, tag).
+? poll(ep, prev).
+"#;
+    let (code, _out, err) = run(&d, prog);
+    assert_eq!(code, 0, "the @next cache loop must be stratified: {err}");
+    assert!(!err.contains("not-stratified"), "must not false-flag: {err}");
+}
+
+/// (4c) Dropping the `@next` edge does NOT hide a genuine within-tick negation
+/// cycle that happens to share a program with a carry: `e <- d, !e` is still
+/// caught even though `c <- @next d` exists.
+#[test]
+fn next_program_with_real_within_tick_cycle_still_errors() {
+    let d = sandbox("nextreal");
+    let prog = r#"
+rel c(x: text).
+rel d(x: text).
+rel e(x: text).
+d("z").
+c(x) <- @next d(x).
+e(x) <- d(x), !e(x).
+? c(x).
+"#;
+    let (code, _out, err) = run(&d, prog);
+    assert_ne!(code, 0, "a real within-tick neg cycle must still fail");
+    assert!(err.contains("not-stratified"), "expected not-stratified: {err}");
+}
+
 /// (5) BONUS FIX: a string literal in an int column is a `brand-mismatch` at
 /// typecheck, not a SQLite datatype crash at tick time.
 #[test]

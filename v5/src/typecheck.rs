@@ -616,6 +616,15 @@ pub fn stratify_diags(prog: &Program, dl_path: &str) -> Vec<TypeDiag> {
     let mut edges: Vec<(u32, u32, bool)> = Vec::new();
     for item in &prog.items {
         let Item::Rule(r) = item else { continue; };
+        // A temporal rule (`@next`/`@async`/`@stream`) crosses a tick boundary: its
+        // head lands in a LATER tick (the next seed, or an async response), so its
+        // body->head dependency does NOT hold within this tick's fixpoint. The
+        // runtime excludes these rules from the derived set for exactly this reason
+        // (engine.rs `all_derived`), so the static SCC graph must too — otherwise a
+        // legitimate carry like `etag <- @next etag_next` with a negation elsewhere
+        // in the loop false-flags as not-stratified. The tick boundary IS the
+        // stratification for across-tick cycles.
+        if r.temporal.is_some() { continue; }
         let h = intern(&r.head.rel, &mut id, &mut names);
         let agg = r.has_agg();
         for b in &r.body {
