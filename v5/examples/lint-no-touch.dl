@@ -1,0 +1,50 @@
+# No-touch guard: fence regions an agent must not hand-edit, and squiggle the
+# instant an agent turn edits inside one. Two kinds of protected range:
+#
+#   autogen — a `<!-- BEGIN: X -->` / `<!-- END: X -->` block WRITTEN by a dl
+#             generator (examples/rels-doc.dl, op-table.dl). A hand-edit here is
+#             overwritten next tick and breaks the generator-is-source contract.
+#   manual  — a `NO-TOUCH: <reason>` / `END-NO-TOUCH` comment marker a human places
+#             to fence hand-tuned code from agents. Works in ANY language: the
+#             `comment` op detects the marker by line prefix (//, #, <!--, --, /*),
+#             so the same regex matches a Rust, Python, or Markdown comment. The
+#             open marker requires the colon so it can't substring-match the close
+#             (`END-NO-TOUCH` contains `NO-TOUCH` but not `NO-TOUCH:`).
+#
+# Run:  dl examples/lint-no-touch.dl --root <repo> --check
+#       dl examples/lint-no-touch.dl --root <repo> --lsp
+#       dl --load examples/lint-no-touch.dl    (daemon: live squiggle while editing)
+
+# A sprefa-generated block. `comment` pairs BEGIN/END with LIFO nesting; the
+# trailing `name` binds the open regex's first named group (which generator owns
+# it). l0/l1 are the 1-based marker lines — the protected range at line resolution.
+rel is_auto_zone(path: file, name: text, l0: int, l1: int).
+is_auto_zone(p, name, l0, l1) <- scan("WORK", "**/*.{rs,ts,tsx,js,py,go,kt,kts,md,toml,yaml,yml}", p, rev),
+  comment(p, rev, /BEGIN: (?<name>[\w-]+)/, /END:/, l0, l1, name).
+
+# Hand-placed markers are their own SOURCE rel (scan + comment). A rel can't be
+# headed by both a source rule and a derived rule, so the manual scan stays
+# separate from the unioned fact below.
+rel manual_zone(path: file, l0: int, l1: int).
+manual_zone(p, l0, l1) <- scan("WORK", "**/*.{rs,ts,tsx,js,py,go,kt,kts,md,toml,yaml,yml}", p, rev),
+  comment(p, rev, /NO-TOUCH:/, /END-NO-TOUCH/, l0, l1).
+
+# Every protected range, regardless of origin. The autogen blocks AND any
+# hand-placed marker fold into one fact the lint (and any other rule) can read.
+# Both arms are DERIVED (read is_auto_zone / manual_zone), so the union is legal.
+rel no_touch_zone(path: file, kind: text, l0: int, l1: int).
+no_touch_zone(p, "autogen", l0, l1) <- is_auto_zone(p, _, l0, l1).
+no_touch_zone(p, "manual", l0, l1) <- manual_zone(p, l0, l1).
+
+# Violation: an AGENT touched the file this turn (agent_touch, file-level, from the
+# harness store) AND a working-tree change lands on a line inside a no-touch range.
+# agent_touch ⨝ changed_line = the agent's moved lines; `l0 <= l <= l1` is the
+# "any part of the protected byte range" overlap. `dl --check` fails CI / a
+# pre-commit hook; `dl --lsp` squiggles it the instant the byte moves.
+rel diag(path: text, line: int, severity: text, code: text, msg: text).
+diag(p, l, "error", "no-touch-edit",
+     "agent edited a ${kind} no-touch range — do not hand-edit; regenerate via its dl generator (autogen) or leave it (manual)") <-
+  no_touch_zone(p, kind, l0, l1), agent_touch(_, _, p), changed_line(p, l), l >= l0, l <= l1.
+
+? no_touch_zone(path, kind, l0, l1).
+? diag(path, line, sev, code, msg).
