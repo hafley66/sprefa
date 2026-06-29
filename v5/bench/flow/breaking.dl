@@ -1,0 +1,42 @@
+# Breaking-change detector. The OpenAPI spec is an ARTIFACT (codegen input), not
+# source — so the question is not "did the spec file change" but "did a change
+# REMOVE an operation that consumers still depend on". Diff the spec across revs
+# (HEAD = committed baseline, WORK = working tree) and join a removed operation to
+# the consumers still referencing its generated symbol: the blast radius of the
+# break. sprefa observes and diffs; the codegen build step stays external — this
+# is what a watcher would compute on every change.
+
+# spec operations at the committed baseline and in the working tree.
+rel op_head(op: text).
+op_head(op) <- scan("HEAD", "**/openapi.yaml", p, rev),
+  jsonp(p, rev, "paths.*.*.operationId", op).
+rel op_work(op: text).
+op_work(op) <- scan("WORK", "**/openapi.yaml", p, rev),
+  jsonp(p, rev, "paths.*.*.operationId", op).
+
+# removed: present at HEAD, gone in WORK (deleted or renamed). After codegen its
+# generated symbol disappears. added: new in WORK, not breaking by itself.
+rel removed_op(op: text).
+removed_op(op) <- op_head(op), !op_work(op).
+rel added_op(op: text).
+added_op(op) <- op_work(op), !op_head(op).
+
+# the generated symbols actually present in the lib (last codegen output),
+# independent of the current spec.
+rel gen_file(file: file).
+gen_file(f) <- scan("WORK", "**/*.ts", f, rev), match(f, rev, /GENERATED from openapi/, l).
+rel gen_sym(name: text, sym: text, file: file).
+gen_sym(n, sym, f) <- scip_name(sym, n), scip_def(sym, f), gen_file(f).
+
+# who references a generated symbol (resolved import / callsite).
+rel uses_op(op: text, file: file).
+uses_op(n, rf) <- gen_sym(n, sym, _), scip_ref(rf, sym, _).
+
+# BREAKING: an op removed from the spec whose generated symbol is still used.
+# These consumers break the moment the library is regenerated.
+rel breaking(op: text, file: file).
+breaking(op, f) <- removed_op(op), uses_op(op, f).
+
+? removed_op(op).
+? added_op(op).
+? breaking(op, file).
