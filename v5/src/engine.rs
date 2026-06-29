@@ -2583,14 +2583,25 @@ impl Engine {
              -- multiple graphs coexist (the `backend` analog for the text path).
              -- `node` is the node id verbatim (a sym / file / whatever the edge
              -- rel carries). `vec` is comma-joined f32 TEXT, same as _embeddings.
+             -- `edge_digest` (W2) lets the last N distinct edge-digests of a
+             -- graph coexist, so branch A<->B thrash is a cache hit both ways;
+             -- `_node_emb_seen` is the per-graph LRU bookkeeping that bounds it.
              CREATE TABLE IF NOT EXISTS _node_embeddings (
                  node TEXT NOT NULL,
                  graph TEXT NOT NULL,
+                 edge_digest TEXT NOT NULL DEFAULT '',
                  dim INTEGER NOT NULL,
                  vec TEXT NOT NULL,
-                 PRIMARY KEY (node, graph)
+                 PRIMARY KEY (node, graph, edge_digest)
              );
              CREATE INDEX IF NOT EXISTS _node_embeddings_graph_idx ON _node_embeddings(graph);
+             CREATE INDEX IF NOT EXISTS _node_embeddings_gd_idx ON _node_embeddings(graph, edge_digest);
+             CREATE TABLE IF NOT EXISTS _node_emb_seen (
+                 graph TEXT NOT NULL,
+                 digest TEXT NOT NULL,
+                 last_tick INTEGER NOT NULL,
+                 PRIMARY KEY (graph, digest)
+             );
              CREATE INDEX IF NOT EXISTS _strings_norm_idx ON _strings(norm);
              CREATE INDEX IF NOT EXISTS _where_bytes_string_idx ON _where_bytes(string_id);
              CREATE INDEX IF NOT EXISTS _where_bytes_file_span_idx ON _where_bytes(file_id, lo, hi);
@@ -2633,6 +2644,20 @@ impl Engine {
                  DROP TABLE _prov_old;",
                 s = slug.replace('\'', "''"),
             ))?;
+        }
+        // _node_embeddings gained an edge_digest column (W2 vector cache). It is
+        // a pure derived cache (vectors re-embed on the next tick), so an old
+        // single-digest table is dropped and rebuilt empty, not data-migrated.
+        if !self.column_exists("_node_embeddings", "edge_digest")? {
+            self.db.conn().execute_batch(
+                "DROP TABLE IF EXISTS _node_embeddings;
+                 CREATE TABLE _node_embeddings (
+                     node TEXT NOT NULL, graph TEXT NOT NULL,
+                     edge_digest TEXT NOT NULL DEFAULT '',
+                     dim INTEGER NOT NULL, vec TEXT NOT NULL,
+                     PRIMARY KEY (node, graph, edge_digest));
+                 CREATE INDEX IF NOT EXISTS _node_embeddings_graph_idx ON _node_embeddings(graph);
+                 CREATE INDEX IF NOT EXISTS _node_embeddings_gd_idx ON _node_embeddings(graph, edge_digest);")?;
         }
         Ok(())
     }
@@ -4775,8 +4800,10 @@ impl Engine {
     /// the vectors in `_node_embeddings` keyed by the edge rel name, and fill the
     /// 3-col head with each node's top-k cosine-nearest neighbors. Excluded from
     /// `rebuild_derived` (the Node2vec body item can't lower to SQL); runs after
-    /// the edge rel has materialized. Recomputes each tick (no incremental reuse
-    /// yet — the embed is the cost; cap the graph or run on demand).
+    /// the edge rel has materialized. The embed is the cost, so it is guarded:
+    /// W1 skips an unchanged graph (digest match), W2 reuses cached vectors for
+    /// any of the last N seen edge-digests (branch thrash), only a genuinely new
+    /// graph pays `embed_graph`. Cap the graph or run on demand for huge edge sets.
     fn eval_node2vec_rule(&mut self, rule: &Rule) -> Result<()> {
         let edge = rule.node2vec_edge()
             .ok_or_else(|| anyhow::anyhow!("eval_node2vec_rule on a non-node2vec rule"))?;
@@ -4812,44 +4839,86 @@ impl Engine {
         // so it is not cheaply incrementalizable. Most git checkouts move file
         // content without moving the call/type edge set, so an order-independent
         // digest of the edge rows lets the common re-tick be a no-op. Same guard
-        // the scc/closure operators use (recondense only when rows moved). Skip
-        // only when the digest matched AND we already hold this graph's vectors
-        // (or it is legitimately empty and we recorded that all-zero digest).
+        // the scc/closure operators use (recondense only when rows moved).
         let digest = blake3_edges(&edges);
+        let dhex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
         let dkey = format!("node2vec:{edge}");
-        let have_vecs: i64 = self.db.conn().query_row(
-            "SELECT COUNT(*) FROM _node_embeddings WHERE graph = ?1", [edge], |r| r.get(0))?;
+        // Vectors for THIS exact digest (W2 keeps the last N digests per graph).
+        let have_cur: i64 = self.db.conn().query_row(
+            "SELECT COUNT(*) FROM _node_embeddings WHERE graph = ?1 AND edge_digest = ?2",
+            rusqlite::params![edge, dhex], |r| r.get(0))?;
         let trace = std::env::var("SPREFA_N2V_TRACE").is_ok();
+        // Skip when node_sim already reflects this digest and its vectors exist
+        // (or the graph is legitimately empty and we recorded the all-zero digest).
         if self.load_rel_digest(&dkey)? == Some(digest)
-            && (edges.is_empty() || have_vecs > 0) {
+            && (edges.is_empty() || have_cur > 0) {
             if trace { eprintln!("[node2vec] graph '{edge}': skip (digest unchanged)"); }
             return Ok(());
         }
-        if trace { eprintln!("[node2vec] graph '{edge}': re-embed ({} edges)", edges.len()); }
 
-        // Recompute. Clear the head + this graph's vectors so an emptied edge set
-        // produces an empty head (steady-state correctness over speed).
+        // node_sim is rebuilt for the new digest either way.
         self.db.exec(&format!("DELETE FROM {}", tbl(head)))?;
-        self.db.conn().execute("DELETE FROM _node_embeddings WHERE graph = ?1", [edge])?;
         if edges.is_empty() {
+            // Empty graph: drop this graph's whole vector cache, record the
+            // all-zero digest so a later empty tick skips.
+            self.db.conn().execute("DELETE FROM _node_embeddings WHERE graph = ?1", [edge])?;
+            self.db.conn().execute("DELETE FROM _node_emb_seen WHERE graph = ?1", [edge])?;
+            if trace { eprintln!("[node2vec] graph '{edge}': empty (cleared)"); }
             self.save_rel_digest(&dkey, &digest)?;
             return Ok(());
         }
-        self.node2vec_recomputed += 1;
 
         let cfg = crate::embed::node2vec::N2vConfig::from_env();
-        let pool = crate::embed::node2vec::embed_graph(&edges, &cfg);
-        if pool.len() > 2000 {
-            eprintln!("[node2vec] brute-force KNN over {} nodes (O(n^2)); \
-                       shrink the edge rel or cap SPREFA_N2V_*", pool.len());
-        }
+        // W2 cache: reuse the stored vectors when we have already embedded this
+        // exact edge set (branch A<->B thrash is a hit both ways); only a
+        // genuinely new graph pays the embed.
+        let pool: Vec<(String, Vec<f32>)> = if have_cur > 0 {
+            if trace { eprintln!("[node2vec] graph '{edge}': cache hit (digest seen)"); }
+            let conn = self.db.conn();
+            let mut s = conn.prepare(
+                "SELECT node, vec FROM _node_embeddings WHERE graph = ?1 AND edge_digest = ?2")?;
+            let v: Vec<(String, Vec<f32>)> = s.query_map(rusqlite::params![edge, dhex], |r|
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+                .filter_map(|x| x.ok())
+                .map(|(n, txt): (String, String)| (n, crate::embed::parse_vec(&txt)))
+                .collect();
+            v
+        } else {
+            if trace { eprintln!("[node2vec] graph '{edge}': re-embed ({} edges)", edges.len()); }
+            self.node2vec_recomputed += 1;
+            let pool = crate::embed::node2vec::embed_graph(&edges, &cfg);
+            if pool.len() > 2000 {
+                eprintln!("[node2vec] brute-force KNN over {} nodes (O(n^2)); \
+                           shrink the edge rel or cap SPREFA_N2V_*", pool.len());
+            }
+            // Persist this digest's vectors (one flush, never N+1).
+            let dim = cfg.dim as i64;
+            let emb_rows: Vec<Vec<Value>> = pool.iter().map(|(node, v)| vec![
+                Value::Text(node.clone()), Value::Text(edge.to_string()), Value::Text(dhex.clone()),
+                Value::Int(dim), Value::Text(crate::embed::encode_vec(v))]).collect();
+            self.db.insert_rows("_node_embeddings",
+                &["node", "graph", "edge_digest", "dim", "vec"], &emb_rows)?;
+            pool
+        };
 
-        // Persist vectors (one flush, never N+1).
-        let dim = cfg.dim as i64;
-        let emb_rows: Vec<Vec<Value>> = pool.iter().map(|(node, v)| vec![
-            Value::Text(node.clone()), Value::Text(edge.to_string()),
-            Value::Int(dim), Value::Text(crate::embed::encode_vec(v))]).collect();
-        self.db.insert_rows("_node_embeddings", &["node", "graph", "dim", "vec"], &emb_rows)?;
+        // LRU: stamp this digest most-recently-used, prune each graph to the N
+        // most-recent distinct digests (SPREFA_N2V_CACHE, default 4).
+        let seq: i64 = self.db.conn().query_row(
+            "SELECT COALESCE(MAX(last_tick), 0) + 1 FROM _node_emb_seen", [], |r| r.get(0))?;
+        self.db.conn().execute(
+            "INSERT INTO _node_emb_seen(graph, digest, last_tick) VALUES (?1, ?2, ?3)
+             ON CONFLICT(graph, digest) DO UPDATE SET last_tick = excluded.last_tick",
+            rusqlite::params![edge, dhex, seq])?;
+        let cap: i64 = std::env::var("SPREFA_N2V_CACHE").ok()
+            .and_then(|s| s.parse().ok()).filter(|n| *n >= 1).unwrap_or(4);
+        self.db.conn().execute(
+            "DELETE FROM _node_embeddings WHERE graph = ?1 AND edge_digest NOT IN
+                 (SELECT digest FROM _node_emb_seen WHERE graph = ?1 ORDER BY last_tick DESC LIMIT ?2)",
+            rusqlite::params![edge, cap])?;
+        self.db.conn().execute(
+            "DELETE FROM _node_emb_seen WHERE graph = ?1 AND digest NOT IN
+                 (SELECT digest FROM _node_emb_seen WHERE graph = ?1 ORDER BY last_tick DESC LIMIT ?2)",
+            rusqlite::params![edge, cap])?;
 
         // Fill the head with KNN pairs (reuses the text path's cosine top-k).
         let k: usize = std::env::var("SPREFA_NODE_SIM_K").ok()

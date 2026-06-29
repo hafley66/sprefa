@@ -110,12 +110,15 @@ fn node2vec_separates_two_clusters() {
     }
 }
 
-/// One `dl` run sharing a persistent `--db`, with the W1 digest trace on.
-/// Returns stderr (carries the `[node2vec] graph 'edge': ...` marker).
-fn run_db(dir: &Path, db: &Path) -> String {
+/// One `dl` run over the given edge content, sharing a persistent `--db`, with
+/// the W1/W2 digest trace on. Returns stderr (carries the `[node2vec] graph
+/// 'edge': ...` marker: re-embed / cache hit / skip).
+fn run_db_edges(dir: &Path, db: &Path, edges: &str) -> String {
+    fs::write(dir.join("edges.txt"), edges).unwrap();
+    fs::write(dir.join("p.dl"), PROG).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--root", dir.to_str().unwrap(), "--db", db.to_str().unwrap()])
+        .args(["--root", dir.to_str().unwrap(), "--db", db.to_str().unwrap(), "--no-daemon"])
         .env("SPREFA_N2V_DIM", "32")
         .env("SPREFA_N2V_NUMWALKS", "40")
         .env("SPREFA_N2V_WALKLEN", "20")
@@ -126,6 +129,10 @@ fn run_db(dir: &Path, db: &Path) -> String {
         .output()
         .expect("run dl");
     String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+fn run_db(dir: &Path, db: &Path) -> String {
+    run_db_edges(dir, db, &edges_txt())
 }
 
 /// W1 digest-skip: node2vec is a global op; an unchanged edge set must not
@@ -151,4 +158,65 @@ fn node2vec_digest_skip_on_unchanged_graph() {
         "second run over an unchanged graph must skip the embed; stderr:\n{second}");
     assert!(!second.contains("graph 'edge': re-embed"),
         "second run must not re-embed an unchanged graph; stderr:\n{second}");
+}
+
+/// W2 recent-digest cache: bouncing between two graphs (A -> B -> A) must not
+/// re-embed A the second time. W1 alone re-embeds on every switch (it remembers
+/// only the last digest); W2 keeps the last N digests' vectors, so revisiting A
+/// is a cache hit. A and B differ by one extra component so their edge digests
+/// differ.
+#[test]
+fn node2vec_w2_cache_hit_on_revisited_graph() {
+    let dir = sandbox("w2_cache");
+    let db = dir.join("db");
+    let graph_a = edges_txt();
+    // B = A plus a disjoint 2-node component: a genuinely different edge set.
+    let graph_b = format!("{graph_a}c0 c1\nc1 c0\n");
+
+    let a1 = run_db_edges(&dir, &db, &graph_a);
+    assert!(a1.contains("graph 'edge': re-embed"),
+        "first sight of A must embed; stderr:\n{a1}");
+
+    let b1 = run_db_edges(&dir, &db, &graph_b);
+    assert!(b1.contains("graph 'edge': re-embed"),
+        "B is a new graph, must embed; stderr:\n{b1}");
+
+    let a2 = run_db_edges(&dir, &db, &graph_a);
+    assert!(a2.contains("graph 'edge': cache hit (digest seen)"),
+        "revisiting A must hit the W2 cache, not re-embed; stderr:\n{a2}");
+    assert!(!a2.contains("graph 'edge': re-embed"),
+        "revisiting A must not re-embed; stderr:\n{a2}");
+}
+
+/// The W2 cache is bounded: with SPREFA_N2V_CACHE=1 only the most recent digest
+/// is retained, so A -> B -> A evicts A and the revisit re-embeds (proves the
+/// LRU prune actually fires, not an unbounded store).
+#[test]
+fn node2vec_w2_cache_is_bounded() {
+    let dir = sandbox("w2_bound");
+    let db = dir.join("db");
+    let graph_a = edges_txt();
+    let graph_b = format!("{graph_a}c0 c1\nc1 c0\n");
+
+    // Write the given edges, run with cap=1, return stderr.
+    let run = |edges: &str| -> String {
+        fs::write(dir.join("edges.txt"), edges).unwrap();
+        fs::write(dir.join("p.dl"), PROG).unwrap();
+        let out = Command::new(DL)
+            .arg(dir.join("p.dl"))
+            .args(["--root", dir.to_str().unwrap(), "--db", db.to_str().unwrap(), "--no-daemon"])
+            .env("SPREFA_N2V_DIM", "32").env("SPREFA_N2V_NUMWALKS", "40")
+            .env("SPREFA_N2V_WALKLEN", "20").env("SPREFA_N2V_EPOCHS", "3")
+            .env("SPREFA_N2V_SEED", "1").env("SPREFA_NODE_SIM_K", "7")
+            .env("SPREFA_N2V_TRACE", "1").env("SPREFA_N2V_CACHE", "1")
+            .output().expect("run dl");
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    };
+    let _ = run(&graph_a);   // embed A, cache = {A}
+    let _ = run(&graph_b);   // embed B, cap=1 evicts A, cache = {B}
+    let a2 = run(&graph_a);  // A is gone -> must re-embed (not a cache hit)
+    assert!(a2.contains("graph 'edge': re-embed"),
+        "cap=1 must evict A after B, so the revisit re-embeds; stderr:\n{a2}");
+    assert!(!a2.contains("cache hit"),
+        "with cap=1 the revisit cannot be a cache hit; stderr:\n{a2}");
 }
