@@ -1,0 +1,18 @@
+# SEAM (generic, real-repo): every type/entity NAME declared in two or more
+# files. Name-agnostic version of xlang-siblings — no hardcoded symbol — so it
+# runs on any checkout. A high count is a cross-module / cross-language sibling
+# cluster (or an overload), the candidate set a "rename/lands-everywhere" query
+# would expand. Pure string-equality join over the type graph, no embeddings.
+rel seen(path: file).
+seen(p) <- scan("WORK", "**/*.rs", p, rev), match(p, rev, /./, _).
+seen(p) <- scan("WORK", "**/*.ts", p, rev), match(p, rev, /./, _).
+seen(p) <- scan("WORK", "**/*.tsx", p, rev), match(p, rev, /./, _).
+seen(p) <- scan("WORK", "**/*.kt", p, rev), match(p, rev, /./, _).
+
+rel decl(name: text, file: file).
+decl(n, f) <- type_entity(_, _, n, _, _, f, _).
+
+rel shared(name: text, files: int).
+shared(name, count(file)) <- decl(name, file).
+
+? shared(name, files).

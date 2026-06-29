@@ -23,9 +23,11 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Instant;
 
 const DL: &str = env!("CARGO_BIN_EXE_dl");
 const SEAMS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/bench/seams");
+const MANIFEST: &str = env!("CARGO_MANIFEST_DIR");
 
 fn git(dir: &Path, args: &[&str]) {
     let out = Command::new("git").arg("-C").arg(dir).args(args).output().expect("git");
@@ -70,8 +72,11 @@ fn build_repo() -> PathBuf {
 
 /// Run one seam `.dl` and return the JSON-line record for `query`.
 fn run_seam(repo: &Path, seam: &str, query: &str) -> serde_json::Value {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
     let prog = PathBuf::from(SEAMS).join(format!("{seam}.dl"));
-    let db = std::env::temp_dir().join(format!("seam_bench_{seam}.db"));
+    let nonce = N.fetch_add(1, Ordering::Relaxed);
+    let db = std::env::temp_dir().join(format!("seam_bench_{seam}_{}_{nonce}.db", std::process::id()));
     let _ = fs::remove_file(&db);
     let out = Command::new(DL).arg(&prog)
         .args(["--root", repo.to_str().unwrap(), "--db", db.to_str().unwrap(), "--query-json"])
@@ -143,4 +148,36 @@ fn seams_score_exact_on_planted_corpus() {
     }
     eprintln!();
     assert!(failures.is_empty(), "seam(s) not exact:\n  {}", failures.join("\n  "));
+}
+
+/// Tier 2: scale + latency on a REAL checkout. Correctness lives in the planted
+/// tier above; this answers "does it hold up at size, and how fast." Runs the
+/// name-agnostic seams (authorship, shared-names) against SPREFA_SEAM_ROOT, or
+/// the v5 repo itself by default (real git history, real polyglot tree). Prints
+/// rows + wall-time per seam; asserts the run produced facts. No P/R faking — a
+/// real repo has no free hand-labeled gold for these seams (the resolution-
+/// accuracy number lives in oracle_rust.rs against rust-analyzer SCIP).
+#[test]
+fn seams_scale_on_real_repo() {
+    let root = std::env::var("SPREFA_SEAM_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(MANIFEST));
+    if !root.join(".git").exists() && !root.exists() {
+        eprintln!("skip: no real repo at {}", root.display());
+        return;
+    }
+    eprintln!("\n  scale on {}", root.display());
+    eprintln!("  seam            rows     ms");
+    eprintln!("  ------------------------------");
+    let mut total_rows = 0usize;
+    for (seam, query) in [("authorship", "author_file"), ("shared-names", "shared")] {
+        let t = Instant::now();
+        let rec = run_seam(&root, seam, query);
+        let ms = t.elapsed().as_millis();
+        let rows = rec["rows"].as_array().map(|a| a.len()).unwrap_or(0);
+        total_rows += rows;
+        eprintln!("  {seam:<14} {rows:>5}  {ms:>5}");
+    }
+    eprintln!();
+    assert!(total_rows > 0, "real-repo seam run produced no facts");
 }
