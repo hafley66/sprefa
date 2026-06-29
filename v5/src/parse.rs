@@ -584,42 +584,77 @@ impl Parser {
         })
     }
 
+    /// FILE form `jsonp(path, rev, "a.b", out, id?)` vs TERM form
+    /// `jsonp(src, "a.b", out, id?)` (a bound `str` content value, no rev). The
+    /// jpath is the string literal immediately followed by the `out` var (never a
+    /// string), so a string in the SECOND slot followed by a non-string is the
+    /// term form; a string in the second slot followed by another string is a
+    /// string-literal `rev` (file form). A non-string second is `rev` (file form).
     fn jsonp(&mut self) -> Result<BodyItem> {
         self.ident()?; // jsonp
         self.expect(Tok::LParen)?;
-        let path = self.term()?; self.expect(Tok::Comma)?;
-        let rev = self.term()?; self.expect(Tok::Comma)?;
-        let jpath = match self.next()? {
-            Tok::Str(s) => s,
-            other => bail!("expected json path string in jsonp(), got {:?}", other),
-        };
+        let first = self.term()?;
         self.expect(Tok::Comma)?;
-        let out = self.term()?;
+        let second = self.term()?;
+        let (src, rev, jpath, out) = match second {
+            Term::Str(jp) => {
+                self.expect(Tok::Comma)?;
+                match self.term()? {
+                    // file form: first=path, second=rev(str literal), third=jpath.
+                    Term::Str(jp2) => {
+                        self.expect(Tok::Comma)?;
+                        (first, Some(Term::Str(jp)), jp2, self.term()?)
+                    }
+                    // term form: first=src, second=jpath, third=out.
+                    out => (first, None, jp, out),
+                }
+            }
+            rev => {
+                // file form: first=path, second=rev (non-string), then jpath, out.
+                self.expect(Tok::Comma)?;
+                let jpath = match self.next()? {
+                    Tok::Str(s) => s,
+                    other => bail!("expected json path string in jsonp(), got {:?}", other),
+                };
+                self.expect(Tok::Comma)?;
+                (first, Some(rev), jpath, self.term()?)
+            }
+        };
         // Trailing optional `id`: the spine id of the matched value's byte span,
-        // bound through the same located-id path as ast/sg/match (christmas #9,
-        // decision 3). Omitted = no id binding (existing 4-arg form unchanged).
+        // bound through the same located-id path as ast/sg/match (christmas #9).
+        // Only the FILE form locates (the term source has no file); an id on a
+        // term-form jsonp is rejected in the engine.
         let id = if matches!(self.peek(), Some(Tok::Comma)) {
             self.next()?; Some(self.term()?)
         } else { None };
         self.expect(Tok::RParen)?;
-        Ok(BodyItem::JsonP { path, rev, jpath, out, id })
+        Ok(BodyItem::JsonP { src, rev, jpath, out, id })
     }
 
-    /// `json(path, rev, q:{ $k: $v })` — declarative brace pattern. The 3rd
-    /// arg is a `q:{...}` PathLit (a structured, highlightable token), NOT a
-    /// string; a string here is the dotted-path form, redirected to `jsonp`.
+    /// FILE form `json(path, rev, q:{...})` vs TERM form `json(src, q:{...})`.
+    /// The pattern is always a `q:{...}` PathLit; a PathLit in the SECOND slot is
+    /// the term form (src then pattern), otherwise the second slot is `rev` and
+    /// the pattern is third (file form). A `rev` may be a string literal.
     fn json(&mut self) -> Result<BodyItem> {
         self.ident()?; // json
         self.expect(Tok::LParen)?;
-        let path = self.term()?; self.expect(Tok::Comma)?;
-        let rev = self.term()?; self.expect(Tok::Comma)?;
-        let pat = match self.term()? {
-            Term::PathLit { body, .. } => body,
-            Term::Str(_) => bail!(
-                "json takes a brace-pattern literal (`q:{{ $k: $v }}`); for the \
-                 dotted-string form use `jsonp(path, rev, \"a.b\", out)`"
-            ),
-            other => bail!("json 3rd arg must be a `q:{{...}}` brace-pattern literal, got {:?}", other),
+        let first = self.term()?;
+        self.expect(Tok::Comma)?;
+        let second = self.term()?;
+        let (src, rev, pat) = match second {
+            Term::PathLit { body, .. } => (first, None, body),
+            rev => {
+                self.expect(Tok::Comma)?;
+                let pat = match self.term()? {
+                    Term::PathLit { body, .. } => body,
+                    Term::Str(_) => bail!(
+                        "json takes a brace-pattern literal (`q:{{ $k: $v }}`); for the \
+                         dotted-string form use `jsonp(...)`"
+                    ),
+                    other => bail!("json pattern arg must be a `q:{{...}}` brace-pattern literal, got {:?}", other),
+                };
+                (first, Some(rev), pat)
+            }
         };
         self.expect(Tok::RParen)?;
         // Validate at parse time so malformed bodies fail fast and capture
@@ -627,7 +662,7 @@ impl Parser {
         if let Err(e) = crate::datapath::parse_pattern(&pat) {
             bail!("json pattern error: {e}");
         }
-        Ok(BodyItem::Json { path, rev, pat })
+        Ok(BodyItem::Json { src, rev, pat })
     }
 
     fn cmd(&mut self) -> Result<BodyItem> {

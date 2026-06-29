@@ -2287,9 +2287,16 @@ impl Engine {
         // evaluated by a seeded BFS in the query phase instead. Repo-sinks are
         // excluded: they are drained, not derived. `@next` rules are excluded:
         // their head lands in the next tick's carry buffer, not this tick.
+        // A TERM-form json/jsonp rule (`page(..), jsonp(body, "x", n)`) joins
+        // relations in SQL then extracts from a bound string value — tree-sitter
+        // can't run inside the SQL fixpoint, so it is evaluated by the hybrid
+        // `eval_extract_rules` pass (after sources/responses are present, before
+        // the derived fixpoint) and excluded from `all_derived` here.
+        let extract_rules: Vec<&Rule> = rules.iter().copied()
+            .filter(|r| r.has_term_extract() && !r.is_source()).collect();
         let all_derived: Vec<&Rule> = rules.iter().copied()
             .filter(|r| !r.is_source() && !r.is_repo_sink() && !r.is_next() && !r.is_async()
-                && !r.is_stream()
+                && !r.is_stream() && !r.has_term_extract()
                 && r.closure_edge().is_none() && r.scc_edge().is_none()).collect();
         // `head(..) <- scc(edge).` rules: materialize (rep, member) from the
         // closure condensation in the query phase (after refresh_cond_cache).
@@ -2452,6 +2459,16 @@ impl Engine {
         let rebuilt_all = changed || derived_moved
             || self.any_derived_empty(&derived_rels)? || self.any_closure_empty(&edges)?;
         if rebuilt_all {
+            self.rebuild_derived(&derived_rules, &derived_rels)?;
+            self.rebuild_closures(&edges)?;
+        }
+        // The hybrid join+extract pass (term-form json/jsonp) reads its inputs —
+        // facts/source/derived/response rels — AFTER the fixpoint populates them,
+        // then extracts from each bound string. If its output moved, the consumers
+        // of the extract head rels must re-derive, so a second fixpoint pass runs.
+        // (No feedback INTO the extracted inputs, so one extra pass converges.)
+        let extract_changed = self.eval_extract_rules(&extract_rules)?;
+        if extract_changed {
             self.rebuild_derived(&derived_rules, &derived_rels)?;
             self.rebuild_closures(&edges)?;
         }
@@ -6067,6 +6084,166 @@ impl Engine {
             self.db.insert_rows(&tbl(head_rel), &col_refs, rows)?;
         }
         Ok(assembled.len())
+    }
+
+    /// Evaluate the TERM-form `json`/`jsonp` rules — the hybrid join+extract. A
+    /// rule like `star(repo,n) <- page(repo,200,_,body), jsonp(body,"stars",n).`
+    /// joins relations in SQL (binding the content var `body`), then runs the
+    /// tree-sitter extractor over each joined row's bound string, fanning the
+    /// extracted bindings into head rows. This is the only path that parses a
+    /// value held in a relation (a response body, a column) rather than a file.
+    /// Runs after sources/responses are present and before the derived fixpoint
+    /// (so derived rules see the output). Returns whether any head rel changed,
+    /// which the caller ORs into the rebuild gate.
+    ///
+    /// @recompute unguarded: re-runs each tick — its inputs (response/source rels)
+    /// move off the file-source-digest path, so a digest skip here would miss a
+    /// freshly-drained body. The join is bounded by the read relations (the
+    /// response/page set), not the repo; the downstream rebuild is gated on the
+    /// returned changed flag, so a steady state does not re-run the fixpoint.
+    fn eval_extract_rules(&self, extract_rules: &[&Rule]) -> Result<bool> {
+        if extract_rules.is_empty() { return Ok(false); }
+        let mut heads: Vec<String> = Vec::new();
+        for r in extract_rules {
+            if !heads.contains(&r.head.rel) { heads.push(r.head.rel.clone()); }
+        }
+        let mut any_changed = false;
+        for head_rel in &heads {
+            let cols: Vec<String> = {
+                let meta = self.rels.get(head_rel)
+                    .ok_or_else(|| anyhow::anyhow!("term-extract head rel `{head_rel}` is not declared"))?;
+                meta.cols.iter().map(|c| c.name.clone()).collect()
+            };
+            let mut rows: Vec<Vec<Value>> = Vec::new();
+            for r in extract_rules.iter().filter(|r| &r.head.rel == head_rel) {
+                self.extract_rule_rows(r, &mut rows)?;
+            }
+            // Changed iff the head row SET differs from what is stored (sorted
+            // compare): only then does the downstream fixpoint need to re-run.
+            // `Value` is not Ord/Eq; compare the row SETS via a string projection.
+            let key = |row: &[Value]| -> Vec<String> {
+                row.iter().map(|v| match v {
+                    Value::Int(n) => format!("i{n}"),
+                    Value::Text(s) => format!("t{s}"),
+                    other => format!("{other:?}"),
+                }).collect()
+            };
+            let mut before: Vec<Vec<String>> = {
+                let n = cols.len();
+                let sql = format!("SELECT * FROM {}", tbl(head_rel));
+                let mut stmt = self.db.conn().prepare(&sql)?;
+                let v = stmt.query_map([], |row| {
+                    let mut r = Vec::with_capacity(n);
+                    for i in 0..n {
+                        r.push(match row.get::<_, rusqlite::types::Value>(i)? {
+                            rusqlite::types::Value::Integer(x) => format!("i{x}"),
+                            rusqlite::types::Value::Text(s) => format!("t{s}"),
+                            rusqlite::types::Value::Null => "t".to_string(),
+                            other => format!("{other:?}"),
+                        });
+                    }
+                    Ok(r)
+                })?.filter_map(|x| x.ok()).collect();
+                v
+            };
+            let mut after: Vec<Vec<String>> = rows.iter().map(|r| key(r)).collect();
+            before.sort();
+            after.sort();
+            if before != after { any_changed = true; }
+            self.db.conn().execute(&format!("DELETE FROM {}", tbl(head_rel)), [])?;
+            let col_refs: Vec<&str> = cols.iter().map(|s| s.as_str()).collect();
+            self.db.insert_rows(&tbl(head_rel), &col_refs, &rows)?;
+        }
+        Ok(any_changed)
+    }
+
+    /// One term-extract rule: project the relational join to bind the content var,
+    /// then fan the extractor (`run_data` for jsonp, `run_pattern` for json) over
+    /// each joined row's bound string into head rows. Cmps over both join vars AND
+    /// the extracted vars are post-filtered with `eval_cmp`.
+    fn extract_rule_rows(&self, r: &Rule, out_rows: &mut Vec<Vec<Value>>) -> Result<()> {
+        let extracts: Vec<&BodyItem> = r.body.iter().filter(|b| matches!(b,
+            BodyItem::JsonP { rev: None, .. } | BodyItem::Json { rev: None, .. })).collect();
+        if extracts.len() != 1 {
+            bail!("rule `{}`: a term-form json/jsonp rule must have exactly one extract op \
+                   (split a multi-extract rule into chained rules)", r.head.rel);
+        }
+        let cmps: Vec<&Constraint> = r.body.iter()
+            .filter_map(|b| if let BodyItem::Cmp(c) = b { Some(c) } else { None }).collect();
+        // The relational join binds the content var (and the head's join vars).
+        let vars = async_bound_vars(r);
+        if vars.is_empty() {
+            bail!("rule `{}`: a term-extract rule needs a positive atom binding the content var", r.head.rel);
+        }
+        let sql = crate::lower::lower_body_projection(&r.body, &self.rels, &vars)?;
+        let join_rows: Vec<Bind> = {
+            let mut stmt = self.db.conn().prepare(&sql)?;
+            let v = stmt.query_map([], |row| {
+                let mut b: Bind = HashMap::new();
+                for (i, v) in vars.iter().enumerate() {
+                    let val = match row.get::<_, rusqlite::types::Value>(i)? {
+                        rusqlite::types::Value::Integer(x) => Value::Int(x),
+                        rusqlite::types::Value::Text(s) => Value::Text(s),
+                        rusqlite::types::Value::Null => Value::Text(String::new()),
+                        other => Value::Text(format!("{other:?}")),
+                    };
+                    b.insert(v.clone(), val);
+                }
+                Ok(b)
+            })?.filter_map(|x| x.ok()).collect();
+            v
+        };
+        // A term source has no extension to dispatch on (response bodies are
+        // json); the synthetic name routes `run_data`/`run_pattern` to the json
+        // walker. yaml/toml-in-a-string is not supported (v1).
+        let synth = "_.json";
+        let mut emit = |env: &Bind, out: &mut Vec<Vec<Value>>| -> Result<()> {
+            for c in &cmps { if !eval_cmp(c, env)? { return Ok(()); } }
+            let mut row = Vec::with_capacity(r.head.terms.len());
+            for t in &r.head.terms { row.push(val_of(t, env)?); }
+            out.push(row);
+            Ok(())
+        };
+        match extracts[0] {
+            BodyItem::JsonP { src, jpath, out, id, .. } => {
+                let srcvar = var_of(src)?;
+                let outvar = var_of(out)?;
+                if id.is_some() {
+                    bail!("rule `{}`: a term-form jsonp has no file to locate — drop the `id` arg", r.head.rel);
+                }
+                for jr in &join_rows {
+                    let content = match jr.get(&srcvar) {
+                        Some(Value::Text(s)) => s.clone(),
+                        Some(Value::Int(n)) => n.to_string(),
+                        _ => continue,
+                    };
+                    for (v, _lo, _hi) in crate::datapath::run_data(synth, &content, jpath) {
+                        let mut env = jr.clone();
+                        env.insert(outvar.clone(), Value::Text(v));
+                        emit(&env, out_rows)?;
+                    }
+                }
+            }
+            BodyItem::Json { src, pat, .. } => {
+                let srcvar = var_of(src)?;
+                let (steps, _) = crate::datapath::parse_pattern(pat)
+                    .map_err(|e| anyhow::anyhow!("json pattern error: {e}"))?;
+                for jr in &join_rows {
+                    let content = match jr.get(&srcvar) {
+                        Some(Value::Text(s)) => s.clone(),
+                        Some(Value::Int(n)) => n.to_string(),
+                        _ => continue,
+                    };
+                    for m in crate::datapath::run_pattern(synth, &content, &steps) {
+                        let mut env = jr.clone();
+                        for (cap, text, _lo, _hi) in m { env.insert(cap, Value::Text(text)); }
+                        emit(&env, out_rows)?;
+                    }
+                }
+            }
+            _ => unreachable!("extracts filtered to JsonP/Json"),
+        }
+        Ok(())
     }
 
     /// Wipe derived tables and run the semi-naive fixpoint to convergence.

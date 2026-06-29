@@ -280,12 +280,14 @@ fn rewrite_terms(b: &mut BodyItem, sub: &HashMap<String, Term>, params: &[String
         BodyItem::AstYaml { path, rev, line, col, end_line, end_col, .. } => {
             for t in [path, rev, line, col, end_line, end_col] { rewrite_term(t); }
         }
-        BodyItem::JsonP { path, rev, out, id, .. } => {
-            for t in [path, rev, out] { rewrite_term(t); }
+        BodyItem::JsonP { src, rev, out, id, .. } => {
+            for t in [src, out] { rewrite_term(t); }
+            if let Some(r) = rev { rewrite_term(r); }
             rewrite_opt(id);
         }
-        BodyItem::Json { path, rev, .. } => {
-            for t in [path, rev] { rewrite_term(t); }
+        BodyItem::Json { src, rev, .. } => {
+            rewrite_term(src);
+            if let Some(r) = rev { rewrite_term(r); }
         }
         BodyItem::Cmd { path, rev, line, out, .. } => {
             for t in [path, rev, line, out] { rewrite_term(t); }

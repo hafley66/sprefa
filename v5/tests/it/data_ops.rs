@@ -141,6 +141,43 @@ fn json_declarative_nested_and_exact() {
     assert!(out.contains(">=18"), "nested descent:\n{out}");
 }
 
+/// TERM-form `jsonp`: the source is a bound `str` value (a relation column), not
+/// a file. The hybrid join+extract pass joins `page`, then parses each `body`
+/// string and binds the extracted value. This is the response-body path (no file,
+/// no scan).
+#[test]
+fn jsonp_term_source_extracts_from_a_bound_value() {
+    let d = sandbox("jsonp_term");
+    let prog = concat!(
+        "rel page(repo: text, body: text).\n",
+        "page(\"octo\", \"{\\\"stargazerCount\\\": 42}\").\n",
+        "rel star(repo: text, n: text).\n",
+        "star(repo, n) <- page(repo, body), jsonp(body, \"stargazerCount\", n).\n",
+        "? star(repo, n).\n",
+    );
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("octo"), "repo echoes from the join:\n{out}");
+    assert!(out.contains("42"), "the extracted value binds:\n{out}");
+}
+
+/// TERM-form `json` brace pattern over a bound value, with a Cmp post-filter on
+/// the EXTRACTED var (applied after the parse, in the hybrid pass).
+#[test]
+fn json_term_source_brace_pattern_and_filter() {
+    let d = sandbox("json_term");
+    let prog = concat!(
+        "rel doc(id: text, body: text).\n",
+        "doc(\"a\", \"{\\\"name\\\": \\\"alice\\\", \\\"age\\\": \\\"30\\\"}\").\n",
+        "rel person(id: text, name: text).\n",
+        "person(id, nm) <- doc(id, body), json(body, q:{ name: $nm }).\n",
+        "? person(id, nm).\n",
+    );
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("alice"), "brace capture binds from the bound value:\n{out}");
+}
+
 /// A string passed to `json(` is redirected: it's a parse error pointing at jsonp.
 #[test]
 fn json_string_arg_redirects_to_jsonp() {

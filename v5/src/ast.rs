@@ -172,13 +172,18 @@ pub enum BodyItem {
     /// json/yaml/toml (dispatched by extension; `*` = any key/element). Renamed
     /// from `json` to free the name for the declarative brace pattern. Trailing
     /// optional `id` = the matched value's located span (christmas #9).
-    JsonP { path: Term, rev: Term, jpath: String, out: Term, id: Option<Term> },
+    /// `rev: Some` = the FILE form (`src` is a path read at `rev`, span-located);
+    /// `rev: None` = the TERM form (`src` is a bound `str` content value — a
+    /// response body / column / stdout — parsed directly, no file, no span). The
+    /// term form runs in the join+extract hybrid pass, not the file scan.
+    JsonP { src: Term, rev: Option<Term>, jpath: String, out: Term, id: Option<Term> },
     /// `json(path, rev, q:{ $k: $v })` — declarative brace pattern over a
     /// json/yaml/toml document (dispatched by extension, like jsonp). Each
     /// match binds N named captures (keys AND values) as rule vars, mirroring
     /// match's named groups. `pat` is the raw `q:` body (validated at parse
-    /// time; the engine re-parses it to walk the Step tree).
-    Json { path: Term, rev: Term, pat: String },
+    /// time; the engine re-parses it to walk the Step tree). `rev: None` = the
+    /// term form (`src` is bound content), like `JsonP`.
+    Json { src: Term, rev: Option<Term>, pat: String },
     /// Shell out per matched file: `cmd(p, rev, "tool {file}", line, out)` binds
     /// one row per stdout line. Cached like every source op: rows re-run only
     /// when the file content or the rule text moves (the docker-layer contract).
@@ -261,11 +266,24 @@ impl Rule {
     }
 
     pub fn is_source(&self) -> bool {
-        self.body.iter().any(|b| matches!(b,
+        self.body.iter().any(|b| match b {
             BodyItem::Scan { .. } | BodyItem::Match { .. } | BodyItem::Ast { .. }
-            | BodyItem::Sg { .. } | BodyItem::AstYaml { .. } | BodyItem::JsonP { .. }
-            | BodyItem::Json { .. }
-            | BodyItem::Cmd { .. } | BodyItem::Comment { .. }))
+            | BodyItem::Sg { .. } | BodyItem::AstYaml { .. }
+            | BodyItem::Cmd { .. } | BodyItem::Comment { .. } => true,
+            // A FILE-form json/jsonp (rev=Some) scans a file = a source op. The
+            // TERM form (rev=None) reads a bound value, so it is NOT a source —
+            // it runs in the join+extract hybrid pass over already-derived rels.
+            BodyItem::JsonP { rev, .. } | BodyItem::Json { rev, .. } => rev.is_some(),
+            _ => false,
+        })
+    }
+
+    /// True iff the body has a TERM-form `json`/`jsonp` (`rev=None`): the source
+    /// is a bound `str` value, not a file. Such a rule joins relations (the Pos
+    /// atoms bind the content var) and then extracts — the hybrid evaluator.
+    pub fn has_term_extract(&self) -> bool {
+        self.body.iter().any(|b| matches!(b,
+            BodyItem::JsonP { rev: None, .. } | BodyItem::Json { rev: None, .. }))
     }
 
     /// Some(edge) iff this rule is exactly `head(..) <- closure(edge).`
