@@ -1,10 +1,12 @@
-# Kotlin interface dispatch + multi-op participation. The OpenAPI spec is the
-# source of op names. A generated client interface exposes one method per op;
-# concrete impls override those methods, and the override bodies fan into shared
-# helpers. The question: which functions sit on the call-graph path of >= 2
-# distinct ops, where the path crosses the interface -> impl virtual-dispatch hop
-# that occurrences (scip_ref / scip_fn_edge) alone can't see. That hop is
-# scip_impl, loaded from SCIP's is_implementation relationship.
+# Interface dispatch + multi-op participation. Language-blind: it reads only the
+# OpenAPI spec and the SCIP relations, so the same query runs over a Kotlin, Go,
+# or Python index unchanged. The OpenAPI spec is the source of op names. A
+# generated client interface exposes one method per op; concrete impls override
+# those methods, and the override bodies fan into shared helpers. The question:
+# which functions sit on the call-graph path of >= 2 distinct ops, where the path
+# crosses the interface -> impl virtual-dispatch hop that occurrences (scip_ref /
+# scip_fn_edge) alone can't see. That hop is scip_impl, loaded from SCIP's
+# is_implementation relationship.
 
 rel spec_op(op: text).
 spec_op(op) <- scan("WORK", "**/openapi.yaml", p, rev),

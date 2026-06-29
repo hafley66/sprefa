@@ -62,10 +62,15 @@ pub fn rows(index: &Index) -> ScipRows {
     let mut def_file: HashMap<String, String> = HashMap::new();
     let mut defs: HashSet<(String, String)> = HashSet::new();
     // Per-file fn-def intervals for caller attribution: ((start), (end), symbol).
-    // A def qualifies as fn-like when its symbol contains '(' — RA emits
-    // `…/fn_name().` for free functions, `…/impl#[Type]method().` for methods;
-    // types, modules, and impl-block holders carry no '(' in their terminal
-    // descriptor, so they are excluded from the interval index.
+    // A def qualifies as fn-like when its terminal descriptor is a method/
+    // function call descriptor, which every indexer (RA, scip-typescript,
+    // scip-go, scip-python) ends with `().`: `…/fn_name().`,
+    // `…/impl#[Type]method().`. Types, modules, and impl-block holders carry no
+    // such descriptor. Crucially, a PARAMETER descriptor (`…/getPet().(id)`)
+    // also contains '(' but ends with `)` not `).`; the old `contains('(')`
+    // test mis-registered params as enclosing fns, so a body call would be
+    // attributed to the nearest parameter instead of the method (scip-python
+    // emits params, RA/scip-go inline them, so this only bit the Python tier).
     let mut fn_defs: HashMap<String, Vec<((i32, i32), (i32, i32), String)>> = HashMap::new();
     // (method moniker, receiver type) for every method def. Covers BOTH callees
     // and callers (a caller that is itself a method has a receiver type here),
@@ -81,7 +86,7 @@ pub fn rows(index: &Index) -> ScipRows {
                 if let Some(ty) = receiver_type(&occ.symbol) {
                     callee_types.insert((occ.symbol.clone(), ty));
                 }
-                if occ.symbol.contains('(') {
+                if is_callable_def(&occ.symbol) {
                     if let Some((s, e)) = parse_range(&occ.range) {
                         fn_defs.entry(doc.relative_path.clone())
                             .or_default()
@@ -222,6 +227,15 @@ fn is_def(roles: i32) -> bool {
 
 fn usable_symbol(symbol: &str) -> bool {
     !symbol.is_empty() && !symbol.starts_with("local ")
+}
+
+/// A callable definition (free fn or method) for the enclosing-fn interval
+/// index. Every supported indexer terminates a callable's descriptor with `().`,
+/// so the symbol ends with `).`. A parameter descriptor (`…getPet().(id)`) also
+/// contains parens but ends with a bare `)`, so it is excluded — otherwise a
+/// body reference would be attributed to the nearest parameter, not the method.
+fn is_callable_def(symbol: &str) -> bool {
+    symbol.ends_with(").")
 }
 
 /// Extract the receiver type from a RA method moniker. RA encodes the impl
@@ -400,6 +414,35 @@ mod tests {
         index.documents = vec![doc];
         let rows = rows(&index);
         assert_eq!(rows.locals.len(), 1, "only def collected: {:?}", rows.locals);
+    }
+
+    #[test]
+    fn body_ref_attributes_to_method_not_parameter() {
+        // scip-python emits parameter symbols (`…getPet().(id)`) whose def range
+        // sits between the method's name range and the body. A parameter
+        // descriptor ends with `)`, not `).`, so it must NOT register as an
+        // enclosing fn — otherwise the predecessor search attributes the body's
+        // call to the nearest PARAMETER instead of the method, and the dispatch
+        // hop dead-ends. Layout mirrors scip-python: method def, then its param
+        // def, then a body ref to a callee.
+        let method = "scip-python . . pkg/PetClient#getPet().";
+        let param = "scip-python . . pkg/PetClient#getPet().(id)";
+        let callee = "scip-python . . pkg/httpExec().";
+        let mut doc = Document::new();
+        doc.relative_path = "petapi.py".to_string();
+        doc.occurrences = vec![
+            occ_r(method, SymbolRole::Definition as i32, [0, 4, 0, 10]),
+            occ_r(param, SymbolRole::Definition as i32, [0, 11, 0, 13]),
+            occ_r(callee, SymbolRole::Definition as i32, [3, 0, 3, 8]),
+            occ_r(callee, 0, [1, 8, 1, 16]),  // body call to httpExec
+        ];
+        let mut index = Index::new();
+        index.documents = vec![doc];
+        let rows = rows(&index);
+        // exactly one fn_edge: the METHOD calls httpExec (not the parameter).
+        let call: Vec<_> = rows.fn_edges.iter().filter(|(_, c)| c == callee).collect();
+        assert_eq!(call.len(), 1, "one body call attributed: {:?}", rows.fn_edges);
+        assert_eq!(call[0].0, method, "attributed to the method, not the param: {:?}", rows.fn_edges);
     }
 
     #[test]

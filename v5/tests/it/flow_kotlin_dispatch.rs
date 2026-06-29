@@ -126,7 +126,7 @@ fn interface_dispatch_finds_function_on_two_op_paths() {
     std::fs::write(root.join("index.scip"), build_index().write_to_bytes().unwrap()).unwrap();
 
     let out = Command::new(DL)
-        .arg(root.join("kotlin_flow.dl"))
+        .arg(root.join("dispatch_flow.dl"))
         .args(["--root", root.to_str().unwrap(), "--db", root.join("kt.db").to_str().unwrap()])
         .output().expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
