@@ -1,0 +1,28 @@
+# Cross-language flow page: the OpenAPI spec is the source of truth; one
+# operationId resolves to its backend implementor (Rust) AND its consumers (TS),
+# across language boundaries, by the codegen rhythm (the operationId verbatim).
+
+rel src(p: file).
+src(p) <- scan("WORK", "**/*.rs", p, rev).
+src(p) <- scan("WORK", "**/*.ts", p, rev).
+
+# the contract: every operationId declared in the spec (source of truth).
+rel spec_op(op: text).
+spec_op(op) <- scan("WORK", "**/openapi.yaml", p, rev),
+  jsonp(p, rev, "paths.*.*.operationId", op).
+
+# backend implementor: a function whose name IS an operationId.
+rel impl_at(op: text, file: file, line: int).
+impl_at(op, f, l) <- spec_op(op), type_entity(_, _, op, "function", _, f, l).
+
+# consumer: a call site whose callee IS an operationId.
+rel client_at(op: text, file: file, line: int).
+client_at(op, f, l) <- spec_op(op), call_site(_, _, op, f, l).
+
+# the cross-language flow: one op, every participant, tagged by role.
+rel flow(op: text, role: text, file: file, line: int).
+flow(op, "impl", f, l) <- impl_at(op, f, l).
+flow(op, "client", f, l) <- client_at(op, f, l).
+
+? spec_op(op).
+? flow(op, role, file, line).

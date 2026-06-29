@@ -1,0 +1,17 @@
+openapi: 3.0.0
+info:
+  title: Pet API
+  version: 1.0.0
+paths:
+  /pets/{id}:
+    get:
+      operationId: getPet
+      responses:
+        '200':
+          description: a pet
+  /pets:
+    post:
+      operationId: createPet
+      responses:
+        '201':
+          description: created
