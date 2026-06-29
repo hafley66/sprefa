@@ -45,6 +45,15 @@ This phase is independent of everything below. Land it alone.
 
 ## Phase 1 — the `sh` template decl + effect-call body item (the language surface)
 
+> **Status (2026-06-29).** Slice 1a LANDED (`a20f0f9`): the `sh`/`sh!`/`sh*` typed
+> decl + registry. Slice 1b LANDED (`9377825`): `BodyItem::Effect` call site +
+> head-response desugar (D-3) so both surfaces lower to ONE body-effect model;
+> `Temporal::Stream` + `Rule::effect()`; `pending_effect` two-field D-4
+> (`head_rel`/`full_json`, migrated on open); identity split kind(template) vs
+> head_rel(reconstruction). `@stream`/`sh*` parse but the tick bails (Phase 4).
+> Remaining slice 1c: `check_effect` typecheck (arity/hole/temporal-cross),
+> reserve `sh` like `ref`, the brace `{ shell }` body form.
+
 ### 1.1 Type signatures
 
 ```rust
