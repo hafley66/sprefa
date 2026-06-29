@@ -665,3 +665,54 @@ fn async_response_rel_must_be_drain_only() {
         "expected a response-conflict bail: {err}"
     );
 }
+
+/// The `effect_log` built-in projects `pending_effect` into a queryable rel: the
+/// drain queue, live. A rule reading it sees each request's `state` march
+/// queued -> done across a drain, so a `.dl` program can observe (and rail on)
+/// its own effect queue — the dl-native call log, the parity surface against an
+/// external cache's call_log.
+#[test]
+fn effect_log_mirrors_the_drain_queue() {
+    let d = sandbox("efflog");
+    let dbp = d.join("db");
+    fs::write(
+        d.join("p.dl"),
+        "rel want(key: str, url: str).\n\
+         want(\"home\", \"https://api/home\").\n\
+         rel resp(key: str, status: int, body: str).\n\
+         resp(key, status, body) <- @async want(key, url).\n\
+         rel queued(id: str).\n\
+         queued(id) <- effect_log(id, _, _, \"queued\", _, _).\n\
+         rel landed(id: str).\n\
+         landed(id) <- effect_log(id, _, _, \"done\", _, _).\n",
+    )
+    .unwrap();
+    let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+
+    // Tick 1 queues the request; tick 2 projects effect_log (the row queued at
+    // tick-1 end is visible at tick-2 start) and the `queued` rail fires.
+    eng.tick(&prog, true).unwrap();
+    eng.tick(&prog, true).unwrap();
+    let log = rows(&dbp, "SELECT kind, head, state FROM rel_effect_log");
+    assert_eq!(log.len(), 1, "one effect_log row for the one request: {log:?}");
+    assert_eq!(log[0], vec!["resp".to_string(), "resp".to_string(), "queued".to_string()]);
+    assert_eq!(rows(&dbp, "SELECT id FROM rel_queued").len(), 1, "queued rail fired");
+    assert_eq!(rows(&dbp, "SELECT id FROM rel_landed").len(), 0, "nothing done yet");
+
+    // Drain off-tick, then re-tick: effect_log now reads the row as done.
+    let exec = MockExec {
+        table: HashMap::from([(
+            "https://api/home".to_string(),
+            vec!["200".to_string(), "HOME".to_string()],
+        )]),
+        calls: Mutex::new(Vec::new()),
+    };
+    eng.drain_effects(&prog, &exec).unwrap();
+    eng.tick(&prog, true).unwrap();
+    let state: Vec<Vec<String>> = rows(&dbp, "SELECT state FROM rel_effect_log");
+    assert_eq!(state, vec![vec!["done".to_string()]], "drain flipped the state");
+    assert_eq!(rows(&dbp, "SELECT id FROM rel_queued").len(), 0, "no longer queued");
+    assert_eq!(rows(&dbp, "SELECT id FROM rel_landed").len(), 1, "landed rail fires on done");
+}

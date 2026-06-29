@@ -519,6 +519,17 @@ const DAEMON_RELS: [&str; 3] = ["program", "head", "rev_advanced"];
 /// (`every:N`), so the cadence is exact regardless of how often the daemon ticks.
 const EVERY_RELS: [&str; 1] = ["every"];
 
+/// The effect-drain audit view: a thin query rel over `pending_effect`, the job
+/// table @async/@stream requests land in. One row per distinct request (digest
+/// `id`), carrying its template `kind`, the `head` rel it rebuilds, the job
+/// `state` (queued|running|done|failed), the request `args` JSON (the hole map —
+/// the call's parameters, the endpoint analog), and `req_tx` (the tx it was
+/// queued at). This is the dl-native call log: `? effect_log(...)` shows the
+/// drain queue live, and it doubles as the parity surface against ghcacher's
+/// `call_log`. Lazy like every other built-in group; a program that never reads
+/// it pays nothing (`pending_effect` is still written, just not projected).
+const EFFECT_RELS: [&str; 1] = ["effect_log"];
+
 fn builtin_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -556,6 +567,7 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
         .chain(type_lgg_rel_decls())
         .chain(daemon_rel_decls())
         .chain(every_rel_decls())
+        .chain(effect_rel_decls())
         .chain(catalog_rel_decls())
         .collect()
 }
@@ -645,6 +657,8 @@ pub fn builtin_rel_docs() -> &'static [(&'static str, &'static str, &'static str
         ("rev_advanced", "daemon", "daemon signal that a repo ref advanced (repo, name, old oid, new oid)"),
         // clock: edge-triggered interval gate for @async polling.
         ("every", "clock", "holds interval N only on ticks that cross an N-second boundary (and the first tick); an every(30) body atom self-throttles its rule"),
+        // effect drain: the @async/@stream job queue as a query rel.
+        ("effect_log", "effect", "the @async/@stream drain queue: one row per request (id, kind, head rel, state queued/running/done/failed, args JSON, req_tx); the dl-native call log, queryable live and parity-comparable to an external cache's call log"),
         // self: the catalog documents itself.
         ("rel_catalog", "meta", "this table: every built-in relation with its group, columns, and one-line doc"),
     ]
@@ -679,6 +693,17 @@ fn catalog_rel_decls() -> Vec<RelDecl> {
 }
 
 fn catalog_rels_used(prog: &Program) -> bool { rels_used(prog, &CATALOG_RELS) }
+
+fn effect_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "effect_log".into(), cols: vec![
+            c("id", Type::Text), c("kind", Type::Text), c("head", Type::Text),
+            c("state", Type::Text), c("args", Type::Text), c("req_tx", Type::Int)] },
+    ]
+}
+
+fn effect_rels_used(prog: &Program) -> bool { rels_used(prog, &EFFECT_RELS) }
 
 fn module_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
@@ -2450,6 +2475,7 @@ impl Engine {
         if type_shape_rels_used(prog) { changed |= self.refresh_type_shape_rel()?; }
         if type_lgg_rels_used(prog) { changed |= self.refresh_type_lgg_rel()?; }
         if daemon_rels_used(prog) { self.refresh_daemon_rels()?; }
+        if effect_rels_used(prog) { self.refresh_effect_rels()?; }
         if catalog_rels_used(prog) { changed |= self.refresh_catalog_rel()?; }
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
 
@@ -3552,6 +3578,7 @@ impl Engine {
         for d in type_lgg_rel_decls() { self.declare(&d)?; }
         for d in daemon_rel_decls() { self.declare(&d)?; }
         for d in every_rel_decls() { self.declare(&d)?; }
+        for d in effect_rel_decls() { self.declare(&d)?; }
         for d in catalog_rel_decls() { self.declare(&d)?; }
         Ok(())
     }
@@ -3771,6 +3798,33 @@ impl Engine {
         self.refresh_rel("program", &["path", "hash", "mtime"], &programs)?;
         self.refresh_rel("head", &["repo", "name", "oid"], &heads)?;
         self.refresh_rel("rev_advanced", &["repo", "name", "old", "new"], &advances)?;
+        Ok(())
+    }
+
+    /// Project `pending_effect` into the `effect_log` query rel — a thin view (like
+    /// `refresh_daemon_rels`), one row per distinct request, exposing the drain
+    /// queue to a `?` query / dashboard. The job table IS the call log; this names
+    /// it relationally. Reflects the queue as of tick start (rebuild_async appends
+    /// new rows at tick end, the daemon drains BETWEEN ticks), so a tick sees the
+    /// state its inputs were in when it began. Wipe+repopulate, plural seam.
+    pub fn refresh_effect_rels(&self) -> Result<()> {
+        let conn = self.db.conn();
+        let mut p = conn.prepare(
+            "SELECT id, kind, head_rel, state, args_json, req_tx \
+             FROM pending_effect ORDER BY req_tx, id")?;
+        let rows: Vec<Vec<Value>> = p
+            .query_map([], |r| Ok(vec![
+                Value::Text(r.get::<_, String>(0)?),
+                Value::Text(r.get::<_, String>(1)?),
+                Value::Text(r.get::<_, String>(2)?),
+                Value::Text(r.get::<_, String>(3)?),
+                Value::Text(r.get::<_, String>(4)?),
+                Value::Int(r.get::<_, i64>(5)?),
+            ]))?
+            .filter_map(|x| x.ok()).collect();
+        drop(p);
+        self.refresh_rel("effect_log",
+            &["id", "kind", "head", "state", "args", "req_tx"], &rows)?;
         Ok(())
     }
 
