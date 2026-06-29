@@ -1,0 +1,145 @@
+//! ghcacher, as a datalog program (examples/gh-cache.dl). The conditional-request
+//! cache loop end to end with a mock executor: the FIRST poll (no etag) returns
+//! 200 + a body, term-form `jsonp` extracts entities, the `@next` `change_log`
+//! appends them, and the etag is carried. Every subsequent poll sends that etag
+//! and the mock returns 304 — no body, no entity, so `change_log` is untouched.
+//! That 304-skip (a cache hit costs nothing and emits no change) is the property
+//! ghcacher exists for, here proven without a network. See the gh-cache example.
+
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+use anyhow::Result;
+use serde_json::{Map, Value as Json};
+
+use sprefa_v5::db;
+use sprefa_v5::engine::{EffectExec, Engine};
+use sprefa_v5::prepare_paths;
+
+fn sandbox(tag: &str) -> PathBuf {
+    let p = std::env::temp_dir().join(format!("dl_ghcache_{tag}_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&p);
+    fs::create_dir_all(&p).unwrap();
+    p
+}
+
+fn rows(db_path: &Path, sql: &str) -> Vec<Vec<String>> {
+    let conn = db::open(Some(db_path.to_str().unwrap())).unwrap();
+    let mut s = conn.prepare(sql).unwrap();
+    let ncol = s.column_count();
+    s.query_map([], |r| {
+        let mut row = Vec::new();
+        for i in 0..ncol {
+            let v: rusqlite::types::Value = r.get(i)?;
+            row.push(match v {
+                rusqlite::types::Value::Integer(n) => n.to_string(),
+                rusqlite::types::Value::Text(t) => t,
+                rusqlite::types::Value::Null => String::new(),
+                other => format!("{other:?}"),
+            });
+        }
+        Ok(row)
+    })
+    .unwrap()
+    .filter_map(|x| x.ok())
+    .collect()
+}
+
+/// The GitHub API as a conditional cache: the first request (empty `prev` etag)
+/// returns 200 with a body and a fresh etag; any request that carries an etag is
+/// a cache hit and returns 304 with no body. Records every (status) it served so
+/// the test can assert a 304 actually happened (the resource was re-polled).
+struct GhMock {
+    body: String,
+    served: Mutex<Vec<String>>,
+}
+
+impl EffectExec for GhMock {
+    fn run(&self, _kind: &str, args: &Map<String, Json>) -> Result<Vec<String>> {
+        let prev = args.get("prev").and_then(|v| v.as_str()).unwrap_or("");
+        let out = if prev.is_empty() {
+            // 200: fresh etag + the JSON body.
+            vec!["200".to_string(), "etagA".to_string(), self.body.clone()]
+        } else {
+            // 304 Not Modified: no etag change, no body.
+            vec!["304".to_string(), String::new(), String::new()]
+        };
+        self.served.lock().unwrap().push(out[0].clone());
+        Ok(out)
+    }
+}
+
+#[test]
+fn gh_cache_lands_entities_then_304_is_a_free_cache_hit() {
+    let d = sandbox("loop");
+    let dbp = d.join("db");
+    // The cache loop WITHOUT `every()` (manual ticks drive it; the example file
+    // carries every(300) for the daemon). `!etag` seeds the first poll with "".
+    fs::write(
+        d.join("p.dl"),
+        "rel watch(ep: text).\n\
+         watch(\"repos/cli/cli\").\n\
+         rel etag(ep: text, tag: text).\n\
+         rel etag_next(ep: text, tag: text).\n\
+         rel poll(ep: text, prev: text).\n\
+         poll(ep, prev) <- watch(ep), etag(ep, prev).\n\
+         poll(ep, \"\")  <- watch(ep), !etag(ep, _).\n\
+         rel resp(ep: text, status: int, tag: text, body: text).\n\
+         resp(ep, status, tag, body) <- @async poll(ep, prev).\n\
+         etag_next(ep, tag) <- resp(ep, 200, tag, _).\n\
+         etag_next(ep, old) <- resp(ep, 304, _, _), etag(ep, old).\n\
+         etag(ep, tag) <- @next etag_next(ep, tag).\n\
+         rel stars(ep: text, n: text).\n\
+         stars(ep, n) <- resp(ep, 200, _, body), jsonp(body, \"stargazers_count\", n).\n\
+         rel full_name(ep: text, name: text).\n\
+         full_name(ep, name) <- resp(ep, 200, _, body), jsonp(body, \"full_name\", name).\n\
+         rel change_log(ep: text, kind: text, val: text).\n\
+         rel change_log_next(ep: text, kind: text, val: text).\n\
+         change_log_next(ep, kind, val) <- change_log(ep, kind, val).\n\
+         change_log_next(ep, \"stars\", n) <- stars(ep, n).\n\
+         change_log_next(ep, \"full_name\", v) <- full_name(ep, v).\n\
+         change_log(ep, kind, val) <- @next change_log_next(ep, kind, val).\n",
+    )
+    .unwrap();
+    let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+
+    let exec = GhMock {
+        body: r#"{"stargazers_count": 42, "full_name": "cli/cli"}"#.to_string(),
+        served: Mutex::new(Vec::new()),
+    };
+
+    // Drive the loop: tick emits/derives, drain runs the conditional request
+    // off-tick. Five cycles lets the etag carry advance (first poll "" -> 200 ->
+    // carry etagA -> re-poll with etagA -> 304) and settle.
+    for _ in 0..5 {
+        eng.tick(&prog, true).unwrap();
+        eng.drain_effects(&prog, &exec).unwrap();
+    }
+    eng.tick(&prog, true).unwrap();
+
+    // The 200 body's two fields are in the change feed, exactly once each.
+    let mut log = rows(&dbp, "SELECT kind, val FROM rel_change_log ORDER BY kind, val");
+    log.sort();
+    assert_eq!(
+        log,
+        vec![
+            vec!["full_name".to_string(), "cli/cli".to_string()],
+            vec!["stars".to_string(), "42".to_string()],
+        ],
+        "change_log holds the 200's entities, deduped"
+    );
+
+    // A re-poll carrying the etag happened and the mock served a 304 — the cache
+    // hit. The 304 added no entity and no change_log row (asserted above).
+    let served = exec.served.lock().unwrap().clone();
+    assert!(served.contains(&"200".to_string()), "the first poll was a 200: {served:?}");
+    assert!(served.contains(&"304".to_string()), "a carried-etag re-poll got a 304: {served:?}");
+
+    // The carried etag settled on the 200's value (the 304 kept it).
+    let etag = rows(&dbp, "SELECT tag FROM rel_etag");
+    assert_eq!(etag, vec![vec!["etagA".to_string()]], "etag carried from the 200");
+}

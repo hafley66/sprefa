@@ -1,0 +1,78 @@
+# gh-cache.dl — ghcacher, as a datalog program.
+#
+# ghcacher (a Rust service, ~/projects/ghcacher) polls the GitHub API on an
+# interval, sends `If-None-Match: <etag>` so an unchanged resource comes back 304
+# (free), normalizes the JSON into SQLite tables, and appends every change to an
+# append-only `change_log` that an SSE endpoint tails. This file is that whole
+# shape in the effect runtime: an interval clock (`every`), a cached conditional
+# request (`@async` + an `@next` etag carry), JSON entity extraction (term-form
+# `jsonp`), and a `@next`-accumulated `change_log`.
+#
+# The cache IS the content-addressed `pending_effect` digest plus the etag carry:
+# a request is keyed by (head, kind, args), and `args` includes the prior etag, so
+# the SAME (endpoint, etag) pair fires at most once. When the resource changes the
+# server returns a NEW etag, which changes the args, which re-fires — the change
+# itself is what advances the cache. A 304 carries the old etag forward and lands
+# no entity rows, so `change_log` is untouched (the parity-critical behavior).
+#
+# Run (daemon):  DL_POLL_SECS=5 dl --lsp examples/gh-cache.dl --root <repo>
+
+# --- what to poll -----------------------------------------------------------
+# One row per endpoint. `gh api {ep} -H "If-None-Match: {prev}"` is the call; the
+# template lives in `effect_cmd`, filled from the request args.
+rel watch(ep: text).
+watch("repos/cli/cli").
+
+# --- the conditional request (the cache) ------------------------------------
+# Carry the last etag per endpoint across ticks. `etag` is written ONLY by the
+# @next rule; `etag_next` is this tick's value (a 200's fresh etag, or the old one
+# kept on a 304 / unchanged tick).
+rel etag(ep: text, tag: text).
+rel etag_next(ep: text, tag: text).
+
+# The poll args: the endpoint plus the prior etag ("" on the first poll, before
+# any etag is carried). Two rules cover present-vs-absent (no outer join).
+rel poll(ep: text, prev: text).
+poll(ep, prev) <- watch(ep), etag(ep, prev).
+poll(ep, "")   <- watch(ep), !etag(ep, _).
+
+# Fire the conditional GET on the interval. `status`/`tag`/`body` are the response
+# columns the executor fills; `ep` echoes from the request. `gh api -i` returns
+# the status line, the ETag header, and the JSON body — the effect_cmd template
+# formats them tab-separated (status<TAB>etag<TAB>body), the D-7 @tsv convention.
+rel resp(ep: text, status: int, tag: text, body: text).
+resp(ep, status, tag, body) <- @async poll(ep, prev), every(300).
+
+rel effect_cmd(kind: text, template: text).
+effect_cmd("resp", "gh api {ep} -i -H \"If-None-Match: {prev}\" | gh-resp-tsv").
+
+# Advance the etag carry: a 200 installs its fresh etag; a 304 keeps the old one.
+etag_next(ep, tag) <- resp(ep, 200, tag, _).
+etag_next(ep, old) <- resp(ep, 304, _, _), etag(ep, old).
+etag(ep, tag) <- @next etag_next(ep, tag).
+
+# --- normalize: entities from 200 bodies ------------------------------------
+# Only a 200 carries a body; term-form `jsonp` parses the bound `body` value (the
+# hybrid join+extract pass), no file, no scan. Add a rule per field you track.
+rel stars(ep: text, n: text).
+stars(ep, n) <- resp(ep, 200, _, body), jsonp(body, "stargazers_count", n).
+
+rel full_name(ep: text, name: text).
+full_name(ep, name) <- resp(ep, 200, _, body), jsonp(body, "full_name", name).
+
+# --- the change feed (append-only) ------------------------------------------
+# `change_log(ep, kind, val)` accumulates every observed entity value across
+# ticks; the @next rule keeps the prior rows and unions this tick's entities, so a
+# tick that lands no new entity (a 304) appends nothing. Dedup is structural (the
+# same (ep, kind, val) never doubles), so re-deriving an unchanged entity is a
+# no-op — idempotent, the ghcacher INSERT-OR-IGNORE property.
+rel change_log(ep: text, kind: text, val: text).
+rel change_log_next(ep: text, kind: text, val: text).
+change_log_next(ep, kind, val) <- change_log(ep, kind, val).
+change_log_next(ep, "stars", n)    <- stars(ep, n).
+change_log_next(ep, "full_name", v) <- full_name(ep, v).
+change_log(ep, kind, val) <- @next change_log_next(ep, kind, val).
+
+# --- read the cache ---------------------------------------------------------
+? change_log(ep, kind, val).
+? effect_log(id, kind, head, state, args, req_tx).
