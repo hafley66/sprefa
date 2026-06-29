@@ -12,9 +12,9 @@
 #
 # Read: `decision` (each near-miss pair + the slot that differs), `exact_bucket`
 # (identical-shape groups = the exact traits), `ftrait` (one-edit-connected groups
-# = the FUZZY traits, wider than exact). NOTE: ftrait is an scc head; it is filled
-# in the query phase, so a derived rule CANNOT read it in the same tick (query it
-# directly). exact_bucket/decision are plain derived rels and aggregate fine.
+# = the FUZZY traits, wider than exact). `ftrait` is an scc head; the engine
+# evaluates derived rules that read an operator head (scc/closure/node2vec) in a
+# second stratum after the head fills, so `tsize` below aggregates it directly.
 
 rel f0(f: file). f0(f) <- scan("WORK", "src/engine.rs", f, rev).
 
@@ -77,9 +77,11 @@ decision(an, bn, sl, p, r) <- adj(a, b), dfact(a, sl, p, r),
     !bothhave(a, b, sl, p, r), mname(a, an), mname(b, bn).
 
 # fuzzy trait = connected component of the one-edit graph (adj is symmetric).
-# scc head: query directly, do not consume in a derived rule this tick.
 rel ftrait(rep: text, member: text).
 ftrait(rep, member) <- scc(adj).
+# a derived rule reading the scc head: runs in the post-operator stratum.
+rel tsize(rep: text, n: int).
+tsize(rep, count(member)) <- ftrait(rep, member).
 
 # how many distinct methods sit on at least one one-edit bridge
 rel touched(sym: text).
@@ -90,4 +92,4 @@ fuzzy_touched(count(a)) <- touched(a).
 ? exact_size(rep, size).
 ? decision(a, b, slot, pos, a_type).
 ? fuzzy_touched(n).
-? ftrait(rep, member).
+? tsize(rep, n).

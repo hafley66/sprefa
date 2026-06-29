@@ -97,3 +97,47 @@ g(rep, member) <- scc(edge).
              "c\tc".to_string(), "d\td".to_string()],
         "DAG should be all singletons:\n{stdout}");
 }
+
+/// Regression: a derived rule that READS an scc head. The head fills in the
+/// query phase (after the main fixpoint), so before the post-stratum split this
+/// derived rule was lowered into the fixpoint and read the head EMPTY — silently
+/// emitting zero rows. The two-stratum rebuild evaluates it AFTER the scc eval.
+#[test]
+fn derived_rule_can_aggregate_over_scc_head() {
+    let dir = sandbox("derived_over_scc");
+    let stdout = run(&dir, r#"rel edge(a: text, b: text).
+edge("a","b"). edge("b","c"). edge("c","a").
+edge("d","e").
+rel g(rep: text, member: text).
+g(rep, member) <- scc(edge).
+rel csize(rep: text, n: int).
+csize(rep, count(member)) <- g(rep, member).
+? csize(rep, n).
+"#);
+    // {a,b,c} -> rep "a" size 3; d, e singletons size 1. Empty before the fix.
+    assert_eq!(rows_of(&stdout, "csize"),
+        vec!["a\t3".to_string(), "d\t1".to_string(), "e\t1".to_string()],
+        "derived aggregate over scc head wrong (was empty pre-fix):\n{stdout}");
+}
+
+/// A second derived rule downstream of the scc-reading one (post-stratum depth
+/// > 1): the partition must pull the whole transitive chain into the post
+/// stratum, not just the direct reader.
+#[test]
+fn derived_chain_below_scc_head_fills() {
+    let dir = sandbox("chain_below_scc");
+    let stdout = run(&dir, r#"rel edge(a: text, b: text).
+edge("a","b"). edge("b","c"). edge("c","a").
+edge("d","e").
+rel g(rep: text, member: text).
+g(rep, member) <- scc(edge).
+rel csize(rep: text, n: int).
+csize(rep, count(member)) <- g(rep, member).
+rel big(rep: text).
+big(rep) <- csize(rep, n), n > 1.
+? big(rep).
+"#);
+    // only {a,b,c} has size > 1, rep "a".
+    assert_eq!(rows_of(&stdout, "big"), vec!["a".to_string()],
+        "transitive post-stratum chain did not fill:\n{stdout}");
+}

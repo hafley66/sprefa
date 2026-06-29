@@ -1513,6 +1513,56 @@ fn affected_derived(derived_rules: &[&Rule], changed: &HashSet<String>) -> HashS
         .filter(|h| affected.contains(h)).collect()
 }
 
+/// The two operator heads (scc + node2vec) fill in the QUERY phase, after the
+/// derived fixpoint (`eval_scc_rule` / `eval_node2vec_rule` read an edge relation
+/// the fixpoint already materialized). So a derived rule that reads one of those
+/// heads cannot be lowered into the same fixpoint — it would read an empty table
+/// and silently emit wrong rows. The fix: split the derived layer into a
+/// `pre`-stratum (no transitive dependency on an operator head) and a
+/// `post`-stratum (depends on one). The pre-stratum runs in the main fixpoint
+/// (before the operator evals); the post-stratum runs AFTER the heads fill.
+struct DerivedStrata<'a> {
+    pre_rules: Vec<&'a Rule>,
+    post_rules: Vec<&'a Rule>,
+    pre_rels: Vec<String>,
+    post_rels: Vec<String>,
+}
+
+/// Partition the derived rules/rels around the operator boundary. A rel is in the
+/// post-stratum iff it transitively reads an scc/node2vec head (reuses the
+/// `affected_derived` dependency walk, seeded with the operator head names).
+/// Bails if an operator's own input edge depends on another operator head:
+/// chaining one graph operator into another within a single tick is a cycle
+/// through the query phase, which this two-stratum split cannot order.
+fn partition_derived_strata<'a>(
+    derived_rules: &[&'a Rule],
+    derived_rels: &[String],
+    scc_rules: &[&'a Rule],
+    node2vec_rules: &[&'a Rule],
+) -> Result<DerivedStrata<'a>> {
+    let mut op_heads: HashSet<String> = HashSet::new();
+    for r in scc_rules { op_heads.insert(r.head.rel.clone()); }
+    for r in node2vec_rules { op_heads.insert(r.head.rel.clone()); }
+    let post_heads = affected_derived(derived_rules, &op_heads);
+    for r in scc_rules.iter().chain(node2vec_rules.iter()) {
+        let edge = r.scc_edge().or_else(|| r.node2vec_edge())
+            .expect("operator rule has an scc/node2vec edge");
+        if post_heads.contains(edge) {
+            bail!("operator rule '{}' reads edge relation '{}', which transitively \
+                   depends on another operator head (scc/node2vec); chaining one graph \
+                   operator into another within a single tick is not supported — \
+                   materialize '{}' in a separate program/tick.", r.head.rel, edge, edge);
+        }
+    }
+    let pre_rules = derived_rules.iter().copied()
+        .filter(|r| !post_heads.contains(&r.head.rel)).collect();
+    let post_rules = derived_rules.iter().copied()
+        .filter(|r| post_heads.contains(&r.head.rel)).collect();
+    let pre_rels = derived_rels.iter().filter(|r| !post_heads.contains(*r)).cloned().collect();
+    let post_rels = derived_rels.iter().filter(|r| post_heads.contains(*r)).cloned().collect();
+    Ok(DerivedStrata { pre_rules, post_rules, pre_rels, post_rels })
+}
+
 fn intern_rel(s: &str, id: &mut HashMap<String, u32>, name: &mut Vec<String>) -> u32 {
     if let Some(&i) = id.get(s) { return i; }
     let i = name.len() as u32; id.insert(s.to_string(), i); name.push(s.to_string()); i
@@ -2479,6 +2529,10 @@ impl Engine {
         for r in &derived_rules {
             if !derived_rels.contains(&r.head.rel) { derived_rels.push(r.head.rel.clone()); }
         }
+        // Split the derived layer around the operator boundary: pre-stratum rules
+        // run in the main fixpoint, post-stratum rules (those transitively reading
+        // an scc/node2vec head) run AFTER the operator evals fill those heads.
+        let strata = partition_derived_strata(&derived_rules, &derived_rels, &scc_rules, &node2vec_rules)?;
         // A rel written by BOTH a source rule (scan/match/ast/sg/json/cmd/comment)
         // and a derived rule cannot share one table: `reconcile_sources` fills the
         // source rows incrementally (tracked in `_prov`), then `rebuild_derived`
@@ -2627,7 +2681,7 @@ impl Engine {
         let rebuilt_all = changed || derived_moved
             || self.any_derived_empty(&derived_rels)? || self.any_closure_empty(&edges)?;
         if rebuilt_all {
-            self.rebuild_derived(&derived_rules, &derived_rels)?;
+            self.rebuild_derived(&strata.pre_rules, &strata.pre_rels)?;
             self.rebuild_closures(&edges)?;
         }
         // The hybrid join+extract pass (term-form json/jsonp) reads its inputs —
@@ -2637,7 +2691,7 @@ impl Engine {
         // (No feedback INTO the extracted inputs, so one extra pass converges.)
         let extract_changed = self.eval_extract_rules(&extract_rules)?;
         if extract_changed {
-            self.rebuild_derived(&derived_rules, &derived_rels)?;
+            self.rebuild_derived(&strata.pre_rules, &strata.pre_rels)?;
             self.rebuild_closures(&edges)?;
         }
         // persisted only after the rebuild lands, so a failed tick retries
@@ -2657,6 +2711,14 @@ impl Engine {
         for (r, cs) in &seed_rules { self.eval_closure_seed_rule(r, cs)?; }
         for r in &scc_rules { self.eval_scc_rule(r)?; }
         for r in &node2vec_rules { self.eval_node2vec_rule(r)?; }
+        // Post-stratum: derived rules that read an operator head. The heads just
+        // filled (scc/node2vec evals above), so these now lower correctly. Gated on
+        // the same condition as the pre-stratum rebuild — on a warm tick no derived
+        // rel moved, so no operator edge moved, so the heads (deterministic) are
+        // unchanged and the post rels already hold the right rows.
+        if !strata.post_rels.is_empty() && (rebuilt_all || extract_changed) {
+            self.rebuild_derived(&strata.post_rules, &strata.post_rels)?;
+        }
         // The priming tick skips `?` evaluation: it exists only to derive the
         // coordinates a data-driven scan / repo-sink reads on the real tick.
         if !self.prime_tick {
@@ -2748,6 +2810,7 @@ impl Engine {
         for r in &source_rules { if !source_rels.contains(&r.head.rel) { source_rels.push(r.head.rel.clone()); } }
         let mut derived_rels: Vec<String> = Vec::new();
         for r in &derived_rules { if !derived_rels.contains(&r.head.rel) { derived_rels.push(r.head.rel.clone()); } }
+        let strata = partition_derived_strata(&derived_rules, &derived_rels, &scc_rules, &node2vec_rules)?;
         let edges: Vec<&str> = dedup_edges(&closures);
         self.create_auto_indexes(&derived_rules, &closures)?;
 
@@ -2984,16 +3047,20 @@ impl Engine {
         // Edges whose source/derived relation was rebuilt this tick; only these
         // are re-considered by the cond cache (the rest are reused untouched).
         let mut dirty_edges: HashSet<&str> = HashSet::new();
+        // Pre-stratum rebuild only (the post-stratum, which reads operator heads,
+        // runs after the operator evals below). `affected` carries the changed
+        // derived set forward so the post-stratum knows which operator inputs moved.
+        let mut affected: HashSet<String> = HashSet::new();
         if need_full {
-            self.rebuild_derived(&derived_rules, &derived_rels)?;
+            self.rebuild_derived(&strata.pre_rules, &strata.pre_rels)?;
             self.rebuild_closures(&edges)?;
-            rebuilt = derived_rels.clone();
+            rebuilt = strata.pre_rels.clone();
             dirty_edges = edges.iter().copied().collect();
         } else if changed_facts {
-            let affected = affected_derived(&derived_rules, &changed_source_rels);
-            let sub_rules: Vec<&Rule> = derived_rules.iter().copied()
+            affected = affected_derived(&derived_rules, &changed_source_rels);
+            let sub_rules: Vec<&Rule> = strata.pre_rules.iter().copied()
                 .filter(|r| affected.contains(&r.head.rel)).collect();
-            let sub_rels: Vec<String> = derived_rels.iter()
+            let sub_rels: Vec<String> = strata.pre_rels.iter()
                 .filter(|r| affected.contains(*r)).cloned().collect();
             self.rebuild_derived(&sub_rules, &sub_rels)?;
             let aff_edges: Vec<&str> = edges.iter().copied()
@@ -3014,6 +3081,32 @@ impl Engine {
         for (r, cs) in &seed_rules { self.eval_closure_seed_rule(r, cs)?; }
         for r in &scc_rules { self.eval_scc_rule(r)?; }
         for r in &node2vec_rules { self.eval_node2vec_rule(r)?; }
+        // Post-stratum rebuild (rules reading an operator head). The heads filled
+        // just above. On a full rebuild, redo every post rel; on an incremental
+        // tick, redo only those whose inputs moved — a changed source/derived rel
+        // they read, OR an operator head whose input edge was rebuilt this tick.
+        if !strata.post_rels.is_empty() {
+            if need_full {
+                self.rebuild_derived(&strata.post_rules, &strata.post_rels)?;
+            } else if changed_facts {
+                let mut seed = changed_source_rels.clone();
+                for r in scc_rules.iter().chain(node2vec_rules.iter()) {
+                    let edge = r.scc_edge().or_else(|| r.node2vec_edge())
+                        .expect("operator rule has an scc/node2vec edge");
+                    if affected.contains(edge) || changed_source_rels.contains(edge) {
+                        seed.insert(r.head.rel.clone());
+                    }
+                }
+                let aff_post = affected_derived(&derived_rules, &seed);
+                let sub_post_rules: Vec<&Rule> = strata.post_rules.iter().copied()
+                    .filter(|r| aff_post.contains(&r.head.rel)).collect();
+                let sub_post_rels: Vec<String> = strata.post_rels.iter()
+                    .filter(|r| aff_post.contains(*r)).cloned().collect();
+                if !sub_post_rels.is_empty() {
+                    self.rebuild_derived(&sub_post_rules, &sub_post_rels)?;
+                }
+            }
+        }
         for item in &prog.items { if let Item::Query(q) = item { self.run_query(q, &closures)?; } }
         self.run_gens(prog, quiet)?;
         if self.dropped > 0 { eprintln!("[checked-type] dropped {} rows", self.dropped); self.dropped = 0; }
