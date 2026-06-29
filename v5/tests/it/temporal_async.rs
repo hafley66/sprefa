@@ -8,7 +8,9 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use anyhow::Result;
 use serde_json::{Map, Value as Json};
@@ -195,6 +197,61 @@ fn shell_effect_exec_runs_real_subprocess() {
         rows(&dbp, "SELECT key, status, body FROM rel_resp"),
         vec![vec!["home".to_string(), "200".to_string(), "api/home-body".to_string()]]
     );
+}
+
+/// Records peak in-flight count: each `run` bumps a counter, sleeps so the
+/// overlap window is wide, then decrements. If the drain ran serially the peak
+/// would be 1; the parallel drain over rayon should overlap requests.
+struct ConcExec {
+    in_flight: AtomicUsize,
+    peak: AtomicUsize,
+}
+
+impl EffectExec for ConcExec {
+    fn run(&self, _kind: &str, args: &Map<String, Json>) -> Result<Vec<String>> {
+        let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak.fetch_max(now, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(40));
+        self.in_flight.fetch_sub(1, Ordering::SeqCst);
+        let key = args.get("key").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        Ok(vec![format!("{key}-out")])
+    }
+}
+
+/// The drain runs executors across the rayon pool, not one-at-a-time: with 8
+/// pending requests the peak in-flight count exceeds 1. (The slow part of a real
+/// effect is the shell spawn / network round-trip; nothing serializes them.)
+#[test]
+fn drain_runs_executors_in_parallel() {
+    let d = sandbox("parallel");
+    let dbp = d.join("db");
+    let mut prog_src = String::from(
+        "rel want(key: str).\n\
+         rel resp(key: str, out: str).\n\
+         resp(key, out) <- @async want(key).\n",
+    );
+    for i in 0..8 {
+        prog_src.push_str(&format!("want(\"k{i}\").\n"));
+    }
+    fs::write(d.join("p.dl"), prog_src).unwrap();
+    let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    eng.tick(&prog, true).unwrap();
+    assert_eq!(rows(&dbp, "SELECT COUNT(*) FROM pending_effect"), vec![vec!["8".to_string()]]);
+
+    let exec = ConcExec { in_flight: AtomicUsize::new(0), peak: AtomicUsize::new(0) };
+    let n = eng.drain_effects(&prog, &exec).unwrap();
+    assert_eq!(n, 8, "all eight drained");
+    assert!(
+        exec.peak.load(Ordering::SeqCst) >= 2,
+        "expected overlapping requests, peak in-flight was {}",
+        exec.peak.load(Ordering::SeqCst)
+    );
+
+    eng.tick(&prog, true).unwrap();
+    assert_eq!(rows(&dbp, "SELECT COUNT(*) FROM rel_resp"), vec![vec!["8".to_string()]]);
+    assert_eq!(rows(&dbp, "SELECT done FROM pending_effect WHERE done = 0").len(), 0);
 }
 
 /// A response relation may not be headed by a source/derived rule too: it is

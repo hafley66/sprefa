@@ -48,7 +48,10 @@ fn async_bound_vars(rule: &Rule) -> Vec<String> {
 /// unbound head slot, in head order. Pure: it holds no engine state, lives in the
 /// daemon, and is the only place an `@async` effect actually executes (the shell
 /// `gh`/`git`/http call). See docs/research-reactive-effectful-datalog.md §8.
-pub trait EffectExec {
+/// `Sync` so one executor instance is shared across the rayon pool when
+/// `drain_effects` runs the pending requests in parallel (the subprocess spawn is
+/// the slow part; the DB writes stay serial and batched).
+pub trait EffectExec: Sync {
     fn run(&self, kind: &str, args: &serde_json::Map<String, serde_json::Value>) -> Result<Vec<String>>;
 }
 
@@ -5424,37 +5427,68 @@ impl Engine {
             v
         };
 
-        let mut drained = 0usize;
+        // Parse args serially (cheap, and a bad JSON blob should bail before any
+        // subprocess spawns). Drop requests whose `@async` rule is not in the
+        // current program — a different program may own that kind, leave it queued.
+        let mut work: Vec<(String, String, serde_json::Map<String, serde_json::Value>)> = Vec::new();
         for (id, kind, args_json) in pending {
-            // A request whose @async rule is not in the current program is left
-            // queued (a different program may own that kind).
-            let Some((slots, nout)) = plans.get(&kind) else { continue };
-            let args: serde_json::Map<String, serde_json::Value> =
-                match serde_json::from_str::<serde_json::Value>(&args_json)? {
-                    serde_json::Value::Object(m) => m,
-                    _ => bail!("pending_effect.args_json for `{kind}` is not a JSON object"),
-                };
-            let out = exec.run(&kind, &args)?;
-            if out.len() != *nout {
-                bail!("@async executor for `{kind}` returned {} value(s), expected {} \
-                       (one per unbound head slot)", out.len(), nout);
-            }
-            let row: Vec<Value> = slots.iter().map(|s| match s {
-                AsyncSlot::Const(v) => v.clone(),
-                AsyncSlot::FromArg(v) => json_to_value(args.get(v)),
-                AsyncSlot::FromOutput(i) => Value::Text(out[*i].clone()),
-            }).collect();
+            if !plans.contains_key(&kind) { continue; }
+            let args = match serde_json::from_str::<serde_json::Value>(&args_json)? {
+                serde_json::Value::Object(m) => m,
+                _ => bail!("pending_effect.args_json for `{kind}` is not a JSON object"),
+            };
+            work.push((id, kind, args));
+        }
+
+        // Run the executors across the rayon pool: the shell spawn / network call
+        // is the slow part, and one request never depends on another's response
+        // (downstream rules join the landed rows on a LATER tick). Each closure
+        // assembles its head row; the DB writes below stay serial and batched.
+        let assembled: Vec<(String, String, Vec<Value>)> = work.par_iter()
+            .map(|(id, kind, args)| {
+                let (slots, nout) = &plans[kind];
+                let out = exec.run(kind, args)?;
+                if out.len() != *nout {
+                    bail!("@async executor for `{kind}` returned {} value(s), expected {} \
+                           (one per unbound head slot)", out.len(), nout);
+                }
+                let row: Vec<Value> = slots.iter().map(|s| match s {
+                    AsyncSlot::Const(v) => v.clone(),
+                    AsyncSlot::FromArg(v) => json_to_value(args.get(v)),
+                    AsyncSlot::FromOutput(i) => Value::Text(out[*i].clone()),
+                }).collect();
+                Ok((id.clone(), kind.clone(), row))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        if assembled.is_empty() { return Ok(0); }
+
+        // Batch the response rows by kind (one `insert_rows` per response rel) and
+        // mark every drained request done in a single transaction.
+        let mut by_kind: HashMap<String, Vec<Vec<Value>>> = HashMap::new();
+        let mut done_ids: Vec<String> = Vec::with_capacity(assembled.len());
+        for (id, kind, row) in assembled {
+            by_kind.entry(kind).or_default().push(row);
+            done_ids.push(id);
+        }
+        for (kind, rows) in &by_kind {
             let cols: Vec<String> = {
-                let meta = self.rels.get(&kind)
+                let meta = self.rels.get(kind)
                     .ok_or_else(|| anyhow::anyhow!("@async response relation `{kind}` is not declared"))?;
                 meta.cols.iter().map(|c| c.name.clone()).collect()
             };
             let col_refs: Vec<&str> = cols.iter().map(|s| s.as_str()).collect();
-            self.db.insert_rows(&tbl(&kind), &col_refs, &[row])?;
-            self.db.conn().execute("UPDATE pending_effect SET done = 1 WHERE id = ?1", [&id])?;
-            drained += 1;
+            self.db.insert_rows(&tbl(kind), &col_refs, rows)?;
         }
-        Ok(drained)
+        {
+            let conn = self.db.conn();
+            let tx = conn.unchecked_transaction()?;
+            for id in &done_ids {
+                tx.execute("UPDATE pending_effect SET done = 1 WHERE id = ?1", [id])?;
+            }
+            tx.commit()?;
+        }
+        Ok(done_ids.len())
     }
 
     /// Wipe derived tables and run the semi-naive fixpoint to convergence.
