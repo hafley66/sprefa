@@ -464,3 +464,195 @@ current tick. So `reconcile_sources` (or a sibling) must surface `carry_<rel> WH
 current_tx` as a readable relation before `rebuild_derived`, and the stratifier must treat
 it as EDB. That is the whole semantic delta. Everything else (tokens, the effect queue, the
 daemon loop) is additive plumbing over machinery that exists.
+
+## 9. Zoom-2 spec — the effect runtime: shell-fn templates, a job table, the reconcile drain
+
+§8 built the minimum: `pending_effect` as a flat queue, a per-row serial `sh -c` in
+`drain_effects`, the command map as an `effect_cmd(kind, template)` relation, one global
+`DL_POLL_SECS` clock. That ships. This section is the next layer, driven by five questions
+the flat version does not answer well: per-stream cadence, native HTTP, streaming responses,
+parallel/batched shell, and process control. Four of the five collapse into one structural
+move (the drain becomes a reconcile loop over a job table); the fifth (shell as a first-class
+language thing) is the surface that makes the whole effect layer readable.
+
+### 9.1 The reframe: `@next`/`@async` are the lazy-state + unidirectional-stream core
+
+`@next` = carry a value to the next tick = `BehaviorSubject` (lazy state that survives a
+generation). `@async` = a body fires, the response lands later = the one-shot unidirectional
+stream (request -> single response). Together they are the rxjs spine minus the operator
+zoo: state that persists and effects that resolve out-of-band, both as data on the `tx`
+spine. What they do NOT yet cover is the *generator* shape — one effect that yields MANY
+rows over time (pagination, `tail -f`, SSE, a websocket). That is the coroutine/`yield`
+direction (§9.5); it is a third rule kind, not a config of the two.
+
+### 9.2 Shell as a language thing: the `sh` template declaration (not a relation)
+
+Today the command lives in an `effect_cmd(kind, template)` *row*. The dream is to make a
+templated CLI call a declared, named, typed *callable* — neither a relation nor a magic op,
+a third top-level item next to `rel`/`rule`:
+
+```
+# A templated bash function. Params fill {holes}; the arrow names the outputs.
+# Backtick body = the shell line; the engine never parses it, it runs it.
+sh gh(repo, path) -> (status, body) {
+    gh api "repos/{repo}/contents/{path}" -w "\n%{http_code}"
+}
+
+# Terser single-line form.
+sh sha(file) -> (digest) = `git hash-object {file}`.
+```
+
+Used as the effect in an `@async` body (this is §8.2's `gh:get(...) -> (...)` sketch pulled
+back, but *declared* instead of magic):
+
+```
+resp(repo, path, status, body) <- @async want(repo, path), gh(repo, path) -> (status, body).
+```
+
+The `sh` decl replaces the `kind`-is-the-head-rel-name convention: the effect kind is the
+shell-fn name, args are its params (explicit), outputs are its return tuple (explicit). The
+§8 built form (head-rel as kind, unbound-head-terms as outputs) stays valid as the
+zero-ceremony path; the `sh` decl is the typed, reusable, named upgrade.
+
+Signatures:
+
+```rust
+// ast.rs — a new Item variant.
+pub struct ShellFn {
+    pub name: String,            // call name = effect kind
+    pub params: Vec<String>,     // {hole} names, the request args
+    pub outs: Vec<(String, Type)>, // the response tuple, typed
+    pub body: String,            // raw shell, {param} holes filled at run
+    pub streaming: bool,         // §9.5: `sh*` yields many rows over time
+}
+pub enum Item { Rel(..), Rule(..), /* ... */ Shell(ShellFn) }
+```
+
+This is the piece that makes the effect layer *read* like the rest of the language: the
+`@async` body names a function, not a string, and the function is checked (arity, output
+columns, hole coverage) at parse time, not at drain time.
+
+### 9.3 Per-stream cadence: `every(secs)` as a clock relation
+
+Retire the global `DL_POLL_SECS` as the *only* knob. `every(N)` is a built-in source
+relation, non-empty only on the wall-clock boundary where the daemon's base tick crosses a
+multiple of N:
+
+```
+fast(k, s, b) <- @async want(k, u), gh(k, u) -> (s, b), every(30).
+slow(...)      <- @async other(...), gh(...) -> (...),  every(900).
+```
+
+Cadence becomes data, per-rule, composable (`every(30), weekday()` is a throttle AND a
+filter). The daemon poll loop runs at the base resolution; each `every(N)` gates its own
+rule. `DL_POLL_SECS` degrades to "base scheduler tick." This honors the file's rule that
+derivable things are facts that flow, not global statements.
+
+### 9.4 The structural move: `pending_effect` becomes a job table, the drain a reconcile loop
+
+The flat queue + per-row serial `sh -c` has two faults: it is a subprocess **N+1** (the
+exact per-row-write anti-pattern the repo bans, in spawn space), and it has no handle on a
+running child (no kill, no timeout, no liveness). Both fix with one change: make the table a
+job table and the drain a reconciler.
+
+```
+pending_effect(
+  id TEXT PRIMARY KEY,     -- = blake3(kind, args): the IDENTITY and the interrupt key
+  kind TEXT, args_json TEXT, req_tx INTEGER,
+  state TEXT,              -- queued | running | done | failed
+  pid INTEGER,             -- the live child, for kill/reap/reattach
+  started_at INTEGER
+)
+```
+
+The drain is no longer "loop rows, run each." It is a reconcile of **desired** (the request
+ids the `@async` rules currently derive this tick) against **running** (rows with a live
+pid), the k8s-controller shape the daemon already uses for discovery mode:
+
+| desired | running | action |
+|---|---|---|
+| yes | no | spawn (`.spawn()`, record pid + started_at, state=running) |
+| no | yes | SIGTERM (input changed or retracted — kill by digest id) |
+| yes | yes, over timeout | kill, state=failed |
+| (exited) | — | reap, insert response into the head rel, state=done |
+
+The content-hash interrupt the design wants is free: `id = blake3(kind, args)` already *is*
+the hash. When an input row changes, the id changes, the old id is no longer in the desired
+set, so the reconcile kills its child. No new key needed; the digest is the interrupt key.
+
+`nohup`/detach matters only for jobs that must outlive a daemon bounce (the streaming case);
+for a poll cache the daemon owns the children and a plain spawn + kill-on-undesired suffices.
+Persisting `pid` is what lets a restarted daemon reattach or reap orphans.
+
+### 9.5 Parallel and batch: the `xargs` combinator, the subprocess collect-then-flush
+
+Two ways to stop the N+1, not exclusive:
+
+- **(a) Engine-owned pool.** Reconcile spawns the desired-not-running set across a bounded
+  rayon pool (the `cmd` op already parallelizes across files). The engine sees and budgets
+  every spawn, like the existing `CMD_COUNT` guard. Metering stays honest.
+- **(b) Shell-owned batch — the `xargs` shape.** Group the desired set by kind, hand the
+  whole arg set to ONE process that fans internally:
+
+  ```
+  sh* gh_batch(urls) -> (url, status) {
+      printf '%s\n' {urls} | xargs -P8 -I{} sh -c 'echo "{} $(gh api {} -w %{http_code} -o /dev/null -s)"'
+  }
+  ```
+
+  This is `insert_rows` for spawns: the engine already collects the set (collect-then-flush
+  is the whole ethos), so handing it to one `xargs -P` is the literal subprocess analog. The
+  shell owns the parallelism knob (the user's muscle memory); the engine sees one logical
+  job.
+
+Tension: (a) keeps the budget/metering visible to the engine, (b) matches the N+1 ban and
+the user's shell idiom but the fan-out is opaque to the engine. Likely both: batch by kind,
+let `xargs -P` parallelize inside, cap the batch count with a per-poll spawn budget that
+mirrors `cmd_budget()`.
+
+### 9.6 Streaming / SSE / pagination: the `sh*` generator (the yield/coroutine direction)
+
+`@async` resolves to exactly one response then flips `done`. A stream is one effect that
+yields rows over time: `gh api --paginate`, `tail -f`, an SSE endpoint, a websocket. That is
+a generator/coroutine, and it is the genuinely new primitive (Bloom does not have it either;
+it is Dedalus' "async with multiplicity").
+
+The `sh*` form (star = yields) is a shell-fn whose child stays alive and whose every stdout
+line appends one row to the head relation as it arrives:
+
+```
+sh* events(repo) -> (kind, at) {
+    gh api "repos/{repo}/events" --paginate --jq '.[] | "\(.type)\t\(.created_at)"'
+}
+
+event(repo, kind, at) <- @stream events(repo) -> (kind, at).
+```
+
+Runtime: a `sh*` job stays `state=running` (never auto-`done`), its child reparented and fed
+through a reader thread that batches lines into the head rel between ticks. This is `@next`
+(carry the read cursor / last-seen line) married to a long-running `cmd`. SSR-as-render
+(projecting relations to HTML/text) is unrelated — that is an output sink, a derived rel
+through a template, orthogonal to the effect layer.
+
+### 9.7 Native HTTP: a sibling `EffectExec`, not a rewrite
+
+`EffectExec` is already the seam. Keep `ShellEffectExec` (built, zero-dep, `gh`/`curl` own
+auth+etag). Add `HttpEffectExec` (ureq/reqwest) returning `(status, headers_json, body)` for
+the cases that want connection reuse, structured headers, and in-process 304/etag. Dispatch
+by the shell-fn's body scheme or an attribute. The etag/304 guard (an `@async` reading last
+tick's etag carry to skip an unchanged fetch) is clean native, awkward in shell (`curl -D -`
+blob you regex).
+
+### 9.8 Build order (smallest dup-free increments)
+
+1. **Parallel/batch drain** (§9.5a) — smallest, kills the live subprocess N+1, no new
+   surface. Reconcile spawns across rayon with a per-poll budget.
+2. **`every(N)` clock relation** (§9.3) — retires the global-only knob, small source op.
+3. **`sh` template decl** (§9.2) — the language surface; makes effects read like rules.
+   Subsumes `effect_cmd` rows. Parse-time arity/hole/output checks.
+4. **Job table + reconcile** (§9.4) — `state`/`pid`/`started_at`, kill-by-digest. Unlocks
+   process control AND is the precondition for streaming.
+5. **`sh*` streaming generator** (§9.6) — the third rule kind (`@stream`), the coroutine
+   shape, rides the job table.
+6. **`HttpEffectExec` + etag/304** (§9.7) — the conditional-request cache, the last ghcacher
+   piece.
