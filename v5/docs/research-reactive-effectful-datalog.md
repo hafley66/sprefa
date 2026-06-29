@@ -312,7 +312,22 @@ async executor exists.
 
 Grounded in `src/engine.rs` `tick()` (1916), `src/ast.rs` `Rule` (203). Follows the
 four-layer protocol: signatures, pseudo-body, instance lifetimes, then storage / read-write
-order / uniqueness. Nothing here is built yet.
+order / uniqueness.
+
+**Status: built.** `@next` carry (commit bd7eb6e) and `@async` effect seam land the
+`pending_effect` queue, `EffectExec` trait, and off-tick `drain_effects`. Tests:
+`tests/it/temporal_carry.rs`, `tests/it/temporal_async.rs`.
+
+**One simplification vs the §8.2 sketch below.** The sketch wrote the effect as a body op
+`gh:get(EP, OLD) -> (S, B, E)`. The built form has no effect op: an `@async` rule body is an
+ordinary conjunctive query that binds the *request args* (every positive-atom variable), and
+the head's columns are the response. A head term the body binds echoes from the request; a
+head term the body does NOT bind is an *output slot* the executor fills. The effect `kind` is
+the head rel name; the daemon's `EffectExec` maps kind -> the actual shell call. So
+`resp(key, status, body) <- @async want(key, url).` queues one request per `want` row with
+args `{key, url}`, and the executor returns `[status, body]` (the two unbound head slots).
+This keeps the grammar at zero new body ops and reuses the source-op "unbound out var"
+mental model.
 
 ### 8.1 Type signatures
 

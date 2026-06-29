@@ -22,6 +22,46 @@ fn scc_edge_tbl(edge: &str) -> String { format!("scc_edge_{edge}") }
 /// start of the next tick. See docs/research-reactive-effectful-datalog.md §8.
 fn carry_tbl(rel: &str) -> String { format!("_carry_{rel}") }
 
+/// One head slot of an `@async` rule, classifying how its value is filled when
+/// the effect response lands: a literal constant, a body-bound request arg
+/// (echoed from the request), or the i-th value the executor returned.
+enum AsyncSlot { Const(Value), FromArg(String), FromOutput(usize) }
+
+/// The distinct variables a positive body atom binds, in first-appearance order.
+/// For an `@async` rule these are the request args passed to the executor.
+fn async_bound_vars(rule: &Rule) -> Vec<String> {
+    let mut seen = Vec::new();
+    for b in &rule.body {
+        if let BodyItem::Pos(a) = b {
+            for t in &a.terms {
+                if let Term::Var(v) = t {
+                    if !seen.contains(v) { seen.push(v.clone()); }
+                }
+            }
+        }
+    }
+    seen
+}
+
+/// Runs one queued `@async` request. `kind` is the response rel name; `args` is
+/// the bound-var object the rule body projected; the return is one string per
+/// unbound head slot, in head order. Pure: it holds no engine state, lives in the
+/// daemon, and is the only place an `@async` effect actually executes (the shell
+/// `gh`/`git`/http call). See docs/research-reactive-effectful-datalog.md §8.
+pub trait EffectExec {
+    fn run(&self, kind: &str, args: &serde_json::Map<String, serde_json::Value>) -> Result<Vec<String>>;
+}
+
+/// Coerce a JSON arg value (from `pending_effect.args_json`) into a db cell.
+fn json_to_value(v: Option<&serde_json::Value>) -> Value {
+    match v {
+        Some(serde_json::Value::Number(n)) if n.is_i64() => Value::Int(n.as_i64().unwrap()),
+        Some(serde_json::Value::String(s)) => Value::Text(s.clone()),
+        Some(other) => Value::Text(other.to_string()),
+        None => Value::Text(String::new()),
+    }
+}
+
 /// Per-tick `cmd` invocation counter (parse_file runs across rayon, hence
 /// atomic; process-global like the profile stats — one engine per process in
 /// real use, e2e tests get their own subprocess).
@@ -1942,12 +1982,20 @@ impl Engine {
             }
         }
         // `@next` carry rules: staged into carry_<rel> at tx+1 after the tick
-        // converges, NOT derived into the head rel this tick. `@async` is the
-        // effect seam (docs §8) — not in this build, bail loudly rather than run
-        // its body as an ordinary rule (which would have no effect op to call).
+        // converges, NOT derived into the head rel this tick. `@async` rules emit
+        // a `pending_effect` request per body solution; the off-tick daemon runs
+        // the executor and lands the response in the head rel at a later tick.
+        // Neither is derived this tick (both excluded from all_derived below).
         let next_rules: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_next()).collect();
-        if let Some(r) = rules.iter().copied().find(|r| r.is_async()) {
-            bail!("@async rules are not yet implemented (rel `{}`); this build wires @next only", r.head.rel);
+        let async_rules: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_async()).collect();
+        // An @async body fires an effect over already-derived relations; a source
+        // op (scan/match/...) in the body has no meaning here (the effect, not the
+        // file system, is the IO). Reject it like a repo-sink.
+        for r in &async_rules {
+            if r.is_source() {
+                bail!("@async rule (rel `{}`) must be derived-style (no scan/match/ast/...); \
+                       its body binds the request args over already-derived relations", r.head.rel);
+            }
         }
         // non-source, non-closure rules. A rule whose body reads a closure head in
         // the seedable shape is split out: it can't go through `lower_rule` (the
@@ -2002,6 +2050,22 @@ impl Engine {
             if source_rels.contains(rel) || derived_rels.contains(rel) {
                 bail!("relation '{rel}' is headed by a @next rule and also by a source/derived \
                        rule; a @next (carry) relation must be written only by @next rules.");
+            }
+        }
+        // `@async` response relations: like carry, an @async head rel is written
+        // only by the off-tick drain (a persisted source-style rel). A source or
+        // derived rule heading it would be wiped each tick. Bail loudly.
+        let mut async_rels: Vec<String> = Vec::new();
+        for r in &async_rules {
+            if !async_rels.contains(&r.head.rel) { async_rels.push(r.head.rel.clone()); }
+        }
+        for rel in &async_rels {
+            if source_rels.contains(rel) || derived_rels.contains(rel) {
+                bail!("relation '{rel}' is headed by a @async rule and also by a source/derived \
+                       rule; an @async (response) relation is written only by the effect drain.");
+            }
+            if next_rels.contains(rel) {
+                bail!("relation '{rel}' is headed by both @next and @async rules; pick one.");
             }
         }
         // Load each carry rel's rows staged for the current generation into its
@@ -2152,6 +2216,17 @@ impl Engine {
         // rows surface as the live rel at the START of the next tick (Edit 2).
         if !next_rules.is_empty() {
             self.rebuild_next(&next_rules, &next_rels, cur_tx)?;
+        }
+        // @async request emission: now that the tick converged, each @async rule's
+        // body binds the request args; one `pending_effect` row per solution lands
+        // (idempotent on its digest id). The daemon's `drain_effects` runs them
+        // off-tick and the response surfaces in the head rel at a later tick.
+        if !async_rules.is_empty() {
+            self.rebuild_async(&async_rules, cur_tx)?;
+        }
+        // The carry clock advances once per tick that has any temporal rule, so
+        // `req_tx` and the next carry generation track the same coordinate.
+        if !next_rules.is_empty() || !async_rules.is_empty() {
             self.set_tx(cur_tx + 1)?;
         }
         self.last_n1 = self.db.tick_end();
@@ -2549,7 +2624,16 @@ impl Engine {
              -- tx=current+1; the counter advances once per tick. See
              -- docs/research-reactive-effectful-datalog.md §8.
              CREATE TABLE IF NOT EXISTS _carry_meta (k TEXT PRIMARY KEY, tx INTEGER NOT NULL DEFAULT 0);
-             INSERT OR IGNORE INTO _carry_meta (k, tx) VALUES ('tx', 0);"
+             INSERT OR IGNORE INTO _carry_meta (k, tx) VALUES ('tx', 0);
+             -- @async effect queue: one row per outstanding request. `id` =
+             -- digest(kind, args_json) so the same request emitted on two ticks
+             -- before it runs does not double-fire. `kind` = the response rel
+             -- name; `args_json` = the bound-var object; `done` flips to 1 once
+             -- the executor has run and the response row is inserted. Off-tick
+             -- `drain_effects` is the only writer of `done`. See §8.
+             CREATE TABLE IF NOT EXISTS pending_effect (
+                 id TEXT PRIMARY KEY, kind TEXT NOT NULL, args_json TEXT NOT NULL,
+                 req_tx INTEGER NOT NULL, done INTEGER NOT NULL DEFAULT 0);"
         )?;
         // tolerate dbs created before mtime/size existed
         let _ = self.db.conn().execute("ALTER TABLE _file ADD COLUMN mtime INTEGER DEFAULT 0", []);
@@ -5186,6 +5270,124 @@ impl Engine {
             self.db.conn().execute(&sql, [])?;
         }
         Ok(())
+    }
+
+    /// Emit one `pending_effect` request row per @async-rule body solution. The
+    /// body binds the request args (the distinct positive-atom vars); each
+    /// solution becomes a JSON arg object keyed by var name. The row's `id` is a
+    /// digest of (kind, args) so re-emitting the same request across ticks before
+    /// it runs does not double-fire (INSERT OR IGNORE on the PK). The executor
+    /// runs off-tick in `drain_effects`; nothing here touches the network.
+    fn rebuild_async(&self, async_rules: &[&Rule], cur: i64) -> Result<()> {
+        let mut rows: Vec<Vec<Value>> = Vec::new();
+        for r in async_rules {
+            let kind = &r.head.rel;
+            let vars = async_bound_vars(r);
+            if vars.is_empty() {
+                bail!("@async rule (rel `{kind}`) binds no request args; its body must have \
+                       a positive atom with at least one variable");
+            }
+            let sql = crate::lower::lower_body_projection(&r.body, &self.rels, &vars)?;
+            let solutions: Vec<serde_json::Map<String, serde_json::Value>> = {
+                let mut stmt = self.db.conn().prepare(&sql)?;
+                let it = stmt.query_map([], |row| {
+                    let mut obj = serde_json::Map::new();
+                    for (i, v) in vars.iter().enumerate() {
+                        let val: rusqlite::types::Value = row.get(i)?;
+                        let jv = match val {
+                            rusqlite::types::Value::Integer(n) => serde_json::json!(n),
+                            rusqlite::types::Value::Real(f) => serde_json::json!(f),
+                            rusqlite::types::Value::Text(s) => serde_json::json!(s),
+                            _ => serde_json::Value::Null,
+                        };
+                        obj.insert(v.clone(), jv);
+                    }
+                    Ok(obj)
+                })?;
+                it.filter_map(|x| x.ok()).collect()
+            };
+            for obj in solutions {
+                let args_json = serde_json::Value::Object(obj).to_string();
+                let id = blake3::hash(format!("{kind}\u{0}{args_json}").as_bytes()).to_hex().to_string();
+                rows.push(vec![
+                    Value::Text(id), Value::Text(kind.clone()),
+                    Value::Text(args_json), Value::Int(cur),
+                ]);
+            }
+        }
+        // `done` defaults to 0; INSERT OR IGNORE keeps an already-queued (or
+        // already-run, done=1) request untouched.
+        self.db.insert_rows("pending_effect", &["id", "kind", "args_json", "req_tx"], &rows)?;
+        Ok(())
+    }
+
+    /// Run every outstanding `@async` request through `exec` and land its response
+    /// in the head relation, then flip `done`. Called by the daemon BETWEEN ticks
+    /// (never inside `tick`): this is the only place an effect actually executes.
+    /// The response row is assembled in head order — body-bound head terms echo
+    /// from the request args, unbound head terms take the executor's outputs in
+    /// order. The response rel persists (it is neither source nor derived), so the
+    /// next tick reads it like any fact. Returns the number of requests drained.
+    pub fn drain_effects(&mut self, prog: &Program, exec: &dyn EffectExec) -> Result<usize> {
+        // Per-kind head reassembly plan, keyed by the @async head rel name.
+        let mut plans: HashMap<String, (Vec<AsyncSlot>, usize)> = HashMap::new();
+        for item in &prog.items {
+            let Item::Rule(r) = item else { continue };
+            if !r.is_async() { continue; }
+            let vars = async_bound_vars(r);
+            let mut slots = Vec::new();
+            let mut nout = 0usize;
+            for t in &r.head.terms {
+                slots.push(match t {
+                    Term::Str(s) => AsyncSlot::Const(Value::Text(s.clone())),
+                    Term::Int(n) => AsyncSlot::Const(Value::Int(*n)),
+                    Term::Var(v) if vars.contains(v) => AsyncSlot::FromArg(v.clone()),
+                    Term::Var(_) => { let i = nout; nout += 1; AsyncSlot::FromOutput(i) }
+                    other => bail!("@async head term {other:?} (rel `{}`) must be a variable or literal", r.head.rel),
+                });
+            }
+            plans.insert(r.head.rel.clone(), (slots, nout));
+        }
+
+        let pending: Vec<(String, String, String)> = {
+            let mut stmt = self.db.conn().prepare(
+                "SELECT id, kind, args_json FROM pending_effect WHERE done = 0")?;
+            let v = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                .filter_map(|x| x.ok()).collect();
+            v
+        };
+
+        let mut drained = 0usize;
+        for (id, kind, args_json) in pending {
+            // A request whose @async rule is not in the current program is left
+            // queued (a different program may own that kind).
+            let Some((slots, nout)) = plans.get(&kind) else { continue };
+            let args: serde_json::Map<String, serde_json::Value> =
+                match serde_json::from_str::<serde_json::Value>(&args_json)? {
+                    serde_json::Value::Object(m) => m,
+                    _ => bail!("pending_effect.args_json for `{kind}` is not a JSON object"),
+                };
+            let out = exec.run(&kind, &args)?;
+            if out.len() != *nout {
+                bail!("@async executor for `{kind}` returned {} value(s), expected {} \
+                       (one per unbound head slot)", out.len(), nout);
+            }
+            let row: Vec<Value> = slots.iter().map(|s| match s {
+                AsyncSlot::Const(v) => v.clone(),
+                AsyncSlot::FromArg(v) => json_to_value(args.get(v)),
+                AsyncSlot::FromOutput(i) => Value::Text(out[*i].clone()),
+            }).collect();
+            let cols: Vec<String> = {
+                let meta = self.rels.get(&kind)
+                    .ok_or_else(|| anyhow::anyhow!("@async response relation `{kind}` is not declared"))?;
+                meta.cols.iter().map(|c| c.name.clone()).collect()
+            };
+            let col_refs: Vec<&str> = cols.iter().map(|s| s.as_str()).collect();
+            self.db.insert_rows(&tbl(&kind), &col_refs, &[row])?;
+            self.db.conn().execute("UPDATE pending_effect SET done = 1 WHERE id = ?1", [&id])?;
+            drained += 1;
+        }
+        Ok(drained)
     }
 
     /// Wipe derived tables and run the semi-naive fixpoint to convergence.

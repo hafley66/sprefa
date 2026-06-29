@@ -168,6 +168,26 @@ fn body_sql(body: &[BodyItem], rels: &Rels)
 }
 
 /// Lower a derived rule (Pos/Neg/Cmp only) to one `INSERT OR IGNORE ... SELECT`.
+/// Lower an `@async` rule body to a `SELECT DISTINCT` of the named bound vars
+/// (in the given order), each aliased to its var name. No head rel: the columns
+/// are the request-arg variables themselves, projected out of the converged
+/// relations. The engine reads each row into a JSON arg object. See engine
+/// `rebuild_async` and docs §8.
+pub fn lower_body_projection(body: &[BodyItem], rels: &Rels, vars: &[String]) -> Result<String> {
+    let (canon, froms, wheres) = body_sql(body, rels)?;
+    if froms.is_empty() {
+        bail!("@async rule body has no positive atom to bind request args");
+    }
+    let mut exprs = Vec::new();
+    for v in vars {
+        let e = canon.get(v).cloned()
+            .ok_or_else(|| anyhow::anyhow!("@async request var {v} is unbound in the body"))?;
+        exprs.push(format!("{e} AS \"{v}\""));
+    }
+    let where_sql = if wheres.is_empty() { String::new() } else { format!(" WHERE {}", wheres.join(" AND ")) };
+    Ok(format!("SELECT DISTINCT {} FROM {}{}", exprs.join(", "), froms.join(", "), where_sql))
+}
+
 pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
     lower_rule_to(rule, rels, &tbl(&rule.head.rel), &[])
 }

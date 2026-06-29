@@ -90,23 +90,6 @@ fn next_carry_accumulates() {
     assert_eq!(ints(&dbp, "acc", "v"), vec![1, 2], "acc carries the prior acc_next");
 }
 
-/// `@async` is not wired in this build: it must bail loudly, never silently run
-/// its body as an ordinary rule.
-#[test]
-fn async_rule_bails() {
-    let d = sandbox("async");
-    fs::write(d.join("p.dl"),
-        "rel ping(v: int).\n\
-         ping(1).\n\
-         rel out(v: int).\n\
-         out(v) <- @async ping(v).\n").unwrap();
-    let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
-    let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
-    let mut eng = Engine::new(conn, d.clone());
-    let err = eng.tick(&prog, true).unwrap_err();
-    assert!(err.to_string().contains("@async"), "expected an @async-not-implemented bail: {err}");
-}
-
 /// A carry rel may be written ONLY by @next rules: heading it with a derived rule
 /// too is a loud conflict (it would be wiped by rebuild_derived).
 #[test]
