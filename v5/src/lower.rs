@@ -169,6 +169,16 @@ fn body_sql(body: &[BodyItem], rels: &Rels)
 
 /// Lower a derived rule (Pos/Neg/Cmp only) to one `INSERT OR IGNORE ... SELECT`.
 pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
+    lower_rule_to(rule, rels, &tbl(&rule.head.rel), &[])
+}
+
+/// Lower a rule into an arbitrary `target` table, appending `extra` constant
+/// columns `(col_name, value_sql)` to the SELECT. The plain rule path is
+/// `lower_rule_to(rule, rels, &tbl(head), &[])`. The `@next` carry path passes
+/// `target = carry_<rel>` and `extra = [("tx", "<next_tx>")]` so the body's rows
+/// land in the carry buffer stamped with the next generation instead of in the
+/// head relation this tick. Existing callers go through `lower_rule` unchanged.
+pub fn lower_rule_to(rule: &Rule, rels: &Rels, target: &str, extra: &[(String, String)]) -> Result<String> {
     let (canon, froms, mut wheres) = body_sql(&rule.body, rels)?;
 
     // a ground fact (empty body) lowers to a FROM-less SELECT of literals;
@@ -182,7 +192,9 @@ pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
     if rule.head.terms.len() != head_meta.cols.len() {
         bail!("head {} expects {} cols, got {}", rule.head.rel, head_meta.cols.len(), rule.head.terms.len());
     }
-    let cols: Vec<String> = head_meta.cols.iter().map(|c| format!("\"{}\"", c.name)).collect();
+    let mut cols: Vec<String> = head_meta.cols.iter().map(|c| format!("\"{}\"", c.name)).collect();
+    for (n, _) in extra { cols.push(format!("\"{n}\"")); }
+    let extra_vals: Vec<String> = extra.iter().map(|(_, v)| v.clone()).collect();
     let where_sql = if wheres.is_empty() { String::new() } else { format!(" WHERE {}", wheres.join(" AND ")) };
 
     // An aggregating head selects `AGG(arg)` for each aggregate term and the plain
@@ -218,9 +230,10 @@ pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
             }
         }
         let group_sql = if group.is_empty() { String::new() } else { format!(" GROUP BY {}", group.join(", ")) };
+        exprs.extend(extra_vals.iter().cloned());
         return Ok(format!(
             "INSERT OR IGNORE INTO {} ({}) SELECT {} FROM {}{}{}",
-            tbl(&rule.head.rel),
+            target,
             cols.join(", "),
             exprs.join(", "),
             froms.join(", "),
@@ -242,11 +255,12 @@ pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
         exprs.push(e);
     }
 
+    exprs.extend(extra_vals.iter().cloned());
     let from_sql = if froms.is_empty() { String::new() } else { format!(" FROM {}", froms.join(", ")) };
     let where_sql = if wheres.is_empty() { String::new() } else { format!(" WHERE {}", wheres.join(" AND ")) };
     Ok(format!(
         "INSERT OR IGNORE INTO {} ({}) SELECT {}{}{}",
-        tbl(&rule.head.rel),
+        target,
         cols.join(", "),
         exprs.join(", "),
         from_sql,

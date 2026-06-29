@@ -17,6 +17,10 @@ use crate::typegraph;
 
 fn scc_node_tbl(edge: &str) -> String { format!("scc_node_{edge}") }
 fn scc_edge_tbl(edge: &str) -> String { format!("scc_edge_{edge}") }
+/// The per-`@next`-rel carry buffer: the live rel's columns plus a `tx`
+/// generation column. Rows staged at `tx = cur+1` surface as the live rel at the
+/// start of the next tick. See docs/research-reactive-effectful-datalog.md §8.
+fn carry_tbl(rel: &str) -> String { format!("_carry_{rel}") }
 
 /// Per-tick `cmd` invocation counter (parse_file runs across rayon, hence
 /// atomic; process-global like the profile stats — one engine per process in
@@ -1937,13 +1941,22 @@ impl Engine {
                        its body is compiled as a SELECT over already-derived relations");
             }
         }
+        // `@next` carry rules: staged into carry_<rel> at tx+1 after the tick
+        // converges, NOT derived into the head rel this tick. `@async` is the
+        // effect seam (docs §8) — not in this build, bail loudly rather than run
+        // its body as an ordinary rule (which would have no effect op to call).
+        let next_rules: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_next()).collect();
+        if let Some(r) = rules.iter().copied().find(|r| r.is_async()) {
+            bail!("@async rules are not yet implemented (rel `{}`); this build wires @next only", r.head.rel);
+        }
         // non-source, non-closure rules. A rule whose body reads a closure head in
         // the seedable shape is split out: it can't go through `lower_rule` (the
         // closure head is a VIEW that isn't populated mid-fixpoint), so it is
         // evaluated by a seeded BFS in the query phase instead. Repo-sinks are
-        // excluded: they are drained, not derived.
+        // excluded: they are drained, not derived. `@next` rules are excluded:
+        // their head lands in the next tick's carry buffer, not this tick.
         let all_derived: Vec<&Rule> = rules.iter().copied()
-            .filter(|r| !r.is_source() && !r.is_repo_sink()
+            .filter(|r| !r.is_source() && !r.is_repo_sink() && !r.is_next() && !r.is_async()
                 && r.closure_edge().is_none() && r.scc_edge().is_none()).collect();
         // `head(..) <- scc(edge).` rules: materialize (rep, member) from the
         // closure condensation in the query phase (after refresh_cond_cache).
@@ -1976,6 +1989,31 @@ impl Engine {
                        the source rule and the derived rule in two separate relations and union \
                        them in a third derived rule.");
             }
+        }
+        // `@next` carry relations: a head rel staged for the next tick must be
+        // written ONLY by @next rules — it is loaded from carry as EDB this tick,
+        // so a source/derived rule heading it would be wiped (rebuild_derived) or
+        // collide (reconcile). Its dedup head set drives the carry load/stage.
+        let mut next_rels: Vec<String> = Vec::new();
+        for r in &next_rules {
+            if !next_rels.contains(&r.head.rel) { next_rels.push(r.head.rel.clone()); }
+        }
+        for rel in &next_rels {
+            if source_rels.contains(rel) || derived_rels.contains(rel) {
+                bail!("relation '{rel}' is headed by a @next rule and also by a source/derived \
+                       rule; a @next (carry) relation must be written only by @next rules.");
+            }
+        }
+        // Load each carry rel's rows staged for the current generation into its
+        // live table BEFORE reconcile/derive, so same-tick rules read the carried
+        // state as an ordinary relation. tx stays at `cur_tx` until staging.
+        let cur_tx = self.current_tx()?;
+        for rel in &next_rels {
+            let meta = self.rels.get(rel)
+                .ok_or_else(|| anyhow::anyhow!("@next relation {rel} is not declared (add `rel {rel}(...)`)"))?
+                .clone();
+            self.ensure_carry_table(rel, &meta)?;
+            self.load_carry(rel, &meta, cur_tx)?;
         }
         let edges: Vec<&str> = dedup_edges(&closures);
         self.create_auto_indexes(&derived_rules, &closures)?;
@@ -2107,6 +2145,14 @@ impl Engine {
             counts.sort_by(|a, b| a.0.cmp(&b.0));
             eprintln!("[audit] {} relation(s)", counts.len());
             for (rel, n) in &counts { eprintln!("[audit]   {rel}: {n}"); }
+        }
+        // @next staging: now that the tick has converged, each @next rule's body
+        // is evaluated over tick-T's relations and its head rows land in
+        // carry_<rel> at tx = cur_tx + 1. Then the clock advances. The carried
+        // rows surface as the live rel at the START of the next tick (Edit 2).
+        if !next_rules.is_empty() {
+            self.rebuild_next(&next_rules, &next_rels, cur_tx)?;
+            self.set_tx(cur_tx + 1)?;
         }
         self.last_n1 = self.db.tick_end();
         Ok(())
@@ -2497,7 +2543,13 @@ impl Engine {
              INSERT OR IGNORE INTO _files (id, content_hash, path, size)
                  VALUES ('0', '0000000000000000000000000000000000000000000000000000000000000000', '', 0);
              INSERT OR IGNORE INTO _where_bytes (id, string_id, file_id, lo, hi, repo, rev, path)
-                 VALUES ('0', '0', '0', 0, 0, '0', '0', '');"
+                 VALUES ('0', '0', '0', 0, 0, '0', '0', '');
+             -- The @next carry clock: one row, k='tx', the current generation.
+             -- A @next rule reads carry_<rel> WHERE tx=current and stages rows at
+             -- tx=current+1; the counter advances once per tick. See
+             -- docs/research-reactive-effectful-datalog.md §8.
+             CREATE TABLE IF NOT EXISTS _carry_meta (k TEXT PRIMARY KEY, tx INTEGER NOT NULL DEFAULT 0);
+             INSERT OR IGNORE INTO _carry_meta (k, tx) VALUES ('tx', 0);"
         )?;
         // tolerate dbs created before mtime/size existed
         let _ = self.db.conn().execute("ALTER TABLE _file ADD COLUMN mtime INTEGER DEFAULT 0", []);
@@ -5077,6 +5129,62 @@ impl Engine {
              SELECT na.name AS \"{c0}\", nb.name AS \"{c1}\"
                FROM {nt} na JOIN {nt} nb ON na.comp = nb.comp AND na.cyclic = 1;"
         ))?;
+        Ok(())
+    }
+
+    /// The current `@next` generation (`_carry_meta.tx`). 0 on a fresh db.
+    fn current_tx(&self) -> Result<i64> {
+        Ok(self.db.conn().query_row(
+            "SELECT tx FROM _carry_meta WHERE k = 'tx'", [], |r| r.get(0))?)
+    }
+
+    /// Advance the carry clock to `tx` (called once per tick after staging).
+    fn set_tx(&self, tx: i64) -> Result<()> {
+        self.db.conn().execute("UPDATE _carry_meta SET tx = ?1 WHERE k = 'tx'", [tx])?;
+        Ok(())
+    }
+
+    /// Create a carry buffer table mirroring the live rel's columns plus `tx`.
+    /// PK is (all rel cols, tx) so a re-tick at the same generation is idempotent.
+    fn ensure_carry_table(&self, rel: &str, meta: &RelMeta) -> Result<()> {
+        let cols: Vec<String> = meta.cols.iter()
+            .map(|c| format!("\"{}\" {}", c.name, c.ty.sql())).collect();
+        let pk: Vec<String> = meta.cols.iter().map(|c| format!("\"{}\"", c.name)).collect();
+        let sql = format!(
+            "CREATE TABLE IF NOT EXISTS {} ({}, tx INTEGER NOT NULL, PRIMARY KEY ({}, tx))",
+            carry_tbl(rel), cols.join(", "), pk.join(", "));
+        self.db.conn().execute(&sql, [])?;
+        Ok(())
+    }
+
+    /// Replace the live rel with the carry rows staged for generation `tx`.
+    fn load_carry(&self, rel: &str, meta: &RelMeta, tx: i64) -> Result<()> {
+        let cl = meta.cols.iter().map(|c| format!("\"{}\"", c.name))
+            .collect::<Vec<_>>().join(", ");
+        self.db.conn().execute(&format!("DELETE FROM {}", tbl(rel)), [])?;
+        self.db.conn().execute(
+            &format!("INSERT OR IGNORE INTO {dst} ({cl}) SELECT {cl} FROM {src} WHERE tx = ?1",
+                dst = tbl(rel), src = carry_tbl(rel)),
+            [tx])?;
+        Ok(())
+    }
+
+    /// Stage each @next rule's body (evaluated over the converged tick-T state)
+    /// into its carry buffer at `cur + 1`. One pass: the body reads only relations
+    /// that are already converged this tick (including the carried-in live rel),
+    /// none of which change during staging, so no fixpoint is needed.
+    fn rebuild_next(&self, next_rules: &[&Rule], next_rels: &[String], cur: i64) -> Result<()> {
+        let nxt = cur + 1;
+        for rel in next_rels {
+            self.db.conn().execute(
+                &format!("DELETE FROM {} WHERE tx = ?1", carry_tbl(rel)), [nxt])?;
+        }
+        for r in next_rules {
+            let sql = crate::lower::lower_rule_to(
+                r, &self.rels, &carry_tbl(&r.head.rel),
+                &[("tx".to_string(), nxt.to_string())])?;
+            self.db.conn().execute(&sql, [])?;
+        }
         Ok(())
     }
 
