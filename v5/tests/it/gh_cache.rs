@@ -184,3 +184,75 @@ fn list_endpoint_body_normalizes_into_entity_rows() {
         "each array element is one row, flat + nested fields correlated"
     );
 }
+
+/// LIVE against real GitHub (ignored by default: needs `gh` authed + network).
+/// Run: `cargo test --test it gh_cache_live -- --ignored --nocapture`. Drives the
+/// gh-cache loop with a REAL ShellEffectExec (no mock): the effect_cmd template
+/// shells `gh api -i`, a formatter splits status/etag/body, term-form jsonp
+/// normalizes the live body, and a second drain carrying the etag must get a 304.
+/// This is the actual utility check against the thing ghcacher does.
+#[test]
+#[ignore]
+fn gh_cache_live_against_github() {
+    use sprefa_v5::engine::{async_effect_arity, ShellEffectExec};
+    let d = sandbox("live");
+    let dbp = d.join("db");
+    // Newline-separated outputs (status\netag\nbody) — `run` splits stdout by line,
+    // last slot absorbs the body. {ep}/{prev} are filled from the request args.
+    let tmpl = "R=$(gh api {ep} -i -H \"If-None-Match: $prev\" 2>/dev/null); \
+                C=$(printf '%s' \"$R\" | head -1 | grep -oE '[0-9]{3}' | head -1); \
+                E=$(printf '%s' \"$R\" | grep -iE '^etag:' | head -1 | sed -E 's/^[Ee]tag:[[:space:]]*//; s/\\r$//'); \
+                B=$(printf '%s' \"$R\" | awk 'f{print} /^\\r?$/{f=1}' | tr -d '\\n'); \
+                printf '%s\\n%s\\n%s' \"$C\" \"$E\" \"$B\"";
+    fs::write(
+        d.join("p.dl"),
+        format!(
+            "rel watch(ep: text).\n\
+             watch(\"repos/cli/cli\").\n\
+             rel etag(ep: text, tag: text).\n\
+             rel etag_next(ep: text, tag: text).\n\
+             rel poll(ep: text, prev: text).\n\
+             poll(ep, prev) <- watch(ep), etag(ep, prev).\n\
+             poll(ep, \"\")  <- watch(ep), !etag(ep, _).\n\
+             rel resp(ep: text, status: int, tag: text, body: text).\n\
+             resp(ep, status, tag, body) <- @async poll(ep, prev).\n\
+             rel effect_cmd(kind: text, template: text).\n\
+             effect_cmd(\"resp\", {tmpl:?}).\n\
+             etag_next(ep, tag) <- resp(ep, 200, tag, _).\n\
+             etag_next(ep, old) <- resp(ep, 304, _, _), etag(ep, old).\n\
+             etag(ep, tag) <- @next etag_next(ep, tag).\n\
+             rel stars(ep: text, n: text).\n\
+             stars(ep, n) <- resp(ep, 200, _, body), jsonp(body, \"stargazers_count\", n).\n\
+             rel full_name(ep: text, name: text).\n\
+             full_name(ep, name) <- resp(ep, 200, _, body), jsonp(body, \"full_name\", name).\n\
+             ? stars(ep, n).\n"
+        ),
+    )
+    .unwrap();
+    let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    for i in 0..4 {
+        eng.tick(&prog, true).unwrap();
+        let exec = {
+            let mut templates = HashMap::new();
+            for row in eng.query_sql("SELECT kind, template FROM rel_effect_cmd", &[]).unwrap() {
+                templates.insert(row[0].as_str().unwrap().to_string(), row[1].as_str().unwrap().to_string());
+            }
+            ShellEffectExec { templates, n_out: async_effect_arity(&prog), cwd: eng.root() }
+        };
+        let n = eng.drain_effects(&prog, &exec).unwrap();
+        eprintln!("cycle {i}: drained {n} | resp={:?} | etag={:?}",
+            rows(&dbp, "SELECT status, substr(tag,1,12) FROM rel_resp"),
+            rows(&dbp, "SELECT substr(tag,1,12) FROM rel_etag"));
+    }
+    eng.tick(&prog, true).unwrap();
+    eprintln!("stars={:?} full_name={:?}",
+        rows(&dbp, "SELECT n FROM rel_stars"),
+        rows(&dbp, "SELECT name FROM rel_full_name"));
+
+    assert!(!rows(&dbp, "SELECT n FROM rel_stars").is_empty(), "live body normalized into stars");
+    let statuses: Vec<String> = rows(&dbp, "SELECT status FROM rel_resp").into_iter().flatten().collect();
+    assert!(statuses.contains(&"200".to_string()), "first poll was a live 200: {statuses:?}");
+    assert!(statuses.contains(&"304".to_string()), "carried-etag re-poll got a live 304: {statuses:?}");
+}

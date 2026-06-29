@@ -43,8 +43,19 @@ poll(ep, "")   <- watch(ep), !etag(ep, _).
 rel resp(ep: text, status: int, tag: text, body: text).
 resp(ep, status, tag, body) <- @async poll(ep, prev), every(300).
 
+# The shell template, keyed by the @async head rel. `{ep}` is raw text (a clean
+# path); `$prev` is the env-var form — the carried etag is `W/"..."`, whose quotes
+# would corrupt a `{prev}` inside the quoted header, but survive intact as `$prev`
+# (the shell expands it without re-parsing). Output is newline-separated
+# status / etag / body (`run` splits stdout by line, the body slot absorbing the
+# rest), the D-7 response-row convention.
 rel effect_cmd(kind: text, template: text).
-effect_cmd("resp", "gh api {ep} -i -H \"If-None-Match: {prev}\" | gh-resp-tsv").
+effect_cmd("resp",
+  "R=$(gh api {ep} -i -H \"If-None-Match: $prev\" 2>/dev/null); \
+   C=$(printf '%s' \"$R\" | head -1 | grep -oE '[0-9]{3}' | head -1); \
+   E=$(printf '%s' \"$R\" | grep -iE '^etag:' | head -1 | sed -E 's/^[Ee]tag:[[:space:]]*//; s/\\r$//'); \
+   B=$(printf '%s' \"$R\" | awk 'f{print} /^\\r?$/{f=1}' | tr -d '\\n'); \
+   printf '%s\\n%s\\n%s' \"$C\" \"$E\" \"$B\"").
 
 # Advance the etag carry: a 200 installs its fresh etag; a 304 keeps the old one.
 etag_next(ep, tag) <- resp(ep, 200, tag, _).

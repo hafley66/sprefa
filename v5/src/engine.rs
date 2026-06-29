@@ -84,13 +84,22 @@ impl ShellEffectExec {
     fn spawn_stdout(&self, kind: &str, args: &serde_json::Map<String, serde_json::Value>) -> Result<String> {
         let tmpl = self.templates.get(kind)
             .ok_or_else(|| anyhow::anyhow!("no effect command registered for kind `{kind}`"))?;
+        // Each arg is available two ways: `{k}` is raw text substitution (handy
+        // for clean values like a path), and `$k` is an environment variable the
+        // shell expands. The env form is METACHARACTER-SAFE — a value containing
+        // quotes/slashes (an HTTP etag `W/"..."`, a JSON blob) corrupts a raw
+        // `{k}` if it sits inside a quoted template span, but survives intact as
+        // `"$k"` because the shell never re-parses an env value. Templates that
+        // carry opaque values should use `$k`.
         let mut cmdline = tmpl.clone();
+        let mut envs: Vec<(String, String)> = Vec::new();
         for (k, v) in args {
             let s = match v {
                 serde_json::Value::String(s) => s.clone(),
                 other => other.to_string(),
             };
             cmdline = cmdline.replace(&format!("{{{k}}}"), &s);
+            envs.push((k.clone(), s));
         }
         // Per-row working directory: a `cwd` arg the rule binds wins over the
         // engine root, so one effect kind can run each request in its own repo
@@ -106,6 +115,7 @@ impl ShellEffectExec {
         };
         let mut cmd = Command::new("sh");
         cmd.arg("-c").arg(&cmdline);
+        for (k, v) in &envs { cmd.env(k, v); }
         if run_in.as_os_str().len() > 0 { cmd.current_dir(&run_in); }
         let output = cmd.output()?;
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
