@@ -656,3 +656,52 @@ blob you regex).
    shape, rides the job table.
 6. **`HttpEffectExec` + etag/304** (§9.7) — the conditional-request cache, the last ghcacher
    piece.
+
+## 10. What it unlocks, and what to guard
+
+The structural shift behind §8/§9: v5 stopped being a pure function of the code at an instant.
+A tick used to re-derive everything from the current files/revs and forget. The temporal +
+effect layer adds three things it never had: **memory** (`@next` carry), **senses** (`@async`
+reach outside the repo), and a **heartbeat** (the clock). That is the move from a *linter*
+(answers a question about a snapshot) to a *control plane* (remembers the answer, watches for
+the conditions to change, acts when they do). Most of the future-world payoff is downstream of
+that one shift.
+
+### 10.1 Doors it opens (each rides an asset already in the tree)
+
+| existing asset | + temporal/effect | unlock |
+|---|---|---|
+| breaking-change detector, blast radius | `@async gh` | auto-comment / request-review on a PR whose blast radius hits a watched symbol — the deterministic *actuator* half of the LLM-brain / dl-executor split |
+| dispatch-flow (cross-lang, real SCIP) | poll N repos on a clock | a *live* org-wide call graph, not a one-shot scan |
+| `type_edge_rev` / `module_edge_rev` (git history) | the `tx` clock + a `delta` feed | a **second time axis** — observation-time history, not git history ("what did the detector say last Tuesday" without re-running) |
+| SCIP importer (batch) | `sh*` stream | ingest a long-running indexer / LSP as it emits, not after it finishes |
+| anim atlas (already reads `rel_*` from sqlite) | clock-driven re-tick | a live dashboard off the same tables, no new pipe |
+| `--move` refactor | `@async` across repos | propose-and-apply at fleet scale |
+
+### 10.2 Two unifications worth naming now
+
+1. **Derivation keyed by input hash.** The effect cache (`id = blake3(kind, args)`, recompute
+   on change), the `cmd` op cache (re-run when file content moves), and `_files` content
+   addressing are the *same idea*. etag/304 is that idea aimed at the network. Name it once —
+   "a derivation is keyed by its input digest, recomputed only when the digest moves" — and the
+   source cache, the effect cache, and memoization collapse into one mechanism. This is the
+   conceptual core of the reactive story, not three coincidentally-similar caches.
+2. **The fixpoint escape hatch.** Datalog fixpoint is monotone-to-convergence; genuinely
+   sequential work (paginate, retry-with-backoff, multi-step negotiation) never fits it.
+   `@next` + `@stream` are the controlled imperative seam for exactly those, kept on the `tx`
+   spine so they stay inspectable. This is where `yield`/coroutines earn their place: not
+   syntax sugar, but the only way to express the sequential algorithms a pure fixpoint can't.
+
+### 10.3 Guards (cheap to design in now, painful to retrofit)
+
+| guard | why | the design move |
+|---|---|---|
+| **Quarantine nondeterminism** | pure v5 is reproducible, and the RA precision/recall snapshots, oracle diffs, and agg dogfood gates depend on it; `@async` injects network/time/arrival-order | effects live in their own stratum; effect-tainted relations are a *marked subspace*; downstream-pure derivations stay reproducible (the CALM guard, §8.4 cond 4, is the enforcement point) |
+| **Mutating effects need exactly-once** | the `done`-flip is at-least-once — a crash between run and `done=1` re-fires; fine for GET, wrong for "open a PR" | an idempotency key / two-phase mark on the job table, decided *before* the first mutating `sh`-fn lands |
+| **No DD creep** | the repo deliberately dropped runtime_graph / support-counting; the desired-vs-running reconcile is incremental-maintenance bookkeeping by another name | keep it a flat sqlite reconcile (a `SELECT` diff per poll), never a reactive dependency graph |
+| **Capability scoping** | a `sh`-fn is `rm -rf` waiting to happen, and the daemon takes `load <script>` over a socket | decide whether `sh`-fns are declared-and-trusted-at-the-root vs callable-by-any-loaded-snippet |
+| **Policy vs mechanism stays split** | if decisions move into rules, you rebuild an agent framework inside a datalog engine (wrong place) | rules express *mechanism* (how to act); the trigger/candidate comes from outside (the refactor-detection ruling: LLM proposes, dl executes) |
+
+The sharpest early decision is the first two: the determinism quarantine and the mutating-effect
+idempotency key. Both are nearly free to build into the job table now and expensive to bolt on
+once something depends on the loose version.
