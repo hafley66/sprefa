@@ -1,0 +1,62 @@
+# Call-seam finder: where can a big file be cut with the LEAST call traffic
+# crossing the cut? Unlike a name-family sort (which wrecks call locality), this
+# respects how the file is actually wired. For each method boundary it counts the
+# self-call edges that straddle it; the local minima are the natural split lines,
+# and `bridge` names the methods whose calls cross a cut (the coupling you'd pay).
+#
+# Validated finding on src/engine.rs: the free-function periphery peels at 0 cost,
+# the impl core has no cheap balanced cut (~35% of traffic crosses any), and most
+# of that is tick/tick_paths calling outward (a facade boundary, not real debt).
+#
+# Point it at a file by editing the scan glob. Run:
+#   dl examples/call-seams.dl --root <repo> --no-daemon
+# then read `seam` (low n = thin cut) and `bridge` (who couples a given cut).
+
+rel m(file: file, name: text, line: int).
+m(f, n, l) <- scan("WORK", "src/engine.rs", f, rev),
+    match(f, rev, /(?m)^\s*(?:pub(?:\([a-z_]+\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(?P<n>[A-Za-z_][A-Za-z0-9_]*)/, l).
+
+rel csite(file: file, line: int, callee: text).
+csite(f, l, c) <- scan("WORK", "src/engine.rs", f, rev),
+    match(f, rev, /self\.(?P<c>[a-z_][A-Za-z0-9_]*)\s*\(/, l).
+
+# attribute each call to its enclosing method (nearest decl at/above, per file)
+rel cabove(file: file, mline: int, mname: text, cline: int, callee: text).
+cabove(f, ml, mn, cl, ce) <- csite(f, cl, ce), m(f, mn, ml), ml <= cl.
+rel ccloser(file: file, mline: int, cline: int).
+ccloser(f, ml, cl) <- cabove(f, ml, _, cl, _), m(f, _, mid), ml < mid, mid <= cl.
+rel call_raw(file: file, caller: text, callee: text).
+call_raw(f, mn, ce) <- cabove(f, ml, mn, cl, ce), !ccloser(f, ml, cl).
+
+rel cedge(file: file, caller: text, callee: text).
+cedge(f, a, b) <- call_raw(f, a, b), m(f, b, _), a != b.
+
+# edges in (caller-line, callee-line) form
+rel cedge_ln(file: file, al: int, bl: int).
+cedge_ln(f, al, bl) <- cedge(f, a, b), m(f, a, al), m(f, b, bl).
+
+# a boundary is any method's decl line; an edge straddles it if the line sits
+# strictly between the endpoints (either direction)
+rel boundary(file: file, g: int).
+boundary(f, g) <- m(f, _, g).
+rel straddle(file: file, g: int, al: int, bl: int).
+straddle(f, g, al, bl) <- boundary(f, g), cedge_ln(f, al, bl), al < g, g <= bl.
+straddle(f, g, al, bl) <- boundary(f, g), cedge_ln(f, al, bl), bl < g, g <= al.
+
+# crossing count per boundary: the cut cost at that line (low = a clean seam)
+rel seam(file: file, g: int, n: int).
+seam(f, g, count(al)) <- straddle(f, g, al, bl).
+
+# bridge: per (boundary, caller) how many of the caller's calls cross that line —
+# the methods that couple the two halves (tick/tick_paths dominate a core cut)
+rel bridge(file: file, g: int, caller: text, n: int).
+bridge(f, g, a, count(bl)) <- boundary(f, g), cedge_ln2(f, a, al, bl),
+    al < g, g <= bl.
+bridge(f, g, a, count(bl)) <- boundary(f, g), cedge_ln2(f, a, al, bl),
+    bl < g, g <= al.
+# cedge with the caller name kept (for bridge attribution)
+rel cedge_ln2(file: file, caller: text, al: int, bl: int).
+cedge_ln2(f, a, al, bl) <- cedge(f, a, b), m(f, a, al), m(f, b, bl).
+
+? seam(file, g, n).
+? bridge(file, g, caller, n).
