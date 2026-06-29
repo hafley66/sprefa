@@ -428,6 +428,43 @@ removed its reason to exist.
 
 ---
 
+## Build status (2026-06-29, this arc)
+
+| phase | state | commit |
+|---|---|---|
+| 0 parallel drain | landed (prior) | 204b9ba |
+| 2 every(N) clock | landed (prior) | 6dceab6 |
+| 1 sh decl + Effect body item (1a/1b/1c) | LANDED | a20f0f9 / 9377825 / dcb2626 |
+| 3 job-state machine + sh! exactly-once claim | LANDED | 7f7aef1 |
+| 4 @stream / sh* line fan-out (drain_streams) | LANDED | 6b504d1 |
+| 1b.2 collect(x) aggregate batch | LANDED | 7254a32 |
+| 1b.1 json/jsonp over a bound term | DEFERRED (see below) | — |
+| 5 native http delegate-wrapper | DEFERRED (plan-optional) | — |
+
+`pending_effect` is now `(id, kind, head_rel, args_json, full_json, req_tx, done,
+state, idem_key, batch)`. The drain reconciles by `ShellKind`: `sh` re-runnable,
+`sh!` exactly-once (claim queued→running, crash-orphan quarantined), `sh*`
+long-lived (`drain_streams`, stays running). `EffectExec::run_stream` +
+`split_tsv` make a stdout line = a response row (D-7); a `collect` batch and a
+`sh*` stream share that line fan-out.
+
+**1b.1 DEFERRED — needs a new hybrid evaluator, and D-7's shell-jq path now
+covers the case.** `json`/`jsonp` run only in the file-scan source evaluator
+(`parse_file`), which requires a scan. The headline term-source use
+(`page(repo,200,_,body), jsonp(body,"stargazerCount",n)`) reads `body` from a
+RELATION JOIN — a derived SQL-lowered rule, where tree-sitter can't run. It needs
+a post-join extraction arm (run the join, then per joined row parse the bound
+string and fan out), which the engine does not have. Per D-7 the designated
+response-extraction route is the CLI's own jq/`-q`/`--query` emitting `@tsv`
+(stdout line = response row), and that path is fully wired now (`run_stream` +
+`split_tsv` + `collect` fan-out). In-engine term-json is the convenience "no
+shell-jq" case; build it only if the hybrid evaluator is wanted for its own sake.
+
+**5 DEFERRED — plan-sanctioned.** Bulk graphql (`collect`, now landed) collapsed
+N requests to one, which removed native http's reason to exist; curl/gh cover the
+functional surface and the etag/304 cache lives on the `@next` spine. Build only
+if profiling demands, and as a delegate-wrapper, never a router.
+
 ## Zoom Level 3 — logic filled in (one step from real)
 
 The interesting logic written out against the real tree (lex.rs byte-loop, parse.rs `def`
