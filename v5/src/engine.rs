@@ -132,6 +132,19 @@ fn json_to_value(v: Option<&serde_json::Value>) -> Value {
     }
 }
 
+/// Current wall-clock time in whole seconds since the epoch, used by the `every`
+/// clock. `DL_NOW_SECS` overrides it so tests can advance time deterministically
+/// across ticks without sleeping.
+fn now_secs() -> i64 {
+    if let Ok(v) = std::env::var("DL_NOW_SECS") {
+        if let Ok(n) = v.parse::<i64>() { return n; }
+    }
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 /// Per-tick `cmd` invocation counter (parse_file runs across rayon, hence
 /// atomic; process-global like the profile stats — one engine per process in
 /// real use, e2e tests get their own subprocess).
@@ -353,6 +366,13 @@ const NODE_RELS: [&str; 2] = ["node", "child"];
 /// tables via `save_program_meta` / `save_repos_meta` / `observe_ref`.
 const DAEMON_RELS: [&str; 3] = ["program", "head", "rev_advanced"];
 
+/// The clock relation. `every(secs)` is an engine-populated source rel that holds
+/// the interval `N` only on the tick that crosses an `N`-second boundary (and on
+/// the first tick), so a body atom `every(30)` self-throttles the rule that joins
+/// it. Edge-triggered off wall-clock seconds, bucket-per-N stored in `_carry_meta`
+/// (`every:N`), so the cadence is exact regardless of how often the daemon ticks.
+const EVERY_RELS: [&str; 1] = ["every"];
+
 fn builtin_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -389,6 +409,7 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
         .chain(type_shape_rel_decls())
         .chain(type_lgg_rel_decls())
         .chain(daemon_rel_decls())
+        .chain(every_rel_decls())
         .chain(catalog_rel_decls())
         .collect()
 }
@@ -476,6 +497,8 @@ pub fn builtin_rel_docs() -> &'static [(&'static str, &'static str, &'static str
         ("program", "daemon", "dl programs the daemon tracks (path, content hash, mtime)"),
         ("head", "daemon", "git HEAD per repo (repo, ref name, oid)"),
         ("rev_advanced", "daemon", "daemon signal that a repo ref advanced (repo, name, old oid, new oid)"),
+        // clock: edge-triggered interval gate for @async polling.
+        ("every", "clock", "holds interval N only on ticks that cross an N-second boundary (and the first tick); an every(30) body atom self-throttles its rule"),
         // self: the catalog documents itself.
         ("rel_catalog", "meta", "this table: every built-in relation with its group, columns, and one-line doc"),
     ]
@@ -741,6 +764,40 @@ fn daemon_rel_decls() -> Vec<RelDecl> {
             c("repo", Type::Text), c("name", Type::Text), c("old", Type::Text), c("new", Type::Text)] },
     ]
 }
+
+fn every_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![RelDecl { name: "every".into(), cols: vec![c("secs", Type::Int)] }]
+}
+
+/// The distinct `every(N)` interval literals used as body atoms in the program.
+/// A non-literal arg (`every(N)` with `N` a variable) is ignored: the clock fires
+/// per concrete interval the program names. Each becomes a row candidate in
+/// `refresh_every`.
+fn every_intervals(prog: &Program) -> Vec<i64> {
+    let mut out: Vec<i64> = Vec::new();
+    let mut atoms = |body: &[BodyItem]| {
+        for b in body {
+            if let BodyItem::Pos(a) = b {
+                if a.rel == "every" {
+                    if let [Term::Int(n)] = a.terms.as_slice() {
+                        if *n > 0 && !out.contains(n) { out.push(*n); }
+                    }
+                }
+            }
+        }
+    };
+    for item in &prog.items {
+        match item {
+            Item::Rule(r) => atoms(&r.body),
+            Item::Gen(g) => atoms(&g.body),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn every_rels_used(prog: &Program) -> bool { rels_used(prog, &EVERY_RELS) }
 
 /// Does the program reference any relation in `rels` (body atom, closure edge,
 /// or query head)? Gates lazy built-in indexers so unrelated programs pay nothing.
@@ -2172,6 +2229,10 @@ impl Engine {
         let t = std::time::Instant::now();
         self.refresh_builtin_rels()?;
         phase("builtin-rels", t);
+        // The clock can move with no file change (a boundary crossing, or the
+        // clear after one), so feed its change into `changed` — else the full tick
+        // below skips rebuild_derived and a rule gated by `every` keeps stale rows.
+        if every_rels_used(prog) { changed |= self.refresh_every(&every_intervals(prog))?; }
         if module_rels_used(prog) {
             let t = std::time::Instant::now();
             self.refresh_module_rels()?;
@@ -2494,6 +2555,14 @@ impl Engine {
                 self.refresh_spine_rels()?;
                 for s in SPINE_RELS { changed_source_rels.insert(s.to_string()); }
             }
+        }
+        // The clock fires on time, not on file change, so refresh it outside the
+        // `files_changed` guard. It only re-derives dependents on a tick where the
+        // row set actually moves (a boundary crossing or the clear after one), so a
+        // quiet poll tick stays a no-op.
+        if every_rels_used(prog) && self.refresh_every(&every_intervals(prog))? {
+            changed_source_rels.insert("every".to_string());
+            changed_facts = true;
         }
         if wants_module_rels && (module_full_work || !module_delta_paths.is_empty()) {
             if module_full_work {
@@ -3223,6 +3292,9 @@ impl Engine {
                 if DAEMON_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in daemon-state relation (program / head / rev_advanced); pick another name", d.name);
                 }
+                if EVERY_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is the built-in clock relation (every); pick another name", d.name);
+                }
                 if CATALOG_RELS.contains(&d.name.as_str()) {
                     bail!("{} is the built-in self-describing relation catalog (rel_catalog); pick another name", d.name);
                 }
@@ -3268,6 +3340,7 @@ impl Engine {
         for d in type_shape_rel_decls() { self.declare(&d)?; }
         for d in type_lgg_rel_decls() { self.declare(&d)?; }
         for d in daemon_rel_decls() { self.declare(&d)?; }
+        for d in every_rel_decls() { self.declare(&d)?; }
         for d in catalog_rel_decls() { self.declare(&d)?; }
         Ok(())
     }
@@ -3334,6 +3407,41 @@ impl Engine {
         self.db.exec(&format!("DELETE FROM {}", tbl("true")))?;
         self.db.exec(&format!("INSERT OR IGNORE INTO {} DEFAULT VALUES", tbl("true")))?;
         Ok(())
+    }
+
+    /// Populate the `every` clock relation for this tick. For each interval `N`
+    /// the program names, `secs=N` lands a row IFF the current wall-second is in a
+    /// different `N`-bucket than the last time `N` fired (so it fires on the first
+    /// tick and once per boundary crossing thereafter, exact regardless of tick
+    /// cadence). The last-fired bucket per `N` is stored in `_carry_meta` under
+    /// `every:N`. Wholesale wipe: the rel is ephemeral, not derived.
+    /// Returns true if the rel's content changed this tick (a row landed, or rows
+    /// cleared after the previous tick had some) — the incremental path uses it to
+    /// re-derive rules that join `every`.
+    fn refresh_every(&self, intervals: &[i64]) -> Result<bool> {
+        use rusqlite::OptionalExtension;
+        let before: i64 = self.db.conn().query_row(
+            &format!("SELECT COUNT(*) FROM {}", tbl("every")), [], |r| r.get(0))?;
+        self.db.exec(&format!("DELETE FROM {}", tbl("every")))?;
+        let now = now_secs();
+        let mut rows: Vec<Vec<Value>> = Vec::new();
+        for &n in intervals {
+            if n <= 0 { continue; }
+            let bucket = now / n;
+            let key = format!("every:{n}");
+            let prev: Option<i64> = self.db.conn().query_row(
+                "SELECT tx FROM _carry_meta WHERE k = ?1", [&key], |r| r.get(0)).optional()?;
+            if prev != Some(bucket) {
+                rows.push(vec![Value::Int(n)]);
+                self.db.conn().execute(
+                    "INSERT INTO _carry_meta (k, tx) VALUES (?1, ?2) \
+                     ON CONFLICT(k) DO UPDATE SET tx = ?2",
+                    rusqlite::params![key, bucket])?;
+            }
+        }
+        let landed = rows.len();
+        self.db.insert_rows(&tbl("every"), &["secs"], &rows)?;
+        Ok(landed > 0 || before > 0)
     }
 
     /// Project the durable `_strings` / `_where_bytes` meta tables into the
