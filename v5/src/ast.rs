@@ -222,9 +222,10 @@ pub enum BodyItem {
 /// `<-` neck. `Next`: the head is staged into the next tick's seed (carry state)
 /// instead of this tick's fixpoint. `Async`: the body fires a one-shot effect
 /// whose response lands as a fact at a later tick (non-blocking IO). `Stream`: the
-/// body opens a long-lived subscription (`sh*`) whose rows append over many ticks
-/// (Phase 4, runtime not yet wired). `None` on the `Rule` = today's same-tick
-/// deductive rule. See docs/research-reactive-effectful-datalog.md §8.
+/// body opens a long-lived subscription (`sh*`) whose rows append over many ticks,
+/// drained by `Engine::drain_streams` (one head row per output line). `None` on the
+/// `Rule` = today's same-tick deductive rule. See
+/// docs/research-reactive-effectful-datalog.md §8.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Temporal { Next, Async, Stream }
 
@@ -259,7 +260,7 @@ impl Rule {
     pub fn is_async(&self) -> bool { self.temporal == Some(Temporal::Async) }
 
     /// `@stream` subscription rule: body opens a long-lived `sh*` source whose
-    /// rows append over many ticks. Runtime is Phase 4 (the engine bails today).
+    /// rows append over many ticks, fanned into the head by `drain_streams`.
     pub fn is_stream(&self) -> bool { self.temporal == Some(Temporal::Stream) }
 
     /// The single `BodyItem::Effect` of an `@async`/`@stream` rule, if present.
