@@ -2547,6 +2547,24 @@ impl Engine {
                        them in a third derived rule.");
             }
         }
+        // Same hazard for a rel headed by BOTH a term-extract rule (json/jsonp body
+        // form) and a plain derived rule: `eval_extract_rules` fills the extract
+        // rows, then `rebuild_derived` runs AFTER it (so derived rules can read the
+        // extract output) and its `DELETE FROM rel` + recompute silently drops them.
+        // Extract must precede the derived fixpoint, so the same rel cannot be both;
+        // split the extract into its own rel and union it in a third derived rule.
+        let mut extract_rels: Vec<String> = Vec::new();
+        for r in &extract_rules {
+            if !extract_rels.contains(&r.head.rel) { extract_rels.push(r.head.rel.clone()); }
+        }
+        for rel in &extract_rels {
+            if derived_rels.contains(rel) {
+                bail!("relation '{rel}' is written by both a term-extract rule (json/jsonp \
+                       body form) and a derived rule; the extracted rows would be dropped when \
+                       the derived rule rebuilds. Put the extract in its own relation and union \
+                       it with the derived rule in a third relation.");
+            }
+        }
         // `@next` carry relations: a head rel staged for the next tick must be
         // written ONLY by @next rules — it is loaded from carry as EDB this tick,
         // so a source/derived rule heading it would be wiped (rebuild_derived) or

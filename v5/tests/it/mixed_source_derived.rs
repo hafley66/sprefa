@@ -50,6 +50,55 @@ mixed(x) <- seen(x).
 }
 
 #[test]
+fn mixed_extract_and_derived_rule_for_one_rel_bails() {
+    let d = sandbox("extract_bail");
+
+    // `mixed` is fed by a term-extract rule (json/jsonp body form) AND a plain
+    // derived rule. eval_extract_rules fills the extract rows, then rebuild_derived
+    // (which runs after the extract pass so derived rules can read its output) does
+    // a full DELETE + recompute and drops them. Same hazard as source+derived; the
+    // engine must bail, not silently lose the extracted row.
+    let prog = r#"
+rel src(x: text).
+src("keep").
+rel body_rel(b: text).
+body_rel("{\"n\": 7}").
+rel mixed(v: text).
+mixed(n) <- body_rel(b), jsonp(b, "n", n).
+mixed(x) <- src(x).
+? mixed(v).
+"#;
+    let (code, stderr) = run(&d, prog);
+    assert_ne!(code, 0, "expected a non-zero exit; stderr: {stderr}");
+    assert!(
+        stderr.contains("term-extract") && stderr.contains("mixed"),
+        "expected the extract-rel bail naming 'mixed'; got: {stderr}"
+    );
+}
+
+#[test]
+fn split_extract_and_derived_into_two_rels_is_fine() {
+    let d = sandbox("extract_split");
+
+    // The sanctioned shape: extract into its own rel, derive into another, union in
+    // a third. No rel mixes the extract and derived rule kinds.
+    let prog = r#"
+rel body_rel(b: text).
+body_rel("{\"n\": 7}").
+rel xrow(v: text).
+xrow(n) <- body_rel(b), jsonp(b, "n", n).
+rel src(x: text).
+src("keep").
+rel both(v: text).
+both(v) <- xrow(v).
+both(v) <- src(v).
+? both(v).
+"#;
+    let (code, stderr) = run(&d, prog);
+    assert_eq!(code, 0, "split program should succeed; stderr: {stderr}");
+}
+
+#[test]
 fn split_source_and_derived_into_two_rels_is_fine() {
     let d = sandbox("split");
     fs::create_dir_all(d.join("src")).unwrap();
