@@ -368,6 +368,70 @@ fn stream_rule_parses_but_runtime_bails() {
     );
 }
 
+/// `check_effect`: an explicit body-effect call whose out-arity disagrees with
+/// the `sh` decl is a `effect-arity` error, and a `{hole}` the decl never
+/// references is `unused-hole`. Both surface as `TypeDiag`s from `prepare_paths`.
+#[test]
+fn effect_arity_and_hole_are_checked() {
+    let d = sandbox("eff_arity");
+    fs::write(
+        d.join("p.dl"),
+        "rel want(repo: str).\n\
+         want(\"octo\").\n\
+         sh gh(r, p) -> (status: int, body: str) = `printf '200' '{r}'`.\n\
+         rel resp(repo: str, status: int).\n\
+         resp(repo, status) <- @async want(repo), gh(repo) -> (status).\n",
+    )
+    .unwrap();
+    let (_prog, diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let codes: Vec<&str> = diags.iter().map(|x| x.code.as_str()).collect();
+    // gh takes 2 params, called with 1; returns 2, bound to 1; param `p` has no {p}.
+    assert!(codes.contains(&"effect-arity"), "want effect-arity, got {codes:?}");
+    assert!(codes.contains(&"unused-hole"), "want unused-hole, got {codes:?}");
+}
+
+/// `check_effect`: an explicit call to no declared `sh` is `unknown-sh`.
+#[test]
+fn effect_unknown_sh_is_flagged() {
+    let d = sandbox("eff_unknown");
+    fs::write(
+        d.join("p.dl"),
+        "rel want(repo: str).\n\
+         want(\"octo\").\n\
+         rel resp(repo: str, body: str).\n\
+         resp(repo, body) <- @async want(repo), nope(repo) -> (body).\n",
+    )
+    .unwrap();
+    let (_prog, diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    assert!(
+        diags.iter().any(|x| x.code == "unknown-sh"),
+        "want unknown-sh, got {:?}",
+        diags.iter().map(|x| x.code.as_str()).collect::<Vec<_>>()
+    );
+}
+
+/// `check_effect`: `@async` calling a `sh*` (Stream) decl crosses the temporal
+/// axis and is `temporal-kind-mismatch`.
+#[test]
+fn effect_temporal_kind_must_agree() {
+    let d = sandbox("eff_cross");
+    fs::write(
+        d.join("p.dl"),
+        "rel want(repo: str).\n\
+         want(\"octo\").\n\
+         sh* feed(r) -> (line: str) = `printf '%s' '{r}'`.\n\
+         rel resp(repo: str, line: str).\n\
+         resp(repo, line) <- @async want(repo), feed(repo) -> (line).\n",
+    )
+    .unwrap();
+    let (_prog, diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    assert!(
+        diags.iter().any(|x| x.code == "temporal-kind-mismatch"),
+        "want temporal-kind-mismatch, got {:?}",
+        diags.iter().map(|x| x.code.as_str()).collect::<Vec<_>>()
+    );
+}
+
 /// A response relation may not be headed by a source/derived rule too: it is
 /// written only by the effect drain.
 #[test]

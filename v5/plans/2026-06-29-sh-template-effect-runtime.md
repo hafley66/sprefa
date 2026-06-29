@@ -51,8 +51,22 @@ This phase is independent of everything below. Land it alone.
 > `Temporal::Stream` + `Rule::effect()`; `pending_effect` two-field D-4
 > (`head_rel`/`full_json`, migrated on open); identity split kind(template) vs
 > head_rel(reconstruction). `@stream`/`sh*` parse but the tick bails (Phase 4).
-> Remaining slice 1c: `check_effect` typecheck (arity/hole/temporal-cross),
-> reserve `sh` like `ref`, the brace `{ shell }` body form.
+> Slice 1c LANDED: `check_effect` typecheck (`multiple-effects`,
+> `effect-needs-async`, `unknown-sh`, `effect-arity`, `unused-hole`,
+> `temporal-kind-mismatch`); binds each `BodyItem::Effect` to its `sh` decl and
+> the temporal axis (`@async`↔`sh`/`sh!`, `@stream`↔`sh*`); a head-response
+> effect with no matching decl is left to the legacy `effect_cmd` path. `sh`
+> reservation is context-sensitive at item-leading position (`sh <ident|!|*>` is
+> a decl; `sh(...)` stays a usable rel name — strictly less breaking than the
+> full `ref`-style reservation in D-1, same ambiguity resolved). Tests: 3 new
+> negatives in `tests/it/temporal_async.rs`.
+>
+> DEFERRED (sugar not worth the plumbing): the brace `{ shell }` body form. The
+> lexer drops raw inter-token text (only `Tok::Scheme` carries a span), so a
+> brace block can't be recovered as raw shell without threading byte-spans on
+> every token + the source into the parser. The `= ` + backtick form already
+> lexes multiline shell to `Tok::Str` (lex.rs:85), so the brace form adds zero
+> capability. Revisit only if a token-span pass lands for another reason.
 
 ### 1.1 Type signatures
 
