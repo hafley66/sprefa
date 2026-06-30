@@ -115,6 +115,39 @@ fn own_injection_marker_suppresses_reinject() {
     assert!(out.trim().is_empty(), "dl's own prior injection should suppress re-inject:\n{out}");
 }
 
+/// End-to-end over the SHIPPED path: `dl setup --project` writes the hook
+/// registration + the starter `.dl/hook-skill-on-test.dl` (the committed
+/// `changed`-based example), then `dl --hook` with NO program argument
+/// discovers that `.dl/` and fires. Proves the bootstrap chain, not just the
+/// two halves in isolation.
+#[test]
+fn setup_bootstrap_then_hook_injects() {
+    let (root, store) = fixture("setup_e2e");
+    // src/foo_test.rs is an untracked worktree change, so the example's
+    // `changed(p)` source sees it (git status -uall). No transcript = empty
+    // skill_loaded, so the `!skill_loaded` guard passes.
+    write_transcript(&store, &root, &[]);
+
+    let setup_ok = Command::new(DL)
+        .args(["setup", "--project", root.to_str().unwrap()])
+        .output().unwrap().status.success();
+    assert!(setup_ok, "dl setup --project should succeed");
+    assert!(root.join(".dl/hook-skill-on-test.dl").exists(), "starter hook .dl written");
+    assert!(root.join(".claude/settings.json").exists(), "settings.json written");
+
+    // No program arg: discovery globs <root>/.dl/*.dl (the just-written example).
+    let mut child = Command::new(DL)
+        .arg("--hook")
+        .args(["--root", root.to_str().unwrap(), "--db", root.join("db").to_str().unwrap(), "--no-daemon"])
+        .env("SPREFA_CLAUDE_PROJECTS", &store)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
+        .spawn().unwrap();
+    child.stdin.take().unwrap().write_all(EVENT.as_bytes()).unwrap();
+    let out = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned();
+    assert!(out.contains("additionalContext"), "bootstrapped example should inject:\n{out}");
+    assert!(out.contains("Run cargo test"), "testing skill body should be injected:\n{out}");
+}
+
 #[test]
 fn block_relation_emits_decision_block() {
     let (root, store) = fixture("block");
