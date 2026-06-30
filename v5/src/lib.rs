@@ -9,6 +9,7 @@ pub mod db;
 pub mod desc;
 pub mod embed;
 pub mod engine;
+pub mod effect;
 pub mod frontend;
 pub mod ingest;
 pub mod ktpath;
