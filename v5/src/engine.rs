@@ -192,11 +192,11 @@ const DOC_RELS: [&str; 2] = ["doc_node", "doc_ref"];
 const DOC_TEXT_RELS: [&str; 2] = ["doc_comment", "doc_tag"];
 
 // The git-derived families `changed` / `changed_line` / `created`, the analysis
-// families `agent` / `type_shape` / `type_lgg` / catalog, the SCIP importer
-// `scip_*`, the clone proposers `propose_extract` / `propose_clone`, and the
-// embedding `similar` now live behind `trait RelKind` in relkind.rs (decls +
-// gate + refresh per family, one registry the tick/declare/guard sites loop
-// over).
+// families `agent` / `dl_diag` / `type_shape` / `type_lgg` / catalog, the SCIP
+// importer `scip_*`, the clone proposers `propose_extract` / `propose_clone`,
+// and the embedding `similar` now live behind `trait RelKind` in the `rels`
+// module dir (decls + gate + refresh per family, one registry the
+// tick/declare/guard sites loop over).
 
 /// Ref-spine query relations: thin views over the `_strings` / `_where_bytes`
 /// meta tables. `string(id, text, norm)` resolves an interned StringId to its
@@ -280,7 +280,7 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
         .chain(doc_rel_decls())
         .chain(spine_rel_decls())
         .chain(node_rel_decls())
-        .chain(crate::relkind::rel_kind_decls())
+        .chain(crate::rels::rel_kind_decls())
         .chain(daemon_rel_decls())
         .chain(every_rel_decls())
         .chain(clock_rel_decls())
@@ -2284,7 +2284,7 @@ impl Engine {
         // `changed` directly rather than riding the reconcile delta. A full tick
         // always refreshes every used family (`dirty` is consulted only by the
         // incremental `tick_paths`), so the scip index reload runs here too.
-        for k in crate::relkind::rel_kinds() {
+        for k in crate::rels::rel_kinds() {
             if k.used(prog) { changed |= k.refresh(self)?; }
         }
         if daemon_rels_used(prog) { self.refresh_daemon_rels()?; }
@@ -2609,7 +2609,7 @@ impl Engine {
         // source edit never forces a full SCIP reload. Every save can move the
         // worktree diff, so the `changed` family re-reads whenever the program
         // joins it; the false-on-no-op result keeps the rebuild scope tight.
-        for k in crate::relkind::rel_kinds() {
+        for k in crate::rels::rel_kinds() {
             if k.used(prog) && k.dirty(&seen) && k.refresh(self)? {
                 for r in k.rels() { changed_source_rels.insert(r.to_string()); }
                 changed_facts = true;
@@ -3396,7 +3396,7 @@ impl Engine {
                 if NODE_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in CST relation (node / child); pick another name", d.name);
                 }
-                for k in crate::relkind::rel_kinds() {
+                for k in crate::rels::rel_kinds() {
                     if k.rels().contains(&d.name.as_str()) {
                         bail!("{} is {}; pick another name", d.name, k.reserved_msg());
                     }
@@ -3442,7 +3442,7 @@ impl Engine {
         // the LSP-common point query first-class. Idempotent.
         self.db.conn().execute(
             &format!("CREATE INDEX IF NOT EXISTS node_file_span_idx ON {}(\"file\", \"lo\", \"hi\")", tbl("node")), [])?;
-        for d in crate::relkind::rel_kind_decls() { self.declare(&d)?; }
+        for d in crate::rels::rel_kind_decls() { self.declare(&d)?; }
         for d in daemon_rel_decls() { self.declare(&d)?; }
         for d in every_rel_decls() { self.declare(&d)?; }
         for d in clock_rel_decls() { self.declare(&d)?; }
