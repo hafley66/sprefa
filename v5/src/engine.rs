@@ -735,6 +735,7 @@ pub fn builtin_rel_docs() -> &'static [(&'static str, &'static str, &'static str
         ("effect_log", "effect", "the @async/@stream drain queue: one row per request (id, kind, head rel, state queued/running/done/failed, args JSON, req_tx); the dl-native call log, queryable live and parity-comparable to an external cache's call log"),
         // self: the catalog documents itself.
         ("rel_catalog", "meta", "this table: every built-in relation with its group, columns, and one-line doc"),
+        ("fn_catalog", "meta", "every scalar function callable in a head or comparison with its arity, group, and one-line doc; sourced from fn_docs"),
     ]
 }
 
@@ -753,9 +754,51 @@ pub fn undocumented_builtins() -> Vec<String> {
     missing
 }
 
-/// The self-describing catalog relation: one row per built-in relation. Lazy like
-/// every other built-in group, so a program that never reads it pays nothing.
-const CATALOG_RELS: [&str; 1] = ["rel_catalog"];
+/// One-line documentation for every scalar function callable in a rule head or
+/// comparison: `(name, arity, group, doc)`. THIS is the single source of function
+/// docs — `fn_catalog` projects it and `examples/fn-catalog.dl` renders it into
+/// the README, mirroring `builtin_rel_docs`/`rel_catalog` for relations. A new
+/// `STR_FNS` entry is forced to appear here by `undocumented_fns` (a test fails
+/// until it does). Docs avoid `|` so they render inside a markdown table cell.
+pub fn fn_docs() -> &'static [(&'static str, usize, &'static str, &'static str)] {
+    &[
+        // native: lowered to SQLite or a hand-coded arm in lower.rs.
+        ("split", 3, "string", "split text on a separator; idx 0-based, negative counts from the end (-1 = last); out-of-range drops the row (NULL filter); the sprf_split UDF"),
+        ("replace", 3, "string", "replace ALL occurrences of `from` with `to`; SQLite-native"),
+        ("int", 1, "cast", "text->int coercion (leading-int prefix, else 0); fills an int column or compares numerically; SQLite CAST"),
+        // pass-through string builtins (STR_FNS in lower.rs -> sprf_* UDFs).
+        ("lower", 1, "string", "lowercase (Unicode-aware)"),
+        ("upper", 1, "string", "uppercase (Unicode-aware)"),
+        ("lcfirst", 1, "string", "first char lowercased, the rest unchanged"),
+        ("ucfirst", 1, "string", "first char uppercased, the rest unchanged"),
+        ("trim", 1, "string", "strip leading and trailing whitespace"),
+        ("strip_prefix", 2, "string", "drop a leading affix if present, else return the input unchanged (idempotent cleanup, not a filter — pair with =~ /^p/ for drop-on-miss)"),
+        ("strip_suffix", 2, "string", "drop a trailing affix if present, else return the input unchanged"),
+        ("replace_re", 3, "string", "regex replace-all with $1 group refs; the pattern shares the process-wide compile cache"),
+    ]
+}
+
+/// Lowering names (STR_FNS plus the hand-coded native arms) that have no matching
+/// `fn_docs` entry. The doc-completeness invariant: this must be empty. A test
+/// asserts it, so adding a string builtin without documenting it fails CI.
+pub fn undocumented_fns() -> Vec<String> {
+    let documented: std::collections::HashSet<(&str, usize)> =
+        fn_docs().iter().map(|(n, a, _, _)| (*n, *a)).collect();
+    let native: [(&str, usize); 3] = [("split", 3), ("replace", 3), ("int", 1)];
+    let mut missing: Vec<String> = crate::lower::STR_FNS.iter()
+        .map(|(n, _, a)| (*n, *a))
+        .chain(native)
+        .filter(|(n, a)| !documented.contains(&(n, *a)))
+        .map(|(n, a)| format!("{n}/{a}"))
+        .collect();
+    missing.sort();
+    missing
+}
+
+/// The self-describing catalog relations: one row per built-in relation
+/// (`rel_catalog`) and per scalar function (`fn_catalog`). Lazy like every other
+/// built-in group, so a program that never reads them pays nothing.
+const CATALOG_RELS: [&str; 2] = ["rel_catalog", "fn_catalog"];
 
 fn catalog_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
@@ -763,6 +806,9 @@ fn catalog_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "rel_catalog".into(), cols: vec![
             c("name", Type::Text), c("group", Type::Text),
             c("cols", Type::Text), c("doc", Type::Text)] },
+        RelDecl { name: "fn_catalog".into(), cols: vec![
+            c("name", Type::Text), c("arity", Type::Int),
+            c("group", Type::Text), c("doc", Type::Text)] },
     ]
 }
 
@@ -4110,6 +4156,14 @@ impl Engine {
                  Value::Text(cols), Value::Text(summary.to_string())]
         }).collect();
         self.refresh_rel("rel_catalog", &["name", "group", "cols", "doc"], &rows)?;
+
+        // fn_catalog: one row per scalar function, from fn_docs (the single source
+        // of function docs). Static like rel_catalog.
+        let fn_rows: Vec<Vec<Value>> = fn_docs().iter().map(|(n, a, g, d)| {
+            vec![Value::Text(n.to_string()), Value::Int(*a as i64),
+                 Value::Text(g.to_string()), Value::Text(d.to_string())]
+        }).collect();
+        self.refresh_rel("fn_catalog", &["name", "arity", "group", "doc"], &fn_rows)?;
         Ok(true)
     }
 
@@ -7316,24 +7370,28 @@ impl Engine {
         // Within one rule, rows to one path concat via `groups`; the claim is
         // per rule, so that path stays legal.
         let mut claimed: HashMap<String, ()> = HashMap::new();
+        // Whole-file :append buffers, flushed after every gen rule ran so rows
+        // from all append rules to one path concatenate in program order.
+        let mut appends = Appends::default();
         for item in &prog.items {
             if let Item::Gen(g) = item {
-                self.run_gen(g, &mut written, &mut splices, &mut cursors, &mut claimed, &write_roots)?;
+                self.run_gen(g, &mut written, &mut splices, &mut cursors, &mut claimed, &mut appends, &write_roots)?;
             }
         }
         self.apply_splices(&splices, &mut written, &write_roots)?;
         self.apply_cursors(&cursors, &mut written, &write_roots)?;
+        self.apply_appends(&appends, &claimed, &mut written, &write_roots)?;
         if !written.is_empty() && !quiet {
             eprintln!("[gen] wrote {}", written.join(", "));
         }
         Ok(())
     }
 
-    fn run_gen(&mut self, g: &GenRule, written: &mut Vec<String>, splices: &mut Splices, cursors: &mut Cursors, claimed: &mut HashMap<String, ()>, write_roots: &[PathBuf]) -> Result<()> {
+    fn run_gen(&mut self, g: &GenRule, written: &mut Vec<String>, splices: &mut Splices, cursors: &mut Cursors, claimed: &mut HashMap<String, ()>, appends: &mut Appends, write_roots: &[PathBuf]) -> Result<()> {
         // Target vars lead the SELECT so grouping reads prefix columns; the
         // ORDER BY over all vars makes render order deterministic.
         let target_vars: Vec<String> = match &g.target {
-            GenTarget::File { path_tmpl } => tmpl_holes(path_tmpl),
+            GenTarget::File { path_tmpl, .. } => tmpl_holes(path_tmpl),
             GenTarget::Splice { path, l0, l1 } => vec![var_of(path)?, var_of(l0)?, var_of(l1)?],
             GenTarget::Cursor { path, lo, hi, .. } => vec![var_of(path)?, var_of(lo)?, var_of(hi)?],
         };
@@ -7364,7 +7422,7 @@ impl Engine {
         };
 
         match &g.target {
-            GenTarget::File { path_tmpl } => {
+            GenTarget::File { path_tmpl, append } => {
                 let mut order: Vec<String> = Vec::new();
                 let mut groups: HashMap<String, Vec<String>> = HashMap::new();
                 for m in &rows {
@@ -7375,15 +7433,30 @@ impl Engine {
                     if !groups.contains_key(&path) { order.push(path.clone()); }
                     groups.entry(path).or_default().push(render_tmpl(&g.row_tmpl, m));
                 }
+                if *append {
+                    // File-append: accumulate this rule's rows (already ORDER
+                    // BY'd within the rule) onto the per-file buffer. Across
+                    // rules they concatenate in program order — the for loop in
+                    // run_all_gens visits gen items in source order — so a header
+                    // rule, a separator rule, and a rows rule assemble one page.
+                    // Flushed once in apply_appends after every gen rule ran.
+                    for p in order {
+                        let rows = groups.remove(&p).unwrap();
+                        if !appends.groups.contains_key(&p) { appends.keys.push(p.clone()); }
+                        appends.groups.entry(p).or_default().extend(rows);
+                    }
+                    return Ok(());
+                }
                 // A path another gen rule already wrote this tick would be
                 // clobbered, not concatenated. Bail loudly (mirrors the
                 // mixed-source/derived bail): union the rows into one relation
-                // and emit them from a single gen rule.
+                // and emit them from a single gen rule (or use :append).
                 for p in &order {
                     if claimed.insert(p.clone(), ()).is_some() {
                         bail!("two gen rules write the same file `{p}`; file emits don't \
                                concatenate across rules (last would win). Union the rows into \
-                               one relation and emit from a single gen rule.");
+                               one relation and emit from a single gen rule, or use \
+                               gen(:append, \"{p}\", ...) to concatenate in program order.");
                     }
                 }
                 for p in order {
@@ -7481,6 +7554,27 @@ impl Engine {
         Ok(())
     }
 
+    /// Flush the whole-file `gen(:append, ...)` buffers: one write per path,
+    /// rows joined in the program order they accumulated. Same byte-converge +
+    /// dir-create as the non-append File arm. A path also written by a plain
+    /// File rule (in `claimed`) is a clobber — bail, mirroring the claimed-path
+    /// stance (mixing the two forms on one file would race last-wins).
+    fn apply_appends(&self, appends: &Appends, claimed: &HashMap<String, ()>, written: &mut Vec<String>, write_roots: &[PathBuf]) -> Result<()> {
+        for p in &appends.keys {
+            if claimed.contains_key(p) {
+                bail!("file `{p}` is written by both a plain gen rule and gen(:append, ...); \
+                       pick one form for a given file");
+            }
+            let content = format!("{}\n", appends.groups[p].join("\n"));
+            let full = resolve_write_full(write_roots, p);
+            if std::fs::read(&full).ok().as_deref() == Some(content.as_bytes()) { continue; }
+            if let Some(dir) = full.parent() { std::fs::create_dir_all(dir)?; }
+            self.journaled_write(&full, p, content.as_bytes())?;
+            written.push(p.clone());
+        }
+        Ok(())
+    }
+
     /// Apply byte-accurate gen(:mode, ...) cursors per file. Port of v4's
     /// `WriteCursorComponent::render_batch`: group by path, sort regions
     /// right-to-left by lo so earlier offsets stay valid as the buffer grows,
@@ -7569,6 +7663,17 @@ struct Splices {
 struct Cursors {
     keys: Vec<(String, i64, i64, SpliceMode)>,
     groups: HashMap<(String, i64, i64, SpliceMode), Vec<String>>,
+}
+
+/// Whole-file `gen(:append, "path", ...)` buffers collected across every append
+/// rule in a tick. The key is the rendered path; rows per path concatenate in
+/// program order (the gen-item visit order in run_all_gens), so a header rule +
+/// a rows rule build one ordered page. Flushed once in `apply_appends` after
+/// every gen rule ran, mirroring `Splices`.
+#[derive(Default)]
+struct Appends {
+    keys: Vec<String>,
+    groups: HashMap<String, Vec<String>>,
 }
 
 /// `{var}` holes in a gen template, first-appearance order, deduped. A brace

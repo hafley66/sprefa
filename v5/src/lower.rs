@@ -5,6 +5,20 @@ use crate::ast::*;
 
 pub fn tbl(name: &str) -> String { format!("rel_{name}") }
 
+/// Pass-through string builtins: (dsl name, sql UDF, arity). All text->text,
+/// registered in db.rs::register_string_fns. Shared with typecheck (the known-fn
+/// whitelist) so a new entry lights up lowering AND type checking at once.
+pub const STR_FNS: &[(&str, &str, usize)] = &[
+    ("lower", "sprf_lower", 1),
+    ("upper", "sprf_upper", 1),
+    ("lcfirst", "sprf_lcfirst", 1),
+    ("ucfirst", "sprf_ucfirst", 1),
+    ("trim", "sprf_trim", 1),
+    ("strip_prefix", "sprf_strip_prefix", 2),
+    ("strip_suffix", "sprf_strip_suffix", 2),
+    ("replace_re", "sprf_replace_re", 3),
+];
+
 fn esc(s: &str) -> String { s.replace('\'', "''") }
 
 fn lit_sql(t: &Term) -> Option<String> {
@@ -54,7 +68,14 @@ fn term_sql(t: &Term, canon: &HashMap<String, String>) -> Result<String> {
                 // compared numerically instead of as text against "0".
                 "int" if args.len() == 1 =>
                     Ok(format!("CAST({} AS INTEGER)", arg_sqls[0])),
-                other => bail!("unknown or mis-arity function `{other}` (known: split/3, replace/3, int/1)"),
+                // Registered string UDFs (db.rs::register_string_fns), all
+                // text->text. STR_FNS = (dsl name, sql fn, arity).
+                _ if STR_FNS.iter().any(|(n, _, k)| *n == name && *k == args.len()) => {
+                    let (_, sql, _) = STR_FNS.iter().find(|(n, _, _)| *n == name).unwrap();
+                    Ok(format!("{sql}({})", arg_sqls.join(", ")))
+                }
+                other => bail!("unknown or mis-arity function `{other}` (known: split/3, replace/3, int/1, {})",
+                    STR_FNS.iter().map(|(n, _, k)| format!("{n}/{k}")).collect::<Vec<_>>().join(", ")),
             }
         }
     }
@@ -323,8 +344,14 @@ pub fn lower_gen(vars: &[String], body: &[BodyItem], rels: &Rels) -> Result<Stri
             .ok_or_else(|| anyhow::anyhow!("unbound variable {v} in gen template"))?;
         sel.push(format!("{cell} AS \"{v}\""));
     }
-    if sel.is_empty() { bail!("gen templates bind no variables (static content needs no gen)"); }
     let where_sql = if wheres.is_empty() { String::new() } else { format!(" WHERE {}", wheres.join(" AND ")) };
+    if sel.is_empty() {
+        // A constant gen row (no template holes). Legitimate for a fully-
+        // generated file: a title / header / separator line has no variables,
+        // and there's no static file to put it in. DISTINCT collapses the body's
+        // rows to exactly one, so the line is emitted once.
+        return Ok(format!("SELECT DISTINCT 1 FROM {}{}", froms.join(", "), where_sql));
+    }
     let order: Vec<String> = (1..=vars.len()).map(|i| i.to_string()).collect();
     Ok(format!("SELECT DISTINCT {} FROM {}{} ORDER BY {}",
         sel.join(", "), froms.join(", "), where_sql, order.join(", ")))

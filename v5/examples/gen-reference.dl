@@ -1,0 +1,42 @@
+# gen-reference.dl — programmable rustdoc/jsdoc for the engine's OWN surface.
+#
+# Writes a folder of reference pages from the engine's self-describing catalogs,
+# using the :append form of `gen` (`gen(:append, "path", "row")`): every rule
+# targeting one file concatenates in PROGRAM ORDER, so a title rule, a header
+# rule, a separator rule, and a rows rule assemble one ordered page — no marker
+# pairs, no in-place edit, no sort-key tricks. The engine creates the dir and
+# skips the write when the bytes already match (convergence, safe under --watch /
+# CI). README links to these pages instead of inlining the tables, so the docs
+# cannot drift: a new built-in relation (builtin_rel_docs) or scalar function
+# (fn_docs) appears on the next tick, and the doc-completeness tests fail the
+# build until it carries a summary.
+#
+#   Run:     dl v5/examples/gen-reference.dl --root .
+#   Output:  v5/docs/reference/{relations,functions}.md
+#   Daemon:  dl --load v5/examples/gen-reference.dl   (regens on engine.rs edits)
+#
+# Add a page by adding a catalog and a block of :append rules — the doc layout is
+# entirely in dl, however you want it. This is the "auto-doc folder": a page is a
+# query. `true` is the always-true singleton: a header line is one row over it.
+
+# ── relations.md : every built-in relation, grouped, from rel_catalog ──────────
+gen(:append, "docs/reference/relations.md", "# Built-in relations") <- true().
+gen(:append, "docs/reference/relations.md", "") <- true().
+gen(:append, "docs/reference/relations.md",
+    "Generated from the engine's `rel_catalog` by examples/gen-reference.dl. Do not hand-edit.") <- true().
+gen(:append, "docs/reference/relations.md", "") <- true().
+gen(:append, "docs/reference/relations.md", "| relation | group | columns | summary |") <- true().
+gen(:append, "docs/reference/relations.md", "|---|---|---|---|") <- true().
+gen(:append, "docs/reference/relations.md", "| `{name}` | {group} | `{cols}` | {doc} |") <-
+    rel_catalog(name, group, cols, doc).
+
+# ── functions.md : every scalar function, from fn_catalog ──────────────────────
+gen(:append, "docs/reference/functions.md", "# Scalar functions") <- true().
+gen(:append, "docs/reference/functions.md", "") <- true().
+gen(:append, "docs/reference/functions.md",
+    "Callable in a rule head or a comparison side. Generated from the engine's `fn_catalog` by examples/gen-reference.dl. Do not hand-edit.") <- true().
+gen(:append, "docs/reference/functions.md", "") <- true().
+gen(:append, "docs/reference/functions.md", "| function | arity | group | what it does |") <- true().
+gen(:append, "docs/reference/functions.md", "|---|---|---|---|") <- true().
+gen(:append, "docs/reference/functions.md", "| `{name}` | {arity} | {group} | {doc} |") <-
+    fn_catalog(name, arity, group, doc).

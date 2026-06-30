@@ -367,16 +367,25 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                 // whitelist (split/replace) is enforced again at lower time.
                 Term::Call { name, args } => {
                     // `int/1` produces an int (fills an int column); split/replace
-                    // produce text (fill a text-base column). Both take text args.
+                    // and the STR_FNS pass-throughs produce text (fill a text-base
+                    // column). All take text args.
                     let is_int = name == "int";
-                    if !matches!(name.as_str(), "split" | "replace" | "int") {
+                    let str_fn = crate::lower::STR_FNS.iter().find(|(n, _, _)| *n == name.as_str());
+                    let known = is_int || matches!(name.as_str(), "split" | "replace") || str_fn.is_some();
+                    if !known {
+                        let extra = crate::lower::STR_FNS.iter()
+                            .map(|(n, _, _)| *n).collect::<Vec<_>>().join(", ");
                         diags.push(TypeDiag {
                             path: dl_path.to_string(), span: (0, 0),
                             severity: Severity::Error, code: "unknown-function".into(),
-                            msg: format!("unknown function `{name}` (known: split, replace, int)"),
+                            msg: format!("unknown function `{name}` (known: split, replace, int, {extra})"),
                         });
                     }
-                    let want = if is_int { 1 } else { 3 };
+                    let want = match (is_int, str_fn) {
+                        (true, _) => 1,
+                        (_, Some((_, _, k))) => *k,
+                        _ => 3, // split/replace
+                    };
                     if args.len() != want {
                         diags.push(TypeDiag {
                             path: dl_path.to_string(), span: (0, 0),
