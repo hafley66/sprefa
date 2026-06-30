@@ -4,10 +4,11 @@
 //! The point is "we can repeat ghcacher's tests in dl": the conditional cache
 //! (poll_state), the append-only change_log, idempotent dedup, entity
 //! normalization, the reactive resync trigger, and ndjson output all reproduce.
-//! Two behaviors are `#[ignore]` with the reason: the upsert UPDATE family needs
-//! latest-wins (gap B, argmax by req_tx) and the live tail needs a query
-//! subscription. Surrogate integer ids (get_repo_id) do not map — dl is
-//! content-addressed by design.
+//! The upsert UPDATE family (latest-wins, once thought to need a new argmax
+//! builtin = "gap B") is just the relational argmax — `max(tx)` per key joined
+//! back to the winning row, no engine change (parity_upsert_pr_update_latest_wins).
+//! Surrogate integer ids (get_repo_id) do not map — dl is content-addressed by
+//! design.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -240,27 +241,96 @@ fn parity_query_json_is_ndjson() {
 
 /// ghcacher sync/prs.rs `upsert_pr_insert_and_update`: insert PR#1 "First", then a
 /// re-sync of PR#1 "Updated" leaves COUNT=1 with title="Updated" (latest-wins,
-/// keyed on number). A naive dl accumulator keeps BOTH titles (set-valued), so
-/// this needs gap B (a `latest(key)` reduction = argmax by req_tx). Un-ignore when
-/// latest-wins lands.
+/// keyed on number). A naive accumulator keeps BOTH titles, so this looked like it
+/// needed a new `latest`/argmax builtin (gap B). It does not: latest-wins IS the
+/// textbook relational argmax — `max(tx)` per key, then join back to recover the
+/// winning row. Two existing pieces (the head-only `max` aggregate + an ordinary
+/// join), no engine change. PR#2 (single observation) rides through untouched.
 #[test]
-#[ignore = "needs gap B: latest-wins/upsert (argmax by req_tx)"]
 fn parity_upsert_pr_update_latest_wins() {
     let d = sandbox("upsert");
     let dbp = d.join("db");
-    // Two observations of the same PR number with different titles, tagged by tick.
+    // Observations of each PR number tagged by tick; #1 is re-observed (an update).
     let src = "rel obs(num: text, title: text, tx: int).\n\
         obs(\"1\", \"First\", 1).\n\
         obs(\"1\", \"Updated\", 2).\n\
+        obs(\"2\", \"Solo\", 1).\n\
+        rel latest_tx(num: text, tx: int).\n\
+        latest_tx(num, max(tx)) <- obs(num, _, tx).\n\
         rel pull_request(num: text, title: text).\n\
-        # DESIRED (gap B): keep only the latest tx per num.\n\
-        pull_request(num, title) <- latest(obs, num, tx), obs(num, title, tx).\n\
+        pull_request(num, title) <- latest_tx(num, tx), obs(num, title, tx).\n\
         ? pull_request(num, title).\n";
     let mut eng = run(&d, src);
     let (prog, _d, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
     eng.tick(&prog, true).unwrap();
 
-    let pr = rows(&dbp, "SELECT num, title FROM rel_pull_request");
-    assert_eq!(pr, vec![vec!["1".to_string(), "Updated".to_string()]],
-        "latest-wins: one row per number, the newest title");
+    let mut pr = rows(&dbp, "SELECT num, title FROM rel_pull_request");
+    pr.sort();
+    assert_eq!(pr, vec![
+        vec!["1".to_string(), "Updated".to_string()],
+        vec!["2".to_string(), "Solo".to_string()],
+    ], "latest-wins: one row per number, the newest title (argmax via max+join)");
+}
+
+/// A two-kind mock for the FULL port (examples/gh-cache-full.dl). The effect kind
+/// is the `sh` fn NAME: `fetch` (the conditional GET, 5 output slots: status, etag,
+/// remaining, reset, body — body last) and `list_fetch` (the paginated list, 1
+/// slot: the merged array body). Proves the whole loop wires through `@async`: rate
+/// capture + gate, the 200/304 etag cache, `--paginate`-shaped array normalize, and
+/// the change feed — no network, no jq.
+struct FullMock;
+impl EffectExec for FullMock {
+    fn run(&self, kind: &str, args: &Map<String, Json>) -> Result<Vec<String>> {
+        match kind {
+            "fetch" => {
+                let prev = args.get("prev").and_then(|v| v.as_str()).unwrap_or("");
+                Ok(if prev.is_empty() {
+                    // 200: status, etag, x-ratelimit-remaining, -reset, body.
+                    vec!["200".into(), "etagA".into(), "4998".into(), "1700000000".into(),
+                         r#"{"stargazers_count": 42, "full_name": "cli/cli"}"#.into()]
+                } else {
+                    // 304: no body, but the rate headers still arrive (remaining ticks down).
+                    vec!["304".into(), "".into(), "4997".into(), "1700000000".into(), "".into()]
+                })
+            }
+            // The merged multi-page array (what `gh api --paginate | jq -s add` yields).
+            "list_fetch" => Ok(vec![
+                r#"[{"number":1,"title":"fix","state":"open","user":{"login":"alice"}},
+                    {"number":2,"title":"feat","state":"closed","user":{"login":"bob"}}]"#.into(),
+            ]),
+            _ => Ok(Vec::new()),
+        }
+    }
+}
+
+/// The feature-complete port runs end to end: drive examples/gh-cache-full.dl with
+/// FullMock and assert every feature surfaced — stars normalized from a 200 body,
+/// the rate reading captured + carried, both PRs normalized from the paginated
+/// array (latest-wins argmax), and the change feed accumulated.
+#[test]
+fn parity_full_port_end_to_end() {
+    let d = sandbox("fullport");
+    let dbp = d.join("db");
+    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/gh-cache-full.dl");
+    let src = fs::read_to_string(&example).expect("read gh-cache-full.dl");
+    let mut eng = run(&d, &src);
+    let (prog, _d, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    drive(&mut eng, &prog, &FullMock, 4);
+
+    let stars = rows(&dbp, "SELECT n FROM rel_stars");
+    assert_eq!(stars, vec![vec!["42".to_string()]], "stars normalized from the 200 body");
+
+    let reading = rows(&dbp, "SELECT remaining FROM rel_reading");
+    assert!(!reading.is_empty(), "the rate reading was captured + carried: {reading:?}");
+
+    let mut prs = rows(&dbp, "SELECT num, title, state, author FROM rel_pull_request");
+    prs.sort();
+    assert_eq!(prs, vec![
+        vec!["1".to_string(), "fix".to_string(), "open".to_string(), "alice".to_string()],
+        vec!["2".to_string(), "feat".to_string(), "closed".to_string(), "bob".to_string()],
+    ], "both PRs normalized from the paginated array (latest-wins): {prs:?}");
+
+    let log = rows(&dbp, "SELECT DISTINCT kind FROM rel_change_log ORDER BY kind");
+    assert_eq!(log, vec![vec!["pull_request".to_string()], vec!["stars".to_string()]],
+        "the change feed accumulated both entity kinds: {log:?}");
 }

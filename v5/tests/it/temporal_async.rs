@@ -466,6 +466,48 @@ fn effect_arity_and_hole_are_checked() {
     assert!(codes.contains(&"unused-hole"), "want unused-hole, got {codes:?}");
 }
 
+/// A param referenced ONLY via the env-var form `$p` (not `{p}`) is a USE, not an
+/// `unused-hole`: ShellEffectExec exports each arg both ways, and the env form is
+/// the metacharacter-safe one (an etag `W/"..."` survives `$prev` but corrupts a
+/// raw `{prev}`). The bare `$p` must be whole-word: `$prev` is not a use of `pre`.
+#[test]
+fn effect_param_used_via_env_form_is_ok() {
+    let d = sandbox("eff_envform");
+    fs::write(
+        d.join("p.dl"),
+        "rel want(ep: str, prev: str).\n\
+         want(\"octo\", \"\").\n\
+         sh fetch(ep, prev) -> (status: int) = `gh api {ep} -H \"If-None-Match: $prev\"; printf 200`.\n\
+         rel resp(ep: str, status: int).\n\
+         resp(ep, status) <- @async want(ep, prev), fetch(ep, prev) -> (status).\n",
+    )
+    .unwrap();
+    let (_prog, diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let codes: Vec<&str> = diags.iter().map(|x| x.code.as_str()).collect();
+    assert!(!codes.contains(&"unused-hole"),
+        "`$prev` is a use of param `prev`; should not flag unused-hole, got {codes:?}");
+}
+
+/// The whole-word guard: a param `pre` is NOT satisfied by `$prev` appearing in the
+/// template (it would be a substring match without the boundary check).
+#[test]
+fn effect_env_form_is_whole_word() {
+    let d = sandbox("eff_wholeword");
+    fs::write(
+        d.join("p.dl"),
+        "rel want(pre: str).\n\
+         want(\"x\").\n\
+         sh f(pre) -> (ok: text) = `echo $prefix; printf done`.\n\
+         rel resp(pre: str, ok: text).\n\
+         resp(pre, ok) <- @async want(pre), f(pre) -> (ok).\n",
+    )
+    .unwrap();
+    let (_prog, diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let codes: Vec<&str> = diags.iter().map(|x| x.code.as_str()).collect();
+    assert!(codes.contains(&"unused-hole"),
+        "`$prefix` must not count as a use of param `pre`; want unused-hole, got {codes:?}");
+}
+
 /// `check_effect`: an explicit call to no declared `sh` is `unknown-sh`.
 #[test]
 fn effect_unknown_sh_is_flagged() {
@@ -640,6 +682,37 @@ fn collect_batches_one_request_and_fans_response() {
         vec!["b".to_string(), "B".to_string()],
         vec!["c".to_string(), "C".to_string()],
     ]);
+}
+
+/// `collect(x, N)` caps each batched request at N values: a 7-row watch set with
+/// `collect(slug, 3)` queues ceil(7/3)=3 requests (groups of 3/3/1), each
+/// `batch=1`, instead of one whole-set request (`collect(x)`) or 7 per-row
+/// requests. ghcacher's 20-per-call GraphQL discipline as a `collect` arg.
+#[test]
+fn collect_chunk_caps_batched_request_size() {
+    let d = sandbox("collectchunk");
+    let dbp = d.join("db");
+    fs::write(
+        d.join("p.dl"),
+        "rel watch_pr(slug: text).\n\
+         watch_pr(\"o/r1\"). watch_pr(\"o/r2\"). watch_pr(\"o/r3\"). watch_pr(\"o/r4\").\n\
+         watch_pr(\"o/r5\"). watch_pr(\"o/r6\"). watch_pr(\"o/r7\").\n\
+         sh pr_batch(repos) -> (body: text) = `printf '%s' '{repos}'`.\n\
+         rel pr_resp(body: text).\n\
+         pr_resp(body) <- @async watch_pr(slug), pr_batch(collect(slug, 3)) -> (body).\n",
+    )
+    .unwrap();
+    let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let conn = db::open(dbp.to_str()).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    eng.tick(&prog, true).unwrap();
+    // ceil(7/3) = 3 batched requests, sorted+chunked, each batch=1.
+    let pend = rows(&dbp,
+        "SELECT json_extract(args_json,'$.repos'), batch FROM pending_effect ORDER BY 1");
+    assert_eq!(pend.len(), 3, "ceil(7/3)=3 requests, not 1 (whole-set) and not 7 (per-row)");
+    assert!(pend.iter().all(|r| r[1] == "1"), "every request is batch=1: {pend:?}");
+    let groups: Vec<&str> = pend.iter().map(|r| r[0].as_str()).collect();
+    assert_eq!(groups, vec!["o/r1,o/r2,o/r3", "o/r4,o/r5,o/r6", "o/r7"]);
 }
 
 /// A response relation may not be headed by a source/derived rule too: it is

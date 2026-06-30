@@ -261,8 +261,25 @@ fn shell_kinds(prog: &Program) -> HashMap<String, ShellKind> {
 /// var is supported inside `collect`.
 fn collect_inner_var(t: &Term) -> Option<&str> {
     match t {
-        Term::Call { name, args } if name == "collect" && args.len() == 1 => match &args[0] {
-            Term::Var(v) => Some(v.as_str()),
+        Term::Call { name, args }
+            if name == "collect" && (args.len() == 1 || args.len() == 2) =>
+        {
+            match &args[0] {
+                Term::Var(v) => Some(v.as_str()),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// `collect(x, N)` chunk size: cap each batched request at N values (the
+/// provider's per-call limit, e.g. a GraphQL query-complexity ceiling), firing
+/// ceil(|values|/N) requests. `collect(x)` (no N) batches the whole set into one.
+fn collect_chunk(t: &Term) -> Option<usize> {
+    match t {
+        Term::Call { name, args } if name == "collect" && args.len() == 2 => match &args[1] {
+            Term::Int(n) if *n > 0 => Some(*n as usize),
             _ => None,
         },
         _ => None,
@@ -6381,27 +6398,34 @@ impl Engine {
                 if values.is_empty() { continue; }
                 values.sort();
                 values.dedup();
-                let mut hole = base.unwrap_or_default();
                 let ckey = &hole_keys[ci];
-                if !ckey.is_empty() {
-                    // The batch list joins comma-separated (the common CLI form,
-                    // `--ids a,b,c`); the template controls how `{ids}` is consumed.
-                    hole.insert(ckey.clone(), serde_json::json!(values.join(",")));
+                let base = base.unwrap_or_default();
+                // `collect(x, N)` caps each request at N values; `collect(x)`
+                // (no N) batches the whole set into one request. ceil(|x|/N)
+                // batched requests, each marked `batch=1`.
+                let chunk = collect_chunk(&eff_args[ci]).unwrap_or(values.len().max(1));
+                for group in values.chunks(chunk) {
+                    let mut hole = base.clone();
+                    if !ckey.is_empty() {
+                        // The batch list joins comma-separated (the common CLI form,
+                        // `--ids a,b,c`); the template controls how `{ids}` is consumed.
+                        hole.insert(ckey.clone(), serde_json::json!(group.join(",")));
+                    }
+                    let args_json = serde_json::Value::Object(hole).to_string();
+                    let id = blake3::hash(
+                        format!("{head_rel}\u{0}{kind}\u{0}{args_json}").as_bytes()
+                    ).to_hex().to_string();
+                    // No single body solution keys the batch — the head rebuilds
+                    // purely from the fanned-out response (`full_json` empty), so a
+                    // batch head must read only response outs / the echoed id (not a
+                    // per-row body var). `batch=1`.
+                    rows.push(vec![
+                        Value::Text(id), Value::Text(kind.to_string()),
+                        Value::Text(head_rel.clone()),
+                        Value::Text(args_json), Value::Text(String::new()), Value::Int(cur),
+                        Value::Int(1),
+                    ]);
                 }
-                let args_json = serde_json::Value::Object(hole).to_string();
-                let id = blake3::hash(
-                    format!("{head_rel}\u{0}{kind}\u{0}{args_json}").as_bytes()
-                ).to_hex().to_string();
-                // No single body solution keys the batch — the head rebuilds purely
-                // from the fanned-out response (`full_json` empty), so a batch head
-                // must read only response outs / the echoed id (not a per-row body
-                // var). `batch=1`.
-                rows.push(vec![
-                    Value::Text(id), Value::Text(kind.to_string()),
-                    Value::Text(head_rel.clone()),
-                    Value::Text(args_json), Value::Text(String::new()), Value::Int(cur),
-                    Value::Int(1),
-                ]);
                 continue;
             }
             for sol in solutions {

@@ -1,0 +1,133 @@
+# gh-cache-full.dl — the FULL ghcacher feature set as a datalog program, so the
+# Rust service (~/projects/ghcacher) can be archived. gh-cache.dl is the teaching
+# version (one conditional GET); this is the feature-complete one. Three things
+# it adds, each a dl IDIOM over the existing engine, no Rust:
+#
+#   gap C  pagination     `gh api --paginate` in the template (gh merges array
+#                         pages into one body); `json q:[... {...}]` explodes all
+#                         pages into rows. The SAME mechanism ghcacher uses.
+#   gap D  rate backoff   the conditional-GET template greps x-ratelimit-remaining
+#                         / -reset into extra output lines (split_outputs is
+#                         dynamic-arity, body stays last); a `rate_ok` rule gates
+#                         every poll, so the loop self-throttles as ghcacher does.
+#   gap B  PR upsert      latest-wins is the relational argmax: max(tx) per number,
+#                         joined back to the winning row. No new builtin.
+#
+#   Run (daemon):  DL_POLL_SECS=5 dl --lsp examples/gh-cache-full.dl --root <repo>
+
+# ============================================================================
+# 1. CONDITIONAL SINGLE-GET (repo metadata) — etag/304 cache + rate capture
+# ============================================================================
+rel watch(ep: text).
+watch("repos/cli/cli").
+
+rel etag(ep: text, tag: text).
+rel etag_next(ep: text, tag: text).
+
+# --- active rate backoff (gap D) ---------------------------------------------
+# Carry the freshest rate reading across ticks; gate every poll on it. The single
+# conditional-GET endpoint supplies the reading (its -i headers), so `reading`
+# holds at most one row. A fresh response REPLACES it; a tick with no response
+# carries the prior one. This is ghcacher's rate_stop_threshold as a join instead
+# of an `if remaining <= stop { return }`. (A bare `!reading` rule is unsafe and a
+# scalar min/max over an empty `reading` does not converge on the first tick, so
+# the gate is grounded on `gate_seed` and avoids aggregates.)
+rel gate_seed(g: text).
+gate_seed("go").
+
+rel reading(remaining: int, reset: int).
+rel reading_next(remaining: int, reset: int).
+reading_next(rem, rst) <- resp(_, 200, _, rem, rst, _), rem != "".   # fresh 200
+reading_next(rem, rst) <- resp(_, 304, _, rem, rst, _), rem != "".   # 304s carry rate too
+reading_next(rem, rst) <- reading(rem, rst), !resp(_, _, _, _, _, _). # else keep prior
+reading(rem, rst) <- @next reading_next(rem, rst).
+
+rel rate_ok(g: text).
+rate_ok("go") <- gate_seed("go"), !reading(_, _).         # no reading yet: allow
+rate_ok("go") <- gate_seed("go"), reading(rem, _), rem > 200.  # healthy headroom
+
+# --- cadence + the gate ------------------------------------------------------
+rel poll(ep: text, prev: text, bucket: int).
+poll(ep, prev, b) <- watch(ep), etag(ep, prev), clock(300, b), rate_ok("go").
+poll(ep, "",   b) <- watch(ep), !etag(ep, _),   clock(300, b), rate_ok("go").
+
+# The conditional GET as a TYPED effect. Typed outputs (status/remaining/reset are
+# int), BODY IS LAST so split_outputs' last slot absorbs the multi-line JSON. `$prev`
+# (env form) keeps the etag's quotes intact; the backtick body needs no escaping.
+sh fetch(ep, prev) -> (status: int, tag: text, remaining: int, reset: int, body: text) =
+  `R=$(gh api {ep} -i -H "If-None-Match: $prev" 2>/dev/null)
+   C=$(printf '%s' "$R" | head -1 | grep -oE '[0-9]{3}' | head -1)
+   E=$(printf '%s' "$R" | grep -iE '^etag:' | head -1 | sed -E 's/^[Ee]tag:[[:space:]]*//; s/\r$//')
+   RM=$(printf '%s' "$R" | grep -iE '^x-ratelimit-remaining:' | head -1 | grep -oE '[0-9]+')
+   RS=$(printf '%s' "$R" | grep -iE '^x-ratelimit-reset:' | head -1 | grep -oE '[0-9]+')
+   B=$(printf '%s' "$R" | awk 'f{print} /^\r?$/{f=1}' | tr -d '\n')
+   printf '%s\n%s\n%s\n%s\n%s' "$C" "$E" "$RM" "$RS" "$B"`.
+
+rel resp(ep: text, status: int, tag: text, remaining: int, reset: int, body: text).
+resp(ep, status, tag, rem, rst, body) <-
+    @async poll(ep, prev, bucket), fetch(ep, prev) -> (status, tag, rem, rst, body).
+
+etag_next(ep, tag) <- resp(ep, 200, tag, _, _, _).
+etag_next(ep, old) <- resp(ep, 304, _, _, _, _), etag(ep, old).
+etag(ep, tag) <- @next etag_next(ep, tag).
+
+# normalize the repo body (a single object)
+rel stars(ep: text, n: text).
+stars(ep, n) <- resp(ep, 200, _, _, _, body), jsonp(body, "stargazers_count", n).
+
+# ============================================================================
+# 2. PAGINATED LIST (PRs) — gap C pagination + gap B upsert (latest-wins)
+# ============================================================================
+rel watch_list(ep: text, kind: text).
+watch_list("repos/cli/cli/pulls", "pull_request").
+
+# A separate effect: `gh api --paginate` follows Link rel="next" and merges the
+# array pages into one body (gh's own pagination, = ghcacher's parse_paginated).
+# No etag here (ghcacher doesn't conditional-cache the list refetch either); the
+# clock bucket is the cadence + the request-dedup key.
+rel list_poll(ep: text, kind: text, bucket: int).
+list_poll(ep, kind, b) <- watch_list(ep, kind), clock(300, b), rate_ok("go").
+
+# A second typed effect: `gh api --paginate` follows Link rel="next"; `jq -s add`
+# merges the per-page arrays into one document = the one `body` output slot.
+sh list_fetch(ep) -> (body: text) =
+  `gh api --paginate {ep} 2>/dev/null | jq -s 'add // .' 2>/dev/null`.
+
+# `bucket` echoes from the request (the tx tag = clock bucket); `body` is bound
+# from list_fetch's output.
+rel list_resp(ep: text, kind: text, tx: int, body: text).
+list_resp(ep, kind, bucket, body) <-
+    @async list_poll(ep, kind, bucket), list_fetch(ep) -> (body).
+
+# Each array element -> one observation, tagged by the poll's clock bucket (its
+# tx). One brace pattern over the merged body normalizes every page at once.
+rel pr_obs(num: text, title: text, state: text, author: text, tx: int).
+pr_obs(num, title, state, author, tx) <-
+    list_resp(ep, "pull_request", tx, body),
+    json(body, q:[... { number: $num, title: $title, state: $state,
+                        user: { login: $author } } ]).
+
+# UPSERT = latest-wins = relational argmax: newest tx per number, join back.
+rel pr_latest_tx(num: text, tx: int).
+pr_latest_tx(num, max(tx)) <- pr_obs(num, _, _, _, tx).
+rel pull_request(num: text, title: text, state: text, author: text).
+pull_request(num, title, state, author) <-
+    pr_latest_tx(num, tx), pr_obs(num, title, state, author, tx).
+
+# ============================================================================
+# 3. THE CHANGE FEED (append-only) — every distinct observed entity
+# ============================================================================
+rel change_log(ep: text, kind: text, val: text).
+rel change_log_next(ep: text, kind: text, val: text).
+change_log_next(ep, kind, val) <- change_log(ep, kind, val).
+change_log_next(ep, "stars", n)        <- stars(ep, n).
+change_log_next("pulls", "pull_request", num) <- pull_request(num, _, _, _).
+change_log(ep, kind, val) <- @next change_log_next(ep, kind, val).
+
+# ============================================================================
+# 4. READ THE CACHE
+# ============================================================================
+? pull_request(num, title, state, author).
+? stars(ep, n).
+? change_log(ep, kind, val).
+? reading(remaining, reset).

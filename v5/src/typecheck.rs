@@ -492,6 +492,26 @@ fn coerce_base(var: &str, base: Type, dl_path: &str, diags: &mut Vec<TypeDiag>) 
 ///   - when the decl is known: arg arity = params, out arity = decl outs, every
 ///     `{param}` hole appears in the body text, and the temporal axis agrees with
 ///     the `sh` kind (`@async`↔`sh`/`sh!`, `@stream`↔`sh*`).
+/// True if `param` appears in a shell template as the raw hole `{param}`, the
+/// braced env form `${param}`, or the bare env form `$param` (terminated by a
+/// non-identifier char, so `$prev` does not count as a use of `pre`).
+fn param_referenced(body: &str, param: &str) -> bool {
+    if body.contains(&format!("{{{param}}}")) || body.contains(&format!("${{{param}}}")) {
+        return true;
+    }
+    let needle = format!("${param}");
+    let mut from = 0;
+    while let Some(i) = body[from..].find(&needle) {
+        let end = from + i + needle.len();
+        let next_ok = body[end..].chars().next()
+            .map(|c| !c.is_ascii_alphanumeric() && c != '_')
+            .unwrap_or(true);
+        if next_ok { return true; }
+        from = end;
+    }
+    false
+}
+
 fn check_effect(rule: &Rule, fns: &HashMap<&str, &ShellFn>, dl_path: &str, diags: &mut Vec<TypeDiag>) {
     let err = |code: &str, msg: String, diags: &mut Vec<TypeDiag>| {
         diags.push(TypeDiag {
@@ -534,9 +554,14 @@ fn check_effect(rule: &Rule, fns: &HashMap<&str, &ShellFn>, dl_path: &str, diags
             diags);
     }
     for p in &f.params {
-        if !f.body.contains(&format!("{{{p}}}")) {
+        // A param is "used" if it appears as the raw hole `{p}` OR the env-var
+        // form `$p` / `${p}`. ShellEffectExec exports each arg both ways (commit
+        // c8ebf46): `{p}` substitutes the raw text, `$p` lets the shell expand an
+        // opaque value (an etag `W/"..."`, a JSON blob) without re-parsing its
+        // quotes. A template that only needs the safe form should still pass.
+        if !param_referenced(&f.body, p) {
             err("unused-hole",
-                format!("`sh {name}` param `{p}` never appears as `{{{p}}}` in the template"),
+                format!("`sh {name}` param `{p}` never appears as `{{{p}}}` or `${p}` in the template"),
                 diags);
         }
     }

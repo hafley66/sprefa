@@ -1,0 +1,71 @@
+# gh-cache-batch.dl — ghcacher's API-COST-AT-SCALE feature: the BATCHED PR sweep.
+#
+# gh-cache-full.dl fetches PRs with one paginated REST call PER repo (N calls for
+# N repos). ghcacher's economy trick is batching: one GraphQL call aliases up to
+# 20 `repository(){ pullRequests }` blocks, so 20 repos cost ONE request instead
+# of 20. This file is that, as a dl IDIOM — the `collect(x)` aggregate effect.
+#
+#   collect(slug, 20)  gathers `slug` across ALL `watch_pr` solutions and fires
+#                  ceil(N/20) requests (batch=1), each capped at 20 repos — the
+#                  GraphQL query-complexity ceiling ghcacher batches against. The
+#                  response fans back out (one row per output line). `collect(x)`
+#                  with no cap batches the whole set into one request. This is the
+#                  engine's provider-native batch-by-id — ghcacher's shape, no Rust.
+#
+# The template builds a multi-repo GraphQL query from the comma-joined `{repos}`
+# list (one aliased `repository(){pullRequests}` block per slug), fires ONE
+# `gh api graphql`, and `jq` flattens the aliased result into a single JSON array
+# of repo-tagged PR objects, which `json q:[...]` explodes into one row per PR.
+#
+# HONEST LIMITS (both also true of ghcacher):
+#   * GraphQL transport: in a proxied env whose gh GraphQL endpoint 502s, this
+#     path cannot run — ghcacher's PR sync has the IDENTICAL blocker (it is
+#     GraphQL-only, gh.rs `graphql`). The REST path (gh-cache-full.dl) is the
+#     proxy-survivable one; this one is the API-economy path for a real env.
+#   * (resolved) Chunk-size: `collect(slug, 20)` caps each query at 20 repos, so
+#     a large watch set fans into ceil(N/20) batched GraphQL calls — ghcacher's
+#     exact 20-per-call discipline, now a `collect` arg (no per-row request).
+#
+#   Run (daemon, needs a working gh GraphQL endpoint):
+#     DL_POLL_SECS=5 dl --lsp examples/gh-cache-batch.dl --root <repo>
+
+# Full "owner/name" slugs (avoids a concat builtin; the shell splits them).
+rel watch_pr(slug: text).
+watch_pr("astral-sh/ruff").
+watch_pr("astral-sh/uv").
+watch_pr("cli/cli").
+
+# Batched effect over the whole watch set. `collect(slug, 20)` folds the slugs
+# into comma-joined `{repos}` holes of <=20 each; ONE `gh api graphql` per chunk
+# returns those repos' open PRs. The query is assembled in shell from the comma
+# list; jq flattens the aliased `data` object into one array of
+# {repo,number,title,state}.
+rel pr_resp(body: text).
+sh pr_batch(repos) -> (body: text) =
+  `Q='query {'
+   i=0
+   IFS=, ; for slug in {repos}; do
+     o=${slug%%/*}; n=${slug#*/}
+     Q="$Q r$i: repository(owner:\"$o\", name:\"$n\") {
+          nameWithOwner pullRequests(states: OPEN, first: 100) {
+            nodes { number title state } } }"
+     i=$((i+1))
+   done
+   Q="$Q }"
+   gh api graphql -f query="$Q" 2>/dev/null \
+     | jq -c '[ .data | to_entries[] | .value as $r
+                | $r.pullRequests.nodes[]
+                | { repo: $r.nameWithOwner, number: .number,
+                    title: .title, state: .state } ]'`.
+
+# One body (the whole flattened array) from ONE batched call.
+pr_resp(body) <- @async watch_pr(slug), pr_batch(collect(slug, 20)) -> (body).
+
+# Explode the array: one row per PR across ALL batched repos, from one request.
+rel pull_request(repo: text, num: text, title: text, state: text).
+pull_request(repo, num, title, state) <-
+    pr_resp(body),
+    json(body, q:[... { repo: $repo, number: $num,
+                        title: $title, state: $state } ]).
+
+? pull_request(repo, num, title, state).

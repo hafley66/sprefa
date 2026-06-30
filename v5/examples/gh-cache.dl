@@ -54,26 +54,26 @@ rel poll(ep: text, prev: text, bucket: int).
 poll(ep, prev, b) <- watch(ep), etag(ep, prev), clock(300, b).
 poll(ep, "",   b) <- watch(ep), !etag(ep, _),   clock(300, b).
 
-# Fire the conditional GET. `status`/`tag`/`body` are the response columns the
-# executor fills; `ep` echoes from the request; `prev`/`bucket` are request-only
-# inputs (the digest key). No `every` gate here — the bucket already throttles via
-# the request id, and a gate would stall the very first poll until a boundary.
-rel resp(ep: text, status: int, tag: text, body: text).
-resp(ep, status, tag, body) <- @async poll(ep, prev, bucket).
+# The conditional GET as a TYPED effect (not a string fact). `sh` = a read-effect
+# (the @async kind); the signature names the request params and the TYPED response
+# columns. `{ep}` is raw text (a clean path); `$prev` is the env-var form — the
+# carried etag is `W/"..."`, whose quotes would corrupt a raw `{prev}` inside the
+# quoted header, but survive intact as `$prev` (the shell expands it without
+# re-parsing). The backtick body is raw shell, so no `\"`/`\\n` escaping. Output is
+# newline-separated status / etag / body, the body slot absorbing the rest.
+sh fetch(ep, prev) -> (status: int, tag: text, body: text) =
+  `R=$(gh api {ep} -i -H "If-None-Match: $prev" 2>/dev/null)
+   C=$(printf '%s' "$R" | head -1 | grep -oE '[0-9]{3}' | head -1)
+   E=$(printf '%s' "$R" | grep -iE '^etag:' | head -1 | sed -E 's/^[Ee]tag:[[:space:]]*//; s/\r$//')
+   B=$(printf '%s' "$R" | awk 'f{print} /^\r?$/{f=1}' | tr -d '\n')
+   printf '%s\n%s\n%s' "$C" "$E" "$B"`.
 
-# The shell template, keyed by the @async head rel. `{ep}` is raw text (a clean
-# path); `$prev` is the env-var form — the carried etag is `W/"..."`, whose quotes
-# would corrupt a `{prev}` inside the quoted header, but survive intact as `$prev`
-# (the shell expands it without re-parsing). Output is newline-separated
-# status / etag / body (`run` splits stdout by line, the body slot absorbing the
-# rest), the D-7 response-row convention.
-rel effect_cmd(kind: text, template: text).
-effect_cmd("resp",
-  "R=$(gh api {ep} -i -H \"If-None-Match: $prev\" 2>/dev/null); \
-   C=$(printf '%s' \"$R\" | head -1 | grep -oE '[0-9]{3}' | head -1); \
-   E=$(printf '%s' \"$R\" | grep -iE '^etag:' | head -1 | sed -E 's/^[Ee]tag:[[:space:]]*//; s/\\r$//'); \
-   B=$(printf '%s' \"$R\" | awk 'f{print} /^\\r?$/{f=1}' | tr -d '\\n'); \
-   printf '%s\\n%s\\n%s' \"$C\" \"$E\" \"$B\"").
+# Fire it. `status`/`tag`/`body` are bound by `fetch(...) -> (status, tag, body)`
+# (named, not positional); `ep` echoes from the request; `prev`/`bucket` are the
+# request-only digest key. No `every` gate — the bucket throttles via the request
+# id, and a gate would stall the first poll until a boundary.
+rel resp(ep: text, status: int, tag: text, body: text).
+resp(ep, status, tag, body) <- @async poll(ep, prev, bucket), fetch(ep, prev) -> (status, tag, body).
 
 # Advance the etag carry: a 200 installs its fresh etag; a 304 keeps the old one.
 etag_next(ep, tag) <- resp(ep, 200, tag, _).
