@@ -30,6 +30,10 @@ autotests = false
 name = "sprefa_v5"
 path = "src/lib.rs"
 
+# The ONLY published binary. `scc_reach` (a debug/proof tool) lives in
+# examples/ instead of src/bin/, so `cargo install --git <url> sprefa-dl` ships
+# just `dl` with no `--bin` flag, and the release tarball carries only `dl`.
+# Build the example with `cargo run --example scc_reach -- <db>`.
 [[bin]]
 name = "dl"
 path = "src/main.rs"

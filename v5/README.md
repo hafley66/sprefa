@@ -14,7 +14,7 @@ other doc in the tree.
 
 ```sh
 cargo build                                    # debug binary at target/debug/dl
-cargo install --path v5 --bin dl               # put `dl` on PATH (run from repo root)
+cargo install --path v5                          # put `dl` on PATH (run from repo root)
 
 dl examples/glean.dl --root .                  # run a program, print ? queries
 dl --check --root <repo>                       # discovery mode: runs <repo>/.dl/*.dl
