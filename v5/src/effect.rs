@@ -114,8 +114,14 @@ impl ShellEffectExec {
         cmd.arg("-c").arg(&cmdline);
         for (k, v) in &envs { cmd.env(k, v); }
         if run_in.as_os_str().len() > 0 { cmd.current_dir(&run_in); }
+        // Effect trace (DL_TRACE=debug): the rendered command actually spawned,
+        // truncated so a giant inlined body stays one readable line. This is the
+        // "what request am I about to make" half of the ghcacher-style log.
+        tracing::debug!(target: "dl::effect", kind, cmd = %preview(&cmdline), "spawn");
         let output = cmd.output()?;
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        tracing::debug!(target: "dl::effect", kind, exit = ?output.status.code(),
+            bytes = stdout.len(), "result");
         // nonzero exit WITH stdout is the findings-exist convention (the `cmd` op
         // shares it); nonzero with empty stdout is a broken command — be loud.
         if !output.status.success() && stdout.trim().is_empty() {
@@ -157,6 +163,18 @@ fn split_tsv(line: &str, nout: usize) -> Vec<String> {
     let rest = if fields.len() > nout - 1 { fields[nout - 1..].join("\t") } else { String::new() };
     out.push(rest);
     out
+}
+
+/// One-line preview of an effect command/value for the `dl::effect` trace:
+/// collapse newlines and cap length so a multi-line shell body or a big JSON
+/// blob stays one readable log line.
+fn preview(s: &str) -> String {
+    let flat: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() > 160 {
+        format!("{}…", flat.chars().take(160).collect::<String>())
+    } else {
+        flat
+    }
 }
 
 /// Split shell stdout into `nout` response values: one per line, the last slot
@@ -547,6 +565,9 @@ impl Engine {
             };
             work.push((id, kind, head_rel, args, full, batch != 0));
         }
+        if !work.is_empty() {
+            tracing::info!(target: "dl::effect", n = work.len(), "draining effects");
+        }
 
         // Run the executors across the rayon pool: the shell spawn / network call
         // is the slow part, and one request never depends on another's response
@@ -566,6 +587,15 @@ impl Engine {
                 } else {
                     vec![exec.run(kind, args)?]
                 };
+                // Effect trace (DL_TRACE=info): one line per response. `args` is
+                // the digest key (the endpoint + carried etag + cadence bucket),
+                // and `status` is the first response slot — for a gh poll that is
+                // the HTTP status, so a 200-vs-304 cache hit is visible here.
+                tracing::info!(target: "dl::effect",
+                    kind = %kind, head = %head_rel,
+                    args = %preview(&serde_json::to_string(args).unwrap_or_default()),
+                    status = %lines.first().and_then(|l| l.first()).map(String::as_str).unwrap_or(""),
+                    rows = lines.len(), "response");
                 let mut out_rows = Vec::with_capacity(lines.len());
                 for out in &lines {
                     if out.len() != out_vars.len() {
@@ -620,7 +650,51 @@ impl Engine {
             }
             tx.commit()?;
         }
+        self.gc_done_effects(&kinds)?;
         Ok(done_ids.len())
+    }
+
+    /// Reclaim old `done` `pending_effect` rows so a long-lived poller's audit
+    /// log does not grow without bound (the one effect-table leak: a
+    /// cadence-bucketed poll queues a fresh row every `clock` bucket forever).
+    ///
+    /// Scope is deliberately narrow:
+    /// - **`Read` (`sh`) only.** A `Read` row is cache-safe to drop — re-firing a
+    ///   read is defined-harmless — and a cadence bucket only moves FORWARD, so an
+    ///   old (endpoint, etag, bucket) request can never recur to be re-fired.
+    /// - **`Mutate` (`sh!`) rows are kept.** Their persisted `done` state IS the
+    ///   exactly-once guard (`INSERT OR IGNORE` on the same id is what stops a
+    ///   re-POST); GC-ing one would re-open the window. `Stream` rows are
+    ///   long-lived and owned by the stream reader, so they are kept too.
+    /// - Only rows older than the retention window (`DL_EFFECT_RETAIN_TICKS`,
+    ///   default 256 ticks) are removed, so the live `effect_log` view still
+    ///   shows recent activity.
+    fn gc_done_effects(&self, kinds: &HashMap<String, ShellKind>) -> Result<()> {
+        let read_kinds: Vec<&String> = kinds.iter()
+            .filter(|(_, k)| **k == ShellKind::Read)
+            .map(|(name, _)| name)
+            .collect();
+        if read_kinds.is_empty() { return Ok(()); }
+        let keep: i64 = std::env::var("DL_EFFECT_RETAIN_TICKS").ok()
+            .and_then(|s| s.parse().ok()).unwrap_or(256);
+        // Read the carry clock directly (the private `current_tx` lives in the
+        // engine module); `_carry_meta` is the same row `set_tx` advances.
+        let cur_tx: i64 = self.db.conn().query_row(
+            "SELECT tx FROM _carry_meta WHERE k = 'tx'", [], |r| r.get(0))?;
+        if cur_tx <= keep { return Ok(()); }
+        let cutoff = cur_tx - keep;
+        let placeholders = read_kinds.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "DELETE FROM pending_effect WHERE state = 'done' AND req_tx < ? AND kind IN ({placeholders})");
+        let conn = self.db.conn();
+        let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(read_kinds.len() + 1);
+        params.push(&cutoff);
+        for k in &read_kinds { params.push(*k); }
+        let n = conn.execute(&sql, params.as_slice())?;
+        if n > 0 {
+            tracing::debug!(target: "dl::effect", reclaimed = n, cutoff, "gc done effects");
+        }
+        Ok(())
     }
 
     /// Drain `@stream` (`sh*`) subscriptions. Unlike `drain_effects` (one row per
