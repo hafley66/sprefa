@@ -1200,7 +1200,7 @@ mod tests {
     #[test]
     fn oracle_extracted_fn_signatures() {
         let src = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/engine.rs"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/engine/mod.rs"),
         )
         .unwrap();
         let mut parser = Parser::new();
@@ -1544,7 +1544,7 @@ mod tests {
     #[test]
     fn tree_iso_ranges_subset_of_ast_on_engine_rs() {
         let src = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/engine.rs"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/engine/mod.rs"),
         )
         .unwrap();
         let tree_p = tree_shape_proposals(&src);
@@ -1572,7 +1572,7 @@ mod tests {
         // proposal level, containment should be ≥90% (some boundary effects
         // from different seed windows). Uses the SCIP index if available.
         let src = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/engine.rs"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/engine/mod.rs"),
         )
         .unwrap();
         let repo_root = format!("{}/..", env!("CARGO_MANIFEST_DIR"));
@@ -1584,7 +1584,7 @@ mod tests {
                 occ_owned = rows
                     .occ_spans
                     .iter()
-                    .filter(|(f, _, _, _)| f == "src/engine.rs")
+                    .filter(|(f, _, _, _)| f == "src/engine/mod.rs")
                     .map(|(_, l, c, s)| (*l, *c, s.clone()))
                     .collect();
                 spans = occ_owned

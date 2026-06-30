@@ -79,7 +79,7 @@ fn build_adj(edges: &[(String, String)]) -> (Vec<String>, Vec<Vec<u32>>) {
     use std::collections::HashMap;
     let mut idx: HashMap<String, u32> = HashMap::new();
     let mut ids: Vec<String> = Vec::new();
-    let mut intern = |s: &str, ids: &mut Vec<String>, idx: &mut HashMap<String, u32>| -> u32 {
+    let intern = |s: &str, ids: &mut Vec<String>, idx: &mut HashMap<String, u32>| -> u32 {
         if let Some(&i) = idx.get(s) { return i; }
         let i = ids.len() as u32;
         ids.push(s.to_string());

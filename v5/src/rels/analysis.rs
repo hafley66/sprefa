@@ -2,7 +2,6 @@
 //! `type_shape`, `type_lgg`.
 
 use anyhow::Result;
-use std::collections::HashSet;
 
 use crate::ast::{RelDecl, Type, Value};
 use crate::engine::Engine;

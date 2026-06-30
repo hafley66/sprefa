@@ -1,5 +1,9 @@
-# coupling-metrics.dl — the dogfood instrument. dl measures engine.rs's OWN
-# RelKind coupling so the Phase-1 trait extraction has a before/after number.
+# coupling-metrics.dl — the dogfood instrument. dl measures the engine module's
+# OWN RelKind coupling so the trait extraction has a before/after number. Scans
+# the whole module (`src/engine/*.rs` = mod.rs + the lifted extract.rs), so a
+# Stage-4-style body LIFT reads flat here (coupling relocated, not reduced) while
+# the file-size win is mod.rs's line count; a true registry-loop collapse would
+# drop dispatch_* toward 0.
 # All facts via the tree-sitter `ast` backend (structural, not regex): a comment
 # that says `refresh_foo_rel` is not a function_item, a string is not a call.
 #
@@ -14,19 +18,19 @@
 
 # --- the RelKind family: the dup-shape that becomes trait impls --------------
 rel relkind_decl(name: text).
-relkind_decl(name) <- scan("WORK", "src/engine.rs", p, rev),
+relkind_decl(name) <- scan("src/engine/*.rs", p, rev),
     ast(p, rev, :rust, "(function_item name: (identifier) @name)", line),
     name =~ /_rel_decls$/.
 rel relkind_used(name: text).
-relkind_used(name) <- scan("WORK", "src/engine.rs", p, rev),
+relkind_used(name) <- scan("src/engine/*.rs", p, rev),
     ast(p, rev, :rust, "(function_item name: (identifier) @name)", line),
     name =~ /_rels_used$/.
 rel relkind_refresh(name: text).
-relkind_refresh(name) <- scan("WORK", "src/engine.rs", p, rev),
+relkind_refresh(name) <- scan("src/engine/*.rs", p, rev),
     ast(p, rev, :rust, "(function_item name: (identifier) @name)", line),
     name =~ /^refresh_.*_rels?$/.
 rel relkind_const(name: text).
-relkind_const(name) <- scan("WORK", "src/engine.rs", p, rev),
+relkind_const(name) <- scan("src/engine/*.rs", p, rev),
     ast(p, rev, :rust, "(const_item name: (identifier) @name)", line),
     name =~ /_RELS$/.
 
@@ -35,12 +39,12 @@ relkind_const(name) <- scan("WORK", "src/engine.rs", p, rev),
 # `X_rels_used(...)` gate. `_` keeps the line, so count() tallies SITES, not the
 # (smaller) set of distinct callees.
 rel dispatch_refresh(callee: text, line: int).
-dispatch_refresh(callee, line) <- scan("WORK", "src/engine.rs", p, rev),
+dispatch_refresh(callee, line) <- scan("src/engine/*.rs", p, rev),
     ast(p, rev, :rust,
         "(call_expression function: (field_expression field: (field_identifier) @callee))", line),
     callee =~ /^refresh_.*_rels?$/.
 rel dispatch_used(callee: text, line: int).
-dispatch_used(callee, line) <- scan("WORK", "src/engine.rs", p, rev),
+dispatch_used(callee, line) <- scan("src/engine/*.rs", p, rev),
     ast(p, rev, :rust, "(call_expression function: (identifier) @callee)", line),
     callee =~ /_rels_used$/.
 
