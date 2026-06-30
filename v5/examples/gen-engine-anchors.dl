@@ -1,0 +1,73 @@
+# gen-engine-anchors.dl — index dl's OWN language/engine features through dl's
+# tree-sitter `ast` backend (its own AST, not regex), so the next session reads
+# a fresh table instead of spawning an agent to re-derive it.
+#
+# Every feature below is something we keep re-finding by hand: the builtin-rel
+# registry (`*_RELS` consts), where each builtin populates (`refresh_*_rel`),
+# the three temporal `@`-words and their runtime seams, the aggregate set, and
+# the stratifier. The `sprefa-v5-new-builtin-rel` SKILL.md carries a HAND-
+# maintained "Anchor drift log" ("Verified 2026-06-11 ... line 53 matches");
+# this program is that log, regenerated from source on every tick. (The hand
+# log already drifted: it claims CHANGED_RELS@53, the AST says it moved.)
+#
+# Structural, not lexical: `ast(:rust, "(const_item ...) @name")` matches the
+# real Rust grammar node, then a `=~` filter narrows the bound name. A comment
+# that happens to say `const FOO_RELS` never matches — it is not a const_item.
+#
+#   Run:  dl v5/examples/gen-engine-anchors.dl --root .
+
+rel feature_at(feature: text, name: text, file: text, line: int).
+
+# (1) The builtin-rel registry: every `const NAME_RELS: [&str; N]`. AST gives
+# real const declarations; `=~` keeps the registry naming convention.
+feature_at("builtin-rel", name, p, line) <-
+    scan("WORK", "v5/src/**/*.rs", p, rev),
+    ast(p, rev, :rust, "(const_item name: (identifier) @name)", line),
+    name =~ /_RELS$/.
+
+# (2) Where each builtin populates: one `refresh_*_rel` fn per family.
+feature_at("refresh-fn", name, p, line) <-
+    scan("WORK", "v5/src/**/*.rs", p, rev),
+    ast(p, rev, :rust, "(function_item name: (identifier) @name)", line),
+    name =~ /^refresh_.*_rels?$/.
+
+# (3) The three temporal `@`-words (the closed tick-relation set): the enum AND
+# the runtime seams that stage/drain them.
+feature_at("temporal", name, p, line) <-
+    scan("WORK", "v5/src/**/*.rs", p, rev),
+    ast(p, rev, :rust, "(enum_item name: (type_identifier) @name)", line),
+    name = "Temporal".
+feature_at("temporal-runtime", name, p, line) <-
+    scan("WORK", "v5/src/**/*.rs", p, rev),
+    ast(p, rev, :rust, "(function_item name: (identifier) @name)", line),
+    name =~ /^(load_carry|rebuild_next|rebuild_async|drain_effects|drain_streams)$/.
+
+# (4) The aggregate set (head-only): the enum.
+feature_at("aggregate", name, p, line) <-
+    scan("WORK", "v5/src/**/*.rs", p, rev),
+    ast(p, rev, :rust, "(enum_item name: (type_identifier) @name)", line),
+    name = "AggFn".
+
+# (5) The stratifier (the no-combinational-loop check): its entry point.
+feature_at("stratify", name, p, line) <-
+    scan("WORK", "v5/src/**/*.rs", p, rev),
+    ast(p, rev, :rust, "(function_item name: (identifier) @name)", line),
+    name = "stratify_diags".
+
+# (6) The effect output-arity seam (status\netag\nbody -> columns).
+feature_at("effect-output", name, p, line) <-
+    scan("WORK", "v5/src/**/*.rs", p, rev),
+    ast(p, rev, :rust, "(function_item name: (identifier) @name)", line),
+    name =~ /^(split_outputs|split_tsv|async_effect_arity)$/.
+
+? feature_at(feature, name, file, line).
+
+# Sink: regenerate the anchor table as a repo artifact (versioned with the code
+# it indexes). The SKILL.md points HERE instead of carrying hand-typed line
+# numbers that go stale. Convergent: re-running writes nothing when bytes match,
+# so it is safe under --watch / CI. One gen rule per file (the engine bails on
+# two writers of one path), so the rows render as a flat list, grouped by
+# feature via the lowerer's deterministic ORDER BY.
+gen("v5/examples/_auto-doc/engine-anchors.md",
+    "- `{name}`  ({feature})  {file}:{line}") <-
+    feature_at(feature, name, file, line).
