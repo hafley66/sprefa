@@ -1,0 +1,80 @@
+# gh-cache-config.dl — the reusable/configurable ghcacher: the watch set comes
+# from a SCANNED config file (gh-cache.config.json), not inlined facts. This is
+# ghcacher's config.toml axis — point it at a different repo set by editing the
+# JSON, no program edit. Because `scan` is reactive, editing the config file
+# HOT-RELOADS the watch set under the daemon (no restart): that is dl's "live
+# config loading", for free.
+#
+# Config-vs-program separation:
+#   gh-cache.config.json   DATA   which repos, which get PR sync (the config)
+#   gh-cache-config.dl     RULES  the conditional-GET + PR machinery (fixed)
+#
+# Reuse alternatives (same effect, pick per taste):
+#   * `.dl/` dir:  drop this file + a generated `watch-set.dl` facts file in
+#                  <root>/.dl/ — both auto-load (resolve_programs globs the dir).
+#   * `use`:       `use watch_set` to include a config facts module.
+#
+# LIMITS: `clock(N, b)` needs N as a literal, so `poll_seconds` in the config is
+# read for documentation but the interval below stays a program constant. There
+# is no `env()` builtin — process env / .env files are NOT readable from a
+# program; a scanned config file is the supported (and reactive) path.
+#
+#   Run (daemon):  DL_POLL_SECS=5 dl --lsp examples/gh-cache-config.dl --root <repo>
+#   (the config file must sit at <root>/examples/gh-cache.config.json, or edit
+#    the scan path to wherever you keep it)
+
+# --- the config: derive the watch sets from the scanned JSON -----------------
+rel watch(ep: text).
+rel watch_pr(ep: text).
+watch(slug) <-
+    scan("WORK", "examples/gh-cache.config.json", p, rev),
+    jsonp(p, rev, "watch.*", slug).
+watch_pr(slug) <-
+    scan("WORK", "examples/gh-cache.config.json", p, rev),
+    jsonp(p, rev, "watch_pr.*", slug).
+
+# --- conditional GET (repo metadata): etag/304 cache, exactly gh-cache.dl -----
+rel etag(ep: text, tag: text).
+rel etag_next(ep: text, tag: text).
+rel poll(ep: text, prev: text, bucket: int).
+poll(ep, prev, b) <- watch(ep), etag(ep, prev), clock(300, b).
+poll(ep, "",   b) <- watch(ep), !etag(ep, _),   clock(300, b).
+
+sh fetch(ep, prev) -> (status: int, tag: text, body: text) =
+  `R=$(gh api {ep} -i -H "If-None-Match: $prev" 2>/dev/null)
+   C=$(printf '%s' "$R" | head -1 | grep -oE '[0-9]{3}' | head -1)
+   E=$(printf '%s' "$R" | grep -iE '^etag:' | head -1 | sed -E 's/^[Ee]tag:[[:space:]]*//; s/\r$//')
+   B=$(printf '%s' "$R" | awk 'f{print} /^\r?$/{f=1}' | tr -d '\n')
+   printf '%s\n%s\n%s' "$C" "$E" "$B"`.
+
+rel resp(ep: text, status: int, tag: text, body: text).
+resp(ep, status, tag, body) <- @async poll(ep, prev, bucket), fetch(ep, prev) -> (status, tag, body).
+etag_next(ep, tag) <- resp(ep, 200, tag, _).
+etag_next(ep, old) <- resp(ep, 304, _, _), etag(ep, old).
+etag(ep, tag) <- @next etag_next(ep, tag).
+
+rel stars(ep: text, n: text).
+stars(ep, n) <- resp(ep, 200, _, body), jsonp(body, "stargazers_count", n).
+
+# --- paginated PR list, gated on the config's watch_pr set -------------------
+rel list_poll(ep: text, bucket: int).
+list_poll(ep, b) <- watch_pr(ep), clock(300, b).
+sh list_fetch(ep) -> (body: text) =
+  `gh api --paginate {ep}/pulls 2>/dev/null | jq -s 'add // .' 2>/dev/null`.
+rel list_resp(ep: text, tx: int, body: text).
+list_resp(ep, bucket, body) <- @async list_poll(ep, bucket), list_fetch(ep) -> (body).
+
+rel pr_obs(ep: text, num: text, title: text, state: text, tx: int).
+pr_obs(ep, num, title, state, tx) <-
+    list_resp(ep, tx, body),
+    json(body, q:[... { number: $num, title: $title, state: $state } ]).
+rel pr_latest_tx(ep: text, num: text, tx: int).
+pr_latest_tx(ep, num, max(tx)) <- pr_obs(ep, num, _, _, tx).
+rel pull_request(ep: text, num: text, title: text, state: text).
+pull_request(ep, num, title, state) <-
+    pr_latest_tx(ep, num, tx), pr_obs(ep, num, title, state, tx).
+
+? watch(ep).
+? watch_pr(ep).
+? stars(ep, n).
+? pull_request(ep, num, title, state).

@@ -1,0 +1,5 @@
+{
+  "poll_seconds": 300,
+  "watch":    ["cli/cli", "astral-sh/uv", "rust-lang/cargo"],
+  "watch_pr": ["cli/cli", "astral-sh/uv"]
+}
