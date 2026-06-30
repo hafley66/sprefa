@@ -1,1 +1,1 @@
-20260629.6.sprefa-ghcacher-port-live-verified.md
+20260629.7.string-builtins-render-template-design.md
