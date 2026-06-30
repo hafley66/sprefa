@@ -27,7 +27,7 @@ call_reaches(a, b) <- closure(call_pair).
 
 # Type-graph transitive reachability.
 rel type_pair(a: text, b: text).
-type_pair(a, b) <- type_edge(a, b, _).
+type_pair(a, b) <- type_edge(a, b, _, _).
 
 rel type_reaches(a: text, b: text).
 type_reaches(a, b) <- closure(type_pair).
