@@ -421,6 +421,7 @@ surface, and env vars: [docs/daemon.md](docs/daemon.md).
 | `--db <DB>` | Persist derived tables to a SQLite db at this path (default: in-memory; discovery mode defaults to `<root>/.dl/cache.db`). Derived relations land as plain-TEXT `rel_<name>` tables, queryable by anything that reads SQLite |
 | `--diag-json` | Like --check but emit the diagnostics as a JSON array on stdout |
 | `--fix` | With --move, write the rewritten files instead of previewing |
+| `--hook` | Harness-hook mode: read a Claude Code hook event (PostToolUse JSON) on stdin, tick the rules, emit the hook output (additionalContext / block) on stdout. The program heads `inject`/`inject_skill`/`block` over the agent built-ins. The condition is a dl rule; no editor, no bash. See docs/skill-injection.md |
 | `--load <LOAD>` | Load a script into the running daemon as a WATCHED program: joins the loaded set, runs on every tick, hot-reloads on edit. Omit `--root` to target the global rootless serving daemon |
 | `--load-once <LOAD_ONCE>` | Load a script ONE-TIME: eval it on a throwaway engine, print the `?` query results, persist nothing. Same target rules as `--load` |
 | `--lsp` | Run as an LSP server over stdio: the program's `diag` relation becomes live editor diagnostics (lint on open/save). See docs/lsp.md |
@@ -633,6 +634,7 @@ between the markers.
 | [`gh-cache.dl`](examples/gh-cache.dl) | gh-cache.dl — ghcacher, as a datalog program. |
 | [`glean.dl`](examples/glean.dl) | glean.dl — the "ask this codebase questions" showpiece, over v5's own source. |
 | [`graph_score.dl`](examples/graph_score.dl) | graph_score.dl — TurboMQ (Mitchell & Mancoridis 2002) modularity scoring. |
+| [`hook-skill-on-test.dl`](examples/hook-skill-on-test.dl) | dl --hook condition: inject the "testing" skill when the agent reads OR edits a |
 | [`inspect_pairs.dl`](examples/inspect_pairs.dl) | inspect_pairs.dl — dump the field structure of specific LGG pairs |
 | [`interface-soup.dl`](examples/interface-soup.dl) | Interface composition soup + over-abstraction smell, cross-language. |
 | [`latest-turn-guardrail.dl`](examples/latest-turn-guardrail.dl) | Latest agent turn ∩ worktree change -> diag (for the LSP). |
