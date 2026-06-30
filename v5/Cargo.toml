@@ -2,6 +2,13 @@
 name = "sprefa-v5"
 version = "0.1.0"
 edition = "2021"
+description = "dl: a reactive datalog-over-code engine (sprefa v5) — call/import/type graphs, lint rails, LSP diagnostics, and codemods, welded to SQLite."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/hafley66/sprefa"
+homepage = "https://github.com/hafley66/sprefa"
+readme = "README.md"
+keywords = ["datalog", "code-analysis", "lsp", "static-analysis"]
+categories = ["development-tools"]
 # build.rs cc-compiles the vendored tree-sitter grammars whose only published
 # crates pin an incompatible tree-sitter ABI (dockerfile 0.20) or ship no crate
 # at all (go-template). C sources live in vendor/grammars/; the extern fns are
@@ -102,11 +109,5 @@ tree-sitter-language = "0.1"
 # Compiles the vendored grammar C sources (vendor/grammars/) into the crate.
 cc = "1"
 
-# Faster dev/test builds: line-tables-only debuginfo. Strips the variable/type
-# debuginfo that bloats the link step (the per-test-crate link is the long pole
-# on macOS), keeps panic line numbers. Full strip = debug = 0.
-[profile.dev]
-debug = 0
-
-[profile.test]
-debug = 0
+# NOTE: build profiles (dev/test debug=0, the faster-link knob) live in the ROOT
+# workspace Cargo.toml — cargo ignores [profile.*] in a non-root member.
