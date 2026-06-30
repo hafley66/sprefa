@@ -2,10 +2,17 @@
 # prior iterations v3/ and v4/ are kept for design-recovery and are NOT built
 # here (excluded). A root manifest is what lets `cargo install --git <url>
 # sprefa-dl --bin dl` resolve the subdir crate, and what cargo-dist anchors on.
+#
+# `.claude` is excluded so a git worktree created under `.claude/worktrees/<name>/`
+# (nested inside this checkout) does NOT get captured by this workspace: without
+# the exclude, cargo building the worktree's own v5 walks up, finds this manifest,
+# and fails with "believes it's in a workspace when it's not" (its v5 is neither a
+# member nor excluded here). Each worktree carries its own root manifest, but a
+# worktree branched before that manifest landed would still escape upward.
 [workspace]
 resolver = "2"
 members = ["v5", "v5/tree-sitter-dl"]
-exclude = ["v3", "v4", "v5/src/v5cozokuzu"]
+exclude = ["v3", "v4", "v5/src/v5cozokuzu", ".claude"]
 
 # Hoisted from v5/Cargo.toml (profiles in a non-root member are ignored with a
 # warning): keep debuginfo off for faster dev/test builds.
