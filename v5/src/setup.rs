@@ -81,9 +81,11 @@ fn wire_global(skills_dir: Option<String>) -> Result<i32> {
 
     // Claude Code reads ~/.claude/skills. If that is not already the dest, drop a
     // copy there too (a copy, not a symlink — most portable across machines).
+    // Detect Claude Code by ~/.claude (its config dir, present after first run);
+    // the skills/ subdir may not exist yet on a fresh machine, so create it.
     if let Ok(h) = home() {
         let cc = h.join(".claude/skills");
-        if cc.exists() && cc.canonicalize().ok() != dest.canonicalize().ok() {
+        if h.join(".claude").is_dir() && cc.canonicalize().ok() != dest.canonicalize().ok() {
             let ccd = cc.join("sprefa-dl");
             if std::fs::create_dir_all(&ccd).is_ok()
                 && std::fs::write(ccd.join("SKILL.md"), SKILL_MD).is_ok() {
@@ -106,8 +108,17 @@ fn resolve_skills_dir(flag: Option<String>) -> Result<PathBuf> {
     if let Some(p) = opencode_first_skill_path(&h) {
         if p.is_dir() { return Ok(p); }
     }
+    // Claude Code: prefer its skills dir whenever Claude Code is present
+    // (~/.claude exists), even if the skills/ subdir hasn't been created yet on a
+    // fresh machine — wire_global creates it. (The old `cc.is_dir()` check fell
+    // through to the no-agent stash below, where Claude Code never reads it.)
     let cc = h.join(".claude/skills");
-    if cc.is_dir() { return Ok(cc); }
+    if cc.is_dir() || h.join(".claude").is_dir() { return Ok(cc); }
+    // No agent detected: stash under XDG. Warn, since nothing reads it until an
+    // agent is pointed at it (SPREFA_SKILLS_DIR or opencode skills.paths).
+    eprintln!("[dl setup] no Claude Code (~/.claude) or opencode config found; \
+               stashing the skill under ~/.config/sprefa/skills. Point an agent at \
+               it with SPREFA_SKILLS_DIR=<dir> or `dl setup --skills-dir <dir>`.");
     Ok(h.join(".config/sprefa/skills"))
 }
 
