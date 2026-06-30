@@ -1,3 +1,6 @@
 node_modules/
 out/
 *.vsix
+# The shipped install artifact is embedded into the `dl` binary via
+# include_bytes! (setup.rs), so it must be tracked despite the *.vsix ignore.
+!dl-lsp-0.3.0.vsix

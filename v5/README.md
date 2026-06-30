@@ -25,6 +25,27 @@ dl examples/lint-unwrap.dl --root <repo> --lsp # live LSP diagnostics
 cwd in discovery mode). Multi-repo analysis is configured in
 `~/.config/sprefa/config.toml` (see [Multi-repo](#multi-repo)).
 
+### Turnkey setup
+
+```sh
+dl setup                  # install the agent skill (~/.claude/skills, opencode)
+dl setup --project .      # bootstrap THIS repo (see below)
+dl setup --vscode         # install the bundled dl LSP VSCode extension (needs `code`)
+```
+
+`dl setup --project .` wires every channel into the repo, idempotently:
+
+| writes | channel |
+|---|---|
+| `.dl/dl-self-lint.dl`, `.dl/hook-skill-on-test.dl` | starter rails |
+| `AGENTS.md` / `CLAUDE.md` dl section | agent docs |
+| `.claude/settings.json` PostToolUse → `dl --hook` | Claude Code hook (merged, preserves other keys) |
+| `.githooks/pre-commit` (`exec dl --check`) + `core.hooksPath` | git pre-commit rail (discovers `.dl/*.dl`) |
+
+The VSCode extension (`dl setup --vscode`, or `editors/vscode-dl/`) runs
+`dl --root <ws> --lsp` over stdio: drop a rule in `.dl/`, get live squiggles on
+the rust/ts/py/go/kt the rule scans and on the `.dl` itself.
+
 ## The model
 
 - **Coordinates.** Every fact is keyed on `(repo, path, rev)`. File content is
@@ -446,8 +467,9 @@ never fires — only the current diff can trip a check. Full doc:
 [docs/rails.md](docs/rails.md), starter rules: [examples/rails.dl](examples/rails.dl).
 
 1. Put rules in `<repo>/.dl/*.dl`.
-2. **Git pre-commit**: commit `.githooks/pre-commit` containing
-   `exec dl --check`, then once per clone:
+2. **Git pre-commit**: `dl setup --project .` writes `.githooks/pre-commit`
+   (`exec dl --check`) and sets `core.hooksPath` for you. By hand it is that
+   file plus once per clone:
    ```sh
    git config core.hooksPath .githooks
    ```

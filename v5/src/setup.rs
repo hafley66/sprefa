@@ -32,6 +32,9 @@ structured facts: call graph, import/type graph, blast radius, lint rails, codem
 - `dl setup --project` wired a `dl --hook` PostToolUse hook in `.claude/settings.json`:
   a `.dl/` rule heading `inject`/`inject_skill`/`block` fires on a matching tool use
   (see `.dl/hook-skill-on-test.dl`). Editor-independent context injection, no bash glue.
+- It also wired a `.githooks/pre-commit` (`dl --check`) + `core.hooksPath`, so a
+  `diag` rail in `.dl/*.dl` blocks a bad commit (`git commit -n` bypasses).
+- Live editor squiggles: `dl setup --vscode` installs the bundled LSP extension.
 
 See the `sprefa-dl` skill for the full surface and authoring gotchas.
 <!-- END: sprefa-dl -->
@@ -46,10 +49,12 @@ pub fn run(args: &[String]) -> Result<i32> {
     let mut project: Option<Option<String>> = None; // Some(dir) once --project seen
     let mut skills_dir: Option<String> = None;
     let mut print = false;
+    let mut vscode = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--print" => print = true,
+            "--vscode" => vscode = true,
             "--skills-dir" => { i += 1; skills_dir = args.get(i).cloned(); }
             "--project" => {
                 // optional trailing DIR (defaults to cwd if next is a flag/absent)
@@ -66,6 +71,7 @@ pub fn run(args: &[String]) -> Result<i32> {
     }
 
     if print { print!("{SKILL_MD}"); return Ok(0); }
+    if vscode { return install_vscode_extension(); }
     if let Some(dir) = project {
         let target = dir.unwrap_or_else(|| ".".to_string());
         return bootstrap_project(Path::new(&target));
@@ -74,7 +80,52 @@ pub fn run(args: &[String]) -> Result<i32> {
 }
 
 fn print_help() {
-    eprintln!("usage: dl setup [--project [DIR]] [--skills-dir DIR] [--print]");
+    eprintln!("usage: dl setup [--project [DIR]] [--vscode] [--skills-dir DIR] [--print]");
+    eprintln!("  (no args)         install the global skill + wire detected agents");
+    eprintln!("  --project [DIR]    bootstrap a repo: .dl/ rails, AGENTS/CLAUDE block,");
+    eprintln!("                     Claude Code PostToolUse hook, git pre-commit (dl --check)");
+    eprintln!("  --vscode           install the bundled dl LSP VSCode extension (needs `code`)");
+    eprintln!("  --skills-dir DIR   override the skill destination");
+    eprintln!("  --print            print the embedded skill to stdout");
+}
+
+/// The dl LSP VSCode extension, embedded so a prebuilt `dl` can install it with
+/// no source tree (mirrors the SKILL_MD / starter embedding). Rebuild + bump:
+/// `(cd editors/vscode-dl && npm run compile && npx vsce package)`, then point
+/// this at the new VSIX. The committed VSIX is the install artifact.
+const VSCODE_VSIX: &[u8] = include_bytes!("../editors/vscode-dl/dl-lsp-0.3.0.vsix");
+const VSCODE_VSIX_NAME: &str = "dl-lsp-0.3.0.vsix";
+
+/// `dl setup --vscode`: write the embedded VSIX to a temp file and install it
+/// via the VSCode `code` CLI (`code --install-extension`). The extension starts
+/// `dl --root <workspace> --lsp` and proxies LSP over stdio, so `.dl/*.dl` rules
+/// give live squiggles. No-op with a clear message if `code` is not on PATH.
+fn install_vscode_extension() -> Result<i32> {
+    let vsix = std::env::temp_dir().join(VSCODE_VSIX_NAME);
+    std::fs::write(&vsix, VSCODE_VSIX)
+        .with_context(|| format!("write {}", vsix.display()))?;
+    let status = std::process::Command::new("code")
+        .arg("--install-extension").arg(&vsix).arg("--force")
+        .status();
+    match status {
+        Ok(s) if s.success() => {
+            println!("[dl setup] installed the dl LSP VSCode extension ({VSCODE_VSIX_NAME}).");
+            println!("[dl setup] reload VSCode; open any file your .dl rules scan for live squiggles.");
+            let _ = std::fs::remove_file(&vsix);
+            Ok(0)
+        }
+        Ok(s) => {
+            eprintln!("[dl setup] `code --install-extension` exited {s}; VSIX left at {}", vsix.display());
+            Ok(1)
+        }
+        Err(_) => {
+            println!("[dl setup] VSCode `code` CLI not found on PATH. The extension VSIX is at:");
+            println!("             {}", vsix.display());
+            println!("[dl setup] install it by hand: `code --install-extension {}`", vsix.display());
+            println!("[dl setup] (in VSCode, enable the `code` command via Shell Command: Install 'code' in PATH).");
+            Ok(0)
+        }
+    }
 }
 
 // ── global: install the skill where the agents read it ────────────────────────
@@ -182,8 +233,50 @@ fn bootstrap_project(dir: &Path) -> Result<i32> {
     append_section(&dir.join("AGENTS.md"))?;
     append_section(&dir.join("CLAUDE.md"))?;
     wire_claude_hook(&dir);
+    wire_git_hook(&dir);
     println!("[dl setup] run it:  (cd {} && dl --check)", dir.display());
     Ok(0)
+}
+
+/// Wire a git pre-commit rail: write `.githooks/pre-commit` (runs `dl --check`,
+/// which discovers `<repo>/.dl/*.dl`) and point the repo's `core.hooksPath` at
+/// `.githooks`. A non-zero `dl --check` (exit 2 = a `diag` rail tripped) blocks
+/// the commit; `git commit -n` bypasses. Idempotent: keeps an existing hook
+/// file, and `git config` is a set-or-overwrite of one value. No-op outside a
+/// git work tree.
+fn wire_git_hook(dir: &Path) {
+    if !dir.join(".git").exists() {
+        println!("[dl setup] not a git repo ({}); skipped pre-commit hook", dir.display());
+        return;
+    }
+    let hooks_dir = dir.join(".githooks");
+    if std::fs::create_dir_all(&hooks_dir).is_err() {
+        return;
+    }
+    let hook = hooks_dir.join("pre-commit");
+    if hook.exists() {
+        println!("[dl setup] kept existing {}", hook.display());
+    } else {
+        // `dl --check` with no program = discovery over <root>/.dl/*.dl.
+        let body = "#!/bin/sh\n# sprefa dl rail: blocks a commit when a .dl/ diag rule trips.\nexec dl --check\n";
+        if std::fs::write(&hook, body).is_err() {
+            return;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755));
+        }
+        println!("[dl setup] wrote {}", hook.display());
+    }
+    let set = std::process::Command::new("git")
+        .arg("-C").arg(dir)
+        .args(["config", "core.hooksPath", ".githooks"])
+        .status();
+    match set {
+        Ok(s) if s.success() => println!("[dl setup] git core.hooksPath -> .githooks"),
+        _ => println!("[dl setup] could not set core.hooksPath; run: git config core.hooksPath .githooks"),
+    }
 }
 
 /// Register the `dl --hook` PostToolUse hook in `<repo>/.claude/settings.json`,
@@ -301,6 +394,29 @@ mod tests {
         // Second call must not add a duplicate.
         wire_claude_hook(&dir);
         assert_eq!(post_cmds(&read_settings(&dir)), vec!["dl --hook".to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn git_hook_written_and_hooks_path_set() {
+        let dir = std::env::temp_dir().join(format!("dlsetup_git_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(std::process::Command::new("git").arg("-C").arg(&dir)
+            .arg("init").arg("-q").status().unwrap().success());
+        wire_git_hook(&dir);
+        let hook = dir.join(".githooks/pre-commit");
+        assert!(hook.exists(), "pre-commit hook written");
+        let body = std::fs::read_to_string(&hook).unwrap();
+        assert!(body.contains("dl --check"), "hook runs dl --check");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_ne!(hook.metadata().unwrap().permissions().mode() & 0o111, 0, "executable");
+        }
+        let cfg = std::process::Command::new("git").arg("-C").arg(&dir)
+            .args(["config", "core.hooksPath"]).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&cfg.stdout).trim(), ".githooks");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
