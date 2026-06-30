@@ -476,6 +476,8 @@ pub fn op_docs() -> &'static [(&'static str, &'static str, &'static str, &'stati
         ("regex", "body", "f =~ /^[A-Za-z]+$/", "regex constraint (SQLite REGEXP); the /.../ unified regex literal, same form match/comment/sg use"),
         ("glob", "body", "p ~~ \"src/*\"", "glob constraint (SQLite GLOB)"),
         ("closure", "body", "closure(edge)", "transitive closure of a 2-col relation as the entire body (SCC-condensed); pin an endpoint for a point query; mixed-body closure is literal-seeded only"),
+        ("scc", "body", "head(rep, member) <- scc(edge)", "strongly-connected-component condensation of a 2-col relation as the entire body; binds (representative, member) per node; mirrors closure, evaluated outside SQL"),
+        ("node2vec", "body", "head(a, b, score) <- node2vec(edge)", "structural graph embedding of a 2-col relation as the entire body; binds node pairs with a similarity score (the graph-position sibling of the text `similar` rel); evaluated outside SQL"),
         ("arith", "body", "+ - * / %", "int arithmetic in rule heads and comparison sides (rank(p, line+1)); usual precedence, parens OK; never in a binding atom"),
         ("strfn", "body", "split(text, sep, idx) / replace(text, from, to)", "string functions in heads and comparison sides; idx 0-based, negative counts from the end; a computed binding (ext = split(p, \".\", -1)) binds for later use in the same body"),
         ("aggregation", "body", "count sum min max", "head-position-only aggregation; non-aggregate head terms are the grouping key; count/sum produce int, min/max carry the arg type; count in body is a parse error"),
