@@ -477,14 +477,11 @@ const DOC_TEXT_RELS: [&str; 2] = ["doc_comment", "doc_tag"];
 /// callees' types from one relation — the basis for feature-envy detection.
 const SCIP_RELS: [&str; 8] = ["scip_def", "scip_name", "scip_ref", "scip_edge", "scip_fn_edge", "scip_callee_type", "scip_local", "scip_impl"];
 
-/// Worktree diff relation. `changed(path)` holds every path `git status` says
-/// differs from HEAD in the self repo: modified, added, renamed (new side),
-/// untracked. Lazily refreshed like the other built-in indexers; the rails use
-/// case is `diag(...) <- some_hit(p, ...), changed(p).` so a check scoped to
-/// what an edit session touched never fires on pre-existing repo debt.
-const CHANGED_RELS: [&str; 1] = ["changed"];
+// The git-derived families `changed` / `changed_line` / `created` now live
+// behind `trait RelKind` in relkind.rs (const + decls + gate + refresh per
+// family, one registry the tick/declare/guard sites loop over).
 
-/// Agent-harness relations (agent.rs). Reserved like CHANGED_RELS, declared each
+/// Agent-harness relations (agent.rs). Reserved like the RelKind families, declared each
 /// tick, populated by `refresh_agent_rels` only when the program references one.
 /// `agent_edit(harness, session, idx, path)` = every file edit in the newest
 /// session per detected harness (Claude Code JSONL, opencode SQLite), paths
@@ -495,24 +492,6 @@ const CHANGED_RELS: [&str; 1] = ["changed"];
 /// agent uniformly: `diag(p,...) <- changed(p), agent_touch(_, _, p).` ACP is
 /// the live tier (deferred).
 const AGENT_RELS: [&str; 2] = ["agent_edit", "agent_touch"];
-
-/// Line-level worktree diff: `(path, line)` for every new-side line of every
-/// hunk in `git diff -U0 HEAD`, plus every line of untracked files (which the
-/// diff omits). Lets a rail scope to the touched lines, not the touched path:
-/// `diag(p, l, ...) <- hit(p, l), changed_line(p, l).` instead of `changed(p)`,
-/// so a touch on engine.rs surfaces only the `.conn()` calls on edited lines.
-const CHANGED_LINE_RELS: [&str; 1] = ["changed_line"];
-
-/// File-authorship relation. `created(path, name, email, ts)` is one row per
-/// tracked file: the author of the commit that ADDED it (its creation), from
-/// `git log --reverse --diff-filter=A --name-only`. `--reverse` orders
-/// oldest-first, so the first time a path appears is its add. Renames are `R`,
-/// not `A`, so a file moved with `git mv` keeps its original creation row only
-/// if history is followed (it is not here — the new path looks un-created until
-/// it is next added). Pairs with `changed` for "who wrote what": the literal
-/// "most-similar code in test files by author X" is
-/// `propose_clone(_, p, ...), created(p, _, "x@…", _), p ~ "*/tests/*"`.
-const CREATED_RELS: [&str; 1] = ["created"];
 
 /// Embedding-similarity relation. `similar(a, b, score)` is the top-k nearest
 /// neighbors of each embedded interned string by cosine; `score` is an Int =
@@ -641,10 +620,8 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
         .chain(scip_rel_decls())
         .chain(spine_rel_decls())
         .chain(node_rel_decls())
-        .chain(changed_rel_decls())
+        .chain(crate::relkind::rel_kind_decls())
         .chain(agent_rel_decls())
-        .chain(changed_line_rel_decls())
-        .chain(created_rel_decls())
         .chain(embed_rel_decls())
         .chain(propose_extract_rel_decls())
         .chain(propose_clone_rel_decls())
@@ -981,13 +958,6 @@ fn scip_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
-fn changed_rel_decls() -> Vec<RelDecl> {
-    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
-    vec![
-        RelDecl { name: "changed".into(), cols: vec![c("path", Type::Path)] },
-    ]
-}
-
 fn agent_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -995,23 +965,6 @@ fn agent_rel_decls() -> Vec<RelDecl> {
             c("harness", Type::Text), c("session", Type::Text), c("idx", Type::Int), c("path", Type::Path)] },
         RelDecl { name: "agent_touch".into(), cols: vec![
             c("harness", Type::Text), c("session", Type::Text), c("path", Type::Path)] },
-    ]
-}
-
-fn changed_line_rel_decls() -> Vec<RelDecl> {
-    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
-    vec![
-        RelDecl { name: "changed_line".into(),
-                  cols: vec![c("path", Type::Path), c("line", Type::Int)] },
-    ]
-}
-
-fn created_rel_decls() -> Vec<RelDecl> {
-    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
-    vec![
-        RelDecl { name: "created".into(),
-                  cols: vec![c("path", Type::Path), c("name", Type::Text),
-                             c("email", Type::Text), c("ts", Type::Int)] },
     ]
 }
 
@@ -1158,7 +1111,7 @@ fn clock_rels_used(prog: &Program) -> bool { rels_used(prog, &CLOCK_RELS) }
 
 /// Does the program reference any relation in `rels` (body atom, closure edge,
 /// or query head)? Gates lazy built-in indexers so unrelated programs pay nothing.
-fn rels_used(prog: &Program, rels: &[&str]) -> bool {
+pub(crate) fn rels_used(prog: &Program, rels: &[&str]) -> bool {
     let hit = |r: &str| rels.contains(&r);
     for item in &prog.items {
         match item {
@@ -1248,11 +1201,7 @@ fn spine_rels_used(prog: &Program) -> bool { rels_used(prog, &SPINE_RELS) }
 
 fn node_rels_used(prog: &Program) -> bool { rels_used(prog, &NODE_RELS) }
 
-fn changed_rels_used(prog: &Program) -> bool { rels_used(prog, &CHANGED_RELS) }
 fn agent_rels_used(prog: &Program) -> bool { rels_used(prog, &AGENT_RELS) }
-
-fn changed_line_rels_used(prog: &Program) -> bool { rels_used(prog, &CHANGED_LINE_RELS) }
-fn created_rels_used(prog: &Program) -> bool { rels_used(prog, &CREATED_RELS) }
 fn embed_rels_used(prog: &Program) -> bool { rels_used(prog, &EMBED_RELS) }
 
 fn propose_extract_rels_used(prog: &Program) -> bool { rels_used(prog, &PROPOSE_EXTRACT_RELS) }
@@ -1760,7 +1709,7 @@ fn unix_secs() -> i64 {
 pub struct Engine {
     pub(crate) db: crate::db::Db,
     pub(crate) rels: Rels,
-    root: PathBuf,
+    pub(crate) root: PathBuf,
     /// True only when `root` is a placeholder, not an explicit workspace —
     /// i.e. the rootless daemon, whose `self.root` is the XDG state dir. Then a
     /// self-form scan (`.`/`""`/`self`/`WORK`) and a gen write fall back to each
@@ -2742,10 +2691,10 @@ impl Engine {
         // The diff can move without any file content changing (a commit moves
         // HEAD under an identical worktree), so the refresh result feeds
         // `changed` directly rather than riding the reconcile delta.
-        if changed_rels_used(prog) { changed |= self.refresh_changed_rel()?; }
+        for k in crate::relkind::rel_kinds() {
+            if k.used(prog) { changed |= k.refresh(self)?; }
+        }
         if agent_rels_used(prog) { changed |= self.refresh_agent_rels()?; }
-        if changed_line_rels_used(prog) { changed |= self.refresh_changed_line_rel()?; }
-        if created_rels_used(prog) { changed |= self.refresh_created_rel()?; }
         if embed_rels_used(prog) { changed |= self.refresh_embed_rels()?; }
         if propose_extract_rels_used(prog) { changed |= self.refresh_propose_extract_rel()?; }
         if propose_clone_rels_used(prog) { changed |= self.refresh_propose_clone_rel()?; }
@@ -3077,20 +3026,14 @@ impl Engine {
         // Every save can move the worktree diff, so re-read it whenever the
         // program joins `changed`; the refresh returns false (set unchanged)
         // on the common no-op, keeping the rebuild scope tight.
-        if changed_rels_used(prog) && self.refresh_changed_rel()? {
-            changed_source_rels.insert("changed".to_string());
-            changed_facts = true;
+        for k in crate::relkind::rel_kinds() {
+            if k.used(prog) && k.refresh(self)? {
+                for r in k.rels() { changed_source_rels.insert(r.to_string()); }
+                changed_facts = true;
+            }
         }
         if agent_rels_used(prog) && self.refresh_agent_rels()? {
             for a in AGENT_RELS { changed_source_rels.insert(a.to_string()); }
-            changed_facts = true;
-        }
-        if changed_line_rels_used(prog) && self.refresh_changed_line_rel()? {
-            changed_source_rels.insert("changed_line".to_string());
-            changed_facts = true;
-        }
-        if created_rels_used(prog) && self.refresh_created_rel()? {
-            changed_source_rels.insert("created".to_string());
             changed_facts = true;
         }
         if embed_rels_used(prog) && self.refresh_embed_rels()? {
@@ -3901,17 +3844,13 @@ impl Engine {
                 if NODE_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in CST relation (node / child); pick another name", d.name);
                 }
-                if CHANGED_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is the built-in worktree-diff relation; pick another name", d.name);
+                for k in crate::relkind::rel_kinds() {
+                    if k.rels().contains(&d.name.as_str()) {
+                        bail!("{} is {}; pick another name", d.name, k.reserved_msg());
+                    }
                 }
                 if AGENT_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in agent-harness relation (agent_edit / agent_touch); pick another name", d.name);
-                }
-                if CHANGED_LINE_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is the built-in line-diff relation; pick another name", d.name);
-                }
-                if CREATED_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is the built-in file-authorship relation; pick another name", d.name);
                 }
                 if EMBED_RELS.contains(&d.name.as_str()) {
                     bail!("{} is the built-in embedding-similarity relation (similar); pick another name", d.name);
@@ -3973,10 +3912,8 @@ impl Engine {
         // the LSP-common point query first-class. Idempotent.
         self.db.conn().execute(
             &format!("CREATE INDEX IF NOT EXISTS node_file_span_idx ON {}(\"file\", \"lo\", \"hi\")", tbl("node")), [])?;
-        for d in changed_rel_decls() { self.declare(&d)?; }
+        for d in crate::relkind::rel_kind_decls() { self.declare(&d)?; }
         for d in agent_rel_decls() { self.declare(&d)?; }
-        for d in changed_line_rel_decls() { self.declare(&d)?; }
-        for d in created_rel_decls() { self.declare(&d)?; }
         for d in embed_rel_decls() { self.declare(&d)?; }
         for d in propose_extract_rel_decls() { self.declare(&d)?; }
         for d in propose_clone_rel_decls() { self.declare(&d)?; }
@@ -4168,7 +4105,7 @@ impl Engine {
 
     /// Wholesale replace one engine-owned relation through the same plural write
     /// seam every built-in module/indexer uses.
-    fn refresh_rel(&self, rel: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
+    pub(crate) fn refresh_rel(&self, rel: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
         let table = tbl(rel);
         self.db.exec(&format!("DELETE FROM {table}"))?;
         self.db.insert_rows(&table, cols, rows)
@@ -5498,116 +5435,6 @@ impl Engine {
         Ok(true)
     }
 
-    /// Refresh the `changed` relation from `git status --porcelain -uall` at the
-    /// self repo's root: modified, added, renamed (new side), and untracked
-    /// paths, re-anchored from the git toplevel to `--root` (paths outside the
-    /// root are dropped). A non-repo root or git failure yields an empty
-    /// relation, not an error. One subprocess, one batched write. Returns
-    /// whether the row set differs from what was stored, so an incremental tick
-    /// only propagates a rebuild when the diff actually moved.
-    fn refresh_changed_rel(&self) -> Result<bool> {
-        let mut paths: Vec<String> = Vec::new();
-        let top = Command::new("git").arg("-C").arg(&self.root)
-            .args(["rev-parse", "--show-toplevel"]).output();
-        if let Ok(out) = top {
-            if out.status.success() {
-                let toplevel = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim().to_string());
-                let status = Command::new("git").arg("-C").arg(&self.root)
-                    .args(["status", "--porcelain", "-uall"]).output()?;
-                if status.status.success() {
-                    // canonicalize for prefix-stripping: git prints the physical
-                    // toplevel (macOS /private/var) while --root may be the symlink
-                    let root = std::fs::canonicalize(&self.root)
-                        .unwrap_or_else(|_| self.root.clone());
-                    for line in String::from_utf8_lossy(&status.stdout).lines() {
-                        if line.len() < 4 { continue; }
-                        let entry = &line[3..];
-                        // a rename prints "old -> new"; the worktree file is the new side
-                        let p = entry.rsplit(" -> ").next().unwrap_or(entry).trim_matches('"');
-                        if let Ok(rel) = toplevel.join(p).strip_prefix(&root) {
-                            paths.push(rel.to_string_lossy().replace('\\', "/"));
-                        }
-                    }
-                }
-            }
-        }
-        paths.sort();
-        paths.dedup();
-        let existing: Vec<String> = {
-            let conn = self.db.conn();
-            let mut s = conn.prepare(&format!(
-                "SELECT \"path\" FROM {} ORDER BY \"path\"", tbl("changed")))?;
-            let rows = s.query_map([], |r| r.get::<_, String>(0))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
-        if existing == paths { return Ok(false); }
-        let rows: Vec<Vec<Value>> = paths.into_iter().map(|p| vec![Value::Text(p)]).collect();
-        self.refresh_rel("changed", &["path"], &rows)?;
-        Ok(true)
-    }
-
-    /// Refresh `created(path, name, email, ts)` — the author of the commit that
-    /// added each tracked file. One `git log --reverse --diff-filter=A
-    /// --name-only` walk: `--reverse` puts the oldest commit first, so the first
-    /// time a path appears is its creation; later re-adds (delete-then-add) are
-    /// ignored. The custom `--format` line carries the author fields delimited by
-    /// control bytes; name-only file lines follow until the next format line.
-    /// Whole-set recompute, compared to stored, early-out on no-op (history is
-    /// append-only, so this is almost always a no-op after the first tick).
-    fn refresh_created_rel(&self) -> Result<bool> {
-        let mut created: Vec<(String, String, String, i64)> = Vec::new(); // path, name, email, ts
-        let top = Command::new("git").arg("-C").arg(&self.root)
-            .args(["rev-parse", "--show-toplevel"]).output();
-        if let Ok(out) = top {
-            if out.status.success() {
-                let toplevel = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim().to_string());
-                // \x01 prefixes the per-commit author line; \x1f separates fields.
-                let log = Command::new("git").arg("-C").arg(&self.root)
-                    .args(["log", "--reverse", "--diff-filter=A", "--name-only",
-                           "--format=\x01%an\x1f%ae\x1f%at"]).output()?;
-                if log.status.success() {
-                    let root = std::fs::canonicalize(&self.root)
-                        .unwrap_or_else(|_| self.root.clone());
-                    let mut seen: HashSet<String> = HashSet::new();
-                    let (mut name, mut email, mut ts) = (String::new(), String::new(), 0i64);
-                    for line in String::from_utf8_lossy(&log.stdout).lines() {
-                        if let Some(hdr) = line.strip_prefix('\x01') {
-                            let mut it = hdr.split('\x1f');
-                            name = it.next().unwrap_or("").to_string();
-                            email = it.next().unwrap_or("").to_string();
-                            ts = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-                        } else if !line.is_empty() {
-                            let p = line.trim_matches('"');
-                            if let Ok(rel) = toplevel.join(p).strip_prefix(&root) {
-                                let rel = rel.to_string_lossy().replace('\\', "/");
-                                if seen.insert(rel.clone()) {
-                                    created.push((rel, name.clone(), email.clone(), ts));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        created.sort();
-        let existing: Vec<(String, String, String, i64)> = {
-            let conn = self.db.conn();
-            let mut s = conn.prepare(&format!(
-                "SELECT \"path\",\"name\",\"email\",\"ts\" FROM {} ORDER BY 1,2,3,4",
-                tbl("created")))?;
-            let rows = s.query_map([], |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?, r.get::<_, i64>(3)?)))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
-        if existing == created { return Ok(false); }
-        let rows: Vec<Vec<Value>> = created.into_iter()
-            .map(|(p, n, e, t)| vec![Value::Text(p), Value::Text(n), Value::Text(e), Value::Int(t)])
-            .collect();
-        self.refresh_rel("created", &["path", "name", "email", "ts"], &rows)?;
-        Ok(true)
-    }
-
     /// Encode every interned `_strings` row lacking a vector for the active
     /// backend (embed-once per (StringId, backend)), then materialize `similar`.
     /// Returns true if the `similar` row set could have changed (new content was
@@ -6092,103 +5919,6 @@ impl Engine {
             .collect();
         self.refresh_rel("type_lgg", &["a", "b", "vars"], &rows)?;
         Ok(true)
-    }
-
-    /// Refresh `changed_line(path, line)` from the worktree diff. Two sources:
-    ///   1. `git diff -U0 HEAD` new-side hunks: parse `@@ -a,b +c,d @@`, emit
-    ///      lines `c..c+d-1` for each hunk (the lines that exist in the worktree
-    ///      and differ from HEAD). A pure-deletion hunk has `d=0` -> no lines.
-    ///   2. Untracked files (the `??` rows of `git status --porcelain -uall`),
-    ///      which `git diff HEAD` omits entirely: emit every line 1..=N.
-    /// Paths are canonicalized to repo-relative exactly like `refresh_changed_rel`
-    /// so a `changed_line(p, l)` row joins `call_site(_, _, p, l)` on equal text.
-    fn refresh_changed_line_rel(&self) -> Result<bool> {
-        let top = Command::new("git").arg("-C").arg(&self.root)
-            .args(["rev-parse", "--show-toplevel"]).output();
-        let mut rows: Vec<(String, i64)> = Vec::new();
-        if let Ok(out) = top {
-            if out.status.success() {
-                let toplevel = PathBuf::from(
-                    String::from_utf8_lossy(&out.stdout).trim().to_string());
-                // Canonicalize for prefix-stripping: git prints the physical
-                // toplevel (macOS /private/var) while --root may be the symlink.
-                let root = std::fs::canonicalize(&self.root)
-                    .unwrap_or_else(|_| self.root.clone());
-                let canon = |p: &str| -> Option<String> {
-                    toplevel.join(p).strip_prefix(&root)
-                        .ok().map(|r| r.to_string_lossy().replace('\\', "/"))
-                };
-                // (1) tracked modifications via context-free hunks.
-                let diff = Command::new("git").arg("-C").arg(&self.root)
-                    .args(["diff", "-U0", "HEAD"]).output();
-                if let Ok(d) = diff {
-                    if d.status.success() {
-                        let stdout = String::from_utf8_lossy(&d.stdout);
-                        let mut cur: Option<String> = None;
-                        for line in stdout.lines() {
-                            if let Some(rest) = line.strip_prefix("+++ ") {
-                                cur = if rest == "/dev/null" { None }
-                                      else { canon(rest.strip_prefix("b/").unwrap_or(rest)) };
-                            } else if line.starts_with("@@") {
-                                if let (Some(path), Some((c, n))) = (&cur, Self::hunk_new_range(line)) {
-                                    for ln in c..c + n {
-                                        rows.push((path.clone(), ln));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                // (2) untracked files: emit every line; git diff HEAD omits them.
-                let status = Command::new("git").arg("-C").arg(&self.root)
-                    .args(["status", "--porcelain", "-uall"]).output()?;
-                if status.status.success() {
-                    for line in String::from_utf8_lossy(&status.stdout).lines() {
-                        if line.len() < 4 || &line[..2] != "??" { continue; }
-                        let p = line[3..].rsplit(" -> ").next().unwrap_or(&line[3..])
-                            .trim_matches('"');
-                        if let Some(rel) = canon(p) {
-                            if let Ok(s) = std::fs::read_to_string(self.root.join(&rel)) {
-                                for ln in 1..=(s.lines().count() as i64) {
-                                    rows.push((rel.clone(), ln));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        rows.sort();
-        rows.dedup();
-        let existing: Vec<(String, i64)> = {
-            let conn = self.db.conn();
-            let mut s = conn.prepare(&format!(
-                "SELECT \"path\", \"line\" FROM {} ORDER BY \"path\", \"line\"",
-                tbl("changed_line")))?;
-            let rs = s.query_map([], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
-            })?;
-            rs.filter_map(|x| x.ok()).collect()
-        };
-        if existing == rows { return Ok(false); }
-        let out: Vec<Vec<Value>> = rows.into_iter()
-            .map(|(p, l)| vec![Value::Text(p), Value::Int(l)]).collect();
-        self.refresh_rel("changed_line", &["path", "line"], &out)?;
-        Ok(true)
-    }
-
-    /// Parse the new-side range `+c,d` out of an `@@ -a,b +c,d @@` hunk header.
-    /// The count defaults to 1 when omitted (`@@ -a +c @@`); a deletion-only
-    /// hunk carries `d=0`. Returns `(start, count)` on the new side.
-    fn hunk_new_range(line: &str) -> Option<(i64, i64)> {
-        let f: Vec<&str> = line.split_whitespace().collect();
-        // ["@@", "-a,b", "+c,d", "@@", <optional fn label>...]
-        let new = f.get(2)?.strip_prefix('+')?;
-        let (c, n) = match new.split_once(',') {
-            Some((c, n)) => (c.parse::<i64>().ok()?, n.parse::<i64>().ok()?),
-            None => (new.parse::<i64>().ok()?, 1),
-        };
-        Some((c, n))
     }
 
     /// Read the Cargo.toml / package.json manifests above the file set, at this

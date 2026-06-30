@@ -20,6 +20,7 @@ pub mod parse;
 pub mod propose;
 pub mod rpc;
 pub mod refactor;
+pub mod relkind;
 pub mod repo;
 pub mod rspath;
 pub mod scc;
