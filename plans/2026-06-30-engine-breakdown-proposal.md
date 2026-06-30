@@ -37,10 +37,10 @@ rest by what they additionally need:
 
 | bucket | families | extra need beyond RelKind |
 |---|---|---|
-| A. self-diff bool (FITS TODAY) | changed, changed_line, created, agent, type_shape, type_lgg, catalog | none — **7 migrated** |
-| B. needs file list + heavy compute | propose_extract, propose_clone | `repo_roots`/`node_file_set`/`read_content` on the seam |
-| C. reload-gated (not self-diffing) | scip | a `dirty(changed_paths)` input gate (`index.scip` changed) |
-| D. embed supercluster | embed (`similar`) | vector cache + knn helper move together |
+| A. self-diff bool (DONE) | changed, changed_line, created, agent, type_shape, type_lgg, catalog | none — **7 migrated** |
+| B. needs file list + heavy compute (DONE) | propose_extract, propose_clone | `repo_roots`/`node_file_set`/`read_content` — widened to `pub(crate)` |
+| C. reload-gated (DONE) | scip | `dirty(changed)` input gate (`index.scip` changed) — added as defaulted trait method |
+| D. embed supercluster (DONE) | embed (`similar`) | knn helper widened to `pub(crate)`; `refresh_similar_rel` moved with it |
 | E. `()` always-on, ordered | builtin, module, type, call, dataflow, doc, node, spine, daemon, effect | ordering (type before type_shape; node before spine), delta refresh, `()` not bool |
 | F. arg-taking | every, clock | program-derived args (intervals/periods) |
 
@@ -105,8 +105,17 @@ impl<'a> RelCtx<'a> {
 
 `Engine::tick` builds one `RelCtx` and passes it to the registry loop. A family
 can touch the seam and nothing else — the move becomes safe AND the blast radius
-of "what a rel body can do" is bounded. This is the type change that unblocks
-Stages 2 and 4.
+of "what a rel body can do" is bounded.
+
+**Update (Stage 2 landed, 5932b40): RelCtx deferred.** Stage 2 moved
+scip/propose/embed behind RelKind WITHOUT the borrow struct — it kept the
+existing `refresh(&self, eng: &Engine)` shape (consistent with Stages 0/1) and
+widened five read helpers to `pub(crate)` (`repo_roots` / `node_file_set` /
+`read_content` / `knn_rows` / `scip_descriptor_name`). RelCtx is an encapsulation
+tightening, not a prerequisite for the line move, so it folds into Stage 3/4
+(when `rels/` becomes its own module dir and the bucket-E bodies leave). The one
+trait change Stage 2 DID need was the defaulted `dirty(&changed) -> bool`
+(ScipKind gates the index reload on `index.scip ∈ changed`).
 
 ## New file layout
 
@@ -138,10 +147,10 @@ relkind.rs (514 lines now) becomes `rels/mod.rs` + the per-bucket files.
 |---|---|---|---|
 | 0 (done) | RelKind + git families | baseline | — |
 | 1 (done) | + agent/type_shape/type_lgg/catalog | −283 | low |
-| 2 | `RelCtx` seam + propose/scip/embed (buckets B/C/D) | −400 | med (dirty(), knn move) |
-| 3 | split rels into `src/rels/*` module dir | ~0 (relocation) | low |
+| 5 (done) | extract `src/effect.rs` (the stream/async runtime) | −713 actual | med (self-contained) |
+| 2 (done) | propose/scip/embed behind RelKind + `dirty()` (RelCtx deferred) | −379 actual | med |
+| 3 | split rels into `src/rels/*` module dir (folds in RelCtx) | ~0 (relocation) | low |
 | 4 | bucket E behind RelKind (module/type/call/dataflow/doc/node/spine/daemon/effect) — the big extractor bodies leave | −1500 | high (ordering, delta) |
-| 5 | extract `src/effect.rs` (the stream/async runtime) | −2000 | med (self-contained) |
 | 6 | extract `src/tick.rs` + `src/source.rs` + `src/derived.rs` + `src/schema.rs` | −1500 | high (the core) |
 
 Target: engine.rs ~1000–1500 lines (struct + seam). Stages 4–6 are where the
