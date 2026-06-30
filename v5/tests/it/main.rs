@@ -19,6 +19,7 @@ mod comment_op;
 mod config_repos;
 mod created_perf;
 mod cst_node_perf;
+mod dl_diag;
 mod cst_node_rel;
 mod daemon;
 mod daemon_stateful_revs;

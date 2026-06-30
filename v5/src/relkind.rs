@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::ast::{Col, Program, RelDecl, Type, Value};
-use crate::engine::{all_builtin_decls, builtin_rel_docs, fn_docs, knn_rows, read_content,
+use crate::engine::{all_builtin_decls, builtin_rel_docs, fn_docs, knn_rows, op_docs, read_content,
                     rels_used, scip_descriptor_name, Engine};
 use crate::lower::tbl;
 use crate::scip_import;
@@ -72,7 +72,7 @@ pub trait RelKind: Sync {
 /// guard iterate THIS instead of repeating the family list.
 pub fn rel_kinds() -> &'static [&'static dyn RelKind] {
     &[&ChangedKind, &ChangedLineKind, &CreatedKind,
-      &AgentKind, &TypeShapeKind, &TypeLggKind, &CatalogKind,
+      &AgentKind, &DlDiagKind, &TypeShapeKind, &TypeLggKind, &CatalogKind,
       &ScipKind, &ProposeExtractKind, &ProposeCloneKind, &EmbedKind]
 }
 
@@ -393,6 +393,106 @@ impl RelKind for AgentKind {
     }
 }
 
+// --- dl_diag (self-validation) -----------------------------------------------
+
+/// `dl_diag(path, line, col, end_line, end_col, severity, code, msg)` — the
+/// engine's own lexer/parser/typechecker run over every scanned `.dl` file (the
+/// `file` rows whose path ends `.dl`), so dl lints dl the way rust-analyzer lints
+/// Rust. Byte spans from `TypeDiag` map to 1-based line / 0-based byte col. A lex
+/// or parse failure is one whole-file error row (code `lex`/`parse`); typecheck
+/// diagnostics (brand-mismatch, unknown-anchor, type errors, stratification)
+/// carry their real span. Same pass as `--check`, relocated into a relation.
+///
+/// Validated FILE-LOCALLY: a `use`-split program is checked per file, so a
+/// relation defined in an *included* file is out of scope here (run `dl --check`
+/// on the whole set for cross-file `use` resolution). Column names mirror the
+/// `diag` sink so a rail forwards by name:
+/// `diag(...) <- agent_changed(p), p =~ /\.dl$/, dl_diag(p, ...).`
+pub struct DlDiagKind;
+
+/// Byte offset -> (1-based line, 0-based byte col) within `content`.
+fn offset_to_line_col(content: &str, off: u32) -> (i64, i64) {
+    let off = (off as usize).min(content.len());
+    let mut line = 1i64;
+    let mut line_start = 0usize;
+    for (i, b) in content.as_bytes().iter().enumerate() {
+        if i >= off { break; }
+        if *b == b'\n' { line += 1; line_start = i + 1; }
+    }
+    (line, (off - line_start) as i64)
+}
+
+type DlDiagRow = (String, i64, i64, i64, i64, String, String, String);
+
+/// Lex+parse+typecheck one `.dl` source in isolation. A lex/parse failure is one
+/// whole-file row; typecheck diags carry their byte span mapped to line/col.
+fn validate_dl_source(content: &str, path: &str) -> Vec<DlDiagRow> {
+    let toks = match crate::lex::lex(content) {
+        Ok(t) => t,
+        Err(e) => return vec![(path.into(), 1, 0, 1, 0, "error".into(), "lex".into(), e.to_string())],
+    };
+    let mut prog = match crate::parse::parse(toks) {
+        Ok(p) => p,
+        Err(e) => return vec![(path.into(), 1, 0, 1, 0, "error".into(), "parse".into(), e.to_string())],
+    };
+    crate::typecheck::check_and_normalize(&mut prog, path).into_iter().map(|d| {
+        let (l0, c0) = offset_to_line_col(content, d.span.0);
+        let (l1, c1) = offset_to_line_col(content, d.span.1);
+        (path.to_string(), l0, c0, l1, c1, d.severity.as_str().to_string(), d.code, d.msg)
+    }).collect()
+}
+
+impl RelKind for DlDiagKind {
+    fn rels(&self) -> &'static [&'static str] { &["dl_diag"] }
+    fn decls(&self) -> Vec<RelDecl> {
+        vec![RelDecl { name: "dl_diag".into(), cols: vec![
+            col("path", Type::Path), col("line", Type::Int), col("col", Type::Int),
+            col("end_line", Type::Int), col("end_col", Type::Int),
+            col("severity", Type::Text), col("code", Type::Text), col("msg", Type::Text)] }]
+    }
+    fn reserved_msg(&self) -> &'static str {
+        "the built-in dl self-diagnostics relation"
+    }
+    fn refresh(&self, eng: &Engine) -> Result<bool> {
+        // Every scanned .dl path; the WORK text is read from disk (file.content is a
+        // content hash, not the source). Validates the on-disk working copy — the
+        // lint-on-edit target. A path that can't be read (a non-self repo root, a
+        // git-only rev) is skipped, never a false diag.
+        let paths: Vec<String> = {
+            let conn = eng.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT DISTINCT \"path\" FROM {} WHERE \"path\" LIKE '%.dl' ORDER BY \"path\"",
+                tbl("file")))?;
+            let rows = s.query_map([], |r| r.get::<_, String>(0))?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        let mut rows: Vec<DlDiagRow> = Vec::new();
+        for path in &paths {
+            let Ok(content) = std::fs::read_to_string(eng.root.join(path)) else { continue };
+            rows.extend(validate_dl_source(&content, path));
+        }
+        rows.sort();
+        rows.dedup();
+        let existing: Vec<DlDiagRow> = {
+            let conn = eng.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"path\",\"line\",\"col\",\"end_line\",\"end_col\",\"severity\",\"code\",\"msg\" \
+                 FROM {} ORDER BY 1,2,3,4,5,6,7,8", tbl("dl_diag")))?;
+            let rows = s.query_map([], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)?,
+                r.get::<_, i64>(4)?, r.get::<_, String>(5)?, r.get::<_, String>(6)?, r.get::<_, String>(7)?)))?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        if existing == rows { return Ok(false); }
+        let out: Vec<Vec<Value>> = rows.into_iter().map(|(p, l, c, el, ec, sev, code, msg)| vec![
+            Value::Text(p), Value::Int(l), Value::Int(c), Value::Int(el), Value::Int(ec),
+            Value::Text(sev), Value::Text(code), Value::Text(msg)]).collect();
+        eng.refresh_rel("dl_diag",
+            &["path", "line", "col", "end_line", "end_col", "severity", "code", "msg"], &out)?;
+        Ok(true)
+    }
+}
+
 // --- type_shape (analysis-derived) -------------------------------------------
 
 /// `type_shape(name, hash)` — Merkle shape hash per type, from the current
@@ -494,7 +594,7 @@ pub struct CatalogKind;
 
 impl RelKind for CatalogKind {
     fn rels(&self) -> &'static [&'static str] {
-        &["rel_catalog", "fn_catalog"]
+        &["rel_catalog", "fn_catalog", "op_catalog"]
     }
     fn decls(&self) -> Vec<RelDecl> {
         vec![
@@ -504,10 +604,13 @@ impl RelKind for CatalogKind {
             RelDecl { name: "fn_catalog".into(), cols: vec![
                 col("name", Type::Text), col("arity", Type::Int),
                 col("group", Type::Text), col("doc", Type::Text)] },
+            RelDecl { name: "op_catalog".into(), cols: vec![
+                col("op", Type::Text), col("kind", Type::Text),
+                col("syntax", Type::Text), col("doc", Type::Text)] },
         ]
     }
     fn reserved_msg(&self) -> &'static str {
-        "the built-in self-describing relation catalog (rel_catalog / fn_catalog)"
+        "the built-in self-describing relation catalog (rel_catalog / fn_catalog / op_catalog)"
     }
     fn refresh(&self, eng: &Engine) -> Result<bool> {
         let docs: HashMap<&str, (&str, &str)> =
@@ -526,6 +629,12 @@ impl RelKind for CatalogKind {
                  Value::Text(g.to_string()), Value::Text(d.to_string())]
         }).collect();
         eng.refresh_rel("fn_catalog", &["name", "arity", "group", "doc"], &fn_rows)?;
+
+        let op_rows: Vec<Vec<Value>> = op_docs().iter().map(|(op, kind, syn, d)| {
+            vec![Value::Text(op.to_string()), Value::Text(kind.to_string()),
+                 Value::Text(syn.to_string()), Value::Text(d.to_string())]
+        }).collect();
+        eng.refresh_rel("op_catalog", &["op", "kind", "syntax", "doc"], &op_rows)?;
         Ok(true)
     }
 }

@@ -383,6 +383,9 @@ pub fn builtin_rel_docs() -> &'static [(&'static str, &'static str, &'static str
         // self: the catalog documents itself.
         ("rel_catalog", "meta", "this table: every built-in relation with its group, columns, and one-line doc"),
         ("fn_catalog", "meta", "every scalar function callable in a head or comparison with its arity, group, and one-line doc; sourced from fn_docs"),
+        ("op_catalog", "meta", "every body/sink op (source ops, derived constructs, sinks) with its syntax sketch and one-line semantics; sourced from op_docs"),
+        // self: dl validates dl. rust-analyzer-grade positioned diagnostics for scanned `.dl` files.
+        ("dl_diag", "meta", "parse/type diagnostics for each scanned `.dl` file (path, line, col, end_line, end_col, severity, code, msg); the engine's own lexer/parser/typechecker run over `file` rows ending in `.dl`, byte spans mapped to 1-based line / 0-based col — join agent_changed for lint-on-edit"),
     ]
 }
 
@@ -440,6 +443,40 @@ pub fn undocumented_fns() -> Vec<String> {
         .collect();
     missing.sort();
     missing
+}
+
+/// One-line documentation for every body/sink OP: `(op, kind, syntax, semantics)`.
+/// `kind` ∈ source / body / sink. THIS is the single source of op docs — `op_catalog`
+/// projects it and `gen-reference.dl` renders `docs/reference/syntax.md` plus the
+/// README splice, mirroring `fn_docs`/`fn_catalog` for functions. Docs avoid `|`
+/// so they render inside a markdown table cell (use `/` for alternatives).
+pub fn op_docs() -> &'static [(&'static str, &'static str, &'static str, &'static str)] {
+    &[
+        // source ops: body position, extract facts from files. Cannot join derived rels.
+        ("scan", "source", "scan([repo,][rev,] glob, path, rev_out)", "select files; 3-ary defaults repo=\".\"/rev=\"WORK\", 5-ary names a repo coordinate; rev ∈ WORK/HEAD/any git rev"),
+        ("match", "source", "match(path, rev, /re/, line[, id][, col, end_col])", "regex over file content, one row per match line; (?<cap>..) named groups bind dl vars; $cap is sugar for a lazy named group; trailing id/col bind the whole-match span"),
+        ("ast", "source", "ast(path, rev, :lang, \"(query) @cap\", line[, end])", "tree-sitter query; @cap captures bind same-named vars; :lang ∈ rust/c/kotlin/..."),
+        ("sg", "source", "sg(path, rev, :lang, \"$X.unwrap()\", line[, col, end_line, end_col][, id])", "ast-grep pattern; metavar $X binds dl var X (matched text); trailing id binds the whole-match span for structural rewrite via gen(:replace)"),
+        ("ast_yaml", "source", "ast_yaml(path, rev, :lang, \"rule yaml\", line, ...)", "ast-grep RuleCore YAML body (inside:/has: relational rule) instead of a pattern string; span outputs share the sg form"),
+        ("json", "source", "json(path, rev, q:{ $k: $v })", "declarative brace pattern over json/yaml/toml; each match binds named key AND value captures as dl vars; supports **: recursion, [...$x] spread, re:/glob keys"),
+        ("jsonp", "source", "jsonp(path, rev, \"a.*.b\", out)", "dotted path over json/yaml/toml (* = any key/element); the value is located; the string form of json"),
+        ("cmd", "source", "cmd(path, rev, \"tool {file}\", line, out)", "shell out per matched file, one row per stdout line; cached by (file hash, rule text); nonzero exit + stdout = findings, nonzero + empty = error"),
+        ("comment", "source", "comment(path, rev, /open/[, /close/], l0, l1, label)", "comment-marker regions in any file type; one regex = sequential dividers, two = paired BEGIN/END with LIFO nesting; l0/l1 are 1-based marker lines; pairs with gen splice"),
+        // body constructs: derived rules.
+        ("atom", "body", "edge(f, t)", "positive atom; binds its vars from the named relation"),
+        ("negation", "body", "!round(t, _)", "negation / anti-join; the row must NOT exist in the relation"),
+        ("comparison", "body", "= != < <= > >=", "scalar comparison on bound vars or literals (n >= 4, p != fs:src/db.rs)"),
+        ("regex", "body", "f =~ /^[A-Za-z]+$/", "regex constraint (SQLite REGEXP); the /.../ unified regex literal, same form match/comment/sg use"),
+        ("glob", "body", "p ~~ \"src/*\"", "glob constraint (SQLite GLOB)"),
+        ("closure", "body", "closure(edge)", "transitive closure of a 2-col relation as the entire body (SCC-condensed); pin an endpoint for a point query; mixed-body closure is literal-seeded only"),
+        ("arith", "body", "+ - * / %", "int arithmetic in rule heads and comparison sides (rank(p, line+1)); usual precedence, parens OK; never in a binding atom"),
+        ("strfn", "body", "split(text, sep, idx) / replace(text, from, to)", "string functions in heads and comparison sides; idx 0-based, negative counts from the end; a computed binding (ext = split(p, \".\", -1)) binds for later use in the same body"),
+        ("aggregation", "body", "count sum min max", "head-position-only aggregation; non-aggregate head terms are the grouping key; count/sum produce int, min/max carry the arg type; count in body is a parse error"),
+        // sinks.
+        ("query", "sink", "? rel(a, b).", "print a TSV block (or JSON-lines with --query-json); a literal in any position filters; no where clause"),
+        ("diag", "sink", "rel diag(path, line, col, ..., severity, msg).", "declare a rel named diag; the engine maps columns BY NAME into editor diagnostics (--lsp) or check output (--check); required path/line/msg"),
+        ("gen", "sink", "gen([:mode,] path, [l0, l1,] \"{var} template\")", "codegen; file form renders body rows through a path+row template, splice form replaces lines between comment marker pairs; convergent (skips write when bytes match); never runs under --check/--lsp"),
+    ]
 }
 
 fn effect_rel_decls() -> Vec<RelDecl> {
