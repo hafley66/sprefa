@@ -47,14 +47,21 @@ sh fetch(ep, prev) -> (status: int, tag: text, body: text) =
    B=$(printf '%s' "$R" | awk 'f{print} /^\r?$/{f=1}' | tr -d '\n')
    printf '%s\n%s\n%s' "$C" "$E" "$B"`.
 
-rel resp(ep: text, status: int, tag: text, body: text).
-resp(ep, status, tag, body) <- @async poll(ep, prev, bucket), fetch(ep, prev) -> (status, tag, body).
-etag_next(ep, tag) <- resp(ep, 200, tag, _).
-etag_next(ep, old) <- resp(ep, 304, _, _), etag(ep, old).
+# `resp` carries the cadence bucket (time order) and accumulates; `resp_current`
+# is the newest 200 by `max(bucket)`, so the etag carry stays single-valued and a
+# changed resource upserts (latest-wins) instead of fanning the poll out. See
+# gh-cache.dl for the full rationale.
+rel resp(ep: text, b: int, status: int, tag: text, body: text).
+resp(ep, b, status, tag, body) <- @async poll(ep, prev, b), fetch(ep, prev) -> (status, tag, body).
+rel resp_latest(ep: text, b: int).
+resp_latest(ep, max(b)) <- resp(ep, b, 200, _, _).
+rel resp_current(ep: text, tag: text, body: text).
+resp_current(ep, tag, body) <- resp(ep, b, 200, tag, body), resp_latest(ep, b).
+etag_next(ep, tag) <- resp_current(ep, tag, _).
 etag(ep, tag) <- @next etag_next(ep, tag).
 
 rel stars(ep: text, n: text).
-stars(ep, n) <- resp(ep, 200, _, body), jsonp(body, "stargazers_count", n).
+stars(ep, n) <- resp_current(ep, _, body), jsonp(body, "stargazers_count", n).
 
 # --- paginated PR list, gated on the config's watch_pr set -------------------
 rel list_poll(ep: text, bucket: int).

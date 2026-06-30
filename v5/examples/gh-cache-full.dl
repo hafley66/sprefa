@@ -37,9 +37,9 @@ gate_seed("go").
 
 rel reading(remaining: int, reset: int).
 rel reading_next(remaining: int, reset: int).
-reading_next(rem, rst) <- resp(_, 200, _, rem, rst, _), rem != "".   # fresh 200
-reading_next(rem, rst) <- resp(_, 304, _, rem, rst, _), rem != "".   # 304s carry rate too
-reading_next(rem, rst) <- reading(rem, rst), !resp(_, _, _, _, _, _). # else keep prior
+reading_next(rem, rst) <- resp(_, _, 200, _, rem, rst, _), rem != "".   # fresh 200
+reading_next(rem, rst) <- resp(_, _, 304, _, rem, rst, _), rem != "".   # 304s carry rate too
+reading_next(rem, rst) <- reading(rem, rst), !resp(_, _, _, _, _, _, _). # else keep prior
 reading(rem, rst) <- @next reading_next(rem, rst).
 
 rel rate_ok(g: text).
@@ -63,17 +63,22 @@ sh fetch(ep, prev) -> (status: int, tag: text, remaining: int, reset: int, body:
    B=$(printf '%s' "$R" | awk 'f{print} /^\r?$/{f=1}' | tr -d '\n')
    printf '%s\n%s\n%s\n%s\n%s' "$C" "$E" "$RM" "$RS" "$B"`.
 
-rel resp(ep: text, status: int, tag: text, remaining: int, reset: int, body: text).
-resp(ep, status, tag, rem, rst, body) <-
-    @async poll(ep, prev, bucket), fetch(ep, prev) -> (status, tag, rem, rst, body).
+rel resp(ep: text, b: int, status: int, tag: text, remaining: int, reset: int, body: text).
+resp(ep, b, status, tag, rem, rst, body) <-
+    @async poll(ep, prev, b), fetch(ep, prev) -> (status, tag, rem, rst, body).
 
-etag_next(ep, tag) <- resp(ep, 200, tag, _, _, _).
-etag_next(ep, old) <- resp(ep, 304, _, _, _, _), etag(ep, old).
+# latest-wins: newest 200 by max(bucket) -> single-valued etag carry (see
+# gh-cache.dl). A changed resource upserts instead of fanning the poll out.
+rel resp_latest(ep: text, b: int).
+resp_latest(ep, max(b)) <- resp(ep, b, 200, _, _, _, _).
+rel resp_current(ep: text, tag: text, body: text).
+resp_current(ep, tag, body) <- resp(ep, b, 200, tag, _, _, body), resp_latest(ep, b).
+etag_next(ep, tag) <- resp_current(ep, tag, _).
 etag(ep, tag) <- @next etag_next(ep, tag).
 
 # normalize the repo body (a single object)
 rel stars(ep: text, n: text).
-stars(ep, n) <- resp(ep, 200, _, _, _, body), jsonp(body, "stargazers_count", n).
+stars(ep, n) <- resp_current(ep, _, body), jsonp(body, "stargazers_count", n).
 
 # ============================================================================
 # 2. PAGINATED LIST (PRs) — gap C pagination + gap B upsert (latest-wins)

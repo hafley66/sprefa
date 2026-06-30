@@ -73,6 +73,104 @@ impl EffectExec for GhMock {
     }
 }
 
+/// A resource that CHANGES once, then settles: the first poll (no etag) is a 200
+/// with `etagA`/body1; a poll carrying `etagA` finds the resource changed and
+/// returns a NEW 200 (`etagB`/body2); any later etag is a 304. Models a star
+/// count ticking up once. Used to prove the latest-wins (`resp_current`) view.
+struct GhChanging {
+    body1: String,
+    body2: String,
+}
+impl EffectExec for GhChanging {
+    fn run(&self, _kind: &str, args: &Map<String, Json>) -> Result<Vec<String>> {
+        let prev = args.get("prev").and_then(|v| v.as_str()).unwrap_or("");
+        Ok(match prev {
+            "" => vec!["200".into(), "etagA".into(), self.body1.clone()],
+            "etagA" => vec!["200".into(), "etagB".into(), self.body2.clone()],
+            _ => vec!["304".into(), String::new(), String::new()],
+        })
+    }
+}
+
+/// Latest-wins, and the bug it fixes. `resp` accumulates one row per response
+/// (the history); a changing resource lands TWO 200s with different etags. The
+/// naive carry `etag_next <- resp(200, tag, _)` then derives BOTH etags, so the
+/// next poll fans out and the cache multiplies. The fix is a monotone `clock`
+/// bucket threaded into `resp`: `resp_latest(ep, max(b))` picks the newest 200,
+/// `resp_current` is that single body, and the etag carry reads `resp_current`
+/// so it stays single-valued. A 304 lands no 200, so `resp_current` (hence the
+/// etag) holds at the last good version. Entities derive from `resp_current`
+/// (latest-wins); `change_log` still keeps every value that was ever current.
+/// Pure datalog — the upsert reduction, no engine change.
+#[test]
+fn resp_current_is_the_latest_wins_view_over_accumulated_resp() {
+    let _g = CLOCK_LOCK.lock().unwrap();
+    let d = sandbox("latest");
+    let dbp = d.join("db");
+    fs::write(
+        d.join("p.dl"),
+        "rel watch(ep: text).\n\
+         watch(\"repos/cli/cli\").\n\
+         rel etag(ep: text, tag: text).\n\
+         rel etag_next(ep: text, tag: text).\n\
+         rel poll(ep: text, prev: text, b: int).\n\
+         poll(ep, prev, b) <- watch(ep), etag(ep, prev), clock(300, b).\n\
+         poll(ep, \"\", b)  <- watch(ep), !etag(ep, _), clock(300, b).\n\
+         rel resp(ep: text, b: int, status: int, tag: text, body: text).\n\
+         resp(ep, b, status, tag, body) <- @async poll(ep, prev, b).\n\
+         rel resp_latest(ep: text, b: int).\n\
+         resp_latest(ep, max(b)) <- resp(ep, b, 200, _, _).\n\
+         rel resp_current(ep: text, tag: text, body: text).\n\
+         resp_current(ep, tag, body) <- resp(ep, b, 200, tag, body), resp_latest(ep, b).\n\
+         etag_next(ep, tag) <- resp_current(ep, tag, _).\n\
+         etag(ep, tag) <- @next etag_next(ep, tag).\n\
+         rel stars(ep: text, n: text).\n\
+         stars(ep, n) <- resp_current(ep, _, body), jsonp(body, \"stargazers_count\", n).\n\
+         rel change_log(ep: text, kind: text, val: text).\n\
+         rel change_log_next(ep: text, kind: text, val: text).\n\
+         change_log_next(ep, kind, val) <- change_log(ep, kind, val).\n\
+         change_log_next(ep, \"stars\", n) <- stars(ep, n).\n\
+         change_log(ep, kind, val) <- @next change_log_next(ep, kind, val).\n",
+    )
+    .unwrap();
+    let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    let exec = GhChanging {
+        body1: r#"{"stargazers_count": 1}"#.to_string(),
+        body2: r#"{"stargazers_count": 2}"#.to_string(),
+    };
+    // Advance a clock bucket per cycle so the carried-etag poll re-fires:
+    // bucket 0 -> 200 etagA(body1); bucket 1 (carry etagA) -> 200 etagB(body2);
+    // bucket 2+ (carry etagB) -> 304. Settle.
+    for i in 0..8 {
+        set_now(1_000_000 + (i as i64) * 300);
+        eng.tick(&prog, true).unwrap();
+        eng.drain_effects(&prog, &exec).unwrap();
+    }
+    eng.tick(&prog, true).unwrap();
+
+    // Raw resp accumulated BOTH 200 versions (plus the 304s) — the history. (A
+    // version can repeat across buckets during the one-tick etag-carry lag; that
+    // is harmless, `max(bucket)` still picks the newest, so assert on DISTINCT
+    // versions seen.)
+    let resp200 = rows(&dbp, "SELECT DISTINCT tag FROM rel_resp WHERE status = 200 ORDER BY tag");
+    assert_eq!(resp200, vec![vec!["etagA".to_string()], vec!["etagB".to_string()]],
+        "resp keeps every 200 version (history)");
+    // The carry stayed single-valued (the bug would leave two etags).
+    let etags = rows(&dbp, "SELECT tag FROM rel_etag");
+    assert_eq!(etags, vec![vec!["etagB".to_string()]], "etag carry is single-valued (latest)");
+    // resp_current is JUST the current version's body -> stars reflects the LATEST.
+    let stars = rows(&dbp, "SELECT n FROM rel_stars");
+    assert_eq!(stars, vec![vec!["2".to_string()]], "latest-wins: stars is the newest value only");
+    // change_log still has the full history (both star values were once current).
+    let mut log: Vec<String> = rows(&dbp, "SELECT val FROM rel_change_log").into_iter().flatten().collect();
+    log.sort();
+    assert_eq!(log, vec!["1".to_string(), "2".to_string()],
+        "change_log keeps every value that was ever current (the feed)");
+    clear_now();
+}
+
 #[test]
 fn gh_cache_lands_entities_then_304_is_a_free_cache_hit() {
     let d = sandbox("loop");

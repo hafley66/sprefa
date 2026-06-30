@@ -72,22 +72,34 @@ sh fetch(ep, prev) -> (status: int, tag: text, body: text) =
 # (named, not positional); `ep` echoes from the request; `prev`/`bucket` are the
 # request-only digest key. No `every` gate — the bucket throttles via the request
 # id, and a gate would stall the first poll until a boundary.
-rel resp(ep: text, status: int, tag: text, body: text).
-resp(ep, status, tag, body) <- @async poll(ep, prev, bucket), fetch(ep, prev) -> (status, tag, body).
+# `resp` carries the cadence BUCKET it was fetched at, so responses are ordered
+# in time. It ACCUMULATES (one row per (bucket) response) — that is the history,
+# and a 304 collapses to a bodiless row.
+rel resp(ep: text, b: int, status: int, tag: text, body: text).
+resp(ep, b, status, tag, body) <- @async poll(ep, prev, b), fetch(ep, prev) -> (status, tag, body).
 
-# Advance the etag carry: a 200 installs its fresh etag; a 304 keeps the old one.
-etag_next(ep, tag) <- resp(ep, 200, tag, _).
-etag_next(ep, old) <- resp(ep, 304, _, _), etag(ep, old).
+# --- latest-wins (the upsert reduction) -------------------------------------
+# A resource that CHANGES lands several 200s with different etags; reducing over
+# all of them (e.g. `etag_next <- resp(200, tag, _)`) would derive MANY etags and
+# fan the next poll out. Pick the newest 200 by `max(bucket)` instead: `resp_current`
+# is that single body, and a 304 (no new 200) leaves it at the last good version.
+# The etag carry reads `resp_current`, so it stays single-valued. Entities derive
+# from `resp_current`, not raw `resp`, so they reflect the NEWEST version.
+rel resp_latest(ep: text, b: int).
+resp_latest(ep, max(b)) <- resp(ep, b, 200, _, _).
+rel resp_current(ep: text, tag: text, body: text).
+resp_current(ep, tag, body) <- resp(ep, b, 200, tag, body), resp_latest(ep, b).
+etag_next(ep, tag) <- resp_current(ep, tag, _).
 etag(ep, tag) <- @next etag_next(ep, tag).
 
 # --- normalize: entities from 200 bodies ------------------------------------
 # Only a 200 carries a body; term-form `jsonp` parses the bound `body` value (the
 # hybrid join+extract pass), no file, no scan. Add a rule per field you track.
 rel stars(ep: text, n: text).
-stars(ep, n) <- resp(ep, 200, _, body), jsonp(body, "stargazers_count", n).
+stars(ep, n) <- resp_current(ep, _, body), jsonp(body, "stargazers_count", n).
 
 rel full_name(ep: text, name: text).
-full_name(ep, name) <- resp(ep, 200, _, body), jsonp(body, "full_name", name).
+full_name(ep, name) <- resp_current(ep, _, body), jsonp(body, "full_name", name).
 
 # A LIST endpoint (e.g. `gh api repos/cli/cli/pulls`) returns a JSON ARRAY of
 # objects. One `json` brace pattern normalizes the whole array into one row per
@@ -96,7 +108,7 @@ full_name(ep, name) <- resp(ep, 200, _, body), jsonp(body, "full_name", name).
 # rule. Add `watch("repos/cli/cli/pulls").` to poll it.
 rel pull_request(ep: text, num: text, title: text, state: text, author: text).
 pull_request(ep, num, title, state, author) <-
-    resp(ep, 200, _, body),
+    resp_current(ep, _, body),
     json(body, q:[... { number: $num, title: $title, state: $state,
                         user: { login: $author } } ]).
 
