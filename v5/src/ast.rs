@@ -349,8 +349,13 @@ pub struct BrandDecl { pub name: String, pub parent: String }
 #[derive(Clone, Debug)]
 pub enum GenTarget {
     /// `gen("docs/{f}.md", ...)`: a path template with `{var}` holes, resolved
-    /// per row; rows group by rendered path. Relative to the scan root.
-    File { path_tmpl: String },
+    /// per row; rows group by rendered path. Relative to the scan root. `append`
+    /// is the `gen(:append, "path", ...)` form: multiple gen rules may target the
+    /// same file and their rendered rows concatenate in PROGRAM ORDER (like the
+    /// Splice form), so a header rule + a rows rule assemble one ordered page
+    /// without markers. The default form (`append=false`) keeps the one-rule-per-
+    /// file rule (a second rule to the same path bails).
+    File { path_tmpl: String, append: bool },
     /// `gen(p, l0, l1, ...)`: splice between two marker lines of a WORK file
     /// (exclusive of both), the `comment` op's paired coordinates. Rows group
     /// by (path, l0, l1).

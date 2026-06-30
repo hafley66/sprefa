@@ -92,6 +92,7 @@ pub fn open(path: Option<&str>) -> Result<Db> {
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;")?;
     register_regexp(&conn)?;
     register_split(&conn)?;
+    register_string_fns(&conn)?;
     if profiling() { conn.profile(Some(profile_hook)); }
     Ok(Db { conn, counts: RefCell::new(HashMap::new()) })
 }
@@ -103,7 +104,6 @@ pub fn open(path: Option<&str>) -> Result<Db> {
 /// the same regex millions of times was a quadratic CPU sink at scale.
 fn register_regexp(conn: &Connection) -> Result<()> {
     use rusqlite::functions::FunctionFlags;
-    static CACHE: OnceLock<Mutex<HashMap<String, regex::Regex>>> = OnceLock::new();
     conn.create_scalar_function(
         "regexp",
         2,
@@ -111,22 +111,25 @@ fn register_regexp(conn: &Connection) -> Result<()> {
         |ctx| {
             let pattern = ctx.get::<String>(0)?;
             let value = ctx.get::<String>(1)?;
-            let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-            let mut map = cache.lock().unwrap();
-            let re = match map.get(&pattern) {
-                Some(re) => re.clone(),
-                None => {
-                    let re = regex::Regex::new(&pattern)
-                        .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?;
-                    map.insert(pattern, re.clone());
-                    re
-                }
-            };
-            drop(map);
+            let re = compiled_regex(&pattern)
+                .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?;
             Ok(re.is_match(&value))
         },
     )?;
     Ok(())
+}
+
+/// Process-wide regex compile cache. A `=~` filter or `replace_re(..)` over a
+/// large relation calls this once per ROW; recompiling the same pattern millions
+/// of times was a quadratic CPU sink at scale.
+fn compiled_regex(pattern: &str) -> Result<regex::Regex, regex::Error> {
+    static CACHE: OnceLock<Mutex<HashMap<String, regex::Regex>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = cache.lock().unwrap();
+    if let Some(re) = map.get(pattern) { return Ok(re.clone()); }
+    let re = regex::Regex::new(pattern)?;
+    map.insert(pattern.to_string(), re.clone());
+    Ok(re)
 }
 
 /// Register the `sprf_split(text, sep, idx)` SQL function so the `split(...)`
@@ -153,6 +156,61 @@ fn register_split(conn: &Connection) -> Result<()> {
             Ok(Some(parts[i as usize].to_string()))
         },
     )?;
+    Ok(())
+}
+
+/// First char lower/upper-cased, the rest untouched (Unicode-aware). Empty in,
+/// empty out. `getUser`/`GetUser` round-trips ride these — the RTKQ op name.
+fn map_first(s: &str, up: bool) -> String {
+    let mut it = s.chars();
+    match it.next() {
+        None => String::new(),
+        Some(f) => {
+            let head: String = if up { f.to_uppercase().collect() } else { f.to_lowercase().collect() };
+            head + it.as_str()
+        }
+    }
+}
+
+/// Register the pass-through string builtins. All are text->text, deterministic.
+/// `strip_prefix`/`strip_suffix` return the input UNCHANGED when the affix is
+/// absent (an idempotent cleanup, not a filter — pair with `=~ /^p/` if you want
+/// drop-on-miss). `replace_re(s, pattern, repl)` is regex replace-all with `$1`
+/// group refs; its pattern share the process-wide compile cache.
+fn register_string_fns(conn: &Connection) -> Result<()> {
+    use rusqlite::functions::FunctionFlags;
+    let det = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
+
+    conn.create_scalar_function("sprf_lower", 1, det,
+        |ctx| Ok(ctx.get::<String>(0)?.to_lowercase()))?;
+    conn.create_scalar_function("sprf_upper", 1, det,
+        |ctx| Ok(ctx.get::<String>(0)?.to_uppercase()))?;
+    conn.create_scalar_function("sprf_lcfirst", 1, det,
+        |ctx| Ok(map_first(&ctx.get::<String>(0)?, false)))?;
+    conn.create_scalar_function("sprf_ucfirst", 1, det,
+        |ctx| Ok(map_first(&ctx.get::<String>(0)?, true)))?;
+    conn.create_scalar_function("sprf_trim", 1, det,
+        |ctx| Ok(ctx.get::<String>(0)?.trim().to_string()))?;
+
+    conn.create_scalar_function("sprf_strip_prefix", 2, det, |ctx| {
+        let s = ctx.get::<String>(0)?;
+        let p = ctx.get::<String>(1)?;
+        Ok(s.strip_prefix(&p).map(str::to_string).unwrap_or(s))
+    })?;
+    conn.create_scalar_function("sprf_strip_suffix", 2, det, |ctx| {
+        let s = ctx.get::<String>(0)?;
+        let p = ctx.get::<String>(1)?;
+        Ok(s.strip_suffix(&p).map(str::to_string).unwrap_or(s))
+    })?;
+
+    conn.create_scalar_function("sprf_replace_re", 3, det, |ctx| {
+        let s = ctx.get::<String>(0)?;
+        let pattern = ctx.get::<String>(1)?;
+        let repl = ctx.get::<String>(2)?;
+        let re = compiled_regex(&pattern)
+            .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?;
+        Ok(re.replace_all(&s, repl.as_str()).into_owned())
+    })?;
     Ok(())
 }
 

@@ -707,27 +707,40 @@ impl Parser {
                 "delete" => (SpliceMode::Replace, true),
                 other => bail!("unknown splice mode :{other}; expected :replace|:append|:prepend|:wrap|:insert_after|:insert_before|:delete"),
             };
+            // Collect every term after the mode tag; arity disambiguates the
+            // File-append form (`:append, "path", "tmpl"` = 2) from the byte
+            // Cursor form (`:mode, p, lo, hi[, "tmpl"]` = 3 for :delete, 4 else).
             self.expect(Tok::Comma)?;
-            let path = self.term()?;
-            self.expect(Tok::Comma)?;
-            let lo = self.term()?;
-            self.expect(Tok::Comma)?;
-            let hi = self.term()?;
-            // :delete omits the template (it removes [lo, hi)); all others
-            // require one trailing template string.
-            let row_tmpl = if is_delete {
-                self.expect(Tok::RParen)?;
-                String::new()
-            } else {
-                self.expect(Tok::Comma)?;
-                let tmpl_term = self.term()?;
-                self.expect(Tok::RParen)?;
-                match tmpl_term {
-                    Term::Str(s) => s,
+            let mut args: Vec<Term> = vec![self.term()?];
+            while matches!(self.peek(), Some(Tok::Comma)) {
+                self.next()?;
+                args.push(self.term()?);
+            }
+            self.expect(Tok::RParen)?;
+            let tmpl_of = |t: Term| -> Result<String> {
+                match t {
+                    Term::Str(s) => Ok(s),
                     other => bail!("gen expects a template string here, got {other:?}"),
                 }
             };
-            (GenTarget::Cursor { mode, path, lo, hi }, row_tmpl)
+            // File-append: `gen(:append, "path", "tmpl")`. Whole-file emit whose
+            // rules concatenate in program order; only :append has clear whole-
+            // file semantics (the byte modes need lo/hi coordinates).
+            if args.len() == 2 && mode == SpliceMode::Append {
+                let mut it = args.into_iter();
+                let path_tmpl = tmpl_of(it.next().unwrap())?;
+                (GenTarget::File { path_tmpl, append: true }, tmpl_of(it.next().unwrap())?)
+            } else {
+                if args.len() != if is_delete { 3 } else { 4 } {
+                    bail!("gen(:{mode_ident}, ...) expects p, lo, hi{} (got {} args after the mode); \
+                           use gen(:append, \"path\", \"tmpl\") for the whole-file append form",
+                          if is_delete { "" } else { ", \"tmpl\"" }, args.len());
+                }
+                let mut it = args.into_iter();
+                let (path, lo, hi) = (it.next().unwrap(), it.next().unwrap(), it.next().unwrap());
+                let row_tmpl = if is_delete { String::new() } else { tmpl_of(it.next().unwrap())? };
+                (GenTarget::Cursor { mode, path, lo, hi }, row_tmpl)
+            }
         } else {
             let mut args: Vec<Term> = vec![self.term()?];
             while matches!(self.peek(), Some(Tok::Comma)) {
@@ -745,7 +758,7 @@ impl Parser {
                 2 => {
                     let mut it = args.into_iter();
                     let path_tmpl = tmpl_of(it.next().unwrap())?;
-                    (GenTarget::File { path_tmpl }, tmpl_of(it.next().unwrap())?)
+                    (GenTarget::File { path_tmpl, append: false }, tmpl_of(it.next().unwrap())?)
                 }
                 4 => {
                     let mut it = args.into_iter();

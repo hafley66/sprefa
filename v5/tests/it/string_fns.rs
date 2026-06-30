@@ -227,6 +227,86 @@ bad(s, frobnicate(s, "/", 0)) <- f(s).
     );
 }
 
+/// Case + first-char builtins: lower/upper/lcfirst/ucfirst.
+#[test]
+fn case_builtins() {
+    let d = sandbox("case");
+    let prog = r#"
+rel n(w: text).
+n("GetUser").
+rel cased(w: text, lo: text, up: text, lcf: text, ucf: text).
+cased(w, lower(w), upper(w), lcfirst(w), ucfirst(w)) <- n(w).
+? cased(w, lo, up, lcf, ucf).
+"#;
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("getuser\tGETUSER\tgetUser\tGetUser"), "case fns: {out}");
+}
+
+/// trim + anchored strip_prefix/strip_suffix. Strip returns the input UNCHANGED
+/// when the affix is absent (idempotent cleanup, not a filter).
+#[test]
+fn trim_and_strip_affix() {
+    let d = sandbox("strip");
+    let prog = r#"
+rel n(w: text).
+n("  hi  ").
+n("useFoo").
+n("bareName").
+rel out(w: text, t: text, p: text, s: text).
+out(w, trim(w), strip_prefix(w, "use"), strip_suffix(w, "Name")) <- n(w).
+? out(w, t, p, s).
+"#;
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("useFoo\tuseFoo\tFoo\tuseFoo"), "strip_prefix present, suffix absent: {out}");
+    assert!(out.contains("bareName\tbareName\tbareName\tbare"), "prefix absent, suffix present: {out}");
+    assert!(out.contains("  hi  \thi"), "trim: {out}");
+}
+
+/// replace_re: regex replace-ALL strips the whole RTKQ affix family in one call.
+/// `^Lazy|(Query|Mutation)$` matches both the leading `Lazy` and the trailing
+/// suffix; replace_all removes both occurrences.
+#[test]
+fn replace_re_groups_and_family() {
+    let d = sandbox("repre");
+    let prog = r#"
+rel n(w: text).
+n("useGetUserQuery").
+n("useUpdateUserMutation").
+n("useLazyGetUserQuery").
+rel stem(w: text, s: text).
+stem(w, replace_re(strip_prefix(w, "use"), "^Lazy|(Query|Mutation)$", "")) <- n(w).
+? stem(w, s).
+"#;
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("useGetUserQuery\tGetUser"), "Query suffix stripped: {out}");
+    assert!(out.contains("useUpdateUserMutation\tUpdateUser"), "Mutation suffix stripped: {out}");
+    assert!(out.contains("useLazyGetUserQuery\tGetUser"), "Lazy prefix + Query suffix stripped: {out}");
+}
+
+/// The headline composition: recover the RTKQ endpoint op name from a hook
+/// identifier. `useGetUserQuery` -> `getUser`. Pure dl, no engine special case.
+#[test]
+fn rtkq_op_name_recovery() {
+    let d = sandbox("rtkq");
+    let prog = r#"
+rel hook(h: text).
+hook("useGetUserQuery").
+hook("useUpdateUserMutation").
+hook("useLazyListUsersQuery").
+rel op(h: text, name: text).
+op(h, lcfirst(replace_re(strip_prefix(h, "use"), "^Lazy|(Query|Mutation)$", ""))) <- hook(h).
+? op(h, name).
+"#;
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("useGetUserQuery\tgetUser"), "getUser: {out}");
+    assert!(out.contains("useUpdateUserMutation\tupdateUser"), "updateUser: {out}");
+    assert!(out.contains("useLazyListUsersQuery\tlistUsers"), "listUsers: {out}");
+}
+
 /// Unary minus parses as a negative literal: `-1` in split idx, no parens
 /// needed. Distinct from binary subtraction `a - 1` which still works.
 #[test]

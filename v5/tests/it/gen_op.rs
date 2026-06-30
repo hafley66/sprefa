@@ -111,6 +111,54 @@ fn two_file_rules_disjoint_paths_ok() {
     assert_eq!(fs::read_to_string(d.join("out/y.txt")).unwrap(), "b\n");
 }
 
+/// gen(:append, ...): several rules to one file concatenate in PROGRAM ORDER.
+/// A header rule (constant, over true()), a separator rule, and a rows rule
+/// assemble one ordered page — the thing plain File form bails on. Rows within
+/// the rows rule still sort by their ORDER BY (alpha here).
+#[test]
+fn append_mode_concatenates_rules_in_program_order() {
+    let d = sandbox("append");
+    let (code, _, err) = run(&d, concat!(
+        "rel row(a: text, n: int).\n",
+        "row(\"beta\", 1).\n",
+        "row(\"alpha\", 3).\n",
+        "gen(:append, \"out/t.md\", \"| name | n |\") <- true().\n",
+        "gen(:append, \"out/t.md\", \"|---|---|\") <- true().\n",
+        "gen(:append, \"out/t.md\", \"| {a} | {n} |\") <- row(a, n).\n"));
+    assert_eq!(code, 0, "{err}");
+    let got = fs::read_to_string(d.join("out/t.md")).unwrap();
+    assert_eq!(got, "| name | n |\n|---|---|\n| alpha | 3 |\n| beta | 1 |\n",
+        "header, separator, then alpha-sorted rows: {got:?}");
+}
+
+/// A constant append line (no template holes) is allowed: a fully-generated
+/// file has no static scaffold to hold its title, so a no-var gen over true()
+/// emits exactly one line.
+#[test]
+fn append_constant_line_emits_once() {
+    let d = sandbox("append_const");
+    let (code, _, err) = run(&d, concat!(
+        "gen(:append, \"out/c.md\", \"# Title\") <- true().\n"));
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(fs::read_to_string(d.join("out/c.md")).unwrap(), "# Title\n");
+}
+
+/// Mixing a plain File rule and an :append rule on ONE path is a loud error
+/// (the two write disciplines would race last-wins). Distinct forms, distinct
+/// files.
+#[test]
+fn append_and_plain_file_same_path_bail() {
+    let d = sandbox("append_mix");
+    let (code, _, err) = run(&d, concat!(
+        "rel xs(x: text).\n",
+        "xs(\"a\").\n",
+        "gen(\"out/m.md\", \"plain {x}\") <- xs(x).\n",
+        "gen(:append, \"out/m.md\", \"appended {x}\") <- xs(x).\n"));
+    assert_eq!(code, 1, "mixing plain + append on one file must bail: {err}");
+    assert!(err.contains("both a plain gen rule and gen(:append"),
+        "error names the form clash: {err}");
+}
+
 #[test]
 fn escaping_path_is_rejected() {
     let d = sandbox("escape");

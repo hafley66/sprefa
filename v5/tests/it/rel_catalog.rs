@@ -20,6 +20,36 @@ fn every_builtin_relation_is_documented() {
 }
 
 #[test]
+fn every_scalar_function_is_documented() {
+    let missing = engine::undocumented_fns();
+    assert!(missing.is_empty(),
+        "every scalar function (STR_FNS + split/replace/int) needs a (name, arity, group, doc) \
+         row in fn_docs; undocumented: {missing:?}");
+}
+
+#[test]
+fn fn_catalog_is_self_describing_and_complete() {
+    let root = std::env::temp_dir().join(format!("fn_catalog_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+
+    let prog = parse::parse(lex::lex("? fn_catalog(name, arity, group, doc).").unwrap()).unwrap();
+    let conn = db::open(Some(root.join("c.db").to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, root);
+    eng.tick(&prog, true).unwrap();
+
+    let rows = eng.query_sql(
+        "SELECT \"name\",\"arity\",\"group\",\"doc\" FROM rel_fn_catalog", &[]).unwrap();
+    assert!(rows.iter().any(|r| s(&r[0]) == "split"), "fn_catalog lists split");
+    assert!(rows.iter().any(|r| s(&r[0]) == "replace_re"), "fn_catalog lists the new replace_re");
+    for r in &rows {
+        let (name, doc) = (s(&r[0]), s(&r[3]));
+        assert!(!doc.is_empty(), "{name} has no doc");
+        assert!(!doc.contains('|'), "{name} doc has a pipe, would break the md table: {doc}");
+    }
+}
+
+#[test]
 fn rel_catalog_is_self_describing_and_complete() {
     let root = std::env::temp_dir().join(format!("rel_catalog_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);

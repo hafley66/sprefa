@@ -112,7 +112,8 @@ A `.dl` program is a sequence of items, each terminated by `.`:
 | rule | `head(..) <- body, body, ... .` | derive rows; recursion allowed |
 | aggregate rule | `fan_out(F, count(T)) <- edge(F, T).` | head-position aggregation; plain head terms are the GROUP BY |
 | closure rule | `reaches(a, b) <- closure(edge).` | transitive closure of a 2-col edge relation |
-| gen (file) | `gen("docs/{x}.md", "row {y}") <- body.` | render rows to a file, grouped by rendered path |
+| gen (file) | `gen("docs/{x}.md", "row {y}") <- body.` | render rows to a file, grouped by rendered path; one rule per file |
+| gen (append) | `gen(:append, "docs/x.md", "row {y}") <- body.` | render to a file where MANY rules concatenate in program order; assemble a header rule + a rows rule into one page, no markers (see `examples/gen-reference.dl`) |
 | gen (splice) | `gen(p, l0, l1, "row {y}") <- body.` | replace lines strictly between two marker lines (pair with `comment`) |
 | query | `? rel(a, b, "literal").` | print results; a literal pins that column |
 | module import | `use "std/callgraph.dl".` | splice another `.dl` file's items here; see [Modules](#modules) |
