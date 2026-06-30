@@ -1,26 +1,31 @@
 //! Built-in source-relation families behind one trait.
 //!
-//! Each family (`changed`, `changed_line`, `created`, plus the analysis-derived
-//! `agent` / `type_shape` / `type_lgg` / catalog families below) used to be four
-//! loose pieces in engine.rs — a `*_RELS` const, a `*_rel_decls()` fn, a
-//! `*_rels_used()` gate, and a `refresh_*_rel()` method — wired by a
-//! hand-written fan-out repeated in `tick`, `tick_paths`, `declare_builtins`,
-//! `all_builtin_decls`, and the reserved-name guard. This module collapses that
-//! shape: one `RelKind` impl per family, one `rel_kinds()` registry the call
-//! sites loop over. The refresh BODIES live here too (not thin wrappers), so the
-//! code actually leaves engine.rs.
+//! Each family (`changed`, `changed_line`, `created`, the analysis-derived
+//! `agent` / `type_shape` / `type_lgg` / catalog families, the SCIP importer
+//! `scip_*`, the clone proposers `propose_extract` / `propose_clone`, and the
+//! embedding `similar`) used to be four loose pieces in engine.rs — a `*_RELS`
+//! const, a `*_rel_decls()` fn, a `*_rels_used()` gate, and a `refresh_*_rel()`
+//! method — wired by a hand-written fan-out repeated in `tick`, `tick_paths`,
+//! `declare_builtins`, `all_builtin_decls`, and the reserved-name guard. This
+//! module collapses that shape: one `RelKind` impl per family, one `rel_kinds()`
+//! registry the call sites loop over. The refresh BODIES live here too (not thin
+//! wrappers), so the code actually leaves engine.rs.
 //!
 //! Adding a family is now: write a unit struct, impl `RelKind`, add it to
 //! `rel_kinds()`. The five call sites pick it up for free.
 //!
 //! Contract a family must match to live here: a no-arg, whole-set
 //! `refresh(eng) -> Ok(changed?)` that self-diffs against what is stored
-//! (returns `Ok(false)` on the steady-state no-op). Families that need an
-//! incremental input gate (scip's `index.scip`-changed flag), a delta refresh
-//! (spine/node/module), extracted args (every/clock intervals), or a `()` return
-//! that always runs (builtin/type/call/dataflow/doc/daemon/effect) do NOT fit
-//! this trait yet — see `plans/2026-06-30-engine-breakdown-proposal.md` for the
-//! staged trait extensions that absorb them.
+//! (returns `Ok(false)` on the steady-state no-op). A family that should NOT
+//! re-run on every incremental tick overrides `dirty(changed)` to gate on the
+//! changed-path set (`ScipKind` gates on `index.scip`). Bodies that need more of
+//! the `Engine` surface reach it through the `pub(crate)` read helpers
+//! (`repo_roots` / `node_file_set` / `read_content` / `knn_rows`); bounding that
+//! surface behind a `RelCtx` borrow struct is the deferred encapsulation step in
+//! `plans/2026-06-30-engine-breakdown-proposal.md`. Families that still don't fit
+//! — a delta refresh (spine/node/module), extracted args (every/clock
+//! intervals), or a `()` return that always runs (builtin/type/call/dataflow/
+//! doc/daemon/effect) — await the further staged trait extensions there.
 
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
@@ -28,8 +33,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::ast::{Col, Program, RelDecl, Type, Value};
-use crate::engine::{all_builtin_decls, builtin_rel_docs, fn_docs, rels_used, Engine};
+use crate::engine::{all_builtin_decls, builtin_rel_docs, fn_docs, knn_rows, read_content,
+                    rels_used, scip_descriptor_name, Engine};
 use crate::lower::tbl;
+use crate::scip_import;
 use crate::typegraph;
 
 /// A built-in, git-derived relation family: its name(s), column schema, the
@@ -49,6 +56,15 @@ pub trait RelKind: Sync {
     fn used(&self, prog: &Program) -> bool {
         rels_used(prog, self.rels())
     }
+    /// Should an *incremental* tick (`tick_paths`) call `refresh`? Default: yes,
+    /// every tick — the self-diffing families re-read and early-out on a no-op.
+    /// `ScipKind` overrides to gate on `index.scip` being in the changed set, so
+    /// editing source code never forces a full SCIP-index reload. Not consulted
+    /// on a full `tick` (which always refreshes every used family). `changed` is
+    /// the set of repo-relative paths the incremental tick saw move.
+    fn dirty(&self, _changed: &HashSet<String>) -> bool {
+        true
+    }
 }
 
 /// Every git-derived built-in family, in declaration order. `tick`,
@@ -56,7 +72,8 @@ pub trait RelKind: Sync {
 /// guard iterate THIS instead of repeating the family list.
 pub fn rel_kinds() -> &'static [&'static dyn RelKind] {
     &[&ChangedKind, &ChangedLineKind, &CreatedKind,
-      &AgentKind, &TypeShapeKind, &TypeLggKind, &CatalogKind]
+      &AgentKind, &TypeShapeKind, &TypeLggKind, &CatalogKind,
+      &ScipKind, &ProposeExtractKind, &ProposeCloneKind, &EmbedKind]
 }
 
 /// Flattened column decls across the registry, for `all_builtin_decls` /
@@ -511,4 +528,364 @@ impl RelKind for CatalogKind {
         eng.refresh_rel("fn_catalog", &["name", "arity", "group", "doc"], &fn_rows)?;
         Ok(true)
     }
+}
+
+// --- scip (importer, reload-gated) -------------------------------------------
+
+/// SCIP-importer relations, loaded from an existing `index.scip`.
+/// `scip_def(symbol, file)` / `scip_ref(file, symbol, def_file)` /
+/// `scip_edge(src, dst)` are the file-level def/ref/import graph;
+/// `scip_name(symbol, name)` is the descriptor's trailing identifier (computed
+/// where the moniker grammar lives — a pure-dl split can't isolate it);
+/// `scip_fn_edge(caller, callee)` is the function-level call graph;
+/// `scip_callee_type(sym, type)` maps a method moniker to its receiver type;
+/// `scip_local(fn, name)` the locals; `scip_impl(impl, iface)` the
+/// implementation edges. Unlike the self-diffing families, the importer always
+/// re-emits when run, so `dirty` gates an incremental tick on `index.scip`
+/// itself moving.
+pub struct ScipKind;
+
+impl RelKind for ScipKind {
+    fn rels(&self) -> &'static [&'static str] {
+        &["scip_def", "scip_name", "scip_ref", "scip_edge",
+          "scip_fn_edge", "scip_callee_type", "scip_local", "scip_impl"]
+    }
+    fn decls(&self) -> Vec<RelDecl> {
+        vec![
+            RelDecl { name: "scip_def".into(), cols: vec![col("symbol", Type::Text), col("file", Type::Path)] },
+            RelDecl { name: "scip_name".into(), cols: vec![col("symbol", Type::Text), col("name", Type::Text)] },
+            RelDecl { name: "scip_ref".into(), cols: vec![col("file", Type::Path), col("symbol", Type::Text), col("def_file", Type::Path)] },
+            RelDecl { name: "scip_edge".into(), cols: vec![col("src", Type::Path), col("dst", Type::Path)] },
+            RelDecl { name: "scip_fn_edge".into(), cols: vec![col("caller", Type::Text), col("callee", Type::Text)] },
+            RelDecl { name: "scip_callee_type".into(), cols: vec![col("sym", Type::Text), col("type", Type::Text)] },
+            RelDecl { name: "scip_local".into(), cols: vec![col("fn", Type::Text), col("name", Type::Text)] },
+            RelDecl { name: "scip_impl".into(), cols: vec![col("impl", Type::Text), col("iface", Type::Text)] },
+        ]
+    }
+    fn reserved_msg(&self) -> &'static str {
+        "a built-in SCIP relation"
+    }
+    fn dirty(&self, changed: &HashSet<String>) -> bool {
+        changed.contains("index.scip")
+    }
+    fn refresh(&self, eng: &Engine) -> Result<bool> {
+        let t = |s: &str| Value::Text(s.to_string());
+        let Some(path) = scip_import::index_path(&eng.root) else {
+            eng.refresh_rel("scip_def", &["symbol", "file"], &[])?;
+            eng.refresh_rel("scip_name", &["symbol", "name"], &[])?;
+            eng.refresh_rel("scip_ref", &["file", "symbol", "def_file"], &[])?;
+            eng.refresh_rel("scip_edge", &["src", "dst"], &[])?;
+            eng.refresh_rel("scip_fn_edge", &["caller", "callee"], &[])?;
+            eng.refresh_rel("scip_callee_type", &["sym", "type"], &[])?;
+            eng.refresh_rel("scip_local", &["fn", "name"], &[])?;
+            eng.refresh_rel("scip_impl", &["impl", "iface"], &[])?;
+            return Ok(true);
+        };
+        let rows = scip_import::load(&path)?;
+        let defs: Vec<Vec<Value>> = rows.defs.iter().map(|(sym, file)| vec![t(sym), t(file)]).collect();
+        // The symbol's descriptor name (last identifier run), computed where the
+        // SCIP moniker grammar lives. A pure-dl `split` chain can't isolate it:
+        // `…/impl#[Type]method().` needs the `[`/`]`/`#` separators that single-
+        // separator split can't all honor. One row per distinct (symbol, name).
+        let mut name_set: HashSet<(String, String)> = HashSet::new();
+        for (sym, _) in &rows.defs {
+            if let Some(name) = scip_descriptor_name(sym) {
+                name_set.insert((sym.clone(), name));
+            }
+        }
+        let names: Vec<Vec<Value>> = name_set.iter().map(|(sym, name)| vec![t(sym), t(name)]).collect();
+        let refs: Vec<Vec<Value>> = rows.refs.iter()
+            .map(|(file, sym, def)| vec![t(file), t(sym), t(def)]).collect();
+        let edges: Vec<Vec<Value>> = rows.edges.iter().map(|(src, dst)| vec![t(src), t(dst)]).collect();
+        let fn_edges: Vec<Vec<Value>> = rows.fn_edges.iter()
+            .map(|(caller, callee)| vec![t(caller), t(callee)]).collect();
+        let callee_types: Vec<Vec<Value>> = rows.callee_types.iter()
+            .map(|(sym, ty)| vec![t(sym), t(ty)]).collect();
+        let locals: Vec<Vec<Value>> = rows.locals.iter()
+            .map(|(fn_, name)| vec![t(fn_), t(name)]).collect();
+        let impls: Vec<Vec<Value>> = rows.impls.iter()
+            .map(|(im, iface)| vec![t(im), t(iface)]).collect();
+        eng.refresh_rel("scip_def", &["symbol", "file"], &defs)?;
+        eng.refresh_rel("scip_name", &["symbol", "name"], &names)?;
+        eng.refresh_rel("scip_ref", &["file", "symbol", "def_file"], &refs)?;
+        eng.refresh_rel("scip_edge", &["src", "dst"], &edges)?;
+        eng.refresh_rel("scip_fn_edge", &["caller", "callee"], &fn_edges)?;
+        eng.refresh_rel("scip_callee_type", &["sym", "type"], &callee_types)?;
+        eng.refresh_rel("scip_local", &["fn", "name"], &locals)?;
+        eng.refresh_rel("scip_impl", &["impl", "iface"], &impls)?;
+        Ok(true)
+    }
+}
+
+// --- propose_extract (clone proposer) ----------------------------------------
+
+/// Extract-function proposals: one row `(path, lo, hi, param)` per free var of
+/// each verbatim-duplicated block found in a scanned Rust file. `lo`/`hi` bound
+/// the block's first occurrence (1-based lines); the param set is the inferred
+/// extract-fn signature (free vars = read in the block, not bound inside it).
+/// Whole-corpus: recompute all, compare to stored, early-out if equal. Reuses
+/// `node_file_set` for the file list and `propose::extract_proposals`.
+pub struct ProposeExtractKind;
+
+impl RelKind for ProposeExtractKind {
+    fn rels(&self) -> &'static [&'static str] {
+        &["propose_extract"]
+    }
+    fn decls(&self) -> Vec<RelDecl> {
+        vec![RelDecl { name: "propose_extract".into(),
+            cols: vec![col("path", Type::Path), col("lo", Type::Int),
+                       col("hi", Type::Int), col("param", Type::Text)] }]
+    }
+    fn reserved_msg(&self) -> &'static str {
+        "the built-in extract-proposal relation"
+    }
+    fn refresh(&self, eng: &Engine) -> Result<bool> {
+        let roots = eng.repo_roots();
+        let root = eng.root.clone();
+        let files = eng.node_file_set(None)?;
+        let mut computed: Vec<(String, i64, i64, String)> = Vec::new();
+        for (repo, path, rev, _hash) in files {
+            if crate::cst::lang_label_for_path(&path) != Some("rust") { continue; }
+            let froot = roots.get(&repo).map(|p| p.as_path()).unwrap_or(&root);
+            let content = read_content(froot, &rev, &path).unwrap_or_default();
+            for prop in crate::propose::extract_proposals(&content) {
+                for p in prop.params {
+                    computed.push((path.clone(), prop.lo as i64, prop.hi as i64, p));
+                }
+            }
+        }
+        computed.sort(); computed.dedup();
+        let stored: Vec<(String, i64, i64, String)> = {
+            let conn = eng.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"path\",\"lo\",\"hi\",\"param\" FROM {} ORDER BY \"path\",\"lo\",\"hi\",\"param\"",
+                tbl("propose_extract")))?;
+            let rows = s.query_map([], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?, r.get::<_, String>(3)?)))?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        if stored == computed { return Ok(false); }
+        let rows: Vec<Vec<Value>> = computed.into_iter()
+            .map(|(p, lo, hi, pm)| vec![Value::Text(p), Value::Int(lo), Value::Int(hi), Value::Text(pm)])
+            .collect();
+        eng.refresh_rel("propose_extract", &["path", "lo", "hi", "param"], &rows)?;
+        Ok(true)
+    }
+}
+
+// --- propose_clone (multi-kernel clone proposer) -----------------------------
+
+/// Multi-kernel clone-detection relation: `propose_clone(kernel, path, lo, hi,
+/// param)`. Runs all 9 clone-detection kernels (verbatim, ast, tree, cfg, ddg,
+/// cgraph, ngram, symbol, call) on every scanned Rust file; `kernel` selects the
+/// detector. Symbol and call-seq kernels need `index.scip`; they emit no rows if
+/// the index is absent.
+pub struct ProposeCloneKind;
+
+impl RelKind for ProposeCloneKind {
+    fn rels(&self) -> &'static [&'static str] {
+        &["propose_clone"]
+    }
+    fn decls(&self) -> Vec<RelDecl> {
+        vec![RelDecl { name: "propose_clone".into(),
+            cols: vec![col("kernel", Type::Text), col("path", Type::Path),
+                       col("lo", Type::Int), col("hi", Type::Int),
+                       col("param", Type::Text)] }]
+    }
+    fn reserved_msg(&self) -> &'static str {
+        "the built-in clone-detection relation"
+    }
+    fn refresh(&self, eng: &Engine) -> Result<bool> {
+        let roots = eng.repo_roots();
+        let root = eng.root.clone();
+        let files = eng.node_file_set(None)?;
+        let scip_spans: HashMap<String, Vec<(i32, i32, String)>> =
+            if let Some(idx) = scip_import::index_path(&root) {
+                match scip_import::load(&idx) {
+                    Ok(rows) => {
+                        let mut map: HashMap<String, Vec<(i32, i32, String)>> = HashMap::new();
+                        for (file, l, c, sym) in rows.occ_spans {
+                            map.entry(file).or_default().push((l, c, sym));
+                        }
+                        map
+                    }
+                    Err(_) => HashMap::new(),
+                }
+            } else {
+                HashMap::new()
+            };
+        let mut computed: Vec<(String, String, i64, i64, String)> = Vec::new();
+        for (repo, path, rev, _hash) in files {
+            if crate::cst::lang_label_for_path(&path) != Some("rust") {
+                continue;
+            }
+            let froot = roots.get(&repo).map(|p| p.as_path()).unwrap_or(&root);
+            let content = read_content(froot, &rev, &path).unwrap_or_default();
+            let spans_owned = scip_spans.get(&path).cloned().unwrap_or_default();
+            let spans: Vec<(i32, i32, &str)> = spans_owned
+                .iter()
+                .map(|(l, c, s)| (*l, *c, s.as_str()))
+                .collect();
+            let kernels: Vec<(&str, Vec<crate::propose::Proposal>)> = vec![
+                ("verbatim", crate::propose::extract_proposals(&content)),
+                ("ast", crate::propose::ast_shape_proposals(&content)),
+                ("tree", crate::propose::tree_shape_proposals(&content)),
+                ("cfg", crate::propose::cfg_shape_proposals(&content)),
+                ("ddg", crate::propose::ddg_shape_proposals(&content)),
+                ("cgraph", crate::propose::callgraph_shape_proposals(&content)),
+                ("ngram", crate::propose::ngram_stat_proposals(&content)),
+                ("symbol", crate::propose::symbol_shape_proposals(&content, &spans)),
+                ("call", crate::propose::call_seq_proposals(&content, &spans)),
+            ];
+            for (kname, props) in kernels {
+                for prop in props {
+                    for p in &prop.params {
+                        computed.push((
+                            kname.to_string(),
+                            path.clone(),
+                            prop.lo as i64,
+                            prop.hi as i64,
+                            p.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+        computed.sort();
+        computed.dedup();
+        let stored: Vec<(String, String, i64, i64, String)> = {
+            let conn = eng.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"kernel\",\"path\",\"lo\",\"hi\",\"param\" FROM {} ORDER BY \"kernel\",\"path\",\"lo\",\"hi\",\"param\"",
+                tbl("propose_clone")
+            ))?;
+            let rows = s.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            })?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        if stored == computed {
+            return Ok(false);
+        }
+        let rows: Vec<Vec<Value>> = computed
+            .into_iter()
+            .map(|(k, p, lo, hi, pm)| {
+                vec![
+                    Value::Text(k),
+                    Value::Text(p),
+                    Value::Int(lo),
+                    Value::Int(hi),
+                    Value::Text(pm),
+                ]
+            })
+            .collect();
+        eng.refresh_rel("propose_clone", &["kernel", "path", "lo", "hi", "param"], &rows)?;
+        Ok(true)
+    }
+}
+
+// --- embed (embedding similarity) --------------------------------------------
+
+/// Embedding-similarity relation. `similar(a, b, score)` is the top-k nearest
+/// neighbors of each embedded interned string by cosine; `score` is an Int =
+/// round(cosine * 1_000_000), so a `.dl` rule can threshold in Int-only value
+/// space. Vectors are content-addressed: one row per (StringId, backend) in
+/// `_embeddings`, so identical content embeds once. Lazy like the other
+/// indexers; brute-force O(n^2) cosine over the embedded set (capped by
+/// SPREFA_EMBED_MAX, default 4096); SPREFA_SIMILAR_K (default 8) sets neighbors
+/// per row. The sqlite-vec ANN path is the scale follow-on.
+pub struct EmbedKind;
+
+impl RelKind for EmbedKind {
+    fn rels(&self) -> &'static [&'static str] {
+        &["similar"]
+    }
+    fn decls(&self) -> Vec<RelDecl> {
+        vec![RelDecl { name: "similar".into(),
+            cols: vec![col("a", Type::Text), col("b", Type::Text), col("score", Type::Int)] }]
+    }
+    fn reserved_msg(&self) -> &'static str {
+        "the built-in embedding-similarity relation (similar)"
+    }
+    /// Encode every interned `_strings` row lacking a vector for the active
+    /// backend (embed-once per (StringId, backend)), then materialize `similar`.
+    /// Returns true if the `similar` row set could have changed, false on the
+    /// steady-state no-op so the derived rebuild stays scoped.
+    fn refresh(&self, eng: &Engine) -> Result<bool> {
+        let embedder = crate::embed::make(None)?;
+        let backend = embedder.name().to_string();
+        let max: usize = std::env::var("SPREFA_EMBED_MAX").ok()
+            .and_then(|s| s.parse().ok()).unwrap_or(4096);
+
+        // Content with no vector for THIS backend. Capped: only the first `max`
+        // un-embedded strings are encoded per tick (the rest catch up next tick).
+        let to_embed: Vec<(String, String)> = {
+            let conn = eng.db.conn();
+            let mut s = conn.prepare(
+                "SELECT s.id, s.content FROM _strings s
+                 WHERE s.id != '0'
+                   AND NOT EXISTS (SELECT 1 FROM _embeddings e
+                                   WHERE e.sid = s.id AND e.backend = ?1)
+                 LIMIT ?2")?;
+            let v: Vec<(String, String)> = s.query_map(rusqlite::params![backend, max as i64], |r|
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+                .filter_map(|x| x.ok()).collect();
+            v
+        };
+        if !to_embed.is_empty() {
+            let texts: Vec<&str> = to_embed.iter().map(|(_, c)| c.as_str()).collect();
+            let vecs = embedder.encode(&texts)?;
+            let dim = embedder.dim() as i64;
+            // collect-then-flush: one insert_rows, never per-row (the spine rule).
+            let mut rows: Vec<Vec<Value>> = Vec::with_capacity(vecs.len());
+            for ((sid, _), mut v) in to_embed.iter().cloned().zip(vecs) {
+                crate::embed::l2_normalize(&mut v);
+                rows.push(vec![
+                    Value::Text(sid), Value::Text(backend.clone()),
+                    Value::Int(dim), Value::Text(crate::embed::encode_vec(&v))]);
+            }
+            eng.db.insert_rows("_embeddings", &["sid", "backend", "dim", "vec"], &rows)?;
+        }
+
+        // Steady state: no new content AND `similar` already built -> no recompute.
+        let similar_rows: i64 = eng.db.conn().query_row(
+            &format!("SELECT count(*) FROM {}", tbl("similar")), [], |r| r.get(0))?;
+        if to_embed.is_empty() && similar_rows > 0 { return Ok(false); }
+
+        refresh_similar_rel(eng, &backend, max)?;
+        Ok(true)
+    }
+}
+
+/// Materialize `similar(a, b, score)`: top-k cosine neighbors of each embedded
+/// string for `backend`. Brute-force pairwise over the (capped) embedded pool;
+/// vectors are L2-normalized at store time so cosine is a dot product. `score` =
+/// round(cosine * 1e6) as Int. Shares the `knn_rows` chokepoint with node2vec.
+fn refresh_similar_rel(eng: &Engine, backend: &str, max: usize) -> Result<()> {
+    let k: usize = std::env::var("SPREFA_SIMILAR_K").ok()
+        .and_then(|s| s.parse().ok()).unwrap_or(8);
+    let pool: Vec<(String, Vec<f32>)> = {
+        let conn = eng.db.conn();
+        let mut s = conn.prepare("SELECT sid, vec FROM _embeddings WHERE backend = ?1 LIMIT ?2")?;
+        let v: Vec<(String, Vec<f32>)> = s.query_map(rusqlite::params![backend, max as i64], |r|
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+            .filter_map(|x| x.ok())
+            .map(|(sid, txt): (String, String)| (sid, crate::embed::parse_vec(&txt)))
+            .collect();
+        v
+    };
+    if pool.len() > 2000 {
+        eprintln!("[similar] brute-force KNN over {} vectors (O(n^2)); \
+                   cap with SPREFA_EMBED_MAX or wire sqlite-vec", pool.len());
+    }
+    let rows = knn_rows(&pool, k);
+    eng.refresh_rel("similar", &["a", "b", "score"], &rows)?;
+    Ok(())
 }

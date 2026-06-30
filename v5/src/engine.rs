@@ -11,7 +11,6 @@ use crate::ingest;
 use crate::lower::{lower_query, lower_rule, tbl};
 use crate::modgraph::{self, ProjectCx, Resolution};
 use crate::scc;
-use crate::scip_import;
 use crate::spine;
 use crate::typegraph;
 
@@ -46,7 +45,7 @@ fn now_secs() -> i64 {
 /// as `(a, b, score)` rows with `score = round(cosine * 1e6)` as Int. Shared by
 /// the text `similar` rel and the structural `node2vec` rel — both reduce to
 /// "nearest neighbors over a `Vec<(id, vec)>`", only the vectors differ.
-fn knn_rows(pool: &[(String, Vec<f32>)], k: usize) -> Vec<Vec<Value>> {
+pub(crate) fn knn_rows(pool: &[(String, Vec<f32>)], k: usize) -> Vec<Vec<Value>> {
     let mut rows: Vec<Vec<Value>> = Vec::new();
     for (i, (a, va)) in pool.iter().enumerate() {
         let mut scored: Vec<(f32, &str)> = Vec::with_capacity(pool.len().saturating_sub(1));
@@ -192,45 +191,12 @@ const DOC_RELS: [&str; 2] = ["doc_node", "doc_ref"];
 /// builds `type_entity`, by the per-language AST locators in `typegraph`.
 const DOC_TEXT_RELS: [&str; 2] = ["doc_comment", "doc_tag"];
 
-/// Compiler-backed SCIP importer. `scip_edge` is file-to-file dependency data
-/// extracted from definition/reference occurrences in an existing index.scip.
-/// `scip_fn_edge` is the function-level analogue (caller_fn → callee moniker),
-/// resolved by RA and attributed via the reference's enclosing fn-def range.
-/// `scip_callee_type` maps each method moniker to its receiver type (parsed
-/// from the `impl#[Type]` segment), so dl can read both a fn's own type and its
-/// callees' types from one relation — the basis for feature-envy detection.
-const SCIP_RELS: [&str; 8] = ["scip_def", "scip_name", "scip_ref", "scip_edge", "scip_fn_edge", "scip_callee_type", "scip_local", "scip_impl"];
-
-// The git-derived families `changed` / `changed_line` / `created` now live
-// behind `trait RelKind` in relkind.rs (const + decls + gate + refresh per
-// family, one registry the tick/declare/guard sites loop over).
-
-/// Embedding-similarity relation. `similar(a, b, score)` is the top-k nearest
-/// neighbors of each embedded interned string by cosine; `score` is an Int =
-/// round(cosine * 1_000_000) in [-1_000_000, 1_000_000], so a `.dl` rule can
-/// threshold (`score > 800000`) in the engine's Int-only value space. Vectors
-/// are content-addressed: one row per (StringId, backend) in `_embeddings`, so
-/// identical content across repos embeds once and a `similar` hit fans out to
-/// every place that content lives via `ref`/`_file`. The backend is a
-/// compile-time feature (src/embed/), default the deterministic `stub`. Lazy
-/// like the other indexers; brute-force O(n^2) cosine over the embedded set
-/// (capped by SPREFA_EMBED_MAX, default 4096), the sqlite-vec ANN path is the
-/// scale follow-on. SPREFA_SIMILAR_K (default 8) sets neighbors per row.
-const EMBED_RELS: [&str; 1] = ["similar"];
-
-/// Extract-function proposals: one row `(path, lo, hi, param)` per free var of
-/// each verbatim-duplicated block found in a scanned Rust file. `lo`/`hi` bound
-/// the block's first occurrence (1-based lines); the param set is the inferred
-/// extract-fn signature (free vars = read in the block, not bound inside it).
-/// The proposer is the `propose` module; this relation is its queryable output.
-const PROPOSE_EXTRACT_RELS: [&str; 1] = ["propose_extract"];
-
-/// Multi-kernel clone-detection relation: `propose_clone(kernel, path, lo, hi,
-/// param)`. Runs all 9 clone-detection kernels (verbatim, ast, tree, cfg, ddg,
-/// cgraph, ngram, symbol, call) on every scanned Rust file. The `kernel` column
-/// selects which detector produced the row. Symbol and call kernels need
-/// index.scip; they emit no rows if the index is absent.
-const PROPOSE_CLONE_RELS: [&str; 1] = ["propose_clone"];
+// The git-derived families `changed` / `changed_line` / `created`, the analysis
+// families `agent` / `type_shape` / `type_lgg` / catalog, the SCIP importer
+// `scip_*`, the clone proposers `propose_extract` / `propose_clone`, and the
+// embedding `similar` now live behind `trait RelKind` in relkind.rs (decls +
+// gate + refresh per family, one registry the tick/declare/guard sites loop
+// over).
 
 /// Ref-spine query relations: thin views over the `_strings` / `_where_bytes`
 /// meta tables. `string(id, text, norm)` resolves an interned StringId to its
@@ -312,13 +278,9 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
         .chain(call_rel_decls())
         .chain(dataflow_rel_decls())
         .chain(doc_rel_decls())
-        .chain(scip_rel_decls())
         .chain(spine_rel_decls())
         .chain(node_rel_decls())
         .chain(crate::relkind::rel_kind_decls())
-        .chain(embed_rel_decls())
-        .chain(propose_extract_rel_decls())
-        .chain(propose_clone_rel_decls())
         .chain(daemon_rel_decls())
         .chain(every_rel_decls())
         .chain(clock_rel_decls())
@@ -616,47 +578,6 @@ fn doc_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
-fn scip_rel_decls() -> Vec<RelDecl> {
-    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
-    vec![
-        RelDecl { name: "scip_def".into(), cols: vec![c("symbol", Type::Text), c("file", Type::Path)] },
-        RelDecl { name: "scip_name".into(), cols: vec![c("symbol", Type::Text), c("name", Type::Text)] },
-        RelDecl { name: "scip_ref".into(), cols: vec![c("file", Type::Path), c("symbol", Type::Text), c("def_file", Type::Path)] },
-        RelDecl { name: "scip_edge".into(), cols: vec![c("src", Type::Path), c("dst", Type::Path)] },
-        RelDecl { name: "scip_fn_edge".into(), cols: vec![c("caller", Type::Text), c("callee", Type::Text)] },
-        RelDecl { name: "scip_callee_type".into(), cols: vec![c("sym", Type::Text), c("type", Type::Text)] },
-        RelDecl { name: "scip_local".into(), cols: vec![c("fn", Type::Text), c("name", Type::Text)] },
-        RelDecl { name: "scip_impl".into(), cols: vec![c("impl", Type::Text), c("iface", Type::Text)] },
-    ]
-}
-
-fn embed_rel_decls() -> Vec<RelDecl> {
-    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
-    vec![
-        RelDecl { name: "similar".into(),
-                  cols: vec![c("a", Type::Text), c("b", Type::Text), c("score", Type::Int)] },
-    ]
-}
-
-fn propose_extract_rel_decls() -> Vec<RelDecl> {
-    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
-    vec![
-        RelDecl { name: "propose_extract".into(),
-                  cols: vec![c("path", Type::Path), c("lo", Type::Int),
-                             c("hi", Type::Int), c("param", Type::Text)] },
-    ]
-}
-
-fn propose_clone_rel_decls() -> Vec<RelDecl> {
-    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
-    vec![
-        RelDecl { name: "propose_clone".into(),
-                  cols: vec![c("kernel", Type::Text), c("path", Type::Path),
-                             c("lo", Type::Int), c("hi", Type::Int),
-                             c("param", Type::Text)] },
-    ]
-}
-
 fn spine_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -822,7 +743,7 @@ fn daemon_rels_used(prog: &Program) -> bool { rels_used(prog, &DAEMON_RELS) }
 
 /// The trailing identifier of a SCIP symbol descriptor: `... Foo#` -> "Foo",
 /// `... bar().` -> "bar". Used to key the SCIP override by plain type name.
-fn scip_descriptor_name(symbol: &str) -> Option<String> {
+pub(crate) fn scip_descriptor_name(symbol: &str) -> Option<String> {
     let bytes = symbol.as_bytes();
     let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
     // the last maximal identifier run in the symbol string
@@ -841,17 +762,9 @@ fn scip_descriptor_name(symbol: &str) -> Option<String> {
     last.map(|(s, e)| symbol[s..e].to_string())
 }
 
-fn scip_rels_used(prog: &Program) -> bool { rels_used(prog, &SCIP_RELS) }
-
 fn spine_rels_used(prog: &Program) -> bool { rels_used(prog, &SPINE_RELS) }
 
 fn node_rels_used(prog: &Program) -> bool { rels_used(prog, &NODE_RELS) }
-
-fn embed_rels_used(prog: &Program) -> bool { rels_used(prog, &EMBED_RELS) }
-
-fn propose_extract_rels_used(prog: &Program) -> bool { rels_used(prog, &PROPOSE_EXTRACT_RELS) }
-
-fn propose_clone_rels_used(prog: &Program) -> bool { rels_used(prog, &PROPOSE_CLONE_RELS) }
 
 fn module_manifest_path(path: &str) -> bool {
     path.ends_with("Cargo.toml") || path.ends_with("package.json") || path.ends_with("tsconfig.json")
@@ -1675,7 +1588,7 @@ impl Engine {
     /// root via this map, not the single `self.root`, so `type_entity`, the call
     /// graph, and `doc_node` populate for every folder in view — not just
     /// `--root`. `_file.repo` is the key; an unknown repo falls back to root.
-    fn repo_roots(&self) -> HashMap<String, PathBuf> {
+    pub(crate) fn repo_roots(&self) -> HashMap<String, PathBuf> {
         let mut m = HashMap::new();
         m.insert(self.self_slug(), self.root.clone());
         for rc in &self.repos {
@@ -2315,7 +2228,6 @@ impl Engine {
             self.refresh_doc_rels()?;
             phase("doc-rels", t);
         }
-        if scip_rels_used(prog) { changed |= self.refresh_scip_rels()?; }
         // Node rels write into `_strings`/`_where_bytes` (the spine meta tables),
         // so they must run BEFORE the spine projection or this tick's `ref`/
         // `string` would miss the node spans.
@@ -2329,15 +2241,15 @@ impl Engine {
             self.refresh_spine_rels()?;
             phase("spine-rels", t);
         }
+        // The git-derived/analysis/scip/propose/embed families behind RelKind.
         // The diff can move without any file content changing (a commit moves
         // HEAD under an identical worktree), so the refresh result feeds
-        // `changed` directly rather than riding the reconcile delta.
+        // `changed` directly rather than riding the reconcile delta. A full tick
+        // always refreshes every used family (`dirty` is consulted only by the
+        // incremental `tick_paths`), so the scip index reload runs here too.
         for k in crate::relkind::rel_kinds() {
             if k.used(prog) { changed |= k.refresh(self)?; }
         }
-        if embed_rels_used(prog) { changed |= self.refresh_embed_rels()?; }
-        if propose_extract_rels_used(prog) { changed |= self.refresh_propose_extract_rel()?; }
-        if propose_clone_rels_used(prog) { changed |= self.refresh_propose_clone_rel()?; }
         if daemon_rels_used(prog) { self.refresh_daemon_rels()?; }
         if effect_rels_used(prog) { self.refresh_effect_rels()?; }
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
@@ -2527,11 +2439,11 @@ impl Engine {
         // for the path-scoped CST `node`/`child` refresh. A file that the
         // digest prune skipped (content unchanged) is NOT added.
         let mut node_delta_paths: HashSet<String> = HashSet::new();
-        let mut scip_changed = false;
         let (mut extracted, mut retracted, mut npaths) = (0usize, 0usize, 0usize);
+        // Every repo-relative path this tick saw move; `ScipKind::dirty` reads it
+        // to gate the SCIP reload on `index.scip` itself changing.
         let mut seen: HashSet<String> = HashSet::new();
         let wants_module_rels = module_rels_used(prog);
-        let wants_scip_rels = scip_rels_used(prog);
         // The watcher only watches this engine's own `--root`, so every
         // incrementally-changed file belongs to the self repo.
         let slug = self.self_slug();
@@ -2539,7 +2451,6 @@ impl Engine {
         for p in changed {
             let rel = match p.strip_prefix(&self.root) { Ok(r) => r.to_string_lossy().replace('\\', "/"), Err(_) => continue };
             if !seen.insert(rel.clone()) { continue; }
-            if wants_scip_rels && rel == "index.scip" { scip_changed = true; }
             let matching: Vec<&Rule> = work_rules.iter().filter(|(_, m)| m.is_match(&rel)).map(|(r, _)| *r).collect();
             if matching.is_empty() {
                 if wants_module_rels && module_manifest_path(&rel) { module_full_work = true; }
@@ -2655,31 +2566,17 @@ impl Engine {
             for m in MODULE_RELS { changed_source_rels.insert(m.to_string()); }
             changed_facts = true;
         }
-        if wants_scip_rels && scip_changed {
-            self.refresh_scip_rels()?;
-            for s in SCIP_RELS { changed_source_rels.insert(s.to_string()); }
-            changed_facts = true;
-        }
-        // Every save can move the worktree diff, so re-read it whenever the
-        // program joins `changed`; the refresh returns false (set unchanged)
-        // on the common no-op, keeping the rebuild scope tight.
+        // The RelKind families. Most self-diff and re-run every incremental tick
+        // (a no-op returns false); `dirty(&seen)` lets a family opt out — scip
+        // gates its index reload on `index.scip` being in the changed set so a
+        // source edit never forces a full SCIP reload. Every save can move the
+        // worktree diff, so the `changed` family re-reads whenever the program
+        // joins it; the false-on-no-op result keeps the rebuild scope tight.
         for k in crate::relkind::rel_kinds() {
-            if k.used(prog) && k.refresh(self)? {
+            if k.used(prog) && k.dirty(&seen) && k.refresh(self)? {
                 for r in k.rels() { changed_source_rels.insert(r.to_string()); }
                 changed_facts = true;
             }
-        }
-        if embed_rels_used(prog) && self.refresh_embed_rels()? {
-            changed_source_rels.insert("similar".to_string());
-            changed_facts = true;
-        }
-        if propose_extract_rels_used(prog) && self.refresh_propose_extract_rel()? {
-            changed_source_rels.insert("propose_extract".to_string());
-            changed_facts = true;
-        }
-        if propose_clone_rels_used(prog) && self.refresh_propose_clone_rel()? {
-            changed_source_rels.insert("propose_clone".to_string());
-            changed_facts = true;
         }
         if daemon_rels_used(prog) { self.refresh_daemon_rels()?; }
         if changed_source_rels.is_empty() { changed_facts = false; }
@@ -3456,9 +3353,6 @@ impl Engine {
                 if DOC_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in document relation (doc_node / doc_ref); pick another name", d.name);
                 }
-                if SCIP_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in SCIP relation; pick another name", d.name);
-                }
                 if SPINE_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in ref-spine relation (string / ref); pick another name", d.name);
                 }
@@ -3469,15 +3363,6 @@ impl Engine {
                     if k.rels().contains(&d.name.as_str()) {
                         bail!("{} is {}; pick another name", d.name, k.reserved_msg());
                     }
-                }
-                if EMBED_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is the built-in embedding-similarity relation (similar); pick another name", d.name);
-                }
-                if PROPOSE_EXTRACT_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is the built-in extract-proposal relation; pick another name", d.name);
-                }
-                if PROPOSE_CLONE_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is the built-in clone-detection relation; pick another name", d.name);
                 }
                 if DAEMON_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in daemon-state relation (program / head / rev_advanced); pick another name", d.name);
@@ -3510,7 +3395,6 @@ impl Engine {
         for d in call_rel_decls() { self.declare(&d)?; }
         for d in dataflow_rel_decls() { self.declare(&d)?; }
         for d in doc_rel_decls() { self.declare(&d)?; }
-        for d in scip_rel_decls() { self.declare(&d)?; }
         for d in spine_rel_decls() { self.declare(&d)?; }
         for d in node_rel_decls() { self.declare(&d)?; }
         // Optional point/containment index: "innermost CST node covering byte C
@@ -3522,9 +3406,6 @@ impl Engine {
         self.db.conn().execute(
             &format!("CREATE INDEX IF NOT EXISTS node_file_span_idx ON {}(\"file\", \"lo\", \"hi\")", tbl("node")), [])?;
         for d in crate::relkind::rel_kind_decls() { self.declare(&d)?; }
-        for d in embed_rel_decls() { self.declare(&d)?; }
-        for d in propose_extract_rel_decls() { self.declare(&d)?; }
-        for d in propose_clone_rel_decls() { self.declare(&d)?; }
         for d in daemon_rel_decls() { self.declare(&d)?; }
         for d in every_rel_decls() { self.declare(&d)?; }
         for d in clock_rel_decls() { self.declare(&d)?; }
@@ -4501,7 +4382,7 @@ impl Engine {
     /// The scanned file set for a node walk, keyed by (repo, path, rev, hash).
     /// `only` restricts to a changed-path subset (the delta refresh); `None`
     /// reads every `_file` row (the cold/full refresh).
-    fn node_file_set(&self, only: Option<&HashSet<String>>) -> Result<Vec<(String, String, String, String)>> {
+    pub(crate) fn node_file_set(&self, only: Option<&HashSet<String>>) -> Result<Vec<(String, String, String, String)>> {
         let mut files: Vec<(String, String, String, String)> = Vec::new();
         let conn = self.db.conn();
         let mut sel = conn.prepare("SELECT repo, path, rev, hash FROM _file")?;
@@ -4961,135 +4842,6 @@ impl Engine {
         Ok(())
     }
 
-    /// Import compiler-backed SCIP facts from `SPREFA_SCIP_INDEX` or
-    /// `<root>/index.scip`. Missing index means empty relations, so programs can
-    /// mention SCIP facts without making rust-analyzer a hard runtime dependency.
-    fn refresh_scip_rels(&self) -> Result<bool> {
-        let t = |s: &str| Value::Text(s.to_string());
-        let Some(path) = scip_import::index_path(&self.root) else {
-            self.refresh_rel("scip_def", &["symbol", "file"], &[])?;
-            self.refresh_rel("scip_name", &["symbol", "name"], &[])?;
-            self.refresh_rel("scip_ref", &["file", "symbol", "def_file"], &[])?;
-            self.refresh_rel("scip_edge", &["src", "dst"], &[])?;
-            self.refresh_rel("scip_fn_edge", &["caller", "callee"], &[])?;
-            self.refresh_rel("scip_callee_type", &["sym", "type"], &[])?;
-            self.refresh_rel("scip_local", &["fn", "name"], &[])?;
-            self.refresh_rel("scip_impl", &["impl", "iface"], &[])?;
-            return Ok(true);
-        };
-        let rows = scip_import::load(&path)?;
-        let defs: Vec<Vec<Value>> = rows.defs.iter().map(|(sym, file)| vec![t(sym), t(file)]).collect();
-        // The symbol's descriptor name (last identifier run), computed where the
-        // SCIP moniker grammar lives. A pure-dl `split` chain can't isolate it:
-        // `…/impl#[Type]method().` needs the `[`/`]`/`#` separators that single-
-        // separator split can't all honor. One row per distinct (symbol, name).
-        let mut name_set: HashSet<(String, String)> = HashSet::new();
-        for (sym, _) in &rows.defs {
-            if let Some(name) = scip_descriptor_name(sym) {
-                name_set.insert((sym.clone(), name));
-            }
-        }
-        let names: Vec<Vec<Value>> = name_set.iter().map(|(sym, name)| vec![t(sym), t(name)]).collect();
-        let refs: Vec<Vec<Value>> = rows.refs.iter()
-            .map(|(file, sym, def)| vec![t(file), t(sym), t(def)]).collect();
-        let edges: Vec<Vec<Value>> = rows.edges.iter().map(|(src, dst)| vec![t(src), t(dst)]).collect();
-        let fn_edges: Vec<Vec<Value>> = rows.fn_edges.iter()
-            .map(|(caller, callee)| vec![t(caller), t(callee)]).collect();
-        let callee_types: Vec<Vec<Value>> = rows.callee_types.iter()
-            .map(|(sym, ty)| vec![t(sym), t(ty)]).collect();
-        let locals: Vec<Vec<Value>> = rows.locals.iter()
-            .map(|(fn_, name)| vec![t(fn_), t(name)]).collect();
-        let impls: Vec<Vec<Value>> = rows.impls.iter()
-            .map(|(im, iface)| vec![t(im), t(iface)]).collect();
-        self.refresh_rel("scip_def", &["symbol", "file"], &defs)?;
-        self.refresh_rel("scip_name", &["symbol", "name"], &names)?;
-        self.refresh_rel("scip_ref", &["file", "symbol", "def_file"], &refs)?;
-        self.refresh_rel("scip_edge", &["src", "dst"], &edges)?;
-        self.refresh_rel("scip_fn_edge", &["caller", "callee"], &fn_edges)?;
-        self.refresh_rel("scip_callee_type", &["sym", "type"], &callee_types)?;
-        self.refresh_rel("scip_local", &["fn", "name"], &locals)?;
-        self.refresh_rel("scip_impl", &["impl", "iface"], &impls)?;
-        Ok(true)
-    }
-
-    /// Encode every interned `_strings` row lacking a vector for the active
-    /// backend (embed-once per (StringId, backend)), then materialize `similar`.
-    /// Returns true if the `similar` row set could have changed (new content was
-    /// embedded, or the table was empty), false on the steady-state no-op so the
-    /// derived rebuild stays scoped. Brute-force O(n^2) cosine; the embedded set
-    /// is capped by SPREFA_EMBED_MAX to keep a `similar` reference from hanging
-    /// on a large corpus (the sqlite-vec ANN path is the scale follow-on).
-    fn refresh_embed_rels(&self) -> Result<bool> {
-        let embedder = crate::embed::make(None)?;
-        let backend = embedder.name().to_string();
-        let max: usize = std::env::var("SPREFA_EMBED_MAX").ok()
-            .and_then(|s| s.parse().ok()).unwrap_or(4096);
-
-        // Content with no vector for THIS backend. Capped: only the first `max`
-        // un-embedded strings are encoded per tick (the rest catch up next tick).
-        let to_embed: Vec<(String, String)> = {
-            let conn = self.db.conn();
-            let mut s = conn.prepare(
-                "SELECT s.id, s.content FROM _strings s
-                 WHERE s.id != '0'
-                   AND NOT EXISTS (SELECT 1 FROM _embeddings e
-                                   WHERE e.sid = s.id AND e.backend = ?1)
-                 LIMIT ?2")?;
-            let v: Vec<(String, String)> = s.query_map(rusqlite::params![backend, max as i64], |r|
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
-                .filter_map(|x| x.ok()).collect();
-            v
-        };
-        if !to_embed.is_empty() {
-            let texts: Vec<&str> = to_embed.iter().map(|(_, c)| c.as_str()).collect();
-            let vecs = embedder.encode(&texts)?;
-            let dim = embedder.dim() as i64;
-            // collect-then-flush: one insert_rows, never per-row (the spine rule).
-            let mut rows: Vec<Vec<Value>> = Vec::with_capacity(vecs.len());
-            for ((sid, _), mut v) in to_embed.iter().cloned().zip(vecs) {
-                crate::embed::l2_normalize(&mut v);
-                rows.push(vec![
-                    Value::Text(sid), Value::Text(backend.clone()),
-                    Value::Int(dim), Value::Text(crate::embed::encode_vec(&v))]);
-            }
-            self.db.insert_rows("_embeddings", &["sid", "backend", "dim", "vec"], &rows)?;
-        }
-
-        // Steady state: no new content AND `similar` already built -> no recompute.
-        let similar_rows: i64 = self.db.conn().query_row(
-            &format!("SELECT count(*) FROM {}", tbl("similar")), [], |r| r.get(0))?;
-        if to_embed.is_empty() && similar_rows > 0 { return Ok(false); }
-
-        self.refresh_similar_rel(&backend, max)?;
-        Ok(true)
-    }
-
-    /// Materialize `similar(a, b, score)`: top-k cosine neighbors of each
-    /// embedded string for `backend`. Brute-force pairwise over the (capped)
-    /// embedded pool; vectors are L2-normalized at store time so cosine is a dot
-    /// product. `score` = round(cosine * 1e6) as Int.
-    fn refresh_similar_rel(&self, backend: &str, max: usize) -> Result<()> {
-        let k: usize = std::env::var("SPREFA_SIMILAR_K").ok()
-            .and_then(|s| s.parse().ok()).unwrap_or(8);
-        let pool: Vec<(String, Vec<f32>)> = {
-            let conn = self.db.conn();
-            let mut s = conn.prepare("SELECT sid, vec FROM _embeddings WHERE backend = ?1 LIMIT ?2")?;
-            let v: Vec<(String, Vec<f32>)> = s.query_map(rusqlite::params![backend, max as i64], |r|
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
-                .filter_map(|x| x.ok())
-                .map(|(sid, txt): (String, String)| (sid, crate::embed::parse_vec(&txt)))
-                .collect();
-            v
-        };
-        if pool.len() > 2000 {
-            eprintln!("[similar] brute-force KNN over {} vectors (O(n^2)); \
-                       cap with SPREFA_EMBED_MAX or wire sqlite-vec", pool.len());
-        }
-        let rows = knn_rows(&pool, k);
-        self.refresh_rel("similar", &["a", "b", "score"], &rows)?;
-        Ok(())
-    }
-
     /// Materialize `head(a, b, score) <- node2vec(edge).`: read the 2-col edge
     /// rel, learn one structural vector per node (random walks + skip-gram), store
     /// the vectors in `_node_embeddings` keyed by the edge rel name, and fill the
@@ -5223,143 +4975,6 @@ impl Engine {
         self.db.insert_rows(&tbl(head), &cols, &rows)?;
         self.save_rel_digest(&dkey, &digest)?;
         Ok(())
-    }
-
-    /// Refresh `propose_extract(path, lo, hi, param)` — for every scanned Rust
-    /// file, run the proposer (verbatim dup-block detection + lexical-scope
-    /// free-var inference) and store one row per (block, param). Whole-corpus:
-    /// recompute all, compare to stored, early-out if equal. Reuses `node_file_set`
-    /// for the file list and `propose::extract_proposals` for the analysis.
-    fn refresh_propose_extract_rel(&self) -> Result<bool> {
-        let roots = self.repo_roots();
-        let root = self.root.clone();
-        let files = self.node_file_set(None)?;
-        let mut computed: Vec<(String, i64, i64, String)> = Vec::new();
-        for (repo, path, rev, _hash) in files {
-            if crate::cst::lang_label_for_path(&path) != Some("rust") { continue; }
-            let froot = roots.get(&repo).map(|p| p.as_path()).unwrap_or(&root);
-            let content = read_content(froot, &rev, &path).unwrap_or_default();
-            for prop in crate::propose::extract_proposals(&content) {
-                for p in prop.params {
-                    computed.push((path.clone(), prop.lo as i64, prop.hi as i64, p));
-                }
-            }
-        }
-        computed.sort(); computed.dedup();
-        let stored: Vec<(String, i64, i64, String)> = {
-            let conn = self.db.conn();
-            let mut s = conn.prepare(&format!(
-                "SELECT \"path\",\"lo\",\"hi\",\"param\" FROM {} ORDER BY \"path\",\"lo\",\"hi\",\"param\"",
-                tbl("propose_extract")))?;
-            let rows = s.query_map([], |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, i64>(1)?,
-                r.get::<_, i64>(2)?, r.get::<_, String>(3)?)))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
-        if stored == computed { return Ok(false); }
-        let rows: Vec<Vec<Value>> = computed.into_iter()
-            .map(|(p, lo, hi, pm)| vec![Value::Text(p), Value::Int(lo), Value::Int(hi), Value::Text(pm)])
-            .collect();
-        self.refresh_rel("propose_extract", &["path", "lo", "hi", "param"], &rows)?;
-        Ok(true)
-    }
-
-    /// Refresh `propose_clone(kernel, path, lo, hi, param)` — for every scanned
-    /// Rust file, run all 9 clone-detection kernels and store one row per
-    /// (kernel, block, param). Symbol and call-seq kernels need index.scip;
-    /// they emit no rows if the index is absent.
-    fn refresh_propose_clone_rel(&self) -> Result<bool> {
-        let roots = self.repo_roots();
-        let root = self.root.clone();
-        let files = self.node_file_set(None)?;
-        let scip_spans: HashMap<String, Vec<(i32, i32, String)>> =
-            if let Some(idx) = scip_import::index_path(&root) {
-                match scip_import::load(&idx) {
-                    Ok(rows) => {
-                        let mut map: HashMap<String, Vec<(i32, i32, String)>> = HashMap::new();
-                        for (file, l, c, sym) in rows.occ_spans {
-                            map.entry(file).or_default().push((l, c, sym));
-                        }
-                        map
-                    }
-                    Err(_) => HashMap::new(),
-                }
-            } else {
-                HashMap::new()
-            };
-        let mut computed: Vec<(String, String, i64, i64, String)> = Vec::new();
-        for (repo, path, rev, _hash) in files {
-            if crate::cst::lang_label_for_path(&path) != Some("rust") {
-                continue;
-            }
-            let froot = roots.get(&repo).map(|p| p.as_path()).unwrap_or(&root);
-            let content = read_content(froot, &rev, &path).unwrap_or_default();
-            let spans_owned = scip_spans.get(&path).cloned().unwrap_or_default();
-            let spans: Vec<(i32, i32, &str)> = spans_owned
-                .iter()
-                .map(|(l, c, s)| (*l, *c, s.as_str()))
-                .collect();
-            let kernels: Vec<(&str, Vec<crate::propose::Proposal>)> = vec![
-                ("verbatim", crate::propose::extract_proposals(&content)),
-                ("ast", crate::propose::ast_shape_proposals(&content)),
-                ("tree", crate::propose::tree_shape_proposals(&content)),
-                ("cfg", crate::propose::cfg_shape_proposals(&content)),
-                ("ddg", crate::propose::ddg_shape_proposals(&content)),
-                ("cgraph", crate::propose::callgraph_shape_proposals(&content)),
-                ("ngram", crate::propose::ngram_stat_proposals(&content)),
-                ("symbol", crate::propose::symbol_shape_proposals(&content, &spans)),
-                ("call", crate::propose::call_seq_proposals(&content, &spans)),
-            ];
-            for (kname, props) in kernels {
-                for prop in props {
-                    for p in &prop.params {
-                        computed.push((
-                            kname.to_string(),
-                            path.clone(),
-                            prop.lo as i64,
-                            prop.hi as i64,
-                            p.clone(),
-                        ));
-                    }
-                }
-            }
-        }
-        computed.sort();
-        computed.dedup();
-        let stored: Vec<(String, String, i64, i64, String)> = {
-            let conn = self.db.conn();
-            let mut s = conn.prepare(&format!(
-                "SELECT \"kernel\",\"path\",\"lo\",\"hi\",\"param\" FROM {} ORDER BY \"kernel\",\"path\",\"lo\",\"hi\",\"param\"",
-                tbl("propose_clone")
-            ))?;
-            let rows = s.query_map([], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, i64>(2)?,
-                    r.get::<_, i64>(3)?,
-                    r.get::<_, String>(4)?,
-                ))
-            })?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
-        if stored == computed {
-            return Ok(false);
-        }
-        let rows: Vec<Vec<Value>> = computed
-            .into_iter()
-            .map(|(k, p, lo, hi, pm)| {
-                vec![
-                    Value::Text(k),
-                    Value::Text(p),
-                    Value::Int(lo),
-                    Value::Int(hi),
-                    Value::Text(pm),
-                ]
-            })
-            .collect();
-        self.refresh_rel("propose_clone", &["kernel", "path", "lo", "hi", "param"], &rows)?;
-        Ok(true)
     }
 
     /// Read the Cargo.toml / package.json manifests above the file set, at this
@@ -6559,7 +6174,7 @@ pub fn scan_has_var_coords(rule: &Rule) -> bool {
         BodyItem::Scan { rev: Term::Var(_), .. }))
 }
 
-fn read_content(root: &Path, rev: &str, path: &str) -> Result<String> {
+pub(crate) fn read_content(root: &Path, rev: &str, path: &str) -> Result<String> {
     if rev == "WORK" {
         Ok(std::fs::read_to_string(root.join(path))?)
     } else {
