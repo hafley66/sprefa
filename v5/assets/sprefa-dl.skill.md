@@ -17,7 +17,7 @@ a match is a coordinate you can squiggle or rewrite.
 # from a local clone (run from the repo root)
 cargo install --path v5 --bin dl --force
 # or from git
-cargo install --git https://github.com/hafley66/sprefa sprefa-v5 --bin dl
+cargo install --git https://github.com/hafley66/sprefa sprefa-dl --bin dl
 ```
 
 Turnkey, post-download (the skill text + starter `.dl` are embedded in the

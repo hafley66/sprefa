@@ -1,8 +1,12 @@
 [package]
-name = "sprefa-v5"
+# Installed/published name = `sprefa-dl` (the binary is `dl`). The internal
+# LIBRARY crate keeps the name `sprefa_v5` (see [lib] below) so the ~20 files
+# that `use sprefa_v5::…` don't churn; only the user-facing package + the
+# cargo-dist artifact names change.
+name = "sprefa-dl"
 version = "0.1.0"
 edition = "2021"
-description = "dl: a reactive datalog-over-code engine (sprefa v5) — call/import/type graphs, lint rails, LSP diagnostics, and codemods, welded to SQLite."
+description = "dl: a reactive datalog-over-code engine — call/import/type graphs, lint rails, LSP diagnostics, and codemods, welded to SQLite."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/hafley66/sprefa"
 homepage = "https://github.com/hafley66/sprefa"
@@ -18,6 +22,13 @@ build = "build.rs"
 # (each tests/*.rs used to be its own crate, re-linking the full dep graph).
 # tests/it.rs `mod`s in every file under tests/it/; subdir files aren't targets.
 autotests = false
+
+[lib]
+# Internal crate name kept as `sprefa_v5` so existing `use sprefa_v5::…` across
+# src/tests is untouched by the package rename (package name != lib name is fine;
+# the lib name is invisible to anyone installing `sprefa-dl`).
+name = "sprefa_v5"
+path = "src/lib.rs"
 
 [[bin]]
 name = "dl"

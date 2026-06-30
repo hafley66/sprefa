@@ -12,7 +12,7 @@ name: CI
 # (tray-icon/tao), which needs GTK system libs on Linux, and the project is
 # macOS-first (the tray is macOS-v1). A Linux/Windows job lands once the tray
 # deps are cfg-gated. The crate is in v5/ within the root workspace, so cargo
-# calls use `-p sprefa-v5`.
+# calls use `-p sprefa-dl`.
 
 on:
   push:
@@ -39,21 +39,21 @@ jobs:
       # (lsp_protocol.rs) and the self-validation tests; 4 tests are #[ignore]
       # (network / JDK / SCIP) and stay skipped here.
       - name: Unit tests (lib)
-        run: cargo test -p sprefa-v5 --lib
+        run: cargo test -p sprefa-dl --lib
 
       # `created_perf` builds a 65-commit git fixture and trips a `git add`
       # tempfile EINVAL on the macOS runner (not an engine bug — its N+1 guard
       # passes locally; the runner-git quirk is a follow-up). Everything else in
       # `it` runs (LSP, dl_diag, gh-cache, effect, the other perf/stress guards).
       - name: Integration tests (it — includes LSP + dl_diag + gh-cache)
-        run: cargo test -p sprefa-v5 --test it -- --skip created_perf
+        run: cargo test -p sprefa-dl --test it -- --skip created_perf
 
       # Dogfood: the engine lints itself. Build the binary, then run the repo's
       # own discovery rails. Exit 0 = clean, 2 = a rail violation (a real
       # finding — fail), 1 = broken rails program (fail). --no-daemon forces the
       # in-process path (no socket/daemon in CI).
       - name: Build dl
-        run: cargo build -p sprefa-v5 --release --bin dl
+        run: cargo build -p sprefa-dl --release --bin dl
 
       - name: Dogfood rails (dl --check on this repo)
         run: ./target/release/dl --check --no-daemon --root .

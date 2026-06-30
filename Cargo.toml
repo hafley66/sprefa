@@ -1,7 +1,7 @@
-# Root workspace. The shipping crate is `sprefa-v5` (binary `dl`) in v5/; the
+# Root workspace. The shipping crate is `sprefa-dl` (binary `dl`) in v5/; the
 # prior iterations v3/ and v4/ are kept for design-recovery and are NOT built
 # here (excluded). A root manifest is what lets `cargo install --git <url>
-# sprefa-v5 --bin dl` resolve the subdir crate, and what cargo-dist anchors on.
+# sprefa-dl --bin dl` resolve the subdir crate, and what cargo-dist anchors on.
 [workspace]
 resolver = "2"
 members = ["v5", "v5/tree-sitter-dl"]
