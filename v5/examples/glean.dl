@@ -60,7 +60,7 @@ callers(callee, caller) <- calls(caller, callee).
 
 # 4. TYPE FAN-IN — which types embed a given type (the inverse of type_edge).
 rel embedded_by(target: text, owner: text, kind: text).
-embedded_by(target, owner, kind) <- type_edge(owner, target, kind).
+embedded_by(target, owner, kind) <- type_edge(owner, target, kind, _).
 
 # ---- the questions ----
 # Pin a column by writing a literal in that position. A literal in a closure

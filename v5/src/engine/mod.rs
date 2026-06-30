@@ -152,10 +152,16 @@ const MODULE_RELS: [&str; 6] = [
 
 /// Syntax-only type graph. `kind` is edge metadata; closure(type_edge) walks
 /// the first two columns. `type_edge`/`type_edge_rev` are name-keyed (the
-/// historic contract). The sem-style additions are def-keyed: `type_entity`
+/// historic contract) with a trailing `repo` column so two trees scanned in
+/// the same engine instance that happen to share a type name (e.g. two
+/// frozen prior versions of the same crate) don't collapse into one node —
+/// the column is appended last specifically so it never shifts `from`/`to`
+/// out of cols[0]/cols[1]. The sem-style additions are def-keyed: `type_entity`
 /// is the declared-symbol table (kind, parent, location), `type_sig` is each
 /// callable's arrow `[...A] => B` exploded by slot, and `type_link` is the
-/// SCIP-resolved graph where endpoints are definition symbols, not bare names.
+/// SCIP-resolved graph where endpoints are definition symbols, not bare names
+/// (already repo-prefixed via type_entity's sym, so it doesn't need its own
+/// repo column).
 const TYPE_RELS: [&str; 5] =
     ["type_edge", "type_edge_rev", "type_entity", "type_sig", "type_link"];
 
@@ -325,11 +331,11 @@ pub fn builtin_rel_docs() -> &'static [(&'static str, &'static str, &'static str
         ("module_unresolved_rev", "module", "rev-aware module_unresolved"),
         ("crate_edge", "module", "workspace-internal Cargo dependency edges"),
         // type graph: entities, edges, signatures.
-        ("type_edge", "type", "type-graph edges across Rust (syn), Kotlin (tree-sitter), TS (oxc); kind is field/variant/impl/generic — Kotlin interface supertypes are generic, class/object impl, val/var ctor params + body properties field, enum entries variant"),
+        ("type_edge", "type", "type-graph edges across Rust (syn), Kotlin (tree-sitter), TS (oxc); kind is field/variant/impl/generic — Kotlin interface supertypes are generic, class/object impl, val/var ctor params + body properties field, enum entries variant; trailing repo column so two trees scanned together don't collapse same-named types into one node (closure/scc still walk cols 0/1, unaffected)"),
         ("type_edge_rev", "type", "rev-aware type_edge (WORK-vs-HEAD type diff)"),
         ("type_entity", "type", "every declared type; sym is file::kind::name, the cross-graph join key; scip_ref overrides name resolution when a SCIP index is present"),
         ("type_sig", "type", "type signature slots (params, fields) per sym"),
-        ("type_link", "type", "cross-type links not carried by type_edge (SCIP-resolved sym to sym)"),
+        ("type_link", "type", "cross-type links not carried by type_edge (SCIP-resolved sym to sym); src/dst are already repo-prefixed via type_entity's sym, so no separate repo column is needed"),
         // doc comments attached to entities (Tier 1/2 doc gen).
         ("doc_comment", "type", "doc comment per type_entity sym: (repo, sym, line, text); AST-located per language (Rust #[doc] attrs, Kotlin KDoc sibling, TS leading /** */)"),
         ("doc_tag", "type", "structured doc tags per sym: (repo, sym, tag, arg, text); @param/@returns/@deprecated for JSDoc/KDoc, # Section headings for rustdoc"),
@@ -517,8 +523,8 @@ fn module_rel_decls() -> Vec<RelDecl> {
 fn type_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
-        RelDecl { name: "type_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text)] },
-        RelDecl { name: "type_edge_rev".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text), c("rev", Type::Text)] },
+        RelDecl { name: "type_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text), c("repo", Type::Text)] },
+        RelDecl { name: "type_edge_rev".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text), c("rev", Type::Text), c("repo", Type::Text)] },
         RelDecl { name: "type_entity".into(), cols: vec![
             c("repo", Type::Text), c("sym", Type::Text), c("name", Type::Text), c("kind", Type::Text),
             c("parent", Type::Text), c("file", Type::Path), c("line", Type::Int)] },
@@ -3183,8 +3189,6 @@ impl Engine {
         changed.dedup();
         Ok(changed)
     }
-
-
 
 
 

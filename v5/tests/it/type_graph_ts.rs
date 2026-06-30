@@ -40,7 +40,7 @@ rel seen(path: file).
 seen(path) <- scan("WORK", "src/**/*.{ts,tsx}", path, rev), match(path, rev, /./, line).
 rel type_reaches(a: text, b: text).
 type_reaches(a, b) <- closure(type_edge).
-? type_edge(f, t, k).
+? type_edge(f, t, k, _).
 ? type_reaches(a, b).
 "#;
 
@@ -103,7 +103,7 @@ fn kts_still_routes_to_kotlin() {
     let prog = r#"
 rel seen(path: file).
 seen(path) <- scan("WORK", "src/**/*.kts", path, rev), match(path, rev, /./, line).
-? type_edge(f, t, k).
+? type_edge(f, t, k, _).
 "#;
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");

@@ -16,7 +16,7 @@ seen(path) <- scan("WORK", "src/**/*.{ts,tsx}", path, rev),
 # plain-ident edges, TS stdlib/DOM containers dropped (Map in a field is
 # plumbing, not shape)
 rel edge0(f: text, t: text).
-edge0(f, t) <- type_edge(f, t, k), k != "variant",
+edge0(f, t) <- type_edge(f, t, k, _), k != "variant",
   f =~ /^[A-Za-z]+$/, t =~ /^[A-Za-z]+$/,
   t != "Record", t != "Array", t != "Map", t != "Set", t != "Promise",
   t != "ReturnType", t != "Exclude", t != "Pick", t != "Omit", t != "Partial",

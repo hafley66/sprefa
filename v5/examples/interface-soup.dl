@@ -2,7 +2,7 @@
 #
 # Built entirely on the existing `type_edge` / `type_entity` type graph (Rust syn,
 # Kotlin tree-sitter, TS oxc) -- no new engine code. The edge direction is
-# `type_edge(implementor, interface, "impl")`; interface supertypes come in as
+# `type_edge(implementor, interface, "impl", repo)`; interface supertypes come in as
 # "generic". We keep only edges whose target is a DECLARED trait/interface, count
 # implementors per interface, and flag the smell: an interface with exactly one
 # implementor (the "evil singleton abstraction" -- a layer that never earned its
@@ -27,8 +27,8 @@ iface(n) <- type_entity(_, _, n, "interface", _, _, _).
 
 # implementor -> interface, restricted to real interface targets.
 rel impl_of(impl: text, iface: text).
-impl_of(c, i) <- type_edge(c, i, "impl"), iface(i).
-impl_of(c, i) <- type_edge(c, i, "generic"), iface(i).
+impl_of(c, i) <- type_edge(c, i, "impl", _), iface(i).
+impl_of(c, i) <- type_edge(c, i, "generic", _), iface(i).
 
 # Implementor count per interface.
 rel iface_count(iface: text, n: int).

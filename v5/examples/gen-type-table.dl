@@ -20,7 +20,7 @@ rel seen(path: file).
 seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
 
 rel fan_out(f: text, n: int).
-fan_out(f, count(t)) <- type_edge(f, t, _).
+fan_out(f, count(t)) <- type_edge(f, t, _, _).
 
 rel hot(f: text, n: int).
 hot(f, n) <- fan_out(f, n), n >= 10.

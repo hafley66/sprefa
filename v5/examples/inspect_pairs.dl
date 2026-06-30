@@ -3,35 +3,35 @@ rel seen(path: file).
 seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
 
 rel fields_of(t: text, to: text).
-fields_of(t, to) <- type_edge(t, to, "field").
+fields_of(t, to) <- type_edge(t, to, "field", _).
 
 # The Dollar/Resolved/Severity/Value cluster (vars=2 pairs)
 rel dollar(t: text).
-dollar(to) <- type_edge("Dollar", to, "field").
+dollar(to) <- type_edge("Dollar", to, "field", _).
 rel resolved(t: text).
-resolved(to) <- type_edge("Resolved", to, "field").
+resolved(to) <- type_edge("Resolved", to, "field", _).
 rel severity(t: text).
-severity(to) <- type_edge("Severity", to, "field").
+severity(to) <- type_edge("Severity", to, "field", _).
 rel value_t(t: text).
-value_t(to) <- type_edge("Value", to, "field").
+value_t(to) <- type_edge("Value", to, "field", _).
 
 # CallDef / TypeExpr (vars=4)
 rel calldef(t: text).
-calldef(to) <- type_edge("CallDef", to, "field").
+calldef(to) <- type_edge("CallDef", to, "field", _).
 rel typeexpr(t: text).
-typeexpr(to) <- type_edge("TypeExpr", to, "field").
+typeexpr(to) <- type_edge("TypeExpr", to, "field", _).
 
 # Item::Rel / SurfaceItem::Def (vars=2)
 rel item_rel(t: text).
-item_rel(to) <- type_edge("Item::Rel", to, "field").
+item_rel(to) <- type_edge("Item::Rel", to, "field", _).
 rel surface_def(t: text).
-surface_def(to) <- type_edge("SurfaceItem::Def", to, "field").
+surface_def(to) <- type_edge("SurfaceItem::Def", to, "field", _).
 
 # ClosureCache / Desc (vars=4)
 rel cc(t: text).
-cc(to) <- type_edge("ClosureCache", to, "field").
+cc(to) <- type_edge("ClosureCache", to, "field", _).
 rel desc(t: text).
-desc(to) <- type_edge("Desc", to, "field").
+desc(to) <- type_edge("Desc", to, "field", _).
 
 ? dollar(t).
 ? resolved(t).

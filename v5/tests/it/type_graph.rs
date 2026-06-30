@@ -40,7 +40,7 @@ rel seen(path: file).
 seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
 rel type_reaches(a: text, b: text).
 type_reaches(a, b) <- closure(type_edge).
-? type_edge(f, t, k).
+? type_edge(f, t, k, _).
 ? type_reaches(a, b).
 "#;
 
@@ -108,8 +108,8 @@ fn type_edges_carry_rev() {
 rel seen(path: file).
 seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
 rel work_type(a: text, b: text).
-work_type(a, b) <- type_edge_rev(a, b, _, "WORK").
-? type_edge_rev(f, t, k, rev).
+work_type(a, b) <- type_edge_rev(a, b, _, "WORK", _).
+? type_edge_rev(f, t, k, rev, _).
 ? work_type(a, b).
 "#;
     let (code, out, err) = run(&d, prog, &[]);
@@ -123,6 +123,61 @@ work_type(a, b) <- type_edge_rev(a, b, _, "WORK").
         work.contains("User\tId"),
         "WORK-filtered relation recovers the edge: {out}"
     );
+}
+
+/// Two config repos that happen to declare a same-named type (`Auth -> Id`,
+/// `field`) used to collapse into ONE `type_edge` row when scanned together
+/// in a single engine instance — the bare name carried no repo tag, so
+/// closure/fan-out queries silently merged unrelated trees that share
+/// vocabulary (e.g. comparing a crate against an old fork of itself). The
+/// trailing `repo` column keeps them apart without disturbing cols[0]/[1]
+/// (`from`/`to`), so `closure(type_edge)`/`scc(type_edge)` are unaffected.
+#[test]
+fn type_edge_distinguishes_repos() {
+    let d = sandbox("two_repos");
+    let _ = fs::remove_dir_all(&d);
+    for slug in ["ra", "rb"] {
+        let r = d.join(slug);
+        fs::create_dir_all(r.join("src")).unwrap();
+        fs::write(r.join("src/lib.rs"), "struct Id;\nstruct Auth { id: Id }\n").unwrap();
+    }
+    fs::write(
+        d.join("cfg.toml"),
+        format!(
+            "[[repos]]\nslug = \"ra\"\nroot = \"{a}\"\n[[repos]]\nslug = \"rb\"\nroot = \"{b}\"\n",
+            a = d.join("ra").display(),
+            b = d.join("rb").display()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        d.join("p.dl"),
+        "\
+        rel seen(path: file).\n\
+        seen(path) <- scan(\"*\", \"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /./, line).\n\
+        ? type_edge(f, t, k, r).\n",
+    )
+    .unwrap();
+
+    let out = Command::new(DL)
+        .arg(d.join("p.dl"))
+        .args(["--root", d.join("ra").to_str().unwrap(), "--db", d.join("db").to_str().unwrap()])
+        .env("SPREFA_CONFIG", d.join("cfg.toml"))
+        .output()
+        .expect("run dl");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "run failed: {stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+
+    let rows: Vec<&str> = stdout
+        .split("? type_edge")
+        .nth(1)
+        .unwrap_or("")
+        .lines()
+        .filter(|l| l.contains("Auth\tId\tfield"))
+        .collect();
+    assert_eq!(rows.len(), 2, "one Auth->Id edge per repo, not collapsed to one: {stdout}");
+    assert!(rows.iter().any(|l| l.trim().ends_with("\tra")), "ra-tagged row: {rows:?}");
+    assert!(rows.iter().any(|l| l.trim().ends_with("\trb")), "rb-tagged row: {rows:?}");
 }
 
 #[test]

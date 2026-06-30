@@ -413,9 +413,11 @@ impl Engine {
         let mut tag_rows: Vec<Vec<Value>> = Vec::new();
         let mut seen_doc: HashSet<(&str, &str)> = HashSet::new();
         for (repo, path, rev, f) in &facts {
-            // historic name-keyed edges, unchanged
+            // historic name-keyed edges, now repo-tagged so two trees sharing a
+            // type name don't collapse into one node when scanned together
+            // (closure/scc still walk cols[0]/cols[1] = from/to, untouched).
             for edge in &f.edges {
-                edge_rev_rows.push(vec![t(&edge.from), t(&edge.to), t(edge.kind), t(rev)]);
+                edge_rev_rows.push(vec![t(&edge.from), t(&edge.to), t(edge.kind), t(rev), t(repo)]);
                 // SCIP-resolved graph: owner sym -> resolved target sym (or the
                 // bare name when external/ambiguous, so leaf types still appear)
                 let src = sym_at.get(&(repo.as_str(), path.as_str(), edge.from.as_str()))
@@ -463,7 +465,7 @@ impl Engine {
                 }
             }
         }
-        self.refresh_rel("type_edge_rev", &["from", "to", "kind", "rev"], &edge_rev_rows)?;
+        self.refresh_rel("type_edge_rev", &["from", "to", "kind", "rev", "repo"], &edge_rev_rows)?;
         self.refresh_rel("type_entity", &["repo", "sym", "name", "kind", "parent", "file", "line"], &entity_rows)?;
         self.refresh_rel("type_sig", &["sym", "slot", "pos", "ref"], &sig_rows)?;
         self.refresh_rel("type_link", &["src", "dst", "kind"], &link_rows)?;
@@ -503,8 +505,8 @@ impl Engine {
         let edge_rev = tbl("type_edge_rev");
         self.db.exec(&format!("DELETE FROM {edge}"))?;
         self.db.exec(&format!(
-            "INSERT OR IGNORE INTO {edge} (\"from\", \"to\", \"kind\") \
-             SELECT \"from\", \"to\", \"kind\" FROM {edge_rev}"
+            "INSERT OR IGNORE INTO {edge} (\"from\", \"to\", \"kind\", \"repo\") \
+             SELECT \"from\", \"to\", \"kind\", \"repo\" FROM {edge_rev}"
         ))?;
         Ok(())
     }

@@ -101,7 +101,7 @@ enum class Color { RED }
     let prog = r#"
 rel seen(path: file).
 seen(path) <- scan("WORK", "src/**/*.kt", path, rev), match(path, rev, /./, line).
-? type_edge(from, to, kind).
+? type_edge(from, to, kind, _).
 "#;
     let recs = run_json(&d, prog);
     let rows = recs[0]["rows"].as_array().expect("rows");

@@ -35,19 +35,19 @@ type_name(t) <- type_entity(_, _, t, kind, _, _, _), data_kind(kind).
 
 # ── Cardinality ───────────────────────────────────────────────────────────
 rel fields(t: text, n: int).
-fields(t, count(to))   <- type_edge(t, to, "field").
+fields(t, count(to))   <- type_edge(t, to, "field", _).
 rel variants(t: text, n: int).
-variants(t, count(to)) <- type_edge(t, to, "variant").
+variants(t, count(to)) <- type_edge(t, to, "variant", _).
 rel impls(t: text, n: int).
-impls(t, count(to))    <- type_edge(t, to, "impl").
+impls(t, count(to))    <- type_edge(t, to, "impl", _).
 rel generics(t: text, n: int).
-generics(t, count(to)) <- type_edge(t, to, "generic").
+generics(t, count(to)) <- type_edge(t, to, "generic", _).
 
 # ── Coupling (Ca / Ce on name-keyed type_edge) ────────────────────────────
 # Project kind out first so count() is over DISTINCT neighbor names, not edge
 # rows (A can reach B via field AND impl; that's still one coupled neighbor).
 rel edge(a: text, b: text).
-edge(a, b) <- type_edge(a, b, _).
+edge(a, b) <- type_edge(a, b, _, _).
 
 # Ca = afferent: # distinct types pointing TO me (incoming, any kind).
 rel ca(t: text, n: int).
@@ -84,7 +84,7 @@ ret_uses(t, count(fn))   <- type_sig(fn, "ret",  _, r), t = split(r, "::", -1).
 # variant payload, impl target, generic bound, fn param, fn return — the six
 # structural ways a type enters another type's contract.
 rel referenced(t: text).
-referenced(t) <- type_edge(_, t, _).
+referenced(t) <- type_edge(_, t, _, _).
 referenced(t) <- type_sig(_, _, _, r), t = split(r, "::", -1).
 
 # Sym bridge: only data types (struct/enum/trait/class/interface/alias).
@@ -125,7 +125,7 @@ rel fwd(x: text).
 fwd(x) <- type_reaches(a, x), a = "Engine", x != a.
 
 rel type_rev_edge(a: text, b: text).
-type_rev_edge(a, b) <- type_edge(b, a, _).
+type_rev_edge(a, b) <- type_edge(b, a, _, _).
 rel type_reached_by(a: text, b: text).
 type_reached_by(a, b) <- closure(type_rev_edge).
 rel rev_reach(x: text).

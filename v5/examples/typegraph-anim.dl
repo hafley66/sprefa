@@ -12,7 +12,7 @@ seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, l
 # Plain-ident endpoints only: enum-variant nodes (`Tok::Ident`) collide with
 # d2's `:` label syntax and unit variants are leaf noise (101 of 275 edges).
 rel edge0(f: text, t: text).
-edge0(f, t) <- type_edge(f, t, k), k != "variant",
+edge0(f, t) <- type_edge(f, t, k, _), k != "variant",
   f =~ /^[A-Za-z]+$/, t =~ /^[A-Za-z]+$/.
 
 rel fan_out(f: text, n: int).

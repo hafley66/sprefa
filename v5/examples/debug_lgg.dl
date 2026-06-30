@@ -3,14 +3,14 @@ rel seen(path: file).
 seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
 
 rel anch(from: text, to: text, kind: text).
-anch(from, to, kind) <- type_edge(from, to, kind), from = "Anchors".
+anch(from, to, kind) <- type_edge(from, to, kind, _), from = "Anchors".
 rel anch_to(from: text, to: text, kind: text).
-anch_to(from, to, kind) <- type_edge(from, to, kind), to = "Anchors".
+anch_to(from, to, kind) <- type_edge(from, to, kind, _), to = "Anchors".
 
 rel bodyitem(from: text, to: text, kind: text).
-bodyitem(from, to, kind) <- type_edge(from, to, kind), from = "BodyItem".
+bodyitem(from, to, kind) <- type_edge(from, to, kind, _), from = "BodyItem".
 rel bi_astyaml(from: text, to: text, kind: text).
-bi_astyaml(from, to, kind) <- type_edge(from, to, kind), from = "BodyItem::AstYaml".
+bi_astyaml(from, to, kind) <- type_edge(from, to, kind, _), from = "BodyItem::AstYaml".
 
 ? anch(from, to, kind).
 ? anch_to(from, to, kind).

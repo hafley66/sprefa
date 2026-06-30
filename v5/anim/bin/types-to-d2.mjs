@@ -28,17 +28,23 @@ const out = outIx >= 0 ? args[outIx + 1] : path.join(animRoot, 'graphs/types.d2'
 const HUB_DEGREE = 4
 
 // --- 1. ask the engine for every type_edge -------------------------------
-const where = seed ? ` where from = "${seed}"` : ''
+// `where` is gone from the DSL; a seeded query pins the column via a literal
+// head term instead. `_` drops the trailing repo column (this script reads
+// one tree, v5/src, so it never needs to disambiguate by repo).
+const from = seed ? `"${seed}"` : 'from'
 const prog = `
 rel seen(path: file).
 seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
-? type_edge(from, to, kind)${where}.
+? type_edge(${from}, to, kind, _).
 `
 const tmp = path.join(mkdtempSync(path.join(tmpdir(), 'typemap-')), 'q.dl')
 writeFileSync(tmp, prog)
 const raw = execFileSync(dl, [tmp, '--root', repoRoot], { encoding: 'utf8' })
 
 // --- 2. parse the `? type_edge => ...` block -----------------------------
+// A pinned literal head term (the seeded case) isn't projected into the
+// output, same as `_` — so a seeded query prints (to, kind) and an unseeded
+// one prints (from, to, kind); the trailing repo column never shows either way.
 const edges = []                                          // {from, to, kind}
 let inBlock = false
 for (const line of raw.split('\n')) {
@@ -46,7 +52,8 @@ for (const line of raw.split('\n')) {
   if (!inBlock) continue
   if (/^\s*\(\d+ rows?\)/.test(line)) break
   const cols = line.replace(/^\s+/, '').split('\t')
-  if (cols.length === 3) edges.push({ from: cols[0], to: cols[1], kind: cols[2] })
+  if (seed && cols.length === 2) edges.push({ from: seed, to: cols[0], kind: cols[1] })
+  if (!seed && cols.length === 3) edges.push({ from: cols[0], to: cols[1], kind: cols[2] })
 }
 
 // --- 3. shape the graph --------------------------------------------------

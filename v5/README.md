@@ -382,11 +382,11 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `similar` | embed | `(a, b, score)` | content-addressed nearest-neighbor pairs from the embedding backend, with score |
 | `string` | spine | `(id, text, norm)` | interned strings (ref spine): id, text, normalized text |
 | `true` | core | `()` | zero-arity singleton; the always-succeeds atom |
-| `type_edge` | type | `(from, to, kind)` | type-graph edges across Rust (syn), Kotlin (tree-sitter), TS (oxc); kind is field/variant/impl/generic — Kotlin interface supertypes are generic, class/object impl, val/var ctor params + body properties field, enum entries variant |
-| `type_edge_rev` | type | `(from, to, kind, rev)` | rev-aware type_edge (WORK-vs-HEAD type diff) |
+| `type_edge` | type | `(from, to, kind, repo)` | type-graph edges across Rust (syn), Kotlin (tree-sitter), TS (oxc); kind is field/variant/impl/generic — Kotlin interface supertypes are generic, class/object impl, val/var ctor params + body properties field, enum entries variant; trailing repo column so two trees scanned together don't collapse same-named types into one node (closure/scc still walk cols 0/1, unaffected) |
+| `type_edge_rev` | type | `(from, to, kind, rev, repo)` | rev-aware type_edge (WORK-vs-HEAD type diff) |
 | `type_entity` | type | `(repo, sym, name, kind, parent, file, line)` | every declared type; sym is file::kind::name, the cross-graph join key; scip_ref overrides name resolution when a SCIP index is present |
 | `type_lgg` | type-shape | `(a, b, vars)` | least-general generalization of two type shapes (shape-iso experiment) |
-| `type_link` | type | `(src, dst, kind)` | cross-type links not carried by type_edge (SCIP-resolved sym to sym) |
+| `type_link` | type | `(src, dst, kind)` | cross-type links not carried by type_edge (SCIP-resolved sym to sym); src/dst are already repo-prefixed via type_entity's sym, so no separate repo column is needed |
 | `type_shape` | type-shape | `(name, hash)` | structural type-shape fingerprint per type (shape-iso experiment) |
 | `type_sig` | type | `(sym, slot, pos, ref)` | type signature slots (params, fields) per sym |
 <!-- END: builtin-rels -->

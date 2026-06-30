@@ -14,10 +14,10 @@ seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, l
 
 # Struct filter: has ≥2 field children (not unit variants, not 1-field wrappers).
 rel struct2(t: text).
-struct2(t) <- type_edge(t, _, "field"),
-    type_edge(t, _, "field"),
-    type_edge(t, a, "field"),
-    type_edge(t, b, "field"),
+struct2(t) <- type_edge(t, _, "field", _),
+    type_edge(t, _, "field", _),
+    type_edge(t, a, "field", _),
+    type_edge(t, b, "field", _),
     a != b.
 
 # Exact shape-iso among real structs.

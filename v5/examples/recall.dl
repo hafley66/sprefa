@@ -20,7 +20,7 @@ mod_f(src, dst) <- module_edge(src, dst), src != dst.
 rel type_sym_file(sym: text, file: file).
 type_sym_file(sym, file) <- type_entity(_, sym, _, _, _, file, _).
 rel type_f(src: file, dst: file).
-type_f(src, dst) <- type_edge(a, b, _), type_sym_file(a, src), type_sym_file(b, dst), src != dst.
+type_f(src, dst) <- type_edge(a, b, _, _), type_sym_file(a, src), type_sym_file(b, dst), src != dst.
 
 # progressive unions
 rel u_call(src: file, dst: file).   u_call(src, dst) <- call_f(src, dst).

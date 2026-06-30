@@ -3,7 +3,7 @@ rel seen(path: file).
 seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
 
 rel n_edge(n: int).
-n_edge(count(from)) <- type_edge(from, _, _).
+n_edge(count(from)) <- type_edge(from, _, _, _).
 
 rel n_entity(n: int).
 n_entity(count(sym)) <- type_entity(_, sym, _, _, _, _, _).
