@@ -1,7 +1,8 @@
-//! Git-derived built-in relation families behind one trait.
+//! Built-in source-relation families behind one trait.
 //!
-//! Each family (`changed`, `changed_line`, `created`) used to be four loose
-//! pieces in engine.rs — a `*_RELS` const, a `*_rel_decls()` fn, a
+//! Each family (`changed`, `changed_line`, `created`, plus the analysis-derived
+//! `agent` / `type_shape` / `type_lgg` / catalog families below) used to be four
+//! loose pieces in engine.rs — a `*_RELS` const, a `*_rel_decls()` fn, a
 //! `*_rels_used()` gate, and a `refresh_*_rel()` method — wired by a
 //! hand-written fan-out repeated in `tick`, `tick_paths`, `declare_builtins`,
 //! `all_builtin_decls`, and the reserved-name guard. This module collapses that
@@ -9,17 +10,27 @@
 //! sites loop over. The refresh BODIES live here too (not thin wrappers), so the
 //! code actually leaves engine.rs.
 //!
-//! Adding a git-derived family is now: write a unit struct, impl `RelKind`, add
-//! it to `rel_kinds()`. The five call sites pick it up for free.
+//! Adding a family is now: write a unit struct, impl `RelKind`, add it to
+//! `rel_kinds()`. The five call sites pick it up for free.
+//!
+//! Contract a family must match to live here: a no-arg, whole-set
+//! `refresh(eng) -> Ok(changed?)` that self-diffs against what is stored
+//! (returns `Ok(false)` on the steady-state no-op). Families that need an
+//! incremental input gate (scip's `index.scip`-changed flag), a delta refresh
+//! (spine/node/module), extracted args (every/clock intervals), or a `()` return
+//! that always runs (builtin/type/call/dataflow/doc/daemon/effect) do NOT fit
+//! this trait yet — see `plans/2026-06-30-engine-breakdown-proposal.md` for the
+//! staged trait extensions that absorb them.
 
 use anyhow::Result;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::ast::{Col, Program, RelDecl, Type, Value};
-use crate::engine::{rels_used, Engine};
+use crate::engine::{all_builtin_decls, builtin_rel_docs, fn_docs, rels_used, Engine};
 use crate::lower::tbl;
+use crate::typegraph;
 
 /// A built-in, git-derived relation family: its name(s), column schema, the
 /// lazy-use gate, and the whole-set refresh.
@@ -44,7 +55,8 @@ pub trait RelKind: Sync {
 /// `tick_paths`, `declare_builtins`, `all_builtin_decls`, and the reserved-name
 /// guard iterate THIS instead of repeating the family list.
 pub fn rel_kinds() -> &'static [&'static dyn RelKind] {
-    &[&ChangedKind, &ChangedLineKind, &CreatedKind]
+    &[&ChangedKind, &ChangedLineKind, &CreatedKind,
+      &AgentKind, &TypeShapeKind, &TypeLggKind, &CatalogKind]
 }
 
 /// Flattened column decls across the registry, for `all_builtin_decls` /
@@ -295,6 +307,208 @@ impl RelKind for CreatedKind {
             .map(|(p, n, e, t)| vec![Value::Text(p), Value::Text(n), Value::Text(e), Value::Int(t)])
             .collect();
         eng.refresh_rel("created", &["path", "name", "email", "ts"], &rows)?;
+        Ok(true)
+    }
+}
+
+// --- agent (analysis-derived) ------------------------------------------------
+
+/// Agent-harness edit relations. `agent_edit(harness, session, idx, path)` is one
+/// row per edit a coding agent made under `--root`; `agent_touch(harness, session,
+/// path)` is the last-edited path per session. Read from `agent::agent_harnesses`.
+pub struct AgentKind;
+
+impl RelKind for AgentKind {
+    fn rels(&self) -> &'static [&'static str] {
+        &["agent_edit", "agent_touch"]
+    }
+    fn decls(&self) -> Vec<RelDecl> {
+        vec![
+            RelDecl { name: "agent_edit".into(), cols: vec![
+                col("harness", Type::Text), col("session", Type::Text),
+                col("idx", Type::Int), col("path", Type::Path)] },
+            RelDecl { name: "agent_touch".into(), cols: vec![
+                col("harness", Type::Text), col("session", Type::Text),
+                col("path", Type::Path)] },
+        ]
+    }
+    fn reserved_msg(&self) -> &'static str {
+        "a built-in agent-harness relation (agent_edit / agent_touch)"
+    }
+    fn refresh(&self, eng: &Engine) -> Result<bool> {
+        let root = std::fs::canonicalize(&eng.root).unwrap_or_else(|_| eng.root.clone());
+        let mut edits: Vec<(String, String, i64, String)> = Vec::new(); // harness, session, idx, path
+        let mut touch: Vec<(String, String, String)> = Vec::new();      // harness, session, path @ max idx
+        for h in crate::agent::agent_harnesses() {
+            let hn = h.name().to_string();
+            for sess in h.sessions_for(&root) {
+                let maxidx = sess.edits.iter().map(|e| e.idx).max();
+                for e in &sess.edits {
+                    edits.push((hn.clone(), sess.id.clone(), e.idx, e.path.clone()));
+                    if Some(e.idx) == maxidx {
+                        touch.push((hn.clone(), sess.id.clone(), e.path.clone()));
+                    }
+                }
+            }
+        }
+        edits.sort(); edits.dedup();
+        touch.sort(); touch.dedup();
+        // Early-out: compare agent_edit (the superset) against what is stored.
+        let existing: Vec<(String, String, i64, String)> = {
+            let conn = eng.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"harness\", \"session\", \"idx\", \"path\" FROM {} ORDER BY 1,2,3,4",
+                tbl("agent_edit")))?;
+            let rows = s.query_map([], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?)))?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        if existing == edits { return Ok(false); }
+        let edit_rows: Vec<Vec<Value>> = edits.into_iter()
+            .map(|(h, s, i, p)| vec![Value::Text(h), Value::Text(s), Value::Int(i), Value::Text(p)])
+            .collect();
+        eng.refresh_rel("agent_edit", &["harness", "session", "idx", "path"], &edit_rows)?;
+        let touch_rows: Vec<Vec<Value>> = touch.into_iter()
+            .map(|(h, s, p)| vec![Value::Text(h), Value::Text(s), Value::Text(p)])
+            .collect();
+        eng.refresh_rel("agent_touch", &["harness", "session", "path"], &touch_rows)?;
+        Ok(true)
+    }
+}
+
+// --- type_shape (analysis-derived) -------------------------------------------
+
+/// `type_shape(name, hash)` — Merkle shape hash per type, from the current
+/// `type_edge` rows via `typegraph::type_shape_hashes` (fixpoint). Reads the edge
+/// set the type-rels refresh already populated, so it must run AFTER it (the
+/// `rel_kinds()` loop sits after `refresh_type_rels` in both tick paths).
+pub struct TypeShapeKind;
+
+impl RelKind for TypeShapeKind {
+    fn rels(&self) -> &'static [&'static str] {
+        &["type_shape"]
+    }
+    fn decls(&self) -> Vec<RelDecl> {
+        vec![RelDecl { name: "type_shape".into(),
+            cols: vec![col("name", Type::Text), col("hash", Type::Text)] }]
+    }
+    fn reserved_msg(&self) -> &'static str {
+        "the built-in type-shape relation"
+    }
+    fn refresh(&self, eng: &Engine) -> Result<bool> {
+        let edges: Vec<(String, String, String)> = {
+            let conn = eng.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"from\",\"to\",\"kind\" FROM {}", tbl("type_edge")))?;
+            let rows = s.query_map([], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        let computed: Vec<(String, String)> = typegraph::type_shape_hashes(&edges);
+        let stored: Vec<(String, String)> = {
+            let conn = eng.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"name\",\"hash\" FROM {} ORDER BY \"name\",\"hash\"", tbl("type_shape")))?;
+            let rows = s.query_map([], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        if stored == computed { return Ok(false); }
+        let rows: Vec<Vec<Value>> = computed.into_iter()
+            .map(|(n, h)| vec![Value::Text(n), Value::Text(h)]).collect();
+        eng.refresh_rel("type_shape", &["name", "hash"], &rows)?;
+        Ok(true)
+    }
+}
+
+// --- type_lgg (analysis-derived) ---------------------------------------------
+
+/// `type_lgg(a, b, vars)` — least-general-generalization variable count per type
+/// pair, from the resolved `type_link` graph via `typegraph::type_lgg_pairs`.
+/// Uses `type_link` (SCIP-resolved syms), not `type_edge` (bare names), so the
+/// LGG recurses into resolved local types. Runs after the type-rels refresh.
+pub struct TypeLggKind;
+
+impl RelKind for TypeLggKind {
+    fn rels(&self) -> &'static [&'static str] {
+        &["type_lgg"]
+    }
+    fn decls(&self) -> Vec<RelDecl> {
+        vec![RelDecl { name: "type_lgg".into(),
+            cols: vec![col("a", Type::Text), col("b", Type::Text), col("vars", Type::Int)] }]
+    }
+    fn reserved_msg(&self) -> &'static str {
+        "the built-in type-lgg relation"
+    }
+    fn refresh(&self, eng: &Engine) -> Result<bool> {
+        let edges: Vec<(String, String, String)> = {
+            let conn = eng.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"src\",\"dst\",\"kind\" FROM {}", tbl("type_link")))?;
+            let rows = s.query_map([], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        let computed: Vec<(String, String, i64)> = typegraph::type_lgg_pairs(&edges);
+        let stored: Vec<(String, String, i64)> = {
+            let conn = eng.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"a\",\"b\",\"vars\" FROM {} ORDER BY \"a\",\"b\",\"vars\"", tbl("type_lgg")))?;
+            let rows = s.query_map([], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)))?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        if stored == computed { return Ok(false); }
+        let rows: Vec<Vec<Value>> = computed.into_iter()
+            .map(|(a, b, v)| vec![Value::Text(a), Value::Text(b), Value::Int(v)]).collect();
+        eng.refresh_rel("type_lgg", &["a", "b", "vars"], &rows)?;
+        Ok(true)
+    }
+}
+
+// --- catalog (self-describing) -----------------------------------------------
+
+/// `rel_catalog(name, group, cols, doc)` + `fn_catalog(name, arity, group, doc)`
+/// — the engine describing its own built-in relations and scalar functions, from
+/// `all_builtin_decls` / `builtin_rel_docs` / `fn_docs`. Static (no git/file
+/// input), so `refresh` always re-emits and reports changed; cheap (bounded by
+/// the built-in count).
+pub struct CatalogKind;
+
+impl RelKind for CatalogKind {
+    fn rels(&self) -> &'static [&'static str] {
+        &["rel_catalog", "fn_catalog"]
+    }
+    fn decls(&self) -> Vec<RelDecl> {
+        vec![
+            RelDecl { name: "rel_catalog".into(), cols: vec![
+                col("name", Type::Text), col("group", Type::Text),
+                col("cols", Type::Text), col("doc", Type::Text)] },
+            RelDecl { name: "fn_catalog".into(), cols: vec![
+                col("name", Type::Text), col("arity", Type::Int),
+                col("group", Type::Text), col("doc", Type::Text)] },
+        ]
+    }
+    fn reserved_msg(&self) -> &'static str {
+        "the built-in self-describing relation catalog (rel_catalog / fn_catalog)"
+    }
+    fn refresh(&self, eng: &Engine) -> Result<bool> {
+        let docs: HashMap<&str, (&str, &str)> =
+            builtin_rel_docs().iter().map(|(n, g, s)| (*n, (*g, *s))).collect();
+        let rows: Vec<Vec<Value>> = all_builtin_decls().iter().map(|d| {
+            let cols = format!("({})",
+                d.cols.iter().map(|c| c.name.clone()).collect::<Vec<_>>().join(", "));
+            let (group, summary) = docs.get(d.name.as_str()).copied().unwrap_or(("", ""));
+            vec![Value::Text(d.name.clone()), Value::Text(group.to_string()),
+                 Value::Text(cols), Value::Text(summary.to_string())]
+        }).collect();
+        eng.refresh_rel("rel_catalog", &["name", "group", "cols", "doc"], &rows)?;
+
+        let fn_rows: Vec<Vec<Value>> = fn_docs().iter().map(|(n, a, g, d)| {
+            vec![Value::Text(n.to_string()), Value::Int(*a as i64),
+                 Value::Text(g.to_string()), Value::Text(d.to_string())]
+        }).collect();
+        eng.refresh_rel("fn_catalog", &["name", "arity", "group", "doc"], &fn_rows)?;
         Ok(true)
     }
 }

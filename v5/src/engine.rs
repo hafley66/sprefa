@@ -481,18 +481,6 @@ const SCIP_RELS: [&str; 8] = ["scip_def", "scip_name", "scip_ref", "scip_edge", 
 // behind `trait RelKind` in relkind.rs (const + decls + gate + refresh per
 // family, one registry the tick/declare/guard sites loop over).
 
-/// Agent-harness relations (agent.rs). Reserved like the RelKind families, declared each
-/// tick, populated by `refresh_agent_rels` only when the program references one.
-/// `agent_edit(harness, session, idx, path)` = every file edit in the newest
-/// session per detected harness (Claude Code JSONL, opencode SQLite), paths
-/// repo-relative. `agent_touch(harness, session, path)` = the latest turn's
-/// edits (rows at `max(idx)` per session). Both stay keyed by (harness,
-/// session): the cross-harness set is a TAGGED union, not a broadcast — a
-/// consumer filters to one session, or projects the labels away to treat any
-/// agent uniformly: `diag(p,...) <- changed(p), agent_touch(_, _, p).` ACP is
-/// the live tier (deferred).
-const AGENT_RELS: [&str; 2] = ["agent_edit", "agent_touch"];
-
 /// Embedding-similarity relation. `similar(a, b, score)` is the top-k nearest
 /// neighbors of each embedded interned string by cosine; `score` is an Int =
 /// round(cosine * 1_000_000) in [-1_000_000, 1_000_000], so a `.dl` rule can
@@ -519,23 +507,6 @@ const PROPOSE_EXTRACT_RELS: [&str; 1] = ["propose_extract"];
 /// selects which detector produced the row. Symbol and call kernels need
 /// index.scip; they emit no rows if the index is absent.
 const PROPOSE_CLONE_RELS: [&str; 1] = ["propose_clone"];
-
-/// Field-tree Merkle hash per type name: `type_shape(name, hash)`. Two types
-/// with the same hash are field-tree-isomorphic — same arity, depth, and leaf
-/// shape, regardless of names. Built from `type_edge` (field/variant only);
-/// impl/generic excluded as cross-cutting. Fixpoint-iterated so recursive
-/// types (`struct List { tail: Box<List> }`) converge. Lazy: populates only
-/// when the program references `type_shape`, but forces `type_edge` to refresh
-/// first since it reads the edge set from the DB.
-const TYPE_SHAPE_RELS: [&str; 1] = ["type_shape"];
-
-/// Anti-unification (Plotkin LGG) per type pair: `type_lgg(a, b, vars)`. For
-/// every canonical pair (a < b) of distinct type names, `vars` is the count of
-/// fresh variables the LGG introduces — 0 for identical (filtered), 1 for a
-/// single-leaf difference, higher for more divergence. Two types with low vars
-/// are "near shape-iso": they generalize to a shared structure with few holes,
-/// candidates for a missing generic or shared abstraction. Lazy on type_edge.
-const TYPE_LGG_RELS: [&str; 1] = ["type_lgg"];
 
 /// Ref-spine query relations: thin views over the `_strings` / `_where_bytes`
 /// meta tables. `string(id, text, norm)` resolves an interned StringId to its
@@ -621,17 +592,13 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
         .chain(spine_rel_decls())
         .chain(node_rel_decls())
         .chain(crate::relkind::rel_kind_decls())
-        .chain(agent_rel_decls())
         .chain(embed_rel_decls())
         .chain(propose_extract_rel_decls())
         .chain(propose_clone_rel_decls())
-        .chain(type_shape_rel_decls())
-        .chain(type_lgg_rel_decls())
         .chain(daemon_rel_decls())
         .chain(every_rel_decls())
         .chain(clock_rel_decls())
         .chain(effect_rel_decls())
-        .chain(catalog_rel_decls())
         .collect()
 }
 
@@ -789,25 +756,6 @@ pub fn undocumented_fns() -> Vec<String> {
     missing
 }
 
-/// The self-describing catalog relations: one row per built-in relation
-/// (`rel_catalog`) and per scalar function (`fn_catalog`). Lazy like every other
-/// built-in group, so a program that never reads them pays nothing.
-const CATALOG_RELS: [&str; 2] = ["rel_catalog", "fn_catalog"];
-
-fn catalog_rel_decls() -> Vec<RelDecl> {
-    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
-    vec![
-        RelDecl { name: "rel_catalog".into(), cols: vec![
-            c("name", Type::Text), c("group", Type::Text),
-            c("cols", Type::Text), c("doc", Type::Text)] },
-        RelDecl { name: "fn_catalog".into(), cols: vec![
-            c("name", Type::Text), c("arity", Type::Int),
-            c("group", Type::Text), c("doc", Type::Text)] },
-    ]
-}
-
-fn catalog_rels_used(prog: &Program) -> bool { rels_used(prog, &CATALOG_RELS) }
-
 fn effect_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -958,16 +906,6 @@ fn scip_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
-fn agent_rel_decls() -> Vec<RelDecl> {
-    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
-    vec![
-        RelDecl { name: "agent_edit".into(), cols: vec![
-            c("harness", Type::Text), c("session", Type::Text), c("idx", Type::Int), c("path", Type::Path)] },
-        RelDecl { name: "agent_touch".into(), cols: vec![
-            c("harness", Type::Text), c("session", Type::Text), c("path", Type::Path)] },
-    ]
-}
-
 fn embed_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -992,22 +930,6 @@ fn propose_clone_rel_decls() -> Vec<RelDecl> {
                   cols: vec![c("kernel", Type::Text), c("path", Type::Path),
                              c("lo", Type::Int), c("hi", Type::Int),
                              c("param", Type::Text)] },
-    ]
-}
-
-fn type_shape_rel_decls() -> Vec<RelDecl> {
-    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
-    vec![
-        RelDecl { name: "type_shape".into(),
-                  cols: vec![c("name", Type::Text), c("hash", Type::Text)] },
-    ]
-}
-
-fn type_lgg_rel_decls() -> Vec<RelDecl> {
-    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
-    vec![
-        RelDecl { name: "type_lgg".into(),
-                  cols: vec![c("a", Type::Text), c("b", Type::Text), c("vars", Type::Int)] },
     ]
 }
 
@@ -1201,16 +1123,11 @@ fn spine_rels_used(prog: &Program) -> bool { rels_used(prog, &SPINE_RELS) }
 
 fn node_rels_used(prog: &Program) -> bool { rels_used(prog, &NODE_RELS) }
 
-fn agent_rels_used(prog: &Program) -> bool { rels_used(prog, &AGENT_RELS) }
 fn embed_rels_used(prog: &Program) -> bool { rels_used(prog, &EMBED_RELS) }
 
 fn propose_extract_rels_used(prog: &Program) -> bool { rels_used(prog, &PROPOSE_EXTRACT_RELS) }
 
 fn propose_clone_rels_used(prog: &Program) -> bool { rels_used(prog, &PROPOSE_CLONE_RELS) }
-
-fn type_shape_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_SHAPE_RELS) }
-
-fn type_lgg_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_LGG_RELS) }
 
 fn module_manifest_path(path: &str) -> bool {
     path.ends_with("Cargo.toml") || path.ends_with("package.json") || path.ends_with("tsconfig.json")
@@ -2654,7 +2571,7 @@ impl Engine {
             self.refresh_module_rels()?;
             phase("module-rels", t);
         }
-        if type_rels_used(prog) || type_shape_rels_used(prog) || type_lgg_rels_used(prog) || doc_text_rels_used(prog) {
+        if type_rels_used(prog) || rels_used(prog, &["type_shape", "type_lgg"]) || doc_text_rels_used(prog) {
             let t = std::time::Instant::now();
             self.refresh_type_rels()?;
             phase("type-rels", t);
@@ -2694,15 +2611,11 @@ impl Engine {
         for k in crate::relkind::rel_kinds() {
             if k.used(prog) { changed |= k.refresh(self)?; }
         }
-        if agent_rels_used(prog) { changed |= self.refresh_agent_rels()?; }
         if embed_rels_used(prog) { changed |= self.refresh_embed_rels()?; }
         if propose_extract_rels_used(prog) { changed |= self.refresh_propose_extract_rel()?; }
         if propose_clone_rels_used(prog) { changed |= self.refresh_propose_clone_rel()?; }
-        if type_shape_rels_used(prog) { changed |= self.refresh_type_shape_rel()?; }
-        if type_lgg_rels_used(prog) { changed |= self.refresh_type_lgg_rel()?; }
         if daemon_rels_used(prog) { self.refresh_daemon_rels()?; }
         if effect_rels_used(prog) { self.refresh_effect_rels()?; }
-        if catalog_rels_used(prog) { changed |= self.refresh_catalog_rel()?; }
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
 
         let t_der = std::time::Instant::now();
@@ -2967,7 +2880,7 @@ impl Engine {
         if files_changed {
             self.refresh_builtin_rels()?;
             for b in BUILTIN_RELS { changed_source_rels.insert(b.to_string()); }
-            if type_rels_used(prog) || type_shape_rels_used(prog) || type_lgg_rels_used(prog) || doc_text_rels_used(prog) {
+            if type_rels_used(prog) || rels_used(prog, &["type_shape", "type_lgg"]) || doc_text_rels_used(prog) {
                 self.refresh_type_rels()?;
                 for t in TYPE_RELS { changed_source_rels.insert(t.to_string()); }
                 for t in DOC_TEXT_RELS { changed_source_rels.insert(t.to_string()); }
@@ -3032,10 +2945,6 @@ impl Engine {
                 changed_facts = true;
             }
         }
-        if agent_rels_used(prog) && self.refresh_agent_rels()? {
-            for a in AGENT_RELS { changed_source_rels.insert(a.to_string()); }
-            changed_facts = true;
-        }
         if embed_rels_used(prog) && self.refresh_embed_rels()? {
             changed_source_rels.insert("similar".to_string());
             changed_facts = true;
@@ -3048,19 +2957,7 @@ impl Engine {
             changed_source_rels.insert("propose_clone".to_string());
             changed_facts = true;
         }
-        if type_shape_rels_used(prog) && self.refresh_type_shape_rel()? {
-            changed_source_rels.insert("type_shape".to_string());
-            changed_facts = true;
-        }
-        if type_lgg_rels_used(prog) && self.refresh_type_lgg_rel()? {
-            changed_source_rels.insert("type_lgg".to_string());
-            changed_facts = true;
-        }
         if daemon_rels_used(prog) { self.refresh_daemon_rels()?; }
-        if catalog_rels_used(prog) && self.refresh_catalog_rel()? {
-            changed_source_rels.insert("rel_catalog".to_string());
-            changed_facts = true;
-        }
         if changed_source_rels.is_empty() { changed_facts = false; }
 
         // Cold start (or empty derived/closure) needs a full rebuild; otherwise
@@ -3849,9 +3746,6 @@ impl Engine {
                         bail!("{} is {}; pick another name", d.name, k.reserved_msg());
                     }
                 }
-                if AGENT_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in agent-harness relation (agent_edit / agent_touch); pick another name", d.name);
-                }
                 if EMBED_RELS.contains(&d.name.as_str()) {
                     bail!("{} is the built-in embedding-similarity relation (similar); pick another name", d.name);
                 }
@@ -3861,12 +3755,6 @@ impl Engine {
                 if PROPOSE_CLONE_RELS.contains(&d.name.as_str()) {
                     bail!("{} is the built-in clone-detection relation; pick another name", d.name);
                 }
-                if TYPE_SHAPE_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is the built-in type-shape relation; pick another name", d.name);
-                }
-                if TYPE_LGG_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is the built-in type-lgg relation; pick another name", d.name);
-                }
                 if DAEMON_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in daemon-state relation (program / head / rev_advanced); pick another name", d.name);
                 }
@@ -3875,9 +3763,6 @@ impl Engine {
                 }
                 if CLOCK_RELS.contains(&d.name.as_str()) {
                     bail!("{} is the built-in clock relation (clock); pick another name", d.name);
-                }
-                if CATALOG_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is the built-in self-describing relation catalog (rel_catalog); pick another name", d.name);
                 }
                 match closures.get(&d.name) {
                     Some(edge) => self.declare_closure(d, edge)?,
@@ -3913,17 +3798,13 @@ impl Engine {
         self.db.conn().execute(
             &format!("CREATE INDEX IF NOT EXISTS node_file_span_idx ON {}(\"file\", \"lo\", \"hi\")", tbl("node")), [])?;
         for d in crate::relkind::rel_kind_decls() { self.declare(&d)?; }
-        for d in agent_rel_decls() { self.declare(&d)?; }
         for d in embed_rel_decls() { self.declare(&d)?; }
         for d in propose_extract_rel_decls() { self.declare(&d)?; }
         for d in propose_clone_rel_decls() { self.declare(&d)?; }
-        for d in type_shape_rel_decls() { self.declare(&d)?; }
-        for d in type_lgg_rel_decls() { self.declare(&d)?; }
         for d in daemon_rel_decls() { self.declare(&d)?; }
         for d in every_rel_decls() { self.declare(&d)?; }
         for d in clock_rel_decls() { self.declare(&d)?; }
         for d in effect_rel_decls() { self.declare(&d)?; }
-        for d in catalog_rel_decls() { self.declare(&d)?; }
         Ok(())
     }
 
@@ -4109,34 +3990,6 @@ impl Engine {
         let table = tbl(rel);
         self.db.exec(&format!("DELETE FROM {table}"))?;
         self.db.insert_rows(&table, cols, rows)
-    }
-
-    /// Populate the self-describing `rel_catalog`: one row per built-in relation,
-    /// joining the declarations (for the column list) with `builtin_rel_docs`
-    /// (for group + summary). Static — independent of any scanned file — so it is
-    /// the same every tick; emitted only when a program reads it. The columns are
-    /// rendered as `(a, b, c)` so a generator can splice them straight into a doc
-    /// table. Returns true (rows always present) to match the refresh-gate shape.
-    fn refresh_catalog_rel(&self) -> Result<bool> {
-        let docs: std::collections::HashMap<&str, (&str, &str)> =
-            builtin_rel_docs().iter().map(|(n, g, s)| (*n, (*g, *s))).collect();
-        let rows: Vec<Vec<Value>> = all_builtin_decls().iter().map(|d| {
-            let cols = format!("({})",
-                d.cols.iter().map(|c| c.name.clone()).collect::<Vec<_>>().join(", "));
-            let (group, summary) = docs.get(d.name.as_str()).copied().unwrap_or(("", ""));
-            vec![Value::Text(d.name.clone()), Value::Text(group.to_string()),
-                 Value::Text(cols), Value::Text(summary.to_string())]
-        }).collect();
-        self.refresh_rel("rel_catalog", &["name", "group", "cols", "doc"], &rows)?;
-
-        // fn_catalog: one row per scalar function, from fn_docs (the single source
-        // of function docs). Static like rel_catalog.
-        let fn_rows: Vec<Vec<Value>> = fn_docs().iter().map(|(n, a, g, d)| {
-            vec![Value::Text(n.to_string()), Value::Int(*a as i64),
-                 Value::Text(g.to_string()), Value::Text(d.to_string())]
-        }).collect();
-        self.refresh_rel("fn_catalog", &["name", "arity", "group", "doc"], &fn_rows)?;
-        Ok(true)
     }
 
     /// Project the persisted daemon-state meta tables (`_program` / `_ref` /
@@ -5648,54 +5501,6 @@ impl Engine {
         Ok(())
     }
 
-    /// Refresh `agent_edit` / `agent_touch` from the at-rest harness stores
-    /// (agent.rs). For each detected harness, read the newest session for this
-    /// repo and emit one `agent_edit` row per file edit (repo-relative, tagged
-    /// with harness + session + per-session turn idx); `agent_touch` is the rows
-    /// at `max(idx)` per session — the latest turn, still tagged (no broadcast).
-    /// Best-effort: a missing store yields no rows. Whole-set recompute compared
-    /// to stored, early-out when unchanged so an incremental tick rebuilds only
-    /// when the latest turn moved.
-    fn refresh_agent_rels(&self) -> Result<bool> {
-        let root = std::fs::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone());
-        let mut edits: Vec<(String, String, i64, String)> = Vec::new(); // harness, session, idx, path
-        let mut touch: Vec<(String, String, String)> = Vec::new();      // harness, session, path @ max idx
-        for h in crate::agent::agent_harnesses() {
-            let hn = h.name().to_string();
-            for sess in h.sessions_for(&root) {
-                let maxidx = sess.edits.iter().map(|e| e.idx).max();
-                for e in &sess.edits {
-                    edits.push((hn.clone(), sess.id.clone(), e.idx, e.path.clone()));
-                    if Some(e.idx) == maxidx {
-                        touch.push((hn.clone(), sess.id.clone(), e.path.clone()));
-                    }
-                }
-            }
-        }
-        edits.sort(); edits.dedup();
-        touch.sort(); touch.dedup();
-        // Early-out: compare agent_edit (the superset) against what is stored.
-        let existing: Vec<(String, String, i64, String)> = {
-            let conn = self.db.conn();
-            let mut s = conn.prepare(&format!(
-                "SELECT \"harness\", \"session\", \"idx\", \"path\" FROM {} ORDER BY 1,2,3,4",
-                tbl("agent_edit")))?;
-            let rows = s.query_map([], |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?)))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
-        if existing == edits { return Ok(false); }
-        let edit_rows: Vec<Vec<Value>> = edits.into_iter()
-            .map(|(h, s, i, p)| vec![Value::Text(h), Value::Text(s), Value::Int(i), Value::Text(p)])
-            .collect();
-        self.refresh_rel("agent_edit", &["harness", "session", "idx", "path"], &edit_rows)?;
-        let touch_rows: Vec<Vec<Value>> = touch.into_iter()
-            .map(|(h, s, p)| vec![Value::Text(h), Value::Text(s), Value::Text(p)])
-            .collect();
-        self.refresh_rel("agent_touch", &["harness", "session", "path"], &touch_rows)?;
-        Ok(true)
-    }
-
     /// Refresh `propose_extract(path, lo, hi, param)` — for every scanned Rust
     /// file, run the proposer (verbatim dup-block detection + lexical-scope
     /// free-var inference) and store one row per (block, param). Whole-corpus:
@@ -5830,94 +5635,6 @@ impl Engine {
             })
             .collect();
         self.refresh_rel("propose_clone", &["kernel", "path", "lo", "hi", "param"], &rows)?;
-        Ok(true)
-    }
-
-    /// Rebuild `type_shape(name, hash)` from the current `type_edge` rows.
-    /// Reads the edge set out of the DB, hands it to `typegraph::type_shape_hashes`
-    /// (fixpoint Merkle), and writes one row per name. Returns false if the
-    /// computed set matches what's already stored.
-    fn refresh_type_shape_rel(&self) -> Result<bool> {
-        // Read the full edge set: (from, to, kind).
-        let edges: Vec<(String, String, String)> = {
-            let conn = self.db.conn();
-            let mut s = conn.prepare(&format!(
-                "SELECT \"from\",\"to\",\"kind\" FROM {}", tbl("type_edge")
-            ))?;
-            let rows = s.query_map([], |r| Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-            )))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
-        let computed: Vec<(String, String)> = typegraph::type_shape_hashes(&edges);
-        let stored: Vec<(String, String)> = {
-            let conn = self.db.conn();
-            let mut s = conn.prepare(&format!(
-                "SELECT \"name\",\"hash\" FROM {} ORDER BY \"name\",\"hash\"",
-                tbl("type_shape")
-            ))?;
-            let rows = s.query_map([], |r| Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-            )))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
-        if stored == computed {
-            return Ok(false);
-        }
-        let rows: Vec<Vec<Value>> = computed
-            .into_iter()
-            .map(|(n, h)| vec![Value::Text(n), Value::Text(h)])
-            .collect();
-        self.refresh_rel("type_shape", &["name", "hash"], &rows)?;
-        Ok(true)
-    }
-
-    /// Rebuild `type_lgg(a, b, vars)` from the resolved type graph.
-    ///
-    /// Uses `type_link` (SCIP-resolved syms) instead of `type_edge` (bare names)
-    /// so the LGG can recurse into resolved local types. Unresolved types
-    /// (std/external: `HashMap`, `Vec`, `String`) stay as leaves — correct,
-    /// since they have no local structure to compare. Two fields that resolve
-    /// to the same local type sym now produce 0 vars instead of 1, eliminating
-    /// the leaf-noise that drowned the bare-name LGG.
-    fn refresh_type_lgg_rel(&self) -> Result<bool> {
-        let edges: Vec<(String, String, String)> = {
-            let conn = self.db.conn();
-            let mut s = conn.prepare(&format!(
-                "SELECT \"src\",\"dst\",\"kind\" FROM {}", tbl("type_link")
-            ))?;
-            let rows = s.query_map([], |r| Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-            )))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
-        let computed: Vec<(String, String, i64)> = typegraph::type_lgg_pairs(&edges);
-        let stored: Vec<(String, String, i64)> = {
-            let conn = self.db.conn();
-            let mut s = conn.prepare(&format!(
-                "SELECT \"a\",\"b\",\"vars\" FROM {} ORDER BY \"a\",\"b\",\"vars\"",
-                tbl("type_lgg")
-            ))?;
-            let rows = s.query_map([], |r| Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, i64>(2)?,
-            )))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
-        if stored == computed {
-            return Ok(false);
-        }
-        let rows: Vec<Vec<Value>> = computed
-            .into_iter()
-            .map(|(a, b, v)| vec![Value::Text(a), Value::Text(b), Value::Int(v)])
-            .collect();
-        self.refresh_rel("type_lgg", &["a", "b", "vars"], &rows)?;
         Ok(true)
     }
 
