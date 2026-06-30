@@ -1,0 +1,59 @@
+# coupling-metrics.dl — the dogfood instrument. dl measures engine.rs's OWN
+# RelKind coupling so the Phase-1 trait extraction has a before/after number.
+# All facts via the tree-sitter `ast` backend (structural, not regex): a comment
+# that says `refresh_foo_rel` is not a function_item, a string is not a call.
+#
+# What it measures, and what Phase 1 (extract `trait RelKind`) does to it:
+#   relkind_* family   ~93 near-identical methods/consts  ->  1 trait + 24 impls
+#   dispatch_*         the hand-written fan-out from tick  ->  1 registry loop
+# So after the refactor, dispatch_refresh + dispatch_used collapse toward 0
+# (replaced by `for k in REGISTRY { k.refresh(self) }`), and the family counts
+# move from free functions into trait-impl methods. Re-run; diff the snapshot.
+#
+#   Run:  dl examples/coupling-metrics.dl --root .   (from v5/)
+
+# --- the RelKind family: the dup-shape that becomes trait impls --------------
+rel relkind_decl(name: text).
+relkind_decl(name) <- scan("WORK", "src/engine.rs", p, rev),
+    ast(p, rev, :rust, "(function_item name: (identifier) @name)", line),
+    name =~ /_rel_decls$/.
+rel relkind_used(name: text).
+relkind_used(name) <- scan("WORK", "src/engine.rs", p, rev),
+    ast(p, rev, :rust, "(function_item name: (identifier) @name)", line),
+    name =~ /_rels_used$/.
+rel relkind_refresh(name: text).
+relkind_refresh(name) <- scan("WORK", "src/engine.rs", p, rev),
+    ast(p, rev, :rust, "(function_item name: (identifier) @name)", line),
+    name =~ /^refresh_.*_rels?$/.
+rel relkind_const(name: text).
+relkind_const(name) <- scan("WORK", "src/engine.rs", p, rev),
+    ast(p, rev, :rust, "(const_item name: (identifier) @name)", line),
+    name =~ /_RELS$/.
+
+# --- the dispatch fan-out: the coupling the trait+registry collapses ---------
+# Each `self.refresh_X_rel(...)` call site (a field_expression call) and each
+# `X_rels_used(...)` gate. `_` keeps the line, so count() tallies SITES, not the
+# (smaller) set of distinct callees.
+rel dispatch_refresh(callee: text, line: int).
+dispatch_refresh(callee, line) <- scan("WORK", "src/engine.rs", p, rev),
+    ast(p, rev, :rust,
+        "(call_expression function: (field_expression field: (field_identifier) @callee))", line),
+    callee =~ /^refresh_.*_rels?$/.
+rel dispatch_used(callee: text, line: int).
+dispatch_used(callee, line) <- scan("WORK", "src/engine.rs", p, rev),
+    ast(p, rev, :rust, "(call_expression function: (identifier) @callee)", line),
+    callee =~ /_rels_used$/.
+
+# --- the snapshot: one metric row per number --------------------------------
+rel metric(name: text, n: int).
+metric("relkind_decls",    count(x)) <- relkind_decl(x).
+metric("relkind_used",     count(x)) <- relkind_used(x).
+metric("relkind_refresh",  count(x)) <- relkind_refresh(x).
+metric("relkind_consts",   count(x)) <- relkind_const(x).
+metric("dispatch_refresh", count(c)) <- dispatch_refresh(c, _).
+metric("dispatch_used",    count(c)) <- dispatch_used(c, _).
+
+? metric(name, n).
+
+# Versioned before/after artifact: re-run after each refactor phase, diff the md.
+gen("examples/_auto-doc/coupling-metrics.md", "- {name}: {n}") <- metric(name, n).
