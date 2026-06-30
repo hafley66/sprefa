@@ -371,6 +371,7 @@ pub fn builtin_rel_docs() -> &'static [(&'static str, &'static str, &'static str
         // agent-harness rails (from the at-rest session store).
         ("agent_edit", "agent", "every file edit in the latest agent turn, tagged harness+session+turn idx (from the at-rest harness store)"),
         ("agent_touch", "agent", "the latest agent turn's edited files (harness, session, path)"),
+        ("skill_loaded", "agent", "skills loaded in the newest agent session (harness, session, name): explicit Skill tool calls + dl's own prior `dl --hook` injections — negate it for a declarative load-once guard"),
         // misc derived sources.
         ("created", "created", "files added since their first appearance, with author name/email/timestamp"),
         ("similar", "embed", "content-addressed nearest-neighbor pairs from the embedding backend, with score"),

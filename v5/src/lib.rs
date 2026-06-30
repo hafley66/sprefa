@@ -12,6 +12,7 @@ pub mod embed;
 pub mod engine;
 pub mod effect;
 pub mod frontend;
+pub mod hook;
 pub mod ingest;
 pub mod ktpath;
 pub mod lex;

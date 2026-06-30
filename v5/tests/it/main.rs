@@ -21,6 +21,7 @@ mod created_perf;
 mod cst_node_perf;
 mod dl_diag;
 mod cst_node_rel;
+mod hook_inject;
 mod daemon;
 mod daemon_stateful_revs;
 mod data_driven_scan;

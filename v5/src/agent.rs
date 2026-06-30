@@ -32,6 +32,10 @@ pub trait AgentHarness {
     /// Newest session for `repo_root` (absolute), best-effort: a missing store
     /// or parse error yields an empty Vec, never an error.
     fn sessions_for(&self, repo_root: &Path) -> Vec<AgentSession>;
+    /// Skills loaded in the newest session, as (session_id, skill_name): explicit
+    /// `Skill` tool calls plus dl's own prior hook injections. Default none (a
+    /// harness whose store we can't read for skills).
+    fn skill_loads(&self, _repo_root: &Path) -> Vec<(String, String)> { vec![] }
 }
 
 pub fn agent_harnesses() -> Vec<Box<dyn AgentHarness>> {
@@ -88,8 +92,66 @@ pub fn cc_edits_from_text(text: &str, repo_root: &Path) -> Vec<TurnEdit> {
     edits
 }
 
+/// The newest `.jsonl` transcript for `repo_root`, or None. Shared by the
+/// edit reader and the skill-load reader.
+fn cc_newest_transcript(repo_root: &Path) -> Option<PathBuf> {
+    let base = match std::env::var_os("SPREFA_CLAUDE_PROJECTS") {
+        Some(p) => PathBuf::from(p),
+        None => home()?.join(".claude").join("projects"),
+    };
+    let rd = std::fs::read_dir(base.join(cc_slug(repo_root))).ok()?;
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    for ent in rd.flatten() {
+        let p = ent.path();
+        if p.extension().and_then(|e| e.to_str()) != Some("jsonl") { continue; }
+        let Ok(mt) = ent.metadata().and_then(|m| m.modified()) else { continue };
+        if newest.as_ref().map_or(true, |(t, _)| mt > *t) { newest = Some((mt, p)); }
+    }
+    newest.map(|(_, p)| p)
+}
+
+/// Skills loaded in the newest Claude Code transcript, as (session_id,
+/// skill_name): explicit `Skill` tool calls PLUS dl's own past hook injections
+/// (the `additionalContext` marker lands in the transcript). Powers the built-in
+/// `skill_loaded` relation behind the hook's declarative "load once" guard.
+pub fn cc_skill_loads(repo_root: &Path) -> Vec<(String, String)> {
+    let Some(path) = cc_newest_transcript(repo_root) else { return vec![] };
+    let sid = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let Ok(text) = std::fs::read_to_string(&path) else { return vec![] };
+    let mut out = Vec::new();
+    for line in text.lines() {
+        // dl's own injection: the additionalContext marker is recorded verbatim.
+        if line.contains("(auto-loaded by dl --hook)") {
+            if let Some(name) = marker_skill(line) { out.push((sid.clone(), name)); }
+        }
+        // an explicit `Skill` tool call
+        let Ok(rec) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        if rec.get("type").and_then(|v| v.as_str()) != Some("assistant") { continue; }
+        let Some(content) = rec.pointer("/message/content").and_then(|v| v.as_array()) else { continue };
+        for c in content {
+            if c.get("type").and_then(|v| v.as_str()) != Some("tool_use") { continue; }
+            if c.get("name").and_then(|v| v.as_str()) != Some("Skill") { continue; }
+            if let Some(name) = c.pointer("/input/skill").and_then(|v| v.as_str()) {
+                out.push((sid.clone(), name.to_string()));
+            }
+        }
+    }
+    out
+}
+
+/// Pull `<name>` from a `Skill \`<name>\` (auto-loaded by dl --hook)` marker line.
+fn marker_skill(line: &str) -> Option<String> {
+    let i = line.find("Skill `")? + "Skill `".len();
+    let rest = &line[i..];
+    let j = rest.find('`')?;
+    Some(rest[..j].to_string())
+}
+
 impl AgentHarness for ClaudeCodeJsonl {
     fn name(&self) -> &'static str { "claude-code" }
+    fn skill_loads(&self, repo_root: &Path) -> Vec<(String, String)> {
+        cc_skill_loads(repo_root)
+    }
     fn sessions_for(&self, repo_root: &Path) -> Vec<AgentSession> {
         // SPREFA_CLAUDE_PROJECTS overrides ~/.claude/projects (testing / non-std).
         let base = match std::env::var_os("SPREFA_CLAUDE_PROJECTS") {

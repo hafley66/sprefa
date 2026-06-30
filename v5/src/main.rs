@@ -38,6 +38,13 @@ struct Cli {
     /// a broken program. For pre-commit / CI / Claude Code hooks. See docs/rails.md.
     #[arg(long)]
     check: bool,
+    /// Harness-hook mode: read a Claude Code hook event (PostToolUse JSON) on
+    /// stdin, tick the rules, emit the hook output (additionalContext / block)
+    /// on stdout. The program heads `inject`/`inject_skill`/`block` over the
+    /// agent built-ins. The condition is a dl rule; no editor, no bash. See
+    /// docs/skill-injection.md.
+    #[arg(long)]
+    hook: bool,
     /// Like --check but emit the diagnostics as a JSON array on stdout.
     #[arg(long)]
     diag_json: bool,
@@ -228,6 +235,11 @@ fn main() -> Result<()> {
     let program = cli.programs.first().map(|s| s.as_str());
     if cli.lsp || cli.stdio {
         sprefa_v5::run_lsp(program, db.as_deref(), root)
+    } else if cli.hook {
+        // Harness-hook: stdin event -> tick -> stdout hook JSON. Exit 0 normally
+        // (block rides the JSON), 1 if the program is broken (user-facing only).
+        let code = sprefa_v5::hook::run_hook(program, db.as_deref(), root)?;
+        std::process::exit(code);
     } else if cli.check || cli.diag_json {
         // Exit contract: 0 clean, 2 rail violations (Claude Code's blocking-hook
         // code; stderr feeds the agent), 1 broken program (user-facing).

@@ -19,7 +19,7 @@ pub struct AgentKind;
 
 impl RelKind for AgentKind {
     fn rels(&self) -> &'static [&'static str] {
-        &["agent_edit", "agent_touch"]
+        &["agent_edit", "agent_touch", "skill_loaded"]
     }
     fn decls(&self) -> Vec<RelDecl> {
         vec![
@@ -29,15 +29,19 @@ impl RelKind for AgentKind {
             RelDecl { name: "agent_touch".into(), cols: vec![
                 col("harness", Type::Text), col("session", Type::Text),
                 col("path", Type::Path)] },
+            RelDecl { name: "skill_loaded".into(), cols: vec![
+                col("harness", Type::Text), col("session", Type::Text),
+                col("name", Type::Text)] },
         ]
     }
     fn reserved_msg(&self) -> &'static str {
-        "a built-in agent-harness relation (agent_edit / agent_touch)"
+        "a built-in agent-harness relation (agent_edit / agent_touch / skill_loaded)"
     }
     fn refresh(&self, eng: &Engine) -> Result<bool> {
         let root = std::fs::canonicalize(&eng.root).unwrap_or_else(|_| eng.root.clone());
         let mut edits: Vec<(String, String, i64, String)> = Vec::new(); // harness, session, idx, path
         let mut touch: Vec<(String, String, String)> = Vec::new();      // harness, session, path @ max idx
+        let mut skills: Vec<(String, String, String)> = Vec::new();     // harness, session, skill name
         for h in crate::agent::agent_harnesses() {
             let hn = h.name().to_string();
             for sess in h.sessions_for(&root) {
@@ -49,12 +53,16 @@ impl RelKind for AgentKind {
                     }
                 }
             }
+            for (sid, name) in h.skill_loads(&root) {
+                skills.push((hn.clone(), sid, name));
+            }
         }
         edits.sort(); edits.dedup();
         touch.sort(); touch.dedup();
-        // Early-out: compare agent_edit (the superset) against what is stored.
-        let existing: Vec<(String, String, i64, String)> = {
-            let conn = eng.db.conn();
+        skills.sort(); skills.dedup();
+        // Early-out: nothing refreshes unless edits OR skill loads changed.
+        let conn = eng.db.conn();
+        let existing_edits: Vec<(String, String, i64, String)> = {
             let mut s = conn.prepare(&format!(
                 "SELECT \"harness\", \"session\", \"idx\", \"path\" FROM {} ORDER BY 1,2,3,4",
                 tbl("agent_edit")))?;
@@ -62,7 +70,14 @@ impl RelKind for AgentKind {
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?)))?;
             rows.filter_map(|x| x.ok()).collect()
         };
-        if existing == edits { return Ok(false); }
+        let existing_skills: Vec<(String, String, String)> = {
+            let mut s = conn.prepare(&format!(
+                "SELECT \"harness\", \"session\", \"name\" FROM {} ORDER BY 1,2,3", tbl("skill_loaded")))?;
+            let rows = s.query_map([], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
+            rows.filter_map(|x| x.ok()).collect()
+        };
+        if existing_edits == edits && existing_skills == skills { return Ok(false); }
         let edit_rows: Vec<Vec<Value>> = edits.into_iter()
             .map(|(h, s, i, p)| vec![Value::Text(h), Value::Text(s), Value::Int(i), Value::Text(p)])
             .collect();
@@ -71,6 +86,10 @@ impl RelKind for AgentKind {
             .map(|(h, s, p)| vec![Value::Text(h), Value::Text(s), Value::Text(p)])
             .collect();
         eng.refresh_rel("agent_touch", &["harness", "session", "path"], &touch_rows)?;
+        let skill_rows: Vec<Vec<Value>> = skills.into_iter()
+            .map(|(h, s, n)| vec![Value::Text(h), Value::Text(s), Value::Text(n)])
+            .collect();
+        eng.refresh_rel("skill_loaded", &["harness", "session", "name"], &skill_rows)?;
         Ok(true)
     }
 }
