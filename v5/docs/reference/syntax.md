@@ -20,8 +20,10 @@ Source ops (extract facts from files), body constructs (derived rules), and sink
 | `jsonp` | source | `jsonp(path, rev, "a.*.b", out)` | dotted path over json/yaml/toml (* = any key/element); the value is located; the string form of json |
 | `match` | source | `match(path, rev, /re/, line[, id][, col, end_col])` | regex over file content, one row per match line; (?<cap>..) named groups bind dl vars; $cap is sugar for a lazy named group; trailing id/col bind the whole-match span |
 | `negation` | body | `!round(t, _)` | negation / anti-join; the row must NOT exist in the relation |
+| `node2vec` | body | `head(a, b, score) <- node2vec(edge)` | structural graph embedding of a 2-col relation as the entire body; binds node pairs with a similarity score (the graph-position sibling of the text `similar` rel); evaluated outside SQL |
 | `query` | sink | `? rel(a, b).` | print a TSV block (or JSON-lines with --query-json); a literal in any position filters; no where clause |
 | `regex` | body | `f =~ /^[A-Za-z]+$/` | regex constraint (SQLite REGEXP); the /.../ unified regex literal, same form match/comment/sg use |
 | `scan` | source | `scan([repo,][rev,] glob, path, rev_out)` | select files; 3-ary defaults repo="."/rev="WORK", 5-ary names a repo coordinate; rev ∈ WORK/HEAD/any git rev |
+| `scc` | body | `head(rep, member) <- scc(edge)` | strongly-connected-component condensation of a 2-col relation as the entire body; binds (representative, member) per node; mirrors closure, evaluated outside SQL |
 | `sg` | source | `sg(path, rev, :lang, "$X.unwrap()", line[, col, end_line, end_col][, id])` | ast-grep pattern; metavar $X binds dl var X (matched text); trailing id binds the whole-match span for structural rewrite via gen(:replace) |
 | `strfn` | body | `split(text, sep, idx) / replace(text, from, to)` | string functions in heads and comparison sides; idx 0-based, negative counts from the end; a computed binding (ext = split(p, ".", -1)) binds for later use in the same body |

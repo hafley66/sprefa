@@ -8,9 +8,11 @@
 #   gen      — renders rows between the markers, in place
 #
 # BEGIN: fanout
-# | BodyItem | 11 |
-# | Engine | 10 |
-# | Tok | 23 |
+# | BodyItem | 16 |
+# | Daemon | 12 |
+# | Engine | 13 |
+# | ProjectCx | 11 |
+# | Tok | 30 |
 # END:
 # (the table lands between the markers above, as `# | type | n |` rows)
 

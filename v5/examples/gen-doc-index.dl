@@ -36,10 +36,17 @@
 # - md  Auto-refactor track (parallel, OFF the critical path)  (v5/plans/2026-06-01-programmable-lsp-ops-frontend-arc.md)
 # - md  Beyond Manual Paging  (v5/book/beyond-manual-paging/README.md)
 # - md  Beyond code: dl as a personal datalog/sqlite/rust monster  (v5/plans/2026-06-11-beyond-code-domains.md)
+# - md  Built-in relations  (v5/docs/reference/relations.md)
 # - md  CozoDB storage-backend abstraction (for sprefa `RelStore`)  (v5/docs/ext-cozo-storage-trait.md)
+# - md  Cross-codebase validation — rust-analyzer fixture  (v5/research/refactor-reward/cross_codebase_validation.md)
 # - md  Cycles  (v5/anim/src/deck/02-cycles.md)
 # - md  DBSP (Feldera) as a reuse target for sprefa v5's incremental-retraction layer  (v5/docs/ext-dbsp-incremental.md)
 # - md  Daemon mode + menu bar (cross-platform)  (v5/plans/2026-06-21-daemon-and-menu-bar.md)
+# - md  Daemon mode + the full CLI  (v5/docs/daemon.md)
+# - md  Decomposition objectives and cross-domain techniques  (v5/research/2026-06-26-cross-domain-decomposition-techniques.md)
+# - md  Dynamic reaching  (v5/docs/dynamic-reaching.md)
+# - md  Engine god-object diagnosis: coupling scores + field-coverage decomposition  (v5/research/2026-06-26-engine-god-object-decomposition.md)
+# - md  Examples  (v5/docs/reference/examples.md)
 # - md  Filesystem  (v5/anim/src/deck/04-filesystem.md)
 # - md  Further study  (v5/book/further-study.md)
 # - md  Glossary  (v5/anim/src/glossary.md)
@@ -54,6 +61,7 @@
 # - md  Making an LSP server easy, not a labyrinth — three Rust approaches  (v5/docs/ext-lsp-made-easy.md)
 # - md  North star: types, modules, parsers, and the LSP/info channel  (v5/plans/2026-06-18-north-star-types-modules-parsers.md)
 # - md  Open questions (resolve before coding each phase)  (v5/plans/2026-06-01-programmable-lsp-ops-frontend-arc.md)
+# - md  PaymentClient  (v5/bench/seams/corpus/docs/payments.md)
 # - md  Perf variant analysis: overfitting a rule to a bug  (v5/docs/perf-variant-analysis.md)
 # - md  Phase 0 — Lowering contract (1 doc, no code)  (v5/plans/2026-06-01-programmable-lsp-ops-frontend-arc.md)
 # - md  Phase A — Ops authoring frontend + lint std-lib (THE KEYSTONE)  (v5/plans/2026-06-01-programmable-lsp-ops-frontend-arc.md)
@@ -68,43 +76,78 @@
 # - md  Phase F - Full SCIP descriptor unpack (deferred, on demand)  (v5/plans/2026-06-18-north-star-types-modules-parsers.md)
 # - md  Phase G - CSS/XPath selector op + `rs:` symbol scheme (candidates)  (v5/plans/2026-06-18-north-star-types-modules-parsers.md)
 # - md  Piloting haiku from dl: the model as a cached per-file UDF  (v5/plans/2026-06-11-haiku-blade.md)
+# - md  Plan: Effect BOM + JSX/effect taint + string builtins (zoom 2)  (v5/plans/2026-06-29-effect-bom-jsx-taint.md)
+# - md  Plan: `sh` template decls + the effect runtime increments  (v5/plans/2026-06-29-sh-template-effect-runtime.md)
 # - md  Portable reactive/retraction core — does v5 have one, what would it cost  (v5/docs/research-portable-reactive-core.md)
+# - md  Prior-Art Survey: sprefa — Datalog refactor recipes calibrated against git history  (v5/research/2026-06-26-prior-art-temporal-refactor-validation.md)
 # - md  Programmable-LSP arc: ops authoring frontend + incremental closures + real LSP  (v5/plans/2026-06-01-programmable-lsp-ops-frontend-arc.md)
 # - md  Reachability  (v5/anim/src/deck/01-reachability.md)
+# - md  Reactive / effectful datalog — what it takes to usurp ghcacher  (v5/docs/research-reactive-effectful-datalog.md)
 # - md  Reactive Facts  (v5/book/README.md)
+# - md  Recall Ratchet: diet vs rust-analyzer oracle at FILE granularity  (v5/research/recall-ratchet.md)
+# - md  Refactor exploration with dl — a formula  (v5/docs/refactor-exploration.md)
+# - md  Refactor log — manual Q-learning table  (v5/research/refactor-reward/refactor_log.md)
+# - md  Refactor reward: raw LOC vs structural metrics  (v5/research/2026-06-26-refactor-reward-loc-vs-structural.md)
 # - md  Relations  (v5/anim/src/deck/03-relations.md)
 # - md  Round 2 deep dives (2026-05-21)  (v5/research/2026-05-21-incremental-reactive-datalog-landscape.md)
+# - md  SCIP perf — measured on v5, 2026-06-30  (v5/bench/scip_perf_results.md)
 # - md  SQLite × Graph / Datalog / Reactive Query Engines — Landscape for sprefa v5  (v5/docs/research-sqlite-graph-landscape.md)
+# - md  Scalar functions  (v5/docs/reference/functions.md)
+# - md  Seam benchmark  (v5/bench/seams/README.md)
 # - md  Sequencing + the no-6th-rewrite property  (v5/plans/2026-06-01-programmable-lsp-ops-frontend-arc.md)
 # - md  Sequencing summary  (v5/plans/2026-06-18-north-star-types-modules-parsers.md)
 # - md  Starter lint pack — ast-grep → LSP  (v5/examples/lints/README.md)
+# - md  Syntax & semantics  (v5/docs/reference/syntax.md)
 # - md  The data model (the contract)  (v5/docs/data-model.md)
 # - md  The math behind the engine  (v5/book/math/README.md)
 # - md  This session  (v5/anim/src/deck/06-this-session.md)
 # - md  Typed path literals + agg + LSP routing — implementation contract  (v5/plans/2026-06-11-typed-paths-impl.md)
+# - md  Variable-name signal extraction  (v5/research/2026-06-26-variable-name-signal-extraction.md)
 # - md  datafrog as a `MemStore` backend behind a `RelStore` seam  (v5/docs/ext-datafrog-memstore.md)
 # - md  dl LSP  (v5/editors/vscode-dl/README.md)
 # - md  frame-anim  (v5/anim/README.md)
+# - md  node2vec reactive perf — keep the embed off the hot path + guard the anti-pattern  (v5/plans/2026-06-29-node2vec-reactive-perf.md)
 # - md  petgraph swap for scc.rs  (v5/docs/ext-petgraph-scc-swap.md)
+# - md  sprefa `dl` — datalog over code  (v5/assets/sprefa-dl.skill.md)
 # - md  sprefa v5 (`dl`)  (v5/README.md)
 # - md  v5 study tracker (`ls -la`)  (v5/research/STUDY.md)
 # - md  v5cozokuzu  (v5/src/v5cozokuzu/README.md)
-# - rs  v5/src/bin/scc_reach.rs:1  E4 proof: SCC-condensed transitive closure over `rel_calls` in a SQLite db.
+# - rs  v5/src/agent.rs:1  Agent-harness session readers (the at-rest tier).
 # - rs  v5/src/comment.rs:1  Comment-marker regions: `comment(p, rev, /open/[, /close/], l0, l1, label)`.
 # - rs  v5/src/config.rs:1  Turnkey multi-repo config. A single TOML file lists the checkouts to analyze
+# - rs  v5/src/corpus.rs:1  The embedded `.dl` corpus: examples + std libs baked into the binary by
+# - rs  v5/src/cst.rs:1  CST-as-relation (christmas #3): the whole-tree enumeration that backs the
 # - rs  v5/src/daemon.rs:1  Long-lived daemon mode + spawn-if-missing client.
 # - rs  v5/src/datapath.rs:1  Data-file extraction over json/yaml/toml: `jsonp` is the dotted-path
 # - rs  v5/src/desc.rs:1  Descriptors: the canonical value a typed path literal (`fs:`/`glob:`) resolves
+# - rs  v5/src/effect.rs:1  The `@async` / `@stream` / `sh` effect runtime, extracted from engine.rs
+# - rs  v5/src/embed/candle_be.rs:1  candle backend (pure-Rust inference, local model weights). Compiled only
+# - rs  v5/src/embed/fastembed_be.rs:1  fastembed backend (ONNX models, offline after first model download).
+# - rs  v5/src/embed/mod.rs:1  Embedding backends behind a compile-time feature switch.
+# - rs  v5/src/embed/node2vec.rs:1  Structural node embeddings (DeepWalk / node2vec) — the graph sibling of the
+# - rs  v5/src/embed/stub.rs:1  Deterministic hashed pseudo-embedding. The shipped default: zero deps, no
+# - rs  v5/src/engine/extract.rs:1  Built-in graph/CST/spine/daemon extractor methods on `Engine`, lifted out of
+# - rs  v5/src/engine/tick.rs:1  The reactive tick orchestrator: `tick` (full) and `tick_paths` (incremental),
 # - rs  v5/src/frontend.rs:1  Module surface: `use` inclusion + canonical-path dedup. The smallest viable
 # - rs  v5/src/ingest/mod.rs:1  Document ingestion: a registry of grammars that emit structural relations
 # - rs  v5/src/ktpath.rs:1  Kotlin move-refactor path math. A Kotlin import is `package.Decl` and the
 # - rs  v5/src/lsp.rs:1  LSP server mode: turn a `.dl` program's `diag` relation into live editor
 # - rs  v5/src/modgraph.rs:1  Cross-language module dependency graph: "the filesystem from language, as
+# - rs  v5/src/propose.rs:1  Extract-function proposer (Track 2): over a file's source, find verbatim
 # - rs  v5/src/refactor.rs:1  The auto-refactor edit sink (Route A). Turns located `use`-path spans into
+# - rs  v5/src/rels/analysis.rs:1  Analysis-derived relations: `agent_edit`/`agent_touch`, `dl_diag`,
+# - rs  v5/src/rels/catalog.rs:1  Self-describing catalog relations: `rel_catalog`, `fn_catalog`, `op_catalog`.
+# - rs  v5/src/rels/embed.rs:1  Embedding-similarity relation: `similar`.
+# - rs  v5/src/rels/git.rs:1  Git-derived worktree relations: `changed`, `changed_line`, `created`.
+# - rs  v5/src/rels/mod.rs:1  Built-in source-relation families behind one trait.
+# - rs  v5/src/rels/propose.rs:1  Clone-proposer relations: `propose_extract`, `propose_clone`.
+# - rs  v5/src/rels/scip.rs:1  SCIP-importer relations, loaded from an existing `index.scip` (reload-gated).
 # - rs  v5/src/repo.rs:1  Repo-root discovery for `.dl` programs: `nearest_git` walks up from a path
 # - rs  v5/src/rpc.rs:1  JSON-RPC 2.0 over `Content-Length`-framed messages (LSP-style framing).
 # - rs  v5/src/rspath.rs:1  Rust `use`-path rewrite arithmetic for the auto-refactor sink (Route A).
 # - rs  v5/src/scc.rs:1  SCC-condensed transitive closure. Pure graph: no SQL, no engine types.
+# - rs  v5/src/setup.rs:1  `dl setup` — wire a (possibly prebuilt) `dl` binary into AI coding agents,
+# - rs  v5/src/trace.rs:1  Structured tracing (`tracing` crate). Off by default; enable with
 # - rs  v5/src/tray.rs:1  Menu bar tray for the daemon. macOS-only in v1; Windows + Linux are
 # - rs  v5/src/typecheck.rs:1  Lower-time path-literal normalization and rule type checking (spec T2).
 # - rs  v5/src/typegraph.rs:1  Diet type graph extractors. Intentionally syntax-only: parse a file (`syn`

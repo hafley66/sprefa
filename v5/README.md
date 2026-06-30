@@ -344,6 +344,7 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `df_edge` | dataflow | `(from, to)` | intra-procedural dataflow dependency edge |
 | `df_node` | dataflow | `(id, kind, var, fn, file, line)` | intra-procedural dataflow node (call_res/assign/...); id is file::line::kind |
 | `df_param` | dataflow | `(id, pos)` | (param df_node id, positional index); index counts typed params only (self skipped) so it aligns with type_sig.pos for node-level type joins |
+| `dl_diag` | meta | `(path, line, col, end_line, end_col, severity, code, msg)` | parse/type diagnostics for each scanned `.dl` file (path, line, col, end_line, end_col, severity, code, msg); the engine's own lexer/parser/typechecker run over `file` rows ending in `.dl`, byte spans mapped to 1-based line / 0-based col — join agent_changed for lint-on-edit |
 | `doc_comment` | type | `(repo, sym, line, text)` | doc comment per type_entity sym: (repo, sym, line, text); AST-located per language (Rust #[doc] attrs, Kotlin KDoc sibling, TS leading /** */) |
 | `doc_node` | doc | `(repo, file, line, kind, name, parent)` | structural nodes from non-source text (markdown headings + code blocks via tree-sitter-md: ATX/setext headings, fenced/indented blocks); parent is the enclosing heading |
 | `doc_ref` | doc | `(repo, file, line, sym, kind, matched_name)` | doc-to-code bridge: name-matches doc_node headings to type_entity symbols (exact + normalized) and scans code blocks for identifier mentions; empty unless the program also uses type relations |
@@ -351,6 +352,7 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `effect_log` | effect | `(id, kind, head, state, args, req_tx)` | the @async/@stream drain queue: one row per request (id, kind, head rel, state queued/running/done/failed, args JSON, req_tx); the dl-native call log, queryable live and parity-comparable to an external cache's call log |
 | `every` | clock | `(secs)` | holds interval N only on ticks that cross an N-second boundary (and the first tick); an every(30) body atom self-throttles its rule |
 | `file` | core | `(repo, rev, path, content)` | scanned files, keyed by (repo, rev, path, content) |
+| `fn_catalog` | meta | `(name, arity, group, doc)` | every scalar function callable in a head or comparison with its arity, group, and one-line doc; sourced from fn_docs |
 | `head` | daemon | `(repo, name, oid)` | git HEAD per repo (repo, ref name, oid) |
 | `loop_over` | dataflow | `(file, start, end, var, collection, fn)` | one row per loop with its span, iter var, and collection |
 | `module_edge` | module | `(src, dst)` | resolved file-to-file import graph (rev-deduped union) |
@@ -360,6 +362,7 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `module_unresolved_rev` | module | `(file, rev, specifier, reason, line)` | rev-aware module_unresolved |
 | `nest` | dataflow | `(call_id, loop_id, depth, collection)` | one row per (call, enclosing loop); depth is nesting rank (1=outermost); raw material for symbolic Big-O over call_edge |
 | `node` | node | `(id, kind, file, lo, hi, parent)` | CST nodes (nested-set spans): id, kind, file, lo, hi, parent |
+| `op_catalog` | meta | `(op, kind, syntax, doc)` | every body/sink op (source ops, derived constructs, sinks) with its syntax sketch and one-line semantics; sourced from op_docs |
 | `program` | daemon | `(path, hash, mtime)` | dl programs the daemon tracks (path, content hash, mtime) |
 | `propose_clone` | propose | `(kernel, path, lo, hi, param)` | proposed clone/near-duplicate groups keyed by a shared kernel |
 | `propose_extract` | propose | `(path, lo, hi, param)` | proposed extract-function refactor spans (path, lo, hi, param) |
@@ -607,7 +610,7 @@ between the markers.
 | [`callgraph.dl`](examples/callgraph.dl) | Call graph of dl's own source, discovered by pattern, queried as a graph. |
 | [`cli-doc.dl`](examples/cli-doc.dl) | cli-doc.dl — keep the README CLI flag table fresh from the clap `Cli` struct |
 | [`context-object.dl`](examples/context-object.dl) | context-object.dl — detect missing structs from local-name co-occurrence. |
-| [`coupling-metrics.dl`](examples/coupling-metrics.dl) | coupling-metrics.dl — the dogfood instrument. dl measures engine.rs's OWN |
+| [`coupling-metrics.dl`](examples/coupling-metrics.dl) | coupling-metrics.dl — the dogfood instrument. dl measures the engine module's |
 | [`dag-layers.dl`](examples/dag-layers.dl) | dag-layers.dl — longest-path topological tiering of the RA oracle file graph. |
 | [`debug_lgg.dl`](examples/debug_lgg.dl) | debug_lgg.dl — inspect what type_edge rows exist for specific types |
 | [`debug_type.dl`](examples/debug_type.dl) | debug_type.dl — check what's in type_edge and type_entity |
@@ -622,6 +625,7 @@ between the markers.
 | [`gen-doc-index.dl`](examples/gen-doc-index.dl) | gen-doc-index.dl — dogfoods the doc tools on v5's own docs + source. |
 | [`gen-engine-anchors.dl`](examples/gen-engine-anchors.dl) | gen-engine-anchors.dl — index dl's OWN language/engine features through dl's |
 | [`gen-reference.dl`](examples/gen-reference.dl) | gen-reference.dl — programmable rustdoc/jsdoc for the engine's OWN surface. |
+| [`gen-skill.dl`](examples/gen-skill.dl) | gen-skill.dl — generate a DYNAMIC skill page whose code references are CHECKED |
 | [`gen-type-table.dl`](examples/gen-type-table.dl) | The marker-splice codegen loop on v5's own type graph: keep a fan-out table |
 | [`gh-cache-batch.dl`](examples/gh-cache-batch.dl) | gh-cache-batch.dl — ghcacher's API-COST-AT-SCALE feature: the BATCHED PR sweep. |
 | [`gh-cache-config.dl`](examples/gh-cache-config.dl) | gh-cache-config.dl — the reusable/configurable ghcacher: the watch set comes |
