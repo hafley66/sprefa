@@ -1,0 +1,39 @@
+# lint-dl-self.dl — dl validates dl, scoped to what the agent just edited.
+#
+# `dl_diag(path, line, col, end_line, end_col, severity, code, msg)` runs the
+# engine's OWN lexer/parser/typechecker over every scanned `.dl` file (the same
+# pass as `dl --check`), so a broken `.dl` gets a positioned squiggle the way
+# rust-analyzer flags Rust. This rail scopes it to `agent_changed` — the files a
+# coding agent edited this turn — so it fires like a save-hook, not on repo debt.
+#
+# `agent_changed` is GIT-FREE: it reads the agent-harness session log (agent.rs),
+# keyed by `--root`, NOT git. The `.dl` file need not be tracked or committed —
+# point `--root` at any directory the agent worked in. (`changed`/`changed_line`,
+# by contrast, ARE git and empty outside a repo.)
+#
+#   Block on a broken .dl the agent touched (Claude Code hook / pre-commit):
+#     dl examples/lint-dl-self.dl --root . --check
+#   Live editor squiggles (--lsp surfaces the `diag` rel):
+#     dl examples/lint-dl-self.dl --root . --lsp
+#
+# Drop the `agent_changed` atom from the `diag` rule to lint EVERY scanned .dl
+# (CI gate over the whole corpus) instead of just the agent's turn.
+
+# git-free "what did the agent change" — one line over the harness store.
+rel agent_changed(path: file).
+agent_changed(path) <- agent_touch(_, _, path).
+
+# scan so `file` carries .dl sources for dl_diag to validate.
+rel dl_file(path: file).
+dl_file(path) <- scan("**/*.dl", path, rev).
+
+# the rail: a parse/type error in a .dl file the agent just edited.
+rel diag(path: file, line: int, col: int, end_line: int, end_col: int,
+         severity: text, code: text, msg: text).
+diag(p, line, col, end_line, end_col, severity, code, msg) <-
+    agent_changed(p), p =~ /\.dl$/,
+    dl_diag(p, line, col, end_line, end_col, severity, code, msg).
+
+? agent_changed(path).
+? dl_diag(path, line, col, end_line, end_col, severity, code, msg).
+? diag(path, line, col, end_line, end_col, severity, code, msg).

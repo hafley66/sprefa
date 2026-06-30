@@ -149,14 +149,34 @@ fn expand_with(
                 out.push(core);
             }
             SurfaceItem::Use(imp) => {
-                let path = loader.resolve(&imp.path)?;
-                if loader.loaded.contains_key(&path) {
-                    continue; // diamond import: canonical-path dedup
+                match loader.resolve(&imp.path) {
+                    Ok(path) => {
+                        if loader.loaded.contains_key(&path) {
+                            continue; // diamond import: canonical-path dedup
+                        }
+                        let surface = loader.load_entry(&path)?;
+                        // The included items were authored in `path`, not the entry.
+                        let expanded = expand_with(surface, loader, templates, path)?;
+                        out.extend(expanded);
+                    }
+                    Err(disk_err) => {
+                        // No file on any disk root: fall back to the std lib baked
+                        // into the binary (`use "std/callgraph.dl".` with no source
+                        // tree). Disk always wins; this is the last resort.
+                        let Some(src) = crate::corpus::std_lib(&imp.path) else {
+                            return Err(disk_err);
+                        };
+                        if !loader.loaded_embedded.insert(imp.path.clone()) {
+                            continue; // already spliced this embedded lib
+                        }
+                        let surface = lex::lex(src)
+                            .and_then(parse::parse_surface)
+                            .with_context(|| format!("in embedded {}", imp.path))?;
+                        let key = PathBuf::from(format!("<embedded>/{}", imp.path));
+                        let expanded = expand_with(surface, loader, templates, key)?;
+                        out.extend(expanded);
+                    }
                 }
-                let surface = loader.load_entry(&path)?;
-                // The included items were authored in `path`, not the entry.
-                let expanded = expand_with(surface, loader, templates, path)?;
-                out.extend(expanded);
             }
             SurfaceItem::Def(tpl) => {
                 let name = tpl.name.clone();
@@ -313,6 +333,8 @@ pub struct ModuleLoader {
     /// Canonical path -> that file's parsed surface. A second `use` of the same
     /// canonical path is a cache hit (the dedup invariant for diamond imports).
     loaded: HashMap<PathBuf, Vec<SurfaceItem>>,
+    /// Embedded-std `use` paths already spliced (dedup for the no-disk fallback).
+    loaded_embedded: std::collections::HashSet<String>,
 }
 
 impl ModuleLoader {
@@ -321,6 +343,7 @@ impl ModuleLoader {
         ModuleLoader {
             roots: include_roots(entry),
             loaded: HashMap::new(),
+            loaded_embedded: std::collections::HashSet::new(),
         }
     }
 

@@ -157,6 +157,15 @@ fn print_load_response(resp: sprefa_v5::rpc::Response) -> Result<()> {
 
 fn main() -> Result<()> {
     sprefa_v5::trace::init();
+    // `dl setup …` is a subcommand, not a `.dl` program: intercept it before
+    // clap's flat positional parser would swallow "setup" as a program path.
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    if raw.first().map(String::as_str) == Some("setup") {
+        std::process::exit(sprefa_v5::setup::run(&raw[1..])?);
+    }
+    if raw.first().map(String::as_str) == Some("examples") {
+        std::process::exit(sprefa_v5::corpus::run(&raw[1..])?);
+    }
     let cli = Cli::parse();
     if cli.profile { sprefa_v5::db::set_profile(true); }
     if cli.tick_audit { sprefa_v5::engine::set_tick_audit(true); }

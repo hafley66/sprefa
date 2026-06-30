@@ -1,0 +1,55 @@
+# gen-skill.dl — generate a DYNAMIC skill page whose code references are CHECKED
+# against the AST / semantic graph, not regex.
+#
+# Three tiers reference code with a real resolution guarantee, ranked by strength:
+#   1. type_entity / type_link / scip_def — SEMANTIC: a resolved declaration. A
+#      comment or string that merely names the symbol never appears.
+#   2. ast(:lang, "(grammar_node ...) @cap") — STRUCTURAL: a real tree-sitter node;
+#      `=~` only narrows an already-structural capture.
+#   3. sg / ast_yaml — ast-grep pattern / RuleCore YAML (inside:/has: relational).
+# `match` is deliberately NOT used for anchors — it is line/term parsing (break a
+# line down, pull a sub-term), NOT a checked reference to a declaration.
+#
+#   Run:  dl v5/examples/gen-skill.dl --root .   (root = sprefa, paths are v5/-relative)
+
+rel src(p: file).
+src(p) <- scan("WORK", "v5/src/relkind.rs", p, rev).
+
+# ── (A) GENERATED surface, anchored semantically ──────────────────────────────
+# Every function in relkind.rs at its REAL decl line, from type_entity. Rename or
+# delete the fn and the row moves/vanishes on the next tick — the doc cannot drift
+# from the code, because the anchor is the resolved declaration, not a text match.
+# type_entity(repo, sym, name, kind, parent, file, line)
+rel api(name: text, file: file, line: int).
+api(name, f, line) <- type_entity(_, _, name, "function", _, f, line).
+
+gen(:append, "v5/examples/_auto-doc/relkind-skill.md", "# relkind.rs function surface") <- true().
+gen(:append, "v5/examples/_auto-doc/relkind-skill.md",
+    "Generated from `type_entity` (semantic) by examples/gen-skill.dl. Checked: a symbol that no longer resolves drops out.") <- true().
+gen(:append, "v5/examples/_auto-doc/relkind-skill.md", "") <- true().
+gen(:append, "v5/examples/_auto-doc/relkind-skill.md", "| function | anchor |") <- true().
+gen(:append, "v5/examples/_auto-doc/relkind-skill.md", "|---|---|") <- true().
+gen(:append, "v5/examples/_auto-doc/relkind-skill.md", "| `{name}` | {file}:{line} |") <- api(name, file, line).
+
+# ── (B) CHECKED-CLAIMS rail ───────────────────────────────────────────────────
+# Symbols the skill PROSE cites by name. If a claim no longer resolves in
+# type_entity, `--check` fails (the skill cites a dead/renamed symbol). This is
+# the staleness gate a regex-doc cannot give you: `!resolves` is true negation
+# over the resolved declaration set, not "the string is absent from the file".
+rel skill_claims(name: text).
+skill_claims("rel_kinds").             # the built-in-rel registry entry point
+skill_claims("validate_dl_source").    # the dl_diag self-validation fn
+skill_claims("offset_to_line_col").    # span -> line/col helper
+
+rel resolves(name: text).
+resolves(name) <- type_entity(_, _, name, _, _, _, _).
+
+# msg binds the dead symbol name directly (a plain rel head does not interpolate
+# `{var}` — that is a gen-sink feature; `code` carries the category).
+rel diag(path: file, line: int, col: int, end_line: int, end_col: int,
+         severity: text, code: text, msg: text).
+diag("v5/examples/gen-skill.dl", 0, 0, 0, 0, "error", "stale-skill-ref", name) <-
+    skill_claims(name), !resolves(name).
+
+? api(name, file, line).
+? diag(path, line, col, end_line, end_col, severity, code, msg).
