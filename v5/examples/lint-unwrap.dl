@@ -2,20 +2,40 @@
 #   dl examples/lint-unwrap.dl --root . --lsp
 # and any LSP client (VSCode, Claude Code) shows a squiggle per match.
 #
-# The sg pattern `$X.unwrap()` captures the RECEIVER into the metavar $X, which
-# binds to the dl variable X (uppercase, same name). The trailing positionals
-# bind the match span: line, col, end_line, end_col (1-based lines, 0-based byte
-# columns). Passing col/end_col to diag underlines exactly the match, not the
-# whole line.
+# Two ast-grep ops, small and side by side:
+#
+#   sg(path, rev, :lang, "$X.unwrap()", line, col, end_line, end_col[, id])
+#     A bare PATTERN. `$X` captures the receiver into dl var X (uppercase, same
+#     name). Trailing positionals bind the match span (1-based line, 0-based byte
+#     col). A pattern alone cannot say "but not inside a test".
+#
+#   ast_yaml(path, rev, :lang, `<RuleCore yaml>`, line, col, end_line, end_col)
+#     A RELATIONAL rule (ast-grep's pattern/inside/has/not/any language, backtick
+#     multiline). `not: inside: { kind: mod_item, has name ~ ^tests?$ }` walks the
+#     CST ancestors and drops any unwrap contained in a `mod tests { }`. Real
+#     structural containment — an unwrap in a comment/string, or in a differently
+#     named production module, is judged correctly (no line-position heuristic).
+#
+# This program uses the relational form so the "outside test code" claim is true.
+# `_` discards end_line; line/col/end_col drive the exact squiggle.
 
-rel hit(X: text, path: file, line: int, col: int, end_line: int, end_col: int).
-rel diag(path: file, line: int, col: int, end_line: int, end_col: int, severity: text, msg: text).
+rel hit(path: file, line: int, col: int, end_col: int).
+rel diag(path: file, line: int, col: int, end_col: int, severity: text, msg: text).
 
-hit(X, path, line, col, end_line, end_col) <-
+hit(path, line, col, end_col) <-
   scan("WORK", "v5/src/**/*.rs", path, rev),
-  sg(path, rev, :rust, "$X.unwrap()", line, col, end_line, end_col).
+  ast_yaml(path, rev, :rust, `
+pattern: $X.unwrap()
+not:
+  inside:
+    kind: mod_item
+    has:
+      field: name
+      regex: '^tests?$'
+    stopBy: end
+`, line, col, _, end_col).
 
-diag(path, line, col, end_line, end_col, "warn", "unwrap() on `${X}`: use ? or expect(\"reason\")") <-
-  hit(X, path, line, col, end_line, end_col).
+diag(path, line, col, end_col, "warn", "unwrap() outside test code: use ? or expect(\"reason\")") <-
+  hit(path, line, col, end_col).
 
-? diag(path, line, col, end_line, end_col, severity, msg).
+? diag(path, line, col, end_col, severity, msg).
