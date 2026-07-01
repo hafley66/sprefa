@@ -23,7 +23,7 @@
 # Interest declaration: pull v5/src into the file set so the lazy type/call
 # graph indexers populate. type_entity stays empty without a scan.
 rel index_over(p: file).
-index_over(p) <- scan("WORK", "v5/src/**/*.rs", p, rev).
+index_over(p) <- scan("v5/src/**/*.rs", p).
 
 # One row per declared entity, routed by kind. A name resolves to one kind, so
 # a row lands in at most one arm; no duplicate locations in the output.

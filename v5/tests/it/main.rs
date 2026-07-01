@@ -69,6 +69,7 @@ mod recompute_guard;
 mod rel_catalog;
 mod repo_sink;
 mod rule_edit;
+mod scan_kwargs;
 mod scc;
 mod seam_bench;
 mod scip_import;

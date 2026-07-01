@@ -5,7 +5,7 @@
 # (trait method, re-export, macro, dyn, fully-qualified path).
 
 rel seen(path: file).
-seen(path) <- scan("WORK", "src/**/*.rs", path, rev).
+seen(path) <- scan("src/**/*.rs", path).
 
 rel fn_file(sym: text, file: file).
 fn_file(sym, file) <- call_def(_, sym, _, file, _, _).

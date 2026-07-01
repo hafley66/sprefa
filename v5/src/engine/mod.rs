@@ -467,7 +467,7 @@ pub fn undocumented_fns() -> Vec<String> {
 pub fn op_docs() -> &'static [(&'static str, &'static str, &'static str, &'static str)] {
     &[
         // source ops: body position, extract facts from files. Cannot join derived rels.
-        ("scan", "source", "scan([repo,][rev,] glob, path, rev_out)", "select files; 3-ary defaults repo=\".\"/rev=\"WORK\", 5-ary names a repo coordinate; rev ∈ WORK/HEAD/any git rev"),
+        ("scan", "source", "scan([repo,][rev,] glob, path[, rev_out])", "select files; 2-ary omits rev_out, 5-ary names a repo coordinate; outputs path/rev_out take the _ or name: form (rev_out _ or omitted = rev not bound); repo defaults \".\", rev \"WORK\" (WORK/HEAD/any git rev)"),
         ("match", "source", "match(path, rev, /re/, line[, id][, col, end_col])", "regex over file content, one row per match line; (?<cap>..) named groups bind dl vars; $cap is sugar for a lazy named group; trailing id/col bind the whole-match span"),
         ("ast", "source", "ast(path, rev, :lang, \"(query) @cap\", line[, end])", "tree-sitter query; @cap captures bind same-named vars; :lang ∈ rust/c/kotlin/..."),
         ("sg", "source", "sg(path, rev, :lang, \"$X.unwrap()\", line[, col, end_line, end_col][, id])", "ast-grep pattern; metavar $X binds dl var X (matched text); trailing id binds the whole-match span for structural rewrite via gen(:replace)"),
@@ -1391,7 +1391,8 @@ struct ScanSpec {
     rev: Term,
     glob: Term,
     path_var: String,
-    rev_out_var: String,
+    /// `None` when rev_out is `_` or omitted: the scanned rev is not bound.
+    rev_out_var: Option<String>,
 }
 
 /// One parsed file's CST node records plus the repo id + path + content
@@ -4511,9 +4512,14 @@ fn emit_query_json(rel: &str, columns: &[String], rows: &[Vec<serde_json::Value>
 fn scan_spec_of(rule: &Rule) -> Result<ScanSpec> {
     for item in &rule.body {
         if let BodyItem::Scan { repo, rev, glob, path, rev_out } = item {
+            let path_var = match path {
+                Term::Var(v) => v.clone(),
+                Term::Wild => bail!("scan path output must be a variable, not `_` (a scan with no path is meaningless)"),
+                other => bail!("expected scan path variable, got {other:?}"),
+            };
             return Ok(ScanSpec {
                 repo: repo.clone(), rev: rev.clone(), glob: glob.clone(),
-                path_var: var_of(path)?, rev_out_var: var_of(rev_out)?,
+                path_var, rev_out_var: opt_var(rev_out)?,
             });
         }
     }
@@ -5018,7 +5024,7 @@ fn parse_file(
     let mut binds: Vec<Bind> = vec![{
         let mut b = Bind::new();
         b.insert(pathvar.clone(), Value::Text(path.to_string()));
-        b.insert(revvar.clone(), Value::Text(rev.to_string()));
+        if let Some(rv) = &revvar { b.insert(rv.clone(), Value::Text(rev.to_string())); }
         // Data-driven coordinate values (the variable repo/rev this file was
         // scanned under): seed them so the rule head can reference them.
         for (k, v) in head_binds { b.insert(k.clone(), Value::Text(v.clone())); }

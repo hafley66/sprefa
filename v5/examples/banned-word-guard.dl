@@ -13,11 +13,11 @@
 # group: /(?i)(?<w>nuke|<other>)/.
 
 rel asst(idx: int, file: file).
-asst(l, p) <- scan("WORK", "*.jsonl", p, rev), match(p, rev, /"type":\s*"assistant"/, l, _, _).
+asst(l, p) <- scan("WORK", "*.jsonl", p, rev), match(p, rev, /"type":\s*"assistant"/, l).
 
 # Plan-tool body: an ExitPlanMode tool_use record (the proposed plan text).
 rel plan_line(idx: int, file: file).
-plan_line(l, p) <- scan("WORK", "*.jsonl", p, rev), match(p, rev, /"name":\s*"ExitPlanMode"/, l, _, _).
+plan_line(l, p) <- scan("WORK", "*.jsonl", p, rev), match(p, rev, /"name":\s*"ExitPlanMode"/, l).
 
 # Every banned-word occurrence, with its byte span.
 rel word(file: file, l: int, c: int, ec: int, w: text).
