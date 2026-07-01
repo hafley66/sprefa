@@ -35,6 +35,12 @@ structured facts: call graph, import/type graph, blast radius, lint rails, codem
 - It also wired a `.githooks/pre-commit` (`dl --check`) + `core.hooksPath`, so a
   `diag` rail in `.dl/*.dl` blocks a bad commit (`git commit -n` bypasses).
 - Live editor squiggles: `dl setup --vscode` installs the bundled LSP extension.
+- Compiler-precise facts (SCIP): `dl index` detects the language(s) and runs the
+  right indexer (rust-analyzer / scip-typescript / scip-python / scip-go /
+  scip-java / scip-clang), placing `<root>/.dl/index.scip` (gitignored). The
+  `scip_*` relations then load automatically. `dl doctor` reports what is
+  detected, whether an index is present/fresh, and its row counts. Syntactic
+  facts are any-rev; SCIP covers the working tree only.
 
 See the `sprefa-dl` skill for the full surface and authoring gotchas.
 <!-- END: sprefa-dl -->

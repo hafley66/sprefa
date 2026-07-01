@@ -43,19 +43,54 @@ pub struct ScipRows {
     pub impls: Vec<(String, String)>,
 }
 
+/// Where the importer looks for a SCIP index, in priority order:
+///   1. `$SPREFA_SCIP_INDEX` (explicit override)
+///   2. `<root>/index.scip` (the `just oracle-index` / rust-analyzer default)
+///   3. `<root>/.dl/index.scip` (where `dl index` places it — out of the tree,
+///      gitignored, so a turnkey generate never leaves a committable blob at the
+///      repo root)
 pub fn index_path(root: &Path) -> Option<PathBuf> {
     if let Ok(path) = std::env::var("SPREFA_SCIP_INDEX") {
         let path = PathBuf::from(path);
         if path.is_file() { return Some(path); }
     }
-    let path = root.join("index.scip");
-    path.is_file().then_some(path)
+    for cand in [root.join("index.scip"), root.join(".dl").join("index.scip")] {
+        if cand.is_file() { return Some(cand); }
+    }
+    None
 }
 
 pub fn load(path: &Path) -> Result<ScipRows> {
     let bytes = std::fs::read(path)?;
     let index = Index::parse_from_bytes(&bytes)?;
     Ok(rows(&index))
+}
+
+/// Merge several per-language SCIP indexes into one on disk. SCIP is document-
+/// keyed, so a union is just concatenating `documents` + `external_symbols`
+/// (each indexer already namespaces its symbols by tool/package, so there is no
+/// key collision across languages). Used by `dl index` on a polyglot workspace
+/// so a single `index.scip` co-loads every language's facts. `metadata` is
+/// carried from the first input.
+pub fn merge_files(inputs: &[PathBuf], out: &Path) -> Result<usize> {
+    let mut merged: Option<Index> = None;
+    let mut n_docs = 0usize;
+    for path in inputs {
+        let bytes = std::fs::read(path)?;
+        let idx = Index::parse_from_bytes(&bytes)?;
+        n_docs += idx.documents.len();
+        match &mut merged {
+            None => merged = Some(idx),
+            Some(m) => {
+                m.documents.extend(idx.documents);
+                m.external_symbols.extend(idx.external_symbols);
+            }
+        }
+    }
+    let merged = merged.unwrap_or_default();
+    let bytes = merged.write_to_bytes()?;
+    std::fs::write(out, bytes)?;
+    Ok(n_docs)
 }
 
 pub fn rows(index: &Index) -> ScipRows {

@@ -28,6 +28,7 @@ pub mod repo;
 pub mod rspath;
 pub mod scc;
 pub mod scip_import;
+pub mod scip_setup;
 pub mod setup;
 pub mod sg;
 pub mod spine;

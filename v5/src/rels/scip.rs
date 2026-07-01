@@ -45,7 +45,9 @@ impl RelKind for ScipKind {
         "a built-in SCIP relation"
     }
     fn dirty(&self, changed: &HashSet<String>) -> bool {
-        changed.contains("index.scip")
+        // Match the root `index.scip` and the `.dl/index.scip` that `dl index`
+        // writes (the changed-path string carries the relative prefix).
+        changed.iter().any(|c| c.ends_with("index.scip"))
     }
     fn refresh(&self, eng: &Engine) -> Result<bool> {
         let t = |s: &str| Value::Text(s.to_string());
