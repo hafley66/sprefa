@@ -95,33 +95,31 @@ diag(p, l, c, ec, "warn", "conn-loop-reachable",
     loop_reachable_fn(fn),
     changed_line(p, l).
 
-# ---- unwrap budget per changed file -------------------------------------------
+# ---- unwrap budget per changed file (test code exempt, CST-scoped) ------------
+# `.unwrap()` in a test IS the idiom (a panic fails the test loudly), so test
+# code is exempt. This is an ast-grep RELATIONAL rule via ast_yaml, not a regex:
+# `pattern` matches the call, `not: inside:` walks the CST ancestors and drops
+# any unwrap contained in a `mod tests { }` (the Rust test-module idiom). Real
+# structural containment — a `.unwrap()` in a comment/string, or in a
+# differently-named production module, is judged correctly with no line
+# heuristic. (`_` for end_line; we keep line/col/end_col for the squiggle.)
 rel unwrap_hit(p: file, l: int, c: int, ec: int).
 unwrap_hit(p, l, c, ec) <-
     scan("WORK", "v5/src/**/*.rs", p, rev),
-    match(p, rev, /\.unwrap\(\)/, l, c, ec).
-
-# Test code is exempt: `.unwrap()` in a test IS the idiom (a panic fails the
-# test loudly, which is the point). Anchor on the `#[cfg(test)]` / `#[test]`
-# attribute line; a Rust test module conventionally sits at the file's tail, so
-# any unwrap at or after a test marker is inside test code. Heuristic errs
-# toward NOT warning (a scattered mid-file `#[test]` exempts the tail), which is
-# the intended bias for a warn-only rail.
-rel test_marker(p: file, l: int).
-test_marker(p, l) <-
-    scan("WORK", "v5/src/**/*.rs", p, rev),
-    match(p, rev, /#\[(cfg\(test\)|test)\]/, l, _, _).
-
-rel unwrap_in_test(p: file, l: int).
-unwrap_in_test(p, l) <- unwrap_hit(p, l, _, _), test_marker(p, ml), ml <= l.
-
-# Production unwraps only — test unwraps are neither counted nor squiggled.
-rel prod_unwrap(p: file, l: int, c: int, ec: int).
-prod_unwrap(p, l, c, ec) <- unwrap_hit(p, l, c, ec), !unwrap_in_test(p, l).
+    ast_yaml(p, rev, :rust, `
+pattern: $X.unwrap()
+not:
+  inside:
+    kind: mod_item
+    has:
+      field: name
+      regex: '^tests?$'
+    stopBy: end
+`, l, c, _, ec).
 
 rel unwrap_count(p: file, n: int).
-unwrap_count(p, count(l)) <- prod_unwrap(p, l, _, _), changed(p).
+unwrap_count(p, count(l)) <- unwrap_hit(p, l, _, _), changed(p).
 
 # Squiggle the exact `.unwrap()` span on every over-budget line, not line 1.
 diag(p, l, c, ec, "warn", "unwrap-budget", "${n} non-test unwraps in a changed file") <-
-    prod_unwrap(p, l, c, ec), changed(p), unwrap_count(p, n), n > 10.
+    unwrap_hit(p, l, c, ec), changed(p), unwrap_count(p, n), n > 10.
