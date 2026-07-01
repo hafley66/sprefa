@@ -2466,6 +2466,31 @@ impl Engine {
         }
         self.rev_index = current.keys().map(|(repo, p, r)| (repo.clone(), r.clone(), p.clone())).collect();
 
+        // Zero-match diagnostic (v3/v4 parity): a scan rule that matched no files
+        // is almost always a glob/root mismatch, which otherwise fails silently as
+        // "0 rows" far downstream. Warn with the rule, glob, and where it looked so
+        // the miss is self-diagnosing instead of a mystery.
+        let matched: HashSet<usize> = rule_files.iter().map(|(idx, ..)| *idx).collect();
+        for (idx, rule) in source_rules.iter().enumerate() {
+            if matched.contains(&idx) { continue; }
+            let Ok(spec) = scan_spec_of(rule) else { continue };
+            let Term::Str(glob) = &spec.glob else { continue };
+            let targets: Vec<String> = groups.iter()
+                .filter(|(_, (_, rules))| rules.iter().any(|(i, _, _)| *i == idx))
+                .map(|((slug, rev), (root, _))| {
+                    let r = if rev == "WORK" { "WORK" } else { &rev[..rev.len().min(8)] };
+                    format!("{slug}@{r} ({})", root.display())
+                })
+                .collect();
+            let where_ = if targets.is_empty() { "no repo/rev resolved".into() } else { targets.join(", ") };
+            eprintln!("[dl] source `{}` matched 0 files: scan(\"{glob}\") under {where_}", rule.head.rel);
+            // The glob matches paths relative to the repo root. The usual miss is
+            // an anchored glob (`src/…`) while --root points ABOVE the repo, or a
+            // rev with no such path. `*` already crosses `/`, so recursion is not
+            // the issue.
+            eprintln!("       note: the glob matches repo-root-relative paths; check --root points at the repo (not a parent) and the leading path segments match");
+        }
+
         let hash_of = |m: &FileMeta, repo: &str, p: &str, r: &str|
             m.get(&(repo.to_string(), p.to_string(), r.to_string())).map(|t| t.0.clone());
 

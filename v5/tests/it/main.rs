@@ -20,6 +20,7 @@ mod config_repos;
 mod created_perf;
 mod cst_node_perf;
 mod dl_diag;
+mod error_reporting;
 mod cst_node_rel;
 mod hook_inject;
 mod daemon;

@@ -307,7 +307,15 @@ impl Engine {
         // coordinates a data-driven scan / repo-sink reads on the real tick.
         if !self.prime_tick {
             for item in &prog.items {
-                if let Item::Query(q) = item { self.run_query(q, &closures)?; }
+                // Each `?` query is independent: a failed or malformed query
+                // (unknown rel, bad point-query shape) reports and the rest still
+                // run. Aborting the whole chain on the first failure hid every
+                // later answer behind one broken question.
+                if let Item::Query(q) = item {
+                    if let Err(e) = self.run_query(q, &closures) {
+                        eprintln!("[dl] query `{}` failed: {e}", q.head.rel);
+                    }
+                }
             }
         }
         self.run_gens(prog, quiet)?;
@@ -654,7 +662,14 @@ impl Engine {
                 }
             }
         }
-        for item in &prog.items { if let Item::Query(q) = item { self.run_query(q, &closures)?; } }
+        // Independent `?` queries: one failure reports and the chain continues.
+        for item in &prog.items {
+            if let Item::Query(q) = item {
+                if let Err(e) = self.run_query(q, &closures) {
+                    eprintln!("[dl] query `{}` failed: {e}", q.head.rel);
+                }
+            }
+        }
         self.run_gens(prog, quiet)?;
         if self.dropped > 0 { eprintln!("[checked-type] dropped {} rows", self.dropped); self.dropped = 0; }
         self.last_n1 = self.db.tick_end();

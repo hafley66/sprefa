@@ -209,6 +209,13 @@ pub fn lex(src: &str) -> Result<Vec<Tok>> {
                     }
                     if i >= b.len() { bail!("unterminated regex"); }
                     i += 1;
+                    // A bare `//` lexes as an empty regex, which is never useful
+                    // and is almost always a C-style comment habit (dl comments
+                    // are `#`). Fail here with a clear message instead of letting
+                    // a `Regex("")` token surface as a baffling parse error later.
+                    if s.is_empty() {
+                        bail!("empty regex `//`: dl comments start with `#` (not `//`), string literals use quotes");
+                    }
                     out.push(Tok::Regex(s));
                 }
             }
