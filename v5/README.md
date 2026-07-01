@@ -12,10 +12,29 @@ other doc in the tree.
 
 ## Install & run
 
-```sh
-cargo build                                    # debug binary at target/debug/dl
-cargo install --path v5                          # put `dl` on PATH (run from repo root)
+One line — prebuilt macOS binary + agent wiring (`dl setup`):
 
+```sh
+curl -fsSL https://raw.githubusercontent.com/hafley66/sprefa/main/install.sh | sh
+```
+
+Just the binary, no agent wiring: append `-s -- --bin-only`, or use the
+cargo-dist installer directly (always latest release):
+
+```sh
+curl -LsSf https://github.com/hafley66/sprefa/releases/latest/download/sprefa-dl-installer.sh | sh
+```
+
+From source (needs a Rust toolchain):
+
+```sh
+cargo install --git https://github.com/hafley66/sprefa sprefa-dl --bin dl  # any machine
+cargo install --path v5                                                    # from a checkout
+```
+
+Then:
+
+```sh
 dl examples/glean.dl --root .                  # run a program, print ? queries
 dl --check --root <repo>                       # discovery mode: runs <repo>/.dl/*.dl
 dl examples/lint-unwrap.dl --root <repo> --lsp # live LSP diagnostics
