@@ -12,18 +12,18 @@
 # row per declared type / fn / method. Two `=~` filters route by kind. The
 # `=~` literal is the unified regex form (same as `match` takes).
 #
-#   Run:     dl v5/examples/auto-doc.dl --root .
-#   Output:  v5/examples/_auto-doc/v5-reference.md
+#   Run:     dl examples/auto-doc.dl --root .
+#   Output:  examples/_auto-doc/v5-reference.md
 #
 # Swap the path template to `"{file}.md"` (one doc per source file) or to a
 # `{parent}.md` grouping for per-module docs. The lowerer's ORDER BY over all
 # vars makes render order deterministic, so the file content is byte-stable
 # across runs.
 
-# Interest declaration: pull v5/src into the file set so the lazy type/call
+# Interest declaration: pull src into the file set so the lazy type/call
 # graph indexers populate. type_entity stays empty without a scan.
 rel index_over(p: file).
-index_over(p) <- scan("v5/src/**/*.rs", p).
+index_over(p) <- scan("src/**/*.rs", p).
 
 # One row per declared entity, routed by kind. A name resolves to one kind, so
 # a row lands in at most one arm; no duplicate locations in the output.
@@ -32,7 +32,7 @@ doc_row(file, line, "type", name) <- type_entity(name: name, kind: k, file: file
 doc_row(file, line, "fn", name)    <- type_entity(name: name, kind: k, file: file, line: line), k =~ /function|method/.
 
 # The file-sink: every row renders through the template, all rows land in one
-# markdown file under v5/examples/_auto-doc/. The engine creates the dir if
+# markdown file under examples/_auto-doc/. The engine creates the dir if
 # missing and skips the write when bytes already match.
-gen("v5/examples/_auto-doc/v5-reference.md",
+gen("examples/_auto-doc/v5-reference.md",
     "- **{kind}** `{name}` - {file}:{line}") <- doc_row(file, line, kind, name).

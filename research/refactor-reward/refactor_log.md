@@ -1,7 +1,7 @@
 # Refactor log — manual Q-learning table
 
 The reward signal (validated across sprefa/ripgrep/serde: structural beats LOC
-97% vs 50% for consolidations) applied to sprefa's own v5/src. Each entry is a
+97% vs 50% for consolidations) applied to sprefa's own src. Each entry is a
 (state, action, measured reward) tuple. Moves only count if tests stay green.
 
 Reward abbreviations: `lines` = net LOC of the target fn; `dup` = verbatim
@@ -92,6 +92,6 @@ duplicated block count; `fns` = distinct fn count in the target.
    per arm (`alv/elv` vs `slv/clv/ellv/eclv`). Needs a design call: helper takes
    the optional vars as params, or takes a closure that inserts them. Medium
    risk, ~-12 lines. This is the residue left after iter3's narrow bet.
-4. Consolidation detector (trait-aware) found little else genuine in v5/src —
+4. Consolidation detector (trait-aware) found little else genuine in src —
    the parallel Kotlin/Rust impls are already trait-unified (`TypeLang`,
    `ModuleResolver`), i.e. the reward-positive collapse already happened.

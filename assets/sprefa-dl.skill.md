@@ -29,7 +29,7 @@ dl setup --project .     # bootstrap a repo: .dl/ rail + AGENTS.md/CLAUDE.md sec
 dl setup --print         # dump the embedded skill to stdout
 ```
 
-From source, `v5/install-dl.sh` also `cargo install`s the binary first.
+From source, `install-dl.sh` also `cargo install`s the binary first.
 
 ## Discover examples + reusable libs (embedded in the binary, no disk)
 
@@ -77,11 +77,11 @@ isolated ad-hoc run (the daemon otherwise hijacks ad-hoc invocations).
 The engine generates its own reference from self-describing catalogs
 (`rel_catalog`, `fn_catalog`, `op_catalog`) via `examples/gen-reference.dl`:
 
-- `v5/docs/reference/relations.md` — every built-in relation
-- `v5/docs/reference/functions.md` — every scalar function
-- `v5/docs/reference/syntax.md` — every source/body/sink op (syntax + semantics)
-- `v5/docs/reference/examples.md` — the `examples/` corpus, one line each
-- `v5/README.md` — the full human+agent reference
+- `docs/reference/relations.md` — every built-in relation
+- `docs/reference/functions.md` — every scalar function
+- `docs/reference/syntax.md` — every source/body/sink op (syntax + semantics)
+- `docs/reference/examples.md` — the `examples/` corpus, one line each
+- `README.md` — the full human+agent reference
 
 Regenerate after touching the engine: `dl examples/gen-reference.dl --root v5`.
 Docs are spliced/convergent; never hand-edit inside `<!-- BEGIN -->`/`<!-- END -->`.

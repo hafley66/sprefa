@@ -23,7 +23,7 @@ import subprocess, collections, re, os
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(ROOT)))
-ENGINE = "v5/src/engine.rs"
+ENGINE = "src/engine.rs"
 
 # Known partitions from god-object study
 DB_ONLY = {

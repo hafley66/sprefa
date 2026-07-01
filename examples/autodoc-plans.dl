@@ -9,7 +9,7 @@
 # group. PLANS.md is PURE transclusion -- no static header -- so it IS the
 # comments, nothing else.
 #
-# One-shot:  dl v5/examples/autodoc-plans.dl --root . --no-daemon
+# One-shot:  dl examples/autodoc-plans.dl --root . --no-daemon
 # Autodoc:   copy into <root>/.dl/ ; the daemon regenerates PLANS.md on every save
 #            (gen skips the write when bytes are unchanged, so a no-change tick is
 #            a no-op).

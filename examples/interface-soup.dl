@@ -9,16 +9,16 @@
 # keep).
 #
 # Run on this repo (dogfood -- finds IngestLang = 1 impl):
-#   dl v5/examples/interface-soup.dl --root . --no-daemon
+#   dl examples/interface-soup.dl --root . --no-daemon
 # Point at a Kotlin/Java-biased repo to see the real soup:
-#   dl v5/examples/interface-soup.dl --root /path/to/kotlin/repo --no-daemon
+#   dl examples/interface-soup.dl --root /path/to/kotlin/repo --no-daemon
 # Then render the emitted graph:
-#   d2 v5/examples/interface-soup.d2 /tmp/soup.svg && open /tmp/soup.svg
+#   d2 examples/interface-soup.d2 /tmp/soup.svg && open /tmp/soup.svg
 
 # Touch the corpus so the lazy type graph populates (any source glob works; widen
 # for a real repo, e.g. "**/*.{rs,kt,ts}").
 rel seen(path: file).
-seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
 
 # Declared interfaces/traits, by bare name (the type_edge node key).
 rel iface(name: text).
@@ -44,7 +44,7 @@ rel type_reaches(src: text, dst: text).
 type_reaches(s, d) <- closure(type_edge).
 
 # Visual: the whole interface->impl soup as a d2 digraph (one gen rule, file form).
-gen("v5/examples/interface-soup.d2", "{impl} -> {iface}") <- impl_of(impl, iface).
+gen("examples/interface-soup.d2", "{impl} -> {iface}") <- impl_of(impl, iface).
 
 # Reports.
 ? iface_count(iface, n).      # ranked by hand; eyeball the high-fan-in hubs

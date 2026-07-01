@@ -24,7 +24,7 @@ rel hit(path: file, line: int, col: int, end_col: int).
 rel diag(path: file, line: int, col: int, end_col: int, severity: text, msg: text).
 
 hit(path, line, col, end_col) <-
-  scan("WORK", "v5/src/**/*.rs", path, rev),
+  scan("WORK", "src/**/*.rs", path, rev),
   ast_yaml(path, rev, :rust, `
 pattern: $X.unwrap()
 not:

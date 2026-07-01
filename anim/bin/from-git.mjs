@@ -4,7 +4,7 @@
 // `title` + `narration`. This is the "spam commit like a save button" pipeline.
 //
 //   node bin/from-git.mjs <range> <path> [lang]
-//   node bin/from-git.mjs feat/x..HEAD v5/src/engine.rs rust
+//   node bin/from-git.mjs feat/x..HEAD src/engine.rs rust
 //
 // Commit small (one idea per commit) and the log animates cleanly.
 import { execSync } from 'node:child_process'

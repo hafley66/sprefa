@@ -71,7 +71,7 @@ distinguishes params).
 
 ## Extraction plan
 
-`v5/src/scip_import.rs`:
+`src/scip_import.rs`:
 
 1. Add `pub locals: Vec<(String, String)>` field to `ScipRows`.
 2. Add a third pass after the existing two: for each def occurrence whose
@@ -81,7 +81,7 @@ distinguishes params).
 3. Unit test: tiny SCIP index with a local def inside a fn; assert the
    tuple is collected.
 
-`v5/src/engine.rs`:
+`src/engine.rs`:
 
 1. Add `"scip_local"` to `SCIP_RELS`.
 2. Add declaration in `scip_rel_decls`.
@@ -230,9 +230,9 @@ rustc use ~5x less memory. Worth keeping in the working-conventions skill.
 
 ### Reproducibility
 
-- Code: `v5/src/scip_import.rs` (`ScipRows.locals`, `display_names()`,
+- Code: `src/scip_import.rs` (`ScipRows.locals`, `display_names()`,
   locals pass, 3 new unit tests).
-- Wiring: `v5/src/engine.rs` (SCIP_RELS now 6 entries; `scip_local` declared
+- Wiring: `src/engine.rs` (SCIP_RELS now 6 entries; `scip_local` declared
   in `scip_rel_decls`; refresh path in `refresh_scip_rels`).
-- Recipe: `v5/examples/missing-type.dl`.
-- Run: `SPREFA_SCIP_INDEX=index.scip ./v5/target/debug/dl v5/examples/missing-type.dl --root . --db /tmp/dl-mt.db --no-daemon`
+- Recipe: `examples/missing-type.dl`.
+- Run: `SPREFA_SCIP_INDEX=index.scip ./target/debug/dl examples/missing-type.dl --root . --db /tmp/dl-mt.db --no-daemon`

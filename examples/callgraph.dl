@@ -11,11 +11,11 @@ rel reaches(src: text, dst: text).
 rel unused(name: text).
 
 def(name, path, line) <-
-  scan("WORK", "v5/src/**/*.rs", path, rev),
+  scan("WORK", "src/**/*.rs", path, rev),
   match(path, rev, /fn\s+(?<name>[a-z_][a-z0-9_]+)/, line).
 
 use(name, path, line) <-
-  scan("WORK", "v5/src/**/*.rs", path, rev),
+  scan("WORK", "src/**/*.rs", path, rev),
   match(path, rev, /(?<name>[a-z_][a-z0-9_]+)\s*\(/, line).
 
 calls(caller, callee) <-

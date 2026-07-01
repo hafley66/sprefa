@@ -12,11 +12,11 @@ rel reaches(src: text, dst: text).
 rel unused(name: text).
 
 fndef(name, path, s, e) <-
-  scan("WORK", "v5/src/**/*.rs", path, rev),
+  scan("WORK", "src/**/*.rs", path, rev),
   ast(path, rev, :rust, "(function_item name: (identifier) @name) @fn", s, e).
 
 callsite(callee, path, line) <-
-  scan("WORK", "v5/src/**/*.rs", path, rev),
+  scan("WORK", "src/**/*.rs", path, rev),
   ast(path, rev, :rust, "(call_expression function: [ (identifier) @callee (field_expression field: (field_identifier) @callee) (scoped_identifier name: (identifier) @callee) ])", line).
 
 calls(caller, callee) <-

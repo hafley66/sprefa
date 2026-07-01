@@ -14,7 +14,7 @@ Ground truth (2 sources):
      This script tests the co-change hypothesis directly.
 
 Method:
-  - git log --max-count=N --name-only --format=%H on v5/src
+  - git log --max-count=N --name-only --format=%H on src
   - group files by commit, emit co-occurring file pairs with counts
   - rank pairs by co-change frequency
   - check: do top pairs correspond to the known structural partitions?
@@ -23,10 +23,10 @@ import subprocess, collections, sys, os
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(ROOT)))  # sprefa/
-SRC = "v5/src"
+SRC = "src"
 
 def git_log_files(max_count, rev="HEAD"):
-    """Yield (commit, [files]) for each commit touching v5/src."""
+    """Yield (commit, [files]) for each commit touching src."""
     out = subprocess.check_output(
         ["git", "-C", REPO, "log", f"--max-count={max_count}",
          "--name-only", "--format=COMMIT %H", rev, "--", SRC],
@@ -81,17 +81,17 @@ def main():
         # Check against known structural partitions
         print("\nKnown partitions vs co-change:")
         known_pairs = [
-            ("v5/src/engine.rs", "v5/src/db.rs",         "Engine <-> Db (the 44 db_only extraction target)"),
-            ("v5/src/engine.rs", "v5/src/typegraph.rs",  "Engine <-> TypeGraph (type_edge producer)"),
-            ("v5/src/engine.rs", "v5/src/scip_import.rs","Engine <-> SCIP importer"),
-            ("v5/src/engine.rs", "v5/src/lsp.rs",        "Engine <-> LSP"),
-            ("v5/src/engine.rs", "v5/src/parse.rs",      "Engine <-> Parse"),
-            ("v5/src/engine.rs", "v5/src/modgraph.rs",   "Engine <-> ModGraph"),
-            ("v5/src/engine.rs", "v5/src/propose.rs",    "Engine <-> Propose (clone kernels)"),
-            ("v5/src/engine.rs", "v5/src/daemon.rs",     "Engine <-> Daemon"),
-            ("v5/src/engine.rs", "v5/src/rule.rs",       "Engine <-> Rule eval"),
-            ("v5/src/typegraph.rs", "v5/src/parse.rs",   "TypeGraph <-> Parse"),
-            ("v5/src/typegraph.rs", "v5/src/scip_import.rs", "TypeGraph <-> SCIP"),
+            ("src/engine.rs", "src/db.rs",         "Engine <-> Db (the 44 db_only extraction target)"),
+            ("src/engine.rs", "src/typegraph.rs",  "Engine <-> TypeGraph (type_edge producer)"),
+            ("src/engine.rs", "src/scip_import.rs","Engine <-> SCIP importer"),
+            ("src/engine.rs", "src/lsp.rs",        "Engine <-> LSP"),
+            ("src/engine.rs", "src/parse.rs",      "Engine <-> Parse"),
+            ("src/engine.rs", "src/modgraph.rs",   "Engine <-> ModGraph"),
+            ("src/engine.rs", "src/propose.rs",    "Engine <-> Propose (clone kernels)"),
+            ("src/engine.rs", "src/daemon.rs",     "Engine <-> Daemon"),
+            ("src/engine.rs", "src/rule.rs",       "Engine <-> Rule eval"),
+            ("src/typegraph.rs", "src/parse.rs",   "TypeGraph <-> Parse"),
+            ("src/typegraph.rs", "src/scip_import.rs", "TypeGraph <-> SCIP"),
         ]
         for a, b, label in known_pairs:
             key = frozenset({a, b})

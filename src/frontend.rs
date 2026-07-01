@@ -12,7 +12,7 @@
 //!   1. The program file's directory (`use "lib.dl"` for a sibling, and
 //!      `use "std/foo.dl"` when the program lives next to a `std/` dir).
 //!   2. `$SPREFA_STD` (explicit override; the install / CI hand-lever).
-//!   3. `<crate>` (dev path: `v5/` ships a `std/` so `use "std/foo.dl"`
+//!   3. `<crate>` (dev path: the repo root ships a `std/` so `use "std/foo.dl"`
 //!      resolves from any test fixture without an install step).
 //!   4. `<exe>/..` (installed layout: `std/` sits next to the binary).
 //!
@@ -480,7 +480,7 @@ fn include_roots(entry: &Path) -> Vec<PathBuf> {
     if let Some(p) = std::env::var_os("SPREFA_STD") {
         roots.push(PathBuf::from(p));
     }
-    // Dev path: the `v5/` crate root, which ships a `std/` subdir. Lets
+    // Dev path: the repo root (crate root), which ships a `std/` subdir. Lets
     // `use "std/callgraph.dl".` resolve from any test fixture or example
     // without an install step. Compiled out under release builds where the
     // source tree is gone and only the exe-adjacent layout remains.

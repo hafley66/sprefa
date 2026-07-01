@@ -38,7 +38,7 @@ call_refs(s, count(caller)) <-
   call_name(s, name), call_site(_, caller, name, _, _).
 
 # Type references per sym. type_link.dst mixes bare names ("Option") and
-# file-prefixed syms ("v5/src/ast.rs::enum::Term"); cover both. Bare names join
+# file-prefixed syms ("src/ast.rs::enum::Term"); cover both. Bare names join
 # via type_entity.name; prefixed syms join via type_entity.sym directly.
 rel type_refs(sym: text, n: int).
 type_refs(s, count(src)) <- type_entity(_, s, name, _, _, _, _), type_link(src, name, _).
@@ -84,14 +84,14 @@ fn_arity(s, count(p)) <- call_def(_, s, _, _, _, _), type_sig(s, "param", p, _).
 # Every non-empty line in any scanned Rust file. Acts as a spine so we can mark
 # which lines are doc lines and which aren't.
 rel file_line(file: file, line: int).
-file_line(p, l) <- scan("WORK", "v5/src/**/*.rs", p, rev), match(p, rev, /./, l).
+file_line(p, l) <- scan("WORK", "src/**/*.rs", p, rev), match(p, rev, /./, l).
 
 # One row per /// line in any scanned Rust file. `^\/\s?(?<x>.*)` matches the
 # "/ ..." text the comment op sees after stripping "//" from "///"; `.*` (not
 # `.+`) so a bare `///` paragraph-break line still counts as part of the block.
 rel doc_line(path: file, line: int).
 doc_line(p, l0) <-
-  scan("WORK", "v5/src/**/*.rs", p, rev),
+  scan("WORK", "src/**/*.rs", p, rev),
   comment(p, rev, /^\/\s?(?<x>.*)/, l0, label: lab).
 
 # Lines that aren't doc lines (per file).

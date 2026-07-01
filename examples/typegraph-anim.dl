@@ -3,11 +3,11 @@
 # edges new at that tier and d2 keeps node positions stable across frames.
 #
 # Run from the repo root, then render:
-#   dl v5/examples/typegraph-anim.dl
-#   d2 --animate-interval=1200 v5/examples/typegraph-anim.d2 /tmp/typeviz/typegraph.svg
+#   dl examples/typegraph-anim.dl
+#   d2 --animate-interval=1200 examples/typegraph-anim.d2 /tmp/typeviz/typegraph.svg
 
 rel seen(path: file).
-seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
 
 # Plain-ident endpoints only: enum-variant nodes (`Tok::Ident`) collide with
 # d2's `:` label syntax and unit variants are leaf noise (101 of 275 edges).
@@ -22,7 +22,7 @@ rel edge(f: text, t: text, n: int).
 edge(f, t, n) <- edge0(f, t), fan_out(f, n).
 
 rel block(p: file, l0: int, l1: int, name: text).
-block(p, l0, l1, name) <- scan("WORK", "v5/examples/typegraph-anim.d2", p, rev),
+block(p, l0, l1, name) <- scan("WORK", "examples/typegraph-anim.d2", p, rev),
   comment(p, rev, /BEGIN: $name$/, /END:/, l0, l1, name).
 
 # Three gen rules, one target file: splices batch across rules and apply in a

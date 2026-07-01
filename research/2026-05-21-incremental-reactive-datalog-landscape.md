@@ -438,7 +438,7 @@ for recursion; the measurement corrected it and narrowed the build to one rule.
 
 ## E4 result (2026-05-21): SCC-condensed reaches, measured
 
-Built `v5/src/bin/scc_reach.rs`: iterative Tarjan SCC + condensed-DAG reachability
+Built `src/bin/scc_reach.rs`: iterative Tarjan SCC + condensed-DAG reachability
 over `rel_calls`, counting the full closure without materializing it. Verified
 correct (running example: SCC count == naive BFS count == 16). Run over the
 sprefa repo's Rust call graph:

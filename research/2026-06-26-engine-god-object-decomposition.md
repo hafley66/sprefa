@@ -1,6 +1,6 @@
 # Engine god-object diagnosis: coupling scores + field-coverage decomposition
 
-Date: 2026-06-26. Method: prebuilt `v5/target/debug/dl`,
+Date: 2026-06-26. Method: prebuilt `target/debug/dl`,
 `SPREFA_SCIP_INDEX=.../index.scip`, `--root v5`, throwaway `--db /tmp/*.db`,
 `--no-daemon`. All measurements on the RA-resolved oracle (`scip_fn_edge`,
 `scip_callee_type`): 100% recall, no heuristic noise. Pure dl; no new Rust
@@ -305,7 +305,7 @@ Classification* 2: 193-218.
 - **Raters:** 6 cold-read subagents (5 `explore`, 1 `general` from the prior
   session). Each got the same prompt: "decompose `impl Engine` into 3-7
   clusters; cover all 110 methods; each method in exactly one cluster."
-- **Blinding:** raters were instructed not to read `v5/research/`,
+- **Blinding:** raters were instructed not to read `research/`,
   `chat_log/`, `.agents/`, or `skills/`, and not to run `dl`. The dl analyses
   and this note were hidden.
 - **Output check:** every rater covered all 110 methods, no duplicates, no
@@ -440,7 +440,7 @@ the 0.5-0.7 range based on this run.
 ## Reproducibility
 
 All queries above run against the existing `scip_fn_edge` + `scip_callee_type`
-relations (populated by `v5/src/scip_import.rs` from the RA index). No field-
+relations (populated by `src/scip_import.rs` from the RA index). No field-
 access Rust extraction was needed — field references are already in
 `scip_fn_edge` because that relation emits every referenced symbol, and RA's
 `Engine#<field>` moniker shape makes them isolable by regex in dl.

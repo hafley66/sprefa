@@ -109,9 +109,9 @@ Reproducibility:
 ```sh
 git clone https://github.com/BurntSushi/ripgrep /tmp/ripgrep
 git clone https://github.com/serde-rs/serde     /tmp/serde
-python3 v5/research/refactor-reward/generalize_cross_repo.py /tmp/ripgrep
-python3 v5/research/refactor-reward/generalize_cross_repo.py /tmp/serde
-python3 v5/research/refactor-reward/generalize_cross_repo.py   # sprefa default
+python3 research/refactor-reward/generalize_cross_repo.py /tmp/ripgrep
+python3 research/refactor-reward/generalize_cross_repo.py /tmp/serde
+python3 research/refactor-reward/generalize_cross_repo.py   # sprefa default
 ```
 
 Caveat: n per repo is small (commit-message labeling is sparse for the
@@ -170,8 +170,8 @@ per-rev bridge for the semantic residue.
 ## Reproducibility
 
 ```sh
-python3 v5/research/refactor-reward/loc_vs_structural_harness.py
-python3 v5/research/refactor-reward/loc_intent_harness.py
+python3 research/refactor-reward/loc_vs_structural_harness.py
+python3 research/refactor-reward/loc_intent_harness.py
 ```
 
 Both are pure git + Python (no dl, no SCIP index). Run from the repo root.

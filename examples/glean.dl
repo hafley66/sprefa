@@ -4,7 +4,7 @@
 # canonical code-navigation questions. No compiler, no index format — the answers
 # fall out of datalog rules over syn + tree-sitter facts.
 #
-#   Run: dl v5/examples/glean.dl --root .
+#   Run: dl examples/glean.dl --root .
 #
 # Questions answered (each is a `?` query at the bottom):
 #   1. WHERE IS IT DEFINED?   def(name, path, line)
@@ -27,15 +27,15 @@ rel reaches(src: text, dst: text).
 # 1. DEFINITIONS — every function definition, qualified and located.
 rel def(name: text, path: file, line: int).
 
-fn_span(name, path, s, e) <- scan("WORK","v5/src/**/*.rs",path,rev),
+fn_span(name, path, s, e) <- scan("WORK","src/**/*.rs",path,rev),
   ast(path, rev, :rust, "(function_item name: (identifier) @name) @fn", s, e).
-impl_span(ty, path, s, e) <- scan("WORK","v5/src/**/*.rs",path,rev),
+impl_span(ty, path, s, e) <- scan("WORK","src/**/*.rs",path,rev),
   ast(path, rev, :rust, "(impl_item type: [ (type_identifier) @ty (generic_type type: (type_identifier) @ty) ]) @impl", s, e).
-cs_free(f, path, line) <- scan("WORK","v5/src/**/*.rs",path,rev),
+cs_free(f, path, line) <- scan("WORK","src/**/*.rs",path,rev),
   ast(path, rev, :rust, "(call_expression function: (identifier) @f)", line).
-cs_scoped(ty, m, path, line) <- scan("WORK","v5/src/**/*.rs",path,rev),
+cs_scoped(ty, m, path, line) <- scan("WORK","src/**/*.rs",path,rev),
   ast(path, rev, :rust, "(call_expression function: (scoped_identifier path: (identifier) @ty name: (identifier) @m))", line).
-cs_self(m, path, line) <- scan("WORK","v5/src/**/*.rs",path,rev),
+cs_self(m, path, line) <- scan("WORK","src/**/*.rs",path,rev),
   ast(path, rev, :rust, "(call_expression function: (field_expression value: (identifier) @recv field: (field_identifier) @m))", line),
   recv = "self".
 

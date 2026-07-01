@@ -202,10 +202,10 @@ baseline the `MemStore` would have to match.
 
 ## (a) Sketch: `MemStore` impl of sprefa's plural `RelStore`
 
-sprefa's write seam today is `Db` (`v5/src/db.rs:64-116`): the plural chokepoint is
+sprefa's write seam today is `Db` (`src/db.rs:64-116`): the plural chokepoint is
 `insert_rows(table, cols, rows: &[Vec<Value>])` (`db.rs:97`), with `Value` = `Text(String) |
-Int(i64)` (`v5/src/ast.rs:27`). The fixpoint that consumes those rows is `rebuild_derived`
-(`v5/src/engine.rs:1798-1815`): wipe derived tables, then per stratum
+Int(i64)` (`src/ast.rs:27`). The fixpoint that consumes those rows is `rebuild_derived`
+(`src/engine.rs:1798-1815`): wipe derived tables, then per stratum
 `loop { delta += execute(lower_rule(...)); if delta == 0 break; }`. That loop is structurally
 identical to datafrog's `while iteration.changed()` — stratified, delta-driven, run to a
 zero-delta fixpoint. Only the join engine differs (SQL `INSERT ... SELECT` vs. sorted-merge

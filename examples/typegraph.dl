@@ -13,7 +13,7 @@
 # before closure to diff the type graph across WORK vs HEAD. Plain `type_edge`
 # is the rev-deduped union for simple current-state queries.
 #
-# Run: dl v5/examples/typegraph.dl --root .
+# Run: dl examples/typegraph.dl --root .
 
 rel seen(path: file).
 rel type_reaches(src: text, dst: text).
@@ -21,7 +21,7 @@ rel work_type(src: text, dst: text).
 rel work_reaches(src: text, dst: text).
 
 seen(path) <-
-  scan("WORK", "v5/src/**/*.rs", path, rev),
+  scan("WORK", "src/**/*.rs", path, rev),
   match(path, rev, /./, line).
 
 type_reaches(src, dst) <- closure(type_edge).

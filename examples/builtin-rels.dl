@@ -6,14 +6,14 @@
 # (tests/it/rel_catalog.rs) fails the build until it carries a summary. No
 # source-scraping regex anymore — the engine introspects itself.
 #
-# Manual:  dl v5/examples/builtin-rels.dl --root .
-# Daemon:  dl --load v5/examples/builtin-rels.dl   (regens on engine.rs edits)
+# Manual:  dl examples/builtin-rels.dl --root .
+# Daemon:  dl --load examples/builtin-rels.dl   (regens on engine.rs edits)
 # Rerun converges (gen writes only when bytes differ; catalog order is the
 # stable declaration order, so the rendered rows are deterministic).
 
 # The marker pair wrapping the quick-reference block in the README.
 rel block(p: file, l0: int, l1: int).
-block(p, l0, l1) <- scan("WORK", "v5/README.md", p, rev),
+block(p, l0, l1) <- scan("WORK", "README.md", p, rev),
   comment(p, rev, /BEGIN: builtin-rels/, /END: builtin-rels/, l0, l1).
 
 gen(p, l0, l1, "| relation | group | columns | summary |") <- block(p, l0, l1).

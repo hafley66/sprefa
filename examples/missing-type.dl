@@ -8,7 +8,7 @@
 #
 # READ-ONLY analysis. Surfaces hints; does not refactor.
 #
-# Manual:  dl v5/examples/missing-type.dl --root . --db /tmp/dl-mt.db --no-daemon
+# Manual:  dl examples/missing-type.dl --root . --db /tmp/dl-mt.db --no-daemon
 #          (SPREFA_SCIP_INDEX=<repo>/index.scip; needs `just oracle-index` first)
 
 # ── Length filter: names >= 10 chars, snake_case (Rust local convention) ────

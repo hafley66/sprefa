@@ -1,6 +1,6 @@
 # petgraph swap for scc.rs
 
-Drop-in migration map from the hand-rolled `v5/src/scc.rs` to `petgraph`.
+Drop-in migration map from the hand-rolled `src/scc.rs` to `petgraph`.
 Source read: `~/projects/ext/petgraph` (workspace, crate `crates/petgraph` v0.8.3,
 edition 2024, rust-version 1.91). All refs below are `crates/petgraph/src/...`.
 
@@ -120,7 +120,7 @@ If you later want `condensation`, you must instead build a `Graph<(),(),Directed
 
 ## Mapping table: scc.rs → petgraph
 
-| scc.rs (`v5/src/scc.rs`) | petgraph replacement | notes |
+| scc.rs (`src/scc.rs`) | petgraph replacement | notes |
 | --- | --- | --- |
 | `tarjan(adj) -> (Vec<u32> comp, usize ncomp)` | `algo::tarjan_scc(&g) -> Vec<Vec<u32>>` (`scc/tarjan_scc.rs:269`) | Rebuild `comp`/`ncomp` from the result: for each SCC index `i`, set `comp[node]=i`; `ncomp = sccs.len()`. SCC order is reverse-topo, matching sprefa's id convention. |
 | `build_condensed(adj) -> Cond` | no single call; keep a thin builder | Use `tarjan_scc` for membership, then map each edge through `comp[]` + dedupe to get `cadj` (same loop sprefa has at `scc.rs:86-94`). `algo::condensation` is the wrong shape (wants/returns `Graph`, uses kosaraju order). |

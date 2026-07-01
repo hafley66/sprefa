@@ -7,7 +7,7 @@
 # Root is the anim repo itself, so every path matches anim's `doc:` keys
 # (span targets must equal the docs key byte-for-byte).
 #
-#   dl sprefa/v5/examples/anim-self.dl --root ~/projects/anim --db ~/projects/anim/data/animself.sqlite
+#   dl sprefa/examples/anim-self.dl --root ~/projects/anim --db ~/projects/anim/data/animself.sqlite
 
 rel seen(path: file).
 seen(path) <- scan("WORK", "src/**/*.{ts,tsx}", path, rev),

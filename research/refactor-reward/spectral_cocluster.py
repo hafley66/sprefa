@@ -23,7 +23,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.a
 def dl_query(dl_file, query_name):
     """Run a dl query and return rows as lists of strings."""
     out = subprocess.check_output(
-        ["v5/target/debug/dl", dl_file, "--root", "v5", "--db", "/tmp/dl-svd.db",
+        ["target/debug/dl", dl_file, "--root", "v5", "--db", "/tmp/dl-svd.db",
          "--no-daemon"],
         text=True, env={**os.environ, "SPREFA_SCIP_INDEX": "./index.scip"},
         cwd=REPO,
@@ -46,9 +46,9 @@ def dl_query(dl_file, query_name):
     return rows
 
 def build_matrix():
-    methods_raw = dl_query("v5/examples/field_matrix.dl", "method_name")
-    fields_raw = dl_query("v5/examples/field_matrix.dl", "field_name")
-    refs_raw = dl_query("v5/examples/field_matrix.dl", "eng_field_ref")
+    methods_raw = dl_query("examples/field_matrix.dl", "method_name")
+    fields_raw = dl_query("examples/field_matrix.dl", "field_name")
+    refs_raw = dl_query("examples/field_matrix.dl", "eng_field_ref")
 
     methods = sorted(set(r[0] for r in methods_raw))
     fields = sorted(set(r[0] for r in fields_raw))

@@ -2,7 +2,7 @@
 
 ## in the engine
 
-This is not a metaphor: dl runs exactly this. The code below is pulled straight from `v5/src/scc.rs` at build time (not pasted) — the real `Cond` struct the engine produces when it condenses the call graph. `comp` maps each node to its SCC; `cyclic` marks the looping ones; `cadj` is the condensed DAG that drives stratified evaluation.
+This is not a metaphor: dl runs exactly this. The code below is pulled straight from `src/scc.rs` at build time (not pasted) — the real `Cond` struct the engine produces when it condenses the call graph. `comp` maps each node to its SCC; `cyclic` marks the looping ones; `cadj` is the condensed DAG that drives stratified evaluation.
 
 graph: scc
 

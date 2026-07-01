@@ -11,7 +11,7 @@ name: CI
 # Runs on macOS: `dl` depends unconditionally on the menu-bar tray stack
 # (tray-icon/tao), which needs GTK system libs on Linux, and the project is
 # macOS-first (the tray is macOS-v1). A Linux/Windows job lands once the tray
-# deps are cfg-gated. The crate is in v5/ within the root workspace, so cargo
+# deps are cfg-gated. The crate lives at the repo root, so cargo
 # calls use `-p sprefa-dl`.
 
 on:

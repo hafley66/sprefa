@@ -1,6 +1,6 @@
 # debug_type_link.dl — inspect type_link content
 rel seen(path: file).
-seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
 
 rel n_link(n: int).
 n_link(count(src)) <- type_link(src, dst, kind).

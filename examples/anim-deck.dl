@@ -1,12 +1,12 @@
 # Maintains the machine-written regions of the sprefa chapter in the anim deck
 # (~/projects/anim/src/deck/02-sprefa.md). The root spans both repos:
 #
-#   dl v5/examples/anim-deck.dl --root ~/projects
+#   dl examples/anim-deck.dl --root ~/projects
 #
 # Rebuild the deck after: cd ~/projects/anim && npm run check
 
 rel seen(path: file).
-seen(path) <- scan("WORK", "sprefa/v5/src/**/*.rs", path, rev),
+seen(path) <- scan("WORK", "sprefa/src/**/*.rs", path, rev),
   match(path, rev, /./, line).
 
 # Non-variant edges between plain-ident type names (variant nodes like
@@ -71,7 +71,7 @@ tag(f, "tag", "hub") <- hub(f, _).
 
 # where each shown type is declared, as an fs ref (panel rows + periscope)
 rel decl(name: text, path: file, line: int).
-decl(name, path, line) <- scan("WORK", "sprefa/v5/src/**/*.rs", path, rev),
+decl(name, path, line) <- scan("WORK", "sprefa/src/**/*.rs", path, rev),
   match(path, rev, /pub (?:struct|enum) (?<name>[A-Za-z]+)/, line).
 
 rel node_ref(node: text, panel: text, locator: text).

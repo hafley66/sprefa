@@ -4,8 +4,8 @@
 # no longer resolves. The skill is what `dl setup` installs, so it must not drift
 # from the engine's real surface.
 #
-#   Regen:  dl v5/examples/gen-skill-ref.dl --root .
-#   Gate:   dl v5/examples/gen-skill-ref.dl --root . --check   (exit 2 on a dead claim)
+#   Regen:  dl examples/gen-skill-ref.dl --root .
+#   Gate:   dl examples/gen-skill-ref.dl --root . --check   (exit 2 on a dead claim)
 #
 # NOTE: the skill is include_str!'d into the binary (setup.rs), so a regen only
 # SHIPS after `cargo install --path v5 --force`. gen skips under --check/--lsp;
@@ -16,7 +16,7 @@
 # BEGIN/END pair, then emit a header, a separator, and one row per op. Convergent
 # (no write when the bytes already match), so it is safe under --watch / CI.
 rel skill(p: file, l0: int, l1: int).
-skill(p, l0, l1) <- scan("WORK", "v5/assets/sprefa-dl.skill.md", p, rev),
+skill(p, l0, l1) <- scan("WORK", "assets/sprefa-dl.skill.md", p, rev),
     comment(p, rev, /BEGIN: op-quickref/, /END: op-quickref/, l0, l1).
 gen(p, l0, l1, "| op | kind | syntax |") <- skill(p, l0, l1).
 gen(p, l0, l1, "|---|---|---|") <- skill(p, l0, l1).
@@ -58,7 +58,7 @@ resolves(name) <- fn_catalog(name, _, _, _).
 
 rel diag(path: file, line: int, col: int, end_line: int, end_col: int,
          severity: text, code: text, msg: text).
-diag("v5/assets/sprefa-dl.skill.md", 0, 0, 0, 0, "error", "stale-skill-ref", name) <-
+diag("assets/sprefa-dl.skill.md", 0, 0, 0, 0, "error", "stale-skill-ref", name) <-
     skill_claims(name), !resolves(name).
 
 ? diag(path, line, col, end_line, end_col, severity, code, msg).

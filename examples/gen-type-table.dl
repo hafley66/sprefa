@@ -18,7 +18,7 @@
 # (the table lands between the markers above, as `# | type | n |` rows)
 
 rel seen(path: file).
-seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
 
 rel fan_out(f: text, n: int).
 fan_out(f, count(t)) <- type_edge(f, t, _, _).
@@ -27,7 +27,7 @@ rel hot(f: text, n: int).
 hot(f, n) <- fan_out(f, n), n >= 10.
 
 rel block(p: file, l0: int, l1: int, name: text).
-block(p, l0, l1, name) <- scan("WORK", "v5/examples/gen-type-table.dl", p, rev),
+block(p, l0, l1, name) <- scan("WORK", "examples/gen-type-table.dl", p, rev),
   comment(p, rev, /BEGIN: $name$/, /END:/, l0, l1, name).
 
 gen(p, l0, l1, "# | {f} | {n} |") <- block(p, l0, l1, "fanout"), hot(f, n).

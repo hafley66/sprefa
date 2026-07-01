@@ -92,7 +92,7 @@ to one feature. The research doc has the schema.
 
 ## Where to go from here
 
-You have, in this repo: a working engine (`v5/src`), examples that run on the
+You have, in this repo: a working engine (`src`), examples that run on the
 real kernel, a benchmark harness, a research doc on the incremental-recursion
 frontier, and this book. The honest next actions, smallest first: (1) read your
 own `engine.rs` end to end now that you have the vocabulary; (2) implement the

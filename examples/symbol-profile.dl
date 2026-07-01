@@ -8,19 +8,19 @@
 # Same relations, one node. The pinned-endpoint closure restriction is what
 # makes "ask about one symbol" a one-liner per dimension: pin S, read the row.
 #
-# Manual:  dl v5/examples/symbol-profile.dl --root .
+# Manual:  dl examples/symbol-profile.dl --root .
 # Edit the target fact below to x-ray a different symbol. Sym format is the
-# resolved call-graph key, e.g. "sprefa::v5/src/engine.rs::method::Engine.tick"
+# resolved call-graph key, e.g. "sprefa::src/engine.rs::method::Engine.tick"
 # (run refactor-discovery.dl ? cluster(...) to find one).
 
 rel target(sym: text).
-target("sprefa::v5/src/engine.rs::method::Engine.tick").
+target("sprefa::src/engine.rs::method::Engine.tick").
 
 # Ingest the engine source so the call/type/df builtins populate. These
 # relations fill from the scan-driven ingestion pass — without a scan the
 # program reads empty builtins. (A fresh `--db` also avoids daemon cache.)
 rel seen(path: file).
-seen(path) <- scan("v5/src/**/*.rs", path).
+seen(path) <- scan("src/**/*.rs", path).
 
 # ── call dimension ──────────────────────────────────────────────────────
 rel caller_of(sym: text).
@@ -48,7 +48,7 @@ cluster(rep, member) <- scc(call_edge).
 rel reaches(a: text, b: text).
 reaches(a, b) <- closure(call_edge).
 rel forward_reach(x: text).
-forward_reach(x) <- reaches(a, x), a = "sprefa::v5/src/engine.rs::method::Engine.tick", x != a.
+forward_reach(x) <- reaches(a, x), a = "sprefa::src/engine.rs::method::Engine.tick", x != a.
 
 # ── REVERSE dependents: everyone who reaches S = the move-safety set ────
 # closure over a reversed-edge derived rel. rev_reaches(s, x) means x reaches
@@ -58,7 +58,7 @@ rev_call(a, b) <- call_edge(b, a, _).
 rel rev_reaches(a: text, b: text).
 rev_reaches(a, b) <- closure(rev_call).
 rel breaks_if_moved(x: text).
-breaks_if_moved(x) <- rev_reaches(a, x), a = "sprefa::v5/src/engine.rs::method::Engine.tick", x != a.
+breaks_if_moved(x) <- rev_reaches(a, x), a = "sprefa::src/engine.rs::method::Engine.tick", x != a.
 
 # ── type dimension ──────────────────────────────────────────────────────
 # NOTE: the type_* relations key on TYPE-entity syms (type→type edges), not on

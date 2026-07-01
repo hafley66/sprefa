@@ -12,12 +12,12 @@
 # as a "next move to investigate." It does not claim the move is correct — it
 # surfaces candidates whose state-shape matched past reward-positive collapses.
 #
-# Manual:  dl v5/examples/dup-collapse.dl --root . --db /tmp/dl-dc.db --no-daemon
+# Manual:  dl examples/dup-collapse.dl --root . --db /tmp/dl-dc.db --no-daemon
 
 # Every fn-name defined in v5 src, with its file + line.
 rel fn_def(file: file, line: int, name: text).
 fn_def(file, line, name) <-
-    scan("WORK", "v5/src/**/*.rs", file, rev),
+    scan("WORK", "src/**/*.rs", file, rev),
     match(file, rev, /\s*(pub\s+)?(async\s+)?fn (?<name>[a-z_][a-z0-9_]*)\s*\(/, line).
 
 # How many distinct sites define each name WITHIN ONE FILE. The reward-positive

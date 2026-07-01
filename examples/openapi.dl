@@ -8,11 +8,11 @@ rel hook(op: text).
 rel missing_hook(op: text).
 
 spec_op(op) <-
-  scan("WORK", "v5/examples/openapi-sim/openapi.json", path, rev),
+  scan("WORK", "examples/openapi-sim/openapi.json", path, rev),
   jsonp(path, rev, "paths.*.*.operationId", op).
 
 hook(op) <-
-  scan("WORK", "v5/examples/openapi-sim/hooks.ts", path, rev),
+  scan("WORK", "examples/openapi-sim/hooks.ts", path, rev),
   match(path, rev, /registerHook\("(?<op>[a-zA-Z]+)"\)/, line).
 
 missing_hook(op) <- spec_op(op), !hook(op).

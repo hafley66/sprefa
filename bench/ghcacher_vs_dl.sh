@@ -25,7 +25,7 @@ CLOCK_SECS="${CLOCK_SECS:-30}"        # the dl re-poll cadence (one conditional 
 RUN_SECS="${RUN_SECS:-80}"            # how long to run the dl daemon (spans a few clock buckets)
 POLL_SECS="${POLL_SECS:-3}"           # dl daemon tick cadence (drives the effect drain)
 GHCACHE="${GHCACHE:-$HOME/projects/ghcacher}"
-HERE="$(cd "$(dirname "$0")/.." && pwd)"      # v5/
+HERE="$(cd "$(dirname "$0")/.." && pwd)"      # repo root
 DL="${DL:-$HERE/target/debug/dl}"
 
 WORK="$(mktemp -d "/tmp/ghc-vs-dl.${ORG}.XXXX")"

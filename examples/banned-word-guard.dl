@@ -4,7 +4,7 @@
 # this scans WHAT the turn said.
 #
 # Run pointed at the harness transcript dir (Claude Code shown):
-#   v5/target/debug/dl v5/examples/banned-word-guard.dl \
+#   target/debug/dl examples/banned-word-guard.dl \
 #     --root ~/.claude/projects/<repo-slug> --no-daemon
 #   ... or --lsp for squiggles (col/end_col are the exact byte span of the word).
 #

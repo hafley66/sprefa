@@ -25,16 +25,16 @@ A TextMate grammar (`syntaxes/dl.tmLanguage.json`) colors `.dl` files: comments 
 
 Point `dl.program` at a single example to try it without the `.dl/` convention:
 ```json
-{ "dl.program": "v5/examples/openapi-lsp.dl" }
+{ "dl.program": "examples/openapi-lsp.dl" }
 ```
 
 ## Build
 
 ```sh
-cd v5/editors/vscode-dl
+cd editors/vscode-dl
 npm install
 npm run compile
 npx @vscode/vsce package     # -> dl-lsp-0.3.0.vsix
 ```
 
-To iterate on the grammar without reinstalling: `code --extensionDevelopmentPath v5/editors/vscode-dl`.
+To iterate on the grammar without reinstalling: `code --extensionDevelopmentPath editors/vscode-dl`.

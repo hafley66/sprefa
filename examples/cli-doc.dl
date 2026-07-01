@@ -5,20 +5,20 @@
 # drift is visible. Reacts to a main.rs edit directly — no compiled binary, no
 # rebuild — because the watcher re-ticks when the scanned source file changes.
 #
-# Manual:  dl v5/examples/cli-doc.dl --root .
-# Daemon:  dl --daemon v5/examples/cli-doc.dl --root .
+# Manual:  dl examples/cli-doc.dl --root .
+# Daemon:  dl --daemon examples/cli-doc.dl --root .
 #          Writes README.md (a watched non-program file) → converges, no respawn.
 # Rerun converges (gen writes only when bytes differ).
 
 # A clap arg attribute line: `#[arg(long)]` / `#[arg(long = "move")]` / `#[arg(long, hide = true)]`.
 rel arg_attr(line: int).
-arg_attr(line) <- scan("WORK", "v5/src/main.rs", p, rev),
+arg_attr(line) <- scan("WORK", "src/main.rs", p, rev),
   match(p, rev, /#\[arg\(long/, line).
 
 # A struct field decl: `    fieldname: Type`. Trailing `_` (raw-ident workaround,
 # e.g. `move_`) is dropped so the kebab name matches clap's derived long flag.
 rel field_decl(line: int, fname: text).
-field_decl(line, fname) <- scan("WORK", "v5/src/main.rs", p, rev),
+field_decl(line, fname) <- scan("WORK", "src/main.rs", p, rev),
   match(p, rev, /^    (?<fname>[a-z0-9]+(?:_[a-z0-9]+)*)_*: /, line).
 
 # A flag = a field whose immediately-preceding line is an `#[arg(long...)]`. That
@@ -30,12 +30,12 @@ flag(name) <- arg_attr(la), field_decl(lf, fname), lf = la + 1,
 
 # The marker pair wrapping the whole table (header + separator + rows).
 rel block(p: file, l0: int, l1: int).
-block(p, l0, l1) <- scan("WORK", "v5/README.md", p, rev),
+block(p, l0, l1) <- scan("WORK", "README.md", p, rev),
   comment(p, rev, /BEGIN: cli/, /END: cli/, l0, l1).
 
 # Every README flag row, with its `--flag` name (SOURCE rule: scan+match only).
 rel readme_row_raw(p: file, line: int, flag: text, row: text).
-readme_row_raw(p, line, flag, row) <- scan("WORK", "v5/README.md", p, rev),
+readme_row_raw(p, line, flag, row) <- scan("WORK", "README.md", p, rev),
   match(p, rev, /(?<row>\| `--(?<flag>[a-z][a-z0-9-]*)[^|]*\| .+)/, line).
 
 # Scope the rows to the block. Joining on the flag name keeps only rows whose

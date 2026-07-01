@@ -12,7 +12,7 @@
 # here you see the fn-level delta directly (Engine.tick's true fan_out below vs
 # the diet count).
 #
-# Manual:  dl v5/examples/fn-graph.dl --root v5 --db /tmp/dl-fn.db --no-daemon
+# Manual:  dl examples/fn-graph.dl --root v5 --db /tmp/dl-fn.db --no-daemon
 #          (SPREFA_SCIP_INDEX=<repo>/index.scip; needs `just oracle-index` first)
 # Recipe:  just fn
 

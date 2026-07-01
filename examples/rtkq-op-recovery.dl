@@ -17,7 +17,7 @@ rel diag(path: file, line: int, severity: text, code: text, msg: text).
 
 # The contract: every operation declared in the OpenAPI spec.
 rel spec_op(op: text).
-spec_op(op) <- scan("WORK", "v5/examples/openapi-sim/openapi.json", p, rev),
+spec_op(op) <- scan("WORK", "examples/openapi-sim/openapi.json", p, rev),
                jsonp(p, rev, "paths.*.*.operationId", op).
 
 # RTKQ hook call sites in component code. One regex over the codegen naming
@@ -25,7 +25,7 @@ spec_op(op) <- scan("WORK", "v5/examples/openapi-sim/openapi.json", p, rev),
 # trailing `\(` keeps it to call sites, so a hook named in a comment is skipped.
 rel hook_call(p: file, l: int, hook: text).
 hook_call(p, l, hook) <-
-    scan("WORK", "v5/examples/openapi-sim/components.tsx", p, rev),
+    scan("WORK", "examples/openapi-sim/components.tsx", p, rev),
     match(p, rev, /\b(?P<hook>use[A-Z][A-Za-z0-9]*(?:Query|Mutation))\s*\(/, l).
 
 # The recovery: hook identifier -> endpoint op name.
@@ -46,7 +46,7 @@ diag(p, l, "warn", "rtkq-orphan-hook", "hook `${hook}` recovers to `${op}`, not 
 # Unhooked endpoint: a spec op no component hook reaches.
 rel hooked(op: text).
 hooked(op) <- recovered(_, _, _, op).
-diag("v5/examples/openapi-sim/openapi.json", 0, "warn", "rtkq-unhooked",
+diag("examples/openapi-sim/openapi.json", 0, "warn", "rtkq-unhooked",
      "spec op `${op}` has no client hook") <- spec_op(op), !hooked(op).
 
 ? spec_op(op).

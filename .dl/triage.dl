@@ -10,7 +10,7 @@
 #
 # Once this file exists and the extension is installed, hovering any struct/
 # enum/trait name shows the type-profile line:
-#   **struct** `...::Engine`  v5/src/engine.rs:144
+#   **struct** `...::Engine`  src/engine.rs:144
 #   Ca=12 Ce=8 fields=4 variants=0 impls=2
 #
 # NO SQUIGGLES: this program declares no `diag` relation. The output is the
@@ -21,7 +21,7 @@ type_span(name, f, l) <-
     scan("WORK", "src/**/*.rs", f, rev),
     match(f, rev, /\b(struct|enum|trait|type|impl)\s+(?<name>[A-Z][A-Za-z0-9_]*)/, l).
 type_span(name, f, l) <-
-    scan("WORK", "v5/src/**/*.rs", f, rev),
+    scan("WORK", "src/**/*.rs", f, rev),
     match(f, rev, /\b(struct|enum|trait|type|impl)\s+(?<name>[A-Z][A-Za-z0-9_]*)/, l).
 
 rel te(name: text).

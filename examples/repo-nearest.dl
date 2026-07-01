@@ -1,8 +1,8 @@
-# Run with no --root from anywhere:  dl v5/examples/repo-nearest.dl
+# Run with no --root from anywhere:  dl examples/repo-nearest.dl
 # The root defaults to the nearest .git ancestor of THIS file (the repo it
 # lives in), so the program is location-anchored without an imperative repo
 # statement. Cross-repo scanning is a typed coordinate on scan (not this file).
 
 rel located(p: file).
-located(p) <- scan("v5/src/repo.rs", p).
+located(p) <- scan("src/repo.rs", p).
 ? located(p).

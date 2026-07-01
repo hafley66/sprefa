@@ -18,14 +18,14 @@
 # `scan` rule in this program pulls in. The `index_over` rule below is the
 # interest declaration; without it, type_entity stays empty.
 #
-#   Run as LSP:   dl v5/examples/lsp-def-target.dl --root . --lsp
+#   Run as LSP:   dl examples/lsp-def-target.dl --root . --lsp
 #   See:          docs/lsp.md, README.md § LSP
 
-# Interest declaration: pull v5/src into the file set so the lazy type/call
+# Interest declaration: pull src into the file set so the lazy type/call
 # graph indexers have something to chew on. Under --lsp, didSave re-ticks the
 # one changed path; the indexers reconcile incrementally.
 rel index_over(p: file).
-index_over(p) <- scan("v5/src/**/*.rs", p).
+index_over(p) <- scan("src/**/*.rs", p).
 
 # Type-defined targets: structs, enums, traits, aliases. The `=~` constraint
 # is the unified regex literal (same form `match` takes); a name can only be

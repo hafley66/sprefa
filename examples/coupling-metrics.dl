@@ -14,7 +14,7 @@
 # (replaced by `for k in REGISTRY { k.refresh(self) }`), and the family counts
 # move from free functions into trait-impl methods. Re-run; diff the snapshot.
 #
-#   Run:  dl examples/coupling-metrics.dl --root .   (from v5/)
+#   Run:  dl examples/coupling-metrics.dl --root .   (from the repo root)
 
 # --- the RelKind family: the dup-shape that becomes trait impls --------------
 rel relkind_decl(name: text).

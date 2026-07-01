@@ -12,9 +12,9 @@
 #       several -- they union into latest_touch, which is harmless).
 #
 # Run live (squiggles in the editor):
-#   dl v5/examples/latest-turn-guardrail.dl --root . --lsp
+#   dl examples/latest-turn-guardrail.dl --root . --lsp
 # One-shot:
-#   dl v5/examples/latest-turn-guardrail.dl --root . --no-daemon
+#   dl examples/latest-turn-guardrail.dl --root . --no-daemon
 #
 # CROSS-ROOT NOTE: an adapter's records usually live OUTSIDE the repo (a
 # transcript under ~/.claude, a db under ~/.local/share). Two ways to bridge:

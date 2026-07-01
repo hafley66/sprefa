@@ -26,7 +26,7 @@
  *     regexes `/.../`, typed path literals `scheme:BODY`, `:TYPE` annotations
  *     (e.g. `:rust`), arithmetic expressions.
  *
- * Regen: `cd v5/tree-sitter-dl && tree-sitter generate`.
+ * Regen: `cd tree-sitter-dl && tree-sitter generate`.
  */
 
 const BSPAREN = token.immediate(seq('\\', /./));

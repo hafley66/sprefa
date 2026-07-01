@@ -15,7 +15,7 @@ runtime the project has since rejected.
 
 ## 1. v5 today — where the math lives, what is pure vs welded
 
-### File map (v5/src, `wc -l`)
+### File map (src, `wc -l`)
 
 | file | LOC | role | SQLite-coupled? |
 |---|---|---|---|
@@ -119,7 +119,7 @@ read SQL.
 
 ### Abstraction boundary: is there a trait seam?
 
-`grep '^pub trait' v5/src/*.rs`:
+`grep '^pub trait' src/*.rs`:
 - `ModuleResolver` (modgraph.rs:90) — language extraction, not the relation store.
 - spine `From` impls — id conversions.
 

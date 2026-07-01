@@ -28,4 +28,4 @@ Add the extensions your rails scan.
 
 This plugin is navigation + passive diagnostics. Enforcement — the loop that
 blocks an agent and feeds violations back — is the PostToolUse hook on
-`dl --check`, which is independent of this plugin. See `v5/docs/rails.md`.
+`dl --check`, which is independent of this plugin. See `docs/rails.md`.

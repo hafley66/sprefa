@@ -12,14 +12,14 @@ const DL: &str = env!("CARGO_BIN_EXE_dl");
 const BAN_DL: &str = r#"
 rel diag(path: file, line: int, severity: text, code: text, msg: text, hint: text).
 diag(path, line, "error", "no-dbg", "dbg!() left in code", "remove it") <-
-  scan("WORK", "v5/src/**/*.rs", path, rev), sg(path, rev, :rust, "dbg!($X)", line).
+  scan("WORK", "src/**/*.rs", path, rev), sg(path, rev, :rust, "dbg!($X)", line).
 "#;
 
 /// Fresh sandbox dir under the system temp dir, unique per test.
 fn sandbox(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("ban_gate_{tag}"));
     let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(dir.join("v5/src")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
     fs::write(dir.join("ban.dl"), BAN_DL).unwrap();
     dir
 }
@@ -48,7 +48,7 @@ fn run(root: &Path, extra: &[&str]) -> (i32, String, String) {
 #[test]
 fn clean_code_passes() {
     let d = sandbox("clean");
-    write(&d, "v5/src/clean.rs", "fn ok() { let x = 1; println!(\"{}\", x); }\n");
+    write(&d, "src/clean.rs", "fn ok() { let x = 1; println!(\"{}\", x); }\n");
     let (code, _, _) = run(&d, &["--check"]);
     assert_eq!(code, 0, "clean tree must exit 0");
 }
@@ -57,7 +57,7 @@ fn clean_code_passes() {
 fn structural_not_textual() {
     // `dbg!` appears in a comment AND a string literal but in no real call.
     let d = sandbox("structural");
-    write(&d, "v5/src/decoy.rs",
+    write(&d, "src/decoy.rs",
         "// TODO: never use dbg!(x) in committed code\n\
          fn note() { let s = \"dbg!(y)\"; println!(\"{}\", s); }\n");
     let (code, _, err) = run(&d, &["--check"]);
@@ -68,26 +68,26 @@ fn structural_not_textual() {
 #[test]
 fn real_call_fails_with_exact_location() {
     let d = sandbox("realcall");
-    write(&d, "v5/src/bad.rs", "fn risky() {\n    let x = 7;\n    dbg!(x);\n}\n");
+    write(&d, "src/bad.rs", "fn risky() {\n    let x = 7;\n    dbg!(x);\n}\n");
     // decoy in the same tree must stay silent
-    write(&d, "v5/src/decoy.rs", "// dbg!(z) in a comment\n");
+    write(&d, "src/decoy.rs", "// dbg!(z) in a comment\n");
     let (code, _, err) = run(&d, &["--check"]);
     assert_eq!(code, 2, "a real dbg!() call must fail the gate with the blocking-hook code");
-    assert!(err.contains("v5/src/bad.rs:3"), "must point at bad.rs:3, got: {err}");
+    assert!(err.contains("src/bad.rs:3"), "must point at bad.rs:3, got: {err}");
     assert!(!err.contains("decoy.rs"), "decoy must not be reported, got: {err}");
 }
 
 #[test]
 fn diag_json_is_machine_checkable() {
     let d = sandbox("json");
-    write(&d, "v5/src/bad.rs", "fn risky() {\n    let x = 7;\n    dbg!(x);\n}\n");
+    write(&d, "src/bad.rs", "fn risky() {\n    let x = 7;\n    dbg!(x);\n}\n");
     let (_, out, _) = run(&d, &["--diag-json"]);
     // exactly one finding, at line 3, in bad.rs, severity error, code no-dbg
     let v: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
     let arr = v.as_array().expect("array");
     assert_eq!(arr.len(), 1, "exactly one finding");
     assert_eq!(arr[0]["line"], 3);
-    assert_eq!(arr[0]["path"], "v5/src/bad.rs");
+    assert_eq!(arr[0]["path"], "src/bad.rs");
     assert_eq!(arr[0]["severity"], "error");
     assert_eq!(arr[0]["code"], "no-dbg");
 }
@@ -95,10 +95,10 @@ fn diag_json_is_machine_checkable() {
 #[test]
 fn deterministic_round_trip() {
     let d = sandbox("roundtrip");
-    write(&d, "v5/src/bad.rs", "fn risky() {\n    dbg!(7);\n}\n");
+    write(&d, "src/bad.rs", "fn risky() {\n    dbg!(7);\n}\n");
     let (code1, _, _) = run(&d, &["--check"]);
     assert_eq!(code1, 2, "with the move present, gate fails");
-    fs::remove_file(d.join("v5/src/bad.rs")).unwrap();
+    fs::remove_file(d.join("src/bad.rs")).unwrap();
     let (code2, _, _) = run(&d, &["--check"]);
     assert_eq!(code2, 0, "after removing the move, gate passes again");
 }

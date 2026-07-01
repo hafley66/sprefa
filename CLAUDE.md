@@ -1,11 +1,12 @@
 # sprefa
 
-Reactive datalog-over-code engine. Active version is **`v5/`** ("dl"): SQLite-welded,
-facts extracted via `scan`+`regex`/`ast`/`sg`/`json`, recursive rules lower to a SQL
-fixpoint. `v3/` and `v4/` are prior iterations kept for design-recovery; the OG
-coordinate model (strings/refs/byte-spans) lives in `~/projects/sprefa-archive-20260428`.
+Reactive datalog-over-code engine ("dl"), living at the **repo root** (v5 lifted
+2026-07-01): SQLite-welded, facts extracted via `scan`+`regex`/`ast`/`sg`/`json`,
+recursive rules lower to a SQL fixpoint. Prior iterations: v3/v4 working trees in
+`~/projects/sprefa-archive-20260701` (also full git history); the OG coordinate
+model (strings/refs/byte-spans) in `~/projects/sprefa-archive-20260428`.
 
-User-facing overview (model, DSL surface, CLI, examples, known gaps): **`v5/README.md`**.
+User-facing overview (model, DSL surface, CLI, examples, known gaps): **`README.md`**.
 
 Deep state lives in auto-memory (`project_v5_dl_engine`, etc.) + `chat_log/` session
 logs + `plans/`. This file is the standing task ledger only.
@@ -47,7 +48,7 @@ functions**. A third, **(3) string-inline-everywhere**, is the ref-spine debt.
 - [x] SCIP importer tier: existing `index.scip` (or `SPREFA_SCIP_INDEX`) loads into
       `scip_def(symbol,file)`, `scip_ref(file,symbol,def_file)`, and
       `scip_edge(src,dst)` for compiler-backed graph facts.
-- [x] Honest RA oracle recall snapshot for real `v5/src`: ignored test reports
+- [x] Honest RA oracle recall snapshot for real `src`: ignored test reports
       precision 0.86 / recall 0.83 against rust-analyzer SCIP on this checkout.
 - [x] Ref-spine C0: v5-native `spine` ID primitives plus `_strings`, `_files`, and
       `_where_bytes` meta tables with zero sentinels.
@@ -80,7 +81,7 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
 - [x] **B — generalize built-in refresh** (S, kills dup-shape #2): one `refresh_rel(name, cols, rows)`
       so `refresh_builtin_rels` + `refresh_module_rels` + future `type_edge` share one emit path.
 - [x] **E — `type_edge` self-hosted type graph** (S–M, rides B): a `syn`-based extractor (syn
-      already in tree) emits `type_edge(from, to, kind∈field|variant|impl|generic)` over `v5/src`
+      already in tree) emits `type_edge(from, to, kind∈field|variant|impl|generic)` over `src`
       — same shape as `module_edge`. Then `reaches(Term, X)` = blast radius, fan-in/out per type
       as a query, cycles via `closure(type_edge)`. The deterministic, tokenless type-graph generator.
 - [x] **A — migrate remaining N+1 write loops** (S–M, kills dup-shape #1): `refresh_builtin_rels`

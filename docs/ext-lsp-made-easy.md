@@ -15,7 +15,7 @@ Sources cloned under `/Users/chrishafley/projects/ext/`:
 | `async-lsp` | oxalica | modern tower middleware `Layer` stack |
 | `rust-analyzer/lib/lsp-server` | rust-analyzer | minimal sync crate, crossbeam channels, no async runtime |
 
-sprefa already ships on `lsp-server` today: `v5/src/lsp.rs:11`
+sprefa already ships on `lsp-server` today: `src/lsp.rs:11`
 `use lsp_server::{Connection, Message, Notification};`. This doc confirms that
 choice and sketches the next steps.
 
@@ -231,7 +231,7 @@ a sprefa tick goes.
 | one inline tick per request, zero parked-wake | 0 — concurrency spawns tasks | 0 — `ConcurrencyLayer` spawns tasks | **2 — natural; bg work is opt-in** |
 | ceremony to first response | 1 — ~25 async LOC + 2 macros | 0 — Layer stack + `BoxFuture` everywhere | **2 — ~20 plain-sync LOC** |
 | middleware / batteries (cancel, progress) | 1 — built-in but async | **2 — richest Layer set** | 1 — `ReqQueue` opt-in, sync |
-| already adopted by sprefa | — | — | **yes (`v5/src/lsp.rs`)** |
+| already adopted by sprefa | — | — | **yes (`src/lsp.rs`)** |
 | **total (sync-tick fit)** | **2** | **3** | **13** |
 
 **Winner: `lsp-server`.** It is the only one of the three that does not impose
@@ -241,10 +241,10 @@ concurrency; both directly contradict the sprefa "one inline synchronous tick
 per action" rule. async-lsp's middleware stack is the strongest feature set but
 buys the exact async machinery sprefa rejected from v4.
 
-### sprefa LSP loop on the winner (extends today's `v5/src/lsp.rs`)
+### sprefa LSP loop on the winner (extends today's `src/lsp.rs`)
 
 `lsp.rs` is 164 LOC and already runs this shape for didSave/didOpen only
-(`v5/src/lsp.rs:51-71`): cold tick, then per-notification `tick_paths` + publish.
+(`src/lsp.rs:51-71`): cold tick, then per-notification `tick_paths` + publish.
 Generalize the match arm to the "insert request fact → one tick → read answers →
 retract" protocol so requests (hover, definition) join notifications:
 

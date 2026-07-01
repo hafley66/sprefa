@@ -294,7 +294,7 @@ use "std/callgraph.dl".
 1. The program file's directory (`use "lib.dl"` for a sibling;
    `use "std/foo.dl"` when the program lives next to a `std/` dir).
 2. `$SPREFA_STD` (explicit override; the install / CI hand-lever).
-3. The crate root (`v5/`), which ships a `std/` subdir. Lets examples and
+3. The crate root (the repo root), which ships a `std/` subdir. Lets examples and
    tests use `use "std/foo.dl".` without an install step.
 4. The binary's parent directory (`<exe>/..`, the installed layout).
 
@@ -577,7 +577,7 @@ allow_missing = true                    # missing root is non-fatal: scan yields
 `scan("alpha/one", "WORK", glob, p, rev)` targets one repo;
 `scan("*", "WORK", ...)` fans the rule over every configured repo. Or point
 `--root` at a parent directory and use root-relative globs
-(`"sprefa/v5/src/**/*.rs"`), as [examples/anim-deck.dl](examples/anim-deck.dl) does.
+(`"sprefa/src/**/*.rs"`), as [examples/anim-deck.dl](examples/anim-deck.dl) does.
 
 **Progressive analysis.** A multi-repo program does not have to bail when one
 clone is missing. Mark the config row `allow_missing = true` and the engine
@@ -711,7 +711,7 @@ between the markers.
 | [`refactor-clusters.dl`](examples/refactor-clusters.dl) | refactor-clusters.dl — refactor starting points from the RA-oracle graph, |
 | [`refactor-discovery.dl`](examples/refactor-discovery.dl) | refactor-discovery.dl — refactor signals from the engine's resolved call graph. |
 | [`refactor-init.dl`](examples/refactor-init.dl) | refactor-init.dl — from the 100%-recall SCIP oracle: where to START. |
-| [`repo-nearest.dl`](examples/repo-nearest.dl) | Run with no --root from anywhere:  dl v5/examples/repo-nearest.dl |
+| [`repo-nearest.dl`](examples/repo-nearest.dl) | Run with no --root from anywhere:  dl examples/repo-nearest.dl |
 | [`rtkq-op-recovery.dl`](examples/rtkq-op-recovery.dl) | RTK Query op-name recovery. RTKQ generates a hook identifier from each |
 | [`rust.dl`](examples/rust.dl) | Rust lint pack — ast-grep patterns surfaced as LSP diagnostics. |
 | [`string-fns.dl`](examples/string-fns.dl) | string-fns.dl — split / replace / computed binding / unary minus / NULL drop. |
@@ -754,9 +754,9 @@ between the markers.
 | [tests/](tests/) | e2e + the SCIP differential oracles (`oracle_rust.rs` vs rust-analyzer, `oracle_kotlin.rs` vs scip-java; both skip when the tool is absent) |
 | `plans/`, `../CLAUDE.md` | task ledger and design plans |
 
-`v5/` is the active engine. `v3/`/`v4/` are prior iterations kept for
-design-recovery; the original coordinate model lives in
-`../../sprefa-archive-20260428`.
+The engine lives at the repo root (v5 lifted, 2026-07-01). Prior iterations:
+v3/v4 working trees in `../sprefa-archive-20260701` (and git history); the
+original coordinate model in `../sprefa-archive-20260428`.
 
 ## Known gaps
 
@@ -868,7 +868,7 @@ round-trips to locate; documented so the next run (human or agent) skips them.
   the footgun (cost a debug cycle every time). **Now the daemon drains effects by
   default** (`DEFAULT_POLL_SECS=2`, the poll loop no-ops cheaply when a program has
   no effects); `DL_POLL_SECS=N` overrides the cadence and `DL_POLL_SECS=0` is the
-  explicit off switch. `v5/examples/crawl <thing>` still owns the whole
+  explicit off switch. `examples/crawl <thing>` still owns the whole
   daemon+load+render lifecycle as one command, over `examples/npm-crawl.dl`.
 - **`@async` fans out ALL distinct requests on the tick they become derivable —
   and `clock(N,b)` does NOT spread them.** Firing an effect over N derived
@@ -907,8 +907,8 @@ shallow-pulls each dep's source repo at its rev (`git clone --depth 1` — sourc
 only, no `npm install`, no build).
 
 ```
-v5/examples/crawl express 2      # -> _npm/graph.svg + _npm/src/<pkg>/ (81 edges @ depth 1)
-v5/examples/crawl cross-spawn    # small tree: cross-spawn -> {which->isexe, path-key, shebang-command->shebang-regex}
+examples/crawl express 2      # -> _npm/graph.svg + _npm/src/<pkg>/ (81 edges @ depth 1)
+examples/crawl cross-spawn    # small tree: cross-spawn -> {which->isexe, path-key, shebang-command->shebang-regex}
 ```
 
 The driver hides every sharp edge above: it sets `DL_POLL_SECS`, owns the daemon

@@ -1,5 +1,5 @@
 # Rails for this repo: checks scoped to the worktree diff via changed(p).
-# Run by the PostToolUse hook in .claude/settings.json (see v5/docs/rails.md).
+# Run by the PostToolUse hook in .claude/settings.json (see docs/rails.md).
 # error severity blocks the agent (exit 2); warn reports without failing.
 
 # `col`/`end_col` are 0-based byte columns of the offending span within `line`
@@ -10,7 +10,7 @@ rel diag(path: file, line: int, col: int, end_col: int, severity: text, code: te
 # ---- banned identifiers (CLAUDE.md style rule) --------------------------------
 rel banned_hit(p: file, l: int, c: int, ec: int, w: text).
 banned_hit(p, l, c, ec, w) <-
-    scan("WORK", "v5/src/**/*.rs", p, rev),
+    scan("WORK", "src/**/*.rs", p, rev),
 # Substring + case-insensitive on purpose: identifiers concatenate
 # (ProvenanceRecord, substrate_id), so \b and exact case both leak.
     match(p, rev, /(?i)(?<w>provenance|substrate|regime|load.?bearing)/, l, c, ec).
@@ -31,9 +31,9 @@ diag(p, l, c, ec, "error", "banned-word", "banned identifier `${w}` (use source/
 # Seed: raw .conn() call sites, excluding db.rs (the seam itself).
 rel conn_site(p: file, l: int, c: int, ec: int).
 conn_site(p, l, c, ec) <-
-    scan("WORK", "v5/src/**/*.rs", p, rev),
+    scan("WORK", "src/**/*.rs", p, rev),
     match(p, rev, /\.conn\(\)/, l, c, ec),
-    p != fs:`v5/src/db.rs`.
+    p != fs:`src/db.rs`.
 
 # Resolve each .conn() site to its enclosing fn via the call-site extractor.
 # `caller` is the resolved fn sym; "conn" is the method name (self.db.conn()).
@@ -105,7 +105,7 @@ diag(p, l, c, ec, "warn", "conn-loop-reachable",
 # heuristic. (`_` for end_line; we keep line/col/end_col for the squiggle.)
 rel unwrap_hit(p: file, l: int, c: int, ec: int).
 unwrap_hit(p, l, c, ec) <-
-    scan("WORK", "v5/src/**/*.rs", p, rev),
+    scan("WORK", "src/**/*.rs", p, rev),
     ast_yaml(p, rev, :rust, `
 pattern: $X.unwrap()
 not:

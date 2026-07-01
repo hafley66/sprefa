@@ -7,7 +7,7 @@
 //!    `eng.last_n1.is_none()`.
 //!
 //! 2. `node_child_perf_on_v5_src` (`#[ignore]`, run with `--ignored --nocapture`):
-//!    cold-walks the real `v5/src` file set, reports wall-clock + the `node`/
+//!    cold-walks the real `src` file set, reports wall-clock + the `node`/
 //!    `child` row counts (the real ~100x number), then re-ticks after a one-file
 //!    edit for the incremental time, and confirms a program WITHOUT node/child
 //!    pays zero (no rows). Also confirms the stored-id-set early-out
@@ -67,7 +67,7 @@ fn node_child_tick_has_no_n1() {
 #[test]
 #[ignore = "perf bench: run with `cargo test --test cst_node_perf -- --ignored --nocapture`"]
 fn node_child_perf_on_v5_src() {
-    // The real v5/src checkout is the corpus.
+    // The real src checkout is the corpus.
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let dbdir = std::env::temp_dir().join("cst_node_perf_v5src");
     let _ = fs::remove_dir_all(&dbdir);
@@ -77,7 +77,7 @@ fn node_child_perf_on_v5_src() {
     let conn = db::open(Some(dbdir.join("db").to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, root.clone());
 
-    // COLD: full walk over v5/src.
+    // COLD: full walk over src.
     let t = Instant::now();
     eng.tick(&prog, true).unwrap();
     let cold_ms = t.elapsed().as_secs_f64() * 1000.0;
@@ -117,7 +117,7 @@ fn node_child_perf_on_v5_src() {
     let gate_ms = t.elapsed().as_secs_f64() * 1000.0;
     let gate_nodes = row_count(&eng2, "node");
 
-    println!("\n=== CST node/child perf on real v5/src ===");
+    println!("\n=== CST node/child perf on real src ===");
     println!("files (seen):       {files}");
     println!("node rows:          {nodes}");
     println!("child rows:         {children}");
@@ -132,7 +132,7 @@ fn node_child_perf_on_v5_src() {
     // rel_node table exists (declared) but is never populated.
     assert_eq!(gate_nodes, 0, "node_rels_used gate failed: walked despite no node/child reference");
     // Sanity: the real corpus produced a meaningful node count.
-    assert!(nodes > 1000, "v5/src should yield thousands of nodes (got {nodes})");
+    assert!(nodes > 1000, "src should yield thousands of nodes (got {nodes})");
 }
 
 

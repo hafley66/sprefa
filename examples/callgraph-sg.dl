@@ -15,20 +15,20 @@ rel reaches(src: text, dst: text).
 rel unused(name: text).
 
 def(NAME, path, line) <-
-  scan("WORK", "v5/src/**/*.rs", path, rev),
+  scan("WORK", "src/**/*.rs", path, rev),
   sg(path, rev, :rust, "fn $NAME($$$P) -> $R { $$$B }", line).
 def(NAME, path, line) <-
-  scan("WORK", "v5/src/**/*.rs", path, rev),
+  scan("WORK", "src/**/*.rs", path, rev),
   sg(path, rev, :rust, "fn $NAME($$$P) { $$$B }", line).
 def(NAME, path, line) <-
-  scan("WORK", "v5/src/**/*.rs", path, rev),
+  scan("WORK", "src/**/*.rs", path, rev),
   sg(path, rev, :rust, "pub fn $NAME($$$P) -> $R { $$$B }", line).
 def(NAME, path, line) <-
-  scan("WORK", "v5/src/**/*.rs", path, rev),
+  scan("WORK", "src/**/*.rs", path, rev),
   sg(path, rev, :rust, "pub fn $NAME($$$P) { $$$B }", line).
 
 call(CALLEE, path, line) <-
-  scan("WORK", "v5/src/**/*.rs", path, rev),
+  scan("WORK", "src/**/*.rs", path, rev),
   sg(path, rev, :rust, "$CALLEE($$$A)", line).
 
 calls(caller, callee) <-

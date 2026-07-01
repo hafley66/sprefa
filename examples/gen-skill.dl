@@ -10,10 +10,10 @@
 # `match` is deliberately NOT used for anchors — it is line/term parsing (break a
 # line down, pull a sub-term), NOT a checked reference to a declaration.
 #
-#   Run:  dl v5/examples/gen-skill.dl --root .   (root = sprefa, paths are v5/-relative)
+#   Run:  dl examples/gen-skill.dl --root .   (root = repo root)
 
 rel src(p: file).
-src(p) <- scan("v5/src/relkind.rs", p).
+src(p) <- scan("src/relkind.rs", p).
 
 # ── (A) GENERATED surface, anchored semantically ──────────────────────────────
 # Every function in relkind.rs at its REAL decl line, from type_entity. Rename or
@@ -23,13 +23,13 @@ src(p) <- scan("v5/src/relkind.rs", p).
 rel api(name: text, file: file, line: int).
 api(name, f, line) <- type_entity(_, _, name, "function", _, f, line).
 
-gen(:append, "v5/examples/_auto-doc/relkind-skill.md", "# relkind.rs function surface") <- true().
-gen(:append, "v5/examples/_auto-doc/relkind-skill.md",
+gen(:append, "examples/_auto-doc/relkind-skill.md", "# relkind.rs function surface") <- true().
+gen(:append, "examples/_auto-doc/relkind-skill.md",
     "Generated from `type_entity` (semantic) by examples/gen-skill.dl. Checked: a symbol that no longer resolves drops out.") <- true().
-gen(:append, "v5/examples/_auto-doc/relkind-skill.md", "") <- true().
-gen(:append, "v5/examples/_auto-doc/relkind-skill.md", "| function | anchor |") <- true().
-gen(:append, "v5/examples/_auto-doc/relkind-skill.md", "|---|---|") <- true().
-gen(:append, "v5/examples/_auto-doc/relkind-skill.md", "| `{name}` | {file}:{line} |") <- api(name, file, line).
+gen(:append, "examples/_auto-doc/relkind-skill.md", "") <- true().
+gen(:append, "examples/_auto-doc/relkind-skill.md", "| function | anchor |") <- true().
+gen(:append, "examples/_auto-doc/relkind-skill.md", "|---|---|") <- true().
+gen(:append, "examples/_auto-doc/relkind-skill.md", "| `{name}` | {file}:{line} |") <- api(name, file, line).
 
 # ── (B) CHECKED-CLAIMS rail ───────────────────────────────────────────────────
 # Symbols the skill PROSE cites by name. If a claim no longer resolves in
@@ -48,7 +48,7 @@ resolves(name) <- type_entity(_, _, name, _, _, _, _).
 # `{var}` — that is a gen-sink feature; `code` carries the category).
 rel diag(path: file, line: int, col: int, end_line: int, end_col: int,
          severity: text, code: text, msg: text).
-diag("v5/examples/gen-skill.dl", 0, 0, 0, 0, "error", "stale-skill-ref", name) <-
+diag("examples/gen-skill.dl", 0, 0, 0, 0, "error", "stale-skill-ref", name) <-
     skill_claims(name), !resolves(name).
 
 ? api(name, file, line).

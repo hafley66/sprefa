@@ -11,11 +11,11 @@ rel reaches(src: text, dst: text).
 rel unused(name: text).
 
 def(name, path, line) <-
-  scan("WORK", "v5/src/**/*.rs", path, rev),
+  scan("WORK", "src/**/*.rs", path, rev),
   ast(path, rev, :rust, "(function_item name: (identifier) @name)", line).
 
 call(callee, path, line) <-
-  scan("WORK", "v5/src/**/*.rs", path, rev),
+  scan("WORK", "src/**/*.rs", path, rev),
   ast(path, rev, :rust, "(call_expression function: (identifier) @callee)", line).
 
 calls(caller, callee) <-

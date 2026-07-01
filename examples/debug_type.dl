@@ -1,6 +1,6 @@
 # debug_type.dl — check what's in type_edge and type_entity
 rel seen(path: file).
-seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
 
 # Named args: bind only the column you count, no positional `_` padding.
 rel n_edge(n: int).

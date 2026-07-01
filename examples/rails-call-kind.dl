@@ -14,7 +14,7 @@
 # (fn is called FROM a loop-nested site, not just transitively reachable
 # from a fn that has a loop). Both cuts compose by joining on the same fn.
 #
-#   Run: dl v5/examples/rails-call-kind.dl --root . --check
+#   Run: dl examples/rails-call-kind.dl --root . --check
 
 rel diag(path: file, line: int, severity: text, code: text, msg: text).
 
@@ -23,9 +23,9 @@ rel diag(path: file, line: int, severity: text, code: text, msg: text).
 # typo'd exemption path is itself a check error.
 rel conn_site(p: file, l: int).
 conn_site(p, l) <-
-    scan("WORK", "v5/src/**/*.rs", p, rev),
+    scan("WORK", "src/**/*.rs", p, rev),
     match(p, rev, /\.conn\(\)/, l),
-    p != fs:`v5/src/db.rs`.
+    p != fs:`src/db.rs`.
 
 # Resolve each .conn() site to its enclosing fn via call_site.
 # `caller` is the resolved fn sym; "conn" is the bare method name.

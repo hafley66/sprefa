@@ -1,6 +1,6 @@
 # SCIP perf — measured on v5, 2026-06-30
 
-Reproduce: `bench/scip_perf.sh rust .` (from `v5/`) plus the in-place cold/warm
+Reproduce: `bench/scip_perf.sh rust .` (from the repo root) plus the in-place cold/warm
 split below (run `rust-analyzer scip` twice in the same dir).
 
 ## rust-analyzer scip on v5 (real numbers)

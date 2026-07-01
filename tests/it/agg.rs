@@ -51,8 +51,8 @@ fn rows_of(out: &str, rel: &str) -> Vec<(String, String)> {
 }
 
 /// (1) THE GATE. `fan_out(F, count(T)) <- type_edge(F, T, _, _)` over v5's own
-/// self-hosted type graph, run with `--root` at the real sprefa checkout (parent
-/// of v5/). The 2026-06-06 reference numbers were Tok=21, BodyItem=9, Engine=9.
+/// self-hosted type graph, run with `--root` at the real sprefa checkout (the repo
+/// root itself post-lift). The 2026-06-06 reference numbers were Tok=21, BodyItem=9, Engine=9.
 /// T1-T3 work (the `Tok::Scheme` literal token + new engine fields) drifted the
 /// live counts to Tok=23, BodyItem=9, Engine=10, so this asserts the FRESH live
 /// values and the top-3 fan-out ordering (Tok highest, then Engine, then the
@@ -60,10 +60,12 @@ fn rows_of(out: &str, rel: &str) -> Vec<(String, String)> {
 #[test]
 fn gate_fan_out_over_type_edge() {
     let d = sandbox("gate");
-    let sprefa_root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    // Post-lift the crate root IS the sprefa checkout (was `.parent()` when the
+    // crate lived in v5/).
+    let sprefa_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let prog = r#"
 rel seen(path: file).
-seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
 rel fan_out(f: text, n: int).
 fan_out(f, count(t)) <- type_edge(f, t, _, _).
 ? fan_out(f, n).

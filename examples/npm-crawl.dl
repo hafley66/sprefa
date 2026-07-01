@@ -6,11 +6,11 @@
 # name one package and the crawl discovers the graph for you.
 #
 # Effects fire off-tick, so this needs the persistent daemon. Easiest:
-#     v5/examples/crawl wrap-ansi          # driver: daemon up, load, render, down
+#     examples/crawl wrap-ansi          # driver: daemon up, load, render, down
 # or by hand, from the repo root:
 #     dl --daemon --root . &
-#     dl --load v5/examples/npm-crawl.dl --root .
-#     d2 v5/examples/_npm/graph.d2 v5/examples/_npm/graph.svg && open v5/examples/_npm/graph.svg
+#     dl --load examples/npm-crawl.dl --root .
+#     d2 examples/_npm/graph.d2 examples/_npm/graph.svg && open examples/_npm/graph.svg
 #
 # Change the seed(s) below, or drive a different package via the `crawl` script.
 
@@ -35,7 +35,7 @@ frontier(dep, d1) <- dep_at(_, dep, d), d < 3, d1 = d + 1.
 
 # --- progressive graphviz (d2 dialect): every edge known so far, rewritten each
 # tick as more land. Render with `d2`; for GraphViz proper wrap in `digraph{ }`. -
-gen("v5/examples/_npm/graph.d2", "{pkg} -> {dep}") <- dep_at(pkg, dep, _).
+gen("examples/_npm/graph.d2", "{pkg} -> {dep}") <- dep_at(pkg, dep, _).
 
 # fan-in: the ecosystem hubs — which packages the most deps point AT.
 rel fanin(pkg: text, n: int).
@@ -51,8 +51,8 @@ rel repo_url(pkg: text, url: text).
 repo_url(pkg, url) <- @async frontier(pkg, _), npm_repo(pkg) -> (url).
 
 sh pull_src(pkg, url) -> (ok: int) =
-  `test -n "$url" && rm -rf "v5/examples/_npm/src/$pkg" \
-   && git clone --depth 1 "$url" "v5/examples/_npm/src/$pkg" >/dev/null 2>&1 \
+  `test -n "$url" && rm -rf "examples/_npm/src/$pkg" \
+   && git clone --depth 1 "$url" "examples/_npm/src/$pkg" >/dev/null 2>&1 \
    && echo 1 || echo 0`.
 
 rel pulled(pkg: text, ok: int).

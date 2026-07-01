@@ -7,8 +7,8 @@
 # auto-appears as a stub row (ast_yaml today) so drift is visible in the doc;
 # a human fills the prose and the next tick preserves it verbatim.
 #
-# Manual:  dl v5/examples/op-table.dl --root .
-# Daemon:  dl --daemon v5/examples/op-table.dl --root .
+# Manual:  dl examples/op-table.dl --root .
+# Daemon:  dl --daemon examples/op-table.dl --root .
 #          Writes README.md (a watched non-program file) → converges, no respawn.
 # Rerun converges (gen writes only when bytes differ).
 
@@ -18,19 +18,19 @@
 # graph constructs, not source ops (they live in syntax.md's op_catalog, not this
 # source-op table) → excluded.
 rel dispatch_op(op: text).
-dispatch_op(op) <- scan("WORK", "v5/src/parse.rs", p, rev),
+dispatch_op(op) <- scan("WORK", "src/parse.rs", p, rev),
   match(p, rev, /if s == "(?<op>\w+)" \{ return self\./, _),
   op != "closure", op != "scc", op != "node2vec".
 
 # The marker pair wrapping the whole table (header + separator + rows).
 rel block(p: file, l0: int, l1: int).
-block(p, l0, l1) <- scan("WORK", "v5/README.md", p, rev),
+block(p, l0, l1) <- scan("WORK", "README.md", p, rev),
   comment(p, rev, /BEGIN: op-table/, /END: op-table/, l0, l1).
 
 # Extract every backtick-pipe row from README (SOURCE rule: scan+match only,
 # no derived join — the extract-then-join split source rules require).
 rel readme_row_raw(p: file, line: int, op: text, row: text).
-readme_row_raw(p, line, op, row) <- scan("WORK", "v5/README.md", p, rev),
+readme_row_raw(p, line, op, row) <- scan("WORK", "README.md", p, rev),
   match(p, rev, /(?<row>\| `(?<op>\w+)` .+)/, line).
 
 # Scope the rows to the block (DERIVED rule: may join block + compare). Verbatim

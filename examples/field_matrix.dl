@@ -3,7 +3,7 @@
 # Output as TSV for Python SVD.
 
 rel seen(path: file).
-seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
 
 rel eng_method(fn: text).
 eng_method(fn) <- scip_fn_edge(fn, callee), callee =~ /Engine\]/, fn =~ /Engine\]/.

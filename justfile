@@ -1,7 +1,7 @@
-# v5 (dl) — datalog over files in repo/rev/time
-# `just` runs from this directory. `repo` is the sprefa root (parent of v5).
+# dl — datalog over files in repo/rev/time
+# `just` runs from the repo root (also the crate root).
 
-repo := justfile_directory() / ".."
+repo := justfile_directory()
 
 # list recipes
 default:
@@ -70,7 +70,7 @@ clean-db:
 # scip flags (unstable per RA): <path>, --output, --exclude-vendored-libraries,
 # --num-threads, --config-path. There is NO --only; scope-limit via the cargo
 # config or --exclude-vendored-libraries instead.
-# RESULT (2026-06-26, v5/src): RA=193 file edges, sprefa=122, shared=55 ->
+# RESULT (2026-06-26, src): RA=193 file edges, sprefa=122, shared=55 ->
 # recall 28%, precision 45%. Heuristic undercounts (misses trait/re-export/dyn
 # paths) AND over-counts. STUDY.md's "prefer resolved, fall back to ast" is the
 # remedy; this recipe is how you measure it. Currently FILE-granularity only —
@@ -80,7 +80,7 @@ oracle-index:
 
 # run the file-level RA-vs-sprefa comparison. Requires `just oracle-index` first
 # (produces {{repo}}/index.scip). --root . (v5) so sprefa's paths (src/…) match
-# RA's SCIP paths (also src/…); a repo-root --root yields v5/src/… keys that
+# RA's SCIP paths (also src/…); a repo-root --root yields src/… keys that
 # don't join. SPREFA_SCIP_INDEX points at the index outside --root. --no-daemon
 # forces the in-process path; a running daemon must never serve a stale cached
 # program on a one-shot oracle run (this once manufactured a phantom cycle).

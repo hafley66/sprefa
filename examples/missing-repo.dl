@@ -16,7 +16,7 @@
 #   url  = "https://github.com/org/dep-b"
 #
 # Then:
-#   dl v5/examples/missing-repo.dl --root . --db ./db
+#   dl examples/missing-repo.dl --root . --db ./db
 
 # The slugs this program intends to analyze. Author-declared; not built-in.
 rel referenced_repo(slug: text).

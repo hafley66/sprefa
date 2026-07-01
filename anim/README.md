@@ -13,7 +13,7 @@ spin up per topic.
 ## Quick start
 
 ```bash
-cd v5/anim
+cd anim
 npm install
 npm run seed       # one-time: makes a demo SQLite DB for the sql-graph example
 npm run dev        # open the printed http://localhost:5173

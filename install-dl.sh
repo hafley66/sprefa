@@ -3,15 +3,15 @@
 # (Claude Code, opencode, anything that reads AGENTS.md / a skills dir).
 #
 # Usage:
-#   v5/install-dl.sh                 # install binary + wire global skill into detected agents
-#   v5/install-dl.sh --bin-only      # just `cargo install` the binary
-#   v5/install-dl.sh --project DIR   # bootstrap a repo: starter .dl + AGENTS.md/CLAUDE.md section
-#   v5/install-dl.sh --project .     # ...the current repo
+#   install-dl.sh                 # install binary + wire global skill into detected agents
+#   install-dl.sh --bin-only      # just `cargo install` the binary
+#   install-dl.sh --project DIR   # bootstrap a repo: starter .dl + AGENTS.md/CLAUDE.md section
+#   install-dl.sh --project .     # ...the current repo
 #
 # Env: SPREFA_SKILLS_DIR overrides skill destination.
 set -euo pipefail
 
-V5="$(cd "$(dirname "$0")" && pwd)"            # this is the v5/ crate dir
+V5="$(cd "$(dirname "$0")" && pwd)"            # the repo root (crate root)
 SKILL_SRC="$HOME/projects/claude-research/skills/sprefa-dl/SKILL.md"
 say() { printf '\033[1;36m[install-dl]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[install-dl]\033[0m %s\n' "$*"; }

@@ -9,16 +9,16 @@
 # the row drops via an IS NOT NULL guard, so "split then join" is a clean
 # existential check.
 #
-#   Run: dl v5/examples/string-fns.dl --root .
+#   Run: dl examples/string-fns.dl --root .
 
-# Every fn name + its file in v5/src.
+# Every fn name + its file in src.
 rel fn_at(file: text, name: text).
 fn_at(file, name) <-
-    scan("WORK", "v5/src/**/*.rs", file, rev),
+    scan("WORK", "src/**/*.rs", file, rev),
     match(file, rev, /fn (?<name>[a-z_][a-z0-9_]*)/, l).
 
 # 1. LAST PATH SEGMENT — split(file, "/", -1). Negative idx + unary minus
-#    (no parens around -1). "v5/src/engine.rs" -> "engine.rs".
+#    (no parens around -1). "src/engine.rs" -> "engine.rs".
 rel basename(file: text, last: text).
 basename(file, split(file, "/", -1)) <- fn_at(file, _).
 ? basename(file, last).

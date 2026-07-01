@@ -1,6 +1,6 @@
 # Recall Ratchet: diet vs rust-analyzer oracle at FILE granularity
 
-Date: 2026-06-26. Method: prebuilt `v5/target/debug/dl`, `SPREFA_SCIP_INDEX=.../index.scip`,
+Date: 2026-06-26. Method: prebuilt `target/debug/dl`, `SPREFA_SCIP_INDEX=.../index.scip`,
 `--root v5`, throwaway `--db /tmp/*.db`. RA = rust-analyzer SCIP; diet = sprefa
 `call_edge`+`module_edge`+`type_edge` projected to file pairs.
 
@@ -82,7 +82,7 @@ The 112 out-of-scope misses (the scan artifact) break down:
 
 ## Task 3: source-confirmed miss buckets (sampled)
 
-Reading the actual `v5/src/*.rs` and `v5/tests/it/*.rs`:
+Reading the actual `src/*.rs` and `tests/it/*.rs`:
 
 ### A. Fully-qualified `crate::` paths (the 2 in-scope misses) -- confirmed
 - `src/daemon.rs:503` -- `crate::tray::run_tray(daemon.clone())?;` -> def in
@@ -218,8 +218,8 @@ crates (multi-repo). At that point, use SCIP.** The diet's realistic target is
 
 ```sh
 SPREFA_SCIP_INDEX=/Users/chrishafley/projects/sprefa/index.scip \
-  v5/target/debug/dl <prog.dl> --root v5 --db /tmp/<name>.db
+  target/debug/dl <prog.dl> --root v5 --db /tmp/<name>.db
 ```
-- `v5/examples/recall-lever.dl` -> miss_n=114, rec_n=0.
+- `examples/recall-lever.dl` -> miss_n=114, rec_n=0.
 - `/tmp/scope.dl` (this study) -> rain_n=81, raout_n=112, hitin_n=79, missin_n=2.
 - `/tmp/wide.dl` (this study) -> seen_n=99, hit_n=148, miss_n=45.

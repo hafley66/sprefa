@@ -1,5 +1,5 @@
 # refactor-discovery.dl — refactor signals from the engine's resolved call graph.
-# PURE query. Run:  dl v5/examples/refactor-discovery.dl --root .
+# PURE query. Run:  dl examples/refactor-discovery.dl --root .
 #
 # Originally a theory test: is "discovery free"? The per-fn signals (fan-in/out,
 # move-candidates, seeded blast radius) always were. SCC clustering was BLOCKED
@@ -8,7 +8,7 @@
 # and reusing its Tarjan condensation. This file exercises all of it.
 
 rel seen(path: file).
-seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /fn \w+/, line).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /fn \w+/, line).
 
 rel fan_out(caller: text, n: int).
 rel fan_in(callee: text, n: int).
@@ -36,7 +36,7 @@ mutual(a, b) <- call_edge(a, b, _), call_edge(b, a, _).
 single_caller(callee, caller) <- call_edge(caller, callee, _), fan_in(callee, 1).
 
 # Seeded reachability (pinned endpoint is allowed): everything Engine.tick reaches.
-reaches_from_tick(b) <- reaches(a, b), a = "sprefa::v5/src/engine.rs::method::Engine.tick".
+reaches_from_tick(b) <- reaches(a, b), a = "sprefa::src/engine.rs::method::Engine.tick".
 
 rel hub_out(caller: text, n: int).
 hub_out(caller, n) <- fan_out(caller, n), n >= 8.

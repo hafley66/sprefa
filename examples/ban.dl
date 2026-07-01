@@ -14,7 +14,7 @@ rel diag(path: file, line: int, col: int, end_line: int, end_col: int,
 # trailing line/col/end_line/end_col bind the match span for a tight squiggle.
 diag(path, line, col, end_line, end_col, "error", "no-dbg", "dbg!() left in code: `dbg!(${X})`",
      "remove the debug macro before committing") <-
-  scan("WORK", "v5/src/**/*.rs", path, rev),
+  scan("WORK", "src/**/*.rs", path, rev),
   sg(path, rev, :rust, "dbg!($X)", line, col, end_line, end_col).
 
 # Ban 2: a bare `panic!(...)` in library code. `$$$M` is the VARIADIC metavar:
@@ -22,5 +22,5 @@ diag(path, line, col, end_line, end_col, "error", "no-dbg", "dbg!() left in code
 # matches too. A single `$M` would only match a one-argument panic!.
 diag(path, line, col, end_line, end_col, "error", "no-panic", "panic!() in library code",
      "return a Result and let the caller decide") <-
-  scan("WORK", "v5/src/**/*.rs", path, rev),
+  scan("WORK", "src/**/*.rs", path, rev),
   sg(path, rev, :rust, "panic!($$$M)", line, col, end_line, end_col).

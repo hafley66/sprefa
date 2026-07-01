@@ -8,7 +8,7 @@
 // Usage:  node bin/types-to-d2.mjs [--seed TypeName] > graphs/types.d2
 //         (default writes graphs/types.d2, then run `npm run graphs`)
 //
-// It shells out to the `dl` engine, so the map is always live against v5/src.
+// It shells out to the `dl` engine, so the map is always live against src.
 
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -18,7 +18,7 @@ import path from 'node:path'
 
 const animRoot = fileURLToPath(new URL('..', import.meta.url))
 const repoRoot = path.resolve(animRoot, '..', '..')      // sprefa/
-const dl = path.join(repoRoot, 'v5/target/debug/dl')
+const dl = path.join(repoRoot, 'target/debug/dl')
 
 const args = process.argv.slice(2)
 const seedIx = args.indexOf('--seed')
@@ -30,11 +30,11 @@ const HUB_DEGREE = 4
 // --- 1. ask the engine for every type_edge -------------------------------
 // `where` is gone from the DSL; a seeded query pins the column via a literal
 // head term instead. `_` drops the trailing repo column (this script reads
-// one tree, v5/src, so it never needs to disambiguate by repo).
+// one tree, src, so it never needs to disambiguate by repo).
 const from = seed ? `"${seed}"` : 'from'
 const prog = `
 rel seen(path: file).
-seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
 ? type_edge(${from}, to, kind, _).
 `
 const tmp = path.join(mkdtempSync(path.join(tmpdir(), 'typemap-')), 'q.dl')

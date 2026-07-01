@@ -10,7 +10,7 @@
 #
 # READ-ONLY. Surfaces candidates; does not refactor.
 #
-# Manual:  dl v5/examples/context-object.dl --root . --db /tmp/dl-co.db --no-daemon
+# Manual:  dl examples/context-object.dl --root . --db /tmp/dl-co.db --no-daemon
 #          (needs SPREFA_SCIP_INDEX=<repo>/index.scip; `just oracle-index` first)
 
 # ── 1. long-name locals (cut short-name noise: db, ctx, etc.) ───────────────

@@ -5,8 +5,8 @@
 # install`, no build). This is the turnkey wrapper over npm-crawl.dl: it owns
 # the daemon lifecycle + effect polling + render so you run ONE command.
 #
-#   v5/examples/crawl express
-#   v5/examples/crawl cross-spawn 2
+#   examples/crawl express
+#   examples/crawl cross-spawn 2
 #
 # Effects fire off-tick under the persistent daemon; the poll loop below is why
 # you don't hand-manage `dl --daemon` + DL_POLL_SECS + `dl --load` + render.
@@ -15,7 +15,7 @@ PKG="${1:?usage: crawl <npm-package> [max-depth]}"
 DEPTH="${2:-3}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"     # repo root (dl gen paths are root-relative)
 cd "$ROOT"
-OUT="v5/examples/_npm"
+OUT="examples/_npm"
 DB="/tmp/npm-crawl-$(printf '%s' "$PKG" | tr -c 'a-zA-Z0-9' '_').db"
 PROG="$OUT/run.dl"
 mkdir -p "$OUT"
@@ -24,7 +24,7 @@ rm -f "$DB" "$OUT/graph.d2"
 # Rewrite the seed package + depth bound into a throwaway program (fresh db so the
 # content-addressed effects re-fire for a new package). `|` delimiter survives a
 # scoped `@scope/name`.
-sed -e "s|\"wrap-ansi\"|\"$PKG\"|" -e "s|d < 3|d < $DEPTH|" v5/examples/npm-crawl.dl > "$PROG"
+sed -e "s|\"wrap-ansi\"|\"$PKG\"|" -e "s|d < 3|d < $DEPTH|" examples/npm-crawl.dl > "$PROG"
 
 dl --stop --root . >/dev/null 2>&1 || true
 DL_POLL_SECS=2 dl --daemon --root . --db "$DB" >/dev/null 2>&1 &
