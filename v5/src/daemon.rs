@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::ast::Program;
@@ -37,6 +37,17 @@ const IDLE_TICK_SECS: u64 = 30;
 /// `state='queued'` under a bare `dl --daemon`. The poll loop no-ops cheaply when
 /// the loaded program has no effects, so a non-effect daemon pays ~nothing.
 const DEFAULT_POLL_SECS: u64 = 2;
+
+/// Lock a daemon mutex, recovering the guard if a prior holder panicked. One
+/// connection thread panicking mid-critical-section should not brick every other
+/// thread on `.unwrap()`; the guarded state tolerates it — a `Program` swap is an
+/// atomic replace and `Engine` mutations sit behind SQLite transactions that roll
+/// back on unwind. Centralizing the lock here also keeps `daemon.rs` under the
+/// unwrap budget (the poison policy lives in one place, not 48 call sites).
+#[inline]
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 const CONNECT_BACKOFF_MS: &[u64] = &[10, 20, 40, 80, 160, 320, 500];
 const CONNECT_TOTAL_TIMEOUT_SECS: u64 = 5;
 
@@ -145,26 +156,26 @@ pub struct Daemon {
 
 impl Daemon {
     fn touch(&self) {
-        *self.last_activity.lock().unwrap() = Instant::now();
+        *lock(&self.last_activity) = Instant::now();
     }
 
     fn tick_full(&self, quiet: bool) -> Result<()> {
-        let prog = self.prog.lock().unwrap();
-        let mut eng = self.eng.lock().unwrap();
+        let prog = lock(&self.prog);
+        let mut eng = lock(&self.eng);
         eng.tick(&prog, quiet)?;
         drop(eng);
         drop(prog);
         self.tick_count.fetch_add(1, Ordering::Relaxed);
         self.touch();
         // Full tick: changed paths unknown, subscribers re-publish everything.
-        *self.last_changed_paths.lock().unwrap() = Vec::new();
+        *lock(&self.last_changed_paths) = Vec::new();
         self.broadcast_diag_changed();
         Ok(())
     }
 
     fn tick_paths(&self, paths: &[PathBuf], quiet: bool) -> Result<()> {
-        let prog = self.prog.lock().unwrap();
-        let mut eng = self.eng.lock().unwrap();
+        let prog = lock(&self.prog);
+        let mut eng = lock(&self.eng);
         eng.tick_paths(&prog, paths, quiet)?;
         drop(eng);
         drop(prog);
@@ -172,7 +183,7 @@ impl Daemon {
         self.touch();
         // Incremental tick: only these paths' rows could have moved; subscribers
         // can re-publish just these files.
-        *self.last_changed_paths.lock().unwrap() = paths.to_vec();
+        *lock(&self.last_changed_paths) = paths.to_vec();
         self.broadcast_diag_changed();
         Ok(())
     }
@@ -181,7 +192,7 @@ impl Daemon {
     /// by the watcher when `no_respawn` is set and a program file changed.
     /// A parse or type error keeps the last good program.
     fn reload_program(&self) -> Result<()> {
-        let files = self.program_files.lock().unwrap().clone();
+        let files = lock(&self.program_files).clone();
         let (new_prog, type_diags, _display) = crate::prepare_paths(&files)?;
         let n_err = type_diags
             .iter()
@@ -192,10 +203,10 @@ impl Daemon {
         }
         crate::render_type_diags_eprintln(&type_diags);
         {
-            let mut p = self.prog.lock().unwrap();
+            let mut p = lock(&self.prog);
             *p = new_prog;
         }
-        if let Err(e) = self.eng.lock().unwrap().save_program_meta(&files) {
+        if let Err(e) = lock(&self.eng).save_program_meta(&files) {
             eprintln!("[daemon] save_program_meta: {e}");
         }
         self.tick_full(false)?;
@@ -217,7 +228,7 @@ impl Daemon {
             .collect();
         canon.sort();
         {
-            let pf = self.program_files.lock().unwrap();
+            let pf = lock(&self.program_files);
             if canon == *pf {
                 return Ok(());
             }
@@ -234,20 +245,20 @@ impl Daemon {
         }
         crate::render_type_diags_eprintln(&type_diags);
         {
-            let mut pf = self.program_files.lock().unwrap();
+            let mut pf = lock(&self.program_files);
             *pf = canon;
         }
         {
-            let mut p = self.prog.lock().unwrap();
+            let mut p = lock(&self.prog);
             *p = new_prog;
         }
         {
-            let pf = self.program_files.lock().unwrap().clone();
-            if let Err(e) = self.eng.lock().unwrap().save_program_meta(&pf) {
+            let pf = lock(&self.program_files).clone();
+            if let Err(e) = lock(&self.eng).save_program_meta(&pf) {
                 eprintln!("[daemon] save_program_meta: {e}");
             }
         }
-        let n = self.program_files.lock().unwrap().len();
+        let n = lock(&self.program_files).len();
         eprintln!("[daemon] discovery reload: {n} file(s)");
         self.tick_full(false)?;
         Ok(())
@@ -264,7 +275,7 @@ impl Daemon {
         // so hold none here.
         self.tick_full(true)?;
         let arity = {
-            let prog = self.prog.lock().unwrap();
+            let prog = lock(&self.prog);
             crate::engine::async_effect_arity(&prog)
         };
         if arity.is_empty() { return Ok(0); }
@@ -273,10 +284,10 @@ impl Daemon {
             // `effect_cmd(kind, template)` relation overlays them (a data-driven
             // fallback for templates not declared at parse time).
             let mut m = {
-                let prog = self.prog.lock().unwrap();
+                let prog = lock(&self.prog);
                 crate::engine::shell_templates(&prog)
             };
-            let eng = self.eng.lock().unwrap();
+            let eng = lock(&self.eng);
             if let Ok(rows) = eng.query_sql("SELECT kind, template FROM rel_effect_cmd", &[]) {
                 for row in rows {
                     if let (Some(k), Some(t)) = (row.first().and_then(|v| v.as_str()),
@@ -289,8 +300,8 @@ impl Daemon {
         };
         let exec = crate::engine::ShellEffectExec { templates, n_out: arity, cwd };
         let n = {
-            let prog = self.prog.lock().unwrap();
-            let mut eng = self.eng.lock().unwrap();
+            let prog = lock(&self.prog);
+            let mut eng = lock(&self.eng);
             // One-shot @async requests, then long-lived @stream subscriptions: a
             // stream yields N head rows per drain and stays 'running'.
             let a = eng.drain_effects(&prog, &exec)?;
@@ -310,7 +321,7 @@ impl Daemon {
     fn broadcast_diag_changed(&self) {
         // Snapshot paths under the lock so write_frame (which can take time on a
         // slow consumer) doesn't hold it.
-        let paths: Vec<String> = self.last_changed_paths.lock().unwrap().iter()
+        let paths: Vec<String> = lock(&self.last_changed_paths).iter()
             .map(|p| p.to_string_lossy().into_owned()).collect();
         let note = json!({"jsonrpc": "2.0", "method": "diag_changed", "params": {
             "tick": self.tick_count.load(Ordering::Relaxed),
@@ -320,7 +331,7 @@ impl Daemon {
             Ok(s) => s,
             Err(_) => return,
         };
-        let mut subs = self.subscribers.lock().unwrap();
+        let mut subs = lock(&self.subscribers);
         let mut broken: Vec<usize> = Vec::new();
         for (i, s) in subs.iter().enumerate() {
             let mut guard = match s.lock() {
@@ -340,7 +351,7 @@ impl Daemon {
     /// a retag should fire). Deduped, HEAD first.
     fn watched_ref_names(&self) -> Vec<String> {
         let mut names = vec!["HEAD".to_string()];
-        let prog = self.prog.lock().unwrap();
+        let prog = lock(&self.prog);
         for item in &prog.items {
             if let crate::ast::Item::Rule(r) = item {
                 for b in &r.body {
@@ -376,7 +387,7 @@ impl Daemon {
         let mut advances: Vec<(String, String, String, String, Vec<String>)> = Vec::new();
         let mut changed: Vec<PathBuf> = Vec::new();
         {
-            let eng = self.eng.lock().unwrap();
+            let eng = lock(&self.eng);
             for (slug, root) in &repos {
                 for name in &names {
                     match eng.observe_ref(slug, root, name) {
@@ -419,7 +430,7 @@ impl Daemon {
     /// Mirrors `broadcast_diag_changed`: snapshot, write outside the rel lock,
     /// reap broken subscribers.
     fn broadcast_rev_advanced(&self, advances: &[(String, String, String, String, Vec<String>)]) {
-        let mut subs = self.subscribers.lock().unwrap();
+        let mut subs = lock(&self.subscribers);
         let mut broken: Vec<usize> = Vec::new();
         for (repo, name, old, new, files) in advances {
             let note = json!({"jsonrpc": "2.0", "method": "rev_advanced", "params": {
@@ -535,7 +546,7 @@ pub fn run_daemon(
             bail!("daemon already running on socket {}", sock.display());
         }
     }
-    std::fs::create_dir_all(sock.parent().unwrap())?;
+    if let Some(dir) = sock.parent() { std::fs::create_dir_all(dir)?; }
     let listener = UnixListener::bind(&sock)?;
     std::fs::set_permissions(&sock, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
     write_pid_file(home.as_deref(), programs.first().map(|s| s.as_str()))?;
@@ -755,11 +766,11 @@ fn watcher_loop(d: Arc<Daemon>) {
         let tick_label;
         let result = if touches_cfg {
             tick_label = "config change";
-            let mut eng = d.eng.lock().unwrap();
+            let mut eng = lock(&d.eng);
             eng.set_repos(load_repos_eager());
             drop(eng);
             // Re-persist the repo set so `_repo` tracks a config edit.
-            if let Err(e) = d.eng.lock().unwrap().save_repos_meta() {
+            if let Err(e) = lock(&d.eng).save_repos_meta() {
                 eprintln!("[daemon] save_repos_meta: {e}");
             }
             d.tick_full(false)
@@ -781,7 +792,7 @@ fn watcher_loop(d: Arc<Daemon>) {
         // root not yet watched so the next edit there is reactive. Git-dir
         // watching for pulled repos is deferred (commit reactivity follow-up).
         if tick_ok {
-            for rc in d.eng.lock().unwrap().snapshot_repos() {
+            for rc in lock(&d.eng).snapshot_repos() {
                 if rc.root.exists() && watched.insert(rc.root.clone()) {
                     if watcher.watch(&rc.root, RecursiveMode::Recursive).is_ok() {
                         eprintln!("[daemon] watching (pulled) {} ({})", rc.slug, rc.root.display());
@@ -794,7 +805,7 @@ fn watcher_loop(d: Arc<Daemon>) {
 
 impl Daemon {
     fn program_in_paths(&self, paths: &[PathBuf]) -> bool {
-        let pf = self.program_files.lock().unwrap();
+        let pf = lock(&self.program_files);
         for p in paths {
             let canon = p.canonicalize().unwrap_or_else(|_| p.clone());
             if pf.iter().any(|f| f == &canon) {
@@ -810,7 +821,7 @@ impl Daemon {
 fn idle_loop(d: Arc<Daemon>, idle_secs: u64) {
     loop {
         std::thread::sleep(Duration::from_secs(IDLE_TICK_SECS));
-        let last = *d.last_activity.lock().unwrap();
+        let last = *lock(&d.last_activity);
         if last.elapsed() > Duration::from_secs(idle_secs) {
             eprintln!("[daemon] idle {}min, exiting", idle_secs / 60);
             shutdown_cleanup(&d);
@@ -850,7 +861,7 @@ fn poll_loop(d: Arc<Daemon>, secs: u64) {
         // Keeps the default-on poll from re-ticking a plain (effect-free) daemon
         // every interval — the reason polling used to be strictly opt-in.
         let has_effects = {
-            let prog = d.prog.lock().unwrap();
+            let prog = lock(&d.prog);
             !crate::engine::async_effect_arity(&prog).is_empty()
         };
         if !has_effects { continue; }
@@ -918,12 +929,12 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
             "root": d.root.to_string_lossy(),
             "tick_count": d.tick_count.load(Ordering::Relaxed),
             "program": d.program_display,
-            "program_files": d.program_files.lock().unwrap().iter()
+            "program_files": lock(&d.program_files).iter()
                 .map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
         })),
         "query" => {
-            let prog = d.prog.lock().unwrap();
-            let eng = d.eng.lock().unwrap();
+            let prog = lock(&d.prog);
+            let eng = lock(&d.eng);
             match eng.run_queries_capture(&prog) {
                 Ok(results) => Response::ok(req.id, json!({"results": results.iter().map(|r| json!({
                     "rel": r.rel, "columns": r.columns, "rows": r.rows,
@@ -933,7 +944,7 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
         }
         "diag" => {
             let only = req.params.get("path").and_then(|p| p.as_str());
-            let eng = d.eng.lock().unwrap();
+            let eng = lock(&d.eng);
             match eng.diags(only) {
                 Ok(rows) => Response::ok(req.id, json!({"rows": rows.iter().map(diag_to_json).collect::<Vec<_>>()})),
                 Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
@@ -948,7 +959,7 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                 Some(s) => s,
                 None => return Response::err(req.id, INVALID_PARAMS, "missing text"),
             };
-            let eng = d.eng.lock().unwrap();
+            let eng = lock(&d.eng);
             match eng.definition_targets(file, text) {
                 Ok(targets) => Response::ok(req.id, json!({"targets": targets.iter()
                     .map(|(f, l)| json!([f, l])).collect::<Vec<_>>()})),
@@ -961,7 +972,7 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                 Some(s) => s,
                 None => return Response::err(req.id, INVALID_PARAMS, "missing text"),
             };
-            let eng = d.eng.lock().unwrap();
+            let eng = lock(&d.eng);
             match eng.hover(file, text) {
                 Ok(md) => Response::ok(req.id, json!({"markdown": md})),
                 Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
@@ -970,14 +981,14 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
         "subscribe" => {
             let events = req.params.get("events").cloned().unwrap_or(Value::Array(vec![]));
             if let Some(s) = subscriber_stream {
-                d.subscribers.lock().unwrap().push(s);
+                lock(&d.subscribers).push(s);
                 Response::ok(req.id, json!({"events": events, "ok": true}))
             } else {
                 Response::err(req.id, INVALID_PARAMS, "subscribe requires a kept-open socket")
             }
         }
         "schema" => {
-            let eng = d.eng.lock().unwrap();
+            let eng = lock(&d.eng);
             let builtin = crate::engine::builtin_rel_names();
             let mut relations: Vec<Value> = Vec::new();
             for (name, meta) in eng.rels.iter() {
@@ -1016,7 +1027,7 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
             };
             let params: Vec<Value> = req.params.get("params")
                 .and_then(|v| v.as_array()).cloned().unwrap_or_default();
-            let eng = d.eng.lock().unwrap();
+            let eng = lock(&d.eng);
             match eng.query_sql(sql_raw, &params) {
                 Ok(rows) => Response::ok(req.id, json!({"rows": rows})),
                 Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
@@ -1033,13 +1044,13 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
             }
         }
         "status" => {
-            let eng = d.eng.lock().unwrap();
+            let eng = lock(&d.eng);
             let q = |sql: &str| eng.query_sql(sql, &[]).unwrap_or_default();
             Response::ok(req.id, json!({
                 "root": d.root.to_string_lossy(),
                 "program": d.program_display,
                 "tick_count": d.tick_count.load(Ordering::Relaxed),
-                "subscribers": d.subscribers.lock().unwrap().len(),
+                "subscribers": lock(&d.subscribers).len(),
                 "programs": q("SELECT path, hash, mtime, loaded_at FROM _program ORDER BY path"),
                 "repos": q("SELECT slug, root, url, registered_at FROM _repo ORDER BY slug"),
                 "refs": q("SELECT repo, name, oid, observed_at FROM _ref ORDER BY repo, name"),
@@ -1074,7 +1085,7 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                         Err(e) => return Response::err(req.id, INVALID_PARAMS, format!("canonicalize {path}: {e}")),
                     };
                     let already = {
-                        let mut pf = d.program_files.lock().unwrap();
+                        let mut pf = lock(&d.program_files);
                         let dup = pf.iter().any(|f| f == &canon);
                         if !dup { pf.push(canon.clone()); }
                         dup
@@ -1085,11 +1096,11 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                     // until it parses clean.
                     match d.reload_program() {
                         Ok(()) => {
-                            if let Err(e) = d.eng.lock().unwrap()
-                                .save_program_meta(&d.program_files.lock().unwrap().clone()) {
+                            if let Err(e) = lock(&d.eng)
+                                .save_program_meta(&lock(&d.program_files).clone()) {
                                 eprintln!("[daemon] save_program_meta: {e}");
                             }
-                            let files: Vec<String> = d.program_files.lock().unwrap().iter()
+                            let files: Vec<String> = lock(&d.program_files).iter()
                                 .map(|f| f.to_string_lossy().into_owned()).collect();
                             Response::ok(req.id, json!({
                                 "loaded": canon.to_string_lossy(),
@@ -1129,7 +1140,7 @@ fn run_eval(d: &Daemon, text: &str) -> Result<Value, (i64, String)> {
 
     // Splice onto the loaded program so the snippet sees its relations.
     let mut merged = {
-        let base = d.prog.lock().unwrap();
+        let base = lock(&d.prog);
         Program {
             items: base.items.iter().cloned().chain(snippet.items).collect(),
         }
@@ -1276,7 +1287,7 @@ fn wait_ready(root: &Path, _program: Option<&str>) -> Result<()> {
         }
         let delay_ms = CONNECT_BACKOFF_MS.get(backoff_idx)
             .copied()
-            .unwrap_or(*CONNECT_BACKOFF_MS.last().unwrap());
+            .unwrap_or(CONNECT_BACKOFF_MS.last().copied().unwrap_or(500));
         backoff_idx += 1;
         std::thread::sleep(Duration::from_millis(delay_ms));
     }
