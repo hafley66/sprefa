@@ -43,15 +43,44 @@ gen(:append, "v5/docs/reference/functions.md", "| `{name}` | {arity} | {group} |
     fn_catalog(name, arity, group, doc).
 
 # ── syntax.md : every body/sink op (syntax + semantics), from op_catalog ───────
+# The `example` column is a "see more": one program that uses each op, shown
+# from the binary with `dl examples --show <name>` (no source tree needed). It
+# is computed by joining the self-describing op_catalog against the op-call
+# heads scanned out of the examples/ corpus — so a new example that uses an op
+# lights up its row on the next gen, and an op no example exercises renders an
+# empty cell (visible drift, same convention as an undocumented flag).
+
+# Every `ident(` call head in the examples corpus, with its line.
+rel ex_call(op: text, ex: file, line: int).
+ex_call(op, ex, l) <-
+    scan("WORK", "v5/examples/*.dl", ex, rev),
+    match(ex, rev, /(?<op>[a-z_][a-z0-9_]*)\(/, l).
+
+# Keep only heads that are a real op (join the catalog); representative example
+# per op = the lexicographically first path; op_show carries its basename for
+# the `dl examples --show` command. op_used gates the empty-cell rule.
+rel op_use(op: text, ex: file).
+op_use(op, ex) <- op_catalog(op, _, _, _), ex_call(op, ex, _).
+rel op_used(op: text).
+op_used(op) <- op_use(op, _).
+rel op_example(op: text, ex: file).
+op_example(op, min(ex)) <- op_use(op, ex).
+rel op_show(op: text, name: text).
+op_show(op, split(ex, "/", -1)) <- op_example(op, ex).
+
 gen(:append, "v5/docs/reference/syntax.md", "# Syntax & semantics") <- true().
 gen(:append, "v5/docs/reference/syntax.md", "") <- true().
 gen(:append, "v5/docs/reference/syntax.md",
-    "Source ops (extract facts from files), body constructs (derived rules), and sinks. The `kind` column groups them. Generated from the engine's `op_catalog` by examples/gen-reference.dl. Do not hand-edit.") <- true().
+    "Source ops (extract facts from files), body constructs (derived rules), and sinks. The `kind` column groups them; `example` shows one program that uses the op (`dl examples --show <name>` prints it from the binary). Generated from the engine's `op_catalog` by examples/gen-reference.dl. Do not hand-edit.") <- true().
 gen(:append, "v5/docs/reference/syntax.md", "") <- true().
-gen(:append, "v5/docs/reference/syntax.md", "| op | kind | syntax | semantics |") <- true().
-gen(:append, "v5/docs/reference/syntax.md", "|---|---|---|---|") <- true().
-gen(:append, "v5/docs/reference/syntax.md", "| `{op}` | {kind} | `{syntax}` | {doc} |") <-
-    op_catalog(op, kind, syntax, doc).
+gen(:append, "v5/docs/reference/syntax.md", "| op | kind | syntax | semantics | example |") <- true().
+gen(:append, "v5/docs/reference/syntax.md", "|---|---|---|---|---|") <- true().
+# With a see-more example.
+gen(:append, "v5/docs/reference/syntax.md", "| `{op}` | {kind} | `{syntax}` | {doc} | `dl examples --show {name}` |") <-
+    op_catalog(op, kind, syntax, doc), op_show(op, name).
+# No example exercises this op yet (empty cell = visible drift).
+gen(:append, "v5/docs/reference/syntax.md", "| `{op}` | {kind} | `{syntax}` | {doc} | |") <-
+    op_catalog(op, kind, syntax, doc), !op_used(op).
 
 # ── examples.md : the examples/ corpus, first-comment summary per file ─────────
 # example_doc keys each program on its filename and its first `#` comment line
