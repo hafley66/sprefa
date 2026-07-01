@@ -13,7 +13,7 @@
 #   Run:  dl v5/examples/gen-skill.dl --root .   (root = sprefa, paths are v5/-relative)
 
 rel src(p: file).
-src(p) <- scan("WORK", "v5/src/relkind.rs", p, rev).
+src(p) <- scan("v5/src/relkind.rs", p).
 
 # ── (A) GENERATED surface, anchored semantically ──────────────────────────────
 # Every function in relkind.rs at its REAL decl line, from type_entity. Rename or

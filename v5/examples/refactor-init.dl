@@ -3,7 +3,7 @@
 # (2) engine.rs out-neighbors -> candidate extraction groups.
 
 rel seen(path: file).
-seen(path) <- scan("WORK", "src/**/*.rs", path, rev).
+seen(path) <- scan("src/**/*.rs", path).
 
 rel ra_edge(src: file, dst: file).
 ra_edge(src, dst) <- scip_edge(src, dst).

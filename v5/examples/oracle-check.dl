@@ -23,7 +23,7 @@
 # gives sprefa `v5/src/…` keys that won't join against scip_edge's `src/…`.
 
 rel seen(path: file).
-seen(path) <- scan("WORK", "src/**/*.rs", path, rev).
+seen(path) <- scan("src/**/*.rs", path).
 
 # sprefa's file-level graph: project the fn->fn call_edge through each fn's
 # home file (from call_def). Relations are sets, so (src,dst) dedups.

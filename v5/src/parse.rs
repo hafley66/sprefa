@@ -427,25 +427,64 @@ impl Parser {
     fn scan(&mut self) -> Result<BodyItem> {
         self.ident()?; // scan
         self.expect(Tok::LParen)?;
-        // Comma-separated terms. 3-ary `scan(glob, path, rev_out)` defaults the
-        // repo to "." (self) and rev to WORK (live disk); 4-ary
-        // `scan(rev, glob, path, rev_out)` defaults the repo to "."; 5-ary
-        // `scan(repo, rev, glob, path, rev_out)` names a repo coordinate
-        // (slug / path / ".") that flows as a value.
-        let mut terms = vec![self.term()?];
-        while matches!(self.peek(), Some(Tok::Comma)) {
-            self.next()?; // ,
-            terms.push(self.term()?);
-        }
+        // Leading positional args are the coordinate prefix (repo?, rev?, glob);
+        // the two OUTPUTS (path, rev_out) follow, positionally OR by name. `_` or
+        // an omitted rev_out is a don't-care (rev not bound). The repo defaults to
+        // "." (self) and rev to WORK (live disk):
+        //   scan(glob, path)                       repo=".", rev=WORK, no rev_out
+        //   scan(glob, path, rev_out)              repo=".", rev=WORK
+        //   scan(rev, glob, path, rev_out)         repo="."
+        //   scan(repo, rev, glob, path, rev_out)   named repo coordinate (slug / path / ".")
+        // Naming an output (`path: p`, `rev_out: r`) leaves the remaining
+        // positionals as pure inputs (1=glob, 2=rev+glob, 3=repo+rev+glob).
+        let (pos, named) = self.parse_kwarg_terms()?;
         self.expect(Tok::RParen)?;
-        let (repo, rev, glob, path, rev_out) = match terms.len() {
-            3 => { let mut t = terms.into_iter();
-                (Term::Str(".".into()), Term::Str("WORK".into()), t.next().unwrap(), t.next().unwrap(), t.next().unwrap()) }
-            4 => { let mut t = terms.into_iter();
-                (Term::Str(".".into()), t.next().unwrap(), t.next().unwrap(), t.next().unwrap(), t.next().unwrap()) }
-            5 => { let mut t = terms.into_iter();
-                (t.next().unwrap(), t.next().unwrap(), t.next().unwrap(), t.next().unwrap(), t.next().unwrap()) }
-            n => bail!("scan expects 3 args (glob, path, rev), 4 (rev, glob, path, rev), or 5 (repo, rev, glob, path, rev), got {n}"),
+        let mut path_named: Option<Term> = None;
+        let mut rev_out_named: Option<Term> = None;
+        for (name, t) in named {
+            match name.as_str() {
+                "path" => path_named = Some(t),
+                "rev_out" => rev_out_named = Some(t),
+                other => bail!("unknown scan output arg `{other}` (known: path, rev_out)"),
+            }
+        }
+        // Split the positional list into the input coordinate prefix and any
+        // positional outputs. `n_inputs` = how many leading positionals are the
+        // repo/rev/glob coordinate; the coordinate itself is dispatched by count.
+        let coord = |inputs: Vec<Term>| -> Result<(Term, Term, Term)> {
+            match inputs.len() {
+                1 => { let mut t = inputs.into_iter();
+                    Ok((Term::Str(".".into()), Term::Str("WORK".into()), t.next().unwrap())) }
+                2 => { let mut t = inputs.into_iter();
+                    Ok((Term::Str(".".into()), t.next().unwrap(), t.next().unwrap())) }
+                3 => { let mut t = inputs.into_iter();
+                    Ok((t.next().unwrap(), t.next().unwrap(), t.next().unwrap())) }
+                n => bail!("scan coordinate expects glob, rev+glob, or repo+rev+glob, got {n} input arg(s)"),
+            }
+        };
+        let (repo, rev, glob, path, rev_out) = if path_named.is_some() {
+            // path is named: every positional is an input coordinate.
+            let (repo, rev, glob) = coord(pos)?;
+            (repo, rev, glob, path_named.unwrap(), rev_out_named.unwrap_or(Term::Wild))
+        } else if let Some(ro) = rev_out_named {
+            // rev_out named, path positional (the last positional).
+            let mut pos = pos;
+            let path = pos.pop().ok_or_else(|| anyhow::anyhow!("scan missing path output"))?;
+            let (repo, rev, glob) = coord(pos)?;
+            (repo, rev, glob, path, ro)
+        } else {
+            // Fully positional: last one or two positionals are the outputs.
+            match pos.len() {
+                2 => { let mut t = pos.into_iter();
+                    (Term::Str(".".into()), Term::Str("WORK".into()), t.next().unwrap(), t.next().unwrap(), Term::Wild) }
+                3 => { let mut t = pos.into_iter();
+                    (Term::Str(".".into()), Term::Str("WORK".into()), t.next().unwrap(), t.next().unwrap(), t.next().unwrap()) }
+                4 => { let mut t = pos.into_iter();
+                    (Term::Str(".".into()), t.next().unwrap(), t.next().unwrap(), t.next().unwrap(), t.next().unwrap()) }
+                5 => { let mut t = pos.into_iter();
+                    (t.next().unwrap(), t.next().unwrap(), t.next().unwrap(), t.next().unwrap(), t.next().unwrap()) }
+                n => bail!("scan expects 2 args (glob, path), 3 (glob, path, rev_out), 4 (rev, glob, path, rev_out), or 5 (repo, rev, glob, path, rev_out), got {n}"),
+            }
         };
         Ok(BodyItem::Scan { repo, rev, glob, path, rev_out })
     }
@@ -468,20 +507,33 @@ impl Parser {
         //                     `line`, for sub-line diagnostic spans.
         //   3 ⇒ `id, col, end_col` — both.
         // The 4-arg (zero-trailing) form keeps named-captures-only spine behavior.
-        let mut trailing = Vec::new();
-        while matches!(self.peek(), Some(Tok::Comma)) {
-            self.next()?; // ,
-            trailing.push(self.term()?);
-        }
+        // Named trailing outputs (`id:`/`col:`/`end_col:`) share the kwarg/`_`
+        // form: bind only what you want, no positional counting. Positional-only
+        // trailing keeps the count-disambiguated form (1⇒id, 2⇒col+end_col,
+        // 3⇒all) for backward compatibility.
+        let (pos, named) = if matches!(self.peek(), Some(Tok::Comma)) {
+            self.next()?; // consume the comma after `line`
+            self.parse_kwarg_terms()?
+        } else {
+            (Vec::new(), Vec::new())
+        };
         self.expect(Tok::RParen)?;
-        let (id, col, end_col) = match trailing.len() {
-            0 => (None, None, None),
-            1 => (Some(trailing.remove(0)), None, None),
-            2 => (None, Some(trailing.remove(0)), Some(trailing.remove(0))),
-            3 => { let id = trailing.remove(0);
-                   (Some(id), Some(trailing.remove(0)), Some(trailing.remove(0))) }
-            n => bail!("match expects 4 args (path, rev, /re/, line), +1 (id), \
-                        +2 (col, end_col), or +3 (id, col, end_col), got {} trailing", n),
+        let opt = |t: Term| if matches!(t, Term::Wild) { None } else { Some(t) };
+        let (id, col, end_col) = if named.is_empty() {
+            let mut trailing = pos;
+            match trailing.len() {
+                0 => (None, None, None),
+                1 => (Some(trailing.remove(0)), None, None),
+                2 => (None, Some(trailing.remove(0)), Some(trailing.remove(0))),
+                3 => { let id = trailing.remove(0);
+                       (Some(id), Some(trailing.remove(0)), Some(trailing.remove(0))) }
+                n => bail!("match expects 4 args (path, rev, /re/, line), +1 (id), \
+                            +2 (col, end_col), or +3 (id, col, end_col), got {} trailing", n),
+            }
+        } else {
+            let outs = Self::assign_outputs(&["id", "col", "end_col"], pos, named)?;
+            let mut it = outs.into_iter();
+            (opt(it.next().unwrap()), opt(it.next().unwrap()), opt(it.next().unwrap()))
         };
         Ok(BodyItem::Match { path, rev, regex, line, id, col, end_col })
     }
@@ -500,19 +552,33 @@ impl Parser {
         };
         self.expect(Tok::Comma)?;
         let line = self.term()?;
-        // optional 6th term binds the match's end line (for body-span queries)
-        let end = if matches!(self.peek(), Some(Tok::Comma)) {
-            self.next()?; Some(self.term()?)
-        } else { None };
-        // optional 7th term binds the spine id of the WHOLE-match span (the
-        // captures' min..max byte range). A rule joins `ref(id, _, _, lo, hi)`
-        // off it for the codemod anchor: the bytes this ast match covered.
-        // Mirrors `match`'s 5th-arg `id` (christmas #9). Omit `end` with `_` to
-        // bind only the id.
-        let id = if matches!(self.peek(), Some(Tok::Comma)) {
-            self.next()?; Some(self.term()?)
-        } else { None };
+        // Optional trailing outputs `end` (the match's end line, for body-span
+        // queries) and `id` (the spine id of the WHOLE-match span — the captures'
+        // min..max byte range; a rule joins `ref(id, _, _, lo, hi)` off it for the
+        // codemod anchor, mirroring `match`'s 5th-arg `id`, christmas #9). They
+        // take the kwarg/`_` form: positional (`, end`, `, end, id`, `, _, id`
+        // to bind only id) OR named (`end:`/`id:`).
+        let (pos, named) = if matches!(self.peek(), Some(Tok::Comma)) {
+            self.next()?; // consume the comma after `line`
+            self.parse_kwarg_terms()?
+        } else {
+            (Vec::new(), Vec::new())
+        };
         self.expect(Tok::RParen)?;
+        let opt = |t: Term| if matches!(t, Term::Wild) { None } else { Some(t) };
+        let (end, id) = if named.is_empty() {
+            let mut trailing = pos;
+            match trailing.len() {
+                0 => (None, None),
+                1 => (Some(trailing.remove(0)), None),
+                2 => { let end = trailing.remove(0); (Some(end), Some(trailing.remove(0))) }
+                n => bail!("ast expects a query, line, +1 (end), or +2 (end, id) trailing outputs, got {n}"),
+            }
+        } else {
+            let outs = Self::assign_outputs(&["end", "id"], pos, named)?;
+            let mut it = outs.into_iter();
+            (opt(it.next().unwrap()), opt(it.next().unwrap()))
+        };
         Ok(BodyItem::Ast { path, rev, lang, query, line, end, id })
     }
 
@@ -1107,5 +1173,118 @@ mod tests {
         // A lone `@` is a lex error.
         let e = lex("p(X) <- @ q(X).").unwrap_err();
         assert!(e.to_string().contains("lone '@'"), "{e}");
+    }
+
+    use crate::ast::{BodyItem, Term};
+
+    fn body_of(src: &str) -> Vec<BodyItem> {
+        one_rule(src).body
+    }
+    fn str_is(t: &Term, s: &str) -> bool { matches!(t, Term::Str(v) if v == s) }
+    fn var_is(t: &Term, s: &str) -> bool { matches!(t, Term::Var(v) if v == s) }
+    fn scan_of(src: &str) -> (Term, Term, Term, Term, Term) {
+        for b in body_of(src) {
+            if let BodyItem::Scan { repo, rev, glob, path, rev_out } = b {
+                return (repo, rev, glob, path, rev_out);
+            }
+        }
+        panic!("no scan in rule: {src}");
+    }
+    fn parse_err(src: &str) -> String {
+        super::parse(lex(src).unwrap()).unwrap_err().to_string()
+    }
+
+    #[test]
+    fn scan_wild_and_omitted_rev_out() {
+        // 4-ary with `_` rev_out: rev bound as input, rev_out don't-care.
+        let (repo, rev, glob, path, rev_out) = scan_of("f(P) <- scan(\"WORK\", \"**/*.rs\", P, _).");
+        assert!(str_is(&repo, "."));
+        assert!(str_is(&rev, "WORK"));
+        assert!(str_is(&glob, "**/*.rs"));
+        assert!(var_is(&path, "P"));
+        assert!(matches!(rev_out, Term::Wild));
+        // 2-ary: rev_out omitted entirely (repo=".", rev=WORK).
+        let (repo, rev, glob, path, rev_out) = scan_of("f(P) <- scan(\"**/*.rs\", P).");
+        assert!(str_is(&repo, "."));
+        assert!(str_is(&rev, "WORK"));
+        assert!(str_is(&glob, "**/*.rs"));
+        assert!(var_is(&path, "P"));
+        assert!(matches!(rev_out, Term::Wild));
+    }
+
+    #[test]
+    fn scan_positional_forms_unchanged() {
+        // 3-ary (glob, path, rev_out).
+        let (repo, rev, _g, path, rev_out) = scan_of("f(P,R) <- scan(\"**/*.rs\", P, R).");
+        assert!(str_is(&repo, "."));
+        assert!(str_is(&rev, "WORK"));
+        assert!(var_is(&path, "P"));
+        assert!(var_is(&rev_out, "R"));
+        // 5-ary (repo, rev, glob, path, rev_out).
+        let (repo, rev, glob, path, rev_out) =
+            scan_of("f(P,R) <- scan(\"me\", \"HEAD\", \"**/*.rs\", P, R).");
+        assert!(str_is(&repo, "me"));
+        assert!(str_is(&rev, "HEAD"));
+        assert!(str_is(&glob, "**/*.rs"));
+        assert!(var_is(&path, "P"));
+        assert!(var_is(&rev_out, "R"));
+    }
+
+    #[test]
+    fn scan_named_outputs() {
+        // Named path, rev_out omitted; single positional input = glob.
+        let (repo, rev, glob, path, rev_out) = scan_of("f(P) <- scan(\"**/*.rs\", path: P).");
+        assert!(str_is(&repo, "."));
+        assert!(str_is(&rev, "WORK"));
+        assert!(str_is(&glob, "**/*.rs"));
+        assert!(var_is(&path, "P"));
+        assert!(matches!(rev_out, Term::Wild));
+        // Named path + rev_out; two positional inputs = rev, glob.
+        let (repo, rev, glob, path, rev_out) =
+            scan_of("f(P,R) <- scan(\"HEAD\", \"**/*.rs\", path: P, rev_out: R).");
+        assert!(str_is(&repo, "."));
+        assert!(str_is(&rev, "HEAD"));
+        assert!(str_is(&glob, "**/*.rs"));
+        assert!(var_is(&path, "P"));
+        assert!(var_is(&rev_out, "R"));
+    }
+
+    #[test]
+    fn scan_unknown_named_output_is_error() {
+        let e = parse_err("f(P) <- scan(\"**/*.rs\", pat: P).");
+        assert!(e.contains("unknown scan output arg `pat`"), "{e}");
+    }
+
+    #[test]
+    fn match_named_outputs_and_wild() {
+        // Named end_col only: id/col default to `_` (None).
+        for b in body_of("f(P,L,E) <- scan(\"**/*.rs\", P), match(P, \"WORK\", /x/, L, end_col: E).") {
+            if let BodyItem::Match { id, col, end_col, .. } = b {
+                assert!(id.is_none());
+                assert!(col.is_none());
+                assert!(matches!(end_col, Some(t) if var_is(&t, "E")));
+                return;
+            }
+        }
+        panic!("no match body item");
+    }
+
+    #[test]
+    fn match_unknown_named_output_is_error() {
+        let e = parse_err("f(P,L) <- scan(\"**/*.rs\", P), match(P, \"WORK\", /x/, L, foo: L).");
+        assert!(e.contains("unknown output arg `foo`"), "{e}");
+    }
+
+    #[test]
+    fn ast_named_id_output() {
+        // Named id, end omitted.
+        for b in body_of("f(P,L,I) <- scan(\"**/*.rs\", P), ast(P, \"WORK\", :rust, \"(x) @c\", L, id: I).") {
+            if let BodyItem::Ast { end, id, .. } = b {
+                assert!(end.is_none());
+                assert!(matches!(id, Some(t) if var_is(&t, "I")));
+                return;
+            }
+        }
+        panic!("no ast body item");
     }
 }

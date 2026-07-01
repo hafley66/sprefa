@@ -16,7 +16,7 @@
 # evaluates derived rules that read an operator head (scc/closure/node2vec) in a
 # second stratum after the head fills, so `tsize` below aggregates it directly.
 
-rel f0(f: file). f0(f) <- scan("WORK", "src/engine.rs", f, rev).
+rel f0(f: file). f0(f) <- scan("src/engine.rs", f).
 
 # one row per (method, slot, pos, type-ref)
 rel sigfact(sym: text, slot: text, pos: int, ref: text).

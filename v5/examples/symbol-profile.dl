@@ -20,7 +20,7 @@ target("sprefa::v5/src/engine.rs::method::Engine.tick").
 # relations fill from the scan-driven ingestion pass — without a scan the
 # program reads empty builtins. (A fresh `--db` also avoids daemon cache.)
 rel seen(path: file).
-seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev).
+seen(path) <- scan("v5/src/**/*.rs", path).
 
 # ── call dimension ──────────────────────────────────────────────────────
 rel caller_of(sym: text).

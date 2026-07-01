@@ -25,7 +25,7 @@ agent_changed(path) <- agent_touch(_, _, path).
 
 # scan so `file` carries .dl sources for dl_diag to validate.
 rel dl_file(path: file).
-dl_file(path) <- scan("**/*.dl", path, rev).
+dl_file(path) <- scan("**/*.dl", path).
 
 # the rail: a parse/type error in a .dl file the agent just edited.
 rel diag(path: file, line: int, col: int, end_line: int, end_col: int,

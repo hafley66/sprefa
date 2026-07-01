@@ -4,5 +4,5 @@
 # statement. Cross-repo scanning is a typed coordinate on scan (not this file).
 
 rel located(p: file).
-located(p) <- scan("WORK", "v5/src/repo.rs", p, rev).
+located(p) <- scan("v5/src/repo.rs", p).
 ? located(p).

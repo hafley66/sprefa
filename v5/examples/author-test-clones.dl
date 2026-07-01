@@ -14,7 +14,7 @@
 # scan to the test tree directly — the clone kernels are O(file size) per file,
 # so a repo-wide `*.rs` scan is the slow path; name only what you query.
 rel src(path: file).
-src(p) <- scan("WORK", "tests/**/*.rs", p, rev).
+src(p) <- scan("tests/**/*.rs", p).
 
 # Clone blocks that live in a test file (path contains "tests/") AND whose file
 # was created by the target author. `split(path,"tests/",1)` is the part after

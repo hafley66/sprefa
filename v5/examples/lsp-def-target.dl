@@ -25,7 +25,7 @@
 # graph indexers have something to chew on. Under --lsp, didSave re-ticks the
 # one changed path; the indexers reconcile incrementally.
 rel index_over(p: file).
-index_over(p) <- scan("WORK", "v5/src/**/*.rs", p, rev).
+index_over(p) <- scan("v5/src/**/*.rs", p).
 
 # Type-defined targets: structs, enums, traits, aliases. The `=~` constraint
 # is the unified regex literal (same form `match` takes); a name can only be
