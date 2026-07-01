@@ -21,3 +21,7 @@ tools/macos-text-overlay/
 
 # Local-only build tweaks (nightly -Z threads + lld); not portable to stable CI / cargo install.
 .cargo/config.toml
+
+# runtime state under .dl/ is self-ignored by .dl/.gitignore
+# npm-crawl generated output (pulled source repos, rendered graph)
+examples/_npm/

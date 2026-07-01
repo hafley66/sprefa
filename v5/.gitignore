@@ -1,9 +1,0 @@
-target/
-*.db
-*.db-wal
-*.db-shm
-tests/.fixtures/
-.dl/
-
-# npm-crawl generated output (pulled source repos, rendered graph, throwaway program)
-examples/_npm/
