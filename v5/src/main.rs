@@ -182,6 +182,11 @@ fn main() -> Result<()> {
     if raw.first().map(String::as_str) == Some("doctor") {
         std::process::exit(sprefa_v5::scip_setup::run_doctor(&raw[1..])?);
     }
+    // `dl update`: self-update to the latest published release (turnkey; reuses
+    // the cargo-dist release installer). Same pre-clap intercept as the others.
+    if raw.first().map(String::as_str) == Some("update") {
+        std::process::exit(sprefa_v5::update::run(&raw[1..])?);
+    }
     let cli = Cli::parse();
     if cli.profile { sprefa_v5::db::set_profile(true); }
     if cli.tick_audit { sprefa_v5::engine::set_tick_audit(true); }

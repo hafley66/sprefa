@@ -50,6 +50,8 @@ cwd in discovery mode). Multi-repo analysis is configured in
 dl setup                  # install the agent skill (~/.claude/skills, opencode)
 dl setup --project .      # bootstrap THIS repo (see below)
 dl setup --vscode         # install the bundled dl LSP VSCode extension (needs `code`)
+dl update                 # self-update to the latest prebuilt release (dl update --check to peek)
+dl index                  # generate compiler-backed SCIP facts (dl doctor for the health screen)
 ```
 
 `dl setup --project .` bootstraps the repo, idempotently. Base scaffolding

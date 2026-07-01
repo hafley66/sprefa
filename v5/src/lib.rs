@@ -34,6 +34,7 @@ pub mod sg;
 pub mod spine;
 pub mod tray;
 pub mod trace;
+pub mod update;
 pub mod typecheck;
 pub mod typegraph;
 
