@@ -1,10 +1,12 @@
 #!/bin/sh
-# install.sh — one-line turnkey install for `dl` (sprefa v5).
+# install.sh — one-line install for `dl` (sprefa).
 #
 #   curl -fsSL https://raw.githubusercontent.com/hafley66/sprefa/main/install.sh | sh
 #
-# Downloads the latest prebuilt macOS binary and wires it into your AI coding
-# agents (`dl setup`). Pass --bin-only to skip the agent wiring.
+# Downloads the latest prebuilt macOS binary. That is ALL it does by default:
+# wiring `dl` into AI coding agents (skills, hooks) mutates your home config,
+# so it never happens implicitly — run `dl setup` yourself, or pass --setup to
+# opt in here.
 set -eu
 
 REPO="hafley66/sprefa"
@@ -17,14 +19,19 @@ curl -LsSf "$INSTALLER" | sh
 DL="${CARGO_HOME:-$HOME/.cargo}/bin/dl"
 [ -x "$DL" ] || DL="$(command -v dl 2>/dev/null || true)"
 if [ -z "${DL:-}" ] || [ ! -x "$DL" ]; then
-  echo "[dl] binary installed but not yet on PATH — open a new shell, then: dl setup"
+  echo "[dl] binary installed but not yet on PATH — open a new shell to use it."
   exit 0
 fi
 
 case "${1:-}" in
-  --bin-only) echo "[dl] installed: $DL"; exit 0 ;;
+  --setup)
+    echo "[dl] wiring agent skill (dl setup)…"
+    "$DL" setup
+    ;;
+  *)
+    echo "[dl] installed: $DL"
+    echo "[dl] next steps (both optional, both mutate config only when YOU run them):"
+    echo "       dl setup              # wire the agent skill into Claude Code / opencode"
+    echo "       dl setup --project .  # bootstrap the current repo (.dl/ rails)"
+    ;;
 esac
-
-echo "[dl] wiring agent skill (dl setup)…"
-"$DL" setup
-echo "[dl] done. Inside a repo, bootstrap it with:  dl setup --project ."

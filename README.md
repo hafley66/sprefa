@@ -12,14 +12,15 @@ other doc in the tree.
 
 ## Install & run
 
-One line — prebuilt macOS binary + agent wiring (`dl setup`):
+One line — prebuilt macOS binary (binary only; nothing else is touched):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/hafley66/sprefa/main/install.sh | sh
 ```
 
-Just the binary, no agent wiring: append `-s -- --bin-only`, or use the
-cargo-dist installer directly (always latest release):
+Agent wiring (Claude Code / opencode skills) is a separate, explicit step:
+`dl setup` after install, or opt in during install with `-s -- --setup`.
+The cargo-dist installer works directly too (always latest release):
 
 ```sh
 curl -LsSf https://github.com/hafley66/sprefa/releases/latest/download/sprefa-dl-installer.sh | sh
