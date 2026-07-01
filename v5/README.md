@@ -425,6 +425,7 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `scip_name` | scip | `(symbol, name)` | descriptor name (last identifier run) of a moniker, computed in-engine |
 | `scip_ref` | scip | `(file, symbol, def_file)` | compiler-backed references (ref file, symbol, def file) |
 | `similar` | embed | `(a, b, score)` | content-addressed nearest-neighbor pairs from the embedding backend, with score |
+| `skill_loaded` | agent | `(harness, session, name)` | skills loaded in the newest agent session (harness, session, name): explicit Skill tool calls + dl's own prior `dl --hook` injections — negate it for a declarative load-once guard |
 | `string` | spine | `(id, text, norm)` | interned strings (ref spine): id, text, normalized text |
 | `true` | core | `()` | zero-arity singleton; the always-succeeds atom |
 | `type_edge` | type | `(from, to, kind, repo)` | type-graph edges across Rust (syn), Kotlin (tree-sitter), TS (oxc); kind is field/variant/impl/generic — Kotlin interface supertypes are generic, class/object impl, val/var ctor params + body properties field, enum entries variant; trailing repo column so two trees scanned together don't collapse same-named types into one node (closure/scc still walk cols 0/1, unaffected) |
