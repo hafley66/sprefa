@@ -238,6 +238,59 @@ pub fn lower_rule_to(rule: &Rule, rels: &Rels, target: &str, extra: &[(String, S
     let extra_vals: Vec<String> = extra.iter().map(|(_, v)| v.clone()).collect();
     let where_sql = if wheres.is_empty() { String::new() } else { format!(" WHERE {}", wheres.join(" AND ")) };
 
+    // Lattice merge path: a `key(...) merge(MaxBy(col))` relation lowers to an
+    // UPSERT keyed on the declared FD, replacing the stored row's non-key columns
+    // with the incoming row's only when the incoming `col` is strictly greater.
+    // The whole winning row stays intact (row-selection, not per-column Galois
+    // mixing), which is exactly what MCP dispatch needs: one response per
+    // request id, the highest-priority matching rule. NOT `INSERT OR IGNORE`
+    // (that would first-wins, ignoring a higher-priority later rule). The
+    // fixpoint loop converges: once the max-prio row is in, any re-insert of a
+    // lower-or-equal row fails the WHERE and affects 0 rows (delta 0). Agg +
+    // merge is rejected (an aggregating head has no single row to rank).
+    if let Some(crate::ast::MergeFn::MaxBy(mc)) = &head_meta.merge {
+        if rule.has_agg() {
+            bail!("rel {} has both an aggregate head and merge(...); pick one", rule.head.rel);
+        }
+        let key = head_meta.key.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("rel {} has merge(...) without key(...)", rule.head.rel))?;
+        let key_cols: Vec<String> = key.iter().map(|c| format!("\"{c}\"")).collect();
+        // Non-key columns to copy on a winning conflict: every user column not in
+        // the key, in declaration order, plus any extra columns (e.g. carry tx).
+        let mut non_key: Vec<String> = Vec::new();
+        for c in &head_meta.cols {
+            if !key.contains(&c.name) { non_key.push(c.name.clone()); }
+        }
+        for (n, _) in extra { non_key.push(n.clone()); }
+        let mut exprs = Vec::new();
+        for term in &rule.head.terms {
+            let e = term_sql(term, &canon)?;
+            if has_call(term) { wheres.push(format!("{e} IS NOT NULL")); }
+            exprs.push(e);
+        }
+        exprs.extend(extra_vals.iter().cloned());
+        let from_sql = if froms.is_empty() { String::new() } else { format!(" FROM {}", froms.join(", ")) };
+        // SQLite parses `FROM t ON CONFLICT` as a join (ON = join condition),
+        // so the UPSERT clause must be preceded by a terminated SELECT. A bare
+        // `FROM t` with no WHERE leaves `ON CONFLICT` ambiguous and fails with
+        // "near DO: syntax error". Always emit a WHERE — `WHERE 1` when the
+        // body has no constraints — so the SELECT body closes before ON CONFLICT.
+        let where_sql = if wheres.is_empty() { " WHERE 1".to_string() } else { format!(" WHERE {}", wheres.join(" AND ")) };
+        let set_clause: Vec<String> = non_key.iter()
+            .map(|c| format!("\"{c}\" = excluded.\"{c}\"")).collect();
+        return Ok(format!(
+            "INSERT INTO {} ({}) SELECT {}{}{} ON CONFLICT({}) DO UPDATE SET {} WHERE excluded.\"{}\" > \"{}\"",
+            target,
+            cols.join(", "),
+            exprs.join(", "),
+            from_sql,
+            where_sql,
+            key_cols.join(", "),
+            set_clause.join(", "),
+            mc, mc,
+        ));
+    }
+
     // An aggregating head selects `AGG(arg)` for each aggregate term and the plain
     // head terms as the GROUP BY list. `count(_)` aggregates the whole group, so a
     // wildcard arg lowers to `COUNT(*)`.

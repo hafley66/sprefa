@@ -24,7 +24,7 @@ impl RelKind for ChangedKind {
         &["changed"]
     }
     fn decls(&self) -> Vec<RelDecl> {
-        vec![RelDecl { name: "changed".into(), cols: vec![col("path", Type::Path)] }]
+        vec![RelDecl { name: "changed".into(), cols: vec![col("path", Type::Path)], ..Default::default() }]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in worktree-diff relation"
@@ -78,8 +78,7 @@ impl RelKind for ChangedLineKind {
     fn decls(&self) -> Vec<RelDecl> {
         vec![RelDecl {
             name: "changed_line".into(),
-            cols: vec![col("path", Type::Path), col("line", Type::Int)],
-        }]
+            cols: vec![col("path", Type::Path), col("line", Type::Int)], ..Default::default() }]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in line-diff relation"
@@ -179,8 +178,7 @@ impl RelKind for CreatedKind {
         vec![RelDecl {
             name: "created".into(),
             cols: vec![col("path", Type::Path), col("name", Type::Text),
-                       col("email", Type::Text), col("ts", Type::Int)],
-        }]
+                       col("email", Type::Text), col("ts", Type::Int)], ..Default::default() }]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in file-authorship relation"

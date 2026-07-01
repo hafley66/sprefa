@@ -26,7 +26,7 @@ impl RelKind for EmbedKind {
     }
     fn decls(&self) -> Vec<RelDecl> {
         vec![RelDecl { name: "similar".into(),
-            cols: vec![col("a", Type::Text), col("b", Type::Text), col("score", Type::Int)] }]
+            cols: vec![col("a", Type::Text), col("b", Type::Text), col("score", Type::Int)], ..Default::default() }]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in embedding-similarity relation (similar)"

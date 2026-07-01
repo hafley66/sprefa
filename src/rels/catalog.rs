@@ -25,13 +25,13 @@ impl RelKind for CatalogKind {
         vec![
             RelDecl { name: "rel_catalog".into(), cols: vec![
                 col("name", Type::Text), col("group", Type::Text),
-                col("cols", Type::Text), col("doc", Type::Text)] },
+                col("cols", Type::Text), col("doc", Type::Text)], ..Default::default() },
             RelDecl { name: "fn_catalog".into(), cols: vec![
                 col("name", Type::Text), col("arity", Type::Int),
-                col("group", Type::Text), col("doc", Type::Text)] },
+                col("group", Type::Text), col("doc", Type::Text)], ..Default::default() },
             RelDecl { name: "op_catalog".into(), cols: vec![
                 col("op", Type::Text), col("kind", Type::Text),
-                col("syntax", Type::Text), col("doc", Type::Text)] },
+                col("syntax", Type::Text), col("doc", Type::Text)], ..Default::default() },
         ]
     }
     fn reserved_msg(&self) -> &'static str {

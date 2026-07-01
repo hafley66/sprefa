@@ -191,8 +191,43 @@ impl Parser {
                 other => bail!("expected , or ) in rel decl, got {:?}", other),
             }
         }
+        // Optional qualifiers between `)` and `.`: `key(c1, c2, ...)` and
+        // `merge(MaxBy(col))`. Either order, both optional. `key` narrows the
+        // conflict target (FD / choice-domain); `merge` sets the lattice merge.
+        let mut key: Option<Vec<String>> = None;
+        let mut merge: Option<crate::ast::MergeFn> = None;
+        while let Some(Tok::Ident(q)) = self.peek() {
+            let q = q.clone();
+            self.next()?;
+            match q.as_str() {
+                "key" => {
+                    self.expect(Tok::LParen)?;
+                    let mut cols = Vec::new();
+                    loop {
+                        cols.push(self.ident()?);
+                        match self.next()? {
+                            Tok::Comma => continue,
+                            Tok::RParen => break,
+                            other => bail!("expected , or ) in key(...), got {:?}", other),
+                        }
+                    }
+                    key = Some(cols);
+                }
+                "merge" => {
+                    self.expect(Tok::LParen)?;
+                    let fname = self.ident()?;
+                    self.expect(Tok::LParen)?;
+                    let arg = self.ident()?;
+                    self.expect(Tok::RParen)?;
+                    self.expect(Tok::RParen)?;
+                    merge = Some(crate::ast::MergeFn::parse(&fname, &arg)
+                        .ok_or_else(|| anyhow::anyhow!("unknown merge function {fname}"))?);
+                }
+                _ => bail!("expected `.` or rel qualifier (key/merge), got {q:?}"),
+            }
+        }
         self.expect(Tok::Dot)?;
-        Ok(RelDecl { name, cols })
+        Ok(RelDecl { name, cols, key, merge })
     }
 
     /// `sh[!|*] name(p1, p2) -> (c1: t1, c2: t2) = `cmd {p1}`.` — a shell-fn

@@ -738,7 +738,7 @@ fn prog_rels(prog: &Program) -> Rels {
     let mut rels = Rels::new();
     for item in &prog.items {
         if let Item::Rel(d) = item {
-            rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone() });
+            rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone(), ..Default::default() });
         }
     }
     rels

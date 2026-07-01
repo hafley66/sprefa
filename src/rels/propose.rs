@@ -27,7 +27,7 @@ impl RelKind for ProposeExtractKind {
     fn decls(&self) -> Vec<RelDecl> {
         vec![RelDecl { name: "propose_extract".into(),
             cols: vec![col("path", Type::Path), col("lo", Type::Int),
-                       col("hi", Type::Int), col("param", Type::Text)] }]
+                       col("hi", Type::Int), col("param", Type::Text)], ..Default::default() }]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in extract-proposal relation"
@@ -84,7 +84,7 @@ impl RelKind for ProposeCloneKind {
         vec![RelDecl { name: "propose_clone".into(),
             cols: vec![col("kernel", Type::Text), col("path", Type::Path),
                        col("lo", Type::Int), col("hi", Type::Int),
-                       col("param", Type::Text)] }]
+                       col("param", Type::Text)], ..Default::default() }]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in clone-detection relation"

@@ -270,11 +270,11 @@ const EFFECT_RELS: [&str; 1] = ["effect_log"];
 fn builtin_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
-        RelDecl { name: "true".into(), cols: vec![] },
-        RelDecl { name: "repo".into(), cols: vec![c("slug", Type::Text), c("root", Type::Path), c("url", Type::Text)] },
-        RelDecl { name: "rev".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text), c("oid", Type::Text), c("ts", Type::Int)] },
-        RelDecl { name: "content".into(), cols: vec![c("id", Type::Text), c("hash", Type::Text)] },
-        RelDecl { name: "file".into(), cols: vec![c("repo", Type::Text), c("rev", Type::Text), c("path", Type::Path), c("content", Type::Text)] },
+        RelDecl { name: "true".into(), cols: vec![], ..Default::default() },
+        RelDecl { name: "repo".into(), cols: vec![c("slug", Type::Text), c("root", Type::Path), c("url", Type::Text)], ..Default::default() },
+        RelDecl { name: "rev".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text), c("oid", Type::Text), c("ts", Type::Int)], ..Default::default() },
+        RelDecl { name: "content".into(), cols: vec![c("id", Type::Text), c("hash", Type::Text)], ..Default::default() },
+        RelDecl { name: "file".into(), cols: vec![c("repo", Type::Text), c("rev", Type::Text), c("path", Type::Path), c("content", Type::Text)], ..Default::default() },
     ]
 }
 
@@ -500,7 +500,7 @@ fn effect_rel_decls() -> Vec<RelDecl> {
     vec![
         RelDecl { name: "effect_log".into(), cols: vec![
             c("id", Type::Text), c("kind", Type::Text), c("head", Type::Text),
-            c("state", Type::Text), c("args", Type::Text), c("req_tx", Type::Int)] },
+            c("state", Type::Text), c("args", Type::Text), c("req_tx", Type::Int)], ..Default::default() },
     ]
 }
 
@@ -510,28 +510,28 @@ fn module_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "module_import".into(), cols: vec![
-            c("file", Type::Path), c("rev", Type::Text), c("specifier", Type::Text), c("kind", Type::Text), c("line", Type::Int)] },
-        RelDecl { name: "module_edge".into(), cols: vec![c("src", Type::Path), c("dst", Type::Path)] },
-        RelDecl { name: "module_edge_rev".into(), cols: vec![c("src", Type::Path), c("dst", Type::Path), c("rev", Type::Text)] },
+            c("file", Type::Path), c("rev", Type::Text), c("specifier", Type::Text), c("kind", Type::Text), c("line", Type::Int)], ..Default::default() },
+        RelDecl { name: "module_edge".into(), cols: vec![c("src", Type::Path), c("dst", Type::Path)], ..Default::default() },
+        RelDecl { name: "module_edge_rev".into(), cols: vec![c("src", Type::Path), c("dst", Type::Path), c("rev", Type::Text)], ..Default::default() },
         RelDecl { name: "module_unresolved".into(), cols: vec![
-            c("file", Type::Path), c("specifier", Type::Text), c("reason", Type::Text), c("line", Type::Int)] },
+            c("file", Type::Path), c("specifier", Type::Text), c("reason", Type::Text), c("line", Type::Int)], ..Default::default() },
         RelDecl { name: "module_unresolved_rev".into(), cols: vec![
-            c("file", Type::Path), c("rev", Type::Text), c("specifier", Type::Text), c("reason", Type::Text), c("line", Type::Int)] },
-        RelDecl { name: "crate_edge".into(), cols: vec![c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text), c("rev", Type::Text)] },
+            c("file", Type::Path), c("rev", Type::Text), c("specifier", Type::Text), c("reason", Type::Text), c("line", Type::Int)], ..Default::default() },
+        RelDecl { name: "crate_edge".into(), cols: vec![c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text), c("rev", Type::Text)], ..Default::default() },
     ]
 }
 
 fn type_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
-        RelDecl { name: "type_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text), c("repo", Type::Text)] },
-        RelDecl { name: "type_edge_rev".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text), c("rev", Type::Text), c("repo", Type::Text)] },
+        RelDecl { name: "type_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text), c("repo", Type::Text)], ..Default::default() },
+        RelDecl { name: "type_edge_rev".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text), c("rev", Type::Text), c("repo", Type::Text)], ..Default::default() },
         RelDecl { name: "type_entity".into(), cols: vec![
             c("repo", Type::Text), c("sym", Type::Text), c("name", Type::Text), c("kind", Type::Text),
-            c("parent", Type::Text), c("file", Type::Path), c("line", Type::Int)] },
+            c("parent", Type::Text), c("file", Type::Path), c("line", Type::Int)], ..Default::default() },
         RelDecl { name: "type_sig".into(), cols: vec![
-            c("sym", Type::Text), c("slot", Type::Text), c("pos", Type::Int), c("ref", Type::Text)] },
-        RelDecl { name: "type_link".into(), cols: vec![c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text)] },
+            c("sym", Type::Text), c("slot", Type::Text), c("pos", Type::Int), c("ref", Type::Text)], ..Default::default() },
+        RelDecl { name: "type_link".into(), cols: vec![c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text)], ..Default::default() },
     ]
 }
 
@@ -539,10 +539,10 @@ fn doc_text_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "doc_comment".into(), cols: vec![
-            c("repo", Type::Text), c("sym", Type::Text), c("line", Type::Int), c("text", Type::Text)] },
+            c("repo", Type::Text), c("sym", Type::Text), c("line", Type::Int), c("text", Type::Text)], ..Default::default() },
         RelDecl { name: "doc_tag".into(), cols: vec![
             c("repo", Type::Text), c("sym", Type::Text), c("tag", Type::Text),
-            c("arg", Type::Text), c("text", Type::Text)] },
+            c("arg", Type::Text), c("text", Type::Text)], ..Default::default() },
     ]
 }
 
@@ -551,26 +551,26 @@ fn call_rel_decls() -> Vec<RelDecl> {
     vec![
         RelDecl { name: "call_def".into(), cols: vec![
             c("repo", Type::Text), c("sym", Type::Text), c("kind", Type::Text),
-            c("file", Type::Path), c("line", Type::Int), c("end", Type::Int)] },
+            c("file", Type::Path), c("line", Type::Int), c("end", Type::Int)], ..Default::default() },
         RelDecl { name: "call_site".into(), cols: vec![
             c("repo", Type::Text), c("caller", Type::Text), c("callee", Type::Text),
-            c("file", Type::Path), c("line", Type::Int)] },
+            c("file", Type::Path), c("line", Type::Int)], ..Default::default() },
         RelDecl { name: "call_edge".into(), cols: vec![
-            c("caller", Type::Text), c("callee", Type::Text), c("kind", Type::Text)] },
+            c("caller", Type::Text), c("callee", Type::Text), c("kind", Type::Text)], ..Default::default() },
         RelDecl { name: "call_edge_rev".into(), cols: vec![
             c("caller", Type::Text), c("callee", Type::Text),
-            c("kind", Type::Text), c("rev", Type::Text)] },
+            c("kind", Type::Text), c("rev", Type::Text)], ..Default::default() },
         // def sym -> bare callable name, so rules can resolve a call_site's
         // callee text to the set of candidate def syms (then filter, e.g. by
         // allocates). One row per def; a bare name may map to several syms.
-        RelDecl { name: "call_name".into(), cols: vec![c("sym", Type::Text), c("name", Type::Text)] },
+        RelDecl { name: "call_name".into(), cols: vec![c("sym", Type::Text), c("name", Type::Text)], ..Default::default() },
         // Per-fn read/write classification of the fn's call sites. `fn` is the
         // caller sym (same shape as call_site.caller); `kind` is `read` or
         // `write`, classified from the bare callee name (execute/
         // execute_batch -> write; prepare/query_row/query_map -> read). Lets a
         // rail ask "does this fn contain any write?" via `call_kind(fn, "write")`
         // without re-declaring the method-name table per program.
-        RelDecl { name: "call_kind".into(), cols: vec![c("fn", Type::Text), c("kind", Type::Text)] },
+        RelDecl { name: "call_kind".into(), cols: vec![c("fn", Type::Text), c("kind", Type::Text)], ..Default::default() },
     ]
 }
 
@@ -579,19 +579,19 @@ fn dataflow_rel_decls() -> Vec<RelDecl> {
     vec![
         RelDecl { name: "df_node".into(), cols: vec![
             c("id", Type::Text), c("kind", Type::Text), c("var", Type::Text),
-            c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int)] },
-        RelDecl { name: "df_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text)] },
+            c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int)], ..Default::default() },
+        RelDecl { name: "df_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text)], ..Default::default() },
         // one row per loop, with its source span + loop variable. The flag rule
         // joins this against df_node/df_edge to find loop-invariant calls: a
         // call whose line falls in [start,end] taking an argument that is a
         // function param (not the loop variable).
         RelDecl { name: "loop_over".into(), cols: vec![
             c("file", Type::Path), c("start", Type::Int), c("end", Type::Int),
-            c("var", Type::Text), c("collection", Type::Text), c("fn", Type::Text)] },
+            c("var", Type::Text), c("collection", Type::Text), c("fn", Type::Text)], ..Default::default() },
         // one row per fn whose body builds a collection (Vec/HashMap/String ctor
         // or .collect/.clone/.to_string). The cost signal that cuts the
         // loop-invariant-call suspect list down to recomputation candidates.
-        RelDecl { name: "allocates".into(), cols: vec![c("fn", Type::Text)] },
+        RelDecl { name: "allocates".into(), cols: vec![c("fn", Type::Text)], ..Default::default() },
         // one row per (call, enclosing loop) pair: `call_id` is the call_res
         // node, `loop_id` joins back to loop_over via "{file}:{start}", `depth`
         // is the loop's nesting rank (1 = outermost), `collection` is the inner
@@ -599,12 +599,12 @@ fn dataflow_rel_decls() -> Vec<RelDecl> {
         // raw material for symbolic Big-O composed over call_edge.
         RelDecl { name: "nest".into(), cols: vec![
             c("call_id", Type::Text), c("loop_id", Type::Text),
-            c("depth", Type::Int), c("collection", Type::Text)] },
+            c("depth", Type::Int), c("collection", Type::Text)], ..Default::default() },
         // (param df_node id, positional index) — the index counts only typed
         // params (the Rust receiver `self` is skipped), so it aligns with
         // type_sig's `pos`. Lets a query bind a specific param node to its
         // declared type at node granularity, not just per-fn.
-        RelDecl { name: "df_param".into(), cols: vec![c("id", Type::Text), c("pos", Type::Int)] },
+        RelDecl { name: "df_param".into(), cols: vec![c("id", Type::Text), c("pos", Type::Int)], ..Default::default() },
     ]
 }
 
@@ -616,7 +616,7 @@ fn doc_rel_decls() -> Vec<RelDecl> {
         // walk the section tree. See `ingest::IngestLang`.
         RelDecl { name: "doc_node".into(), cols: vec![
             c("repo", Type::Text), c("file", Type::Path), c("line", Type::Int),
-            c("kind", Type::Text), c("name", Type::Text), c("parent", Type::Text)] },
+            c("kind", Type::Text), c("name", Type::Text), c("parent", Type::Text)], ..Default::default() },
         // doc→code bridge: (file, line, sym, kind, matched_name). For each row,
         // `kind` is the doc_node kind that produced it ("heading" or
         // "code_block") and `matched_name` is the doc-side string that matched a
@@ -627,16 +627,16 @@ fn doc_rel_decls() -> Vec<RelDecl> {
         // type relations.
         RelDecl { name: "doc_ref".into(), cols: vec![
             c("repo", Type::Text), c("file", Type::Path), c("line", Type::Int), c("sym", Type::Text),
-            c("kind", Type::Text), c("matched_name", Type::Text)] },
+            c("kind", Type::Text), c("matched_name", Type::Text)], ..Default::default() },
     ]
 }
 
 fn spine_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
-        RelDecl { name: "string".into(), cols: vec![c("id", Type::Text), c("text", Type::Text), c("norm", Type::Text)] },
+        RelDecl { name: "string".into(), cols: vec![c("id", Type::Text), c("text", Type::Text), c("norm", Type::Text)], ..Default::default() },
         RelDecl { name: "ref".into(), cols: vec![
-            c("id", Type::Text), c("string", Type::Text), c("file", Type::Text), c("lo", Type::Int), c("hi", Type::Int)] },
+            c("id", Type::Text), c("string", Type::Text), c("file", Type::Text), c("lo", Type::Int), c("hi", Type::Int)], ..Default::default() },
     ]
 }
 
@@ -645,26 +645,26 @@ fn node_rel_decls() -> Vec<RelDecl> {
     vec![
         RelDecl { name: "node".into(), cols: vec![
             c("id", Type::Text), c("kind", Type::Text), c("file", Type::Text),
-            c("lo", Type::Int), c("hi", Type::Int), c("parent", Type::Text)] },
+            c("lo", Type::Int), c("hi", Type::Int), c("parent", Type::Text)], ..Default::default() },
         // EXACTLY 2 cols: `declare_closure` requires it, so `anc(a,b) <-
         // closure(child).` works with zero new recursion code.
-        RelDecl { name: "child".into(), cols: vec![c("parent", Type::Text), c("child", Type::Text)] },
+        RelDecl { name: "child".into(), cols: vec![c("parent", Type::Text), c("child", Type::Text)], ..Default::default() },
     ]
 }
 
 fn daemon_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
-        RelDecl { name: "program".into(), cols: vec![c("path", Type::Path), c("hash", Type::Text), c("mtime", Type::Int)] },
-        RelDecl { name: "head".into(), cols: vec![c("repo", Type::Text), c("name", Type::Text), c("oid", Type::Text)] },
+        RelDecl { name: "program".into(), cols: vec![c("path", Type::Path), c("hash", Type::Text), c("mtime", Type::Int)], ..Default::default() },
+        RelDecl { name: "head".into(), cols: vec![c("repo", Type::Text), c("name", Type::Text), c("oid", Type::Text)], ..Default::default() },
         RelDecl { name: "rev_advanced".into(), cols: vec![
-            c("repo", Type::Text), c("name", Type::Text), c("old", Type::Text), c("new", Type::Text)] },
+            c("repo", Type::Text), c("name", Type::Text), c("old", Type::Text), c("new", Type::Text)], ..Default::default() },
     ]
 }
 
 fn every_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
-    vec![RelDecl { name: "every".into(), cols: vec![c("secs", Type::Int)] }]
+    vec![RelDecl { name: "every".into(), cols: vec![c("secs", Type::Int)], ..Default::default() }]
 }
 
 /// The distinct `every(N)` interval literals used as body atoms in the program.
@@ -698,7 +698,7 @@ fn every_rels_used(prog: &Program) -> bool { rels_used(prog, &EVERY_RELS) }
 
 fn clock_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
-    vec![RelDecl { name: "clock".into(), cols: vec![c("secs", Type::Int), c("bucket", Type::Int)] }]
+    vec![RelDecl { name: "clock".into(), cols: vec![c("secs", Type::Int), c("bucket", Type::Int)], ..Default::default() }]
 }
 
 /// The distinct `secs` periods the program names in a `clock(secs, bucket)` body
@@ -2715,14 +2715,40 @@ impl Engine {
         } else {
             let cols: Vec<String> = d.cols.iter()
                 .map(|c| format!("\"{}\" {}", c.name, c.ty.sql())).collect();
-            let pk: Vec<String> = d.cols.iter().map(|c| format!("\"{}\"", c.name)).collect();
+            // The PRIMARY KEY drives dedup. The default (no `key(...)`) is the
+            // full row, so identical rows collapse (set semantics). A `key(...)`
+            // qualifier narrows the PK to that column subset = a functional
+            // dependency / choice-domain (Soufflé APLAS'21): one row per key,
+            // first-wins under `INSERT OR IGNORE`, or lattice-merged under a
+            // `merge(...)`. Validate the key/merge columns exist and that the
+            // merge col is NOT a key col (it ranks rows within a key).
+            let pk: Vec<String> = if let Some(key) = &d.key {
+                for k in key {
+                    if !d.cols.iter().any(|c| &c.name == k) {
+                        bail!("key column {k} not in rel {}", d.name);
+                    }
+                }
+                key.iter().map(|c| format!("\"{c}\"")).collect()
+            } else {
+                d.cols.iter().map(|c| format!("\"{}\"", c.name)).collect()
+            };
+            if let Some(crate::ast::MergeFn::MaxBy(mc)) = &d.merge {
+                let key = d.key.as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("rel {} has merge(...) without key(...)", d.name))?;
+                if !d.cols.iter().any(|c| &c.name == mc) {
+                    bail!("merge column {mc} not in rel {}", d.name);
+                }
+                if key.contains(mc) {
+                    bail!("rel {}: merge column {mc} is also a key column; the merge ranks rows WITHIN a key", d.name);
+                }
+            }
             format!(
                 "CREATE TABLE IF NOT EXISTS {} ({}, __src TEXT DEFAULT '', PRIMARY KEY ({}))",
                 tbl(&d.name), cols.join(", "), pk.join(", ")
             )
         };
         self.db.conn().execute(&sql, [])?;
-        self.rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone() });
+        self.rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone(), key: d.key.clone(), merge: d.merge.clone() });
         Ok(())
     }
 
@@ -3402,7 +3428,7 @@ impl Engine {
     /// same-cyclic-component pairs (so a node on a cycle reaches itself).
     fn declare_closure(&mut self, d: &RelDecl, edge: &str) -> Result<()> {
         if d.cols.len() != 2 { bail!("closure head {} must have 2 columns", d.name); }
-        self.rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone() });
+        self.rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone(), ..Default::default() });
         let (nt, et, v) = (scc_node_tbl(edge), scc_edge_tbl(edge), tbl(&d.name));
         self.db.conn().execute_batch(&format!(
             "CREATE TABLE IF NOT EXISTS {nt} (name TEXT PRIMARY KEY, comp INTEGER, cyclic INTEGER);

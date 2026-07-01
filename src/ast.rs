@@ -48,11 +48,52 @@ impl Col {
     pub fn plain(name: String, ty: Type) -> Col { Col { name, ty, brand: None } }
 }
 
-#[derive(Clone, Debug)]
-pub struct RelDecl { pub name: String, pub cols: Vec<Col> }
+/// A lattice merge function on key conflict: among rows sharing a `key(...)`
+/// functional dependency, which one wins. `MaxBy(col)` keeps the whole row
+/// whose `col` value is greatest (row-selection, the dispatch case: one
+/// response per request id, highest-priority rule). Lowers to
+/// `ON CONFLICT(key) DO UPDATE SET <non-key> = excluded.<non-key>
+///  WHERE excluded.<col> > <col>`. Per-column lattice merges (Sum/Max per
+/// column) are deferred; `MaxBy` is the only merge today.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MergeFn {
+    /// Row-selection by a priority column: on conflict on the `key`, replace
+    /// the stored row's non-key columns with the incoming row's only when the
+    /// incoming row's `col` is strictly greater. The whole winning row stays
+    /// intact (no Galois cross-row mixing).
+    MaxBy(String),
+}
 
-#[derive(Clone, Debug)]
-pub struct RelMeta { pub cols: Vec<Col> }
+impl MergeFn {
+    pub fn parse(name: &str, arg: &str) -> Option<MergeFn> {
+        Some(match name {
+            "MaxBy" => MergeFn::MaxBy(arg.to_string()),
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct RelDecl {
+    pub name: String,
+    pub cols: Vec<Col>,
+    /// `key(c1, c2, ...)` qualifier: a functional dependency / choice-domain
+    /// (Soufflé APLAS'21). The conflict target is this column subset, not the
+    /// full row. With no `merge`, `INSERT OR IGNORE` keeps the first row per
+    /// key (silent-pick choice). With a `merge`, the ON CONFLICT clause drives
+    /// the lattice. `None` = the legacy full-row PRIMARY KEY (set semantics).
+    pub key: Option<Vec<String>>,
+    /// `merge(MaxBy(col))` qualifier: the lattice merge on key conflict.
+    /// Requires `key` to be set (the conflict target). `None` = first-wins.
+    pub merge: Option<MergeFn>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct RelMeta {
+    pub cols: Vec<Col>,
+    pub key: Option<Vec<String>>,
+    pub merge: Option<MergeFn>,
+}
 
 impl RelMeta {
     pub fn col_name(&self, i: usize) -> &str { &self.cols[i].name }
