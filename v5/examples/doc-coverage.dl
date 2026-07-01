@@ -19,5 +19,5 @@ src(p) <- scan("WORK", "src/**/*.{rs,ts,kt,kts,tsx}", p, rev), match(p, rev, /./
 
 # Every declared entity with no doc comment bound to its sym.
 diag(file, line, "warning", "undocumented", "${kind} `${name}` has no doc comment") <-
-  type_entity(_, sym, name, kind, _, file, line),
-  !doc_comment(_, sym, _, _).
+  type_entity(sym: sym, name: name, kind: kind, file: file, line: line),
+  !doc_comment(sym: sym).

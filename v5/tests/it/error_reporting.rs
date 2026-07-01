@@ -36,22 +36,41 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
     )
 }
 
-/// A first `?` query over an unknown relation reports its own failure, and the
-/// SECOND (valid) query still runs and prints its rows. Before the fix, the `?`
-/// eval loop `?`-aborted on the first failure, hiding every later answer.
+/// A first `?` query that fails at evaluation (here: wrong arity on a declared
+/// rel) reports its own failure, and the SECOND (valid) query still runs and
+/// prints its rows. Before the fix, the `?` eval loop aborted on the first
+/// failure, hiding every later answer. (An UNDECLARED rel is a separate case now
+/// caught at typecheck — see `undeclared_relation_is_a_clear_error`.)
 #[test]
 fn failed_query_does_not_abort_the_chain() {
     let d = sandbox("chain");
     let (code, out, err) = run(&d, concat!(
         "rel hit(p: file, l: int).\n",
         "hit(p, l) <- scan(\"src/**/*.rs\", p, rev), match(p, rev, /alpha/, l).\n",
-        "? missingrel(x).\n",
+        "? hit(p).\n",          // wrong arity: fails at eval, not typecheck
         "? hit(p, l).\n",
     ));
-    assert!(err.contains("query `missingrel` failed"), "first query reports its failure:\n{err}");
+    assert!(err.contains("query `hit` failed"), "first query reports its failure:\n{err}");
     assert!(out.contains("? hit =>"), "second query still runs:\n{out}");
     assert!(out.contains("src/x.rs"), "second query prints its row:\n{out}");
     assert_eq!(code, 0, "a failed query is not a fatal error:\n{err}");
+    let _ = fs::remove_dir_all(&d);
+}
+
+/// An undeclared relation is a clear typecheck error naming the rel, not a raw
+/// SQLite `no such table: rel_X` leak from execution.
+#[test]
+fn undeclared_relation_is_a_clear_error() {
+    let d = sandbox("undecl");
+    let (code, _out, err) = run(&d, concat!(
+        "rel hit(p: file, l: int).\n",
+        "hit(p, l) <- scan(\"src/**/*.rs\", p, rev), match(p, rev, /alpha/, l).\n",
+        "? missingrel(x).\n",
+    ));
+    assert_ne!(code, 0);
+    assert!(err.contains("relation `missingrel`") && err.contains("never declared"),
+        "names the undeclared rel:\n{err}");
+    assert!(!err.contains("no such table"), "no raw SQLite leak:\n{err}");
     let _ = fs::remove_dir_all(&d);
 }
 

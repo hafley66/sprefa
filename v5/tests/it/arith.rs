@@ -126,7 +126,7 @@ r(p) <- fns(p, line + 1).
 "#;
     let (code, _out, err) = run(&d, prog);
     assert_ne!(code, 0, "arithmetic in a body atom must fail");
-    assert!(err.contains("expected , or ) in atom, got Plus"), "{err}");
+    assert!(err.contains("expected , or ) in arg list, got Plus"), "{err}");
 }
 
 /// Arithmetic into a non-int column is a typecheck error, not a SQLite crash.

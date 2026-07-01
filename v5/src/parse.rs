@@ -302,6 +302,12 @@ impl Parser {
         let mut aggs: Vec<Option<AggFn>> = Vec::new();
         if !matches!(self.peek(), Some(Tok::RParen)) {
             loop {
+                // A `col: term` named arg in head position: the resolver would have
+                // to permute `aggs` in lockstep, so reject it clearly for now (named
+                // args resolve in body and `?` atoms). Positional heads are unaffected.
+                if matches!((self.peek(), self.peek2()), (Some(Tok::Ident(_)), Some(Tok::Colon))) {
+                    bail!("named args are not yet supported in a rule head (use positional args here; `col: term` works in body atoms and `?` queries)");
+                }
                 // An `aggfn(arg)` call: a known aggregate name immediately followed
                 // by `(`. Otherwise a plain term.
                 let is_agg = matches!((self.peek(), self.peek2()),
@@ -328,7 +334,7 @@ impl Parser {
             self.next()?; // RParen
         }
         if !aggs.iter().any(|a| a.is_some()) { aggs.clear(); }
-        Ok((Atom { rel, terms }, aggs))
+        Ok((Atom { rel, terms, named: Vec::new() }, aggs))
     }
 
     fn query(&mut self) -> Result<Query> {
@@ -346,20 +352,13 @@ impl Parser {
     fn atom(&mut self) -> Result<Atom> {
         let rel = self.ident()?;
         self.expect(Tok::LParen)?;
-        let mut terms = Vec::new();
-        if !matches!(self.peek(), Some(Tok::RParen)) {
-            loop {
-                terms.push(self.term()?);
-                match self.next()? {
-                    Tok::Comma => continue,
-                    Tok::RParen => break,
-                    other => bail!("expected , or ) in atom, got {:?}", other),
-                }
-            }
-        } else {
-            self.next()?; // RParen
-        }
-        Ok(Atom { rel, terms })
+        // Args are positional terms or `col: term` named args, in any order. The
+        // frontend resolves the named args to positional slots once every rel
+        // schema is known (a body atom can forward-reference a rel). Shared with
+        // the source-op kwarg form via `parse_kwarg_terms`.
+        let (terms, named) = self.parse_kwarg_terms()?;
+        self.expect(Tok::RParen)?;
+        Ok(Atom { rel, terms, named })
     }
 
     fn body_item(&mut self) -> Result<BodyItem> {
@@ -870,7 +869,8 @@ impl Parser {
                     if matches!(self.peek(), Some(Tok::RParen)) { break; }
                 }
                 Some(Tok::RParen) => break,
-                other => bail!("expected , or ) in arg list, got {:?}", other),
+                Some(t) => bail!("expected , or ) in arg list, got {:?}", t),
+                None => bail!("expected , or ) in arg list, got end of input"),
             }
         }
         Ok((pos, named))

@@ -2,11 +2,12 @@
 rel seen(path: file).
 seen(path) <- scan("WORK", "v5/src/**/*.rs", path, rev), match(path, rev, /./, line).
 
+# Named args: bind only the column you count, no positional `_` padding.
 rel n_edge(n: int).
-n_edge(count(from)) <- type_edge(from, _, _, _).
+n_edge(count(from)) <- type_edge(from: from).
 
 rel n_entity(n: int).
-n_entity(count(sym)) <- type_entity(_, sym, _, _, _, _, _).
+n_entity(count(sym)) <- type_entity(sym: sym).
 
 rel n_shape(n: int).
 n_shape(count(name)) <- type_shape(name, _).

@@ -23,7 +23,7 @@ const AGENTS_SECTION: &str = r#"
 `dl` (sprefa v5) is datalog over code. Reach for it instead of grep when you need
 structured facts: call graph, import/type graph, blast radius, lint rails, codemods.
 
-- Run a program: `dl prog.dl --root .` (prints `?` rows). `--no-daemon` for ad-hoc.
+- Run a program: `dl prog.dl --root .` (prints `?` rows). Let it use the daemon; `--no-daemon` is a last resort for a wedged socket, not the default.
 - Discovery rail: `dl --check` runs every `.dl/*.dl`; exits 2 on a `diag` row.
 - The `.dl/dl-self-lint.dl` rail makes a broken/mistyped `.dl` a `--check` failure
   (the engine lints `.dl` via the built-in `dl_diag` relation, like rust-analyzer).

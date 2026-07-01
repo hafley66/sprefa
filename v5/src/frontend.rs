@@ -39,6 +39,7 @@ pub fn load_program(entry: &Path) -> Result<Vec<Item>> {
     let surface = loader.load_entry(entry)?;
     let origin = entry.canonicalize().unwrap_or_else(|_| entry.to_path_buf());
     let mut items = expand_program(surface, &mut loader, origin)?;
+    resolve_named_args(&mut items)?;
     desugar_effects(&mut items);
     dedup_rels(&mut items)?;
     Ok(items)
@@ -105,9 +106,92 @@ pub fn load_program_set(entry_paths: &[PathBuf]) -> Result<Vec<Item>> {
             inline_template_calls(&mut r.body, &templates, &mut counter)?;
         }
     }
+    resolve_named_args(&mut items)?;
     desugar_effects(&mut items);
     dedup_rels(&mut items)?;
     Ok(items)
+}
+
+/// Fold `col: term` named args in body and `?` atoms into positional slots using
+/// each relation's declared column names. Positional args fill left-to-right;
+/// named args fill by column name; any column mentioned by neither becomes
+/// `Term::Wild` (a don't-care) — that padding is the win over counting `_`. A
+/// fully-positional atom (no named args) is left exactly as written, so existing
+/// programs and the arity check downstream are unaffected. Column names come from
+/// the user's `rel` decls (which override) plus the built-in schemas, so the
+/// forward-reference case (`hit(l: 5)` before `rel hit`) still resolves. Runs
+/// before `desugar_effects`, which reads the now-positional body terms.
+fn resolve_named_args(items: &mut [Item]) -> Result<()> {
+    let mut schema: HashMap<String, Vec<String>> = HashMap::new();
+    for d in crate::engine::all_builtin_decls() {
+        schema.insert(d.name, d.cols.into_iter().map(|c| c.name).collect());
+    }
+    for it in items.iter() {
+        if let Item::Rel(d) = it {
+            schema.insert(d.name.clone(), d.cols.iter().map(|c| c.name.clone()).collect());
+        }
+    }
+    for it in items.iter_mut() {
+        match it {
+            Item::Rule(r) => {
+                for b in &mut r.body {
+                    if let BodyItem::Pos(a) | BodyItem::Neg(a) = b {
+                        resolve_atom(a, &schema)?;
+                    }
+                }
+            }
+            Item::Query(q) => resolve_atom(&mut q.head, &schema)?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Fold one atom's named args into positional slots. No-op when the atom is
+/// fully positional (no `col:` present) — that path stays exactly positional, so
+/// existing programs and the arity check are untouched. Once ANY `col:` appears
+/// the atom is in named mode, and a bare identifier `x` puns to `x: x` (binds the
+/// column of the same name, the JS `{a: A, b, c}` / Rust `Foo { c }` shorthand).
+/// A bare non-identifier in named mode is ambiguous and errors. Any column named
+/// by neither an explicit arg nor a pun becomes a don't-care (`Term::Wild`).
+fn resolve_atom(a: &mut ast::Atom, schema: &HashMap<String, Vec<String>>) -> Result<()> {
+    if a.named.is_empty() { return Ok(()); }
+    let cols = schema.get(&a.rel).ok_or_else(|| anyhow::anyhow!(
+        "named args on `{0}` need a `rel {0}(...)` declaration (or a built-in schema) \
+         to map column names to positions", a.rel))?;
+    let pos = std::mem::take(&mut a.terms);
+    let named = std::mem::take(&mut a.named);
+    let mut slots: Vec<Option<Term>> = vec![None; cols.len()];
+    let mut set = |name: &str, t: Term| -> Result<()> {
+        let i = cols.iter().position(|c| c == name).ok_or_else(|| anyhow::anyhow!(
+            "unknown column `{name}` on `{}` (columns: {})", a.rel, cols.join(", ")))?;
+        if slots[i].is_some() {
+            bail!("column `{name}` on `{}` is set twice", a.rel);
+        }
+        slots[i] = Some(t);
+        Ok(())
+    };
+    // A bare positional term in named mode is a pun: `c` == `c: c`. Only an
+    // identifier can pun (it names its own column); a literal/`_`/arith cannot.
+    for t in pos {
+        match t {
+            Term::Var(v) => set(&v.clone(), Term::Var(v))?,
+            other => {
+                let shown = match &other {
+                    Term::Str(s) => format!("\"{s}\""),
+                    Term::Int(n) => n.to_string(),
+                    Term::Wild => "_".to_string(),
+                    _ => "value".to_string(),
+                };
+                bail!(
+                    "in an atom with named args, the bare {shown} on `{}` is ambiguous — \
+                     name it `col: {shown}`, or make the whole atom positional", a.rel);
+            }
+        }
+    }
+    for (name, t) in named { set(&name, t)?; }
+    a.terms = slots.into_iter().map(|s| s.unwrap_or(Term::Wild)).collect();
+    Ok(())
 }
 
 /// Top-level expand: same as `expand_with` but owns the templates table and

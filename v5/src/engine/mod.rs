@@ -477,7 +477,7 @@ pub fn op_docs() -> &'static [(&'static str, &'static str, &'static str, &'stati
         ("cmd", "source", "cmd(path, rev, \"tool {file}\", line, out)", "shell out per matched file, one row per stdout line; cached by (file hash, rule text); nonzero exit + stdout = findings, nonzero + empty = error"),
         ("comment", "source", "comment(path, rev, /open/[, /close/], l0, l1, label)", "comment-marker regions in any file type; one regex = sequential dividers, two = paired BEGIN/END with LIFO nesting; l0/l1 are 1-based marker lines; pairs with gen splice"),
         // body constructs: derived rules.
-        ("atom", "body", "edge(f, t)", "positive atom; binds its vars from the named relation"),
+        ("atom", "body", "edge(f, t) / edge(to: t) / edge(from, to: t)", "positive atom; binds its vars from the relation. Positional by slot (edge(f,t)) OR named mode once any `col: term` appears: then a bare name puns to its own column (`from` == `from: from`, the JS/Rust struct shorthand) and an unmentioned column is a don't-care, so you name only the columns you use instead of counting positional `_`"),
         ("negation", "body", "!round(t, _)", "negation / anti-join; the row must NOT exist in the relation"),
         ("comparison", "body", "= != < <= > >=", "scalar comparison on bound vars or literals (n >= 4, p != fs:src/db.rs)"),
         ("regex", "body", "f =~ /^[A-Za-z]+$/", "regex constraint (SQLite REGEXP); the /.../ unified regex literal, same form match/comment/sg use"),
@@ -489,7 +489,7 @@ pub fn op_docs() -> &'static [(&'static str, &'static str, &'static str, &'stati
         ("strfn", "body", "split(text, sep, idx) / replace(text, from, to)", "string functions in heads and comparison sides; idx 0-based, negative counts from the end; a computed binding (ext = split(p, \".\", -1)) binds for later use in the same body"),
         ("aggregation", "body", "count sum min max", "head-position-only aggregation; non-aggregate head terms are the grouping key; count/sum produce int, min/max carry the arg type; count in body is a parse error"),
         // sinks.
-        ("query", "sink", "? rel(a, b).", "print a TSV block (or JSON-lines with --query-json); a literal in any position filters; no where clause"),
+        ("query", "sink", "? rel(a, b). / ? rel(col: v).", "print a TSV block (or JSON-lines with --query-json); a literal in any position filters; args may be named by column (`col: v`), unmentioned columns are don't-cares; no where clause"),
         ("diag", "sink", "rel diag(path, line, col, ..., severity, msg).", "declare a rel named diag; the engine maps columns BY NAME into editor diagnostics (--lsp) or check output (--check); required path/line/msg"),
         ("gen", "sink", "gen([:mode,] path, [l0, l1,] \"{var} template\")", "codegen; file form renders body rows through a path+row template, splice form replaces lines between comment marker pairs; convergent (skips write when bytes match); never runs under --check/--lsp"),
     ]

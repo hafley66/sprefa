@@ -620,6 +620,27 @@ pub fn check_and_normalize(prog: &mut Program, dl_path: &str) -> Vec<TypeDiag> {
             check_effect(r, &shell_fns, dl_path, &mut diags);
         }
     }
+    // Every rule/query head must target a declared relation. Tables are created
+    // only from `rel` decls (plus the engine's built-ins), so an undeclared head
+    // would otherwise fail at execution as a raw SQLite `no such table: rel_X`.
+    // Reporting it here routes a clear message through --check and the LSP.
+    let builtins = crate::engine::builtin_rel_names();
+    let mut reported: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for item in &prog.items {
+        let (head, is_query) = match item {
+            Item::Rule(r) => (&r.head.rel, false),
+            Item::Query(q) => (&q.head.rel, true),
+            _ => continue,
+        };
+        if rels.contains_key(head) || builtins.contains(head) { continue; }
+        if !reported.insert(head.as_str()) { continue; }
+        let role = if is_query { "queried" } else { "used as a rule head" };
+        diags.push(TypeDiag {
+            path: dl_path.to_string(), span: (0, 0),
+            severity: Severity::Error, code: "unknown-relation".into(),
+            msg: format!("relation `{head}` is {role} but never declared — add `rel {head}(...)`"),
+        });
+    }
     diags.extend(stratify_diags(prog, dl_path));
     diags.extend(normalize_program(prog, dl_path));
     diags

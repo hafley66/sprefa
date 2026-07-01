@@ -114,7 +114,17 @@ pub enum Term {
 }
 
 #[derive(Clone, Debug)]
-pub struct Atom { pub rel: String, pub terms: Vec<Term> }
+pub struct Atom {
+    pub rel: String,
+    pub terms: Vec<Term>,
+    /// Named args `col: term` collected at parse time, unresolved. The frontend's
+    /// `resolve_named_args` folds these into positional `terms` slots using the
+    /// relation's declared column names (unnamed columns become `Term::Wild`),
+    /// then clears this. Empty for a fully-positional atom (the common case) and
+    /// always empty after the frontend pass, so every later reader sees only
+    /// `terms`. The `col:` production is the reusable colon syntax.
+    pub named: Vec<(String, Term)>,
+}
 
 /// An aggregation function in a rule head: `count(T)`, `sum(T)`, `min(T)`,
 /// `max(T)`. Count/Sum produce an `Int`; Min/Max produce the argument's type.
