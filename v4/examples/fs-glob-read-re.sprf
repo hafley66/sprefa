@@ -1,9 +1,0 @@
-# Implemented syntax. Walk files, filter paths, read bytes, capture text.
-
-rule(:rule_mentions, FS?, MATCH?, LO?, HI?);
-
-fs
-  > glob`**/*.sprf`
-  > read
-  > re`rule`
-  > rule_mentions(FS, MATCH, LO, HI);

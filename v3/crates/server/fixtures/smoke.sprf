@@ -1,2 +1,0 @@
-# sprefa-run smoke: bind repo+rev, fan out over .rs files.
-repo(${R?}) > rev(:HEAD) > fs(glob(**/$LOL.rs))

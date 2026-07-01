@@ -1,4 +1,0 @@
-# Config Repos
-
-- local/sprefa: .
-

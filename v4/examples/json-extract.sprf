@@ -1,7 +1,0 @@
-# Implemented syntax. Match structured JSON from cursor.value.
-
-rule(:people, NAME?, AGE?);
-
-`{"name":"ada","age":37}`
-  > json`{ name: $NAME, age: $AGE }`
-  > people(NAME, AGE);

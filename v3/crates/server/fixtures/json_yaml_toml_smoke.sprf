@@ -1,7 +1,0 @@
-# Smoke fixture for sprefa-1vi: json() dispatches on file extension.
-# Exercises:
-#   fs(glob(**/Cargo.toml)) ↦ each Cargo.toml file
-#   json({ package: { name: ${N?}, version: ${V?} } }) ↦ TomlNode walk
-# Validates: parse_by_ext routes .toml through TomlNode while keeping the
-# brace pattern grammar identical to JSON.
-repo(${R?}) > rev(:HEAD) > fs(glob(crates/tree-sitter-sprefa/Cargo.toml)) > json({ package: { name: ${N?}, version: ${V?} } })

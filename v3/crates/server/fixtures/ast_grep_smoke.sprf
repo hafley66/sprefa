@@ -1,8 +1,0 @@
-# Smoke fixture for sprefa-4m7.2.11: ast[lang](pattern).
-# Exercises bracket-arg lowering + ast-grep-core matching:
-#   fs(glob(**/*.rs)) ↦ each Rust file
-#   ast[rust](fn $N($$$ARGS) { $$$BODY }) ↦ one cursor per fn
-# Expected: at least one row binding $N to a function name.
-repo(${R?}) > rev(:HEAD) > fs(glob(**/*.rs)) > ast[rs](fn ${N?}($$${ARGS?}) { $$${BODY?} });
-
-# fact(:a, str(A), str(B)); fact(:a, ${A?}, ${B?}) > print(:lol);

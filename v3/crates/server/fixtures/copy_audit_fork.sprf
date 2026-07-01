@@ -1,7 +1,0 @@
-# Same audit, brace-fork form. One fs walk, fan over patterns.
-repo(${R?}) > rev(:HEAD) > fs(glob(**/*.rs)) > {
-  > ast[rs](${X?}.to_owned());
-  > ast[rs](String::from_utf8_lossy(${X?}).into_owned());
-  > ast[rs](String::from_utf8(${X?}));
-  > ast[rs](format!(${X?}));
-}

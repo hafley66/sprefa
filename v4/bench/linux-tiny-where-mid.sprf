@@ -1,5 +1,0 @@
-# bench/linux-tiny-where-mid.sprf — mid-stream `where` microbench.
-
-rule(:hits_filtered, FS?, LO?) {
-  fs(glob`**/*.c`) > ast(:c)`printk($$$)` > where`${LO} > 100`
-};

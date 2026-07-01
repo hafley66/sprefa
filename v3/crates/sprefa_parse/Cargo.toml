@@ -1,9 +1,0 @@
-[package]
-name    = "sprefa_parse"
-version = "0.0.0"
-edition = "2021"
-publish = false
-
-[dependencies]
-tree-sitter        = "0.24"
-tree-sitter-sprefa = { path = "../tree-sitter-sprefa" }

@@ -1,6 +1,0 @@
-# Smoke fixture for sprefa-4m7.14: rev(:main) atom sugar form.
-# Exercises the :ident atom → Value::Atom lowering path for rev.
-# rev(:main) is syntactic sugar for a scalar-equality filter on cursor.rev.
-# The runner must match cursors whose rev field equals "main" (or HEAD
-# if the driver passes HEAD — the fixture author sets rev via CLI flag).
-repo($R) > rev(:HEAD) > fs(glob(**/*.rs))
