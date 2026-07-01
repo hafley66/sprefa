@@ -49,6 +49,12 @@ gen(:append, "v5/docs/reference/functions.md", "| `{name}` | {arity} | {group} |
 # heads scanned out of the examples/ corpus — so a new example that uses an op
 # lights up its row on the next gen, and an op no example exercises renders an
 # empty cell (visible drift, same convention as an undocumented flag).
+#
+# Curation lives in COMMENT SPACE: a `# @op <name>` line in an example pins it as
+# that op's canonical see-more (the min-pick below is only a fallback). The pin
+# doubles as a live LSP squiggle — run this generator with --lsp and each `# @op`
+# line carries an INFO diagnostic saying where it is transcluded (see the diag
+# rules further down); a pin naming no known op WARNs (a typo in the marker).
 
 # Every `ident(` call head in the examples corpus, with its line.
 rel ex_call(op: text, ex: file, line: int).
@@ -56,17 +62,40 @@ ex_call(op, ex, l) <-
     scan("WORK", "v5/examples/*.dl", ex, rev),
     match(ex, rev, /(?<op>[a-z_][a-z0-9_]*)\(/, l).
 
-# Keep only heads that are a real op (join the catalog); representative example
-# per op = the lexicographically first path; op_show carries its basename for
-# the `dl examples --show` command. op_used gates the empty-cell rule.
+# Keep only heads that are a real op (join the catalog). op_used gates the
+# empty-cell rule.
 rel op_use(op: text, ex: file).
 op_use(op, ex) <- op_catalog(op, _, _, _), ex_call(op, ex, _).
 rel op_used(op: text).
 op_used(op) <- op_use(op, _).
+
+# `# @op <name>` pins in comment space: the curated see-more for that op. One
+# file may pin several ops (one per line).
+rel op_pin(op: text, ex: file, line: int).
+op_pin(op, ex, l) <-
+    scan("WORK", "v5/examples/*.dl", ex, rev),
+    match(ex, rev, /^#\s*@op\s+(?<op>[a-z_][a-z0-9_]*)/, l).
+
+# Representative example per op = the pin if present (and a real op), else the
+# lexicographically first path. op_show carries the basename for `dl examples
+# --show`; the two rules are guarded so a pinned op never also takes the min.
 rel op_example(op: text, ex: file).
 op_example(op, min(ex)) <- op_use(op, ex).
 rel op_show(op: text, name: text).
-op_show(op, split(ex, "/", -1)) <- op_example(op, ex).
+op_show(op, split(ex, "/", -1)) <- op_pin(op, ex, _), op_catalog(op, _, _, _).
+op_show(op, split(ex, "/", -1)) <- op_example(op, ex), !op_pin(op, _, _).
+
+# The pin as a live squiggle: gen rules skip under --lsp, diag rules do not, so
+# the SAME op_pin set drives both the splice (above) and an editor diagnostic.
+# INFO on a valid pin says where it lands; WARN on an unknown op catches a typo.
+rel diag(path: file, line: int, col: int, end_line: int, end_col: int,
+         severity: text, code: text, msg: text).
+diag(ex, l, 0, l, 0, "info", "op-example",
+     replace("curated `dl examples --show` for op @OP@ -> docs/reference/syntax.md", "@OP@", op)) <-
+    op_pin(op, ex, l), op_catalog(op, _, _, _).
+diag(ex, l, 0, l, 0, "warn", "op-example-unknown",
+     replace("`# @op @OP@` names no known op (see op_catalog)", "@OP@", op)) <-
+    op_pin(op, ex, l), !op_catalog(op, _, _, _).
 
 gen(:append, "v5/docs/reference/syntax.md", "# Syntax & semantics") <- true().
 gen(:append, "v5/docs/reference/syntax.md", "") <- true().

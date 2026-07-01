@@ -2,6 +2,7 @@
 # `path: file` is a checked type: rows whose path is not a real file are dropped.
 # calls is file-scoped co-occurrence (caller's file mentions a known fn), a
 # heuristic, not a resolved call graph. reaches is its transitive closure.
+# @op closure
 
 rel def(name: text, path: file, line: int).
 rel use(name: text, path: file, line: int).

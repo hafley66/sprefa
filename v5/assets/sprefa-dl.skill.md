@@ -86,6 +86,41 @@ The engine generates its own reference from self-describing catalogs
 Regenerate after touching the engine: `dl examples/gen-reference.dl --root v5`.
 Docs are spliced/convergent; never hand-edit inside `<!-- BEGIN -->`/`<!-- END -->`.
 
+### Op quick-reference
+
+Every source/body/sink op, spliced from `op_catalog` by
+`examples/gen-skill-ref.dl` (do not hand-edit between the markers). That same
+program is a `--check` freshness rail: it fails if this skill names a relation or
+op that no longer resolves in a catalog.
+
+<!-- BEGIN: op-quickref -->
+| op | kind | syntax |
+|---|---|---|
+| `aggregation` | body | `count sum min max` |
+| `arith` | body | `+ - * / %` |
+| `ast` | source | `ast(path, rev, :lang, "(query) @cap", line[, end])` |
+| `ast_yaml` | source | `ast_yaml(path, rev, :lang, "rule yaml", line, ...)` |
+| `atom` | body | `edge(f, t)` |
+| `closure` | body | `closure(edge)` |
+| `cmd` | source | `cmd(path, rev, "tool {file}", line, out)` |
+| `comment` | source | `comment(path, rev, /open/[, /close/], l0, l1, label)` |
+| `comparison` | body | `= != < <= > >=` |
+| `diag` | sink | `rel diag(path, line, col, ..., severity, msg).` |
+| `gen` | sink | `gen([:mode,] path, [l0, l1,] "{var} template")` |
+| `glob` | body | `p ~~ "src/*"` |
+| `json` | source | `json(path, rev, q:{ $k: $v })` |
+| `jsonp` | source | `jsonp(path, rev, "a.*.b", out)` |
+| `match` | source | `match(path, rev, /re/, line[, id][, col, end_col])` |
+| `negation` | body | `!round(t, _)` |
+| `node2vec` | body | `head(a, b, score) <- node2vec(edge)` |
+| `query` | sink | `? rel(a, b).` |
+| `regex` | body | `f =~ /^[A-Za-z]+$/` |
+| `scan` | source | `scan([repo,][rev,] glob, path, rev_out)` |
+| `scc` | body | `head(rep, member) <- scc(edge)` |
+| `sg` | source | `sg(path, rev, :lang, "$X.unwrap()", line[, col, end_line, end_col][, id])` |
+| `strfn` | body | `split(text, sep, idx) / replace(text, from, to)` |
+<!-- END: op-quickref -->
+
 ## Self-validating (dl lints dl, like rust-analyzer)
 
 `dl_diag(path, line, col, end_line, end_col, severity, code, msg)` runs the

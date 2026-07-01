@@ -1,0 +1,64 @@
+# gen-skill-ref.dl — keep the SHIPPED skill (assets/sprefa-dl.skill.md) fresh with
+# dl's OWN tooling: (A) splice the op surface from op_catalog into the skill, and
+# (B) a checked-claims rail that fails --check when the skill cites a symbol that
+# no longer resolves. The skill is what `dl setup` installs, so it must not drift
+# from the engine's real surface.
+#
+#   Regen:  dl v5/examples/gen-skill-ref.dl --root .
+#   Gate:   dl v5/examples/gen-skill-ref.dl --root . --check   (exit 2 on a dead claim)
+#
+# NOTE: the skill is include_str!'d into the binary (setup.rs), so a regen only
+# SHIPS after `cargo install --path v5 --force`. gen skips under --check/--lsp;
+# diag does not — one program, both modes.
+
+# ── (A) op quick-reference: splice op_catalog between the skill's markers ───────
+# Same marker/splice form as gen-reference.dl's README examples-index: find the
+# BEGIN/END pair, then emit a header, a separator, and one row per op. Convergent
+# (no write when the bytes already match), so it is safe under --watch / CI.
+rel skill(p: file, l0: int, l1: int).
+skill(p, l0, l1) <- scan("WORK", "v5/assets/sprefa-dl.skill.md", p, rev),
+    comment(p, rev, /BEGIN: op-quickref/, /END: op-quickref/, l0, l1).
+gen(p, l0, l1, "| op | kind | syntax |") <- skill(p, l0, l1).
+gen(p, l0, l1, "|---|---|---|") <- skill(p, l0, l1).
+gen(p, l0, l1, "| `{op}` | {kind} | `{syntax}` |") <-
+    skill(p, l0, l1), op_catalog(op, kind, syntax, _).
+
+# ── (B) checked-claims freshness rail ──────────────────────────────────────────
+# Every built-in RELATION the skill prose names in backticks. A rename or removal
+# drops the name from every catalog, so `!resolves` fires and --check exits 2 —
+# the staleness gate a regex-over-the-skill cannot give you (true negation over
+# the resolved surface, not "the string is absent"). User rules the skill names
+# (reaches) are deliberately NOT claimed — they are not built-ins.
+rel skill_claims(name: text).
+skill_claims("call_edge").
+skill_claims("module_edge").
+skill_claims("type_edge").
+skill_claims("type_entity").
+skill_claims("type_sig").
+skill_claims("type_link").
+skill_claims("scip_def").
+skill_claims("scip_ref").
+skill_claims("scip_edge").
+skill_claims("dl_diag").
+skill_claims("agent_edit").
+skill_claims("agent_touch").
+skill_claims("changed").
+skill_claims("changed_line").
+skill_claims("created").
+skill_claims("rel_catalog").
+skill_claims("fn_catalog").
+skill_claims("op_catalog").
+
+# resolves = the union of the three self-describing catalogs (relations, scalar
+# functions, ops). A claimed name that appears in none is dead.
+rel resolves(name: text).
+resolves(name) <- rel_catalog(name, _, _, _).
+resolves(op)   <- op_catalog(op, _, _, _).
+resolves(name) <- fn_catalog(name, _, _, _).
+
+rel diag(path: file, line: int, col: int, end_line: int, end_col: int,
+         severity: text, code: text, msg: text).
+diag("v5/assets/sprefa-dl.skill.md", 0, 0, 0, 0, "error", "stale-skill-ref", name) <-
+    skill_claims(name), !resolves(name).
+
+? diag(path, line, col, end_line, end_col, severity, code, msg).

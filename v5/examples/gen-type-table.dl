@@ -1,6 +1,7 @@
 # The marker-splice codegen loop on v5's own type graph: keep a fan-out table
 # inside this file's markers fresh. Run `dl examples/gen-type-table.dl` from
 # the repo root; rerunning converges (no write when the table already matches).
+# @op comment
 #
 # The three pieces:
 #   comment  — extracts the marker pair's line coordinates (re-located every tick)
