@@ -33,14 +33,17 @@ dl setup --project .      # bootstrap THIS repo (see below)
 dl setup --vscode         # install the bundled dl LSP VSCode extension (needs `code`)
 ```
 
-`dl setup --project .` wires every channel into the repo, idempotently:
+`dl setup --project .` bootstraps the repo, idempotently. Base scaffolding
+always lands; the integrations that change how *other* tools behave prompt on a
+TTY, are skipped when piped/CI, and are forced with `-y`/`--yes`:
 
-| writes | channel |
-|---|---|
-| `.dl/dl-self-lint.dl`, `.dl/hook-skill-on-test.dl` | starter rails |
-| `AGENTS.md` / `CLAUDE.md` dl section | agent docs |
-| `.claude/settings.json` PostToolUse → `dl --hook` | Claude Code hook (merged, preserves other keys) |
-| `.githooks/pre-commit` (`exec dl --check`) + `core.hooksPath` | git pre-commit rail (discovers `.dl/*.dl`) |
+| writes | channel | when |
+|---|---|---|
+| `.dl/dl-self-lint.dl`, `.dl/hook-skill-on-test.dl` | starter rails | always |
+| `AGENTS.md` / `CLAUDE.md` dl section | agent docs | always |
+| `.claude/settings.json` PostToolUse → `dl --hook` | Claude Code hook (merged, preserves other keys) | prompt / `--yes` |
+| `.githooks/pre-commit` (`exec dl --check`) + `core.hooksPath` | git pre-commit rail (discovers `.dl/*.dl`) | prompt / `--yes` |
+| VSCode dl LSP extension (`code --install-extension`) | live editor squiggles | prompt / `--yes` |
 
 The VSCode extension (`dl setup --vscode`, or `editors/vscode-dl/`) runs
 `dl --root <ws> --lsp` over stdio: drop a rule in `.dl/`, get live squiggles on

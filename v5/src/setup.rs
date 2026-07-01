@@ -50,11 +50,13 @@ pub fn run(args: &[String]) -> Result<i32> {
     let mut skills_dir: Option<String> = None;
     let mut print = false;
     let mut vscode = false;
+    let mut assume_yes = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--print" => print = true,
             "--vscode" => vscode = true,
+            "-y" | "--yes" => assume_yes = true,
             "--skills-dir" => { i += 1; skills_dir = args.get(i).cloned(); }
             "--project" => {
                 // optional trailing DIR (defaults to cwd if next is a flag/absent)
@@ -74,17 +76,19 @@ pub fn run(args: &[String]) -> Result<i32> {
     if vscode { return install_vscode_extension(); }
     if let Some(dir) = project {
         let target = dir.unwrap_or_else(|| ".".to_string());
-        return bootstrap_project(Path::new(&target));
+        return bootstrap_project(Path::new(&target), assume_yes);
     }
     wire_global(skills_dir)
 }
 
 fn print_help() {
-    eprintln!("usage: dl setup [--project [DIR]] [--vscode] [--skills-dir DIR] [--print]");
+    eprintln!("usage: dl setup [--project [DIR]] [--vscode] [-y|--yes] [--skills-dir DIR] [--print]");
     eprintln!("  (no args)         install the global skill + wire detected agents");
-    eprintln!("  --project [DIR]    bootstrap a repo: .dl/ rails, AGENTS/CLAUDE block,");
-    eprintln!("                     Claude Code PostToolUse hook, git pre-commit (dl --check)");
+    eprintln!("  --project [DIR]    bootstrap a repo: .dl/ rails + AGENTS/CLAUDE always;");
+    eprintln!("                     Claude Code hook / git pre-commit / VSCode ext prompt on");
+    eprintln!("                     a TTY, are skipped when piped, or forced with --yes");
     eprintln!("  --vscode           install the bundled dl LSP VSCode extension (needs `code`)");
+    eprintln!("  -y, --yes          wire every integration without prompting (scripts / CI)");
     eprintln!("  --skills-dir DIR   override the skill destination");
     eprintln!("  --print            print the embedded skill to stdout");
 }
@@ -223,19 +227,62 @@ fn wire_opencode(h: &Path, dest: &Path) {
 }
 
 // ── project: bootstrap a repo ─────────────────────────────────────────────────
-fn bootstrap_project(dir: &Path) -> Result<i32> {
+fn bootstrap_project(dir: &Path, assume_yes: bool) -> Result<i32> {
     let dir = dir.canonicalize().with_context(|| format!("no such dir: {}", dir.display()))?;
     println!("[dl setup] bootstrap {}", dir.display());
+    // Base scaffolding is always safe (repo-local starter rules + agent docs).
     let dl_dir = dir.join(".dl");
     std::fs::create_dir_all(&dl_dir)?;
     write_starter(&dl_dir.join("dl-self-lint.dl"), STARTER_DL)?;
     write_starter(&dl_dir.join("hook-skill-on-test.dl"), STARTER_HOOK)?;
     append_section(&dir.join("AGENTS.md"))?;
     append_section(&dir.join("CLAUDE.md"))?;
-    wire_claude_hook(&dir);
-    wire_git_hook(&dir);
+    // The integrations change how OTHER tools behave (Claude Code / git config /
+    // the editor), so only wire them when the user is present to consent: a TTY
+    // prompt, or an explicit `--yes`. A piped / CI run adds nothing (it would be
+    // a surprising mutation of the agent + git config).
+    let interactive = is_tty();
+    if !interactive && !assume_yes {
+        println!("[dl setup] non-interactive; wired base scaffolding only. Re-run in a \
+                  terminal (or pass --yes) to add the Claude Code hook / git pre-commit / \
+                  VSCode extension.");
+    } else {
+        if want("the Claude Code PostToolUse hook (.claude/settings.json)", assume_yes) {
+            wire_claude_hook(&dir);
+        }
+        if want("the git pre-commit rail (.githooks/pre-commit + core.hooksPath)", assume_yes) {
+            wire_git_hook(&dir);
+        }
+        if want("the VSCode dl LSP extension (needs the `code` CLI)", assume_yes) {
+            install_vscode_extension()?;
+        }
+    }
     println!("[dl setup] run it:  (cd {} && dl --check)", dir.display());
     Ok(0)
+}
+
+/// stdin AND stdout are a terminal — the session can answer a prompt. A piped
+/// stdin (CI, `| tee`, a heredoc) reads false, so setup never blocks on input.
+fn is_tty() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+}
+
+/// Decide whether to wire one integration. `--yes` wires all without asking;
+/// otherwise (a TTY, per the caller's guard) ask a `[Y/n]` question, default Y.
+fn want(name: &str, assume_yes: bool) -> bool {
+    if assume_yes {
+        return true;
+    }
+    use std::io::Write;
+    print!("[dl setup] wire {name}? [Y/n] ");
+    let _ = std::io::stdout().flush();
+    let mut line = String::new();
+    if std::io::stdin().read_line(&mut line).is_err() {
+        return false;
+    }
+    let a = line.trim().to_ascii_lowercase();
+    a.is_empty() || a == "y" || a == "yes"
 }
 
 /// Wire a git pre-commit rail: write `.githooks/pre-commit` (runs `dl --check`,
@@ -394,6 +441,39 @@ mod tests {
         // Second call must not add a duplicate.
         wire_claude_hook(&dir);
         assert_eq!(post_cmds(&read_settings(&dir)), vec!["dl --hook".to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn git_init(dir: &Path) {
+        std::fs::create_dir_all(dir).unwrap();
+        assert!(std::process::Command::new("git").arg("-C").arg(dir)
+            .arg("init").arg("-q").status().unwrap().success());
+    }
+
+    #[test]
+    fn bootstrap_noninteractive_skips_integrations() {
+        // Under `cargo test`, stdin is not a TTY -> is_tty() is false. Without
+        // --yes, base scaffolding lands but the integrations do not.
+        let dir = std::env::temp_dir().join(format!("dlsetup_noint_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        git_init(&dir);
+        assert_eq!(bootstrap_project(&dir, false).unwrap(), 0);
+        assert!(dir.join(".dl/dl-self-lint.dl").exists(), "base scaffolding written");
+        assert!(!dir.join(".claude/settings.json").exists(), "CC hook skipped (non-tty)");
+        assert!(!dir.join(".githooks/pre-commit").exists(), "git hook skipped (non-tty)");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn bootstrap_assume_yes_wires_integrations() {
+        let dir = std::env::temp_dir().join(format!("dlsetup_yes_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        git_init(&dir);
+        // --yes wires without prompting even off a TTY (VSCode install no-ops
+        // without `code`, but must not fail the bootstrap).
+        assert_eq!(bootstrap_project(&dir, true).unwrap(), 0);
+        assert!(dir.join(".claude/settings.json").exists(), "CC hook wired (--yes)");
+        assert!(dir.join(".githooks/pre-commit").exists(), "git hook wired (--yes)");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
