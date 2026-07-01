@@ -1,0 +1,63 @@
+# npm-crawl.dl — point at ONE public npm package, progressively crawl its whole
+# dependency graph STRAIGHT FROM THE REGISTRY (no clone, no install, no build),
+# draw the graph as it fills in, and OPTIONALLY shallow-pull each dep's repo at
+# its rev (source only, still no build). This is the self-seeding version of the
+# org-scale corpus: you don't pre-clone 800 repos and write a config.toml — you
+# name one package and the crawl discovers the graph for you.
+#
+# Effects fire off-tick, so this needs the persistent daemon. Easiest:
+#     v5/examples/crawl wrap-ansi          # driver: daemon up, load, render, down
+# or by hand, from the repo root:
+#     dl --daemon --root . &
+#     dl --load v5/examples/npm-crawl.dl --root .
+#     d2 v5/examples/_npm/graph.d2 v5/examples/_npm/graph.svg && open v5/examples/_npm/graph.svg
+#
+# Change the seed(s) below, or drive a different package via the `crawl` script.
+
+# --- seed: the root package(s). Add more facts to crawl several at once. -------
+rel frontier(pkg: text, depth: int).
+frontier("wrap-ansi", 0).
+
+# --- one curl per package -> its declared deps, one row per line (name<TAB>range).
+# @stream (`sh*`) fans each stdout line into a head row; the request is content-
+# addressed on `pkg`, so every package is fetched EXACTLY ONCE across the crawl. -
+sh* npm_deps(pkg) -> (dep: text, range: text) =
+  `curl -s https://registry.npmjs.org/{pkg}/latest \
+   | jq -r '.dependencies // {} | to_entries[] | "\(.key)\t\(.value)"'`.
+
+# each discovered edge, tagged with the BFS depth it was found at
+rel dep_at(pkg: text, dep: text, depth: int).
+dep_at(pkg, dep, d) <- @stream frontier(pkg, d), npm_deps(pkg) -> (dep, range).
+
+# expand the frontier one BFS layer per tick, bounded by MAX_DEPTH. Each dep is a
+# new package to crawl; the fetch dedup means the closure terminates on its own. -
+frontier(dep, d1) <- dep_at(_, dep, d), d < 3, d1 = d + 1.
+
+# --- progressive graphviz (d2 dialect): every edge known so far, rewritten each
+# tick as more land. Render with `d2`; for GraphViz proper wrap in `digraph{ }`. -
+gen("v5/examples/_npm/graph.d2", "{pkg} -> {dep}") <- dep_at(pkg, dep, _).
+
+# fan-in: the ecosystem hubs — which packages the most deps point AT.
+rel fanin(pkg: text, n: int).
+fanin(dep, count(pkg)) <- dep_at(pkg, dep, _).
+
+# --- OPTIONAL: shallow-pull each package's SOURCE repo at its rev. No `npm
+# install`, no build step — just `git clone --depth 1` (source, no history). ----
+sh npm_repo(pkg) -> (url: text) =
+  `curl -s https://registry.npmjs.org/{pkg} \
+   | jq -r '.repository.url // "" | sub("^git\\+";"") | sub("\\.git$";"")'`.
+
+rel repo_url(pkg: text, url: text).
+repo_url(pkg, url) <- @async frontier(pkg, _), npm_repo(pkg) -> (url).
+
+sh pull_src(pkg, url) -> (ok: int) =
+  `test -n "$url" && rm -rf "v5/examples/_npm/src/$pkg" \
+   && git clone --depth 1 "$url" "v5/examples/_npm/src/$pkg" >/dev/null 2>&1 \
+   && echo 1 || echo 0`.
+
+rel pulled(pkg: text, ok: int).
+pulled(pkg, ok) <- @async repo_url(pkg, url), url != "", pull_src(pkg, url) -> (ok).
+
+? dep_at(pkg, dep, depth).
+? fanin(pkg, n).
+? pulled(pkg, ok).

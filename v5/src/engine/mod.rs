@@ -5296,7 +5296,13 @@ fn parse_file(
         for (i, term) in rule.head.terms.iter().enumerate() {
             let v = match term {
                 Term::Var(v) => b.get(v).cloned()
-                    .ok_or_else(|| anyhow::anyhow!("head var {v} unbound in source rule"))?,
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "head var `{v}` is not bound by any source op in this rule. A source rule \
+                         (scan/match/ast/sg/json) binds head vars only from the source op's own \
+                         captures — a join to `repo(...)`/`file(...)` in the body cannot supply it. \
+                         To fan a scan over every configured repo AND capture which repo each row \
+                         came from, put `{v}` in scan's repo slot: \
+                         `... <- repo({v}, _, _), scan({v}, rev, glob, path, rev_out).`"))?,
                 Term::Str(s) => Value::Text(s.clone()),
                 Term::Int(n) => Value::Int(*n),
                 Term::Interp(parts) => interp_value(parts, &b)?,

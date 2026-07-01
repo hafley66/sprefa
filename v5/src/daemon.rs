@@ -31,6 +31,12 @@ use crate::{config, db};
 
 const DEFAULT_IDLE_SECS: u64 = 30 * 60;
 const IDLE_TICK_SECS: u64 = 30;
+/// Default effect-drain cadence when `DL_POLL_SECS` is unset. A program with
+/// `@async`/`@stream` effects needs SOME poll to drain its queue off-tick; making
+/// this a default (rather than opt-in) is what stops effects silently sitting at
+/// `state='queued'` under a bare `dl --daemon`. The poll loop no-ops cheaply when
+/// the loaded program has no effects, so a non-effect daemon pays ~nothing.
+const DEFAULT_POLL_SECS: u64 = 2;
 const CONNECT_BACKOFF_MS: &[u64] = &[10, 20, 40, 80, 160, 320, 500];
 const CONNECT_TOTAL_TIMEOUT_SECS: u64 = 5;
 
@@ -821,19 +827,33 @@ fn idle_timeout_secs() -> u64 {
 
 // ---------- poll thread (the @async clock source) ----------
 
-/// `DL_POLL_SECS=N` drives `@async` polling: every N seconds the daemon advances
-/// the tick and drains outstanding effects. Unset / 0 = no polling (the default;
-/// a program with no @async rules never needs it). A DSL `every(secs)` clock
-/// source that lets the program declare its own cadence is the follow-up.
+/// The effect-drain cadence. `DL_POLL_SECS` overrides it: `N>0` = every N
+/// seconds; `0` = OFF (the explicit escape hatch, for a program that manages its
+/// own drain or wants none). UNSET = drain by default at `DEFAULT_POLL_SECS` —
+/// so `@async`/`@stream` effects fire under a bare `dl --daemon` without the
+/// caller having to know an env var exists. The poll loop gates on the program
+/// actually having effects, so this default costs a non-effect daemon nothing.
+/// A DSL `every(secs)` clock source (per-program cadence) is the follow-up.
 fn poll_interval_secs() -> Option<u64> {
-    std::env::var("DL_POLL_SECS").ok().and_then(|s| s.parse().ok()).filter(|&n| n > 0)
+    match std::env::var("DL_POLL_SECS") {
+        Ok(s) => s.parse::<u64>().ok().filter(|&n| n > 0), // "0"/junk => off
+        Err(_) => Some(DEFAULT_POLL_SECS),                 // unset => default on
+    }
 }
 
 fn poll_loop(d: Arc<Daemon>, secs: u64) {
-    eprintln!("[daemon] poll loop every {secs}s (@async clock)");
+    eprintln!("[daemon] poll loop every {secs}s (@async drain)");
     loop {
         std::thread::sleep(Duration::from_secs(secs));
         if d.shutdown_requested.load(Ordering::Relaxed) { return; }
+        // Cheap gate: only tick+drain when the loaded program has effect rules.
+        // Keeps the default-on poll from re-ticking a plain (effect-free) daemon
+        // every interval — the reason polling used to be strictly opt-in.
+        let has_effects = {
+            let prog = d.prog.lock().unwrap();
+            !crate::engine::async_effect_arity(&prog).is_empty()
+        };
+        if !has_effects { continue; }
         match d.poll_tick() {
             Ok(n) if n > 0 => eprintln!("[daemon] poll: drained {n} effect(s)"),
             Ok(_) => {}

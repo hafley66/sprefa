@@ -1,0 +1,56 @@
+#!/usr/bin/env sh
+# crawl <npm-package> [max-depth] — progressive dependency-graph crawl of ANY
+# public npm package, straight from the registry. Draws _npm/graph.svg as the
+# graph fills in and shallow-pulls each dep's source repo at its rev (no `npm
+# install`, no build). This is the turnkey wrapper over npm-crawl.dl: it owns
+# the daemon lifecycle + effect polling + render so you run ONE command.
+#
+#   v5/examples/crawl express
+#   v5/examples/crawl cross-spawn 2
+#
+# Effects fire off-tick under the persistent daemon; the poll loop below is why
+# you don't hand-manage `dl --daemon` + DL_POLL_SECS + `dl --load` + render.
+set -eu
+PKG="${1:?usage: crawl <npm-package> [max-depth]}"
+DEPTH="${2:-3}"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"     # repo root (dl gen paths are root-relative)
+cd "$ROOT"
+OUT="v5/examples/_npm"
+DB="/tmp/npm-crawl-$(printf '%s' "$PKG" | tr -c 'a-zA-Z0-9' '_').db"
+PROG="$OUT/run.dl"
+mkdir -p "$OUT"
+rm -f "$DB" "$OUT/graph.d2"
+
+# Rewrite the seed package + depth bound into a throwaway program (fresh db so the
+# content-addressed effects re-fire for a new package). `|` delimiter survives a
+# scoped `@scope/name`.
+sed -e "s|\"wrap-ansi\"|\"$PKG\"|" -e "s|d < 3|d < $DEPTH|" v5/examples/npm-crawl.dl > "$PROG"
+
+dl --stop --root . >/dev/null 2>&1 || true
+DL_POLL_SECS=2 dl --daemon --root . --db "$DB" >/dev/null 2>&1 &
+sleep 2
+dl --load "$PROG" --root . --db "$DB" >/dev/null 2>&1
+echo "crawling $PKG (max-depth $DEPTH) ..."
+
+# Poll until the edge count holds steady across THREE checks = crawl reached its
+# fixpoint. Two isn't enough: a BFS layer takes a poll cycle to fire, so a brief
+# plateau between layers would false-trigger. Leaf packages have no deps, so the
+# closure terminates on its own.
+prev=-1; stable=0
+for _ in $(seq 1 90); do
+  sleep 2
+  n=$(sqlite3 "$DB" "SELECT count(*) FROM rel_dep_at" 2>/dev/null || echo 0)
+  printf '\r  %s edges' "$n"
+  if [ "$n" = "$prev" ]; then stable=$((stable + 1)); else stable=0; fi
+  [ "$stable" -ge 3 ] && [ "$n" != "0" ] && break
+  prev="$n"
+done
+echo
+dl --stop --root . >/dev/null 2>&1 || true
+
+if [ -f "$OUT/graph.d2" ] && command -v d2 >/dev/null 2>&1; then
+  d2 "$OUT/graph.d2" "$OUT/graph.svg" >/dev/null 2>&1
+  echo "wrote $OUT/graph.svg ($n edges), source in $OUT/src/"
+else
+  echo "wrote $OUT/graph.d2 ($n edges); render: d2 $OUT/graph.d2 out.svg"
+fi

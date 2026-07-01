@@ -842,3 +842,80 @@ Verification tasks for whoever picks these up (observed, not yet confirmed):
 Worked first try (do NOT "fix" these): `${sym}` interpolation from a `(?<sym>…)`
 match group into the `diag` head; the minimal 6-col `diag` shape (no `col`/
 `end_col`); `!allowed(p)` anti-join.
+
+## Sharp edges (multi-repo + effects at scale)
+
+Traps hit while standing up an 800-repo org scan + a cross-repo dependency graph
++ progressive rev fetching over the `@async` effect runtime. Each cost real
+round-trips to locate; documented so the next run (human or agent) skips them.
+
+- **Multi-repo `scan` fan: bind the repo in `scan`'s slot, not by joining
+  `file()`.** To fan a scan over every configured repo AND capture which repo a
+  row came from, write `srcfile(r, p) <- repo(r, _, _), scan(r, "HEAD", glob, p,
+  rev).` — the repo variable goes in `scan`'s repo argument (a data-driven scan;
+  it reads the coordinate from `repo`). The intuitive `scan("*", …, p, rev),
+  file(r, p, rev)` FAILS with `head var r unbound in source rule`: a `scan`-headed
+  rule is a source rule and binds head vars only from the source op, so the
+  `file()` join can't supply `r`. Cost a full run to diagnose.
+- **`@async`/`sh` effects only drain under the *persistent* daemon** (FIXED: it
+  now drains by default). A plain `dl prog --root X` (and `--no-daemon`) ticks once
+  and does NOT run the effect drain — `effect_log` stays empty and nothing fires.
+  `dl --lsp prog </dev/null` is worse: the LSP front-end hits EOF immediately
+  (`Error: disconnected channel`) and takes the daemon down with it. So run
+  `dl --daemon --root X` (backgrounded) **plus** `dl --load prog --root X`. This
+  used to *also* silently sit at `state='queued'` forever unless you knew to set
+  `DL_POLL_SECS` — the drain runs inside `poll_tick`, which was opt-in. That was
+  the footgun (cost a debug cycle every time). **Now the daemon drains effects by
+  default** (`DEFAULT_POLL_SECS=2`, the poll loop no-ops cheaply when a program has
+  no effects); `DL_POLL_SECS=N` overrides the cadence and `DL_POLL_SECS=0` is the
+  explicit off switch. `v5/examples/crawl <thing>` still owns the whole
+  daemon+load+render lifecycle as one command, over `examples/npm-crawl.dl`.
+- **`@async` fans out ALL distinct requests on the tick they become derivable —
+  and `clock(N,b)` does NOT spread them.** Firing an effect over N derived
+  coordinates queues all N at once; against an external API that means a burst
+  into a *secondary* (anti-abuse) rate limit and mass failure (measured 1/14
+  succeeding). `clock(N,b)` in the args re-fires *each coordinate* once per bucket
+  (retry / re-poll), it does not stagger distinct coordinates across time — a bare
+  `clock` join just re-bursts every bucket. To rate-safe a fan-out: **jitter in
+  the effect body** (`sleep $(( RANDOM % 25 ))`) to desync, and/or presence-gate
+  so completed coordinates stop re-firing. Jitter alone took the dskit rev fetch
+  from 1/14 to 12/14.
+- **Content-addressed effects ignore edits to the shell template.** The
+  `pending_effect` id is `(head, kind, args)` — NOT the command text. Editing an
+  `sh` effect's backtick body and re-running does nothing (the id is unchanged, so
+  it reads as already-done). Force a re-fire with a fresh `--db`. Cost one
+  confused "why didn't my fix run" cycle.
+- **`go.mod` pseudo-versions pin a 12-hex *short* sha that `git fetch` rejects.**
+  `require …/x v0.0.0-DATE-abcdef123456` → `git fetch origin abcdef123456` fails
+  with `couldn't find remote ref`. Resolve short→full first (`gh api
+  repos/OWNER/REPO/commits/<short> -q .sha`), then `git fetch --depth 1 origin
+  <full-sha>`. Semver tags (`v1.6.3`) fetch directly, no resolve.
+- **BSD `xargs` aborts the whole batch if any child exits 255** (`gh` does on
+  empty/odd repos), which silently truncated a 389-repo clone at 85. Wrap each
+  child so it always `exit 0`. (Ops-level, but it read as "the clone just
+  stopped" with no error.)
+
+### Turnkey: crawl a dependency graph without a pre-cloned corpus
+
+The 800-repo flow above needs the corpus on disk first (clone the org, write a
+`config.toml`). `examples/npm-crawl.dl` + the `examples/crawl` driver are the
+*self-seeding* version: name one public npm package, and the `@stream` effect
+runtime crawls its dependency graph straight from the registry (one `curl` per
+package, content-addressed so each is fetched exactly once), expands the frontier
+one BFS layer per tick, rewrites `_npm/graph.d2` progressively as edges land, and
+shallow-pulls each dep's source repo at its rev (`git clone --depth 1` — source
+only, no `npm install`, no build).
+
+```
+v5/examples/crawl express 2      # -> _npm/graph.svg + _npm/src/<pkg>/ (81 edges @ depth 1)
+v5/examples/crawl cross-spawn    # small tree: cross-spawn -> {which->isexe, path-key, shebang-command->shebang-regex}
+```
+
+The driver hides every sharp edge above: it sets `DL_POLL_SECS`, owns the daemon
+lifecycle, waits for the crawl to reach its fixpoint (edge count stable across
+three polls, since a BFS layer takes a poll cycle to fire), and renders. Fan-in
+hubs (`fanin(pkg, count)`) fall out of the same graph — the ecosystem's
+most-depended-on packages, no SCIP, no compile. Same manifest-first shape as the
+`go.mod` graph, but the manifest is the registry and the crawl is progressive.
+Scoped packages (`@scope/name`) need registry URL-encoding (`@scope%2Fname`) —
+the current template passes the slash through, so unscoped names work today.

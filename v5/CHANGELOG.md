@@ -6,6 +6,35 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-01
+
+### Fixed
+- **`@async`/`@stream` effects now drain by default under `dl --daemon`.** The
+  effect drain runs inside the daemon poll loop, which was opt-in behind
+  `DL_POLL_SECS` — so a program with effects sat at `state='queued'` forever under
+  a bare `dl --daemon` with no indication why. The daemon now polls at
+  `DEFAULT_POLL_SECS=2` by default; the loop no-ops cheaply when the loaded program
+  has no effect rules, so an effect-free daemon is unaffected. `DL_POLL_SECS=N`
+  overrides the cadence, `DL_POLL_SECS=0` disables the drain entirely.
+- **Actionable diagnostic for the multi-repo scan fan.** A source rule whose head
+  var isn't produced by its source op (the common mistake: `scan("*", …), file(r,
+  …)` trying to recover the repo by a join) reported a bare `head var r unbound in
+  source rule`. It now explains that a source rule binds head vars only from its
+  source op, and shows the fix — put the var in scan's repo slot: `repo(r, _, _),
+  scan(r, rev, glob, path, rev_out)`.
+
+### Added
+- **`examples/npm-crawl.dl` + `examples/crawl` — progressive dependency-graph crawl
+  of any public npm package.** Name one package; the `@stream` effect runtime
+  crawls its dependency graph straight from the npm registry (one `curl` per
+  package, content-addressed so each is fetched once), expands the frontier one BFS
+  layer per tick, rewrites a d2 graph progressively as edges land, and optionally
+  shallow-pulls each dep's source repo at its rev (`git clone --depth 1` — source
+  only, no `npm install`, no build). The `crawl` driver owns the whole
+  daemon+load+render lifecycle as one command; fan-in hubs fall out of the same
+  graph. The self-seeding counterpart to the org-scale corpus scan — no pre-clone,
+  no `config.toml`.
+
 ## [0.2.0] - 2026-07-01
 
 ### Added
