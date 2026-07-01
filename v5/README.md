@@ -775,3 +775,67 @@ design-recovery; the original coordinate model lives in
   deferred. Symbols are reachable today via column conjunctions (`name = "tick"`
   + `file = fs:src/engine.rs`); a terse module-path literal would collapse that
   but needs a resolver/UDF choice (see chat_log session 4).
+
+## Papercuts
+
+UX friction hit while authoring a real lint (the smash confinement-lint session:
+fence raw input-device symbols to an allowlisted file). Each cost a round-trip.
+None are blockers; all are cheap wins.
+
+- **`scan` rev_out = `_` errors as "expected variable, got Wild"** — writing
+  `scan("WORK", "**/*.rs", p, _)` (don't-care the git rev) is rejected with a
+  parse error that names neither `scan` nor the offending slot. Either accept `_`
+  for rev_out (it reads as a don't-care everywhere else) or make the message say
+  "scan rev_out must be a named variable". Cost me one failed run to locate.
+- **`agent_touch` / `agent_changed` silently empty on the daemon fallback** — an
+  ad-hoc run prints `[daemon] attach failed, falling back to in-process` and then
+  the agent-harness relations come back EMPTY, so a rail scoped to
+  `agent_changed(p)` returns 0 rows that read as "clean" when really the relation
+  never populated. A false green is the worst failure for a lint. Either populate
+  `agent_*` in the in-process path, or have `--check` warn when a referenced
+  `agent_*` relation is empty because the store wasn't reachable.
+- **daemon-attach banner + 5s wait on every ad-hoc invocation** — `[daemon]
+  attach failed, falling back to in-process: daemon did not become ready in 5s`
+  prints (and stalls 5s) on a plain `dl prog.dl --root .`. `--no-daemon` skips it
+  but isn't the default for a one-off. Consider a shorter attach timeout, or
+  suppressing the banner unless `--verbose`. Root cause found: the daemon runs
+  its cold `eng.tick` BEFORE binding the socket (`daemon.rs` run_daemon:
+  tick at ~489, `UnixListener::bind` at ~533), so on a big program the socket
+  isn't answerable inside the 5s `wait_ready` budget — the daemon is coming up,
+  just slower than the client waits. Worse: each timed-out run respawns another
+  daemon (`is_running` is false until the socket binds), so N cold ticks pile up.
+  Real fix is bind-before-tick (write a "starting" pid marker early so
+  `ensure_daemon` waits on the in-flight daemon instead of spawning a duplicate),
+  not just a shorter timeout. This is the pivot for the whole `--hook` story: a
+  PostToolUse hook firing on every edit eats up to 5s per fire on this path.
+- **`diag` maps columns by NAME in an otherwise positional language, with no
+  error on a misnamed column** — everything else in dl is positional; `diag`
+  silently switches to nominal (`path`/`line`/`msg` required; `severity`/`code`/
+  `hint` optional by name). Writing `diag(path, line, level, ...)` (should be
+  `severity`) is a silent drop, not a diagnostic — same false-green failure class
+  as the `agent_*` one. The op-table already makes a typo'd `comment` label name a
+  parse error; `diag`'s nominal columns should get the same guard. That single
+  fix makes `diag` intuitive-blind instead of intuitive-by-example. Also: the
+  valid severity set (`error`/`warn`/`info`) and "only `error` trips exit 2" are
+  not declared at the sink; they have to be harvested from examples.
+- **`?` queries still render under `--check`** — a rail file with leftover `?`
+  debug queries prints `? foo => …` to output alongside the diag render, polluting
+  CI. Either `--check` should ignore `?` blocks (render only `diag`), or the docs
+  should say "strip `?` before shipping a rail."
+
+Verification tasks for whoever picks these up (observed, not yet confirmed):
+- Confirm whether the in-process path reads the agent harness store at all, or
+  whether the store read is gated on the daemon path (`agent.rs`). Symptom was an
+  empty `agent_touch` from `--root .` right after edits — points at in-process not
+  populating rather than a `--root` keying mismatch.
+- A/B whether a bare `sg(:rust, "JoyButton")` pattern matches `use …::JoyButton`
+  and `try_cast::<InputEventKey>()` type/use positions. If ast-grep catches those,
+  `sg` beats `match` for any-position symbol fencing (skips comments/strings) and
+  the skill's "use match for any-position" note is wrong.
+- Confirm `dl examples "<query>"` ranks `ban.dl` high for "ban api" / "restrict
+  symbol to file". If the embedded search doesn't, "lead with dl examples" is bad
+  advice and the ranking is the real papercut.
+
+Worked first try (do NOT "fix" these): `${sym}` interpolation from a `(?<sym>…)`
+match group into the `diag` head; the minimal 6-col `diag` shape (no `col`/
+`end_col`); `!allowed(p)` anti-join.
