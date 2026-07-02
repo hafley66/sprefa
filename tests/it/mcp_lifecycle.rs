@@ -1,9 +1,10 @@
 //! The repeatable MCP lifecycle harness: drives the REAL examples/mcp-server.dl
 //! through the protocol handshake a real client performs — initialize ->
 //! notifications/initialized -> tools/list -> tools/call — over stdio, exactly
-//! as `claude mcp add dl-demo -- dl examples/mcp-server.dl --mcp --no-daemon`
-//! would. Registering in Claude Code and re-testing by hand is replaced by
-//! `cargo test --test it mcp_lifecycle`.
+//! as `claude mcp add dl-demo -- dl examples/mcp-server.dl --mcp` would (the
+//! harness adds --no-daemon for hermetic runs; tests/it/mcp_daemon.rs covers
+//! the daemon-attached mode). Registering in Claude Code and re-testing by
+//! hand is replaced by `cargo test --test it mcp_lifecycle`.
 //!
 //! Also pins the id contract: the rpc envelope id is the request id's raw JSON
 //! text, so integer AND string JSON-RPC ids round-trip exactly (real MCP

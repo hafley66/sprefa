@@ -4,10 +4,13 @@
 # as plain rules: every lifecycle message is just a JSON-RPC method, so the
 # handshake is a handler table like any other. Register it in Claude Code:
 #
-#   claude mcp add dl-demo -- dl /abs/path/to/examples/mcp-server.dl --mcp --no-daemon
+#   claude mcp add dl-demo -- dl /abs/path/to/examples/mcp-server.dl --mcp
 #
-# or drive it by hand (the repeatable harness in tests/it/mcp_lifecycle.rs
-# runs exactly this sequence):
+# Daemon-first: with a .dl/ dir at the root, the --mcp process is a thin
+# adapter over the daemon's warm engine (one engine, one lock, file-watch
+# reactive between requests). --no-daemon keeps a hermetic in-process engine
+# for CI. Or drive it by hand (the repeatable harness in
+# tests/it/mcp_lifecycle.rs runs exactly this sequence):
 #
 #   printf '%s\n' \
 #     '{"jsonrpc":"2.0","id":"init-1","method":"initialize","params":{}}' \
