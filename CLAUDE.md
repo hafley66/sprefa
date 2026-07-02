@@ -260,6 +260,29 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       desync loop_over/nest spans). Suite green: it 306/0/3, lib 162/0/1. See
       [[project_interproc_flow]].
 
+- [x] **Ports + MCP epic** (main, 2026-07-01, fc1c977..4ac9cff, pushed):
+      lattice decl qualifiers `key(...)`/`merge(MaxBy(col))` (Soufflé
+      choice-domain + row-selection lattice); `@in(class)`/`@out(class)` port
+      qualifiers on the same seam (class = contract, rpc only; envelope
+      checked by column name at declare; rules/facts heading an @in port bail
+      — the serving loop is the only writer; ambient recv/send globals
+      REJECTED and torn out); `--mcp` = the rpc->stdio×jsonrpc binding
+      profile (transport NEVER in .dl). Envelope id = raw JSON text of the
+      request id (int + string ids round-trip); notifications silent;
+      unanswered id -> -32601; drain law 1 retires answered rows. Daemon-first
+      pump mirrors --hook: `mcp_request`/`mcp_retire` RPCs beside query_sql,
+      port-validated against the DAEMON's program (drift guard);
+      mcp.rs Pump{Local,Daemon}; --no-daemon = hermetic CI path.
+      examples/mcp-echo.dl (lattice dispatch) + examples/mcp-server.dl
+      (registerable: initialize/tools/list/tools/call as rules, tools/call
+      params via term-form jsonp). Harnesses: tests/it/mcp.rs (8),
+      mcp_lifecycle.rs (4, drives the real example through the client
+      handshake), mcp_daemon.rs (2, tick-counter proof + non-port refusal).
+      RESIDUAL (decided, unbuilt): bind("rpc","stdio","jsonrpc") facts
+      cascade (CLI > bind facts > class default); setup --project writing
+      .mcp.json; adapter built-in dl.query/eval tool bridging the daemon's
+      eval RPC; law-2 digest sent-log -> @yield -> stream class.
+
 ### Open (sprefa type graph)
 - [ ] Optional: migrate the deck graph (`examples/anim-self.dl` + anim AtlasPanel)
       from name-keyed `type_edge` to sym-keyed `type_link` + `type_entity` kinds

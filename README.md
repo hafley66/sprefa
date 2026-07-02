@@ -527,6 +527,54 @@ todo_hit(p, l) <- scan("WORK", "src/**/*.rs", p, rev), match(p, rev, /TODO/, l).
 diag(p, l, "error", "no-todo", "TODO in a changed file") <- todo_hit(p, l), changed(p).
 ```
 
+## MCP server (ports)
+
+A dl program can BE a JSON-RPC server: declare its boundary as **ports** —
+rels marked `@in(class)` / `@out(class)` — and bind them to a transport at
+the CLI. The class names the contract, never a transport (`rpc` = one reply
+per request id closes it; `stream`/`duplex` reserved), so the same program
+serves any wire that speaks the class.
+
+```
+rel req(id: text, method: text, params: text) @in(rpc).
+rel resp(id: text, result: text) @out(rpc).
+
+rel route(id: text, result: text, prio: int) key(id) merge(MaxBy(prio)).
+route(id, "pong", 100) <- req(id, "ping", _).
+route(id, "unknown", 1) <- req(id, m, _), !known(m).
+resp(id, r) <- route(id, r, _).
+```
+
+`dl prog.dl --mcp` is the binding profile: rpc ports over stdio x jsonrpc
+(newline-delimited). Each inbound request injects one `req` row (id = the
+request id's raw JSON text, so int and string ids round-trip), ticks, drains
+`resp` back, and retires the answered row — a request can never re-answer.
+An unanswered id gets `-32601`, so a client never hangs. Notifications (no
+id) are silent. Dispatch is the lattice: `key(id) merge(MaxBy(prio))` picks
+the winning rule per request, a prio-1 fallback catches the rest.
+
+Rules for ports: an `@in` rel is written ONLY by the serving loop (a rule or
+fact heading it bails loudly); the envelope columns are checked by name at
+declare time. Internally, join the dispatch rels directly — the port exists
+for the boundary.
+
+Daemon-first, like `--hook`: with `.dl/` at the root the `--mcp` process is
+a thin stdio adapter over the daemon's warm engine (`mcp_request` /
+`mcp_retire` RPCs), so requests between edits see fresh facts with no cold
+scan. `--no-daemon` keeps a hermetic in-process engine (CI).
+
+The MCP lifecycle is just methods, so a registerable server is plain rules —
+[examples/mcp-server.dl](examples/mcp-server.dl) implements `initialize` /
+`tools/list` / `tools/call` and registers with:
+
+```sh
+claude mcp add dl-demo -- dl /abs/path/examples/mcp-server.dl --mcp
+```
+
+The repeatable handshake harness is `cargo test --test it mcp_lifecycle`
+(drives the real example through initialize → initialized → tools/list →
+tools/call over stdio); `mcp_daemon` covers the daemon-attached mode.
+
 ## LSP
 
 ```sh
