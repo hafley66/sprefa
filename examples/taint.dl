@@ -12,9 +12,10 @@
 #
 # Presets are substring matches on the bare callee name — edit the facts to
 # your codebase's API. Honest limits (inherited from the flow graph): the
-# arg->param hop is positional-blind and context-insensitive, so this
-# over-approximates (taint analysis usually does); a sanitizer only blocks
-# taint at the node where its result lands, not along unrelated paths.
+# arg->param hop is positional (df_arg slot = df_param slot) but context-
+# insensitive, so this over-approximates (taint analysis usually does); a
+# sanitizer only blocks taint at the node where its result lands, not along
+# unrelated paths.
 
 rel src(p: file).
 src(p) <- scan("WORK", "src/**/*.{rs,ts,kt}", p, rev), match(p, rev, /./, l).
@@ -51,9 +52,10 @@ rel flow_edge(from: text, to: text).
 flow_edge(a, b) <- df_edge(a, b).
 flow_edge(arg, param) <-
     df_node(call_id, "call_res", _, caller_bare, _, _),
-    df_edge(arg, call_id),
+    df_arg(call_id, pos, arg),
     call_edge_bare(caller_bare, callee_bare),
-    df_node(param, "param", _, callee_bare, _, _).
+    df_node(param, "param", _, callee_bare, _, _),
+    df_param(param, pos).
 flow_edge(callee_ret, call_id) <-
     df_node(call_id, "call_res", _, caller_bare, _, _),
     call_edge_bare(caller_bare, callee_bare),

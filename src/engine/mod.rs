@@ -197,8 +197,11 @@ const CALL_RELS: [&str; 6] = ["call_def", "call_site", "call_edge", "call_edge_r
 /// loop-invariant-call flag; `allocates` marks fns whose body builds a
 /// collection; `nest(call_id, loop_id, depth, collection)` records each call's
 /// enclosing loop nest, composing over `call_edge` into symbolic Big-O
-/// ("depth-N over C") without resolving trip counts. See `typegraph::DataflowFacts`.
-const DATAFLOW_RELS: [&str; 6] = ["df_node", "df_edge", "loop_over", "allocates", "nest", "df_param"];
+/// ("depth-N over C") without resolving trip counts. `df_arg` records which
+/// positional slot an argument value feeds (receiver = -1); `df_field` is named
+/// value flow into a composite (struct-literal field, object-literal property,
+/// Kotlin named argument). See `typegraph::DataflowFacts`.
+const DATAFLOW_RELS: [&str; 8] = ["df_node", "df_edge", "loop_over", "allocates", "nest", "df_param", "df_arg", "df_field"];
 
 /// Document structure from non-source text (markdown today; comments and other
 /// tree-sitter grammars to follow via `ingest::IngestLang`). `doc_node` is one row
@@ -554,6 +557,22 @@ fn dataflow_rel_decls() -> Vec<RelDecl> {
         // declared type at node granularity, not just per-fn.
         RelDecl { name: "df_param".into(), cols: vec![c("id", Type::Text), c("pos", Type::Int)], group: "dataflow",
             doc: "(param df_node id, positional index); index counts typed params only (self skipped) so it aligns with type_sig.pos for node-level type joins", ..Default::default() },
+        // (call/new node id, position, arg node id) — which argument slot a
+        // value feeds. 0-based, method receivers at -1 (mirroring the skipped
+        // `self` in df_param), so joining df_arg.pos = df_param.pos makes the
+        // interprocedural arg -> param hop positional instead of blanket.
+        RelDecl { name: "df_arg".into(), cols: vec![
+            c("call", Type::Text), c("pos", Type::Int), c("arg", Type::Text)], group: "dataflow",
+            doc: "(call/new df_node id, slot, arg df_node id); 0-based, receiver at -1; aligns with df_param.pos for the positional arg->param hop", ..Default::default() },
+        // (new/call node id, field name, value node id) — named value flow
+        // into a composite: Rust struct-literal fields (`..base` under the
+        // pseudo-field ".."), TS object-literal properties (spread likewise),
+        // Kotlin named arguments. Matching a df_field write against a member
+        // read of the same name (df_node kind=member, var=name) gives
+        // field-sensitive flow.
+        RelDecl { name: "df_field".into(), cols: vec![
+            c("id", Type::Text), c("field", Type::Text), c("value", Type::Text)], group: "dataflow",
+            doc: "(new/call df_node id, field name, value df_node id); struct-literal fields, object-literal properties, Kotlin named args; \"..\" for spread/functional-update bases", ..Default::default() },
     ]
 }
 
@@ -2865,7 +2884,7 @@ impl Engine {
                     bail!("{} is a built-in call-graph relation (call_def / call_site / call_edge / call_edge_rev / call_name / call_kind); pick another name", d.name);
                 }
                 if DATAFLOW_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in dataflow relation (df_node / df_edge / loop_over / allocates / nest / df_param); pick another name", d.name);
+                    bail!("{} is a built-in dataflow relation (df_node / df_edge / loop_over / allocates / nest / df_param / df_arg / df_field); pick another name", d.name);
                 }
                 if DOC_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in document relation (doc_node / doc_ref); pick another name", d.name);

@@ -17,9 +17,11 @@
 #   SPREFA_SCIP_INDEX=index.scip dl examples/flow-interproc.dl --root .   # SCIP-resolved
 #
 # Precision notes (honest):
-#   - The argument -> parameter hop is positional-blind: every arg feeding a call
-#     reaches every parameter of the callee. Taint analysis is an over-
-#     approximation by nature; this is that, made explicit.
+#   - The argument -> parameter hop is POSITIONAL: df_arg records which slot each
+#     argument feeds (receiver at -1, mirroring the skipped self in df_param), so
+#     arg N reaches param N of the callee — not every param. Still context-
+#     insensitive (per caller, not per call site), the conventional taint
+#     over-approximation.
 #   - The RETURN hop (callee result -> call_res) IS modelled: the lift mints a
 #     `ret` node per return point (explicit `return EXPR`, plus the implicit tail
 #     expression in Rust/Kotlin), and the backward rule connects it to the
@@ -54,18 +56,19 @@ call_edge_bare(cb, eb, cq, eq) <-
     cb = replace_re(cq, "^[^:]*::", ""),
     eb = replace_re(eq, "^[^:]*::", "").
 
-# Interprocedural: an argument that feeds a call result flows into each parameter
-# of the resolved callee. Resolution rides call_edge — the SCIP-preferred
-# caller-sym -> callee-sym graph (scip_ref def_file when an index.scip is present,
-# single-def name resolution otherwise). This is context-insensitive (per caller,
-# not per call site) and positional-blind (every arg of a caller's call reaches
-# every parameter of every callee it resolves to) — both the conventional taint
-# over-approximation.
+# Interprocedural: the argument at slot N flows into the resolved callee's
+# parameter at slot N. df_arg carries the slot per argument node (receiver -1
+# never matches a df_param pos, so receivers stay local); df_param carries it
+# per param node, both aligned with type_sig.pos. Resolution rides call_edge —
+# the SCIP-preferred caller-sym -> callee-sym graph (scip_ref def_file when an
+# index.scip is present, single-def name resolution otherwise). Still
+# context-insensitive: per caller, not per call site.
 flow_edge(arg, param) <-
     df_node(call_id, "call_res", _, caller_bare, _, _),
-    df_edge(arg, call_id),
+    df_arg(call_id, pos, arg),
     call_edge_bare(caller_bare, callee_bare, _, _),
-    df_node(param, "param", _, callee_bare, _, _).
+    df_node(param, "param", _, callee_bare, _, _),
+    df_param(param, pos).
 
 # Interprocedural, backward: the callee's returned value flows back OUT to the
 # caller's call result. The `ret` node is minted per return point (explicit

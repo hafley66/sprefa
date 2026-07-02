@@ -355,6 +355,24 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       `.claude/skills/<name>/SKILL.md` relative symlinks (the three
       maintainer checklists on a fresh clone). Suites lib 191/0/1, it 434/0/4.
 
+- [x] **Positional + constructor dataflow** (main, 2026-07-02, local):
+      `df_arg(call, pos, arg)` (0-based slot per argument, method receiver -1,
+      aligned with df_param.pos/type_sig.pos) + `df_field(id, field, value)`
+      (Rust struct-literal fields, TS object-literal properties, Kotlin named
+      args; ".." = spread/FRU base) across all three TypeLang lifts.
+      Instantiations = `new` df_nodes w/ the type name (Rust struct literal +
+      capitalized tuple-struct/variant ctor, TS `new`/object literal, Kotlin
+      capitalized ctor call); field reads = `member` nodes w/ the accessed
+      name (Rust Expr::Field + Kotlin navigation were `expr` catch-alls with
+      NO base edge — flow hole closed); receivers flow into method results in
+      all 3 langs. flow-interproc.dl + taint.dl forward hop now POSITIONAL
+      (df_arg.pos = df_param.pos, arg 0 no longer reaches param 1);
+      flow-ctor.dl = ctor inventory + field_fill + field-SENSITIVE field_flow
+      (new-seeded recursive rule, NOT closure — a closure rel can't be read
+      unpinned in a rule body). nest counts `new` too (ctor in a loop
+      allocates per iteration). Tests: 3 typegraph units, flow_ctor.rs e2e,
+      position gate in flow_interproc.rs. DATAFLOW_RELS 6->8.
+
 ### Open (sprefa type graph)
 - [ ] Optional: migrate the deck graph (`examples/anim-self.dl` + anim AtlasPanel)
       from name-keyed `type_edge` to sym-keyed `type_link` + `type_entity` kinds

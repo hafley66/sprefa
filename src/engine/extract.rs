@@ -1046,7 +1046,11 @@ impl Engine {
         let mut alloc_rows: Vec<Vec<Value>> = Vec::new();
         let mut nest_rows: Vec<Vec<Value>> = Vec::new();
         let mut param_rows: Vec<Vec<Value>> = Vec::new();
+        let mut arg_rows: Vec<Vec<Value>> = Vec::new();
+        let mut field_rows: Vec<Vec<Value>> = Vec::new();
         let mut seen_param: HashSet<&str> = HashSet::new();
+        let mut seen_arg: HashSet<(&str, i64, &str)> = HashSet::new();
+        let mut seen_field: HashSet<(&str, &str, &str)> = HashSet::new();
         let mut seen_node: HashSet<&str> = HashSet::new();
         let mut seen_edge: HashSet<(&str, &str)> = HashSet::new();
         let mut seen_loop: HashSet<(&str, u32)> = HashSet::new();
@@ -1080,6 +1084,16 @@ impl Engine {
                     param_rows.push(vec![t(id), i(*pos)]);
                 }
             }
+            for (call, pos, arg) in &f.args {
+                if seen_arg.insert((call.as_str(), *pos, arg.as_str())) {
+                    arg_rows.push(vec![t(call), Value::Int(*pos), t(arg)]);
+                }
+            }
+            for (id, field, value) in &f.fields {
+                if seen_field.insert((id.as_str(), field.as_str(), value.as_str())) {
+                    field_rows.push(vec![t(id), t(field), t(value)]);
+                }
+            }
         }
 
         self.refresh_rel("df_node", &["id", "kind", "var", "fn", "file", "line"], &node_rows)?;
@@ -1088,6 +1102,8 @@ impl Engine {
         self.refresh_rel("allocates", &["fn"], &alloc_rows)?;
         self.refresh_rel("nest", &["call_id", "loop_id", "depth", "collection"], &nest_rows)?;
         self.refresh_rel("df_param", &["id", "pos"], &param_rows)?;
+        self.refresh_rel("df_arg", &["call", "pos", "arg"], &arg_rows)?;
+        self.refresh_rel("df_field", &["id", "field", "value"], &field_rows)?;
         // Persisted only after the writes land, so a failed refresh retries.
         self.save_rel_digest("extract:dataflow", &digest)?;
         Ok(true)

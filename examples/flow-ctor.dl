@@ -1,0 +1,58 @@
+# flow-ctor.dl — instantiation-centric value flow: who constructs what, which
+# values fill which fields and argument slots, and field-sensitive read tracing.
+#
+# Rides three dataflow rels the lift emits per language front-end:
+#   - df_node kind="new"   : an instantiation — Rust struct literal (`Foo { .. }`)
+#                            and tuple-struct/variant ctor (`Foo(x)`, `Some(x)`),
+#                            TS `new Foo(...)` and object literal, Kotlin
+#                            capitalized ctor call. var = constructed type name
+#                            ("" for an anonymous object literal).
+#   - df_arg(call, pos, arg): which 0-based slot an argument value feeds
+#                            (method receiver at -1, aligned with df_param.pos).
+#   - df_field(id, f, value): named flow into a composite — struct-literal field,
+#                            object-literal property, Kotlin named argument;
+#                            ".." is a spread / functional-update base.
+#
+#   dl examples/flow-ctor.dl --root .
+
+rel src(p: file).
+src(p) <- scan("WORK", "src/**/*.{rs,ts,kt}", p, rev), match(p, rev, /./, l).
+
+# Every instantiation: the constructed type, where, in which fn.
+rel ctor(node: text, ty: text, fn: text, path: file, line: int).
+ctor(n, ty, f, p, l) <- df_node(n, "new", ty, f, p, l).
+
+# Which value fills which field of which type: the ctor-field inventory,
+# with the kind of value landing in each field (lit / var_read / call_res / ...).
+rel field_fill(ty: text, field: text, value: text, vkind: text).
+field_fill(ty, fld, v, vk) <-
+    df_node(n, "new", ty, _, _, _),
+    df_field(n, fld, v),
+    df_node(v, vk, _, _, _, _).
+
+# Positional slots: what kind of value feeds slot N of a call or instantiation.
+rel arg_slot(call: text, pos: int, arg: text, akind: text).
+arg_slot(c, pos, a, ak) <- df_arg(c, pos, a), df_node(a, ak, _, _, _, _).
+
+# Reachability seeded FROM instantiations, as a plain recursive rule. A closure
+# rel can't be read unpinned inside a rule body (it would materialize the full
+# closure); seeding the frontier at `new` nodes keeps the fixpoint restricted
+# to what the field-flow join below actually consumes — the magic-set shape.
+rel from_new(n: text, x: text).
+from_new(n, x) <- df_node(n, "new", _, _, _, _), df_edge(n, x).
+from_new(n, y) <- from_new(n, x), df_edge(x, y).
+
+# Field-sensitive flow: a value stored into field F of an instantiation reaches
+# a member read of the SAME field name downstream (df_node kind="member" carries
+# the accessed name in var). The blanket df_edge already over-approximates
+# through the composite; matching field names refines it.
+rel field_flow(value: text, ctor_node: text, field: text, read: text).
+field_flow(v, n, fld, r) <-
+    df_field(n, fld, v),
+    from_new(n, r),
+    df_node(r, "member", fld, _, _, _).
+
+? ctor(node, ty, fn, path, line).
+? field_fill(ty, field, value, vkind).
+? arg_slot(call, pos, arg, akind).
+? field_flow(value, ctor_node, field, read).

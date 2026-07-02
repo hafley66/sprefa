@@ -269,6 +269,14 @@ pub struct DataflowFacts {
     pub allocators: std::collections::HashSet<String>, // fn syms whose body builds a collection
     pub nests: Vec<NestFact>,
     pub param_pos: Vec<(String, u32)>, // (param node id, positional index) for node-level type joins
+    /// (call/new node id, position, arg node id): which argument slot a value
+    /// feeds. Position is 0-based and aligns with `param_pos`/`type_sig.pos`
+    /// (Rust method receivers are pos -1, mirroring the skipped `self` param).
+    pub args: Vec<(String, i64, String)>,
+    /// (new/call node id, field name, value node id): named value flow into a
+    /// composite — Rust struct-literal fields, TS object-literal properties,
+    /// Kotlin named arguments.
+    pub fields: Vec<(String, String, String)>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -297,7 +305,7 @@ pub struct NestFact {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DfNode {
     pub id: String,
-    pub kind: String,   // param | let_bind | var_read | var_write | lit | call_res | ret | borrow | binop | unop | loop | if | match | block | closure | try | expr
+    pub kind: String,   // param | let_bind | var_read | var_write | lit | call_res | new | member | ret | borrow | binop | unop | loop | if | match | block | closure | try | expr
     pub var: String,    // variable name when the node is var-related, else ""
     pub fn_sym: String, // enclosing def sym (file::function::name), joins call_def
     pub file: String,
@@ -519,25 +527,96 @@ fn flow_kt(
                 }
             }
         }
-        // f(args): every argument value flows into the call result. The callee
-        // ident (parent == call_expression) is skipped above. Descend through
-        // call_suffix -> value_arguments -> value_argument so multi-arg calls
-        // taint the result from every arg, not just the last.
+        // f(args): every argument value flows into the call result, and
+        // `df_arg` records its 0-based source position (named args keep their
+        // source index — an approximation when Kotlin reorders them). A named
+        // argument `f(x = v)` also lands in `df_field` under its name; the
+        // name ident is a label, not a read, so it is never walked. A
+        // navigation callee `recv.m(a)` flows the receiver in at slot -1; a
+        // capitalized callee is a constructor call (Kotlin classes are
+        // UpperCamelCase), minted as a `new` node carrying the type name.
         "call_expression" => {
-            let mut child_ids = Vec::new();
+            let callee = node.child(0);
+            let mut recv: Option<String> = None;
+            let mut callee_name = String::new();
+            match callee.map(|c| c.kind()) {
+                Some("simple_identifier") => {
+                    callee_name = callee.unwrap().utf8_text(src).unwrap_or("").to_string();
+                }
+                Some("navigation_expression") => {
+                    let nav = callee.unwrap();
+                    if let Some(obj) = nav.child(0) {
+                        recv = flow_kt(obj, src, file, fn_sym, scope, out);
+                    }
+                    if let Some(idn) = kt_first_child(nav, "navigation_suffix")
+                        .and_then(|s| kt_first_child(s, "simple_identifier"))
+                    {
+                        callee_name = idn.utf8_text(src).unwrap_or("").to_string();
+                    }
+                }
+                _ => {}
+            }
+            // (source position, named-arg name if any, value node id)
+            let mut arg_ids: Vec<(Option<String>, String)> = Vec::new();
             if let Some(suffix) = kt_first_child(node, "call_suffix") {
                 if let Some(vargs) = kt_first_child(suffix, "value_arguments") {
                     let mut cur = vargs.walk();
                     for va in vargs.children(&mut cur).filter(|n| n.kind() == "value_argument") {
-                        if let Some(id) = flow_kt(va, src, file, fn_sym, scope, out) {
-                            child_ids.push(id);
+                        // named form: value_argument = simple_identifier '=' expr
+                        let mut kids = Vec::new();
+                        let mut vc = va.walk();
+                        for k in va.children(&mut vc) { kids.push(k); }
+                        let eq_at = kids.iter().position(|k| k.kind() == "=");
+                        let (name, val_node) = match eq_at {
+                            Some(i) if i >= 1 && kids[i - 1].kind() == "simple_identifier" => {
+                                (Some(kids[i - 1].utf8_text(src).unwrap_or("").to_string()),
+                                 kids.get(i + 1).copied())
+                            }
+                            _ => (None, None),
+                        };
+                        let vid = match val_node {
+                            Some(v) => flow_kt(v, src, file, fn_sym, scope, out),
+                            None => flow_kt(va, src, file, fn_sym, scope, out),
+                        };
+                        if let Some(vid) = vid {
+                            arg_ids.push((name, vid));
                         }
                     }
                 }
             }
-            let id = push_node(out, file, pos.row as u32, pos.column as u32, "call_res", "", fn_sym);
-            for cid in child_ids {
-                out.edges.push(DfEdge { from: cid, to: id.clone() });
+            let is_ctor = callee_name.chars().next().is_some_and(|c| c.is_uppercase());
+            let (kind, var) = if is_ctor { ("new", callee_name.as_str()) } else { ("call_res", "") };
+            let id = push_node(out, file, pos.row as u32, pos.column as u32, kind, var, fn_sym);
+            if let Some(r) = recv {
+                out.edges.push(DfEdge { from: r.clone(), to: id.clone() });
+                out.args.push((id.clone(), -1, r));
+            }
+            for (p, (name, vid)) in arg_ids.into_iter().enumerate() {
+                out.edges.push(DfEdge { from: vid.clone(), to: id.clone() });
+                out.args.push((id.clone(), p as i64, vid.clone()));
+                if let Some(n) = name {
+                    out.fields.push((id.clone(), n, vid));
+                }
+            }
+            Some(id)
+        }
+        // `base.f` outside a call: a member read. The base flows into a
+        // `member` node whose var is the accessed name, so a `df_field` write
+        // can be matched against the read of the same field. As a call's
+        // callee (parent == call_expression) the call arm owns it instead —
+        // receiver at slot -1, name on the call node.
+        "navigation_expression" => {
+            if node.parent().map(|p| p.kind()) == Some("call_expression") {
+                return None;
+            }
+            let obj = node.child(0).and_then(|c| flow_kt(c, src, file, fn_sym, scope, out));
+            let name = kt_first_child(node, "navigation_suffix")
+                .and_then(|s| kt_first_child(s, "simple_identifier"))
+                .map(|n| n.utf8_text(src).unwrap_or("").to_string())
+                .unwrap_or_default();
+            let id = push_node(out, file, pos.row as u32, pos.column as u32, "member", &name, fn_sym);
+            if let Some(o) = obj {
+                out.edges.push(DfEdge { from: o, to: id.clone() });
             }
             Some(id)
         }
@@ -990,9 +1069,16 @@ fn ts_flow_expr(
         | E::NullLiteral(_)
         | E::BigIntLiteral(_)
         | E::RegExpLiteral(_) => ts_push(out, file, starts, off, "lit", "", fn_sym),
-        // f(args): each argument flows into the call result. The callee is the
-        // target, not a value in, so it is skipped.
+        // f(args): each argument flows into the call result, with `df_arg`
+        // recording its 0-based slot for the positional interprocedural hop.
+        // A member callee `recv.m(a)` flows the receiver in at slot -1; a bare
+        // callee is the target, not a value in, so it is skipped.
         E::CallExpression(c) => {
+            let recv = match &c.callee {
+                E::StaticMemberExpression(m) => Some(ts_flow_expr(&m.object, file, starts, fn_sym, scope, out)),
+                E::ComputedMemberExpression(m) => Some(ts_flow_expr(&m.object, file, starts, fn_sym, scope, out)),
+                _ => None,
+            };
             let mut child_ids = Vec::new();
             for arg in &c.arguments {
                 if let Some(id) = arg.as_expression() {
@@ -1000,17 +1086,76 @@ fn ts_flow_expr(
                 }
             }
             let id = ts_push(out, file, starts, off, "call_res", "", fn_sym);
-            for cid in child_ids {
-                out.edges.push(DfEdge { from: cid, to: id.clone() });
+            if let Some(r) = recv {
+                out.edges.push(DfEdge { from: r.clone(), to: id.clone() });
+                out.args.push((id.clone(), -1, r));
+            }
+            for (pos, cid) in child_ids.into_iter().enumerate() {
+                out.edges.push(DfEdge { from: cid.clone(), to: id.clone() });
+                out.args.push((id.clone(), pos as i64, cid));
             }
             id
         }
-        // recv.prop / recv[prop]: the receiver flows through; the property is
-        // a name, not a value in (skipped). oxc flattens MemberExpression into
-        // StaticMemberExpression / ComputedMemberExpression on Expression.
+        // `new Foo(args)`: an instantiation — a `new` node carrying the class
+        // name, args recorded positionally like a call.
+        E::NewExpression(n) => {
+            let ty = match &n.callee {
+                E::Identifier(i) => i.name.to_string(),
+                E::StaticMemberExpression(m) => m.property.name.to_string(),
+                _ => String::new(),
+            };
+            let mut child_ids = Vec::new();
+            for arg in &n.arguments {
+                if let Some(a) = arg.as_expression() {
+                    child_ids.push(ts_flow_expr(a, file, starts, fn_sym, scope, out));
+                }
+            }
+            let id = ts_push(out, file, starts, off, "new", &ty, fn_sym);
+            for (pos, cid) in child_ids.into_iter().enumerate() {
+                out.edges.push(DfEdge { from: cid.clone(), to: id.clone() });
+                out.args.push((id.clone(), pos as i64, cid));
+            }
+            id
+        }
+        // `{ a: x, ...rest }`: the JS instantiation. Each property value flows
+        // into an anonymous `new` node and `df_field` records the property
+        // name; a spread flows in under the pseudo-field ".." (mirroring
+        // Rust's functional-update base).
+        E::ObjectExpression(o) => {
+            let mut filled: Vec<(String, String)> = Vec::new();
+            for prop in &o.properties {
+                match prop {
+                    ts_ast::ObjectPropertyKind::ObjectProperty(p) => {
+                        let v = ts_flow_expr(&p.value, file, starts, fn_sym, scope, out);
+                        let name = match &p.key {
+                            ts_ast::PropertyKey::StaticIdentifier(i) => i.name.to_string(),
+                            ts_ast::PropertyKey::StringLiteral(s) => s.value.to_string(),
+                            _ => String::new(),
+                        };
+                        filled.push((name, v));
+                    }
+                    ts_ast::ObjectPropertyKind::SpreadProperty(sp) => {
+                        let v = ts_flow_expr(&sp.argument, file, starts, fn_sym, scope, out);
+                        filled.push(("..".into(), v));
+                    }
+                }
+            }
+            let id = ts_push(out, file, starts, off, "new", "", fn_sym);
+            for (name, v) in filled {
+                out.edges.push(DfEdge { from: v.clone(), to: id.clone() });
+                if !name.is_empty() {
+                    out.fields.push((id.clone(), name, v));
+                }
+            }
+            id
+        }
+        // recv.prop / recv[prop]: the receiver flows through into a `member`
+        // node; a static property records its name so a `df_field` write can
+        // be matched against the read of the same field. oxc flattens
+        // MemberExpression into StaticMemberExpression / ComputedMemberExpression.
         E::StaticMemberExpression(m) => {
             let obj = ts_flow_expr(&m.object, file, starts, fn_sym, scope, out);
-            let id = ts_push(out, file, starts, off, "member", "", fn_sym);
+            let id = ts_push(out, file, starts, off, "member", &m.property.name, fn_sym);
             out.edges.push(DfEdge { from: obj, to: id.clone() });
             id
         }
@@ -2659,7 +2804,9 @@ fn rust_dataflow_from(parsed: &syn::File, file: &str) -> DataflowFacts {
 fn compute_nests(nodes: &[DfNode], loops: &[LoopFact]) -> Vec<NestFact> {
     let mut out = Vec::new();
     for n in nodes {
-        if n.kind != "call_res" { continue; }
+        // `new` nodes count too: a constructor in a loop allocates per
+        // iteration, the exact cost shape nest exists to surface.
+        if n.kind != "call_res" && n.kind != "new" { continue; }
         let mut enclosing: Vec<&LoopFact> = loops.iter()
             .filter(|l| l.fn_sym == n.fn_sym && n.line >= l.start && n.line <= l.end)
             .collect();
@@ -2777,6 +2924,21 @@ fn push_node(
     id
 }
 
+/// A call expression whose callee is a bare path with a capitalized last
+/// segment is a tuple-struct or enum-variant constructor (`Foo(x)`,
+/// `Some(x)`, `mod::Variant(x)`) under Rust naming convention — functions are
+/// snake_case. Returns the constructed type/variant name, or None for an
+/// ordinary call. `Foo::new(x)` stays a call: `new` is lowercase.
+fn ctor_name(e: &syn::Expr) -> Option<String> {
+    if let syn::Expr::Path(p) = e {
+        let last = p.path.segments.last()?.ident.to_string();
+        if last.chars().next().is_some_and(|c| c.is_uppercase()) {
+            return Some(last);
+        }
+    }
+    None
+}
+
 /// A call whose callee is a collection constructor (`Vec::new`, `HashMap::new`,
 /// `String::new`, ...) marks its enclosing fn as allocating — the cost signal
 /// for the loop-invariant-call flag. Conservative: catches the common shapes,
@@ -2828,31 +2990,88 @@ fn flow_expr(
             id
         }
         syn::Expr::Lit(_) => push_node(out, file, line, col, "lit", "", fn_sym),
-        // f(args): each argument flows into the call result. The callee path is
-        // the target, not a value in, so it gets no flow edge.
+        // f(args): each argument flows into the call result, and `df_arg`
+        // records its 0-based slot so the interprocedural hop can join it
+        // against `df_param`/`type_sig` by position. A capitalized last path
+        // segment is a tuple-struct / enum-variant constructor (`Foo(x)`,
+        // `Some(x)`) — those become `new` nodes carrying the type name, since
+        // they build a value rather than resolve through the call graph.
         syn::Expr::Call(c) => {
             if is_allocator_call(&c.func) { out.allocators.insert(fn_sym.to_string()); }
+            let ctor = ctor_name(&c.func);
             let mut children = Vec::new();
             for arg in &c.args {
                 children.push(flow_expr(arg, file, fn_sym, scope, out));
             }
-            let id = push_node(out, file, line, col, "call_res", "", fn_sym);
-            for child in children {
-                out.edges.push(DfEdge { from: child, to: id.clone() });
+            let (kind, var) = match &ctor {
+                Some(n) => ("new", n.as_str()),
+                None => ("call_res", ""),
+            };
+            let id = push_node(out, file, line, col, kind, var, fn_sym);
+            for (pos, child) in children.into_iter().enumerate() {
+                out.edges.push(DfEdge { from: child.clone(), to: id.clone() });
+                out.args.push((id.clone(), pos as i64, child));
             }
             id
         }
-        // recv.m(args): receiver + args flow into the result; method name skipped.
+        // recv.m(args): receiver + args flow into the result; method name
+        // skipped. The receiver is `df_arg` slot -1 (mirroring the skipped
+        // `self` in `df_param`), args count 0.. so they align with the
+        // callee's typed params.
         syn::Expr::MethodCall(m) => {
             if is_allocator_method(&m.method) { out.allocators.insert(fn_sym.to_string()); }
-            let mut children = vec![flow_expr(&m.receiver, file, fn_sym, scope, out)];
+            let recv = flow_expr(&m.receiver, file, fn_sym, scope, out);
+            let mut children = Vec::new();
             for arg in &m.args {
                 children.push(flow_expr(arg, file, fn_sym, scope, out));
             }
             let id = push_node(out, file, line, col, "call_res", "", fn_sym);
-            for child in children {
-                out.edges.push(DfEdge { from: child, to: id.clone() });
+            out.edges.push(DfEdge { from: recv.clone(), to: id.clone() });
+            out.args.push((id.clone(), -1, recv));
+            for (pos, child) in children.into_iter().enumerate() {
+                out.edges.push(DfEdge { from: child.clone(), to: id.clone() });
+                out.args.push((id.clone(), pos as i64, child));
             }
+            id
+        }
+        // `Foo { a: x, ..base }`: an instantiation. Each field value flows into
+        // the `new` node and `df_field` records which field it fills — the
+        // field-sensitive half the blanket edge can't express. A functional-
+        // update base flows in under the pseudo-field "..".
+        syn::Expr::Struct(s) => {
+            let ty = s.path.segments.last().map(|sg| sg.ident.to_string()).unwrap_or_default();
+            let mut filled: Vec<(String, String)> = Vec::new();
+            for f in &s.fields {
+                let v = flow_expr(&f.expr, file, fn_sym, scope, out);
+                let name = match &f.member {
+                    syn::Member::Named(i) => i.to_string(),
+                    syn::Member::Unnamed(i) => i.index.to_string(),
+                };
+                filled.push((name, v));
+            }
+            let base = s.rest.as_ref().map(|r| flow_expr(r, file, fn_sym, scope, out));
+            let id = push_node(out, file, line, col, "new", &ty, fn_sym);
+            for (name, v) in filled {
+                out.edges.push(DfEdge { from: v.clone(), to: id.clone() });
+                out.fields.push((id.clone(), name, v));
+            }
+            if let Some(b) = base {
+                out.edges.push(DfEdge { from: b.clone(), to: id.clone() });
+                out.fields.push((id.clone(), "..".into(), b));
+            }
+            id
+        }
+        // `base.f` / `tuple.0`: a field read. The base flows into a `member`
+        // node whose var is the field name, so a query can match a `df_field`
+        // write against the read of the same field (field-sensitive flow).
+        syn::Expr::Field(f) => {
+            let base = flow_expr(&f.base, file, fn_sym, scope, out);
+            let name = match &f.member {
+                syn::Member::Named(i) => i.to_string(),
+                syn::Member::Unnamed(i) => i.index.to_string(),
+            };
+            let id = push_node(out, file, line, col, "member", &name, fn_sym);
+            out.edges.push(DfEdge { from: base, to: id.clone() });
             id
         }
         syn::Expr::Paren(p) => flow_expr(&p.expr, file, fn_sym, scope, out),
@@ -3832,5 +4051,124 @@ function helper(raw: Raw) {}
         let pairs = type_lgg_pairs(&edges);
         let ab = pairs.iter().find(|(p, q, _)| p == "A" && q == "B").map(|(_, _, v)| *v);
         assert_eq!(ab, Some(1));
+    }
+
+    // --- dataflow lift: instantiations, positional args, named fields, members
+
+    fn dnode<'a>(df: &'a DataflowFacts, kind: &str, var: &str) -> &'a DfNode {
+        df.nodes
+            .iter()
+            .find(|n| n.kind == kind && n.var == var)
+            .unwrap_or_else(|| panic!("no node {kind}/{var}: {:?}", df.nodes))
+    }
+
+    fn has_arg(df: &DataflowFacts, call: &str, pos: i64, arg: &str) -> bool {
+        df.args.iter().any(|(c, p, a)| c == call && *p == pos && a == arg)
+    }
+
+    fn has_field(df: &DataflowFacts, id: &str, field: &str, value: &str) -> bool {
+        df.fields.iter().any(|(i, f, v)| i == id && f == field && v == value)
+    }
+
+    #[test]
+    fn rust_lift_ctors_args_fields_members() {
+        let src = "struct Cfg { host: i32, port: i32 }\n\
+                   fn go(h: i32, items: Vec<i32>) {\n    \
+                       let c = Cfg { host: h, port: 1 };\n    \
+                       let x = c.host;\n    \
+                       let w = Wrap(x);\n    \
+                       let n = items.len();\n    \
+                       eat(n, x);\n\
+                   }\n";
+        let df = RustTypes.extract_dataflow("f.rs", src);
+
+        // struct literal and tuple-struct ctor are `new` nodes with type names.
+        let cfg = dnode(&df, "new", "Cfg").id.clone();
+        let wrap = dnode(&df, "new", "Wrap").id.clone();
+        // struct-literal fields land in df_field by name.
+        let h_read = df.nodes.iter().find(|n| n.kind == "var_read" && n.var == "h").unwrap().id.clone();
+        assert!(has_field(&df, &cfg, "host", &h_read), "{:?}", df.fields);
+        assert!(df.fields.iter().any(|(i, f, _)| i == &cfg && f == "port"), "{:?}", df.fields);
+        // `.host` is a member read carrying the field name.
+        let member = dnode(&df, "member", "host");
+        assert!(df.edges.iter().any(|e| e.to == member.id), "member has a base edge");
+        // tuple-struct ctor arg at slot 0.
+        let x_reads: Vec<&DfNode> = df.nodes.iter().filter(|n| n.kind == "var_read" && n.var == "x").collect();
+        assert!(x_reads.iter().any(|x| has_arg(&df, &wrap, 0, &x.id)), "{:?}", df.args);
+        // method receiver at slot -1: items.len().
+        let items_read = df.nodes.iter().find(|n| n.kind == "var_read" && n.var == "items").unwrap();
+        assert!(df.args.iter().any(|(_, p, a)| *p == -1 && a == &items_read.id), "{:?}", df.args);
+        // eat(n, x): slots 0 and 1 on the same call.
+        let n_read = df.nodes.iter().find(|n| n.kind == "var_read" && n.var == "n").unwrap();
+        let eat_call = df.args.iter().find(|(_, p, a)| *p == 0 && a == &n_read.id).map(|(c, _, _)| c.clone())
+            .expect("eat call with n at slot 0");
+        assert!(df.args.iter().any(|(c, p, a)| c == &eat_call && *p == 1
+            && x_reads.iter().any(|x| a == &x.id)), "{:?}", df.args);
+    }
+
+    #[test]
+    fn kotlin_lift_ctor_named_args_and_members() {
+        let src = "class Cfg(val host: Int, val port: Int)\n\
+                   fun go(h: Int) {\n    \
+                       val c = Cfg(host = h, port = 1)\n    \
+                       val x = c.host\n    \
+                       val n = c.count()\n    \
+                       val u = go2(x)\n\
+                   }\n";
+        let df = KotlinTypes.extract_dataflow("f.kt", src);
+
+        // capitalized callee = ctor call = `new` node with the type name.
+        let cfg = dnode(&df, "new", "Cfg").id.clone();
+        // named args land in df_field AND keep their source slot in df_arg.
+        let h_read = df.nodes.iter().find(|n| n.kind == "var_read" && n.var == "h").unwrap().id.clone();
+        assert!(has_field(&df, &cfg, "host", &h_read), "{:?}", df.fields);
+        assert!(df.fields.iter().any(|(i, f, _)| i == &cfg && f == "port"), "{:?}", df.fields);
+        assert!(has_arg(&df, &cfg, 0, &h_read), "{:?}", df.args);
+        // the named-arg label is NOT a var_read (it's a label, not a value).
+        assert!(
+            !df.nodes.iter().any(|n| n.kind == "var_read" && n.var == "host"),
+            "named-arg label leaked as a read: {:?}", df.nodes
+        );
+        // `.host` outside a call is a member read carrying the name.
+        let member = dnode(&df, "member", "host");
+        assert!(df.edges.iter().any(|e| e.to == member.id), "member has a base edge");
+        // navigation callee: c.count() flows the receiver in at slot -1.
+        assert!(
+            df.args.iter().any(|(_, p, a)| *p == -1
+                && df.nodes.iter().any(|n| &n.id == a && n.kind == "var_read" && n.var == "c")),
+            "{:?}", df.args
+        );
+        // lowercase callee stays a call with slot-0 arg.
+        let go2 = df.nodes.iter().filter(|n| n.kind == "call_res").count();
+        assert!(go2 >= 1, "go2(x) should stay call_res: {:?}", df.nodes);
+    }
+
+    #[test]
+    fn ts_lift_new_object_literal_and_members() {
+        let src = "function go(h: number): void {\n    \
+                       const w = new Widget(h);\n    \
+                       const c = { host: h, port: 1 };\n    \
+                       const x = c.host;\n    \
+                       const n = x.toFixed(2);\n\
+                   }\n";
+        let df = TsTypes.extract_dataflow("f.ts", src);
+
+        // `new Widget(h)`: a `new` node with the class name and a slot-0 arg.
+        let widget = dnode(&df, "new", "Widget").id.clone();
+        let h_reads: Vec<&DfNode> = df.nodes.iter().filter(|n| n.kind == "var_read" && n.var == "h").collect();
+        assert!(h_reads.iter().any(|h| has_arg(&df, &widget, 0, &h.id)), "{:?}", df.args);
+        // object literal: anonymous `new` with named property fills.
+        let obj = df.nodes.iter().find(|n| n.kind == "new" && n.var.is_empty()).expect("object literal new node");
+        assert!(h_reads.iter().any(|h| has_field(&df, &obj.id, "host", &h.id)), "{:?}", df.fields);
+        assert!(df.fields.iter().any(|(i, f, _)| i == &obj.id && f == "port"), "{:?}", df.fields);
+        // `.host` member read carries the property name.
+        let member = dnode(&df, "member", "host");
+        assert!(df.edges.iter().any(|e| e.to == member.id), "member has a base edge");
+        // method receiver at slot -1: x.toFixed(2).
+        assert!(
+            df.args.iter().any(|(_, p, a)| *p == -1
+                && df.nodes.iter().any(|n| &n.id == a && n.kind == "var_read" && n.var == "x")),
+            "{:?}", df.args
+        );
     }
 }

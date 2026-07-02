@@ -137,6 +137,46 @@ fn value_flows_across_the_call_boundary_per_language() {
     }
 }
 
+/// THE POSITION GATE. Two arguments, two params: arg 0 must reach param 0 and
+/// NOT param 1 (and symmetrically for arg 1). Under the old positional-blind
+/// hop every arg reached every param, so the negative halves of this test are
+/// exactly what df_arg(call, pos, arg) ⨝ df_param(param, pos) buys. Run per
+/// language.
+#[test]
+fn args_flow_to_matching_param_positions_only() {
+    let rust = "fn callee(x: i32, y: i32) { let u = x; let w = y; }\n\
+                fn caller(a: i32, b: i32) {\n    let r = callee(a, b);\n    let _ = r;\n}\n";
+    let ts = "function callee(x: number, y: number): void { const u = x; const w = y; }\n\
+              function caller(a: number, b: number): void {\n    const r = callee(a, b);\n    const _x = r;\n}\n";
+    let kotlin = "fun callee(x: Int, y: Int) { val u = x; val w = y }\n\
+                  fun caller(a: Int, b: Int) {\n    val r = callee(a, b)\n    val q = r\n}\n";
+
+    for (lang, ext, srcfile) in [("rust", "rs", rust), ("ts", "ts", ts), ("kotlin", "kt", kotlin)] {
+        let d = sandbox(&format!("pos_{lang}"));
+        fs::write(d.join(format!("src/lib.{ext}")), srcfile).unwrap();
+        let (code, out, err) = run(&d);
+        assert_eq!(code, 0, "[{lang}] must not error:\n{err}");
+
+        let secs = sections(&out);
+        let mut reach: HashSet<(String, String)> = HashSet::new();
+        for r in rows(&secs[1]) {
+            reach.insert((r[0].clone(), r[1].clone()));
+        }
+        let nodes = rows(&secs[4]);
+        let (a, _) = node_id(&nodes, "param", "a", &out, lang);
+        let (b, _) = node_id(&nodes, "param", "b", &out, lang);
+        let (x, _) = node_id(&nodes, "param", "x", &out, lang);
+        let (y, _) = node_id(&nodes, "param", "y", &out, lang);
+
+        // Positive halves: each arg crosses into its own slot.
+        assert!(reach.contains(&(a.clone(), x.clone())), "[{lang}] a must reach x (slot 0):\n{out}");
+        assert!(reach.contains(&(b.clone(), y.clone())), "[{lang}] b must reach y (slot 1):\n{out}");
+        // DECISIVE negative halves: no cross-slot leakage.
+        assert!(!reach.contains(&(a.clone(), y.clone())), "[{lang}] a must NOT reach y (blind hop leak):\n{out}");
+        assert!(!reach.contains(&(b.clone(), x.clone())), "[{lang}] b must NOT reach x (blind hop leak):\n{out}");
+    }
+}
+
 /// THE RETURN GATE. A value passed INTO a callee, transformed, and RETURNED must
 /// reach a sink the call result feeds. `driver`'s `secret` is the argument to
 /// `ident`, whose param flows to its `ret` node; the backward hop carries that

@@ -7,6 +7,29 @@ tags consumed by cargo-dist.
 ## [Unreleased]
 
 ### Added
+- **Positional + constructor dataflow: `df_arg`, `df_field`, `new`/`member`
+  nodes** — the intra-procedural lift now records WHICH slot each argument
+  feeds (`df_arg(call, pos, arg)`, 0-based, method receiver at -1, aligned
+  with `df_param.pos`/`type_sig.pos`) and named flow into composites
+  (`df_field(id, field, value)`: Rust struct-literal fields, TS
+  object-literal properties, Kotlin named arguments; `".."` for
+  spread/functional-update bases). Instantiations are first-class `new`
+  df_nodes carrying the constructed type name: Rust struct literals and
+  capitalized tuple-struct/variant ctors, TS `new Foo()` and object
+  literals, Kotlin capitalized ctor calls. Field reads become `member`
+  nodes carrying the accessed name (Rust `Expr::Field` and Kotlin
+  navigation previously fell into the `expr` catch-all with NO base edge —
+  a real flow hole, now closed); method receivers flow into call results
+  in all three languages. `examples/flow-interproc.dl` and
+  `examples/taint.dl` upgrade the arg->param hop from positional-blind to
+  positional (`df_arg.pos = df_param.pos`); new `examples/flow-ctor.dl`
+  demos the instantiation inventory, per-field fills, and field-SENSITIVE
+  flow (a value stored into field F reaches a member read of F, and only
+  F, via a new-seeded recursive rule — closure rels can't be read unpinned
+  in a rule body). `nest` now also counts `new` nodes (a ctor in a loop
+  allocates per iteration). Tests: typegraph units per language,
+  `tests/it/flow_ctor.rs`, and the position gate in
+  `tests/it/flow_interproc.rs` (arg 0 must NOT reach param 1).
 - **Per-family extraction skip + per-file fact cache (perf gap A)** — the
   type/call/dataflow/doc refreshers persist an `extract:<family>` input
   digest (corpus (repo, path, rev, content hash) rows + the `scip_ref`
