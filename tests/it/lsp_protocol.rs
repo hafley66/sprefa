@@ -496,6 +496,47 @@ fn hover_includes_type_profile_overlay_for_data_types() {
     s.shutdown();
 }
 
+/// Gate (7): the custom `dl/query` request answers raw SQL over the LSP channel
+/// with positional rows — the flow-panel webview's data door. Bad SQL comes back
+/// as a JSON-RPC error (result stays null through the test helper).
+#[test]
+fn dl_query_returns_rows_over_lsp() {
+    let root = sandbox("query");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/a.rs"), "fn a() {}\n").unwrap();
+    fs::write(root.join("src/b.rs"), "fn b() {}\n").unwrap();
+    let prog = root.join("p.dl");
+    fs::write(&prog, concat!(
+        "rel seen(p: file).\n",
+        "seen(p) <- scan(\"WORK\", \"src/**/*.rs\", p, rev).\n",
+    )).unwrap();
+
+    let mut s = Session::spawn(&prog, &root, &root.join("query.db"));
+    initialize(&mut s, &root);
+
+    let result = s.request(2, "dl/query",
+        serde_json::json!({"sql": "SELECT p FROM rel_seen ORDER BY p"}));
+    let rows = result.get("rows").and_then(|r| r.as_array()).unwrap_or_else(|| panic!(
+        "expected rows, got: {result}\nstderr: {}", drain_stderr(&mut s.child)));
+    let paths: Vec<&str> = rows.iter()
+        .filter_map(|r| r.get(0).and_then(|v| v.as_str()))
+        .collect();
+    assert_eq!(paths, vec!["src/a.rs", "src/b.rs"], "positional rows: {rows:?}");
+
+    // Bound params round-trip.
+    let result = s.request(3, "dl/query", serde_json::json!({
+        "sql": "SELECT p FROM rel_seen WHERE p = ?", "params": ["src/b.rs"]}));
+    let rows = result.get("rows").and_then(|r| r.as_array()).cloned().unwrap_or_default();
+    assert_eq!(rows.len(), 1, "one bound match: {result}");
+
+    // Malformed SQL: error response, so the helper surfaces a null result.
+    let result = s.request(4, "dl/query",
+        serde_json::json!({"sql": "SELECT nope FROM does_not_exist"}));
+    assert!(result.is_null(), "bad SQL is a JSON-RPC error: {result}");
+
+    s.shutdown();
+}
+
 /// Gate (2b): a literal-bearing TypeDiag lands at its real line, proving the
 /// byte->line resolver fixes the T2 line-1 bug. An `fs:` literal in a plain-text
 /// column coerces (warn) and the diagnostic points at the literal's actual line,

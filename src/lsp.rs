@@ -138,6 +138,10 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Res
                         let resp = handle_hover(&eng, &root, &req);
                         connection.sender.send(Message::Response(resp))?;
                     }
+                    "dl/query" => {
+                        let resp = handle_query(&eng, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
                     _ => { if connection.handle_shutdown(&req)? { break; } }
                 }
             }
@@ -308,6 +312,23 @@ fn handle_hover(eng: &Engine, root: &Path, req: &Request) -> Response {
         }),
     };
     Response::new_ok(req.id.clone(), serde_json::to_value(hover).unwrap_or_default())
+}
+
+/// Custom request `dl/query`: SQL against the engine's SQLite, the same surface
+/// as the daemon's `query_sql` RPC but reachable through the editor's existing
+/// LSP channel (the flow-panel webview is the caller). Params:
+/// `{"sql": string, "params": [scalar, ...]}`. Result: `{"rows": [[col, ...]]}`
+/// — positional values; callers select explicit columns.
+fn handle_query(eng: &Engine, req: &Request) -> Response {
+    let Some(sql) = req.params.get("sql").and_then(|v| v.as_str()) else {
+        return Response::new_err(req.id.clone(), -32602, "missing sql".into());
+    };
+    let params: Vec<serde_json::Value> = req.params.get("params")
+        .and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    match eng.query_sql(sql, &params) {
+        Ok(rows) => Response::new_ok(req.id.clone(), serde_json::json!({ "rows": rows })),
+        Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
+    }
 }
 
 /// textDocument/references over the ref spine: cursor -> innermost located span
