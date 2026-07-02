@@ -43,12 +43,14 @@ pub mod typegraph;
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-/// Resolve the program file set: an explicit path, or with no positional the
-/// repo-local discovery convention `<root>/.dl/*.dl` (lexicographic file
-/// order). A missing or empty directory is a loud error: a typo'd dir must
-/// never let `--check` pass green by checking nothing.
-pub fn resolve_programs(program: Option<&str>, root: &Path) -> Result<Vec<PathBuf>> {
-    if let Some(p) = program { return Ok(vec![PathBuf::from(p)]); }
+/// Resolve the program file set: the explicit positionals (ALL of them — they
+/// merge into one program in the given order, e.g. a rail file beside the
+/// program it watches), or with no positional the repo-local discovery
+/// convention `<root>/.dl/*.dl` (lexicographic file order). A missing or empty
+/// directory is a loud error: a typo'd dir must never let `--check` pass green
+/// by checking nothing.
+pub fn resolve_programs(programs: &[String], root: &Path) -> Result<Vec<PathBuf>> {
+    if !programs.is_empty() { return Ok(programs.iter().map(PathBuf::from).collect()); }
     let dir = root.join(".dl");
     let rd = std::fs::read_dir(&dir)
         .map_err(|_| anyhow::anyhow!("no program argument and no {} directory", dir.display()))?;
@@ -105,11 +107,13 @@ pub fn render_type_diags_eprintln(diags: &[ast::TypeDiag]) {
     }
 }
 
-pub fn run_file(program: Option<&str>, db_path: Option<&str>, root: PathBuf, query_json: bool) -> Result<()> {
-    if daemon::enabled_for(&root) && db_path.is_none() {
+pub fn run_file(programs: &[String], db_path: Option<&str>, root: PathBuf, query_json: bool) -> Result<()> {
+    // An explicit multi-file merge is an ad-hoc in-process run: the daemon
+    // serves its own loaded program set, not the positionals.
+    if daemon::enabled_for(&root) && db_path.is_none() && programs.len() <= 1 {
         // Daemon owns the db; if the caller passed --db explicitly they want the
         // in-process path against that file (the daemon owns its own db).
-        match run_file_via_daemon(program, &root, query_json) {
+        match run_file_via_daemon(programs.first().map(|s| s.as_str()), &root, query_json) {
             Ok(()) => return Ok(()),
             Err(e) => {
                 // Daemon path failed; fall through to in-process so a transient
@@ -119,7 +123,7 @@ pub fn run_file(program: Option<&str>, db_path: Option<&str>, root: PathBuf, que
             }
         }
     }
-    run_file_inproc(program, db_path, root, query_json)
+    run_file_inproc(programs, db_path, root, query_json)
 }
 
 /// Daemon path: ensure the daemon is up, send `query` + `diag` RPCs, render the
@@ -168,8 +172,8 @@ fn json_cell_tsv_render(v: &serde_json::Value) -> String {
 
 /// The pre-daemon `run_file` body, in-process. Kept for the no-daemon fallback
 /// and the test path (`DL_NO_DAEMON=1`).
-fn run_file_inproc(program: Option<&str>, db_path: Option<&str>, root: PathBuf, query_json: bool) -> Result<()> {
-    let files = resolve_programs(program, &root)?;
+fn run_file_inproc(programs: &[String], db_path: Option<&str>, root: PathBuf, query_json: bool) -> Result<()> {
+    let files = resolve_programs(programs, &root)?;
     let (prog, type_diags, _) = prepare_paths(&files)?;
     render_type_diags(&type_diags, false);
     let n_errors = type_diags.iter().filter(|d| d.severity == ast::Severity::Error).count();
@@ -235,10 +239,10 @@ fn load_repos() -> Vec<config::RepoConfig> {
 /// if it exits 0; otherwise restore every touched file to its pre-run bytes.
 /// Returns `true` if kept (checker passed), `false` if rolled back. Always
 /// in-process (never the daemon) — a verify run owns the tree transactionally.
-pub fn run_verify(program: Option<&str>, db_path: Option<&str>, root: PathBuf, checker: &str)
+pub fn run_verify(programs: &[String], db_path: Option<&str>, root: PathBuf, checker: &str)
     -> Result<bool>
 {
-    let files = resolve_programs(program, &root)?;
+    let files = resolve_programs(programs, &root)?;
     let (prog, type_diags, _) = prepare_paths(&files)?;
     render_type_diags(&type_diags, false);
     let n_errors = type_diags.iter().filter(|d| d.severity == ast::Severity::Error).count();
@@ -268,14 +272,15 @@ pub fn run_verify(program: Option<&str>, db_path: Option<&str>, root: PathBuf, c
     }
 }
 
-pub fn run_check(program: Option<&str>, db_path: Option<&str>, root: PathBuf, json: bool) -> Result<usize> {
-    if daemon::enabled_for(&root) && db_path.is_none() {
-        match run_check_via_daemon(program, &root, json) {
+pub fn run_check(programs: &[String], db_path: Option<&str>, root: PathBuf, json: bool) -> Result<usize> {
+    // Same daemon gate as run_file: explicit multi-file merges stay in-process.
+    if daemon::enabled_for(&root) && db_path.is_none() && programs.len() <= 1 {
+        match run_check_via_daemon(programs.first().map(|s| s.as_str()), &root, json) {
             Ok(n) => return Ok(n),
             Err(e) => eprintln!("[daemon] check attach failed, falling back to in-process: {e}"),
         }
     }
-    run_check_inproc(program, db_path, root, json)
+    run_check_inproc(programs, db_path, root, json)
 }
 
 /// Daemon check path: ensure daemon up, send `diag` RPC, render same as
@@ -307,8 +312,8 @@ fn run_check_via_daemon(program: Option<&str>, root: &Path, json: bool) -> Resul
     Ok(arr.iter().filter(|d| d.get("severity").and_then(|v| v.as_str()) == Some("error")).count())
 }
 
-fn run_check_inproc(program: Option<&str>, db_path: Option<&str>, root: PathBuf, json: bool) -> Result<usize> {
-    let files = resolve_programs(program, &root)?;
+fn run_check_inproc(programs: &[String], db_path: Option<&str>, root: PathBuf, json: bool) -> Result<usize> {
+    let files = resolve_programs(programs, &root)?;
     // Drop `?` queries so their stdout rows don't mix with --diag-json output.
     let (mut prog, type_diags, _) = prepare_paths(&files)?;
     if json { prog.items.retain(|i| !matches!(i, ast::Item::Query(_))); }
@@ -355,8 +360,8 @@ fn run_check_inproc(program: Option<&str>, db_path: Option<&str>, root: PathBuf,
 
 /// Drive one incremental tick over an existing db for a set of changed paths
 /// (relative to root or absolute). The delta entry point the watcher uses.
-pub fn run_changed(program: Option<&str>, db_path: Option<&str>, root: PathBuf, changed: Vec<PathBuf>) -> Result<()> {
-    let files = resolve_programs(program, &root)?;
+pub fn run_changed(programs: &[String], db_path: Option<&str>, root: PathBuf, changed: Vec<PathBuf>) -> Result<()> {
+    let files = resolve_programs(programs, &root)?;
     let (prog, type_diags, _) = prepare_paths(&files)?;
     render_type_diags(&type_diags, false);
     let conn = db::open(db_path)?;
@@ -368,13 +373,13 @@ pub fn run_changed(program: Option<&str>, db_path: Option<&str>, root: PathBuf, 
 
 /// Run as an LSP server over stdio. The program's `diag` relation becomes live
 /// editor diagnostics; lint fires on file open / save. See docs/lsp.md.
-pub fn run_lsp(program: Option<&str>, db_path: Option<&str>, root: PathBuf) -> Result<()> {
-    lsp::run_lsp(program, db_path, root)
+pub fn run_lsp(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Result<()> {
+    lsp::run_lsp(programs, db_path, root)
 }
 
-pub fn run_watch(program: Option<&str>, db_path: Option<&str>, root: PathBuf) -> Result<()> {
+pub fn run_watch(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Result<()> {
     use notify::{RecursiveMode, Watcher};
-    let files = resolve_programs(program, &root)?;
+    let files = resolve_programs(programs, &root)?;
     let (prog, type_diags, _) = prepare_paths(&files)?;
     render_type_diags(&type_diags, false);
     let conn = db::open(db_path)?;

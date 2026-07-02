@@ -7,6 +7,24 @@ tags consumed by cargo-dist.
 ## [Unreleased]
 
 ### Added
+- **`rel_count(rel, rows)` / `stmt_ms(rel, ms)` telemetry built-ins** — tick
+  cardinalities and per-rel derived-statement wall costs as queryable facts
+  (`--tick-audit` / `--profile` output, made joinable). Derived rels report
+  the previous tick's counts (source-phase refresh); `stmt_ms` is empty until
+  a rebuild has landed in the db. Closure-head VIEWS are excluded from the
+  counts (counting one materializes the full closure).
+- **`examples/perf-rails.dl`** — cardinality-blowup + slow-rule diags over the
+  telemetry built-ins with budget facts; merge it beside the program under
+  watch.
+- **Multi-file one-shot merge** — `dl a.dl b.dl` now merges ALL positionals
+  into one program for every one-shot mode (run/check/lsp/hook/mcp/verify/
+  changed/watch), as the help text always claimed; previously everything
+  after the first file was silently ignored. An explicit multi-file merge
+  runs in-process (the daemon serves its own loaded set).
+- **`closure-unpinned` lint in `dl_diag`** — a `?` query on a closure head
+  with both endpoints free warns with the pin hint (the lint twin of the
+  runtime guard below).
+
 - **`git_ref(repo, refname, kind, sha)` built-in** — ref inventory across the
   self repo and every config repo: one row per branch/tag/remote ref plus a
   `("HEAD", "head")` row, annotated tags peeled to their commit.
@@ -47,6 +65,27 @@ tags consumed by cargo-dist.
     its provider drops it).
   - `vendored-drift.dl` — a `third_party/` copy vs its upstream config repo by
     content address: `in_sync` / `drift` / `local_only`.
+
+### Changed
+- **Non-recursive derived rules evaluate in ONE pass.** `rebuild_derived` now
+  splits each stratum into rel-level dependency components (Tarjan,
+  dependencies first); only genuinely recursive components iterate to a
+  fixpoint. Previously every statement re-ran until a whole-stratum delta hit
+  zero, so every expensive non-recursive rule paid its cost twice (measured:
+  a 40s join statement executed 2x per tick).
+- **Unpinned closure queries are guarded.** A `?` on a closure head that
+  falls through to the SQL reachability view is refused loudly when the edge
+  rel exceeds `DL_CLOSURE_QUERY_MAX_EDGES` (default 20k, `0` disables) — a
+  LIMIT cannot short-circuit the view, so on a dense graph it is effectively
+  unbounded (measured minutes of CPU on a 471k-edge flow graph). Both-pinned
+  closure queries now answer as an existence probe via the seeded
+  condensation walk.
+- **`flow-interproc.dl` / `taint.dl` sym bridge is an equality join.** The
+  per-pair `replace(qual, bare, "") != qual` suffix test (unindexable; ~25M
+  string evals, 40s per fixpoint pass on this repo) is replaced by
+  `call_edge_bare`, which strips the repo qualifier once per `call_edge` row;
+  the interproc hops join on it by equality. Cold derived phase on this
+  repo: 130s+ -> 1.4s.
 
 ### Fixed
 - **`Engine::rel_rows` no longer drops rows containing non-text columns.**

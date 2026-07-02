@@ -93,3 +93,25 @@ fn dl_diag_is_reserved() {
     assert!(err.contains("built-in") || err.contains("dl self-diagnostics"),
         "reserved-name error expected:\n{err}");
 }
+
+/// (new) The unpinned-closure-query lint: a `?` on a closure head with both
+/// endpoints free warns (code closure-unpinned, with the pin hint) — the lint
+/// twin of the runtime DL_CLOSURE_QUERY_MAX_EDGES guard. A pinned query on the
+/// same head is silent.
+#[test]
+fn warns_on_unpinned_closure_query() {
+    let d = sandbox("closure_unpinned");
+    fs::write(d.join("walk.dl"),
+        "rel e(a: text, b: text).\ne(\"x\", \"y\").\n\
+         rel reach(from: text, to: text).\nreach(a, b) <- closure(e).\n\
+         ? reach(from, to).\n").unwrap();
+    fs::write(d.join("pinned.dl"),
+        "rel e2(a: text, b: text).\ne2(\"x\", \"y\").\n\
+         rel reach2(from: text, to: text).\nreach2(a, b) <- closure(e2).\n\
+         ? reach2(\"x\", to).\n").unwrap();
+    let (code, out, err) = run(&d, PROBE, &[]);
+    assert_eq!(code, 0, "stderr: {err}");
+    assert!(out.contains("closure-unpinned") && out.contains("walk.dl"),
+        "unpinned query flagged:\n{out}");
+    assert!(!out.contains("pinned.dl\t"), "pinned query silent:\n{out}");
+}

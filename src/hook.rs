@@ -92,8 +92,8 @@ fn rels_via_daemon(program: Option<&str>, root: &Path) -> Result<EmitRels> {
 
 /// Cold in-process tick (the no-daemon fallback): open a fresh db, tick, read the
 /// emit rels. `broken` if the program has a type error.
-fn rels_inproc(program: Option<&str>, db_path: Option<&str>, root: &Path) -> Result<EmitRels> {
-    let files = crate::resolve_programs(program, root)?;
+fn rels_inproc(programs: &[String], db_path: Option<&str>, root: &Path) -> Result<EmitRels> {
+    let files = crate::resolve_programs(programs, root)?;
     let (mut prog, type_diags, _) = crate::prepare_paths(&files)?;
     // `?` queries and `gen` never run from a hook tick: emit/observe, not codegen.
     prog.items.retain(|i| !matches!(i, ast::Item::Query(_) | ast::Item::Gen(_)));
@@ -118,7 +118,7 @@ fn rels_inproc(program: Option<&str>, db_path: Option<&str>, root: &Path) -> Res
 /// fallback), emit the harness hook JSON. Exit 0 for a well-formed program (block
 /// rides the JSON, not the code), 1 if the program is broken (user-facing only,
 /// never fed to the agent — same 1/2 split as `--check`).
-pub fn run_hook(program: Option<&str>, db_path: Option<&str>, root: PathBuf) -> Result<i32> {
+pub fn run_hook(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Result<i32> {
     // Drain stdin (the harness pipes the event); the condition reads the agent
     // built-ins, so the live payload isn't threaded into a relation yet. Feeding
     // it in as a `hook_event` rel is the next increment.
@@ -128,16 +128,16 @@ pub fn run_hook(program: Option<&str>, db_path: Option<&str>, root: PathBuf) -> 
     // Prefer the daemon (primary mode): it already re-ticked on the agent's edit,
     // so the emit rels are fresh — read them, don't recompute. Fall back to a cold
     // in-process tick when no daemon serves this root, or if attach fails.
-    let rels = if crate::daemon::enabled_for(&root) && db_path.is_none() {
-        match rels_via_daemon(program, &root) {
+    let rels = if crate::daemon::enabled_for(&root) && db_path.is_none() && programs.len() <= 1 {
+        match rels_via_daemon(programs.first().map(|s| s.as_str()), &root) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("[daemon] hook attach failed, in-process: {e}");
-                rels_inproc(program, db_path, &root)?
+                rels_inproc(programs, db_path, &root)?
             }
         }
     } else {
-        rels_inproc(program, db_path, &root)?
+        rels_inproc(programs, db_path, &root)?
     };
     if rels.broken {
         return Ok(1);

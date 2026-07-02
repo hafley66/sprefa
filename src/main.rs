@@ -252,22 +252,23 @@ fn main() -> Result<()> {
             db = Some(dir.join("cache.db").to_string_lossy().into_owned());
         }
     }
-    // One-shot modes consume a single program (or discovery when empty); only
-    // the daemon merges multiple positionals today.
-    let program = cli.programs.first().map(|s| s.as_str());
+    // Every one-shot mode takes the full positional set: multiple files merge
+    // into one program in the given order (a rail file beside the program it
+    // watches). Empty = `.dl/*.dl` discovery inside resolve_programs.
+    let programs = &cli.programs;
     if cli.lsp || cli.stdio {
-        sprefa_v5::run_lsp(program, db.as_deref(), root)
+        sprefa_v5::run_lsp(programs, db.as_deref(), root)
     } else if cli.hook {
         // Harness-hook: stdin event -> tick -> stdout hook JSON. Exit 0 normally
         // (block rides the JSON), 1 if the program is broken (user-facing only).
-        let code = sprefa_v5::hook::run_hook(program, db.as_deref(), root)?;
+        let code = sprefa_v5::hook::run_hook(programs, db.as_deref(), root)?;
         std::process::exit(code);
     } else if cli.mcp {
-        sprefa_v5::mcp::run_mcp(program, db.as_deref(), root)
+        sprefa_v5::mcp::run_mcp(programs, db.as_deref(), root)
     } else if cli.check || cli.diag_json {
         // Exit contract: 0 clean, 2 rail violations (Claude Code's blocking-hook
         // code; stderr feeds the agent), 1 broken program (user-facing).
-        let errors = sprefa_v5::run_check(program, db.as_deref(), root, cli.diag_json)?;
+        let errors = sprefa_v5::run_check(programs, db.as_deref(), root, cli.diag_json)?;
         if errors > 0 {
             eprintln!("{errors} error-severity diagnostic(s) found");
             std::process::exit(2);
@@ -275,14 +276,14 @@ fn main() -> Result<()> {
         Ok(())
     } else if let Some(cmd) = cli.verify.as_deref() {
         // Transactional codemod: apply gen edits, run the checker, keep-if-pass.
-        let kept = sprefa_v5::run_verify(program, db.as_deref(), root, cmd)?;
+        let kept = sprefa_v5::run_verify(programs, db.as_deref(), root, cmd)?;
         if !kept { std::process::exit(1); }
         Ok(())
     } else if !cli.changed.is_empty() {
-        sprefa_v5::run_changed(program, db.as_deref(), root, cli.changed)
+        sprefa_v5::run_changed(programs, db.as_deref(), root, cli.changed)
     } else if cli.watch {
-        sprefa_v5::run_watch(program, db.as_deref(), root)
+        sprefa_v5::run_watch(programs, db.as_deref(), root)
     } else {
-        sprefa_v5::run_file(program, db.as_deref(), root, cli.query_json)
+        sprefa_v5::run_file(programs, db.as_deref(), root, cli.query_json)
     }
 }

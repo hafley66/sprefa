@@ -14,6 +14,8 @@ mod changed;
 mod changed_line;
 mod clock_lock;
 mod closure_incremental_bench;
+mod closure_query_guard;
+mod perf_rels;
 mod cmd_op;
 mod comment_op;
 mod config_repos;

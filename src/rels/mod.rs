@@ -45,6 +45,7 @@ mod analysis;
 mod catalog;
 mod embed;
 mod git;
+mod perf;
 mod propose;
 mod scip;
 
@@ -52,6 +53,7 @@ use analysis::{AgentKind, DlDiagKind, TypeLggKind, TypeShapeKind};
 use catalog::CatalogKind;
 use embed::EmbedKind;
 use git::{ChangedKind, ChangedLineKind, CreatedKind, GitRefKind, RevBehindKind};
+use perf::PerfKind;
 use propose::{ProposeCloneKind, ProposeExtractKind};
 use scip::ScipKind;
 
@@ -89,7 +91,7 @@ pub trait RelKind: Sync {
 pub fn rel_kinds() -> &'static [&'static dyn RelKind] {
     &[&ChangedKind, &ChangedLineKind, &CreatedKind, &GitRefKind, &RevBehindKind,
       &AgentKind, &DlDiagKind, &TypeShapeKind, &TypeLggKind, &CatalogKind,
-      &ScipKind, &ProposeExtractKind, &ProposeCloneKind, &EmbedKind]
+      &ScipKind, &ProposeExtractKind, &ProposeCloneKind, &EmbedKind, &PerfKind]
 }
 
 /// Flattened column decls across the registry, for `all_builtin_decls` /

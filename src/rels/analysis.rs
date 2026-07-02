@@ -136,11 +136,37 @@ fn validate_dl_source(content: &str, path: &str) -> Vec<DlDiagRow> {
         Ok(p) => p,
         Err(e) => return vec![(path.into(), 1, 0, 1, 0, "error".into(), "parse".into(), e.to_string())],
     };
-    crate::typecheck::check_and_normalize(&mut prog, path).into_iter().map(|d| {
+    let mut rows: Vec<DlDiagRow> = crate::typecheck::check_and_normalize(&mut prog, path).into_iter().map(|d| {
         let (l0, c0) = offset_to_line_col(content, d.span.0);
         let (l1, c1) = offset_to_line_col(content, d.span.1);
         (path.to_string(), l0, c0, l1, c1, d.severity.as_str().to_string(), d.code, d.msg)
-    }).collect()
+    }).collect();
+    // Unpinned closure query lint: `? reach(a, b)` on a closure head evaluates
+    // the SQL reachability VIEW, which materializes the FULL relation (a LIMIT
+    // does not short-circuit the UNION + recursive CTE) — unbounded on a dense
+    // edge rel; the runtime guard (DL_CLOSURE_QUERY_MAX_EDGES) will refuse it
+    // at tick time. Flag it at lint time so the author pins an endpoint first.
+    let closure_heads: std::collections::HashSet<&str> = prog.items.iter()
+        .filter_map(|i| match i {
+            crate::ast::Item::Rule(r) if r.closure_edge().is_some() => Some(r.head.rel.as_str()),
+            _ => None,
+        }).collect();
+    for item in &prog.items {
+        let crate::ast::Item::Query(q) = item else { continue };
+        if !closure_heads.contains(q.head.rel.as_str()) || q.head.terms.len() != 2 { continue; }
+        let unpinned = q.head.terms.iter()
+            .all(|t| matches!(t, crate::ast::Term::Var(_) | crate::ast::Term::Wild));
+        if !unpinned { continue; }
+        // Query nodes carry no span; locate the `? rel(` text directly.
+        let off = content.find(&format!("? {}(", q.head.rel))
+            .or_else(|| content.find(&format!("?{}(", q.head.rel))).unwrap_or(0) as u32;
+        let (l, c) = offset_to_line_col(content, off);
+        rows.push((path.to_string(), l, c, l, c, "warning".into(), "closure-unpinned".into(),
+            format!("unpinned query on closure head `{0}` materializes the full reachability \
+                     relation (unbounded on a dense graph); pin one endpoint, e.g. \
+                     `? {0}(\"seed\", x)`, for the seeded fast path", q.head.rel)));
+    }
+    rows
 }
 
 impl RelKind for DlDiagKind {

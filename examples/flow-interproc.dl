@@ -40,23 +40,32 @@ rel flow_edge(from: text, to: text).
 # Intra-procedural: the local lift, as-is.
 flow_edge(a, b) <- df_edge(a, b).
 
+# Sym-space bridge: df_node.fn is the BARE sym (file::kind::name) while
+# call_edge's endpoints are repo-qualified (repo::file::kind::name). Strip the
+# leading repo segment ONCE per call_edge row so every downstream join is a plain
+# equality on the bare sym — indexable, O(|call_edge|) replace_re calls total.
+# (The old per-pair suffix test `replace(qual, bare, "") != qual` was unindexable:
+# ~25M string evals on this repo, 40s per fixpoint pass. An unresolved external
+# callee has no repo prefix; the strip leaves it unchanged and it simply never
+# matches a bare df_node.fn — same rows as before.)
+rel call_edge_bare(caller: text, callee: text, caller_q: text, callee_q: text).
+call_edge_bare(cb, eb, cq, eq) <-
+    call_edge(cq, eq, _),
+    cb = replace_re(cq, "^[^:]*::", ""),
+    eb = replace_re(eq, "^[^:]*::", "").
+
 # Interprocedural: an argument that feeds a call result flows into each parameter
 # of the resolved callee. Resolution rides call_edge — the SCIP-preferred
 # caller-sym -> callee-sym graph (scip_ref def_file when an index.scip is present,
-# single-def name resolution otherwise). df_node.fn is the BARE sym
-# (file::kind::name) and call_edge's endpoints are repo-qualified, so bridge the
-# two sym spaces with the suffix-containment idiom: removing the bare fn sym from
-# the qualified sym must change it (i.e. the bare sym is a suffix of the qualified).
-# This is context-insensitive (per caller, not per call site) and positional-blind
-# (every arg of a caller's call reaches every parameter of every callee it
-# resolves to) — both the conventional taint over-approximation.
+# single-def name resolution otherwise). This is context-insensitive (per caller,
+# not per call site) and positional-blind (every arg of a caller's call reaches
+# every parameter of every callee it resolves to) — both the conventional taint
+# over-approximation.
 flow_edge(arg, param) <-
     df_node(call_id, "call_res", _, caller_bare, _, _),
     df_edge(arg, call_id),
-    call_edge(caller_q, callee_q, _),
-    cstrip = replace(caller_q, caller_bare, ""), cstrip != caller_q,
-    df_node(param, "param", _, callee_bare, _, _),
-    estrip = replace(callee_q, callee_bare, ""), estrip != callee_q.
+    call_edge_bare(caller_bare, callee_bare, _, _),
+    df_node(param, "param", _, callee_bare, _, _).
 
 # Interprocedural, backward: the callee's returned value flows back OUT to the
 # caller's call result. The `ret` node is minted per return point (explicit
@@ -65,10 +74,8 @@ flow_edge(arg, param) <-
 # IN as an argument, transformed, and returned, reaches the caller's call_res.
 flow_edge(callee_ret, call_id) <-
     df_node(call_id, "call_res", _, caller_bare, _, _),
-    call_edge(caller_q, callee_q, _),
-    cstrip = replace(caller_q, caller_bare, ""), cstrip != caller_q,
-    df_node(callee_ret, "ret", _, callee_bare, _, _),
-    estrip = replace(callee_q, callee_bare, ""), estrip != callee_q.
+    call_edge_bare(caller_bare, callee_bare, _, _),
+    df_node(callee_ret, "ret", _, callee_bare, _, _).
 
 # Transitive value reachability across function boundaries.
 rel flow_reach(from: text, to: text).
@@ -81,8 +88,7 @@ flow_reach(a, b) <- closure(flow_edge).
 rel sink_callee(callee_sym: text).
 sink_callee(callee_q) <-
     df_node(_, "call_res", _, caller_bare, _, _),
-    call_edge(caller_q, callee_q, _),
-    cstrip = replace(caller_q, caller_bare, ""), cstrip != caller_q.
+    call_edge_bare(caller_bare, _, _, callee_q).
 
 rel flow_param_type(callee_sym: text, pos: int, ty: text).
 flow_param_type(callee_sym, pos, ty) <-
@@ -91,14 +97,14 @@ flow_param_type(callee_sym, pos, ty) <-
 
 # Node-level typed view: bind a specific param df_node to its declared type. The
 # df_param positional index counts only typed params (self skipped) so it aligns
-# with type_sig's pos; the suffix bridge ties the bare df_node.fn to the
-# qualified callee sym. This is the per-node "type-carrying" form the
-# function-level view above approximates.
+# with type_sig's pos; the bridge rel ties the bare df_node.fn to the qualified
+# callee sym. This is the per-node "type-carrying" form the function-level view
+# above approximates.
 rel flow_node_type(node: text, callee_sym: text, ty: text).
 flow_node_type(param, callee_q, ty) <-
     sink_callee(callee_q),
+    call_edge_bare(_, callee_bare, _, callee_q),
     df_node(param, "param", _, callee_bare, _, _),
-    estrip = replace(callee_q, callee_bare, ""), estrip != callee_q,
     df_param(param, pos),
     type_sig(callee_q, "param", pos, ty).
 

@@ -38,21 +38,26 @@ sanitizer_call("sanitize").
 sanitizer_call("quote").
 
 # ---- the flow graph (flow-interproc.dl, condensed) --------------------------
+# call_edge_bare strips the repo qualifier once per call_edge row so the sym-
+# space bridge (df_node.fn is bare, call_edge is repo-qualified) is a plain
+# indexable equality join, not a per-pair replace() suffix test.
+rel call_edge_bare(caller: text, callee: text).
+call_edge_bare(cb, eb) <-
+    call_edge(cq, eq, _),
+    cb = replace_re(cq, "^[^:]*::", ""),
+    eb = replace_re(eq, "^[^:]*::", "").
+
 rel flow_edge(from: text, to: text).
 flow_edge(a, b) <- df_edge(a, b).
 flow_edge(arg, param) <-
     df_node(call_id, "call_res", _, caller_bare, _, _),
     df_edge(arg, call_id),
-    call_edge(caller_q, callee_q, _),
-    cstrip = replace(caller_q, caller_bare, ""), cstrip != caller_q,
-    df_node(param, "param", _, callee_bare, _, _),
-    estrip = replace(callee_q, callee_bare, ""), estrip != callee_q.
+    call_edge_bare(caller_bare, callee_bare),
+    df_node(param, "param", _, callee_bare, _, _).
 flow_edge(callee_ret, call_id) <-
     df_node(call_id, "call_res", _, caller_bare, _, _),
-    call_edge(caller_q, callee_q, _),
-    cstrip = replace(caller_q, caller_bare, ""), cstrip != caller_q,
-    df_node(callee_ret, "ret", _, callee_bare, _, _),
-    estrip = replace(callee_q, callee_bare, ""), estrip != callee_q.
+    call_edge_bare(caller_bare, callee_bare),
+    df_node(callee_ret, "ret", _, callee_bare, _, _).
 
 # ---- bind call_res nodes to their callee name -------------------------------
 # df_node id is minted at the call site; call_site carries the bare callee text

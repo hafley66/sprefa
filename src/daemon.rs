@@ -221,7 +221,7 @@ impl Daemon {
         if !self.discovery_mode {
             return Ok(());
         }
-        let files = crate::resolve_programs(None, &self.root)?;
+        let files = crate::resolve_programs(&[], &self.root)?;
         let mut canon: Vec<PathBuf> = files
             .iter()
             .map(|f| std::fs::canonicalize(f).unwrap_or_else(|_| f.clone()))
@@ -483,7 +483,7 @@ pub fn run_daemon(
         // Rootless serving daemon: tolerate an empty `.dl/` (no discovery
         // files) so it starts empty and grows via the `load` RPC. A non-empty
         // discovery or an explicit program file set still works as before.
-        crate::resolve_programs(None, &eng_root).unwrap_or_default()
+        crate::resolve_programs(&[], &eng_root).unwrap_or_default()
     } else {
         programs.iter().map(PathBuf::from).collect()
     };

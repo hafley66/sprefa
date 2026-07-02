@@ -23,8 +23,8 @@ use crate::{ast, db};
 
 use tree_sitter::Parser;
 
-pub fn run_lsp(program: Option<&str>, db_path: Option<&str>, root: PathBuf) -> Result<()> {
-    let files = crate::resolve_programs(program, &root)?;
+pub fn run_lsp(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Result<()> {
+    let files = crate::resolve_programs(programs, &root)?;
     // prepare_paths resolves typed path literals (`fs:`/`glob:`) to canonical
     // text before any tick and keeps the TypeDiags: a brand mismatch / escaping
     // literal becomes a squiggle on the `.dl` program file itself (not on a

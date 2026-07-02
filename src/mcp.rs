@@ -201,8 +201,8 @@ fn local_pump(prog: &ast::Program, db_path: Option<&str>, root: PathBuf) -> Resu
 /// like `--hook`: when the daemon manages this root, this process is a thin
 /// adapter over its warm engine; otherwise (opt-out, explicit `--db`, or a
 /// failed attach) a cold in-process engine serves hermetically.
-pub fn run_mcp(program: Option<&str>, db_path: Option<&str>, root: PathBuf) -> Result<()> {
-    let files = crate::resolve_programs(program, &root)?;
+pub fn run_mcp(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Result<()> {
+    let files = crate::resolve_programs(programs, &root)?;
     let (mut prog, type_diags, _) = crate::prepare_paths(&files)?;
     prog.items.retain(|i| !matches!(i, ast::Item::Query(_) | ast::Item::Gen(_)));
     let n_err = type_diags.iter().filter(|d| d.severity == ast::Severity::Error).count();
@@ -213,9 +213,9 @@ pub fn run_mcp(program: Option<&str>, db_path: Option<&str>, root: PathBuf) -> R
         anyhow::bail!("{n_err} program error(s)");
     }
     let ports = rpc_ports(&prog)?;
-    let mut pump = if crate::daemon::enabled_for(&root) && db_path.is_none() {
+    let mut pump = if crate::daemon::enabled_for(&root) && db_path.is_none() && programs.len() <= 1 {
         let attach = || -> Result<Pump> {
-            crate::daemon::ensure_daemon(&root, program)?;
+            crate::daemon::ensure_daemon(&root, programs.first().map(|s| s.as_str()))?;
             let stream = crate::daemon::connect(Some(&root))?;
             Ok(Pump::Daemon { stream, next_id: 1 })
         };

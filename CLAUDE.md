@@ -301,6 +301,35 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       cross-org rows), 218 shallow skips, 0 false diverged. Tests:
       tests/it/git_ref.rs, scip_want.rs, pin_skew.rs.
 
+- [x] **Perf-under-reactivity arc** (main, 2026-07-02): profiling
+      flow-interproc on this repo found four walls; three fixed + telemetry.
+      (1) `rebuild_derived` one-pass for non-recursive components:
+      `rel_components` splits each stratum by rel-level Tarjan (ascending
+      comp id = dependencies first; self-edges tracked separately), only
+      recursive components iterate — the old loop re-ran EVERY statement to
+      observe delta=0, a structural 2x on expensive rules (40s statement ran
+      twice). (2) Closure-query guard: unpinned/`?`-view closure queries
+      refused over `DL_CLOSURE_QUERY_MAX_EDGES` (20k default) — LIMIT does
+      NOT short-circuit the view (UNION + recursive CTE materialize first;
+      measured >10s for LIMIT 5 on 471k edges); both-pinned queries answer
+      via `run_reaches_pair` condensation walk; `closure-unpinned` warning in
+      dl_diag is the lint twin. (3) call_edge_bare equality bridge in
+      flow-interproc.dl + taint.dl kills the per-pair replace() suffix test
+      (~25M evals -> 2.5k row-local strips); cold derived 130s+ -> 1.4s.
+      (4) NEW `rel_count`/`stmt_ms` telemetry built-ins (src/rels/perf.rs;
+      `_stmt_ms` meta table written batched by rebuild_derived; closure VIEWS
+      excluded from counts — counting one materializes the closure, found by
+      dogfood hang) + examples/perf-rails.dl budget rails. BONUS: multi-file
+      one-shot merge fixed (`dl a.dl b.dl` silently dropped all but the first
+      positional in every one-shot mode; now merges, in-process, daemon gate
+      len<=1). MEASURED warm no-change tick: 1.56s, of which 515ms = the
+      type/call/dataflow full-corpus re-parse — the remaining known wall
+      (gap A; per-file fact cache keyed on content hash is the fix shape,
+      template refresh_module_rels_for_paths). Gaps B (full tick lacks
+      affected_derived scoping) and C (families dirty-mark unconditionally)
+      documented in chat_log/20260702.0. Tests: closure_query_guard.rs,
+      perf_rels.rs, dl_diag closure lint, rel_components units.
+
 ### Open (sprefa type graph)
 - [ ] Optional: migrate the deck graph (`examples/anim-self.dl` + anim AtlasPanel)
       from name-keyed `type_edge` to sym-keyed `type_link` + `type_entity` kinds

@@ -1,0 +1,42 @@
+# perf-rails.dl — the engine's own telemetry as lint rails.
+#
+# Two built-in relations turn tick telemetry into facts a rule can read:
+#   rel_count(rel, rows) — row count per declared relation. Derived rels report
+#       the PREVIOUS tick's counts (the refresh runs in the tick's source
+#       phase); under the daemon a rail converges one tick later.
+#   stmt_ms(rel, ms)     — wall ms of each derived rel's INSERT statements from
+#       its most recent rebuild (max across its rules/passes). Empty until a
+#       rebuild has landed in this db: a one-shot CLI run reports on the second
+#       invocation, the daemon on every tick after its first.
+#
+# Origin: the flow-interproc perf audit (2026-07-02) — a 471,406-row derived
+# rel and a 40-SECOND join statement were plainly visible in --profile /
+# --tick-audit output and invisible to every rail. These two rules make both a
+# diag. The usual culprits when they fire: a positional-blind hop (density), a
+# computed predicate joining columns of two different atoms (unindexable —
+# rewrite it as a row-local computation in its own rel + an equality join, see
+# call_edge_bare in flow-interproc.dl), or a missing pin on a closure query.
+#
+# A rail only sees the relations of the program it runs WITH — merge it with
+# the program under watch (multiple files merge into one program), or drop both
+# in <root>/.dl/ for the daemon's discovery mode:
+#
+#   dl examples/flow-interproc.dl examples/perf-rails.dl --root . --check
+#
+# Budgets are facts — edit to your repo's scale.
+
+rel row_budget(max: int).
+row_budget(500000).
+
+rel ms_budget(max: int).
+ms_budget(5000).
+
+rel diag(path: text, line: int, severity: text, code: text, msg: text).
+diag("(engine)", 1, "warning", "rel-blowup",
+     "relation `${r}` holds ${n} rows (budget ${max}); check the join shape feeding it") <-
+    rel_count(r, n), row_budget(max), n > max.
+diag("(engine)", 1, "warning", "slow-rule",
+     "rebuilding `${r}` took ${ms}ms in one statement (budget ${max}); look for an unindexable computed join predicate or a missing bridge rel") <-
+    stmt_ms(r, ms), ms_budget(max), ms > max.
+
+? diag(path, line, sev, code, msg).

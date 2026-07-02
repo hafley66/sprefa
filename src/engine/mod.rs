@@ -120,6 +120,20 @@ fn tick_log_ms() -> f64 {
         .and_then(|v| v.parse().ok()).unwrap_or(250.0))
 }
 
+/// Edge-count guard for a `?` query that would evaluate a closure VIEW. The
+/// view materializes the FULL reachability relation, and a LIMIT does not
+/// short-circuit it (the UNION + recursive CTE run before the first row emits
+/// — measured >10s for `LIMIT 5` on a 471k-edge graph, minutes unbounded).
+/// Pinned queries answer through the seeded condensation walk in microseconds;
+/// anything that falls through to the view on an edge rel bigger than this is
+/// refused loudly instead of hanging the tick.
+/// `DL_CLOSURE_QUERY_MAX_EDGES` overrides; 0 disables. Default 20k.
+static CLOSURE_QUERY_MAX_EDGES: OnceLock<usize> = OnceLock::new();
+fn closure_query_max_edges() -> usize {
+    *CLOSURE_QUERY_MAX_EDGES.get_or_init(|| std::env::var("DL_CLOSURE_QUERY_MAX_EDGES").ok()
+        .and_then(|v| v.parse().ok()).unwrap_or(20_000))
+}
+
 /// The built-in relations of the data-model contract (docs/data-model.md). A
 /// `.dl` program may not declare these names; they are registered with fixed
 /// schemas and refreshed each tick from the `_file` change-detection cache, so
@@ -397,6 +411,9 @@ pub fn builtin_rel_docs() -> &'static [(&'static str, &'static str, &'static str
         ("clock", "clock", "the current time bucket now/secs per named period, present EVERY tick (not edge-triggered like every); clock(300,b) binds b to a monotone int advancing once per 300s — join it to vary a digest or gate on cadence, no @next counter"),
         // effect drain: the @async/@stream job queue as a query rel.
         ("effect_log", "effect", "the @async/@stream drain queue: one row per request (id, kind, head rel, state queued/running/done/failed, args JSON, req_tx); the dl-native call log, queryable live and parity-comparable to an external cache's call log"),
+        // engine telemetry as facts: perf rails are ordinary dl rules.
+        ("rel_count", "perf", "row count per declared relation at refresh time; derived rels report the previous tick's counts (source-phase refresh, one-tick lag) — the cardinality-blowup rail joins here"),
+        ("stmt_ms", "perf", "wall ms of each derived rel's INSERT statements from its most recent rebuild (max across rules/passes); empty until a rebuild has landed in this db, so a one-shot CLI run reports on the second invocation — the slow-rule rail joins here"),
         // self: the catalog documents itself.
         ("rel_catalog", "meta", "this table: every built-in relation with its group, columns, and one-line doc"),
         ("fn_catalog", "meta", "every scalar function callable in a head or comparison with its arity, group, and one-line doc; sourced from fn_docs"),
@@ -1259,6 +1276,47 @@ fn stratify(rules: &[&Rule]) -> Result<Vec<Vec<usize>>> {
     Ok(groups)
 }
 
+/// Split one stratum's rules into rel-level dependency components, dependencies
+/// first. Rules sharing a head rel form one node; a component is recursive when
+/// its rels are mutually reachable (multi-rel SCC) or a rule reads its own head.
+/// `stratify` groups by negation depth, so a stratum can hold long acyclic
+/// chains — each such component needs exactly one execution pass, not a fixpoint.
+fn rel_components(group: &[usize], rules: &[&Rule]) -> Vec<(Vec<usize>, bool)> {
+    let mut id: HashMap<&str, u32> = HashMap::new();
+    let mut nheads = 0u32;
+    for &ri in group {
+        id.entry(rules[ri].head.rel.as_str()).or_insert_with(|| { nheads += 1; nheads - 1 });
+    }
+    let mut adj = vec![Vec::new(); nheads as usize];
+    let mut self_edge = vec![false; nheads as usize];
+    for &ri in group {
+        let h = id[rules[ri].head.rel.as_str()];
+        for item in &rules[ri].body {
+            let atom = match item { BodyItem::Pos(a) | BodyItem::Neg(a) => a, _ => continue };
+            match id.get(atom.rel.as_str()) {
+                Some(&b) if b == h => self_edge[h as usize] = true, // tarjan skips self-loops
+                Some(&b) => adj[h as usize].push(b),
+                None => {} // reads a lower stratum / source rel: already final
+            }
+        }
+    }
+    let (comp, ncomp) = scc::tarjan(&adj);
+    // adj points head -> body dependency, and tarjan completes every SCC
+    // reachable from a node before the node's own, so ascending comp id is
+    // dependencies-first evaluation order.
+    let mut out: Vec<(Vec<usize>, bool)> = vec![(Vec::new(), false); ncomp];
+    let mut comp_size = vec![0usize; ncomp];
+    for (n, &c) in comp.iter().enumerate() {
+        comp_size[c as usize] += 1;
+        if self_edge[n] { out[c as usize].1 = true; }
+    }
+    for (c, size) in comp_size.iter().enumerate() { if *size > 1 { out[c].1 = true; } }
+    for &ri in group {
+        out[comp[id[rules[ri].head.rel.as_str()] as usize] as usize].0.push(ri);
+    }
+    out
+}
+
 type Bind = HashMap<String, Value>;
 /// (repo slug, path, rev) -> (content hash, mtime secs, size bytes). The repo
 /// slug is the third coordinate so two repos sharing a path do not collide.
@@ -2068,6 +2126,11 @@ impl Engine {
                  mtime INTEGER DEFAULT 0, size INTEGER DEFAULT 0, PRIMARY KEY (repo, path, rev));
              CREATE TABLE IF NOT EXISTS _prov (rel TEXT, repo TEXT NOT NULL DEFAULT '', path TEXT, src TEXT, PRIMARY KEY (rel, repo, path, src));
              CREATE TABLE IF NOT EXISTS _reldigest (rel TEXT PRIMARY KEY, digest TEXT);
+             -- Wall ms of each derived rel's INSERT statements from its most
+             -- recent rebuild (max across the rel's rules/passes). Written
+             -- batched by rebuild_derived; projected by the perf built-in
+             -- stmt_ms so a .dl rail can watch its own rule cost.
+             CREATE TABLE IF NOT EXISTS _stmt_ms (rel TEXT PRIMARY KEY, ms INTEGER NOT NULL);
              -- CST node path attribution (not a public rel column): maps a
              -- node id to its source path so the delta refresh can prune one
              -- file's `node` rows. The `node.file` column is a content FileId
@@ -3770,19 +3833,58 @@ impl Engine {
     #[tracing::instrument(skip_all, fields(n_rules = derived_rules.len(), n_rels = derived_rels.len()), level = "debug")]
     fn rebuild_derived(&self, derived_rules: &[&Rule], derived_rels: &[String]) -> Result<()> {
         for rel in derived_rels { self.db.conn().execute(&format!("DELETE FROM {}", tbl(rel)), [])?; }
-        // Evaluate stratum by stratum: each runs a positive (monotone) semi-naive
-        // fixpoint to convergence, so a higher stratum's negation reads relations
-        // that lower strata have already finished.
+        // Evaluate stratum by stratum: each higher stratum's negation reads
+        // relations that lower strata have already finished. Within a stratum,
+        // rules split into rel-level dependency components (dependencies first).
+        // Only a recursive component iterates to a fixpoint; an acyclic one runs
+        // each rule exactly once — the loop's extra pass existed only to observe
+        // delta=0, which doubled the cost of every expensive non-recursive join.
+        // Per-rel statement cost of THIS rebuild (max ms across a rel's rules
+        // and passes), flushed into `_stmt_ms` once at the end so the perf
+        // built-in `stmt_ms` can serve it to rails next tick.
+        let mut stmt_ms: HashMap<String, i64> = HashMap::new();
+        let mut timed = |rel: &str, sql: &str| -> Result<usize> {
+            let t = std::time::Instant::now();
+            let n = self.db.conn().execute(sql, [])?;
+            let ms = t.elapsed().as_millis() as i64;
+            let e = stmt_ms.entry(rel.to_string()).or_insert(0);
+            if ms > *e { *e = ms; }
+            Ok(n)
+        };
         for group in stratify(derived_rules)? {
-            let mut iters = 0;
-            loop {
-                let mut delta = 0usize;
-                for &ri in &group { delta += self.db.conn().execute(&lower_rule(derived_rules[ri], &self.rels)?, [])?; }
-                iters += 1;
-                if delta == 0 { break; }
-                if iters > 100_000 { bail!("fixpoint did not converge"); }
+            for (comp_rules, recursive) in rel_components(&group, derived_rules) {
+                let stmts: Vec<(&str, String)> = comp_rules.iter()
+                    .map(|&ri| Ok((derived_rules[ri].head.rel.as_str(),
+                                   lower_rule(derived_rules[ri], &self.rels)?)))
+                    .collect::<Result<_>>()?;
+                if !recursive {
+                    for (rel, sql) in &stmts { timed(rel, sql)?; }
+                    continue;
+                }
+                let mut iters = 0;
+                loop {
+                    let mut delta = 0usize;
+                    for (rel, sql) in &stmts { delta += timed(rel, sql)?; }
+                    iters += 1;
+                    if delta == 0 { break; }
+                    if iters > 100_000 { bail!("fixpoint did not converge"); }
+                }
             }
         }
+        self.save_stmt_ms(&stmt_ms)?;
+        Ok(())
+    }
+
+    /// Flush one rebuild's per-rel statement timings into `_stmt_ms` (replace
+    /// the rebuilt rels' rows, leave the rest — the last known cost of a rel
+    /// that did not rebuild this tick stays visible to rails).
+    fn save_stmt_ms(&self, stmt_ms: &HashMap<String, i64>) -> Result<()> {
+        if stmt_ms.is_empty() { return Ok(()); }
+        let names: Vec<String> = stmt_ms.keys().map(|r| format!("'{}'", r.replace('\'', "''"))).collect();
+        self.db.exec(&format!("DELETE FROM _stmt_ms WHERE rel IN ({})", names.join(",")))?;
+        let rows: Vec<Vec<Value>> = stmt_ms.iter()
+            .map(|(rel, ms)| vec![Value::Text(rel.clone()), Value::Int(*ms)]).collect();
+        self.db.insert_rows("_stmt_ms", &["rel", "ms"], &rows)?;
         Ok(())
     }
 
@@ -4033,6 +4135,33 @@ impl Engine {
         Ok(())
     }
 
+    /// Both endpoints pinned: an existence probe answered by the seeded walk —
+    /// same row semantics as the view's doubly-pinned slice (one row when src
+    /// reaches dst, zero otherwise), without evaluating the view.
+    fn run_reaches_pair(&self, q: &Query, cc: &ClosureCache, src: &str, dst: &str) -> Result<()> {
+        let meta = self.rels.get(&q.head.rel).unwrap();
+        let header = |pos: usize| match &q.head.terms[pos] {
+            Term::Var(v) => v.clone(),
+            _ => meta.col_name(pos).to_string(),
+        };
+        let hit = match (cc.id.get(src), cc.id.get(dst)) {
+            (Some(&sid), Some(&did)) => scc::reaches_from(&cc.cond, sid).contains(&did),
+            _ => false,
+        };
+        let rows: Vec<Vec<serde_json::Value>> = if hit {
+            vec![vec![serde_json::Value::String(src.to_string()),
+                      serde_json::Value::String(dst.to_string())]]
+        } else { Vec::new() };
+        if self.query_json {
+            emit_query_json(&q.head.rel, &[header(0), header(1)], &rows);
+        } else {
+            println!("? {} => {}\t{}", q.head.rel, header(0), header(1));
+            if hit { println!("  {src}\t{dst}"); }
+            println!("  ({} rows)\n", rows.len());
+        }
+        Ok(())
+    }
+
     /// Evaluate a closure-seedable derived rule (one closure endpoint pinned to a
     /// literal) by a seeded BFS over the cross-tick condensation, writing its head
     /// table. This is the rule-body twin of `run_reaches_point`: same walk, but
@@ -4146,12 +4275,36 @@ impl Engine {
                             return self.run_reaches_point(q, cc, &seed, true),
                         (None, Some(seed)) if matches!(q.head.terms[0], Term::Var(_)) =>
                             return self.run_reaches_point(q, cc, &seed, false),
+                        // Both pinned: an existence probe. The view pays the full
+                        // materialization for it (constraints don't push into the
+                        // recursive CTE), the condensation walk answers directly.
+                        (Some(src), Some(dst)) => return self.run_reaches_pair(q, cc, &src, &dst),
                         _ => {}
                     }
                 }
             }
+            // Anything still here evaluates the closure VIEW = materializing full
+            // reachability (a LIMIT does not short-circuit it). Refuse loudly on a
+            // big edge rel instead of hanging the tick.
+            let cap = closure_query_max_edges();
+            if cap > 0 {
+                let n: i64 = self.db.conn().query_row(
+                    &format!("SELECT COUNT(*) FROM {}", tbl(edge)), [], |r| r.get(0))?;
+                if n as usize > cap {
+                    bail!("closure query `{0}` would evaluate the reachability view over edge \
+                           rel `{edge}` ({n} rows > cap {cap}), which is unbounded on a graph \
+                           this dense; pin an endpoint (e.g. `? {0}(\"seed\", x)`) for the \
+                           seeded fast path, or raise/disable the guard with \
+                           DL_CLOSURE_QUERY_MAX_EDGES=<n|0>", q.head.rel);
+                }
+            }
         }
         let res = self.query_one_sql(q)?;
+        self.print_query_result(&res);
+        Ok(())
+    }
+
+    fn print_query_result(&self, res: &QueryResult) {
         if self.query_json {
             emit_query_json(&res.rel, &res.columns, &res.rows);
         } else {
@@ -4161,7 +4314,6 @@ impl Engine {
             }
             println!("  ({} rows)\n", res.rows.len());
         }
-        Ok(())
     }
 
     /// Run one `?` query through the SQL view path only (no closure-cache
@@ -5637,3 +5789,61 @@ fn run_ts(content: &str, lang: &str, query_str: &str) -> Result<Vec<(i64, i64, V
     Ok(out)
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn program(src: &str) -> Program {
+        crate::parse::parse(crate::lex::lex(src).unwrap()).unwrap()
+    }
+
+    /// One stratum can hold a long acyclic chain (stratify groups by negation
+    /// depth, not SCC). rel_components must order it dependencies-first and
+    /// mark every link non-recursive — each then runs exactly one pass.
+    #[test]
+    fn rel_components_orders_acyclic_chain_dependencies_first() {
+        let prog = program(
+            "rel s(x: text). rel a(x: text). rel b(x: text). rel c(x: text).\n\
+             s(\"seed\").\n\
+             c(x) <- b(x). a(x) <- s(x). b(x) <- a(x).");
+        let rules: Vec<&Rule> = prog.items.iter()
+            .filter_map(|i| match i { Item::Rule(r) if !r.body.is_empty() => Some(r), _ => None })
+            .collect();
+        let groups = stratify(&rules).unwrap();
+        assert_eq!(groups.len(), 1, "all positive: one stratum");
+        let comps = rel_components(&groups[0], &rules);
+        assert_eq!(comps.len(), 3);
+        assert!(comps.iter().all(|(_, recursive)| !recursive), "chain is acyclic");
+        let order: Vec<&str> = comps.iter()
+            .map(|(ris, _)| rules[ris[0]].head.rel.as_str()).collect();
+        assert_eq!(order, ["a", "b", "c"], "dependencies evaluate first");
+    }
+
+    /// Self-recursion and mutual recursion both mark their component recursive
+    /// (the fixpoint loop), while an independent plain rel in the same stratum
+    /// stays single-pass.
+    #[test]
+    fn rel_components_flags_recursive_components() {
+        let prog = program(
+            "rel s(x: text). rel e(x: text, y: text). rel t(x: text).\n\
+             rel p(x: text). rel q(x: text). rel lone(x: text).\n\
+             s(\"seed\"). e(\"seed\", \"z\").\n\
+             t(x) <- s(x). t(y) <- t(x), e(x, y).\n\
+             p(x) <- q(x). q(x) <- p(x). q(x) <- s(x).\n\
+             lone(x) <- s(x).");
+        let rules: Vec<&Rule> = prog.items.iter()
+            .filter_map(|i| match i { Item::Rule(r) if !r.body.is_empty() => Some(r), _ => None })
+            .collect();
+        let groups = stratify(&rules).unwrap();
+        assert_eq!(groups.len(), 1);
+        let comps = rel_components(&groups[0], &rules);
+        let by_head = |name: &str| comps.iter()
+            .find(|(ris, _)| ris.iter().any(|&ri| rules[ri].head.rel == name))
+            .unwrap_or_else(|| panic!("no component holds {name}"));
+        assert!(by_head("t").1, "self-recursive t iterates");
+        assert!(by_head("p").1, "mutually recursive p/q iterate");
+        assert_eq!(by_head("p").0.len(), 3, "p+q rules share one component");
+        assert!(!by_head("lone").1, "independent rel is single-pass");
+    }
+}
