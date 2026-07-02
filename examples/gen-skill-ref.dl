@@ -56,9 +56,7 @@ resolves(name) <- rel_catalog(name, _, _, _).
 resolves(op)   <- op_catalog(op, _, _, _).
 resolves(name) <- fn_catalog(name, _, _, _).
 
-rel diag(path: file, line: int, col: int, end_line: int, end_col: int,
-         severity: text, code: text, msg: text).
-diag("assets/sprefa-dl.skill.md", 0, 0, 0, 0, "error", "stale-skill-ref", name) <-
+diag(path: "assets/sprefa-dl.skill.md", line: 0, col: 0, end_line: 0, end_col: 0, severity: "error", code: "stale-skill-ref", msg: name) <-
     skill_claims(name), !resolves(name).
 
 ? diag(path, line, col, end_line, end_col, severity, code, msg).

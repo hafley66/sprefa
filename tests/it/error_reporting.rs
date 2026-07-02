@@ -47,7 +47,7 @@ fn failed_query_does_not_abort_the_chain() {
     let (code, out, err) = run(&d, concat!(
         "rel hit(p: file, l: int).\n",
         "hit(p, l) <- scan(\"src/**/*.rs\", p, rev), match(p, rev, /alpha/, l).\n",
-        "? hit(p).\n",          // wrong arity: fails at eval, not typecheck
+        "? hit(z).\n",          // wrong arity (z is not a column, so no shorthand): fails at eval, not typecheck
         "? hit(p, l).\n",
     ));
     assert!(err.contains("query `hit` failed"), "first query reports its failure:\n{err}");

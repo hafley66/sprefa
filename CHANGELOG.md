@@ -6,6 +6,39 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-02
+
+### Changed
+- **`diag` is now a fixed-schema built-in relation, not a magic name.** It was
+  a user-declared rel whose columns the engine mapped BY NAME at read time —
+  which meant every rail file carried its own `rel diag(...)` decl, and the
+  merged `.dl/` discovery namespace collided the moment two files declared it
+  with different columns. `diag` is now engine-declared with a fixed 9-col
+  schema `(path, line, col, end_line, end_col, severity, code, msg, hint)`,
+  reserved like every other built-in (a `rel diag(...)` decl is now an error
+  pointing you at the sink form). `path` is TEXT so a synthetic origin
+  (`"(engine)"`, `"(checked-notes)"`) is not file-checked away. No compatibility
+  fallback — every example and test writes the built-in directly. **Migration:
+  drop the `rel diag(...)` line and write only the columns you use** (see below).
+
+### Added
+- **Named args in rule heads.** `diag(path: p, line: l, msg: m) <- ...` names
+  only the columns a rule writes; every unnamed column pads to `NULL` (the
+  reader defaults it — severity `warn`, `end_line = line`, ints `0`). Works for
+  any rel head, not just `diag`. A head can't mix named args with an aggregate
+  call (the two shapes are incompatible).
+- **Bare-name shorthand with no anchor.** A fully-positional atom whose terms
+  are all Vars naming columns, and which has fewer terms than the rel has
+  columns, resolves as all-puns — `diag(path, line, msg)` ==
+  `diag(path: path, line: line, msg: msg)`, the JS `{a, b}` / Rust `Foo { c }`
+  struct shorthand. It only fires when the atom would otherwise be an arity
+  error, so a genuinely positional atom (term count == arity) is never
+  reinterpreted and existing programs are untouched. `? diag(path, line, msg)`
+  just works.
+- **`ast::Value::Null`** — the value model gains a null so a padded head column
+  round-trips to SQL `NULL` through both the derived (SQL) and source-rule
+  (Rust) head-projection paths.
+
 ## [0.3.0] - 2026-07-02
 
 ### Added

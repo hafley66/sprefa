@@ -17,8 +17,6 @@
 #   dl examples/lint-docs.dl --root . --check    # human, exit 1 on any row
 #   dl examples/lint-docs.dl --root . --lsp      # squiggles in the editor
 
-rel diag(path: file, line: int, col: int, end_line: int, end_col: int,
-         severity: text, code: text, msg: text).
 
 # ---- Rule 1: needs-doc -------------------------------------------------------
 #
@@ -65,8 +63,7 @@ needs_doc(s, f, l, n) <-
   total_refs(s, n), n > 2,
   !documented(s).
 
-diag(f, l, 1, l, 1, "warn", "needs-doc",
-     "${s} is new and has ${n} refs but no doc; please document this large and important component") <-
+diag(path: f, line: l, col: 1, end_line: l, end_col: 1, severity: "warn", code: "needs-doc", msg: "${s} is new and has ${n} refs but no doc; please document this large and important component") <-
   needs_doc(s, f, l, n).
 
 # ---- Rule 2: chat-comment ----------------------------------------------------
@@ -133,8 +130,7 @@ chat_comment(s, f, l, actual, bud) <-
   budget(s, bud),
   actual > bud.
 
-diag(f, l, 1, l, 1, "warn", "chat-comment",
-     "${s}: ${actual} /// lines for ${ar} inputs (budget ${bud}); trim the chat comment") <-
+diag(path: f, line: l, col: 1, end_line: l, end_col: 1, severity: "warn", code: "chat-comment", msg: "${s}: ${actual} /// lines for ${ar} inputs (budget ${bud}); trim the chat comment") <-
   chat_comment(s, f, l, actual, bud), fn_arity(s, ar).
 
 ? diag(path, line, col, end_line, end_col, severity, code, msg).

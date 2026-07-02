@@ -5,7 +5,6 @@
 # `col`/`end_col` are 0-based byte columns of the offending span within `line`
 # (match's +2 trailing args bind the whole-match span). The LSP renders a
 # sub-line squiggle when set; --check ignores them. end_line defaults to line.
-rel diag(path: file, line: int, col: int, end_col: int, severity: text, code: text, msg: text).
 
 # ---- banned identifiers (CLAUDE.md style rule) --------------------------------
 rel banned_hit(p: file, l: int, c: int, ec: int, w: text).
@@ -15,7 +14,7 @@ banned_hit(p, l, c, ec, w) <-
 # (ProvenanceRecord, substrate_id), so \b and exact case both leak.
     match(p, rev, /(?i)(?<w>provenance|substrate|regime|load.?bearing)/, l, c, ec).
 
-diag(p, l, c, ec, "error", "banned-word", "banned identifier `${w}` (use source/base/mode)") <-
+diag(path: p, line: l, col: c, end_col: ec, severity: "error", code: "banned-word", msg: "banned identifier `${w}` (use source/base/mode)") <-
     banned_hit(p, l, c, ec, w), changed(p).
 
 # ---- no .conn() reachable from a loop outside the Db seam ----------------------
@@ -88,8 +87,7 @@ loop_reachable_fn(fn) <-
 # loop". The call_kind table is keyed by bare callee name (execute/
 # execute_batch -> write; prepare/query_row/query_map -> read); see
 # classify_call_kind in engine.rs for the table.
-diag(p, l, c, ec, "warn", "conn-loop-reachable",
-     "raw .conn() reachable from a loop; per-row write risk") <-
+diag(path: p, line: l, col: c, end_col: ec, severity: "warn", code: "conn-loop-reachable", msg: "raw .conn() reachable from a loop; per-row write risk") <-
     conn_fn(fn, p, l, c, ec),
     call_kind(fn, "write"),
     loop_reachable_fn(fn),
@@ -121,5 +119,5 @@ rel unwrap_count(p: file, n: int).
 unwrap_count(p, count(l)) <- unwrap_hit(p, l, _, _), changed(p).
 
 # Squiggle the exact `.unwrap()` span on every over-budget line, not line 1.
-diag(p, l, c, ec, "warn", "unwrap-budget", "${n} non-test unwraps in a changed file") <-
+diag(path: p, line: l, col: c, end_col: ec, severity: "warn", code: "unwrap-budget", msg: "${n} non-test unwraps in a changed file") <-
     unwrap_hit(p, l, c, ec), changed(p), unwrap_count(p, n), n > 10.

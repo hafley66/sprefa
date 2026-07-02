@@ -10,8 +10,7 @@ use std::process::Command;
 const DL: &str = env!("CARGO_BIN_EXE_dl");
 
 const BAN_DL: &str = r#"
-rel diag(path: file, line: int, severity: text, code: text, msg: text, hint: text).
-diag(path, line, "error", "no-dbg", "dbg!() left in code", "remove it") <-
+diag(path, line, severity: "error", code: "no-dbg", msg: "dbg!() left in code", hint: "remove it") <-
   scan("WORK", "src/**/*.rs", path, rev), sg(path, rev, :rust, "dbg!($X)", line).
 "#;
 

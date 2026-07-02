@@ -68,9 +68,7 @@ rel waived_fn(file: file, fline: int).
 waived_fn(f, fl) <- waive_above(f, fl, wl), !waive_closer(f, fl, wl).
 
 # --- the diag: a recompute fn with neither a guard nor a waiver ---------------
-rel diag(path: text, line: int, severity: text, code: text, msg: text).
-diag(f, cl, "error", "unguarded-recompute",
-     "fn calls embed_graph without a digest skip (load_rel_digest) or a `// @recompute unguarded: <reason>` waiver") <-
+diag(path: f, line: cl, severity: "error", code: "unguarded-recompute", msg: "fn calls embed_graph without a digest skip (load_rel_digest) or a `// @recompute unguarded: <reason>` waiver") <-
     enc_embed(f, fl, cl), !guarded_fn(f, fl), !waived_fn(f, fl).
 
 ? diag(path, line, severity, code, msg).

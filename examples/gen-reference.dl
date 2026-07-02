@@ -88,13 +88,9 @@ op_show(op, split(ex, "/", -1)) <- op_example(op, ex), !op_pin(op, _, _).
 # The pin as a live squiggle: gen rules skip under --lsp, diag rules do not, so
 # the SAME op_pin set drives both the splice (above) and an editor diagnostic.
 # INFO on a valid pin says where it lands; WARN on an unknown op catches a typo.
-rel diag(path: file, line: int, col: int, end_line: int, end_col: int,
-         severity: text, code: text, msg: text).
-diag(ex, l, 0, l, 0, "info", "op-example",
-     replace("curated `dl examples --show` for op @OP@ -> docs/reference/syntax.md", "@OP@", op)) <-
+diag(path: ex, line: l, col: 0, end_line: l, end_col: 0, severity: "info", code: "op-example", msg: replace("curated `dl examples --show` for op @OP@ -> docs/reference/syntax.md", "@OP@", op)) <-
     op_pin(op, ex, l), op_catalog(op, _, _, _).
-diag(ex, l, 0, l, 0, "warn", "op-example-unknown",
-     replace("`# @op @OP@` names no known op (see op_catalog)", "@OP@", op)) <-
+diag(path: ex, line: l, col: 0, end_line: l, end_col: 0, severity: "warn", code: "op-example-unknown", msg: replace("`# @op @OP@` names no known op (see op_catalog)", "@OP@", op)) <-
     op_pin(op, ex, l), !op_catalog(op, _, _, _).
 
 gen(:append, "docs/reference/syntax.md", "# Syntax & semantics") <- true().

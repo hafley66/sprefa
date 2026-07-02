@@ -303,6 +303,7 @@ impl Db {
             let params: Vec<rusqlite::types::Value> = chunk.iter().flatten().map(|v| match v {
                 Value::Text(s) => rusqlite::types::Value::Text(s.clone()),
                 Value::Int(n) => rusqlite::types::Value::Integer(*n),
+                Value::Null => rusqlite::types::Value::Null,
             }).collect();
             let res = self.conn.execute(&sql, rusqlite::params_from_iter(params));
             match res {

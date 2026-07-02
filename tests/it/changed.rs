@@ -79,10 +79,9 @@ fn rail_joined_with_changed_skips_clean_files() {
     let prog = concat!(
         "rel hit(p: file, l: int).\n",
         "hit(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), match(p, rev, /fn /, l).\n",
-        "rel diag(path: text, line: int, severity: text, code: text, msg: text).\n",
-        "diag(p, l, \"error\", \"rail\", \"hit in changed file\") <- hit(p, l), changed(p).\n",
+        "diag(path: p, line: l, severity: \"error\", code: \"rail\", msg: \"hit in changed file\") <- hit(p, l), changed(p).\n",
     );
-    let (code, out, _err) = run(&d, &format!("{prog}? diag(p, l, s, c, m).\n"), &[]);
+    let (code, out, _err) = run(&d, &format!("{prog}? diag(path: p, line: l, severity: s, code: c, msg: m).\n"), &[]);
     assert_eq!(code, 0);
     assert!(out.contains("src/edited.rs"), "edited file must trip the rail:\n{out}");
     assert!(out.contains("src/new.rs"), "untracked file must trip the rail:\n{out}");

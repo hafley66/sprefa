@@ -355,13 +355,25 @@ impl Parser {
         self.expect(Tok::LParen)?;
         let mut terms = Vec::new();
         let mut aggs: Vec<Option<AggFn>> = Vec::new();
+        let mut named: Vec<(String, Term)> = Vec::new();
         if !matches!(self.peek(), Some(Tok::RParen)) {
             loop {
-                // A `col: term` named arg in head position: the resolver would have
-                // to permute `aggs` in lockstep, so reject it clearly for now (named
-                // args resolve in body and `?` atoms). Positional heads are unaffected.
+                // A `col: term` named arg in head position (`diag(path: p, msg: m)
+                // <- ...`): the frontend resolves it to a positional slot once the
+                // rel schema is known, padding unnamed columns with `Term::Wild`
+                // (which the head lowers to NULL). Named args never carry an
+                // aggregate — `aggs` stays parallel to the POSITIONAL terms only,
+                // and resolve pads its length out, so mixing named args with an
+                // aggregate head is rejected below.
                 if matches!((self.peek(), self.peek2()), (Some(Tok::Ident(_)), Some(Tok::Colon))) {
-                    bail!("named args are not yet supported in a rule head (use positional args here; `col: term` works in body atoms and `?` queries)");
+                    let col = self.ident()?;
+                    self.expect(Tok::Colon)?;
+                    named.push((col, self.expr()?));
+                    match self.next()? {
+                        Tok::Comma => continue,
+                        Tok::RParen => break,
+                        other => bail!("expected , or ) in atom, got {:?}", other),
+                    }
                 }
                 // An `aggfn(arg)` call: a known aggregate name immediately followed
                 // by `(`. Otherwise a plain term.
@@ -388,8 +400,11 @@ impl Parser {
         } else {
             self.next()?; // RParen
         }
+        if !named.is_empty() && aggs.iter().any(|a| a.is_some()) {
+            bail!("a rule head can't mix named args with an aggregate; write the aggregate head fully positional");
+        }
         if !aggs.iter().any(|a| a.is_some()) { aggs.clear(); }
-        Ok((Atom { rel, terms, named: Vec::new() }, aggs))
+        Ok((Atom { rel, terms, named }, aggs))
     }
 
     fn query(&mut self) -> Result<Query> {

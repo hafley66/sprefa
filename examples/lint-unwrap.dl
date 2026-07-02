@@ -21,7 +21,6 @@
 # `_` discards end_line; line/col/end_col drive the exact squiggle.
 
 rel hit(path: file, line: int, col: int, end_col: int).
-rel diag(path: file, line: int, col: int, end_col: int, severity: text, msg: text).
 
 hit(path, line, col, end_col) <-
   scan("WORK", "src/**/*.rs", path, rev),
@@ -36,7 +35,7 @@ not:
     stopBy: end
 `, line, col, _, end_col).
 
-diag(path, line, col, end_col, "warn", "unwrap() outside test code: use ? or expect(\"reason\")") <-
+diag(path, line, col, end_col, severity: "warn", msg: "unwrap() outside test code: use ? or expect(\"reason\")") <-
   hit(path, line, col, end_col).
 
 ? diag(path, line, col, end_col, severity, msg).

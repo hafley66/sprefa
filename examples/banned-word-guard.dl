@@ -28,13 +28,12 @@ word(p, l, c, ec, w) <- scan("WORK", "*.jsonl", p, rev), match(p, rev, /(?i)(?<w
 rel last_turn(file: file, idx: int).
 last_turn(p, max(l)) <- asst(l, p).
 
-rel diag(path: file, line: int, col: int, end_col: int, severity: text, code: text, msg: text).
 
 # Banned word in the latest turn's text.
-diag(p, l, c, ec, "error", "banned-word-turn", "banned word `${w}` in agent output — rephrase") <-
+diag(path: p, line: l, col: c, end_col: ec, severity: "error", code: "banned-word-turn", msg: "banned word `${w}` in agent output — rephrase") <-
     word(p, l, c, ec, w), asst(l, p), last_turn(p, l).
 # Banned word in a plan-tool body.
-diag(p, l, c, ec, "error", "banned-word-plan", "banned word `${w}` in a plan body — rephrase") <-
+diag(path: p, line: l, col: c, end_col: ec, severity: "error", code: "banned-word-plan", msg: "banned word `${w}` in a plan body — rephrase") <-
     word(p, l, c, ec, w), plan_line(l, p).
 
 # Whole-history audit view (ignored under --lsp/--check): every occurrence ever.

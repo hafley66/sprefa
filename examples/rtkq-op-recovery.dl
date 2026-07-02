@@ -13,7 +13,6 @@
 # That recovered string is the join key against the spec. No engine special
 # case: the recovery is ordinary derived-head SQL over the scanned hook calls.
 
-rel diag(path: file, line: int, severity: text, code: text, msg: text).
 
 # The contract: every operation declared in the OpenAPI spec.
 rel spec_op(op: text).
@@ -36,20 +35,19 @@ recovered(p, l, hook, lcfirst(replace_re(strip_prefix(hook, "use"), "^Lazy|(Quer
 # Happy path: a recovered op name that matches a real spec endpoint.
 rel linked(op: text, p: file, l: int, hook: text).
 linked(op, p, l, hook) <- recovered(p, l, hook, op), spec_op(op).
-diag(p, l, "info", "rtkq-link", "hook `${hook}` -> spec op `${op}`") <- linked(op, p, l, hook).
+diag(path: p, line: l, severity: "info", code: "rtkq-link", msg: "hook `${hook}` -> spec op `${op}`") <- linked(op, p, l, hook).
 
 # Orphan hook: a hook whose recovered name has no matching spec endpoint (a
 # stale call left after the endpoint was renamed or removed).
-diag(p, l, "warn", "rtkq-orphan-hook", "hook `${hook}` recovers to `${op}`, not in the spec") <-
+diag(path: p, line: l, severity: "warn", code: "rtkq-orphan-hook", msg: "hook `${hook}` recovers to `${op}`, not in the spec") <-
     recovered(p, l, hook, op), !spec_op(op).
 
 # Unhooked endpoint: a spec op no component hook reaches.
 rel hooked(op: text).
 hooked(op) <- recovered(_, _, _, op).
-diag("examples/openapi-sim/openapi.json", 0, "warn", "rtkq-unhooked",
-     "spec op `${op}` has no client hook") <- spec_op(op), !hooked(op).
+diag(path: "examples/openapi-sim/openapi.json", line: 0, severity: "warn", code: "rtkq-unhooked", msg: "spec op `${op}` has no client hook") <- spec_op(op), !hooked(op).
 
 ? spec_op(op).
 ? recovered(p, l, hook, op).
 ? linked(op, p, l, hook).
-? diag(p, l, sev, code, msg).
+? diag(path: p, line: l, severity: sev, code, msg).

@@ -16,9 +16,7 @@
 # also has a session for this directory, you'll see a second, separately-tagged
 # row — a tagged union, never a broadcast.
 
-rel diag(path: file, line: int, col: int, end_col: int,
-         severity: text, code: text, msg: text).
-diag(p, 0, 0, 0, "info", "latest-turn-change", "changed in the latest agent turn") <-
+diag(path: p, line: 0, col: 0, end_col: 0, severity: "info", code: "latest-turn-change", msg: "changed in the latest agent turn") <-
     changed(p), agent_touch(_, _, p).
 
 ? agent_edit(harness, session, idx, path).

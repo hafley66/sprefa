@@ -76,8 +76,7 @@ fn rail_blocks_on_broken_dl_under_check() {
     let prog = concat!(
         "rel dl_file(p: file).\n",
         "dl_file(p) <- scan(\"**/*.dl\", p, rev).\n",
-        "rel diag(path: file, line: int, col: int, end_line: int, end_col: int, severity: text, code: text, msg: text).\n",
-        "diag(p, line, col, end_line, end_col, \"error\", code, msg) <- ",
+        "diag(path: p, line, col, end_line, end_col, severity: \"error\", code, msg) <- ",
         "dl_file(p), p =~ /bad\\.dl$/, dl_diag(p, line, col, end_line, end_col, _, code, msg).\n",
     );
     let (code, _out, _err) = run(&d, prog, &["--check"]);

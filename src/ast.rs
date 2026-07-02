@@ -25,11 +25,11 @@ impl Type {
 }
 
 #[derive(Clone, Debug)]
-pub enum Value { Text(String), Int(i64) }
+pub enum Value { Text(String), Int(i64), Null }
 
 impl Value {
     pub fn as_str(&self) -> String {
-        match self { Value::Text(s) => s.clone(), Value::Int(n) => n.to_string() }
+        match self { Value::Text(s) => s.clone(), Value::Int(n) => n.to_string(), Value::Null => String::new() }
     }
 }
 

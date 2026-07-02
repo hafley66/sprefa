@@ -15,8 +15,7 @@ rel seen(path: file).
 seen(path) <- scan("WORK", "**/*.{rs,ts,tsx,js}", path, rev), match(path, rev, /./, line).
 
 # Every unresolved reference becomes an error pointing at its line.
-rel diag(path: text, line: int, severity: text, code: text, msg: text).
-diag(p, l, "error", "broken-import", "unresolved import `${spec}` (${reason})") <-
+diag(path: p, line: l, severity: "error", code: "broken-import", msg: "unresolved import `${spec}` (${reason})") <-
     module_unresolved(p, spec, reason, l).
 
-? diag(path, line, sev, code, msg).
+? diag(path, line, severity: sev, code, msg).

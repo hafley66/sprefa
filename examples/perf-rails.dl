@@ -31,12 +31,9 @@ row_budget(500000).
 rel ms_budget(max: int).
 ms_budget(5000).
 
-rel diag(path: text, line: int, severity: text, code: text, msg: text).
-diag("(engine)", 1, "warning", "rel-blowup",
-     "relation `${r}` holds ${n} rows (budget ${max}); check the join shape feeding it") <-
+diag(path: "(engine)", line: 1, severity: "warning", code: "rel-blowup", msg: "relation `${r}` holds ${n} rows (budget ${max}); check the join shape feeding it") <-
     rel_count(r, n), row_budget(max), n > max.
-diag("(engine)", 1, "warning", "slow-rule",
-     "rebuilding `${r}` took ${ms}ms in one statement (budget ${max}); look for an unindexable computed join predicate or a missing bridge rel") <-
+diag(path: "(engine)", line: 1, severity: "warning", code: "slow-rule", msg: "rebuilding `${r}` took ${ms}ms in one statement (budget ${max}); look for an unindexable computed join predicate or a missing bridge rel") <-
     stmt_ms(r, ms), ms_budget(max), ms > max.
 
-? diag(path, line, sev, code, msg).
+? diag(path, line, severity: sev, code, msg).

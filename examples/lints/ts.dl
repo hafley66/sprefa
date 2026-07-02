@@ -6,24 +6,19 @@
 # `sg` lang tokens: :ts :tsx :js. Globs pick the files. Same pattern syntax as
 # Rust ($X one node, $$$A variadic).
 
-rel diag(path: file, line: int, col: int, end_line: int, end_col: int,
-         severity: text, code: text, msg: text, hint: text).
 
 # error: a leftover debugger statement (blocks commit)
-diag(path, line, col, el, ec, "error", "no-debugger", "debugger statement left in code",
-     "remove before committing") <-
+diag(path, line, col, end_line: el, end_col: ec, severity: "error", code: "no-debugger", msg: "debugger statement left in code", hint: "remove before committing") <-
   scan("*", "WORK", "**/*.{ts,tsx}", path, rev),
   sg(path, rev, :tsx, "debugger", line, col, el, ec).
 
 # warn: console.log left in code
-diag(path, line, col, el, ec, "warn", "no-console", "console.log() left in code",
-     "use a logger or remove") <-
+diag(path, line, col, end_line: el, end_col: ec, severity: "warn", code: "no-console", msg: "console.log() left in code", hint: "use a logger or remove") <-
   scan("*", "WORK", "**/*.{ts,tsx}", path, rev),
   sg(path, rev, :tsx, "console.log($$$A)", line, col, el, ec).
 
 # warn: `as any` escape hatch
-diag(path, line, col, el, ec, "warn", "no-any-cast", "`as any` defeats the type checker",
-     "narrow the type or use `unknown` + a guard") <-
+diag(path, line, col, end_line: el, end_col: ec, severity: "warn", code: "no-any-cast", msg: "`as any` defeats the type checker", hint: "narrow the type or use `unknown` + a guard") <-
   scan("*", "WORK", "**/*.{ts,tsx}", path, rev),
   sg(path, rev, :tsx, "$X as any", line, col, el, ec).
 

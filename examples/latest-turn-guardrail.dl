@@ -1,4 +1,4 @@
-# Latest agent turn ∩ worktree change -> diag (for the LSP).
+# Latest agent turn ∩ worktree change -> a diag for the LSP.
 #
 # Surfaces, as live diagnostics, every file the MOST RECENT agent turn changed
 # in the worktree. The point is harness-INDEPENDENT: the policy is one rule over
@@ -7,7 +7,7 @@
 #   THE TRAIT (contract every adapter satisfies):
 #       latest_touch(path: file)   -- files the latest agent turn wrote/edited
 #   THE POLICY (generic, harness-agnostic):
-#       diag(p,...) <- changed(p), latest_touch(p).
+#       diag(path: p, ...) <- changed(p), latest_touch(p).
 #   THE IMPLS below: one per harness. Enable the one matching your agent (or run
 #       several -- they union into latest_touch, which is harmless).
 #
@@ -24,12 +24,9 @@
 # The planned pull() source (plans/2026-06-28-polling-push-sources-activation-
 # state.md) folds the materialization step into dl natively.
 
-rel diag(path: file, line: int, col: int, end_col: int,
-         severity: text, code: text, msg: text).
 
 # ---- POLICY (generic) -------------------------------------------------------
-diag(p, 0, 0, 0, "info", "latest-turn-change",
-     "changed in the latest agent turn") <-
+diag(path: p, line: 0, col: 0, end_col: 0, severity: "info", code: "latest-turn-change", msg: "changed in the latest agent turn") <-
     changed(p), latest_touch(p).
 
 rel latest_touch(path: file).

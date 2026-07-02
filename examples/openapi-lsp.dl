@@ -8,8 +8,6 @@
 # operationId verbatim. That identical string is what the spine interns, so
 # definition/references crosses languages with no resolution logic.
 
-rel diag(path: file, line: int, severity: text, code: text, msg: text).
-
 # The contract: every operation in the spec.
 rel spec_op(op: text).
 spec_op(op) <- scan("WORK", "examples/openapi-sim/openapi.json", p, rev),
@@ -28,12 +26,12 @@ def(p, l, op) <- scan("WORK", "examples/openapi-sim/server.rs", p, rev),
 # Happy path: a call that hits a spec op.
 rel linked(op: text, p: file, l: int).
 linked(op, p, l) <- call(p, l, op), spec_op(op).
-diag(p, l, "info", "api-link", "calls spec op `${op}`") <- linked(op, p, l).
+diag(path: p, line: l, severity: "info", code: "api-link", msg: "calls spec op `${op}`") <- linked(op, p, l).
 
 # Dead endpoint: defined in the server but never called by the client.
 rel called(op: text).
 called(op) <- call(_, _, op).
-diag(p, l, "warn", "orphan-op", "spec op `${op}` defined but never called") <-
+diag(path: p, line: l, severity: "warn", code: "orphan-op", msg: "spec op `${op}` defined but never called") <-
     def(p, l, op), !called(op).
 
 ? spec_op(op).

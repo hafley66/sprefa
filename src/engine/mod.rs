@@ -284,6 +284,18 @@ const CLOCK_RELS: [&str; 1] = ["clock"];
 /// it pays nothing (`pending_effect` is still written, just not projected).
 const EFFECT_RELS: [&str; 1] = ["effect_log"];
 
+/// The diagnostic sink. Unlike every other built-in, `diag` is engine-declared
+/// but USER-WRITTEN: a rule heads it to emit an editor squiggle (`--lsp`), a
+/// check finding (`--check` exit code), or a daemon-hook message. Fixed 9-col
+/// schema (was a magic user-declared name whose columns the engine mapped by
+/// NAME — the merged `.dl/` namespace collided when two files declared it with
+/// different columns). Write only the columns you need via named args
+/// (`diag(path: p, line: l, msg: m) <- ...`); the rest lower to NULL and take
+/// defaults in `Engine::diags` (severity "warn", end_line = line, ints 0). Read
+/// only, never populated by a refresh — `rebuild_derived` fills it from the
+/// program's rules like any other derived rel.
+const DIAG_RELS: [&str; 1] = ["diag"];
+
 fn builtin_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -320,6 +332,7 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
         .chain(every_rel_decls())
         .chain(clock_rel_decls())
         .chain(effect_rel_decls())
+        .chain(diag_rel_decls())
         .collect()
 }
 
@@ -416,8 +429,25 @@ pub fn op_docs() -> &'static [(&'static str, &'static str, &'static str, &'stati
         ("aggregation", "body", "count sum min max", "head-position-only aggregation; non-aggregate head terms are the grouping key; count/sum produce int, min/max carry the arg type; count in body is a parse error"),
         // sinks.
         ("query", "sink", "? rel(a, b). / ? rel(col: v).", "print a TSV block (or JSON-lines with --query-json); a literal in any position filters; args may be named by column (`col: v`), unmentioned columns are don't-cares; no where clause"),
-        ("diag", "sink", "rel diag(path, line, col, ..., severity, msg).", "declare a rel named diag; the engine maps columns BY NAME into editor diagnostics (--lsp) or check output (--check); required path/line/msg"),
+        ("diag", "sink", "diag(path: p, line: l, msg: m[, col: , end_line: , end_col: , severity: , code: , hint: ]) <- ...", "head the built-in diagnostic sink; fixed 9-col schema (path/line/col/end_line/end_col/severity/code/msg/hint), name only the columns you use, the rest default (severity warn, end_line=line); feeds editor diagnostics (--lsp) and check output (--check)"),
         ("gen", "sink", "gen([:mode,] path, [l0, l1,] \"{var} template\")", "codegen; file form renders body rows through a path+row template, splice form replaces lines between comment marker pairs; convergent (skips write when bytes match); never runs under --check/--lsp"),
+    ]
+}
+
+/// The diagnostic sink relation (see `DIAG_RELS`). Fixed schema, `path` is TEXT
+/// (not the `file` checked type) so a synthetic origin — `"(engine)"`,
+/// `"(checked-notes)"` — is not row-dropped by the file check.
+fn diag_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "diag".into(), cols: vec![
+            c("path", Type::Text), c("line", Type::Int), c("col", Type::Int),
+            c("end_line", Type::Int), c("end_col", Type::Int),
+            c("severity", Type::Text), c("code", Type::Text),
+            c("msg", Type::Text), c("hint", Type::Text)],
+            group: "diag",
+            doc: "diagnostic sink; head it from a rule to emit an editor squiggle (--lsp), a --check finding, or a daemon-hook message. Fixed 9-col schema — write only the cols you need via named args (diag(path: p, line: l, msg: m)); the rest are NULL and default (severity warn, end_line=line, ints 0). path is TEXT so a synthetic origin isn't file-checked away",
+            ..Default::default() },
     ]
 }
 
@@ -2043,18 +2073,16 @@ impl Engine {
     /// the program declares no `diag` relation. Drives LSP publishDiagnostics.
     /// `only` filters to one path (the changed file) when Some.
     pub fn diags(&self, only: Option<&str>) -> Result<Vec<DiagRow>> {
-        let Some(meta) = self.rels.get("diag") else { return Ok(Vec::new()); };
-        // column name -> position in the rel table
-        let idx: HashMap<&str, usize> =
-            meta.cols.iter().enumerate().map(|(i, c)| (c.name.as_str(), i)).collect();
-        let need = |k: &str| idx.get(k).copied();
-        let (pi, li, mi) = match (need("path"), need("line"), need("msg")) {
-            (Some(p), Some(l), Some(m)) => (p, l, m),
-            _ => bail!("diag relation must have columns: path, line, msg"),
-        };
-        let select: Vec<String> = meta.cols.iter().map(|c| format!("\"{}\"", c.name)).collect();
-        let mut sql = format!("SELECT {} FROM {}", select.join(", "), tbl("diag"));
-        if only.is_some() { sql.push_str(&format!(" WHERE \"{}\" = ?1", meta.cols[pi].name)); }
+        // `diag` is a fixed-schema built-in (declare_builtins), so the columns
+        // and their positions are known. A rule that names only some of them
+        // (via head named args) leaves the rest NULL — read NULL-tolerant and
+        // apply the same defaults the old by-name reader did (severity "warn",
+        // end_line = line, ints 0, empty hint = None).
+        let Some(_meta) = self.rels.get("diag") else { return Ok(Vec::new()); };
+        let mut sql = format!(
+            "SELECT \"path\", \"line\", \"col\", \"end_line\", \"end_col\", \
+             \"severity\", \"code\", \"msg\", \"hint\" FROM {}", tbl("diag"));
+        if only.is_some() { sql.push_str(" WHERE \"path\" = ?1"); }
         let mut stmt = self.db.conn().prepare(&sql)?;
         let map_row = |row: &rusqlite::Row| -> rusqlite::Result<DiagRow> {
             let text = |i: usize| row.get::<_, rusqlite::types::Value>(i)
@@ -2063,18 +2091,20 @@ impl Engine {
                     rusqlite::types::Value::Integer(n) => n.to_string(),
                     _ => String::new(),
                 }).unwrap_or_default();
-            let int = |i: usize| row.get::<_, i64>(i).unwrap_or(0);
-            let line = int(li);
+            // NULL (unnamed column) -> None, so a default can fill it.
+            let int_opt = |i: usize| row.get::<_, Option<i64>>(i).ok().flatten();
+            let line = int_opt(1).unwrap_or(0);
+            let sev = text(5);
             Ok(DiagRow {
-                path: text(pi),
+                path: text(0),
                 line,
-                col: need("col").map(int).unwrap_or(0),
-                end_line: need("end_line").map(int).unwrap_or(line),
-                end_col: need("end_col").map(int).unwrap_or(0),
-                severity: need("severity").map(text).unwrap_or_else(|| "warn".into()),
-                code: need("code").map(text).unwrap_or_default(),
-                msg: text(mi),
-                hint: need("hint").map(text).filter(|s| !s.is_empty()),
+                col: int_opt(2).unwrap_or(0),
+                end_line: int_opt(3).unwrap_or(line),
+                end_col: int_opt(4).unwrap_or(0),
+                severity: if sev.is_empty() { "warn".into() } else { sev },
+                code: text(6),
+                msg: text(7),
+                hint: { let h = text(8); if h.is_empty() { None } else { Some(h) } },
             })
         };
         let mut out = Vec::new();
@@ -2909,6 +2939,9 @@ impl Engine {
                 if CLOCK_RELS.contains(&d.name.as_str()) {
                     bail!("{} is the built-in clock relation (clock); pick another name", d.name);
                 }
+                if DIAG_RELS.contains(&d.name.as_str()) {
+                    bail!("diag is the built-in diagnostic sink (fixed schema: path, line, col, end_line, end_col, severity, code, msg, hint); drop the `rel diag(...)` decl and write it directly — name only the columns you use, e.g. `diag(path: p, line: l, msg: m) <- ...`");
+                }
                 match closures.get(&d.name) {
                     Some(edge) => self.declare_closure(d, edge)?,
                     None => self.declare(d)?,
@@ -2946,6 +2979,7 @@ impl Engine {
         for d in every_rel_decls() { self.declare(&d)?; }
         for d in clock_rel_decls() { self.declare(&d)?; }
         for d in effect_rel_decls() { self.declare(&d)?; }
+        for d in diag_rel_decls() { self.declare(&d)?; }
         Ok(())
     }
 
@@ -3704,6 +3738,7 @@ impl Engine {
                 row.iter().map(|v| match v {
                     Value::Int(n) => format!("i{n}"),
                     Value::Text(s) => format!("t{s}"),
+                    Value::Null => "n".to_string(),
                 }).collect()
             };
             let mut before: Vec<Vec<String>> = {
@@ -4985,7 +5020,7 @@ fn git_batch_read(root: &Path, rev: &str, path: &str) -> Result<String> {
 }
 
 fn check_type(ty: Type, v: &Value, repo: &str, rev: &str, root: &Path, rev_index: &HashSet<(String, String, String)>) -> bool {
-    let p = match v { Value::Text(s) => s, Value::Int(_) => return ty == Type::Int || ty == Type::Text };
+    let p = match v { Value::Text(s) => s, Value::Int(_) => return ty == Type::Int || ty == Type::Text, Value::Null => return true };
     if rev != "WORK" {
         return match ty {
             Type::File | Type::Path => rev_index.contains(&(repo.to_string(), rev.to_string(), p.clone())),
@@ -5568,12 +5603,17 @@ fn parse_file(
                 Term::Str(s) => Value::Text(s.clone()),
                 Term::Int(n) => Value::Int(*n),
                 Term::Interp(parts) => interp_value(parts, &b)?,
-                Term::Wild => bail!("'_' in head not allowed"),
+                // A Wild head slot is head named-arg padding (a diag rule that
+                // names only some columns). Emit NULL; the reader defaults it.
+                Term::Wild => Value::Null,
                 Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
                 Term::Arith { .. } => val_of(term, &b)?,
                 Term::Call { .. } => val_of(term, &b)?,
             };
-            if !check_type(head_meta.cols[i].ty, &v, repo, rev, root, rev_index) { dropped += 1; continue 'bind; }
+            // NULL (a padded column) has no type to check; the file/path checks
+            // would drop it. Only type-check present values.
+            if !matches!(v, Value::Null)
+                && !check_type(head_meta.cols[i].ty, &v, repo, rev, root, rev_index) { dropped += 1; continue 'bind; }
             row.push(v);
         }
         rows.push(row);

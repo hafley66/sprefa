@@ -16,7 +16,6 @@
 #
 #   Run: dl examples/rails-call-kind.dl --root . --check
 
-rel diag(path: file, line: int, severity: text, code: text, msg: text).
 
 # Seed: raw .conn() call sites, exempt the db.rs seam (that's where .conn()
 # belongs, not a bypass). The fs:`...` literal resolves at check time, so a
@@ -42,8 +41,7 @@ conn_write_fn(fn, p, l) <- conn_fn(fn, p, l), call_kind(fn, "write").
 # .conn() in an unchanged line stays silent. Path-grain (changed(p)) would
 # fire on any touch to the file; line-grain is stricter and matches only the
 # worktree diff hunks.
-diag(p, l, "warn", "conn-write-fn",
-     "raw .conn() in a write-kind fn — per-row write risk") <-
+diag(path: p, line: l, severity: "warn", code: "conn-write-fn", msg: "raw .conn() in a write-kind fn — per-row write risk") <-
     conn_write_fn(_, p, l), changed_line(p, l).
 
 # Under --check the diag is the live output. Without a worktree diff, every
@@ -52,4 +50,4 @@ diag(p, l, "warn", "conn-write-fn",
 # scoped view of the precision cut, so you can see which .conn() fns would
 # trip if their lines were touched:
 ? conn_write_fn(fn, p, l).
-? diag(path, line, sev, code, msg).
+? diag(path, line, severity: sev, code, msg).

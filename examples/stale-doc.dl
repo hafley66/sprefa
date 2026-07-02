@@ -29,9 +29,7 @@ review_doc(sym, name, f, l) <-
     doc_comment(sym: sym),
     changed_line(f, l).
 
-rel diag(path: file, line: int, severity: text, code: text, msg: text).
-diag(f, l, "warning", "review-doc",
-     "`${name}` changed — confirm its doc comment is still accurate") <-
+diag(path: f, line: l, severity: "warning", code: "review-doc", msg: "`${name}` changed — confirm its doc comment is still accurate") <-
     review_doc(sym, name, f, l).
 
-? diag(f, l, sev, code, msg).
+? diag(path: f, line: l, severity: sev, code, msg).

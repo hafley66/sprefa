@@ -41,10 +41,9 @@ no_touch_zone(p, "manual", l0, l1) <- manual_zone(p, l0, l1).
 # agent_touch ⨝ changed_line = the agent's moved lines; `l0 <= l <= l1` is the
 # "any part of the protected byte range" overlap. `dl --check` fails CI / a
 # pre-commit hook; `dl --lsp` squiggles it the instant the byte moves.
-rel diag(path: text, line: int, severity: text, code: text, msg: text).
-diag(p, l, "error", "no-touch-edit",
-     "agent edited a ${kind} no-touch range — do not hand-edit; regenerate via its dl generator (autogen) or leave it (manual)") <-
+diag(path: p, line: l, severity: "error", code: "no-touch-edit",
+     msg: "agent edited a ${kind} no-touch range — do not hand-edit; regenerate via its dl generator (autogen) or leave it (manual)") <-
   no_touch_zone(p, kind, l0, l1), agent_touch(_, _, p), changed_line(p, l), l >= l0, l <= l1.
 
 ? no_touch_zone(path, kind, l0, l1).
-? diag(path, line, sev, code, msg).
+? diag(path, line, severity: sev, code, msg).

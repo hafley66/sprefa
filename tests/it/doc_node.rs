@@ -90,11 +90,10 @@ fn doc_node_joins_changed_to_scope_to_touched_docs() {
     fs::write(d.join("docs/touched.md"), "# After\n").unwrap();
     let prog = concat!(
         "rel seen(path: file).\n",
-        "seen(path) <- scan(\"WORK\", \"docs/**/*.md\", path, rev), match(path, rev, /./, line).\n",
-        "rel diag(path: text, line: int, severity: text, code: text, msg: text).\n",
-        "diag(p, l, \"warn\", \"doc-touched\", \"heading in a changed doc\") <-\n",
+        "seen(path) <- scan(\"WORK\", \"docs/**/*.md\", path, rev).\n",
+        "diag(path: p, line: l, severity: \"warn\", code: \"doc-touched\", msg: \"heading in a changed doc\") <-\n",
         "    doc_node(_, p, l, \"heading\", n, par), changed(p).\n",
-        "? diag(p, l, s, c, m).\n",
+        "? diag(path: p, line: l, severity: s, code: c, msg: m).\n",
     );
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "stderr: {err}\nstdout: {out}");

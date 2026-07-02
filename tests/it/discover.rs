@@ -28,30 +28,32 @@ fn run(dir: &Path, extra: &[&str]) -> (i32, String, String) {
      String::from_utf8_lossy(&out.stderr).into_owned())
 }
 
-/// Two rail files, each re-declaring the shared `diag` relation identically.
-/// `10-` / `20-` prefixes pin the lexicographic merge order.
+/// Two rail files, each writing the built-in `diag` sink (no decl — `diag` is a
+/// fixed-schema built-in). `10-` / `20-` prefixes pin the lexicographic merge
+/// order. This is exactly the shape that USED to collide when `diag` was a
+/// magic user-declared name: two files declaring it with (even identical)
+/// columns fought over one merged namespace. Now there is nothing to declare.
 fn fixture(tag: &str) -> PathBuf {
     let d = sandbox(tag);
     fs::create_dir_all(d.join(".dl")).unwrap();
     fs::create_dir_all(d.join("src")).unwrap();
     fs::write(d.join("src/x.rs"), "fn alpha() {}\nlet beta = 1;\n").unwrap();
     fs::write(d.join(".dl/10-a.dl"), concat!(
-        "rel diag(path: text, line: int, severity: text, code: text, msg: text).\n",
         "rel a_hit(p: file, l: int).\n",
         "a_hit(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), match(p, rev, /alpha/, l).\n",
-        "diag(p, l, \"error\", \"rail-a\", \"alpha found\") <- a_hit(p, l).\n",
+        "diag(path: p, line: l, severity: \"error\", code: \"rail-a\", msg: \"alpha found\") <- a_hit(p, l).\n",
     )).unwrap();
     fs::write(d.join(".dl/20-b.dl"), concat!(
-        "rel diag(path: text, line: int, severity: text, code: text, msg: text).\n",
         "rel b_hit(p: file, l: int).\n",
         "b_hit(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), match(p, rev, /beta/, l).\n",
-        "diag(p, l, \"warn\", \"rail-b\", \"beta found\") <- b_hit(p, l).\n",
+        "diag(path: p, line: l, severity: \"warn\", code: \"rail-b\", msg: \"beta found\") <- b_hit(p, l).\n",
     )).unwrap();
     d
 }
 
-/// (1) Both files contribute rules; the identical `diag` re-declaration merges
-/// instead of erroring. rail-a is error severity, so --check exits non-zero.
+/// (1) Both files contribute rules; both write the one built-in `diag` sink
+/// with no decl and no collision. rail-a is error severity, so --check exits
+/// non-zero.
 #[test]
 fn discovery_merges_files_and_dedupes_identical_decls() {
     let d = fixture("merge");
@@ -81,11 +83,12 @@ fn empty_dl_dir_is_a_loud_error() {
 }
 
 /// (4) The same relation declared with different columns across files is a
-/// conflict, not a silent last-wins.
+/// conflict, not a silent last-wins. `a_hit` is declared `(p: file, l: int)` in
+/// 10-a.dl; 30-c.dl re-declares it with a different shape.
 #[test]
 fn conflicting_decl_across_files_errors() {
     let d = fixture("conflict");
-    fs::write(d.join(".dl/30-c.dl"), "rel diag(path: text, line: int).\n").unwrap();
+    fs::write(d.join(".dl/30-c.dl"), "rel a_hit(path: text, line: int, extra: text).\n").unwrap();
     let (code, _out, err) = run(&d, &["--check"]);
     assert_eq!(code, 1, "a broken program is exit 1 (user-facing), not 2:\n{err}");
     assert!(err.contains("declared twice"), "conflict must be named:\n{err}");

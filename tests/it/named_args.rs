@@ -151,17 +151,39 @@ fn double_set_column_is_an_error() {
     let _ = fs::remove_dir_all(&d);
 }
 
-/// Named args in a rule head are rejected clearly for now (aggregate interaction
-/// deferred); positional heads are unaffected.
+/// Named args in a rule head resolve by column name, same as body/query atoms.
+/// A column named by neither an explicit arg nor a pun pads to NULL.
 #[test]
-fn named_args_in_a_rule_head_are_rejected() {
+fn named_args_in_a_rule_head_resolve() {
     let d = sandbox("head");
-    let (code, _out, err) = run(&d, concat!(
+    let (code, out, err) = run(&d, concat!(
         "rel person(name: text, age: int).\n",
         "person(name: \"x\", age: 1).\n",
+        // out of column order, and a head that names only one column (age -> NULL)
+        "person(age: 2, name: \"y\").\n",
+        "person(name: \"z\").\n",
         "? person(a, b).\n",
     ));
+    assert_eq!(code, 0, "named head args resolve:\n{err}");
+    assert!(out.contains("x\t1"), "in-order named head:\n{out}");
+    assert!(out.contains("y\t2"), "out-of-order named head:\n{out}");
+    assert!(out.contains("z\t"), "partial head pads the rest to NULL:\n{out}");
+    let _ = fs::remove_dir_all(&d);
+}
+
+/// A rule head can't mix named args with an aggregate call: `aggs` is parallel to
+/// the positional terms only, so the two shapes are incompatible.
+#[test]
+fn named_args_with_aggregate_head_are_rejected() {
+    let d = sandbox("head_agg");
+    let (code, _out, err) = run(&d, concat!(
+        "rel edge(f: text, t: text).\n",
+        "edge(\"a\", \"b\").\n",
+        "rel fan(f: text, n: int).\n",
+        "fan(f: f, count(t)) <- edge(f, t).\n",
+        "? fan(f, n).\n",
+    ));
     assert_ne!(code, 0);
-    assert!(err.contains("not yet supported in a rule head"), "clear head rejection:\n{err}");
+    assert!(err.contains("mix named args with an aggregate"), "clear rejection:\n{err}");
     let _ = fs::remove_dir_all(&d);
 }

@@ -264,6 +264,7 @@ pub fn lower_rule_to(rule: &Rule, rels: &Rels, target: &str, extra: &[(String, S
         for (n, _) in extra { non_key.push(n.clone()); }
         let mut exprs = Vec::new();
         for term in &rule.head.terms {
+            if matches!(term, Term::Wild) { exprs.push("NULL".into()); continue; }
             let e = term_sql(term, &canon)?;
             if has_call(term) { wheres.push(format!("{e} IS NOT NULL")); }
             exprs.push(e);
@@ -338,6 +339,13 @@ pub fn lower_rule_to(rule: &Rule, rels: &Rels, target: &str, extra: &[(String, S
 
     let mut exprs = Vec::new();
     for term in &rule.head.terms {
+        // A `Term::Wild` head slot comes from head named-arg padding: a sink
+        // rule that names only some columns (`diag(path: p, line: l, msg: m)`)
+        // leaves the rest unset. Project SQL NULL so the reader can default it.
+        // Sink use only — a NULL never dedups in a fixpoint delta (NULL != NULL),
+        // so a Wild in a RECURSIVE head would diverge; `diag` (and other sinks)
+        // are non-recursive.
+        if matches!(term, Term::Wild) { exprs.push("NULL".into()); continue; }
         let e = term_sql(term, &canon)?;
         // A head term containing a Call (split/replace) may evaluate to NULL
         // when the function misses (split out-of-range). A NULL row inserted

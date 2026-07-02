@@ -46,9 +46,7 @@ resolves(name) <- type_entity(_, _, name, _, _, _, _).
 
 # msg binds the dead symbol name directly (a plain rel head does not interpolate
 # `{var}` — that is a gen-sink feature; `code` carries the category).
-rel diag(path: file, line: int, col: int, end_line: int, end_col: int,
-         severity: text, code: text, msg: text).
-diag("examples/gen-skill.dl", 0, 0, 0, 0, "error", "stale-skill-ref", name) <-
+diag(path: "examples/gen-skill.dl", line: 0, col: 0, end_line: 0, end_col: 0, severity: "error", code: "stale-skill-ref", msg: name) <-
     skill_claims(name), !resolves(name).
 
 ? api(name, file, line).

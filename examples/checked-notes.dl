@@ -59,12 +59,11 @@ broken_link(c, f, t) <- link_note(c, f, t), !calls_by_name(f, t).
 # diag is the diagnostic sink: --check exits non-zero on any row, --lsp draws a
 # squiggle, the daemon hook surfaces it on edit. Line 1 of a notes pseudo-file
 # (a note has no single source line; the message carries the claim).
-rel diag(path: file, line: int, severity: text, code: text, msg: text).
-diag("(checked-notes)", 1, "error", "stale-note",
-     "note points at a missing name `${target}`: ${claim}") <-
+diag(path: "(checked-notes)", line: 1, severity: "error", code: "stale-note",
+     msg: "note points at a missing name `${target}`: ${claim}") <-
     broken_note(claim, target).
-diag("(checked-notes)", 1, "error", "stale-link",
-     "note's call `${from}` -> `${to}` no longer resolves: ${claim}") <-
+diag(path: "(checked-notes)", line: 1, severity: "error", code: "stale-link",
+     msg: "note's call `${from}` -> `${to}` no longer resolves: ${claim}") <-
     broken_link(claim, from, to).
 
 ? broken_note(claim, target).

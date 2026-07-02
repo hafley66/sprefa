@@ -249,9 +249,8 @@ fn broken_imports_lint_via_check() {
     fs::write(d.join("src/present.ts"), "export const p=1;\n").unwrap();
     let prog = r#"
 rel seen(path: file).
-seen(path) <- scan("WORK", "**/*.{rs,ts}", path, rev), match(path, rev, /./, line).
-rel diag(path: text, line: int, severity: text, code: text, msg: text).
-diag(p, l, "error", "broken-import", "unresolved `${spec}`") <- module_unresolved(p, spec, reason, l).
+seen(path) <- scan("WORK", "**/*.{rs,ts}", path, rev).
+diag(path: p, line: l, severity: "error", code: "broken-import", msg: "unresolved `${spec}`") <- module_unresolved(p, spec, reason, l).
 "#;
     let (code, _out, err) = run(&d, prog, &["--check"]);
     assert_ne!(code, 0, "broken imports must fail --check");

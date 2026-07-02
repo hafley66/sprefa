@@ -11,9 +11,8 @@ const DL: &str = env!("CARGO_BIN_EXE_dl");
 
 // Bind the full span off `dbg!($X)` and emit it as a diag.
 const PROG: &str = r#"
-rel diag(path: file, line: int, col: int, end_line: int, end_col: int,
-         severity: text, code: text, msg: text).
-diag(path, line, col, end_line, end_col, "error", "no-dbg", "dbg") <-
+diag(path, line, col, end_line, end_col,
+     severity: "error", code: "no-dbg", msg: "dbg") <-
   scan("WORK", "src/**/*.rs", path, rev),
   sg(path, rev, :rust, "dbg!($X)", line, col, end_line, end_col).
 "#;

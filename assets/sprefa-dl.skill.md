@@ -100,12 +100,12 @@ op that no longer resolves in a catalog.
 | `arith` | body | `+ - * / %` |
 | `ast` | source | `ast(path, rev, :lang, "(query) @cap", line[, end])` |
 | `ast_yaml` | source | `ast_yaml(path, rev, :lang, "rule yaml", line, ...)` |
-| `atom` | body | `edge(f, t)` |
+| `atom` | body | `edge(f, t) / edge(to: t) / edge(from, to: t)` |
 | `closure` | body | `closure(edge)` |
 | `cmd` | source | `cmd(path, rev, "tool {file}", line, out)` |
 | `comment` | source | `comment(path, rev, /open/[, /close/], l0, l1, label)` |
 | `comparison` | body | `= != < <= > >=` |
-| `diag` | sink | `rel diag(path, line, col, ..., severity, msg).` |
+| `diag` | sink | `diag(path: p, line: l, msg: m[, col: , end_line: , end_col: , severity: , code: , hint: ]) <- ...` |
 | `gen` | sink | `gen([:mode,] path, [l0, l1,] "{var} template")` |
 | `glob` | body | `p ~~ "src/*"` |
 | `json` | source | `json(path, rev, q:{ $k: $v })` |
@@ -113,9 +113,9 @@ op that no longer resolves in a catalog.
 | `match` | source | `match(path, rev, /re/, line[, id][, col, end_col])` |
 | `negation` | body | `!round(t, _)` |
 | `node2vec` | body | `head(a, b, score) <- node2vec(edge)` |
-| `query` | sink | `? rel(a, b).` |
+| `query` | sink | `? rel(a, b). / ? rel(col: v).` |
 | `regex` | body | `f =~ /^[A-Za-z]+$/` |
-| `scan` | source | `scan([repo,][rev,] glob, path, rev_out)` |
+| `scan` | source | `scan([repo,][rev,] glob, path[, rev_out])` |
 | `scc` | body | `head(rep, member) <- scc(edge)` |
 | `sg` | source | `sg(path, rev, :lang, "$X.unwrap()", line[, col, end_line, end_col][, id])` |
 | `strfn` | body | `split(text, sep, idx) / replace(text, from, to)` |

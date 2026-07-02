@@ -392,6 +392,7 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `df_field` | dataflow | `(id, field, value)` | (new/call df_node id, field name, value df_node id); struct-literal fields, object-literal properties, Kotlin named args; ".." for spread/functional-update bases |
 | `df_node` | dataflow | `(id, kind, var, fn, file, line)` | intra-procedural dataflow node (call_res/assign/...); id is file::line::kind |
 | `df_param` | dataflow | `(id, pos)` | (param df_node id, positional index); index counts typed params only (self skipped) so it aligns with type_sig.pos for node-level type joins |
+| `diag` | diag | `(path, line, col, end_line, end_col, severity, code, msg, hint)` | diagnostic sink; head it from a rule to emit an editor squiggle (--lsp), a --check finding, or a daemon-hook message. Fixed 9-col schema — write only the cols you need via named args (diag(path: p, line: l, msg: m)); the rest are NULL and default (severity warn, end_line=line, ints 0). path is TEXT so a synthetic origin isn't file-checked away |
 | `dl_diag` | meta | `(path, line, col, end_line, end_col, severity, code, msg)` | parse/type diagnostics for each scanned `.dl` file (path, line, col, end_line, end_col, severity, code, msg); the engine's own lexer/parser/typechecker run over `file` rows ending in `.dl`, byte spans mapped to 1-based line / 0-based col — join agent_changed for lint-on-edit |
 | `doc_comment` | type | `(repo, sym, line, text)` | doc comment per type_entity sym: (repo, sym, line, text); AST-located per language (Rust #[doc] attrs, Kotlin KDoc sibling, TS leading /** */) |
 | `doc_node` | doc | `(repo, file, line, kind, name, parent)` | structural nodes from non-source text (markdown headings + code blocks via tree-sitter-md: ATX/setext headings, fenced/indented blocks); parent is the enclosing heading |
@@ -756,7 +757,7 @@ between the markers.
 | [`hook-skill-on-test.dl`](examples/hook-skill-on-test.dl) | dl --hook condition: inject the "testing" skill when the agent reads OR edits a |
 | [`inspect_pairs.dl`](examples/inspect_pairs.dl) | inspect_pairs.dl — dump the field structure of specific LGG pairs |
 | [`interface-soup.dl`](examples/interface-soup.dl) | Interface composition soup + over-abstraction smell, cross-language. |
-| [`latest-turn-guardrail.dl`](examples/latest-turn-guardrail.dl) | Latest agent turn ∩ worktree change -> diag (for the LSP). |
+| [`latest-turn-guardrail.dl`](examples/latest-turn-guardrail.dl) | Latest agent turn ∩ worktree change -> a diag for the LSP. |
 | [`lint-dl-self.dl`](examples/lint-dl-self.dl) | lint-dl-self.dl — dl validates dl, scoped to what the agent just edited. |
 | [`lint-docs.dl`](examples/lint-docs.dl) | Documentation hygiene lints. Two warnings: |
 | [`lint-imports.dl`](examples/lint-imports.dl) | Broken-import linter: the module graph as a diagnostic source. |

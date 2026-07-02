@@ -11,13 +11,11 @@
 # is a sharper lint — join doc_tag instead. Left as an exercise; this is the
 # Tier-1 coverage gate.
 
-rel diag(path: file, line: int, severity: text, code: text, msg: text).
-
 # Populate _file. Adjust the glob to the tree you want graded.
 rel src(p: file).
 src(p) <- scan("WORK", "src/**/*.{rs,ts,kt,kts,tsx}", p, rev).
 
 # Every declared entity with no doc comment bound to its sym.
-diag(file, line, "warning", "undocumented", "${kind} `${name}` has no doc comment") <-
+diag(path: file, line, severity: "warning", code: "undocumented", msg: "${kind} `${name}` has no doc comment") <-
   type_entity(sym: sym, name: name, kind: kind, file: file, line: line),
   !doc_comment(sym: sym).

@@ -81,11 +81,10 @@ fn run(dir: &Path, store: &Path, prog: &str) -> (i32, String, String) {
 fn agent_touch_intersects_changed_and_stays_session_tagged() {
     let (d, store) = fixture("hit");
     let prog = concat!(
-        "rel diag(path: file, line: int, col: int, end_col: int, severity: text, code: text, msg: text).\n",
-        "diag(p, 0, 0, 0, \"info\", \"latest-turn-change\", \"latest turn\") <- changed(p), agent_touch(_, _, p).\n",
+        "diag(path: p, line: 0, col: 0, end_col: 0, severity: \"info\", code: \"latest-turn-change\", msg: \"latest turn\") <- changed(p), agent_touch(_, _, p).\n",
         "? agent_edit(h, s, i, p).\n",
         "? agent_touch(h, s, p).\n",
-        "? diag(p, l, c, e, sev, code, msg).\n",
+        "? diag(path: p, line: l, col: c, end_col: e, severity: sev, code, msg).\n",
     );
     let (code, out, err) = run(&d, &store, prog);
     assert_eq!(code, 0, "stderr: {err}");

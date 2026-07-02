@@ -28,9 +28,7 @@ rel dl_file(path: file).
 dl_file(path) <- scan("**/*.dl", path).
 
 # the rail: a parse/type error in a .dl file the agent just edited.
-rel diag(path: file, line: int, col: int, end_line: int, end_col: int,
-         severity: text, code: text, msg: text).
-diag(p, line, col, end_line, end_col, severity, code, msg) <-
+diag(path: p, line, col, end_line, end_col, severity, code, msg) <-
     agent_changed(p), p =~ /\.dl$/,
     dl_diag(p, line, col, end_line, end_col, severity, code, msg).
 

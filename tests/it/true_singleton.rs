@@ -29,11 +29,10 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
 
 const PROG: &str = concat!(
     "rel hit(p: file).\n",
-    "rel diag(path: text, line: int, severity: text, code: text, msg: text).\n",
     "\n",
     "hit(p) <- scan(\"WORK\", \"*.rs\", p, rev), match(p, rev, /fn \\w+/, line).\n",
     "\n",
-    "diag(\"p.dl\", 1, \"info\", \"empty-match\", \"hit matched 0 rows\") <- true(), !hit(_).\n",
+    "diag(path: \"p.dl\", line: 1, severity: \"info\", code: \"empty-match\", msg: \"hit matched 0 rows\") <- true(), !hit(_).\n",
     "\n",
     "? diag(path, line, severity, code, msg).\n",
 );

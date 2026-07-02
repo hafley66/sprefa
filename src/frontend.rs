@@ -134,6 +134,11 @@ fn resolve_named_args(items: &mut [Item]) -> Result<()> {
     for it in items.iter_mut() {
         match it {
             Item::Rule(r) => {
+                // The HEAD too: `diag(path: p, line: l, msg: m) <- ...` names only
+                // the columns it writes, the rest pad to `Term::Wild` (which the
+                // head projection lowers to NULL). A fully-positional head has no
+                // `named` and is left exactly as written.
+                resolve_atom(&mut r.head, &schema)?;
                 for b in &mut r.body {
                     if let BodyItem::Pos(a) | BodyItem::Neg(a) = b {
                         resolve_atom(a, &schema)?;
@@ -147,15 +152,30 @@ fn resolve_named_args(items: &mut [Item]) -> Result<()> {
     Ok(())
 }
 
-/// Fold one atom's named args into positional slots. No-op when the atom is
-/// fully positional (no `col:` present) — that path stays exactly positional, so
-/// existing programs and the arity check are untouched. Once ANY `col:` appears
-/// the atom is in named mode, and a bare identifier `x` puns to `x: x` (binds the
+/// Fold one atom's named args into positional slots. Once ANY `col:` appears the
+/// atom is in named mode, and a bare identifier `x` puns to `x: x` (binds the
 /// column of the same name, the JS `{a: A, b, c}` / Rust `Foo { c }` shorthand).
 /// A bare non-identifier in named mode is ambiguous and errors. Any column named
 /// by neither an explicit arg nor a pun becomes a don't-care (`Term::Wild`).
+///
+/// A FULLY-bare atom (no `col:` at all) needs no anchor to shorthand: if it has
+/// fewer terms than the rel has columns AND every term is a Var naming a column,
+/// it resolves as all-puns — `diag(path, line, msg)` == `diag(path: path, line:
+/// line, msg: msg)`, the rest Wild. That only fires when the atom would OTHERWISE
+/// be an arity error (count != arity), so a genuinely positional atom (count ==
+/// arity) is never reinterpreted and existing programs are untouched.
 fn resolve_atom(a: &mut ast::Atom, schema: &HashMap<String, Vec<String>>) -> Result<()> {
-    if a.named.is_empty() { return Ok(()); }
+    if a.named.is_empty() {
+        // Positional atom. Leave it exactly positional unless it is a bare
+        // shorthand that would otherwise fail the arity check.
+        let is_shorthand = match schema.get(&a.rel) {
+            Some(cols) => a.terms.len() != cols.len()
+                && !a.terms.is_empty()
+                && a.terms.iter().all(|t| matches!(t, Term::Var(v) if cols.contains(v))),
+            None => false,
+        };
+        if !is_shorthand { return Ok(()); }
+    }
     let cols = schema.get(&a.rel).ok_or_else(|| anyhow::anyhow!(
         "named args on `{0}` need a `rel {0}(...)` declaration (or a built-in schema) \
          to map column names to positions", a.rel))?;

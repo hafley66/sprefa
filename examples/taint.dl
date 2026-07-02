@@ -64,8 +64,7 @@ rel tainted(id: text).
 tainted(id) <- source_node(id).
 tainted(b)  <- tainted(a), flow_edge(a, b), !sanitized(b).
 
-rel diag(path: file, line: int, severity: text, code: text, msg: text).
-diag(f, l, "warning", "taint", "tainted value reaches sink `${callee}`") <-
+diag(path: f, line: l, severity: "warning", code: "taint", msg: "tainted value reaches sink `${callee}`") <-
     tainted(id), sink_node(id, callee, f, l).
 
-? diag(f, l, sev, code, msg).
+? diag(path: f, line: l, severity: sev, code, msg).

@@ -42,9 +42,8 @@ violation(a, b, ta, tb) <-
 rel violation_count(from_tier: text, to_tier: text, n: int).
 violation_count(ta, tb, count(a)) <- violation(a, _, ta, tb).
 
-rel diag(path: file, line: int, severity: text, code: text, msg: text).
-diag(a, 1, "warning", "arch",
-     "layer `${ta}` must not depend on `${tb}` (imports ${b})") <-
+diag(path: a, line: 1, severity: "warning", code: "arch",
+     msg: "layer `${ta}` must not depend on `${tb}` (imports ${b})") <-
     violation(a, b, ta, tb).
 
 ? violation_count(ta, tb, n).
