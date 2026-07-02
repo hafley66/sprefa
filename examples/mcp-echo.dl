@@ -1,0 +1,36 @@
+# mcp-echo.dl — a JSON-RPC server authored as datalog.
+#
+#   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"ping"}' \
+#     | dl examples/mcp-echo.dl --mcp --no-daemon
+#
+# The program declares its boundary as PORTS: rels marked @in(class)/@out(class).
+# The class names the contract (rpc = one reply per request id closes it), never
+# a transport — `--mcp` is the binding profile that puts the rpc ports on
+# stdio x jsonrpc, so this same file could serve HTTP later without an edit.
+#
+# The --mcp serve loop injects each inbound request into the @in(rpc) rel
+#   req(id, method, params)      params = the request's params as JSON text
+# ticks the program, then drains the @out(rpc) rel
+#   resp(id, result)             result = response payload (JSON text, or a
+#                                bare string sent as a JSON string)
+# back to the transport, retiring the answered req row (drain law 1). One
+# request = one tick = one response (streaming rides the stream class later).
+#
+# Dispatch is the lattice: route is keyed on the request id and merge(MaxBy(prio))
+# keeps the highest-priority matching handler's whole row — competing rules,
+# one winner, no if/else. The prio-1 fallback answers anything unhandled, so
+# the client never hangs on an unknown method.
+
+rel req(id: int, method: text, params: text) @in(rpc).
+rel resp(id: int, result: text) @out(rpc).
+
+rel known(method: text).
+known("ping").
+known("echo").
+
+rel route(id: int, result: text, prio: int) key(id) merge(MaxBy(prio)).
+route(id, "pong", 100) <- req(id, "ping", _).
+route(id, params, 100) <- req(id, "echo", params).
+route(id, "unknown method", 1) <- req(id, method, _), !known(method).
+
+resp(id, result) <- route(id, result, _).

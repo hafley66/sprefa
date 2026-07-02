@@ -47,6 +47,7 @@ mod gen_op;
 mod kotlin;
 mod lattice;
 mod lex_utf8;
+mod mcp;
 mod lint_no_touch;
 mod lsp_protocol;
 mod match_col_span;

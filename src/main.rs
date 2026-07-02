@@ -45,6 +45,14 @@ struct Cli {
     /// docs/skill-injection.md.
     #[arg(long)]
     hook: bool,
+    /// Serve the program as an MCP (JSON-RPC stdio, newline-delimited) server:
+    /// binds the program's rpc-class ports to stdio. Each inbound request
+    /// injects into the `@in(rpc)` rel (envelope id, method, params), runs a
+    /// tick, and the `@out(rpc)` rel's rows (id, result) drain back as
+    /// responses. Dispatch is a lattice rel (`key(id) merge(MaxBy(prio))`).
+    /// See examples/mcp-echo.dl.
+    #[arg(long)]
+    mcp: bool,
     /// Like --check but emit the diagnostics as a JSON array on stdout.
     #[arg(long)]
     diag_json: bool,
@@ -254,6 +262,8 @@ fn main() -> Result<()> {
         // (block rides the JSON), 1 if the program is broken (user-facing only).
         let code = sprefa_v5::hook::run_hook(program, db.as_deref(), root)?;
         std::process::exit(code);
+    } else if cli.mcp {
+        sprefa_v5::mcp::run_mcp(program, db.as_deref(), root)
     } else if cli.check || cli.diag_json {
         // Exit contract: 0 clean, 2 rail violations (Claude Code's blocking-hook
         // code; stderr feeds the agent), 1 broken program (user-facing).

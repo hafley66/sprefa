@@ -73,6 +73,36 @@ impl MergeFn {
     }
 }
 
+/// Which way rows cross the engine boundary for a port rel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PortDir { In, Out }
+
+/// `@in(class)` / `@out(class)` decl qualifier: the rel is a port — rows enter
+/// (`@in`, injected by a serving loop before its tick) or leave (`@out`,
+/// drained to a transport after the tick). `class` names the CONTRACT the port
+/// abides by, never a transport: `rpc` = Promise-shaped (envelope
+/// id/method/params in, id/result out, one reply per id closes the request).
+/// `stream`/`duplex` are reserved. Binding a class to a wire is a CLI profile
+/// (`--mcp` = rpc ports over stdio x jsonrpc), so the same program serves any
+/// transport that speaks the class.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Port {
+    pub dir: PortDir,
+    pub class: String,
+}
+
+impl Port {
+    /// The column envelope a class requires, by (name, type) — order-free,
+    /// mirroring `diag`'s by-name mapping. `None` = unknown class.
+    pub fn envelope(class: &str, dir: PortDir) -> Option<&'static [(&'static str, Type)]> {
+        match (class, dir) {
+            ("rpc", PortDir::In) => Some(&[("id", Type::Int), ("method", Type::Text), ("params", Type::Text)]),
+            ("rpc", PortDir::Out) => Some(&[("id", Type::Int), ("result", Type::Text)]),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct RelDecl {
     pub name: String,
@@ -86,6 +116,8 @@ pub struct RelDecl {
     /// `merge(MaxBy(col))` qualifier: the lattice merge on key conflict.
     /// Requires `key` to be set (the conflict target). `None` = first-wins.
     pub merge: Option<MergeFn>,
+    /// `@in(class)` / `@out(class)` qualifier: this rel is a port (see `Port`).
+    pub port: Option<Port>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -93,6 +125,7 @@ pub struct RelMeta {
     pub cols: Vec<Col>,
     pub key: Option<Vec<String>>,
     pub merge: Option<MergeFn>,
+    pub port: Option<Port>,
 }
 
 impl RelMeta {

@@ -118,6 +118,22 @@ impl Engine {
                        them in a third derived rule.");
             }
         }
+        // An `@in(class)` port rel is EDB injected by the serving loop (--mcp);
+        // a source or derived rule heading it would wipe/collide with the
+        // injected requests. Rules READ an in-port; they head an @out rel.
+        let in_ports: Vec<&str> = prog.items.iter().filter_map(|i| match i {
+            crate::ast::Item::Rel(d)
+                if matches!(&d.port, Some(p) if p.dir == crate::ast::PortDir::In) =>
+                Some(d.name.as_str()),
+            _ => None,
+        }).collect();
+        for rel in source_rels.iter().chain(derived_rels.iter()) {
+            if in_ports.contains(&rel.as_str()) {
+                bail!("relation '{rel}' is an @in port (rows are injected by the serving loop); \
+                       rules read it, never head it — head your handler output in an @out rel \
+                       (or an ordinary relation) instead.");
+            }
+        }
         // Same hazard for a rel headed by BOTH a term-extract rule (json/jsonp body
         // form) and a plain derived rule: `eval_extract_rules` fills the extract
         // rows, then `rebuild_derived` runs AFTER it (so derived rules can read the

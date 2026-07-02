@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod ast;
+pub mod channel;
 pub mod comment;
 pub mod config;
 pub mod corpus;
@@ -18,6 +19,7 @@ pub mod ktpath;
 pub mod lex;
 pub mod lower;
 pub mod lsp;
+pub mod mcp;
 pub mod modgraph;
 pub mod parse;
 pub mod propose;
