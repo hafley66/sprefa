@@ -6,6 +6,8 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-02
+
 ### Added
 - **`std/flow.dl` — the shared value-flow base as a `use` module** — the
   lines every flow program copy-pasted (the `call_edge_bare` sym-space
@@ -54,6 +56,13 @@ tags consumed by cargo-dist.
   enclosing scope so captures still resolve; `nest` still counts a call
   inside a closure inside a loop (loop-fn matching is `::closure::`
   prefix-aware). Tests: 3 typegraph units + the e2e collection gates.
+- **`examples/flow-slice.dl` — the value slice of one local / instance** —
+  forward ("what does `token` reach?"), backward ("what feeds it?"), and the
+  field-accurate reads of a single instantiation, each a seeded recursive
+  walk of `std/flow.dl`'s `flow_edge` (the closure-can't-be-read-unpinned
+  idiom, cheaper by magic-set). A copy template for slicing on any repo:
+  edit the seed's var literal, or seed one exact node id from a `? df_node`
+  dump.
 - **`examples/flow-services.dl` — the wire hop** — cross-SERVICE value flow
   where no call edge exists: a spec-seeded `service_op` inventory (every
   `operationId` in a scanned `openapi.yaml`; assert `service_op("x").`

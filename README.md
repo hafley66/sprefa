@@ -686,7 +686,9 @@ All in [examples/](examples/), runnable as `dl examples/<name>.dl --root .`:
 | [version-skew.dl](examples/version-skew.dl) | one dep pinned at differing versions across an org; min/max witnesses + blast-radius by repo count over `SPREFA_CONFIG` |
 | [phantom-deps.dl](examples/phantom-deps.dl) | Go imports covered by no `require` in any go.mod — the transitive import that breaks the day its provider drops it |
 | [vendored-drift.dl](examples/vendored-drift.dl) | a `third_party/` copy vs its upstream config repo by content address: `in_sync` / `drift` / `local_only` |
-| [taint.dl](examples/taint.dl) | source/sink/sanitizer preset over the interprocedural flow graph; recursive propagation, stops at sanitized nodes |
+| [taint.dl](examples/taint.dl) | source/sink/sanitizer preset over the interprocedural flow graph; recursive propagation, stops at sanitized nodes; rides `use "std/flow.dl"` |
+| [flow-slice.dl](examples/flow-slice.dl) | the value slice of ONE local or instance: forward ("what does `token` touch?") + backward ("what feeds it?") + field-accurate reads of a single `new`, via a seeded recursive walk of `std/flow.dl`'s `flow_edge` |
+| [flow-services.dl](examples/flow-services.dl) | value flow ACROSS the wire: a spec-seeded `operationId` seam bridges a client's call argument to the handler's param (and its return back) where no call edge exists |
 | [route-norm.dl](examples/route-norm.dl) | client paths vs server routes across `{id}`/`:id`/`%s` dialects, joined on the punctuation-stripped lowercase normal form |
 | [arch-conformance.dl](examples/arch-conformance.dl) | declared layers + allowed arrows vs the real `module_edge` graph; every unpermitted cross-layer edge is a `violation` |
 
@@ -730,7 +732,11 @@ between the markers.
 | [`dup-collapse.dl`](examples/dup-collapse.dl) | dup-collapse.dl — RECOMMENDER, bootstrapped from measured tuples #1 and #2. |
 | [`feature-envy.dl`](examples/feature-envy.dl) | feature-envy.dl — automatic refactor hints from the RA oracle. |
 | [`field_matrix.dl`](examples/field_matrix.dl) | Extract the Engine method×field incidence matrix for spectral co-clustering. |
+| [`flow-ctor.dl`](examples/flow-ctor.dl) | flow-ctor.dl — instantiation-centric value flow: who constructs what, which |
 | [`flow-interproc.dl`](examples/flow-interproc.dl) | flow-interproc.dl — cross-function, SCIP-resolved value flow. |
+| [`flow-jsx.dl`](examples/flow-jsx.dl) | flow-jsx.dl — JSX prop flow. `<Card title={t}/>` IS a call in costume — |
+| [`flow-services.dl`](examples/flow-services.dl) | flow-services.dl — value flow ACROSS the wire. Two services never share a |
+| [`flow-slice.dl`](examples/flow-slice.dl) | flow-slice.dl — the value slice of ONE local or ONE instance. "What does |
 | [`fn-graph.dl`](examples/fn-graph.dl) | fn-graph.dl — the 100%-recall function-level call graph from the RA oracle. |
 | [`fuzzy-traits.dl`](examples/fuzzy-traits.dl) | Fuzzy latent traits over a Rust file (defaults to src/engine.rs). Last session's |
 | [`gen-doc-index.dl`](examples/gen-doc-index.dl) | gen-doc-index.dl — dogfoods the doc tools on v5's own docs + source. |

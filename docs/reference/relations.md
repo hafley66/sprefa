@@ -20,7 +20,9 @@ Generated from the engine's `rel_catalog` by examples/gen-reference.dl. Do not h
 | `content` | core | `(id, hash)` | content addresses |
 | `crate_edge` | module | `(src, dst, kind, rev)` | workspace-internal Cargo dependency edges |
 | `created` | created | `(path, name, email, ts)` | files added since their first appearance, with author name/email/timestamp |
+| `df_arg` | dataflow | `(call, pos, arg)` | (call/new df_node id, slot, arg df_node id); 0-based, receiver at -1; aligns with df_param.pos for the positional arg->param hop |
 | `df_edge` | dataflow | `(from, to)` | intra-procedural dataflow dependency edge |
+| `df_field` | dataflow | `(id, field, value)` | (new/call df_node id, field name, value df_node id); struct-literal fields, object-literal properties, Kotlin named args; ".." for spread/functional-update bases |
 | `df_node` | dataflow | `(id, kind, var, fn, file, line)` | intra-procedural dataflow node (call_res/assign/...); id is file::line::kind |
 | `df_param` | dataflow | `(id, pos)` | (param df_node id, positional index); index counts typed params only (self skipped) so it aligns with type_sig.pos for node-level type joins |
 | `dl_diag` | meta | `(path, line, col, end_line, end_col, severity, code, msg)` | parse/type diagnostics for each scanned `.dl` file (path, line, col, end_line, end_col, severity, code, msg); the engine's own lexer/parser/typechecker run over `file` rows ending in `.dl`, byte spans mapped to 1-based line / 0-based col — join agent_changed for lint-on-edit |

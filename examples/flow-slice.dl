@@ -1,0 +1,79 @@
+# flow-slice.dl — the value slice of ONE local or ONE instance. "What does
+# this variable touch?" (forward) and "what feeds it?" (backward), plus the
+# field-accurate reads of a single instantiation.
+#
+# The graph is std/flow.dl's flow_edge (intra-proc lift ∪ the per-call-site
+# interprocedural / lambda / summary hops), so a slice crosses function — and,
+# with a wire hop unioned in, service — boundaries for free.
+#
+# THE SHAPE: seed a frontier from the node you care about, then a plain
+# recursive rule walks flow_edge from the seed. A closure rel CANNOT be read
+# unpinned in a rule body (the engine bails — it would materialize the whole
+# closure), so the seed + recursion IS the idiom, and it is cheaper anyway
+# (magic-set: the fixpoint only touches what the seed reaches).
+#
+#   dl examples/flow-slice.dl --root .
+#
+# To target a DIFFERENT variable, edit the seed's var literal (and, if the
+# name is shadowed across functions, pin `fn`/`file`/`line` too — every
+# df_node carries all four). To seed one exact node instead, dump
+# `? df_node(id, kind, var, fn, file, line).`, copy an id, and write
+# `seed("src/lib.rs:42:8").` — node ids are stable strings.
+
+use "std/flow.dl".
+
+rel src(p: file).
+src(p) <- scan("WORK", "src/**/*.{rs,ts,kt}", p, rev), match(p, rev, /./, l).
+
+# ── 1. forward slice of a local ──────────────────────────────────────────────
+# Seed: every binding (let/param) named `token`. Pin `fn`/`line` in the body
+# to disambiguate a shadowed name; unpinned = the union over all `token`s.
+rel seed(node: text).
+seed(n) <- df_node(n, "let_bind", "token", _, _, _).
+seed(n) <- df_node(n, "param", "token", _, _, _).
+
+# Forward reachability from the seed. The two rules are the frontier and its
+# transitive walk — the same magic-set shape as flow-ctor.dl's from_new.
+rel forward(node: text).
+forward(y) <- seed(n), flow_edge(n, y).
+forward(y) <- forward(x), flow_edge(x, y).
+
+# Project each reached node back to a readable (kind, var, location). Anonymous
+# nodes (empty var — call results, binops, literals) are dropped for legibility;
+# drop the `v != ""` guard to see them.
+rel reaches(kind: text, var: text, fn: text, file: file, line: int).
+reaches(k, v, f, p, l) <- forward(n), df_node(n, k, v, f, p, l), v != "".
+
+# ── 2. backward slice of a local ─────────────────────────────────────────────
+# "What feeds `token`?" — the same rules with flow_edge flipped. Seeds on the
+# same frontier; walks edges INTO the seed instead of out of it. (A source has
+# no backward slice and a sink no forward slice, so seeding a fn PARAMETER
+# here yields no `fed_by` rows — it is the origin; seed a downstream binding
+# to see the backward direction light up.)
+rel backward(node: text).
+backward(x) <- seed(n), flow_edge(x, n).
+backward(x) <- backward(y), flow_edge(x, y).
+
+rel fed_by(kind: text, var: text, fn: text, file: file, line: int).
+fed_by(k, v, f, p, l) <- backward(n), df_node(n, k, v, f, p, l), v != "".
+
+# ── 3. field-accurate slice of ONE instance ──────────────────────────────────
+# Seed a single instantiation (a `new` node — pin file/line to one alloc site,
+# or leave var = the type name for every instance of a type). A value stored
+# into field F of that instance reaches downstream `member` reads of the SAME
+# field name — field-sensitive, so a read of a different field is excluded.
+rel inst(node: text).
+inst(n) <- df_node(n, "new", "Config", _, _, _).   # edit: the type / alloc site
+
+rel from_inst(node: text).
+from_inst(x) <- inst(n), flow_edge(n, x).
+from_inst(y) <- from_inst(x), flow_edge(x, y).
+
+rel inst_field_read(value: text, field: text, read: text).
+inst_field_read(v, fld, rd) <-
+    inst(n), df_field(n, fld, v),
+    from_inst(rd), df_node(rd, "member", fld, _, _, _).
+
+? reaches(kind, var, fn, file, line).
+? fed_by(kind, var, fn, file, line).
+? inst_field_read(value, field, read).
