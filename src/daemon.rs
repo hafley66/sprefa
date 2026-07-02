@@ -1033,6 +1033,69 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                 Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
             }
         }
+        // One rpc-port request pumped through the daemon's warm engine: inject
+        // into the @in(rpc) rel, tick, drain the @out(rpc) rel. The `dl --mcp`
+        // adapter calls this per inbound frame, so the daemon stays the single
+        // engine/lock owner (no second process fighting for the db).
+        "mcp_request" => {
+            let p = &req.params;
+            let (Some(in_rel), Some(out_rel), Some(rid), Some(method)) = (
+                p.get("in_rel").and_then(|v| v.as_str()),
+                p.get("out_rel").and_then(|v| v.as_str()),
+                p.get("id").and_then(|v| v.as_str()),
+                p.get("method").and_then(|v| v.as_str()),
+            ) else {
+                return Response::err(req.id, INVALID_PARAMS,
+                    "mcp_request needs in_rel, out_rel, id, method");
+            };
+            let args = p.get("params").and_then(|v| v.as_str()).unwrap_or("null");
+            let prog = lock(&d.prog);
+            // Validate against the DAEMON's loaded program, not the adapter's
+            // file: the two can drift, and injecting into a rel that is not an
+            // @in(rpc) port here would corrupt an ordinary relation.
+            for (rel, dir) in [(in_rel, crate::ast::PortDir::In), (out_rel, crate::ast::PortDir::Out)] {
+                match crate::mcp::port_decl(&prog, rel) {
+                    Some(port) if port.dir == dir && port.class == "rpc" => {}
+                    _ => return Response::err(req.id, INVALID_PARAMS, format!(
+                        "rel {rel} is not an @{}(rpc) port in the daemon's loaded program",
+                        if dir == crate::ast::PortDir::In { "in" } else { "out" })),
+                }
+            }
+            let mut eng = lock(&d.eng);
+            let run = (|| -> anyhow::Result<Vec<(String, String)>> {
+                eng.inject_rpc(in_rel, rid, method, args)?;
+                eng.tick(&prog, true)?;
+                eng.drain_rpc(out_rel, in_rel)
+            })();
+            d.tick_count.fetch_add(1, Ordering::Relaxed);
+            match run {
+                Ok(rows) => Response::ok(req.id, json!({"rows": rows})),
+                Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
+            }
+        }
+        // Retire unanswered request ids from an @in(rpc) rel (the adapter's
+        // -32601 path). Answered ids were already retired by the drain.
+        "mcp_retire" => {
+            let Some(in_rel) = req.params.get("in_rel").and_then(|v| v.as_str()) else {
+                return Response::err(req.id, INVALID_PARAMS, "mcp_retire needs in_rel");
+            };
+            let ids: Vec<String> = req.params.get("ids").and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            {
+                let prog = lock(&d.prog);
+                match crate::mcp::port_decl(&prog, in_rel) {
+                    Some(port) if port.dir == crate::ast::PortDir::In && port.class == "rpc" => {}
+                    _ => return Response::err(req.id, INVALID_PARAMS, format!(
+                        "rel {in_rel} is not an @in(rpc) port in the daemon's loaded program")),
+                }
+            }
+            let mut eng = lock(&d.eng);
+            match eng.retire_rpc(in_rel, &ids) {
+                Ok(()) => Response::ok(req.id, json!({"ok": true})),
+                Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
+            }
+        }
         "eval" => {
             let text = match req.params.get("text").and_then(|v| v.as_str()) {
                 Some(s) => s,

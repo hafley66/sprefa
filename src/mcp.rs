@@ -23,7 +23,77 @@
 use crate::ast::{self, Item, PortDir};
 use crate::channel::{Channel, Frame, StdioChannel};
 use anyhow::Result;
+use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+
+/// The port qualifier of a named rel decl, if any.
+pub fn port_decl<'a>(prog: &'a ast::Program, name: &str) -> Option<&'a ast::Port> {
+    prog.items.iter().find_map(|i| match i {
+        Item::Rel(d) if d.name == name => d.port.as_ref(),
+        _ => None,
+    })
+}
+
+/// Where requests are pumped. `Daemon` is the primary mode: the daemon owns
+/// the one engine and its lock, stays warm and file-watch reactive, and this
+/// process is a thin stdio adapter (`mcp_request`/`mcp_retire` RPCs beside
+/// `query_sql`). `Local` is the fallback: `--no-daemon`, an explicit `--db`,
+/// or a failed attach — a cold in-process engine, hermetic, right for CI.
+pub enum Pump {
+    Local(Box<crate::engine::Engine>),
+    Daemon { stream: UnixStream, next_id: u64 },
+}
+
+impl Pump {
+    fn rpc(&mut self, method: &str, params: serde_json::Value) -> Result<crate::rpc::Response> {
+        let Pump::Daemon { stream, next_id } = self else {
+            anyhow::bail!("rpc on a local pump");
+        };
+        let req = crate::rpc::Request::new(*next_id, method, params);
+        *next_id += 1;
+        let resp = crate::daemon::rpc_call(stream, &req)?;
+        if let Some(e) = &resp.error {
+            anyhow::bail!("daemon {method}: {}", e.message);
+        }
+        Ok(resp)
+    }
+
+    /// Inject one request, tick, drain: the per-frame pump.
+    fn handle(&mut self, prog: &ast::Program, ports: &(String, String),
+              id: &str, method: &str, params: &str) -> Result<Vec<(String, String)>> {
+        let (in_rel, out_rel) = ports;
+        match self {
+            Pump::Local(eng) => {
+                eng.inject_rpc(in_rel, id, method, params)?;
+                eng.tick(prog, true)?;
+                eng.drain_rpc(out_rel, in_rel)
+            }
+            Pump::Daemon { .. } => {
+                let resp = self.rpc("mcp_request", serde_json::json!({
+                    "in_rel": in_rel, "out_rel": out_rel,
+                    "id": id, "method": method, "params": params,
+                }))?;
+                let rows = resp.result.as_ref().and_then(|r| r.get("rows"))
+                    .and_then(|r| r.as_array()).cloned().unwrap_or_default();
+                Ok(rows.iter().filter_map(|row| {
+                    let r = row.as_array()?;
+                    Some((r.first()?.as_str()?.to_string(), r.get(1)?.as_str()?.to_string()))
+                }).collect())
+            }
+        }
+    }
+
+    /// Retire unanswered ids from the in-port (the -32601 path).
+    fn retire(&mut self, in_rel: &str, ids: &[String]) -> Result<()> {
+        match self {
+            Pump::Local(eng) => eng.retire_rpc(in_rel, ids),
+            Pump::Daemon { .. } => {
+                self.rpc("mcp_retire", serde_json::json!({ "in_rel": in_rel, "ids": ids }))?;
+                Ok(())
+            }
+        }
+    }
+}
 
 /// The program's rpc port pair: (in rel, out rel). Exactly one of each —
 /// with no named-instance syntax yet (`@in(rpc: api)` is deferred), two ports
@@ -54,16 +124,16 @@ pub fn rpc_ports(prog: &ast::Program) -> Result<(String, String)> {
     }
 }
 
-/// Handle one inbound JSON-RPC message: inject, tick, drain. Returns the
-/// outbound messages (empty for a notification). A request no rule answered
-/// gets a method-not-found error so the client never hangs.
+/// Handle one inbound JSON-RPC message: inject, tick, drain (through the
+/// pump). Returns the outbound messages (empty for a notification). A request
+/// no rule answered gets a method-not-found error so the client never hangs.
 pub fn handle_msg(
-    eng: &mut crate::engine::Engine,
+    pump: &mut Pump,
     prog: &ast::Program,
     ports: &(String, String),
     msg: &serde_json::Value,
 ) -> Result<Vec<serde_json::Value>> {
-    let (in_rel, out_rel) = ports;
+    let (in_rel, _) = ports;
     let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or_default().to_string();
     let Some(idv) = msg.get("id") else {
         // No id = a notification (MCP's notifications/initialized etc.):
@@ -80,9 +150,7 @@ pub fn handle_msg(
         serde_json::from_str(rid).unwrap_or_else(|_| serde_json::Value::String(rid.to_string()))
     };
     let params = msg.get("params").map(|p| p.to_string()).unwrap_or_else(|| "null".into());
-    eng.inject_rpc(in_rel, &id, &method, &params)?;
-    eng.tick(prog, true)?;
-    let rows = eng.drain_rpc(out_rel, in_rel)?;
+    let rows = pump.handle(prog, ports, &id, &method, &params)?;
     let mut out = Vec::new();
     let mut answered = false;
     for (rid, result) in rows {
@@ -94,7 +162,7 @@ pub fn handle_msg(
         out.push(serde_json::json!({ "jsonrpc": "2.0", "id": id_val(&rid), "result": val }));
     }
     if !answered {
-        eng.retire_rpc(in_rel, std::slice::from_ref(&id))?;
+        pump.retire(in_rel, std::slice::from_ref(&id))?;
         out.push(serde_json::json!({
             "jsonrpc": "2.0", "id": id_val(&id),
             "error": { "code": -32601, "message": format!("no rule answered method `{method}`") },
@@ -105,24 +173,34 @@ pub fn handle_msg(
 
 /// The serve loop: frames in, responses out, until the peer closes.
 pub fn serve(
-    eng: &mut crate::engine::Engine,
+    pump: &mut Pump,
     prog: &ast::Program,
     ports: &(String, String),
     chan: &mut dyn Channel,
 ) -> Result<()> {
     while let Some(Frame::Rpc(msg)) = chan.recv()? {
-        for resp in handle_msg(eng, prog, ports, &msg)? {
+        for resp in handle_msg(pump, prog, ports, &msg)? {
             chan.send(&Frame::Rpc(resp))?;
         }
     }
     Ok(())
 }
 
+/// Cold in-process pump: open the db, one priming tick so sources are scanned,
+/// the port rels are declared, and per-request latency is the fixpoint.
+fn local_pump(prog: &ast::Program, db_path: Option<&str>, root: PathBuf) -> Result<Pump> {
+    let conn = crate::db::open(db_path)?;
+    let mut eng = crate::engine::Engine::new(conn, root);
+    eng.tick(prog, true)?;
+    Ok(Pump::Local(Box::new(eng)))
+}
+
 /// `dl --mcp` entry: load the program (positional or `.dl/` discovery), strip
 /// `?` queries and `gen` sinks (stdout is the transport; codegen has no place
-/// in a serve loop), resolve the rpc port pair, then serve stdio. One priming
-/// tick runs before the first request so sources are scanned, the port rels
-/// are declared, and per-request latency is the fixpoint, not a cold scan.
+/// in a serve loop), resolve the rpc port pair, then serve stdio. Daemon-first,
+/// like `--hook`: when the daemon manages this root, this process is a thin
+/// adapter over its warm engine; otherwise (opt-out, explicit `--db`, or a
+/// failed attach) a cold in-process engine serves hermetically.
 pub fn run_mcp(program: Option<&str>, db_path: Option<&str>, root: PathBuf) -> Result<()> {
     let files = crate::resolve_programs(program, &root)?;
     let (mut prog, type_diags, _) = crate::prepare_paths(&files)?;
@@ -135,10 +213,23 @@ pub fn run_mcp(program: Option<&str>, db_path: Option<&str>, root: PathBuf) -> R
         anyhow::bail!("{n_err} program error(s)");
     }
     let ports = rpc_ports(&prog)?;
-    let conn = crate::db::open(db_path)?;
-    let mut eng = crate::engine::Engine::new(conn, root);
-    eng.tick(&prog, true)?;
+    let mut pump = if crate::daemon::enabled_for(&root) && db_path.is_none() {
+        let attach = || -> Result<Pump> {
+            crate::daemon::ensure_daemon(&root, program)?;
+            let stream = crate::daemon::connect(Some(&root))?;
+            Ok(Pump::Daemon { stream, next_id: 1 })
+        };
+        match attach() {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[daemon] mcp attach failed, in-process: {e}");
+                local_pump(&prog, db_path, root)?
+            }
+        }
+    } else {
+        local_pump(&prog, db_path, root)?
+    };
     let stdin = std::io::stdin();
     let mut chan = StdioChannel::new(stdin.lock(), std::io::stdout());
-    serve(&mut eng, &prog, &ports, &mut chan)
+    serve(&mut pump, &prog, &ports, &mut chan)
 }

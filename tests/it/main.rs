@@ -48,6 +48,7 @@ mod kotlin;
 mod lattice;
 mod lex_utf8;
 mod mcp;
+mod mcp_daemon;
 mod mcp_lifecycle;
 mod lint_no_touch;
 mod lsp_protocol;
