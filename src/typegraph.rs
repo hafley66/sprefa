@@ -778,6 +778,54 @@ fn ts_binding_name(p: &ts_ast::BindingPattern) -> Option<String> {
     }
 }
 
+/// Seed a fn's param nodes into the scope. A bare identifier binds as itself.
+/// An object-destructuring param (`{title, count: n}` — the React props shape)
+/// mints one param node PER property: var carries the PROPERTY name (what a
+/// caller's df_field prop row matches by name), while the scope binds the
+/// LOCAL name (they differ under `key: renamed`). Every piece shares the
+/// slot's positional index, so the positional arg->param hop fans the incoming
+/// object into each piece — the conservative read of destructuring.
+fn ts_seed_params(
+    params: &ts_ast::FormalParameters,
+    file: &str,
+    starts: &[usize],
+    fn_sym: &str,
+    scope: &mut std::collections::HashMap<String, String>,
+    out: &mut DataflowFacts,
+) {
+    for (pos, p) in params.items.iter().enumerate() {
+        match &p.pattern {
+            ts_ast::BindingPattern::BindingIdentifier(b) => {
+                let id = ts_push(out, file, starts, p.span.start, "param", &b.name, fn_sym);
+                out.param_pos.push((id.clone(), pos as u32));
+                scope.insert(b.name.to_string(), id);
+            }
+            ts_ast::BindingPattern::ObjectPattern(op) => {
+                for prop in &op.properties {
+                    if let ts_ast::BindingPattern::BindingIdentifier(b) = &prop.value {
+                        let key = match &prop.key {
+                            ts_ast::PropertyKey::StaticIdentifier(i) => i.name.to_string(),
+                            ts_ast::PropertyKey::StringLiteral(s) => s.value.to_string(),
+                            _ => b.name.to_string(),
+                        };
+                        let id = ts_push(out, file, starts, b.span.start, "param", &key, fn_sym);
+                        out.param_pos.push((id.clone(), pos as u32));
+                        scope.insert(b.name.to_string(), id);
+                    }
+                }
+                if let Some(rest) = &op.rest {
+                    if let ts_ast::BindingPattern::BindingIdentifier(b) = &rest.argument {
+                        let id = ts_push(out, file, starts, b.span.start, "param", &b.name, fn_sym);
+                        out.param_pos.push((id.clone(), pos as u32));
+                        scope.insert(b.name.to_string(), id);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 fn ts_dataflow_from(program: &ts_ast::Program, file: &str, content: &str) -> DataflowFacts {
     let starts = line_index(content);
     let mut out = DataflowFacts::default();
@@ -796,14 +844,7 @@ fn ts_flow_stmt(stmt: &ts_ast::Statement, file: &str, starts: &[usize], out: &mu
                 let name = f.id.as_ref().map(|i| i.name.to_string()).unwrap_or_default();
                 let fn_sym = mint_sym(file, EntityKind::Function, &name, None);
                 let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-                for (pos, p) in f.params.items.iter().enumerate() {
-                    if let Some(name) = ts_binding_name(&p.pattern) {
-                        let off = p.span.start;
-                        let id = ts_push(out, file, starts, off, "param", &name, &fn_sym);
-                        out.param_pos.push((id.clone(), pos as u32));
-                        scope.insert(name, id);
-                    }
-                }
+                ts_seed_params(&f.params, file, starts, &fn_sym, &mut scope, out);
                 ts_flow_body(body, file, starts, &fn_sym, &mut scope, out);
             }
         }
@@ -829,14 +870,7 @@ fn ts_flow_decl(d: &ts_ast::Declaration, file: &str, starts: &[usize], out: &mut
                 let name = f.id.as_ref().map(|i| i.name.to_string()).unwrap_or_default();
                 let fn_sym = mint_sym(file, EntityKind::Function, &name, None);
                 let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-                for (pos, p) in f.params.items.iter().enumerate() {
-                    if let Some(name) = ts_binding_name(&p.pattern) {
-                        let off = p.span.start;
-                        let id = ts_push(out, file, starts, off, "param", &name, &fn_sym);
-                        out.param_pos.push((id.clone(), pos as u32));
-                        scope.insert(name, id);
-                    }
-                }
+                ts_seed_params(&f.params, file, starts, &fn_sym, &mut scope, out);
                 ts_flow_body(body, file, starts, &fn_sym, &mut scope, out);
             }
         }
@@ -872,13 +906,7 @@ fn ts_lift_fn(
     out: &mut DataflowFacts,
 ) {
     let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    for (pos, p) in params.items.iter().enumerate() {
-        if let Some(name) = ts_binding_name(&p.pattern) {
-            let id = ts_push(out, file, starts, p.span.start, "param", &name, fn_sym);
-            out.param_pos.push((id.clone(), pos as u32));
-            scope.insert(name, id);
-        }
-    }
+    ts_seed_params(params, file, starts, fn_sym, &mut scope, out);
     if expression {
         if let Some(ts_ast::Statement::ExpressionStatement(es)) = body.statements.first() {
             let v = ts_flow_expr(&es.expression, file, starts, fn_sym, &mut scope, out);
@@ -1149,6 +1177,13 @@ fn ts_flow_expr(
             }
             id
         }
+        // `<Card title={t} {...rest}>{kids}</Card>`: JSX is a call in costume —
+        // jsx(Card, {title: t, ...rest, children: kids}) — so an element lifts
+        // exactly like an instantiation: a `new` node carrying the component/
+        // tag name, each attribute a df_field row (spread under ".."), children
+        // under the "children" pseudo-prop React actually passes.
+        E::JSXElement(el) => ts_flow_jsx_element(el, file, starts, fn_sym, scope, out),
+        E::JSXFragment(fr) => ts_flow_jsx_fragment(fr, file, starts, fn_sym, scope, out),
         // recv.prop / recv[prop]: the receiver flows through into a `member`
         // node; a static property records its name so a `df_field` write can
         // be matched against the read of the same field. oxc flattens
@@ -1185,6 +1220,128 @@ fn ts_flow_expr(
 fn span_off(e: &ts_ast::Expression) -> u32 {
     use oxc_span::GetSpan;
     e.span().start
+}
+
+/// The element's name as written: `<div/>` -> "div" (host element),
+/// `<Card/>` -> "Card" (component), `<Foo.Bar/>` -> "Bar" (trailing property,
+/// matching the callee-name convention), `<ns:tag/>` -> the tag part.
+fn ts_jsx_name(n: &ts_ast::JSXElementName) -> String {
+    use ts_ast::JSXElementName as N;
+    match n {
+        N::Identifier(i) => i.name.to_string(),
+        N::IdentifierReference(r) => r.name.to_string(),
+        N::MemberExpression(m) => m.property.name.to_string(),
+        N::NamespacedName(ns) => ns.name.name.to_string(),
+        N::ThisExpression(_) => String::new(),
+    }
+}
+
+/// A JSX element is `jsx(Name, {props..., children})`: lift it as a `new`
+/// node carrying the component/tag name, each attribute as a df_field row
+/// (a bare boolean prop `<Foo flag/>` fills with a lit — it IS `true` — and
+/// a spread `{...rest}` lands under ".." like an object spread), and each
+/// non-text child under the "children" pseudo-prop React actually passes.
+fn ts_flow_jsx_element(
+    el: &ts_ast::JSXElement,
+    file: &str,
+    starts: &[usize],
+    fn_sym: &str,
+    scope: &mut std::collections::HashMap<String, String>,
+    out: &mut DataflowFacts,
+) -> String {
+    let comp = ts_jsx_name(&el.opening_element.name);
+    let mut filled: Vec<(String, String)> = Vec::new();
+    for attr in &el.opening_element.attributes {
+        match attr {
+            ts_ast::JSXAttributeItem::Attribute(a) => {
+                let name = match &a.name {
+                    ts_ast::JSXAttributeName::Identifier(i) => i.name.to_string(),
+                    ts_ast::JSXAttributeName::NamespacedName(ns) => ns.name.name.to_string(),
+                };
+                let v = match &a.value {
+                    None => ts_push(out, file, starts, a.span.start, "lit", "", fn_sym),
+                    Some(ts_ast::JSXAttributeValue::StringLiteral(s)) => {
+                        ts_push(out, file, starts, s.span.start, "lit", "", fn_sym)
+                    }
+                    Some(ts_ast::JSXAttributeValue::ExpressionContainer(c)) => {
+                        match c.expression.as_expression() {
+                            Some(e) => ts_flow_expr(e, file, starts, fn_sym, scope, out),
+                            None => continue, // empty container `{}` carries no value
+                        }
+                    }
+                    Some(ts_ast::JSXAttributeValue::Element(child)) => {
+                        ts_flow_jsx_element(child, file, starts, fn_sym, scope, out)
+                    }
+                    Some(ts_ast::JSXAttributeValue::Fragment(fr)) => {
+                        ts_flow_jsx_fragment(fr, file, starts, fn_sym, scope, out)
+                    }
+                };
+                filled.push((name, v));
+            }
+            ts_ast::JSXAttributeItem::SpreadAttribute(sp) => {
+                let v = ts_flow_expr(&sp.argument, file, starts, fn_sym, scope, out);
+                filled.push(("..".into(), v));
+            }
+        }
+    }
+    ts_flow_jsx_children(&el.children, file, starts, fn_sym, scope, out, &mut filled);
+    let id = ts_push(out, file, starts, el.span.start, "new", &comp, fn_sym);
+    for (name, v) in filled {
+        out.edges.push(DfEdge { from: v.clone(), to: id.clone() });
+        out.fields.push((id.clone(), name, v));
+    }
+    id
+}
+
+/// `<>...</>`: an anonymous element — children only.
+fn ts_flow_jsx_fragment(
+    fr: &ts_ast::JSXFragment,
+    file: &str,
+    starts: &[usize],
+    fn_sym: &str,
+    scope: &mut std::collections::HashMap<String, String>,
+    out: &mut DataflowFacts,
+) -> String {
+    let mut filled: Vec<(String, String)> = Vec::new();
+    ts_flow_jsx_children(&fr.children, file, starts, fn_sym, scope, out, &mut filled);
+    let id = ts_push(out, file, starts, fr.span.start, "new", "", fn_sym);
+    for (name, v) in filled {
+        out.edges.push(DfEdge { from: v.clone(), to: id.clone() });
+        out.fields.push((id.clone(), name, v));
+    }
+    id
+}
+
+/// Non-text children flow into the parent element under the "children"
+/// pseudo-prop (that is the prop React passes); a spread child under "..".
+fn ts_flow_jsx_children(
+    children: &[ts_ast::JSXChild],
+    file: &str,
+    starts: &[usize],
+    fn_sym: &str,
+    scope: &mut std::collections::HashMap<String, String>,
+    out: &mut DataflowFacts,
+    filled: &mut Vec<(String, String)>,
+) {
+    for ch in children {
+        match ch {
+            ts_ast::JSXChild::Element(el) => {
+                filled.push(("children".into(), ts_flow_jsx_element(el, file, starts, fn_sym, scope, out)));
+            }
+            ts_ast::JSXChild::Fragment(fr) => {
+                filled.push(("children".into(), ts_flow_jsx_fragment(fr, file, starts, fn_sym, scope, out)));
+            }
+            ts_ast::JSXChild::ExpressionContainer(c) => {
+                if let Some(e) = c.expression.as_expression() {
+                    filled.push(("children".into(), ts_flow_expr(e, file, starts, fn_sym, scope, out)));
+                }
+            }
+            ts_ast::JSXChild::Spread(sp) => {
+                filled.push(("..".into(), ts_flow_expr(&sp.expression, file, starts, fn_sym, scope, out)));
+            }
+            ts_ast::JSXChild::Text(_) => {}
+        }
+    }
 }
 
 impl TypeLang for TsTypes {
@@ -2506,6 +2663,27 @@ impl<'a, 'p> OxcVisit<'a> for TsCallSites<'p> {
             });
         }
         oxc_ast_visit::walk::walk_call_expression(self, c);
+    }
+    // `<Card .../>` is a call — jsx(Card, props) — so a component usage is a
+    // call site and call_edge resolves caller -> Card like any other callee.
+    // Host elements (`<div/>`, lowercase = JSXElementName::Identifier) are
+    // skipped at the source: there is no def to resolve to.
+    fn visit_jsx_element(&mut self, el: &ts_ast::JSXElement<'a>) {
+        use ts_ast::JSXElementName as N;
+        let callee = match &el.opening_element.name {
+            N::IdentifierReference(r) => Some(r.name.to_string()),
+            N::MemberExpression(m) => Some(m.property.name.to_string()),
+            _ => None,
+        };
+        if let Some(callee) = callee {
+            self.sites.push(CallSite {
+                caller_sym: None,
+                callee,
+                file: self.file.to_string(),
+                line: line_at(self.starts, el.opening_element.span.start as usize),
+            });
+        }
+        oxc_ast_visit::walk::walk_jsx_element(self, el);
     }
 }
 
@@ -4141,6 +4319,56 @@ function helper(raw: Raw) {}
         // lowercase callee stays a call with slot-0 arg.
         let go2 = df.nodes.iter().filter(|n| n.kind == "call_res").count();
         assert!(go2 >= 1, "go2(x) should stay call_res: {:?}", df.nodes);
+    }
+
+    #[test]
+    fn tsx_lift_jsx_elements_props_children() {
+        let src = "function go(t: number) {\n    \
+                       const el = <Card title={t} flag {...rest}><Item/></Card>;\n    \
+                       const frag = <>{t}</>;\n\
+                   }\n";
+        let df = TsTypes.extract_dataflow("f.tsx", src);
+
+        // the element is a `new` node carrying the component name.
+        let card = dnode(&df, "new", "Card").id.clone();
+        // title={t}: the var_read flows in under the prop name.
+        let t_reads: Vec<&DfNode> = df.nodes.iter().filter(|n| n.kind == "var_read" && n.var == "t").collect();
+        assert!(t_reads.iter().any(|t| has_field(&df, &card, "title", &t.id)), "{:?}", df.fields);
+        // bare boolean prop fills with a lit; spread lands under "..".
+        assert!(df.fields.iter().any(|(i, f, _)| i == &card && f == "flag"), "{:?}", df.fields);
+        assert!(df.fields.iter().any(|(i, f, _)| i == &card && f == ".."), "{:?}", df.fields);
+        // the child element fills the "children" pseudo-prop.
+        let item = dnode(&df, "new", "Item").id.clone();
+        assert!(has_field(&df, &card, "children", &item), "{:?}", df.fields);
+        // a fragment is an anonymous element whose children flow in.
+        let frag = df.nodes.iter().find(|n| n.kind == "new" && n.var.is_empty()).expect("fragment new node");
+        assert!(df.fields.iter().any(|(i, f, _)| i == &frag.id && f == "children"), "{:?}", df.fields);
+    }
+
+    #[test]
+    fn ts_destructured_params_bind_by_prop_name() {
+        let src = "function card({title, count: n}: any, plain: number) {\n    \
+                       const a = title;\n    \
+                       const b = n;\n    \
+                       const c = plain;\n\
+                   }\n";
+        let df = TsTypes.extract_dataflow("f.ts", src);
+
+        // one param node per property, var = the PROPERTY name (what a JSX
+        // prop row matches), even when the local binding is renamed.
+        let title = dnode(&df, "param", "title").id.clone();
+        let count = dnode(&df, "param", "count").id.clone();
+        let plain = dnode(&df, "param", "plain").id.clone();
+        // scope binds the LOCAL names: reads of title/n/plain edge from them.
+        let read_of = |v: &str| df.nodes.iter().find(|n| n.kind == "var_read" && n.var == v).unwrap().id.clone();
+        assert!(df.edges.iter().any(|e| e.from == title && e.to == read_of("title")), "{:?}", df.edges);
+        assert!(df.edges.iter().any(|e| e.from == count && e.to == read_of("n")), "{:?}", df.edges);
+        assert!(df.edges.iter().any(|e| e.from == plain && e.to == read_of("plain")), "{:?}", df.edges);
+        // both destructured pieces share slot 0; plain is slot 1.
+        let pos_of = |id: &str| df.param_pos.iter().find(|(i, _)| i == id).map(|(_, p)| *p);
+        assert_eq!(pos_of(&title), Some(0));
+        assert_eq!(pos_of(&count), Some(0));
+        assert_eq!(pos_of(&plain), Some(1));
     }
 
     #[test]

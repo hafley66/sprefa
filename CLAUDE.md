@@ -373,6 +373,21 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       allocates per iteration). Tests: 3 typegraph units, flow_ctor.rs e2e,
       position gate in flow_interproc.rs. DATAFLOW_RELS 6->8.
 
+- [x] **JSX dataflow** (main, 2026-07-02, local): JSX element = `new` df_node
+      w/ component/tag name + df_field per attribute (bare bool = lit, spread
+      "..", children under "children" — the jsx(Comp, props) desugar made
+      facts); component usage = call SITE (IdentifierReference/Member only,
+      host elements skipped) so call_edge resolves caller->Card and
+      call_name(sym, "Card") is the indexable name handle; TS destructured
+      object params mint one param df_node PER property (var = KEY name for
+      the name-match, scope binds LOCAL name, shared slot index; was a total
+      hole — ts_binding_name returned None so React components had NO param
+      nodes). ts_seed_params replaces the 3 dup param loops.
+      examples/flow-jsx.dl = jsx_use + prop_edge (name-matched via call_name
+      equality, param + member targets). Tests: tsx/destructure units,
+      flow_jsx.rs e2e (undeclared-prop negative). Suites lib 196/0/1,
+      it 439/0/4.
+
 ### Open (sprefa type graph)
 - [ ] Optional: migrate the deck graph (`examples/anim-self.dl` + anim AtlasPanel)
       from name-keyed `type_edge` to sym-keyed `type_link` + `type_entity` kinds

@@ -42,6 +42,7 @@ mod facts;
 mod flow_breaking;
 mod flow_ctor;
 mod flow_interproc;
+mod flow_jsx;
 mod flow_go_dispatch;
 mod flow_kotlin_dispatch;
 mod flow_py_dispatch;

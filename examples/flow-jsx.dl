@@ -1,0 +1,59 @@
+# flow-jsx.dl — JSX prop flow. `<Card title={t}/>` IS a call in costume —
+# jsx(Card, {title: t}) — so a prop value flows into the component the same
+# way a named argument flows into a callee.
+#
+# The lift gives three fact families to compose:
+#   - a JSX element = a `new` df_node carrying the component/tag name; each
+#     attribute = df_field(elem, prop, value) (spread under "..", children
+#     under the "children" pseudo-prop React actually passes).
+#   - a component usage = a call SITE, so call_edge resolves caller -> Card
+#     and call_name(sym, "Card") is an indexable equality handle on the name.
+#   - a destructured props param (`function Card({title})`) mints one param
+#     df_node PER property, var = the PROPERTY name; `props.title` member
+#     reads carry the name too. Either shape is a name-match target.
+#
+#   dl examples/flow-jsx.dl --root .
+
+rel src(p: file).
+src(p) <- scan("WORK", "src/**/*.{ts,tsx}", p, rev), match(p, rev, /./, l).
+
+# Sym-space bridge (see flow-interproc.dl): df_node.fn is bare, call_edge is
+# repo-qualified; strip once per row so downstream joins are plain equalities.
+rel call_edge_bare(caller: text, callee: text, callee_q: text).
+call_edge_bare(cb, eb, eq) <-
+    call_edge(cq, eq, _),
+    cb = replace_re(cq, "^[^:]*::", ""),
+    eb = replace_re(eq, "^[^:]*::", "").
+
+# Where each component is used and which props it receives.
+rel jsx_use(comp: text, prop: text, path: file, line: int).
+jsx_use(comp, prop, p, l) <-
+    df_node(elem, "new", comp, _, p, l),
+    df_field(elem, prop, _).
+
+# The JSX hop: a prop value flows into the component's matching prop target,
+# by NAME. call_name(callee_q, comp) pins the resolved callee to the element's
+# component name (an equality join — no suffix test). Two target shapes:
+# the destructured param piece, and the `props.title` member read.
+rel prop_edge(value: text, comp: text, prop: text, target: text).
+prop_edge(v, comp, prop, target) <-
+    df_node(elem, "new", comp, caller_bare, _, _),
+    df_field(elem, prop, v),
+    call_edge_bare(caller_bare, callee_bare, callee_q),
+    call_name(callee_q, comp),
+    df_node(target, "param", prop, callee_bare, _, _).
+prop_edge(v, comp, prop, target) <-
+    df_node(elem, "new", comp, caller_bare, _, _),
+    df_field(elem, prop, v),
+    call_edge_bare(caller_bare, callee_bare, callee_q),
+    call_name(callee_q, comp),
+    df_node(target, "member", prop, callee_bare, _, _).
+
+# The unified edge rel, ready for closure() composition by a consumer (union
+# more hops here — the flow-interproc arg->param/ret hops slot in verbatim).
+rel flow_edge(from: text, to: text).
+flow_edge(a, b) <- df_edge(a, b).
+flow_edge(v, t) <- prop_edge(v, _, _, t).
+
+? jsx_use(comp, prop, path, line).
+? prop_edge(value, comp, prop, target).

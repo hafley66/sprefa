@@ -7,6 +7,22 @@ tags consumed by cargo-dist.
 ## [Unreleased]
 
 ### Added
+- **JSX dataflow** — `<Card title={t} {...rest}>{kids}</Card>` lifts as what
+  it desugars to, `jsx(Card, {title: t, ...rest, children: kids})`: the
+  element is a `new` df_node carrying the component/tag name, each
+  attribute a `df_field` row (bare boolean prop = lit, spread under `".."`,
+  non-text children under the `"children"` pseudo-prop). A component usage
+  is also a call SITE (host elements skipped), so `call_edge` resolves
+  caller -> Card and `call_name` gives an indexable name handle. TS
+  object-destructured params (`function Card({title, count: n})`) now mint
+  one param df_node per property — var carries the PROPERTY name (the
+  JSX/name-match target), scope binds the LOCAL name, all pieces share the
+  slot index (previously destructured params bound NOTHING — every React
+  component body was a flow hole). New `examples/flow-jsx.dl`: `jsx_use`
+  inventory + the `prop_edge` hop (prop value -> matching destructured
+  param or `props.x` member read, `call_name` equality join, no suffix
+  test). Tests: 2 typegraph units, `tests/it/flow_jsx.rs` (name-match
+  positive + undeclared-prop negative + member-read shape).
 - **Positional + constructor dataflow: `df_arg`, `df_field`, `new`/`member`
   nodes** — the intra-procedural lift now records WHICH slot each argument
   feeds (`df_arg(call, pos, arg)`, 0-based, method receiver at -1, aligned
