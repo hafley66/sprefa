@@ -1,0 +1,44 @@
+# madge.dl — madge's readout as dl rules: the resolved JS/TS module dependency
+# graph, circular dependencies, orphans (nobody imports them), and leaves
+# (import nothing). `module_edge` already speaks ES import / dynamic import /
+# tsconfig path mapping, so madge's core is four derived rules.
+# Differential oracle: tests/it/oracle_madge.rs (skips without a madge binary).
+#
+# Panel SQL (dl: Flow Panel):
+#   nodes: SELECT path, path, CASE WHEN EXISTS (SELECT 1 FROM rel_cycle_member c
+#          WHERE c.path = rel_seen.path) THEN 'cycle' ELSE 'module' END, path, 1
+#          FROM rel_seen
+#   edges: SELECT src, dst, 'import' FROM rel_dep
+
+rel seen(path: file).
+seen(path) <- scan("WORK", "**/*.ts", path, rev).
+seen(path) <- scan("WORK", "**/*.tsx", path, rev).
+seen(path) <- scan("WORK", "**/*.js", path, rev).
+seen(path) <- scan("WORK", "**/*.jsx", path, rev).
+
+rel dep(src: path, dst: path).
+dep(src, dst) <- module_edge(src, dst).
+
+rel dep_reach(src: path, dst: path).
+dep_reach(src, dst) <- dep(src, dst).
+dep_reach(src, dst) <- dep_reach(src, mid), dep(mid, dst).
+
+# a file on any import cycle, and the pairs that see each other
+rel cycle_member(path: path).
+cycle_member(src) <- dep_reach(src, src).
+rel circular(src: path, dst: path).
+circular(src, dst) <- dep_reach(src, dst), dep_reach(dst, src), src != dst.
+
+# madge --orphans: no one depends on it
+rel orphan(path: path).
+orphan(path) <- seen(path), !dep(_, path).
+
+# madge --leaves: depends on nothing
+rel leaf(path: path).
+leaf(path) <- seen(path), !dep(path, _).
+
+? dep(src, dst).
+? circular(src, dst).
+? cycle_member(path).
+? orphan(path).
+? leaf(path).

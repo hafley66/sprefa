@@ -100,7 +100,7 @@ op that no longer resolves in a catalog.
 | `arith` | body | `+ - * / %` |
 | `ast` | source | `ast(path, rev, :lang, "(query) @cap", line[, end])` |
 | `ast_yaml` | source | `ast_yaml(path, rev, :lang, "rule yaml", line, ...)` |
-| `atom` | body | `edge(f, t) / edge(to: t) / edge(from, to: t)` |
+| `atom` | body | `edge(f, t) / edge(to: t) / edge("x", 1, kind: k)` |
 | `closure` | body | `closure(edge)` |
 | `cmd` | source | `cmd(path, rev, "tool {file}", line, out)` |
 | `comment` | source | `comment(path, rev, /open/[, /close/], l0, l1, label)` |

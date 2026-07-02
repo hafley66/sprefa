@@ -72,6 +72,7 @@ mod module_use;
 mod move_refactor;
 mod named_args;
 mod oracle_kotlin;
+mod oracle_madge;
 mod oracle_rust;
 mod path_types;
 mod perf_stress;
