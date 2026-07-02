@@ -1,1 +1,1 @@
-20260701.1.dl-ports-channel-class-mcp-rung1.md
+20260701.2.dl-ports-mcp-epic-shipped.md
