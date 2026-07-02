@@ -1,0 +1,51 @@
+# arch-conformance.dl — declared layering vs the import graph that actually
+# exists. Layers are path prefixes, the allowed dependency directions are
+# facts, and every module_edge that crosses layers against the arrows is a
+# violation. The whole architecture document is ~6 facts; the enforcement is
+# one negation.
+#
+#   dl examples/arch-conformance.dl --root .           # report
+#   dl examples/arch-conformance.dl --root . --check   # exit 1 on violations
+#
+# The facts below describe THIS repo (rels/ and ingest/ may depend on the
+# engine, nothing depends back). Run it here and the violations query is a
+# live inventory of engine->rels back-edges — findings are information about
+# the code OR about the declared architecture; you decide which one is wrong.
+# Edit the layer/allowed facts to describe your tree. Files under no declared
+# prefix are unassigned and exempt (add a catch-all layer to change that).
+
+# Populate the module graph. Adjust the glob to the tree being graded.
+rel src(p: file).
+src(p) <- scan("WORK", "src/**/*.rs", p, rev), match(p, rev, /./, l).
+
+# ---- the architecture (edit me) ---------------------------------------------
+rel layer(prefix: text, tier: text).
+layer("src/rels/", "rels").
+layer("src/ingest/", "ingest").
+layer("src/engine/", "engine").
+
+rel allowed(from: text, to: text).
+allowed("rels", "engine").
+allowed("ingest", "engine").
+
+# ---- assignment: a file belongs to the layer whose prefix it carries --------
+rel tier(f: file, tier: text).
+tier(f, t) <- module_edge(f, _), layer(p, t), s = strip_prefix(f, p), s != f.
+tier(f, t) <- module_edge(_, f), layer(p, t), s = strip_prefix(f, p), s != f.
+
+# ---- enforcement ------------------------------------------------------------
+# Same-tier edges are always legal; cross-tier edges need an allowed arrow.
+rel violation(src: file, dst: file, from_tier: text, to_tier: text).
+violation(a, b, ta, tb) <-
+    module_edge(a, b), tier(a, ta), tier(b, tb), ta != tb, !allowed(ta, tb).
+
+rel violation_count(from_tier: text, to_tier: text, n: int).
+violation_count(ta, tb, count(a)) <- violation(a, _, ta, tb).
+
+rel diag(path: file, line: int, severity: text, code: text, msg: text).
+diag(a, 1, "warning", "arch",
+     "layer `${ta}` must not depend on `${tb}` (imports ${b})") <-
+    violation(a, b, ta, tb).
+
+? violation_count(ta, tb, n).
+? violation(a, b, ta, tb).

@@ -1,0 +1,40 @@
+# version-skew.dl — one dependency, how many pinned versions across the org?
+#
+# Every repo's go.mod contributes (repo, module, version) rows; a module whose
+# min and max pinned version differ is skewed, and the full row set is the
+# upgrade worklist grouped by module. Point it at a corpus config
+# (SPREFA_CONFIG=all.config.toml) and the skew table IS the org's dependency
+# drift, one scan, no builds.
+#
+#   SPREFA_CONFIG=~/orgs/all.config.toml dl examples/version-skew.dl --root .
+#
+# Bespoke lockfiles union in: head `dep_pin` with another rule per format (a
+# json() rule over package-lock.json, a match() over anything). Honest limit:
+# min/max compare LEXICOGRAPHICALLY, so `lo`/`hi` labels can be wrong across
+# a digit-width boundary (v1.10.0 sorts below v1.9.0) — the skew TEST
+# (lo != hi, i.e. more than one distinct version) is order-independent and
+# correct regardless; treat lo/hi as "two witnesses", not "oldest/newest".
+
+# every repo's pinned requires: "<module> v<version>"
+rel dep_pin(repo: text, module: text, ver: text).
+dep_pin(r, m, v) <- repo(r, _, _), scan(r, "HEAD", "go.mod", p, rev),
+                    match(p, rev, /(?<m>\S+\/\S+)\s+(?<v>v[0-9]\S*)/, l).
+
+# per module: two witness versions; differing witnesses = skew
+rel dep_ver(module: text, lo: text, hi: text).
+dep_ver(m, min(v), max(v)) <- dep_pin(_, m, v).
+
+rel skew(module: text, lo: text, hi: text).
+skew(m, lo, hi) <- dep_ver(m, lo, hi), lo != hi.
+
+# how many repos ride each skewed module — the blast-radius ordering
+rel skew_width(module: text, repos: int).
+skew_width(m, count(r)) <- skew(m, _, _), dep_pin(r, m, _).
+
+# the full worklist: every (repo, version) row of every skewed module
+rel skew_row(module: text, repo: text, ver: text).
+skew_row(m, r, v) <- skew(m, _, _), dep_pin(r, m, v).
+
+? skew_width(m, n).
+? skew(m, lo, hi).
+? skew_row(m, r, v).

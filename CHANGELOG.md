@@ -27,6 +27,26 @@ tags consumed by cargo-dist.
   dep's main line moved past (stale) or never contained (diverged)? go.mod
   manifest seam -> `pin` -> `rev_cmp_want` -> `stale_pin`/`diverged_pin`;
   bespoke lockfile formats union into `pin` with one rule per format.
+- **Seven cross-repo / dataflow recipe examples** on the existing built-ins,
+  each with honest-limit headers and validated end to end:
+  - `taint.dl` — source/sink/sanitizer preset over the interprocedural flow
+    graph; taint propagates recursively, stops at sanitized nodes, reports
+    sink hits as `diag`.
+  - `route-norm.dl` — client request paths vs declared server routes across
+    template dialects (`{id}`/`:id`/`%s`), joined on the punctuation-stripped
+    lowercase normal form; `route_hit`/`route_orphan`/`route_dead`.
+  - `stale-doc.dl` — a documented declaration whose decl line is in the
+    working diff (a pre-commit "confirm the doc is still true" rail).
+  - `arch-conformance.dl` — declared layers (path prefixes) + allowed
+    dependency arrows vs the real `module_edge` graph; every cross-layer edge
+    without an arrow is a `violation`.
+  - `version-skew.dl` — one dependency pinned at differing versions across the
+    org (min/max witnesses per module, blast-radius by repo count).
+  - `phantom-deps.dl` — Go imports covered by no `require` line in any of the
+    repo's go.mod files (the transitively-available import that breaks the day
+    its provider drops it).
+  - `vendored-drift.dl` — a `third_party/` copy vs its upstream config repo by
+    content address: `in_sync` / `drift` / `local_only`.
 
 ### Fixed
 - **`Engine::rel_rows` no longer drops rows containing non-text columns.**

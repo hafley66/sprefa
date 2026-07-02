@@ -1,0 +1,54 @@
+# vendored-drift.dl — has the vendored copy drifted from its upstream?
+#
+# A `third_party/libfoo/` tree copied in two years ago and patched locally is
+# invisible to every dependency tool — it has no manifest. Declare the mapping
+# as a fact (vendored prefix -> upstream config repo) and content addresses do
+# the rest: same relative path + same content = in sync; different content =
+# drift (a local patch, an upstream fix you're missing, or both); no upstream
+# file at that path = local-only (added here, or deleted upstream).
+#
+#   SPREFA_CONFIG=vendored.config.toml dl examples/vendored-drift.dl --root .
+#
+# Both the app and its upstream must be config repos (the upstream slug in
+# vendor_map names one). `scan("*")` fans one rule over every config repo to
+# populate the built-in `file(repo, rev, path, content)` — which already
+# carries the repo per row, so no data-driven scan is needed; the joins are
+# plain derived rules reading content straight off `file`.
+#
+# Honest limits: comparison is whole-file content identity — a reformat counts
+# as drift; WHAT changed needs a diff, this finds WHERE to look. `**/*` over
+# every config repo is heavy; put ONLY the app + upstream in the config (or
+# narrow the glob to the vendored subtree's file types) for a fast run.
+
+# ---- the mapping (edit me): vendored prefix in this repo -> upstream slug ---
+rel vendor_map(repo: text, prefix: text, upstream: text).
+# vendor_map("app", "third_party/libfoo/", "libfoo").
+
+# populate the built-in file() rel across every config repo
+rel src(p: file).
+src(p) <- scan("*", "HEAD", "**/*", p, rev), match(p, rev, /./, l).
+
+# ---- both sides, content-addressed via file() -------------------------------
+# vendored side: strip the prefix so paths join upstream's layout. `file`'s
+# first column is the repo slug, so the vendor_map join is by repo.
+rel vfile(repo: text, upstream: text, sub: text, content: text).
+vfile(r, up, sub, c) <-
+    vendor_map(r, pre, up), file(r, _, path, c),
+    sub = strip_prefix(path, pre), sub != path.
+
+rel ufile(upstream: text, sub: text, content: text).
+ufile(up, path, c) <- vendor_map(_, _, up), file(up, _, path, c).
+
+# ---- the verdicts -----------------------------------------------------------
+rel drift(repo: text, upstream: text, path: text).
+drift(r, up, sub) <- vfile(r, up, sub, c1), ufile(up, sub, c2), c1 != c2.
+
+rel local_only(repo: text, upstream: text, path: text).
+local_only(r, up, sub) <- vfile(r, up, sub, _), !ufile(up, sub, _).
+
+rel in_sync(repo: text, upstream: text, n: int).
+in_sync(r, up, count(sub)) <- vfile(r, up, sub, c), ufile(up, sub, c).
+
+? in_sync(r, up, n).
+? drift(r, up, sub).
+? local_only(r, up, sub).

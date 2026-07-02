@@ -1,0 +1,89 @@
+# taint.dl — source/sink/sanitizer preset over interprocedural value flow.
+#
+# The classic taint question: does a value from an untrusted SOURCE reach a
+# dangerous SINK without passing through a SANITIZER? The flow graph is the
+# flow-interproc.dl union (df_edge + the arg->param / ret->call_res hops,
+# call_edge-resolved, SCIP-preferred); this file adds the preset layer: name
+# the source/sink/sanitizer callees as FACTS, propagate taint recursively,
+# stop propagation at sanitized nodes, report sink hits as diagnostics.
+#
+#   dl examples/taint.dl --root .           # stdout
+#   dl examples/taint.dl --root . --check   # exit 1 on any finding
+#
+# Presets are substring matches on the bare callee name — edit the facts to
+# your codebase's API. Honest limits (inherited from the flow graph): the
+# arg->param hop is positional-blind and context-insensitive, so this
+# over-approximates (taint analysis usually does); a sanitizer only blocks
+# taint at the node where its result lands, not along unrelated paths.
+
+rel src(p: file).
+src(p) <- scan("WORK", "src/**/*.{rs,ts,kt}", p, rev), match(p, rev, /./, l).
+
+# ---- the preset (edit me) ---------------------------------------------------
+rel source_call(pat: text).      # values born untrusted
+source_call("env").              # env vars
+source_call("args").             # CLI args
+source_call("read_to_string").   # file/stream reads
+source_call("stdin").
+
+rel sink_call(pat: text).        # places tainted values must not reach
+sink_call("execute").            # SQL
+sink_call("query").
+sink_call("spawn").              # subprocess
+sink_call("command").
+
+rel sanitizer_call(pat: text).   # calls whose result is considered clean
+sanitizer_call("escape").
+sanitizer_call("sanitize").
+sanitizer_call("quote").
+
+# ---- the flow graph (flow-interproc.dl, condensed) --------------------------
+rel flow_edge(from: text, to: text).
+flow_edge(a, b) <- df_edge(a, b).
+flow_edge(arg, param) <-
+    df_node(call_id, "call_res", _, caller_bare, _, _),
+    df_edge(arg, call_id),
+    call_edge(caller_q, callee_q, _),
+    cstrip = replace(caller_q, caller_bare, ""), cstrip != caller_q,
+    df_node(param, "param", _, callee_bare, _, _),
+    estrip = replace(callee_q, callee_bare, ""), estrip != callee_q.
+flow_edge(callee_ret, call_id) <-
+    df_node(call_id, "call_res", _, caller_bare, _, _),
+    call_edge(caller_q, callee_q, _),
+    cstrip = replace(caller_q, caller_bare, ""), cstrip != caller_q,
+    df_node(callee_ret, "ret", _, callee_bare, _, _),
+    estrip = replace(callee_q, callee_bare, ""), estrip != callee_q.
+
+# ---- bind call_res nodes to their callee name -------------------------------
+# df_node id is minted at the call site; call_site carries the bare callee text
+# at (file, line). df_node lines are 1-based for Rust but 0-based for the
+# Kotlin/TS lifts, so join at both offsets (the second rule catches the
+# 0-based languages).
+rel call_node(id: text, callee: text, file: file, line: int).
+call_node(id, callee, f, cl) <-
+    df_node(id, "call_res", _, _, f, dl), call_site(_, _, callee, f, cl), dl = cl.
+call_node(id, callee, f, cl) <-
+    df_node(id, "call_res", _, _, f, dl), call_site(_, _, callee, f, cl), cl = dl + 1.
+
+rel source_node(id: text).
+source_node(id) <- call_node(id, callee, _, _), source_call(pat),
+                   s = replace(callee, pat, ""), s != callee.
+rel sink_node(id: text, callee: text, file: file, line: int).
+sink_node(id, callee, f, l) <- call_node(id, callee, f, l), sink_call(pat),
+                               s = replace(callee, pat, ""), s != callee.
+rel sanitized(id: text).
+sanitized(id) <- call_node(id, callee, _, _), sanitizer_call(pat),
+                 s = replace(callee, pat, ""), s != callee.
+
+# ---- propagation: recursive, blocked at sanitized nodes ---------------------
+# Stratified: `sanitized` is not in the recursive cycle, so the negation is
+# legal. A tainted value stops when it lands in a sanitizer's result node.
+rel tainted(id: text).
+tainted(id) <- source_node(id).
+tainted(b)  <- tainted(a), flow_edge(a, b), !sanitized(b).
+
+rel diag(path: file, line: int, severity: text, code: text, msg: text).
+diag(f, l, "warning", "taint", "tainted value reaches sink `${callee}`") <-
+    tainted(id), sink_node(id, callee, f, l).
+
+? diag(f, l, sev, code, msg).

@@ -1,0 +1,37 @@
+# stale-doc.dl — you changed a documented declaration; is its doc still true?
+#
+# A documented entity whose declaration line is in the working diff is a
+# review prompt: the signature moved, the doc comment may now lie. Joins three
+# builtins: type_entity (where declarations are), doc_comment (which entities
+# carry a doc), changed_line (the new-side lines of `git diff -U0 HEAD`) — so
+# this is a rail that fires only on UNCOMMITTED edits, not a whole-tree audit.
+#
+#   dl examples/stale-doc.dl --root .           # stdout
+#   dl examples/stale-doc.dl --root . --check   # exit 1 while any decl is unreviewed
+#   dl examples/stale-doc.dl --root . --lsp     # squiggle on the decl line
+#
+# Precision, honestly: this flags EVERY documented decl whose declaration line
+# changed, including ones whose doc you correctly updated in the same commit.
+# The sharper "decl changed but the doc block did NOT" lint needs the doc
+# block's line SPAN; `doc_comment.line` is the declaration line (the entity's
+# own line, so it joins type_entity), and the spine exposes no doc-start line
+# to bound the block above it — so the untouched-doc refinement is deferred.
+# As a pre-commit rail the coarse form still earns its keep: a changed
+# documented API you have to eyeball is exactly the set you want surfaced.
+
+rel src(p: file).
+src(p) <- scan("WORK", "src/**/*.{rs,ts,kt,kts,tsx}", p, rev), match(p, rev, /./, l).
+
+# Documented entities whose declaration line is in the working diff.
+rel review_doc(sym: text, name: text, file: file, line: int).
+review_doc(sym, name, f, l) <-
+    type_entity(sym: sym, name: name, file: f, line: l),
+    doc_comment(sym: sym),
+    changed_line(f, l).
+
+rel diag(path: file, line: int, severity: text, code: text, msg: text).
+diag(f, l, "warning", "review-doc",
+     "`${name}` changed — confirm its doc comment is still accurate") <-
+    review_doc(sym, name, f, l).
+
+? diag(f, l, sev, code, msg).

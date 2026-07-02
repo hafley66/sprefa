@@ -1,0 +1,70 @@
+# route-norm.dl — do the client's request paths match the server's declared
+# routes, across languages and template syntaxes?
+#
+# `/users/{id}` (OpenAPI, Flask), `/users/:id` (Express), `/users/%s` (a
+# format string) never string-equal, so a naive join finds nothing. Strip
+# every non-alphanumeric and lowercase — the same transform the string spine
+# stores as `string.norm` — and all three collapse to `usersid`, one join key.
+#
+#   dl examples/route-norm.dl --root .
+#
+# The demo facts below show the join working; the scan rules show how to feed
+# it from real trees (edit the globs + regexes to your framework). Honest
+# limit: normalization also collapses `/users/{id}` with `/user/sid` — it is
+# a recall lever, not proof. Pair a hit with a param-count check if the
+# false-positive rate bites.
+
+# ---- normalize --------------------------------------------------------------
+rel route_norm(side: text, origin: text, route: text, norm: text).
+route_norm(side, o, t, lower(replace_re(t, "[^A-Za-z0-9]", ""))) <-
+    route_raw(side, o, t).
+
+# One rel = one rule kind: the scanned rows and the demo facts live in their
+# own rels, and route_raw is the derived union (a rel headed by both a source
+# rule and a derived rule bails — the engine says so loudly).
+rel route_raw(side: text, origin: text, route: text).
+route_raw(s, o, t) <- route_fact(s, o, t).
+route_raw(s, o, t) <- route_scan(s, o, t).
+
+# ---- demo facts (three template dialects, one real join) --------------------
+rel route_fact(side: text, origin: text, route: text).
+route_fact("server", "openapi",  "/users/{id}").
+route_fact("server", "openapi",  "/orders/{order_id}/items").
+route_fact("client", "web",      "/users/:id").
+route_fact("client", "web",      "/Orders/:orderId/items").
+route_fact("client", "cli",      "/reports/%s").          # no server route
+
+# ---- scan rules (edit me): real servers + clients feed the same rel ---------
+rel route_scan(side: text, origin: text, route: text).
+# Express:  app.get("/users/:id", ...)
+route_scan("server", p, t) <-
+    scan("WORK", "**/*.{ts,js}", p, rev),
+    match(p, rev, /app\.(?:get|post|put|delete|patch)\(\s*['"](?<t>[^'"]+)/, l).
+# Flask:    @app.route("/users/<id>")
+route_scan("server", p, t) <-
+    scan("WORK", "**/*.py", p, rev),
+    match(p, rev, /@\w+\.route\(\s*['"](?<t>[^'"]+)/, l).
+# fetch-style clients: fetch("/users/..."), axios.get('/users/...')
+route_scan("client", p, t) <-
+    scan("WORK", "**/*.{ts,js,tsx}", p, rev),
+    match(p, rev, /(?:fetch|axios\.\w+)\(\s*[`'"](?<t>\/[^`'"$]+)/, l).
+
+# ---- the verdicts -----------------------------------------------------------
+# A client path whose normalized form matches a declared server route.
+rel route_hit(client_origin: text, client_route: text, server_route: text).
+route_hit(co, ct, st) <-
+    route_norm("client", co, ct, n), route_norm("server", _, st, n).
+
+# A client path no server route normalizes to — the broken-call candidate.
+rel route_orphan(client_origin: text, client_route: text).
+route_orphan(co, ct) <-
+    route_norm("client", co, ct, n), !route_norm("server", _, _, n).
+
+# A server route no client ever calls — the dead-endpoint candidate.
+rel route_dead(server_origin: text, server_route: text).
+route_dead(so, st) <-
+    route_norm("server", so, st, n), !route_norm("client", _, _, n).
+
+? route_hit(co, ct, st).
+? route_orphan(co, ct).
+? route_dead(so, st).

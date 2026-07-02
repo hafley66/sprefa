@@ -1,0 +1,65 @@
+# phantom-deps.dl — imports the manifest never declared.
+#
+# A Go file importing github.com/x/y compiles today because some OTHER
+# dependency pulled x/y into the module graph transitively; the day that
+# dependency drops it, the build breaks with no diff of yours. The phantom =
+# an external import path covered by no `require` line in the repo's own
+# go.mod (and not under the repo's own module path).
+#
+#   dl examples/phantom-deps.dl --root .
+#   SPREFA_CONFIG=~/orgs/all.config.toml dl examples/phantom-deps.dl --root .
+#
+# Honest limits: imports are matched by line shape (a quoted domain-ish path,
+# optionally aliased) rather than parsed, so a string literal that LOOKS like
+# an import path inside a const block can false-positive; vendored trees and
+# generated code count like any other file (add path filters to taste);
+# stdlib never matches (no dot in the first segment). A `replace` directive
+# with no version (`replace x => ../x`) is not a `require`, so imports of a
+# replace-only module read as phantom — often the correct call, sometimes a
+# local override you meant; add a replace() rule if you want them exempt.
+
+# the repo's own module path(s). Scan EVERY go.mod, not just the root — a
+# monorepo with nested modules (`docker/go.mod`, `tools/go.mod`) declares each
+# one's path, and imports under any of them are internal, not phantom. `**/`
+# also matches the root file.
+rel module_id(repo: text, module: text).
+module_id(r, m) <- repo(r, _, _), scan(r, "HEAD", "**/go.mod", p, rev),
+                   match(p, rev, /^module\s+(?<m>\S+)/, l).
+
+# declared requires, from every go.mod in the repo
+rel gomod_pin(repo: text, module: text, ver: text).
+gomod_pin(r, m, v) <- repo(r, _, _), scan(r, "HEAD", "**/go.mod", p, rev),
+                      match(p, rev, /(?<m>\S+\/\S+)\s+(?<v>v[0-9]\S*)/, l).
+
+# external imports: a gofmt import line — optional alias, a quoted domain
+# path, and NOTHING after the closing quote but an optional comment. The end
+# anchor is what separates a real import (`\t"github.com/x/y"`) from an
+# annotation or map key that happens to be domain-shaped
+# (`Labels["app.kubernetes.io/name"] = ...` has code before/after the quote).
+rel ext_import(repo: text, file: file, imp: text).
+ext_import(r, p, imp) <-
+    repo(r, _, _), scan(r, "HEAD", "**/*.go", p, rev),
+    match(p, rev, /^\s*(?:[A-Za-z_.][A-Za-z0-9_]*\s+)?"(?<imp>[a-z0-9.\-]+\.[a-z]{2,}\/[^"]+)"\s*(?:\/\/.*)?$/, l).
+
+# covered: the import path IS a declared module, or extends one at a `/`
+# boundary (strip the module prefix; what remains must be empty or start
+# with `/` — bare strip_prefix alone would let `x/y` cover `x/y-old`).
+rel covered(repo: text, imp: text).
+covered(r, imp) <- ext_import(r, _, imp), gomod_pin(r, m, _), imp = m.
+covered(r, imp) <- ext_import(r, _, imp), gomod_pin(r, m, _),
+                   s = strip_prefix(imp, m), s != imp,
+                   t = strip_prefix(s, "/"), t != s.
+covered(r, imp) <- ext_import(r, _, imp), module_id(r, m), imp = m.
+covered(r, imp) <- ext_import(r, _, imp), module_id(r, m),
+                   s = strip_prefix(imp, m), s != imp,
+                   t = strip_prefix(s, "/"), t != s.
+
+rel phantom(repo: text, file: file, imp: text).
+phantom(r, f, imp) <- ext_import(r, f, imp), !covered(r, imp).
+
+# blast radius per phantom path: how many files ride the undeclared import
+rel phantom_width(repo: text, imp: text, files: int).
+phantom_width(r, imp, count(f)) <- phantom(r, f, imp).
+
+? phantom_width(r, imp, n).
+? phantom(r, f, imp).
