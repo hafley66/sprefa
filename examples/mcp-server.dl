@@ -1,0 +1,41 @@
+# mcp-server.dl — a REAL, registerable MCP server authored as datalog.
+#
+# Implements the MCP lifecycle (initialize / ping / tools/list / tools/call)
+# as plain rules: every lifecycle message is just a JSON-RPC method, so the
+# handshake is a handler table like any other. Register it in Claude Code:
+#
+#   claude mcp add dl-demo -- dl /abs/path/to/examples/mcp-server.dl --mcp --no-daemon
+#
+# or drive it by hand (the repeatable harness in tests/it/mcp_lifecycle.rs
+# runs exactly this sequence):
+#
+#   printf '%s\n' \
+#     '{"jsonrpc":"2.0","id":"init-1","method":"initialize","params":{}}' \
+#     '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+#     '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+#     '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"ping"}}' \
+#     | dl examples/mcp-server.dl --mcp --no-daemon
+#
+# id is TEXT holding the request id's raw JSON ("2" or "\"init-1\""), so int
+# and string ids both round-trip; notifications carry no id and get no reply.
+# An unanswered request id gets -32601 from the loop, so a client never hangs.
+
+rel req(id: text, method: text, params: text) @in(rpc).
+rel resp(id: text, result: text) @out(rpc).
+
+# --- lifecycle ---------------------------------------------------------------
+resp(id, "{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"dl\",\"version\":\"0.2.1\"}}")
+    <- req(id, "initialize", _).
+resp(id, "{}") <- req(id, "ping", _).
+
+# --- tools -------------------------------------------------------------------
+resp(id, "{\"tools\":[{\"name\":\"ping\",\"description\":\"replies pong\",\"inputSchema\":{\"type\":\"object\",\"properties\":{}}}]}")
+    <- req(id, "tools/list", _).
+
+# tools/call dispatch: term-form jsonp destructures the params JSON (the tool
+# name lives at params.name). Its own rel per the extract/derived split.
+rel tool_call(id: text, name: text).
+tool_call(id, name) <- req(id, "tools/call", params), jsonp(params, "name", name).
+
+resp(id, "{\"content\":[{\"type\":\"text\",\"text\":\"pong\"}]}")
+    <- tool_call(id, "ping").

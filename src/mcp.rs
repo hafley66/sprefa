@@ -65,17 +65,22 @@ pub fn handle_msg(
 ) -> Result<Vec<serde_json::Value>> {
     let (in_rel, out_rel) = ports;
     let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or_default().to_string();
-    let Some(id) = msg.get("id").and_then(|i| i.as_i64()) else {
+    let Some(idv) = msg.get("id") else {
         // No id = a notification (MCP's notifications/initialized etc.):
         // nothing to answer, and rung 1 doesn't feed them into the engine.
-        // A non-integer id is skipped loudly — the rpc envelope's id is int.
-        if let Some(v) = msg.get("id") {
-            eprintln!("[mcp] non-integer request id skipped: {v}");
-        }
         return Ok(Vec::new());
     };
+    // The envelope id is the raw JSON serialization (`1`, `"abc"`), so both
+    // integer and string JSON-RPC ids round-trip exactly. dl rules treat it as
+    // an opaque text key.
+    let id = idv.to_string();
+    // Parse an envelope id back to the JSON value the client sent; a table row
+    // that isn't valid JSON (a program constructed its own id) goes as a string.
+    let id_val = |rid: &str| -> serde_json::Value {
+        serde_json::from_str(rid).unwrap_or_else(|_| serde_json::Value::String(rid.to_string()))
+    };
     let params = msg.get("params").map(|p| p.to_string()).unwrap_or_else(|| "null".into());
-    eng.inject_rpc(in_rel, id, &method, &params)?;
+    eng.inject_rpc(in_rel, &id, &method, &params)?;
     eng.tick(prog, true)?;
     let rows = eng.drain_rpc(out_rel, in_rel)?;
     let mut out = Vec::new();
@@ -86,12 +91,12 @@ pub fn handle_msg(
         let val: serde_json::Value =
             serde_json::from_str(&result).unwrap_or(serde_json::Value::String(result));
         answered |= rid == id;
-        out.push(serde_json::json!({ "jsonrpc": "2.0", "id": rid, "result": val }));
+        out.push(serde_json::json!({ "jsonrpc": "2.0", "id": id_val(&rid), "result": val }));
     }
     if !answered {
-        eng.retire_rpc(in_rel, &[id])?;
+        eng.retire_rpc(in_rel, std::slice::from_ref(&id))?;
         out.push(serde_json::json!({
-            "jsonrpc": "2.0", "id": id,
+            "jsonrpc": "2.0", "id": id_val(&id),
             "error": { "code": -32601, "message": format!("no rule answered method `{method}`") },
         }));
     }

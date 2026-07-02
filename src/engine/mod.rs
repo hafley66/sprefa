@@ -3078,14 +3078,16 @@ impl Engine {
     }
 
     /// Inject one inbound rpc request into an `@in(rpc)` port rel (the serving
-    /// loop's pre-tick write). The rel must already be declared (the priming
-    /// tick declares every program rel), so injection never races the schema.
-    pub fn inject_rpc(&mut self, rel: &str, id: i64, method: &str, params: &str) -> Result<()> {
+    /// loop's pre-tick write). `id` is the raw JSON serialization of the
+    /// request id (int or string), so it round-trips exactly. The rel must
+    /// already be declared (the priming tick declares every program rel), so
+    /// injection never races the schema.
+    pub fn inject_rpc(&mut self, rel: &str, id: &str, method: &str, params: &str) -> Result<()> {
         if !self.rels.contains_key(rel) {
             bail!("@in(rpc) rel {rel} is not declared; run a tick before injecting");
         }
         self.db.insert_rows(&tbl(rel), &["id", "method", "params"],
-            &[vec![Value::Int(id), Value::Text(method.into()), Value::Text(params.into())]])?;
+            &[vec![Value::Text(id.into()), Value::Text(method.into()), Value::Text(params.into())]])?;
         Ok(())
     }
 
@@ -3095,9 +3097,9 @@ impl Engine {
     /// fixpoint, pushed to the transport, deleted. Leaving the out rel empty
     /// also guarantees the next tick's derived rebuild (`any_derived_empty`),
     /// so the next request re-derives over the fresh in-port set.
-    pub fn drain_rpc(&mut self, out_rel: &str, in_rel: &str) -> Result<Vec<(i64, String)>> {
+    pub fn drain_rpc(&mut self, out_rel: &str, in_rel: &str) -> Result<Vec<(String, String)>> {
         if !self.rels.contains_key(out_rel) { return Ok(Vec::new()); }
-        let rows: Vec<(i64, String)> = {
+        let rows: Vec<(String, String)> = {
             let conn = self.db.conn();
             let mut s = conn.prepare(&format!("SELECT id, result FROM {}", tbl(out_rel)))?;
             let rows = s.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
@@ -3105,17 +3107,19 @@ impl Engine {
             conn.execute(&format!("DELETE FROM {}", tbl(out_rel)), [])?;
             rows
         };
-        self.retire_rpc(in_rel, &rows.iter().map(|(id, _)| *id).collect::<Vec<_>>())?;
+        let ids: Vec<String> = rows.iter().map(|(id, _)| id.clone()).collect();
+        self.retire_rpc(in_rel, &ids)?;
         Ok(rows)
     }
 
     /// Delete the given request ids from an `@in(rpc)` rel (answered, or given
     /// up on). One batched DELETE, not per-row.
-    pub fn retire_rpc(&mut self, in_rel: &str, ids: &[i64]) -> Result<()> {
+    pub fn retire_rpc(&mut self, in_rel: &str, ids: &[String]) -> Result<()> {
         if ids.is_empty() || !self.rels.contains_key(in_rel) { return Ok(()); }
-        let list = ids.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+        let ph = (1..=ids.len()).map(|i| format!("?{i}")).collect::<Vec<_>>().join(",");
         self.db.conn().execute(
-            &format!("DELETE FROM {} WHERE id IN ({list})", tbl(in_rel)), [])?;
+            &format!("DELETE FROM {} WHERE id IN ({ph})", tbl(in_rel)),
+            rusqlite::params_from_iter(ids))?;
         Ok(())
     }
 

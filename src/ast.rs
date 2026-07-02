@@ -93,11 +93,13 @@ pub struct Port {
 
 impl Port {
     /// The column envelope a class requires, by (name, type) — order-free,
-    /// mirroring `diag`'s by-name mapping. `None` = unknown class.
+    /// mirroring `diag`'s by-name mapping. `None` = unknown class. The rpc `id`
+    /// is TEXT holding the raw JSON serialization of the request id (`1`,
+    /// `"abc"`), so both integer and string JSON-RPC ids round-trip exactly.
     pub fn envelope(class: &str, dir: PortDir) -> Option<&'static [(&'static str, Type)]> {
         match (class, dir) {
-            ("rpc", PortDir::In) => Some(&[("id", Type::Int), ("method", Type::Text), ("params", Type::Text)]),
-            ("rpc", PortDir::Out) => Some(&[("id", Type::Int), ("result", Type::Text)]),
+            ("rpc", PortDir::In) => Some(&[("id", Type::Text), ("method", Type::Text), ("params", Type::Text)]),
+            ("rpc", PortDir::Out) => Some(&[("id", Type::Text), ("result", Type::Text)]),
             _ => None,
         }
     }

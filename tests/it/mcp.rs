@@ -16,14 +16,14 @@ use std::process::{Command, Stdio};
 const DL: &str = env!("CARGO_BIN_EXE_dl");
 
 const ECHO: &str = r#"
-rel req(id: int, method: text, params: text) @in(rpc).
-rel resp(id: int, result: text) @out(rpc).
+rel req(id: text, method: text, params: text) @in(rpc).
+rel resp(id: text, result: text) @out(rpc).
 
 rel known(method: text).
 known("ping").
 known("echo").
 
-rel route(id: int, result: text, prio: int) key(id) merge(MaxBy(prio)).
+rel route(id: text, result: text, prio: int) key(id) merge(MaxBy(prio)).
 route(id, "pong", 100) <- req(id, "ping", _).
 route(id, params, 100) <- req(id, "echo", params).
 route(id, "unknown method", 1) <- req(id, method, _), !known(method).
@@ -109,8 +109,8 @@ fn unknown_method_hits_fallback() {
 fn unanswered_request_gets_error() {
     let d = sandbox("unanswered");
     let prog = concat!(
-        "rel req(id: int, method: text, params: text) @in(rpc).\n",
-        "rel resp(id: int, result: text) @out(rpc).\n",
+        "rel req(id: text, method: text, params: text) @in(rpc).\n",
+        "rel resp(id: text, result: text) @out(rpc).\n",
         "resp(id, \"pong\") <- req(id, \"ping\", _).\n");
     let (code, msgs, err) = serve(&d, prog,
         &[r#"{"jsonrpc":"2.0","id":7,"method":"nope"}"#]);
@@ -140,9 +140,9 @@ fn answered_rows_retire_between_requests() {
 fn rule_heading_in_port_bails() {
     let d = sandbox("inport_head");
     let prog = concat!(
-        "rel req(id: int, method: text, params: text) @in(rpc).\n",
-        "rel resp(id: int, result: text) @out(rpc).\n",
-        "req(1, \"ping\", \"null\") <- true().\n",
+        "rel req(id: text, method: text, params: text) @in(rpc).\n",
+        "rel resp(id: text, result: text) @out(rpc).\n",
+        "req(\"1\", \"ping\", \"null\") <- true().\n",
         "resp(id, \"pong\") <- req(id, \"ping\", _).\n");
     fs::write(d.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
@@ -160,7 +160,7 @@ fn rule_heading_in_port_bails() {
 #[test]
 fn rpc_envelope_checked_at_declare() {
     let d = sandbox("envelope");
-    let prog = "rel req(id: int, verb: text) @in(rpc).\n";
+    let prog = "rel req(id: text, verb: text) @in(rpc).\n";
     fs::write(d.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
