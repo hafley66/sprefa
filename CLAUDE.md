@@ -283,6 +283,24 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       .mcp.json; adapter built-in dl.query/eval tool bridging the daemon's
       eval RPC; law-2 digest sent-log -> @yield -> stream class.
 
+- [x] **Want-tier demand built-ins** (main, 2026-07-01, 8111515): `git_ref`
+      (ref inventory across self+config repos, annotated tags peeled) +
+      `rev_behind(repo, refname, upstream, behind, ahead)` filled from a
+      user-DERIVED `rev_cmp_want` (convention read, the org-allowlist
+      pattern; unresolvable refs AND shallow clones skip loudly — corpus
+      depth-1 clones produced 2111 false diverged before the guard) +
+      `scip_want(repo)` lazy multi-repo SCIP (ensure_index per wanted root
+      runs installed indexers only when the index is missing, merge_files,
+      ONE load so cross-repo refs resolve; no schema change). Demand hops
+      compose at one tick each (pin-skew chain = 3 ticks). `repo_want`
+      unneeded: repo-sink rules already register dynamically. `rel_rows`
+      now stringifies non-text columns (int reads silently dropped rows).
+      examples/pin-skew.dl = the proving query (go.mod seam -> pin ->
+      stale_pin/diverged_pin; bespoke lockfiles union into pin); corpus
+      smoke: 120 stale pins on the one unshallowed hub (go-retryablehttp,
+      cross-org rows), 218 shallow skips, 0 false diverged. Tests:
+      tests/it/git_ref.rs, scip_want.rs, pin_skew.rs.
+
 ### Open (sprefa type graph)
 - [ ] Optional: migrate the deck graph (`examples/anim-self.dl` + anim AtlasPanel)
       from name-keyed `type_edge` to sym-keyed `type_link` + `type_entity` kinds
