@@ -1,4 +1,5 @@
-//! Git-derived worktree relations: `changed`, `changed_line`, `created`.
+//! Git-derived worktree relations: `changed`, `changed_line`, `created`,
+//! `git_ref`, `rev_behind`.
 
 use anyhow::Result;
 use std::collections::HashSet;
@@ -142,6 +143,207 @@ impl RelKind for ChangedLineKind {
         let out: Vec<Vec<Value>> = rows.into_iter()
             .map(|(p, l)| vec![Value::Text(p), Value::Int(l)]).collect();
         eng.refresh_rel("changed_line", &["path", "line"], &out)?;
+        Ok(true)
+    }
+}
+
+// --- git_ref -----------------------------------------------------------------
+
+/// Ref inventory across every nameable repo (self + config):
+/// `git_ref(repo, refname, kind, sha)` — one row per branch/tag/remote ref plus
+/// a `("HEAD", "head")` row per repo. `sha` is the peeled commit for annotated
+/// tags. Two subprocesses per repo (`for-each-ref` + `rev-parse HEAD`), batched
+/// per repo, never per ref. Feeds pin-skew queries: a lockfile-derived ref
+/// joins here to learn what it points at and what else exists.
+pub struct GitRefKind;
+
+impl RelKind for GitRefKind {
+    fn rels(&self) -> &'static [&'static str] {
+        &["git_ref"]
+    }
+    fn decls(&self) -> Vec<RelDecl> {
+        vec![RelDecl {
+            name: "git_ref".into(),
+            cols: vec![col("repo", Type::Text), col("refname", Type::Text),
+                       col("kind", Type::Text), col("sha", Type::Text)], ..Default::default() }]
+    }
+    fn reserved_msg(&self) -> &'static str {
+        "the built-in ref-inventory relation"
+    }
+    fn refresh(&self, eng: &Engine) -> Result<bool> {
+        let mut rows: Vec<(String, String, String, String)> = Vec::new();
+        let mut roots: Vec<(String, std::path::PathBuf)> =
+            eng.repo_roots().into_iter().collect();
+        roots.sort();
+        for (slug, root) in roots {
+            let head = Command::new("git").arg("-C").arg(&root)
+                .args(["rev-parse", "HEAD"]).output();
+            if let Ok(h) = head {
+                if h.status.success() {
+                    let sha = String::from_utf8_lossy(&h.stdout).trim().to_string();
+                    rows.push((slug.clone(), "HEAD".into(), "head".into(), sha));
+                } else {
+                    continue; // not a git repo (or empty): no rows for this slug
+                }
+            } else {
+                continue;
+            }
+            let out = Command::new("git").arg("-C").arg(&root)
+                .args(["for-each-ref",
+                       "--format=%(refname)\u{1f}%(refname:short)\u{1f}%(objectname)\u{1f}%(*objectname)"])
+                .output()?;
+            if !out.status.success() { continue; }
+            for line in String::from_utf8_lossy(&out.stdout).lines() {
+                let f: Vec<&str> = line.split('\u{1f}').collect();
+                if f.len() < 4 { continue; }
+                let kind = if f[0].starts_with("refs/heads/") { "branch" }
+                           else if f[0].starts_with("refs/tags/") { "tag" }
+                           else if f[0].starts_with("refs/remotes/") { "remote" }
+                           else { "other" };
+                // annotated tag: %(*objectname) is the peeled commit
+                let sha = if f[3].is_empty() { f[2] } else { f[3] };
+                rows.push((slug.clone(), f[1].to_string(), kind.to_string(), sha.to_string()));
+            }
+        }
+        rows.sort();
+        rows.dedup();
+        let existing: Vec<(String, String, String, String)> = {
+            let conn = eng.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"repo\",\"refname\",\"kind\",\"sha\" FROM {} ORDER BY 1,2,3,4",
+                tbl("git_ref")))?;
+            let rs = s.query_map([], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?, r.get::<_, String>(3)?)))?;
+            rs.filter_map(|x| x.ok()).collect()
+        };
+        if existing == rows { return Ok(false); }
+        let out: Vec<Vec<Value>> = rows.into_iter()
+            .map(|(r, n, k, s)| vec![Value::Text(r), Value::Text(n), Value::Text(k), Value::Text(s)])
+            .collect();
+        eng.refresh_rel("git_ref", &["repo", "refname", "kind", "sha"], &out)?;
+        Ok(true)
+    }
+}
+
+// --- rev_behind ---------------------------------------------------------------
+
+/// Demand-driven ancestry counts. The demand set is a user-DERIVED relation
+/// named `rev_cmp_want(repo, refname, upstream)` (the `org`-allowlist pattern:
+/// the engine reads it by convention, users head it with rules — typically off
+/// lockfile pins). For each wanted row, one
+/// `git rev-list --left-right --count upstream...refname` yields
+/// `rev_behind(repo, refname, upstream, behind, ahead)`: `behind` = commits in
+/// `upstream` missing from `refname` (how far the pin trails), `ahead` =
+/// commits in `refname` missing from `upstream` (nonzero ⇒ the pin diverged —
+/// it is not an ancestor). Rows read this tick are LAST tick's derivations
+/// (same one-tick latency as a data-driven scan), so a one-shot run needs a
+/// second tick to see counts. A ref that fails to resolve is skipped loudly,
+/// and so is every pair in a SHALLOW clone (grafted history makes the counts
+/// wrong, not just incomplete).
+pub struct RevBehindKind;
+
+impl RelKind for RevBehindKind {
+    fn rels(&self) -> &'static [&'static str] {
+        &["rev_behind"]
+    }
+    fn decls(&self) -> Vec<RelDecl> {
+        vec![RelDecl {
+            name: "rev_behind".into(),
+            cols: vec![col("repo", Type::Text), col("refname", Type::Text),
+                       col("upstream", Type::Text), col("behind", Type::Int),
+                       col("ahead", Type::Int)], ..Default::default() }]
+    }
+    fn reserved_msg(&self) -> &'static str {
+        "the built-in demand-driven ancestry relation (derive rev_cmp_want to fill it)"
+    }
+    fn refresh(&self, eng: &Engine) -> Result<bool> {
+        let want: Vec<(String, String, String)> = match eng.rels.get("rev_cmp_want") {
+            None => Vec::new(),
+            Some(meta) => {
+                if meta.cols.len() < 3 {
+                    anyhow::bail!("rev_cmp_want needs 3 columns (repo, refname, upstream); \
+                                   found {}", meta.cols.len());
+                }
+                let conn = eng.db.conn();
+                let mut s = conn.prepare(&format!(
+                    "SELECT DISTINCT \"{}\",\"{}\",\"{}\" FROM {} ORDER BY 1,2,3",
+                    meta.col_name(0), meta.col_name(1), meta.col_name(2),
+                    tbl("rev_cmp_want")))?;
+                let rs = s.query_map([], |r| Ok((
+                    r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?)))?;
+                rs.filter_map(|x| x.ok()).collect()
+            }
+        };
+        let roots = eng.repo_roots();
+        let mut rows: Vec<(String, String, String, i64, i64)> = Vec::new();
+        // A shallow clone grafts HEAD, so nearly every ref counts as "ahead" —
+        // garbage ancestry, silently. Skip the whole repo loudly instead
+        // (`git fetch --unshallow` fixes it); checked once per repo, not per pair.
+        let mut shallow: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+        for (repo, refname, upstream) in want {
+            // The self-form coordinates a scan accepts ("."/""/"self") resolve
+            // to the self slug here too; the emitted row keeps the user's
+            // spelling so it joins back to rev_cmp_want.
+            let key = match repo.as_str() {
+                "." | "" | "self" => eng.self_slug(),
+                _ => repo.clone(),
+            };
+            let Some(root) = roots.get(&key) else {
+                eprintln!("[rev_behind] skip {repo}/{refname}: unknown repo slug");
+                continue;
+            };
+            let is_shallow = match shallow.get(&key) {
+                Some(s) => *s,
+                None => {
+                    let s = Command::new("git").arg("-C").arg(root)
+                        .args(["rev-parse", "--is-shallow-repository"]).output()
+                        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "true")
+                        .unwrap_or(false);
+                    if s {
+                        eprintln!("[rev_behind] skip {repo}: shallow clone — ancestry \
+                                   counts would be wrong; `git -C {} fetch --unshallow`",
+                            root.display());
+                    }
+                    shallow.insert(key.clone(), s);
+                    s
+                }
+            };
+            if is_shallow { continue; }
+            let out = Command::new("git").arg("-C").arg(root)
+                .args(["rev-list", "--left-right", "--count",
+                       &format!("{upstream}...{refname}")]).output()?;
+            if !out.status.success() {
+                eprintln!("[rev_behind] skip {repo}: {upstream}...{refname} did not resolve");
+                continue;
+            }
+            let text = String::from_utf8_lossy(&out.stdout);
+            let mut it = text.split_whitespace();
+            let (Some(behind), Some(ahead)) =
+                (it.next().and_then(|s| s.parse::<i64>().ok()),
+                 it.next().and_then(|s| s.parse::<i64>().ok())) else { continue };
+            rows.push((repo, refname, upstream, behind, ahead));
+        }
+        rows.sort();
+        rows.dedup();
+        let existing: Vec<(String, String, String, i64, i64)> = {
+            let conn = eng.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"repo\",\"refname\",\"upstream\",\"behind\",\"ahead\" \
+                 FROM {} ORDER BY 1,2,3,4,5", tbl("rev_behind")))?;
+            let rs = s.query_map([], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?, r.get::<_, i64>(4)?)))?;
+            rs.filter_map(|x| x.ok()).collect()
+        };
+        if existing == rows { return Ok(false); }
+        let out: Vec<Vec<Value>> = rows.into_iter()
+            .map(|(r, n, u, b, a)| vec![Value::Text(r), Value::Text(n), Value::Text(u),
+                                        Value::Int(b), Value::Int(a)])
+            .collect();
+        eng.refresh_rel("rev_behind",
+            &["repo", "refname", "upstream", "behind", "ahead"], &out)?;
         Ok(true)
     }
 }

@@ -22,6 +22,17 @@ use super::{col, RelKind};
 /// implementation edges. Unlike the self-diffing families, the importer always
 /// re-emits when run, so `dirty` gates an incremental tick on `index.scip`
 /// itself moving.
+///
+/// Lazy multi-repo tier: a user-DERIVED relation named `scip_want(repo)` (the
+/// `org`-allowlist convention — the engine reads it, users head it, e.g.
+/// `scip_want(r) <- repo(r, _, _), lang(r, "go").`) demands an index per named
+/// repo. Each wanted root gets `scip_setup::ensure_index` (existing index wins;
+/// otherwise detected+installed indexers run once to `.dl/index.scip`), the
+/// self index plus all wanted indexes merge via `merge_files`, and ONE load
+/// fills the same rels — NO schema change, monikers self-disambiguate across
+/// repos, and cross-repo refs resolve because the def map spans the merged
+/// document set. Want rows read this tick are last tick's derivations (the
+/// data-driven-scan latency contract). A repo with no toolchain skips loudly.
 pub struct ScipKind;
 
 impl RelKind for ScipKind {
@@ -51,7 +62,8 @@ impl RelKind for ScipKind {
     }
     fn refresh(&self, eng: &Engine) -> Result<bool> {
         let t = |s: &str| Value::Text(s.to_string());
-        let Some(path) = scip_import::index_path(&eng.root) else {
+        let path = self.resolve_index(eng)?;
+        let Some(path) = path else {
             eng.refresh_rel("scip_def", &["symbol", "file"], &[])?;
             eng.refresh_rel("scip_name", &["symbol", "name"], &[])?;
             eng.refresh_rel("scip_ref", &["file", "symbol", "def_file"], &[])?;
@@ -95,5 +107,60 @@ impl RelKind for ScipKind {
         eng.refresh_rel("scip_local", &["fn", "name"], &locals)?;
         eng.refresh_rel("scip_impl", &["impl", "iface"], &impls)?;
         Ok(true)
+    }
+}
+
+impl ScipKind {
+    /// The index to load this tick: the self root's `index.scip` alone (the
+    /// existing single-repo path), or — when a user-derived `scip_want(repo)`
+    /// demands more repos — the self index plus each wanted repo's ensured
+    /// index, merged to one temp file so the load resolves refs across repos.
+    /// `None` = no index anywhere (the caller clears the rels).
+    fn resolve_index(&self, eng: &Engine) -> Result<Option<std::path::PathBuf>> {
+        let self_index = scip_import::index_path(&eng.root);
+        let want: Vec<String> = match eng.rels.get("scip_want") {
+            None => Vec::new(),
+            Some(meta) => {
+                if meta.cols.is_empty() {
+                    anyhow::bail!("scip_want needs a repo column");
+                }
+                let conn = eng.db.conn();
+                let mut s = conn.prepare(&format!(
+                    "SELECT DISTINCT \"{}\" FROM {} ORDER BY 1",
+                    meta.col_name(0), crate::lower::tbl("scip_want")))?;
+                let rs = s.query_map([], |r| r.get::<_, String>(0))?;
+                rs.filter_map(|x| x.ok()).collect()
+            }
+        };
+        if want.is_empty() {
+            return Ok(self_index);
+        }
+        let roots = eng.repo_roots();
+        let self_slug = eng.self_slug();
+        let mut parts: Vec<std::path::PathBuf> = self_index.into_iter().collect();
+        for repo in want {
+            let key = match repo.as_str() {
+                "." | "" | "self" => self_slug.clone(),
+                _ => repo.clone(),
+            };
+            if key == self_slug { continue; } // self index already in parts
+            let Some(root) = roots.get(&key) else {
+                eprintln!("[scip_want] skip {repo}: unknown repo slug");
+                continue;
+            };
+            if let Some(p) = crate::scip_setup::ensure_index(root)? {
+                parts.push(p);
+            }
+        }
+        match parts.len() {
+            0 => Ok(None),
+            1 => Ok(Some(parts.remove(0))),
+            _ => {
+                let merged = std::env::temp_dir()
+                    .join(format!("dl-scip-want-{}.scip", std::process::id()));
+                scip_import::merge_files(&parts, &merged)?;
+                Ok(Some(merged))
+            }
+        }
     }
 }

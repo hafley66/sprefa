@@ -399,6 +399,7 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `every` | clock | `(secs)` | holds interval N only on ticks that cross an N-second boundary (and the first tick); an every(30) body atom self-throttles its rule |
 | `file` | core | `(repo, rev, path, content)` | scanned files, keyed by (repo, rev, path, content) |
 | `fn_catalog` | meta | `(name, arity, group, doc)` | every scalar function callable in a head or comparison with its arity, group, and one-line doc; sourced from fn_docs |
+| `git_ref` | git-ref | `(repo, refname, kind, sha)` | every branch/tag/remote ref plus HEAD across self + config repos (repo, refname, kind, sha); annotated tags peeled to the commit |
 | `head` | daemon | `(repo, name, oid)` | git HEAD per repo (repo, ref name, oid) |
 | `loop_over` | dataflow | `(file, start, end, var, collection, fn)` | one row per loop with its span, iter var, and collection |
 | `module_edge` | module | `(src, dst)` | resolved file-to-file import graph (rev-deduped union) |
@@ -417,6 +418,7 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `repo` | core | `(slug, root, url)` | configured + dynamically-pulled repos whose root exists; writable as a sink — a repo(...) rule clones+registers when the github org is in `org` (hard filter); see docs/dynamic-reaching.md |
 | `rev` | core | `(id, repo, oid, ts)` | git revs seen by scans |
 | `rev_advanced` | daemon | `(repo, name, old, new)` | daemon signal that a repo ref advanced (repo, name, old oid, new oid) |
+| `rev_behind` | git-ref | `(repo, refname, upstream, behind, ahead)` | demand-driven ancestry counts: derive rev_cmp_want(repo, refname, upstream) and each wanted pair yields behind/ahead commit counts (ahead>0 = the ref diverged from upstream); one-tick latency like a data-driven scan; unresolvable refs and shallow clones skip loudly |
 | `scip_callee_type` | scip | `(sym, type)` | receiver type parsed from a method moniker's impl/for segment |
 | `scip_def` | scip | `(symbol, file)` | symbol defs from an existing index.scip (root or $SPREFA_SCIP_INDEX) |
 | `scip_edge` | scip | `(src, dst)` | file-to-file SCIP dependency edges |

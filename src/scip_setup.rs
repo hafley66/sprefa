@@ -330,6 +330,53 @@ pub fn run_index(args: &[String]) -> Result<i32> {
     Ok(0)
 }
 
+/// Ensure `root` has a loadable SCIP index, for the lazy `scip_want` gate: an
+/// existing index (root `index.scip`, `.dl/index.scip`, or $SPREFA_SCIP_INDEX)
+/// wins untouched; otherwise every detected+installed indexer runs once and the
+/// parts merge to `.dl/index.scip`. Returns `None` (loudly) when no indexer can
+/// produce one — a missing toolchain skips the repo, it never fails the tick.
+/// No freshness check: like the CLI contract, a stale index is the user's to
+/// rebuild (`dl index` / delete it); `dl doctor` reports staleness.
+pub fn ensure_index(root: &Path) -> Result<Option<PathBuf>> {
+    if let Some(p) = crate::scip_import::index_path(root) {
+        return Ok(Some(p));
+    }
+    let found = detect(root);
+    let present: Vec<&&Indexer> = found.iter().filter(|ix| installed(ix.bin)).collect();
+    if present.is_empty() {
+        eprintln!("[scip_want] {}: no installed indexer for detected markers; skipping",
+            root.display());
+        return Ok(None);
+    }
+    let dl_dir = root.join(".dl");
+    std::fs::create_dir_all(&dl_dir)?;
+    let out = index_out(root);
+    let mut parts: Vec<PathBuf> = Vec::new();
+    for ix in present {
+        let part = dl_dir.join(format!("index.{}.scip", ix.lang.replace('/', "_")));
+        eprintln!("[scip_want] indexing {} with {}", root.display(), ix.bin);
+        if run_indexer(ix, root, &part)? {
+            parts.push(part);
+        } else {
+            eprintln!("[scip_want] {} failed under {}; skipping {}", ix.bin, root.display(), ix.lang);
+        }
+    }
+    if parts.is_empty() {
+        return Ok(None);
+    }
+    if parts.len() == 1 {
+        std::fs::rename(&parts[0], &out)
+            .or_else(|_| std::fs::copy(&parts[0], &out).map(|_| ()))?;
+    } else {
+        crate::scip_import::merge_files(&parts, &out)?;
+        for p in &parts {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+    gitignore_index(root);
+    Ok(Some(out))
+}
+
 /// Run one indexer with cwd=root and `{out}` -> abs output path. Inherits stdio
 /// so the indexer's own progress is visible. Returns whether it exited 0.
 fn run_indexer(ix: &Indexer, root: &Path, out: &Path) -> Result<bool> {

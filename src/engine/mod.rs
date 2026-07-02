@@ -368,6 +368,9 @@ pub fn builtin_rel_docs() -> &'static [(&'static str, &'static str, &'static str
         // working-tree change rails.
         ("changed", "changed", "git status --porcelain -uall vs HEAD (modified/added/renamed/untracked); empty outside git; the rails join"),
         ("changed_line", "changed", "new-side lines of git diff -U0 HEAD hunks plus every line of untracked files; pure-deletion hunks emit nothing; line-scoped rails precision"),
+        // git ref inventory + demand-driven ancestry (pin-skew queries).
+        ("git_ref", "git-ref", "every branch/tag/remote ref plus HEAD across self + config repos (repo, refname, kind, sha); annotated tags peeled to the commit"),
+        ("rev_behind", "git-ref", "demand-driven ancestry counts: derive rev_cmp_want(repo, refname, upstream) and each wanted pair yields behind/ahead commit counts (ahead>0 = the ref diverged from upstream); one-tick latency like a data-driven scan; unresolvable refs and shallow clones skip loudly"),
         // agent-harness rails (from the at-rest session store).
         ("agent_edit", "agent", "every file edit in the latest agent turn, tagged harness+session+turn idx (from the at-rest harness store)"),
         ("agent_touch", "agent", "the latest agent turn's edited files (harness, session, path)"),
@@ -1632,7 +1635,7 @@ impl Engine {
     pub fn root(&self) -> PathBuf { self.root.clone() }
 
     /// Stable slug for this engine's own repo: the `--root` directory name.
-    fn self_slug(&self) -> String {
+    pub(crate) fn self_slug(&self) -> String {
         self.root.file_name().map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| self.root.to_string_lossy().to_string())
     }
@@ -3134,7 +3137,18 @@ impl Engine {
         };
         let rows = s.query_map([], |r| {
             let mut v = Vec::with_capacity(ncols);
-            for i in 0..ncols { v.push(r.get::<_, String>(i)?); }
+            for i in 0..ncols {
+                // Stringify whatever the column holds: an int column read as
+                // String is a rusqlite type error, which would silently drop
+                // the whole row from a diagnostic read.
+                v.push(match r.get_ref(i)? {
+                    rusqlite::types::ValueRef::Null => String::new(),
+                    rusqlite::types::ValueRef::Integer(n) => n.to_string(),
+                    rusqlite::types::ValueRef::Real(f) => f.to_string(),
+                    rusqlite::types::ValueRef::Text(t) => String::from_utf8_lossy(t).into_owned(),
+                    rusqlite::types::ValueRef::Blob(b) => String::from_utf8_lossy(b).into_owned(),
+                });
+            }
             Ok(v)
         });
         rows.map(|iter| iter.filter_map(|x| x.ok()).collect()).unwrap_or_default()

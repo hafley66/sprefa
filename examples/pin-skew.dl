@@ -1,0 +1,48 @@
+# pin-skew.dl — which repos pin an internal dep at a ref the dep's main line
+# has moved past (stale), or at a ref main never contained (diverged)?
+#
+# The chain: go.mod manifests give each repo's module id + pinned requires
+# (the manifest seam — no compile, no SCIP); `pin` joins them into internal
+# (consumer, dep, ref) edges; deriving `rev_cmp_want` demands ancestry counts,
+# which the built-in `rev_behind` fills next tick (one `git rev-list` per
+# wanted pair — the data-driven latency contract, so run twice / serve).
+#
+# Bespoke lockfiles are first-class: head `pin` with another rule per format
+# (a json() rule over package-lock.json, a match() over anything). Built-ins
+# never assumed complete.
+#
+# Honest limits: a go.mod pseudo-version (v0.0.0-<date>-<12hex>) is used as a
+# ref verbatim — the 12-hex suffix resolves in git, the full string does not,
+# so those pairs skip loudly until a split fn extracts the sha. A SHALLOW dep
+# clone also skips loudly (grafted history makes ancestry counts wrong, not
+# just incomplete): `git fetch --unshallow` the dep repos you care about.
+
+# each repo's own module path (go.mod `module` line)
+rel module_id(repo: text, module: text).
+module_id(r, mod) <- repo(r, _, _), scan(r, "HEAD", "go.mod", p, rev),
+                     match(p, rev, /^module\s+(?<mod>\S+)/, l).
+
+# each repo's pinned requires: "<module> v<version>"
+rel gomod_pin(repo: text, module: text, ver: text).
+gomod_pin(r, mod, ver) <- repo(r, _, _), scan(r, "HEAD", "go.mod", p, rev),
+                          match(p, rev, /(?<mod>\S+\/\S+)\s+(?<ver>v[0-9]\S*)/, l).
+
+# internal pin edge: the required module is another config repo's declared id
+rel pin(consumer: text, dep: text, ref: text).
+pin(a, b, v) <- gomod_pin(a, m, v), module_id(b, m), a != b.
+
+# demand ancestry for every pinned ref vs the dep's checked-out main line
+rel rev_cmp_want(repo: text, refname: text, upstream: text).
+rev_cmp_want(b, v, "HEAD") <- pin(_, b, v).
+
+# behind: main moved past the pin (n = how many commits the consumer trails)
+rel stale_pin(consumer: text, dep: text, ref: text, behind: int).
+stale_pin(a, b, v, n) <- pin(a, b, v), rev_behind(b, v, "HEAD", n, _), n > 0.
+
+# diverged: the pinned ref carries commits main never had (k > 0 = not an
+# ancestor — the alarming bucket, a pin onto a side branch or rewritten tag)
+rel diverged_pin(consumer: text, dep: text, ref: text).
+diverged_pin(a, b, v) <- pin(a, b, v), rev_behind(b, v, "HEAD", _, k), k > 0.
+
+? stale_pin(a, b, v, n).
+? diverged_pin(a, b, v).

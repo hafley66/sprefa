@@ -51,7 +51,7 @@ mod scip;
 use analysis::{AgentKind, DlDiagKind, TypeLggKind, TypeShapeKind};
 use catalog::CatalogKind;
 use embed::EmbedKind;
-use git::{ChangedKind, ChangedLineKind, CreatedKind};
+use git::{ChangedKind, ChangedLineKind, CreatedKind, GitRefKind, RevBehindKind};
 use propose::{ProposeCloneKind, ProposeExtractKind};
 use scip::ScipKind;
 
@@ -87,7 +87,7 @@ pub trait RelKind: Sync {
 /// `tick_paths`, `declare_builtins`, `all_builtin_decls`, and the reserved-name
 /// guard iterate THIS instead of repeating the family list.
 pub fn rel_kinds() -> &'static [&'static dyn RelKind] {
-    &[&ChangedKind, &ChangedLineKind, &CreatedKind,
+    &[&ChangedKind, &ChangedLineKind, &CreatedKind, &GitRefKind, &RevBehindKind,
       &AgentKind, &DlDiagKind, &TypeShapeKind, &TypeLggKind, &CatalogKind,
       &ScipKind, &ProposeExtractKind, &ProposeCloneKind, &EmbedKind]
 }
