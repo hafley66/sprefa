@@ -7,6 +7,36 @@ tags consumed by cargo-dist.
 ## [Unreleased]
 
 ### Added
+- **Per-family extraction skip + per-file fact cache (perf gap A)** — the
+  type/call/dataflow/doc refreshers persist an `extract:<family>` input
+  digest (corpus (repo, path, rev, content hash) rows + the `scip_ref`
+  override + the running binary's identity) and skip the whole
+  parse/resolve/write pass on a warm tick; when a file DOES move, an
+  in-memory (repo, path, content hash)-keyed fact cache re-parses only it.
+  Measured on this repo's flow-interproc program: type/call/dataflow refresh
+  183/281/930ms -> ~0.3ms each on the no-change tick, which drops from
+  ~1.5s to ~35ms in-engine. `Engine::extract_files_parsed` is the
+  instrumentation; `tests/it/extract_cache.rs` pins both the skip and the
+  single-file re-parse (including cross-process skip over a warm db).
+- **Full-tick scoped rebuild (perf gap B)** — the full `tick` now attributes
+  changes per relation (source-rel digests, family refresh results, RelKind
+  returns, an `async:` content digest for @async/@stream response rels the
+  off-tick drain writes) and rebuilds only the derived rels
+  dependency-reachable from what moved — the same `affected_derived` walk
+  `tick_paths` uses, now on the full path. A blank slate, a program edit, or
+  a carried @next change still rebuilds everything.
+  `Engine::last_derived_rebuilt` is the instrumentation;
+  `tests/it/scoped_tick.rs` pins the two-chain isolation.
+- **Family change reporting (perf gap C)** — `tick_paths` marks a family's
+  rels changed only when its input digest actually moved, so an edited `.md`
+  under a type-graph program (or an edited `.rs` under a doc-only program)
+  no longer re-derives the other family's dependents.
+- **`dl setup --project` wires repo-tracked skills** — every
+  `assets/*.skill.md` in the target repo gets a gitignored
+  `.claude/skills/<name>/SKILL.md` relative symlink (copy on non-unix), so a
+  fresh clone of a repo following that convention (this one: the three
+  maintainer checklists) exposes its project skills after one setup run.
+
 - **`rel_count(rel, rows)` / `stmt_ms(rel, ms)` telemetry built-ins** — tick
   cardinalities and per-rel derived-statement wall costs as queryable facts
   (`--tick-audit` / `--profile` output, made joinable). Derived rels report
@@ -67,6 +97,11 @@ tags consumed by cargo-dist.
     content address: `in_sync` / `drift` / `local_only`.
 
 ### Changed
+- **`RelDecl` carries `group`/`doc`** — the parallel `builtin_rel_docs()`
+  tuple registry is gone; every built-in relation's one-line doc and group
+  live on its declaration, so the schema and the doc cannot drift.
+  `rel_catalog`, the generated README table, and the `undocumented_builtins`
+  CI guard all read the decls; rendered output is byte-identical.
 - **Non-recursive derived rules evaluate in ONE pass.** `rebuild_derived` now
   splits each stratum into rel-level dependency components (Tarjan,
   dependencies first); only genuinely recursive components iterate to a

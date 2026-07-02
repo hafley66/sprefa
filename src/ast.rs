@@ -120,6 +120,14 @@ pub struct RelDecl {
     pub merge: Option<MergeFn>,
     /// `@in(class)` / `@out(class)` qualifier: this rel is a port (see `Port`).
     pub port: Option<Port>,
+    /// Doc-table group for a built-in relation ("core", "module", ...); "" for
+    /// user-declared rels. Lives on the decl so the schema and the doc cannot
+    /// drift — `rel_catalog` and the generated README table read it from here.
+    pub group: &'static str,
+    /// One-line summary for a built-in relation; "" for user-declared rels.
+    /// `undocumented_builtins` (and its test) fail while a built-in decl leaves
+    /// this empty. Avoid `|` so it renders inside a markdown table cell.
+    pub doc: &'static str,
 }
 
 #[derive(Clone, Debug, Default)]

@@ -1,7 +1,7 @@
 # builtin-rels.dl — render the engine's self-describing `rel_catalog` into the
 # README quick-reference block. The engine emits one `rel_catalog` row per
 # built-in relation (name, group, columns, one-line doc) from its OWN
-# declarations joined to `builtin_rel_docs`, so this generator cannot drift: a
+# declarations (each RelDecl carries its group + doc), so this generator cannot drift: a
 # new built-in appears in the table the next tick, and the doc-completeness test
 # (tests/it/rel_catalog.rs) fails the build until it carries a summary. No
 # source-scraping regex anymore — the engine introspects itself.

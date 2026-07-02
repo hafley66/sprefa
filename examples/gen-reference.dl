@@ -7,7 +7,7 @@
 # pairs, no in-place edit, no sort-key tricks. The engine creates the dir and
 # skips the write when the bytes already match (convergence, safe under --watch /
 # CI). README links to these pages instead of inlining the tables, so the docs
-# cannot drift: a new built-in relation (builtin_rel_docs) or scalar function
+# cannot drift: a new built-in relation (RelDecl group/doc) or scalar function
 # (fn_docs) appears on the next tick, and the doc-completeness tests fail the
 # build until it carries a summary.
 #

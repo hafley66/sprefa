@@ -247,7 +247,7 @@ impl Parser {
             }
         }
         self.expect(Tok::Dot)?;
-        Ok(RelDecl { name, cols, key, merge, port })
+        Ok(RelDecl { name, cols, key, merge, port, ..Default::default() })
     }
 
     /// `sh[!|*] name(p1, p2) -> (c1: t1, c2: t2) = `cmd {p1}`.` — a shell-fn

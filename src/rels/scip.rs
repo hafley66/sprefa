@@ -42,14 +42,22 @@ impl RelKind for ScipKind {
     }
     fn decls(&self) -> Vec<RelDecl> {
         vec![
-            RelDecl { name: "scip_def".into(), cols: vec![col("symbol", Type::Text), col("file", Type::Path)], ..Default::default() },
-            RelDecl { name: "scip_name".into(), cols: vec![col("symbol", Type::Text), col("name", Type::Text)], ..Default::default() },
-            RelDecl { name: "scip_ref".into(), cols: vec![col("file", Type::Path), col("symbol", Type::Text), col("def_file", Type::Path)], ..Default::default() },
-            RelDecl { name: "scip_edge".into(), cols: vec![col("src", Type::Path), col("dst", Type::Path)], ..Default::default() },
-            RelDecl { name: "scip_fn_edge".into(), cols: vec![col("caller", Type::Text), col("callee", Type::Text)], ..Default::default() },
-            RelDecl { name: "scip_callee_type".into(), cols: vec![col("sym", Type::Text), col("type", Type::Text)], ..Default::default() },
-            RelDecl { name: "scip_local".into(), cols: vec![col("fn", Type::Text), col("name", Type::Text)], ..Default::default() },
-            RelDecl { name: "scip_impl".into(), cols: vec![col("impl", Type::Text), col("iface", Type::Text)], ..Default::default() },
+            RelDecl { name: "scip_def".into(), cols: vec![col("symbol", Type::Text), col("file", Type::Path)], group: "scip",
+                doc: "symbol defs from an existing index.scip (root or $SPREFA_SCIP_INDEX)", ..Default::default() },
+            RelDecl { name: "scip_name".into(), cols: vec![col("symbol", Type::Text), col("name", Type::Text)], group: "scip",
+                doc: "descriptor name (last identifier run) of a moniker, computed in-engine", ..Default::default() },
+            RelDecl { name: "scip_ref".into(), cols: vec![col("file", Type::Path), col("symbol", Type::Text), col("def_file", Type::Path)], group: "scip",
+                doc: "compiler-backed references (ref file, symbol, def file)", ..Default::default() },
+            RelDecl { name: "scip_edge".into(), cols: vec![col("src", Type::Path), col("dst", Type::Path)], group: "scip",
+                doc: "file-to-file SCIP dependency edges", ..Default::default() },
+            RelDecl { name: "scip_fn_edge".into(), cols: vec![col("caller", Type::Text), col("callee", Type::Text)], group: "scip",
+                doc: "function-level call edge; caller is the innermost enclosing fn def", ..Default::default() },
+            RelDecl { name: "scip_callee_type".into(), cols: vec![col("sym", Type::Text), col("type", Type::Text)], group: "scip",
+                doc: "receiver type parsed from a method moniker's impl/for segment", ..Default::default() },
+            RelDecl { name: "scip_local".into(), cols: vec![col("fn", Type::Text), col("name", Type::Text)], group: "scip",
+                doc: "local-variable + parameter declarations attributed to their enclosing fn", ..Default::default() },
+            RelDecl { name: "scip_impl".into(), cols: vec![col("impl", Type::Text), col("iface", Type::Text)], group: "scip",
+                doc: "interface/supertype dispatch edge from SCIP is_implementation (impl to iface)", ..Default::default() },
         ]
     }
     fn reserved_msg(&self) -> &'static str {

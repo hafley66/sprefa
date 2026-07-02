@@ -1,10 +1,10 @@
 //! Self-describing built-in catalog (`rel_catalog`) + the doc-completeness
-//! invariant. Every engine-emitted relation must carry a one-line doc in
-//! `builtin_rel_docs`; `undocumented_builtins()` is the guard, and this test
-//! fails the build the moment a new built-in ships without a doc — so the
-//! documentation standard is mechanical, not a review checklist. The generated
-//! README table (examples/builtin-rels.dl) reads `rel_catalog`, so it can never
-//! drift from the engine's actual declarations.
+//! invariant. Every engine-emitted relation must carry a one-line doc on its
+//! `RelDecl` (`group`/`doc` fields); `undocumented_builtins()` is the guard, and
+//! this test fails the build the moment a new built-in ships without a doc — so
+//! the documentation standard is mechanical, not a review checklist. The
+//! generated README table (examples/builtin-rels.dl) reads `rel_catalog`, so it
+//! can never drift from the engine's actual declarations.
 
 use sprefa_v5::{db, engine::{self, Engine}, lex, parse};
 use std::path::PathBuf;
@@ -15,7 +15,7 @@ fn s(v: &serde_json::Value) -> String { v.as_str().unwrap_or_default().to_string
 fn every_builtin_relation_is_documented() {
     let missing = engine::undocumented_builtins();
     assert!(missing.is_empty(),
-        "every built-in relation needs a (name, group, summary) row in builtin_rel_docs; \
+        "every built-in relation needs group/doc set on its RelDecl; \
          undocumented: {missing:?}");
 }
 

@@ -25,13 +25,16 @@ impl RelKind for AgentKind {
         vec![
             RelDecl { name: "agent_edit".into(), cols: vec![
                 col("harness", Type::Text), col("session", Type::Text),
-                col("idx", Type::Int), col("path", Type::Path)], ..Default::default() },
+                col("idx", Type::Int), col("path", Type::Path)], group: "agent",
+                doc: "every file edit in the latest agent turn, tagged harness+session+turn idx (from the at-rest harness store)", ..Default::default() },
             RelDecl { name: "agent_touch".into(), cols: vec![
                 col("harness", Type::Text), col("session", Type::Text),
-                col("path", Type::Path)], ..Default::default() },
+                col("path", Type::Path)], group: "agent",
+                doc: "the latest agent turn's edited files (harness, session, path)", ..Default::default() },
             RelDecl { name: "skill_loaded".into(), cols: vec![
                 col("harness", Type::Text), col("session", Type::Text),
-                col("name", Type::Text)], ..Default::default() },
+                col("name", Type::Text)], group: "agent",
+                doc: "skills loaded in the newest agent session (harness, session, name): explicit Skill tool calls + dl's own prior `dl --hook` injections — negate it for a declarative load-once guard", ..Default::default() },
         ]
     }
     fn reserved_msg(&self) -> &'static str {
@@ -175,7 +178,8 @@ impl RelKind for DlDiagKind {
         vec![RelDecl { name: "dl_diag".into(), cols: vec![
             col("path", Type::Path), col("line", Type::Int), col("col", Type::Int),
             col("end_line", Type::Int), col("end_col", Type::Int),
-            col("severity", Type::Text), col("code", Type::Text), col("msg", Type::Text)], ..Default::default() }]
+            col("severity", Type::Text), col("code", Type::Text), col("msg", Type::Text)], group: "meta",
+            doc: "parse/type diagnostics for each scanned `.dl` file (path, line, col, end_line, end_col, severity, code, msg); the engine's own lexer/parser/typechecker run over `file` rows ending in `.dl`, byte spans mapped to 1-based line / 0-based col — join agent_changed for lint-on-edit", ..Default::default() }]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in dl self-diagnostics relation"
@@ -234,7 +238,8 @@ impl RelKind for TypeShapeKind {
     }
     fn decls(&self) -> Vec<RelDecl> {
         vec![RelDecl { name: "type_shape".into(),
-            cols: vec![col("name", Type::Text), col("hash", Type::Text)], ..Default::default() }]
+            cols: vec![col("name", Type::Text), col("hash", Type::Text)], group: "type-shape",
+            doc: "structural type-shape fingerprint per type (shape-iso experiment)", ..Default::default() }]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in type-shape relation"
@@ -279,7 +284,8 @@ impl RelKind for TypeLggKind {
     }
     fn decls(&self) -> Vec<RelDecl> {
         vec![RelDecl { name: "type_lgg".into(),
-            cols: vec![col("a", Type::Text), col("b", Type::Text), col("vars", Type::Int)], ..Default::default() }]
+            cols: vec![col("a", Type::Text), col("b", Type::Text), col("vars", Type::Int)], group: "type-shape",
+            doc: "least-general generalization of two type shapes (shape-iso experiment)", ..Default::default() }]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in type-lgg relation"

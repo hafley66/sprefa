@@ -157,6 +157,8 @@ diag(p, l, c, el, ec, sev, code, msg) <-
 ## Adding a built-in relation
 
 See the `sprefa-v5-new-builtin-rel` skill. Short version (current pattern):
-a `RelKind` impl in `relkind.rs` + register in `rel_kinds()` + a
-`builtin_rel_docs()` entry. The reserved-name guard, both tick paths, and decls
-wire automatically. (The older `*_RELS`/`refresh_*_rel` engine.rs pattern is stale.)
+a `RelKind` impl in `src/rels/` + register in `rel_kinds()`, with `group`/`doc`
+set on each `RelDecl` (an empty doc fails the doc-completeness test; the
+catalog + generated README table read the decl). The reserved-name guard, both
+tick paths, and decls wire automatically. (The older `*_RELS`/`refresh_*_rel`
+engine.rs pattern is stale.)

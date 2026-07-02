@@ -211,42 +211,66 @@ impl Engine {
         // A carried-in @next rel that moved is an EDB change for this tick's
         // derived rules (e.g. a `poll` rule that reads the carried `etag`).
         let mut changed = recon.changed || carry_changed;
-        // Baseline each source relation's content digest so the next incremental
-        // tick can skip a rebuild when bytes move but rows don't (see tick_paths).
-        self.seed_rel_digests(&source_rels)?;
+        // Per-rel change attribution for the scoped rebuild below (perf gap B):
+        // every source/built-in relation whose rows moved this tick lands here,
+        // and only the derived rels dependency-reachable from the set re-derive.
+        // Baselining each source relation's content digest doubles as the
+        // attribution for extraction rels (the digests were already computed
+        // here for tick_paths' bytes-moved-rows-didn't prune).
+        let mut changed_source_rels: HashSet<String> =
+            self.seed_rel_digests(&source_rels)?.into_iter().collect();
         // refresh built-in repo/rev/content/file from the updated _file cache,
         // before derived rules that may join them are rebuilt.
         let t = std::time::Instant::now();
         self.refresh_builtin_rels()?;
+        if recon.changed { for b in BUILTIN_RELS { changed_source_rels.insert(b.to_string()); } }
         phase("builtin-rels", t);
         // The clock can move with no file change (a boundary crossing, or the
         // clear after one), so feed its change into `changed` — else the full tick
         // below skips rebuild_derived and a rule gated by `every` keeps stale rows.
-        if every_rels_used(prog) { changed |= self.refresh_every(&every_intervals(prog))?; }
-        if clock_rels_used(prog) { changed |= self.refresh_clock(&clock_periods(prog))?; }
+        if every_rels_used(prog) && self.refresh_every(&every_intervals(prog))? {
+            changed = true;
+            changed_source_rels.insert("every".to_string());
+        }
+        if clock_rels_used(prog) && self.refresh_clock(&clock_periods(prog))? {
+            changed = true;
+            changed_source_rels.insert("clock".to_string());
+        }
         if module_rels_used(prog) {
             let t = std::time::Instant::now();
             self.refresh_module_rels()?;
+            // No change report from the module refresh (wholesale rebuild), so
+            // its rels stay conservatively marked whenever the family runs.
+            for m in MODULE_RELS { changed_source_rels.insert(m.to_string()); }
             phase("module-rels", t);
         }
         if type_rels_used(prog) || rels_used(prog, &["type_shape", "type_lgg"]) || doc_text_rels_used(prog) {
             let t = std::time::Instant::now();
-            self.refresh_type_rels()?;
+            if self.refresh_type_rels()? {
+                for r in TYPE_RELS { changed_source_rels.insert(r.to_string()); }
+                for r in DOC_TEXT_RELS { changed_source_rels.insert(r.to_string()); }
+            }
             phase("type-rels", t);
         }
         if call_rels_used(prog) {
             let t = std::time::Instant::now();
-            self.refresh_call_rels()?;
+            if self.refresh_call_rels()? {
+                for r in CALL_RELS { changed_source_rels.insert(r.to_string()); }
+            }
             phase("call-rels", t);
         }
         if dataflow_rels_used(prog) {
             let t = std::time::Instant::now();
-            self.refresh_dataflow_rels()?;
+            if self.refresh_dataflow_rels()? {
+                for r in DATAFLOW_RELS { changed_source_rels.insert(r.to_string()); }
+            }
             phase("dataflow-rels", t);
         }
         if doc_rels_used(prog) {
             let t = std::time::Instant::now();
-            self.refresh_doc_rels()?;
+            if self.refresh_doc_rels()? {
+                for r in DOC_RELS { changed_source_rels.insert(r.to_string()); }
+            }
             phase("doc-rels", t);
         }
         // Node rels write into `_strings`/`_where_bytes` (the spine meta tables),
@@ -254,12 +278,17 @@ impl Engine {
         // `string` would miss the node spans.
         if node_rels_used(prog) {
             let t = std::time::Instant::now();
-            changed |= self.refresh_node_rels()?;
+            if self.refresh_node_rels()? {
+                changed = true;
+                for n in NODE_RELS { changed_source_rels.insert(n.to_string()); }
+            }
             phase("node-rels", t);
         }
         if spine_rels_used(prog) {
             let t = std::time::Instant::now();
             self.refresh_spine_rels()?;
+            // Wholesale projection with no change report; conservative mark.
+            for s in SPINE_RELS { changed_source_rels.insert(s.to_string()); }
             phase("spine-rels", t);
         }
         // The git-derived/analysis/scip/propose/embed families behind RelKind.
@@ -269,20 +298,67 @@ impl Engine {
         // always refreshes every used family (`dirty` is consulted only by the
         // incremental `tick_paths`), so the scip index reload runs here too.
         for k in crate::rels::rel_kinds() {
-            if k.used(prog) { changed |= k.refresh(self)?; }
+            if k.used(prog) && k.refresh(self)? {
+                changed = true;
+                for r in k.rels() { changed_source_rels.insert(r.to_string()); }
+            }
         }
-        if daemon_rels_used(prog) { self.refresh_daemon_rels()?; }
-        if effect_rels_used(prog) { self.refresh_effect_rels()?; }
+        if daemon_rels_used(prog) {
+            self.refresh_daemon_rels()?;
+            for r in DAEMON_RELS { changed_source_rels.insert(r.to_string()); }
+        }
+        if effect_rels_used(prog) {
+            self.refresh_effect_rels()?;
+            for r in EFFECT_RELS { changed_source_rels.insert(r.to_string()); }
+        }
+        // @async/@stream response rels are written by the OFF-TICK drain, so
+        // none of the source-phase machinery above attributes them. Digest
+        // their content here (an `async:` key in the same `_reldigest` store):
+        // a drain that landed rows re-derives their dependents; a quiet tick
+        // leaves them out of the scoped rebuild. First-ever seeding counts as
+        // moved, like the source-rel baseline.
+        for rel in &async_rels {
+            let Some(meta) = self.rels.get(rel).cloned() else { continue };
+            let d = self.rel_content_digest(rel, &meta)?;
+            let key = format!("async:{rel}");
+            if self.load_rel_digest(&key)? != Some(d) {
+                self.save_rel_digest(&key, &d)?;
+                changed = true;
+                changed_source_rels.insert(rel.clone());
+            }
+        }
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
 
         let t_der = std::time::Instant::now();
         let der_digest = derived_program_digest(&derived_rules, &seed_rules, &edges);
         let derived_moved = self.load_rel_digest("derived:program")? != Some(der_digest);
-        let rebuilt_all = changed || derived_moved
+        // A blank slate, a program-shape change, or an unattributable EDB change
+        // (a carried @next rel has no per-rel entry above) rebuilds everything.
+        // Otherwise a changed tick scopes the rebuild to the derived rels
+        // dependency-reachable from what actually moved (perf gap B — the full
+        // tick's twin of tick_paths' affected_derived scoping).
+        let need_full = derived_moved || carry_changed
             || self.any_derived_empty(&derived_rels)? || self.any_closure_empty(&edges)?;
-        if rebuilt_all {
+        let mut affected: HashSet<String> = HashSet::new();
+        let mut dirty_edges: HashSet<&str> = HashSet::new();
+        self.last_derived_rebuilt = Vec::new();
+        if need_full {
             self.rebuild_derived(&strata.pre_rules, &strata.pre_rels)?;
             self.rebuild_closures(&edges)?;
+            dirty_edges = edges.iter().copied().collect();
+            self.last_derived_rebuilt = strata.pre_rels.clone();
+        } else if changed {
+            affected = affected_derived(&derived_rules, &changed_source_rels);
+            let sub_rules: Vec<&Rule> = strata.pre_rules.iter().copied()
+                .filter(|r| affected.contains(&r.head.rel)).collect();
+            let sub_rels: Vec<String> = strata.pre_rels.iter()
+                .filter(|r| affected.contains(*r)).cloned().collect();
+            self.rebuild_derived(&sub_rules, &sub_rels)?;
+            let aff_edges: Vec<&str> = edges.iter().copied()
+                .filter(|e| affected.contains(*e) || changed_source_rels.contains(*e)).collect();
+            self.rebuild_closures(&aff_edges)?;
+            dirty_edges = aff_edges.into_iter().collect();
+            self.last_derived_rebuilt = sub_rels;
         }
         // The hybrid join+extract pass (term-form json/jsonp) reads its inputs —
         // facts/source/derived/response rels — AFTER the fixpoint populates them,
@@ -293,6 +369,8 @@ impl Engine {
         if extract_changed {
             self.rebuild_derived(&strata.pre_rules, &strata.pre_rels)?;
             self.rebuild_closures(&edges)?;
+            dirty_edges = edges.iter().copied().collect();
+            self.last_derived_rebuilt = strata.pre_rels.clone();
         }
         // persisted only after the rebuild lands, so a failed tick retries
         if derived_moved { self.save_rel_digest("derived:program", &der_digest)?; }
@@ -303,21 +381,42 @@ impl Engine {
                 recon.parsed, recon.total, recon.extracted, recon.retracted,
                 if changed { "rebuilt" } else { "unchanged" }, src_ms, der_ms);
         }
-        // Full tick: every edge is potentially dirty when we rebuilt; the digest
-        // check inside still skips the Tarjan for edges whose rows didn't move.
-        let dirty: HashSet<&str> = if rebuilt_all { edges.iter().copied().collect() } else { HashSet::new() };
+        // Only the edges actually rebuilt this tick are dirty for the cond
+        // cache (scoped or full); the digest check inside still skips the
+        // Tarjan for edges whose rows didn't move.
         let cond_edges = cond_edges_for(&edges, &scc_rules);
-        self.refresh_cond_cache(&cond_edges, &dirty)?;
+        self.refresh_cond_cache(&cond_edges, &dirty_edges)?;
         for (r, cs) in &seed_rules { self.eval_closure_seed_rule(r, cs)?; }
         for r in &scc_rules { self.eval_scc_rule(r)?; }
         for r in &node2vec_rules { self.eval_node2vec_rule(r)?; }
         // Post-stratum: derived rules that read an operator head. The heads just
-        // filled (scc/node2vec evals above), so these now lower correctly. Gated on
-        // the same condition as the pre-stratum rebuild — on a warm tick no derived
-        // rel moved, so no operator edge moved, so the heads (deterministic) are
-        // unchanged and the post rels already hold the right rows.
-        if !strata.post_rels.is_empty() && (rebuilt_all || extract_changed) {
-            self.rebuild_derived(&strata.post_rules, &strata.post_rels)?;
+        // filled (scc/node2vec evals above), so these now lower correctly. On a
+        // warm tick no derived rel moved, so no operator edge moved, so the heads
+        // (deterministic) are unchanged and the post rels already hold the right
+        // rows. On a scoped tick, redo only post rels whose inputs moved — a
+        // changed source rel they read, OR an operator head whose input edge was
+        // rebuilt (same seed logic as tick_paths).
+        if !strata.post_rels.is_empty() {
+            if need_full || extract_changed {
+                self.rebuild_derived(&strata.post_rules, &strata.post_rels)?;
+            } else if changed {
+                let mut seed = changed_source_rels.clone();
+                for r in scc_rules.iter().chain(node2vec_rules.iter()) {
+                    let edge = r.scc_edge().or_else(|| r.node2vec_edge())
+                        .expect("operator rule has an scc/node2vec edge");
+                    if affected.contains(edge) || changed_source_rels.contains(edge) {
+                        seed.insert(r.head.rel.clone());
+                    }
+                }
+                let aff_post = affected_derived(&derived_rules, &seed);
+                let sub_post_rules: Vec<&Rule> = strata.post_rules.iter().copied()
+                    .filter(|r| aff_post.contains(&r.head.rel)).collect();
+                let sub_post_rels: Vec<String> = strata.post_rels.iter()
+                    .filter(|r| aff_post.contains(*r)).cloned().collect();
+                if !sub_post_rels.is_empty() {
+                    self.rebuild_derived(&sub_post_rules, &sub_post_rels)?;
+                }
+            }
         }
         // The priming tick skips `?` evaluation: it exists only to derive the
         // coordinates a data-driven scan / repo-sink reads on the real tick.
@@ -544,21 +643,23 @@ impl Engine {
         if files_changed {
             self.refresh_builtin_rels()?;
             for b in BUILTIN_RELS { changed_source_rels.insert(b.to_string()); }
+            // The extractor families report whether their input digest moved
+            // (perf gap C): a changed file OUTSIDE a family's corpus (e.g. an
+            // edited .dl or .md under a type-graph program) no longer marks the
+            // family's rels changed, so their derived dependents stay put.
             if type_rels_used(prog) || rels_used(prog, &["type_shape", "type_lgg"]) || doc_text_rels_used(prog) {
-                self.refresh_type_rels()?;
-                for t in TYPE_RELS { changed_source_rels.insert(t.to_string()); }
-                for t in DOC_TEXT_RELS { changed_source_rels.insert(t.to_string()); }
+                if self.refresh_type_rels()? {
+                    for t in TYPE_RELS { changed_source_rels.insert(t.to_string()); }
+                    for t in DOC_TEXT_RELS { changed_source_rels.insert(t.to_string()); }
+                }
             }
-            if call_rels_used(prog) {
-                self.refresh_call_rels()?;
+            if call_rels_used(prog) && self.refresh_call_rels()? {
                 for r in CALL_RELS { changed_source_rels.insert(r.to_string()); }
             }
-            if dataflow_rels_used(prog) {
-                self.refresh_dataflow_rels()?;
+            if dataflow_rels_used(prog) && self.refresh_dataflow_rels()? {
                 for r in DATAFLOW_RELS { changed_source_rels.insert(r.to_string()); }
             }
-            if doc_rels_used(prog) {
-                self.refresh_doc_rels()?;
+            if doc_rels_used(prog) && self.refresh_doc_rels()? {
                 for r in DOC_RELS { changed_source_rels.insert(r.to_string()); }
             }
             // Node rels write into the spine meta tables, so refresh them BEFORE

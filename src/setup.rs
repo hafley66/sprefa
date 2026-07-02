@@ -243,6 +243,7 @@ fn bootstrap_project(dir: &Path, assume_yes: bool) -> Result<i32> {
     write_starter(&dl_dir.join("hook-skill-on-test.dl"), STARTER_HOOK)?;
     append_section(&dir.join("AGENTS.md"))?;
     append_section(&dir.join("CLAUDE.md"))?;
+    wire_repo_skills(&dir);
     // The integrations change how OTHER tools behave (Claude Code / git config /
     // the editor), so only wire them when the user is present to consent: a TTY
     // prompt, or an explicit `--yes`. A piped / CI run adds nothing (it would be
@@ -265,6 +266,38 @@ fn bootstrap_project(dir: &Path, assume_yes: bool) -> Result<i32> {
     }
     println!("[dl setup] run it:  (cd {} && dl --check)", dir.display());
     Ok(0)
+}
+
+/// Expose a repo's tracked skills as PROJECT skills: every `assets/*.skill.md`
+/// gets a `.claude/skills/<name>/SKILL.md` symlink (relative, so the checkout
+/// can move). `.claude/` is typically gitignored, which is why a fresh clone
+/// lacks the links even though the skill text is tracked — this recreates
+/// them. In this repo that wires the three maintainer checklists alongside the
+/// embedded consumer skill; any repo adopting the `assets/*.skill.md`
+/// convention gets the same. Idempotent: a link (or file) already at the
+/// destination is left alone; a dangling symlink is re-pointed. Non-unix
+/// falls back to a copy.
+fn wire_repo_skills(dir: &Path) {
+    let assets = dir.join("assets");
+    let Ok(entries) = std::fs::read_dir(&assets) else { return };
+    for e in entries.flatten() {
+        let p = e.path();
+        let Some(name) = p.file_name().and_then(|s| s.to_str())
+            .and_then(|s| s.strip_suffix(".skill.md")) else { continue };
+        let skill_dir = dir.join(".claude/skills").join(name);
+        let link = skill_dir.join("SKILL.md");
+        if link.exists() { continue; } // present and resolvable (file or live link)
+        let _ = std::fs::remove_file(&link); // a dangling symlink: exists()=false, remove_file works
+        if std::fs::create_dir_all(&skill_dir).is_err() { continue; }
+        #[cfg(unix)]
+        let ok = std::os::unix::fs::symlink(
+            Path::new("../../../assets").join(format!("{name}.skill.md")), &link).is_ok();
+        #[cfg(not(unix))]
+        let ok = std::fs::copy(&p, &link).is_ok();
+        if ok {
+            println!("[dl setup] project skill -> {}", link.display());
+        }
+    }
 }
 
 /// stdin AND stdout are a terminal — the session can answer a prompt. A piped

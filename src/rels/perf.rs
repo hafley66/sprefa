@@ -30,11 +30,15 @@ impl RelKind for PerfKind {
             RelDecl {
                 name: "rel_count".into(),
                 cols: vec![col("rel", Type::Text), col("rows", Type::Int)],
+                group: "perf",
+                doc: "row count per declared relation at refresh time; derived rels report the previous tick's counts (source-phase refresh, one-tick lag) — the cardinality-blowup rail joins here",
                 ..Default::default()
             },
             RelDecl {
                 name: "stmt_ms".into(),
                 cols: vec![col("rel", Type::Text), col("ms", Type::Int)],
+                group: "perf",
+                doc: "wall ms of each derived rel's INSERT statements from its most recent rebuild (max across rules/passes); empty until a rebuild has landed in this db, so a one-shot CLI run reports on the second invocation — the slow-rule rail joins here",
                 ..Default::default()
             },
         ]

@@ -330,6 +330,31 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       documented in chat_log/20260702.0. Tests: closure_query_guard.rs,
       perf_rels.rs, dl_diag closure lint, rel_components units.
 
+- [x] **Perf gaps A/B/C + RelDecl doc consolidation** (main, 2026-07-02,
+      local): **A** = type/call/dataflow/doc refreshers persist an
+      `extract:<family>` input digest (corpus (repo,path,rev,hash) rows +
+      scip_ref + exe identity, `_reldigest` keys) and SKIP the whole
+      parse/resolve/write pass warm; per-file fact cache (repo,path,hash) ->
+      Arc<facts> re-parses only moved files on a changed tick. Measured:
+      warm flow-interproc tick 1.5s -> ~35ms in-engine (extraction
+      183/281/930ms -> 0.3ms each). **B** = the FULL tick now attributes
+      changes per rel (seed_rel_digests returns movers; family/RelKind
+      refresh bools; NEW `async:<rel>` content digest for @async/@stream
+      response rels — the drain writes off-tick, nothing else attributes
+      them, gh-cache latest-wins broke without it) and scopes
+      rebuild_derived + closures + post-stratum via affected_derived, same
+      walk as tick_paths; blank slate / program edit / @next carry still
+      full. **C** = tick_paths marks a family's rels changed only when its
+      digest moved (editing .md no longer re-derives a type program's deps).
+      Instrumentation: `extract_files_parsed`, `last_derived_rebuilt`;
+      tests extract_cache.rs (3) + scoped_tick.rs. **Consolidation** =
+      builtin_rel_docs() tuple registry DELETED; RelDecl carries
+      group/doc (&'static str, "" for user decls), all 65 decl sites
+      annotated, catalog + undocumented_builtins read decls, README regen
+      byte-identical. **dl setup --project** wires `assets/*.skill.md` ->
+      `.claude/skills/<name>/SKILL.md` relative symlinks (the three
+      maintainer checklists on a fresh clone). Suites lib 191/0/1, it 434/0/4.
+
 ### Open (sprefa type graph)
 - [ ] Optional: migrate the deck graph (`examples/anim-self.dl` + anim AtlasPanel)
       from name-keyed `type_edge` to sym-keyed `type_link` + `type_entity` kinds

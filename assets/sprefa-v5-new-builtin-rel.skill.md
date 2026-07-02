@@ -52,6 +52,8 @@ impl RelKind for StagedKind {
         vec![RelDecl {
             name: "staged".into(),
             cols: vec![col("path", Type::Path)],
+            group: "changed",
+            doc: "git-staged paths (git diff --cached --name-only)",
             ..Default::default()
         }]
     }
@@ -84,6 +86,12 @@ impl RelKind for StagedKind {
 "yes, every incremental tick" respectively) — only override `dirty` if your
 family should NOT re-run on every `tick_paths` call (see `ScipKind`, which
 gates on `index.scip` being in the changed set).
+
+**`group`/`doc` on the decl are REQUIRED** (2026-07-02, replaces the old
+`builtin_rel_docs()` tuple registry): `rel_catalog` and the generated README
+table read them off the decl, and a built-in decl with an empty `doc` fails
+`rel_catalog::every_builtin_relation_is_documented`. Avoid `|` in the doc (it
+renders inside a markdown table cell).
 
 **Hard rule** (unchanged): the `Db` seam (`db.rs`) is plural-only.
 `insert_rows` / `refresh_rel` take a slice. A per-row write loop fires the

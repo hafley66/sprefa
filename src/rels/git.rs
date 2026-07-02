@@ -25,7 +25,8 @@ impl RelKind for ChangedKind {
         &["changed"]
     }
     fn decls(&self) -> Vec<RelDecl> {
-        vec![RelDecl { name: "changed".into(), cols: vec![col("path", Type::Path)], ..Default::default() }]
+        vec![RelDecl { name: "changed".into(), cols: vec![col("path", Type::Path)], group: "changed",
+            doc: "git status --porcelain -uall vs HEAD (modified/added/renamed/untracked); empty outside git; the rails join", ..Default::default() }]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in worktree-diff relation"
@@ -79,7 +80,8 @@ impl RelKind for ChangedLineKind {
     fn decls(&self) -> Vec<RelDecl> {
         vec![RelDecl {
             name: "changed_line".into(),
-            cols: vec![col("path", Type::Path), col("line", Type::Int)], ..Default::default() }]
+            cols: vec![col("path", Type::Path), col("line", Type::Int)], group: "changed",
+            doc: "new-side lines of git diff -U0 HEAD hunks plus every line of untracked files; pure-deletion hunks emit nothing; line-scoped rails precision", ..Default::default() }]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in line-diff relation"
@@ -165,7 +167,8 @@ impl RelKind for GitRefKind {
         vec![RelDecl {
             name: "git_ref".into(),
             cols: vec![col("repo", Type::Text), col("refname", Type::Text),
-                       col("kind", Type::Text), col("sha", Type::Text)], ..Default::default() }]
+                       col("kind", Type::Text), col("sha", Type::Text)], group: "git-ref",
+            doc: "every branch/tag/remote ref plus HEAD across self + config repos (repo, refname, kind, sha); annotated tags peeled to the commit", ..Default::default() }]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in ref-inventory relation"
@@ -252,7 +255,8 @@ impl RelKind for RevBehindKind {
             name: "rev_behind".into(),
             cols: vec![col("repo", Type::Text), col("refname", Type::Text),
                        col("upstream", Type::Text), col("behind", Type::Int),
-                       col("ahead", Type::Int)], ..Default::default() }]
+                       col("ahead", Type::Int)], group: "git-ref",
+            doc: "demand-driven ancestry counts: derive rev_cmp_want(repo, refname, upstream) and each wanted pair yields behind/ahead commit counts (ahead>0 = the ref diverged from upstream); one-tick latency like a data-driven scan; unresolvable refs and shallow clones skip loudly", ..Default::default() }]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in demand-driven ancestry relation (derive rev_cmp_want to fill it)"
@@ -380,7 +384,8 @@ impl RelKind for CreatedKind {
         vec![RelDecl {
             name: "created".into(),
             cols: vec![col("path", Type::Path), col("name", Type::Text),
-                       col("email", Type::Text), col("ts", Type::Int)], ..Default::default() }]
+                       col("email", Type::Text), col("ts", Type::Int)], group: "created",
+            doc: "files added since their first appearance, with author name/email/timestamp", ..Default::default() }]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in file-authorship relation"

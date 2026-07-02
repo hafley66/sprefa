@@ -17,12 +17,89 @@ use anyhow::Result;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::Arc;
 
 use super::*;
 use crate::lower::tbl;
 use crate::modgraph::{self, ProjectCx, Resolution};
 use crate::spine;
 use crate::typegraph;
+
+/// One extraction-corpus row: (repo, path, rev, content hash) from `_file`.
+type ExtractFile = (String, String, String, String);
+
+/// Per-file fact cache for one extractor family (perf gap A): (repo, path,
+/// content hash) -> (derived repo id, extracted facts). See the field docs on
+/// `Engine`.
+pub(super) type FactCache<T> =
+    std::cell::RefCell<HashMap<(String, String, String), (String, Arc<T>)>>;
+
+/// Identity of the running binary, folded into every `extract:*` input digest
+/// so a rebuilt `dl` re-extracts even over an unchanged corpus (the extractor
+/// logic may have changed). (len, mtime) of the current executable; a stat
+/// failure yields a fixed stamp (the digest then keys on inputs alone).
+fn exe_stamp() -> u128 {
+    static STAMP: std::sync::OnceLock<u128> = std::sync::OnceLock::new();
+    *STAMP.get_or_init(|| {
+        std::env::current_exe().ok()
+            .and_then(|p| std::fs::metadata(&p).ok())
+            .map(|m| {
+                let mt = m.modified().ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_nanos()).unwrap_or(0);
+                (m.len() as u128) << 64 | (mt & u128::from(u64::MAX))
+            })
+            .unwrap_or(0)
+    })
+}
+
+/// Split `files` into cache hits and misses (keyed by (repo, path, content
+/// hash)), run `parse` over the misses in parallel, then replace the cache
+/// with exactly the current file set's entries. Returns one
+/// (repo id, path, rev, facts) tuple per input row; order is not preserved.
+/// A row with an empty content hash is never cached (no identity to key on).
+/// `parsed_counter` accumulates the miss count (the `extract_files_parsed`
+/// instrumentation).
+fn cached_facts<T: Send + Sync>(
+    cache: &FactCache<T>,
+    files: &[ExtractFile],
+    parsed_counter: &std::cell::Cell<usize>,
+    parse: impl Fn(&str, &str, &str) -> Option<(String, T)> + Sync,
+) -> Vec<(String, String, String, Arc<T>)> {
+    let mut out: Vec<(String, String, String, Arc<T>)> = Vec::with_capacity(files.len());
+    let mut next: HashMap<(String, String, String), (String, Arc<T>)> =
+        HashMap::with_capacity(files.len());
+    let mut misses: Vec<&ExtractFile> = Vec::new();
+    {
+        let cur = cache.borrow();
+        for f in files {
+            let hit = if f.3.is_empty() { None } else {
+                cur.get(&(f.0.clone(), f.1.clone(), f.3.clone()))
+            };
+            match hit {
+                Some((rid, facts)) => {
+                    out.push((rid.clone(), f.1.clone(), f.2.clone(), facts.clone()));
+                    next.insert((f.0.clone(), f.1.clone(), f.3.clone()),
+                                (rid.clone(), facts.clone()));
+                }
+                None => misses.push(f),
+            }
+        }
+    }
+    let parsed: Vec<(&ExtractFile, String, Arc<T>)> = misses.par_iter().filter_map(|f| {
+        let (rid, facts) = parse(&f.0, &f.1, &f.2)?;
+        Some((*f, rid, Arc::new(facts)))
+    }).collect();
+    parsed_counter.set(parsed_counter.get() + parsed.len());
+    for (f, rid, facts) in parsed {
+        out.push((rid.clone(), f.1.clone(), f.2.clone(), facts.clone()));
+        if !f.3.is_empty() {
+            next.insert((f.0.clone(), f.1.clone(), f.3.clone()), (rid, facts));
+        }
+    }
+    *cache.borrow_mut() = next;
+    out
+}
 
 impl Engine {
     /// Project the durable `_strings` / `_where_bytes` meta tables into the
@@ -336,19 +413,74 @@ impl Engine {
         Ok(())
     }
 
+    /// The extraction corpus: every `_file` row in a TypeLang extension, with
+    /// its content address. One query serves the type/call/dataflow refreshers;
+    /// the hash column is what makes both the whole-pass digest skip and the
+    /// per-file fact cache content-keyed (perf gap A).
+    fn extract_file_set(&self) -> Result<Vec<ExtractFile>> {
+        let mut files: Vec<ExtractFile> = Vec::new();
+        let mut sel = self.db.conn().prepare(
+            "SELECT repo, path, rev, hash FROM _file WHERE path LIKE '%.rs' OR path LIKE '%.kt' OR path LIKE '%.kts' \
+             OR path LIKE '%.ts' OR path LIKE '%.tsx'")?;
+        let rows = sel.query_map([], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+            r.get::<_, Option<String>>(3)?.unwrap_or_default())))?;
+        for row in rows.flatten() { files.push(row); }
+        Ok(files)
+    }
+
+    /// XOR-folded input digest for one extractor family: one blake3 per
+    /// (repo, path, rev, content hash) corpus row, plus the `scip_ref` override
+    /// table when the family resolves through it, plus the running binary's
+    /// identity (see `exe_stamp`). Persisted under `extract:<family>` in
+    /// `_reldigest`; an unchanged digest means the family's output rows are
+    /// already in this db, so the whole parse + resolve + write pass skips.
+    /// A row with an empty content hash has no identity, so the digest is
+    /// salted with the current time — never equal, never a false skip.
+    fn extract_input_digest(&self, family: &str, files: &[ExtractFile], with_scip: bool) -> [u8; 32] {
+        let mut acc = [0u8; 32];
+        let fold = |acc: &mut [u8; 32], h: &blake3::Hash| {
+            for (a, b) in acc.iter_mut().zip(h.as_bytes()) { *a ^= *b; }
+        };
+        fold(&mut acc, &blake3::hash(format!("{family}\0{:032x}", exe_stamp()).as_bytes()));
+        for (repo, path, rev, hash) in files {
+            if hash.is_empty() {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos()).unwrap_or(0);
+                fold(&mut acc, &blake3::hash(format!("nonce\0{now}").as_bytes()));
+                continue;
+            }
+            fold(&mut acc, &blake3::hash(format!("{repo}\0{path}\0{rev}\0{hash}").as_bytes()));
+        }
+        if with_scip {
+            if let Ok(mut s) = self.db.conn().prepare(
+                &format!("SELECT file, symbol, def_file FROM {}", tbl("scip_ref"))) {
+                if let Ok(rows) = s.query_map([], |r| Ok((
+                    r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))) {
+                    for (f, sym, d) in rows.flatten() {
+                        fold(&mut acc, &blake3::hash(format!("scip\0{f}\0{sym}\0{d}").as_bytes()));
+                    }
+                }
+            }
+        }
+        acc
+    }
+
     /// Rebuild the type graph from the `_file` set. This is the same L3
     /// shape as module graph: read tracked Rust/Kotlin/TS files, run a
     /// deterministic syntax extractor, flush one built-in relation through
     /// `refresh_rel`.
-    pub(crate) fn refresh_type_rels(&self) -> Result<()> {
-        let mut files: Vec<(String, String, String)> = Vec::new();
-        {
-            let mut sel = self.db.conn().prepare(
-                "SELECT repo, path, rev FROM _file WHERE path LIKE '%.rs' OR path LIKE '%.kt' OR path LIKE '%.kts' \
-                 OR path LIKE '%.ts' OR path LIKE '%.tsx'")?;
-            let rows = sel.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
-            for row in rows.flatten() { files.push(row); }
-        }
+    /// Returns whether the family's inputs moved (false = digest skip, the
+    /// stored rows already serve): the tick marks the family's rels changed
+    /// only on true, so dependents of an untouched family are not re-derived
+    /// (perf gap C).
+    pub(crate) fn refresh_type_rels(&self) -> Result<bool> {
+        let files = self.extract_file_set()?;
+        // Perf gap A: a warm tick whose corpus (and scip override) didn't move
+        // already has this family's rows in the db — skip the whole pass.
+        let digest = self.extract_input_digest("type", &files, true);
+        if self.load_rel_digest("extract:type")? == Some(digest) { return Ok(false); }
         // Parse + extract per file in parallel (same shape as module_rows_for_rev),
         // then flatten and write once. Keeps the cold-build parse working set bounded
         // by the rayon pool, not the corpus (peak-RSS invariant). Rows carry their
@@ -361,14 +493,16 @@ impl Engine {
         // because name->def resolution is corpus-global (a barrier). Content is
         // read from the file's OWN repo root so config-repo files index too.
         // facts carry the derived repo id (nearest `.git` of the file) so each
-        // entity/edge row is attributed to the folder it lives in.
-        let facts: Vec<(String, String, String, typegraph::TypeFacts)> = files.par_iter().filter_map(|(repo, path, rev)| {
-            let lang = typegraph::type_langs().iter().find(|l| l.matches(path))?;
-            let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
-            let content = read_content(froot, rev, path).unwrap_or_default();
-            let rid = repo_id_of(froot, path, repo);
-            Some((rid, path.clone(), rev.clone(), lang.extract(path, &content)))
-        }).collect();
+        // entity/edge row is attributed to the folder it lives in. Unchanged
+        // files come out of the per-file cache without a parse.
+        let facts: Vec<(String, String, String, Arc<typegraph::TypeFacts>)> =
+            cached_facts(&self.type_facts_cache, &files, &self.extract_files_parsed, |repo, path, rev| {
+                let lang = typegraph::type_langs().iter().find(|l| l.matches(path))?;
+                let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
+                let content = read_content(froot, rev, path).unwrap_or_default();
+                let rid = repo_id_of(froot, path, repo);
+                Some((rid, lang.extract(path, &content)))
+            });
 
         // Resolver: a name maps to its definition symbol when exactly one entity
         // in the SAME repo declares it (syntactic). Keying by repo keeps two
@@ -472,7 +606,9 @@ impl Engine {
         self.refresh_rel("doc_comment", &["repo", "sym", "line", "text"], &doc_rows)?;
         self.refresh_rel("doc_tag", &["repo", "sym", "tag", "arg", "text"], &tag_rows)?;
         self.rebuild_legacy_type_rels()?;
-        Ok(())
+        // Persisted only after the writes land, so a failed refresh retries.
+        self.save_rel_digest("extract:type", &digest)?;
+        Ok(true)
     }
 
     /// Best-effort SCIP override for resolution: read `scip_ref(file, symbol,
@@ -737,25 +873,23 @@ impl Engine {
     /// The caller-resolution second pass (span containment + bare-name resolve,
     /// the type_link path) lands with the first real extractor body; the row
     /// vecs already flow through it so the write path is exercised now.
-    pub(crate) fn refresh_call_rels(&self) -> Result<()> {
-        let mut files: Vec<(String, String, String)> = Vec::new();
-        {
-            let mut sel = self.db.conn().prepare(
-                "SELECT repo, path, rev FROM _file WHERE path LIKE '%.rs' OR path LIKE '%.kt' OR path LIKE '%.kts' \
-                 OR path LIKE '%.ts' OR path LIKE '%.tsx'")?;
-            let rows = sel.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
-            for row in rows.flatten() { files.push(row); }
-        }
+    /// Change-reporting contract mirrors `refresh_type_rels`.
+    pub(crate) fn refresh_call_rels(&self) -> Result<bool> {
+        let files = self.extract_file_set()?;
+        // Perf gap A: same digest skip + per-file cache as refresh_type_rels.
+        let digest = self.extract_input_digest("call", &files, true);
+        if self.load_rel_digest("extract:call")? == Some(digest) { return Ok(false); }
 
         let root = self.root.clone();
         let roots = self.repo_roots();
-        let facts: Vec<(String, String, String, typegraph::CallFacts)> = files.par_iter().filter_map(|(repo, path, rev)| {
-            let lang = typegraph::type_langs().iter().find(|l| l.matches(path))?;
-            let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
-            let content = read_content(froot, rev, path).unwrap_or_default();
-            let rid = repo_id_of(froot, path, repo);
-            Some((rid, path.clone(), rev.clone(), lang.extract_calls(path, &content)))
-        }).collect();
+        let facts: Vec<(String, String, String, Arc<typegraph::CallFacts>)> =
+            cached_facts(&self.call_facts_cache, &files, &self.extract_files_parsed, |repo, path, rev| {
+                let lang = typegraph::type_langs().iter().find(|l| l.matches(path))?;
+                let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
+                let content = read_content(froot, rev, path).unwrap_or_default();
+                let rid = repo_id_of(froot, path, repo);
+                Some((rid, lang.extract_calls(path, &content)))
+            });
 
         // Corpus-global def index: a barrier before any edge is emitted, same
         // shape as refresh_type_rels. by_name resolves a bare callee to a def
@@ -862,7 +996,9 @@ impl Engine {
         self.refresh_rel("call_name", &["sym", "name"], &name_rows)?;
         self.refresh_rel("call_kind", &["fn", "kind"], &kind_rows)?;
         self.rebuild_legacy_call_rels()?;
-        Ok(())
+        // Persisted only after the writes land, so a failed refresh retries.
+        self.save_rel_digest("extract:call", &digest)?;
+        Ok(true)
     }
 
     /// Rebuild the convenient rev-less `call_edge(caller, callee, kind)` from
@@ -886,22 +1022,21 @@ impl Engine {
     /// `file:line:col` start span is already unique across files). No resolution
     /// pass is needed — node ids and the enclosing `fn` sym are self-contained,
     /// so this is a straight extract + bulk write.
-    pub(crate) fn refresh_dataflow_rels(&self) -> Result<()> {
-        let mut files: Vec<(String, String)> = Vec::new();
-        {
-            let mut sel = self.db.conn().prepare(
-                "SELECT path, rev FROM _file WHERE path LIKE '%.rs' OR path LIKE '%.kt' OR path LIKE '%.kts' \
-                 OR path LIKE '%.ts' OR path LIKE '%.tsx'")?;
-            let rows = sel.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
-            for row in rows.flatten() { files.push(row); }
-        }
+    /// Change-reporting contract mirrors `refresh_type_rels`.
+    pub(crate) fn refresh_dataflow_rels(&self) -> Result<bool> {
+        let files = self.extract_file_set()?;
+        // Perf gap A: no resolution pass here, so the digest folds the corpus
+        // rows only (no scip term).
+        let digest = self.extract_input_digest("dataflow", &files, false);
+        if self.load_rel_digest("extract:dataflow")? == Some(digest) { return Ok(false); }
 
         let root = self.root.clone();
-        let facts: Vec<typegraph::DataflowFacts> = files.par_iter().filter_map(|(path, rev)| {
-            let lang = typegraph::type_langs().iter().find(|l| l.matches(path))?;
-            let content = read_content(&root, rev, path).unwrap_or_default();
-            Some(lang.extract_dataflow(path, &content))
-        }).collect();
+        let facts: Vec<(String, String, String, Arc<typegraph::DataflowFacts>)> =
+            cached_facts(&self.df_facts_cache, &files, &self.extract_files_parsed, |_repo, path, rev| {
+                let lang = typegraph::type_langs().iter().find(|l| l.matches(path))?;
+                let content = read_content(&root, rev, path).unwrap_or_default();
+                Some((String::new(), lang.extract_dataflow(path, &content)))
+            });
 
         let t = |s: &str| Value::Text(s.to_string());
         let i = |n: u32| Value::Int(n as i64);
@@ -916,7 +1051,7 @@ impl Engine {
         let mut seen_edge: HashSet<(&str, &str)> = HashSet::new();
         let mut seen_loop: HashSet<(&str, u32)> = HashSet::new();
         let mut seen_nest: HashSet<(&str, &str)> = HashSet::new();
-        for f in &facts {
+        for (_, _, _, f) in &facts {
             for n in &f.nodes {
                 if seen_node.insert(n.id.as_str()) {
                     node_rows.push(vec![t(&n.id), t(&n.kind), t(&n.var), t(&n.fn_sym), t(&n.file), i(n.line)]);
@@ -953,7 +1088,9 @@ impl Engine {
         self.refresh_rel("allocates", &["fn"], &alloc_rows)?;
         self.refresh_rel("nest", &["call_id", "loop_id", "depth", "collection"], &nest_rows)?;
         self.refresh_rel("df_param", &["id", "pos"], &param_rows)?;
-        Ok(())
+        // Persisted only after the writes land, so a failed refresh retries.
+        self.save_rel_digest("extract:dataflow", &digest)?;
+        Ok(true)
     }
 
     /// Refresh `doc_node` from the document-grammar registry. Same shape as the
@@ -962,17 +1099,30 @@ impl Engine {
     /// (a source rule scanning `**/*.md` feeds it, exactly as `**/*.rs` feeds
     /// the type graph); the SQL prefilter narrows to document extensions, then
     /// the registry's `matches` decides the real dispatch.
-    pub(crate) fn refresh_doc_rels(&self) -> Result<()> {
-        let mut files: Vec<(String, String, String)> = Vec::new();
+    /// Change-reporting contract mirrors `refresh_type_rels`. The `doc_ref`
+    /// bridge reads `type_entity`, so the input digest folds the md corpus
+    /// PLUS the stored `extract:type` digest (which identifies the type
+    /// family's inputs; type refresh runs before doc in both tick paths).
+    pub(crate) fn refresh_doc_rels(&self) -> Result<bool> {
+        let mut files: Vec<ExtractFile> = Vec::new();
         {
             let mut sel = self.db.conn().prepare(
-                "SELECT repo, path, rev FROM _file WHERE path LIKE '%.md' OR path LIKE '%.markdown'")?;
-            let rows = sel.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
+                "SELECT repo, path, rev, hash FROM _file WHERE path LIKE '%.md' OR path LIKE '%.markdown'")?;
+            let rows = sel.query_map([], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?.unwrap_or_default())))?;
             for row in rows.flatten() { files.push(row); }
         }
+        let mut digest = self.extract_input_digest("doc", &files, false);
+        let ty = self.load_rel_digest("extract:type")?
+            .map(|d| d.iter().map(|b| format!("{b:02x}")).collect::<String>())
+            .unwrap_or_default();
+        for (a, b) in digest.iter_mut()
+            .zip(blake3::hash(format!("type\0{ty}").as_bytes()).as_bytes()) { *a ^= *b; }
+        if self.load_rel_digest("extract:doc")? == Some(digest) { return Ok(false); }
         let root = self.root.clone();
         let roots = self.repo_roots();
-        let facts: Vec<(String, String, ingest::DocFacts)> = files.par_iter().filter_map(|(repo, path, rev)| {
+        let facts: Vec<(String, String, ingest::DocFacts)> = files.par_iter().filter_map(|(repo, path, rev, _)| {
             let lang = ingest::ingest_langs().iter().find(|l| l.matches(path))?;
             let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
             let content = read_content(froot, rev, path).unwrap_or_default();
@@ -1073,6 +1223,8 @@ impl Engine {
         }
         self.refresh_rel("doc_ref",
             &["repo", "file", "line", "sym", "kind", "matched_name"], &ref_rows)?;
-        Ok(())
+        // Persisted only after the writes land, so a failed refresh retries.
+        self.save_rel_digest("extract:doc", &digest)?;
+        Ok(true)
     }
 }

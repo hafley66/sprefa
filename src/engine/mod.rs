@@ -284,11 +284,16 @@ const EFFECT_RELS: [&str; 1] = ["effect_log"];
 fn builtin_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
-        RelDecl { name: "true".into(), cols: vec![], ..Default::default() },
-        RelDecl { name: "repo".into(), cols: vec![c("slug", Type::Text), c("root", Type::Path), c("url", Type::Text)], ..Default::default() },
-        RelDecl { name: "rev".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text), c("oid", Type::Text), c("ts", Type::Int)], ..Default::default() },
-        RelDecl { name: "content".into(), cols: vec![c("id", Type::Text), c("hash", Type::Text)], ..Default::default() },
-        RelDecl { name: "file".into(), cols: vec![c("repo", Type::Text), c("rev", Type::Text), c("path", Type::Path), c("content", Type::Text)], ..Default::default() },
+        RelDecl { name: "true".into(), cols: vec![], group: "core",
+            doc: "zero-arity singleton; the always-succeeds atom", ..Default::default() },
+        RelDecl { name: "repo".into(), cols: vec![c("slug", Type::Text), c("root", Type::Path), c("url", Type::Text)], group: "core",
+            doc: "configured + dynamically-pulled repos whose root exists; writable as a sink — a repo(...) rule clones+registers when the github org is in `org` (hard filter); see docs/dynamic-reaching.md", ..Default::default() },
+        RelDecl { name: "rev".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text), c("oid", Type::Text), c("ts", Type::Int)], group: "core",
+            doc: "git revs seen by scans", ..Default::default() },
+        RelDecl { name: "content".into(), cols: vec![c("id", Type::Text), c("hash", Type::Text)], group: "core",
+            doc: "content addresses", ..Default::default() },
+        RelDecl { name: "file".into(), cols: vec![c("repo", Type::Text), c("rev", Type::Text), c("path", Type::Path), c("content", Type::Text)], group: "core",
+            doc: "scanned files, keyed by (repo, rev, path, content)", ..Default::default() },
     ]
 }
 
@@ -322,117 +327,15 @@ pub fn builtin_rel_names() -> std::collections::HashSet<String> {
     all_builtin_decls().into_iter().map(|d| d.name).collect()
 }
 
-/// One-line documentation for every built-in relation, as `(name, group,
-/// summary)`. THIS is the single source of relation docs: `rel_catalog` projects
-/// it (joined to the decls for columns) and `examples/builtin-rels.dl` renders it
-/// into the README, so a generated doc table can never drift from the engine. A
-/// new built-in is forced to appear here by `undocumented_builtins` (a test fails
-/// until it does), so the doc standard is mechanical, not a review checklist.
-/// Summaries avoid `|` so they render inside a markdown table cell.
-pub fn builtin_rel_docs() -> &'static [(&'static str, &'static str, &'static str)] {
-    &[
-        // core: the repo/rev/content/file spine + the always-true atom.
-        ("true", "core", "zero-arity singleton; the always-succeeds atom"),
-        ("repo", "core", "configured + dynamically-pulled repos whose root exists; writable as a sink — a repo(...) rule clones+registers when the github org is in `org` (hard filter); see docs/dynamic-reaching.md"),
-        ("rev", "core", "git revs seen by scans"),
-        ("content", "core", "content addresses"),
-        ("file", "core", "scanned files, keyed by (repo, rev, path, content)"),
-        // module graph: imports + resolved file-to-file edges.
-        ("module_import", "module", "import statements (Rust + TS + Kotlin); Kotlin adds kind=same-package rows for bare uses of another file's column-0 decl, and an expect/actual decl fans edges to all declaring files"),
-        ("module_edge", "module", "resolved file-to-file import graph (rev-deduped union)"),
-        ("module_edge_rev", "module", "rev-aware module_edge"),
-        ("module_unresolved", "module", "broken imports: a reference that resolved to no project file (the linter question)"),
-        ("module_unresolved_rev", "module", "rev-aware module_unresolved"),
-        ("crate_edge", "module", "workspace-internal Cargo dependency edges"),
-        // type graph: entities, edges, signatures.
-        ("type_edge", "type", "type-graph edges across Rust (syn), Kotlin (tree-sitter), TS (oxc); kind is field/variant/impl/generic — Kotlin interface supertypes are generic, class/object impl, val/var ctor params + body properties field, enum entries variant; trailing repo column so two trees scanned together don't collapse same-named types into one node (closure/scc still walk cols 0/1, unaffected)"),
-        ("type_edge_rev", "type", "rev-aware type_edge (WORK-vs-HEAD type diff)"),
-        ("type_entity", "type", "every declared type; sym is file::kind::name, the cross-graph join key; scip_ref overrides name resolution when a SCIP index is present"),
-        ("type_sig", "type", "type signature slots (params, fields) per sym"),
-        ("type_link", "type", "cross-type links not carried by type_edge (SCIP-resolved sym to sym); src/dst are already repo-prefixed via type_entity's sym, so no separate repo column is needed"),
-        // doc comments attached to entities (Tier 1/2 doc gen).
-        ("doc_comment", "type", "doc comment per type_entity sym: (repo, sym, line, text); AST-located per language (Rust #[doc] attrs, Kotlin KDoc sibling, TS leading /** */)"),
-        ("doc_tag", "type", "structured doc tags per sym: (repo, sym, tag, arg, text); @param/@returns/@deprecated for JSDoc/KDoc, # Section headings for rustdoc"),
-        // call graph: defs, sites, resolved edges, classification.
-        ("call_def", "call", "every callable; sym is file::kind::name"),
-        ("call_site", "call", "each call occurrence; caller is the resolved fn sym, callee the bare text; changed_line joins here for line-scoped rails"),
-        ("call_edge", "call", "resolved caller-sym to callee-sym edge (single-def or SCIP override)"),
-        ("call_edge_rev", "call", "rev-aware call_edge"),
-        ("call_name", "call", "def sym to bare callable name; resolves a call_site callee to candidate def syms"),
-        ("call_kind", "call", "per-fn read/write classification from the bare callee name (execute* -> write, query*/prepare -> read); rusqlite-shaped, collection names dropped to avoid false positives"),
-        // intra-procedural dataflow + loop/alloc material for Big-O.
-        ("df_node", "dataflow", "intra-procedural dataflow node (call_res/assign/...); id is file::line::kind"),
-        ("df_edge", "dataflow", "intra-procedural dataflow dependency edge"),
-        ("loop_over", "dataflow", "one row per loop with its span, iter var, and collection"),
-        ("allocates", "dataflow", "one row per fn whose body builds a collection (Vec/HashMap/String ctor, .collect/.clone/.to_string)"),
-        ("nest", "dataflow", "one row per (call, enclosing loop); depth is nesting rank (1=outermost); raw material for symbolic Big-O over call_edge"),
-        ("df_param", "dataflow", "(param df_node id, positional index); index counts typed params only (self skipped) so it aligns with type_sig.pos for node-level type joins"),
-        // doc-to-code bridge.
-        ("doc_node", "doc", "structural nodes from non-source text (markdown headings + code blocks via tree-sitter-md: ATX/setext headings, fenced/indented blocks); parent is the enclosing heading"),
-        ("doc_ref", "doc", "doc-to-code bridge: name-matches doc_node headings to type_entity symbols (exact + normalized) and scans code blocks for identifier mentions; empty unless the program also uses type relations"),
-        // SCIP: compiler-backed facts from an index.scip.
-        ("scip_def", "scip", "symbol defs from an existing index.scip (root or $SPREFA_SCIP_INDEX)"),
-        ("scip_name", "scip", "descriptor name (last identifier run) of a moniker, computed in-engine"),
-        ("scip_ref", "scip", "compiler-backed references (ref file, symbol, def file)"),
-        ("scip_edge", "scip", "file-to-file SCIP dependency edges"),
-        ("scip_fn_edge", "scip", "function-level call edge; caller is the innermost enclosing fn def"),
-        ("scip_callee_type", "scip", "receiver type parsed from a method moniker's impl/for segment"),
-        ("scip_local", "scip", "local-variable + parameter declarations attributed to their enclosing fn"),
-        ("scip_impl", "scip", "interface/supertype dispatch edge from SCIP is_implementation (impl to iface)"),
-        // working-tree change rails.
-        ("changed", "changed", "git status --porcelain -uall vs HEAD (modified/added/renamed/untracked); empty outside git; the rails join"),
-        ("changed_line", "changed", "new-side lines of git diff -U0 HEAD hunks plus every line of untracked files; pure-deletion hunks emit nothing; line-scoped rails precision"),
-        // git ref inventory + demand-driven ancestry (pin-skew queries).
-        ("git_ref", "git-ref", "every branch/tag/remote ref plus HEAD across self + config repos (repo, refname, kind, sha); annotated tags peeled to the commit"),
-        ("rev_behind", "git-ref", "demand-driven ancestry counts: derive rev_cmp_want(repo, refname, upstream) and each wanted pair yields behind/ahead commit counts (ahead>0 = the ref diverged from upstream); one-tick latency like a data-driven scan; unresolvable refs and shallow clones skip loudly"),
-        // agent-harness rails (from the at-rest session store).
-        ("agent_edit", "agent", "every file edit in the latest agent turn, tagged harness+session+turn idx (from the at-rest harness store)"),
-        ("agent_touch", "agent", "the latest agent turn's edited files (harness, session, path)"),
-        ("skill_loaded", "agent", "skills loaded in the newest agent session (harness, session, name): explicit Skill tool calls + dl's own prior `dl --hook` injections — negate it for a declarative load-once guard"),
-        // misc derived sources.
-        ("created", "created", "files added since their first appearance, with author name/email/timestamp"),
-        ("similar", "embed", "content-addressed nearest-neighbor pairs from the embedding backend, with score"),
-        ("propose_extract", "propose", "proposed extract-function refactor spans (path, lo, hi, param)"),
-        ("propose_clone", "propose", "proposed clone/near-duplicate groups keyed by a shared kernel"),
-        ("type_shape", "type-shape", "structural type-shape fingerprint per type (shape-iso experiment)"),
-        ("type_lgg", "type-shape", "least-general generalization of two type shapes (shape-iso experiment)"),
-        // ref spine: interned strings + located byte spans.
-        ("string", "spine", "interned strings (ref spine): id, text, normalized text"),
-        ("ref", "spine", "byte span per interned string; id is the rewrite coordinate — 'where does Foo occur' is string(s, Foo, _), ref(_, s, f, lo, hi)"),
-        // CST nested-set nodes for ancestry/containment.
-        ("node", "node", "CST nodes (nested-set spans): id, kind, file, lo, hi, parent"),
-        ("child", "node", "CST parent-child edges (exactly 2 cols, so closure(child) gives ancestry)"),
-        // daemon bookkeeping.
-        ("program", "daemon", "dl programs the daemon tracks (path, content hash, mtime)"),
-        ("head", "daemon", "git HEAD per repo (repo, ref name, oid)"),
-        ("rev_advanced", "daemon", "daemon signal that a repo ref advanced (repo, name, old oid, new oid)"),
-        // clock: edge-triggered interval gate for @async polling.
-        ("every", "clock", "holds interval N only on ticks that cross an N-second boundary (and the first tick); an every(30) body atom self-throttles its rule"),
-        ("clock", "clock", "the current time bucket now/secs per named period, present EVERY tick (not edge-triggered like every); clock(300,b) binds b to a monotone int advancing once per 300s — join it to vary a digest or gate on cadence, no @next counter"),
-        // effect drain: the @async/@stream job queue as a query rel.
-        ("effect_log", "effect", "the @async/@stream drain queue: one row per request (id, kind, head rel, state queued/running/done/failed, args JSON, req_tx); the dl-native call log, queryable live and parity-comparable to an external cache's call log"),
-        // engine telemetry as facts: perf rails are ordinary dl rules.
-        ("rel_count", "perf", "row count per declared relation at refresh time; derived rels report the previous tick's counts (source-phase refresh, one-tick lag) — the cardinality-blowup rail joins here"),
-        ("stmt_ms", "perf", "wall ms of each derived rel's INSERT statements from its most recent rebuild (max across rules/passes); empty until a rebuild has landed in this db, so a one-shot CLI run reports on the second invocation — the slow-rule rail joins here"),
-        // self: the catalog documents itself.
-        ("rel_catalog", "meta", "this table: every built-in relation with its group, columns, and one-line doc"),
-        ("fn_catalog", "meta", "every scalar function callable in a head or comparison with its arity, group, and one-line doc; sourced from fn_docs"),
-        ("op_catalog", "meta", "every body/sink op (source ops, derived constructs, sinks) with its syntax sketch and one-line semantics; sourced from op_docs"),
-        // self: dl validates dl. rust-analyzer-grade positioned diagnostics for scanned `.dl` files.
-        ("dl_diag", "meta", "parse/type diagnostics for each scanned `.dl` file (path, line, col, end_line, end_col, severity, code, msg); the engine's own lexer/parser/typechecker run over `file` rows ending in `.dl`, byte spans mapped to 1-based line / 0-based col — join agent_changed for lint-on-edit"),
-    ]
-}
-
-/// Built-in relation names that have no entry in `builtin_rel_docs`. The
-/// doc-completeness invariant: this must be empty. A test asserts it, so adding a
-/// built-in without documenting it fails CI rather than silently shipping a blank
-/// row in the generated table.
+/// Built-in relation names whose decl carries an empty `doc`. The
+/// doc-completeness invariant: this must be empty. A test asserts it, so adding
+/// a built-in without documenting it on its `RelDecl` fails CI rather than
+/// silently shipping a blank row in the generated table.
 pub fn undocumented_builtins() -> Vec<String> {
-    let documented: std::collections::HashSet<&str> =
-        builtin_rel_docs().iter().map(|(n, _, _)| *n).collect();
-    let mut missing: Vec<String> = builtin_rel_names()
+    let mut missing: Vec<String> = all_builtin_decls()
         .into_iter()
-        .filter(|n| !documented.contains(n.as_str()))
+        .filter(|d| d.doc.is_empty())
+        .map(|d| d.name)
         .collect();
     missing.sort();
     missing
@@ -441,7 +344,7 @@ pub fn undocumented_builtins() -> Vec<String> {
 /// One-line documentation for every scalar function callable in a rule head or
 /// comparison: `(name, arity, group, doc)`. THIS is the single source of function
 /// docs — `fn_catalog` projects it and `examples/fn-catalog.dl` renders it into
-/// the README, mirroring `builtin_rel_docs`/`rel_catalog` for relations. A new
+/// the README, mirroring the per-decl doc/group + `rel_catalog` for relations. A new
 /// `STR_FNS` entry is forced to appear here by `undocumented_fns` (a test fails
 /// until it does). Docs avoid `|` so they render inside a markdown table cell.
 pub fn fn_docs() -> &'static [(&'static str, usize, &'static str, &'static str)] {
@@ -520,7 +423,8 @@ fn effect_rel_decls() -> Vec<RelDecl> {
     vec![
         RelDecl { name: "effect_log".into(), cols: vec![
             c("id", Type::Text), c("kind", Type::Text), c("head", Type::Text),
-            c("state", Type::Text), c("args", Type::Text), c("req_tx", Type::Int)], ..Default::default() },
+            c("state", Type::Text), c("args", Type::Text), c("req_tx", Type::Int)], group: "effect",
+            doc: "the @async/@stream drain queue: one row per request (id, kind, head rel, state queued/running/done/failed, args JSON, req_tx); the dl-native call log, queryable live and parity-comparable to an external cache's call log", ..Default::default() },
     ]
 }
 
@@ -530,28 +434,39 @@ fn module_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "module_import".into(), cols: vec![
-            c("file", Type::Path), c("rev", Type::Text), c("specifier", Type::Text), c("kind", Type::Text), c("line", Type::Int)], ..Default::default() },
-        RelDecl { name: "module_edge".into(), cols: vec![c("src", Type::Path), c("dst", Type::Path)], ..Default::default() },
-        RelDecl { name: "module_edge_rev".into(), cols: vec![c("src", Type::Path), c("dst", Type::Path), c("rev", Type::Text)], ..Default::default() },
+            c("file", Type::Path), c("rev", Type::Text), c("specifier", Type::Text), c("kind", Type::Text), c("line", Type::Int)], group: "module",
+            doc: "import statements (Rust + TS + Kotlin); Kotlin adds kind=same-package rows for bare uses of another file's column-0 decl, and an expect/actual decl fans edges to all declaring files", ..Default::default() },
+        RelDecl { name: "module_edge".into(), cols: vec![c("src", Type::Path), c("dst", Type::Path)], group: "module",
+            doc: "resolved file-to-file import graph (rev-deduped union)", ..Default::default() },
+        RelDecl { name: "module_edge_rev".into(), cols: vec![c("src", Type::Path), c("dst", Type::Path), c("rev", Type::Text)], group: "module",
+            doc: "rev-aware module_edge", ..Default::default() },
         RelDecl { name: "module_unresolved".into(), cols: vec![
-            c("file", Type::Path), c("specifier", Type::Text), c("reason", Type::Text), c("line", Type::Int)], ..Default::default() },
+            c("file", Type::Path), c("specifier", Type::Text), c("reason", Type::Text), c("line", Type::Int)], group: "module",
+            doc: "broken imports: a reference that resolved to no project file (the linter question)", ..Default::default() },
         RelDecl { name: "module_unresolved_rev".into(), cols: vec![
-            c("file", Type::Path), c("rev", Type::Text), c("specifier", Type::Text), c("reason", Type::Text), c("line", Type::Int)], ..Default::default() },
-        RelDecl { name: "crate_edge".into(), cols: vec![c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text), c("rev", Type::Text)], ..Default::default() },
+            c("file", Type::Path), c("rev", Type::Text), c("specifier", Type::Text), c("reason", Type::Text), c("line", Type::Int)], group: "module",
+            doc: "rev-aware module_unresolved", ..Default::default() },
+        RelDecl { name: "crate_edge".into(), cols: vec![c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text), c("rev", Type::Text)], group: "module",
+            doc: "workspace-internal Cargo dependency edges", ..Default::default() },
     ]
 }
 
 fn type_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
-        RelDecl { name: "type_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text), c("repo", Type::Text)], ..Default::default() },
-        RelDecl { name: "type_edge_rev".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text), c("rev", Type::Text), c("repo", Type::Text)], ..Default::default() },
+        RelDecl { name: "type_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text), c("repo", Type::Text)], group: "type",
+            doc: "type-graph edges across Rust (syn), Kotlin (tree-sitter), TS (oxc); kind is field/variant/impl/generic — Kotlin interface supertypes are generic, class/object impl, val/var ctor params + body properties field, enum entries variant; trailing repo column so two trees scanned together don't collapse same-named types into one node (closure/scc still walk cols 0/1, unaffected)", ..Default::default() },
+        RelDecl { name: "type_edge_rev".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text), c("rev", Type::Text), c("repo", Type::Text)], group: "type",
+            doc: "rev-aware type_edge (WORK-vs-HEAD type diff)", ..Default::default() },
         RelDecl { name: "type_entity".into(), cols: vec![
             c("repo", Type::Text), c("sym", Type::Text), c("name", Type::Text), c("kind", Type::Text),
-            c("parent", Type::Text), c("file", Type::Path), c("line", Type::Int)], ..Default::default() },
+            c("parent", Type::Text), c("file", Type::Path), c("line", Type::Int)], group: "type",
+            doc: "every declared type; sym is file::kind::name, the cross-graph join key; scip_ref overrides name resolution when a SCIP index is present", ..Default::default() },
         RelDecl { name: "type_sig".into(), cols: vec![
-            c("sym", Type::Text), c("slot", Type::Text), c("pos", Type::Int), c("ref", Type::Text)], ..Default::default() },
-        RelDecl { name: "type_link".into(), cols: vec![c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text)], ..Default::default() },
+            c("sym", Type::Text), c("slot", Type::Text), c("pos", Type::Int), c("ref", Type::Text)], group: "type",
+            doc: "type signature slots (params, fields) per sym", ..Default::default() },
+        RelDecl { name: "type_link".into(), cols: vec![c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text)], group: "type",
+            doc: "cross-type links not carried by type_edge (SCIP-resolved sym to sym); src/dst are already repo-prefixed via type_entity's sym, so no separate repo column is needed", ..Default::default() },
     ]
 }
 
@@ -559,10 +474,12 @@ fn doc_text_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "doc_comment".into(), cols: vec![
-            c("repo", Type::Text), c("sym", Type::Text), c("line", Type::Int), c("text", Type::Text)], ..Default::default() },
+            c("repo", Type::Text), c("sym", Type::Text), c("line", Type::Int), c("text", Type::Text)], group: "type",
+            doc: "doc comment per type_entity sym: (repo, sym, line, text); AST-located per language (Rust #[doc] attrs, Kotlin KDoc sibling, TS leading /** */)", ..Default::default() },
         RelDecl { name: "doc_tag".into(), cols: vec![
             c("repo", Type::Text), c("sym", Type::Text), c("tag", Type::Text),
-            c("arg", Type::Text), c("text", Type::Text)], ..Default::default() },
+            c("arg", Type::Text), c("text", Type::Text)], group: "type",
+            doc: "structured doc tags per sym: (repo, sym, tag, arg, text); @param/@returns/@deprecated for JSDoc/KDoc, # Section headings for rustdoc", ..Default::default() },
     ]
 }
 
@@ -571,26 +488,32 @@ fn call_rel_decls() -> Vec<RelDecl> {
     vec![
         RelDecl { name: "call_def".into(), cols: vec![
             c("repo", Type::Text), c("sym", Type::Text), c("kind", Type::Text),
-            c("file", Type::Path), c("line", Type::Int), c("end", Type::Int)], ..Default::default() },
+            c("file", Type::Path), c("line", Type::Int), c("end", Type::Int)], group: "call",
+            doc: "every callable; sym is file::kind::name", ..Default::default() },
         RelDecl { name: "call_site".into(), cols: vec![
             c("repo", Type::Text), c("caller", Type::Text), c("callee", Type::Text),
-            c("file", Type::Path), c("line", Type::Int)], ..Default::default() },
+            c("file", Type::Path), c("line", Type::Int)], group: "call",
+            doc: "each call occurrence; caller is the resolved fn sym, callee the bare text; changed_line joins here for line-scoped rails", ..Default::default() },
         RelDecl { name: "call_edge".into(), cols: vec![
-            c("caller", Type::Text), c("callee", Type::Text), c("kind", Type::Text)], ..Default::default() },
+            c("caller", Type::Text), c("callee", Type::Text), c("kind", Type::Text)], group: "call",
+            doc: "resolved caller-sym to callee-sym edge (single-def or SCIP override)", ..Default::default() },
         RelDecl { name: "call_edge_rev".into(), cols: vec![
             c("caller", Type::Text), c("callee", Type::Text),
-            c("kind", Type::Text), c("rev", Type::Text)], ..Default::default() },
+            c("kind", Type::Text), c("rev", Type::Text)], group: "call",
+            doc: "rev-aware call_edge", ..Default::default() },
         // def sym -> bare callable name, so rules can resolve a call_site's
         // callee text to the set of candidate def syms (then filter, e.g. by
         // allocates). One row per def; a bare name may map to several syms.
-        RelDecl { name: "call_name".into(), cols: vec![c("sym", Type::Text), c("name", Type::Text)], ..Default::default() },
+        RelDecl { name: "call_name".into(), cols: vec![c("sym", Type::Text), c("name", Type::Text)], group: "call",
+            doc: "def sym to bare callable name; resolves a call_site callee to candidate def syms", ..Default::default() },
         // Per-fn read/write classification of the fn's call sites. `fn` is the
         // caller sym (same shape as call_site.caller); `kind` is `read` or
         // `write`, classified from the bare callee name (execute/
         // execute_batch -> write; prepare/query_row/query_map -> read). Lets a
         // rail ask "does this fn contain any write?" via `call_kind(fn, "write")`
         // without re-declaring the method-name table per program.
-        RelDecl { name: "call_kind".into(), cols: vec![c("fn", Type::Text), c("kind", Type::Text)], ..Default::default() },
+        RelDecl { name: "call_kind".into(), cols: vec![c("fn", Type::Text), c("kind", Type::Text)], group: "call",
+            doc: "per-fn read/write classification from the bare callee name (execute* -> write, query*/prepare -> read); rusqlite-shaped, collection names dropped to avoid false positives", ..Default::default() },
     ]
 }
 
@@ -599,19 +522,23 @@ fn dataflow_rel_decls() -> Vec<RelDecl> {
     vec![
         RelDecl { name: "df_node".into(), cols: vec![
             c("id", Type::Text), c("kind", Type::Text), c("var", Type::Text),
-            c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int)], ..Default::default() },
-        RelDecl { name: "df_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text)], ..Default::default() },
+            c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int)], group: "dataflow",
+            doc: "intra-procedural dataflow node (call_res/assign/...); id is file::line::kind", ..Default::default() },
+        RelDecl { name: "df_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text)], group: "dataflow",
+            doc: "intra-procedural dataflow dependency edge", ..Default::default() },
         // one row per loop, with its source span + loop variable. The flag rule
         // joins this against df_node/df_edge to find loop-invariant calls: a
         // call whose line falls in [start,end] taking an argument that is a
         // function param (not the loop variable).
         RelDecl { name: "loop_over".into(), cols: vec![
             c("file", Type::Path), c("start", Type::Int), c("end", Type::Int),
-            c("var", Type::Text), c("collection", Type::Text), c("fn", Type::Text)], ..Default::default() },
+            c("var", Type::Text), c("collection", Type::Text), c("fn", Type::Text)], group: "dataflow",
+            doc: "one row per loop with its span, iter var, and collection", ..Default::default() },
         // one row per fn whose body builds a collection (Vec/HashMap/String ctor
         // or .collect/.clone/.to_string). The cost signal that cuts the
         // loop-invariant-call suspect list down to recomputation candidates.
-        RelDecl { name: "allocates".into(), cols: vec![c("fn", Type::Text)], ..Default::default() },
+        RelDecl { name: "allocates".into(), cols: vec![c("fn", Type::Text)], group: "dataflow",
+            doc: "one row per fn whose body builds a collection (Vec/HashMap/String ctor, .collect/.clone/.to_string)", ..Default::default() },
         // one row per (call, enclosing loop) pair: `call_id` is the call_res
         // node, `loop_id` joins back to loop_over via "{file}:{start}", `depth`
         // is the loop's nesting rank (1 = outermost), `collection` is the inner
@@ -619,12 +546,14 @@ fn dataflow_rel_decls() -> Vec<RelDecl> {
         // raw material for symbolic Big-O composed over call_edge.
         RelDecl { name: "nest".into(), cols: vec![
             c("call_id", Type::Text), c("loop_id", Type::Text),
-            c("depth", Type::Int), c("collection", Type::Text)], ..Default::default() },
+            c("depth", Type::Int), c("collection", Type::Text)], group: "dataflow",
+            doc: "one row per (call, enclosing loop); depth is nesting rank (1=outermost); raw material for symbolic Big-O over call_edge", ..Default::default() },
         // (param df_node id, positional index) — the index counts only typed
         // params (the Rust receiver `self` is skipped), so it aligns with
         // type_sig's `pos`. Lets a query bind a specific param node to its
         // declared type at node granularity, not just per-fn.
-        RelDecl { name: "df_param".into(), cols: vec![c("id", Type::Text), c("pos", Type::Int)], ..Default::default() },
+        RelDecl { name: "df_param".into(), cols: vec![c("id", Type::Text), c("pos", Type::Int)], group: "dataflow",
+            doc: "(param df_node id, positional index); index counts typed params only (self skipped) so it aligns with type_sig.pos for node-level type joins", ..Default::default() },
     ]
 }
 
@@ -636,7 +565,8 @@ fn doc_rel_decls() -> Vec<RelDecl> {
         // walk the section tree. See `ingest::IngestLang`.
         RelDecl { name: "doc_node".into(), cols: vec![
             c("repo", Type::Text), c("file", Type::Path), c("line", Type::Int),
-            c("kind", Type::Text), c("name", Type::Text), c("parent", Type::Text)], ..Default::default() },
+            c("kind", Type::Text), c("name", Type::Text), c("parent", Type::Text)], group: "doc",
+            doc: "structural nodes from non-source text (markdown headings + code blocks via tree-sitter-md: ATX/setext headings, fenced/indented blocks); parent is the enclosing heading", ..Default::default() },
         // doc→code bridge: (file, line, sym, kind, matched_name). For each row,
         // `kind` is the doc_node kind that produced it ("heading" or
         // "code_block") and `matched_name` is the doc-side string that matched a
@@ -647,16 +577,19 @@ fn doc_rel_decls() -> Vec<RelDecl> {
         // type relations.
         RelDecl { name: "doc_ref".into(), cols: vec![
             c("repo", Type::Text), c("file", Type::Path), c("line", Type::Int), c("sym", Type::Text),
-            c("kind", Type::Text), c("matched_name", Type::Text)], ..Default::default() },
+            c("kind", Type::Text), c("matched_name", Type::Text)], group: "doc",
+            doc: "doc-to-code bridge: name-matches doc_node headings to type_entity symbols (exact + normalized) and scans code blocks for identifier mentions; empty unless the program also uses type relations", ..Default::default() },
     ]
 }
 
 fn spine_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
-        RelDecl { name: "string".into(), cols: vec![c("id", Type::Text), c("text", Type::Text), c("norm", Type::Text)], ..Default::default() },
+        RelDecl { name: "string".into(), cols: vec![c("id", Type::Text), c("text", Type::Text), c("norm", Type::Text)], group: "spine",
+            doc: "interned strings (ref spine): id, text, normalized text", ..Default::default() },
         RelDecl { name: "ref".into(), cols: vec![
-            c("id", Type::Text), c("string", Type::Text), c("file", Type::Text), c("lo", Type::Int), c("hi", Type::Int)], ..Default::default() },
+            c("id", Type::Text), c("string", Type::Text), c("file", Type::Text), c("lo", Type::Int), c("hi", Type::Int)], group: "spine",
+            doc: "byte span per interned string; id is the rewrite coordinate — 'where does Foo occur' is string(s, Foo, _), ref(_, s, f, lo, hi)", ..Default::default() },
     ]
 }
 
@@ -665,26 +598,32 @@ fn node_rel_decls() -> Vec<RelDecl> {
     vec![
         RelDecl { name: "node".into(), cols: vec![
             c("id", Type::Text), c("kind", Type::Text), c("file", Type::Text),
-            c("lo", Type::Int), c("hi", Type::Int), c("parent", Type::Text)], ..Default::default() },
+            c("lo", Type::Int), c("hi", Type::Int), c("parent", Type::Text)], group: "node",
+            doc: "CST nodes (nested-set spans): id, kind, file, lo, hi, parent", ..Default::default() },
         // EXACTLY 2 cols: `declare_closure` requires it, so `anc(a,b) <-
         // closure(child).` works with zero new recursion code.
-        RelDecl { name: "child".into(), cols: vec![c("parent", Type::Text), c("child", Type::Text)], ..Default::default() },
+        RelDecl { name: "child".into(), cols: vec![c("parent", Type::Text), c("child", Type::Text)], group: "node",
+            doc: "CST parent-child edges (exactly 2 cols, so closure(child) gives ancestry)", ..Default::default() },
     ]
 }
 
 fn daemon_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
-        RelDecl { name: "program".into(), cols: vec![c("path", Type::Path), c("hash", Type::Text), c("mtime", Type::Int)], ..Default::default() },
-        RelDecl { name: "head".into(), cols: vec![c("repo", Type::Text), c("name", Type::Text), c("oid", Type::Text)], ..Default::default() },
+        RelDecl { name: "program".into(), cols: vec![c("path", Type::Path), c("hash", Type::Text), c("mtime", Type::Int)], group: "daemon",
+            doc: "dl programs the daemon tracks (path, content hash, mtime)", ..Default::default() },
+        RelDecl { name: "head".into(), cols: vec![c("repo", Type::Text), c("name", Type::Text), c("oid", Type::Text)], group: "daemon",
+            doc: "git HEAD per repo (repo, ref name, oid)", ..Default::default() },
         RelDecl { name: "rev_advanced".into(), cols: vec![
-            c("repo", Type::Text), c("name", Type::Text), c("old", Type::Text), c("new", Type::Text)], ..Default::default() },
+            c("repo", Type::Text), c("name", Type::Text), c("old", Type::Text), c("new", Type::Text)], group: "daemon",
+            doc: "daemon signal that a repo ref advanced (repo, name, old oid, new oid)", ..Default::default() },
     ]
 }
 
 fn every_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
-    vec![RelDecl { name: "every".into(), cols: vec![c("secs", Type::Int)], ..Default::default() }]
+    vec![RelDecl { name: "every".into(), cols: vec![c("secs", Type::Int)], group: "clock",
+        doc: "holds interval N only on ticks that cross an N-second boundary (and the first tick); an every(30) body atom self-throttles its rule", ..Default::default() }]
 }
 
 /// The distinct `every(N)` interval literals used as body atoms in the program.
@@ -718,7 +657,8 @@ fn every_rels_used(prog: &Program) -> bool { rels_used(prog, &EVERY_RELS) }
 
 fn clock_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
-    vec![RelDecl { name: "clock".into(), cols: vec![c("secs", Type::Int), c("bucket", Type::Int)], ..Default::default() }]
+    vec![RelDecl { name: "clock".into(), cols: vec![c("secs", Type::Int), c("bucket", Type::Int)], group: "clock",
+        doc: "the current time bucket now/secs per named period, present EVERY tick (not edge-triggered like every); clock(300,b) binds b to a monotone int advancing once per 300s — join it to vary a digest or gate on cadence, no @next counter", ..Default::default() }]
 }
 
 /// The distinct `secs` periods the program names in a `clock(secs, bucket)` body
@@ -1439,12 +1379,36 @@ pub struct Engine {
     /// it to the whole corpus. The structural proof the incremental path is
     /// path-scoped (and can't silently regress to full-corpus).
     pub last_node_files_walked: std::cell::Cell<usize>,
+    /// Test/bench instrumentation: cumulative count of files the type/call/
+    /// dataflow extractors actually parsed (per-file cache misses). A warm
+    /// no-change tick must not bump it (the `extract:*` digest skips the whole
+    /// pass); an edit bumps it by the changed-file count per family, not the
+    /// corpus. The structural proof of perf gap A.
+    pub extract_files_parsed: std::cell::Cell<usize>,
+    /// Test/bench instrumentation: the pre-stratum derived rels the LAST full
+    /// `tick` actually rebuilt. A scoped tick (perf gap B) lists only the rels
+    /// dependency-reachable from what changed; a full rebuild lists every
+    /// pre-stratum rel; a no-change tick leaves it empty. The structural proof
+    /// the full tick's rebuild is affected-scoped.
+    pub last_derived_rebuilt: Vec<String>,
     /// Verify-rollback journal (christmas #14). `None` = not in verify mode (gen
     /// writes go straight to disk, no capture). `Some(...)` = every gen write
     /// first stashes the target's original bytes (`None` entry = the file did not
     /// exist) so `rollback_writes` can restore the tree if a checker fails. One
     /// entry per path, first-write wins (the pre-tick state).
     gen_journal: std::cell::RefCell<Option<Vec<(String, Option<Vec<u8>>)>>>,
+    /// Per-file extracted-fact caches for the type/call/dataflow refreshers,
+    /// keyed by (repo, path, content hash) — a warm tick re-parses only files
+    /// whose content address moved. Each refresh replaces the map with exactly
+    /// the current file set's entries, so dead content evicts itself and the
+    /// size stays bounded by the corpus. In-memory only (the daemon's warm
+    /// ticks are the measured wall); a fresh process parses once, then the
+    /// persisted `extract:*` input digest skips the whole pass while nothing
+    /// moves. The cached value carries the file's derived repo id alongside
+    /// the facts (both are (path, content) functions).
+    type_facts_cache: extract::FactCache<crate::typegraph::TypeFacts>,
+    call_facts_cache: extract::FactCache<crate::typegraph::CallFacts>,
+    df_facts_cache: extract::FactCache<crate::typegraph::DataflowFacts>,
 }
 
 struct ScanSpec {
@@ -1481,7 +1445,12 @@ impl Engine {
             root_implicit: false,
             last_n1: None,
             last_node_files_walked: std::cell::Cell::new(0),
+            extract_files_parsed: std::cell::Cell::new(0),
+            last_derived_rebuilt: Vec::new(),
             gen_journal: std::cell::RefCell::new(None),
+            type_facts_cache: Default::default(),
+            call_facts_cache: Default::default(),
+            df_facts_cache: Default::default(),
         }
     }
 
@@ -2458,13 +2427,20 @@ impl Engine {
     }
 
     /// Seed `_reldigest` for every source relation, so the first delta after a
-    /// cold run has a baseline to compare against.
-    fn seed_rel_digests(&self, source_rels: &[String]) -> Result<()> {
+    /// cold run has a baseline to compare against. Returns the relations whose
+    /// digest MOVED against the stored baseline (first-ever seeding counts as
+    /// moved) — the full tick's per-rel change attribution, feeding the same
+    /// `affected_derived` scoping `tick_paths` uses (perf gap B). An unchanged
+    /// relation skips the save.
+    fn seed_rel_digests(&self, source_rels: &[String]) -> Result<Vec<String>> {
+        let mut moved = Vec::new();
         for rel in source_rels {
             let d = self.rel_digest(rel)?;
+            if self.load_rel_digest(rel)? == Some(d) { continue; }
             self.save_rel_digest(rel, &d)?;
+            moved.push(rel.clone());
         }
-        Ok(())
+        Ok(moved)
     }
 
     fn any_derived_empty(&self, derived_rels: &[String]) -> Result<bool> {

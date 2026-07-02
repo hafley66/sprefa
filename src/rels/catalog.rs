@@ -1,10 +1,9 @@
 //! Self-describing catalog relations: `rel_catalog`, `fn_catalog`, `op_catalog`.
 
 use anyhow::Result;
-use std::collections::HashMap;
 
 use crate::ast::{RelDecl, Type, Value};
-use crate::engine::{all_builtin_decls, builtin_rel_docs, fn_docs, op_docs, Engine};
+use crate::engine::{all_builtin_decls, fn_docs, op_docs, Engine};
 
 use super::{col, RelKind};
 
@@ -12,9 +11,9 @@ use super::{col, RelKind};
 
 /// `rel_catalog(name, group, cols, doc)` + `fn_catalog(name, arity, group, doc)`
 /// — the engine describing its own built-in relations and scalar functions, from
-/// `all_builtin_decls` / `builtin_rel_docs` / `fn_docs`. Static (no git/file
-/// input), so `refresh` always re-emits and reports changed; cheap (bounded by
-/// the built-in count).
+/// `all_builtin_decls` (each decl carries its group + doc) / `fn_docs`. Static
+/// (no git/file input), so `refresh` always re-emits and reports changed; cheap
+/// (bounded by the built-in count).
 pub struct CatalogKind;
 
 impl RelKind for CatalogKind {
@@ -25,27 +24,27 @@ impl RelKind for CatalogKind {
         vec![
             RelDecl { name: "rel_catalog".into(), cols: vec![
                 col("name", Type::Text), col("group", Type::Text),
-                col("cols", Type::Text), col("doc", Type::Text)], ..Default::default() },
+                col("cols", Type::Text), col("doc", Type::Text)], group: "meta",
+                doc: "this table: every built-in relation with its group, columns, and one-line doc", ..Default::default() },
             RelDecl { name: "fn_catalog".into(), cols: vec![
                 col("name", Type::Text), col("arity", Type::Int),
-                col("group", Type::Text), col("doc", Type::Text)], ..Default::default() },
+                col("group", Type::Text), col("doc", Type::Text)], group: "meta",
+                doc: "every scalar function callable in a head or comparison with its arity, group, and one-line doc; sourced from fn_docs", ..Default::default() },
             RelDecl { name: "op_catalog".into(), cols: vec![
                 col("op", Type::Text), col("kind", Type::Text),
-                col("syntax", Type::Text), col("doc", Type::Text)], ..Default::default() },
+                col("syntax", Type::Text), col("doc", Type::Text)], group: "meta",
+                doc: "every body/sink op (source ops, derived constructs, sinks) with its syntax sketch and one-line semantics; sourced from op_docs", ..Default::default() },
         ]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in self-describing relation catalog (rel_catalog / fn_catalog / op_catalog)"
     }
     fn refresh(&self, eng: &Engine) -> Result<bool> {
-        let docs: HashMap<&str, (&str, &str)> =
-            builtin_rel_docs().iter().map(|(n, g, s)| (*n, (*g, *s))).collect();
         let rows: Vec<Vec<Value>> = all_builtin_decls().iter().map(|d| {
             let cols = format!("({})",
                 d.cols.iter().map(|c| c.name.clone()).collect::<Vec<_>>().join(", "));
-            let (group, summary) = docs.get(d.name.as_str()).copied().unwrap_or(("", ""));
-            vec![Value::Text(d.name.clone()), Value::Text(group.to_string()),
-                 Value::Text(cols), Value::Text(summary.to_string())]
+            vec![Value::Text(d.name.clone()), Value::Text(d.group.to_string()),
+                 Value::Text(cols), Value::Text(d.doc.to_string())]
         }).collect();
         eng.refresh_rel("rel_catalog", &["name", "group", "cols", "doc"], &rows)?;
 
