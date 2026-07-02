@@ -1,3 +1,11 @@
+// The single VS Code-coupling file. Everything editor-specific lives here:
+// the LSP client, the flow-panel webview wrapper, and the explorer
+// decorations. media/flow-panel.html is host-agnostic (it also runs in a plain
+// browser against scripts/dl-bridge.mjs); this file only injects a
+// `window.dlHost` bootstrap that bridges the panel's three host calls
+// (query/hover/open) onto VS Code machinery.
+import * as fs from "fs";
+import * as path from "path";
 import * as vscode from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, State } from "vscode-languageclient/node";
 
@@ -52,8 +60,134 @@ export function activate(ctx: vscode.ExtensionContext): void {
   });
   ctx.subscriptions.push({ dispose: () => { void client?.stop(); } });
   void client.start();
+
+  const slice = new SliceDecorations(root);
+  ctx.subscriptions.push(vscode.window.registerFileDecorationProvider(slice));
+  ctx.subscriptions.push(vscode.commands.registerCommand("dl.flowPanel", () => {
+    openFlowPanel(ctx, root, slice);
+  }));
+  ctx.subscriptions.push(vscode.commands.registerCommand("dl.markSelection", () => addMark(root)));
+  ctx.subscriptions.push(vscode.commands.registerCommand("dl.clearMarks", () => clearMarks(root)));
+}
+
+// ── marks: selection -> a `mark` fact the reactive engine joins against ─────
+// The editor is a dumb recorder; resolution (entity? df node? shared pattern
+// across marks?) is dl rules in .dl/mark-lens.dl. Facts only here — the rel
+// decl lives in mark-lens.dl so an absent marks file never breaks the program.
+
+const MARKS_HEADER =
+  "# marks.dl — written by the dl VS Code extension (dl.markSelection / dl.clearMarks).\n" +
+  "# Facts only; `rel mark(marked: text, path: file, line: int).` is declared in mark-lens.dl.\n";
+
+function marksPath(root: string): string {
+  return path.join(root, ".dl", "marks.dl");
+}
+
+function addMark(root: string): void {
+  const ed = vscode.window.activeTextEditor;
+  if (!ed) return;
+  const sel = ed.selection;
+  const text = (sel.isEmpty
+    ? ed.document.getText(ed.document.getWordRangeAtPosition(sel.active))
+    : ed.document.getText(sel)).trim();
+  if (!text) { void vscode.window.showWarningMessage("dl: nothing selected to mark"); return; }
+  const rel = path.relative(root, ed.document.uri.fsPath).replace(/\\/g, "/");
+  if (rel.startsWith("..")) { void vscode.window.showWarningMessage("dl: file is outside the scan root"); return; }
+  const line = sel.active.line + 1; // dl lines are 1-based
+  const fact = `mark(${JSON.stringify(text)}, ${JSON.stringify(rel)}, ${line}).\n`;
+  const p = marksPath(root);
+  const cur = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : MARKS_HEADER;
+  if (!cur.includes(fact)) fs.writeFileSync(p, cur + fact);
+  vscode.window.setStatusBarMessage(`dl mark: ${text} @ ${rel}:${line}`, 3000);
+}
+
+function clearMarks(root: string): void {
+  fs.writeFileSync(marksPath(root), MARKS_HEADER);
+  vscode.window.setStatusBarMessage("dl marks cleared", 3000);
 }
 
 export function deactivate(): Thenable<void> | undefined {
   return client?.stop();
+}
+
+/** Explorer highlight for the hovered graph slice: badge + theme color on the
+ *  slice's files, propagated up their parent folders. `set([])` clears. */
+class SliceDecorations implements vscode.FileDecorationProvider {
+  private files = new Set<string>();
+  private emitter = new vscode.EventEmitter<vscode.Uri[] | undefined>();
+  readonly onDidChangeFileDecorations = this.emitter.event;
+
+  constructor(private root: string) {}
+
+  set(relFiles: string[]): void {
+    const next = new Set(relFiles.map((f) => path.join(this.root, f)));
+    const touched = [...this.files, ...next].map((p) => vscode.Uri.file(p));
+    this.files = next;
+    this.emitter.fire(touched.length ? touched : undefined);
+  }
+
+  provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
+    if (!this.files.has(uri.fsPath)) return undefined;
+    const d = new vscode.FileDecoration("◆", "dl flow slice", new vscode.ThemeColor("dlFlow.slice"));
+    d.propagate = true;
+    return d;
+  }
+}
+
+let panel: vscode.WebviewPanel | undefined;
+
+function openFlowPanel(ctx: vscode.ExtensionContext, root: string, slice: SliceDecorations): void {
+  if (panel) { panel.reveal(); return; }
+  panel = vscode.window.createWebviewPanel("dlFlow", "dl flow", vscode.ViewColumn.Beside, {
+    enableScripts: true,
+    retainContextWhenHidden: true,
+  });
+  panel.onDidDispose(() => { panel = undefined; slice.set([]); }, null, ctx.subscriptions);
+
+  // The dlHost bootstrap replaces the panel's HTTP fallback: query rides the
+  // LSP custom request `dl/query`; hover and open post back to this file.
+  const bootstrap = `<script>window.dlHost = (() => {
+    const vscode = acquireVsCodeApi();
+    const pending = new Map(); let seq = 0;
+    window.addEventListener('message', e => {
+      const m = e.data;
+      if ((m.type === 'rows' || m.type === 'error') && pending.has(m.id)) {
+        const p = pending.get(m.id); pending.delete(m.id);
+        m.type === 'rows' ? p.resolve(m.rows) : p.reject(new Error(m.message));
+      }
+    });
+    return {
+      query: (sql, params = []) => new Promise((resolve, reject) => {
+        const id = ++seq; pending.set(id, { resolve, reject });
+        vscode.postMessage({ type: 'query', id, sql, params });
+      }),
+      hover: files => vscode.postMessage({ type: 'hover', files }),
+      open: (file, line) => vscode.postMessage({ type: 'open', file, line }),
+    };
+  })();</script>`;
+  const html = fs.readFileSync(path.join(ctx.extensionPath, "media", "flow-panel.html"), "utf8");
+  panel.webview.html = html.replace("<!-- DL_HOST -->", bootstrap);
+
+  panel.webview.onDidReceiveMessage(async (m) => {
+    if (m.type === "query") {
+      try {
+        const result: { rows: unknown[][] } = await client!.sendRequest("dl/query", {
+          sql: m.sql, params: m.params ?? [],
+        });
+        void panel?.webview.postMessage({ type: "rows", id: m.id, rows: result.rows });
+      } catch (e) {
+        void panel?.webview.postMessage({ type: "error", id: m.id, message: String((e as Error).message ?? e) });
+      }
+    } else if (m.type === "hover") {
+      slice.set(m.files ?? []);
+    } else if (m.type === "open") {
+      const uri = vscode.Uri.file(path.join(root, m.file));
+      const line = Math.max(0, (Number(m.line) || 1) - 1);
+      const doc = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(doc, {
+        viewColumn: vscode.ViewColumn.One,
+        selection: new vscode.Range(line, 0, line, 0),
+      });
+    }
+  }, null, ctx.subscriptions);
 }

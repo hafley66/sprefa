@@ -115,3 +115,27 @@ fn:
 # `just oracle-index` first. --no-daemon + isolated --db.
 envy:
     SPREFA_SCIP_INDEX={{repo}}/index.scip cargo run --bin dl -- examples/feature-envy.dl --root . --db /tmp/dl-envy.db --no-daemon
+
+# ── vscode extension (editors/vscode-dl) ─────────────────────────────────────
+
+# compile the extension TypeScript
+ext-build:
+    cd {{repo}}/editors/vscode-dl && npm run compile
+
+# package the vsix (runs tsc via vsce's prepublish)
+ext-package:
+    cd {{repo}}/editors/vscode-dl && npm run package
+
+# install the newest vsix into VS Code (reload the window afterwards:
+# cmd+shift+p -> "Developer: Reload Window")
+ext-install:
+    code --install-extension $(ls -t {{repo}}/editors/vscode-dl/*.vsix | head -1)
+
+# the full chain: compile -> package -> install, serialized by a mkdir lock
+# (the daemon's effect drain runs requests in parallel; concurrent vsce runs
+# would race on the same vsix). `.dl/watch-ext.dl` fires this through the
+# daemon whenever an extension source changes.
+ext-reload:
+    @until mkdir {{repo}}/.ext-reload.lock 2>/dev/null; do sleep 1; done
+    -just ext-build ext-package ext-install
+    @rmdir {{repo}}/.ext-reload.lock

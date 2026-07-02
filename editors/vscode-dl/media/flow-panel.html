@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>dl flow panel</title>
+<!--
+  Host-agnostic dl graph panel. All host coupling goes through `window.dlHost`:
+
+    window.dlHost = {
+      query(sql, params?) -> Promise<rows: any[][]>   // positional columns
+      hover(files: string[])                          // repo-relative paths under the pointer; [] clears
+      open(file, line)                                // ask the host to open a file
+    }
+
+  Hosts:
+  - VS Code: extension.ts injects a dlHost bootstrap at the DL_HOST marker
+    (postMessage bridge to the LSP `dl/query` request + explorer decorations).
+  - Browser / instant / anything else: no marker replacement -> the fallback
+    below POSTs JSON-RPC {method:"query_sql"} to an HTTP bridge
+    (`scripts/dl-bridge.mjs`), endpoint from `?dl=<url>` or localStorage.
+
+  Query contract (positional columns):
+  - node query: id, label?, kind?, file?, line?   (id repeated as label when absent)
+  - edge query: src, dst, kind?                   (src/dst are node ids)
+  Edges whose src/dst id has no node row are dropped and counted.
+-->
+<!-- DL_HOST -->
+<style>
+  :root {
+    --bg: #0a0e14; --grid: #131a26; --cyan: #2de2e6; --magenta: #ff3caa;
+    --node: #121a28; --node-border: #24364f; --ink: #cfe3ff; --muted: #6f86a6;
+    --sel: #ffd166; --err: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; color: var(--ink);
+    font: 13px/1.4 ui-monospace, "SF Mono", Menlo, monospace; background: var(--bg); }
+
+  .viewport { position: fixed; inset: 0; overflow: hidden; cursor: grab;
+    background-color: var(--bg);
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 32px 32px; }
+  .viewport.panning { cursor: grabbing; }
+  .world { position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    transform-origin: 0 0; }
+
+  /* ── NODES ─────────────────────────────────────────────────────────── */
+  .node {
+    position: absolute; width: 208px; z-index: 2;
+    background: linear-gradient(180deg, #16223400, #0e1622cc), var(--node);
+    border: 1px solid var(--node-border); border-radius: 12px;
+    box-shadow: 0 8px 30px #0009, inset 0 1px 0 #ffffff10;
+    user-select: none; transition: box-shadow .15s, border-color .15s, opacity .15s; }
+  .node:hover { border-color: #36527a; }
+  .node.dragging { box-shadow: 0 0 0 1px var(--cyan), 0 14px 50px #000c; z-index: 6; }
+  .node.hl { border-color: var(--sel); box-shadow: 0 0 0 1px var(--sel), 0 10px 40px #000a; z-index: 5; }
+  .world.hovering .node:not(.hl) { opacity: .25; }
+  .world.hovering .edge:not(.hl) { opacity: .12; }
+
+  .node .head { display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+    cursor: grab; font-weight: 600; letter-spacing: .3px; }
+  .node.dragging .head { cursor: grabbing; }
+  .node .head .dot { width: 8px; height: 8px; border-radius: 50%;
+    background: var(--cyan); box-shadow: 0 0 8px var(--cyan); flex: 0 0 auto; }
+  .node .head .label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .node .head .kind { color: var(--muted); font-size: 10px; }
+  .node .loc { padding: 0 10px 7px; color: var(--muted); font-size: 11px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    border-top: 1px solid #ffffff0d; padding-top: 5px; cursor: pointer; }
+  .node .loc:hover { color: var(--cyan); text-decoration: underline; }
+
+  .port { position: absolute; top: 50%; width: 11px; height: 11px; border-radius: 50%;
+    transform: translateY(-50%); z-index: 3; pointer-events: none; }
+  .port.out { right: -6px;
+    background: radial-gradient(circle at 50% 40%, #fff, var(--cyan) 60%, #0c5b5e);
+    box-shadow: 0 0 8px var(--cyan); border: 1px solid #0a3b3d; }
+  .port.in  { left: -6px;
+    background: radial-gradient(circle at 50% 40%, #fff, var(--magenta) 60%, #6e0f48);
+    box-shadow: 0 0 8px var(--magenta); border: 1px solid #3b0a2c; }
+
+  /* ══ THE EDGE: pure-CSS tether between two anchors ════════════════════ */
+  .edge { position: absolute; z-index: 1; pointer-events: none;
+    top:    min(anchor(var(--a) center), anchor(var(--b) center));
+    left:   min(anchor(var(--a) center), anchor(var(--b) center));
+    right:  min(anchor(var(--a) center), anchor(var(--b) center));
+    bottom: min(anchor(var(--a) center), anchor(var(--b) center)); }
+  .edge svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible;
+    filter: drop-shadow(0 0 5px #2de2e655); }
+  .edge.flip svg { transform: scaleY(-1); transform-origin: center; }
+  .edge .wire { fill: none; stroke: url(#g); stroke-width: 2.5; stroke-linecap: round;
+    vector-effect: non-scaling-stroke; stroke-dasharray: 7 9; animation: flow 1.2s linear infinite; }
+  /* keep the dash marching source→sink despite the mirror flip */
+  .edge.flip .wire { animation-direction: reverse; }
+  .edge.hl .wire { stroke: var(--sel); stroke-dasharray: none; }
+  @keyframes flow { to { stroke-dashoffset: -16; } }
+
+  /* ── TOOLBAR / HUD ─────────────────────────────────────────────────── */
+  .bar { position: fixed; top: 10px; left: 10px; right: 10px; display: flex;
+    flex-direction: column; gap: 6px; z-index: 20; pointer-events: none; }
+  .bar .row { display: flex; align-items: center; gap: 8px; }
+  .bar .title { font-weight: 700; color: #fff; letter-spacing: .4px; }
+  .bar .title b { color: var(--cyan); }
+  .bar .spacer { flex: 1; }
+  .bar button { pointer-events: auto; all: unset; cursor: pointer; padding: 6px 11px; border-radius: 8px;
+    background: #14233a; border: 1px solid #284060; color: var(--ink); font: inherit; }
+  .bar button:hover { border-color: var(--cyan); background: #173050; }
+  .bar .toggle.on { color: #fff; border-color: var(--cyan); background: #173a52; }
+  .bar .pill { padding: 6px 10px; border-radius: 8px; background: #0d1828aa;
+    border: 1px solid #213650; color: var(--muted); }
+  .bar input { pointer-events: auto; flex: 1; padding: 6px 10px; border-radius: 8px;
+    background: #0d1828dd; border: 1px solid #213650; color: var(--ink); font: inherit; }
+  .bar input:focus { outline: none; border-color: var(--cyan); }
+  .bar label { color: var(--muted); width: 44px; text-align: right; }
+  .bar .err { color: var(--err); font-size: 12px; min-height: 15px; }
+
+  .unsupported { display: none; position: fixed; inset: 0; place-items: center; text-align: center;
+    background: var(--bg); padding: 40px; z-index: 99; }
+  @supports not (top: anchor(--x center)) { .unsupported { display: grid; } }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#2de2e6"/><stop offset="1" stop-color="#ff3caa"/>
+  </linearGradient>
+</defs></svg>
+
+<div class="bar">
+  <div class="row">
+    <span class="title">dl <b>flow</b></span>
+    <button id="runBtn">Run</button>
+    <button id="resetBtn">Reset view</button>
+    <button id="linkedBtn" class="toggle on">linked only</button>
+    <span class="spacer"></span>
+    <span class="pill" id="countPill">–</span>
+    <span class="pill" id="zoomPill">100%</span>
+  </div>
+  <div class="row"><label>nodes</label><input id="nodesSql" spellcheck="false" /></div>
+  <div class="row"><label>edges</label><input id="edgesSql" spellcheck="false" /></div>
+  <div class="row"><span class="err" id="errLine"></span></div>
+</div>
+
+<div class="viewport" id="viewport">
+  <div class="world" id="world"></div>
+</div>
+
+<div class="unsupported"><div>
+  <h2>No CSS anchor positioning here.</h2>
+  <p>Chrome 125+ / Safari 26+ / Firefox 147+, or load the oddbird polyfill.</p>
+</div></div>
+
+<script>
+// ── host seam ───────────────────────────────────────────────────────────────
+// VS Code replaces the DL_HOST marker with a postMessage bridge. Anything else
+// falls through to the HTTP bridge (scripts/dl-bridge.mjs).
+if (!window.dlHost) {
+  const endpoint = new URLSearchParams(location.search).get('dl')
+    || localStorage.getItem('dl-endpoint') || 'http://127.0.0.1:7379';
+  let rpcId = 0;
+  window.dlHost = {
+    async query(sql, params = []) {
+      const res = await fetch(endpoint + '/rpc', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method: 'query_sql',
+                               params: { sql, params } }),
+      });
+      const v = await res.json();
+      if (v.error) throw new Error(v.error.message || 'query failed');
+      return (v.result && v.result.rows) || [];
+    },
+    hover(files) { /* no explorer to decorate in a plain browser */ },
+    open(file, line) { console.log('open', file + ':' + line); },
+  };
+}
+const host = window.dlHost;
+
+// ── state ───────────────────────────────────────────────────────────────────
+const world = document.getElementById('world');
+const viewport = document.getElementById('viewport');
+const nodes = new Map();   // nodeId(sym) -> {sym, el, file, line, anchor}
+const edges = [];          // {src, dst, el}
+let anchorSeq = 0;
+
+const view = { x: 40, y: 110, z: 1 };
+function applyView() {
+  world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.z})`;
+  document.getElementById('zoomPill').textContent = Math.round(view.z * 100) + '%';
+}
+function toWorld(sx, sy) {
+  const r = viewport.getBoundingClientRect();
+  return { x: (sx - r.left - view.x) / view.z, y: (sy - r.top - view.y) / view.z };
+}
+
+// ── defaults (the type graph; edit in place, Run re-queries) ────────────────
+const DEFAULT_NODES =
+  "SELECT sym, name, kind, file, line FROM rel_type_entity LIMIT 600";
+const DEFAULT_EDGES =
+  "SELECT src, dst, kind FROM rel_type_link LIMIT 1200";
+document.getElementById('nodesSql').value = DEFAULT_NODES;
+document.getElementById('edgesSql').value = DEFAULT_EDGES;
+
+// ── graph build ─────────────────────────────────────────────────────────────
+let linkedOnly = true;
+
+async function run() {
+  const err = document.getElementById('errLine');
+  err.textContent = '';
+  let nodeRows, edgeRows;
+  try {
+    [nodeRows, edgeRows] = await Promise.all([
+      host.query(document.getElementById('nodesSql').value),
+      host.query(document.getElementById('edgesSql').value),
+    ]);
+  } catch (e) {
+    err.textContent = String(e.message || e) +
+      ' — a graph rel populates when the running .dl program references it';
+    return;
+  }
+  render(nodeRows, edgeRows);
+}
+
+function render(nodeRows, edgeRows) {
+  world.innerHTML = '';
+  nodes.clear(); edges.length = 0;
+
+  const ids = new Set(nodeRows.map(r => String(r[0])));
+  const keptEdges = edgeRows.filter(r => ids.has(String(r[0])) && ids.has(String(r[1])));
+  const dropped = edgeRows.length - keptEdges.length;
+  const linked = new Set();
+  for (const [s, d] of keptEdges) { linked.add(String(s)); linked.add(String(d)); }
+  const keptNodes = nodeRows.filter(r => !linkedOnly || linked.has(String(r[0])));
+
+  // layered layout: layer = longest path from a root, bounded passes so a
+  // cyclic subgraph settles instead of spinning
+  const layer = new Map(keptNodes.map(r => [String(r[0]), 0]));
+  for (let pass = 0; pass < 40; pass++) {
+    let moved = false;
+    for (const [s, d] of keptEdges) {
+      const src = String(s), dst = String(d);
+      if (!layer.has(src) || !layer.has(dst)) continue;
+      const want = layer.get(src) + 1;
+      if (want > layer.get(dst) && want < 60) { layer.set(dst, want); moved = true; }
+    }
+    if (!moved) break;
+  }
+  const byLayer = new Map();
+  for (const r of keptNodes) {
+    const l = layer.get(String(r[0])) || 0;
+    if (!byLayer.has(l)) byLayer.set(l, []);
+    byLayer.get(l).push(r);
+  }
+  const COL = 280, ROW = 92;
+  for (const [l, rows] of byLayer) {
+    rows.sort((a, b) => String(a[1] ?? a[0]).localeCompare(String(b[1] ?? b[0])));
+    rows.forEach((r, i) => addNode(r, l * COL, i * ROW));
+  }
+  for (const [s, d] of keptEdges) addEdge(String(s), String(d));
+
+  document.getElementById('countPill').textContent =
+    `${nodes.size} nodes · ${edges.length} edges` + (dropped ? ` · ${dropped} dropped` : '');
+  scheduleFlips();
+}
+
+function addNode(row, x, y) {
+  const [id, label, kind, file, line] = [String(row[0]), row[1], row[2], row[3], row[4]];
+  if (nodes.has(id)) return;
+  const anchor = 'n' + (anchorSeq++);
+  const el = document.createElement('div');
+  el.className = 'node';
+  el.style.left = x + 'px'; el.style.top = y + 'px';
+  el.style.anchorName = '--' + anchor;
+  el.dataset.id = id;
+
+  const head = document.createElement('div');
+  head.className = 'head';
+  const short = String(label ?? id);
+  head.innerHTML = `<span class="dot"></span><span class="label" title="${esc(id)}">${esc(short)}</span>`
+    + (kind ? `<span class="kind">${esc(String(kind))}</span>` : '');
+  el.appendChild(head);
+
+  if (file) {
+    const loc = document.createElement('div');
+    loc.className = 'loc';
+    loc.textContent = `${file}${line != null ? ':' + line : ''}`;
+    loc.addEventListener('click', e => { e.stopPropagation(); host.open(String(file), Number(line) || 1); });
+    el.appendChild(loc);
+  }
+  for (const k of ['in', 'out']) {
+    const p = document.createElement('span');
+    p.className = 'port ' + k;
+    el.appendChild(p);
+  }
+
+  el.addEventListener('pointerenter', () => hoverNode(id));
+  el.addEventListener('pointerleave', () => hoverNode(null));
+  world.appendChild(el);
+  nodes.set(id, { sym: id, el, file: file ? String(file) : null, line, anchor });
+}
+
+const PATH = 'M0,0 C50,0 50,100 100,100';
+function addEdge(src, dst) {
+  const f = nodes.get(src), t = nodes.get(dst);
+  if (!f || !t || src === dst) return;
+  const el = document.createElement('div');
+  el.className = 'edge';
+  el.style.setProperty('--a', '--' + f.anchor);
+  el.style.setProperty('--b', '--' + t.anchor);
+  el.innerHTML = `<svg viewBox="0 0 100 100" preserveAspectRatio="none"><path class="wire" d="${PATH}"/></svg>`;
+  world.appendChild(el);
+  edges.push({ src, dst, el });
+}
+
+// ── hover: highlight the slice + tell the host which files it touches ───────
+function hoverNode(id) {
+  world.classList.toggle('hovering', !!id);
+  const files = new Set();
+  for (const n of nodes.values()) n.el.classList.remove('hl');
+  for (const e of edges) e.el.classList.remove('hl');
+  if (id) {
+    const slice = new Set([id]);
+    for (const e of edges) {
+      if (e.src === id) slice.add(e.dst);
+      if (e.dst === id) slice.add(e.src);
+    }
+    for (const e of edges) {
+      if (e.src === id || e.dst === id) e.el.classList.add('hl');
+    }
+    for (const sid of slice) {
+      const n = nodes.get(sid);
+      if (!n) continue;
+      n.el.classList.add('hl');
+      if (n.file) files.add(n.file);
+    }
+  }
+  host.hover([...files]);
+}
+
+// ── flip the curve onto the correct diagonal (the only edge math) ───────────
+let flipQueued = false;
+function scheduleFlips() { if (!flipQueued) { flipQueued = true; requestAnimationFrame(runFlips); } }
+function runFlips() {
+  flipQueued = false;
+  for (const e of edges) {
+    const a = nodes.get(e.src)?.el.getBoundingClientRect();
+    const b = nodes.get(e.dst)?.el.getBoundingClientRect();
+    if (!a || !b) continue;
+    e.el.classList.toggle('flip', (a.left < b.left) !== (a.top < b.top));
+  }
+}
+
+// ── pointer interactions: drag node / pan ───────────────────────────────────
+let mode = null, dragNode = null, dragOff = null, panStart = null;
+
+viewport.addEventListener('pointerdown', ev => {
+  const head = ev.target.closest('.node .head');
+  const nodeEl = ev.target.closest('.node');
+  if (head) {
+    mode = 'drag'; dragNode = head.closest('.node');
+    dragNode.classList.add('dragging');
+    const w = toWorld(ev.clientX, ev.clientY);
+    dragOff = { x: w.x - parseFloat(dragNode.style.left), y: w.y - parseFloat(dragNode.style.top) };
+    viewport.setPointerCapture(ev.pointerId);
+  } else if (!nodeEl) {
+    mode = 'pan'; panStart = { x: ev.clientX, y: ev.clientY, vx: view.x, vy: view.y };
+    viewport.classList.add('panning');
+    viewport.setPointerCapture(ev.pointerId);
+  }
+});
+viewport.addEventListener('pointermove', ev => {
+  if (mode === 'drag') {
+    const w = toWorld(ev.clientX, ev.clientY);
+    dragNode.style.left = (w.x - dragOff.x) + 'px';
+    dragNode.style.top  = (w.y - dragOff.y) + 'px';
+    scheduleFlips();
+  } else if (mode === 'pan') {
+    view.x = panStart.vx + (ev.clientX - panStart.x);
+    view.y = panStart.vy + (ev.clientY - panStart.y);
+    applyView(); scheduleFlips();
+  }
+});
+viewport.addEventListener('pointerup', () => {
+  if (dragNode) dragNode.classList.remove('dragging');
+  viewport.classList.remove('panning');
+  mode = null; dragNode = null; panStart = null;
+});
+viewport.addEventListener('wheel', ev => {
+  ev.preventDefault();
+  const r = viewport.getBoundingClientRect();
+  const sx = ev.clientX - r.left, sy = ev.clientY - r.top;
+  const wx = (sx - view.x) / view.z, wy = (sy - view.y) / view.z;
+  view.z = Math.min(2.5, Math.max(0.15, view.z * (ev.deltaY < 0 ? 1.1 : 1 / 1.1)));
+  view.x = sx - wx * view.z; view.y = sy - wy * view.z;
+  applyView(); scheduleFlips();
+}, { passive: false });
+
+// ── toolbar ──────────────────────────────────────────────────────────────────
+document.getElementById('runBtn').addEventListener('click', run);
+document.getElementById('resetBtn').addEventListener('click', () => {
+  view.x = 40; view.y = 110; view.z = 1; applyView(); scheduleFlips();
+});
+document.getElementById('linkedBtn').addEventListener('click', function () {
+  linkedOnly = !linkedOnly;
+  this.classList.toggle('on', linkedOnly);
+  run();
+});
+for (const id of ['nodesSql', 'edgesSql']) {
+  document.getElementById(id).addEventListener('keydown', e => {
+    if (e.key === 'Enter') run();
+  });
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+applyView();
+run();
+</script>
+</body>
+</html>

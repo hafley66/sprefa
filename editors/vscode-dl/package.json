@@ -2,7 +2,7 @@
   "name": "dl-lsp",
   "displayName": "dl LSP",
   "description": "sprefa dl datalog linter. Drop a .dl file in .dl/, get live squiggles on rust/ts/py/go/kt and the .dl itself.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "sprefa",
   "license": "MIT",
   "engines": {
@@ -17,6 +17,44 @@
     "workspaceContains:**/*.dl"
   ],
   "contributes": {
+    "commands": [
+      {
+        "command": "dl.flowPanel",
+        "title": "dl: Flow Panel"
+      },
+      {
+        "command": "dl.markSelection",
+        "title": "dl: Mark Selection"
+      },
+      {
+        "command": "dl.clearMarks",
+        "title": "dl: Clear Marks"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "dl.markSelection",
+        "key": "ctrl+alt+m",
+        "mac": "cmd+alt+m",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "dl.clearMarks",
+        "key": "ctrl+alt+shift+m",
+        "mac": "cmd+alt+shift+m"
+      }
+    ],
+    "colors": [
+      {
+        "id": "dlFlow.slice",
+        "description": "Explorer tint for files in the hovered dl flow-panel slice",
+        "defaults": {
+          "dark": "#ffd166",
+          "light": "#b8860b",
+          "highContrast": "#ffd166"
+        }
+      }
+    ],
     "languages": [
       {
         "id": "dl",
