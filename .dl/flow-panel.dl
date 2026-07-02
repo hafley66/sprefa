@@ -1,0 +1,22 @@
+# flow-panel.dl — graph rels for the dl flow panel (editors/vscode-dl).
+# A bare scan seeds the file set and triggers type extraction; referencing
+# type_entity/type_link opts those built-ins in. panel_node/panel_edge are the
+# curated panel-sized view: data types only (no fn/method noise), edges
+# restricted to nodes both present.
+#
+# Panel SQL (paste into the nodes/edges boxes, or use the defaults which read
+# rel_type_entity/rel_type_link directly):
+#   nodes: SELECT sym, name, kind, file, line FROM rel_panel_node
+#   edges: SELECT src, dst, kind FROM rel_panel_edge
+
+rel seen(path: file).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev).
+
+rel panel_node(sym: text, name: text, kind: text, file: file, line: int).
+panel_node(sym, name, "struct", file, line) <- type_entity(_, sym, name, "struct", _, file, line).
+panel_node(sym, name, "enum", file, line)   <- type_entity(_, sym, name, "enum", _, file, line).
+panel_node(sym, name, "trait", file, line)  <- type_entity(_, sym, name, "trait", _, file, line).
+
+rel panel_edge(src: text, dst: text, kind: text).
+panel_edge(src, dst, kind) <-
+  type_link(src, dst, kind), panel_node(src, _, _, _, _), panel_node(dst, _, _, _, _).

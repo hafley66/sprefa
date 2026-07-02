@@ -1,0 +1,77 @@
+# mark-lens.dl — turn editor marks into resolved entities, shared-pattern
+# selectors (anti-unification over the fact space), and mark-to-mark dataflow.
+#
+# `mark(marked, path, line)` facts are appended by the VS Code extension
+# (cmd+alt+m = dl.markSelection) into .dl/marks.dl; this file owns the decl so
+# the program loads with zero marks. The lens answers three questions reactively:
+#   1. what IS each mark            -> mark_entity / mark_df
+#   2. what do ALL marks share      -> mark_selector (the least general
+#      generalization per axis: entity kind, file, directory, common caller)
+#   3. does value flow between them -> mark_flow (seeded recursion over
+#      std/flow.dl's flow_edge; mark a variable name at its line to seed)
+#
+# Panel SQL (dl: Flow Panel):
+#   nodes: SELECT marked, marked, 'mark', path, line FROM rel_mark
+#          UNION ALL
+#          SELECT sel || '=' || detail, sel || '=' || detail, 'selector', NULL, NULL
+#          FROM rel_mark_selector
+#   edges: SELECT src, dst, 'flow' FROM rel_mark_flow
+#          UNION ALL
+#          SELECT sel || '=' || detail, marked, 'covers'
+#          FROM rel_mark_selector, rel_mark
+
+use "std/flow.dl".
+
+rel mark(marked: text, path: file, line: int).
+
+rel lens_seen(path: file).
+lens_seen(path) <- scan("WORK", "src/**/*.rs", path, rev).
+
+# ── 1) resolution ────────────────────────────────────────────────────────────
+# entity whose declared name is exactly the marked text (repo-wide)
+rel mark_entity(marked: text, sym: text, kind: text, file: file, line: int).
+mark_entity(marked, sym, kind, file, line) <-
+  mark(marked, _, _), type_entity(_, sym, marked, kind, _, file, line).
+
+# df node for a marked variable: same var text, same file, same line
+rel mark_df(marked: text, id: text).
+mark_df(marked, id) <- mark(marked, path, line), df_node(id, _, marked, _, path, line).
+
+# ── 2) anti-unification: the least general selector covering ALL marks ──────
+# kind axis: kind survives if no mark lacks an entity of that kind
+rel mark_kinds(kind: text).
+mark_kinds(kind) <- mark_entity(_, _, kind, _, _).
+rel mark_missing_kind(kind: text).
+mark_missing_kind(kind) <-
+  mark(marked, _, _), mark_kinds(kind), !mark_entity(marked, _, kind, _, _).
+
+# file / directory axes: survive only when every mark shares them
+rel mark_two_files(path: file).
+mark_two_files(path) <- mark(_, path, _), mark(_, other_path, _), path != other_path.
+rel mark_dir(marked: text, dir: text).
+mark_dir(marked, dir) <- mark(marked, path, _), dir = replace_re(path, "/[^/]*$", "").
+rel mark_two_dirs(dir: text).
+mark_two_dirs(dir) <- mark_dir(_, dir), mark_dir(_, other_dir), dir != other_dir.
+
+# caller axis: a fn that calls EVERY marked entity (fan-in generalization)
+rel mark_covered_by(caller: text, marked: text).
+mark_covered_by(caller, marked) <-
+  mark_entity(marked, sym, _, _, _), call_edge(caller, sym, _).
+rel mark_caller_misses(caller: text).
+mark_caller_misses(caller) <-
+  mark_covered_by(caller, _), mark(marked, _, _), !mark_covered_by(caller, marked).
+
+rel mark_selector(sel: text, detail: text).
+mark_selector("kind", kind)     <- mark_kinds(kind), !mark_missing_kind(kind).
+mark_selector("file", path)     <- mark(_, path, _), !mark_two_files(path).
+mark_selector("dir", dir)       <- mark_dir(_, dir), !mark_two_dirs(dir).
+mark_selector("caller", caller) <- mark_covered_by(caller, _), !mark_caller_misses(caller).
+
+# ── 3) mark-to-mark value flow ───────────────────────────────────────────────
+# frontier seeded at each mark's df nodes; a hit on another mark's node =
+# value flows between the two places you marked
+rel mark_reach(marked: text, id: text).
+mark_reach(marked, id) <- mark_df(marked, id).
+mark_reach(marked, to) <- mark_reach(marked, from), flow_edge(from, to).
+rel mark_flow(src: text, dst: text).
+mark_flow(src, dst) <- mark_reach(src, id), mark_df(dst, id), src != dst.

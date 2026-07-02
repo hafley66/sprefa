@@ -25,3 +25,6 @@ tools/macos-text-overlay/
 # runtime state under .dl/ is self-ignored by .dl/.gitignore
 # npm-crawl generated output (pulled source repos, rendered graph)
 examples/_npm/
+
+# mkdir-lock serializer for `just ext-reload` (editors/vscode-dl)
+.ext-reload.lock

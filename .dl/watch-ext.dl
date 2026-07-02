@@ -1,0 +1,26 @@
+# watch-ext.dl — reactive extension reload: when a VS Code extension source
+# changes (extension.ts, the panel html, package.json), the daemon fires
+# `just ext-reload` (compile -> vsce package -> code --install-extension)
+# off-tick through the effect runtime. Reload the VS Code window to pick the
+# new build up.
+#
+# Mechanics: ext_src carries each source's content hash; the @async rule's
+# request args (path, hash) digest into pending_effect's id, so an unchanged
+# file never re-fires and an edited file fires exactly once per new content.
+# The build outputs (out/, *.vsix, node_modules/) are NOT scanned — a rebuild
+# does not re-trigger itself.
+
+rel ext_seen(path: file).
+ext_seen(path) <- scan("WORK", "editors/vscode-dl/src/*.ts", path, rev).
+ext_seen(path) <- scan("WORK", "editors/vscode-dl/media/*.html", path, rev).
+ext_seen(path) <- scan("WORK", "editors/vscode-dl/package.json", path, rev).
+
+rel ext_src(path: file, hash: text).
+ext_src(path, hash) <- ext_seen(path), file(_, "WORK", path, content_id), content(content_id, hash).
+
+rel effect_cmd(kind: text, template: text).
+effect_cmd("ext_built", "just ext-reload").
+
+# One request per (source, content-hash); `out` is the build log tail.
+rel ext_built(path: file, hash: text, out: text).
+ext_built(path, hash, out) <- @async ext_src(path, hash).

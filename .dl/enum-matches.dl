@@ -1,0 +1,55 @@
+# enum-matches.dl — every Rust enum and the match blocks that pattern-match it.
+#
+# arm_pat captures variant paths in pattern position (tuple / struct / unit,
+# each in bare `Enum::V` and mod-qualified `path::Enum::V` form); match_block
+# and impl_span are line spans; enum_match keeps only arms inside a match
+# block whose enum name is a real enum decl (type_entity join), resolving
+# `Self::V` through the enclosing impl. enum_match_block is the per-enum block
+# inventory (block = its start line).
+#
+# Known gaps: `use Color::*` bare-variant arms have no path to capture; a
+# nested match attributes its arms to every enclosing block; same-named enums
+# in different modules merge (name-keyed join).
+#
+# Panel SQL (dl: Flow Panel):
+#   nodes: SELECT name, name, 'enum', file, line FROM rel_type_entity
+#          WHERE kind='enum' AND name IN (SELECT enum_name FROM rel_enum_match_block)
+#          UNION ALL
+#          SELECT DISTINCT file || ':' || start, file || ':' || start, 'match', file, start
+#          FROM rel_enum_match_block
+#   edges: SELECT DISTINCT enum_name, file || ':' || start, 'match' FROM rel_enum_match_block
+
+rel arm_pat(enum_name: text, variant: text, file: file, line: int).
+# tuple variants: Color::Green(g) / path::Color::Green(g)
+arm_pat(enum_name, variant, path, line) <- scan("WORK", "src/**/*.rs", path, rev),
+  ast(path, rev, :rust, "(tuple_struct_pattern type: [ (scoped_identifier path: (identifier) @enum_name name: (identifier) @variant) (scoped_identifier path: (scoped_identifier name: (identifier) @enum_name) name: (identifier) @variant) ])", line).
+# struct variants: Color::Blue { v } / path::Color::Blue { v }
+arm_pat(enum_name, variant, path, line) <- scan("WORK", "src/**/*.rs", path, rev),
+  ast(path, rev, :rust, "(struct_pattern type: [ (scoped_type_identifier path: (identifier) @enum_name name: (type_identifier) @variant) (scoped_type_identifier path: (scoped_identifier name: (identifier) @enum_name) name: (type_identifier) @variant) ])", line).
+# unit variants: Color::Red as a whole arm pattern, or a leg of A | B
+arm_pat(enum_name, variant, path, line) <- scan("WORK", "src/**/*.rs", path, rev),
+  ast(path, rev, :rust, "[ (match_pattern (scoped_identifier path: (identifier) @enum_name name: (identifier) @variant)) (or_pattern (scoped_identifier path: (identifier) @enum_name name: (identifier) @variant)) (match_pattern (scoped_identifier path: (scoped_identifier name: (identifier) @enum_name) name: (identifier) @variant)) (or_pattern (scoped_identifier path: (scoped_identifier name: (identifier) @enum_name) name: (identifier) @variant)) ]", line).
+
+rel match_block(file: file, start: int, end: int).
+match_block(path, start, end) <- scan("WORK", "src/**/*.rs", path, rev),
+  ast(path, rev, :rust, "(match_expression) @m", start, end).
+
+rel impl_span(ty: text, file: file, start: int, end: int).
+impl_span(ty, path, start, end) <- scan("WORK", "src/**/*.rs", path, rev),
+  ast(path, rev, :rust, "(impl_item type: [ (type_identifier) @ty (generic_type type: (type_identifier) @ty) ]) @impl", start, end).
+
+# arm-level: (enum, variant, file, arm line), only inside a match block,
+# only for enums declared in this repo
+rel enum_match(enum_name: text, variant: text, file: file, line: int).
+enum_match(enum_name, variant, file, line) <- arm_pat(enum_name, variant, file, line),
+  match_block(file, start, end), start <= line, line <= end,
+  type_entity(_, _, enum_name, "enum", _, _, _).
+enum_match(ty, variant, file, line) <- arm_pat("Self", variant, file, line),
+  impl_span(ty, file, impl_start, impl_end), impl_start <= line, line <= impl_end,
+  match_block(file, start, end), start <= line, line <= end,
+  type_entity(_, _, ty, "enum", _, _, _).
+
+# block-level: which match blocks touch which enum
+rel enum_match_block(enum_name: text, file: file, start: int, end: int).
+enum_match_block(enum_name, file, start, end) <- enum_match(enum_name, _, file, line),
+  match_block(file, start, end), start <= line, line <= end.
