@@ -153,10 +153,18 @@ fn resolve_named_args(items: &mut [Item]) -> Result<()> {
 }
 
 /// Fold one atom's named args into positional slots. Once ANY `col:` appears the
-/// atom is in named mode, and a bare identifier `x` puns to `x: x` (binds the
-/// column of the same name, the JS `{a: A, b, c}` / Rust `Foo { c }` shorthand).
-/// A bare non-identifier in named mode is ambiguous and errors. Any column named
-/// by neither an explicit arg nor a pun becomes a don't-care (`Term::Wild`).
+/// atom is in named mode. Binding then follows one rule: **a term that carries a
+/// name binds by name; a nameless term binds by position.**
+///   - `col: term` binds `col`.
+///   - a bare Var `x` puns to `x: x` (binds the column of its own name — the JS
+///     `{a, b}` / Rust `Foo { c }` shorthand), in any order, interleaved freely
+///     with `col:` args (unlike Python, which forbids positional-after-keyword).
+///   - a bare LITERAL (or any non-Var: interp / `_` / arith / call) has no name,
+///     so it fills the next column left open by the named + pun args, in
+///     declaration order, matched to the literals in written order. This is the
+///     Python-style positional prefix: `diag("synth.rs", 1, severity: "error")`
+///     puts "synth.rs" in `path`, 1 in `line`.
+/// A column claimed by nothing becomes a don't-care (`Term::Wild` -> NULL).
 ///
 /// A FULLY-bare atom (no `col:` at all) needs no anchor to shorthand: if it has
 /// fewer terms than the rel has columns AND every term is a Var naming a column,
@@ -182,34 +190,39 @@ fn resolve_atom(a: &mut ast::Atom, schema: &HashMap<String, Vec<String>>) -> Res
     let pos = std::mem::take(&mut a.terms);
     let named = std::mem::take(&mut a.named);
     let mut slots: Vec<Option<Term>> = vec![None; cols.len()];
-    let mut set = |name: &str, t: Term| -> Result<()> {
-        let i = cols.iter().position(|c| c == name).ok_or_else(|| anyhow::anyhow!(
-            "unknown column `{name}` on `{}` (columns: {})", a.rel, cols.join(", ")))?;
-        if slots[i].is_some() {
-            bail!("column `{name}` on `{}` is set twice", a.rel);
-        }
-        slots[i] = Some(t);
-        Ok(())
-    };
-    // A bare positional term in named mode is a pun: `c` == `c: c`. Only an
-    // identifier can pun (it names its own column); a literal/`_`/arith cannot.
-    for t in pos {
-        match t {
-            Term::Var(v) => set(&v.clone(), Term::Var(v))?,
-            other => {
-                let shown = match &other {
-                    Term::Str(s) => format!("\"{s}\""),
-                    Term::Int(n) => n.to_string(),
-                    Term::Wild => "_".to_string(),
-                    _ => "value".to_string(),
-                };
-                bail!(
-                    "in an atom with named args, the bare {shown} on `{}` is ambiguous — \
-                     name it `col: {shown}`, or make the whole atom positional", a.rel);
+    // Named + pun args bind by name FIRST (so positional literals fill only the
+    // holes they leave). A bare Var is a pun; a nameless term is deferred to the
+    // positional pass.
+    let mut positional: Vec<Term> = Vec::new();
+    {
+        let mut set = |name: &str, t: Term| -> Result<()> {
+            let i = cols.iter().position(|c| c == name).ok_or_else(|| anyhow::anyhow!(
+                "unknown column `{name}` on `{}` (columns: {})", a.rel, cols.join(", ")))?;
+            if slots[i].is_some() {
+                bail!("column `{name}` on `{}` is set twice", a.rel);
+            }
+            slots[i] = Some(t);
+            Ok(())
+        };
+        for t in pos {
+            match t {
+                Term::Var(v) => set(&v.clone(), Term::Var(v))?,
+                other => positional.push(other),
             }
         }
+        for (name, t) in named { set(&name, t)?; }
     }
-    for (name, t) in named { set(&name, t)?; }
+    // Positional literals fill the columns left open, in declaration order.
+    let mut next = 0usize;
+    for t in positional {
+        while next < slots.len() && slots[next].is_some() { next += 1; }
+        if next >= slots.len() {
+            bail!("too many positional args on `{}`: all {} columns are already \
+                   claimed by name", a.rel, cols.len());
+        }
+        slots[next] = Some(t);
+        next += 1;
+    }
     a.terms = slots.into_iter().map(|s| s.unwrap_or(Term::Wild)).collect();
     Ok(())
 }

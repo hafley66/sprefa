@@ -35,6 +35,14 @@ tags consumed by cargo-dist.
   error, so a genuinely positional atom (term count == arity) is never
   reinterpreted and existing programs are untouched. `? diag(path, line, msg)`
   just works.
+- **Positional literals mixed with named args (Python-style prefix).** In named
+  mode, binding follows one rule: a term that carries a name binds by name (a
+  bare var puns, interleavable in any order — unlike Python), a nameless literal
+  fills the next column left open by the named + pun args, in declaration order.
+  So `diag("synth.rs", 1, severity: "error")` puts `"synth.rs"` in `path` and `1`
+  in `line` without spelling those column names. Over-filling (more literals than
+  open columns) is a clear error. (Previously a bare literal alongside named args
+  was rejected as ambiguous.)
 - **`ast::Value::Null`** — the value model gains a null so a padded head column
   round-trips to SQL `NULL` through both the derived (SQL) and source-rule
   (Rust) head-projection paths.

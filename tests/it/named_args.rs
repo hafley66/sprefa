@@ -109,15 +109,36 @@ fn a_bare_name_puns_to_its_own_column() {
 /// A bare non-identifier (a literal) in named mode is ambiguous and errors — a
 /// pun needs a name to bind, so a literal must be written `col: value`.
 #[test]
-fn bare_literal_in_named_mode_is_an_error() {
+fn bare_literal_in_named_mode_binds_by_position() {
     let d = sandbox("barelit");
-    let (code, _out, err) = run(&d, concat!(
+    // `5` is a nameless positional: it fills the next column left open by the
+    // named arg (`name`), i.e. `age`. So the body filters age = 5.
+    let (code, out, err) = run(&d, concat!(
         "rel person(name: text, age: int).\n",
+        "person(\"alice\", 5).\n",
+        "person(\"bob\", 9).\n",
+        "rel q(n: text).\n",
         "q(n) <- person(name: n, 5).\n",
         "? q(n).\n",
     ));
+    assert_eq!(code, 0, "positional literal binds by slot:\n{err}");
+    assert!(out.contains("alice"), "age 5 matches alice:\n{out}");
+    assert!(!out.contains("bob"), "age 9 must not match:\n{out}");
+    let _ = fs::remove_dir_all(&d);
+}
+
+/// Too many positional literals — more than the columns left open by name —
+/// is a clear error, not a silent drop.
+#[test]
+fn too_many_positional_literals_errors() {
+    let d = sandbox("toomany");
+    let (code, _out, err) = run(&d, concat!(
+        "rel pt(x: int, y: int).\n",
+        "pt(x: 1, 2, 3).\n",   // x named, then two literals for one open column (y)
+        "? pt(x, y).\n",
+    ));
     assert_ne!(code, 0);
-    assert!(err.contains("ambiguous"), "bare literal in named mode is flagged:\n{err}");
+    assert!(err.contains("too many positional"), "clear over-fill error:\n{err}");
     let _ = fs::remove_dir_all(&d);
 }
 
