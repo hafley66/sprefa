@@ -1,6 +1,6 @@
 # structural embedding of the v5 call graph
 rel seg(p: file).
-seg(p) <- scan("WORK", "src/**/*.rs", p, rev), match(p, rev, /./, l).
+seg(p) <- scan("WORK", "src/**/*.rs", p, rev).
 
 # undirected call graph: both directions so walks traverse either way
 rel g(a: text, b: text).

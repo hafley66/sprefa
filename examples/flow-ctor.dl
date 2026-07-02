@@ -16,7 +16,7 @@
 #   dl examples/flow-ctor.dl --root .
 
 rel src(p: file).
-src(p) <- scan("WORK", "src/**/*.{rs,ts,kt}", p, rev), match(p, rev, /./, l).
+src(p) <- scan("WORK", "src/**/*.{rs,ts,kt}", p, rev).
 
 # Every instantiation: the constructed type, where, in which fn.
 rel ctor(node: text, ty: text, fn: text, path: file, line: int).

@@ -20,7 +20,7 @@
 # documented API you have to eyeball is exactly the set you want surfaced.
 
 rel src(p: file).
-src(p) <- scan("WORK", "src/**/*.{rs,ts,kt,kts,tsx}", p, rev), match(p, rev, /./, l).
+src(p) <- scan("WORK", "src/**/*.{rs,ts,kt,kts,tsx}", p, rev).
 
 # Documented entities whose declaration line is in the working diff.
 rel review_doc(sym: text, name: text, file: file, line: int).

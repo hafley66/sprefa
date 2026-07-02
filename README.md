@@ -689,6 +689,7 @@ All in [examples/](examples/), runnable as `dl examples/<name>.dl --root .`:
 | [taint.dl](examples/taint.dl) | source/sink/sanitizer preset over the interprocedural flow graph; recursive propagation, stops at sanitized nodes; rides `use "std/flow.dl"` |
 | [flow-slice.dl](examples/flow-slice.dl) | the value slice of ONE local or instance: forward ("what does `token` touch?") + backward ("what feeds it?") + field-accurate reads of a single `new`, via a seeded recursive walk of `std/flow.dl`'s `flow_edge` |
 | [flow-services.dl](examples/flow-services.dl) | value flow ACROSS the wire: a spec-seeded `operationId` seam bridges a client's call argument to the handler's param (and its return back) where no call edge exists |
+| [checked-notes.dl](examples/checked-notes.dl) | review notes that POINT AT CODE and warn when it moves: `note(claim, symbol)` / `link_note(claim, from, to)` joined against the live `call_name`/`type_entity`/`call_edge` graph, a `diag` when the referent is gone — the reviewer's stale-pointer rail |
 | [route-norm.dl](examples/route-norm.dl) | client paths vs server routes across `{id}`/`:id`/`%s` dialects, joined on the punctuation-stripped lowercase normal form |
 | [arch-conformance.dl](examples/arch-conformance.dl) | declared layers + allowed arrows vs the real `module_edge` graph; every unpermitted cross-layer edge is a `violation` |
 
@@ -721,6 +722,7 @@ between the markers.
 | [`callgraph-sg.dl`](examples/callgraph-sg.dl) | Same call graph as callgraph-ast.dl, but using ast-grep PATTERNS instead of |
 | [`callgraph-typed.dl`](examples/callgraph-typed.dl) | Typed call graph: nodes are QUALIFIED names (Type::method), so two functions |
 | [`callgraph.dl`](examples/callgraph.dl) | Call graph of dl's own source, discovered by pattern, queried as a graph. |
+| [`checked-notes.dl`](examples/checked-notes.dl) | checked-notes.dl — notes that POINT AT CODE and warn when the code moves out |
 | [`cli-doc.dl`](examples/cli-doc.dl) | cli-doc.dl — keep the README CLI flag table fresh from the clap `Cli` struct |
 | [`context-object.dl`](examples/context-object.dl) | context-object.dl — detect missing structs from local-name co-occurrence. |
 | [`coupling-metrics.dl`](examples/coupling-metrics.dl) | coupling-metrics.dl — the dogfood instrument. dl measures the engine module's |

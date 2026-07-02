@@ -26,7 +26,7 @@ rel vendor_map(repo: text, prefix: text, upstream: text).
 
 # populate the built-in file() rel across every config repo
 rel src(p: file).
-src(p) <- scan("*", "HEAD", "**/*", p, rev), match(p, rev, /./, l).
+src(p) <- scan("*", "HEAD", "**/*", p, rev).
 
 # ---- both sides, content-addressed via file() -------------------------------
 # vendored side: strip the prefix so paths join upstream's layout. `file`'s

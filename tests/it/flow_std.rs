@@ -80,7 +80,7 @@ const SUMMARY_SRC: &str = "fn caller(secret: i32, benign: i32) {\n    let r = li
 const SUMMARY_PROG_BASE: &str = r#"
 use "std/flow.dl".
 rel src(p: file).
-src(p) <- scan("WORK", "src/**/*.rs", p, rev), match(p, rev, /./, l).
+src(p) <- scan("WORK", "src/**/*.rs", p, rev).
 rel flow_reach(from: text, to: text).
 flow_reach(a, b) <- closure(flow_edge).
 ? flow_reach(from, to).
@@ -215,7 +215,7 @@ fn collection_lambda_hops_are_fact_driven_per_language() {
         let prog = format!(
             "use \"std/flow-collections.dl\".\n\
              rel src(p: file).\n\
-             src(p) <- scan(\"WORK\", \"src/**/*.{ext}\", p, rev), match(p, rev, /./, l).\n\
+             src(p) <- scan(\"WORK\", \"src/**/*.{ext}\", p, rev).\n\
              rel flow_reach(from: text, to: text).\n\
              flow_reach(a, b) <- closure(flow_edge).\n\
              ? flow_reach(from, to).\n\
@@ -277,7 +277,7 @@ fn arg_field_flow_matches_same_named_reads_only() {
     let prog = r#"
 use "std/flow.dl".
 rel src(p: file).
-src(p) <- scan("WORK", "src/**/*.ts", p, rev), match(p, rev, /./, l).
+src(p) <- scan("WORK", "src/**/*.ts", p, rev).
 ? arg_field_flow(value, field, call, target).
 ? df_node(id, kind, var, fn, file, line).
 "#;

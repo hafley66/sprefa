@@ -16,7 +16,7 @@
 
 # Populate the module graph. Adjust the glob to the tree being graded.
 rel src(p: file).
-src(p) <- scan("WORK", "src/**/*.rs", p, rev), match(p, rev, /./, l).
+src(p) <- scan("WORK", "src/**/*.rs", p, rev).
 
 # ---- the architecture (edit me) ---------------------------------------------
 rel layer(prefix: text, tier: text).

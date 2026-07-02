@@ -347,7 +347,7 @@ fn definition_jumps_to_module_edge_target() {
     let prog = root.join("p.dl");
     fs::write(&prog, concat!(
         "rel seen(p: file).\n",
-        "seen(p) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), match(p, rev, /./, ln).\n",
+        "seen(p) <- scan(\"WORK\", \"src/**/*.rs\", p, rev).\n",
         "rel edge(a: path, b: path).\n",
         "edge(a, b) <- module_edge(a, b).\n",
     )).unwrap();

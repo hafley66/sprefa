@@ -29,7 +29,7 @@ fn run(dir: &Path, prog: &str) -> String {
 
 const PROG: &str = r#"
 rel seen(p: file).
-seen(p) <- scan("WORK", "src/**/*.{rs,ts,kt}", p, rev), match(p, rev, /./, line).
+seen(p) <- scan("WORK", "src/**/*.{rs,ts,kt}", p, rev).
 ? doc_comment(repo, sym, line, text).
 ? doc_tag(repo, sym, tag, arg, text).
 "#;

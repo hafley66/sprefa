@@ -23,7 +23,7 @@
 use "std/flow.dl".
 
 rel src(p: file).
-src(p) <- scan("WORK", "src/**/*.{rs,ts,kt}", p, rev), match(p, rev, /./, l).
+src(p) <- scan("WORK", "src/**/*.{rs,ts,kt}", p, rev).
 
 # ── 1. forward slice of a local ──────────────────────────────────────────────
 # Seed: every binding (let/param) named `token`. Pin `fn`/`line` in the body

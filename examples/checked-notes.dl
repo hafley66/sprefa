@@ -1,0 +1,72 @@
+# checked-notes.dl — notes that POINT AT CODE and warn when the code moves out
+# from under them. The reviewer's rail: you read a coworker's PR, an agent
+# traces the flow, and you write down what you're relying on — "this handler is
+# the only writer", "sanitized before it reaches the sink", "A still calls B".
+# Those notes are FACTS here, joined against the live code graph every tick.
+# When a later commit deletes or renames the thing a note points at, the join
+# fails and you get a diagnostic — in --check (CI exit code), an editor squiggle
+# (--lsp), or the daemon hook on every save. A comment rots silently; a checked
+# note fails loudly.
+#
+#   dl examples/checked-notes.dl --root .           # list stale notes
+#   dl examples/checked-notes.dl --root . --check   # exit 1 if any note is stale
+#
+# TWO kinds of pointer:
+#   note(claim, target)          — target is the bare name of a fn/type you rely
+#                                  on. Stale when NO definition carries that name.
+#   link_note(claim, from, to)   — you verified `from` calls `to`. Stale when
+#                                  that resolved call edge no longer exists.
+# Edit the facts below to your own review notes; the two marked STALE fire on
+# any repo, so a fresh run shows the rail working.
+
+# Scan the code the notes point at: a bare `scan` populates the corpus, which
+# is what the AST/SCIP extraction families (call_name / type_entity /
+# call_edge) run over. No regex — the parser does the work.
+rel src(p: file).
+src(p) <- scan("WORK", "src/**/*.{rs,ts,kt}", p, rev).
+
+# ── the live name universe: every bare name a definition provides ────────────
+# A pointer resolves if SOME def carries the name — a callable (call_name) or a
+# declared type/fn entity (type_entity). Union so both symbol kinds count.
+rel known_name(name: text).
+known_name(n) <- call_name(_, n).
+known_name(n) <- type_entity(_, _, n, _, _, _, _).
+
+# ── the resolved call graph, by name ─────────────────────────────────────────
+# call_edge walks qualified syms; call_name maps each end back to its bare name,
+# so a link note can be written in the names a human actually uses.
+rel calls_by_name(from: text, to: text).
+calls_by_name(a, b) <-
+    call_edge(cq, eq, _), call_name(cq, a), call_name(eq, b).
+
+# ── your review notes (edit me) ──────────────────────────────────────────────
+rel note(claim: text, target: text).
+note("entry point still exists", "main").
+note("STALE: coworker deleted this in their branch", "handle_legacy_widget_v2").
+
+rel link_note(claim: text, from: text, to: text).
+link_note("lowering still delegates to the target form", "lower_rule", "lower_rule_to").
+link_note("STALE: this call was refactored away", "lower_rule", "run_the_old_planner").
+
+# ── the rails: a note whose referent is gone ─────────────────────────────────
+rel broken_note(claim: text, target: text).
+broken_note(c, t) <- note(c, t), !known_name(t).
+
+rel broken_link(claim: text, from: text, to: text).
+broken_link(c, f, t) <- link_note(c, f, t), !calls_by_name(f, t).
+
+# ── warnings ─────────────────────────────────────────────────────────────────
+# diag is the diagnostic sink: --check exits non-zero on any row, --lsp draws a
+# squiggle, the daemon hook surfaces it on edit. Line 1 of a notes pseudo-file
+# (a note has no single source line; the message carries the claim).
+rel diag(path: file, line: int, severity: text, code: text, msg: text).
+diag("(checked-notes)", 1, "error", "stale-note",
+     "note points at a missing name `${target}`: ${claim}") <-
+    broken_note(claim, target).
+diag("(checked-notes)", 1, "error", "stale-link",
+     "note's call `${from}` -> `${to}` no longer resolves: ${claim}") <-
+    broken_link(claim, from, to).
+
+? broken_note(claim, target).
+? broken_link(claim, from, to).
+? diag(path, line, severity, code, msg).
