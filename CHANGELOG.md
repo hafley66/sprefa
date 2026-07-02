@@ -6,6 +6,34 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+### Added
+- **`git_ref(repo, refname, kind, sha)` built-in** — ref inventory across the
+  self repo and every config repo: one row per branch/tag/remote ref plus a
+  `("HEAD", "head")` row, annotated tags peeled to their commit.
+- **`rev_behind(repo, refname, upstream, behind, ahead)` built-in,
+  demand-driven** — derive an ordinary relation named
+  `rev_cmp_want(repo, refname, upstream)` and each wanted pair fills with
+  behind/ahead commit counts (`ahead > 0` = the ref diverged from upstream).
+  One-tick latency, like a data-driven scan. Unresolvable refs skip loudly;
+  a SHALLOW clone skips loudly per repo (grafted history makes ancestry
+  counts wrong, not just incomplete — `git fetch --unshallow` fixes it).
+- **`scip_want(repo)` — lazy multi-repo SCIP.** Derive `scip_want` rows and
+  each wanted repo's index is ensured (an existing `index.scip` wins;
+  otherwise detected+installed indexers run once to `.dl/index.scip`), then
+  the self index and all wanted indexes merge into ONE load — so a
+  cross-repo reference resolves its `def_file`. No schema change; monikers
+  self-disambiguate.
+- **`examples/pin-skew.dl`** — which repos pin an internal dep at a ref the
+  dep's main line moved past (stale) or never contained (diverged)? go.mod
+  manifest seam -> `pin` -> `rev_cmp_want` -> `stale_pin`/`diverged_pin`;
+  bespoke lockfile formats union into `pin` with one rule per format.
+
+### Fixed
+- **`Engine::rel_rows` no longer drops rows containing non-text columns.**
+  Reading an INTEGER column as String is a per-row rusqlite type error that
+  silently filtered the whole row from diagnostic reads; values now
+  stringify from their stored type.
+
 ## [0.2.1] - 2026-07-01
 
 ### Fixed
