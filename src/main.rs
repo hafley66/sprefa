@@ -242,6 +242,7 @@ fn main() -> Result<()> {
     // defaults to the same cache so the daemon's writes are visible to the LSP
     // process via SQLite WAL. A generated .gitignore keeps the cache out of git.
     let mut db = cli.db;
+    let mut db_defaulted = false;
     if db.is_none() {
         let dir = root.join(".dl");
         let daemon_on = sprefa_v5::daemon::enabled();
@@ -250,6 +251,7 @@ fn main() -> Result<()> {
             let gi = dir.join(".gitignore");
             if !gi.exists() { let _ = std::fs::write(&gi, "cache.db*\n"); }
             db = Some(dir.join("cache.db").to_string_lossy().into_owned());
+            db_defaulted = true;
         }
     }
     // Every one-shot mode takes the full positional set: multiple files merge
@@ -284,6 +286,6 @@ fn main() -> Result<()> {
     } else if cli.watch {
         sprefa_v5::run_watch(programs, db.as_deref(), root)
     } else {
-        sprefa_v5::run_file(programs, db.as_deref(), root, cli.query_json)
+        sprefa_v5::run_file(programs, db.as_deref(), db_defaulted, root, cli.query_json)
     }
 }

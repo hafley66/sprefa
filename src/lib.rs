@@ -107,12 +107,13 @@ pub fn render_type_diags_eprintln(diags: &[ast::TypeDiag]) {
     }
 }
 
-pub fn run_file(programs: &[String], db_path: Option<&str>, root: PathBuf, query_json: bool) -> Result<()> {
+pub fn run_file(programs: &[String], db_path: Option<&str>, db_defaulted: bool, root: PathBuf, query_json: bool) -> Result<()> {
     // An explicit multi-file merge is an ad-hoc in-process run: the daemon
     // serves its own loaded program set, not the positionals.
-    if daemon::enabled_for(&root) && db_path.is_none() && programs.len() <= 1 {
-        // Daemon owns the db; if the caller passed --db explicitly they want the
-        // in-process path against that file (the daemon owns its own db).
+    if daemon::enabled_for(&root) && (db_path.is_none() || db_defaulted) && programs.len() <= 1 {
+        // An explicit `--db` opts out (in-process against that file). The
+        // discovery-mode default db does NOT opt out: it names the same
+        // `.dl/cache.db` the daemon owns, so it must still attach.
         match run_file_via_daemon(programs.first().map(|s| s.as_str()), &root, query_json) {
             Ok(()) => return Ok(()),
             Err(e) => {
