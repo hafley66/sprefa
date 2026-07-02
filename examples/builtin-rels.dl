@@ -1,5 +1,5 @@
 # builtin-rels.dl — render the engine's self-describing `rel_catalog` into the
-# README quick-reference block. The engine emits one `rel_catalog` row per
+# README quick-reference rel_block. The engine emits one `rel_catalog` row per
 # built-in relation (name, group, columns, one-line doc) from its OWN
 # declarations (each RelDecl carries its group + doc), so this generator cannot drift: a
 # new built-in appears in the table the next tick, and the doc-completeness test
@@ -11,12 +11,12 @@
 # Rerun converges (gen writes only when bytes differ; catalog order is the
 # stable declaration order, so the rendered rows are deterministic).
 
-# The marker pair wrapping the quick-reference block in the README.
-rel block(p: file, l0: int, l1: int).
-block(p, l0, l1) <- scan("WORK", "README.md", p, rev),
+# The marker pair wrapping the quick-reference rel_block in the README.
+rel rel_block(p: file, l0: int, l1: int).
+rel_block(p, l0, l1) <- scan("WORK", "README.md", p, rev),
   comment(p, rev, /BEGIN: builtin-rels/, /END: builtin-rels/, l0, l1).
 
-gen(p, l0, l1, "| relation | group | columns | summary |") <- block(p, l0, l1).
-gen(p, l0, l1, "|---|---|---|---|") <- block(p, l0, l1).
+gen(p, l0, l1, "| relation | group | columns | summary |") <- rel_block(p, l0, l1).
+gen(p, l0, l1, "|---|---|---|---|") <- rel_block(p, l0, l1).
 gen(p, l0, l1, "| `{name}` | {group} | `{cols}` | {doc} |") <-
-  block(p, l0, l1), rel_catalog(name, group, cols, doc).
+  rel_block(p, l0, l1), rel_catalog(name, group, cols, doc).

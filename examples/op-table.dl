@@ -23,8 +23,8 @@ dispatch_op(op) <- scan("WORK", "src/parse.rs", p, rev),
   op != "closure", op != "scc", op != "node2vec".
 
 # The marker pair wrapping the whole table (header + separator + rows).
-rel block(p: file, l0: int, l1: int).
-block(p, l0, l1) <- scan("WORK", "README.md", p, rev),
+rel op_block(p: file, l0: int, l1: int).
+op_block(p, l0, l1) <- scan("WORK", "README.md", p, rev),
   comment(p, rev, /BEGIN: op-table/, /END: op-table/, l0, l1).
 
 # Extract every backtick-pipe row from README (SOURCE rule: scan+match only,
@@ -33,20 +33,20 @@ rel readme_row_raw(p: file, line: int, op: text, row: text).
 readme_row_raw(p, line, op, row) <- scan("WORK", "README.md", p, rev),
   match(p, rev, /(?<row>\| `(?<op>\w+)` .+)/, line).
 
-# Scope the rows to the block (DERIVED rule: may join block + compare). Verbatim
+# Scope the rows to the op_block (DERIVED rule: may join op_block + compare). Verbatim
 # re-emit = byte-identical = converge. Joining on op keeps only rows whose op is
 # still dispatched, so a removed op drops out of the table.
 rel readme_op_row(op: text, row: text).
-readme_op_row(op, row) <- readme_row_raw(p, line, op, row), block(p, l0, l1),
+readme_op_row(op, row) <- readme_row_raw(p, line, op, row), op_block(p, l0, l1),
   line > l0, line < l1.
 
-# Header + separator (constant; body matches the block once).
-gen(p, l0, l1, "| op | signature | what it does |") <- block(p, l0, l1).
-gen(p, l0, l1, "|---|---|---|") <- block(p, l0, l1).
+# Header + separator (constant; body matches the op_block once).
+gen(p, l0, l1, "| op | signature | what it does |") <- op_block(p, l0, l1).
+gen(p, l0, l1, "|---|---|---|") <- op_block(p, l0, l1).
 
 # Pass-through: re-emit each row verbatim (alpha by row text via gen's ORDER BY).
-gen(p, l0, l1, "{row}") <- block(p, l0, l1), dispatch_op(op), readme_op_row(op, row).
+gen(p, l0, l1, "{row}") <- op_block(p, l0, l1), dispatch_op(op), readme_op_row(op, row).
 
 # Stub: dispatched op with no README row → drift made visible in the doc.
-gen(p, l0, l1, "| `{op}` | — | _undocumented_ |") <- block(p, l0, l1), dispatch_op(op),
+gen(p, l0, l1, "| `{op}` | — | _undocumented_ |") <- op_block(p, l0, l1), dispatch_op(op),
   !readme_op_row(op, _).
