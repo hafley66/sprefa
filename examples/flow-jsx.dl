@@ -12,18 +12,16 @@
 #     df_node PER property, var = the PROPERTY name; `props.title` member
 #     reads carry the name too. Either shape is a name-match target.
 #
+# The sym-space bridge (call_edge_bare) and the base flow_edge union come from
+# std/flow.dl; this file adds the JSX-specific prop hop on top and unions it
+# into flow_edge for closure() composition by a consumer.
+#
 #   dl examples/flow-jsx.dl --root .
+
+use "std/flow.dl".
 
 rel src(p: file).
 src(p) <- scan("WORK", "src/**/*.{ts,tsx}", p, rev), match(p, rev, /./, l).
-
-# Sym-space bridge (see flow-interproc.dl): df_node.fn is bare, call_edge is
-# repo-qualified; strip once per row so downstream joins are plain equalities.
-rel call_edge_bare(caller: text, callee: text, callee_q: text).
-call_edge_bare(cb, eb, eq) <-
-    call_edge(cq, eq, _),
-    cb = replace_re(cq, "^[^:]*::", ""),
-    eb = replace_re(eq, "^[^:]*::", "").
 
 # Where each component is used and which props it receives.
 rel jsx_use(comp: text, prop: text, path: file, line: int).
@@ -39,20 +37,18 @@ rel prop_edge(value: text, comp: text, prop: text, target: text).
 prop_edge(v, comp, prop, target) <-
     df_node(elem, "new", comp, caller_bare, _, _),
     df_field(elem, prop, v),
-    call_edge_bare(caller_bare, callee_bare, callee_q),
+    call_edge_bare(caller_bare, callee_bare, _, callee_q),
     call_name(callee_q, comp),
     df_node(target, "param", prop, callee_bare, _, _).
 prop_edge(v, comp, prop, target) <-
     df_node(elem, "new", comp, caller_bare, _, _),
     df_field(elem, prop, v),
-    call_edge_bare(caller_bare, callee_bare, callee_q),
+    call_edge_bare(caller_bare, callee_bare, _, callee_q),
     call_name(callee_q, comp),
     df_node(target, "member", prop, callee_bare, _, _).
 
-# The unified edge rel, ready for closure() composition by a consumer (union
-# more hops here — the flow-interproc arg->param/ret hops slot in verbatim).
-rel flow_edge(from: text, to: text).
-flow_edge(a, b) <- df_edge(a, b).
+# Union the JSX hop into the shared edge rel (std/flow.dl already contributed
+# df_edge + the interprocedural hops), ready for closure() by a consumer.
 flow_edge(v, t) <- prop_edge(v, _, _, t).
 
 ? jsx_use(comp, prop, path, line).

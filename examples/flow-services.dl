@@ -1,0 +1,82 @@
+# flow-services.dl — value flow ACROSS the wire. Two services never share a
+# call edge: the client calls a generated stub, the server implements a
+# handler, and the connection between them exists only in the CONTRACT (an
+# OpenAPI spec's operationId). This program asserts that seam as a flow hop:
+#
+#   client arg --[wire]--> endpoint param      (the request payload)
+#   endpoint ret --[wire]--> client call_res   (the response)
+#
+# so closure(flow_edge) walks a value from the caller in service A, through
+# the operation name, into the handler in service B, and back. Name
+# resolution alone cannot make this join — the stub and the handler usually
+# SHARE the operation's name, so single-def call_edge resolution refuses, and
+# there is no call at all across the process boundary.
+#
+# The operation inventory is spec-seeded (every operationId in a scanned
+# openapi.yaml). A runtime-only topology (message queues, RPC registries)
+# has no spec to scan — assert `service_op("name").` facts for those, the
+# same convention-read pattern as rev_cmp_want.
+#
+#   dl examples/flow-services.dl --root .          # single repo
+#   dl examples/flow-services.dl --root . --config all.config.toml   # multi-repo:
+#     make the scans `scan("*", ...)` to fan over every config repo and the
+#     wire hop joins ACROSS repos — the endpoint may live in another service's
+#     checkout entirely.
+#
+# Honest limits: the hop is name-keyed (an endpoint is ANY def carrying the
+# operation's name — generated stub and handwritten handler both match, the
+# conservative fan); positional (arg slot N -> param slot N, like the local
+# interprocedural hop); and blind to serialization (the payload is assumed to
+# cross the wire unchanged).
+
+use "std/flow.dl".
+
+rel src(p: file).
+src(p) <- scan("WORK", "src/**/*.{rs,ts,kt}", p, rev), match(p, rev, /./, l).
+
+# ---- the wire contract ------------------------------------------------------
+# Spec-seeded: every operationId in every scanned OpenAPI document. Union
+# `service_op("...").` facts for conventions that have no spec.
+rel service_op(op: text).
+service_op(op) <- scan("WORK", "**/openapi.yaml", p, rev),
+    jsonp(p, rev, "paths.*.*.operationId", op).
+
+# ---- endpoints: every def carrying an operation's name ----------------------
+# call_name(sym, name) is the indexable def-name handle; strip the repo
+# qualifier once so the fn sym joins df_node.fn (bare) directly.
+rel op_endpoint(op: text, fn_bare: text, sym: text).
+op_endpoint(op, fnb, sym) <-
+    service_op(op), call_name(sym, op),
+    fnb = replace_re(sym, "^[^:]*::", "").
+
+# ---- where each operation is invoked ----------------------------------------
+rel wire_call(op: text, file: file, line: int).
+wire_call(op, f, l) <- service_op(op), call_node(_, op, f, l).
+
+# ---- the wire hops, unioned into the shared flow graph ----------------------
+# Request: the argument at slot N of a call to the operation's name flows into
+# slot N of EVERY endpoint carrying that name (stub and handler both — the
+# wire doesn't say which one serves, so both is the honest over-approximation).
+flow_edge(arg, param) <-
+    service_op(op),
+    call_node(c, op, _, _),
+    df_arg(c, pos, arg),
+    op_endpoint(op, fnb, _),
+    df_node(param, "param", _, fnb, _, _),
+    df_param(param, pos).
+
+# Response: an endpoint's returned value flows back to the client call result.
+flow_edge(r, c) <-
+    service_op(op),
+    call_node(c, op, _, _),
+    op_endpoint(op, fnb, _),
+    df_node(r, "ret", _, fnb, _, _).
+
+# Transitive reach over local flow + local interproc hops + the wire.
+rel service_reach(from: text, to: text).
+service_reach(a, b) <- closure(flow_edge).
+
+? service_op(op).
+? wire_call(op, file, line).
+? op_endpoint(op, fn_bare, sym).
+? service_reach(from, to).

@@ -388,6 +388,47 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       flow_jsx.rs e2e (undeclared-prop negative). Suites lib 196/0/1,
       it 439/0/4.
 
+- [x] **Dataflow roadmap 1-6 (std/flow.dl arc)** (main, 2026-07-02, local):
+      all six ranked items in one arc. **(3)** std/flow.dl = the shared base
+      as a `use` module (call_edge_bare, flow_edge union, call_node);
+      flow-interproc/taint/flow-jsx rebased on it (flow-ctor shares nothing,
+      untouched). **(1)** flow_summary(callee,pos)/flow_sanitizer(callee) =
+      propagation MODELS: the lift's blanket arg->result edge is CUT for
+      modeled callees except summarized slots (additive summary would be
+      redundant — the blanket edge already exists; suppression is the real
+      semantics, sanitizer = zero-slot instance); stratified via
+      flow_kept/flow_cut, free when no facts. **(4)** arg_field_flow =
+      prop_edge generalized to plain calls (df_field on an arg composite ->
+      same-named member/param reads in the resolved callee). **(2)** inline
+      lambdas lift as own fn scopes across 3 langs (Rust closures, TS inline
+      arrows/fn-exprs, Kotlin lambda literals incl. trailing-lambda syntax
+      which wasn't even an ARG before; implicit `it` = param 0; `closure`
+      value node carries the lifted sym in var = the join key; captures via
+      shared scope in Rust/Kotlin; nest loop-matching ::closure::-prefix
+      aware) + flow_lambda/flow_lambda_ret fact-driven hops;
+      std/flow-collections.dl ships map/filter/fold/... facts. **(5)**
+      examples/flow-services.dl = the wire hop (spec-seeded service_op from
+      openapi.yaml operationId — NB `**/openapi.yaml` glob, brace-set
+      `{yaml,yml}` doesn't match; stub+handler SHARE the name so single-def
+      resolution refuses exactly where the wire hop takes over). **(6)**
+      per-call-site context: Kotlin df lines normalized to 1-based (+1 rows
+      AND loop spans, ids keep raw rows; TS was already 1-based via line_at —
+      old "Kotlin/TS 0-based" note was half wrong), Rust method-call node
+      moved to the METHOD ident line (multiline chains join call_site now),
+      call_node = ONE equality join, and NEW call_target(call,caller,callee,
+      callee_q) pins both interproc hops per call site — f(secret);g(benign)
+      no longer cross-talks args OR returns. call_target factored as its own
+      rel ALSO for the planner: the inlined 7-atom fwd hop = ~7s/tick on this
+      repo (stmt_ms found it), factored = ~0.5s whole graph; cold derived
+      1.07s (pre-arc 1.4s baseline) w/ strictly more precision. Dogfood:
+      taint.dl on this repo 161 -> 9 findings (the deleted rows were
+      per-caller cross-talk). Residual (documented, deferred): callee
+      param->ret path still merges callers (k-CFA cloning out of scope);
+      flow_lambda facts are name-keyed so ecosystem-ambiguous by design.
+      Tests: 3 typegraph units, flow_std.rs (6, incl. per-lang cross-talk +
+      fact-driven collection gates), flow_services.rs (2, incl. no-spec
+      negative). Suites lib 199/0/1, it 447/0/4.
+
 ### Open (sprefa type graph)
 - [ ] Optional: migrate the deck graph (`examples/anim-self.dl` + anim AtlasPanel)
       from name-keyed `type_edge` to sym-keyed `type_link` + `type_entity` kinds

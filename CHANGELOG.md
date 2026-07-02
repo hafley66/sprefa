@@ -7,6 +7,64 @@ tags consumed by cargo-dist.
 ## [Unreleased]
 
 ### Added
+- **`std/flow.dl` — the shared value-flow base as a `use` module** — the
+  lines every flow program copy-pasted (the `call_edge_bare` sym-space
+  bridge, the `flow_edge` union of `df_edge` + the interprocedural hops,
+  the `call_node` call-site name join) now live in one importable std lib;
+  `examples/flow-interproc.dl`, `examples/taint.dl`, and
+  `examples/flow-jsx.dl` are rebased on `use "std/flow.dl".` and keep only
+  their own layers. New surfaces riding it:
+  - **`flow_summary(callee, pos)` / `flow_sanitizer(callee)`** — user-asserted
+    propagation MODELS for callees the lift can't see into (the
+    CodeQL-models move as plain facts). The lift's default is maximal:
+    every argument gets a blanket edge into the call result; a summary
+    overrides that for its callee, keeping ONLY the summarized slots
+    (`flow_sanitizer` = the zero-slot instance: nothing flows). Stratified
+    cut via `flow_cut`; free when no facts are asserted.
+  - **`call_target(call, caller, callee, callee_q)`** — per-CALL-SITE
+    resolution: each call node tied to the defs carrying its own callee
+    name (`call_node` ⨝ `call_edge_bare` ⨝ `call_name`). Both
+    interprocedural hops now ride it, so `f(secret); g(benign)` in one
+    caller no longer cross-talks (the old per-caller hop leaked every arg
+    into every callee of the caller, and every callee's return into every
+    call result). Factored as its own rel for the planner too: the inlined
+    7-atom forward hop measured ~7s per tick on this repo, the factored
+    shape ~0.5s for the whole graph.
+  - **`arg_field_flow(value, field, call, target)`** — the JSX `prop_edge`
+    pattern generalized to plain calls: a value stored into field F of a
+    composite passed as an argument reaches the resolved callee's reads of
+    the SAME field name (member reads and TS destructured-param pieces).
+  - **`flow_lambda(callee, lam_pos, src_pos, param_pos)` /
+    `flow_lambda_ret(callee, lam_pos)`** — higher-order propagation facts:
+    how a callee invokes a lambda it receives (element hop + result hop).
+    `std/flow-collections.dl` ships facts for the common combinator names
+    (map/filter/forEach/fold/reduce/...), language-blind by name equality.
+  Tests: `tests/it/flow_std.rs` (summary cut, sanitizer, field view,
+  fact-driven collection hops per language, per-call-site cross-talk gates
+  per language).
+- **Inline lambdas lift as their own fn scopes** — Rust `|x| ..` closures,
+  TS inline arrows / function expressions, and Kotlin `{ it + 1 }` /
+  `{ x -> .. }` lambda literals (including trailing-lambda call syntax,
+  which previously wasn't even an argument) now produce a lifted scope:
+  kind `param` nodes with `df_param` slots (Kotlin's implicit `it` at slot
+  0), the body walked under a synthetic `<enclosing>::closure::<pos>` sym,
+  and a `ret` node fed by the body result. The `closure` VALUE node stays
+  in the enclosing fn at the argument position and carries the lifted sym
+  in `var` — the join key the flow_lambda hops ride. Rust/Kotlin share the
+  enclosing scope so captures still resolve; `nest` still counts a call
+  inside a closure inside a loop (loop-fn matching is `::closure::`
+  prefix-aware). Tests: 3 typegraph units + the e2e collection gates.
+- **`examples/flow-services.dl` — the wire hop** — cross-SERVICE value flow
+  where no call edge exists: a spec-seeded `service_op` inventory (every
+  `operationId` in a scanned `openapi.yaml`; assert `service_op("x").`
+  facts for runtime-only topologies), `op_endpoint` (every def carrying an
+  operation's name), and two hops unioned into `flow_edge` — client
+  argument -> endpoint param (positional) and endpoint return -> client
+  call result. The stub and the handler usually SHARE the operation's
+  name, so single-def resolution refuses exactly where the wire hop takes
+  over. Tests: `tests/it/flow_services.rs` (end-to-end reach through the
+  spec + the no-spec negative).
+
 - **JSX dataflow** — `<Card title={t} {...rest}>{kids}</Card>` lifts as what
   it desugars to, `jsx(Card, {title: t, ...rest, children: kids})`: the
   element is a `new` df_node carrying the component/tag name, each
@@ -136,6 +194,19 @@ tags consumed by cargo-dist.
     content address: `in_sync` / `drift` / `local_only`.
 
 ### Changed
+- **df_node lines are 1-based in ALL three lifts** — the Kotlin dataflow
+  lift normalizes tree-sitter's 0-based rows (+1, loop spans bumped in
+  step so `nest` containment is unchanged), and the Rust method-call
+  `call_res` node now sits at the METHOD ident's line (where the call-site
+  extractor records it) instead of the receiver expression's start, so a
+  multiline builder chain still joins. `call_node` (std/flow.dl) is
+  therefore ONE equality join; the old dual-offset form (`cl = dl + 1` for
+  the 0-based languages) is gone, and with it the false match against a
+  call site on the line after an unrelated call.
+- **taint.dl findings tighten under the per-call-site pin** — on this repo
+  the demo preset drops from 161 findings to 9; the removed rows were the
+  per-caller cross-talk (any tainted value in any fn that also calls a
+  sink), not real flows.
 - **`RelDecl` carries `group`/`doc`** — the parallel `builtin_rel_docs()`
   tuple registry is gone; every built-in relation's one-line doc and group
   live on its declaration, so the schema and the doc cannot drift.

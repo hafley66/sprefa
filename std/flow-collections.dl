@@ -1,0 +1,54 @@
+# Standard library: higher-order propagation facts for the common collection /
+# combinator names, riding std/flow.dl's flow_lambda / flow_lambda_ret hops.
+#
+#   use "std/flow-collections.dl".   # pulls std/flow.dl transitively
+#
+# Matching is NAME-equality on the call site's callee text, so one fact covers
+# every language that spells the combinator the same way (Rust/Kotlin/TS
+# `map`, TS `forEach` vs Rust `for_each`, ...). Names are ambiguous across
+# ecosystems by construction — a codebase with a conflicting `map` should
+# retract or shadow with its own facts. Column reading:
+#
+#   flow_lambda(name, lam_pos, src_pos, param_pos)
+#     call to `name`: value at slot src_pos (-1 = receiver) enters the lambda
+#     at slot lam_pos, landing in the lambda's param at param_pos.
+#   flow_lambda_ret(name, lam_pos)
+#     the lambda's returned value becomes the call's result.
+
+use "std/flow.dl".
+
+# element in -> lambda param 0; lambda result -> call result
+flow_lambda("map", 0, -1, 0).            flow_lambda_ret("map", 0).
+flow_lambda("flatMap", 0, -1, 0).        flow_lambda_ret("flatMap", 0).
+flow_lambda("flat_map", 0, -1, 0).       flow_lambda_ret("flat_map", 0).
+flow_lambda("filterMap", 0, -1, 0).      flow_lambda_ret("filterMap", 0).
+flow_lambda("filter_map", 0, -1, 0).     flow_lambda_ret("filter_map", 0).
+flow_lambda("and_then", 0, -1, 0).       flow_lambda_ret("and_then", 0).
+flow_lambda("then", 0, -1, 0).           flow_lambda_ret("then", 0).
+flow_lambda("mapNotNull", 0, -1, 0).     flow_lambda_ret("mapNotNull", 0).
+
+# element in only: the lambda's result does not carry the element out.
+# (filter's OUTPUT elements are the receiver's own — the blanket receiver
+# edge into the call result already covers that flow.)
+flow_lambda("filter", 0, -1, 0).
+flow_lambda("forEach", 0, -1, 0).
+flow_lambda("for_each", 0, -1, 0).
+flow_lambda("retain", 0, -1, 0).
+flow_lambda("find", 0, -1, 0).
+flow_lambda("any", 0, -1, 0).
+flow_lambda("all", 0, -1, 0).
+flow_lambda("none", 0, -1, 0).
+flow_lambda("filterNot", 0, -1, 0).
+flow_lambda("takeWhile", 0, -1, 0).
+flow_lambda("dropWhile", 0, -1, 0).
+flow_lambda("take_while", 0, -1, 0).
+flow_lambda("skip_while", 0, -1, 0).
+flow_lambda("position", 0, -1, 0).
+flow_lambda("some", 0, -1, 0).
+flow_lambda("every", 0, -1, 0).
+
+# fold/reduce: the element lands in the ACCUMULATOR lambda's second param.
+# Rust `fold(init, |acc, x|)`: lambda at slot 1. JS `reduce((acc, x) =>, init)`
+# and Kotlin `fold(init) { acc, x -> }`: mixed shapes — both directions listed.
+flow_lambda("fold", 1, -1, 1).           flow_lambda_ret("fold", 1).
+flow_lambda("reduce", 0, -1, 1).         flow_lambda_ret("reduce", 0).

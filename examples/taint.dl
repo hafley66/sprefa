@@ -1,21 +1,27 @@
 # taint.dl — source/sink/sanitizer preset over interprocedural value flow.
 #
 # The classic taint question: does a value from an untrusted SOURCE reach a
-# dangerous SINK without passing through a SANITIZER? The flow graph is the
-# flow-interproc.dl union (df_edge + the arg->param / ret->call_res hops,
-# call_edge-resolved, SCIP-preferred); this file adds the preset layer: name
-# the source/sink/sanitizer callees as FACTS, propagate taint recursively,
-# stop propagation at sanitized nodes, report sink hits as diagnostics.
+# dangerous SINK without passing through a SANITIZER? The flow graph
+# (df_edge ∪ the positional arg->param / ret->call_res hops, call_edge-resolved,
+# SCIP-preferred) comes from std/flow.dl — along with `call_node` (call_res ->
+# callee name) and the `flow_summary` fact surface. This file adds the preset
+# layer: name the source/sink/sanitizer callees as FACTS, propagate taint
+# recursively, stop propagation at sanitized nodes, report sink hits as
+# diagnostics.
 #
 #   dl examples/taint.dl --root .           # stdout
 #   dl examples/taint.dl --root . --check   # exit 1 on any finding
 #
 # Presets are substring matches on the bare callee name — edit the facts to
-# your codebase's API. Honest limits (inherited from the flow graph): the
+# your codebase's API. A library callee that PROPAGATES taint without an
+# analyzable body (e.g. format/join wrappers) is a `flow_summary(name, pos).`
+# fact — see std/flow.dl. Honest limits (inherited from the flow graph): the
 # arg->param hop is positional (df_arg slot = df_param slot) but context-
 # insensitive, so this over-approximates (taint analysis usually does); a
 # sanitizer only blocks taint at the node where its result lands, not along
 # unrelated paths.
+
+use "std/flow.dl".
 
 rel src(p: file).
 src(p) <- scan("WORK", "src/**/*.{rs,ts,kt}", p, rev), match(p, rev, /./, l).
@@ -38,40 +44,9 @@ sanitizer_call("escape").
 sanitizer_call("sanitize").
 sanitizer_call("quote").
 
-# ---- the flow graph (flow-interproc.dl, condensed) --------------------------
-# call_edge_bare strips the repo qualifier once per call_edge row so the sym-
-# space bridge (df_node.fn is bare, call_edge is repo-qualified) is a plain
-# indexable equality join, not a per-pair replace() suffix test.
-rel call_edge_bare(caller: text, callee: text).
-call_edge_bare(cb, eb) <-
-    call_edge(cq, eq, _),
-    cb = replace_re(cq, "^[^:]*::", ""),
-    eb = replace_re(eq, "^[^:]*::", "").
-
-rel flow_edge(from: text, to: text).
-flow_edge(a, b) <- df_edge(a, b).
-flow_edge(arg, param) <-
-    df_node(call_id, "call_res", _, caller_bare, _, _),
-    df_arg(call_id, pos, arg),
-    call_edge_bare(caller_bare, callee_bare),
-    df_node(param, "param", _, callee_bare, _, _),
-    df_param(param, pos).
-flow_edge(callee_ret, call_id) <-
-    df_node(call_id, "call_res", _, caller_bare, _, _),
-    call_edge_bare(caller_bare, callee_bare),
-    df_node(callee_ret, "ret", _, callee_bare, _, _).
-
-# ---- bind call_res nodes to their callee name -------------------------------
-# df_node id is minted at the call site; call_site carries the bare callee text
-# at (file, line). df_node lines are 1-based for Rust but 0-based for the
-# Kotlin/TS lifts, so join at both offsets (the second rule catches the
-# 0-based languages).
-rel call_node(id: text, callee: text, file: file, line: int).
-call_node(id, callee, f, cl) <-
-    df_node(id, "call_res", _, _, f, dl), call_site(_, _, callee, f, cl), dl = cl.
-call_node(id, callee, f, cl) <-
-    df_node(id, "call_res", _, _, f, dl), call_site(_, _, callee, f, cl), cl = dl + 1.
-
+# ---- bind preset patterns to call_res nodes ---------------------------------
+# call_node (std/flow.dl) already joined df_node call_res ids to the call
+# site's callee text; the preset match is a substring test.
 rel source_node(id: text).
 source_node(id) <- call_node(id, callee, _, _), source_call(pat),
                    s = replace(callee, pat, ""), s != callee.

@@ -1,0 +1,188 @@
+# Standard library: the shared interprocedural value-flow base.
+#
+# The lines every flow program used to copy-paste (flow-interproc.dl, taint.dl,
+# flow-jsx.dl each carried their own), importable:
+#
+#   use "std/flow.dl".
+#   # `call_edge_bare`, `flow_edge`, `call_node`, `flow_summary`, and
+#   # `arg_field_flow` are all in scope. Union more hops into flow_edge from
+#   # the importing program (the JSX prop hop, a service hop, ...), then walk
+#   # it — seeded recursion for a frontier, or closure(flow_edge) if the full
+#   # transitive graph is affordable.
+#
+# The program owns the corpus: this file scans nothing. Scan rules in the
+# importer decide which files feed df_*/call_* (the builtin extractors run
+# over whatever the program scans).
+#
+# NO `?` queries live here — a `use`d module must not perturb the importer's
+# query output order.
+
+# Sym-space bridge: df_node.fn is the BARE sym (file::kind::name) while
+# call_edge's endpoints are repo-qualified (repo::file::kind::name). Strip the
+# leading repo segment ONCE per call_edge row so every downstream join is a
+# plain equality on the bare sym — indexable, O(|call_edge|) replace_re calls
+# total. (A per-pair replace() suffix test is unindexable: ~25M string evals on
+# a repo this size, 40s per fixpoint pass. An unresolved external callee has no
+# repo prefix; the strip leaves it unchanged and it simply never matches a bare
+# df_node.fn.)
+rel call_edge_bare(caller: text, callee: text, caller_q: text, callee_q: text).
+call_edge_bare(cb, eb, cq, eq) <-
+    call_edge(cq, eq, _),
+    cb = replace_re(cq, "^[^:]*::", ""),
+    eb = replace_re(eq, "^[^:]*::", "").
+
+# Bind call_res df_nodes to the callee NAME at the call site. Every lift emits
+# 1-based df_node lines (the Kotlin lift normalizes tree-sitter's 0-based rows,
+# and the Rust method-call node sits at the method ident, where the call-site
+# extractor records it), so this is ONE equality join — the old dual-offset
+# form (`cl = dl + 1` for the 0-based languages) also false-matched a call site
+# on the next line.
+rel call_node(id: text, callee: text, file: file, line: int).
+call_node(id, callee, f, l) <-
+    df_node(id, "call_res", _, _, f, l), call_site(_, _, callee, f, l).
+
+# Flow summaries: user-asserted propagation MODELS for callees the lift can't
+# see into (library / external functions have no df_* body) — the CodeQL-models
+# move, as plain facts. The lift's default for every call is maximal
+# over-approximation: EACH argument gets a blanket df_edge into the call's
+# result. A summary overrides that default for its callee: once a callee is
+# modeled, ONLY the summarized argument slots flow to its result.
+#
+#   flow_summary("join", 0).      # join's slot 0 flows to the result; other
+#                                 # args (a separator, a callback) do NOT
+#   flow_summary("push", -1).     # the receiver (slot -1) flows through
+#   flow_sanitizer("hash").       # NOTHING flows to the result — the
+#                                 # sanitizer is just the zero-slot instance
+#                                 # of the same model
+#
+# Matching is name-EQUALITY on the call site's callee text (via call_node).
+# Both rels are empty by default and cost nothing until facts appear. A callee
+# whose body IS in the corpus is unaffected in the interprocedural rules below
+# (its analyzed body still carries flow); the model only prunes the blanket
+# arg->result edges at its call sites.
+rel flow_summary(callee: text, pos: int).
+rel flow_sanitizer(callee: text).
+
+# A call site whose callee is modeled (by either rel).
+rel flow_modeled(call: text).
+flow_modeled(c) <- call_node(c, name, _, _), flow_summary(name, _).
+flow_modeled(c) <- call_node(c, name, _, _), flow_sanitizer(name).
+
+# The blanket arg->result edges a model keeps / cuts. Stratified: neither rel
+# is recursive, so the negations below are legal.
+rel flow_kept(call: text, arg: text).
+flow_kept(c, a) <- call_node(c, name, _, _), flow_summary(name, pos), df_arg(c, pos, a).
+
+rel flow_cut(from: text, to: text).
+flow_cut(a, c) <- flow_modeled(c), df_arg(c, _, a), !flow_kept(c, a).
+
+# The unified value-flow edge relation: intra ∪ inter procedural. All-derived
+# (no source rule heads it), so closure() may walk it and importers may union
+# more hop rules onto it.
+rel flow_edge(from: text, to: text).
+
+# Intra-procedural: the local lift, minus the blanket edges a summary model
+# cuts (flow_cut is empty when no summaries are asserted — the default is the
+# lift verbatim).
+flow_edge(a, b) <- df_edge(a, b), !flow_cut(a, b).
+
+# Per-call-site resolution: which defs each call NODE actually targets.
+# call_edge resolves per CALLER (SCIP-preferred: scip_ref def_file when an
+# index.scip is present, single-def name resolution otherwise); call_node
+# names each site's callee; call_name pins the resolved def to that name. The
+# pin is what makes the hops below per-call-site — `f(secret); g(benign)` in
+# one caller no longer leaks secret into g's params (the unpinned per-caller
+# form joined every call node in the caller to every callee the caller
+# resolves to). Factored into its own rel both for reuse and for the planner:
+# one 4-atom join materialized once, instead of re-planned inside every hop
+# (the inlined 7-atom forward hop measured ~7s on this repo; this shape holds
+# the whole flow graph at ~0.5s).
+rel call_target(call: text, caller: text, callee: text, callee_q: text).
+call_target(c, cb, eb, eq) <-
+    call_node(c, name, _, _),
+    df_node(c, "call_res", _, cb, _, _),
+    call_edge_bare(cb, eb, _, eq),
+    call_name(eq, name).
+
+# Interprocedural, forward: the argument at slot N flows into the resolved
+# callee's parameter at slot N. df_arg carries the slot per argument (receiver
+# -1 never matches a df_param pos, so receivers stay local); df_param carries
+# it per param node, both aligned with type_sig.pos. What remains merged is
+# the callee's INTERNAL param->ret path across its callers — true per-site
+# callee cloning (k-CFA) is out of scope for a rule this shape.
+flow_edge(arg, param) <-
+    call_target(call_id, _, callee_bare, _),
+    df_arg(call_id, pos, arg),
+    df_node(param, "param", _, callee_bare, _, _),
+    df_param(param, pos).
+
+# Interprocedural, backward: the callee's returned value flows back OUT to the
+# caller's call result — only at call sites targeting that callee. The `ret`
+# node is minted per return point (explicit `return EXPR` and the implicit
+# tail expression in Rust/Kotlin), so a value passed in, transformed, and
+# returned reaches the caller's call_res end to end.
+flow_edge(callee_ret, call_id) <-
+    call_target(call_id, _, callee_bare, _),
+    df_node(callee_ret, "ret", _, callee_bare, _, _).
+
+# Higher-order facts: how a callee INVOKES a lambda it receives. The lift
+# turns every inline lambda (Rust `|x| ..`, TS `(x) => ..` / function
+# expression, Kotlin `{ it .. }` / `{ x -> .. }`) into its own fn scope —
+# param nodes with slots, body, a `ret` node — and leaves a `closure` VALUE
+# node at the argument position whose `var` carries the lifted scope's sym.
+# These facts say what the (usually library) callee does with that value:
+#
+#   flow_lambda(callee, lam_pos, src_pos, param_pos):
+#     a call to `callee` feeds the value at slot `src_pos` (receiver = -1)
+#     into slot `param_pos` of the lambda found at slot `lam_pos` — the
+#     element hop of map/filter/forEach.
+#   flow_lambda_ret(callee, lam_pos):
+#     the lambda's returned value flows to the call's result — true for
+#     map/flatMap/then, NOT for filter (whose result elements are the
+#     receiver's, already covered by the blanket receiver edge).
+#
+# `use "std/flow-collections.dl".` ships facts for the common combinator
+# names. Matching is name-equality on the call site's callee text, so the
+# facts are language-blind (and tunable per codebase).
+rel flow_lambda(callee: text, lam_pos: int, src_pos: int, param_pos: int).
+rel flow_lambda_ret(callee: text, lam_pos: int).
+
+# Element hop: the source value enters the lambda's parameter.
+flow_edge(src, p) <-
+    flow_lambda(name, lpos, spos, ppos),
+    call_node(c, name, _, _),
+    df_arg(c, lpos, lam),
+    df_node(lam, "closure", lam_sym, _, _, _),
+    df_arg(c, spos, src),
+    df_node(p, "param", _, lam_sym, _, _),
+    df_param(p, ppos).
+
+# Result hop: the lambda's return value becomes the call's result.
+flow_edge(r, c) <-
+    flow_lambda_ret(name, lpos),
+    call_node(c, name, _, _),
+    df_arg(c, lpos, lam),
+    df_node(lam, "closure", lam_sym, _, _, _),
+    df_node(r, "ret", _, lam_sym, _, _).
+
+# Field-sensitive interprocedural view: a value stored into field F of a
+# composite that is passed as an argument reaches the resolved callee's reads
+# of the SAME field name — the flow-jsx.dl prop_edge pattern generalized to
+# plain calls. Two target shapes: a `props.title`-style member read, and the
+# destructured-param piece (TS mints one param node per destructured property,
+# var = the property name). This is a PRECISION view, not a reachability
+# extension: the blanket df_edge (value -> composite) + the positional hop
+# already over-approximate through the composite; matching field names refines
+# which downstream read a stored value actually feeds. Query it directly or
+# union it into flow_edge when field-conflating paths should be dropped.
+rel arg_field_flow(value: text, field: text, call: text, target: text).
+arg_field_flow(v, fld, call_id, target) <-
+    call_target(call_id, _, callee_bare, _),
+    df_arg(call_id, _, comp),
+    df_field(comp, fld, v),
+    df_node(target, "member", fld, callee_bare, _, _).
+arg_field_flow(v, fld, call_id, target) <-
+    call_target(call_id, _, callee_bare, _),
+    df_arg(call_id, _, comp),
+    df_field(comp, fld, v),
+    df_node(target, "param", fld, callee_bare, _, _).

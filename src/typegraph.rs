@@ -456,6 +456,14 @@ fn kt_first_child<'a>(node: tree_sitter::Node<'a>, kind: &str) -> Option<tree_si
 fn kotlin_dataflow_from(root: tree_sitter::Node, src: &[u8], file: &str) -> DataflowFacts {
     let mut out = DataflowFacts::default();
     kt_walk_fns(root, src, file, &mut out);
+    // tree-sitter rows are 0-based; the df contract is 1-based (syn and the TS
+    // line_at both emit 1-based), so a (file, line) join against call_site —
+    // the call_node bridge every interprocedural hop rides — is a single
+    // equality across languages. Nodes and loop spans bump together, so the
+    // nest containment below stays internally consistent. Node IDS keep the
+    // raw 0-based row (they are opaque; only uniqueness matters).
+    for n in &mut out.nodes { n.line += 1; }
+    for l in &mut out.loops { l.start += 1; l.end += 1; }
     out.nests = compute_nests(&out.nodes, &out.loops);
     out
 }
@@ -583,6 +591,16 @@ fn flow_kt(
                         }
                     }
                 }
+                // A trailing lambda (`xs.map { it + 1 }`) is the call's last
+                // positional argument; the lambda_literal arm lifts it and
+                // returns its `closure` value node.
+                if let Some(al) = kt_first_child(suffix, "annotated_lambda") {
+                    if let Some(ll) = kt_first_child(al, "lambda_literal") {
+                        if let Some(vid) = flow_kt(ll, src, file, fn_sym, scope, out) {
+                            arg_ids.push((None, vid));
+                        }
+                    }
+                }
             }
             let is_ctor = callee_name.chars().next().is_some_and(|c| c.is_uppercase());
             let (kind, var) = if is_ctor { ("new", callee_name.as_str()) } else { ("call_res", "") };
@@ -659,6 +677,44 @@ fn flow_kt(
                 }
             }
             last
+        }
+        // `{ x -> body }` / `{ it + 1 }`: lift the lambda as its OWN fn scope —
+        // "param" nodes with df_param slots (the implicit `it` when no
+        // parameter list is declared), body walked under the lambda sym, tail
+        // value into a "ret" node — and mint the `closure` VALUE node in the
+        // enclosing fn, carrying the lambda sym in `var` (the join key a
+        // higher-order hop uses; see std/flow.dl flow_lambda). The enclosing
+        // scope is shared, so captures still resolve.
+        "lambda_literal" => {
+            let lam_sym = format!("{fn_sym}::closure::{}_{}", pos.row, pos.column);
+            let mut seeded = false;
+            if let Some(lp) = kt_first_child(node, "lambda_parameters") {
+                let mut cur = lp.walk();
+                for (i, vd) in lp.children(&mut cur).filter(|n| n.kind() == "variable_declaration").enumerate() {
+                    if let Some(idn) = kt_first_child(vd, "simple_identifier") {
+                        let ppos = idn.start_position();
+                        let v = idn.utf8_text(src).unwrap_or("").to_string();
+                        let id = push_node(out, file, ppos.row as u32, ppos.column as u32, "param", &v, &lam_sym);
+                        out.param_pos.push((id.clone(), i as u32));
+                        scope.insert(v, id);
+                        seeded = true;
+                    }
+                }
+            }
+            if !seeded {
+                // No declared parameter list: Kotlin's implicit `it`, slot 0.
+                let id = push_node(out, file, pos.row as u32, pos.column as u32, "param", "it", &lam_sym);
+                out.param_pos.push((id.clone(), 0));
+                scope.insert("it".into(), id);
+            }
+            let tail = kt_first_child(node, "statements")
+                .and_then(|s| flow_kt(s, src, file, &lam_sym, scope, out));
+            if let Some(t) = tail {
+                let end = node.end_position();
+                let ret = push_node(out, file, end.row as u32, end.column as u32, "ret", "", &lam_sym);
+                out.edges.push(DfEdge { from: t, to: ret });
+            }
+            Some(push_node(out, file, pos.row as u32, pos.column as u32, "closure", &lam_sym, fn_sym))
         }
         // return EXPR: the returned value flows into the fn's `ret` node — the
         // sink the interprocedural backward hop reads.
@@ -1208,7 +1264,28 @@ fn ts_flow_expr(
             out.edges.push(DfEdge { from: r, to: id.clone() });
             id
         }
-        // arrow/function values, template strings, control flow: mint a node,
+        // An INLINE lambda (`xs.map((x) => x + 1)`, a function-expression
+        // argument): lift it as its own fn scope — params + body + ret under a
+        // synthetic `<enclosing>::closure::<off>` sym — and mint the `closure`
+        // VALUE node here, carrying that sym in `var`. The value node is what
+        // df_arg records; the sym is the join key a higher-order hop (see
+        // std/flow.dl flow_lambda) uses to feed the lifted params and read the
+        // lifted ret. (Fresh inner scope: captures were already a hole for
+        // inline lambdas — the old catch-all didn't walk the body at all.)
+        E::ArrowFunctionExpression(a) => {
+            let lam_sym = format!("{fn_sym}::closure::{off}");
+            ts_lift_fn(&a.params, &a.body, a.expression, &lam_sym, file, starts, out);
+            ts_push(out, file, starts, off, "closure", &lam_sym, fn_sym)
+        }
+        E::FunctionExpression(f) => match f.body.as_deref() {
+            Some(body) => {
+                let lam_sym = format!("{fn_sym}::closure::{off}");
+                ts_lift_fn(&f.params, body, false, &lam_sym, file, starts, out);
+                ts_push(out, file, starts, off, "closure", &lam_sym, fn_sym)
+            }
+            None => ts_push(out, file, starts, off, "expr", "", fn_sym),
+        },
+        // template strings, control flow, remaining variants: mint a node,
         // don't chase. Conservative — may miss, never invents.
         _ => ts_push(out, file, starts, off, "expr", "", fn_sym),
     }
@@ -2985,8 +3062,16 @@ fn compute_nests(nodes: &[DfNode], loops: &[LoopFact]) -> Vec<NestFact> {
         // `new` nodes count too: a constructor in a loop allocates per
         // iteration, the exact cost shape nest exists to surface.
         if n.kind != "call_res" && n.kind != "new" { continue; }
+        // A lifted lambda's sym is `<enclosing fn>::closure::<pos>` (chained for
+        // nesting), so a call inside a closure inside a loop still counts: the
+        // loop's fn either matches exactly or is a `::closure::` ancestor.
+        let in_fn = |l: &LoopFact| {
+            l.fn_sym == n.fn_sym
+                || (n.fn_sym.starts_with(&l.fn_sym)
+                    && n.fn_sym[l.fn_sym.len()..].starts_with("::closure::"))
+        };
         let mut enclosing: Vec<&LoopFact> = loops.iter()
-            .filter(|l| l.fn_sym == n.fn_sym && n.line >= l.start && n.line <= l.end)
+            .filter(|l| in_fn(l) && n.line >= l.start && n.line <= l.end)
             .collect();
         enclosing.sort_by_key(|l| l.start);
         for (i, l) in enclosing.iter().enumerate() {
@@ -3203,7 +3288,11 @@ fn flow_expr(
             for arg in &m.args {
                 children.push(flow_expr(arg, file, fn_sym, scope, out));
             }
-            let id = push_node(out, file, line, col, "call_res", "", fn_sym);
+            // The node sits at the METHOD ident, not the receiver expression's
+            // start — the same line the call-site extractor records, so the
+            // (file, line) call_node join holds for a multiline builder chain.
+            let msp = m.method.span().start();
+            let id = push_node(out, file, msp.line as u32, msp.column as u32, "call_res", "", fn_sym);
             out.edges.push(DfEdge { from: recv.clone(), to: id.clone() });
             out.args.push((id.clone(), -1, recv));
             for (pos, child) in children.into_iter().enumerate() {
@@ -3353,18 +3442,47 @@ fn flow_expr(
             flow_block(&b.block, file, fn_sym, scope, out);
             push_node(out, file, line, col, "block", "", fn_sym)
         }
-        // `|params| body`: bind params (in-scope for the body), walk the body.
-        // Closures are everywhere in real Rust (`let t = |s| ...`); without this
-        // the body was a total hole.
+        // `|params| body`: lift the lambda as its OWN fn scope — kind "param"
+        // nodes with df_param slots, body walked under the lambda sym, the body
+        // result flowing into a "ret" node — so a higher-order hop (see
+        // std/flow.dl flow_lambda) can feed its params and read its result. The
+        // `closure` VALUE node stays in the enclosing fn (it is the argument a
+        // df_arg row records) and carries the lambda sym in `var`, the join key
+        // between the value and its lifted scope. The enclosing scope is shared,
+        // so captures still resolve (a read of an outer var links to its slot).
         syn::Expr::Closure(c) => {
+            let lam_sym = format!("{fn_sym}::closure::{line}_{col}");
+            let mut pos: u32 = 0;
             for inp in &c.inputs {
-                let _ = bind_pat(inp, file, fn_sym, scope, out);
+                // `|x|` is Pat::Ident; `|x: T|` wraps it in Pat::Type. Either
+                // way the single-ident case gets a positional param node;
+                // destructuring patterns bind without a slot (conservative).
+                let ident_pat = match inp {
+                    syn::Pat::Type(pt) => pt.pat.as_ref(),
+                    other => other,
+                };
+                if let syn::Pat::Ident(pi) = ident_pat {
+                    let sp = pi.ident.span().start();
+                    let id = push_node(out, file, sp.line as u32, sp.column as u32, "param", &pi.ident.to_string(), &lam_sym);
+                    out.param_pos.push((id.clone(), pos));
+                    scope.insert(pi.ident.to_string(), id);
+                } else {
+                    let _ = bind_pat(inp, file, &lam_sym, scope, out);
+                }
+                pos += 1;
             }
-            match c.body.as_ref() {
-                syn::Expr::Block(b) => { let _ = flow_block(&b.block, file, fn_sym, scope, out); }
-                other => { let _ = flow_expr(other, file, fn_sym, scope, out); }
+            let body_val = match c.body.as_ref() {
+                syn::Expr::Block(b) => flow_block(&b.block, file, &lam_sym, scope, out),
+                other => {
+                    let sp = other.span().start();
+                    Some((flow_expr(other, file, &lam_sym, scope, out), sp.line as u32, sp.column as u32))
+                }
+            };
+            if let Some((v, l, cl)) = body_val {
+                let ret = push_node(out, file, l, cl, "ret", "", &lam_sym);
+                out.edges.push(DfEdge { from: v, to: ret });
             }
-            push_node(out, file, line, col, "closure", "", fn_sym)
+            push_node(out, file, line, col, "closure", &lam_sym, fn_sym)
         }
         // `lhs = rhs`: flow rhs, rebind a write slot so later reads see the new
         // value (taint-correct for reassignment). Compound assignment (`+=`) and
@@ -4398,5 +4516,82 @@ function helper(raw: Raw) {}
                 && df.nodes.iter().any(|n| &n.id == a && n.kind == "var_read" && n.var == "x")),
             "{:?}", df.args
         );
+    }
+
+    /// Shared gate for the lambda lift: the `closure` value node sits at the
+    /// call's expected arg slot, its `var` names the lifted scope, and that
+    /// scope holds a positional `param` plus a `ret` fed by the body.
+    fn assert_lambda_lifted(df: &DataflowFacts, lam_slot: i64, param_var: &str) {
+        let clo = df.nodes.iter().find(|n| n.kind == "closure").expect("closure node");
+        let lam_sym = clo.var.clone();
+        assert!(lam_sym.contains("::closure::"), "closure var carries the lifted sym: {clo:?}");
+        // the closure VALUE lives in the enclosing fn, not its own scope.
+        assert_ne!(clo.fn_sym, lam_sym, "{clo:?}");
+        assert!(
+            df.args.iter().any(|(_, p, a)| *p == lam_slot && a == &clo.id),
+            "closure at arg slot {lam_slot}: {:?}", df.args
+        );
+        let param = df.nodes.iter()
+            .find(|n| n.kind == "param" && n.var == param_var && n.fn_sym == lam_sym)
+            .unwrap_or_else(|| panic!("param {param_var} under {lam_sym}: {:?}", df.nodes));
+        assert!(
+            df.param_pos.iter().any(|(i, p)| i == &param.id && *p == 0),
+            "lambda param at slot 0: {:?}", df.param_pos
+        );
+        let ret = df.nodes.iter()
+            .find(|n| n.kind == "ret" && n.fn_sym == lam_sym)
+            .unwrap_or_else(|| panic!("ret under {lam_sym}: {:?}", df.nodes));
+        // body value reaches the ret node (param -> binop -> ret here).
+        assert!(df.edges.iter().any(|e| e.to == ret.id), "{:?}", df.edges);
+    }
+
+    #[test]
+    fn rust_inline_closure_lifts_as_own_scope() {
+        let src = "fn go(xs: Vec<i32>) {\n    let out = xs.map(|x| x + 1);\n}\n";
+        let df = RustTypes.extract_dataflow("f.rs", src);
+        assert_lambda_lifted(&df, 0, "x");
+        // capture still resolves: the shared scope links an outer read.
+        let src2 = "fn go(k: i32, xs: Vec<i32>) {\n    let out = xs.map(|x| x + k);\n}\n";
+        let df2 = RustTypes.extract_dataflow("f.rs", src2);
+        let k_param = df2.nodes.iter().find(|n| n.kind == "param" && n.var == "k").unwrap();
+        let k_read = df2.nodes.iter().find(|n| n.kind == "var_read" && n.var == "k").unwrap();
+        assert!(
+            df2.edges.iter().any(|e| e.from == k_param.id && e.to == k_read.id),
+            "capture edge: {:?}", df2.edges
+        );
+    }
+
+    #[test]
+    fn ts_inline_arrow_lifts_as_own_scope() {
+        let src = "function go(xs: number[]): void {\n    const out = xs.map((x) => x + 1);\n}\n";
+        let df = TsTypes.extract_dataflow("f.ts", src);
+        assert_lambda_lifted(&df, 0, "x");
+        // a function expression lifts too.
+        let src2 = "function go(xs: number[]): void {\n    const out = xs.map(function (x) { return x + 1; });\n}\n";
+        let df2 = TsTypes.extract_dataflow("f.ts", src2);
+        assert_lambda_lifted(&df2, 0, "x");
+    }
+
+    #[test]
+    fn kotlin_trailing_lambda_lifts_with_implicit_it() {
+        // trailing lambda with no parameter list: implicit `it` at slot 0.
+        let src = "fun go(xs: List<Int>) {\n    val out = xs.map { it + 1 }\n}\n";
+        let df = KotlinTypes.extract_dataflow("f.kt", src);
+        assert_lambda_lifted(&df, 0, "it");
+        // declared parameter form binds by name; trailing lambda still slots
+        // after the parenthesized args (fold's accumulator lambda at slot 1).
+        let src2 = "fun go(xs: List<Int>) {\n    val out = xs.fold(0) { acc, x -> acc + x }\n}\n";
+        let df2 = KotlinTypes.extract_dataflow("f.kt", src2);
+        let clo = df2.nodes.iter().find(|n| n.kind == "closure").expect("closure node");
+        assert!(
+            df2.args.iter().any(|(_, p, a)| *p == 1 && a == &clo.id),
+            "trailing lambda after one paren arg sits at slot 1: {:?}", df2.args
+        );
+        let lam_sym = clo.var.clone();
+        let pos_of = |v: &str| df2.nodes.iter()
+            .find(|n| n.kind == "param" && n.var == v && n.fn_sym == lam_sym)
+            .and_then(|n| df2.param_pos.iter().find(|(i, _)| i == &n.id).map(|(_, p)| *p));
+        assert_eq!(pos_of("acc"), Some(0), "{:?}", df2.nodes);
+        assert_eq!(pos_of("x"), Some(1), "{:?}", df2.nodes);
     }
 }
