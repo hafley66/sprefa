@@ -236,46 +236,25 @@ impl Engine {
             changed = true;
             changed_source_rels.insert("clock".to_string());
         }
-        if module_rels_used(prog) {
+        // The extraction-tied builtin rel families (module/type/call/dataflow/
+        // doc/spine): `trait ExtractFamily` + registry (src/rels/extract_family.rs),
+        // replacing six hand-written used-gate/refresh blocks. Contract
+        // preserved per family: refresh() returns whether to mark its rels()
+        // changed — a real input-digest diff for type/call/dataflow/doc
+        // (perf gaps A/C), unconditional true for the wholesale module/spine
+        // rebuilds (conservative mark). None of these feed `changed`
+        // directly, only the `changed_source_rels` attribution set.
+        // `node` (CST) is not a member (it must run BEFORE spine — its walk
+        // writes the `_strings`/`_where_bytes` meta tables spine projects),
+        // so it stays hand-dispatched between the pre/post-node slices.
+        for fam in crate::rels::extract_families_pre_node() {
+            if !fam.used(prog) { continue; }
             let t = std::time::Instant::now();
-            self.refresh_module_rels()?;
-            // No change report from the module refresh (wholesale rebuild), so
-            // its rels stay conservatively marked whenever the family runs.
-            for m in MODULE_RELS { changed_source_rels.insert(m.to_string()); }
-            phase("module-rels", t);
-        }
-        if type_rels_used(prog) || rels_used(prog, &["type_shape", "type_lgg"]) || doc_text_rels_used(prog) {
-            let t = std::time::Instant::now();
-            if self.refresh_type_rels()? {
-                for r in TYPE_RELS { changed_source_rels.insert(r.to_string()); }
-                for r in DOC_TEXT_RELS { changed_source_rels.insert(r.to_string()); }
+            if fam.refresh(self)? {
+                for r in fam.rels() { changed_source_rels.insert(r.to_string()); }
             }
-            phase("type-rels", t);
+            phase(fam.name(), t);
         }
-        if call_rels_used(prog) {
-            let t = std::time::Instant::now();
-            if self.refresh_call_rels()? {
-                for r in CALL_RELS { changed_source_rels.insert(r.to_string()); }
-            }
-            phase("call-rels", t);
-        }
-        if dataflow_rels_used(prog) {
-            let t = std::time::Instant::now();
-            if self.refresh_dataflow_rels()? {
-                for r in DATAFLOW_RELS { changed_source_rels.insert(r.to_string()); }
-            }
-            phase("dataflow-rels", t);
-        }
-        if doc_rels_used(prog) {
-            let t = std::time::Instant::now();
-            if self.refresh_doc_rels()? {
-                for r in DOC_RELS { changed_source_rels.insert(r.to_string()); }
-            }
-            phase("doc-rels", t);
-        }
-        // Node rels write into `_strings`/`_where_bytes` (the spine meta tables),
-        // so they must run BEFORE the spine projection or this tick's `ref`/
-        // `string` would miss the node spans.
         if node_rels_used(prog) {
             let t = std::time::Instant::now();
             if self.refresh_node_rels()? {
@@ -284,12 +263,13 @@ impl Engine {
             }
             phase("node-rels", t);
         }
-        if spine_rels_used(prog) {
+        for fam in crate::rels::extract_families_post_node() {
+            if !fam.used(prog) { continue; }
             let t = std::time::Instant::now();
-            self.refresh_spine_rels()?;
-            // Wholesale projection with no change report; conservative mark.
-            for s in SPINE_RELS { changed_source_rels.insert(s.to_string()); }
-            phase("spine-rels", t);
+            if fam.refresh(self)? {
+                for r in fam.rels() { changed_source_rels.insert(r.to_string()); }
+            }
+            phase(fam.name(), t);
         }
         // The git-derived/analysis/scip/propose/embed families behind RelKind.
         // The diff can move without any file content changing (a commit moves
@@ -643,24 +623,19 @@ impl Engine {
         if files_changed {
             self.refresh_builtin_rels()?;
             for b in BUILTIN_RELS { changed_source_rels.insert(b.to_string()); }
-            // The extractor families report whether their input digest moved
-            // (perf gap C): a changed file OUTSIDE a family's corpus (e.g. an
-            // edited .dl or .md under a type-graph program) no longer marks the
-            // family's rels changed, so their derived dependents stay put.
-            if type_rels_used(prog) || rels_used(prog, &["type_shape", "type_lgg"]) || doc_text_rels_used(prog) {
-                if self.refresh_type_rels()? {
-                    for t in TYPE_RELS { changed_source_rels.insert(t.to_string()); }
-                    for t in DOC_TEXT_RELS { changed_source_rels.insert(t.to_string()); }
+            // The ExtractFamily registry, minus module (dispatched below via
+            // `ModuleFamily::refresh_delta` — it must also fire on a
+            // manifest-only change, outside this files-changed guard). Each
+            // family reports whether its input digest moved (perf gap C): a
+            // changed file OUTSIDE a family's corpus (e.g. an edited .dl or
+            // .md under a type-graph program) no longer marks the family's
+            // rels changed, so their derived dependents stay put. `spine`
+            // (post-node) reports true unconditionally — conservative mark,
+            // as before.
+            for fam in crate::rels::extract_families_paths_pre_node() {
+                if fam.used(prog) && fam.refresh(self)? {
+                    for r in fam.rels() { changed_source_rels.insert(r.to_string()); }
                 }
-            }
-            if call_rels_used(prog) && self.refresh_call_rels()? {
-                for r in CALL_RELS { changed_source_rels.insert(r.to_string()); }
-            }
-            if dataflow_rels_used(prog) && self.refresh_dataflow_rels()? {
-                for r in DATAFLOW_RELS { changed_source_rels.insert(r.to_string()); }
-            }
-            if doc_rels_used(prog) && self.refresh_doc_rels()? {
-                for r in DOC_RELS { changed_source_rels.insert(r.to_string()); }
             }
             // Node rels write into the spine meta tables, so refresh them BEFORE
             // the spine projection (else this tick's `ref`/`string` miss node spans).
@@ -670,9 +645,10 @@ impl Engine {
                 for n in NODE_RELS { changed_source_rels.insert(n.to_string()); }
                 changed_facts = true;
             }
-            if spine_rels_used(prog) {
-                self.refresh_spine_rels()?;
-                for s in SPINE_RELS { changed_source_rels.insert(s.to_string()); }
+            for fam in crate::rels::extract_families_post_node() {
+                if fam.used(prog) && fam.refresh(self)? {
+                    for r in fam.rels() { changed_source_rels.insert(r.to_string()); }
+                }
             }
         }
         // The clock fires on time, not on file change, so refresh it outside the
@@ -687,12 +663,15 @@ impl Engine {
             changed_source_rels.insert("clock".to_string());
             changed_facts = true;
         }
-        if wants_module_rels && (module_full_work || !module_delta_paths.is_empty()) {
-            if module_full_work {
-                self.refresh_module_rels_for_revs(&["WORK"])?;
-            } else {
-                self.refresh_module_rels_for_paths("WORK", &module_delta_paths)?;
-            }
+        // The module family's incremental dispatch: the full-work vs
+        // path-delta decision lives in `ModuleFamily::refresh_delta`; the
+        // per-file loop above computed the classification (manifest / new /
+        // deleted file -> full WORK-rev redo, content edit -> path-scoped).
+        // Outside the files-changed guard on purpose: a manifest-only change
+        // sets `module_full_work` without any matched source file moving.
+        if wants_module_rels
+            && crate::rels::ModuleFamily.refresh_delta(self, module_full_work, &module_delta_paths)?
+        {
             for m in MODULE_RELS { changed_source_rels.insert(m.to_string()); }
             changed_facts = true;
         }

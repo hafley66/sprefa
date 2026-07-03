@@ -44,6 +44,7 @@ use crate::engine::{rels_used, Engine};
 mod analysis;
 mod catalog;
 mod embed;
+pub mod extract_family;
 mod git;
 mod perf;
 mod propose;
@@ -58,6 +59,11 @@ use perf::PerfKind;
 use propose::{ProposeCloneKind, ProposeExtractKind};
 use querylog::QueryLogKind;
 use scip::ScipKind;
+
+pub use extract_family::{
+    extract_families, extract_families_paths_pre_node, extract_families_post_node,
+    extract_families_pre_node, ExtractFamily, ModuleFamily,
+};
 
 /// Refresh the `query_log` projection right now, outside the normal tick
 /// cadence. The daemon `query`/`query_sql` RPC handlers and the LSP `dl/query`

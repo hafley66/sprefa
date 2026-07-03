@@ -155,7 +155,7 @@ pub fn tick_audit() -> bool {
 /// every tick, but populated by `refresh_module_rels` only when the program
 /// references one (resolution parses every file, so it is lazy). `module_edge` is
 /// the 2-col convenience closure edge; `module_edge_rev` is the rev-aware form.
-const MODULE_RELS: [&str; 6] = [
+pub(crate) const MODULE_RELS: [&str; 6] = [
     "module_import",
     "module_edge",
     "module_edge_rev",
@@ -176,7 +176,7 @@ const MODULE_RELS: [&str; 6] = [
 /// SCIP-resolved graph where endpoints are definition symbols, not bare names
 /// (already repo-prefixed via type_entity's sym, so it doesn't need its own
 /// repo column).
-const TYPE_RELS: [&str; 5] =
+pub(crate) const TYPE_RELS: [&str; 5] =
     ["type_edge", "type_edge_rev", "type_entity", "type_sig", "type_link"];
 
 /// Phase D diet-SCIP call graph. `call_def` is each callable (sym, kind, file,
@@ -188,7 +188,7 @@ const TYPE_RELS: [&str; 5] =
 /// on `write` only. Symbols are `file::kind::name`, the same shape
 /// `type_entity` uses, so the call and type graphs share nodes and a join
 /// reaches both.
-const CALL_RELS: [&str; 6] = ["call_def", "call_site", "call_edge", "call_edge_rev", "call_name", "call_kind"];
+pub(crate) const CALL_RELS: [&str; 6] = ["call_def", "call_site", "call_edge", "call_edge_rev", "call_name", "call_kind"];
 
 /// Intra-procedural dataflow lift: `df_node(id, kind, var, fn, file, line)` is a
 /// value-bearing program point, `df_edge(from, to)` is local value flow. A rule
@@ -201,7 +201,7 @@ const CALL_RELS: [&str; 6] = ["call_def", "call_site", "call_edge", "call_edge_r
 /// positional slot an argument value feeds (receiver = -1); `df_field` is named
 /// value flow into a composite (struct-literal field, object-literal property,
 /// Kotlin named argument). See `typegraph::DataflowFacts`.
-const DATAFLOW_RELS: [&str; 8] = ["df_node", "df_edge", "loop_over", "allocates", "nest", "df_param", "df_arg", "df_field"];
+pub(crate) const DATAFLOW_RELS: [&str; 8] = ["df_node", "df_edge", "loop_over", "allocates", "nest", "df_param", "df_arg", "df_field"];
 
 /// Document structure from non-source text (markdown today; comments and other
 /// tree-sitter grammars to follow via `ingest::IngestLang`). `doc_node` is one row
@@ -211,7 +211,7 @@ const DATAFLOW_RELS: [&str; 8] = ["df_node", "df_edge", "loop_over", "allocates"
 /// name matches a `type_entity` name. Populated by the `ingest` registry over
 /// `_file`'s document-typed files (a source rule scanning `**/*.md` feeds `_file`,
 /// same as the source langs).
-const DOC_RELS: [&str; 2] = ["doc_node", "doc_ref"];
+pub(crate) const DOC_RELS: [&str; 2] = ["doc_node", "doc_ref"];
 
 /// Doc comments attached to declared entities (Tier 1/2 doc gen). `doc_comment`
 /// is one row per documented `type_entity`: (repo, sym, line, text), the cleaned
@@ -219,7 +219,7 @@ const DOC_RELS: [&str; 2] = ["doc_node", "doc_ref"];
 /// tag, arg, text) where tag is `param`/`returns`/`deprecated`/`section`/... .
 /// Both are populated in `refresh_type_rels` from the one parse that already
 /// builds `type_entity`, by the per-language AST locators in `typegraph`.
-const DOC_TEXT_RELS: [&str; 2] = ["doc_comment", "doc_tag"];
+pub(crate) const DOC_TEXT_RELS: [&str; 2] = ["doc_comment", "doc_tag"];
 
 // The git-derived families `changed` / `changed_line` / `created`, the analysis
 // families `agent` / `dl_diag` / `type_shape` / `type_lgg` / catalog, the SCIP
@@ -234,7 +234,7 @@ const DOC_TEXT_RELS: [&str; 2] = ["doc_comment", "doc_tag"];
 /// span, `id` being the `_where_bytes` id (the rewrite coordinate an `edit` keys
 /// off). Join them to ask "where does <text> occur": `string(s, "Foo", _),
 /// ref(_, s, f, lo, hi)`. Populated for regex/ast/sg captures and import refs.
-const SPINE_RELS: [&str; 2] = ["string", "ref"];
+pub(crate) const SPINE_RELS: [&str; 2] = ["string", "ref"];
 
 /// CST-as-relation (christmas #3): every NAMED tree-sitter node of every scanned
 /// file as a row. `node(id, kind, file, lo, hi, parent)` — `id`/`parent` are
@@ -463,7 +463,7 @@ fn effect_rel_decls() -> Vec<RelDecl> {
 
 fn effect_rels_used(prog: &Program) -> bool { rels_used(prog, &EFFECT_RELS) }
 
-fn module_rel_decls() -> Vec<RelDecl> {
+pub(crate) fn module_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "module_import".into(), cols: vec![
@@ -484,7 +484,7 @@ fn module_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
-fn type_rel_decls() -> Vec<RelDecl> {
+pub(crate) fn type_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "type_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text), c("repo", Type::Text)], group: "type",
@@ -503,7 +503,7 @@ fn type_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
-fn doc_text_rel_decls() -> Vec<RelDecl> {
+pub(crate) fn doc_text_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "doc_comment".into(), cols: vec![
@@ -516,7 +516,7 @@ fn doc_text_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
-fn call_rel_decls() -> Vec<RelDecl> {
+pub(crate) fn call_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "call_def".into(), cols: vec![
@@ -550,7 +550,7 @@ fn call_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
-fn dataflow_rel_decls() -> Vec<RelDecl> {
+pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "df_node".into(), cols: vec![
@@ -606,7 +606,7 @@ fn dataflow_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
-fn doc_rel_decls() -> Vec<RelDecl> {
+pub(crate) fn doc_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         // one row per document structural node (heading / code block / section).
@@ -631,7 +631,7 @@ fn doc_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
-fn spine_rel_decls() -> Vec<RelDecl> {
+pub(crate) fn spine_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "string".into(), cols: vec![c("id", Type::Text), c("text", Type::Text), c("norm", Type::Text)], group: "spine",
@@ -789,17 +789,17 @@ fn classify_call_kind(callee: &str) -> Option<&'static str> {
     })
 }
 
-fn module_rels_used(prog: &Program) -> bool { rels_used(prog, &MODULE_RELS) }
+pub(crate) fn module_rels_used(prog: &Program) -> bool { rels_used(prog, &MODULE_RELS) }
 
-fn type_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_RELS) }
+pub(crate) fn type_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_RELS) }
 
-fn doc_text_rels_used(prog: &Program) -> bool { rels_used(prog, &DOC_TEXT_RELS) }
+pub(crate) fn doc_text_rels_used(prog: &Program) -> bool { rels_used(prog, &DOC_TEXT_RELS) }
 
-fn call_rels_used(prog: &Program) -> bool { rels_used(prog, &CALL_RELS) }
+pub(crate) fn call_rels_used(prog: &Program) -> bool { rels_used(prog, &CALL_RELS) }
 
-fn dataflow_rels_used(prog: &Program) -> bool { rels_used(prog, &DATAFLOW_RELS) }
+pub(crate) fn dataflow_rels_used(prog: &Program) -> bool { rels_used(prog, &DATAFLOW_RELS) }
 
-fn doc_rels_used(prog: &Program) -> bool { rels_used(prog, &DOC_RELS) }
+pub(crate) fn doc_rels_used(prog: &Program) -> bool { rels_used(prog, &DOC_RELS) }
 
 fn daemon_rels_used(prog: &Program) -> bool { rels_used(prog, &DAEMON_RELS) }
 
@@ -824,7 +824,7 @@ pub(crate) fn scip_descriptor_name(symbol: &str) -> Option<String> {
     last.map(|(s, e)| symbol[s..e].to_string())
 }
 
-fn spine_rels_used(prog: &Program) -> bool { rels_used(prog, &SPINE_RELS) }
+pub(crate) fn spine_rels_used(prog: &Program) -> bool { rels_used(prog, &SPINE_RELS) }
 
 fn node_rels_used(prog: &Program) -> bool { rels_used(prog, &NODE_RELS) }
 
