@@ -695,7 +695,7 @@ pub fn stratify_diags(prog: &Program, dl_path: &str) -> Vec<TypeDiag> {
     let n = names.len();
     let mut adj = vec![Vec::new(); n];
     for &(h, b, _) in &edges { adj[h as usize].push(b); }
-    let (comp, _) = scc::tarjan(&adj);
+    let (comp, ncomp) = scc::tarjan(&adj);
     let mut reported: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
     for &(h, b, force) in &edges {
         if force && comp[h as usize] == comp[b as usize] && reported.insert((h, b)) {
@@ -704,6 +704,34 @@ pub fn stratify_diags(prog: &Program, dl_path: &str) -> Vec<TypeDiag> {
                 severity: Severity::Error, code: "not-stratified".into(),
                 msg: format!("relation `{}` is aggregated or negated inside a recursive cycle with `{}`",
                     names[b as usize], names[h as usize]),
+            });
+        }
+    }
+
+    // NULL-padded head inside a recursive cycle: a `_` head slot (explicit, or
+    // named-arg padding for an unnamed column) lowers to SQL NULL, and a NULL row
+    // never dedups in the fixpoint delta (NULL != NULL under INSERT OR IGNORE) —
+    // the same row re-inserts every iteration and evaluation never converges.
+    // Sink use (a non-recursive head like `diag`) is fine. `rebuild_derived`
+    // carries the runtime defense for programs that skip the check path.
+    let mut comp_size = vec![0usize; ncomp as usize];
+    for &c in &comp { comp_size[c as usize] += 1; }
+    let mut self_loop = vec![false; n];
+    for &(h, b, _) in &edges { if h == b { self_loop[h as usize] = true; } }
+    let mut null_reported: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for item in &prog.items {
+        let Item::Rule(r) = item else { continue; };
+        if r.temporal.is_some() || !r.head_null_pads() { continue; }
+        let Some(&h) = id.get(&r.head.rel) else { continue; };
+        let recursive = comp_size[comp[h as usize] as usize] > 1 || self_loop[h as usize];
+        if recursive && null_reported.insert(r.head.rel.clone()) {
+            diags.push(TypeDiag {
+                path: dl_path.to_string(), span: (0, 0),
+                severity: Severity::Error, code: "recursive-null-pad".into(),
+                msg: format!("rule head for `{}` leaves column(s) NULL (`_` or named-arg padding) \
+                    inside a recursive cycle — a NULL row never dedups in the fixpoint, so \
+                    evaluation would not converge; bind every head column or break the cycle",
+                    r.head.rel),
             });
         }
     }

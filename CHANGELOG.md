@@ -6,6 +6,17 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+### Fixed
+- **NULL-padded heads in recursive rules now refuse instead of hanging.** A `_`
+  head slot (explicit, or the named-arg padding v0.4.0 introduced) lowers to SQL
+  NULL, and NULL rows never dedup in the fixpoint delta (`NULL != NULL` under
+  `INSERT OR IGNORE`) — a recursive rule like `n(a: y) <- n(y, _).` re-inserted
+  the same row every iteration forever (measured: 2^24 rows, 422 MB, still
+  climbing at kill). Two guards: typecheck emits `recursive-null-pad`
+  (`--check`/LSP), and `rebuild_derived` bails before entering the fixpoint loop
+  as the runtime defense. Non-recursive padded sinks (the `diag` shape) are
+  untouched.
+
 ## [0.4.1] - 2026-07-02
 
 ### Fixed

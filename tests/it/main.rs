@@ -80,6 +80,7 @@ mod pin_skew;
 mod perf_stress_c;
 mod propose_extract;
 mod query_json;
+mod recursive_null_pad;
 mod regex_glob_filter;
 mod regex_sugar;
 mod recompute_guard;

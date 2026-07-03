@@ -3964,6 +3964,18 @@ impl Engine {
                     for (rel, sql) in &stmts { timed(rel, sql)?; }
                     continue;
                 }
+                // Defense twin of typecheck's `recursive-null-pad`: a NULL-padded
+                // head in this component would re-insert the same row every
+                // iteration (NULL != NULL never dedups), so the delta never
+                // reaches 0. Bail instead of hanging.
+                for &ri in &comp_rules {
+                    if derived_rules[ri].head_null_pads() {
+                        bail!("rule head for `{}` leaves column(s) NULL (`_` or named-arg padding) \
+                               inside a recursive component — the fixpoint would not converge; \
+                               bind every head column or break the cycle",
+                              derived_rules[ri].head.rel);
+                    }
+                }
                 let mut iters = 0;
                 loop {
                     let mut delta = 0usize;

@@ -347,6 +347,18 @@ impl Rule {
     /// Does any head term carry an aggregate?
     pub fn has_agg(&self) -> bool { self.aggs.iter().any(|a| a.is_some()) }
 
+    /// Does any head slot lower to SQL NULL? A `_` head term (explicit, or the
+    /// named-arg padding for an unnamed column) projects NULL. A NULL row never
+    /// dedups in a fixpoint delta (NULL != NULL under INSERT OR IGNORE), so this
+    /// is only legal on a non-recursive (sink) head — typecheck flags it and
+    /// `rebuild_derived` bails when the head rel sits in a recursive component.
+    /// An aggregated `_` (`count(_)`) is not a projected slot and does not count.
+    pub fn head_null_pads(&self) -> bool {
+        self.head.terms.iter().enumerate().any(|(i, t)| {
+            matches!(t, Term::Wild) && !matches!(self.aggs.get(i), Some(Some(_)))
+        })
+    }
+
     /// `@next` carry rule: head staged for the next tick's seed.
     pub fn is_next(&self) -> bool { self.temporal == Some(Temporal::Next) }
 

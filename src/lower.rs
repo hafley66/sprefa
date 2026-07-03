@@ -343,8 +343,10 @@ pub fn lower_rule_to(rule: &Rule, rels: &Rels, target: &str, extra: &[(String, S
         // rule that names only some columns (`diag(path: p, line: l, msg: m)`)
         // leaves the rest unset. Project SQL NULL so the reader can default it.
         // Sink use only — a NULL never dedups in a fixpoint delta (NULL != NULL),
-        // so a Wild in a RECURSIVE head would diverge; `diag` (and other sinks)
-        // are non-recursive.
+        // so a Wild in a RECURSIVE head would diverge. Enforced upstream:
+        // typecheck's `recursive-null-pad` diag + the `rebuild_derived` bail
+        // (both via `Rule::head_null_pads`), so this arm never runs for a
+        // recursive component.
         if matches!(term, Term::Wild) { exprs.push("NULL".into()); continue; }
         let e = term_sql(term, &canon)?;
         // A head term containing a Call (split/replace) may evaluate to NULL
