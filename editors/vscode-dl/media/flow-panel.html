@@ -177,7 +177,7 @@
     <option value="typeCurated">Type graph (curated)</option>
     <option value="marks">Marks</option>
     <option value="enumMatches">Enums ↔ matches</option>
-    <option value="madge">Module graph (madge)</option>
+    <option value="madge">Module graph</option>
     <option value="custom">Custom</option>
   </select></div>
   <div class="row"><label>nodes</label><input id="nodesSql" spellcheck="false" /></div>
@@ -285,7 +285,7 @@ const DEFAULT_EDGES =
   "SELECT src, dst, kind FROM rel_type_link LIMIT 1200";
 
 // ── presets: one option per panel-SQL block documented in a .dl header ──────
-// (.dl/flow-panel.dl, .dl/mark-lens.dl, .dl/enum-matches.dl, examples/madge.dl)
+// (.dl/flow-panel.dl, .dl/mark-lens.dl, .dl/enum-matches.dl)
 const PRESETS = {
   typeAll: { nodes: DEFAULT_NODES, edges: DEFAULT_EDGES },
   typeCurated: {
@@ -305,9 +305,8 @@ const PRESETS = {
     edges: "SELECT DISTINCT enum_name, file || ':' || start, 'match' FROM rel_enum_match_block",
   },
   madge: {
-    nodes: "SELECT path, path, CASE WHEN EXISTS (SELECT 1 FROM rel_cycle_member c " +
-      "WHERE c.path = rel_seen.path) THEN 'cycle' ELSE 'module' END, path, 1 FROM rel_seen",
-    edges: "SELECT src, dst, 'import' FROM rel_dep",
+    nodes: "SELECT path, path, kind, path, 1 FROM rel_module_node",
+    edges: "SELECT src, dst, 'import' FROM rel_module_edge",
   },
 };
 const PRESET_KEY = 'dl-flow-preset';
@@ -342,6 +341,12 @@ document.getElementById('edgesSql').value = DEFAULT_EDGES;
 let linkedOnly = true;
 
 function showError(msg) {
+  const missingRel = /no such table: rel_(\w+)/.exec(msg);
+  if (missingRel) {
+    msg += ` — rel_${missingRel[1]} is derived by a .dl program the running` +
+      ` daemon hasn't loaded; check that a .dl file referencing ${missingRel[1]}` +
+      ' is being served.';
+  }
   const banner = document.getElementById('errBanner');
   banner.innerHTML = '<b>query failed</b>';
   banner.appendChild(document.createTextNode(msg));

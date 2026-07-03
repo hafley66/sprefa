@@ -20,3 +20,28 @@ panel_node(sym, name, "trait", file, line)  <- type_entity(_, sym, name, "trait"
 rel panel_edge(src: text, dst: text, kind: text).
 panel_edge(src, dst, kind) <-
   type_link(src, dst, kind), panel_node(src, _, _, _, _), panel_node(dst, _, _, _, _).
+
+# Module graph: the "Module graph" panel preset reads this section, backed by
+# the engine's built-in resolved file-to-file import graph (module_edge)
+# instead of the standalone madge.dl example — so it populates on any
+# discovery daemon serving this repo's .dl/, not just when madge.dl happens
+# to be loaded too. Referencing module_edge below opts module extraction in.
+#
+# Panel SQL (dl: Flow Panel, preset "Module graph"):
+#   nodes: SELECT path, path, kind, path, 1 FROM rel_module_node
+#   edges: SELECT src, dst, 'import' FROM rel_module_edge
+#
+# Universe = files that appear as either endpoint of a module_edge; a file
+# with no import edges at all won't show up as a node here (fine for a panel
+# preset — it has nothing to draw a line to).
+rel mod_reach(src: path, dst: path).
+mod_reach(a, b) <- module_edge(a, b).
+mod_reach(a, c) <- mod_reach(a, b), module_edge(b, c).
+
+rel module_cycle(path: path).
+module_cycle(p) <- mod_reach(p, p).
+
+rel module_node(path: path, kind: text).
+module_node(p, "cycle") <- module_cycle(p).
+module_node(p, "module") <- module_edge(p, _), !module_cycle(p).
+module_node(p, "module") <- module_edge(_, p), !module_cycle(p).

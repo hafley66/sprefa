@@ -7,11 +7,13 @@
 # `module_import` (every import statement, resolved or not).
 # Differential oracle: tests/it/oracle_madge.rs (skips without a madge binary).
 #
-# Panel SQL (dl: Flow Panel):
-#   nodes: SELECT path, path, CASE WHEN EXISTS (SELECT 1 FROM rel_cycle_member c
-#          WHERE c.path = rel_seen.path) THEN 'cycle' ELSE 'module' END, path, 1
-#          FROM rel_seen
-#   edges: SELECT src, dst, 'import' FROM rel_dep
+# The flow panel's "Module graph" preset does NOT read this file — it reads
+# the built-in module graph via .dl/flow-panel.dl instead, so the preset
+# populates on any discovery daemon (not just one that happens to have this
+# example loaded too, and without colliding with flow-panel.dl's own `seen`
+# rel). This file remains the standalone madge-CLI-parity example: run it
+# directly for the full madge surface (circular/orphans/leaves/summary/
+# depends/npm/warnings).
 
 rel seen(path: file).
 seen(path) <- scan("WORK", "**/*.ts", path, rev).
