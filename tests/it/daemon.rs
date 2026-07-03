@@ -280,6 +280,94 @@ seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
 }
 
+/// The bug this guards: a discovery-mode daemon (no positional program args,
+/// programs come from `<root>/.dl/*.dl`) used to treat ANY edit to an
+/// already-discovered file as `touches_program` and exit-for-respawn — but a
+/// discovery daemon has no positional args to respawn FROM, so nothing brings
+/// it back until some unrelated `dl` client happens to run. Concretely: the
+/// VS Code panel's mark command appends one fact line to `.dl/marks.dl`,
+/// which is exactly this case. The fix hot-reloads instead. Content edit to a
+/// discovered file must re-tick with the new facts and leave the daemon
+/// process alive.
+#[test]
+fn discovery_mode_content_edit_hot_reloads() {
+    let dir = sandbox("dischot");
+    fs::create_dir_all(dir.join(".dl")).unwrap();
+    fs::write(dir.join(".dl").join("panel.dl"),
+        "rel mark(t: text).\n\
+         mark(\"a\").\n\
+         ? mark(t).\n").unwrap();
+
+    // Discovery mode: no positional program file, just --root.
+    let mut child = Command::new(DL)
+        .args(["--daemon"]).arg("--root").arg(&dir)
+        .spawn().expect("spawn dl --daemon (discovery)");
+
+    let sock = dir.join(".dl").join("daemon.sock");
+    let mut ready = false;
+    for _ in 0..100 {
+        if sock.exists() && std::os::unix::net::UnixStream::connect(&sock).is_ok() {
+            ready = true; break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(ready, "discovery daemon socket not ready");
+
+    let query_rows = |sock: &PathBuf| -> usize {
+        use std::io::Write;
+        let mut s = std::os::unix::net::UnixStream::connect(sock).unwrap();
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"query","params":{}}"#;
+        write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+        let resp = read_frame(&mut s).expect("query response");
+        let v: serde_json::Value = serde_json::from_str(&resp).expect("parse query resp");
+        v["result"]["results"][0]["rows"].as_array().map(|a| a.len()).unwrap_or(0)
+    };
+
+    // Baseline: one mark row.
+    let mut baseline_ok = false;
+    for _ in 0..60 {
+        if query_rows(&sock) == 1 { baseline_ok = true; break; }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(baseline_ok, "baseline should see 1 mark row; got {}", query_rows(&sock));
+
+    // Past STARTUP_GRACE (1s) plus margin, append a fact — the marks.dl append
+    // shape from the VS Code panel's mark command.
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    {
+        use std::io::Write as _;
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(dir.join(".dl").join("panel.dl"))
+            .unwrap();
+        writeln!(f, "mark(\"b\").").unwrap();
+    }
+
+    // Poll until the daemon has hot-reloaded and re-ticked with 2 rows.
+    let mut reloaded = false;
+    for _ in 0..100 {
+        if query_rows(&sock) == 2 { reloaded = true; break; }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(reloaded, "content edit to a discovered program file should hot-reload, not exit; got {} row(s)", query_rows(&sock));
+
+    // The daemon process must still be alive (the bug: it would have exited).
+    assert!(child.try_wait().expect("try_wait").is_none(),
+        "daemon should still be running after a discovered-program content edit");
+
+    // Clean shutdown.
+    {
+        use std::io::Write;
+        let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+        let body = r#"{"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}}"#;
+        write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+        let _ = read_frame(&mut s);
+    }
+    let status = child.wait_timeout(std::time::Duration::from_secs(5))
+        .expect("daemon did not exit after shutdown");
+    assert!(status.success());
+}
+
 // ---------- helpers ----------
 
 fn read_frame(s: &mut std::os::unix::net::UnixStream) -> Option<String> {

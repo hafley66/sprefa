@@ -215,11 +215,15 @@ impl Daemon {
 
     /// Re-discover `.dl` files under `<root>/.dl/`, re-merge the program
     /// if the file set changed, re-tick. Called by the watcher when a new
-    /// `.dl` file appears in discovery mode (k8s-style add-a-file). If the
-    /// set is unchanged, returns immediately.
-    fn reload_discovery(&self) -> Result<()> {
+    /// `.dl` file appears in discovery mode (k8s-style add-a-file), and also
+    /// as the first probe on a discovered-program content edit (see the
+    /// `touches_program` branch in `watcher_loop`). Returns `Ok(true)` when
+    /// the file set changed and the program was re-merged, `Ok(false)` when
+    /// the set is unchanged (a content edit to an already-discovered file, or
+    /// not in discovery mode at all) — the caller tells those two apart.
+    fn reload_discovery(&self) -> Result<bool> {
         if !self.discovery_mode {
-            return Ok(());
+            return Ok(false);
         }
         let files = crate::resolve_programs(&[], &self.root)?;
         let mut canon: Vec<PathBuf> = files
@@ -230,7 +234,7 @@ impl Daemon {
         {
             let pf = lock(&self.program_files);
             if canon == *pf {
-                return Ok(());
+                return Ok(false);
             }
         }
         let (new_prog, type_diags, _display) = crate::prepare_paths(&files)?;
@@ -241,7 +245,7 @@ impl Daemon {
         if n_err > 0 {
             crate::render_type_diags_eprintln(&type_diags);
             eprintln!("[daemon] discovery reload: {n_err} type error(s); keeping old");
-            return Ok(());
+            return Ok(false);
         }
         crate::render_type_diags_eprintln(&type_diags);
         {
@@ -261,7 +265,7 @@ impl Daemon {
         let n = lock(&self.program_files).len();
         eprintln!("[daemon] discovery reload: {n} file(s)");
         self.tick_full(false)?;
-        Ok(())
+        Ok(true)
     }
 
     /// One poll cycle (the clock source for `@async`): advance the tick (which
@@ -715,8 +719,13 @@ fn watcher_loop(d: Arc<Daemon>) {
         tracing::debug!(n_paths = paths.len(), program = touches_program,
             cfg = touches_cfg, git = touches_git, "watcher event");
         // A `.dl` program edit either respawns (cold path: re-parse from
-        // scratch via the spawn-if-missing dance) or hot-reloads (tray path:
-        // re-parse in place, swap the Mutex<Program>, re-tick).
+        // scratch via the spawn-if-missing dance) or hot-reloads (tray path
+        // and discovery-mode path: re-parse in place, swap the Mutex<Program>,
+        // re-tick). A discovery daemon has no startup positional args to
+        // respawn FROM — exiting would strand it until some other `dl`
+        // client happens to run — so it always hot-reloads a content edit to
+        // an already-discovered file (e.g. the VS Code panel appending a mark
+        // fact to `.dl/marks.dl`).
         if touches_program {
             let names: Vec<String> = paths.iter()
                 .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(|s| s.to_string()))
@@ -726,6 +735,24 @@ fn watcher_loop(d: Arc<Daemon>) {
                 match d.reload_program() {
                     Ok(()) => {}
                     Err(e) => eprintln!("[daemon] reload failed, keeping old: {e}"),
+                }
+                continue;
+            }
+            if d.discovery_mode {
+                // The file set can't have changed (touches_program only fires
+                // for paths already in program_files), so this is a content
+                // edit: reload_discovery's early-return confirms the set is
+                // unchanged, then reload_program re-parses the edited text.
+                match d.reload_discovery() {
+                    Ok(false) => {
+                        eprintln!("[daemon] program edit ({}) — reloading (discovery)", names.join(", "));
+                        match d.reload_program() {
+                            Ok(()) => {}
+                            Err(e) => eprintln!("[daemon] reload failed, keeping old: {e}"),
+                        }
+                    }
+                    Ok(true) => {} // file set changed; reload_discovery already re-ticked
+                    Err(e) => eprintln!("[daemon] discovery reload: {e}"),
                 }
                 continue;
             }
@@ -745,7 +772,7 @@ fn watcher_loop(d: Arc<Daemon>) {
             if has_dl {
                 eprintln!("[daemon] .dl discovery change — re-merging program");
                 match d.reload_discovery() {
-                    Ok(()) => {}
+                    Ok(_) => {}
                     Err(e) => eprintln!("[daemon] discovery reload: {e}"),
                 }
                 continue;
