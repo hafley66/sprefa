@@ -68,6 +68,26 @@ export function activate(ctx: vscode.ExtensionContext): void {
   }));
   ctx.subscriptions.push(vscode.commands.registerCommand("dl.markSelection", () => addMark(root)));
   ctx.subscriptions.push(vscode.commands.registerCommand("dl.clearMarks", () => clearMarks(root)));
+
+  // marked-line decorations: left stripe + overview-ruler tick, re-read from
+  // .dl/marks.dl (same facts the engine joins) so external edits show up live
+  markDecoration = vscode.window.createTextEditorDecorationType({
+    isWholeLine: true,
+    borderWidth: "0 0 0 3px",
+    borderStyle: "solid",
+    borderColor: new vscode.ThemeColor("dlFlow.slice"),
+    overviewRulerColor: new vscode.ThemeColor("dlFlow.slice"),
+    overviewRulerLane: vscode.OverviewRulerLane.Left,
+  });
+  ctx.subscriptions.push(markDecoration);
+  refreshMarkDecorations(root, false);
+  ctx.subscriptions.push(vscode.window.onDidChangeVisibleTextEditors(() => refreshMarkDecorations(root, false)));
+  const marksWatcher = vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(vscode.Uri.file(path.join(root, ".dl")), "marks.dl"));
+  for (const on of [marksWatcher.onDidChange, marksWatcher.onDidCreate, marksWatcher.onDidDelete]) {
+    ctx.subscriptions.push(on(() => refreshMarkDecorations(root, true)));
+  }
+  ctx.subscriptions.push(marksWatcher);
 }
 
 // ── marks: selection -> a `mark` fact the reactive engine joins against ─────
@@ -98,12 +118,54 @@ function addMark(root: string): void {
   const p = marksPath(root);
   const cur = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : MARKS_HEADER;
   if (!cur.includes(fact)) fs.writeFileSync(p, cur + fact);
+  refreshMarkDecorations(root, false);
   vscode.window.setStatusBarMessage(`dl mark: ${text} @ ${rel}:${line}`, 3000);
 }
 
 function clearMarks(root: string): void {
   fs.writeFileSync(marksPath(root), MARKS_HEADER);
+  refreshMarkDecorations(root, false);
   vscode.window.setStatusBarMessage("dl marks cleared", 3000);
+}
+
+// ── mark line decorations: stripe + ruler tick on every marked line ─────────
+// Rendered straight from the marks.dl facts (`mark("text", "rel/path", line).`)
+// rather than editor state, so marks survive window reloads and lines marked
+// by other tooling appear too. The fields are JSON string literals (that is
+// how addMark writes them), so a JSON-string regex + JSON.parse round-trips
+// any escaping exactly.
+
+let markDecoration: vscode.TextEditorDecorationType | undefined;
+const MARK_FACT = /^mark\("((?:[^"\\]|\\.)*)",\s*"((?:[^"\\]|\\.)*)",\s*(\d+)\)\.$/;
+
+function parseMarks(root: string): { byFile: Map<string, number[]>; count: number } {
+  const byFile = new Map<string, number[]>();
+  let count = 0;
+  const p = marksPath(root);
+  if (!fs.existsSync(p)) return { byFile, count };
+  for (const row of fs.readFileSync(p, "utf8").split("\n")) {
+    const m = MARK_FACT.exec(row.trim());
+    if (!m) continue;
+    const rel = JSON.parse(`"${m[2]}"`) as string;
+    if (!byFile.has(rel)) byFile.set(rel, []);
+    byFile.get(rel)!.push(Number(m[3]));
+    count++;
+  }
+  return { byFile, count };
+}
+
+function refreshMarkDecorations(root: string, announce: boolean): void {
+  if (!markDecoration) return;
+  const { byFile, count } = parseMarks(root);
+  for (const ed of vscode.window.visibleTextEditors) {
+    const rel = path.relative(root, ed.document.uri.fsPath).replace(/\\/g, "/");
+    const lines = byFile.get(rel) ?? [];
+    ed.setDecorations(markDecoration, lines.map((l) => {
+      const i = Math.max(0, Math.min(l - 1, ed.document.lineCount - 1)); // marks are 1-based
+      return new vscode.Range(i, 0, i, 0);
+    }));
+  }
+  if (announce) vscode.window.setStatusBarMessage(`dl marks: ${count}`, 3000);
 }
 
 export function deactivate(): Thenable<void> | undefined {

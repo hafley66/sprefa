@@ -9,7 +9,7 @@
 
     window.dlHost = {
       query(sql, params?) -> Promise<rows: any[][]>   // positional columns
-      hover(files: string[])                          // repo-relative paths under the pointer; [] clears
+      hover(files: string[])                          // union of hovered-slice + pinned node files; [] clears
       open(file, line)                                // ask the host to open a file
     }
 
@@ -48,24 +48,34 @@
 
   /* ── NODES ─────────────────────────────────────────────────────────── */
   .node {
-    position: absolute; width: 208px; z-index: 2;
+    position: absolute; width: max-content; min-width: 168px; max-width: 300px; z-index: 2;
     background: linear-gradient(180deg, #16223400, #0e1622cc), var(--node);
     border: 1px solid var(--node-border); border-radius: 12px;
+    border-left: 3px solid var(--kc, var(--node-border));
     box-shadow: 0 8px 30px #0009, inset 0 1px 0 #ffffff10;
     user-select: none; transition: box-shadow .15s, border-color .15s, opacity .15s; }
-  .node:hover { border-color: #36527a; }
+  .node:hover { border-color: #36527a; border-left-color: var(--kc, #36527a); }
   .node.dragging { box-shadow: 0 0 0 1px var(--cyan), 0 14px 50px #000c; z-index: 6; }
-  .node.hl { border-color: var(--sel); box-shadow: 0 0 0 1px var(--sel), 0 10px 40px #000a; z-index: 5; }
-  .world.hovering .node:not(.hl) { opacity: .25; }
+  .node.hl, .node.pinned { border-color: var(--sel); box-shadow: 0 0 0 1px var(--sel), 0 10px 40px #000a; z-index: 5; }
+  .world.hovering .node:not(.hl):not(.pinned) { opacity: .25; }
   .world.hovering .edge:not(.hl) { opacity: .12; }
+  .node.dim { opacity: .12; }
+  .edge.dim { opacity: .08; }
 
   .node .head { display: flex; align-items: center; gap: 8px; padding: 8px 10px;
     cursor: grab; font-weight: 600; letter-spacing: .3px; }
   .node.dragging .head { cursor: grabbing; }
   .node .head .dot { width: 8px; height: 8px; border-radius: 50%;
-    background: var(--cyan); box-shadow: 0 0 8px var(--cyan); flex: 0 0 auto; }
-  .node .head .label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .node .head .kind { color: var(--muted); font-size: 10px; }
+    background: var(--kc, var(--cyan)); box-shadow: 0 0 8px var(--kc, var(--cyan)); flex: 0 0 auto; }
+  .node .head .label { flex: 1; min-width: 0; overflow: hidden; white-space: normal;
+    word-break: break-all; display: -webkit-box; -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical; }
+  /* selector-style label (axis=value): small muted axis line, value below */
+  .node .head .label .axis { display: block; color: var(--muted);
+    font-size: 10px; font-weight: 500; letter-spacing: .4px; }
+  .node .head .label .val { display: block; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; }
+  .node .head .kind { color: var(--kc, var(--muted)); font-size: 10px; }
   .node .loc { padding: 0 10px 7px; color: var(--muted); font-size: 11px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     border-top: 1px solid #ffffff0d; padding-top: 5px; cursor: pointer; }
@@ -89,7 +99,8 @@
   .edge svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible;
     filter: drop-shadow(0 0 5px #2de2e655); }
   .edge.flip svg { transform: scaleY(-1); transform-origin: center; }
-  .edge .wire { fill: none; stroke: url(#g); stroke-width: 2.5; stroke-linecap: round;
+  .edge .wire { fill: none; stroke: var(--ec, url(#g)); stroke-width: 2.5; stroke-linecap: round;
+    pointer-events: visibleStroke;
     vector-effect: non-scaling-stroke; stroke-dasharray: 7 9; animation: flow 1.2s linear infinite; }
   /* keep the dash marching source→sink despite the mirror flip */
   .edge.flip .wire { animation-direction: reverse; }
@@ -112,8 +123,31 @@
   .bar input { pointer-events: auto; flex: 1; padding: 6px 10px; border-radius: 8px;
     background: #0d1828dd; border: 1px solid #213650; color: var(--ink); font: inherit; }
   .bar input:focus { outline: none; border-color: var(--cyan); }
+  .bar select { pointer-events: auto; padding: 6px 10px; border-radius: 8px;
+    background: #0d1828dd; border: 1px solid #213650; color: var(--ink); font: inherit; }
+  .bar select:focus { outline: none; border-color: var(--cyan); }
   .bar label { color: var(--muted); width: 44px; text-align: right; }
   .bar .err { color: var(--err); font-size: 12px; min-height: 15px; }
+
+  /* legend: one chip per kind in the current result; click = filter-by-kind */
+  .bar .legend { flex-wrap: wrap; gap: 6px; }
+  .bar .legend:empty { display: none; }
+  .bar .chip { pointer-events: auto; cursor: pointer; display: inline-flex;
+    align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px;
+    background: #0d1828aa; border: 1px solid #213650; color: var(--muted);
+    font-size: 11px; user-select: none; }
+  .bar .chip:hover { border-color: var(--cyan); }
+  .bar .chip.on { color: #fff; border-color: var(--cyan); background: #173a52; }
+  .bar .chip .swatch { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+
+  /* query-failure banner: loud, over the grid — a silent empty grid reads as
+     "no data" when the real story is "the LSP/daemon is down" */
+  .banner { position: fixed; left: 50%; top: 42%; transform: translateX(-50%);
+    max-width: 72%; padding: 14px 18px; border-radius: 10px; z-index: 30;
+    background: #2a0f16ee; border: 1px solid var(--err); color: #ffb3b3;
+    white-space: pre-wrap; box-shadow: 0 10px 40px #000a; }
+  .banner b { color: var(--err); display: block; margin-bottom: 4px; }
+  .banner[hidden] { display: none; }
 
   .unsupported { display: none; position: fixed; inset: 0; place-items: center; text-align: center;
     background: var(--bg); padding: 40px; z-index: 99; }
@@ -138,14 +172,25 @@
     <span class="pill" id="countPill">–</span>
     <span class="pill" id="zoomPill">100%</span>
   </div>
+  <div class="row"><label>preset</label><select id="presetSel" title="panel preset">
+    <option value="typeAll">Type graph (all)</option>
+    <option value="typeCurated">Type graph (curated)</option>
+    <option value="marks">Marks</option>
+    <option value="enumMatches">Enums ↔ matches</option>
+    <option value="madge">Module graph (madge)</option>
+    <option value="custom">Custom</option>
+  </select></div>
   <div class="row"><label>nodes</label><input id="nodesSql" spellcheck="false" /></div>
   <div class="row"><label>edges</label><input id="edgesSql" spellcheck="false" /></div>
+  <div class="row legend" id="legend"></div>
   <div class="row"><span class="err" id="errLine"></span></div>
 </div>
 
 <div class="viewport" id="viewport">
   <div class="world" id="world"></div>
 </div>
+
+<div class="banner" id="errBanner" hidden></div>
 
 <div class="unsupported"><div>
   <h2>No CSS anchor positioning here.</h2>
@@ -182,6 +227,9 @@ const world = document.getElementById('world');
 const viewport = document.getElementById('viewport');
 const nodes = new Map();   // nodeId(sym) -> {sym, el, file, line, anchor}
 const edges = [];          // {src, dst, el}
+const pinned = new Set();  // nodeIds pinned by click, persist highlight+hover
+const kindFilter = new Set(); // legend-selected kinds; empty = show everything
+let hoveredId = null;
 let anchorSeq = 0;
 
 const view = { x: 40, y: 110, z: 1 };
@@ -194,20 +242,119 @@ function toWorld(sx, sy) {
   return { x: (sx - r.left - view.x) / view.z, y: (sy - r.top - view.y) / view.z };
 }
 
+// ── kind colors: fixed hues for the common kinds, stable hash for the rest ──
+const KIND_HUES = {
+  mark: 45, selector: 280, struct: 190, enum: 330, trait: 120,
+  fn: 210, method: 210, function: 210, module: 150, cycle: 0,
+  class: 195, interface: 125, alias: 260, const: 25, match: 30,
+  flow: 210, covers: 280, import: 150,
+};
+function kindHue(kind) {
+  if (kind in KIND_HUES) return KIND_HUES[kind];
+  let h = 0;
+  for (let i = 0; i < kind.length; i++) h = (h * 31 + kind.charCodeAt(i)) >>> 0;
+  return h % 360;
+}
+function kindColor(kind) { return `hsl(${kindHue(kind)} 75% 62%)`; }
+
+// ── label truncation: paths keep the tail, plain text end-truncates in CSS ──
+function tailTruncPath(s, max) {
+  const parts = s.split('/');
+  let out = parts.pop() ?? '';
+  while (parts.length && out.length + parts[parts.length - 1].length + 3 <= max) {
+    out = parts.pop() + '/' + out;
+  }
+  if (out.length > max - 2) out = out.slice(-(max - 2)); // one huge segment
+  return '…/' + out;
+}
+function truncLabel(s, max) { // node title text; CSS clamps non-paths at 2 lines
+  if (s.length <= max) return s;
+  return s.includes('/') ? tailTruncPath(s, max) : s;
+}
+function truncValue(s, max) { // selector values: single line, middle-truncated
+  if (s.length <= max) return s;
+  if (s.includes('/')) return tailTruncPath(s, max);
+  const head = Math.ceil((max - 1) / 2);
+  return s.slice(0, head) + '…' + s.slice(-(max - 1 - head));
+}
+
 // ── defaults (the type graph; edit in place, Run re-queries) ────────────────
 const DEFAULT_NODES =
   "SELECT sym, name, kind, file, line FROM rel_type_entity LIMIT 600";
 const DEFAULT_EDGES =
   "SELECT src, dst, kind FROM rel_type_link LIMIT 1200";
+
+// ── presets: one option per panel-SQL block documented in a .dl header ──────
+// (.dl/flow-panel.dl, .dl/mark-lens.dl, .dl/enum-matches.dl, examples/madge.dl)
+const PRESETS = {
+  typeAll: { nodes: DEFAULT_NODES, edges: DEFAULT_EDGES },
+  typeCurated: {
+    nodes: "SELECT sym, name, kind, file, line FROM rel_panel_node",
+    edges: "SELECT src, dst, kind FROM rel_panel_edge",
+  },
+  marks: {
+    nodes: "SELECT marked, marked, 'mark', path, line FROM rel_mark UNION ALL " +
+      "SELECT sel || '=' || detail, sel || '=' || detail, 'selector', NULL, NULL FROM rel_mark_selector",
+    edges: "SELECT src, dst, 'flow' FROM rel_mark_flow UNION ALL " +
+      "SELECT sel || '=' || detail, marked, 'covers' FROM rel_mark_selector, rel_mark",
+  },
+  enumMatches: {
+    nodes: "SELECT name, name, 'enum', file, line FROM rel_type_entity " +
+      "WHERE kind='enum' AND name IN (SELECT enum_name FROM rel_enum_match_block) UNION ALL " +
+      "SELECT DISTINCT file || ':' || start, file || ':' || start, 'match', file, start FROM rel_enum_match_block",
+    edges: "SELECT DISTINCT enum_name, file || ':' || start, 'match' FROM rel_enum_match_block",
+  },
+  madge: {
+    nodes: "SELECT path, path, CASE WHEN EXISTS (SELECT 1 FROM rel_cycle_member c " +
+      "WHERE c.path = rel_seen.path) THEN 'cycle' ELSE 'module' END, path, 1 FROM rel_seen",
+    edges: "SELECT src, dst, 'import' FROM rel_dep",
+  },
+};
+const PRESET_KEY = 'dl-flow-preset';
+let currentPreset = 'typeAll';
+
+function readLocalStorage(key) {
+  try { return localStorage.getItem(key); } catch (e) { return null; } // e.g. sandboxed webview
+}
+function writeLocalStorage(key, value) {
+  try { localStorage.setItem(key, value); } catch (e) { /* fall back to session-only */ }
+}
+
 document.getElementById('nodesSql').value = DEFAULT_NODES;
 document.getElementById('edgesSql').value = DEFAULT_EDGES;
+
+(function restorePreset() {
+  let saved = null;
+  try { saved = JSON.parse(readLocalStorage(PRESET_KEY) || 'null'); } catch (e) { /* ignore */ }
+  if (saved && saved.preset === 'custom' && typeof saved.nodes === 'string') {
+    document.getElementById('nodesSql').value = saved.nodes;
+    document.getElementById('edgesSql').value = saved.edges || '';
+    currentPreset = 'custom';
+  } else if (saved && PRESETS[saved.preset]) {
+    document.getElementById('nodesSql').value = PRESETS[saved.preset].nodes;
+    document.getElementById('edgesSql').value = PRESETS[saved.preset].edges;
+    currentPreset = saved.preset;
+  }
+  document.getElementById('presetSel').value = currentPreset;
+})();
 
 // ── graph build ─────────────────────────────────────────────────────────────
 let linkedOnly = true;
 
+function showError(msg) {
+  const banner = document.getElementById('errBanner');
+  banner.innerHTML = '<b>query failed</b>';
+  banner.appendChild(document.createTextNode(msg));
+  banner.hidden = false;
+  document.getElementById('errLine').textContent = msg;
+}
+function clearError() {
+  document.getElementById('errBanner').hidden = true;
+  document.getElementById('errLine').textContent = '';
+}
+
 async function run() {
-  const err = document.getElementById('errLine');
-  err.textContent = '';
+  clearError();
   let nodeRows, edgeRows;
   try {
     [nodeRows, edgeRows] = await Promise.all([
@@ -215,8 +362,9 @@ async function run() {
       host.query(document.getElementById('edgesSql').value),
     ]);
   } catch (e) {
-    err.textContent = String(e.message || e) +
-      ' — a graph rel populates when the running .dl program references it';
+    showError(String(e.message || e) +
+      ' — a graph rel populates when the running .dl program references it' +
+      ' (is the dl daemon/LSP running?)');
     return;
   }
   render(nodeRows, edgeRows);
@@ -225,6 +373,7 @@ async function run() {
 function render(nodeRows, edgeRows) {
   world.innerHTML = '';
   nodes.clear(); edges.length = 0;
+  pinned.clear(); hoveredId = null; kindFilter.clear();
 
   const ids = new Set(nodeRows.map(r => String(r[0])));
   const keptEdges = edgeRows.filter(r => ids.has(String(r[0])) && ids.has(String(r[1])));
@@ -252,15 +401,16 @@ function render(nodeRows, edgeRows) {
     if (!byLayer.has(l)) byLayer.set(l, []);
     byLayer.get(l).push(r);
   }
-  const COL = 280, ROW = 92;
+  const COL = 340, ROW = 92;
   for (const [l, rows] of byLayer) {
     rows.sort((a, b) => String(a[1] ?? a[0]).localeCompare(String(b[1] ?? b[0])));
     rows.forEach((r, i) => addNode(r, l * COL, i * ROW));
   }
-  for (const [s, d] of keptEdges) addEdge(String(s), String(d));
+  for (const r of keptEdges) addEdge(String(r[0]), String(r[1]), r[2]);
 
   document.getElementById('countPill').textContent =
     `${nodes.size} nodes · ${edges.length} edges` + (dropped ? ` · ${dropped} dropped` : '');
+  buildLegend();
   scheduleFlips();
 }
 
@@ -274,17 +424,33 @@ function addNode(row, x, y) {
   el.style.anchorName = '--' + anchor;
   el.dataset.id = id;
 
+  const kindStr = kind != null && kind !== '' ? String(kind) : '';
+  if (kindStr) el.style.setProperty('--kc', kindColor(kindStr));
+
   const head = document.createElement('div');
   head.className = 'head';
-  const short = String(label ?? id);
-  head.innerHTML = `<span class="dot"></span><span class="label" title="${esc(id)}">${esc(short)}</span>`
-    + (kind ? `<span class="kind">${esc(String(kind))}</span>` : '');
+  const full = String(label ?? id);
+  // selector-style label (axis=value) -> stacked axis + middle-truncated value
+  const sel = /^([\w.-]+)=([\s\S]+)$/.exec(full);
+  const labelHtml = sel
+    ? `<span class="axis">${esc(sel[1])}</span><span class="val">${esc(truncValue(sel[2], 34))}</span>`
+    : esc(truncLabel(full, 72));
+  head.innerHTML = `<span class="dot"></span><span class="label">${labelHtml}</span>`
+    + (kindStr ? `<span class="kind">${esc(kindStr)}</span>` : '');
   el.appendChild(head);
+
+  // native tooltip: nothing is ever unreachable behind truncation
+  el.title = full
+    + (kindStr ? `\nkind: ${kindStr}` : '')
+    + (file ? `\n${file}${line != null ? ':' + line : ''}` : '')
+    + (id !== full ? `\n${id}` : '');
 
   if (file) {
     const loc = document.createElement('div');
     loc.className = 'loc';
-    loc.textContent = `${file}${line != null ? ':' + line : ''}`;
+    const locText = `${file}${line != null ? ':' + line : ''}`;
+    loc.textContent = locText.length > 40 ? tailTruncPath(locText, 40) : locText;
+    loc.title = locText;
     loc.addEventListener('click', e => { e.stopPropagation(); host.open(String(file), Number(line) || 1); });
     el.appendChild(loc);
   }
@@ -297,36 +463,65 @@ function addNode(row, x, y) {
   el.addEventListener('pointerenter', () => hoverNode(id));
   el.addEventListener('pointerleave', () => hoverNode(null));
   world.appendChild(el);
-  nodes.set(id, { sym: id, el, file: file ? String(file) : null, line, anchor });
+  nodes.set(id, { sym: id, el, file: file ? String(file) : null, line, anchor,
+                  label: full, kind: kindStr });
 }
 
 const PATH = 'M0,0 C50,0 50,100 100,100';
-function addEdge(src, dst) {
+function addEdge(src, dst, kind) {
   const f = nodes.get(src), t = nodes.get(dst);
   if (!f || !t || src === dst) return;
+  const kindStr = kind != null && kind !== '' ? String(kind) : '';
   const el = document.createElement('div');
   el.className = 'edge';
   el.style.setProperty('--a', '--' + f.anchor);
   el.style.setProperty('--b', '--' + t.anchor);
-  el.innerHTML = `<svg viewBox="0 0 100 100" preserveAspectRatio="none"><path class="wire" d="${PATH}"/></svg>`;
+  if (kindStr) el.style.setProperty('--ec', kindColor(kindStr));
+  // svg <title> = native tooltip; the stroke alone takes pointer events, the
+  // edge's (huge) bounding box stays click-through for pan/hover
+  const tip = `${f.label} → ${t.label}${kindStr ? ' (' + kindStr + ')' : ''}`;
+  el.innerHTML = `<svg viewBox="0 0 100 100" preserveAspectRatio="none">`
+    + `<path class="wire" d="${PATH}"><title>${esc(tip)}</title></path></svg>`;
   world.appendChild(el);
-  edges.push({ src, dst, el });
+  edges.push({ src, dst, el, kind: kindStr });
 }
 
-// ── hover: highlight the slice + tell the host which files it touches ───────
+// ── hover + pins: highlight the slice (+ any pinned nodes) and tell the host
+// which files are in play. Pinning persists a node's highlight across hover
+// changes; hovering still shows its own connected slice on top.
 function hoverNode(id) {
-  world.classList.toggle('hovering', !!id);
+  hoveredId = id;
+  refreshHighlight();
+}
+function togglePin(id) {
+  if (!id) return;
+  if (pinned.has(id)) pinned.delete(id); else pinned.add(id);
+  refreshHighlight();
+}
+function clearPins() {
+  if (pinned.size === 0) return;
+  pinned.clear();
+  refreshHighlight();
+}
+function refreshHighlight() {
+  world.classList.toggle('hovering', !!hoveredId);
   const files = new Set();
-  for (const n of nodes.values()) n.el.classList.remove('hl');
+  for (const n of nodes.values()) { n.el.classList.remove('hl'); n.el.classList.remove('pinned'); }
   for (const e of edges) e.el.classList.remove('hl');
-  if (id) {
-    const slice = new Set([id]);
+  for (const pid of pinned) {
+    const n = nodes.get(pid);
+    if (!n) continue;
+    n.el.classList.add('pinned');
+    if (n.file) files.add(n.file);
+  }
+  if (hoveredId) {
+    const slice = new Set([hoveredId]);
     for (const e of edges) {
-      if (e.src === id) slice.add(e.dst);
-      if (e.dst === id) slice.add(e.src);
+      if (e.src === hoveredId) slice.add(e.dst);
+      if (e.dst === hoveredId) slice.add(e.src);
     }
     for (const e of edges) {
-      if (e.src === id || e.dst === id) e.el.classList.add('hl');
+      if (e.src === hoveredId || e.dst === hoveredId) e.el.classList.add('hl');
     }
     for (const sid of slice) {
       const n = nodes.get(sid);
@@ -336,6 +531,36 @@ function hoverNode(id) {
     }
   }
   host.hover([...files]);
+}
+
+// ── legend: a chip per kind in the current result; click = filter-by-kind ───
+function buildLegend() {
+  const leg = document.getElementById('legend');
+  leg.innerHTML = '';
+  const counts = new Map(); // kind -> count (node + edge kinds share the row)
+  for (const n of nodes.values()) if (n.kind) counts.set(n.kind, (counts.get(n.kind) || 0) + 1);
+  for (const e of edges) if (e.kind) counts.set(e.kind, (counts.get(e.kind) || 0) + 1);
+  for (const [k, c] of [...counts].sort((a, b) => b[1] - a[1])) {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.dataset.kind = k;
+    chip.title = `click to show only "${k}" (click again to restore)`;
+    chip.innerHTML = `<span class="swatch" style="background:${kindColor(k)}"></span>${esc(k)} ${c}`;
+    chip.addEventListener('click', () => {
+      if (kindFilter.has(k)) kindFilter.delete(k); else kindFilter.add(k);
+      applyKindFilter();
+    });
+    leg.appendChild(chip);
+  }
+  applyKindFilter();
+}
+function applyKindFilter() {
+  const active = kindFilter.size > 0;
+  for (const n of nodes.values()) n.el.classList.toggle('dim', active && !kindFilter.has(n.kind));
+  for (const e of edges) e.el.classList.toggle('dim', active && !kindFilter.has(e.kind));
+  for (const chip of document.getElementById('legend').children) {
+    chip.classList.toggle('on', kindFilter.has(chip.dataset.kind));
+  }
 }
 
 // ── flip the curve onto the correct diagonal (the only edge math) ───────────
@@ -351,29 +576,43 @@ function runFlips() {
   }
 }
 
-// ── pointer interactions: drag node / pan ───────────────────────────────────
-let mode = null, dragNode = null, dragOff = null, panStart = null;
+// ── pointer interactions: node drag/click vs background pan/click ──────────
+// Standard editor idiom: a press that starts on a NODE never starts a pan
+// (panning the background is only reachable from the background). A press
+// anywhere is first a *candidate* ('maybe') — it only becomes a real drag/pan
+// once the pointer has moved past DRAG_THRESHOLD px; below that, release is a
+// click (node -> toggle pin, background -> clear all pins). The `.loc` hit
+// target is excluded up front so its own click listener (open the file) is
+// never shadowed by drag/select handling.
+const DRAG_THRESHOLD = 4;
+let mode = null;   // null | 'maybe' | 'drag' | 'pan'
+let downNode = null, dragOff = null, panStart = null, downPos = null;
 
 viewport.addEventListener('pointerdown', ev => {
-  const head = ev.target.closest('.node .head');
+  if (ev.target.closest('.loc')) return; // let its own click handler run untouched
   const nodeEl = ev.target.closest('.node');
-  if (head) {
-    mode = 'drag'; dragNode = head.closest('.node');
-    dragNode.classList.add('dragging');
+  downPos = { x: ev.clientX, y: ev.clientY };
+  downNode = nodeEl || null;
+  mode = 'maybe';
+  if (nodeEl) {
     const w = toWorld(ev.clientX, ev.clientY);
-    dragOff = { x: w.x - parseFloat(dragNode.style.left), y: w.y - parseFloat(dragNode.style.top) };
-    viewport.setPointerCapture(ev.pointerId);
-  } else if (!nodeEl) {
-    mode = 'pan'; panStart = { x: ev.clientX, y: ev.clientY, vx: view.x, vy: view.y };
-    viewport.classList.add('panning');
-    viewport.setPointerCapture(ev.pointerId);
+    dragOff = { x: w.x - parseFloat(nodeEl.style.left), y: w.y - parseFloat(nodeEl.style.top) };
+  } else {
+    panStart = { x: ev.clientX, y: ev.clientY, vx: view.x, vy: view.y };
   }
+  viewport.setPointerCapture(ev.pointerId);
 });
 viewport.addEventListener('pointermove', ev => {
+  if (mode === 'maybe') {
+    const dx = ev.clientX - downPos.x, dy = ev.clientY - downPos.y;
+    if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+    if (downNode) { mode = 'drag'; downNode.classList.add('dragging'); }
+    else { mode = 'pan'; viewport.classList.add('panning'); }
+  }
   if (mode === 'drag') {
     const w = toWorld(ev.clientX, ev.clientY);
-    dragNode.style.left = (w.x - dragOff.x) + 'px';
-    dragNode.style.top  = (w.y - dragOff.y) + 'px';
+    downNode.style.left = (w.x - dragOff.x) + 'px';
+    downNode.style.top  = (w.y - dragOff.y) + 'px';
     scheduleFlips();
   } else if (mode === 'pan') {
     view.x = panStart.vx + (ev.clientX - panStart.x);
@@ -382,9 +621,12 @@ viewport.addEventListener('pointermove', ev => {
   }
 });
 viewport.addEventListener('pointerup', () => {
-  if (dragNode) dragNode.classList.remove('dragging');
+  if (mode === 'maybe') {
+    if (downNode) togglePin(downNode.dataset.id); else clearPins();
+  }
+  if (downNode) downNode.classList.remove('dragging');
   viewport.classList.remove('panning');
-  mode = null; dragNode = null; panStart = null;
+  mode = null; downNode = null; dragOff = null; panStart = null; downPos = null;
 });
 viewport.addEventListener('wheel', ev => {
   ev.preventDefault();
@@ -406,9 +648,35 @@ document.getElementById('linkedBtn').addEventListener('click', function () {
   this.classList.toggle('on', linkedOnly);
   run();
 });
+
+function savePreset() {
+  if (currentPreset === 'custom') {
+    writeLocalStorage(PRESET_KEY, JSON.stringify({ preset: 'custom',
+      nodes: document.getElementById('nodesSql').value,
+      edges: document.getElementById('edgesSql').value }));
+  } else {
+    writeLocalStorage(PRESET_KEY, JSON.stringify({ preset: currentPreset }));
+  }
+}
+document.getElementById('presetSel').addEventListener('change', function () {
+  const p = PRESETS[this.value];
+  if (!p) { currentPreset = 'custom'; savePreset(); return; }
+  document.getElementById('nodesSql').value = p.nodes;
+  document.getElementById('edgesSql').value = p.edges;
+  currentPreset = this.value;
+  savePreset();
+  run();
+});
 for (const id of ['nodesSql', 'edgesSql']) {
-  document.getElementById(id).addEventListener('keydown', e => {
+  const el = document.getElementById(id);
+  el.addEventListener('keydown', e => {
     if (e.key === 'Enter') run();
+  });
+  el.addEventListener('input', () => {
+    if (currentPreset === 'custom') return;
+    currentPreset = 'custom';
+    document.getElementById('presetSel').value = 'custom';
+    savePreset();
   });
 }
 
