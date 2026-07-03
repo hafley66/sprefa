@@ -1,2 +1,3 @@
 # marks.dl — written by the dl VS Code extension (dl.markSelection / dl.clearMarks).
 # Facts only; `rel mark(marked: text, path: file, line: int).` is declared in mark-lens.dl.
+mark("resolve_scan_repos", "src/engine/mod.rs", 1641).

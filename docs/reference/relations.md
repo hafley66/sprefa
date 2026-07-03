@@ -49,6 +49,7 @@ Generated from the engine's `rel_catalog` by examples/gen-reference.dl. Do not h
 | `program` | daemon | `(path, hash, mtime)` | dl programs the daemon tracks (path, content hash, mtime) |
 | `propose_clone` | propose | `(kernel, path, lo, hi, param)` | proposed clone/near-duplicate groups keyed by a shared kernel |
 | `propose_extract` | propose | `(path, lo, hi, param)` | proposed extract-function refactor spans (path, lo, hi, param) |
+| `query_log` | daemon | `(ts, source, method, body, params)` | history of server query requests: one row per daemon `query`/`query_sql` RPC and LSP `dl/query` request (ts = ISO-8601 UTC, source in {daemon,lsp}, method = RPC name, body = SQL text or empty, params = JSON array text); append-only, no retention — a polling client (the flow panel) accumulates its own rows too, by design |
 | `ref` | spine | `(id, string, file, lo, hi)` | byte span per interned string; id is the rewrite coordinate — 'where does Foo occur' is string(s, Foo, _), ref(_, s, f, lo, hi) |
 | `rel_catalog` | meta | `(name, group, cols, doc)` | this table: every built-in relation with its group, columns, and one-line doc |
 | `rel_count` | perf | `(rel, rows)` | row count per declared relation at refresh time; derived rels report the previous tick's counts (source-phase refresh, one-tick lag) — the cardinality-blowup rail joins here |
