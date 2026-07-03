@@ -9,6 +9,8 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+use crate::util::DaemonGuard;
+
 const DL: &str = env!("CARGO_BIN_EXE_dl");
 
 const PROG: &str = r#"
@@ -51,10 +53,10 @@ fn rpc(sock: &PathBuf, body: &str) -> String {
 fn mcp_pumps_through_daemon() {
     let dir = sandbox("pump");
     fs::write(dir.join("p.dl"), PROG).unwrap();
-    let mut daemon = Command::new(DL)
+    let mut daemon = DaemonGuard(Command::new(DL)
         .args(["--daemon"]).arg("--root").arg(&dir).arg(dir.join("p.dl"))
         .stdout(Stdio::null()).stderr(Stdio::null())
-        .spawn().expect("spawn daemon");
+        .spawn().expect("spawn daemon"));
 
     let sock = dir.join(".dl").join("daemon.sock");
     let mut up = false;
@@ -102,10 +104,10 @@ fn mcp_pumps_through_daemon() {
 fn daemon_refuses_non_port_rel() {
     let dir = sandbox("refuse");
     fs::write(dir.join("p.dl"), "rel plain(x: text).\nplain(\"a\").\n").unwrap();
-    let mut daemon = Command::new(DL)
+    let mut daemon = DaemonGuard(Command::new(DL)
         .args(["--daemon"]).arg("--root").arg(&dir).arg(dir.join("p.dl"))
         .stdout(Stdio::null()).stderr(Stdio::null())
-        .spawn().expect("spawn daemon");
+        .spawn().expect("spawn daemon"));
     let sock = dir.join(".dl").join("daemon.sock");
     for _ in 0..100 {
         if sock.exists()

@@ -4,7 +4,9 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
+
+use crate::util::DaemonGuard;
 
 const DL: &str = env!("CARGO_BIN_EXE_dl");
 
@@ -15,12 +17,16 @@ fn sandbox(tag: &str) -> PathBuf {
     p
 }
 
-fn run_daemon_explicit(dir: &PathBuf) -> std::process::Child {
-    // Spawn the daemon in foreground; test reads stderr / connects via socket.
-    Command::new(DL)
+fn run_daemon_explicit(dir: &PathBuf) -> DaemonGuard {
+    // Spawn the daemon in foreground; tests communicate only over the unix
+    // socket, so stdout/stderr are nulled — a leaked or slow-exiting daemon
+    // must never write over the suite summary or hold a pipe open. The guard
+    // kills the child on drop if a test panics before its clean shutdown.
+    DaemonGuard(Command::new(DL)
         .args(["--daemon"]).arg("--root").arg(dir)
         .arg(dir.join("p.dl"))
-        .spawn().expect("spawn dl --daemon")
+        .stdout(Stdio::null()).stderr(Stdio::null())
+        .spawn().expect("spawn dl --daemon"))
 }
 
 #[test]
@@ -299,9 +305,10 @@ fn discovery_mode_content_edit_hot_reloads() {
          ? mark(t).\n").unwrap();
 
     // Discovery mode: no positional program file, just --root.
-    let mut child = Command::new(DL)
+    let mut child = DaemonGuard(Command::new(DL)
         .args(["--daemon"]).arg("--root").arg(&dir)
-        .spawn().expect("spawn dl --daemon (discovery)");
+        .stdout(Stdio::null()).stderr(Stdio::null())
+        .spawn().expect("spawn dl --daemon (discovery)"));
 
     let sock = dir.join(".dl").join("daemon.sock");
     let mut ready = false;

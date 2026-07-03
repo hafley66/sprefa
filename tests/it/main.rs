@@ -108,5 +108,6 @@ mod true_singleton;
 mod type_entity_xlang;
 mod type_graph;
 mod type_graph_ts;
+mod util;
 mod where_removed;
 mod wildcard_slots;
