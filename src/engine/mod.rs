@@ -1363,6 +1363,42 @@ fn unix_secs() -> i64 {
         .unwrap_or(0)
 }
 
+/// Days-since-epoch (1970-01-01) -> (year, month, day). Howard Hinnant's
+/// `civil_from_days` (public-domain, http://howardhinnant.github.io/date_algorithms.html),
+/// hand-rolled so `_query_log.ts` needs no chrono/time dependency.
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u64; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // [0, 399]
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
+/// ISO-8601 UTC "now", nanosecond fraction included so two requests logged in
+/// the same wall-clock second (or even microsecond) still sort and compare
+/// distinctly — the `_query_log` row has no primary key, so distinctness lives
+/// in the timestamp, not a dedup key.
+fn iso8601_utc_now() -> String {
+    let dur = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = dur.as_secs() as i64;
+    let nanos = dur.subsec_nanos();
+    let days = secs.div_euclid(86400);
+    let sod = secs.rem_euclid(86400);
+    let (y, m, d) = civil_from_days(days);
+    let hh = sod / 3600;
+    let mm = (sod % 3600) / 60;
+    let ss = sod % 60;
+    format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}.{nanos:09}Z")
+}
+
 pub struct Engine {
     pub(crate) db: crate::db::Db,
     pub(crate) rels: Rels,
@@ -2275,7 +2311,20 @@ impl Engine {
                  full_json TEXT NOT NULL DEFAULT '',
                  req_tx INTEGER NOT NULL, done INTEGER NOT NULL DEFAULT 0,
                  state TEXT NOT NULL DEFAULT 'queued', idem_key TEXT,
-                 batch INTEGER NOT NULL DEFAULT 0);"
+                 batch INTEGER NOT NULL DEFAULT 0);
+             -- Server query history: one row per daemon `query`/`query_sql` RPC
+             -- and LSP `dl/query` request, appended by `Engine::log_query` at the
+             -- handler (src/daemon.rs, src/lsp.rs). No primary key: two requests
+             -- with identical text within the same nanosecond are both real
+             -- events and both land. Append-only by design, no retention/GC.
+             -- Projected by the built-in `query_log` relation (src/rels/querylog.rs).
+             CREATE TABLE IF NOT EXISTS _query_log (
+                 ts TEXT NOT NULL,
+                 source TEXT NOT NULL,
+                 method TEXT NOT NULL,
+                 body TEXT NOT NULL DEFAULT '',
+                 params TEXT NOT NULL DEFAULT '[]'
+             );"
         )?;
         // tolerate a pending_effect created before the body-effect columns existed.
         // The pre-migration default for head_rel is `kind` (head-response 1:1), set
@@ -3121,6 +3170,30 @@ impl Engine {
     }
 
 
+
+    /// Append one row to the server-request history (`_query_log`), the meta
+    /// table the built-in `query_log` relation projects (`src/rels/querylog.rs`).
+    /// Called once per request from the daemon's `query`/`query_sql` RPC
+    /// handlers and the LSP's `dl/query` handler — a single-row insert through
+    /// the plural `Db::insert_rows` seam (same shape as the `pending_effect`
+    /// job queue), never a raw per-row `conn()` write. `source` is which server
+    /// ("daemon"/"lsp"); `method` is the RPC/request method name; `body` is the
+    /// SQL text (empty for the plain `query` RPC, which carries no SQL param);
+    /// `params` is the JSON array text of bound parameters ("[]" when none).
+    /// Append-only, no retention: a polling reader (the flow panel's
+    /// auto-refresh) querying `query_log` logs its own read as a new row too —
+    /// intentional self-noise, not a bug.
+    pub fn log_query(&self, source: &str, method: &str, body: &str, params: &str) -> Result<()> {
+        let row = vec![vec![
+            Value::Text(iso8601_utc_now()),
+            Value::Text(source.to_string()),
+            Value::Text(method.to_string()),
+            Value::Text(body.to_string()),
+            Value::Text(params.to_string()),
+        ]];
+        self.db.insert_rows("_query_log", &["ts", "source", "method", "body", "params"], &row)?;
+        Ok(())
+    }
 
     /// Persist the loaded `.dl` program file set into `_program` (wipe + insert,
     /// plural seam). Each row is (path, content hash, mtime); `loaded_at` stamps

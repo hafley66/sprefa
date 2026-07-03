@@ -935,6 +935,8 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
         "query" => {
             let prog = lock(&d.prog);
             let eng = lock(&d.eng);
+            let _ = eng.log_query("daemon", "query", "", "[]");
+            let _ = crate::rels::refresh_query_log(&eng);
             match eng.run_queries_capture(&prog) {
                 Ok(results) => Response::ok(req.id, json!({"results": results.iter().map(|r| json!({
                     "rel": r.rel, "columns": r.columns, "rows": r.rows,
@@ -1028,6 +1030,9 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
             let params: Vec<Value> = req.params.get("params")
                 .and_then(|v| v.as_array()).cloned().unwrap_or_default();
             let eng = lock(&d.eng);
+            let params_json = serde_json::to_string(&params).unwrap_or_else(|_| "[]".into());
+            let _ = eng.log_query("daemon", "query_sql", sql_raw, &params_json);
+            let _ = crate::rels::refresh_query_log(&eng);
             match eng.query_sql(sql_raw, &params) {
                 Ok(rows) => Response::ok(req.id, json!({"rows": rows})),
                 Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),

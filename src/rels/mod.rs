@@ -47,6 +47,7 @@ mod embed;
 mod git;
 mod perf;
 mod propose;
+mod querylog;
 mod scip;
 
 use analysis::{AgentKind, DlDiagKind, TypeLggKind, TypeShapeKind};
@@ -55,7 +56,26 @@ use embed::EmbedKind;
 use git::{ChangedKind, ChangedLineKind, CreatedKind, GitRefKind, RevBehindKind};
 use perf::PerfKind;
 use propose::{ProposeCloneKind, ProposeExtractKind};
+use querylog::QueryLogKind;
 use scip::ScipKind;
+
+/// Refresh the `query_log` projection right now, outside the normal tick
+/// cadence. The daemon `query`/`query_sql` RPC handlers and the LSP `dl/query`
+/// handler call this immediately after `Engine::log_query` so a request that
+/// reads `query_log` (directly via `? query_log(...)` or via raw SQL against
+/// `rel_query_log`) sees its own and every prior request's row in the SAME
+/// response cycle — a plain read-only RPC never triggers a tick on its own,
+/// so relying on the lazy tick-scoped `used`/`dirty` gate alone would leave
+/// `rel_query_log` stale between file-watch ticks. Ignoring the `used(prog)`
+/// gate here is deliberate: a request was just logged, so the caller always
+/// wants it visible, whether or not the loaded program itself references the
+/// relation. Cost is one full re-diff of `_query_log` vs `rel_query_log`
+/// (same shape as `rel_count`/`stmt_ms`'s per-refresh scan), which grows with
+/// total logged history — acceptable for the append-only, no-retention design
+/// this relation deliberately keeps.
+pub fn refresh_query_log(eng: &Engine) -> Result<bool> {
+    QueryLogKind.refresh(eng)
+}
 
 /// A built-in, git-derived relation family: its name(s), column schema, the
 /// lazy-use gate, and the whole-set refresh.
@@ -91,7 +111,8 @@ pub trait RelKind: Sync {
 pub fn rel_kinds() -> &'static [&'static dyn RelKind] {
     &[&ChangedKind, &ChangedLineKind, &CreatedKind, &GitRefKind, &RevBehindKind,
       &AgentKind, &DlDiagKind, &TypeShapeKind, &TypeLggKind, &CatalogKind,
-      &ScipKind, &ProposeExtractKind, &ProposeCloneKind, &EmbedKind, &PerfKind]
+      &ScipKind, &ProposeExtractKind, &ProposeCloneKind, &EmbedKind, &PerfKind,
+      &QueryLogKind]
 }
 
 /// Flattened column decls across the registry, for `all_builtin_decls` /

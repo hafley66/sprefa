@@ -84,6 +84,61 @@ fn ping_query_diag_shutdown_round_trip() {
     assert!(status.success(), "daemon should exit 0 after shutdown");
 }
 
+/// Every `query_sql` RPC appends one row to the query-history log
+/// (`_query_log`, projected by the built-in `query_log` relation). Sends two
+/// `query_sql` requests over the same daemon session (no file changes, no
+/// intervening tick) and asserts the second one — reading the built-in's
+/// backing table directly — sees the first request's SQL text. The fixture
+/// program references `query_log` so the relation is declared+opted-in.
+#[test]
+fn query_log_records_request_history() {
+    let dir = sandbox("querylog");
+    fs::write(dir.join("p.dl"),
+        "rel edge(a: text, b: text).\n\
+         edge(\"a\", \"b\").\n\
+         ? query_log(ts, source, method, body, params).\n").unwrap();
+    fs::create_dir_all(dir.join(".dl")).unwrap();
+
+    let mut child = run_daemon_explicit(&dir);
+    let sock = dir.join(".dl").join("daemon.sock");
+    let mut ready = false;
+    for _ in 0..100 {
+        if sock.exists() && std::os::unix::net::UnixStream::connect(&sock).is_ok() {
+            ready = true; break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(ready, "daemon socket not ready");
+
+    use std::io::Write;
+
+    // First query_sql RPC: an arbitrary SQL read over a declared rel.
+    let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+    let body = r#"{"jsonrpc":"2.0","id":10,"method":"query_sql","params":{"sql":"SELECT a, b FROM rel_edge"}}"#;
+    write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+    let resp = read_frame(&mut s).expect("first query_sql response");
+    assert!(resp.contains(r#""rows""#), "first query_sql should return rows: {resp}");
+
+    // Second query_sql RPC: read the history back through query_log's backing
+    // table. No tick happened between the two requests — the handler's own
+    // inline refresh (not the tick-scoped one) is what makes this visible.
+    let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+    let body2 = r#"{"jsonrpc":"2.0","id":11,"method":"query_sql","params":{"sql":"SELECT method, body FROM rel_query_log ORDER BY ts"}}"#;
+    write!(s, "Content-Length: {}\r\n\r\n{}", body2.len(), body2).unwrap();
+    let resp2 = read_frame(&mut s).expect("second query_sql response");
+    assert!(resp2.contains("SELECT a, b FROM rel_edge"),
+        "query_log history should carry the first request's SQL body: {resp2}");
+    assert!(resp2.contains("query_sql"), "method column should be recorded: {resp2}");
+
+    // Shutdown.
+    let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+    let body3 = r#"{"jsonrpc":"2.0","id":12,"method":"shutdown","params":{}}"#;
+    write!(s, "Content-Length: {}\r\n\r\n{}", body3.len(), body3).unwrap();
+    let _ = read_frame(&mut s);
+    let status = child.wait_timeout(std::time::Duration::from_secs(5)).expect("daemon exit");
+    assert!(status.success());
+}
+
 #[test]
 fn stop_flag_sends_shutdown() {
     let dir = sandbox("stopflag");

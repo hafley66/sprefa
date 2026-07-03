@@ -534,6 +534,26 @@ fn dl_query_returns_rows_over_lsp() {
         serde_json::json!({"sql": "SELECT nope FROM does_not_exist"}));
     assert!(result.is_null(), "bad SQL is a JSON-RPC error: {result}");
 
+    // Every `dl/query` request (including the failed one above) leaves a row
+    // in the query-history log (`_query_log`, projected by the built-in
+    // `query_log` relation). Read it back through a follow-up `dl/query`
+    // against its backing table and confirm the FIRST request's SQL text
+    // landed. No file changes / no tick happened between requests — the
+    // handler's own inline `query_log` refresh is what makes this visible
+    // within one LSP session.
+    let result = s.request(5, "dl/query",
+        serde_json::json!({"sql": "SELECT method, body FROM rel_query_log ORDER BY ts"}));
+    let rows = result.get("rows").and_then(|r| r.as_array()).unwrap_or_else(|| panic!(
+        "expected query_log rows, got: {result}\nstderr: {}", drain_stderr(&mut s.child)));
+    assert!(rows.len() >= 4, "expected at least 4 logged requests (3 dl/query + this one): {rows:?}");
+    let bodies: Vec<&str> = rows.iter()
+        .filter_map(|r| r.get(1).and_then(|v| v.as_str())).collect();
+    assert!(bodies.contains(&"SELECT p FROM rel_seen ORDER BY p"),
+        "query_log history should carry the first request's SQL body: {bodies:?}");
+    let methods: Vec<&str> = rows.iter()
+        .filter_map(|r| r.get(0).and_then(|v| v.as_str())).collect();
+    assert!(methods.iter().all(|m| *m == "dl/query"), "every logged method should be dl/query: {methods:?}");
+
     s.shutdown();
 }
 

@@ -325,6 +325,9 @@ fn handle_query(eng: &Engine, req: &Request) -> Response {
     };
     let params: Vec<serde_json::Value> = req.params.get("params")
         .and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let params_json = serde_json::to_string(&params).unwrap_or_else(|_| "[]".into());
+    let _ = eng.log_query("lsp", "dl/query", sql, &params_json);
+    let _ = crate::rels::refresh_query_log(eng);
     match eng.query_sql(sql, &params) {
         Ok(rows) => Response::new_ok(req.id.clone(), serde_json::json!({ "rows": rows })),
         Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
