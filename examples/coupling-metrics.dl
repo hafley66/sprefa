@@ -48,6 +48,27 @@ dispatch_used(callee, line) <- scan("src/engine/*.rs", p, rev),
     ast(p, rev, :rust, "(call_expression function: (identifier) @callee)", line),
     callee =~ /_rels_used$/.
 
+# --- file-size budget (refactor v2, phase R2): smaller files, loudly ---------
+# One row per engine/rels source file with its line count; the rail warns on
+# any file over budget. Goes quiet exactly when the seam-split is done.
+rel file_lines(path: file, lines: text).
+file_lines(path, lines) <- scan("src/engine/*.rs", path, rev),
+    cmd(path, rev, "awk 'END{print NR}' {file}", line, lines).
+file_lines(path, lines) <- scan("src/rels/*.rs", path, rev),
+    cmd(path, rev, "awk 'END{print NR}' {file}", line, lines).
+
+# violation-only probe: emits a row IFF the file exceeds the budget (the
+# comparison happens in awk, so no text->int coercion in rule space)
+rel file_over_budget(path: file, lines: text).
+file_over_budget(path, lines) <- scan("src/engine/*.rs", path, rev),
+    cmd(path, rev, "awk 'END{if(NR>1500)print NR}' {file}", line, lines).
+file_over_budget(path, lines) <- scan("src/rels/*.rs", path, rev),
+    cmd(path, rev, "awk 'END{if(NR>1500)print NR}' {file}", line, lines).
+
+diag(path, line: 1, severity: "warning", code: "file-size-budget",
+     msg: "${lines} lines (budget 1500); split along a behavior seam per plans/2026-07-02-engine-trait-refactor-v2.md") <-
+    file_over_budget(path, lines).
+
 # --- the snapshot: one metric row per number --------------------------------
 rel metric(name: text, n: int).
 metric("relkind_decls",    count(x)) <- relkind_decl(x).
@@ -56,8 +77,11 @@ metric("relkind_refresh",  count(x)) <- relkind_refresh(x).
 metric("relkind_consts",   count(x)) <- relkind_const(x).
 metric("dispatch_refresh", count(c)) <- dispatch_refresh(c, _).
 metric("dispatch_used",    count(c)) <- dispatch_used(c, _).
+metric("files_over_budget", count(p)) <- file_over_budget(p, _).
 
 ? metric(name, n).
+? file_lines(path, lines).
+? diag(path, line, severity, code, msg).
 
 # Versioned before/after artifact: re-run after each refactor phase, diff the md.
 gen("examples/_auto-doc/coupling-metrics.md", "- {name}: {n}") <- metric(name, n).
