@@ -6,6 +6,25 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-02
+
+### Fixed
+- **Marking a selection no longer kills the daemon.** A discovery-mode daemon
+  (serving `<root>/.dl/*.dl`) treated any content edit to an already-discovered
+  program file as exit-for-respawn — but a discovery daemon has no positional
+  args to respawn from, so the VS Code extension's mark command (one appended
+  fact line in `.dl/marks.dl`) left it dead until the next `dl` client happened
+  to run. A discovery daemon now hot-reloads the edit in place (re-parse, swap,
+  re-tick) and keeps serving. Explicit-program daemons keep exit-for-respawn.
+- **Flow panel "Module graph" preset now populates on any discovery daemon.**
+  The preset read rels derived only by `examples/madge.dl` (`rel_dep`,
+  `rel_cycle_member`), so it errored unless that example had run against the
+  db — while silently reading `rel_seen` rows from flow-panel.dl's unrelated
+  `seen` rel. It now reads `module_node`/`module_edge`, derived in
+  `.dl/flow-panel.dl` from the engine's built-in module graph (cycle detection
+  via a recursive reach rule). The panel's error banner also explains a
+  `no such table: rel_*` failure as a .dl program the daemon hasn't loaded.
+
 ## [0.4.0] - 2026-07-02
 
 ### Changed
