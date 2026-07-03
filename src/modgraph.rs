@@ -1401,6 +1401,43 @@ mod tests {
     }
 
     #[test]
+    fn ts_resolves_relative_json_import() {
+        // oxc_resolver's extensions list already carries ".json" (modgraph.rs
+        // ResolveOptions), so a relative `import x from "./data.json"` resolves
+        // to a real on-disk file exactly like a `.ts` sibling would — PROVIDED
+        // the target is in the engine's tracked file set (`cx.files`). That
+        // second half is not a resolver concern (it lives in
+        // `module_rows_for_rev`'s `_file`-backed fileset), but this test pins
+        // down the resolver's own half: it must not treat an existing,
+        // tracked `.json` target as an unresolvable/external specifier.
+        let dir = std::env::temp_dir().join("sprf_modgraph_test_ts_json");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        // Canonicalize (matches main.rs's `--root` handling): on macOS
+        // `std::env::temp_dir()` lives under a `/var` -> `/private/var`
+        // symlink, and oxc_resolver's `full_path()` comes back canonicalized,
+        // so an un-canonicalized root here would spuriously fail the
+        // `strip_prefix` in `TsResolver::edges` regardless of the .json fix.
+        let dir = dir.canonicalize().unwrap();
+        std::fs::write(dir.join("src/app.ts"), "import data from './data.json';\n").unwrap();
+        std::fs::write(dir.join("src/data.json"), r#"{"k":1}"#).unwrap();
+
+        let resolver = TsResolver::new(&dir).expect("TsResolver::new");
+        let files = set(&["src/app.ts", "src/data.json"]);
+        let m = no_manifests();
+        let c = cx(&dir, &files, &m);
+        let content = std::fs::read_to_string(dir.join("src/app.ts")).unwrap();
+        let e = resolver.edges("src/app.ts", &content, &c);
+        assert_eq!(
+            e.iter().find(|r| r.specifier == "./data.json").map(|r| &r.target),
+            Some(&Resolution::File("src/data.json".into())),
+            "a tracked .json import target must resolve to Resolution::File: {e:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn path_attribute_override() {
         let files = set(&["src/lib.rs", "src/weird/place.rs"]);
         let m = no_manifests();

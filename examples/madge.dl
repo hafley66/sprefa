@@ -1,7 +1,10 @@
 # madge.dl — madge's readout as dl rules: the resolved JS/TS module dependency
-# graph, circular dependencies, orphans (nobody imports them), and leaves
-# (import nothing). `module_edge` already speaks ES import / dynamic import /
-# tsconfig path mapping, so madge's core is four derived rules.
+# graph, circular dependencies, orphans (nobody imports them), leaves (import
+# nothing), per-module dependency counts, direct-dependent lookup, external
+# (npm) specifiers, and unresolved-import warnings. `module_edge` already
+# speaks ES import / dynamic import / CommonJS require / tsconfig path
+# mapping, so madge's whole CLI surface is derived rules over it plus
+# `module_import` (every import statement, resolved or not).
 # Differential oracle: tests/it/oracle_madge.rs (skips without a madge binary).
 #
 # Panel SQL (dl: Flow Panel):
@@ -16,8 +19,35 @@ seen(path) <- scan("WORK", "**/*.tsx", path, rev).
 seen(path) <- scan("WORK", "**/*.js", path, rev).
 seen(path) <- scan("WORK", "**/*.jsx", path, rev).
 
+# .json is not an entry extension (madge's default --extensions excludes it,
+# and so does `seen` above) but a relative `import x from "./y.json"` DOES
+# resolve natively in madge regardless of --extensions — the target just has
+# to exist. dl's resolver only counts a target as resolved if it is already
+# in the scanned `_file` set (module_rows_for_rev's `cx.files` gate), so
+# without this scan a real, existing .json import target was silently
+# dropped: no `dep` edge AND no `skipped`/`module_unresolved` row, since the
+# resolver fell to the `Resolution::External` arm (built for bare npm
+# specifiers) instead of ever reaching `Resolution::File`. This scan only
+# feeds `_file` for resolution; json paths are deliberately kept OUT of
+# `seen` so unimported manifests (tsconfig.json, package.json, ...) don't
+# show up as spurious `orphan`/`leaf`/`summary` nodes the way an unimported
+# `seen` file would (verified against real madge: `--orphans` with
+# `--extensions ts,json` on a directory of untouched .json files lists every
+# one of them; with json left out of `--extensions`, as here, it does not).
+rel json_file(path: file).
+json_file(path) <- scan("WORK", "**/*.json", path, rev).
+
 rel dep(src: path, dst: path).
 dep(src, dst) <- module_edge(src, dst).
+
+# The full graph-node universe leaf/summary must range over: every `seen`
+# entry file, PLUS any resolved dependency target outside that extension set
+# (an imported .json file, concretely). madge shows an imported .json as its
+# own zero-dependency node in --json/--leaves/--summary even though it is
+# never itself an entry point.
+rel graph_node(path: path).
+graph_node(path) <- seen(path).
+graph_node(path) <- dep(_, path).
 
 rel dep_reach(src: path, dst: path).
 dep_reach(src, dst) <- dep(src, dst).
@@ -33,12 +63,46 @@ circular(src, dst) <- dep_reach(src, dst), dep_reach(dst, src), src != dst.
 rel orphan(path: path).
 orphan(path) <- seen(path), !dep(_, path).
 
-# madge --leaves: depends on nothing
+# madge --leaves: depends on nothing (any graph node, not just an entry file
+# — an imported .json target is a leaf too, it just never has a `seen` row).
 rel leaf(path: path).
-leaf(path) <- seen(path), !dep(path, _).
+leaf(path) <- graph_node(path), !dep(path, _).
+
+# madge --summary: dependency count per module (resolved deps only, matching
+# madge — an unresolved/external specifier does not add to the count). Every
+# graph node gets a row, including the zero-dependency ones `dep` alone can't
+# produce (a group-by aggregate never emits an empty group) — this now
+# includes imported .json targets alongside `seen` entry files.
+rel summary(path: path, dep_count: int).
+summary(path, count(dst)) <- dep(path, dst).
+summary(path, 0) <- graph_node(path), !dep(path, _).
+
+# madge --depends <target>: direct dependents of target (who imports it),
+# the reverse projection of `dep`.
+rel depends_on(target: path, dependent: path).
+depends_on(target, dependent) <- dep(dependent, target).
+
+# npm/external deps (madge --include-npm, restricted to a package actually
+# resolvable in node_modules): `module_import` carries every import statement
+# regardless of resolution, so a specifier that does not start with `.` or `/`
+# names a package rather than a project file. Scoped to `seen` so a bare Rust
+# `use`/Kotlin `import` path (also unprefixed) never leaks in.
+rel npm_dep(path: path, specifier: text).
+npm_dep(path, specifier) <- seen(path), module_import(path, _, specifier, _, _),
+  specifier =~ /^[^.\/]/.
+
+# madge --warning: broken imports, scoped to this file set. `module_unresolved`
+# already holds these (a relative/dynamic specifier that resolved to no
+# project file); this is just the madge-shaped view of it.
+rel skipped(path: path, specifier: text, reason: text, line: int).
+skipped(path, specifier, reason, line) <- seen(path), module_unresolved(path, specifier, reason, line).
 
 ? dep(src, dst).
 ? circular(src, dst).
 ? cycle_member(path).
 ? orphan(path).
 ? leaf(path).
+? summary(path, dep_count).
+? depends_on(target, dependent).
+? npm_dep(path, specifier).
+? skipped(path, specifier, reason, line).
