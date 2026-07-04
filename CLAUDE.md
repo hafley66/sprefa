@@ -429,6 +429,57 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       fact-driven collection gates), flow_services.rs (2, incl. no-spec
       negative). Suites lib 199/0/1, it 447/0/4.
 
+- [x] **D5 rev-aware extraction arc** (worktree, 2026-07-04, local): per-rev
+      `extract:<family>:<rev>` digests + `refresh_rel_for_revs`; twins
+      `type_entity_rev`/`type_link_rev`/`call_def_rev` (rev = column, sym
+      stable cross-rev) + df twins `df_node_rev`/`df_node_repo_rev`/
+      `df_arg_rev`/`df_field_rev` (ids rev-salted `{rev}\u{1}{raw}`, legacy
+      keeps raw ids via dual-emit); per-(repo,rev) resolution, SCIP consulted
+      at rev=="WORK" only; `sweep_gone_revs` retracts a vanished rev from all
+      11 twins + digests + legacy unions same tick (module twins included,
+      previously lingered). Consumers: .dl/graph-diff.dl = diff_pair(rev,rev)
+      anti-joins on ONE checkout (shipped default = inert (WORK,WORK) — a
+      committed base scan would union into the legacy rels for every daily
+      consumer); examples/pr-diff.dl = PR diff via gh effect -> shas -> scan
+      rev slots, self-contained pr_* rels (diff_pair is a fact; a derived twin
+      would mixed-kind bail); harness.sh = 4 scenarios single-checkout,
+      worktree pair + sprefa-base + basename prefix convention RETIRED. Panel
+      contract survived zero HTML logic changes. Plan:
+      plans/2026-07-04-d5-rev-aware-extraction.md.
+- [x] **hook_event seam + chat-marks** (2026-07-04, local): generic builtin
+      `hook_event(kind, session, seq, json)` fed by `dl --hook` (daemon RPC in
+      the mcp_request idiom + in-process fallback); setup registers dl under
+      UserPromptSubmit AND PostToolUse; output arm echoes the received event
+      name. examples/chat-marks.dl = `@@mark <title>` sections every following
+      message via per-message negation argmax; phrase lives in the .dl ONLY
+      (wasm-generality law: engine ships seams, policy lives in programs).
+- [x] **CLI discovery + learning surfaces** (2026-07-04, local): --help gains
+      help_heading groups + SUBCOMMANDS/LEARN MORE/AUTHORING trailers;
+      `dl docs` embeds reference + book (ch0-8 incl. new 08-argmax) + NEW
+      hands-on tutorial (book/tutorial/, 9 lessons, outputs captured from real
+      runs) + `authoring` topic (= the skill). Doc indexes DOGFOODED:
+      examples/gen-doc-indexes.dl generates book/README + tutorial/README
+      lists AND docs_cmd.rs include_str/table rows from a scan of book files
+      (blurb = each file's first `>` blockquote), drift rail exits 2 on
+      file-added-regen-not-run.
+- [x] **Agent sharp-edges arc** (2026-07-04, local, spec docs/agent-sharp-edges.md):
+      skill survival block + per-op language matrix (CI-honest via
+      tests/it/lang_matrix.rs against SG_LANG_TABLE/AST_LANG_TABLE);
+      `--parse-only` no-scan validate (parse+typecheck+metavar sanity+ALL
+      regex literals compiled via shared `compile_dl_regex` — lookahead
+      fast-fails sub-second); `lowercase-metavar` warn lint; head-var-not-bound
+      + unbound-constraint + regex errors now name the fix. NOT built:
+      pre-scan binding analysis (residual 2, needs scope analysis).
+- [x] **Docs/examples polish** (2026-07-04, local): op_docs()/README/reference
+      regenerated with descriptive vars (NEW REPO LAW: no single-letter dl
+      vars anywhere — skills/examples/book/tests/prompts); 4 skill assets
+      refreshed (5 stale arcs; install path was pre-lift `--path v5`, the
+      new-extraction-op example was fictional — replaced with real ast_yaml);
+      examples/endpoint-flows.dl (axum routes -> call-graph reach -> info
+      diags = hover shows "in endpoint flows: GET /users"); deck/ = presenterm
+      slideshow w/ dl.sublime-syntax via bat cache (presenterm syntaxes are
+      compile-time baked; bat+exec_replace is the sanctioned route).
+
 ### Open (sprefa type graph)
 - [x] **BUG FIXED: lattice hot-reload wedge** (found 2026-07-03 live,
       fixed 2026-07-04, local uncommitted): `Engine::declare`
@@ -488,17 +539,19 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       WORK-hashed (fix restored read/digest symmetry). harness.sh S2
       re-armed, exits 0 on a synced pair (all 4 scenarios exact). Tests:
       dataflow.rs config-repo WORK e2e. Suites 204/460.
-- [ ] **SERVED-COPY DIVERGENCE (morning action)**: the live daemon runs
-      installed 0.4.1 which lacks `df_node_repo`, so the served
-      ~/projects/sprefa/.dl/flow-panel.dl is a COMPAT DOWNGRADE (the six
-      `df_node_repo(n, repo),` atoms stripped; helper rels kept). The
-      worktree .dl/flow-panel.dl is the real version. After upgrading
-      the daemon binary (cargo install --path . or restart on
-      target/release/dl — restart was auto-denied overnight), resync:
-      cp <worktree>/.dl/flow-panel.dl ~/projects/sprefa/.dl/. Also note
-      harness vs real sprefa-base pair reads nonzero baseline until the
-      day's arc is committed and sprefa-base fast-forwarded (the
-      scratch-pair run is the exit-0 proof).
+- [ ] **SERVED-COPY DIVERGENCE (remaining: daemon restart, Chris only)**:
+      ~/.cargo/bin/dl IS current (cargo install ran 2026-07-04 through the
+      parse-only-regex arc), but the RUNNING daemon (pid in
+      ~/projects/sprefa/.dl/daemon.pid, started Jul 3) still executes the
+      old image — restart was auto-denied to the agent twice (live-infra
+      boundary). Restart: kill $(head -1 ~/projects/sprefa/.dl/daemon.pid),
+      then nohup ~/.cargo/bin/dl --daemon --root ~/projects/sprefa. After
+      restart: cp <worktree>/.dl/flow-panel.dl ~/projects/sprefa/.dl/
+      (replaces the df_node_repo-stripped compat downgrade) and
+      `dl setup --project` in served repos to register the UserPromptSubmit
+      hook (activates chat-marks `@@mark`). The old sprefa-base worktree-pair
+      note is RETIRED: D5.7-9 moved the diff to rev pairs on one checkout,
+      bench/graph_diff/harness.sh no longer references sprefa-base.
 - [x] **FIXED: `type_entity.parent` real-kind owner keys** (2026-07-03,
       local uncommitted): Rust minted every method parent as
       `EntityKind::Class` (typegraph.rs) — now a per-file name→kind first
@@ -530,6 +583,7 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       and atlas styling must move together.
 
 ### Style notes for this repo
+- dl variable names are descriptive, never single-letter: `path`/`line`/`callee_name`, not `p`/`l`/`q`. Applies to every snippet in skills, examples, book, tests, and agent prompts; rename opportunistically when touching old files.
 - N+1: never a per-row write. Collect the set, call `Db::insert_rows` once. The tick counter screams if you don't.
 - No `provenance`/`substrate`/`load-bearing`/`regime` as prose or identifiers (use source/base/critical/mode).
 - Sync tick engine: plural-API + collect-then-flush, NOT async DataLoader (the redux-out-of-hand trap).
