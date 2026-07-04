@@ -480,6 +480,45 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       slideshow w/ dl.sublime-syntax via bat cache (presenterm syntaxes are
       compile-time baked; bat+exec_replace is the sanctioned route).
 
+- [x] **sg grammar sweep + term-form sg** (worktree, 2026-07-04, b5b61a8):
+      SG_LANG_TABLE 10 -> 23 grammars (css, html, bash, csharp, java, scala,
+      swift, ruby, php, lua, elixir, haskell, yaml); term-form
+      `sg(:lang, bound_str, "pattern"[, spans])` — leading :lang dispatches,
+      Sg src:Term + rev:Option<Term> rides the eval_extract_rules seam,
+      spans REGION-relative; examples/styled-components.dl + md-fences.dl
+      (embedded-lang seam: match feeds line-wise, "..." literal drops \n
+      backslash so backticks). lang_matrix.rs keeps the skill honest at 23.
+      Ledgered follow-up: absolute-span composition for rewrite-grade
+      embedded matches.
+- [x] **comment_node + std/suppress** (worktree, 2026-07-04, 9d0a97c):
+      builtin `comment_node(path, line, col, end_line, end_col, text, kind)`
+      = generic tree-sitter walk (kind().contains("comment")) + oxc
+      program.comments for TS/TSX; string-literal-safe by grammar; own
+      CommentFamily gate/cache/digest; kind = line|block|doc (classify by
+      marker). std/suppress.dl = the eslint/biome disable grammar entirely
+      in dl: dl-disable-line (INLINE works — sharp-edge #5 resolved)/
+      next-line/block pairs via argmax pairing + EOF sentinel, code scoping,
+      `-- reason`, wildcard "*" rows, lint_candidate/rail_finding
+      conventions, self-hosting disable. lint-unwrap.dl converted. Tests:
+      comment_node.rs + suppress.rs (10).
+- [x] **directive visibility** (worktree, 2026-07-04, ce79682): dl's own
+      magic shows itself — info diags (code `dl-directive`) at directive
+      comment col spans, `dl-directive-malformed` warn (typo'd markers no
+      longer fail silent), `dl-suppress-unused` warn (a disable matching
+      nothing). All in std/suppress.dl; severity mapping note: hint renders
+      invisibly in vscode, info = subtlest reliable dot.
+- [x] **diag_mute seam** (worktree, 2026-07-04, 21b68cf): writable
+      `diag_mute(code)` builtin (hook_event precedent: always declared,
+      written out-of-tick, never a rule head) + Engine
+      toggle_diag_mute/muted_codes/diag_code_states; LSP executeCommand
+      `dl.toggleDiagCode`/`dl.listDiagCodes`; filter at the PUBLISH seam
+      only — --check/--parse-only read `diag` directly, unaffected (editor
+      affordance, not a CI gate). vscode 0.4.2: quick-pick toggle +
+      cmd+alt+d cmd+alt+d chord (cmd+alt+m was taken by markSelection).
+      README/relations regen swept in decl drift from the prior arcs.
+      Tests tests/it/diag_mute.rs (4, incl. --check-unchanged e2e + full
+      LSP round-trip). Suites 209 lib / 515 it.
+
 ### Open (sprefa type graph)
 - [x] **BUG FIXED: lattice hot-reload wedge** (found 2026-07-03 live,
       fixed 2026-07-04, local uncommitted): `Engine::declare`
