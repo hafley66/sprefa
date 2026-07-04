@@ -430,6 +430,99 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       negative). Suites lib 199/0/1, it 447/0/4.
 
 ### Open (sprefa type graph)
+- [x] **BUG FIXED: lattice hot-reload wedge** (found 2026-07-03 live,
+      fixed 2026-07-04, local uncommitted): `Engine::declare`
+      (engine/mod.rs:2833) migrated a cached table only on COLUMN-set
+      drift; a key(...)/merge(...) change with identical columns kept the
+      old full-row PK under CREATE IF NOT EXISTS, so the lattice upsert's
+      ON CONFLICT(key) had no matching constraint and every tick wedged.
+      Fix: the same migration block now also reads the existing PK
+      (PRAGMA table_info) and drop+recreates on PK-set drift (order-free
+      compare; _reldigest row deleted so the rel re-derives). Matrix:
+      add/remove/change-key-cols = drop+recreate; merge-fn-only = no
+      drop (upsert SQL regenerates per tick). Wedge reproduced before
+      fix (env-gated), gone after. Tests tests/it/lattice.rs (4, warm-db
+      reload path). Suites 204/466. NOTE: the RUNNING daemon still has
+      the old binary — wedge remains live-possible until the binary
+      upgrade (same morning action as df_node_repo).
+- [x] **BUG FIXED: "corpus-flat" name resolver** (found 2026-07-03 D1,
+      fixed same day, D5a, local uncommitted): root cause was NOT flat
+      keying — `by_name` in `refresh_type_rels`/`refresh_call_rels`
+      (src/engine/extract.rs) is correctly keyed (repo, name), but pushed
+      one entry per raw fact occurrence. When a root is registered twice
+      under one rid (bench diff.config.toml slug `head` + self slug both →
+      basename rid `vscode-flow-panel`), every def sym landed twice →
+      len 2 → read as ambiguous → that whole repo resolved bare while the
+      single-scanned repo resolved fine (looked one-sided: 142/0
+      type_link.dst, 2612/0 call_edge). Fix: dedup the ambiguity bucket by
+      def sym before counting. Identity gate now exact 0 across all
+      resolved kinds; test tests/it/resolver_repo_scope.rs (two fixture
+      repos w/ colliding names, one double-registered). Suites 202/459.
+- [x] **BUG FIXED: SCIP importer cross-root collapse** (found 2026-07-03
+      D3, fixed same day, local uncommitted): per-index load with origin
+      repo threaded (`rows(index, root, slug)` + `repo_of()` nearest-.git
+      basename matching engine `repo_id_of`; `index_inputs` replaces the
+      merged-path `resolve_index`; `merge_files` kept only for the
+      `dl index` artifact); scip_def/scip_ref/scip_edge gained trailing
+      `repo` col (dl arity is exact — 13 in-tree positional readers swept
+      with `_`); `scip_name_defs` keyed (repo, file, name), both resolve
+      closures repo-scoped, cross-repo SCIP resolution dropped;
+      `extract_input_digest` folds scip_ref.repo (byte-identical triples
+      XOR-cancelled → false family-skip). Gate: second index now ADDS
+      3548/4724 (was zero net, total 7096/9448 split evenly); SCIP-on
+      diff == SCIP-off diff byte-identical. Suites 203/459. KNOWN LAG:
+      scip_want consumption lands tick 3 (want t1, ScipKind load t2,
+      extract reads prior-tick scip_ref t3) — pre-existing ordering, not
+      new.
+- [x] **BUG FIXED: df family read config repos at self-root** (found
+      2026-07-03 D4 S2, fixed 2026-07-04, local uncommitted):
+      `refresh_dataflow_rels` (extract.rs:1056) read every file via
+      `read_content(&self.root, ...)` — config-repo paths resolved under
+      the WRONG tree (usually missing → zero df rows). type/call already
+      used `roots.get(repo)`; df now matches. Second defect fixed en
+      route: df rows are path-keyed (no repo), so flow-panel.dl's
+      name-joined field/fill rules fanned one repo's fill across all
+      repos — NEW builtin `df_node_repo(id, repo)` (DATAFLOW_RELS 9,
+      emitted per (id,repo) occurrence, NOT first-seen-deduped) +
+      repo-scoped joins in flow-panel.dl. Digest was already
+      WORK-hashed (fix restored read/digest symmetry). harness.sh S2
+      re-armed, exits 0 on a synced pair (all 4 scenarios exact). Tests:
+      dataflow.rs config-repo WORK e2e. Suites 204/460.
+- [ ] **SERVED-COPY DIVERGENCE (morning action)**: the live daemon runs
+      installed 0.4.1 which lacks `df_node_repo`, so the served
+      ~/projects/sprefa/.dl/flow-panel.dl is a COMPAT DOWNGRADE (the six
+      `df_node_repo(n, repo),` atoms stripped; helper rels kept). The
+      worktree .dl/flow-panel.dl is the real version. After upgrading
+      the daemon binary (cargo install --path . or restart on
+      target/release/dl — restart was auto-denied overnight), resync:
+      cp <worktree>/.dl/flow-panel.dl ~/projects/sprefa/.dl/. Also note
+      harness vs real sprefa-base pair reads nonzero baseline until the
+      day's arc is committed and sprefa-base fast-forwarded (the
+      scratch-pair run is the exit-0 proof).
+- [x] **FIXED: `type_entity.parent` real-kind owner keys** (2026-07-03,
+      local uncommitted): Rust minted every method parent as
+      `EntityKind::Class` (typegraph.rs) — now a per-file name→kind first
+      pass (`rust_owner_kinds`) mints the owner's real kind, so
+      parent joins type_entity.sym with zero normalization (same-file
+      mismatches 928→0). TS `push_entity` takes `(name, kind)` for parent
+      (methods are class-owned, correct by construction); Kotlin members
+      were flat (parent None), untouched. `owner_classkey` workaround
+      DELETED from .dl/flow-panel.dl (member rules join raw_parent
+      against owner_entity.sym directly); served copy synced, no daemon
+      wedge. Join-property test `entity_parent_joins_owner_sym_across_langs`.
+      Suites 204/459.
+- [x] **FIXED: cross-file `impl` parents resolve to the declaring file**
+      (2026-07-04, local uncommitted): `refresh_type_rels`'s qparent
+      computation resolves a dangling parent's owner NAME through the
+      existing D5a bucket machinery (`resolve(repo, file, name)`, SCIP
+      preferred when indexed) — unique-in-repo rewrites to the declaring
+      file's exact sym, ambiguous stays file-scoped (dangling is honest).
+      Same-file parents untouched. Unmatched 66/1020 → 0/1020 on this
+      checkout. Tests tests/it/entity_parent_xfile.rs (resolve +
+      ambiguous-stays). Suites 204/462.
+- [ ] Small extractor gaps (flagged in the join-property test): Rust
+      trait default methods and Kotlin `object` decls emit no
+      type_entity rows.
 - [ ] Optional: migrate the deck graph (`examples/anim-self.dl` + anim AtlasPanel)
       from name-keyed `type_edge` to sym-keyed `type_link` + `type_entity` kinds
       for real cross-file edges and function-vs-type node styling. Bigger lift:
