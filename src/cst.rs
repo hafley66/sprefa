@@ -63,6 +63,95 @@ pub fn walk_cst(content: &str, lang: &tree_sitter::Language) -> anyhow::Result<V
     Ok(out)
 }
 
+// ── comment_node: every comment as a grammar-backed fact ─────────────────────
+
+/// One comment span: its 1-based start/end line, 0-based byte column, and the
+/// RAW text (delimiters included). `comment_node` records the raw span so an
+/// `edit` can key off it; `classify_comment` derives the stripped `text` and the
+/// `kind` from `raw`. Shared by the tree-sitter walk (`walk_comments`, this
+/// module) and the oxc TS arm (`typegraph::ts_comments`).
+#[derive(Clone, Debug)]
+pub struct RawComment {
+    pub start_row: u32,
+    pub start_col: u32,
+    pub end_row: u32,
+    pub end_col: u32,
+    pub raw: String,
+}
+
+/// Enumerate every comment of `content` parsed with `lang`. Grammar-backed:
+/// tree-sitter names comment productions `comment` / `line_comment` /
+/// `block_comment` / `multiline_comment` (grammar-dependent), so any node whose
+/// kind CONTAINS "comment" is one. A `//` (or `#`, `/*`) inside a string literal
+/// is lexed as part of that string, never a comment node — the string-literal
+/// safety that a naive text scan can't give. Positions come straight from
+/// tree-sitter (0-based row/col), normalized here to 1-based line / 0-based
+/// column to match `sg`/`diag`.
+pub fn walk_comments(content: &str, lang: &tree_sitter::Language) -> anyhow::Result<Vec<RawComment>> {
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(lang)?;
+    let tree = parser
+        .parse(content, None)
+        .ok_or_else(|| anyhow::anyhow!("cst parse failed"))?;
+
+    let mut out: Vec<RawComment> = Vec::new();
+    // Full DFS over every node (comments are tree-sitter "extras", attached as
+    // named siblings anywhere in the tree). A comment node is a leaf for our
+    // purposes, so we don't descend into it.
+    let mut stack: Vec<tree_sitter::Node> = vec![tree.root_node()];
+    while let Some(node) = stack.pop() {
+        if node.kind().contains("comment") {
+            let sp = node.start_position();
+            let ep = node.end_position();
+            let raw = content.get(node.start_byte()..node.end_byte()).unwrap_or("").to_string();
+            out.push(RawComment {
+                start_row: sp.row as u32 + 1,
+                start_col: sp.column as u32,
+                end_row: ep.row as u32 + 1,
+                end_col: ep.column as u32,
+                raw,
+            });
+            continue;
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            stack.push(child);
+        }
+    }
+    Ok(out)
+}
+
+/// Classify a comment's RAW text into `(kind, stripped_text)`. `kind` is
+/// `"doc"` for `///` / `//!` / `/**` / `/*!` markers, else `"line"` for `//` /
+/// `#` line comments and `"block"` for `/* */`. `stripped_text` drops the
+/// comment tokens and per-line `*`/leading whitespace (the suppress grammar
+/// parses this text). Language-agnostic: keyed on the marker prefix, not the
+/// tree-sitter node name, so a Rust `///` and a TS `/** */` both read as `doc`.
+pub fn classify_comment(raw: &str) -> (&'static str, String) {
+    let t = raw.trim();
+    // `/**/` is an empty block, not a doc block.
+    if (t.starts_with("///") || t.starts_with("//!"))
+        // `////` (a line of slashes) is a plain line comment, not rustdoc.
+        && !t.starts_with("////")
+    {
+        let body = t.trim_start_matches('/').trim_start_matches('!');
+        return ("doc", body.trim().to_string());
+    }
+    if (t.starts_with("/**") || t.starts_with("/*!")) && t != "/**/" {
+        return ("doc", crate::typegraph::clean_block_comment(t).trim_end().to_string());
+    }
+    if t.starts_with("/*") {
+        return ("block", crate::typegraph::clean_block_comment(t).trim_end().to_string());
+    }
+    if let Some(body) = t.strip_prefix("//") {
+        return ("line", body.trim().to_string());
+    }
+    if t.starts_with('#') {
+        return ("line", t.trim_start_matches('#').trim().to_string());
+    }
+    ("line", t.to_string())
+}
+
 /// Map a file path's extension to the `ts_lang` label, or `None` for files with
 /// no compiled CST grammar (skip them). Covers the 11 languages `ts_lang`
 /// supports. The engine resolves the label via `ts_lang` so this module never
@@ -119,6 +208,35 @@ mod tests {
         let nodes = walk_cst("def beta():\n    pass\n", &lang).unwrap();
         assert!(nodes.iter().any(|n| n.kind == "function_definition"), "python fn def: {nodes:?}");
         assert_eq!(nodes.iter().filter(|n| n.parent_ix.is_none()).count(), 1);
+    }
+
+    #[test]
+    fn walk_comments_grammar_backed_string_safety() {
+        let lang = tree_sitter::Language::new(tree_sitter_rust::LANGUAGE);
+        // `//` inside a string literal must NOT be a comment node.
+        let src = "// real\nfn f() { let s = \"// fake\"; }\n/* block */\n";
+        let cs = walk_comments(src, &lang).unwrap();
+        let texts: Vec<String> = cs.iter().map(|c| c.raw.clone()).collect();
+        assert!(texts.iter().any(|r| r.contains("// real")), "line comment: {texts:?}");
+        assert!(texts.iter().any(|r| r.contains("/* block */")), "block comment: {texts:?}");
+        assert!(!texts.iter().any(|r| r.contains("fake")), "string leaked: {texts:?}");
+        // 1-based line, 0-based col.
+        let first = cs.iter().find(|c| c.raw.contains("// real")).unwrap();
+        assert_eq!((first.start_row, first.start_col), (1, 0));
+    }
+
+    #[test]
+    fn classify_comment_kinds_and_strip() {
+        assert_eq!(classify_comment("// hi"), ("line", "hi".to_string()));
+        assert_eq!(classify_comment("/// doc"), ("doc", "doc".to_string()));
+        assert_eq!(classify_comment("//! inner doc"), ("doc", "inner doc".to_string()));
+        assert_eq!(classify_comment("/* b */"), ("block", "b".to_string()));
+        assert_eq!(classify_comment("/** d */"), ("doc", "d".to_string()));
+        assert_eq!(classify_comment("# py"), ("line", "py".to_string()));
+        // `////` and `/**/` are not doc/block-doc (the empty-block `/**/`
+        // classifies as a plain block, not a doc block).
+        assert_eq!(classify_comment("//// sep").0, "line");
+        assert_eq!(classify_comment("/**/").0, "block");
     }
 
     #[test]

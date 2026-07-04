@@ -226,6 +226,19 @@ pub(crate) const DOC_RELS: [&str; 2] = ["doc_node", "doc_ref"];
 /// builds `type_entity`, by the per-language AST locators in `typegraph`.
 pub(crate) const DOC_TEXT_RELS: [&str; 2] = ["doc_comment", "doc_tag"];
 
+/// Every comment in every parsed file as a grammar-backed fact:
+/// `comment_node(path, line, col, end_line, end_col, text, kind)`. Unlike
+/// `doc_comment` (which rides the TypeLang parse and covers only the three
+/// TypeLang languages' DOC comments bound to an entity), `comment_node` is its
+/// OWN family: it records EVERY comment — line, block, and doc — across the
+/// oxc TS/TSX front-end AND every tree-sitter grammar the `ast` op loads
+/// (Rust, Kotlin, Python, Go, C, bash, ...). `line`/`col` are 1-based line,
+/// 0-based byte column (the `sg`/`diag` convention); `text` is the comment body
+/// with tokens stripped; `kind` ∈ line | block | doc. String-literal safe: a
+/// `//` inside a string is lexed as string content, never a comment row. The
+/// eslint/biome suppression grammar (`std/suppress.dl`) is pure dl over this.
+pub(crate) const COMMENT_RELS: [&str; 1] = ["comment_node"];
+
 // The git-derived families `changed` / `changed_line` / `created`, the analysis
 // families `agent` / `dl_diag` / `type_shape` / `type_lgg` / catalog, the SCIP
 // importer `scip_*`, the clone proposers `propose_extract` / `propose_clone`,
@@ -337,6 +350,7 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
         .chain(module_rel_decls())
         .chain(type_rel_decls())
         .chain(doc_text_rel_decls())
+        .chain(comment_rel_decls())
         .chain(call_rel_decls())
         .chain(dataflow_rel_decls())
         .chain(doc_rel_decls())
@@ -553,6 +567,17 @@ pub(crate) fn doc_text_rel_decls() -> Vec<RelDecl> {
             c("repo", Type::Text), c("sym", Type::Text), c("tag", Type::Text),
             c("arg", Type::Text), c("text", Type::Text)], group: "type",
             doc: "structured doc tags per sym: (repo, sym, tag, arg, text); @param/@returns/@deprecated for JSDoc/KDoc, # Section headings for rustdoc", ..Default::default() },
+    ]
+}
+
+pub(crate) fn comment_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "comment_node".into(), cols: vec![
+            c("path", Type::Path), c("line", Type::Int), c("col", Type::Int),
+            c("end_line", Type::Int), c("end_col", Type::Int),
+            c("text", Type::Text), c("kind", Type::Text)], group: "comment",
+            doc: "every comment in every parsed file: (path, line, col, end_line, end_col, text, kind is line/block/doc); grammar-backed (oxc for TS/TSX, tree-sitter for Rust, Kotlin, Python, Go, C, ...), so a comment marker inside a string is never a row; text has the comment tokens stripped; std/suppress.dl parses it into the eslint/biome disable grammar", ..Default::default() },
     ]
 }
 
@@ -872,6 +897,7 @@ pub(crate) fn module_rels_used(prog: &Program) -> bool { rels_used(prog, &MODULE
 pub(crate) fn type_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_RELS) }
 
 pub(crate) fn doc_text_rels_used(prog: &Program) -> bool { rels_used(prog, &DOC_TEXT_RELS) }
+pub(crate) fn comment_rels_used(prog: &Program) -> bool { rels_used(prog, &COMMENT_RELS) }
 
 pub(crate) fn call_rels_used(prog: &Program) -> bool { rels_used(prog, &CALL_RELS) }
 
@@ -1572,6 +1598,9 @@ pub struct Engine {
     type_facts_cache: extract::FactCache<crate::typegraph::TypeFacts>,
     call_facts_cache: extract::FactCache<crate::typegraph::CallFacts>,
     df_facts_cache: extract::FactCache<crate::typegraph::DataflowFacts>,
+    /// Per-file comment cache for `refresh_comment_rels`, same shape as the
+    /// type/call/df caches: (repo, path, content hash) -> (repo id, comments).
+    comment_facts_cache: extract::FactCache<Vec<crate::cst::RawComment>>,
 }
 
 struct ScanSpec {
@@ -1614,6 +1643,7 @@ impl Engine {
             type_facts_cache: Default::default(),
             call_facts_cache: Default::default(),
             df_facts_cache: Default::default(),
+            comment_facts_cache: Default::default(),
         }
     }
 
@@ -3067,6 +3097,9 @@ impl Engine {
                 if DOC_TEXT_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in doc relation (doc_comment / doc_tag); pick another name", d.name);
                 }
+                if COMMENT_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is a built-in comment relation (comment_node); pick another name", d.name);
+                }
                 if CALL_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in call-graph relation (call_def / call_def_rev / call_site / call_edge / call_edge_rev / call_name / call_kind); pick another name", d.name);
                 }
@@ -3121,6 +3154,7 @@ impl Engine {
         for d in module_rel_decls() { self.declare(&d)?; }
         for d in type_rel_decls() { self.declare(&d)?; }
         for d in doc_text_rel_decls() { self.declare(&d)?; }
+        for d in comment_rel_decls() { self.declare(&d)?; }
         for d in call_rel_decls() { self.declare(&d)?; }
         for d in dataflow_rel_decls() { self.declare(&d)?; }
         for d in doc_rel_decls() { self.declare(&d)?; }

@@ -27,8 +27,13 @@ fail) before a full run.
   body binding. To COMPUTE a value, put the expression in the head, not `l = m+1`.
 - **Regexes are Rust-flavor.** No lookahead/lookbehind (`(?!...)`), no backrefs.
   Anchor with `^`, `$`, `\b`, and character classes instead.
-- **`comment` sees whole-line comments only.** A trailing inline `// ...` after
-  code is invisible to the `comment` op; match a whole-line marker.
+- **`comment_node` sees ALL comments; the regex `comment` op is whole-line only.**
+  The built-in `comment_node(path, line, col, end_line, end_col, text, kind)` rel
+  records EVERY comment (line/block/doc, incl. inline trailing) grammar-backed
+  (oxc for TS, tree-sitter for Rust/Kotlin/Python/Go/C/...), so a `//` inside a
+  string is never a row. `std/suppress.dl` rides it for the eslint/biome
+  `dl-disable-line`/`dl-disable`/`dl-enable` grammar. The regex `comment` op still
+  only detects whole-line comments by prefix — use it for files with no grammar.
 - **Anchor disjunct markers.** In an alternation, a shorter marker substring-
   matches a longer one (`dl-disable` inside `dl-disable-next-line`); anchor each
   branch (`^`, `\b`, trailing `$`) so they do not collide.

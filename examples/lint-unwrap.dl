@@ -19,6 +19,13 @@
 #
 # This program uses the relational form so the "outside test code" claim is true.
 # `_` discards end_line; line/col/end_col drive the exact squiggle.
+#
+# SUPPRESSION: `use "std/suppress.dl"` brings the eslint/biome disable grammar
+# into scope. An inline trailing `// dl-disable-line no-unwrap` on the offending
+# line silences just that hit — the form a whole-line-only comment op could
+# never express, now that `comment_node` sees inline comments. Block suppression
+# (`dl-disable`/`dl-enable`) additionally needs the `lint_candidate` line below.
+use "std/suppress.dl".
 
 rel hit(path: file, line: int, col: int, end_col: int).
 
@@ -35,7 +42,14 @@ not:
     stopBy: end
 `, line, col, _, end_col).
 
-diag(path, line, col, end_col, severity: "warn", msg: "unwrap() outside test code: use ? or expect(\"reason\")") <-
-  hit(path, line, col, end_col).
+# Expose the offense lines so a `dl-disable`/`dl-enable` BLOCK can close its
+# range over them (line/next-line suppression needs no such contract).
+lint_candidate(p, l) <- hit(p, l, _, _).
 
-? diag(path, line, col, end_col, severity, msg).
+# Emit unless suppressed: check the specific code AND the unscoped `"*"` row.
+diag(path, line, col, end_col, severity: "warn", code: "no-unwrap", msg: "unwrap() outside test code: use ? or expect(\"reason\")") <-
+  hit(path, line, col, end_col),
+  !suppressed(path, line, "no-unwrap"),
+  !suppressed(path, line, "*").
+
+? diag(path, line, col, end_col, severity, code, msg).

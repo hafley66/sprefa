@@ -16,7 +16,7 @@ tool calls or made a wrong first move.
 | 2 | `head var BODY is not bound by any source op` | only single captures (`$X`) and span outputs bind head vars; `$$$X` is structural-only | "`$$$X` is pattern structure only; bind via `$X` or a span output." |
 | 3 | `unbound var l in constraint on l = m+1` | arithmetic is head/comparison only, never a body binding | "Arithmetic runs in heads (`rank(path, line+1)`) and comparison sides only, never as a body binding." |
 | 4 | regex `(?!-)` parse error | Rust regex crate: no look-around, no backrefs | "Regexes are Rust-flavor: no lookahead/lookbehind/backrefs; anchor with `$`, `\b`, char classes." |
-| 5 | inline `// dl-disable-line` silently missed | `comment` op detects whole-line comments by prefix; trailing inline comments invisible | "`comment` sees whole-line comments only." |
+| 5 | inline `// dl-disable-line` silently missed | RESOLVED: the built-in `comment_node` rel sees EVERY comment (line/block/doc, incl. inline trailing) grammar-backed; the regex `comment` op keeps its whole-line-by-prefix limit for no-grammar files | "`comment_node` sees all comments incl. inline (`std/suppress.dl` rides it); the regex `comment` op is whole-line-only, for files with no grammar." |
 | 6 | `dl-disable` open-regex substring-matched `dl-disable-next-line` | flat alternations collide when one marker prefixes another | "Anchor disjunct markers." |
 | 7 | scan arity guessing | `scan([repo,][rev,] glob, path[, rev_out])` has two optional leading args | show the with-repo and without-repo forms as two copy-paste lines |
 | 8 | picked `match` for a structural pattern, then `sg`/`ast` blindly | no op-selection decision tree | "`sg`/`ast` when a grammar exists; `match` for substrings/no grammar." |

@@ -99,6 +99,7 @@ pub struct TypeFamily;
 pub struct CallFamily;
 pub struct DataflowFamily;
 pub struct DocFamily;
+pub struct CommentFamily;
 pub struct SpineFamily;
 
 impl ExtractFamily for ModuleFamily {
@@ -212,6 +213,16 @@ impl ExtractFamily for DocFamily {
     fn used(&self, prog: &Program) -> bool { engine::doc_rels_used(prog) }
 }
 
+impl ExtractFamily for CommentFamily {
+    fn name(&self) -> &'static str { "comment-rels" }
+    fn rels(&self) -> &'static [&'static str] { &engine::COMMENT_RELS }
+    fn decls(&self) -> Vec<RelDecl> { engine::comment_rel_decls() }
+    fn reserved_msg(&self) -> &'static str { "a built-in comment relation (comment_node)" }
+    fn digest_key(&self) -> Option<&'static str> { Some("extract:comment") }
+    fn refresh(&self, eng: &mut Engine) -> Result<bool> { eng.refresh_comment_rels() }
+    fn used(&self, prog: &Program) -> bool { engine::comment_rels_used(prog) }
+}
+
 impl ExtractFamily for SpineFamily {
     fn name(&self) -> &'static str { "spine-rels" }
     fn rels(&self) -> &'static [&'static str] { &engine::SPINE_RELS }
@@ -229,11 +240,14 @@ impl ExtractFamily for SpineFamily {
 }
 
 /// Every extraction-tied builtin rel family, in the order the full tick runs
-/// them: module, type, call, dataflow, doc, then spine LAST (after the
+/// them: module, type, call, dataflow, doc, comment, then spine LAST (after the
 /// hand-dispatched `node` refresh — see the module doc). The slice helpers
 /// below split at the node seam so the tick paths never hand-index this.
+/// `comment` sits anywhere between `module` (first) and `spine` (last): it
+/// writes no spine tables and depends on no other family, so both slices'
+/// module-first / spine-last invariants hold.
 pub fn extract_families() -> &'static [&'static dyn ExtractFamily] {
-    &[&ModuleFamily, &TypeFamily, &CallFamily, &DataflowFamily, &DocFamily, &SpineFamily]
+    &[&ModuleFamily, &TypeFamily, &CallFamily, &DataflowFamily, &DocFamily, &CommentFamily, &SpineFamily]
 }
 
 /// Full tick, before `node`: every family but the spine tail.
@@ -267,9 +281,9 @@ mod tests {
     fn registry_order_matches_tick_order() {
         let names: Vec<&str> = extract_families().iter().map(|f| f.name()).collect();
         assert_eq!(names, ["module-rels", "type-rels", "call-rels",
-                           "dataflow-rels", "doc-rels", "spine-rels"]);
-        assert_eq!(extract_families_pre_node().len(), 5);
-        assert_eq!(extract_families_paths_pre_node().len(), 4);
+                           "dataflow-rels", "doc-rels", "comment-rels", "spine-rels"]);
+        assert_eq!(extract_families_pre_node().len(), 6);
+        assert_eq!(extract_families_paths_pre_node().len(), 5);
         assert_eq!(extract_families_paths_pre_node()[0].name(), "type-rels");
         assert_eq!(extract_families_post_node().len(), 1);
         assert_eq!(extract_families_post_node()[0].name(), "spine-rels");

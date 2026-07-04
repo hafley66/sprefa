@@ -138,12 +138,15 @@ pub fn doc_summary(text: &str) -> &str {
     text.lines().map(|l| l.trim()).find(|l| !l.is_empty()).unwrap_or("")
 }
 
-/// Strip a `/** ... */` (or `/* ... */`) block down to its prose: drop the
-/// delimiters, the leading `*` and one space on each inner line, and the blank
-/// leading/trailing lines. Shared by the Kotlin (KDoc) and TS (JSDoc) locators.
-fn clean_block_comment(raw: &str) -> String {
+/// Strip a `/** ... */` (or `/* ... */` / `/*! ... */`) block down to its
+/// prose: drop the delimiters, the leading `*` and one space on each inner line,
+/// and the blank leading/trailing lines. Shared by the Kotlin (KDoc) and TS
+/// (JSDoc) locators, and by the `comment_node` classifier (`crate::cst`).
+pub(crate) fn clean_block_comment(raw: &str) -> String {
     let inner = raw.trim();
-    let inner = inner.strip_prefix("/**").or_else(|| inner.strip_prefix("/*")).unwrap_or(inner);
+    let inner = inner.strip_prefix("/**")
+        .or_else(|| inner.strip_prefix("/*!"))
+        .or_else(|| inner.strip_prefix("/*")).unwrap_or(inner);
     let inner = inner.strip_suffix("*/").unwrap_or(inner);
     let mut lines: Vec<String> = inner.lines().map(|l| {
         let t = l.trim_start();
@@ -1493,6 +1496,16 @@ fn line_at(starts: &[usize], offset: usize) -> u32 {
     }
 }
 
+/// Map a byte offset to (1-based line, 0-based byte column within the line).
+/// Same line base as `line_at`; the column is the byte distance from the line's
+/// start offset, matching the `sg`/`diag` "1-based line, 0-based byte col"
+/// convention the `comment_node` rel follows.
+fn line_col(starts: &[usize], offset: usize) -> (u32, u32) {
+    let line = line_at(starts, offset).max(1);
+    let line_start = starts[(line - 1) as usize];
+    (line, (offset.saturating_sub(line_start)) as u32)
+}
+
 pub fn edges(content: &str) -> Vec<TypeEdge> {
     let Ok(file) = syn::parse_file(content) else {
         return Vec::new();
@@ -2028,6 +2041,31 @@ pub fn ts_edges(content: &str, tsx: bool) -> Vec<TypeEdge> {
         return Vec::new();
     }
     ts_edges_from(&ret.program)
+}
+
+/// Every comment in a TS/TSX file, grammar-backed by oxc's comment table
+/// (`program.comments`). TS/TSX is NOT in the tree-sitter `AST_LANG_TABLE`
+/// (oxc is the front-end), so the generic `cst::walk_comments` can't see it —
+/// this is the TS arm of `comment_node`. oxc's `Comment.span` covers the FULL
+/// comment INCLUDING delimiters (`//`, `/* */`), which is exactly the raw span
+/// `comment_node` records; a `//` inside a string is a token, never a comment
+/// row, because the lexer produced these (string-literal safety, the whole
+/// point). Byte offsets are mapped to 1-based line / 0-based column via a line
+/// index, matching the tree-sitter arm and the `sg`/`diag` convention.
+pub fn ts_comments(content: &str, tsx: bool) -> Vec<crate::cst::RawComment> {
+    let alloc = oxc_allocator::Allocator::default();
+    let st = if tsx { oxc_span::SourceType::tsx() } else { oxc_span::SourceType::ts() };
+    let ret = oxc_parser::Parser::new(&alloc, content, st).parse();
+    // oxc still populates the comment table on a partial parse; `panicked` only
+    // means the AST is incomplete, so comments are usable regardless.
+    let idx = line_index(content);
+    ret.program.comments.iter().filter_map(|c| {
+        let (lo, hi) = (c.span.start as usize, c.span.end as usize);
+        let raw = content.get(lo..hi)?.to_string();
+        let (sl, sc) = line_col(&idx, lo);
+        let (el, ec) = line_col(&idx, hi);
+        Some(crate::cst::RawComment { start_row: sl, start_col: sc, end_row: el, end_col: ec, raw })
+    }).collect()
 }
 
 fn ts_edges_from(program: &ts_ast::Program) -> Vec<TypeEdge> {

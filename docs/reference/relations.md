@@ -18,6 +18,7 @@ Generated from the engine's `rel_catalog` by examples/gen-reference.dl. Do not h
 | `changed_line` | changed | `(path, line)` | new-side lines of git diff -U0 HEAD hunks plus every line of untracked files; pure-deletion hunks emit nothing; line-scoped rails precision |
 | `child` | node | `(parent, child)` | CST parent-child edges (exactly 2 cols, so closure(child) gives ancestry) |
 | `clock` | clock | `(secs, bucket)` | the current time bucket now/secs per named period, present EVERY tick (not edge-triggered like every); clock(300,b) binds b to a monotone int advancing once per 300s — join it to vary a digest or gate on cadence, no @next counter |
+| `comment_node` | comment | `(path, line, col, end_line, end_col, text, kind)` | every comment in every parsed file: (path, line, col, end_line, end_col, text, kind is line/block/doc); grammar-backed (oxc for TS/TSX, tree-sitter for Rust, Kotlin, Python, Go, C, ...), so a comment marker inside a string is never a row; text has the comment tokens stripped; std/suppress.dl parses it into the eslint/biome disable grammar |
 | `content` | core | `(id, hash)` | content addresses |
 | `crate_edge` | module | `(src, dst, kind, rev)` | workspace-internal Cargo dependency edges |
 | `created` | created | `(path, name, email, ts)` | files added since their first appearance, with author name/email/timestamp |

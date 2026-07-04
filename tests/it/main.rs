@@ -21,6 +21,8 @@ mod perf_rels;
 mod scoped_tick;
 mod cmd_op;
 mod comment_op;
+mod comment_node;
+mod suppress;
 mod config_repos;
 mod created_perf;
 mod cst_node_perf;

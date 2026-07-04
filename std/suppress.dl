@@ -1,0 +1,153 @@
+# Standard library: the eslint/biome comment-directive suppression grammar,
+# as pure dl over the built-in `comment_node` rel. Policy lives HERE, never in
+# Rust — the engine only produces grammar-accurate comment facts; which
+# directives mean what, and how a block pairs, is all datalog.
+#
+#   use "std/suppress.dl".
+#   # `suppressed(path, line, code)`, `suppress_reason(path, line, reason)`,
+#   # and `suppress_span(path, code, start, end)` come into scope.
+#
+# The directives (a leading token in any comment — line, block, or doc; the
+# `dl-` prefix keeps them distinct from eslint's own):
+#
+#   // dl-disable-line [codes] [-- reason]        suppress THIS line (an inline
+#                                                 trailing comment on the offense)
+#   // dl-disable-next-line [codes] [-- reason]   suppress the NEXT line
+#   // dl-disable [codes]                         open a block
+#   // dl-enable  [codes]                         close it
+#
+# `codes` is a comma/space list of diag codes the directive scopes to; empty =
+# all codes (recorded as the `"*"` row). `reason` is the free text after `--`.
+#
+# ── the join convention (rails) ──────────────────────────────────────────────
+# A rail filters its candidate diagnostics against `suppressed`, testing BOTH
+# the specific code and the unscoped `"*"` row:
+#
+#   diag(path, line, col, end_col, severity: "warn", msg: "...") <-
+#       hit(path, line, col, end_col),
+#       !suppressed(path, line, "my-code"),
+#       !suppressed(path, line, "*").
+#
+# `disable-line` / `disable-next-line` work out of the box (they name exact
+# lines). BLOCK suppression additionally needs the rail to expose its candidate
+# lines, because a block covers a RANGE and dl can't enumerate lines that carry
+# no fact — the rail closes the range over its own diagnostics via the
+# `lint_candidate(path, line)` contract:
+#
+#   lint_candidate(p, l) <- hit(p, l, _, _).
+#
+# With that one line, `!suppressed(path, line, code)` covers block ranges too.
+# A rail using only line/next-line suppression can skip it.
+#
+# NO `?` queries live here — a `use`d module must not perturb the importer's
+# query output order. This file scans nothing; the importer's scan rules decide
+# which files feed `comment_node`.
+
+# ── directive lexing ─────────────────────────────────────────────────────────
+# One row per recognized directive comment: (path, line, kind, args) where kind
+# ∈ line | next | disable | enable and args is the text after the keyword. The
+# four regexes are mutually exclusive: `dl-disable-line` and
+# `dl-disable-next-line` and `dl-disable` differ at the character after
+# `dl-disable`, so `^dl-disable($| )` never matches the longer forms.
+rel dir_raw(path: file, line: int, kind: text, args: text).
+dir_raw(p, l, "next", args) <-
+    comment_node(p, l, _, _, _, comment_text, _),
+    comment_text =~ /^dl-disable-next-line($| )/,
+    args = trim(replace_re(comment_text, "^dl-disable-next-line", "")).
+dir_raw(p, l, "line", args) <-
+    comment_node(p, l, _, _, _, comment_text, _),
+    comment_text =~ /^dl-disable-line($| )/,
+    args = trim(replace_re(comment_text, "^dl-disable-line", "")).
+dir_raw(p, l, "disable", args) <-
+    comment_node(p, l, _, _, _, comment_text, _),
+    comment_text =~ /^dl-disable($| )/,
+    args = trim(replace_re(comment_text, "^dl-disable", "")).
+dir_raw(p, l, "enable", args) <-
+    comment_node(p, l, _, _, _, comment_text, _),
+    comment_text =~ /^dl-enable($| )/,
+    args = trim(replace_re(comment_text, "^dl-enable", "")).
+
+# ── reason (text after ` -- `) ───────────────────────────────────────────────
+# `.*?--` is non-greedy up to the FIRST `--`; a single `-` inside a code name
+# (e.g. `no-unwrap`) is not a separator.
+rel suppress_reason(path: file, line: int, reason: text).
+suppress_reason(p, l, reason) <-
+    dir_raw(p, l, _, args),
+    args =~ /--/,
+    reason = trim(replace_re(args, "^.*?--", "")).
+
+# ── codes: strip the reason, normalize the separator to a comma ──────────────
+rel dir_codes(path: file, line: int, kind: text, codes: text).
+dir_codes(p, l, k, codes) <-
+    dir_raw(p, l, k, args),
+    without_reason = replace_re(args, " *--.*$", ""),
+    codes = replace_re(trim(without_reason), "[ ,]+", ",").
+
+# One scoped code per directive. Empty codes = the unscoped `"*"` row (suppress
+# everything); a non-empty list is peeled one code at a time (recursive tail).
+rel scoped(path: file, line: int, kind: text, code: text).
+scoped(p, l, k, "*") <- dir_codes(p, l, k, "").
+
+rel code_rest(path: file, line: int, kind: text, rest: text).
+code_rest(p, l, k, codes) <- dir_codes(p, l, k, codes), codes != "".
+scoped(p, l, k, head) <-
+    code_rest(p, l, k, rest),
+    head = replace_re(rest, ",.*$", ""),
+    head != "".
+code_rest(p, l, k, tail) <-
+    code_rest(p, l, k, rest),
+    rest =~ /,/,
+    tail = replace_re(rest, "^[^,]*,", "").
+
+# ── exact-line suppression (disable-line same line, disable-next-line +1) ─────
+rel suppress_line(path: file, line: int, code: text).
+suppress_line(p, l, c)  <- scoped(p, l, "line", c).
+suppress_line(p, l1, c) <- scoped(p, l, "next", c), l1 = l + 1.
+
+# ── block ranges (disable ... enable), the argmax pairing (book ch8) ──────────
+# An `enable` closes a `disable` when it comes strictly after it and matches the
+# scope: same code, OR a bare `dl-enable` ("*") closing a scoped disable. (The
+# reverse — a scoped enable re-opening only one code of a wildcard disable — is
+# eslint's full semantics; kept simple here: a wildcard disable is closed only
+# by a wildcard enable. Documented, not modeled.)
+rel disable_at(path: file, line: int, code: text).
+rel enable_at(path: file, line: int, code: text).
+disable_at(p, l, c) <- scoped(p, l, "disable", c).
+enable_at(p, l, c)  <- scoped(p, l, "enable", c).
+
+rel span_cand(path: file, code: text, start: int, endl: int).
+span_cand(p, c, s, e) <- disable_at(p, s, c), enable_at(p, e, c), e > s.
+span_cand(p, c, s, e) <- disable_at(p, s, c), enable_at(p, e, "*"), e > s, c != "*".
+
+# nearest-enable wins: a candidate close is beaten by any nearer one.
+rel span_beaten(path: file, code: text, start: int, endl: int).
+span_beaten(p, c, s, e) <- span_cand(p, c, s, e), span_cand(p, c, s, e2), e2 < e.
+
+rel suppress_span(path: file, code: text, start: int, endl: int).
+suppress_span(p, c, s, e) <- span_cand(p, c, s, e), !span_beaten(p, c, s, e).
+# an unclosed `dl-disable` runs to end-of-file (a large sentinel — dl has no
+# per-file line count, and a range test never enumerates it).
+rel has_close(path: file, code: text, start: int).
+has_close(p, c, s) <- span_cand(p, c, s, _).
+suppress_span(p, c, s, 1000000000) <- disable_at(p, s, c), !has_close(p, c, s).
+
+# ── the exported check ───────────────────────────────────────────────────────
+# `suppressed(path, line, code)`: a diagnostic with `code` on `line` in `path`
+# is suppressed. Exact-line directives are unconditional; block coverage is
+# closed over the rail's candidate lines (the `lint_candidate` contract above).
+rel lint_candidate(path: file, line: int).
+rel suppressed(path: file, line: int, code: text).
+suppressed(p, l, c) <- suppress_line(p, l, c).
+suppressed(p, l, c) <-
+    lint_candidate(p, l),
+    suppress_span(p, c, s, e), s <= l, l <= e.
+
+# ── optional rail: reason-required (the biome discipline) ────────────────────
+# A disable with no `-- reason` is a warn diagnostic. Uncomment in a program
+# that wants to enforce it (needs `?`/diag in the importer, not here):
+#
+#   rel has_reason(path: file, line: int).
+#   has_reason(p, l) <- suppress_reason(p, l, _).
+#   diag(path: p, line: l, severity: "warn", code: "suppress-reason",
+#        msg: "suppression directive needs a `-- reason`") <-
+#       dir_raw(p, l, _, _), !has_reason(p, l).

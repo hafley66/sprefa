@@ -583,8 +583,8 @@ impl Engine {
 
         // `extract:<family>:<rev>` digest rows, one family prefix at a time
         // (the families whose skip-check is keyed per rev: type/call/
-        // dataflow/doc — see `moved_extract_revs` call sites).
-        for family in ["type", "call", "dataflow", "doc"] {
+        // dataflow/doc/comment — see `moved_extract_revs` call sites).
+        for family in ["type", "call", "dataflow", "doc", "comment"] {
             let prefix = format!("extract:{family}:");
             self.db.exec(&format!(
                 "DELETE FROM _reldigest WHERE rel LIKE '{prefix}%' \
@@ -845,6 +845,87 @@ impl Engine {
              SELECT \"src\", \"dst\", \"kind\" FROM {link_rev}"
         ))?;
         Ok(())
+    }
+
+    /// The comment corpus: every `_file` row whose path has a grammar the
+    /// comment walk can parse — the oxc TS/TSX front-end (`.ts`/`.tsx`) or one of
+    /// the tree-sitter grammars `cst::lang_label_for_path` recognizes (Rust,
+    /// Kotlin, Python, Go, C, bash, ...). Scoping the set here (rather than
+    /// reading all of `_file`) keeps the family's input digest from moving when
+    /// an unparseable file (`.md`, `.json`) is edited.
+    fn comment_file_set(&self) -> Result<Vec<ExtractFile>> {
+        let mut files: Vec<ExtractFile> = Vec::new();
+        let mut sel = self.db.conn().prepare("SELECT repo, path, rev, hash FROM _file")?;
+        let rows = sel.query_map([], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+            r.get::<_, Option<String>>(3)?.unwrap_or_default())))?;
+        for row in rows.flatten() {
+            let p = row.1.as_str();
+            let ts = p.ends_with(".ts") || p.ends_with(".tsx");
+            if ts || crate::cst::lang_label_for_path(p).is_some() { files.push(row); }
+        }
+        Ok(files)
+    }
+
+    /// Rebuild `comment_node` — every comment in every parseable file as a
+    /// grammar-backed fact. Its OWN family (not riding the TypeLang parse like
+    /// `doc_comment`): it covers EVERY comment (line/block/doc) across a broader
+    /// language set (oxc for TS/TSX, tree-sitter for the `AST_LANG_TABLE`
+    /// grammars), so a program reading only `comment_node` shouldn't pay for a
+    /// type-entity pass, and a Python/Go comment has no `type_entity` to hang
+    /// off. Same perf shape as `refresh_type_rels`: per-rev input-digest skip,
+    /// per-file fact cache, parallel parse, one batched `refresh_rel`.
+    ///
+    /// `comment_node` has no rev column (like `doc_comment`): a file present at
+    /// two revs unions its comments, deduped by span. String-literal safety is
+    /// the walk's, not this method's — a `//` inside a string is never a comment
+    /// node / oxc comment, so it never becomes a row.
+    pub(crate) fn refresh_comment_rels(&self) -> Result<bool> {
+        let files = self.comment_file_set()?;
+        let moved = self.moved_extract_revs("comment", &files, false)?;
+        if moved.is_empty() { return Ok(false); }
+        let root = self.root.clone();
+        let roots = self.repo_roots();
+        // Per-file comment walk in parallel; TS/TSX via oxc, everything else via
+        // the shared tree-sitter walk. Unchanged files come from the cache.
+        let facts: Vec<(String, String, String, Arc<Vec<crate::cst::RawComment>>)> =
+            cached_facts(&self.comment_facts_cache, &files, &self.extract_files_parsed, |repo, path, rev| {
+                let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
+                let content = read_content(froot, rev, path).unwrap_or_default();
+                let rid = repo_id_of(froot, path, repo);
+                let comments = if path.ends_with(".ts") || path.ends_with(".tsx") {
+                    typegraph::ts_comments(&content, path.ends_with(".tsx"))
+                } else {
+                    let label = crate::cst::lang_label_for_path(path)?;
+                    let lang = ts_lang(label).ok()?;
+                    crate::cst::walk_comments(&content, &lang).unwrap_or_default()
+                };
+                Some((rid, comments))
+            });
+
+        let t = |s: &str| Value::Text(s.to_string());
+        let i = |n: u32| Value::Int(n as i64);
+        // Dedup by span across revs (no rev column): a file scanned at two revs
+        // emits its comments once. Keyed on (path, span) — a comment can't occur
+        // twice at one span in one file.
+        let mut seen: HashSet<(String, u32, u32, u32, u32)> = HashSet::new();
+        let mut rows: Vec<Vec<Value>> = Vec::new();
+        for (_repo, path, _rev, comments) in &facts {
+            for c in comments.iter() {
+                if !seen.insert((path.clone(), c.start_row, c.start_col, c.end_row, c.end_col)) {
+                    continue;
+                }
+                let (kind, text) = crate::cst::classify_comment(&c.raw);
+                rows.push(vec![
+                    t(path), i(c.start_row), i(c.start_col), i(c.end_row), i(c.end_col),
+                    t(&text), t(kind),
+                ]);
+            }
+        }
+        self.refresh_rel("comment_node",
+            &["path", "line", "col", "end_line", "end_col", "text", "kind"], &rows)?;
+        for (rev, d) in &moved { self.save_rel_digest(&format!("extract:comment:{rev}"), d)?; }
+        Ok(true)
     }
 
     /// CST-as-relation (christmas #3): walk every NAMED tree-sitter node of every
