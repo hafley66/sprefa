@@ -1,0 +1,244 @@
+# net-atlas.dl — networking concepts modeled as facts and rules, teaching the
+# domain AND the engine's idioms at once. The frame: firewall/router configs
+# are already lists of SQL filters in a priority order — ACLs are WHERE
+# clauses with a rank, a RIB is a candidate table, a FIB is the winning row
+# per key. dl just makes that literal.
+#
+# Tier 1 (below) is a plain fact atlas: net_concept / dl_concept / analog.
+# Read-only, no rules — a lookup table for "what's the dl word for this
+# networking word".
+#
+# Tier 2 is a runnable toy lab: two VRFs sharing an OVERLAPPING subnet, three
+# devices, static routes, ACLs with a shadowed rule, and a packet walk that
+# proves three things a real reader would want proven, not asserted:
+#   - first-match-wins ACL: a `deny` at a lower prio number beats a `permit`
+#     matching the exact same flow (the beaten-by-negation idiom).
+#   - longest-prefix-match: a `key(vrf, prefix) merge(MaxBy(prefix_len))`
+#     lattice picks the /24 over the /16 for the same overlapping prefix.
+#   - VRF isolation: the identical destination address resolves to a
+#     DIFFERENT device depending which VRF the packet is in.
+#
+# Run:
+#   dl examples/net-atlas.dl --root . --no-daemon
+#
+# Honest limits (the toy corners cut on purpose):
+#   - cidr matching is STRING-PREFIX only (strip_prefix + a regex that drops
+#     the trailing "<last-octet>/<masklen>"), never real bitwise LPM. It only
+#     behaves correctly for /24-aligned rules — every acl() row here is /24.
+#     A real implementation needs the address as an integer and a mask AND,
+#     not text.
+#   - `route`'s two overlapping rows (a /16 aggregate and a /24 specific)
+#     deliberately share the SAME literal `prefix` text ("10.0.1.0") instead
+#     of each getting its own canonical network address. Real CIDR math would
+#     give the /16 a different address (10.0.0.0/16, not 10.0.1.0/16); this
+#     toy pins them to one key on purpose so `key(vrf, prefix)` actually has
+#     two candidate rows to pick between — the demo is the LATTICE mechanism,
+#     not real route canonicalization.
+#   - `fib` has no per-device column: it is one converged, already-resolved
+#     table, not a per-hop routing decision recomputed at every device. The
+#     toy topology hub-connects the edge firewall directly to both other
+#     devices so a single fib lookup from the ingress device is always
+#     enough to name the right one-hop neighbor — a real multi-hop network
+#     needs a per-device RIB and a lookup at every hop, not one flat table.
+#   - `peer` rows are asserted only in the direction packets actually flow
+#     for these test flows (fw1 -> core1, fw1 -> acc1, core1 -> acc1); a real
+#     link is bidirectional.
+#   - no return-path check: `reach` proves the forward walk only.
+#   - VRF/ACL/route facts are hand-asserted, not scanned from real device
+#     configs — this file is the concept demo, not a config parser.
+
+# =============================================================================
+# Tier 1 — concept atlas (facts only, no rules; asserted-fact rels stay fact-only)
+# =============================================================================
+
+rel net_concept(name: text, layer: text).
+net_concept("packet at an interface", "L2-L3").
+net_concept("forwarding hop / next-hop", "L3").
+net_concept("TTL", "L3").
+net_concept("firewall ACL permit/drop", "L3-L4").
+net_concept("VRF", "L3").
+net_concept("route distinguisher (RD)", "control-plane").
+net_concept("route-target import/export", "control-plane").
+net_concept("RIB -> FIB best-path selection", "control-plane").
+net_concept("BGP convergence", "control-plane").
+net_concept("default gateway / edge router", "L3").
+net_concept("which upstream reaches me", "control-plane").
+net_concept("NAT", "L3-L4").
+net_concept("connection 5-tuple", "L4").
+net_concept("L7 request/response", "L7").
+
+rel dl_concept(name: text, note: text).
+dl_concept("df_node", "a value at one program point").
+dl_concept("flow_edge", "one value-flow hop between two df_nodes").
+dl_concept("recursion depth cap (d < 64)", "the fixpoint's runaway guard, see std/entry.dl").
+dl_concept("flow_sanitizer / flow_summary (flow_kept/flow_cut)", "propagation-suppression models layered over flow_edge").
+dl_concept("per-repo namespace", "same local names, isolated graphs across config repos").
+dl_concept("repo::sym prefix", "the qualifier that makes a local name globally addressable").
+dl_concept("use modules / scip_want cross-repo merge", "explicitly importing another namespace's symbol table").
+dl_concept("key(...) merge(MaxBy(col)) lattice", "every candidate row asserted, one winner kept per key").
+dl_concept("recursive-rule fixpoint", "converges when a full pass adds zero new rows").
+dl_concept("entry(repo, sym, kind)", "the declared inventory of where execution begins").
+dl_concept("op_reach labeled reachability", "which fns a named operation's request can reach").
+dl_concept("--move rewrite coordinate", "the ref-spine edit sink for a boundary rename").
+dl_concept("call_target per-call-site pinning", "the (call, caller, callee) triple pinning one connection's own hops").
+dl_concept("flow-services OpenAPI wire hop", "flow_edge across a spec-named request/response boundary").
+
+rel analog(net: text, dl: text, note: text).
+analog("packet at an interface", "df_node",
+  "a value at a specific program point IS a packet at a specific interface").
+analog("forwarding hop / next-hop", "flow_edge",
+  "one edge = one hop toward the next node").
+analog("TTL", "recursion depth cap (d < 64)",
+  "both exist to kill a runaway loop, neither models real distance").
+analog("firewall ACL permit/drop", "flow_sanitizer/flow_summary suppression (flow_kept/flow_cut)",
+  "a suppression model cuts the blanket edge exactly where an ACL would drop the packet").
+analog("VRF", "per-repo namespace",
+  "same local names, isolated graphs -- a name collision across VRFs/repos never joins").
+analog("route distinguisher (RD)", "repo::sym prefix",
+  "the qualifier that makes an otherwise-ambiguous local name globally addressable").
+analog("route-target import/export", "use modules / scip_want cross-repo symbol merge",
+  "explicitly importing another namespace's routes/symbols into your own table").
+analog("RIB -> FIB best-path selection", "key(...) merge(MaxBy(col)) lattice",
+  "every candidate route/row is asserted; the lattice keeps exactly one winner per key").
+analog("BGP convergence", "recursive-rule fixpoint",
+  "both stop only once a full pass adds nothing new").
+analog("default gateway / edge router", "entry(repo, sym, kind)",
+  "the declared place traffic or execution BEGINS").
+analog("which upstream reaches me", "op_reach labeled reachability",
+  "a labeled reachability set, not a single path").
+analog("NAT", "boundary symbol rewrite (--move rewrite coordinate)",
+  "both rewrite an address/name at a boundary while preserving the connection").
+analog("connection 5-tuple", "call_target per-call-site pinning",
+  "both pin one specific interaction so its hops don't cross-talk with unrelated ones").
+analog("L7 request/response", "flow-services OpenAPI wire hop",
+  "the payload crosses an opaque boundary that only a spec/contract can join").
+
+? analog(net, dl, note).
+
+# =============================================================================
+# Tier 2 — toy topology + packet walk (the runnable part)
+# =============================================================================
+
+# ---- lab facts --------------------------------------------------------------
+
+rel vrf(name: text).
+vrf("red").
+vrf("blue").
+
+rel device(name: text, role: text).
+device("fw1", "firewall").
+device("core1", "router").
+device("acc1", "access").
+
+# Both VRFs carry the SAME subnet on shared devices -- the overlapping-subnet
+# punchline (VRF-lite: identical addressing, isolated forwarding tables).
+rel iface(device: text, ifname: text, vrf: text, cidr: text).
+iface("fw1", "eth0", "red", "10.0.1.0/24").
+iface("fw1", "eth1", "blue", "10.0.1.0/24").
+iface("core1", "eth0", "red", "10.0.1.0/24").
+iface("core1", "eth1", "blue", "10.0.1.0/24").
+iface("acc1", "eth0", "red", "10.0.1.0/24").
+
+# Physical wiring, hub topology (see the header's honest-limits note on why
+# fw1 links directly to both other devices instead of a strict linear chain).
+rel peer(device_a: text, iface_a: text, device_b: text, iface_b: text).
+peer("fw1", "eth0", "core1", "eth0").
+peer("fw1", "eth1", "acc1", "eth0").
+peer("core1", "eth1", "acc1", "eth1").
+
+# Static routes: two rows share the literal prefix "10.0.1.0" on purpose (see
+# header) so the fib lattice below has an actual pick to make. Blue's /16 and
+# /24 both point at core1 (a no-op pick, same shape flow-panel.dl's
+# member_node comment calls out); red's /24 diverges to acc1.
+rel route(vrf: text, prefix: text, prefix_len: int, next_hop: text).
+route("red", "10.0.1.0", 16, "core1").
+route("red", "10.0.1.0", 24, "acc1").
+route("blue", "10.0.1.0", 16, "core1").
+route("blue", "10.0.1.0", 24, "core1").
+
+# ACL: prio 10 denies the same (src,dst) pair prio 20 would permit -- the
+# shadowed-permit fixture. Prio 30 is an unrelated, unshadowed permit.
+rel acl(device: text, prio: int, src_cidr: text, dst_cidr: text, action: text).
+acl("fw1", 10, "10.0.1.0/24", "10.0.2.0/24", "deny").
+acl("fw1", 20, "10.0.1.0/24", "10.0.2.0/24", "permit").
+acl("fw1", 30, "10.0.1.0/24", "10.0.3.0/24", "permit").
+
+# Test flows to walk through the lab.
+#   f_deny   -> hits the shadowed deny at fw1, goes nowhere.
+#   f_permit -> hits the unshadowed permit at fw1, no route past it either
+#               (nothing else in this lab routes 10.0.3.0/24 -- it still
+#               proves the permit verdict, just doesn't walk further).
+#   f_red / f_blue -> same dst_ip, different vrf, the overlap punchline.
+rel test_flow(id: text, vrf: text, src_ip: text, dst_ip: text, ingress_device: text).
+test_flow("f_deny", "red", "10.0.1.50", "10.0.2.50", "fw1").
+test_flow("f_permit", "red", "10.0.1.50", "10.0.3.50", "fw1").
+test_flow("f_red", "red", "10.0.1.50", "10.0.1.0", "fw1").
+test_flow("f_blue", "blue", "10.0.1.50", "10.0.1.0", "fw1").
+
+# ---- 1. FIRST-MATCH-WINS ACL (beaten-by-negation) ---------------------------
+#
+# Cidr matching is STRING-PREFIX only: strip the trailing "<last-octet>/<len>"
+# off a /24 cidr with a regex, then check the flow's address starts with what
+# is left ("10.0.1.0/24" -> "10.0.1." ; "10.0.1.50" starts with it). Real
+# longest-prefix-match needs the address as bits and a mask AND -- out of
+# scope for this toy, and this regex is only correct for /24 rules (all of
+# them, here).
+rel acl_net(device: text, prio: int, action: text, src_net: text, dst_net: text).
+acl_net(d, prio, action, sn, dn) <-
+    acl(d, prio, src_cidr, dst_cidr, action),
+    sn = replace_re(src_cidr, "[0-9]+/[0-9]+$", ""),
+    dn = replace_re(dst_cidr, "[0-9]+/[0-9]+$", "").
+
+rel acl_hit(device: text, flow_id: text, prio: int, action: text).
+acl_hit(d, id, prio, action) <-
+    test_flow(id, _, src_ip, dst_ip, _),
+    acl_net(d, prio, action, sn, dn),
+    ms = strip_prefix(src_ip, sn), ms != src_ip,
+    md = strip_prefix(dst_ip, dn), md != dst_ip.
+
+# A hit is beaten if another hit on the same device+flow has a LOWER prio
+# number (lower number = evaluated first = wins, first-match-wins order).
+rel acl_beaten(device: text, flow_id: text, prio: int).
+acl_beaten(d, id, prio) <-
+    acl_hit(d, id, prio, _), acl_hit(d, id, prio2, _), prio2 < prio.
+
+rel acl_verdict(device: text, flow_id: text, action: text).
+acl_verdict(d, id, action) <- acl_hit(d, id, prio, action), !acl_beaten(d, id, prio).
+
+# ---- 2. LONGEST-PREFIX-MATCH (RIB -> FIB lattice) ---------------------------
+#
+# Every candidate route row goes in; key(vrf, prefix) merge(MaxBy(prefix_len))
+# keeps only the most-specific (highest prefix_len) row per key -- the
+# RIB->FIB line, no if/else.
+rel fib(vrf: text, prefix: text, prefix_len: int, next_hop: text)
+  key(vrf, prefix) merge(MaxBy(prefix_len)).
+fib(vrf, prefix, prefix_len, next_hop) <- route(vrf, prefix, prefix_len, next_hop).
+
+# ---- 3. PACKET WALK (seeded recursion, set semantics, no depth counter) -----
+#
+# Seed at each flow's ingress device. Extend one hop at a time: look up the
+# flow's fib winner, require an actual peer link from the current device to
+# that next hop, and refuse to extend past a device with a "deny" verdict
+# (the packet still arrives AT that device -- deny blocks onward, not
+# arrival). Terminates by set semantics: once no new (flow, device) pair is
+# derivable, the fixpoint is done -- no explicit depth cap needed here.
+rel reach(flow_id: text, device: text).
+reach(id, dev) <- test_flow(id, _, _, _, dev).
+reach(id, nxt) <-
+    reach(id, cur),
+    test_flow(id, vrf, _, dst_ip, _),
+    fib(vrf, dst_ip, _, nxt),
+    peer(cur, _, nxt, _),
+    !acl_verdict(cur, id, "deny").
+
+# ---- 4. queries --------------------------------------------------------------
+
+# The shadowed-permit flow: verdict is "deny" (prio 10 beats prio 20's
+# permit on the identical match), and the walk never leaves fw1.
+? acl_verdict(device, id, action).
+? reach(id, device).
+
+# The overlapping-subnet punchline: the SAME dst_ip resolves to a DIFFERENT
+# device depending on vrf (red -> acc1 via the /24; blue -> core1, the /16
+# and /24 rows agree there).
+? fib(vrf, prefix, prefix_len, next_hop).

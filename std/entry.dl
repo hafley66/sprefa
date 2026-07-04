@@ -1,0 +1,128 @@
+# entry.dl — gateway inventory + reachability-from-entry over the shared
+# value-flow graph (std/flow.dl's flow_edge). "Entry" means main(), a
+# package.json's declared executable, or an OpenAPI-named service handler —
+# the places execution or a request BEGINS, as opposed to flow_edge's plain
+# node-to-node value hops. Three rels an importer gets:
+#
+#   entry(repo, sym, kind)     the inventory itself (assertable, see below)
+#   entry_reach(sym, d)        min hops from ANY entry point to sym
+#   op_reach_fn(op, fnb)       which fns a named wire operation's request can
+#                              reach, labeled per operation
+#
+#   use "std/entry.dl".   # brings all of the above, plus everything
+#                          # std/flow.dl exports (flow_edge, df_*, call_*).
+#
+# Honest limits (the same shape std/flow.dl and flow-services.dl already
+# carry): the sym->df-node bridge is NAME-keyed (entry_seed/op_reach_seed
+# below match EVERY df_node whose enclosing fn's bare name equals the
+# entry's/endpoint's — ecosystem-ambiguous by design, same tradeoff
+# flow_lambda takes); reachability is context-insensitive (a reach fact says
+# "some path exists", not "through which call chain"); both recursions cap
+# at depth 64 so a huge or cyclic flow_edge graph can't run away the
+# fixpoint — a real path longer than that silently doesn't appear, it does
+# not error.
+
+use "std/flow.dl".
+
+# ---- gateway inventory ------------------------------------------------------
+# entry_pkg is a SOURCE rule (heads on jsonp) and entry_drv is DERIVED (heads
+# on plain rel reads) — split per the one-rel-one-rule-kind rule (a rel
+# headed by both a source rule and a derived rule loses the source rows to
+# rebuild_derived's DELETE) and unioned into `entry`.
+rel entry(repo: text, sym: text, kind: text).
+entry(repo, sym, kind) <- entry_pkg(repo, sym, kind).
+entry(repo, sym, kind) <- entry_drv(repo, sym, kind).
+
+# Rust: every fn named exactly "main" — the process entry point. type_entity
+# already carries each row's own repo, so it threads straight through
+# (unlike the two source rules below, which are pinned to the "WORK" scan
+# sentinel like flow-services.dl's service_op).
+rel entry_drv(repo: text, sym: text, kind: text).
+entry_drv(repo, sym, "main") <-
+  type_entity(repo, sym, "main", "function", _, _, _).
+
+# OpenAPI handlers: op_endpoint (below) is flow-services.dl's shape,
+# reproduced here rather than imported from the example — it isn't part of
+# std/flow.dl's exported surface, and this module wants its own
+# service_op/op_endpoint so `use "std/entry.dl".` alone is enough.
+entry_drv("WORK", sym, "service") <- op_endpoint(_, _, sym).
+
+# package.json: the "main" field names the package's executable ENTRY FILE
+# (a path, not a fn sym — package.json has no fn-level granularity). scan +
+# jsonp in one rule, the established source shape (examples/pin-skew.dl's
+# gomod_pin, flow-services.dl's service_op).
+rel entry_pkg(repo: text, sym: text, kind: text).
+entry_pkg("WORK", mainpath, "pkg-main") <-
+  scan("WORK", "**/package.json", p, rev),
+  jsonp(p, rev, "main", mainpath).
+
+# Users union their own convention-read gateways the same way rev_cmp_want /
+# service_op do — a cron trigger, a CLI subcommand table, whatever this repo
+# calls "start":
+#   entry("myrepo", "myrepo::src/worker.ts::function::handleJob", "custom").
+
+# ---- the wire contract (flow-services.dl's shape, owned here too) ----------
+rel service_op(op: text).
+service_op(op) <- scan("WORK", "**/openapi.yaml", p, rev),
+    jsonp(p, rev, "paths.*.*.operationId", op).
+
+rel op_endpoint(op: text, fn_bare: text, sym: text).
+op_endpoint(op, fnb, sym) <-
+    service_op(op), call_name(sym, op),
+    fnb = replace_re(sym, "^[^:]*::", "").
+
+# ---- reachability from any entry point --------------------------------------
+# Bridge a fn SYM into the df-node graph: every df_node belonging to that fn,
+# of ANY kind (param/ret/call_res/local/... — the lift doesn't distinguish
+# here, "reachable from the entry fn at all" is the honest question). A
+# pkg-main entry's sym is a package.json PATH, not a fn sym, so it can't
+# bridge into df_node.fn; excluded rather than left to silently not-match
+# (the same "skip cleanly" contract flow-panel.dl's field mint uses).
+rel entry_seed(node: text).
+entry_seed(node) <-
+  entry(_, sym, kind), kind != "pkg-main",
+  bare = replace_re(sym, "^[^:]*::", ""),
+  df_node(node, _, _, bare, _, _).
+
+rel entry_reach_node_raw(node: text, d: int).
+entry_reach_node_raw(node, 0) <- entry_seed(node).
+entry_reach_node_raw(to, d0 + 1) <-
+  entry_reach_node_raw(from, d0), flow_edge(from, to), d0 < 64.
+
+# Project node hits back up to the enclosing fn's bare name so the answer is
+# per-SYMBOL, not per-node — a fn with many df_nodes would otherwise fan out
+# into many rows at possibly different depths; not-min dedup by negation
+# (MinBy doesn't exist — see .dl/flow-panel.dl's member_param_not_min) keeps
+# the shortest.
+rel entry_reach_raw(sym: text, d: int).
+entry_reach_raw(fnb, d) <-
+  entry_reach_node_raw(node, d), df_node(node, _, _, fnb, _, _).
+
+rel entry_reach_not_min(sym: text, d: int).
+entry_reach_not_min(sym, d) <-
+  entry_reach_raw(sym, d), entry_reach_raw(sym, d2), d2 < d.
+
+rel entry_reach(sym: text, d: int).
+entry_reach(sym, d) <-
+  entry_reach_raw(sym, d), !entry_reach_not_min(sym, d).
+
+# ---- labeled wire reachability -----------------------------------------------
+# Same bridge, per-operation instead of per-any-entry: seed every df_node
+# belonging to an operation's endpoint fn(s), walk flow_edge, depth-capped
+# the same way. op_reach stays at NODE granularity (existence, no depth — a
+# labeled reach SET, not a distance); op_reach_fn projects it up to the
+# enclosing fn's bare name, the query-useful form.
+rel op_reach_seed(op: text, node: text).
+op_reach_seed(op, node) <-
+  op_endpoint(op, fnb, _), df_node(node, _, _, fnb, _, _).
+
+rel op_reach_raw(op: text, n: text, d: int).
+op_reach_raw(op, n, 0) <- op_reach_seed(op, n).
+op_reach_raw(op, to, d0 + 1) <-
+  op_reach_raw(op, from, d0), flow_edge(from, to), d0 < 64.
+
+rel op_reach(op: text, n: text).
+op_reach(op, n) <- op_reach_raw(op, n, _).
+
+rel op_reach_fn(op: text, fnb: text).
+op_reach_fn(op, fnb) <- op_reach(op, n), df_node(n, _, _, fnb, _, _).

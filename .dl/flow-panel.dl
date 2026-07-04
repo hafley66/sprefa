@@ -9,8 +9,17 @@
 #   nodes: SELECT sym, name, kind, file, line FROM rel_panel_node
 #   edges: SELECT src, dst, kind FROM rel_panel_edge
 
+use "../std/entry.dl".
+
 rel seen(path: file).
 seen(path) <- scan("WORK", "src/**/*.rs", path, rev).
+# Multi-repo fan: the daemon serves WORK plus every config repo
+# (~/.config/sprefa/config.toml, e.g. anim/instant/selfv5); scan("*", "WORK", ...)
+# fans one rule over all of them so the panel isn't stuck showing WORK alone
+# (5-ary form: repo="*" fans, rev="WORK" — see examples/lints/rust.dl).
+# TS/TSX get their own fan (WORK here stays Rust-only, unchanged).
+seen(path) <- scan("*", "WORK", "src/**/*.rs", path, rev).
+seen(path) <- scan("*", "WORK", "src/**/*.{ts,tsx}", path, rev).
 
 rel panel_node(sym: text, name: text, kind: text, file: file, line: int).
 panel_node(sym, name, "struct", file, line) <- type_entity(_, sym, name, "struct", _, file, line).
@@ -45,3 +54,397 @@ rel module_node(path: path, kind: text).
 module_node(p, "cycle") <- module_cycle(p).
 module_node(p, "module") <- module_edge(p, _), !module_cycle(p).
 module_node(p, "module") <- module_edge(_, p), !module_cycle(p).
+
+# Member flow: struct/trait/enum/class/interface owners plus their
+# function/method/const members AND their fields AND those members' own
+# params (a field or param is its own node, nested under its owner/fn via
+# `parent` so the panel can collapse it), edged by type_link (impls, params,
+# returns), call_edge (caller -> callee), and per-field fill/read + per-param
+# dataflow. Referencing type_entity/type_link/call_edge/df_*/type_sig below
+# opts type + call + dataflow extraction in over the same `seen` scan.
+#
+# Panel SQL (dl: Flow Panel, preset "Member flow"):
+#   nodes: SELECT sym, name, kind, file, line, parent FROM rel_member_node
+#   edges: SELECT src, dst, kind FROM rel_member_edge UNION ALL
+#          SELECT src, dst, 'wire' FROM rel_port_edge
+#
+# type_entity's `parent` column on a function/method/const row is the owner's
+# OWN entity sym (`file::struct::Foo` for a struct method, etc.), so a member's
+# raw parent equality-joins `owner_entity.sym` directly — no tag rewrite. The
+# two member_node rules split resolved-parent from no-parent (top-level fns, or
+# a parent that didn't match any scanned owner, e.g. a cross-file impl) the
+# same way module_node splits cycle/non-cycle above.
+rel owner_entity(sym: text, name: text, kind: text, file: file, line: int).
+owner_entity(sym, name, "struct", file, line)    <- type_entity(_, sym, name, "struct", _, file, line).
+owner_entity(sym, name, "trait", file, line)     <- type_entity(_, sym, name, "trait", _, file, line).
+owner_entity(sym, name, "enum", file, line)      <- type_entity(_, sym, name, "enum", _, file, line).
+owner_entity(sym, name, "class", file, line)     <- type_entity(_, sym, name, "class", _, file, line).
+owner_entity(sym, name, "interface", file, line) <- type_entity(_, sym, name, "interface", _, file, line).
+
+rel member_fn_has_parent(sym: text).
+member_fn_has_parent(sym) <-
+  type_entity(_, sym, _, "function", raw_parent, _, _), owner_entity(raw_parent, _, _, _, _).
+member_fn_has_parent(sym) <-
+  type_entity(_, sym, _, "method", raw_parent, _, _), owner_entity(raw_parent, _, _, _, _).
+member_fn_has_parent(sym) <-
+  type_entity(_, sym, _, "const", raw_parent, _, _), owner_entity(raw_parent, _, _, _, _).
+
+# `key(sym) merge(MaxBy(line))`: member_node is a row-selection lattice on
+# sym (the ports-epic choice-domain shape, not a per-column aggregate — see
+# the field rule below for why). For every non-field clause below sym is
+# already unique per row (one type_entity row per sym), so the lattice is a
+# no-op there; it only earns its keep on the field rows.
+rel member_node(sym: text, name: text, kind: text, file: file, line: int, parent: text)
+  key(sym) merge(MaxBy(line)).
+member_node(sym, name, kind, file, line, "") <- owner_entity(sym, name, kind, file, line).
+member_node(sym, name, "function", file, line, raw_parent) <-
+  type_entity(_, sym, name, "function", raw_parent, file, line), owner_entity(raw_parent, _, _, _, _).
+member_node(sym, name, "method", file, line, raw_parent) <-
+  type_entity(_, sym, name, "method", raw_parent, file, line), owner_entity(raw_parent, _, _, _, _).
+member_node(sym, name, "const", file, line, raw_parent) <-
+  type_entity(_, sym, name, "const", raw_parent, file, line), owner_entity(raw_parent, _, _, _, _).
+member_node(sym, name, "function", file, line, "") <-
+  type_entity(_, sym, name, "function", _, file, line), !member_fn_has_parent(sym).
+member_node(sym, name, "method", file, line, "") <-
+  type_entity(_, sym, name, "method", _, file, line), !member_fn_has_parent(sym).
+member_node(sym, name, "const", file, line, "") <-
+  type_entity(_, sym, name, "const", _, file, line), !member_fn_has_parent(sym).
+
+# Field declaration lines: a ctor fill's df_node line is the CONSTRUCTOR
+# SITE's line, not the field's own decl line -- every field filled at one
+# call site was showing the SAME line in the panel. struct_span/fld_line/
+# fdecl below locate each field's own line by containment: a struct's own
+# span (two named captures in one ast pattern bind by name, but the
+# trailing positional line is the pattern ROOT's line -- that's why this
+# needs two queries joined by span containment instead of one query) times
+# every field_declaration line in the same file, kept where the line falls
+# inside the span. A nested struct's fields land inside BOTH its own span
+# and its enclosing struct's, so fdecl_beaten drops the looser (smaller-s,
+# outer) owner -- the same not-min dedup shape member_param_not_min above
+# uses, just flipped: there the smallest pos wins, here the largest/
+# tightest s wins (a struct opened on a later line nests deeper). Rust-only:
+# enum variants and tuple structs have no field_identifier, so they fall
+# through to the ctor-site fallback below untouched, same as TS/Kotlin
+# fields (no TypeLang-side field-decl locator for those yet).
+rel struct_span(owner: text, path: file, s: int, e: int).
+struct_span(owner, path, s, e) <-
+  scan("WORK", "src/**/*.rs", path, rev),
+  ast(path, rev, :rust, "(struct_item name: (type_identifier) @owner) @st", s, e).
+struct_span(owner, path, s, e) <-
+  scan("*", "WORK", "src/**/*.rs", path, rev),
+  ast(path, rev, :rust, "(struct_item name: (type_identifier) @owner) @st", s, e).
+
+rel fld_line(fld: text, path: file, line: int).
+fld_line(fld, path, line) <-
+  scan("WORK", "src/**/*.rs", path, rev),
+  ast(path, rev, :rust, "(field_declaration name: (field_identifier) @fld)", line).
+fld_line(fld, path, line) <-
+  scan("*", "WORK", "src/**/*.rs", path, rev),
+  ast(path, rev, :rust, "(field_declaration name: (field_identifier) @fld)", line).
+
+rel fdecl_raw(owner: text, fld: text, path: file, line: int, s: int).
+fdecl_raw(owner, fld, path, line, s) <-
+  struct_span(owner, path, s, e), fld_line(fld, path, line), line >= s, line <= e.
+
+rel fdecl_beaten(owner: text, fld: text, path: file, line: int).
+fdecl_beaten(owner, fld, path, line) <-
+  fdecl_raw(owner, fld, path, line, s),
+  fdecl_raw(owner2, fld, path, line, s2),
+  s2 > s.
+
+rel fdecl(owner: text, fld: text, path: file, line: int).
+fdecl(owner, fld, path, line) <-
+  fdecl_raw(owner, fld, path, line, _),
+  !fdecl_beaten(owner, fld, path, line).
+
+rel fdecl_cover(owner: text, fld: text).
+fdecl_cover(owner, fld) <- fdecl(owner, fld, _, _).
+
+# Field nodes: mint one member_node per (owner, field) from ctor fills, riding
+# flow-ctor.dl's ground truth verbatim — a `new` df_node (var = the
+# constructed type's bare NAME, not sym) joined to df_field(new_id, fld,
+# value). The owning sym is resolved the same way the rest of this section
+# resolves owners: by NAME against owner_entity. A fill whose type name
+# doesn't match any scanned struct/trait/enum/class/interface mints nothing
+# (silently skipped, not guessed at); a name shared by two owners across
+# files fans out into two field nodes (ecosystem-ambiguous by design, same
+# tradeoff std/flow.dl's flow_lambda takes). `..` (df_field's spread /
+# functional-update marker) is excluded — it names a base value, not a field.
+#
+# A field can be filled at many call sites with different (file, line); the
+# `key(sym) merge(MaxBy(line))` lattice on member_node (above) collapses
+# those to ONE row per field sym. This needs row selection (the whole
+# winning (file, line) pair together), not a per-column aggregate — `GROUP
+# BY sym, MIN(line)` would still fan out one row per distinct file paired
+# with that file's own min line. MinBy isn't implemented (MaxBy is the only
+# merge fn today), so the tie-break is MaxBy(line): an arbitrary but
+# deterministic pick among fill sites, not "first" or "canonical" in any
+# semantic sense — only fill-site-minted fields show up at all; a declared
+# field that's never constructed with an explicit value won't appear.
+#
+# owner_in_repo: owner_entity tagged with the repo its sym belongs to (the
+# first sym segment -- type_entity qualifies every sym `{repo}::{...}`). The
+# field/fill rules below join this on the FILL's repo (df_node_repo) so a fill
+# in one repo resolves ONLY that repo's owner, not every repo that happens to
+# declare a struct/class of the same NAME. Without the repo join a fill added
+# to one worktree of a pair minted the field node under BOTH prefixes (the
+# base-only edit showed up in neither *_added nor *_removed -- the diff went
+# blind). The repo scope makes the fill's field a per-repo fact again.
+rel owner_in_repo(owner_sym: text, name: text, repo: text).
+owner_in_repo(owner_sym, name, replace_re(owner_sym, "::.*$", "")) <-
+  owner_entity(owner_sym, name, _, _, _).
+
+# Two rules, disjoint on fdecl_cover(ty, fld): when the field's own decl
+# line was found (fdecl above), mint there; otherwise (no scanned Rust
+# struct span covers it -- enum/tuple-struct/TS/Kotlin) fall back to the
+# ctor-site line. Both feed the same lattice-merged sym, so an unguarded
+# fallback would race the decl row under MaxBy(line) and could pick the
+# wrong one -- the negation is what keeps the two rules from racing.
+member_node("${owner_sym}::field::${fld}", fld, "field", decl_path, decl_line, owner_sym) <-
+  df_node(n, "new", ty, _, _, _),
+  df_node_repo(n, repo),
+  df_field(n, fld, _), fld != "..",
+  owner_in_repo(owner_sym, ty, repo),
+  fdecl(ty, fld, decl_path, decl_line).
+member_node("${owner_sym}::field::${fld}", fld, "field", file, line, owner_sym) <-
+  df_node(n, "new", ty, _, file, line),
+  df_node_repo(n, repo),
+  df_field(n, fld, _), fld != "..",
+  owner_in_repo(owner_sym, ty, repo),
+  !fdecl_cover(ty, fld).
+
+# df_node.fn is the BARE enclosing-fn sym (file::kind::name, no repo prefix —
+# the same fact std/flow.dl's call_edge_bare relies on). member_node's
+# function/method rows carry the REPO-qualified sym straight from
+# type_entity (member_edge's call_edge join below needs that, since
+# call_edge is repo-qualified too). member_bare bridges the two directions
+# by stripping member_node's own sym — call_edge_bare's replace_re, reused
+# rather than re-derived.
+rel member_bare(sym: text, bare: text).
+member_bare(sym, replace_re(sym, "^[^:]*::", "")) <- member_node(sym, _, _, _, _, _).
+
+# member_bare tagged with the fn sym's repo (its first segment), so the fill/
+# read edge rules can require the enclosing fn and the filled field to live in
+# the SAME repo as the fill node -- the fn-side twin of owner_in_repo. Same
+# rationale: a df fill (path-keyed, repo attributed via df_node_repo) must not
+# pair a base-repo fn with a head-repo field just because both share a bare name.
+rel member_bare_repo(sym: text, bare: text, repo: text).
+member_bare_repo(sym, bare, replace_re(sym, "::.*$", "")) <- member_bare(sym, bare).
+
+# Reachability seeded FROM instantiations, flow-ctor.dl's from_new shape
+# verbatim: a closure rel can't be read unpinned in a rule body (it would
+# materialize the full closure), so the frontier is a plain seeded recursive
+# rule instead, restricted to what fills downstream of a `new` node.
+rel member_from_new(n: text, x: text).
+member_from_new(n, x) <- df_node(n, "new", _, _, _, _), df_edge(n, x).
+member_from_new(n, y) <- member_from_new(n, x), df_edge(x, y).
+
+# flow-ctor.dl's field_flow shape verbatim: a value stored into field F of an
+# instantiation reaches a downstream `member` df_node reading the SAME field
+# name. Kept as its own rel (not inlined into the edge rule below) so it
+# stays recognizable as the reused shape rather than a new one.
+rel member_field_flow(value: text, ctor_node: text, field: text, read: text).
+member_field_flow(v, n, fld, r) <-
+  df_field(n, fld, v), fld != "..",
+  member_from_new(n, r),
+  df_node(r, "member", fld, _, _, _).
+
+# (a) type_link's field/impl/generic/param/returns/uses edges, restricted to
+# both endpoints already being a member_node (mirrors panel_edge above).
+# (b) call_edge's resolved caller -> callee edges, same restriction.
+# (c) 'fill': the enclosing fn/method of a fill site -> the field it fills.
+# (d) 'read': the field -> the enclosing fn/method of a `member` df_node
+# reading it on a value reachable from the `new` node (member_field_flow
+# above). df_edge is intra-procedural (the lift never crosses fn boundaries
+# with it), so the read's own `fn` column names the reading function
+# independent of the fill's — this is CONTEXT-INSENSITIVE at fn granularity,
+# not per-call-site (std/flow.dl's call_target pins hops per call site for
+# the interprocedural view; this panel edge answers "does fn X touch field
+# F", not "through which call chain").
+rel member_edge(src: text, dst: text, kind: text).
+member_edge(src, dst, kind) <-
+  type_link(src, dst, kind), member_node(src, _, _, _, _, _), member_node(dst, _, _, _, _, _).
+member_edge(src, dst, "call") <-
+  call_edge(src, dst, _), member_node(src, _, _, _, _, _), member_node(dst, _, _, _, _, _).
+member_edge(fn_sym, "${owner_sym}::field::${fld}", "fill") <-
+  df_node(n, "new", ty, fill_fn, _, _),
+  df_node_repo(n, repo),
+  df_field(n, fld, _), fld != "..",
+  owner_in_repo(owner_sym, ty, repo),
+  member_bare_repo(fn_sym, fill_fn, repo).
+member_edge("${owner_sym}::field::${fld}", fn_sym, "read") <-
+  member_field_flow(_, n, fld, r),
+  df_node(n, "new", ty, _, _, _),
+  df_node_repo(n, repo),
+  df_node(r, "member", fld, read_fn, _, _),
+  owner_in_repo(owner_sym, ty, repo),
+  member_bare_repo(fn_sym, read_fn, repo).
+
+# Param nodes: mirrors the field-node mint above, but sourced from
+# df_node(kind="param") instead of a ctor fill. df_node.fn is the bare
+# enclosing-fn sym; fn_bare bridges it to the REPO-qualified fn sym
+# member_node's function/method rows carry -- the SAME replace_re transform
+# member_bare uses, but sourced straight from type_entity instead of
+# member_node: member_node is about to gain param rows derived FROM
+# member_param below, so bridging through member_bare here would close a
+# negated cycle (member_param -> member_node -> member_bare ->
+# member_param_raw -> member_param_not_min -> !member_param), which the
+# engine correctly refuses as unstratified. type_entity has no such
+# dependency on member_param, so fn_bare stays acyclic.
+rel fn_bare(sym: text, bare: text).
+fn_bare(sym, replace_re(sym, "^[^:]*::", "")) <- type_entity(_, sym, _, "function", _, _, _).
+fn_bare(sym, replace_re(sym, "^[^:]*::", "")) <- type_entity(_, sym, _, "method", _, _, _).
+
+# A (fn, var) pair can surface more than once -- df_param's slot index isn't
+# globally unique when fn_bare's name-unique resolver maps a bare sym to more
+# than one owner (or a trait method and its impl both mint a df_node for the
+# same param name). `key(...) merge(MaxBy(...))` can't pick "smallest pos"
+# here: only MaxBy is implemented (no MinBy), so member_param below is a
+# filtered read of member_param_raw rather than a lattice merge -- keep the
+# row whose pos no sibling row for the same (fn_sym, var) beats downward.
+rel member_param_raw(fn_sym: text, var: text, pos: int, file: file, line: int).
+member_param_raw(fn_sym, var, pos, file, line) <-
+  df_node(n, "param", var, bare_fn, file, line),
+  df_param(n, pos),
+  fn_bare(fn_sym, bare_fn).
+
+rel member_param_not_min(fn_sym: text, var: text, pos: int).
+member_param_not_min(fn_sym, var, pos) <-
+  member_param_raw(fn_sym, var, pos, _, _),
+  member_param_raw(fn_sym, var, pos2, _, _),
+  pos2 < pos.
+
+rel member_param(fn_sym: text, var: text, pos: int, file: file, line: int).
+member_param(fn_sym, var, pos, file, line) <-
+  member_param_raw(fn_sym, var, pos, file, line),
+  !member_param_not_min(fn_sym, var, pos).
+
+member_node("${fn_sym}::param::${var}", var, "param", file, line, fn_sym) <-
+  member_param(fn_sym, var, _, file, line).
+
+member_edge(fn_sym, "${fn_sym}::param::${var}", "param") <-
+  member_param(fn_sym, var, _, _, _).
+
+# type_sig.ref resolves to a repo-qualified sym in the SAME format
+# type_entity/member_node syms use (see extract.rs's `resolve`) when the
+# param's type is a single scanned, unambiguous def; type_sig.pos aligns with
+# df_param.pos (both count typed params only, self dropped). A builtin,
+# ambiguous, or external type falls back to a bare name that won't match any
+# member_node -- the join below just skips it, same "skip cleanly" contract
+# the field mint above already uses.
+member_edge("${fn_sym}::param::${var}", ref_sym, "uses") <-
+  member_param(fn_sym, var, pos, _, _),
+  type_sig(fn_sym, "param", pos, ref_sym),
+  member_node(ref_sym, _, _, _, _, _).
+
+# Ports: a node-editor cut of the same graph. A fn/method's params + its
+# owning struct's fields are INPUT ports, its ret is the OUTPUT port; the
+# non-port df plumbing between them (locals, call_res nodes, field-read
+# nodes) is contracted away into direct port-to-port wires the panel draws
+# as a node-editor edge instead of the full intra-proc graph. flow_edge
+# (std/flow.dl, in scope via the `use "../std/entry.dl".` above) already
+# unions intra- + interprocedural hops -- port_reach below just walks it and
+# stops at the next port pin.
+#
+# Ret ports: mint one member_node per fn that has a `ret` df node -- the
+# same lattice-merge dedup the field mint above relies on collapses multiple
+# return points to one row (an arbitrary MaxBy(line) pick, not "the" return;
+# a fn with no `ret` df node at all -- no return, unit body -- mints no ret
+# port, same "silently skipped" contract as the field mint).
+member_node("${fn_sym}::ret", "ret", "ret", file, line, fn_sym) <-
+  df_node(r, "ret", _, bare_fn, file, line),
+  fn_bare(fn_sym, bare_fn).
+
+# port_of: the node itself IS a port pin (a param entry point or a ret exit
+# point) -- labels the df node with the port sym it stands for. A bare_fn
+# that fn_bare resolves to more than one owning sym (ecosystem-ambiguous
+# name, same tradeoff member_bare/flow_lambda already take) fans one df node
+# out to more than one port_of row; over-generation, not a bug.
+rel port_of(node: text, port: text).
+port_of(n, "${fn_sym}::param::${var}") <-
+  df_node(n, "param", var, bare_fn, _, _),
+  fn_bare(fn_sym, bare_fn).
+port_of(r, "${fn_sym}::ret") <-
+  df_node(r, "ret", _, bare_fn, _, _),
+  fn_bare(fn_sym, bare_fn).
+
+# port_in: a value node's value LANDS in a field port at a ctor fill --
+# direction value -> port, the opposite of port_of's node-is-the-port (the
+# value node is not itself the field pin; it just gets stored into one).
+rel port_in(node: text, port: text).
+port_in(value, "${owner_sym}::field::${fld}") <-
+  df_node(n, "new", ty, _, _, _),
+  df_field(n, fld, value), fld != "..",
+  owner_entity(owner_sym, ty, _, _, _).
+
+# port_out: a field port EMITS its stored value at a df node -- reuses
+# member_field_flow's joins verbatim (the same (owner, fld, reading-node)
+# identification member_edge's 'read' rule above already established).
+rel port_out(port: text, node: text).
+port_out("${owner_sym}::field::${fld}", r) <-
+  member_field_flow(_, n, fld, r),
+  df_node(n, "new", ty, _, _, _),
+  owner_entity(owner_sym, ty, _, _, _).
+
+# Contraction: walk flow_edge forward from a port's own node (port_of) or a
+# field port's read node (port_out), through non-port plumbing, until
+# landing on the next port. port_of halts the walk -- a param/ret pin is a
+# wire ENDPOINT, not a pass-through; the next hop past it (if any) is its
+# own separate port_reach seed, one wire per pin-to-pin hop, not a fully
+# transitive flatten. A port_in landing does NOT halt it: the same value can
+# fork past a field write (still flow elsewhere), so recursion continues.
+rel port_reach(port: text, node: text).
+port_reach(p, n) <- port_of(a, p), flow_edge(a, n).
+port_reach(p, n) <- port_out(p, a), flow_edge(a, n).
+port_reach(p, n) <- port_reach(p, m), !port_of(m, _), flow_edge(m, n).
+
+# port_edge: the contracted port-to-port wire. Two landing shapes -- another
+# port's own node (param/ret), or a field port's write site (port_in) --
+# p != q drops the (frequent) same-port self-loop a param flowing straight
+# back into its own port's node would otherwise produce.
+#
+# Panel SQL: `SELECT src, dst, 'wire' FROM rel_port_edge` unions into the
+# "Member flow" preset's edges box (see PRESETS.memberFlow in the webview).
+rel port_edge(src: text, dst: text).
+port_edge(p, q) <- port_reach(p, n), port_of(n, q), p != q.
+port_edge(p, q) <- port_reach(p, n), port_in(n, q), p != q.
+
+# Trace preset: `use "std/entry.dl".` above puts entry/entry_reach/op_reach_fn
+# in scope (the "Gateways" hover line in flow-panel.html reads rel_op_reach_fn
+# directly). trace_seed follows std/flow.dl's flow_summary precedent -- a rel
+# declared with NO rules and NO facts here, empty and free until something
+# populates it; --check accepts a rule-less/fact-less declared rel cleanly
+# (verified). The panel's "trace" mode does NOT write into trace_seed today
+# (Part 3 computes the trace client-side, BFS over the edges already loaded
+# in the webview -- no daemon round-trip needed for a slice of data the
+# panel already has); trace_seed/trace_step exist so a future daemon-side
+# consumer (or `INSERT INTO trace_seed VALUES (...)` against a served
+# --db) can ask the same "what does flow_edge reach from HERE" question SQL
+# gives a straight answer to, without re-deriving the bridge+depth-cap+
+# not-min-dedup shape entry_reach above already has.
+rel trace_seed(seed: text).
+
+rel trace_seed_node(seed: text, node: text).
+trace_seed_node(seed, node) <-
+  trace_seed(seed),
+  bare = replace_re(seed, "^[^:]*::", ""),
+  df_node(node, _, _, bare, _, _).
+
+rel trace_step_raw(seed: text, n: text, d: int).
+trace_step_raw(seed, n, 0) <- trace_seed_node(seed, n).
+trace_step_raw(seed, to, d0 + 1) <-
+  trace_step_raw(seed, from, d0), flow_edge(from, to), d0 < 64.
+
+# Project node hits to the enclosing fn's bare name (per-seed, per-symbol),
+# same not-min dedup shape as std/entry.dl's entry_reach.
+rel trace_step_sym_raw(seed: text, sym: text, d: int).
+trace_step_sym_raw(seed, fnb, d) <-
+  trace_step_raw(seed, n, d), df_node(n, _, _, fnb, _, _).
+
+rel trace_step_not_min(seed: text, sym: text, d: int).
+trace_step_not_min(seed, sym, d) <-
+  trace_step_sym_raw(seed, sym, d), trace_step_sym_raw(seed, sym, d2), d2 < d.
+
+rel trace_step(seed: text, sym: text, d: int).
+trace_step(seed, sym, d) <-
+  trace_step_sym_raw(seed, sym, d), !trace_step_not_min(seed, sym, d).
