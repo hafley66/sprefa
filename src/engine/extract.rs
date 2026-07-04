@@ -429,21 +429,23 @@ impl Engine {
         Ok(files)
     }
 
-    /// XOR-folded input digest for one extractor family: one blake3 per
-    /// (repo, path, rev, content hash) corpus row, plus the `scip_ref` override
-    /// table when the family resolves through it, plus the running binary's
-    /// identity (see `exe_stamp`). Persisted under `extract:<family>` in
-    /// `_reldigest`; an unchanged digest means the family's output rows are
-    /// already in this db, so the whole parse + resolve + write pass skips.
-    /// A row with an empty content hash has no identity, so the digest is
-    /// salted with the current time — never equal, never a false skip.
-    fn extract_input_digest(&self, family: &str, files: &[ExtractFile], with_scip: bool) -> [u8; 32] {
+    /// XOR-folded input digest for one extractor family AT ONE REV: one blake3
+    /// per (repo, path, rev, content hash) corpus row for that rev's file subset,
+    /// plus the `scip_ref` override table (WORK only — SCIP indexes are
+    /// working-tree artifacts, so a committed rev's resolution can't move when
+    /// the index changes), plus the running binary's identity (see `exe_stamp`).
+    /// Persisted under `extract:<family>:<rev>` in `_reldigest`; an unchanged
+    /// digest means that rev's output rows are already in this db, so the parse +
+    /// resolve + write pass skips for that rev. A row with an empty content hash
+    /// has no identity, so the digest is salted with the current time — never
+    /// equal, never a false skip. `files` is already filtered to `rev`.
+    fn extract_input_digest(&self, family: &str, rev: &str, files: &[ExtractFile], with_scip: bool) -> [u8; 32] {
         let mut acc = [0u8; 32];
         let fold = |acc: &mut [u8; 32], h: &blake3::Hash| {
             for (a, b) in acc.iter_mut().zip(h.as_bytes()) { *a ^= *b; }
         };
-        fold(&mut acc, &blake3::hash(format!("{family}\0{:032x}", exe_stamp()).as_bytes()));
-        for (repo, path, rev, hash) in files {
+        fold(&mut acc, &blake3::hash(format!("{family}\0{rev}\0{:032x}", exe_stamp()).as_bytes()));
+        for (repo, path, frev, hash) in files {
             if hash.is_empty() {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -451,9 +453,12 @@ impl Engine {
                 fold(&mut acc, &blake3::hash(format!("nonce\0{now}").as_bytes()));
                 continue;
             }
-            fold(&mut acc, &blake3::hash(format!("{repo}\0{path}\0{rev}\0{hash}").as_bytes()));
+            fold(&mut acc, &blake3::hash(format!("{repo}\0{path}\0{frev}\0{hash}").as_bytes()));
         }
-        if with_scip {
+        // SCIP only attributes the WORK rev's resolution (index = working tree),
+        // so a committed rev's digest ignores it: folding scip into every rev's
+        // digest would re-tick untouched committed revs whenever the index moves.
+        if with_scip && rev == "WORK" {
             // Include the origin `repo`: two roots of the same crate emit
             // byte-identical (file, symbol, def_file) triples, so folding without
             // repo would XOR-cancel the second root's rows and leave the digest
@@ -472,6 +477,128 @@ impl Engine {
         acc
     }
 
+    /// Group the extraction corpus by rev and return the revs whose per-rev
+    /// input digest moved since the last tick, each paired with its fresh
+    /// digest. An empty result means every rev is unchanged, so the family can
+    /// skip its whole pass (the per-rev twin of perf gap A's warm-tick skip).
+    /// `with_scip` requests the scip fold, which `extract_input_digest` applies
+    /// only to the WORK rev.
+    fn moved_extract_revs(&self, family: &str, files: &[ExtractFile], with_scip: bool)
+        -> Result<Vec<(String, [u8; 32])>>
+    {
+        let mut by_rev: HashMap<&str, Vec<ExtractFile>> = HashMap::new();
+        for f in files { by_rev.entry(f.2.as_str()).or_default().push(f.clone()); }
+        let mut moved: Vec<(String, [u8; 32])> = Vec::new();
+        for (rev, frev) in &by_rev {
+            let d = self.extract_input_digest(family, rev, frev, with_scip);
+            if self.load_rel_digest(&format!("extract:{family}:{rev}"))? == Some(d) { continue; }
+            moved.push(((*rev).to_string(), d));
+        }
+        Ok(moved)
+    }
+
+    /// Fold a rev into a df node id so two revs' `file:line:col` ids stay
+    /// disjoint in one `_rev` table. Readable composition (not a hash) so the raw
+    /// id is recoverable by eye and queries stay debuggable; the U+0001 separator
+    /// never occurs in a rev or a df id. Deterministic, so any two df columns that
+    /// join on node identity within one rev salt identically and still line up.
+    fn salt_rev(id: &str, rev: &str) -> String {
+        format!("{rev}\u{1}{id}")
+    }
+
+    /// Distinct revs present in the extraction corpus (the delete scope for a
+    /// whole-corpus twin refresh — see `refresh_rel_for_revs` call sites).
+    fn corpus_revs(files: &[ExtractFile]) -> Vec<String> {
+        let mut revs: Vec<String> = files.iter().map(|f| f.2.clone()).collect();
+        revs.sort();
+        revs.dedup();
+        revs
+    }
+
+    /// Rev-scoped twin write: wipe only the named revs' rows, then insert the
+    /// fresh set in one batch. Generalizes `refresh_module_rels_for_revs`'s
+    /// DELETE-by-rev pattern to any `_rev` twin. Collect-then-flush, one
+    /// `insert_rows` (the tick counter screams on a per-row write).
+    fn refresh_rel_for_revs(&self, rel: &str, cols: &[&str], rows: &[Vec<Value>], revs: &[&str]) -> Result<()> {
+        if revs.is_empty() { return Ok(()); }
+        self.db.exec("CREATE TEMP TABLE IF NOT EXISTS _rel_refresh_rev(rev TEXT PRIMARY KEY)")?;
+        self.db.exec("DELETE FROM _rel_refresh_rev")?;
+        let rev_rows: Vec<Vec<Value>> = revs.iter().map(|rev| vec![Value::Text((*rev).to_string())]).collect();
+        self.db.insert_rows("_rel_refresh_rev", &["rev"], &rev_rows)?;
+        self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _rel_refresh_rev)", tbl(rel)))?;
+        self.db.insert_rows(&tbl(rel), cols, rows)?;
+        Ok(())
+    }
+
+    /// Every `_rev` twin an extraction family writes: type (node/link/edge),
+    /// call (def/edge), df (node/node_repo/arg/field), and the module family's
+    /// own pair. One shared list so `sweep_gone_revs` and any future twin
+    /// addition touch a single place.
+    const REV_TWINS: &[&str] = &[
+        "type_entity_rev", "type_link_rev", "type_edge_rev",
+        "call_def_rev", "call_edge_rev",
+        "df_node_rev", "df_node_repo_rev", "df_arg_rev", "df_field_rev",
+        "module_edge_rev", "module_unresolved_rev",
+    ];
+
+    /// D5.5 — the rev-retraction sweep (plan Layer 4, "Retraction"). A rev
+    /// that stops being scanned (a `scan` rule dropped it, or its file
+    /// vanished from `_file` entirely) leaves its `_rev` twin rows and
+    /// `extract:<family>:<rev>` digest key stranded forever: `moved_extract_
+    /// revs` only ever iterates revs still present in `_file`, so a gone rev
+    /// can never be "moved" and never gets deleted by the family's own write
+    /// path. One DELETE per twin table (rev NOT IN the live set) and one
+    /// DELETE per digest-key family prefix — the set diff is SQLite's job,
+    /// never a per-rev Rust loop.
+    ///
+    /// The legacy rebuilds run here too, unconditionally, rather than being
+    /// left to each family's own `rebuild_legacy_*` call: those live at the
+    /// END of `refresh_type_rels`/`refresh_call_rels`, gated behind the same
+    /// per-rev digest early return (`moved.is_empty()`) that skips the whole
+    /// family when every currently-live rev's digest is unchanged. A rev that
+    /// just disappeared moves nothing in that check, so a family with no
+    /// other reason to run this tick would never reach its internal legacy
+    /// rebuild — the gone rev's rows would vanish from the twin but linger in
+    /// legacy for another tick or more. Rebuilding legacy directly here is
+    /// what makes a gone rev disappear from twin AND legacy within the SAME
+    /// tick, independent of whether any family's digest moved. `module` has no
+    /// digest gate (`refresh_module_rels` always rebuilds its legacy when the
+    /// family runs), so this call is redundant-but-harmless there; it is not
+    /// redundant for type/call.
+    ///
+    /// Called once per tick, right after `refresh_builtin_rels` settles this
+    /// tick's `_file` set and before the extraction families run — see the
+    /// call sites in `tick.rs`.
+    pub(crate) fn sweep_gone_revs(&self) -> Result<()> {
+        self.db.exec("CREATE TEMP TABLE IF NOT EXISTS _live_rev_scope(rev TEXT PRIMARY KEY)")?;
+        self.db.exec("DELETE FROM _live_rev_scope")?;
+        self.db.exec("INSERT OR IGNORE INTO _live_rev_scope SELECT DISTINCT rev FROM _file")?;
+
+        for twin in Self::REV_TWINS {
+            self.db.exec(&format!(
+                "DELETE FROM {} WHERE \"rev\" NOT IN (SELECT rev FROM _live_rev_scope)",
+                tbl(twin),
+            ))?;
+        }
+
+        // `extract:<family>:<rev>` digest rows, one family prefix at a time
+        // (the families whose skip-check is keyed per rev: type/call/
+        // dataflow/doc — see `moved_extract_revs` call sites).
+        for family in ["type", "call", "dataflow", "doc"] {
+            let prefix = format!("extract:{family}:");
+            self.db.exec(&format!(
+                "DELETE FROM _reldigest WHERE rel LIKE '{prefix}%' \
+                 AND substr(rel, {}) NOT IN (SELECT rev FROM _live_rev_scope)",
+                prefix.chars().count() + 1,
+            ))?;
+        }
+
+        self.rebuild_legacy_type_rels()?;
+        self.rebuild_legacy_call_rels()?;
+        self.rebuild_legacy_module_rels()?;
+        Ok(())
+    }
+
     /// Rebuild the type graph from the `_file` set. This is the same L3
     /// shape as module graph: read tracked Rust/Kotlin/TS files, run a
     /// deterministic syntax extractor, flush one built-in relation through
@@ -482,10 +609,13 @@ impl Engine {
     /// (perf gap C).
     pub(crate) fn refresh_type_rels(&self) -> Result<bool> {
         let files = self.extract_file_set()?;
-        // Perf gap A: a warm tick whose corpus (and scip override) didn't move
-        // already has this family's rows in the db — skip the whole pass.
-        let digest = self.extract_input_digest("type", &files, true);
-        if self.load_rel_digest("extract:type")? == Some(digest) { return Ok(false); }
+        // Perf gap A, per rev: skip any rev whose file subset (and, for WORK, the
+        // scip override) didn't move — its rows already serve. An empty `moved`
+        // means the whole family skips. When ANY rev moved, the emit below stays
+        // whole-corpus (per-rev emission scoping is D5.2+; the per-file fact
+        // cache keeps re-emit cheap).
+        let moved = self.moved_extract_revs("type", &files, true)?;
+        if moved.is_empty() { return Ok(false); }
         // Parse + extract per file in parallel (same shape as module_rows_for_rev),
         // then flatten and write once. Keeps the cold-build parse working set bounded
         // by the rayon pool, not the corpus (peak-RSS invariant). Rows carry their
@@ -510,15 +640,18 @@ impl Engine {
             });
 
         // Resolver: a name maps to its definition symbol when exactly one entity
-        // in the SAME repo declares it (syntactic). Keying by repo keeps two
-        // folders in view that share a name from making each other ambiguous,
-        // and the resolved sym is repo-qualified (`{repo}::{sym}`) so the edge
-        // relations (type_link/type_sig — no repo column) stay distinct across
+        // in the SAME repo AT THE SAME REV declares it (syntactic). Keying by
+        // (repo, rev) keeps two folders in view — and two revs of one folder —
+        // that share a name from making each other ambiguous, and the resolved
+        // sym is repo-qualified (`{repo}::{sym}`) so the edge relations
+        // (type_link/type_sig — no repo column) stay distinct across
         // identical-path repos. A SCIP index, when present, overrides per
-        // (file, name) with the indexed def file (collision-proof).
-        let mut by_name: HashMap<(&str, &str), Vec<&str>> = HashMap::new();
-        let mut sym_at: HashMap<(&str, &str, &str), &str> = HashMap::new();
-        for (repo, _, _, f) in &facts {
+        // (repo, file, name) with the indexed def file (collision-proof) — but
+        // only at rev == WORK, since a SCIP index is a working-tree artifact
+        // (D5.6); committed revs resolve syntactically.
+        let mut by_name: HashMap<(&str, &str, &str), Vec<&str>> = HashMap::new();
+        let mut sym_at: HashMap<(&str, &str, &str, &str), &str> = HashMap::new();
+        for (repo, _, rev, f) in &facts {
             for e in &f.entities {
                 // Dedup the ambiguity bucket by def sym: the same physical file
                 // can be scanned under two slugs that collapse to one rid (a
@@ -526,21 +659,23 @@ impl Engine {
                 // a `.git` basename), so an entity declared ONCE would otherwise
                 // be pushed twice and read as ambiguous. Distinct syms (two real
                 // defs of one name) still stack -> len 2 -> unresolved.
-                let bucket = by_name.entry((repo.as_str(), e.name.as_str())).or_default();
+                let bucket = by_name.entry((repo.as_str(), rev.as_str(), e.name.as_str())).or_default();
                 if !bucket.iter().any(|s| *s == e.sym.as_str()) {
                     bucket.push(e.sym.as_str());
                 }
-                sym_at.insert((repo.as_str(), e.file.as_str(), e.name.as_str()), e.sym.as_str());
+                sym_at.insert((repo.as_str(), e.file.as_str(), rev.as_str(), e.name.as_str()), e.sym.as_str());
             }
         }
         let scip = self.scip_name_defs().unwrap_or_default();
-        let resolve = |repo: &str, file: &str, name: &str| -> Option<String> {
-            if let Some(def_file) = scip.get(&(repo.to_string(), file.to_string(), name.to_string())) {
-                if let Some(sym) = sym_at.get(&(repo, def_file.as_str(), name)) {
-                    return Some(format!("{repo}::{sym}"));
+        let resolve = |repo: &str, rev: &str, file: &str, name: &str| -> Option<String> {
+            if rev == "WORK" {
+                if let Some(def_file) = scip.get(&(repo.to_string(), file.to_string(), name.to_string())) {
+                    if let Some(sym) = sym_at.get(&(repo, def_file.as_str(), rev, name)) {
+                        return Some(format!("{repo}::{sym}"));
+                    }
                 }
             }
-            match by_name.get(&(repo, name)) {
+            match by_name.get(&(repo, rev, name)) {
                 Some(v) if v.len() == 1 => Some(format!("{repo}::{}", v[0])),
                 _ => None,
             }
@@ -549,14 +684,15 @@ impl Engine {
         let t = |s: &str| Value::Text(s.to_string());
         let i = |n: u32| Value::Int(n as i64);
         let mut edge_rev_rows: Vec<Vec<Value>> = Vec::new();
-        let mut entity_rows: Vec<Vec<Value>> = Vec::new();
+        let mut entity_rev_rows: Vec<Vec<Value>> = Vec::new();
         let mut sig_rows: Vec<Vec<Value>> = Vec::new();
-        let mut link_rows: Vec<Vec<Value>> = Vec::new();
-        // Dedup keys carry the repo, so two folders in view that share a relative
-        // path + symbol name (e.g. both have `src/index.ts`) do NOT drop each
-        // other's rows — each repo's entity survives.
-        let mut seen_entity: HashSet<(&str, &str)> = HashSet::new();
-        let mut seen_link: HashSet<(String, String, &str)> = HashSet::new();
+        let mut link_rev_rows: Vec<Vec<Value>> = Vec::new();
+        // Dedup keys carry the repo AND the rev, so two folders in view that
+        // share a relative path + symbol name (e.g. both have `src/index.ts`) do
+        // NOT drop each other's rows, and one file present at two revs emits its
+        // entity/link once PER rev — rev is a column, not folded into the sym.
+        let mut seen_entity: HashSet<(&str, &str, &str)> = HashSet::new();
+        let mut seen_link: HashSet<(String, String, &str, &str)> = HashSet::new();
         let mut doc_rows: Vec<Vec<Value>> = Vec::new();
         let mut tag_rows: Vec<Vec<Value>> = Vec::new();
         let mut seen_doc: HashSet<(&str, &str)> = HashSet::new();
@@ -568,11 +704,11 @@ impl Engine {
                 edge_rev_rows.push(vec![t(&edge.from), t(&edge.to), t(edge.kind), t(rev), t(repo)]);
                 // SCIP-resolved graph: owner sym -> resolved target sym (or the
                 // bare name when external/ambiguous, so leaf types still appear)
-                let src = sym_at.get(&(repo.as_str(), path.as_str(), edge.from.as_str()))
+                let src = sym_at.get(&(repo.as_str(), path.as_str(), rev.as_str(), edge.from.as_str()))
                     .map(|s| format!("{repo}::{s}")).unwrap_or_else(|| edge.from.clone());
-                let dst = resolve(repo, path, &edge.to).unwrap_or_else(|| edge.to.clone());
-                if seen_link.insert((src.clone(), dst.clone(), edge.kind)) {
-                    link_rows.push(vec![t(&src), t(&dst), t(edge.kind)]);
+                let dst = resolve(repo, rev, path, &edge.to).unwrap_or_else(|| edge.to.clone());
+                if seen_link.insert((src.clone(), dst.clone(), edge.kind, rev.as_str())) {
+                    link_rev_rows.push(vec![t(&src), t(&dst), t(edge.kind), t(rev)]);
                 }
             }
             for ent in &f.entities {
@@ -580,7 +716,7 @@ impl Engine {
                 // relative path, so sym-keyed rels (type_sig/type_link) and the
                 // cross-rel joins to call_def stay per-repo distinct.
                 let qsym = format!("{repo}::{}", ent.sym);
-                if seen_entity.insert((repo.as_str(), ent.sym.as_str())) {
+                if seen_entity.insert((repo.as_str(), ent.sym.as_str(), rev.as_str())) {
                     // Method-owner key. The extractor mints `parent` file-scoped
                     // (`<method-file>::<kind>::<Owner>`), which joins the owner's
                     // entity sym only when the owner is declared in the SAME file
@@ -598,29 +734,29 @@ impl Engine {
                     let qparent = ent.parent.as_deref().map(|p| {
                         let owner_name = p.rsplit("::").next().unwrap_or(p);
                         let same_file =
-                            sym_at.get(&(repo.as_str(), ent.file.as_str(), owner_name)) == Some(&p);
+                            sym_at.get(&(repo.as_str(), ent.file.as_str(), rev.as_str(), owner_name)) == Some(&p);
                         if same_file {
                             format!("{repo}::{p}")
                         } else {
-                            resolve(repo, &ent.file, owner_name)
+                            resolve(repo, rev, &ent.file, owner_name)
                                 .unwrap_or_else(|| format!("{repo}::{p}"))
                         }
                     }).unwrap_or_default();
-                    entity_rows.push(vec![
+                    entity_rev_rows.push(vec![
                         t(repo), t(&qsym), t(&ent.name), t(ent.kind.tag()),
-                        t(&qparent), t(&ent.file), i(ent.line),
+                        t(&qparent), t(&ent.file), i(ent.line), t(rev),
                     ]);
                 }
                 // the arrow [...A] => B, one row per referenced type per slot
                 if let Some(ty) = &ent.ty {
                     for (pos, slot) in ty.params.iter().enumerate() {
                         for r in slot {
-                            let rf = resolve(repo, path, r.name()).unwrap_or_else(|| r.name().to_string());
+                            let rf = resolve(repo, rev, path, r.name()).unwrap_or_else(|| r.name().to_string());
                             sig_rows.push(vec![t(&qsym), t("param"), i(pos as u32), t(&rf)]);
                         }
                     }
                     for r in &ty.ret {
-                        let rf = resolve(repo, path, r.name()).unwrap_or_else(|| r.name().to_string());
+                        let rf = resolve(repo, rev, path, r.name()).unwrap_or_else(|| r.name().to_string());
                         sig_rows.push(vec![t(&qsym), t("ret"), i(0), t(&rf)]);
                     }
                 }
@@ -637,15 +773,22 @@ impl Engine {
                 }
             }
         }
-        self.refresh_rel("type_edge_rev", &["from", "to", "kind", "rev", "repo"], &edge_rev_rows)?;
-        self.refresh_rel("type_entity", &["repo", "sym", "name", "kind", "parent", "file", "line"], &entity_rows)?;
+        // type_edge_rev is the rev-carrying twin: write it through the rev-scoped
+        // helper (the real in-tree consumer). Delete scope = every corpus rev;
+        // the emit above is whole-corpus in D5.1, so wiping all corpus revs and
+        // reinserting all rows is equivalent to a full `refresh_rel` wipe (a rev
+        // absent from the corpus is D5.5's retraction sweep, not this path).
+        let all_revs = Self::corpus_revs(&files);
+        let all_rev_refs: Vec<&str> = all_revs.iter().map(|s| s.as_str()).collect();
+        self.refresh_rel_for_revs("type_edge_rev", &["from", "to", "kind", "rev", "repo"], &edge_rev_rows, &all_rev_refs)?;
+        self.refresh_rel_for_revs("type_entity_rev", &["repo", "sym", "name", "kind", "parent", "file", "line", "rev"], &entity_rev_rows, &all_rev_refs)?;
         self.refresh_rel("type_sig", &["sym", "slot", "pos", "ref"], &sig_rows)?;
-        self.refresh_rel("type_link", &["src", "dst", "kind"], &link_rows)?;
+        self.refresh_rel_for_revs("type_link_rev", &["src", "dst", "kind", "rev"], &link_rev_rows, &all_rev_refs)?;
         self.refresh_rel("doc_comment", &["repo", "sym", "line", "text"], &doc_rows)?;
         self.refresh_rel("doc_tag", &["repo", "sym", "tag", "arg", "text"], &tag_rows)?;
         self.rebuild_legacy_type_rels()?;
         // Persisted only after the writes land, so a failed refresh retries.
-        self.save_rel_digest("extract:type", &digest)?;
+        for (rev, d) in &moved { self.save_rel_digest(&format!("extract:type:{rev}"), d)?; }
         Ok(true)
     }
 
@@ -673,10 +816,12 @@ impl Engine {
         Ok(out)
     }
 
-    /// Rebuild the convenient rev-less `type_edge(from, to, kind)` from the
-    /// rev-aware table, deduped across revs. Same shape as
-    /// `rebuild_legacy_module_rels`: the `_rev` table is the source of truth,
-    /// the legacy view is the simple closure target.
+    /// Rebuild the convenient rev-less `type_edge` / `type_entity` / `type_link`
+    /// from their rev-aware twins, deduped across revs (drop the `rev` column,
+    /// `INSERT OR IGNORE`). Same shape as `rebuild_legacy_module_rels`: the
+    /// `_rev` table is the source of truth, the legacy rel is the closure/point-
+    /// query target for the single-rev (WORK) daemon. A multi-rev db's legacy
+    /// rel is the rev-deduped superimposition (plan open-question 3).
     fn rebuild_legacy_type_rels(&self) -> Result<()> {
         let edge = tbl("type_edge");
         let edge_rev = tbl("type_edge_rev");
@@ -684,6 +829,20 @@ impl Engine {
         self.db.exec(&format!(
             "INSERT OR IGNORE INTO {edge} (\"from\", \"to\", \"kind\", \"repo\") \
              SELECT \"from\", \"to\", \"kind\", \"repo\" FROM {edge_rev}"
+        ))?;
+        let entity = tbl("type_entity");
+        let entity_rev = tbl("type_entity_rev");
+        self.db.exec(&format!("DELETE FROM {entity}"))?;
+        self.db.exec(&format!(
+            "INSERT OR IGNORE INTO {entity} (\"repo\", \"sym\", \"name\", \"kind\", \"parent\", \"file\", \"line\") \
+             SELECT \"repo\", \"sym\", \"name\", \"kind\", \"parent\", \"file\", \"line\" FROM {entity_rev}"
+        ))?;
+        let link = tbl("type_link");
+        let link_rev = tbl("type_link_rev");
+        self.db.exec(&format!("DELETE FROM {link}"))?;
+        self.db.exec(&format!(
+            "INSERT OR IGNORE INTO {link} (\"src\", \"dst\", \"kind\") \
+             SELECT \"src\", \"dst\", \"kind\" FROM {link_rev}"
         ))?;
         Ok(())
     }
@@ -917,9 +1076,10 @@ impl Engine {
     /// Change-reporting contract mirrors `refresh_type_rels`.
     pub(crate) fn refresh_call_rels(&self) -> Result<bool> {
         let files = self.extract_file_set()?;
-        // Perf gap A: same digest skip + per-file cache as refresh_type_rels.
-        let digest = self.extract_input_digest("call", &files, true);
-        if self.load_rel_digest("extract:call")? == Some(digest) { return Ok(false); }
+        // Perf gap A, per rev: same per-rev digest skip + per-file cache as
+        // refresh_type_rels. Empty `moved` = whole family skips.
+        let moved = self.moved_extract_revs("call", &files, true)?;
+        if moved.is_empty() { return Ok(false); }
 
         let root = self.root.clone();
         let roots = self.repo_roots();
@@ -938,40 +1098,44 @@ impl Engine {
         // override; def_by_file drives span-containment caller resolution
         // (innermost enclosing def wins, so calls inside a nested block attach
         // to the nearest fn, not the outermost).
-        // Repo-scoped, same as refresh_type_rels: a callee resolves within the
-        // referencing file's repo, and resolved syms are repo-qualified so the
-        // sym-keyed call rels (call_edge/call_name) stay per-repo distinct.
-        let mut by_name: HashMap<(&str, &str), Vec<&str>> = HashMap::new();
-        let mut sym_at: HashMap<(&str, &str, &str), &str> = HashMap::new();
-        let mut def_by_file: HashMap<(&str, &str), Vec<(u32, u32, &str)>> = HashMap::new();
-        for (repo, _, _, f) in &facts {
+        // Repo- AND rev-scoped, same as refresh_type_rels: a callee resolves
+        // within the referencing file's repo at its own rev, and resolved syms
+        // are repo-qualified so the sym-keyed call rels (call_edge/call_name)
+        // stay per-repo distinct. The SCIP override is consulted only at WORK
+        // (D5.6); committed revs resolve syntactically.
+        let mut by_name: HashMap<(&str, &str, &str), Vec<&str>> = HashMap::new();
+        let mut sym_at: HashMap<(&str, &str, &str, &str), &str> = HashMap::new();
+        let mut def_by_file: HashMap<(&str, &str, &str), Vec<(u32, u32, &str)>> = HashMap::new();
+        for (repo, _, rev, f) in &facts {
             for d in &f.defs {
                 // Dedup by callable sym (see refresh_type_rels): a def scanned
                 // twice under two slugs that map to one rid stays unique, while
                 // two distinct callables of one name stay ambiguous.
-                let bucket = by_name.entry((repo.as_str(), d.name.as_str())).or_default();
+                let bucket = by_name.entry((repo.as_str(), rev.as_str(), d.name.as_str())).or_default();
                 if !bucket.iter().any(|s| *s == d.sym.as_str()) {
                     bucket.push(d.sym.as_str());
                 }
-                sym_at.insert((repo.as_str(), d.file.as_str(), d.name.as_str()), d.sym.as_str());
-                def_by_file.entry((repo.as_str(), d.file.as_str())).or_default().push((d.line, d.end, d.sym.as_str()));
+                sym_at.insert((repo.as_str(), d.file.as_str(), rev.as_str(), d.name.as_str()), d.sym.as_str());
+                def_by_file.entry((repo.as_str(), d.file.as_str(), rev.as_str())).or_default().push((d.line, d.end, d.sym.as_str()));
             }
         }
         let scip = self.scip_name_defs().unwrap_or_default();
-        let resolve_callee = |repo: &str, file: &str, callee: &str| -> Option<String> {
-            if let Some(def_file) = scip.get(&(repo.to_string(), file.to_string(), callee.to_string())) {
-                if let Some(sym) = sym_at.get(&(repo, def_file.as_str(), callee)) {
-                    return Some(format!("{repo}::{sym}"));
+        let resolve_callee = |repo: &str, rev: &str, file: &str, callee: &str| -> Option<String> {
+            if rev == "WORK" {
+                if let Some(def_file) = scip.get(&(repo.to_string(), file.to_string(), callee.to_string())) {
+                    if let Some(sym) = sym_at.get(&(repo, def_file.as_str(), rev, callee)) {
+                        return Some(format!("{repo}::{sym}"));
+                    }
                 }
             }
-            match by_name.get(&(repo, callee)) {
+            match by_name.get(&(repo, rev, callee)) {
                 Some(v) if v.len() == 1 => Some(format!("{repo}::{}", v[0])),
                 _ => None,
             }
         };
-        let resolve_caller = |repo: &str, file: &str, line: u32| -> Option<String> {
+        let resolve_caller = |repo: &str, rev: &str, file: &str, line: u32| -> Option<String> {
             let mut best: Option<(u32, &str)> = None; // (span, sym); smallest containing span wins
-            for &(s, e, sym) in def_by_file.get(&(repo, file)).into_iter().flatten() {
+            for &(s, e, sym) in def_by_file.get(&(repo, file, rev)).into_iter().flatten() {
                 if line >= s && line <= e {
                     let span = e - s;
                     match best {
@@ -985,7 +1149,7 @@ impl Engine {
 
         let t = |s: &str| Value::Text(s.to_string());
         let i = |n: u32| Value::Int(n as i64);
-        let mut def_rows: Vec<Vec<Value>> = Vec::new();
+        let mut def_rev_rows: Vec<Vec<Value>> = Vec::new();
         let mut site_rows: Vec<Vec<Value>> = Vec::new();
         let mut edge_rev_rows: Vec<Vec<Value>> = Vec::new();
         let mut name_rows: Vec<Vec<Value>> = Vec::new();
@@ -993,20 +1157,23 @@ impl Engine {
         // write emits two rows. Accumulate in a set so multiple write sites in
         // the same fn collapse to one (fn, "write") row.
         let mut kind_set: HashSet<(String, &'static str)> = HashSet::new();
-        let mut seen_def: HashSet<(&str, &str)> = HashSet::new();
+        // Dedup carries the rev, so one def present at two revs emits its
+        // call_def_rev row once PER rev — rev is a column, not folded into the
+        // sym (same crux as type_entity_rev).
+        let mut seen_def: HashSet<(&str, &str, &str)> = HashSet::new();
         let mut seen_edge: HashSet<(String, String, &str)> = HashSet::new();
         for (repo, _path, rev, f) in &facts {
             for d in &f.defs {
-                if seen_def.insert((repo.as_str(), d.sym.as_str())) {
+                if seen_def.insert((repo.as_str(), d.sym.as_str(), rev.as_str())) {
                     let qsym = format!("{repo}::{}", d.sym);
-                    def_rows.push(vec![t(repo), t(&qsym), t(d.kind.tag()), t(&d.file), i(d.line), i(d.end)]);
+                    def_rev_rows.push(vec![t(repo), t(&qsym), t(d.kind.tag()), t(&d.file), i(d.line), i(d.end), t(rev)]);
                     name_rows.push(vec![t(&qsym), t(&d.name)]);
                 }
             }
             for s in &f.sites {
                 // call_site is the raw graph: every site, caller resolved when a
                 // def encloses it (repo-qualified), callee as written.
-                let caller = resolve_caller(repo, &s.file, s.line).unwrap_or_default();
+                let caller = resolve_caller(repo, rev, &s.file, s.line).unwrap_or_default();
                 site_rows.push(vec![t(repo), t(&caller), t(&s.callee), t(&s.file), i(s.line)]);
                 // call_kind: classify the callee's bare name as read/write. The
                 // fn-aggregate is the precision axis the conn-loop-reachable
@@ -1022,7 +1189,7 @@ impl Engine {
                 // resolve to def syms, so closure(call_edge) walks one identity
                 // space (same contract as type_link). Unresolved calls stay in
                 // call_site with their bare callee.
-                if let Some(callee_sym) = resolve_callee(repo, &s.file, &s.callee) {
+                if let Some(callee_sym) = resolve_callee(repo, rev, &s.file, &s.callee) {
                     if !caller.is_empty() && seen_edge.insert((caller.clone(), callee_sym.clone(), rev)) {
                         edge_rev_rows.push(vec![t(&caller), t(&callee_sym), t("call"), t(rev)]);
                     }
@@ -1037,21 +1204,27 @@ impl Engine {
             .map(|(f, k)| vec![t(&f), t(k)])
             .collect();
 
-        self.refresh_rel("call_def", &["repo", "sym", "kind", "file", "line", "end"], &def_rows)?;
+        // call_def_rev / call_edge_rev are the rev-carrying twins: write them
+        // through the rev-scoped helper. Delete scope = every corpus rev
+        // (whole-corpus emit in D5.1 = full `refresh_rel` wipe; see
+        // refresh_type_rels' matching comment).
+        let all_revs = Self::corpus_revs(&files);
+        let all_rev_refs: Vec<&str> = all_revs.iter().map(|s| s.as_str()).collect();
+        self.refresh_rel_for_revs("call_def_rev", &["repo", "sym", "kind", "file", "line", "end", "rev"], &def_rev_rows, &all_rev_refs)?;
         self.refresh_rel("call_site", &["repo", "caller", "callee", "file", "line"], &site_rows)?;
-        self.refresh_rel("call_edge_rev", &["caller", "callee", "kind", "rev"], &edge_rev_rows)?;
+        self.refresh_rel_for_revs("call_edge_rev", &["caller", "callee", "kind", "rev"], &edge_rev_rows, &all_rev_refs)?;
         self.refresh_rel("call_name", &["sym", "name"], &name_rows)?;
         self.refresh_rel("call_kind", &["fn", "kind"], &kind_rows)?;
         self.rebuild_legacy_call_rels()?;
         // Persisted only after the writes land, so a failed refresh retries.
-        self.save_rel_digest("extract:call", &digest)?;
+        for (rev, d) in &moved { self.save_rel_digest(&format!("extract:call:{rev}"), d)?; }
         Ok(true)
     }
 
-    /// Rebuild the convenient rev-less `call_edge(caller, callee, kind)` from
-    /// the rev-aware table, deduped across revs. Same shape as
-    /// `rebuild_legacy_type_rels`: `call_edge_rev` is the source of truth, the
-    /// legacy view is the simple closure target.
+    /// Rebuild the convenient rev-less `call_edge` / `call_def` from their
+    /// rev-aware twins, deduped across revs. Same shape as
+    /// `rebuild_legacy_type_rels`: the `_rev` table is the source of truth, the
+    /// legacy rel is the closure/point-query target for the single-rev daemon.
     fn rebuild_legacy_call_rels(&self) -> Result<()> {
         let edge = tbl("call_edge");
         let edge_rev = tbl("call_edge_rev");
@@ -1059,6 +1232,13 @@ impl Engine {
         self.db.exec(&format!(
             "INSERT OR IGNORE INTO {edge} (\"caller\", \"callee\", \"kind\") \
              SELECT \"caller\", \"callee\", \"kind\" FROM {edge_rev}"
+        ))?;
+        let def = tbl("call_def");
+        let def_rev = tbl("call_def_rev");
+        self.db.exec(&format!("DELETE FROM {def}"))?;
+        self.db.exec(&format!(
+            "INSERT OR IGNORE INTO {def} (\"repo\", \"sym\", \"kind\", \"file\", \"line\", \"end\") \
+             SELECT \"repo\", \"sym\", \"kind\", \"file\", \"line\", \"end\" FROM {def_rev}"
         ))?;
         Ok(())
     }
@@ -1072,10 +1252,12 @@ impl Engine {
     /// Change-reporting contract mirrors `refresh_type_rels`.
     pub(crate) fn refresh_dataflow_rels(&self) -> Result<bool> {
         let files = self.extract_file_set()?;
-        // Perf gap A: no resolution pass here, so the digest folds the corpus
-        // rows only (no scip term).
-        let digest = self.extract_input_digest("dataflow", &files, false);
-        if self.load_rel_digest("extract:dataflow")? == Some(digest) { return Ok(false); }
+        // Perf gap A, per rev: no resolution pass here, so each rev's digest
+        // folds its corpus rows only (no scip term). Empty `moved` = skip. The
+        // df rels gain `_rev` twins in D5.4; today they stay whole-table
+        // `refresh_rel` writes (single-rev daemon sees today's behavior).
+        let moved = self.moved_extract_revs("dataflow", &files, false)?;
+        if moved.is_empty() { return Ok(false); }
 
         let root = self.root.clone();
         // Read each file from its OWN repo root (same as type/call), so a config
@@ -1105,6 +1287,15 @@ impl Engine {
         let mut param_rows: Vec<Vec<Value>> = Vec::new();
         let mut arg_rows: Vec<Vec<Value>> = Vec::new();
         let mut field_rows: Vec<Vec<Value>> = Vec::new();
+        // Rev-carrying twins (D5.4). Every id-valued column is salted by rev so a
+        // file byte-identical at two revs emits DISJOINT ids per rev (the raw ids
+        // collide and would cross-wire base into head). Legacy rows above keep raw
+        // ids. Twin dedup keys carry rev, so one file at two revs emits its twin
+        // rows once PER rev.
+        let mut node_rev_rows: Vec<Vec<Value>> = Vec::new();
+        let mut node_repo_rev_rows: Vec<Vec<Value>> = Vec::new();
+        let mut arg_rev_rows: Vec<Vec<Value>> = Vec::new();
+        let mut field_rev_rows: Vec<Vec<Value>> = Vec::new();
         let mut seen_param: HashSet<&str> = HashSet::new();
         let mut seen_arg: HashSet<(&str, i64, &str)> = HashSet::new();
         let mut seen_field: HashSet<(&str, &str, &str)> = HashSet::new();
@@ -1113,10 +1304,20 @@ impl Engine {
         let mut seen_edge: HashSet<(&str, &str)> = HashSet::new();
         let mut seen_loop: HashSet<(&str, u32)> = HashSet::new();
         let mut seen_nest: HashSet<(&str, &str)> = HashSet::new();
-        for (repo, _, _, f) in &facts {
+        let mut seen_node_rev: HashSet<(&str, &str)> = HashSet::new();
+        let mut seen_node_repo_rev: HashSet<(&str, &str, &str)> = HashSet::new();
+        let mut seen_arg_rev: HashSet<(&str, i64, &str, &str)> = HashSet::new();
+        let mut seen_field_rev: HashSet<(&str, &str, &str, &str)> = HashSet::new();
+        for (repo, _, rev, f) in &facts {
             for n in &f.nodes {
                 if seen_node.insert(n.id.as_str()) {
                     node_rows.push(vec![t(&n.id), t(&n.kind), t(&n.var), t(&n.fn_sym), t(&n.file), i(n.line)]);
+                }
+                if seen_node_rev.insert((n.id.as_str(), rev.as_str())) {
+                    node_rev_rows.push(vec![
+                        Value::Text(Self::salt_rev(&n.id, rev)), t(&n.kind), t(&n.var),
+                        t(&n.fn_sym), t(&n.file), i(n.line), t(rev),
+                    ]);
                 }
                 // df_node id is `file:line:col` (path only, no repo). Attribute
                 // each node to EVERY repo it appears in so a downstream join
@@ -1131,6 +1332,9 @@ impl Engine {
                 // needs.
                 if seen_node_repo.insert((n.id.as_str(), repo.as_str())) {
                     node_repo_rows.push(vec![t(&n.id), t(repo)]);
+                }
+                if seen_node_repo_rev.insert((n.id.as_str(), repo.as_str(), rev.as_str())) {
+                    node_repo_rev_rows.push(vec![Value::Text(Self::salt_rev(&n.id, rev)), t(repo), t(rev)]);
                 }
             }
             for e in &f.edges {
@@ -1160,10 +1364,25 @@ impl Engine {
                 if seen_arg.insert((call.as_str(), *pos, arg.as_str())) {
                     arg_rows.push(vec![t(call), Value::Int(*pos), t(arg)]);
                 }
+                // both id columns salted so the arg->node join stays intra-rev
+                if seen_arg_rev.insert((call.as_str(), *pos, arg.as_str(), rev.as_str())) {
+                    arg_rev_rows.push(vec![
+                        Value::Text(Self::salt_rev(call, rev)), Value::Int(*pos),
+                        Value::Text(Self::salt_rev(arg, rev)), t(rev),
+                    ]);
+                }
             }
             for (id, field, value) in &f.fields {
                 if seen_field.insert((id.as_str(), field.as_str(), value.as_str())) {
                     field_rows.push(vec![t(id), t(field), t(value)]);
+                }
+                // value is always a value df_node id (never a literal), so it
+                // salts like id; the field name is a plain string, unsalted
+                if seen_field_rev.insert((id.as_str(), field.as_str(), value.as_str(), rev.as_str())) {
+                    field_rev_rows.push(vec![
+                        Value::Text(Self::salt_rev(id, rev)), t(field),
+                        Value::Text(Self::salt_rev(value, rev)), t(rev),
+                    ]);
                 }
             }
         }
@@ -1177,8 +1396,19 @@ impl Engine {
         self.refresh_rel("df_param", &["id", "pos"], &param_rows)?;
         self.refresh_rel("df_arg", &["call", "pos", "arg"], &arg_rows)?;
         self.refresh_rel("df_field", &["id", "field", "value"], &field_rows)?;
+        // Rev-carrying twins: same delete scope as type/call — wipe every corpus
+        // rev and reinsert the whole-corpus salted rows (the emit above is
+        // whole-corpus; a rev absent from the corpus is D5.5's retraction sweep,
+        // not this path). Legacy df rels above stay raw-id, no rebuild needed
+        // (the salt is not cleanly reversible in SQL and the raw rows are in hand).
+        let all_revs = Self::corpus_revs(&files);
+        let all_rev_refs: Vec<&str> = all_revs.iter().map(|s| s.as_str()).collect();
+        self.refresh_rel_for_revs("df_node_rev", &["id", "kind", "var", "fn", "file", "line", "rev"], &node_rev_rows, &all_rev_refs)?;
+        self.refresh_rel_for_revs("df_node_repo_rev", &["id", "repo", "rev"], &node_repo_rev_rows, &all_rev_refs)?;
+        self.refresh_rel_for_revs("df_arg_rev", &["call", "pos", "arg", "rev"], &arg_rev_rows, &all_rev_refs)?;
+        self.refresh_rel_for_revs("df_field_rev", &["id", "field", "value", "rev"], &field_rev_rows, &all_rev_refs)?;
         // Persisted only after the writes land, so a failed refresh retries.
-        self.save_rel_digest("extract:dataflow", &digest)?;
+        for (rev, d) in &moved { self.save_rel_digest(&format!("extract:dataflow:{rev}"), d)?; }
         Ok(true)
     }
 
@@ -1202,13 +1432,26 @@ impl Engine {
                 r.get::<_, Option<String>>(3)?.unwrap_or_default())))?;
             for row in rows.flatten() { files.push(row); }
         }
-        let mut digest = self.extract_input_digest("doc", &files, false);
-        let ty = self.load_rel_digest("extract:type")?
-            .map(|d| d.iter().map(|b| format!("{b:02x}")).collect::<String>())
-            .unwrap_or_default();
-        for (a, b) in digest.iter_mut()
-            .zip(blake3::hash(format!("type\0{ty}").as_bytes()).as_bytes()) { *a ^= *b; }
-        if self.load_rel_digest("extract:doc")? == Some(digest) { return Ok(false); }
+        // Per-rev skip, riding the type family per rev: the doc_ref bridge reads
+        // type_entity, so each rev's doc digest folds the SAME rev's stored
+        // `extract:type:<rev>` (type refresh runs before doc in both tick paths).
+        // Single-rev (WORK-only) programs see the old whole-family behavior.
+        let mut moved: Vec<(String, [u8; 32])> = Vec::new();
+        {
+            let mut by_rev: HashMap<&str, Vec<ExtractFile>> = HashMap::new();
+            for f in &files { by_rev.entry(f.2.as_str()).or_default().push(f.clone()); }
+            for (rev, frev) in &by_rev {
+                let mut digest = self.extract_input_digest("doc", rev, frev, false);
+                let ty = self.load_rel_digest(&format!("extract:type:{rev}"))?
+                    .map(|d| d.iter().map(|b| format!("{b:02x}")).collect::<String>())
+                    .unwrap_or_default();
+                for (a, b) in digest.iter_mut()
+                    .zip(blake3::hash(format!("type\0{ty}").as_bytes()).as_bytes()) { *a ^= *b; }
+                if self.load_rel_digest(&format!("extract:doc:{rev}"))? == Some(digest) { continue; }
+                moved.push(((*rev).to_string(), digest));
+            }
+        }
+        if moved.is_empty() { return Ok(false); }
         let root = self.root.clone();
         let roots = self.repo_roots();
         let facts: Vec<(String, String, ingest::DocFacts)> = files.par_iter().filter_map(|(repo, path, rev, _)| {
@@ -1313,7 +1556,7 @@ impl Engine {
         self.refresh_rel("doc_ref",
             &["repo", "file", "line", "sym", "kind", "matched_name"], &ref_rows)?;
         // Persisted only after the writes land, so a failed refresh retries.
-        self.save_rel_digest("extract:doc", &digest)?;
+        for (rev, d) in &moved { self.save_rel_digest(&format!("extract:doc:{rev}"), d)?; }
         Ok(true)
     }
 }

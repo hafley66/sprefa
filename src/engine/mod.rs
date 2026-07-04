@@ -176,8 +176,8 @@ pub(crate) const MODULE_RELS: [&str; 6] = [
 /// SCIP-resolved graph where endpoints are definition symbols, not bare names
 /// (already repo-prefixed via type_entity's sym, so it doesn't need its own
 /// repo column).
-pub(crate) const TYPE_RELS: [&str; 5] =
-    ["type_edge", "type_edge_rev", "type_entity", "type_sig", "type_link"];
+pub(crate) const TYPE_RELS: [&str; 7] =
+    ["type_edge", "type_edge_rev", "type_entity", "type_entity_rev", "type_sig", "type_link", "type_link_rev"];
 
 /// Phase D diet-SCIP call graph. `call_def` is each callable (sym, kind, file,
 /// span); `call_site` is each call occurrence (caller sym, callee text, file,
@@ -188,7 +188,7 @@ pub(crate) const TYPE_RELS: [&str; 5] =
 /// on `write` only. Symbols are `file::kind::name`, the same shape
 /// `type_entity` uses, so the call and type graphs share nodes and a join
 /// reaches both.
-pub(crate) const CALL_RELS: [&str; 6] = ["call_def", "call_site", "call_edge", "call_edge_rev", "call_name", "call_kind"];
+pub(crate) const CALL_RELS: [&str; 7] = ["call_def", "call_def_rev", "call_site", "call_edge", "call_edge_rev", "call_name", "call_kind"];
 
 /// Intra-procedural dataflow lift: `df_node(id, kind, var, fn, file, line)` is a
 /// value-bearing program point, `df_edge(from, to)` is local value flow. A rule
@@ -201,7 +201,12 @@ pub(crate) const CALL_RELS: [&str; 6] = ["call_def", "call_site", "call_edge", "
 /// positional slot an argument value feeds (receiver = -1); `df_field` is named
 /// value flow into a composite (struct-literal field, object-literal property,
 /// Kotlin named argument). See `typegraph::DataflowFacts`.
-pub(crate) const DATAFLOW_RELS: [&str; 9] = ["df_node", "df_node_repo", "df_edge", "loop_over", "allocates", "nest", "df_param", "df_arg", "df_field"];
+/// `df_node`/`df_node_repo`/`df_arg`/`df_field` gain `_rev` twins (D5.4): the
+/// diff-consumed df rels carry rev, with node ids salted by rev (`salt_rev`) so
+/// two revs' `file:line:col` ids stay disjoint in one table. The legacy rels
+/// keep raw ids (single-rev daemon sees today's behavior). `df_edge`/`loop_over`/
+/// `allocates`/`nest`/`df_param` stay WORK-only (flow/perf inputs, deferred).
+pub(crate) const DATAFLOW_RELS: [&str; 13] = ["df_node", "df_node_rev", "df_node_repo", "df_node_repo_rev", "df_edge", "loop_over", "allocates", "nest", "df_param", "df_arg", "df_arg_rev", "df_field", "df_field_rev"];
 
 /// Document structure from non-source text (markdown today; comments and other
 /// tree-sitter grammars to follow via `ingest::IngestLang`). `doc_node` is one row
@@ -296,6 +301,16 @@ const EFFECT_RELS: [&str; 1] = ["effect_log"];
 /// program's rules like any other derived rel.
 const DIAG_RELS: [&str; 1] = ["diag"];
 
+/// The harness-hook event log. `hook_event(kind, session, seq, json)` accumulates
+/// one row per coding-agent hook invocation (`dl --hook`): kind = the harness
+/// event name (UserPromptSubmit / PostToolUse / ...), session = the event's
+/// session id, seq = an ingest-time monotone millis stamp (orders events within a
+/// session), json = the raw event JSON. Rows are written out-of-tick by the
+/// `hook_event` RPC / the in-process feed, never by a refresh; a program extracts
+/// fields with the term-form `json`/`jsonp` predicates, mirroring how
+/// `mcp_request` carries raw JSON. Lazy per `hook_rels_used`.
+const HOOK_RELS: [&str; 1] = ["hook_event"];
+
 fn builtin_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -332,6 +347,7 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
         .chain(every_rel_decls())
         .chain(clock_rel_decls())
         .chain(effect_rel_decls())
+        .chain(hook_rel_decls())
         .chain(diag_rel_decls())
         .collect()
 }
@@ -416,20 +432,20 @@ pub fn op_docs() -> &'static [(&'static str, &'static str, &'static str, &'stati
         ("cmd", "source", "cmd(path, rev, \"tool {file}\", line, out)", "shell out per matched file, one row per stdout line; cached by (file hash, rule text); nonzero exit + stdout = findings, nonzero + empty = error"),
         ("comment", "source", "comment(path, rev, /open/[, /close/], l0, l1, label)", "comment-marker regions in any file type; one regex = sequential dividers, two = paired BEGIN/END with LIFO nesting; l0/l1 are 1-based marker lines; pairs with gen splice"),
         // body constructs: derived rules.
-        ("atom", "body", "edge(f, t) / edge(to: t) / edge(\"x\", 1, kind: k)", "positive atom; binds its vars from the relation. Positional by slot (edge(f,t)) OR named mode once any `col: term` appears: then a term that carries a name binds by name (a bare var `from` puns to its own column `from: from`, the JS/Rust struct shorthand, in any order), and a nameless literal fills the next column left open (Python-style positional prefix); an unmentioned column is a don't-care, so you name only the columns you use instead of counting positional `_`"),
-        ("negation", "body", "!round(t, _)", "negation / anti-join; the row must NOT exist in the relation"),
-        ("comparison", "body", "= != < <= > >=", "scalar comparison on bound vars or literals (n >= 4, p != fs:src/db.rs)"),
-        ("regex", "body", "f =~ /^[A-Za-z]+$/", "regex constraint (SQLite REGEXP); the /.../ unified regex literal, same form match/comment/sg use"),
-        ("glob", "body", "p ~~ \"src/*\"", "glob constraint (SQLite GLOB)"),
+        ("atom", "body", "edge(from, to) / edge(to: dst) / edge(\"x\", 1, kind: edge_kind)", "positive atom; binds its vars from the relation. Positional by slot (edge(from, to)) OR named mode once any `col: term` appears: then a term that carries a name binds by name (a bare var `from` puns to its own column `from: from`, the JS/Rust struct shorthand, in any order), and a nameless literal fills the next column left open (Python-style positional prefix); an unmentioned column is a don't-care, so you name only the columns you use instead of counting positional `_`"),
+        ("negation", "body", "!edge(from, _)", "negation / anti-join; the row must NOT exist in the relation"),
+        ("comparison", "body", "= != < <= > >=", "scalar comparison on bound vars or literals (n >= 4, path != fs:src/db.rs)"),
+        ("regex", "body", "name =~ /^[A-Za-z]+$/", "regex constraint (SQLite REGEXP); the /.../ unified regex literal, same form match/comment/sg use"),
+        ("glob", "body", "path ~~ \"src/*\"", "glob constraint (SQLite GLOB)"),
         ("closure", "body", "closure(edge)", "transitive closure of a 2-col relation as the entire body (SCC-condensed); pin an endpoint for a point query; mixed-body closure is literal-seeded only"),
         ("scc", "body", "head(rep, member) <- scc(edge)", "strongly-connected-component condensation of a 2-col relation as the entire body; binds (representative, member) per node; mirrors closure, evaluated outside SQL"),
-        ("node2vec", "body", "head(a, b, score) <- node2vec(edge)", "structural graph embedding of a 2-col relation as the entire body; binds node pairs with a similarity score (the graph-position sibling of the text `similar` rel); evaluated outside SQL"),
-        ("arith", "body", "+ - * / %", "int arithmetic in rule heads and comparison sides (rank(p, line+1)); usual precedence, parens OK; never in a binding atom"),
-        ("strfn", "body", "split(text, sep, idx) / replace(text, from, to)", "string functions in heads and comparison sides; idx 0-based, negative counts from the end; a computed binding (ext = split(p, \".\", -1)) binds for later use in the same body"),
+        ("node2vec", "body", "head(node_a, node_b, score) <- node2vec(edge)", "structural graph embedding of a 2-col relation as the entire body; binds node pairs with a similarity score (the graph-position sibling of the text `similar` rel); evaluated outside SQL"),
+        ("arith", "body", "+ - * / %", "int arithmetic in rule heads and comparison sides (rank(path, line+1)); usual precedence, parens OK; never in a binding atom"),
+        ("strfn", "body", "split(text, sep, idx) / replace(text, from, to)", "string functions in heads and comparison sides; idx 0-based, negative counts from the end; a computed binding (ext = split(path, \".\", -1)) binds for later use in the same body"),
         ("aggregation", "body", "count sum min max", "head-position-only aggregation; non-aggregate head terms are the grouping key; count/sum produce int, min/max carry the arg type; count in body is a parse error"),
         // sinks.
-        ("query", "sink", "? rel(a, b). / ? rel(col: v).", "print a TSV block (or JSON-lines with --query-json); a literal in any position filters; args may be named by column (`col: v`), unmentioned columns are don't-cares; no where clause"),
-        ("diag", "sink", "diag(path: p, line: l, msg: m[, col: , end_line: , end_col: , severity: , code: , hint: ]) <- ...", "head the built-in diagnostic sink; fixed 9-col schema (path/line/col/end_line/end_col/severity/code/msg/hint), name only the columns you use, the rest default (severity warn, end_line=line); feeds editor diagnostics (--lsp) and check output (--check)"),
+        ("query", "sink", "? rel(from, to). / ? rel(col: value).", "print a TSV block (or JSON-lines with --query-json); a literal in any position filters; args may be named by column (`col: value`), unmentioned columns are don't-cares; no where clause"),
+        ("diag", "sink", "diag(path: hit_path, line: hit_line, msg: message[, col: , end_line: , end_col: , severity: , code: , hint: ]) <- ...", "head the built-in diagnostic sink; fixed 9-col schema (path/line/col/end_line/end_col/severity/code/msg/hint), name only the columns you use, the rest default (severity warn, end_line=line); feeds editor diagnostics (--lsp) and check output (--check)"),
         ("gen", "sink", "gen([:mode,] path, [l0, l1,] \"{var} template\")", "codegen; file form renders body rows through a path+row template, splice form replaces lines between comment marker pairs; convergent (skips write when bytes match); never runs under --check/--lsp"),
     ]
 }
@@ -463,6 +479,24 @@ fn effect_rel_decls() -> Vec<RelDecl> {
 
 fn effect_rels_used(prog: &Program) -> bool { rels_used(prog, &EFFECT_RELS) }
 
+/// The harness-hook event log (see `HOOK_RELS`). Accumulating facts, one row per
+/// `dl --hook` invocation; the raw event JSON rides the `json` column so all
+/// field extraction is the program's job (term-form json/jsonp), no per-event
+/// column in the engine.
+fn hook_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "hook_event".into(), cols: vec![
+            c("kind", Type::Text), c("session", Type::Text),
+            c("seq", Type::Int), c("json", Type::Text)],
+            group: "hook",
+            doc: "harness-hook event log: one accumulating row per `dl --hook` invocation (kind = the event name UserPromptSubmit/PostToolUse/..., session = the event session id, seq = an ingest-time monotone millis stamp ordering events within a session, json = the raw event JSON). Written by the hook feed, never a refresh; extract fields with term-form json/jsonp",
+            ..Default::default() },
+    ]
+}
+
+fn hook_rels_used(prog: &Program) -> bool { rels_used(prog, &HOOK_RELS) }
+
 pub(crate) fn module_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -495,11 +529,17 @@ pub(crate) fn type_rel_decls() -> Vec<RelDecl> {
             c("repo", Type::Text), c("sym", Type::Text), c("name", Type::Text), c("kind", Type::Text),
             c("parent", Type::Text), c("file", Type::Path), c("line", Type::Int)], group: "type",
             doc: "every declared type; sym is file::kind::name, the cross-graph join key; scip_ref overrides name resolution when a SCIP index is present", ..Default::default() },
+        RelDecl { name: "type_entity_rev".into(), cols: vec![
+            c("repo", Type::Text), c("sym", Type::Text), c("name", Type::Text), c("kind", Type::Text),
+            c("parent", Type::Text), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Text)], group: "type",
+            doc: "rev-aware type_entity (rev is a column, never folded into the sym, so a diff compares the same sym across revs); legacy type_entity is the rev-deduped union", ..Default::default() },
         RelDecl { name: "type_sig".into(), cols: vec![
             c("sym", Type::Text), c("slot", Type::Text), c("pos", Type::Int), c("ref", Type::Text)], group: "type",
             doc: "type signature slots (params, fields) per sym", ..Default::default() },
         RelDecl { name: "type_link".into(), cols: vec![c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text)], group: "type",
             doc: "cross-type links not carried by type_edge (SCIP-resolved sym to sym); src/dst are already repo-prefixed via type_entity's sym, so no separate repo column is needed", ..Default::default() },
+        RelDecl { name: "type_link_rev".into(), cols: vec![c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text), c("rev", Type::Text)], group: "type",
+            doc: "rev-aware type_link (SCIP-resolved sym-to-sym per rev); legacy type_link is the rev-deduped union", ..Default::default() },
     ]
 }
 
@@ -523,6 +563,10 @@ pub(crate) fn call_rel_decls() -> Vec<RelDecl> {
             c("repo", Type::Text), c("sym", Type::Text), c("kind", Type::Text),
             c("file", Type::Path), c("line", Type::Int), c("end", Type::Int)], group: "call",
             doc: "every callable; sym is file::kind::name", ..Default::default() },
+        RelDecl { name: "call_def_rev".into(), cols: vec![
+            c("repo", Type::Text), c("sym", Type::Text), c("kind", Type::Text),
+            c("file", Type::Path), c("line", Type::Int), c("end", Type::Int), c("rev", Type::Text)], group: "call",
+            doc: "rev-aware call_def (rev is a column, never folded into the sym); legacy call_def is the rev-deduped union", ..Default::default() },
         RelDecl { name: "call_site".into(), cols: vec![
             c("repo", Type::Text), c("caller", Type::Text), c("callee", Type::Text),
             c("file", Type::Path), c("line", Type::Int)], group: "call",
@@ -557,6 +601,15 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
             c("id", Type::Text), c("kind", Type::Text), c("var", Type::Text),
             c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int)], group: "dataflow",
             doc: "intra-procedural dataflow node (call_res/assign/...); id is file::line::kind", ..Default::default() },
+        // rev-aware df_node: id is salt_rev(raw id, rev) so two revs' file:line:col
+        // ids stay disjoint in one table (unlike syms, a df id embeds a line so
+        // the same point is different code across revs). legacy df_node keeps the
+        // raw id; a diff reads df_node_rev where the salt makes base/head ids
+        // disjoint and the member-edge diff is name-joined, never raw-id-joined.
+        RelDecl { name: "df_node_rev".into(), cols: vec![
+            c("id", Type::Text), c("kind", Type::Text), c("var", Type::Text),
+            c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Text)], group: "dataflow",
+            doc: "rev-aware df_node; id is salt_rev(raw id, rev) so revs stay disjoint; legacy df_node keeps the raw id", ..Default::default() },
         // (df_node id, repo) — the repo (nearest `.git` basename) the node's file
         // was read from. df_node ids are path-keyed (file:line:col, no repo), so
         // this side table is the repo handle a cross-repo query needs to scope a
@@ -565,6 +618,11 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // df_node). 1:1 with df_node.
         RelDecl { name: "df_node_repo".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text)], group: "dataflow",
             doc: "(df_node id, repo) — the repo (nearest .git basename) each node's file was read from; scopes df joins per-repo (df_node ids are path-keyed)", ..Default::default() },
+        // rev-aware df_node_repo: id salted by rev (matches df_node_rev.id), rev
+        // as a column. Repo attribution stays orthogonal to rev — a multi-repo PR
+        // diff wants both axes.
+        RelDecl { name: "df_node_repo_rev".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text), c("rev", Type::Text)], group: "dataflow",
+            doc: "rev-aware df_node_repo; id is salt_rev(raw id, rev), matching df_node_rev.id; legacy df_node_repo keeps the raw id", ..Default::default() },
         RelDecl { name: "df_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text)], group: "dataflow",
             doc: "intra-procedural dataflow dependency edge", ..Default::default() },
         // one row per loop, with its source span + loop variable. The flag rule
@@ -602,6 +660,12 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "df_arg".into(), cols: vec![
             c("call", Type::Text), c("pos", Type::Int), c("arg", Type::Text)], group: "dataflow",
             doc: "(call/new df_node id, slot, arg df_node id); 0-based, receiver at -1; aligns with df_param.pos for the positional arg->param hop", ..Default::default() },
+        // rev-aware df_arg: both id columns (call, arg) salted by rev to match
+        // df_node_rev.id, so the arg->node join stays within one rev. legacy
+        // df_arg keeps raw ids.
+        RelDecl { name: "df_arg_rev".into(), cols: vec![
+            c("call", Type::Text), c("pos", Type::Int), c("arg", Type::Text), c("rev", Type::Text)], group: "dataflow",
+            doc: "rev-aware df_arg; call and arg are salt_rev(raw id, rev), matching df_node_rev.id; legacy df_arg keeps raw ids", ..Default::default() },
         // (new/call node id, field name, value node id) — named value flow
         // into a composite: Rust struct-literal fields (`..base` under the
         // pseudo-field ".."), TS object-literal properties (spread likewise),
@@ -611,6 +675,12 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "df_field".into(), cols: vec![
             c("id", Type::Text), c("field", Type::Text), c("value", Type::Text)], group: "dataflow",
             doc: "(new/call df_node id, field name, value df_node id); struct-literal fields, object-literal properties, Kotlin named args; \"..\" for spread/functional-update bases", ..Default::default() },
+        // rev-aware df_field: both id columns (id, value) salted by rev — value is
+        // always a value df_node id (never a literal), so it salts like id. legacy
+        // df_field keeps raw ids.
+        RelDecl { name: "df_field_rev".into(), cols: vec![
+            c("id", Type::Text), c("field", Type::Text), c("value", Type::Text), c("rev", Type::Text)], group: "dataflow",
+            doc: "rev-aware df_field; id and value are salt_rev(raw id, rev), matching df_node_rev.id; legacy df_field keeps raw ids", ..Default::default() },
     ]
 }
 
@@ -2992,16 +3062,16 @@ impl Engine {
                     bail!("{} is a built-in module-graph relation; pick another name", d.name);
                 }
                 if TYPE_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in type-graph relation (type_edge / type_edge_rev / type_entity / type_sig / type_link); pick another name", d.name);
+                    bail!("{} is a built-in type-graph relation (type_edge / type_edge_rev / type_entity / type_entity_rev / type_sig / type_link / type_link_rev); pick another name", d.name);
                 }
                 if DOC_TEXT_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in doc relation (doc_comment / doc_tag); pick another name", d.name);
                 }
                 if CALL_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in call-graph relation (call_def / call_site / call_edge / call_edge_rev / call_name / call_kind); pick another name", d.name);
+                    bail!("{} is a built-in call-graph relation (call_def / call_def_rev / call_site / call_edge / call_edge_rev / call_name / call_kind); pick another name", d.name);
                 }
                 if DATAFLOW_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in dataflow relation (df_node / df_node_repo / df_edge / loop_over / allocates / nest / df_param / df_arg / df_field); pick another name", d.name);
+                    bail!("{} is a built-in dataflow relation (df_node / df_node_rev / df_node_repo / df_node_repo_rev / df_edge / loop_over / allocates / nest / df_param / df_arg / df_arg_rev / df_field / df_field_rev); pick another name", d.name);
                 }
                 if DOC_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in document relation (doc_node / doc_ref); pick another name", d.name);
@@ -3025,6 +3095,9 @@ impl Engine {
                 }
                 if CLOCK_RELS.contains(&d.name.as_str()) {
                     bail!("{} is the built-in clock relation (clock); pick another name", d.name);
+                }
+                if HOOK_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is the built-in harness-hook event log (hook_event); pick another name", d.name);
                 }
                 if DIAG_RELS.contains(&d.name.as_str()) {
                     bail!("diag is the built-in diagnostic sink (fixed schema: path, line, col, end_line, end_col, severity, code, msg, hint); drop the `rel diag(...)` decl and write it directly — name only the columns you use, e.g. `diag(path: p, line: l, msg: m) <- ...`");
@@ -3066,6 +3139,7 @@ impl Engine {
         for d in every_rel_decls() { self.declare(&d)?; }
         for d in clock_rel_decls() { self.declare(&d)?; }
         for d in effect_rel_decls() { self.declare(&d)?; }
+        for d in hook_rel_decls() { self.declare(&d)?; }
         for d in diag_rel_decls() { self.declare(&d)?; }
         Ok(())
     }
@@ -3294,6 +3368,21 @@ impl Engine {
         }
         self.db.insert_rows(&tbl(rel), &["id", "method", "params"],
             &[vec![Value::Text(id.into()), Value::Text(method.into()), Value::Text(params.into())]])?;
+        Ok(())
+    }
+
+    /// Append one harness-hook event to the built-in `hook_event` rel. Rows
+    /// accumulate (facts in the db, no retention sweep); the tick's content
+    /// digest (`hook:hook_event`) re-derives dependents on a new row. The rel
+    /// must already be declared (a priming tick declares every built-in), so the
+    /// insert never races the schema.
+    pub fn insert_hook_event(&mut self, kind: &str, session: &str, seq: i64, json: &str) -> Result<()> {
+        if !self.rels.contains_key("hook_event") {
+            bail!("hook_event rel is not declared; run a tick before feeding an event");
+        }
+        self.db.insert_rows(&tbl("hook_event"), &["kind", "session", "seq", "json"],
+            &[vec![Value::Text(kind.into()), Value::Text(session.into()),
+                   Value::Int(seq), Value::Text(json.into())]])?;
         Ok(())
     }
 
@@ -5335,6 +5424,60 @@ fn bind_span_id(
     }
 }
 
+/// The dl authoring note appended to every regex compile error (parse-only AND
+/// the runtime scan/eval path). Points at the Rust-regex escape: the crate has
+/// no look-around or backrefs, so anchor instead.
+pub const DL_REGEX_NOTE: &str =
+    "\nnote: regexes are Rust-flavor: no lookahead/lookbehind/backrefs; \
+     anchor with $, \\b, or character classes.";
+
+/// Compile a dl regex literal EXACTLY as the scan/eval path does — the single
+/// construction point so `--parse-only` and the runtime can never drift on
+/// flags — and carry the dl authoring note on any compile error. Every
+/// `match`/`comment`/`=~` regex goes through here.
+pub fn compile_dl_regex(pattern: &str) -> Result<Regex> {
+    Regex::new(pattern).map_err(|e| anyhow::anyhow!("{e}{DL_REGEX_NOTE}"))
+}
+
+/// Compile every regex literal the program carries (`match`, `comment` open/
+/// close, `=~` body constraints) through `compile_dl_regex`, turning each
+/// compile failure into an error `TypeDiag`. Lets `--parse-only` reject an
+/// unsupported pattern (`/(?!-)/`) without paying a scan — the runtime would
+/// otherwise be the first to fail, mid-scan. `path` attributes the diags (line
+/// 1, the same coarseness as the other parse-only diagnostics). Reports ALL bad
+/// regexes, not the first only.
+pub fn regex_literal_diags(prog: &Program, path: &str) -> Vec<TypeDiag> {
+    fn push(out: &mut Vec<TypeDiag>, path: &str, pat: &str) {
+        if let Err(e) = compile_dl_regex(pat) {
+            out.push(TypeDiag {
+                path: path.to_string(),
+                span: (0, 0),
+                severity: Severity::Error,
+                code: "regex".to_string(),
+                msg: e.to_string(),
+            });
+        }
+    }
+    let mut out = Vec::new();
+    for item in &prog.items {
+        let Item::Rule(r) = item else { continue };
+        for b in &r.body {
+            match b {
+                BodyItem::Match { regex, .. } => push(&mut out, path, regex),
+                BodyItem::Comment { open, close, .. } => {
+                    push(&mut out, path, open);
+                    if let Some(c) = close { push(&mut out, path, c); }
+                }
+                BodyItem::Cmp(c) if c.op == CmpOp::Match => {
+                    if let Term::Str(s) = &c.rhs { push(&mut out, path, s); }
+                }
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
 /// `match(regex, line, [id])` body op. For each input bind, scan every line of
 /// `content`; for each regex capture set produce an extended bind: the line
 /// number (into `line`), each named capture (into its name), and — when `id`
@@ -5356,7 +5499,7 @@ fn bind_match_op(
     repo: &str,
     path: &str,
 ) -> Result<Vec<Bind>> {
-    if !re_cache.contains_key(regex) { re_cache.insert(regex.to_string(), Regex::new(regex)?); }
+    if !re_cache.contains_key(regex) { re_cache.insert(regex.to_string(), compile_dl_regex(regex)?); }
     let re = &re_cache[regex];
     let names: Vec<&str> = re.capture_names().flatten().collect();
     let mut next: Vec<Bind> = Vec::new();
@@ -5627,9 +5770,9 @@ fn parse_file(
                 let l0v = opt_var(l0)?;
                 let l1v = opt_var(l1)?;
                 let labv = opt_var(label)?;
-                if !re_cache.contains_key(open) { re_cache.insert(open.clone(), Regex::new(open)?); }
+                if !re_cache.contains_key(open) { re_cache.insert(open.clone(), compile_dl_regex(open)?); }
                 if let Some(c) = close {
-                    if !re_cache.contains_key(c) { re_cache.insert(c.clone(), Regex::new(c)?); }
+                    if !re_cache.contains_key(c) { re_cache.insert(c.clone(), compile_dl_regex(c)?); }
                 }
                 let open_re = &re_cache[open];
                 let close_re = close.as_ref().map(|c| &re_cache[c]);
@@ -5716,13 +5859,29 @@ fn parse_file(
         for (i, term) in rule.head.terms.iter().enumerate() {
             let v = match term {
                 Term::Var(v) => b.get(v).cloned()
-                    .ok_or_else(|| anyhow::anyhow!(
-                        "head var `{v}` is not bound by any source op in this rule. A source rule \
-                         (scan/match/ast/sg/json) binds head vars only from the source op's own \
-                         captures — a join to `repo(...)`/`file(...)` in the body cannot supply it. \
-                         To fan a scan over every configured repo AND capture which repo each row \
-                         came from, put `{v}` in scan's repo slot: \
-                         `... <- repo({v}, _, _), scan({v}, rev, glob, path, rev_out).`"))?,
+                    .ok_or_else(|| {
+                        let mut msg = format!(
+                            "head var `{v}` is not bound by any source op in this rule. A source rule \
+                             (scan/match/ast/sg/json) binds head vars only from the source op's own \
+                             captures — a join to `repo(...)`/`file(...)` in the body cannot supply it. \
+                             To fan a scan over every configured repo AND capture which repo each row \
+                             came from, put `{v}` in scan's repo slot: \
+                             `... <- repo({v}, _, _), scan({v}, rev, glob, path, rev_out).`");
+                        // sg/ast_yaml `$$$NAME` is a MULTI metavar (pattern
+                        // structure), never a single-node capture, so it binds no
+                        // head var. Name the fix when that is what happened.
+                        let is_structural_metavar = rule.body.iter().any(|bi| match bi {
+                            BodyItem::Sg { pattern, .. } => pattern.contains(&format!("$$${v}")),
+                            BodyItem::AstYaml { yaml, .. } => yaml.contains(&format!("$$${v}")),
+                            _ => false,
+                        });
+                        if is_structural_metavar {
+                            msg.push_str(&format!(
+                                "\nnote: $$${v} is pattern structure only; bind a single node with \
+                                 ${v} or use the span outputs."));
+                        }
+                        anyhow::anyhow!(msg)
+                    })?,
                 Term::Str(s) => Value::Text(s.clone()),
                 Term::Int(n) => Value::Int(*n),
                 Term::Interp(parts) => interp_value(parts, &b)?,
@@ -5800,7 +5959,9 @@ fn cast_int(s: &str) -> i64 {
 
 fn val_of(t: &Term, b: &Bind) -> Result<Value> {
     match t {
-        Term::Var(v) => b.get(v).cloned().ok_or_else(|| anyhow::anyhow!("unbound var {v} in constraint")),
+        Term::Var(v) => b.get(v).cloned().ok_or_else(|| anyhow::anyhow!(
+            "unbound var {v} in constraint\nnote: to compute a new value, put the expression in the \
+             rule head: head(path, line+1) <- ...")),
         Term::Str(s) => Ok(Value::Text(s.clone())),
         Term::Int(n) => Ok(Value::Int(*n)),
         Term::Interp(parts) => interp_value(parts, b),
@@ -5863,7 +6024,7 @@ fn eval_cmp(c: &Constraint, b: &Bind) -> Result<bool> {
     // Pattern ops: lhs value tested against rhs pattern (a literal string).
     match c.op {
         CmpOp::Match => {
-            let re = regex::Regex::new(&r.as_str())?;
+            let re = compile_dl_regex(&r.as_str())?;
             return Ok(re.is_match(&l.as_str()));
         }
         CmpOp::Glob => {
@@ -5893,25 +6054,47 @@ extern "C" {
     fn tree_sitter_dockerfile() -> *const ();
 }
 
+/// The tree-sitter grammar table for the `ast` op (S-expression queries):
+/// `(canonical name, [extra aliases], constructor)`. Single source of truth so
+/// `ts_lang` (the resolver), the bail message, and `ast_langs` (the list the
+/// skill language matrix must match) can never drift. Adding a grammar here
+/// without updating the skill matrix fails the matrix-honesty test. Distinct
+/// from `sg`'s table: the `ast` op runs tree-sitter, `sg`/`ast_yaml` run
+/// ast-grep — the language sets differ (e.g. `ast` has bash/hcl/gotmpl but no
+/// tsx; `sg` has tsx/typescript/cpp but no bash). The non-capturing closures
+/// coerce to `fn` pointers, so this promotes to a `&'static` slice.
+type TsLangCtor = fn() -> tree_sitter::Language;
+static AST_LANG_TABLE: &[(&str, &[&str], TsLangCtor)] = &[
+    ("rust",       &["rs"],                    || tree_sitter::Language::new(tree_sitter_rust::LANGUAGE)),
+    ("c",          &[],                        || tree_sitter::Language::new(tree_sitter_c::LANGUAGE)),
+    ("kotlin",     &["kt"],                    || tree_sitter::Language::new(tree_sitter_kotlin_sg::LANGUAGE)),
+    ("python",     &["py"],                    || tree_sitter::Language::new(tree_sitter_python::LANGUAGE)),
+    ("bash",       &["sh", "shell"],           || tree_sitter::Language::new(tree_sitter_bash::LANGUAGE)),
+    ("go",         &["golang"],                || tree_sitter::Language::new(tree_sitter_go::LANGUAGE)),
+    ("hcl",        &["terraform", "tf"],       || tree_sitter::Language::new(tree_sitter_hcl::LANGUAGE)),
+    ("starlark",   &["bzl", "bazel"],          || tree_sitter::Language::new(tree_sitter_starlark::LANGUAGE)),
+    ("jsonnet",    &[],                        || tree_sitter::Language::new(tree_sitter_jsonnet::LANGUAGE)),
+    ("gotmpl",     &["gotemplate", "gohtml"],  || tree_sitter::Language::new(unsafe {
+        tree_sitter_language::LanguageFn::from_raw(tree_sitter_gotmpl)
+    })),
+    ("dockerfile", &["docker"],                || tree_sitter::Language::new(unsafe {
+        tree_sitter_language::LanguageFn::from_raw(tree_sitter_dockerfile)
+    })),
+];
+
 fn ts_lang(lang: &str) -> Result<tree_sitter::Language> {
-    match lang {
-        "rust" | "rs" => Ok(tree_sitter::Language::new(tree_sitter_rust::LANGUAGE)),
-        "c" => Ok(tree_sitter::Language::new(tree_sitter_c::LANGUAGE)),
-        "kotlin" | "kt" => Ok(tree_sitter::Language::new(tree_sitter_kotlin_sg::LANGUAGE)),
-        "py" | "python" => Ok(tree_sitter::Language::new(tree_sitter_python::LANGUAGE)),
-        "sh" | "bash" | "shell" => Ok(tree_sitter::Language::new(tree_sitter_bash::LANGUAGE)),
-        "go" | "golang" => Ok(tree_sitter::Language::new(tree_sitter_go::LANGUAGE)),
-        "hcl" | "terraform" | "tf" => Ok(tree_sitter::Language::new(tree_sitter_hcl::LANGUAGE)),
-        "starlark" | "bzl" | "bazel" => Ok(tree_sitter::Language::new(tree_sitter_starlark::LANGUAGE)),
-        "jsonnet" => Ok(tree_sitter::Language::new(tree_sitter_jsonnet::LANGUAGE)),
-        "gotmpl" | "gotemplate" | "gohtml" => Ok(tree_sitter::Language::new(unsafe {
-            tree_sitter_language::LanguageFn::from_raw(tree_sitter_gotmpl)
-        })),
-        "dockerfile" | "docker" => Ok(tree_sitter::Language::new(unsafe {
-            tree_sitter_language::LanguageFn::from_raw(tree_sitter_dockerfile)
-        })),
-        other => bail!("no ast grammar for :{other} (compiled in: rust, c, kotlin, python, bash, go, hcl, starlark, jsonnet, gotmpl, dockerfile)"),
+    for (canon, aliases, ctor) in AST_LANG_TABLE {
+        if lang == *canon || aliases.contains(&lang) { return Ok(ctor()); }
     }
+    let compiled = AST_LANG_TABLE.iter().map(|(c, ..)| *c).collect::<Vec<_>>().join(", ");
+    bail!("no ast grammar for :{lang} (compiled in: {compiled})")
+}
+
+/// Canonical language names the `ast` op accepts (one per tree-sitter grammar).
+/// The skill's per-op language matrix is checked set-equal against this in
+/// `tests/it/lang_matrix.rs`, so a stale matrix fails CI.
+pub fn ast_langs() -> Vec<&'static str> {
+    AST_LANG_TABLE.iter().map(|(canon, ..)| *canon).collect()
 }
 
 /// Run a tree-sitter S-expression query over file content.

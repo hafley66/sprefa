@@ -236,6 +236,14 @@ impl Engine {
             changed = true;
             changed_source_rels.insert("clock".to_string());
         }
+        // D5.5 rev-retraction sweep: `_file` above is this tick's live rev
+        // set, so a rev that just stopped being scanned is retractable now.
+        // Runs BEFORE the extraction families below, not after: each family's
+        // own legacy rebuild is gated behind its per-rev digest skip, which
+        // never fires for a rev that disappeared (see `sweep_gone_revs`'s
+        // doc), so the sweep does the legacy rebuild itself rather than
+        // relying on a family running this tick.
+        self.sweep_gone_revs()?;
         // The extraction-tied builtin rel families (module/type/call/dataflow/
         // doc/spine): `trait ExtractFamily` + registry (src/rels/extract_family.rs),
         // replacing six hand-written used-gate/refresh blocks. Contract
@@ -305,6 +313,24 @@ impl Engine {
                 self.save_rel_digest(&key, &d)?;
                 changed = true;
                 changed_source_rels.insert(rel.clone());
+            }
+        }
+        // `hook_event` rows are written out-of-tick by `dl --hook` (the
+        // `hook_event` RPC / the in-process feed), accumulating harness facts, so
+        // none of the source-phase machinery above attributes them. Digest the
+        // rel's content (a `hook:` key in `_reldigest`) so a new event re-derives
+        // its dependents; a tick with no new event leaves them scoped out. Lazy —
+        // a program that never reads hook_event pays nothing.
+        if hook_rels_used(prog) {
+            for rel in HOOK_RELS {
+                let Some(meta) = self.rels.get(rel).cloned() else { continue };
+                let d = self.rel_content_digest(rel, &meta)?;
+                let key = format!("hook:{rel}");
+                if self.load_rel_digest(&key)? != Some(d) {
+                    self.save_rel_digest(&key, &d)?;
+                    changed = true;
+                    changed_source_rels.insert(rel.to_string());
+                }
             }
         }
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
@@ -623,6 +649,11 @@ impl Engine {
         if files_changed {
             self.refresh_builtin_rels()?;
             for b in BUILTIN_RELS { changed_source_rels.insert(b.to_string()); }
+            // D5.5 rev-retraction sweep — same seam and rationale as the full
+            // tick (see `tick`'s call site): only reachable when `_file`
+            // actually moved this tick, since a rev can only disappear from
+            // it as part of a file/rev delta.
+            self.sweep_gone_revs()?;
             // The ExtractFamily registry, minus module (dispatched below via
             // `ModuleFamily::refresh_delta` — it must also fire on a
             // manifest-only change, outside this files-changed guard). Each
