@@ -1,5 +1,7 @@
 # 3. The cycle problem
 
+> self-support, why counting breaks, time vs structure, SCC condensation.
+
 **The question:** computing the fixpoint from scratch handles cycles fine. But
 the moment you want to *update* it when an edge is deleted, cycles become a trap.
 Why, and how do real systems escape it?

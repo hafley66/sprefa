@@ -5,18 +5,23 @@ incremental, reactive datalog engine over code facts, stored on disk, with
 bounded memory. It starts from "what is a fact" and ends at how Glean and Zoekt
 do it at scale and how your `dl` engine embodies the same ideas.
 
+Prefer to learn by writing programs rather than reading theory? The [hands-on tutorial track](tutorial/README.md) is the practical counterpart to this theory track: you build a tiny fixture repo and type real `.dl` programs against it, one lesson at a time.
+
 Read in order; each chapter depends on the previous one. Chapter 0 is the
 exception: read it first, and again whenever the work feels like despair instead
 of curiosity.
 
-0. [A calmer frame](00-a-calmer-frame.md) — the arc of how this got built, v4 sorrow vs v5 calm, and biasing toward easier times. Read when you are in the pit.
+<!-- BEGIN: book-index -->
+0. [A calmer frame (read this when you are in the pit)](00-a-calmer-frame.md) — the arc of how this got built, v4 sorrow vs v5 calm, and biasing toward easier times. Read when you are in the pit.
 1. [Facts, rules, and queries](01-facts-and-rules.md) — datalog from zero: facts, rules, joins, anti-joins, source vs derived.
 2. [Recursion and the fixpoint](02-recursion-and-fixpoint.md) — transitive closure, the frontier, why it terminates.
 3. [The cycle problem](03-the-cycle-problem.md) — self-support, why counting breaks, time vs structure, SCC condensation.
 4. [Incremental maintenance](04-incremental-maintenance.md) — inserts vs deletes, ownership, the source/derived split.
 5. [Where the bytes live](05-where-bytes-live.md) — storage engines vs databases, the bounded-RSS discipline, the zoo.
-6. [Gold standards and your engine](06-gold-standards-and-your-engine.md) — Glean, Zoekt, and how `dl` is the same ideas.
-7. [The fast paths](07-the-fast-paths.md) — the loops that make it scale: semi-naive fixpoint, Tarjan/condensation, seeded reachability, stratification, auto-index, with citations and exercises.
+6. [Gold standards, and your engine](06-gold-standards-and-your-engine.md) — Glean, Zoekt, and how `dl` is the same ideas.
+7. [The fast paths: the loops that make it scale](07-the-fast-paths.md) — the loops that make it scale: semi-naive fixpoint, Tarjan/condensation, seeded reachability, stratification, auto-index, with citations and exercises.
+8. [Argmax and friends](08-argmax-and-friends.md) — max vs argmax, the candidates/beaten/winner negation shape, per-key vs per-row grouping, the `key(...) merge(MaxBy(...))` lattice shortcut, and the SQL it lowers to.
+<!-- END: book-index -->
 
 For the math behind these chapters (lattices, fixpoints, semirings, evaluation, graph cores, incremental maintenance), see the [math sub-series](math/README.md).
 

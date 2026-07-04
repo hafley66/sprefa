@@ -1,5 +1,7 @@
 # 2. Recursion and the fixpoint
 
+> transitive closure, the frontier, why it terminates.
+
 **The question:** "who can `main` reach, following calls as far as they go?" is
 not a fixed-depth join. How do you express and compute "as far as they go"?
 

@@ -1,5 +1,7 @@
 # 6. Gold standards, and your engine
 
+> Glean, Zoekt, and how `dl` is the same ideas.
+
 **The question:** the two systems everyone cites for code-facts-at-scale are
 Glean and Zoekt. What did each actually figure out, and how much of it have you
 already built?

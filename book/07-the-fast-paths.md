@@ -1,5 +1,7 @@
 # 7. The fast paths: the loops that make it scale
 
+> the loops that make it scale: semi-naive fixpoint, Tarjan/condensation, seeded reachability, stratification, auto-index, with citations and exercises.
+
 **The question:** chapters 1–6 built the model and an honest, correct evaluation.
 But "correct" ran the kernel reachability in 197s and the resolved call graph in
 30s. This chapter is the handful of loops and algorithms that turn correct into

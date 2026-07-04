@@ -1,5 +1,7 @@
 # 1. Facts, rules, and queries
 
+> datalog from zero: facts, rules, joins, anti-joins, source vs derived.
+
 **The question:** what is the smallest set of pieces you need to ask questions
 about code, and where does the answering happen?
 

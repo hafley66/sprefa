@@ -1,5 +1,7 @@
 # 5. Where the bytes live
 
+> storage engines vs databases, the bounded-RSS discipline, the zoo.
+
 **The question:** you want a fact store that survives restart and stays small in
 RAM even over a huge corpus. What are the layers, and what is the one discipline
 that buys bounded memory?

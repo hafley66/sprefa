@@ -1,5 +1,7 @@
 # 4. Incremental maintenance
 
+> inserts vs deletes, ownership, the source/derived split.
+
 **The question:** you edit one file. Recomputing every fact from scratch is
 correct but wasteful. How do you update only what changed, and why is deleting
 harder than adding?

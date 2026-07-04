@@ -1,0 +1,205 @@
+# gen-doc-indexes.dl — one scan of book/ drives every hand-maintained doc list.
+#
+# Three lists used to duplicate what is on disk and drift silently:
+#   (a) the numbered chapter list in book/README.md
+#   (b) the lesson list in book/tutorial/README.md
+#   (c) the CHAPTERS/LESSONS tables + include_str consts in src/docs_cmd.rs
+# This program scans the actual files, extracts each file's number, slug, title,
+# and one-line blurb, and gen-splices all five zones between comment markers, so
+# adding book/09-foo.md auto-lands everywhere at the next regen.
+#
+#   Run:     dl examples/gen-doc-indexes.dl        (root-relative; --root = nearest .git)
+#   Check:   dl examples/gen-doc-indexes.dl --check  (drift rail, exit non-zero on a
+#            file added without a regen)
+#   Daemon:  dl --load examples/gen-doc-indexes.dl  (regens on a book/ edit)
+# Rerun converges (gen writes only when bytes differ).
+#
+# THE BLURB CONVENTION (documented once, applied to every numbered file):
+#   Each numbered book/tutorial file opens with
+#       # N. Title
+#
+#       > one-line blurb
+#
+#       ...body...
+#   The H1 gives the number (N) and the title (everything after "N. "); the `>`
+#   blockquote immediately under it is THE blurb, single-sourced for every
+#   generated list. The extractor takes the file's FIRST blockquote as the blurb
+#   (the subtitle is always the earliest `>` line; body blockquotes are deeper).
+#   To add a chapter, write those two lines — the tables and indexes populate.
+
+# ── chapters : book/NN-slug.md, one numbered file per book chapter ─────────────
+# H1 line: `# N. Title`. The numeric-prefix regex skips book/README.md
+# ("# Reactive Facts") and book/further-study.md ("# Further study"); the
+# parent-dir filter (split -2 == "book") skips book/tutorial + book/math etc.
+# whether or not the glob `*` crosses a `/`.
+rel chapter_h1(chapter_path: file, number: int, title: text, heading_line: int).
+chapter_h1(chapter_path, int(num), title, heading_line) <-
+    scan("WORK", "book/*.md", chapter_path, rev),
+    match(chapter_path, rev, /^# (?<num>\d+)\. (?<title>.+)$/, heading_line).
+
+# Keep only files DIRECTLY under book/. The glob `*` in "book/*.md" crosses `/`,
+# so book/math/NN-*.md, book/tutorial/NN-*.md, etc. also carry a numbered H1 and
+# would collide on `number`. The parent-dir segment (split idx -2) filters them:
+# it is computed in a DERIVED head (a body-local computed value is unsupported),
+# then joined against the literal "book" in the assembly rule below.
+rel chapter_dir(chapter_path: file, parent_dir: text).
+chapter_dir(chapter_path, split(chapter_path, "/", -2)) <- chapter_h1(chapter_path, _, _, _).
+
+# The `>` subtitle lines of a book chapter (raw; a chapter body may hold more).
+rel chapter_blurb_raw(chapter_path: file, blurb: text, blurb_line: int).
+chapter_blurb_raw(chapter_path, blurb, blurb_line) <-
+    scan("WORK", "book/*.md", chapter_path, rev),
+    match(chapter_path, rev, /^> (?<blurb>.+)$/, blurb_line).
+
+# The subtitle = the FIRST blockquote (argmin over line): pick the min line,
+# then read the blurb at it.
+rel chapter_blurb_line(chapter_path: file, blurb_line: int).
+chapter_blurb_line(chapter_path, min(blurb_line)) <- chapter_blurb_raw(chapter_path, _, blurb_line).
+rel chapter_blurb(chapter_path: file, blurb: text).
+chapter_blurb(chapter_path, blurb) <-
+    chapter_blurb_raw(chapter_path, blurb, blurb_line),
+    chapter_blurb_line(chapter_path, blurb_line).
+
+# The assembled chapter fact: number, slug ("00-a-calmer-frame"), title, blurb,
+# const suffix ("00" — the slug's numeric prefix, matching CHAPTER_00), path.
+rel chapter(number: int, slug: text, title: text, blurb: text, const_num: text, chapter_path: file).
+chapter(number, slug, title, blurb, const_num, chapter_path) <-
+    chapter_h1(chapter_path, number, title, heading_line),
+    chapter_dir(chapter_path, "book"),
+    chapter_blurb(chapter_path, blurb),
+    slug = replace(split(chapter_path, "/", -1), ".md", ""),
+    const_num = split(slug, "-", 0).
+rel chapter_num(number: int).
+chapter_num(number) <- chapter(number, _, _, _, _, _).
+
+# ── lessons : book/tutorial/NN-slug.md, one numbered file per tutorial lesson ──
+rel lesson_h1(lesson_path: file, number: int, title: text, heading_line: int).
+lesson_h1(lesson_path, int(num), title, heading_line) <-
+    scan("WORK", "book/tutorial/*.md", lesson_path, rev),
+    match(lesson_path, rev, /^# (?<num>\d+)\. (?<title>.+)$/, heading_line).
+
+# Parent-dir filter, same shape as chapter_dir (guards a future book/tutorial/
+# subdir from colliding on `number`).
+rel lesson_dir(lesson_path: file, parent_dir: text).
+lesson_dir(lesson_path, split(lesson_path, "/", -2)) <- lesson_h1(lesson_path, _, _, _).
+
+rel lesson_blurb_raw(lesson_path: file, blurb: text, blurb_line: int).
+lesson_blurb_raw(lesson_path, blurb, blurb_line) <-
+    scan("WORK", "book/tutorial/*.md", lesson_path, rev),
+    match(lesson_path, rev, /^> (?<blurb>.+)$/, blurb_line).
+
+rel lesson_blurb_line(lesson_path: file, blurb_line: int).
+lesson_blurb_line(lesson_path, min(blurb_line)) <- lesson_blurb_raw(lesson_path, _, blurb_line).
+rel lesson_blurb(lesson_path: file, blurb: text).
+lesson_blurb(lesson_path, blurb) <-
+    lesson_blurb_raw(lesson_path, blurb, blurb_line),
+    lesson_blurb_line(lesson_path, blurb_line).
+
+rel lesson(number: int, slug: text, title: text, blurb: text, const_num: text, lesson_path: file).
+lesson(number, slug, title, blurb, const_num, lesson_path) <-
+    lesson_h1(lesson_path, number, title, heading_line),
+    lesson_dir(lesson_path, "tutorial"),
+    lesson_blurb(lesson_path, blurb),
+    slug = replace(split(lesson_path, "/", -1), ".md", ""),
+    const_num = split(slug, "-", 0).
+rel lesson_num(number: int).
+lesson_num(number) <- lesson(number, _, _, _, _, _).
+
+# ── splice (a) : book/README.md numbered chapter list ──────────────────────────
+rel book_index_zone(readme: file, l0: int, l1: int).
+book_index_zone(readme, l0, l1) <- scan("WORK", "book/README.md", readme, rev),
+    comment(readme, rev, /BEGIN: book-index/, /END: book-index/, l0, l1).
+gen(readme, l0, l1, "{number}. [{title}]({slug}.md) — {blurb}") <-
+    book_index_zone(readme, l0, l1), chapter(number, slug, title, blurb, _, _).
+
+# ── splice (b) : book/tutorial/README.md lesson list ───────────────────────────
+rel tutorial_index_zone(readme: file, l0: int, l1: int).
+tutorial_index_zone(readme, l0, l1) <- scan("WORK", "book/tutorial/README.md", readme, rev),
+    comment(readme, rev, /BEGIN: tutorial-index/, /END: tutorial-index/, l0, l1).
+gen(readme, l0, l1, "{number}. [{title}]({slug}.md) — {blurb}") <-
+    tutorial_index_zone(readme, l0, l1), lesson(number, slug, title, blurb, _, _).
+
+# ── splice (c) : src/docs_cmd.rs — four Rust zones (real code, must compile) ────
+# Chapter include_str consts.
+rel chapter_consts_zone(dc: file, l0: int, l1: int).
+chapter_consts_zone(dc, l0, l1) <- scan("WORK", "src/docs_cmd.rs", dc, rev),
+    comment(dc, rev, /BEGIN: gen chapter-consts/, /END: gen chapter-consts/, l0, l1).
+gen(dc, l0, l1, "const CHAPTER_{const_num}: &str = include_str!(\"../book/{slug}.md\");") <-
+    chapter_consts_zone(dc, l0, l1), chapter(_, slug, _, _, const_num, _).
+
+# Lesson include_str consts.
+rel lesson_consts_zone(dc: file, l0: int, l1: int).
+lesson_consts_zone(dc, l0, l1) <- scan("WORK", "src/docs_cmd.rs", dc, rev),
+    comment(dc, rev, /BEGIN: gen lesson-consts/, /END: gen lesson-consts/, l0, l1).
+gen(dc, l0, l1, "const LESSON_{const_num}: &str = include_str!(\"../book/tutorial/{slug}.md\");") <-
+    lesson_consts_zone(dc, l0, l1), lesson(_, slug, _, _, const_num, _).
+
+# CHAPTERS table rows: (number, "slug", "blurb", CHAPTER_NN).
+rel chapters_table_zone(dc: file, l0: int, l1: int).
+chapters_table_zone(dc, l0, l1) <- scan("WORK", "src/docs_cmd.rs", dc, rev),
+    comment(dc, rev, /BEGIN: gen chapters-table/, /END: gen chapters-table/, l0, l1).
+gen(dc, l0, l1, "    ({number}, \"{slug}\", \"{blurb}\", CHAPTER_{const_num}),") <-
+    chapters_table_zone(dc, l0, l1), chapter(number, slug, _, blurb, const_num, _).
+
+# LESSONS table rows: (number, "blurb", LESSON_NN). Addressed only by number, so
+# no slug column (a lesson slug would collide with a book chapter slug).
+rel lessons_table_zone(dc: file, l0: int, l1: int).
+lessons_table_zone(dc, l0, l1) <- scan("WORK", "src/docs_cmd.rs", dc, rev),
+    comment(dc, rev, /BEGIN: gen lessons-table/, /END: gen lessons-table/, l0, l1).
+gen(dc, l0, l1, "    ({number}, \"{blurb}\", LESSON_{const_num}),") <-
+    lessons_table_zone(dc, l0, l1), lesson(number, _, _, blurb, const_num, _).
+
+# ── drift rail : a file on disk absent from a spliced zone (or vice versa) ──────
+# gen is suppressed under --check/--lsp, so the on-disk zones stay as committed;
+# a chapter file added without a regen+commit is missing from every zone and
+# fires here. The zone-membership rels read the numbers ACTUALLY present between
+# each marker pair on disk (match over the whole file, scoped to the zone).
+
+# book/README.md list-row numbers, scoped to the book-index zone.
+rel book_index_row(readme: file, number: int, line: int).
+book_index_row(readme, int(num), line) <- scan("WORK", "book/README.md", readme, rev),
+    match(readme, rev, /^(?<num>\d+)\. \[/, line).
+rel book_index_has(number: int).
+book_index_has(number) <- book_index_row(readme, number, line),
+    book_index_zone(readme, l0, l1), line > l0, line < l1.
+
+# book/tutorial/README.md list-row numbers, scoped to the tutorial-index zone.
+rel tutorial_index_row(readme: file, number: int, line: int).
+tutorial_index_row(readme, int(num), line) <- scan("WORK", "book/tutorial/README.md", readme, rev),
+    match(readme, rev, /^(?<num>\d+)\. \[/, line).
+rel tutorial_index_has(number: int).
+tutorial_index_has(number) <- tutorial_index_row(readme, number, line),
+    tutorial_index_zone(readme, l0, l1), line > l0, line < l1.
+
+# docs_cmd table-row numbers, scoped to each table's zone.
+rel docs_table_row(dc: file, number: int, line: int).
+docs_table_row(dc, int(num), line) <- scan("WORK", "src/docs_cmd.rs", dc, rev),
+    match(dc, rev, /^    \((?<num>\d+), /, line).
+rel chapters_table_has(number: int).
+chapters_table_has(number) <- docs_table_row(dc, number, line),
+    chapters_table_zone(dc, l0, l1), line > l0, line < l1.
+rel lessons_table_has(number: int).
+lessons_table_has(number) <- docs_table_row(dc, number, line),
+    lessons_table_zone(dc, l0, l1), line > l0, line < l1.
+
+# Forward drift: a numbered file exists but its number is absent from a zone.
+diag(path: chapter_path, line: 1, severity: "error", code: "book-index-drift",
+     msg: "book chapter ${slug} on disk but absent from book/README.md book-index; rerun examples/gen-doc-indexes.dl") <-
+    chapter(number, slug, _, _, _, chapter_path), !book_index_has(number).
+diag(path: chapter_path, line: 1, severity: "error", code: "docs-chapters-drift",
+     msg: "book chapter ${slug} on disk but absent from src/docs_cmd.rs CHAPTERS; rerun examples/gen-doc-indexes.dl") <-
+    chapter(number, slug, _, _, _, chapter_path), !chapters_table_has(number).
+diag(path: lesson_path, line: 1, severity: "error", code: "tutorial-index-drift",
+     msg: "tutorial lesson ${slug} on disk but absent from book/tutorial/README.md tutorial-index; rerun examples/gen-doc-indexes.dl") <-
+    lesson(number, slug, _, _, _, lesson_path), !tutorial_index_has(number).
+diag(path: lesson_path, line: 1, severity: "error", code: "docs-lessons-drift",
+     msg: "tutorial lesson ${slug} on disk but absent from src/docs_cmd.rs LESSONS; rerun examples/gen-doc-indexes.dl") <-
+    lesson(number, slug, _, _, _, lesson_path), !lessons_table_has(number).
+
+# Reverse drift: a zone lists a number with no matching file (a delete not regenerated).
+diag(path: readme, line: 1, severity: "error", code: "book-index-orphan",
+     msg: "book/README.md book-index lists chapter ${number} with no matching book/*.md file") <-
+    book_index_zone(readme, _, _), book_index_has(number), !chapter_num(number).
+diag(path: readme, line: 1, severity: "error", code: "tutorial-index-orphan",
+     msg: "book/tutorial/README.md tutorial-index lists lesson ${number} with no matching file") <-
+    tutorial_index_zone(readme, _, _), tutorial_index_has(number), !lesson_num(number).

@@ -1,5 +1,7 @@
 # 0. A calmer frame (read this when you are in the pit)
 
+> the arc of how this got built, v4 sorrow vs v5 calm, and biasing toward easier times. Read when you are in the pit.
+
 This is not a diagnosis. I am a coding tool, not a clinician, and the manic-low
 swings you mentioned deserve real human support beyond anything a terminal can
 give. What I can do honestly is read back the arc of the session that produced
