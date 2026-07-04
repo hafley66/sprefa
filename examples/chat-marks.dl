@@ -1,0 +1,75 @@
+# chat-marks.dl — chat sectioning authored as datalog, off the harness-hook seam.
+#
+#   dl setup --project    # registers `dl --hook` under UserPromptSubmit
+#   ...then every user message you send is fed into the engine as a row.
+#
+# The engine ships ONE generic seam: the built-in `hook_event` rel accumulates a
+# row per `dl --hook` invocation —
+#
+#   hook_event(kind, session, seq, json)
+#     kind    the harness event name ("UserPromptSubmit", "PostToolUse", ...)
+#     session the event's session id
+#     seq     an ingest-time monotone millis stamp (orders events in a session)
+#     json    the RAW event JSON text
+#
+# No policy lives in the engine: the marker phrase, the "a mark starts a section"
+# rule, the argmax — all of it is HERE. Every event field is reached through the
+# term-form `json`/`jsonp` predicates over the raw `json` column, the same way
+# gh-cache.dl parses an HTTP body. The phrase below is a plain string; change it
+# and the whole notion of a "mark" changes, with no Rust edit.
+
+# --- the marker phrase (policy, plain string) --------------------------------
+# A user message is a MARK when it starts with this phrase; the remainder is the
+# section title. This is the ONE place the phrase appears.
+#   e.g.  @@mark Design pass
+
+# --- extract the prompt (term-extract, its own rel) --------------------------
+# `jsonp` parses the bound `body` (the raw event JSON) — the hybrid join+extract
+# pass, no file, no scan. A term-extract rule cannot co-head with a derived rule
+# (rebuild_derived would drop its rows), so the extracted prompt gets its OWN rel
+# and every derived rule reads from here — the pr_number -> change_log split in
+# .dl/gh-cache.dl is the sanctioned shape.
+rel prompt_of(session: text, seq: int, prompt: text).
+prompt_of(session, seq, prompt) <-
+    hook_event("UserPromptSubmit", session, seq, body),
+    jsonp(body, "prompt", prompt).
+
+# --- every prompt is a message -----------------------------------------------
+rel msg(session: text, seq: int, text: text).
+msg(session, seq, text) <- prompt_of(session, seq, text).
+
+# --- a mark is a prompt that opens with the phrase ---------------------------
+# `=~` filters to the phrase; `replace_re` strips it, leaving the title. The
+# regex is anchored (^) so only a leading occurrence marks.
+rel mark(session: text, seq: int, title: text).
+mark(session, seq, title) <-
+    prompt_of(session, seq, prompt),
+    prompt =~ /^@@mark /,
+    title = replace_re(prompt, "^@@mark ", "").
+
+# --- assign each message to the nearest preceding mark (argmax) --------------
+# The negation three-rule shape: candidate marks (a mark at or before the msg,
+# same session), then `beaten` (a strictly-later candidate mark exists for the
+# same msg), then the winner = candidate AND NOT beaten. A message before ANY
+# mark has no candidate, so it gets no row (honest — no catch-all bucket).
+rel candidate(session: text, mseq: int, kseq: int, title: text).
+candidate(session, mseq, kseq, title) <-
+    msg(session, mseq, _),
+    mark(session, kseq, title),
+    kseq <= mseq.
+
+rel beaten(session: text, mseq: int, kseq: int).
+beaten(session, mseq, kseq) <-
+    candidate(session, mseq, kseq, _),
+    candidate(session, mseq, kseq2, _),
+    kseq2 > kseq.
+
+rel section_of(session: text, seq: int, title: text, text: text).
+section_of(session, seq, title, text) <-
+    msg(session, seq, text),
+    candidate(session, seq, kseq, title),
+    !beaten(session, seq, kseq).
+
+# --- render (minimal; the rel is the deliverable) ----------------------------
+# Grouped by title, messages in seq order, when you query interactively.
+? section_of(session, seq, title, text).

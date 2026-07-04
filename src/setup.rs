@@ -11,7 +11,11 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-const SKILL_MD: &str = include_str!("../assets/sprefa-dl.skill.md");
+/// The embedded skill body (the rules survival guide + language matrix + op
+/// quickref). `pub` so `docs_cmd` re-exports it as the `authoring` topic and the
+/// matrix-honesty test can parse the language matrix out of it without a second
+/// `include_str!`.
+pub const SKILL_MD: &str = include_str!("../assets/sprefa-dl.skill.md");
 const STARTER_DL: &str = include_str!("../assets/starter.dl");
 // The hook condition starter — same file as the documented example, so the
 // bootstrap's `.dl/` set heads `inject_skill` for the wired `dl --hook` to read.
@@ -365,13 +369,15 @@ fn wire_git_hook(dir: &Path) {
     }
 }
 
-/// Register the `dl --hook` PostToolUse hook in `<repo>/.claude/settings.json`,
-/// merging into any existing settings (preserving every other key). This is the
-/// editor-independent channel by which a `.dl` rule heading `inject`/
-/// `inject_skill`/`block` can force context into the agent on a tool use. The
-/// matcher fires `dl --hook` after Read/Edit/Write/MultiEdit; `dl --hook` reads
-/// the PostToolUse event on stdin and emits the hook JSON (no-op when no rule
-/// matches). Idempotent: skips if a `dl --hook` command is already registered.
+/// Register the `dl --hook` hooks in `<repo>/.claude/settings.json`, merging into
+/// any existing settings (preserving every other key). This is the
+/// editor-independent channel by which a `.dl` rule reacts to the agent: a
+/// `PostToolUse` block (matched on Read/Edit/Write/MultiEdit) drives
+/// `inject`/`inject_skill`/`block`, and a `UserPromptSubmit` block feeds every
+/// user message into `hook_event` (the chat-marks example reads it). `dl --hook`
+/// reads the event on stdin and emits the hook JSON (no-op when no rule matches).
+/// Idempotent per event: skips an event whose `dl --hook` command is already
+/// registered.
 fn wire_claude_hook(dir: &Path) {
     let cdir = dir.join(".claude");
     let cfg = cdir.join("settings.json");
@@ -382,8 +388,8 @@ fn wire_claude_hook(dir: &Path) {
         match serde_json::from_str(&txt) {
             Ok(v) => v,
             Err(_) => {
-                println!("[dl setup] {} is not valid JSON; add a PostToolUse hook \
-                          running `dl --hook` by hand", cfg.display());
+                println!("[dl setup] {} is not valid JSON; add PostToolUse + \
+                          UserPromptSubmit hooks running `dl --hook` by hand", cfg.display());
                 return;
             }
         }
@@ -391,10 +397,40 @@ fn wire_claude_hook(dir: &Path) {
     let Some(obj) = v.as_object_mut() else { return; };
     let hooks = obj.entry("hooks").or_insert_with(|| serde_json::json!({}));
     let Some(hooks) = hooks.as_object_mut() else { return; };
-    let post = hooks.entry("PostToolUse").or_insert_with(|| serde_json::json!([]));
-    let Some(post) = post.as_array_mut() else { return; };
-    // Already wired? Look for any nested hook command containing `dl --hook`.
-    let already = post.iter().any(|entry| {
+    // PostToolUse fires on file-touch tools; UserPromptSubmit fires on every user
+    // message (no matcher — the whole prompt is the event).
+    let mut wrote = false;
+    wrote |= register_hook_event(hooks, "PostToolUse", Some("Read|Edit|Write|MultiEdit"), &cfg);
+    wrote |= register_hook_event(hooks, "UserPromptSubmit", None, &cfg);
+    if !wrote {
+        return; // nothing changed (both already present) — leave the file as is
+    }
+    if std::fs::create_dir_all(&cdir).is_err() {
+        return;
+    }
+    if let Ok(out) = serde_json::to_string_pretty(&v) {
+        if std::fs::write(&cfg, out).is_ok() {
+            println!("[dl setup] claude code hooks -> {}", cfg.display());
+            println!("[dl setup]   the condition lives in your .dl: PostToolUse reads \
+                      agent built-ins (examples/hook-skill-on-test.dl), UserPromptSubmit \
+                      feeds hook_event (examples/chat-marks.dl).");
+        }
+    }
+}
+
+/// Register one `dl --hook` command under `hooks[event]`, idempotently. Returns
+/// true if a new entry was added. `matcher` is the tool filter (PostToolUse) or
+/// None (UserPromptSubmit, no matcher). One shared shape so a new event kind is a
+/// one-line call, not a copy of the block above.
+fn register_hook_event(
+    hooks: &mut serde_json::Map<String, serde_json::Value>,
+    event: &str,
+    matcher: Option<&str>,
+    cfg: &Path,
+) -> bool {
+    let arr = hooks.entry(event).or_insert_with(|| serde_json::json!([]));
+    let Some(arr) = arr.as_array_mut() else { return false; };
+    let already = arr.iter().any(|entry| {
         entry.get("hooks").and_then(|h| h.as_array()).is_some_and(|hs| {
             hs.iter().any(|h| {
                 h.get("command").and_then(|c| c.as_str())
@@ -403,27 +439,15 @@ fn wire_claude_hook(dir: &Path) {
         })
     });
     if already {
-        println!("[dl setup] claude code hook already registered in {}", cfg.display());
-        return;
+        println!("[dl setup] claude code {event} hook already registered in {}", cfg.display());
+        return false;
     }
-    post.push(serde_json::json!({
-        "matcher": "Read|Edit|Write|MultiEdit",
-        "hooks": [ { "type": "command", "command": "dl --hook" } ]
-    }));
-    if std::fs::create_dir_all(&cdir).is_err() {
-        return;
+    let mut entry = serde_json::json!({ "hooks": [ { "type": "command", "command": "dl --hook" } ] });
+    if let Some(m) = matcher {
+        entry.as_object_mut().unwrap().insert("matcher".into(), serde_json::json!(m));
     }
-    match serde_json::to_string_pretty(&v) {
-        Ok(out) => {
-            if std::fs::write(&cfg, out).is_ok() {
-                println!("[dl setup] claude code PostToolUse hook -> {}", cfg.display());
-                println!("[dl setup]   condition lives in your .dl (see \
-                          examples/hook-skill-on-test.dl): a rule heading \
-                          inject/inject_skill/block fires on a matching tool use.");
-            }
-        }
-        Err(_) => {}
-    }
+    arr.push(entry);
+    true
 }
 
 /// Write a starter `.dl` if absent; never clobber a user's edited rail.
@@ -469,17 +493,31 @@ mod tests {
             .collect()
     }
 
+    fn ups_cmds(v: &Value) -> Vec<String> {
+        v["hooks"]["UserPromptSubmit"].as_array().unwrap().iter()
+            .flat_map(|e| e["hooks"].as_array().unwrap().iter())
+            .map(|h| h["command"].as_str().unwrap().to_string())
+            .collect()
+    }
+
     #[test]
     fn hook_wired_fresh_then_idempotent() {
         let dir = std::env::temp_dir().join(format!("dlsetup_fresh_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         wire_claude_hook(&dir);
-        let cmds = post_cmds(&read_settings(&dir));
-        assert_eq!(cmds, vec!["dl --hook".to_string()]);
-        // Second call must not add a duplicate.
+        let v = read_settings(&dir);
+        assert_eq!(post_cmds(&v), vec!["dl --hook".to_string()]);
+        // Both events register; UserPromptSubmit has no matcher (whole prompt).
+        assert_eq!(ups_cmds(&v), vec!["dl --hook".to_string()]);
+        assert!(v["hooks"]["UserPromptSubmit"][0].get("matcher").is_none(),
+            "UserPromptSubmit hook has no tool matcher");
+        assert_eq!(v["hooks"]["PostToolUse"][0]["matcher"], "Read|Edit|Write|MultiEdit");
+        // Second call must not add a duplicate under either event.
         wire_claude_hook(&dir);
-        assert_eq!(post_cmds(&read_settings(&dir)), vec!["dl --hook".to_string()]);
+        let v = read_settings(&dir);
+        assert_eq!(post_cmds(&v), vec!["dl --hook".to_string()]);
+        assert_eq!(ups_cmds(&v), vec!["dl --hook".to_string()]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

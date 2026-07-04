@@ -1128,6 +1128,37 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                 Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
             }
         }
+        // One harness-hook event fed through the daemon's warm engine: append a
+        // `hook_event` row, tick, done. `dl --hook` calls this before reading the
+        // emit rels, so the daemon stays the single engine/lock owner. Unlike
+        // `mcp_request` there is no port to drift-validate: `hook_event` is a
+        // built-in rel (always declared by the priming tick), engine-owned, so
+        // the only check is that the payload carries the fields.
+        "hook_event" => {
+            let p = &req.params;
+            let (Some(kind), Some(session), Some(json)) = (
+                p.get("kind").and_then(|v| v.as_str()),
+                p.get("session").and_then(|v| v.as_str()),
+                p.get("json").and_then(|v| v.as_str()),
+            ) else {
+                return Response::err(req.id, INVALID_PARAMS, "hook_event needs kind, session, json");
+            };
+            let seq = p.get("seq").and_then(|v| v.as_i64()).unwrap_or_else(|| {
+                SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64).unwrap_or(0)
+            });
+            let prog = lock(&d.prog);
+            let mut eng = lock(&d.eng);
+            let run = (|| -> anyhow::Result<()> {
+                eng.insert_hook_event(kind, session, seq, json)?;
+                eng.tick(&prog, true)
+            })();
+            d.tick_count.fetch_add(1, Ordering::Relaxed);
+            match run {
+                Ok(()) => Response::ok(req.id, json!({"ok": true})),
+                Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
+            }
+        }
         "eval" => {
             let text = match req.params.get("text").and_then(|v| v.as_str()) {
                 Some(s) => s,
