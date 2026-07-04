@@ -46,9 +46,21 @@
   .world { position: absolute; top: 0; left: 0; width: 100%; height: 100%;
     transform-origin: 0 0; }
 
+  /* shift-drag marquee select: lives directly in `viewport` (position:fixed
+     inset:0), so clientX/clientY double as viewport-local px with no pan/zoom
+     math -- the hit test at pointerup reads screen-space getBoundingClientRect
+     on both this box and every node card, same coordinate space, no layout
+     math either. z-index 10 clears node/edge (max 6) but stays under the
+     toolbar/help chrome (20+). */
+  .marquee { position: absolute; z-index: 10; pointer-events: none;
+    border: 1px dashed var(--sel); border-radius: 6px; background: #ffd1661a; }
+
   /* ── NODES ─────────────────────────────────────────────────────────── */
   .node {
     position: absolute; width: max-content; min-width: 168px; max-width: 300px; z-index: 2;
+    content-visibility: auto; /* off-screen nodes skip layout/paint; contain-intrinsic-size
+      is set post-render (see measureNodeBoxes) so a skipped node keeps its exact
+      box and edge anchors don't shift */
     background: linear-gradient(180deg, #16223400, #0e1622cc), var(--node);
     border: 1px solid var(--node-border); border-radius: 12px;
     border-left: 3px solid var(--kc, var(--node-border));
@@ -56,11 +68,29 @@
     user-select: none; transition: box-shadow .15s, border-color .15s, opacity .15s; }
   .node:hover { border-color: #36527a; border-left-color: var(--kc, #36527a); }
   .node.dragging { box-shadow: 0 0 0 1px var(--cyan), 0 14px 50px #000c; z-index: 6; }
+  /* two channels, not one: .hl (hover = "pointed at") owns the border + text
+     color only, never the fill; .pinned (selected) owns the background wash,
+     keeping whatever border it already has. Hovering a pinned node shows
+     both at once -- hover is additive on top of selection, never a
+     replacement for it (list view mirrors this split below, .lrow.hl/.pinned). */
   .node.hl, .node.pinned { border-color: var(--sel); box-shadow: 0 0 0 1px var(--sel), 0 10px 40px #000a; z-index: 5; }
+  .node.hl .head .label { color: var(--sel); }
+  .node.pinned {
+    background: linear-gradient(0deg, #ffd16629, #ffd16629), linear-gradient(180deg, #16223400, #0e1622cc), var(--node);
+  }
   .world.hovering .node:not(.hl):not(.pinned) { opacity: .25; }
   .world.hovering .edge:not(.hl) { opacity: .12; }
-  .node.dim { opacity: .12; }
-  .edge.dim { opacity: .08; }
+  /* kind filter HIDES (not dims): .fout pulls a node/edge out of layout
+     entirely. .ghost is the hover-reveal override -- a direct neighbor of
+     the hovered node that's currently .fout comes back at reduced opacity,
+     no highlight glow (see refreshHighlight). Plain class-specificity alone
+     beats .fout's display:none, but the opacity needs !important: the
+     .world.hovering non-hl dim rule above matches 4 classes and would
+     otherwise outrank a bare 3-class .ghost selector. */
+  .node.fout, .edge.fout { display: none; }
+  .node.fout.ghost, .edge.fout.ghost {
+    display: block !important; opacity: .35 !important; pointer-events: none; }
+  .edge.fout.ghost .wire { pointer-events: none; }
 
   .node .head { display: flex; align-items: center; gap: 8px; padding: 8px 10px;
     cursor: grab; font-weight: 600; letter-spacing: .3px; }
@@ -90,31 +120,95 @@
     background: radial-gradient(circle at 50% 40%, #fff, var(--magenta) 60%, #6e0f48);
     box-shadow: 0 0 8px var(--magenta); border: 1px solid #3b0a2c; }
 
+  /* ── PINS: node-editor ports (param/field = in, ret = out) nested inside a
+     card via the member_node `parent` column -- a two-column strip below the
+     head/loc, params+fields stacked left, ret stacked right. Each dot carries
+     its own anchor-name so a port_edge wire lands pixel-precise on the pin,
+     not just somewhere on the card. */
+  .node .pins { display: flex; justify-content: space-between; gap: 10px;
+    padding: 5px 9px 8px; border-top: 1px solid #ffffff0d; }
+  .node .pin-col { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 50%; }
+  .node .pin-col.out { align-items: flex-end; text-align: right; }
+  .node .pin { display: flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%;
+    color: var(--muted); font-size: 10px; }
+  .node .pin-col.out .pin { flex-direction: row-reverse; }
+  .node .pin-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto;
+    background: var(--kc, var(--cyan)); box-shadow: 0 0 5px var(--kc, var(--cyan)); }
+  .node .pin-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100px; }
+
   /* ══ THE EDGE: pure-CSS tether between two anchors ════════════════════ */
   .edge { position: absolute; z-index: 1; pointer-events: none;
+    content-visibility: auto; /* box comes entirely from the anchor positions
+      below, svg is inset:0 — safe to skip paint/layout when off-screen */
     top:    min(anchor(var(--a) center), anchor(var(--b) center));
     left:   min(anchor(var(--a) center), anchor(var(--b) center));
     right:  min(anchor(var(--a) center), anchor(var(--b) center));
     bottom: min(anchor(var(--a) center), anchor(var(--b) center)); }
-  .edge svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible;
-    filter: drop-shadow(0 0 5px #2de2e655); }
+  .edge svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  /* drop-shadow is per-edge paint cost — reserve it for the hovered slice */
+  .edge.hl svg { filter: drop-shadow(0 0 5px #2de2e655); }
   .edge.flip svg { transform: scaleY(-1); transform-origin: center; }
-  .edge .wire { fill: none; stroke: var(--ec, url(#g)); stroke-width: 2.5; stroke-linecap: round;
+  .edge .wire { fill: none; stroke: var(--ec, url(#g)); stroke-width: var(--ew, 2.5); stroke-linecap: round;
     pointer-events: visibleStroke;
-    vector-effect: non-scaling-stroke; stroke-dasharray: 7 9; animation: flow 1.2s linear infinite; }
-  /* keep the dash marching source→sink despite the mirror flip */
+    vector-effect: non-scaling-stroke; stroke-dasharray: 7 9; }
+  /* port_edge ('wire' kind): a CONTRACTED hop, not a one-step df edge -- a
+     tighter dash tells it apart from the rest of the graph at a glance, on
+     top of wire's own hue in KIND_HUES. .edge.port-wire (the outer div) vs
+     .edge .wire (the inner path, every edge's generic stroke class) --
+     deliberately different names so the two don't read as the same thing. */
+  .edge.port-wire .wire { stroke-dasharray: 2 5; }
+  /* two tiers, same idea as the list gutter: .active persists for every edge
+     touching a pinned node (flat --sel stroke, no animation/glow -- idle
+     wires stay static so pinning a busy node doesn't run N animations at
+     rest); .hl (hover) is additive on top -- same stroke plus the
+     marching-ants + glow, reserved for the momentarily-hovered slice. */
+  .edge.active .wire { stroke: var(--sel); }
+  .edge.hl .wire { stroke: var(--sel); stroke-dasharray: 7 9; animation: flow 1.2s linear infinite; }
+  /* keep the dash marching source→sink despite the mirror flip; declared AFTER
+     .edge.hl .wire — equal specificity, and the animation shorthand up there
+     expands to animation-direction: normal, so this must win the source-order
+     tie to reverse a flipped+highlighted edge */
   .edge.flip .wire { animation-direction: reverse; }
-  .edge.hl .wire { stroke: var(--sel); stroke-dasharray: none; }
   @keyframes flow { to { stroke-dashoffset: -16; } }
+  /* pan/zoom in flight: pause every wire's animation so dragging/zooming the
+     canvas doesn't also pay for keyframe recalculation on the hl slice */
+  .viewport.panning .wire, .viewport.zooming .wire { animation-play-state: paused; }
+
+  /* ── DIFF PRESET (D2): added/removed/unchanged visual classes on top of the
+     plain kind coloring. addNode/addEdge set .diff-added/.diff-removed/
+     .diff-unchanged only when the SQL supplies a diff-class column (node
+     row[6], edge row[3]) -- every other preset's rows don't, so this is a
+     pure no-op there. Edges are dashed (7 9) by default already (see .wire
+     above); "added" is the one that needs to look distinctly SOLID. */
+  .node.diff-added { box-shadow: 0 8px 30px #0009, inset 0 1px 0 #ffffff10, 0 0 16px var(--kc, var(--cyan)); }
+  .node.diff-removed { opacity: .55; border-style: dashed; filter: saturate(.5); }
+  .node.diff-removed .head .label { text-decoration: line-through; }
+  .node.diff-unchanged { opacity: .4; }
+  .node .head .diff-badge { flex: 0 0 auto; padding: 1px 6px; border-radius: 999px;
+    background: #ff3caa26; color: var(--magenta); font-size: 9px; letter-spacing: .3px; }
+  .edge.diff-added .wire { stroke-dasharray: none; }
+  .edge.diff-removed .wire { stroke: #ff6b6b; opacity: .55; }
+  .edge.diff-unchanged .wire { opacity: .3; }
+  /* class-chip visibility toggle (#diffLegend chips) -- hides by DOM class on
+     #viewport, independent of the kind legend's kindFilter/.fout mechanism. */
+  .viewport.hide-diff-added .node.diff-added, .viewport.hide-diff-added .edge.diff-added { display: none; }
+  .viewport.hide-diff-removed .node.diff-removed, .viewport.hide-diff-removed .edge.diff-removed { display: none; }
+  .viewport.hide-diff-unchanged .node.diff-unchanged, .viewport.hide-diff-unchanged .edge.diff-unchanged { display: none; }
+  .bar .chip.diffchip.on { color: #fff; }
 
   /* ── TOOLBAR / HUD ─────────────────────────────────────────────────── */
-  .bar { position: fixed; top: 10px; left: 10px; right: 10px; display: flex;
-    flex-direction: column; gap: 6px; z-index: 20; pointer-events: none; }
+  /* opaque backdrop: the bar's height varies (legend wraps), and list rows
+     scroll under it — content must never read through the control surface */
+  .bar { position: fixed; top: 0; left: 0; right: 0; padding: 10px; display: flex;
+    flex-direction: column; gap: 6px; z-index: 20; pointer-events: none;
+    background: #0a0e14f0; border-bottom: 1px solid #16233a; }
   .bar .row { display: flex; align-items: center; gap: 8px; }
   .bar .title { font-weight: 700; color: #fff; letter-spacing: .4px; }
   .bar .title b { color: var(--cyan); }
   .bar .spacer { flex: 1; }
-  .bar button { pointer-events: auto; all: unset; cursor: pointer; padding: 6px 11px; border-radius: 8px;
+  /* all:unset FIRST — it resets every property, so anything before it (notably
+     pointer-events, which must override .bar's none) would be wiped */
+  .bar button { all: unset; pointer-events: auto; cursor: pointer; padding: 6px 11px; border-radius: 8px;
     background: #14233a; border: 1px solid #284060; color: var(--ink); font: inherit; }
   .bar button:hover { border-color: var(--cyan); background: #173050; }
   .bar .toggle.on { color: #fff; border-color: var(--cyan); background: #173a52; }
@@ -139,6 +233,8 @@
   .bar .chip:hover { border-color: var(--cyan); }
   .bar .chip.on { color: #fff; border-color: var(--cyan); background: #173a52; }
   .bar .chip .swatch { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+  .bar .chip.disabled { cursor: default; opacity: .45; }
+  .bar .chip.disabled:hover { border-color: #213650; }
 
   /* query-failure banner: loud, over the grid — a silent empty grid reads as
      "no data" when the real story is "the LSP/daemon is down" */
@@ -149,9 +245,148 @@
   .banner b { color: var(--err); display: block; margin-bottom: 4px; }
   .banner[hidden] { display: none; }
 
+  /* ── HELP OVERLAY ──────────────────────────────────────────────────── */
+  .help { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center;
+    background: #000a; padding: 24px; }
+  .help[hidden] { display: none; }
+  .help-card { position: relative; max-width: 640px; width: 100%; max-height: 80vh;
+    overflow: auto; background: #0d1828f2; border: 1px solid #284060; border-radius: 12px;
+    padding: 20px 24px; box-shadow: 0 20px 60px #000c; }
+  .help-card h2 { margin: 0 0 4px; color: #fff; font-size: 15px; }
+  .help-card h3 { margin: 18px 0 6px; color: var(--cyan); font-size: 12px;
+    text-transform: uppercase; letter-spacing: .5px; }
+  .help-card p { margin: 4px 0; color: var(--ink); }
+  .help-card table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  .help-card td { padding: 3px 8px 3px 0; vertical-align: top; border-bottom: 1px solid #ffffff0d; }
+  .help-card td:first-child { color: var(--sel); white-space: nowrap; }
+  .help-card ul { margin: 4px 0; padding-left: 18px; color: var(--ink); font-size: 12px; }
+  .help-card code { color: var(--cyan); background: #0000; }
+  .help-close { all: unset; cursor: pointer; position: absolute; top: 10px; right: 14px;
+    color: var(--muted); font-size: 18px; line-height: 1; }
+  .help-close:hover { color: var(--err); }
+
   .unsupported { display: none; position: fixed; inset: 0; place-items: center; text-align: center;
     background: var(--bg); padding: 40px; z-index: 99; }
   @supports not (top: anchor(--x center)) { .unsupported { display: grid; } }
+
+  /* ══ LIST VIEW: fs-snippet listing, secondary to no layout engine at all ══ */
+  .viewport[hidden], .listport[hidden] { display: none; }
+  .listport { position: fixed; inset: 0; overflow: hidden;
+    background-color: var(--bg);
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 32px 32px; }
+  .listscroll { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; }
+  /* listinner is the positioned ancestor for both the rows and the two
+     absolutely-positioned gutter svgs -- they scroll together because
+     they're all inside the ONE scrolling element (listscroll). */
+  /* --bar-h tracks the toolbar's real height (ResizeObserver below): the bar
+     grows when the legend wraps, and rows/gutters must start below it, not at
+     a guessed constant. Gutter top MUST equal listinner's padding-top — arc
+     y=0 is row 0. */
+  .listinner { position: relative; padding: var(--bar-h, 150px) 0 60px; min-height: 100%; }
+  .listrows { margin: 0 110px; position: relative; }
+  .listgutter { position: absolute; top: var(--bar-h, 150px); width: 110px; overflow: visible; pointer-events: none; }
+  .listgutter.left { left: 0; }
+  .listgutter.right { right: 0; }
+  .listgutter path.arc { pointer-events: stroke; fill: none;
+    transition: stroke .12s, opacity .12s; } /* idle arcs: no filter, no animation -- T4 */
+  /* two-tier list highlight: .active persists while a touched node stays
+     pinned (flat --sel stroke, no glow/animation); .hl (hover) is additive
+     on top -- same stroke color plus the glow + a width bump via --aw (the
+     per-arc base width drawGutterArcs stashes as a custom prop, so the hover
+     boost stays proportional to a bundled edge's already-thicker stroke). */
+  .listgutter path.arc.active { stroke: var(--sel) !important; }
+  .listgutter .arrow.active { fill: var(--sel) !important; }
+  .listgutter path.arc.hl { stroke: var(--sel) !important; stroke-width: calc(var(--aw, 2px) + 1.5px);
+    filter: drop-shadow(0 0 3px #ffd16699); }
+  .listgutter .arrow.hl { fill: var(--sel) !important; }
+  .overlap-badge text { user-select: none; }
+
+  /* ghost reveal (list view only -- canvas nodes keep their coordinates and
+     just toggle .ghost, see the .fout.ghost rule above). A filtered-hidden
+     row has no row/y of its own to draw a real arc to (re-entering it would
+     shift every row below and jump the gutter), so instead: a short dashed
+     stub grows from the HOVERED row's own gutter entry, tipped with a dot +
+     truncated label parked just inside the gutter. Asymmetric with canvas on
+     purpose -- see showListGhosts. */
+  .lghost .ghost-stub { fill: none; stroke-width: 1.3; stroke-dasharray: 2 3; opacity: .45; }
+  .lghost circle { opacity: .6; }
+  .lghost text, .lghost-more { font-size: 9px; fill: var(--muted); opacity: .7; }
+
+  /* fixed-height rows: content-visibility skips paint for off-screen rows;
+     the intrinsic size is EXACT (ROW_H), so there's no measuring pass like
+     the canvas node boxes need. */
+  .lrow { height: 22px; line-height: 22px; display: flex; align-items: center; gap: 7px;
+    white-space: nowrap; padding-right: 10px; border-radius: 4px;
+    user-select: none; /* dblclick is now a fold gesture -- don't let it select label text */
+    content-visibility: auto; contain-intrinsic-size: auto 22px; }
+  .lrow-node { cursor: pointer; }
+  .lrow-node:hover, .lrow-dir:hover { background: #ffffff08; }
+  .lrow-dir { color: var(--muted); }
+  /* two channels: .pinned (selected) owns the background wash + a permanent
+     inset stripe so it still reads once hover moves off; .hl (hover =
+     "pointed at") owns an outline + text color only, never the fill -- so a
+     hovered row and a selected row are never visually identical, and
+     hovering a pinned row shows both at once (additive, not a replacement). */
+  .lrow.pinned { background: #ffd16633; box-shadow: inset 2px 0 0 var(--sel); }
+  .lrow.hl { outline: 1px solid var(--sel); outline-offset: -1px; }
+  .lrow.hl .llabel { color: var(--sel); }
+  .ldot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; background: var(--kc, var(--muted)); }
+  .lrow-dir .ldot { opacity: .55; }
+  .llabel { overflow: hidden; text-overflow: ellipsis; }
+  .lkind { color: var(--muted); font-size: 10px; flex: 0 0 auto; }
+  .lline { margin-left: auto; color: var(--muted); font-size: 11px; flex: 0 0 auto;
+    padding: 0 2px; cursor: pointer; }
+  .lline:hover { color: var(--cyan); text-decoration: underline; }
+
+  /* trace mode: same .lrow/.ldot/.llabel/.lkind/.lline row as list view, plus
+     one new element -- a depth badge (BFS hop count from the pinned seed). */
+  .tdepth { color: var(--muted); font-size: 10px; flex: 0 0 auto; min-width: 20px;
+    text-align: right; }
+  .lrow-empty { padding: 8px 10px; color: var(--muted); font-size: 12px; }
+
+  /* disclosure triangle: reserved width even on childless rows so labels
+     stay aligned across a mixed collapsible/leaf listing */
+  .ltri { width: 11px; flex: 0 0 auto; text-align: center; font-size: 9px;
+    color: var(--muted); cursor: pointer; user-select: none; }
+  .ltri:hover { color: var(--cyan); }
+  .ltri-none { visibility: hidden; cursor: default; }
+  .lrow-dir { cursor: pointer; }
+  .listgutter path.arc.rolled { stroke-dasharray: 3 4; }
+  /* arcs are click targets now (edge teleport) -- pointer-events: stroke on
+     path.arc already keeps the hit area to the wire itself, so this never
+     shadows row clicks (gutters don't overlap the rows column anyway) */
+  .listgutter path.arc { cursor: pointer; }
+  /* teleport landing flash: a short one-shot pulse so the eye finds the row
+     the smooth-scroll just arrived at; ends transparent, so a pinned row's
+     own background wash comes back once the animation finishes */
+  .lrow.tele-flash { animation: teleflash .6s ease-out; }
+  @keyframes teleflash { 0% { background: #ffd166aa; } 100% { background: #ffd16600; } }
+
+  /* ── HOVER CARD: floating detail popup, both views ────────────────────── */
+  .hover-card { position: fixed; z-index: 38; pointer-events: none;
+    max-width: 360px; background: #0d1828f2; border: 1px solid #284060;
+    border-radius: 10px; padding: 10px 12px; box-shadow: 0 14px 40px #000c;
+    font-size: 12px; line-height: 1.5; }
+  .hover-card[hidden] { display: none; }
+  .hc-label { color: #fff; font-weight: 600; word-break: break-word; }
+  .hc-kind { font-size: 10px; }
+  .hc-id, .hc-loc { color: var(--muted); font-size: 11px; word-break: break-all; }
+  .hc-section { margin-top: 6px; color: var(--muted); font-size: 10px;
+    text-transform: uppercase; letter-spacing: .4px; }
+  .hc-edge { color: var(--ink); font-size: 11px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  .hc-more { color: var(--muted); font-size: 11px; }
+
+  /* ── PROTOTYPE OPTIONS STRIP ──────────────────────────────────────────── */
+  .bar .proto:empty { display: none; }
+
+  /* ── canvas edge-direction arrows (prototype toggle) ──────────────────── */
+  .flow-arrow { position: absolute; width: 0; height: 0; pointer-events: none;
+    z-index: 1; border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+    border-left: 7px solid var(--ec, var(--cyan)); }
 </style>
 </head>
 <body>
@@ -160,6 +395,16 @@
   <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
     <stop offset="0" stop-color="#2de2e6"/><stop offset="1" stop-color="#ff3caa"/>
   </linearGradient>
+  <!-- list-view chevron marker (prototype toggle): context-stroke picks up
+       whatever stroke color the referencing arc path already carries, so one
+       marker def serves every kind color; userSpaceOnUse keeps it in the
+       gutter's unscaled px, orient=auto follows the path tangent so a chevron
+       always points from source row toward destination row. -->
+  <marker id="chevron" markerWidth="6" markerHeight="6" refX="3" refY="3"
+          orient="auto" markerUnits="userSpaceOnUse">
+    <path d="M1.2,1 L4.2,3 L1.2,5" fill="none" stroke="context-stroke" stroke-width="1.3"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
 </defs></svg>
 
 <div class="bar">
@@ -168,8 +413,11 @@
     <button id="runBtn">Run</button>
     <button id="resetBtn">Reset view</button>
     <button id="linkedBtn" class="toggle on">linked only</button>
+    <button id="modeBtn" class="toggle" title="switch between list and canvas view">list view</button>
     <span class="spacer"></span>
+    <button id="helpBtn" title="help (?)">?</button>
     <span class="pill" id="countPill">–</span>
+    <span class="pill" id="diffCountPill" hidden>–</span>
     <span class="pill" id="zoomPill">100%</span>
   </div>
   <div class="row"><label>preset</label><select id="presetSel" title="panel preset">
@@ -178,19 +426,115 @@
     <option value="marks">Marks</option>
     <option value="enumMatches">Enums ↔ matches</option>
     <option value="madge">Module graph</option>
+    <option value="memberFlow">Member flow</option>
+    <option value="diff">Diff (base vs head)</option>
     <option value="custom">Custom</option>
   </select></div>
   <div class="row"><label>nodes</label><input id="nodesSql" spellcheck="false" /></div>
   <div class="row"><label>edges</label><input id="edgesSql" spellcheck="false" /></div>
   <div class="row legend" id="legend"></div>
+  <div class="row legend" id="diffLegend" hidden></div>
+  <div class="row proto" id="protoRow"></div>
   <div class="row"><span class="err" id="errLine"></span></div>
 </div>
 
-<div class="viewport" id="viewport">
+<div class="viewport" id="viewport" hidden>
   <div class="world" id="world"></div>
 </div>
 
+<div class="hover-card" id="hoverCard" hidden></div>
+
+<!-- ══ LIST VIEW: fs-snippet listing + two gutter svgs (arcs scroll WITH the
+     rows since they live inside the same scroll container) ══ -->
+<div class="listport" id="listport">
+  <div class="listscroll" id="listScroll">
+    <div class="listinner" id="listInner">
+      <svg class="listgutter left" id="gutterLeft"></svg>
+      <div class="listrows" id="listRows"></div>
+      <svg class="listgutter right" id="gutterRight"></svg>
+    </div>
+  </div>
+</div>
+
+<!-- ══ TRACE MODE: flat, depth-ordered forward slice from the pinned node(s),
+     over whichever edge set the current preset already loaded (list view's
+     lastListMergedEdges) -- no gutters/arcs, no fs-tree, just rows. Entered
+     from list view via the "trace" proto chip; reuses .listport/.listrows/
+     .lrow* CSS wholesale. ══ -->
+<div class="listport" id="tracePort" hidden>
+  <div class="listscroll">
+    <div class="listinner">
+      <div class="listrows" id="traceRows"></div>
+    </div>
+  </div>
+</div>
+
 <div class="banner" id="errBanner" hidden></div>
+
+<div class="help" id="helpPanel" hidden>
+  <div class="help-card">
+    <button class="help-close" id="helpClose" aria-label="close">×</button>
+    <h2>dl <b style="color:var(--cyan)">flow</b> panel</h2>
+    <p>A node/edge graph rendered from two SQL queries against the running dl daemon.</p>
+
+    <h3>interactions</h3>
+    <table>
+      <tr><td>hover node</td><td>highlight its connected slice</td></tr>
+      <tr><td>click node</td><td>pin (highlight persists across hover changes)</td></tr>
+      <tr><td>click background</td><td>clear all pins</td></tr>
+      <tr><td>drag node</td><td>move it</td></tr>
+      <tr><td>drag background</td><td>pan the canvas</td></tr>
+      <tr><td>wheel</td><td>zoom at the cursor</td></tr>
+      <tr><td>click file:line footer</td><td>open that file in the editor</td></tr>
+      <tr><td>click legend chip</td><td>filter by kind (click again to clear)</td></tr>
+      <tr><td>Enter in a SQL box</td><td>run the queries</td></tr>
+      <tr><td><code>?</code> key</td><td>toggle this panel (ignored while typing in a box)</td></tr>
+      <tr><td><code>list | canvas</code> button</td><td>switch viewport mode (persisted); same queries, pins, and legend filter carry over</td></tr>
+    </table>
+
+    <h3>list view</h3>
+    <p>Default view: a filesystem-snippet listing where every row is a node and edges are bracket arcs in the side gutters.</p>
+    <table>
+      <tr><td>click a row</td><td>pin (same pin set as canvas; folder/file rows pin too)</td></tr>
+      <tr><td>double-click a foldable row</td><td>collapse/expand (single-click ▸/▾ still folds); an edge into a collapsed row rolls up onto its nearest visible ancestor (dashed arc)</td></tr>
+      <tr><td>click the <code>:line</code> cell</td><td>open that file at that line</td></tr>
+      <tr><td>hover a row</td><td>highlight its arcs and connected rows</td></tr>
+      <tr><td>click a gutter arc</td><td>jump to the edge's other endpoint (click again to bounce back)</td></tr>
+      <tr><td><code>f</code> key</td><td>focus mode: with rows pinned, hide everything outside their connected flows (press again or Esc to exit; the "focus" chip stays lit while on)</td></tr>
+      <tr><td><code>Esc</code> key</td><td>close help, else exit focus mode, else clear all pins</td></tr>
+      <tr><td>fold all / unfold all chip</td><td>collapse or expand every foldable row at once</td></tr>
+      <tr><td>left gutter</td><td>downward edges (source row above destination)</td></tr>
+      <tr><td>right gutter</td><td>upward / back edges (destination above source)</td></tr>
+      <tr><td>node with a <code>parent</code> column</td><td>nests under its parent's row instead of flat-under-file</td></tr>
+    </table>
+
+    <h3>query contract</h3>
+    <p>Columns are positional, read left to right — extra columns are ignored.</p>
+    <table>
+      <tr><td>node query</td><td><code>id, label?, kind?, file?, line?, parent?</code> (id repeats as label when absent; parent nests a node under another node's row in list view)</td></tr>
+      <tr><td>edge query</td><td><code>src, dst, kind?</code> (src/dst are node ids)</td></tr>
+    </table>
+    <p>Edges whose src/dst id has no matching node row are dropped and counted in the pill.</p>
+
+    <h3>presets</h3>
+    <table>
+      <tr><td>Type graph (all)</td><td>every <code>rel_type_entity</code> node, every <code>rel_type_link</code> edge — the full cross-file type graph</td></tr>
+      <tr><td>Type graph (curated)</td><td>a hand-filtered subset via <code>rel_panel_node</code>/<code>rel_panel_edge</code> (.dl/flow-panel.dl)</td></tr>
+      <tr><td>Marks</td><td>marked terms + selector nodes from <code>rel_mark</code>/<code>rel_mark_selector</code>, edged by <code>rel_mark_flow</code> plus selector→mark "covers" (.dl/mark-lens.dl)</td></tr>
+      <tr><td>Enums ↔ matches</td><td>enum <code>rel_type_entity</code> rows edged to their <code>rel_enum_match_block</code> match-arm sites (.dl/enum-matches.dl)</td></tr>
+      <tr><td>Module graph</td><td><code>rel_module_node</code> files edged by <code>rel_module_edge</code> imports</td></tr>
+      <tr><td>Member flow</td><td>struct/trait/enum/class/interface owners + their function/method/const members, edged by type links and calls, methods nested under their owner in list view (.dl/flow-panel.dl)</td></tr>
+      <tr><td>Diff (base vs head)</td><td>added/removed/unchanged nodes and edges between two worktree-pair roots (<code>rel_edge_added</code>/<code>rel_edge_removed</code>/<code>rel_node_added</code>/<code>rel_node_removed</code>/<code>rel_bare_edge</code>/<code>rel_bare_node</code> from <code>.dl/graph-diff.dl</code>); canvas view only for the added/removed/unchanged styling (dashed+muted/solid+hot/dimmed) and the class chips + count pill</td></tr>
+      <tr><td>Custom</td><td>whatever SQL is in the two boxes below; editing either box switches here automatically</td></tr>
+    </table>
+
+    <h3>troubleshooting</h3>
+    <ul>
+      <li><code>no such table: rel_X</code> — the running daemon isn't serving a .dl program that references <code>X</code>; check what's loaded.</li>
+      <li>"linked only" hides nodes with no kept edges (isolated nodes); toggle it off to see everything the node query returned.</li>
+    </ul>
+  </div>
+</div>
 
 <div class="unsupported"><div>
   <h2>No CSS anchor positioning here.</h2>
@@ -228,6 +572,13 @@ const viewport = document.getElementById('viewport');
 const nodes = new Map();   // nodeId(sym) -> {sym, el, file, line, anchor}
 const edges = [];          // {src, dst, el}
 const pinned = new Set();  // nodeIds pinned by click, persist highlight+hover
+// pin(port sym) -> {anchor, label}. Ports (member_node kind param/field/ret
+// whose `parent` resolves to another rendered card) render as small dots
+// INSIDE the owner's card (see addPins) instead of getting their own
+// top-level card -- so they live in this separate map, not in `nodes`, and
+// deliberately don't participate in layering/drag/hover-highlight/kind-filter
+// (all keyed on `nodes`). addEdge's resolveEndpoint is the only reader.
+const pinInfo = new Map();
 const kindFilter = new Set(); // legend-selected kinds; empty = show everything
 let hoveredId = null;
 let anchorSeq = 0;
@@ -248,6 +599,8 @@ const KIND_HUES = {
   fn: 210, method: 210, function: 210, module: 150, cycle: 0,
   class: 195, interface: 125, alias: 260, const: 25, match: 30,
   flow: 210, covers: 280, import: 150,
+  param: 300, // hash color (229) sits too close to field's (186, unhashed) to tell apart nested under the same fn
+  ret: 80, wire: 340, // ret = the node-editor output pin; wire = a contracted port_edge, both need to stand apart from param/field's hues
 };
 function kindHue(kind) {
   if (kind in KIND_HUES) return KIND_HUES[kind];
@@ -279,8 +632,14 @@ function truncValue(s, max) { // selector values: single line, middle-truncated
 }
 
 // ── defaults (the type graph; edit in place, Run re-queries) ────────────────
+// FILE column is repo-prefixed (`<repo-slug>/<file>`) so the fs-tree's top
+// tier is the repo: sym's first `::` segment is the repo slug (see
+// .dl/flow-panel.dl); ids with no `::` (shouldn't happen for a type_entity
+// sym, but guarded) fall back to the bare file.
+const REPO_FILE_COL =
+  "CASE WHEN instr(sym, '::') > 0 THEN substr(sym, 1, instr(sym, '::') - 1) || '/' || file ELSE file END";
 const DEFAULT_NODES =
-  "SELECT sym, name, kind, file, line FROM rel_type_entity LIMIT 600";
+  `SELECT sym, name, kind, ${REPO_FILE_COL}, line FROM rel_type_entity LIMIT 600`;
 const DEFAULT_EDGES =
   "SELECT src, dst, kind FROM rel_type_link LIMIT 1200";
 
@@ -289,13 +648,14 @@ const DEFAULT_EDGES =
 const PRESETS = {
   typeAll: { nodes: DEFAULT_NODES, edges: DEFAULT_EDGES },
   typeCurated: {
-    nodes: "SELECT sym, name, kind, file, line FROM rel_panel_node",
+    nodes: `SELECT sym, name, kind, ${REPO_FILE_COL}, line FROM rel_panel_node`,
     edges: "SELECT src, dst, kind FROM rel_panel_edge",
   },
   marks: {
     nodes: "SELECT marked, marked, 'mark', path, line FROM rel_mark UNION ALL " +
       "SELECT sel || '=' || detail, sel || '=' || detail, 'selector', NULL, NULL FROM rel_mark_selector",
-    edges: "SELECT src, dst, 'flow' FROM rel_mark_flow UNION ALL " +
+    edges: "SELECT src, dst, 'call' FROM rel_mark_call UNION ALL " +
+      "SELECT src, dst, 'flow' FROM rel_mark_flow UNION ALL " +
       "SELECT sel || '=' || detail, marked, 'covers' FROM rel_mark_selector, rel_mark",
   },
   enumMatches: {
@@ -308,6 +668,34 @@ const PRESETS = {
     nodes: "SELECT path, path, kind, path, 1 FROM rel_module_node",
     edges: "SELECT src, dst, 'import' FROM rel_module_edge",
   },
+  memberFlow: {
+    nodes: `SELECT sym, name, kind, ${REPO_FILE_COL}, line, parent FROM rel_member_node`,
+    edges: "SELECT src, dst, kind FROM rel_member_edge UNION ALL " +
+      "SELECT src, dst, 'wire' FROM rel_port_edge",
+  },
+  // Diff (base vs head), D2 of plans/2026-07-03-pr-diff-graph.md. Node/edge
+  // ids are already bare syms (rel_node_added/rel_node_removed/rel_edge_added/
+  // rel_edge_removed/rel_bare_node/rel_bare_edge strip the repo-basename
+  // prefix in .dl/graph-diff.dl), so no repo-prefix math is needed here --
+  // the diff-class column (7th for nodes, 4th for edges) is what addNode/
+  // addEdge read to apply the added/removed/unchanged visual treatment.
+  // "unchanged" = a bare (sym,kind) / (a,b,kind) row present in >=2 repos'
+  // worth of rel_bare_node/rel_bare_edge (this pair configures exactly 2).
+  // Removed nodes don't exist at head -- ghost rows, file/line left NULL
+  // (rel_node_removed doesn't carry them; the id alone is enough to layout
+  // and label a ghost card, see the "removed" badge in addNode).
+  diff: {
+    nodes:
+      "SELECT sym, sym, kind, NULL, NULL, NULL, 'added' FROM rel_node_added UNION ALL " +
+      "SELECT sym, sym, kind, NULL, NULL, NULL, 'removed' FROM rel_node_removed UNION ALL " +
+      "SELECT sym, sym, kind, NULL, NULL, NULL, 'unchanged' FROM " +
+      "(SELECT sym, kind FROM rel_bare_node GROUP BY sym, kind HAVING COUNT(DISTINCT repo) >= 2)",
+    edges:
+      "SELECT a, b, kind, 'added' FROM rel_edge_added UNION ALL " +
+      "SELECT a, b, kind, 'removed' FROM rel_edge_removed UNION ALL " +
+      "SELECT a, b, kind, 'unchanged' FROM (SELECT a, b, kind FROM rel_bare_edge " +
+      "GROUP BY a, b, kind HAVING COUNT(DISTINCT repo) >= 2)",
+  },
 };
 const PRESET_KEY = 'dl-flow-preset';
 let currentPreset = 'typeAll';
@@ -317,6 +705,81 @@ function readLocalStorage(key) {
 }
 function writeLocalStorage(key, value) {
   try { localStorage.setItem(key, value); } catch (e) { /* fall back to session-only */ }
+}
+
+// ── prototype options strip: per-view toggle chips under the legend. hover
+// card defaults ON everywhere; chevrons (list)/arrows (canvas) default OFF.
+// One persisted object covers both views -- a chip only renders in the view
+// it applies to, and switching views never resets the other's setting.
+const PROTO_KEY = 'dl-flow-proto';
+const protoState = { chevrons: false, arrows: false, hoverCard: true };
+(function restoreProto() {
+  try {
+    const saved = JSON.parse(readLocalStorage(PROTO_KEY) || 'null');
+    if (saved && typeof saved === 'object') Object.assign(protoState, saved);
+  } catch (e) { /* ignore */ }
+})();
+function saveProto() { writeLocalStorage(PROTO_KEY, JSON.stringify(protoState)); }
+const PROTO_CHIPS = {
+  list:   [['chevrons', 'chevrons'], ['hoverCard', 'hover card']],
+  canvas: [['arrows', 'arrows'], ['hoverCard', 'hover card']],
+};
+function buildProtoRow() {
+  const row = document.getElementById('protoRow');
+  row.innerHTML = '';
+  for (const [key, label] of PROTO_CHIPS[viewMode] || []) {
+    const chip = document.createElement('span');
+    chip.className = 'chip' + (protoState[key] ? ' on' : '');
+    chip.textContent = label;
+    chip.addEventListener('click', () => {
+      protoState[key] = !protoState[key];
+      saveProto();
+      chip.classList.toggle('on', protoState[key]);
+      onProtoToggle(key);
+    });
+    row.appendChild(chip);
+  }
+  // list-only ACTION chips (not persisted protoState prefs): focus mode
+  // (mirror of the `f` hotkey, lit while on so missing rows don't read as a
+  // bug) and fold/unfold-all. State lives in focusMode/allFolded down in the
+  // list-view section; buildProtoRow only runs after those declarations
+  // (first call is applyViewMode() at the bottom of the script).
+  if (viewMode === 'list') {
+    const focusChip = document.createElement('span');
+    focusChip.className = 'chip' + (focusMode ? ' on' : '');
+    focusChip.id = 'focusChip';
+    focusChip.textContent = 'focus';
+    focusChip.title = 'focus mode (f): hide every row outside the flows touching the pinned rows';
+    focusChip.addEventListener('click', toggleFocusMode);
+    row.appendChild(focusChip);
+    const foldChip = document.createElement('span');
+    foldChip.className = 'chip';
+    foldChip.id = 'foldAllChip';
+    foldChip.textContent = allFolded ? 'unfold all' : 'fold all';
+    foldChip.title = 'collapse every foldable row (click again to expand all)';
+    foldChip.addEventListener('click', toggleFoldAll);
+    row.appendChild(foldChip);
+    const traceChip = document.createElement('span');
+    traceChip.className = 'chip' + (pinned.size ? '' : ' disabled');
+    traceChip.id = 'traceChip';
+    traceChip.textContent = 'trace';
+    traceChip.title = pinned.size
+      ? 'trace mode: flat, depth-ordered forward slice from the pinned node(s)'
+      : 'trace mode: pin a node first';
+    traceChip.addEventListener('click', enterTraceMode);
+    row.appendChild(traceChip);
+  }
+}
+// side effects per toggle: chevrons/arrows need a geometry rebuild (new
+// marker attrs / new DOM triangles), hoverCard just needs to hide immediately
+// when turned off (positionHoverCard already gates on protoState.hoverCard
+// for turning back on, driven by the next mousemove/hover).
+function onProtoToggle(key) {
+  if (key === 'chevrons' && viewMode === 'list') refreshListView();
+  if (key === 'arrows' && viewMode === 'canvas') {
+    if (protoState.arrows) rebuildFlowArrows(); else clearFlowArrows();
+  }
+  if (key === 'hoverCard' && !protoState.hoverCard) hoverCardEl.hidden = true;
 }
 
 document.getElementById('nodesSql').value = DEFAULT_NODES;
@@ -367,18 +830,207 @@ async function run() {
       host.query(document.getElementById('edgesSql').value),
     ]);
   } catch (e) {
-    showError(String(e.message || e) +
+    const msg = String(e.message || e);
+    // diff preset, missing-table tolerance (same pattern as loadGateways
+    // below): rel_edge_added/rel_edge_removed/rel_node_added/rel_node_removed/
+    // rel_bare_edge/rel_bare_node only exist when the running daemon is
+    // serving .dl/graph-diff.dl against a base+head config-repo pair -- that's
+    // an empty-state, not a query error, so skip showError's scary banner.
+    if (currentPreset === 'diff' &&
+        /no such table: rel_(edge_added|edge_removed|node_added|node_removed|bare_edge|bare_node)\b/.test(msg)) {
+      render([], []);
+      updateDiffPanel([], []);
+      document.getElementById('errLine').textContent =
+        'no diff rels — serve .dl/graph-diff.dl against a base+head pair';
+      return;
+    }
+    showError(msg +
       ' — a graph rel populates when the running .dl program references it' +
       ' (is the dl daemon/LSP running?)');
     return;
   }
   render(nodeRows, edgeRows);
+  updateDiffPanel(nodeRows, edgeRows);
+  loadGateways(); // fire-and-forget: the hover card shouldn't wait on it
 }
 
-function render(nodeRows, edgeRows) {
+// ── diff preset UI (D2): "+N −M" count pill + added/removed/unchanged
+// visibility chips. Reads straight off the raw query rows (node row[6],
+// edge row[3]) rather than the canvas nodes/edges Maps, so it stays
+// view-mode agnostic even though the dashed/muted/dimmed CSS treatment
+// itself (see addNode/addEdge) only renders in canvas view. A no-op (pill
+// + legend row stay hidden) for every non-diff preset.
+const DIFF_CLASSES = ['added', 'removed', 'unchanged'];
+const diffVisible = { added: true, removed: true, unchanged: true };
+function applyDiffVisibility() {
+  for (const cls of DIFF_CLASSES) viewport.classList.toggle('hide-diff-' + cls, !diffVisible[cls]);
+}
+function updateDiffPanel(nodeRows, edgeRows) {
+  const pill = document.getElementById('diffCountPill');
+  const leg = document.getElementById('diffLegend');
+  if (currentPreset !== 'diff') { pill.hidden = true; leg.hidden = true; leg.innerHTML = ''; return; }
+  const counts = { added: 0, removed: 0, unchanged: 0 };
+  for (const r of nodeRows) if (Object.prototype.hasOwnProperty.call(counts, r[6])) counts[r[6]]++;
+  for (const r of edgeRows) if (Object.prototype.hasOwnProperty.call(counts, r[3])) counts[r[3]]++;
+  pill.hidden = false;
+  pill.title = `${counts.added} added, ${counts.removed} removed (nodes + edges combined)`;
+  pill.textContent = `+${counts.added} −${counts.removed}`;
+  leg.innerHTML = '';
+  const present = DIFF_CLASSES.filter(c => counts[c] > 0);
+  leg.hidden = !present.length;
+  for (const cls of present) {
+    const chip = document.createElement('span');
+    chip.className = 'chip diffchip' + (diffVisible[cls] ? ' on' : '');
+    chip.title = `toggle "${cls}" visibility (canvas view)`;
+    chip.textContent = `${cls} ${counts[cls]}`;
+    chip.addEventListener('click', () => {
+      diffVisible[cls] = !diffVisible[cls];
+      chip.classList.toggle('on', diffVisible[cls]);
+      applyDiffVisibility();
+    });
+    leg.appendChild(chip);
+  }
+  applyDiffVisibility();
+}
+
+// ── gateways: which wire operations (std/entry.dl's op_reach_fn) can reach a
+// given fn, surfaced as a "gateways" line on the hover card. Loaded lazily,
+// once per data refresh (here, not per hover -- op_reach_fn is a whole-graph
+// precomputed table, unrelated to whichever node/edge SQL the panel
+// currently shows). Silently empty when the served program doesn't `use
+// "std/entry.dl".` (most presets don't) -- rel_op_reach_fn just won't exist,
+// and a missing table is a skip, not an error.
+let gatewaysByFn = new Map(); // bare fn name -> [op, ...]
+async function loadGateways() {
+  const next = new Map();
+  try {
+    const rows = await host.query('SELECT op, fn FROM rel_op_reach_fn');
+    for (const r of rows) {
+      const op = r[0], fn = r[1];
+      if (fn == null) continue;
+      const key = String(fn);
+      if (!next.has(key)) next.set(key, []);
+      next.get(key).push(String(op));
+    }
+  } catch (e) { /* no std/entry.dl in this served program -- fine */ }
+  gatewaysByFn = next;
+}
+
+// ── layered layout (Sugiyama-lite) ───────────────────────────────────────────
+// Longest-path layering (unchanged shape) gives each node an x-layer. Left on
+// its own, alphabetical order within a layer tangles edges badly — these
+// functions add a barycenter crossing-reduction pass and a neighbor-relaxation
+// y-assignment pass on top. Pure functions of (ids, edge pairs) so they're
+// unit-testable without a DOM.
+function computeLayers(nodeIds, edgePairs) {
+  const layer = new Map(nodeIds.map(id => [id, 0]));
+  for (let pass = 0; pass < 40; pass++) {
+    let moved = false;
+    for (const [s, d] of edgePairs) {
+      if (!layer.has(s) || !layer.has(d)) continue;
+      const want = layer.get(s) + 1;
+      if (want > layer.get(d) && want < 60) { layer.set(d, want); moved = true; }
+    }
+    if (!moved) break;
+  }
+  return layer;
+}
+function buildAdjacency(edgePairs) {
+  // undirected: crossing reduction and y-relaxation both want "neighbor in
+  // some layer", not "successor" — direction only mattered for layering
+  const adj = new Map();
+  const add = (a, b) => { if (!adj.has(a)) adj.set(a, []); adj.get(a).push(b); };
+  for (const [s, d] of edgePairs) { add(s, d); add(d, s); }
+  return adj;
+}
+function sweepLayer(byLayer, l, adjacentL, adj) {
+  // reorder byLayer[l] by the mean order-index of each node's neighbors that
+  // land in byLayer[adjacentL]; a node with no such neighbor keeps its current
+  // slot (barycenter falls back to its pre-sweep index, so a stable sort
+  // leaves it in place relative to its un-mentioned peers)
+  const layerIds = byLayer[l];
+  if (!layerIds || adjacentL < 0 || adjacentL >= byLayer.length) return;
+  const adjIndex = new Map(byLayer[adjacentL].map((id, i) => [id, i]));
+  const curIndex = new Map(layerIds.map((id, i) => [id, i]));
+  const bary = new Map();
+  for (const id of layerIds) {
+    const neigh = (adj.get(id) || []).filter(n => adjIndex.has(n));
+    bary.set(id, neigh.length
+      ? neigh.reduce((sum, n) => sum + adjIndex.get(n), 0) / neigh.length
+      : curIndex.get(id));
+  }
+  byLayer[l] = layerIds.slice().sort((a, b) => bary.get(a) - bary.get(b));
+}
+function crossingReductionPasses(byLayer, edgePairs, passes) {
+  const adj = buildAdjacency(edgePairs);
+  const n = byLayer.length;
+  for (let p = 0; p < passes; p++) {
+    if (p % 2 === 0) { for (let l = 1; l < n; l++) sweepLayer(byLayer, l, l - 1, adj); }
+    else { for (let l = n - 2; l >= 0; l--) sweepLayer(byLayer, l, l + 1, adj); }
+  }
+  return byLayer;
+}
+function assignY(byLayer, edgePairs, row) {
+  const y = new Map();
+  for (const layerIds of byLayer) layerIds.forEach((id, i) => y.set(id, i * row));
+  const adj = buildAdjacency(edgePairs);
+  for (let pass = 0; pass < 3; pass++) {
+    // move each node halfway toward the mean y of ALL its graph neighbors,
+    // regardless of which layer they're in
+    const next = new Map();
+    for (const layerIds of byLayer) {
+      for (const id of layerIds) {
+        const neigh = adj.get(id) || [];
+        if (neigh.length === 0) { next.set(id, y.get(id)); continue; }
+        const mean = neigh.reduce((sum, n) => sum + y.get(n), 0) / neigh.length;
+        next.set(id, (y.get(id) + mean) / 2);
+      }
+    }
+    for (const [id, v] of next) y.set(id, v);
+    // resolve overlaps within each layer top-down, walking the layer's fixed
+    // order (crossing reduction already decided it) so relaxation can't
+    // reintroduce a crossing by re-sorting on y
+    for (const layerIds of byLayer) {
+      for (let i = 1; i < layerIds.length; i++) {
+        const prev = layerIds[i - 1], cur = layerIds[i];
+        if (y.get(cur) - y.get(prev) < row) y.set(cur, y.get(prev) + row);
+      }
+    }
+  }
+  // center each layer vertically so layer midpoints align
+  const means = byLayer.map(layerIds => layerIds.length
+    ? layerIds.reduce((sum, id) => sum + y.get(id), 0) / layerIds.length : 0);
+  const globalMean = means.length ? means.reduce((a, b) => a + b, 0) / means.length : 0;
+  byLayer.forEach((layerIds, l) => {
+    const shift = globalMean - means[l];
+    for (const id of layerIds) y.set(id, y.get(id) + shift);
+  });
+  return y;
+}
+
+// A member_node row is a PIN of its parent's card, not its own card, when
+// its own kind is param/field/ret AND its `parent` (row[5]) names another
+// row that's also present in this render — i.e. the owner card is going to
+// exist. Everything else (structs/traits/enums/fns/methods, and a stray
+// param/field/ret whose owner didn't survive the linkedOnly filter) still
+// gets a plain top-level card, unchanged from before ports existed.
+const PIN_KINDS = new Set(['param', 'field', 'ret']);
+function partitionPins(rows) {
+  const idSet = new Set(rows.map(r => String(r[0])));
+  const main = [], pins = [];
+  for (const r of rows) {
+    const kind = r[2] != null ? String(r[2]) : '';
+    const parent = r[5] != null && r[5] !== '' ? String(r[5]) : null;
+    if (PIN_KINDS.has(kind) && parent && parent !== String(r[0]) && idSet.has(parent)) pins.push(r);
+    else main.push(r);
+  }
+  return { main, pins };
+}
+
+function renderCanvas(nodeRows, edgeRows) {
   world.innerHTML = '';
-  nodes.clear(); edges.length = 0;
-  pinned.clear(); hoveredId = null; kindFilter.clear();
+  nodes.clear(); edges.length = 0; flowArrowEls = []; // world.innerHTML already dropped their DOM
+  pinned.clear(); hoveredId = null; kindFilter.clear(); hoverCardEl.hidden = true; pinInfo.clear();
 
   const ids = new Set(nodeRows.map(r => String(r[0])));
   const keptEdges = edgeRows.filter(r => ids.has(String(r[0])) && ids.has(String(r[1])));
@@ -387,44 +1039,110 @@ function render(nodeRows, edgeRows) {
   for (const [s, d] of keptEdges) { linked.add(String(s)); linked.add(String(d)); }
   const keptNodes = nodeRows.filter(r => !linkedOnly || linked.has(String(r[0])));
 
-  // layered layout: layer = longest path from a root, bounded passes so a
-  // cyclic subgraph settles instead of spinning
-  const layer = new Map(keptNodes.map(r => [String(r[0]), 0]));
-  for (let pass = 0; pass < 40; pass++) {
-    let moved = false;
-    for (const [s, d] of keptEdges) {
-      const src = String(s), dst = String(d);
-      if (!layer.has(src) || !layer.has(dst)) continue;
-      const want = layer.get(src) + 1;
-      if (want > layer.get(dst) && want < 60) { layer.set(dst, want); moved = true; }
-    }
-    if (!moved) break;
+  // Pins never enter the layered-card layout below — only the "main" rows
+  // (owners) get laid out and get a card at all; pinRows get docked inside
+  // their owner's card afterward (see addPins), once that card exists.
+  const { main: mainRows, pins: pinRows } = partitionPins(keptNodes);
+
+  const rowById = new Map(mainRows.map(r => [String(r[0]), r]));
+  const nodeIds = mainRows.map(r => String(r[0]));
+  const edgePairs = keptEdges.map(r => [String(r[0]), String(r[1])]);
+
+  // 1. longest-path layering (bounded passes so a cyclic subgraph settles
+  //    instead of spinning), same as before.
+  const layer = computeLayers(nodeIds, edgePairs);
+  const maxLayer = nodeIds.reduce((m, id) => Math.max(m, layer.get(id) || 0), 0);
+  const byLayer = [];
+  for (let l = 0; l <= maxLayer; l++) byLayer.push([]);
+  for (const id of nodeIds) byLayer[layer.get(id) || 0].push(id);
+
+  // 2. initial order within a layer: alphabetical (today's baseline), then
+  //    8 alternating down/up barycenter sweeps settle the crossings.
+  const labelOf = id => String((rowById.get(id) || [])[1] ?? id);
+  for (const layerIds of byLayer) layerIds.sort((a, b) => labelOf(a).localeCompare(labelOf(b)));
+  crossingReductionPasses(byLayer, edgePairs, 8);
+
+  // 3. y = order*ROW seed, then relaxation toward neighbor mean + overlap
+  //    resolution + layer-midpoint centering. x stays layer*COL.
+  const COL = 340, ROW = 100;
+  const yById = assignY(byLayer, edgePairs, ROW);
+  byLayer.forEach((layerIds, l) => {
+    for (const id of layerIds) addNode(rowById.get(id), l * COL, yById.get(id));
+  });
+
+  // 3b. dock each pin row into its (now-rendered) owner card. Every pinRow
+  // survived partitionPins() because its parent id was present among
+  // keptNodes, and every present non-pin row goes through addNode above —
+  // so the owner card always exists by this point; the `nodes.get` guard is
+  // defensive, not a real-world path (matches the "no crash" contract, not
+  // the "resolveEndpoint" fallback below, which is a different case: an
+  // EDGE whose endpoint pin never got minted at all).
+  const pinsByOwner = new Map();
+  for (const r of pinRows) {
+    const owner = String(r[5]);
+    if (!pinsByOwner.has(owner)) pinsByOwner.set(owner, []);
+    pinsByOwner.get(owner).push(r);
   }
-  const byLayer = new Map();
-  for (const r of keptNodes) {
-    const l = layer.get(String(r[0])) || 0;
-    if (!byLayer.has(l)) byLayer.set(l, []);
-    byLayer.get(l).push(r);
+  for (const [ownerId, rows] of pinsByOwner) {
+    const ownerNode = nodes.get(ownerId);
+    if (ownerNode) addPins(ownerNode, rows);
   }
-  const COL = 340, ROW = 92;
-  for (const [l, rows] of byLayer) {
-    rows.sort((a, b) => String(a[1] ?? a[0]).localeCompare(String(b[1] ?? b[0])));
-    rows.forEach((r, i) => addNode(r, l * COL, i * ROW));
-  }
-  for (const r of keptEdges) addEdge(String(r[0]), String(r[1]), r[2]);
+
+  // 4. dedup: identical (src,dst) rows (direction-sensitive) become one DOM
+  //    edge with a multiplicity — one arrow instead of N overlapping ones.
+  const mergedEdges = mergeEdgeRows(keptEdges);
+  for (const m of mergedEdges) addEdge(m);
 
   document.getElementById('countPill').textContent =
-    `${nodes.size} nodes · ${edges.length} edges` + (dropped ? ` · ${dropped} dropped` : '');
+    `${nodes.size} nodes · ${keptEdges.length} edges`
+    + (edges.length !== keptEdges.length ? ` · ${edges.length} drawn` : '')
+    + (dropped ? ` · ${dropped} dropped` : '');
   buildLegend();
+  if (protoState.arrows) rebuildFlowArrows();
   scheduleFlips();
+  requestAnimationFrame(measureNodeBoxes);
+}
+
+function mergeEdgeRows(rows) {
+  const map = new Map(); // "src\0dst\0diffClass" -> record (NUL-joined: ids can contain spaces)
+  const order = [];
+  for (const r of rows) {
+    const src = String(r[0]), dst = String(r[1]);
+    const kind = r[2] != null && r[2] !== '' ? String(r[2]) : '';
+    // diff-class column (4th, index 3) -- absent for every non-diff preset,
+    // so diffClass stays '' and the key is unchanged from before for them.
+    // Keyed IN so an (a,b) pair that's e.g. 'removed' under one kind and
+    // 'added' under another never merges into one visually-ambiguous edge.
+    const diffClass = r[3] != null && r[3] !== '' ? String(r[3]) : '';
+    const key = src + '\0' + dst + '\0' + diffClass;
+    let rec = map.get(key);
+    if (!rec) { rec = { src, dst, kinds: [], diffClass }; map.set(key, rec); order.push(rec); }
+    rec.kinds.push(kind);
+  }
+  return order;
+}
+
+// content-visibility:auto skips layout for off-screen nodes; without a
+// contain-intrinsic-size a skipped node reports a 0x0 box, which would drag
+// its anchor (and every edge tethered to it) to nothing. Measure once the
+// layout above has settled and pin the box. A drag can't change a node's
+// size (no re-measure needed there — content is fixed once rendered).
+function measureNodeBoxes() {
+  for (const n of nodes.values()) {
+    const w = n.el.offsetWidth, h = n.el.offsetHeight;
+    if (w && h) n.el.style.containIntrinsicSize = `${w}px ${h}px`;
+  }
 }
 
 function addNode(row, x, y) {
   const [id, label, kind, file, line] = [String(row[0]), row[1], row[2], row[3], row[4]];
   if (nodes.has(id)) return;
+  // diff-class column (7th, index 6) -- absent for every non-diff preset,
+  // so this stays '' and every diff-* branch below is a no-op for them.
+  const diffClass = row[6] != null && row[6] !== '' ? String(row[6]) : '';
   const anchor = 'n' + (anchorSeq++);
   const el = document.createElement('div');
-  el.className = 'node';
+  el.className = 'node' + (diffClass ? ' diff-' + diffClass : '');
   el.style.left = x + 'px'; el.style.top = y + 'px';
   el.style.anchorName = '--' + anchor;
   el.dataset.id = id;
@@ -441,7 +1159,11 @@ function addNode(row, x, y) {
     ? `<span class="axis">${esc(sel[1])}</span><span class="val">${esc(truncValue(sel[2], 34))}</span>`
     : esc(truncLabel(full, 72));
   head.innerHTML = `<span class="dot"></span><span class="label">${labelHtml}</span>`
-    + (kindStr ? `<span class="kind">${esc(kindStr)}</span>` : '');
+    + (kindStr ? `<span class="kind">${esc(kindStr)}</span>` : '')
+    // removed nodes are ghost rows synthesized from rel_node_removed (don't
+    // exist at head) -- the "removed" badge is the only cue besides the
+    // dashed/muted card styling that this row is gone, not just quiet.
+    + (diffClass === 'removed' ? `<span class="diff-badge">removed</span>` : '');
   el.appendChild(head);
 
   // native tooltip: nothing is ever unreachable behind truncation
@@ -469,55 +1191,274 @@ function addNode(row, x, y) {
   el.addEventListener('pointerleave', () => hoverNode(null));
   world.appendChild(el);
   nodes.set(id, { sym: id, el, file: file ? String(file) : null, line, anchor,
-                  label: full, kind: kindStr });
+                  label: full, kind: kindStr, diffClass });
+}
+
+// One pin per port row, docked inside the owner card: params+fields on the
+// LEFT column (in), ret on the RIGHT column (out) — same in/out convention
+// as the decorative .port dots every card already has. Each pin's dot gets
+// its own anchor-name (see resolveEndpoint) so a wire lands on the exact
+// pin, not the card's center; --kc is set on the dot itself (not inherited
+// from the owner's card-level --kc) so the dot's color reflects the PIN's
+// own kind (param/field/ret) via kindColor.
+function addPins(ownerNode, rows) {
+  const inRows = rows.filter(r => String(r[2]) !== 'ret');
+  const outRows = rows.filter(r => String(r[2]) === 'ret');
+  if (!inRows.length && !outRows.length) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'pins';
+  const buildCol = (colRows, side) => {
+    if (!colRows.length) return null;
+    const col = document.createElement('div');
+    col.className = 'pin-col ' + side;
+    for (const r of colRows) {
+      const id = String(r[0]);
+      const label = r[1] != null ? String(r[1]) : id;
+      const kindStr = r[2] != null ? String(r[2]) : '';
+      const anchor = 'p' + (anchorSeq++);
+      const pin = document.createElement('div');
+      pin.className = 'pin';
+      pin.title = label + (kindStr ? `\nkind: ${kindStr}` : '') + `\n${id}`;
+      const dot = document.createElement('span');
+      dot.className = 'pin-dot';
+      dot.style.anchorName = '--' + anchor;
+      if (kindStr) dot.style.setProperty('--kc', kindColor(kindStr));
+      const lab = document.createElement('span');
+      lab.className = 'pin-label';
+      lab.textContent = truncLabel(label, 18);
+      pin.appendChild(dot); pin.appendChild(lab);
+      col.appendChild(pin);
+      pinInfo.set(id, { anchor, label });
+    }
+    return col;
+  };
+  const colIn = buildCol(inRows, 'in'), colOut = buildCol(outRows, 'out');
+  if (colIn) wrap.appendChild(colIn);
+  if (colOut) wrap.appendChild(colOut);
+  ownerNode.el.appendChild(wrap);
+}
+
+// The owner id behind a port sym, derived from the id text alone (no row
+// lookup) — the fallback path when the port's own pin never got minted (its
+// owner card was filtered out, linkedOnly hid it, etc). Mirrors the three
+// mint shapes in flow-panel.dl: "<fn>::param::<var>", "<owner>::field::<fld>",
+// "<fn>::ret".
+function stripPortSuffix(id) {
+  let m = /^(.*)::ret$/.exec(id);
+  if (m) return m[1];
+  m = /^(.*)::(?:param|field)::[^:]*$/.exec(id);
+  return m ? m[1] : null;
+}
+
+// Resolve an edge endpoint id to an {anchor, label} to tether a wire to.
+// Three-tier fallback: the id's own pin (precise dot), else the id's own
+// top-level card (a plain, non-pin node), else its owner card's anchor
+// (pin absent/collapsed — land on the card itself instead). null means
+// neither exists; addEdge skips the edge rather than crash.
+function resolveEndpoint(id) {
+  const pin = pinInfo.get(id);
+  if (pin) return pin;
+  const n = nodes.get(id);
+  if (n) return { anchor: n.anchor, label: n.label };
+  const ownerId = stripPortSuffix(id);
+  if (ownerId) {
+    const o = nodes.get(ownerId);
+    if (o) return { anchor: o.anchor, label: o.label };
+  }
+  return null;
 }
 
 const PATH = 'M0,0 C50,0 50,100 100,100';
-function addEdge(src, dst, kind) {
-  const f = nodes.get(src), t = nodes.get(dst);
-  if (!f || !t || src === dst) return;
-  const kindStr = kind != null && kind !== '' ? String(kind) : '';
+// one DOM edge per merged (src,dst) record — see mergeEdgeRows. `kinds` is one
+// entry per underlying row (duplicates kept, for the legend's count-by-kind).
+function addEdge(rec) {
+  const { src, dst, kinds, diffClass } = rec;
+  const f = resolveEndpoint(src), t = resolveEndpoint(dst);
+  if (!f || !t || f.anchor === t.anchor) return;
+  const n = kinds.length;
+  const uniqKinds = [...new Set(kinds.filter(Boolean))];
+  const kindStr = uniqKinds[0] || '';
   const el = document.createElement('div');
-  el.className = 'edge';
+  el.className = 'edge' + (uniqKinds.includes('wire') ? ' port-wire' : '')
+    + (diffClass ? ' diff-' + diffClass : '');
   el.style.setProperty('--a', '--' + f.anchor);
   el.style.setProperty('--b', '--' + t.anchor);
   if (kindStr) el.style.setProperty('--ec', kindColor(kindStr));
+  // stroke width scales with multiplicity so a bundled edge reads as "thicker",
+  // not as N identical overlapping lines
+  if (n > 1) el.style.setProperty('--ew', String(Math.min(7, 2.5 + 1.5 * Math.log2(n))));
   // svg <title> = native tooltip; the stroke alone takes pointer events, the
   // edge's (huge) bounding box stays click-through for pan/hover
-  const tip = `${f.label} → ${t.label}${kindStr ? ' (' + kindStr + ')' : ''}`;
+  const kindsLabel = uniqKinds.join(', ');
+  const countLabel = n > 1 ? `×${n}` : '';
+  const suffix = kindsLabel || countLabel ? ` (${[kindsLabel, countLabel].filter(Boolean).join(' ')})` : '';
+  const tip = `${f.label} → ${t.label}${suffix}`;
   el.innerHTML = `<svg viewBox="0 0 100 100" preserveAspectRatio="none">`
     + `<path class="wire" d="${PATH}"><title>${esc(tip)}</title></path></svg>`;
   world.appendChild(el);
-  edges.push({ src, dst, el, kind: kindStr });
+  // `kinds` keeps every underlying row's kind (dupes included) — buildLegend
+  // sums multiplicities from it, applyKindFilter just needs membership.
+  // src/dst stay the RAW ids (not the resolved anchor) so applyKindFilter/
+  // refreshHighlight — both keyed on `nodes.get(e.src/e.dst)` — degrade
+  // gracefully for a pin-based edge (their `if (!n) continue`/`f &&` guards
+  // already handle a miss): the wire still renders via --a/--b above, it
+  // just doesn't get the hover-glow/kind-dim treatment a pin isn't wired
+  // into. Out of scope here — those two functions are core highlight/filter
+  // machinery, not the edge-rendering seam this task touches.
+  edges.push({ src, dst, el, kinds, n, diffClass });
 }
+
+// ── hover card: a floating detail popup for whatever node is hovered, in
+// either view. Content is rebuilt only when hoveredId changes (hoverNode);
+// position tracks the cursor every mousemove, throttled to one rAF. View-mode
+// agnostic via nodeMetaFor/edgesFor, which read from `nodes`/`edges` (canvas)
+// or `listNodeMeta`/`listArcs` (list) depending on `viewMode`.
+const hoverCardEl = document.getElementById('hoverCard');
+function nodeMetaFor(id) {
+  if (id == null) return null;
+  if (viewMode === 'list') {
+    const m = listNodeMeta.get(id);
+    return m ? { id, label: m.label, kind: m.kind, file: m.file, line: m.line } : null;
+  }
+  const n = nodes.get(id);
+  return n ? { id, label: n.label, kind: n.kind, file: n.file, line: n.line } : null;
+}
+function edgesFor(id) {
+  const out = [];
+  if (viewMode === 'list') {
+    for (const a of listArcs) {
+      if (a.srcKey === id) out.push({ other: a.dstKey, kinds: a.kinds, dir: 'out' });
+      else if (a.dstKey === id) out.push({ other: a.srcKey, kinds: a.kinds, dir: 'in' });
+    }
+  } else {
+    for (const e of edges) {
+      if (e.src === id) out.push({ other: e.dst, kinds: e.kinds, dir: 'out' });
+      else if (e.dst === id) out.push({ other: e.src, kinds: e.kinds, dir: 'in' });
+    }
+  }
+  return out;
+}
+function buildHoverCard(id) {
+  const meta = nodeMetaFor(id);
+  if (!meta) { hoverCardEl.innerHTML = ''; return; }
+  const es = edgesFor(id);
+  const fmtSide = (dirWanted, arrow) => {
+    const side = es.filter(e => e.dir === dirWanted);
+    const shown = side.slice(0, 8).map(e => {
+      const m = nodeMetaFor(e.other);
+      const label = m ? m.label : e.other;
+      const uniq = [...new Set(e.kinds.filter(Boolean))];
+      const kindLabel = uniq.join(', ');
+      return `<div class="hc-edge">${arrow} ${esc(label)}` +
+        (kindLabel ? ` <span class="hc-kind" style="color:${kindColor(uniq[0])}">(${esc(kindLabel)})</span>` : '') +
+        `</div>`;
+    }).join('');
+    const overflow = side.length > 8 ? `<div class="hc-more">+${side.length - 8} more</div>` : '';
+    return side.length ? shown + overflow : '';
+  };
+  let html = `<div class="hc-label">${esc(meta.label)}</div>`;
+  if (meta.kind) html += `<div class="hc-kind" style="color:${kindColor(meta.kind)}">${esc(meta.kind)}</div>`;
+  if (meta.id !== meta.label) html += `<div class="hc-id">${esc(meta.id)}</div>`;
+  if (meta.file) html += `<div class="hc-loc">${esc(meta.file)}${meta.line != null ? ':' + meta.line : ''}</div>`;
+  const outHtml = fmtSide('out', '→'), inHtml = fmtSide('in', '←');
+  if (outHtml) html += `<div class="hc-section">outbound</div>${outHtml}`;
+  if (inHtml) html += `<div class="hc-section">inbound</div>${inHtml}`;
+  // gateways: op_reach_fn is keyed on the BARE fn name (no repo qualifier),
+  // the same replace_re strip every rel in std/flow.dl/std/entry.dl uses --
+  // node ids elsewhere in this panel are repo-qualified syms, so strip here
+  // too before the lookup.
+  const bare = String(meta.id).replace(/^[^:]*::/, '');
+  const gw = gatewaysByFn.get(bare);
+  if (gw && gw.length) {
+    const uniqOps = [...new Set(gw)];
+    html += `<div class="hc-section">gateways</div><div class="hc-edge">${esc(uniqOps.join(', '))}</div>`;
+  }
+  hoverCardEl.innerHTML = html;
+}
+let hoverCardMouseX = 0, hoverCardMouseY = 0, hoverCardRAF = false;
+function positionHoverCard() {
+  hoverCardRAF = false;
+  if (!hoveredId || !protoState.hoverCard) { hoverCardEl.hidden = true; return; }
+  hoverCardEl.hidden = false;
+  const pad = 14;
+  const r = hoverCardEl.getBoundingClientRect();
+  let x = hoverCardMouseX + pad, y = hoverCardMouseY + pad;
+  if (x + r.width > innerWidth - 6) x = hoverCardMouseX - pad - r.width;
+  if (y + r.height > innerHeight - 6) y = hoverCardMouseY - pad - r.height;
+  x = Math.max(6, x); y = Math.max(6, y);
+  hoverCardEl.style.left = x + 'px';
+  hoverCardEl.style.top = y + 'px';
+}
+function scheduleHoverCard() {
+  if (hoverCardRAF) return;
+  hoverCardRAF = true;
+  requestAnimationFrame(positionHoverCard);
+}
+document.addEventListener('mousemove', ev => {
+  hoverCardMouseX = ev.clientX; hoverCardMouseY = ev.clientY;
+  if (hoveredId) scheduleHoverCard();
+});
 
 // ── hover + pins: highlight the slice (+ any pinned nodes) and tell the host
 // which files are in play. Pinning persists a node's highlight across hover
 // changes; hovering still shows its own connected slice on top.
 function hoverNode(id) {
   hoveredId = id;
+  if (id) { buildHoverCard(id); scheduleHoverCard(); } else { hoverCardEl.hidden = true; }
   refreshHighlight();
 }
 function togglePin(id) {
   if (!id) return;
   if (pinned.has(id)) pinned.delete(id); else pinned.add(id);
+  afterPinChange();
+}
+// shift-click range (list view) and shift-drag marquee (canvas) both ADD a
+// batch of ids to the selection in one shot -- never toggle-off inside the
+// batch, matching mainstream file-manager range/marquee select. Same tail
+// as togglePin's single-id case, factored out as afterPinChange.
+function pinRange(ids) {
+  if (!ids || !ids.length) return;
+  for (const id of ids) pinned.add(id);
+  afterPinChange();
+}
+function afterPinChange() {
+  hoverCardEl.hidden = true;
+  // focus mode derives its keep-slice from `pinned` -- a pin change while it's
+  // on must re-derive the visible rows, not just repaint highlights. Emptying
+  // the set exits focus outright (an empty slice would hide every row).
+  if (focusMode && viewMode === 'list') {
+    if (!pinned.size) { setFocusMode(false); return; } // refreshListView inside
+    refreshListView(); return; // ends in refreshListHighlight
+  }
   refreshHighlight();
 }
 function clearPins() {
+  hoverCardEl.hidden = true;
   if (pinned.size === 0) return;
   pinned.clear();
+  if (focusMode && viewMode === 'list') { setFocusMode(false); return; }
   refreshHighlight();
 }
 function refreshHighlight() {
+  if (viewMode === 'list') { refreshListHighlight(); return; }
   world.classList.toggle('hovering', !!hoveredId);
   const files = new Set();
-  for (const n of nodes.values()) { n.el.classList.remove('hl'); n.el.classList.remove('pinned'); }
-  for (const e of edges) e.el.classList.remove('hl');
+  for (const n of nodes.values()) { n.el.classList.remove('hl', 'pinned', 'ghost'); }
+  for (const e of edges) e.el.classList.remove('hl', 'active', 'ghost');
+  const pinnedVisible = new Set();
   for (const pid of pinned) {
     const n = nodes.get(pid);
     if (!n) continue;
     n.el.classList.add('pinned');
+    pinnedVisible.add(pid);
     if (n.file) files.add(n.file);
+  }
+  // persistent tier: every edge touching a pinned node stays highlighted
+  // (flat stroke, no animation) whether or not anything is hovered right now.
+  if (pinnedVisible.size) {
+    for (const e of edges) {
+      if (pinnedVisible.has(e.src) || pinnedVisible.has(e.dst)) e.el.classList.add('active');
+    }
   }
   if (hoveredId) {
     const slice = new Set([hoveredId]);
@@ -525,13 +1466,21 @@ function refreshHighlight() {
       if (e.src === hoveredId) slice.add(e.dst);
       if (e.dst === hoveredId) slice.add(e.src);
     }
+    // a hovered node can only ever be a currently-VISIBLE one (a .fout node
+    // has display:none, so it never receives pointerenter in the first
+    // place) -- so hoveredId itself is never .fout, only its neighbors can
+    // be. A .fout neighbor gets 'ghost' (faded reveal) instead of 'hl'
+    // (the gold highlight is reserved for nodes that actually pass the
+    // filter); its edge follows the same split.
     for (const e of edges) {
-      if (e.src === hoveredId || e.dst === hoveredId) e.el.classList.add('hl');
+      if (e.src !== hoveredId && e.dst !== hoveredId) continue;
+      const other = nodes.get(e.src === hoveredId ? e.dst : e.src);
+      e.el.classList.add(other && other.el.classList.contains('fout') ? 'ghost' : 'hl');
     }
     for (const sid of slice) {
       const n = nodes.get(sid);
       if (!n) continue;
-      n.el.classList.add('hl');
+      n.el.classList.add(n.el.classList.contains('fout') ? 'ghost' : 'hl');
       if (n.file) files.add(n.file);
     }
   }
@@ -544,7 +1493,8 @@ function buildLegend() {
   leg.innerHTML = '';
   const counts = new Map(); // kind -> count (node + edge kinds share the row)
   for (const n of nodes.values()) if (n.kind) counts.set(n.kind, (counts.get(n.kind) || 0) + 1);
-  for (const e of edges) if (e.kind) counts.set(e.kind, (counts.get(e.kind) || 0) + 1);
+  // sum multiplicities (every underlying row), not one per merged DOM edge
+  for (const e of edges) for (const k of e.kinds) if (k) counts.set(k, (counts.get(k) || 0) + 1);
   for (const [k, c] of [...counts].sort((a, b) => b[1] - a[1])) {
     const chip = document.createElement('span');
     chip.className = 'chip';
@@ -560,12 +1510,1171 @@ function buildLegend() {
   applyKindFilter();
 }
 function applyKindFilter() {
+  if (viewMode === 'list') { applyKindFilterList(); return; }
   const active = kindFilter.size > 0;
-  for (const n of nodes.values()) n.el.classList.toggle('dim', active && !kindFilter.has(n.kind));
-  for (const e of edges) e.el.classList.toggle('dim', active && !kindFilter.has(e.kind));
+  for (const n of nodes.values()) n.el.classList.toggle('fout', active && !kindFilter.has(n.kind));
+  // an edge hides if EITHER endpoint is filtered out, or none of its own
+  // (possibly several, merged) kinds survive the filter
+  for (const e of edges) {
+    const f = nodes.get(e.src), t = nodes.get(e.dst);
+    const endpointOut = active && ((f && !kindFilter.has(f.kind)) || (t && !kindFilter.has(t.kind)));
+    const kindsOut = active && !e.kinds.some(k => kindFilter.has(k));
+    e.el.classList.toggle('fout', endpointOut || kindsOut);
+  }
   for (const chip of document.getElementById('legend').children) {
     chip.classList.toggle('on', kindFilter.has(chip.dataset.kind));
   }
+  refreshHighlight(); // re-derive hl/ghost now that some nodes just left/rejoined layout
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// ── LIST VIEW: fs-snippet listing + gutter arcs (the default view) ──────────
+// Row order = a tree walk of (file path, line). No layout engine: indent is
+// depth, y is row index * ROW_H. Two pure functions (buildRows, assignLanes)
+// carry all the interesting math and take no DOM — the node test harness
+// exercises them directly.
+// ══════════════════════════════════════════════════════════════════════════
+
+const ROW_H = 22;      // fixed row height -- arc y-math and CSS both hard-code this
+const GUTTER_W = 110;  // px, each side
+const LANE_W = 8;      // px between lanes
+const LANE_CAP = 12;   // overflow edges share the outermost lane at reduced opacity
+
+// ── buildRows: pure. nodeRows = positional [id, label?, kind?, file?, line?,
+// parent?]. Every row carries `key` (collapse-state identity: a node's own
+// id, or a dir's full accumulated path) and `hasChildren` (whether a
+// disclosure triangle applies) so the renderer never has to re-derive either.
+//
+// col 6 (parent) lets a node nest under ANOTHER node's row instead of the
+// default file-tree placement -- recursive chains supported (a method's
+// owner can itself be nested under something else). A node only nests when
+// its parent id resolves to another node IN THIS SAME RESULT SET; otherwise
+// it falls back to the plain file-grouping below, unchanged from before.
+function buildRows(nodeRows) {
+  const parsed = nodeRows.map(r => ({
+    id: String(r[0]),
+    label: r[1] != null && r[1] !== '' ? String(r[1]) : String(r[0]),
+    kind: r[2] != null && r[2] !== '' ? String(r[2]) : '',
+    file: r[3] != null && r[3] !== '' ? String(r[3]) : null,
+    line: r[4] != null && r[4] !== '' ? Number(r[4]) : null,
+    parent: r[5] != null && r[5] !== '' ? String(r[5]) : null,
+  }));
+
+  const byId = new Map(parsed.map(n => [n.id, n]));
+
+  // A parent CYCLE (A's ancestor chain loops back to A) has no root to hang
+  // the nesting off of -- if every member of the cycle only ever appears as
+  // someone else's child, none of them is ever a topLevel emission root and
+  // the whole cycle silently vanishes from the listing. Walk each node's
+  // ancestor chain up front and mark every id in a detected loop `cyclic`;
+  // those ids are excluded from childrenOf below, so they fall back to
+  // ordinary file grouping instead of disappearing.
+  const cyclic = new Set();
+  for (const n of parsed) {
+    if (!n.parent || !byId.has(n.parent)) continue;
+    const seen = new Set([n.id]);
+    let cur = n.parent;
+    while (cur && byId.has(cur)) {
+      if (seen.has(cur)) { for (const s of seen) cyclic.add(s); break; }
+      seen.add(cur);
+      cur = byId.get(cur).parent;
+    }
+  }
+
+  const childrenOf = new Map(); // parent id -> [child nodes], only resolvable non-cyclic parents
+  for (const n of parsed) {
+    if (n.parent && n.parent !== n.id && byId.has(n.parent) && !cyclic.has(n.id)) {
+      if (!childrenOf.has(n.parent)) childrenOf.set(n.parent, []);
+      childrenOf.get(n.parent).push(n);
+    }
+  }
+  for (const kids of childrenOf.values()) {
+    kids.sort((a, b) => (a.line ?? 1e9) - (b.line ?? 1e9) || a.label.localeCompare(b.label));
+  }
+  const nested = new Set();
+  for (const kids of childrenOf.values()) for (const k of kids) nested.add(k.id);
+
+  const rows = [];
+  // DFS-emit a node's parent-nested children (cycle-guarded via `path`, a
+  // per-root visited set -- a chain that loops back on itself just stops
+  // nesting further rather than recursing forever).
+  function emitChildren(parentId, depth, path) {
+    const kids = childrenOf.get(parentId);
+    if (!kids) return;
+    for (const k of kids) {
+      if (path.has(k.id)) continue;
+      rows.push({ type: 'node', depth, label: k.label, id: k.id, kind: k.kind,
+                   file: k.file, line: k.line, key: k.id, hasChildren: childrenOf.has(k.id) });
+      path.add(k.id);
+      emitChildren(k.id, depth + 1, path);
+      path.delete(k.id);
+    }
+  }
+
+  // Everything below groups only TOP-LEVEL nodes (no resolvable parent, or
+  // themselves someone's nested child so they're already handled above) --
+  // `nested` ids are excluded so a method doesn't ALSO appear flat under its
+  // file once it's nesting under its owner.
+  const topLevel = parsed.filter(n => !nested.has(n.id));
+  const withFile = topLevel.filter(n => n.file);
+  const noFile = topLevel.filter(n => !n.file);
+
+  // group by exact file path, then thread every file into one segment trie
+  const byFile = new Map();
+  for (const n of withFile) {
+    if (!byFile.has(n.file)) byFile.set(n.file, []);
+    byFile.get(n.file).push(n);
+  }
+  const root = { children: new Map() };
+  for (const file of byFile.keys()) {
+    let cur = root;
+    for (const seg of file.split('/').filter(Boolean)) {
+      if (!cur.children.has(seg)) cur.children.set(seg, { children: new Map() });
+      cur = cur.children.get(seg);
+    }
+    cur.isFile = true;
+    cur.fileKey = file;
+  }
+
+  // walk from `trieNode` (already reached, first segment name = namePrefix),
+  // compacting forward through single-child non-file dirs GitHub-tree-style,
+  // then emit either a dir row or (id===path case) the file's own node row.
+  // `parentPath` is the FULL accumulated path down to (not including) this
+  // call's own segment -- `key` below is the real collapse identity, kept
+  // separate from `label` (which is cosmetic and only spans the compaction).
+  function emit(trieNode, depth, namePrefix, parentPath) {
+    let label = namePrefix, node = trieNode;
+    while (!node.isFile && node.children.size === 1) {
+      const [childName, child] = [...node.children.entries()][0];
+      label += '/' + childName;
+      node = child;
+    }
+    const key = parentPath ? parentPath + '/' + label : label;
+    const groupNodes = node.isFile ? byFile.get(node.fileKey) : null;
+    const fileNodeRow = groupNodes ? groupNodes.find(n => n.id === node.fileKey) : null;
+    const syms = (groupNodes || []).filter(n => n !== fileNodeRow)
+      .sort((a, b) => (a.line ?? 1e9) - (b.line ?? 1e9) || a.label.localeCompare(b.label));
+    if (node.isFile) {
+      if (fileNodeRow) {
+        rows.push({ type: 'node', depth, label, id: fileNodeRow.id, kind: fileNodeRow.kind,
+                     file: fileNodeRow.file, line: fileNodeRow.line, key: fileNodeRow.id,
+                     hasChildren: syms.length > 0 || childrenOf.has(fileNodeRow.id) });
+        emitChildren(fileNodeRow.id, depth + 1, new Set([fileNodeRow.id]));
+      } else {
+        rows.push({ type: 'dir', depth, label, key, hasChildren: true });
+      }
+      for (const s of syms) {
+        rows.push({ type: 'node', depth: depth + 1, label: s.label, id: s.id, kind: s.kind,
+                     file: s.file, line: s.line, key: s.id, hasChildren: childrenOf.has(s.id) });
+        emitChildren(s.id, depth + 2, new Set([s.id]));
+      }
+    } else {
+      rows.push({ type: 'dir', depth, label, key, hasChildren: true });
+    }
+    for (const cn of [...node.children.keys()].sort((a, b) => a.localeCompare(b))) {
+      emit(node.children.get(cn), depth + 1, cn, key);
+    }
+  }
+  for (const tn of [...root.children.keys()].sort((a, b) => a.localeCompare(b))) {
+    emit(root.children.get(tn), 0, tn, '');
+  }
+
+  if (noFile.length) {
+    rows.push({ type: 'dir', depth: 0, label: '(no file)', key: '(no file)', hasChildren: true });
+    for (const s of noFile.slice().sort((a, b) => a.label.localeCompare(b.label))) {
+      rows.push({ type: 'node', depth: 1, label: s.label, id: s.id, kind: s.kind, file: s.file,
+                   line: s.line, key: s.id, hasChildren: childrenOf.has(s.id) });
+      emitChildren(s.id, 2, new Set([s.id]));
+    }
+  }
+  return rows;
+}
+
+// filteredKinds = the active kindFilter Set (or falsy/empty = no filter). A
+// 'dir' row's own visibility rides on whether ANYTHING in its raw subtree
+// (ignoring fold state -- a COLLAPSED dir must not look empty just because
+// its real children are individually skipDepth-hidden) would pass the
+// filter; a folded-but-nonempty dir stays as the re-expand affordance, an
+// entirely-filtered-out dir vanishes. One forward pass, no recursion.
+function dirsWithFilteredContent(rows, nodePasses) {
+  const has = new Array(rows.length).fill(false);
+  const openDirs = []; // indexes of dir rows currently "open" (ancestor of the cursor)
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    while (openDirs.length && rows[openDirs[openDirs.length - 1]].depth >= r.depth) openDirs.pop();
+    if (r.type === 'dir') { openDirs.push(i); continue; }
+    if (nodePasses(r)) for (const d of openDirs) has[d] = true;
+  }
+  return has;
+}
+
+// ── applyCollapse: pure. rows = buildRows() output (flat, depth-ordered).
+// collapsedKeys = Set of collapsed row.key. edgeList = merged (src,dst,kinds)
+// node-id edges (mergeEdgeRows output, pre-collapse). filteredKinds = the
+// active kind-filter Set, ANDed into the SAME visibility pass as collapse
+// (a filtered-out row just never gets pushed to visibleRows -- no separate
+// dim/hide toggle downstream). A single forward pass over `rows` gives every
+// row its "nearest visible ancestor" (itself, if visible) via a depth-tracked
+// stack; edges then retarget through that map, re-merge onto (visible src,
+// visible dst) index pairs, drop pairs that collapsed onto the same row, and
+// mark the survivors `rolled` when either endpoint actually moved -- the
+// renderer draws those dashed. An edge whose endpoint was hidden by the
+// FILTER (not merely folded under a collapsed ancestor) is dropped outright
+// instead of rolling up -- rollup is a collapse affordance ("click to
+// re-expand"), a filtered node has no such re-expand path in this view.
+function applyCollapse(rows, collapsedKeys, edgeList, filteredKinds, focusKeep) {
+  // focusKeep (optional 5th arg, Set of node ids or null) is focus mode's
+  // keep-slice -- a SEPARATE hide predicate from the kind filter, ANDed in:
+  // a node row hides if EITHER says hide. Dir visibility generalizes the
+  // same way: a dir stays only while some raw-subtree node passes BOTH.
+  // Callers passing 4 args (the node test harness) are unchanged.
+  const filterActive = !!(filteredKinds && filteredKinds.size);
+  const focusActive = !!(focusKeep && focusKeep.size);
+  const hideActive = filterActive || focusActive;
+  const nodePasses = r =>
+    (!filterActive || filteredKinds.has(r.kind)) &&
+    (!focusActive || focusKeep.has(r.id));
+  const dirHasContent = hideActive ? dirsWithFilteredContent(rows, nodePasses) : null;
+  const isFilteredOut = (r, i) => {
+    if (!hideActive) return false;
+    return r.type === 'node' ? !nodePasses(r) : !dirHasContent[i];
+  };
+
+  const fullIndexById = new Map();
+  rows.forEach((r, i) => { if (r.type === 'node' && r.id != null) fullIndexById.set(r.id, i); });
+
+  const nearestVisibleAncestor = new Array(rows.length).fill(-1);
+  const visIdxOf = new Array(rows.length).fill(-1);
+  const selfFiltered = new Array(rows.length).fill(false); // node hidden BY THE FILTER specifically
+  const visibleRows = [];
+  const stack = []; // {depth, idx} idx = nearest-visible full-row-index at/under this frame
+  let skipDepth = null;
+  let foldedHidden = 0, filterHidden = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    while (stack.length && stack[stack.length - 1].depth >= r.depth) stack.pop();
+    if (skipDepth !== null && r.depth > skipDepth) {
+      const anc = stack.length ? stack[stack.length - 1].idx : -1;
+      nearestVisibleAncestor[i] = anc;
+      stack.push({ depth: r.depth, idx: anc });
+      foldedHidden++;
+      continue;
+    }
+    skipDepth = null;
+    if (isFilteredOut(r, i)) {
+      if (r.type === 'node') selfFiltered[i] = true;
+      const anc = stack.length ? stack[stack.length - 1].idx : -1;
+      nearestVisibleAncestor[i] = anc;
+      stack.push({ depth: r.depth, idx: anc });
+      filterHidden++;
+      continue; // children still individually evaluated below, not force-skipped
+    }
+    nearestVisibleAncestor[i] = i;
+    visIdxOf[i] = visibleRows.length;
+    visibleRows.push(r);
+    stack.push({ depth: r.depth, idx: i });
+    if (r.hasChildren && collapsedKeys.has(r.key)) skipDepth = r.depth;
+  }
+
+  const groups = new Map(); // "vsi\0vdi" -> record
+  const order = [];
+  for (const m of edgeList) {
+    const si = fullIndexById.get(m.src), di = fullIndexById.get(m.dst);
+    if (si == null || di == null) continue;
+    if (selfFiltered[si] || selfFiltered[di]) continue; // filter-hidden endpoint: drop, no rollup
+    const asi = nearestVisibleAncestor[si], adi = nearestVisibleAncestor[di];
+    if (asi < 0 || adi < 0) continue; // whole ancestor chain filtered away
+    const vsi = visIdxOf[asi], vdi = visIdxOf[adi];
+    if (vsi === vdi) continue; // collapsed onto the same row -- drop
+    const rolled = asi !== si || adi !== di;
+    const key = vsi + '\0' + vdi;
+    let rec = groups.get(key);
+    if (!rec) {
+      rec = { srcIdx: vsi, dstIdx: vdi, srcKey: rows[asi].key, dstKey: rows[adi].key,
+               kinds: [], rolled: false, n: 0 };
+      groups.set(key, rec); order.push(rec);
+    }
+    rec.kinds.push(...m.kinds);
+    rec.rolled = rec.rolled || rolled;
+    rec.n += 1;
+  }
+  return { visibleRows, arcs: order, collapsedCount: foldedHidden, filteredCount: filterHidden };
+}
+
+// ── assignLanes: pure greedy interval coloring, deterministic. spans =
+// [{i, lo, hi}] (row-index intervals). Returns { lanes: Map(i -> lane),
+// overflow: Set(i) } — overflow spans still get a lane (the cap), the
+// renderer just dims them instead of growing the gutter without bound.
+function assignLanes(spans, cap) {
+  cap = cap || LANE_CAP;
+  const sorted = spans.slice().sort((a, b) => {
+    const da = a.hi - a.lo, db = b.hi - b.lo;
+    return da !== db ? da - db : a.lo - b.lo;
+  });
+  const laneIntervals = []; // laneIntervals[lane] = [{lo,hi}, ...]
+  const lanes = new Map();
+  const overflow = new Set();
+  for (const s of sorted) {
+    let lane = -1;
+    for (let l = 0; l < laneIntervals.length; l++) {
+      if (!laneIntervals[l].some(iv => !(s.hi < iv.lo || s.lo > iv.hi))) { lane = l; break; }
+    }
+    if (lane === -1) {
+      if (laneIntervals.length < cap) { lane = laneIntervals.length; laneIntervals.push([]); }
+      else { lane = cap - 1; overflow.add(s.i); }
+    }
+    laneIntervals[lane].push({ lo: s.lo, hi: s.hi });
+    lanes.set(s.i, lane);
+  }
+  return { lanes, overflow };
+}
+
+// ── bracket path: horizontal out from the row edge, rounded corner, vertical
+// run at the lane's x, rounded corner, horizontal back in. xInner = the edge
+// touching the rows column (110 for the left gutter, 0 for the right);
+// xLane is always on the far side of xInner from the rows.
+function arcPath(xInner, xLane, y1, y2, r) {
+  const hSign = xLane < xInner ? -1 : 1;   // direction FROM inner TO lane
+  const vSign = y2 >= y1 ? 1 : -1;
+  const rr = Math.min(r, Math.abs(xLane - xInner) || r, Math.abs(y2 - y1) / 2 || r);
+  const xNear = xInner + hSign * (Math.abs(xLane - xInner) - rr);
+  const y1b = y1 + vSign * rr, y2a = y2 - vSign * rr;
+  return `M ${xInner} ${y1} L ${xNear} ${y1} Q ${xLane} ${y1} ${xLane} ${y1b} `
+    + `L ${xLane} ${y2a} Q ${xLane} ${y2} ${xNear} ${y2} L ${xInner} ${y2}`;
+}
+function arrowHead(xInner, y, hSign, size) {
+  const dir = -hSign; // direction of travel at arrival (into the rows column)
+  const tipX = xInner + dir * size, baseX = xInner;
+  return `${baseX},${(y - size * 0.6).toFixed(1)} ${tipX},${y.toFixed(1)} ${baseX},${(y + size * 0.6).toFixed(1)}`;
+}
+
+// ── chevrons prototype: same bracket as arcPath, but the vertical run is
+// subdivided into `spacing`-px segments so SVG marker-mid has interior
+// vertices to paint a chevron at -- a plain arcPath has only the 4 corner
+// vertices (bend points), which reads as "a bracket", not "a directed run".
+// Path direction is always src(y1) -> dst(y2), so orient=auto markers point
+// downstream regardless of which gutter (up/down) drew this edge.
+function arcPathChevron(xInner, xLane, y1, y2, r, spacing) {
+  const hSign = xLane < xInner ? -1 : 1;
+  const vSign = y2 >= y1 ? 1 : -1;
+  const rr = Math.min(r, Math.abs(xLane - xInner) || r, Math.abs(y2 - y1) / 2 || r);
+  const xNear = xInner + hSign * (Math.abs(xLane - xInner) - rr);
+  const y1b = y1 + vSign * rr, y2a = y2 - vSign * rr;
+  let d = `M ${xInner} ${y1} L ${xNear} ${y1} Q ${xLane} ${y1} ${xLane} ${y1b} `;
+  const runLen = Math.abs(y2a - y1b);
+  const steps = Math.max(0, Math.floor(runLen / spacing));
+  for (let i = 1; i <= steps; i++) d += `L ${xLane} ${(y1b + vSign * spacing * i).toFixed(1)} `;
+  d += `L ${xLane} ${y2a} Q ${xLane} ${y2} ${xNear} ${y2} L ${xInner} ${y2}`;
+  return d;
+}
+
+// ── list-view mutable state (parallels the canvas `nodes`/`edges` maps) ─────
+const listRowEls = new Map();      // id -> row <div>, NODE rows only (pin targets)
+const listRowElByKey = new Map();  // key -> row <div>, EVERY row incl. dirs (hl targets,
+                                    // since a rolled-up arc's far end may be a collapsed dir)
+const listNodeMeta = new Map();    // id -> {file, line, label, kind}, VISIBLE rows only
+const listAllNodeMeta = new Map(); // id -> {label, kind, file, line}, EVERY kept node
+                                    // regardless of filter/collapse -- ghost reveal needs to
+                                    // look up a currently-hidden neighbor's label/kind
+const listRowIndexById = new Map(); // id -> current visible row index, VISIBLE rows only
+                                    // (ghost reveal anchors its stub at the HOVERED row's y)
+let listArcs = [];                 // [{srcKey, dstKey, kinds, rolled, n, pathEl, arrowEl}]
+const collapsedKeys = new Set();   // in-memory collapse state, keyed by row.key
+let focusMode = false;             // `f` hotkey: hide rows outside the pinned flow slice.
+                                    // SEPARATE flag from kindFilter -- both feed applyCollapse
+                                    // as independent hide predicates (hide if EITHER says so),
+                                    // so toggling legend chips never clobbers focus and vice versa
+let allFolded = false;             // fold-all chip state (label mirror only; collapsedKeys is truth)
+
+// cached inputs for a collapse/filter toggle to re-render from without
+// re-querying
+let lastListRows = [], lastListMergedEdges = [], lastKeptEdgeCount = 0, lastDroppedCount = 0;
+
+// ── focus mode: the transitive connected slice over the CURRENT edge set,
+// seeded from the pinned NODE ids (a pinned dir key can't seed -- edges are
+// node-id keyed), walked both directions to a fixpoint. Recomputed on every
+// refreshListView so pin changes track live while the mode is on.
+function computeFocusSlice() {
+  const keep = new Set([...pinned].filter(id => listAllNodeMeta.has(id)));
+  let grew = keep.size > 0;
+  while (grew) {
+    grew = false;
+    for (const m of lastListMergedEdges) {
+      const s = keep.has(m.src), d = keep.has(m.dst);
+      if (s !== d) { keep.add(s ? m.dst : m.src); grew = true; }
+    }
+  }
+  return keep;
+}
+function setFocusMode(on) {
+  if (focusMode === on) return;
+  focusMode = on;
+  const chip = document.getElementById('focusChip');
+  if (chip) chip.classList.toggle('on', focusMode);
+  refreshListView();
+}
+function toggleFocusMode() {
+  if (focusMode) { setFocusMode(false); return; }
+  if (viewMode !== 'list' || !pinned.size) return;      // needs a non-empty selection
+  if (!computeFocusSlice().size) return;                 // dir-only pins: nothing to slice from
+  setFocusMode(true);
+}
+
+// ── fold all: one-click collapse of every foldable row; second click clears.
+// Manual per-row toggles afterward just mutate collapsedKeys -- the chip's
+// label only tracks the last all-or-nothing action.
+function toggleFoldAll() {
+  allFolded = !allFolded;
+  collapsedKeys.clear();
+  if (allFolded) for (const r of lastListRows) if (r.hasChildren) collapsedKeys.add(r.key);
+  const chip = document.getElementById('foldAllChip');
+  if (chip) chip.textContent = allFolded ? 'unfold all' : 'fold all';
+  refreshListView();
+}
+function syncListChips() { // fresh query reset both flags -- reflect it if the chips exist
+  const fc = document.getElementById('focusChip');
+  if (fc) fc.classList.toggle('on', focusMode);
+  const fa = document.getElementById('foldAllChip');
+  if (fa) fa.textContent = allFolded ? 'unfold all' : 'fold all';
+}
+
+// ── trace mode: flat, forward-only, depth-tracked BFS from the pinned
+// node(s), over the SAME edge set list view already has loaded
+// (lastListMergedEdges/listAllNodeMeta) -- no re-query, no daemon round
+// trip. Deliberately a separate algorithm from computeFocusSlice (which
+// walks both directions to an undirected fixpoint for the tree-view "focus"
+// filter): trace wants ONE direction and a depth per node, ordered
+// depth-ascending so the render reads as "what happens after this, in
+// order" rather than "what's connected to this".
+const traceRowEls = new Map(); // id -> row <div>, current trace render only
+function computeTraceRows() {
+  const depth = new Map();   // id -> min hop count from ANY pinned seed
+  const seeds = [...pinned].filter(id => listAllNodeMeta.has(id));
+  const queue = [];
+  for (const id of seeds) { depth.set(id, 0); queue.push(id); }
+  for (let head = 0; head < queue.length; head++) {
+    const from = queue[head];
+    const d = depth.get(from);
+    for (const m of lastListMergedEdges) {
+      if (m.src !== from || depth.has(m.dst)) continue; // BFS order = shortest hop wins
+      depth.set(m.dst, d + 1);
+      queue.push(m.dst);
+    }
+  }
+  const rows = [...depth.entries()].map(([id, d]) => {
+    const meta = listAllNodeMeta.get(id) || {};
+    return { id, d, label: meta.label || id, kind: meta.kind || '',
+      file: meta.file || null, line: meta.line || null };
+  });
+  // depth ascending, ties by (file, line) -- "the order it happens" within a hop.
+  rows.sort((a, b) => a.d - b.d
+    || String(a.file || '').localeCompare(String(b.file || ''))
+    || (a.line || 0) - (b.line || 0));
+  return rows;
+}
+function renderTraceView() {
+  const rows = computeTraceRows();
+  let html = '';
+  for (const r of rows) {
+    const pad = 8 + r.d * 14; // indent by depth, same per-level step list view uses
+    const kc = r.kind ? kindColor(r.kind) : '';
+    const lineCell = r.line != null
+      ? `<span class="lline" title="open ${esc(r.file || '')}:${r.line}">:${r.line}</span>` : '';
+    html += `<div class="lrow lrow-node${pinned.has(r.id) ? ' pinned' : ''}" `
+      + `data-id="${esc(r.id)}" style="padding-left:${pad}px">`
+      + `<span class="ltri ltri-none"></span>`
+      + `<span class="tdepth">#${r.d}</span>`
+      + `<span class="ldot"${kc ? ` style="background:${kc}"` : ''}></span>`
+      + `<span class="llabel" title="${esc(r.label)}">${esc(r.label)}</span>`
+      + (r.kind ? `<span class="lkind">${esc(r.kind)}</span>` : '')
+      + lineCell + `</div>`;
+  }
+  const rowsEl = document.getElementById('traceRows');
+  rowsEl.innerHTML = html
+    || `<div class="lrow-empty">no forward flow from the pinned node(s) in the currently loaded edges</div>`;
+  traceRowEls.clear();
+  for (const el of rowsEl.children) if (el.dataset.id) traceRowEls.set(el.dataset.id, el);
+  document.getElementById('countPill').textContent =
+    rows.length ? `${rows.length} reached · max depth ${rows[rows.length - 1].d}` : '0 reached';
+}
+// entered from list view's "trace" proto chip; a no-op with nothing pinned.
+// Deliberately does NOT go through renderList/render() -- those belong to
+// the tree-view's own data-refresh path and clear `pinned` as a side
+// effect (see renderList's "fresh data" comment above); trace reuses the
+// CURRENT list state as-is, so nothing that already got pinned is lost.
+function enterTraceMode() {
+  if (viewMode !== 'list' || !pinned.size) return;
+  viewMode = 'trace';
+  writeLocalStorage(MODE_KEY, viewMode);
+  applyViewMode();
+  renderTraceView();
+}
+
+function renderList(nodeRows, edgeRows) {
+  pinned.clear(); hoveredId = null; kindFilter.clear(); collapsedKeys.clear(); hoverCardEl.hidden = true;
+  focusMode = false; allFolded = false; syncListChips(); // fresh data: no pins -> no slice to focus
+
+  const ids = new Set(nodeRows.map(r => String(r[0])));
+  const keptEdges = edgeRows.filter(r => ids.has(String(r[0])) && ids.has(String(r[1])));
+  const dropped = edgeRows.length - keptEdges.length;
+  const linked = new Set();
+  for (const r of keptEdges) { linked.add(String(r[0])); linked.add(String(r[1])); }
+  const keptNodes = nodeRows.filter(r => !linkedOnly || linked.has(String(r[0])));
+
+  lastListRows = buildRows(keptNodes);
+  lastListMergedEdges = mergeEdgeRows(keptEdges);
+  lastKeptEdgeCount = keptEdges.length;
+  lastDroppedCount = dropped;
+
+  listAllNodeMeta.clear();
+  for (const r of keptNodes) {
+    listAllNodeMeta.set(String(r[0]), {
+      label: r[1] != null && r[1] !== '' ? String(r[1]) : String(r[0]),
+      kind: r[2] != null && r[2] !== '' ? String(r[2]) : '',
+      file: r[3] != null && r[3] !== '' ? String(r[3]) : null,
+      line: r[4] != null && r[4] !== '' ? Number(r[4]) : null,
+    });
+  }
+
+  refreshListView();
+
+  buildLegendList(
+    keptNodes.map(r => (r[2] != null && r[2] !== '') ? String(r[2]) : ''),
+    lastListMergedEdges.map(m => m.kinds));
+  refreshHighlight();
+}
+
+// re-derive visible rows + rolled-up arcs from the cached last query result
+// and re-render both -- driven by the initial renderList, every collapse
+// toggle, AND every kind-filter toggle (no re-query, buildRows/applyCollapse
+// are both pure; kindFilter is threaded straight in as another visibility
+// predicate ANDed with collapse -- see applyCollapse's isFilteredOut).
+function refreshListView() {
+  const focusKeep = focusMode ? computeFocusSlice() : null;
+  const { visibleRows, arcs, collapsedCount, filteredCount } =
+    applyCollapse(lastListRows, collapsedKeys, lastListMergedEdges, kindFilter, focusKeep);
+
+  listNodeMeta.clear();
+  listRowIndexById.clear();
+  visibleRows.forEach((r, i) => {
+    if (r.type !== 'node' || r.id == null) return;
+    listRowIndexById.set(r.id, i);
+    listNodeMeta.set(r.id, { file: r.file, line: r.line, label: r.label, kind: r.kind });
+  });
+
+  renderListRows(visibleRows);
+  drawGutterArcs(arcs, visibleRows.length);
+
+  document.getElementById('countPill').textContent =
+    `${listRowIndexById.size} nodes · ${lastKeptEdgeCount} edges`
+    + (arcs.length !== lastKeptEdgeCount ? ` · ${arcs.length} drawn` : '')
+    + (lastDroppedCount ? ` · ${lastDroppedCount} dropped` : '')
+    + (collapsedCount ? ` · ${collapsedCount} collapsed` : '')
+    + (filteredCount ? ` · ${filteredCount} filtered` : '');
+
+  refreshListHighlight();
+}
+
+function toggleCollapse(key) {
+  if (!key) return;
+  if (collapsedKeys.has(key)) collapsedKeys.delete(key); else collapsedKeys.add(key);
+  refreshListView();
+}
+
+function renderListRows(rows) {
+  let html = '';
+  for (const r of rows) {
+    const pad = 8 + r.depth * 14;
+    const collapsed = r.hasChildren && collapsedKeys.has(r.key);
+    const tri = r.hasChildren
+      ? `<span class="ltri" data-key="${esc(r.key)}">${collapsed ? '▸' : '▾'}</span>`
+      : `<span class="ltri ltri-none"></span>`;
+    if (r.type === 'dir') {
+      html += `<div class="lrow lrow-dir" data-key="${esc(r.key)}" style="padding-left:${pad}px">`
+        + tri + `<span class="ldot"></span><span class="llabel" title="${esc(r.label)}">${esc(r.label)}</span></div>`;
+      continue;
+    }
+    const kc = r.kind ? kindColor(r.kind) : '';
+    const lineCell = r.line != null
+      ? `<span class="lline" title="open ${esc(r.file || '')}:${r.line}">:${r.line}</span>` : '';
+    html += `<div class="lrow lrow-node" data-id="${esc(r.id)}" data-key="${esc(r.key)}" style="padding-left:${pad}px">`
+      + tri
+      + `<span class="ldot"${kc ? ` style="background:${kc}"` : ''}></span>`
+      + `<span class="llabel" title="${esc(r.label)}">${esc(r.label)}</span>`
+      + (r.kind ? `<span class="lkind">${esc(r.kind)}</span>` : '')
+      + lineCell + `</div>`;
+  }
+  const rowsEl = document.getElementById('listRows');
+  rowsEl.innerHTML = html;
+  listRowEls.clear();
+  listRowElByKey.clear();
+  for (const el of rowsEl.children) {
+    listRowElByKey.set(el.dataset.key, el);
+    if (el.classList.contains('lrow-node')) listRowEls.set(el.dataset.id, el);
+  }
+}
+
+// arcs are rebuilt only from refreshListView (data/filter/collapse/mode
+// change drove the call); scrolling never touches this -- the svgs live
+// inside the scrolling element and the browser moves them for free.
+// `arcs` = applyCollapse() output: [{srcIdx, dstIdx, srcKey, dstKey, kinds, rolled, n}],
+// srcIdx/dstIdx already resolved to VISIBLE row positions.
+function drawGutterArcs(arcs, totalRows) {
+  const leftSvg = document.getElementById('gutterLeft');
+  const rightSvg = document.getElementById('gutterRight');
+  const totalH = totalRows * ROW_H;
+  leftSvg.setAttribute('height', totalH);
+  rightSvg.setAttribute('height', totalH);
+  leftSvg.innerHTML = '';
+  rightSvg.innerHTML = '';
+  listArcs = [];
+  lastTeleport = null; // arc records are rebuilt -- a stale bounce anchor would never match
+  listGhostEls = []; // innerHTML='' above already dropped any ghost overlay DOM they held
+
+  const downSpans = [], upSpans = [];
+  arcs.forEach((m, i) => {
+    const span = { i, lo: Math.min(m.srcIdx, m.dstIdx), hi: Math.max(m.srcIdx, m.dstIdx) };
+    (m.srcIdx < m.dstIdx ? downSpans : upSpans).push(span);
+  });
+  const downLanes = assignLanes(downSpans);
+  const upLanes = assignLanes(upSpans);
+
+  const svgNS = 'http://www.w3.org/2000/svg';
+  arcs.forEach((m, i) => {
+    const down = m.srcIdx < m.dstIdx;
+    const laneInfo = down ? downLanes : upLanes;
+    const lane = laneInfo.lanes.get(i);
+    const overflow = laneInfo.overflow.has(i);
+    const y1 = m.srcIdx * ROW_H + ROW_H / 2, y2 = m.dstIdx * ROW_H + ROW_H / 2;
+    const svg = down ? leftSvg : rightSvg;
+    const xInner = down ? GUTTER_W : 0;
+    const xLane = down ? GUTTER_W - (lane + 1) * LANE_W : (lane + 1) * LANE_W;
+    const n = m.kinds.length;
+    const uniqKinds = [...new Set(m.kinds.filter(Boolean))];
+    const kindStr = uniqKinds[0] || '';
+    const color = kindStr ? kindColor(kindStr) : 'var(--muted)';
+    const width = Math.min(4, 1.5 + Math.log2(Math.max(1, n)));
+
+    const path = document.createElementNS(svgNS, 'path');
+    path.setAttribute('d', protoState.chevrons
+      ? arcPathChevron(xInner, xLane, y1, y2, 4, 14)
+      : arcPath(xInner, xLane, y1, y2, 4));
+    path.setAttribute('class', 'arc' + (m.rolled ? ' rolled' : ''));
+    path.setAttribute('stroke', color);
+    path.setAttribute('stroke-width', String(width));
+    path.style.setProperty('--aw', width + 'px'); // base width, so .hl's hover boost stays proportional
+    if (protoState.chevrons) path.setAttribute('marker-mid', 'url(#chevron)');
+    path.style.opacity = overflow ? '0.35' : '1';
+    const kindsLabel = uniqKinds.join(', ');
+    const countLabel = n > 1 ? `×${n}` : '';
+    const suffix = kindsLabel || countLabel ? ` (${[kindsLabel, countLabel].filter(Boolean).join(' ')})` : '';
+    const title = document.createElementNS(svgNS, 'title');
+    title.textContent = m.rolled
+      ? `${m.n} edge${m.n === 1 ? '' : 's'} rolled up`
+      : `${m.srcKey} → ${m.dstKey}${suffix}`;
+    path.appendChild(title);
+    svg.appendChild(path);
+
+    const poly = document.createElementNS(svgNS, 'polygon');
+    poly.setAttribute('points', arrowHead(xInner, y2, down ? -1 : 1, 4));
+    poly.setAttribute('fill', color);
+    poly.setAttribute('class', 'arrow');
+    svg.appendChild(poly);
+
+    const arc = { srcKey: m.srcKey, dstKey: m.dstKey, kinds: m.kinds, rolled: m.rolled,
+                   pathEl: path, arrowEl: poly, svg, y1, y2 };
+    listArcs.push(arc);
+    // edge teleport: click the wire, land at its other endpoint. stopPropagation
+    // keeps the listScroll background-click listener from reading this as a
+    // clear-pins click. Hit area = the stroke only (pointer-events: stroke).
+    path.addEventListener('click', ev => { ev.stopPropagation(); teleportArc(arc); });
+  });
+}
+
+// ── edge teleport: scroll to the arc's OTHER endpoint. First click on an arc
+// jumps AWAY from whichever endpoint sits closer to the current viewport
+// center (that's the row you're "at"); repeated clicks on the SAME arc bounce
+// src <-> dst via lastTeleport, which drawGutterArcs nulls whenever the arc
+// records are rebuilt (any re-render invalidates the anchor).
+let lastTeleport = null; // { arc, to: 'src' | 'dst' }
+function teleportArc(a) {
+  const scroll = document.getElementById('listScroll');
+  const gutterTop = document.getElementById('gutterLeft').offsetTop; // == resolved --bar-h
+  let to;
+  if (lastTeleport && lastTeleport.arc === a) {
+    to = lastTeleport.to === 'dst' ? 'src' : 'dst';
+  } else {
+    const center = scroll.scrollTop + scroll.clientHeight / 2 - gutterTop;
+    to = Math.abs(a.y1 - center) <= Math.abs(a.y2 - center) ? 'dst' : 'src';
+  }
+  lastTeleport = { arc: a, to };
+  const y = to === 'dst' ? a.y2 : a.y1;
+  const key = to === 'dst' ? a.dstKey : a.srcKey;
+  scroll.scrollTo({ top: Math.max(0, gutterTop + y - scroll.clientHeight / 2), behavior: 'smooth' });
+  const el = listRowElByKey.get(key);
+  if (el) {
+    el.classList.remove('tele-flash');
+    void el.offsetWidth; // restart the one-shot animation when re-landing on the same row
+    el.classList.add('tele-flash');
+    clearTimeout(el._teleTimer);
+    el._teleTimer = setTimeout(() => el.classList.remove('tele-flash'), 650);
+  }
+}
+
+function buildLegendList(nodeKinds, edgeKindsLists) {
+  const leg = document.getElementById('legend');
+  leg.innerHTML = '';
+  const counts = new Map();
+  for (const k of nodeKinds) if (k) counts.set(k, (counts.get(k) || 0) + 1);
+  for (const ks of edgeKindsLists) for (const k of ks) if (k) counts.set(k, (counts.get(k) || 0) + 1);
+  for (const [k, c] of [...counts].sort((a, b) => b[1] - a[1])) {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.dataset.kind = k;
+    chip.title = `click to show only "${k}" (click again to restore)`;
+    chip.innerHTML = `<span class="swatch" style="background:${kindColor(k)}"></span>${esc(k)} ${c}`;
+    chip.addEventListener('click', () => {
+      if (kindFilter.has(k)) kindFilter.delete(k); else kindFilter.add(k);
+      applyKindFilter();
+    });
+    leg.appendChild(chip);
+  }
+  applyKindFilter();
+}
+// filter is threaded straight into applyCollapse as another visibility
+// predicate (see refreshListView) -- no per-row dim toggle here, a filtered
+// row simply doesn't come back in visibleRows, so a full recompute+redraw is
+// the only thing needed (row indexes shift, the gutter arcs must too).
+function applyKindFilterList() {
+  refreshListView();
+  for (const chip of document.getElementById('legend').children) {
+    chip.classList.toggle('on', kindFilter.has(chip.dataset.kind));
+  }
+}
+
+// hover highlights the row + its arcs + counterpart rows; pins persist. Same
+// pinned/hoveredId globals as the canvas -- switching views is free. Arc
+// endpoints are keyed by row `key` (== node id for node rows, so hoveredId
+// -- always a node id -- compares directly; a rolled-up arc's far end may
+// instead be a collapsed dir's key, highlighting that dir row).
+// two tiers: .active persists for every arc touching a PINNED (visible)
+// node, regardless of hover; .hl (hover) layers on top -- both re-append to
+// paint above the plain arcs, hover re-appends LAST so it paints above
+// active too. bumpToFront collects which arcs actually got highlighted so
+// buildOverlapBadges can mark shared entry/exit points afterward.
+function bumpToFront(a, cls) {
+  a.pathEl.classList.add(cls);
+  a.arrowEl.classList.add(cls);
+  a.pathEl.parentNode.appendChild(a.pathEl);
+  a.arrowEl.parentNode.appendChild(a.arrowEl);
+}
+
+// ── ghost reveal (list view). Canvas nodes keep their absolute coordinates
+// whether hidden or not, so unhiding a filtered neighbor there is just a
+// class toggle (refreshHighlight). A list row has no such fixed coordinate:
+// its y IS its index in visibleRows, so bringing a filtered-out row back
+// into buildRows/applyCollapse would shift every row below it and make the
+// gutter arcs jump mid-hover. Instead this draws a small floating overlay --
+// a short dashed stub off the HOVERED row's own gutter entry (the one y we
+// know for certain), tipped with a dot + truncated label -- entirely outside
+// the row-index machinery, so nothing else moves. Capped at GHOST_CAP with a
+// "+N more" summary beyond that.
+let listGhostEls = [];
+const GHOST_CAP = 6, GHOST_ROW_GAP = 13, GHOST_STUB = 34;
+function clearListGhosts() {
+  for (const el of listGhostEls) el.remove();
+  listGhostEls = [];
+}
+function showListGhosts(hoveredId) {
+  if (!kindFilter.size || !listRowIndexById.has(hoveredId)) return;
+  const y1 = listRowIndexById.get(hoveredId) * ROW_H + ROW_H / 2;
+
+  // side = which gutter this neighbor would have drawn into had it been
+  // visible (left = hoveredId is the edge source, same "downward" convention
+  // real arcs use; right = hoveredId is the destination)
+  const bySide = { left: new Map(), right: new Map() }; // id -> meta, de-duped
+  for (const m of lastListMergedEdges) {
+    let otherId = null, side = null;
+    if (m.src === hoveredId) { otherId = m.dst; side = 'left'; }
+    else if (m.dst === hoveredId) { otherId = m.src; side = 'right'; }
+    if (otherId == null || otherId === hoveredId || bySide[side].has(otherId)) continue;
+    const meta = listAllNodeMeta.get(otherId);
+    if (!meta || kindFilter.has(meta.kind)) continue; // already visible -- nothing to ghost
+    bySide[side].set(otherId, meta);
+  }
+
+  const svgNS = 'http://www.w3.org/2000/svg';
+  for (const side of ['left', 'right']) {
+    const entries = [...bySide[side].entries()];
+    if (!entries.length) continue;
+    const shown = entries.slice(0, GHOST_CAP);
+    const overflow = entries.length - shown.length;
+    const total = shown.length + (overflow > 0 ? 1 : 0);
+    const svg = document.getElementById(side === 'left' ? 'gutterLeft' : 'gutterRight');
+    const xInner = side === 'left' ? GUTTER_W : 0;
+    const dir = side === 'left' ? -1 : 1; // grows away from the rows column, same as arcPath's hSign
+    const xTip = xInner + dir * GHOST_STUB;
+    const anchor = side === 'left' ? 'end' : 'start';
+    const startY = y1 - ((total - 1) * GHOST_ROW_GAP) / 2;
+
+    shown.forEach(([, meta], i) => {
+      const y = startY + i * GHOST_ROW_GAP;
+      const color = meta.kind ? kindColor(meta.kind) : 'var(--muted)';
+      const g = document.createElementNS(svgNS, 'g');
+      g.setAttribute('class', 'lghost');
+      const stub = document.createElementNS(svgNS, 'path');
+      stub.setAttribute('d', `M ${xInner} ${y1} L ${xTip} ${y}`);
+      stub.setAttribute('class', 'ghost-stub');
+      stub.setAttribute('stroke', color);
+      g.appendChild(stub);
+      const dot = document.createElementNS(svgNS, 'circle');
+      dot.setAttribute('cx', xTip); dot.setAttribute('cy', y); dot.setAttribute('r', 2.5);
+      dot.setAttribute('fill', color);
+      g.appendChild(dot);
+      const text = document.createElementNS(svgNS, 'text');
+      text.setAttribute('x', xTip + dir * 5);
+      text.setAttribute('y', y);
+      text.setAttribute('text-anchor', anchor);
+      text.setAttribute('dominant-baseline', 'central');
+      text.textContent = meta.label.length > 14 ? meta.label.slice(0, 13) + '…' : meta.label;
+      g.appendChild(text);
+      svg.appendChild(g);
+      listGhostEls.push(g);
+    });
+    if (overflow > 0) {
+      const text = document.createElementNS(svgNS, 'text');
+      text.setAttribute('x', xTip + dir * 5);
+      text.setAttribute('y', startY + shown.length * GHOST_ROW_GAP);
+      text.setAttribute('text-anchor', anchor);
+      text.setAttribute('dominant-baseline', 'central');
+      text.setAttribute('class', 'lghost-more');
+      text.textContent = `+${overflow} more`;
+      svg.appendChild(text);
+      listGhostEls.push(text);
+    }
+  }
+}
+
+function refreshListHighlight() {
+  const files = new Set();
+  for (const el of listRowElByKey.values()) { el.classList.remove('hl'); el.classList.remove('pinned'); }
+  for (const a of listArcs) { a.pathEl.classList.remove('hl', 'active'); a.arrowEl.classList.remove('hl', 'active'); }
+  clearListGhosts(); // recomputed below when hoveredId is set; also handles hover-cleared
+
+  const pinnedVisible = new Set();
+  for (const pid of pinned) {
+    // by-key lookup covers dir/file rows too (node rows: key === id, same
+    // element); a pinned dir also lights its rolled-up arcs below, since a
+    // rolled arc's endpoint key IS the collapsed ancestor's key
+    const el = listRowElByKey.get(pid);
+    if (el) { el.classList.add('pinned'); pinnedVisible.add(pid); }
+    const meta = listNodeMeta.get(pid);
+    if (meta && meta.file) files.add(meta.file);
+  }
+
+  const highlighted = [];
+  if (pinnedVisible.size) {
+    for (const a of listArcs) {
+      if (pinnedVisible.has(a.srcKey) || pinnedVisible.has(a.dstKey)) {
+        // SVG paints in document order, no z-index -- every arc entering the
+        // same row shares the same in-run y, so a later unhighlighted path
+        // can paint over an earlier highlighted one. bumpToFront re-appends
+        // so the highlighted wire + arrowhead paint on top. No re-sort
+        // needed when a pin/hover clears: drawGutterArcs rebuilds the gutter
+        // from scratch on every render, so stale ordering is never visible.
+        bumpToFront(a, 'active');
+        highlighted.push(a);
+      }
+    }
+  }
+
+  if (hoveredId) {
+    const slice = new Set([hoveredId]);
+    for (const a of listArcs) {
+      if (a.srcKey === hoveredId) slice.add(a.dstKey);
+      if (a.dstKey === hoveredId) slice.add(a.srcKey);
+    }
+    for (const a of listArcs) {
+      if (a.srcKey === hoveredId || a.dstKey === hoveredId) { bumpToFront(a, 'hl'); highlighted.push(a); }
+    }
+    for (const key of slice) {
+      const el = listRowElByKey.get(key);
+      if (el) el.classList.add('hl');
+      const meta = listNodeMeta.get(key);
+      if (meta && meta.file) files.add(meta.file);
+    }
+    showListGhosts(hoveredId);
+  }
+
+  buildOverlapBadges(highlighted);
+  host.hover([...files]);
+}
+
+// overlap badges: when 2+ currently-highlighted (active or hovered) arcs in
+// the SAME gutter enter/exit at the SAME row (same y), a plain paint-order
+// fix isn't enough -- only one wire is visible AT ALL at that point. Drop
+// one small badge there summing how many actually converge, tooltip listing
+// each arc's far-end label. Cheap: only runs over the highlighted subset
+// (never the full arc list), rebuilt every highlight pass, no animation.
+let overlapBadgeEls = [];
+function clearOverlapBadges() {
+  for (const el of overlapBadgeEls) el.remove();
+  overlapBadgeEls = [];
+}
+function buildOverlapBadges(highlightedArcs) {
+  clearOverlapBadges();
+  const uniq = [...new Set(highlightedArcs)]; // an arc can be both active AND hovered
+  if (uniq.length < 2) return;
+  const groups = new Map(); // "L|R\0y" -> arcs sharing that gutter+row point
+  for (const a of uniq) {
+    for (const y of [a.y1, a.y2]) {
+      const side = a.svg.id === 'gutterLeft' ? 'L' : 'R';
+      const key = side + '\0' + y;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push({ a, y, side });
+    }
+  }
+  const svgNS = 'http://www.w3.org/2000/svg';
+  for (const [key, arr] of groups) {
+    if (arr.length < 2) continue;
+    const { y, side } = arr[0];
+    const svg = side === 'L' ? document.getElementById('gutterLeft') : document.getElementById('gutterRight');
+    const x = side === 'L' ? GUTTER_W : 0;
+    const g = document.createElementNS(svgNS, 'g');
+    g.setAttribute('class', 'overlap-badge');
+    g.style.pointerEvents = 'none';
+    const circle = document.createElementNS(svgNS, 'circle');
+    circle.setAttribute('cx', x); circle.setAttribute('cy', y); circle.setAttribute('r', 7);
+    circle.setAttribute('fill', 'var(--sel)');
+    const text = document.createElementNS(svgNS, 'text');
+    text.setAttribute('x', x); text.setAttribute('y', y);
+    text.setAttribute('text-anchor', 'middle'); text.setAttribute('dominant-baseline', 'central');
+    text.setAttribute('font-size', '8'); text.setAttribute('fill', '#0a0e14'); text.setAttribute('font-weight', '700');
+    text.textContent = '+' + arr.length;
+    const title = document.createElementNS(svgNS, 'title');
+    title.textContent = arr.map(({ a, y: ay }) => {
+      const otherKey = a.y1 === ay ? a.dstKey : a.srcKey;
+      const meta = listNodeMeta.get(otherKey);
+      return meta ? meta.label : otherKey;
+    }).join(', ');
+    g.appendChild(circle); g.appendChild(text); g.appendChild(title);
+    svg.appendChild(g); // last -> paints above every wire in this gutter
+    overlapBadgeEls.push(g);
+  }
+}
+
+// row interactions: delegated on the static #listRows element so nothing
+// gets rebound on every render.
+(function wireListInteractions() {
+  const rowsEl = document.getElementById('listRows');
+  rowsEl.addEventListener('mouseover', ev => {
+    const row = ev.target.closest('.lrow-node');
+    if (row) hoverNode(row.dataset.id);
+  });
+  rowsEl.addEventListener('mouseout', ev => {
+    const row = ev.target.closest('.lrow-node');
+    if (!row) return;
+    const related = ev.relatedTarget && ev.relatedTarget.closest && ev.relatedTarget.closest('.lrow-node');
+    if (related === row) return;
+    hoverNode(null);
+  });
+  // click contract: single click on ANY row (dir/file rows included) = pin
+  // toggle; double click on a FOLDABLE row = collapse/expand. The ▸/▾ glyph
+  // keeps single-click fold as a dedicated hit target. Double-fire guard, two
+  // shapes by row type:
+  //  - foldable rows DEFER the pin behind a timer; the dblclick handler
+  //    cancels it, so a double click folds without a stray pin toggle (and
+  //    without the on-off-on flicker of pinning per click).
+  //  - leaf rows pin IMMEDIATELY on the first click (no UX latency), and
+  //    `ev.detail > 1` drops the second click of a double click, so a
+  //    dblclick on a leaf nets exactly one pin toggle -- never a double.
+  let pendingPin = null;   // { pinId, timer } -- foldable row's deferred single-click pin
+  let lastClickKey = null; // ev.detail counts nearby clicks even across DIFFERENT rows;
+                            // only a repeat on the SAME row is a double-click gesture here
+  let clickAnchorId = null; // last PLAIN-clicked row's pin id/key -- shift-click range anchor
+  const DBLCLICK_MS = 250;
+  // dir rows have no data-id; their pin identity is the collapse key
+  const rowPinId = row => row.classList.contains('lrow-node') ? row.dataset.id : row.dataset.key;
+  // shift+click otherwise extends the browser's native text selection even
+  // without a drag; .lrow already carries user-select:none over the whole
+  // row area, but the selection still needs suppressing at mousedown time
+  // (before click fires) or Safari/Chrome both flash it for one frame.
+  rowsEl.addEventListener('mousedown', ev => { if (ev.shiftKey) ev.preventDefault(); });
+  rowsEl.addEventListener('click', ev => {
+    // triangle keeps single-click collapse on either a dir or a childful
+    // node row; ltri-none is inert (childless rows keep the placeholder)
+    const tri = ev.target.closest('.ltri');
+    if (tri && !tri.classList.contains('ltri-none')) { toggleCollapse(tri.dataset.key); return; }
+    const lineCell = ev.target.closest('.lline');
+    if (lineCell) {
+      const row = lineCell.closest('.lrow-node');
+      const meta = row && listNodeMeta.get(row.dataset.id);
+      if (meta && meta.file) host.open(meta.file, meta.line || 1);
+      return;
+    }
+    const row = ev.target.closest('.lrow');
+    if (!row) { clearPins(); return; }
+    const pinId = rowPinId(row);
+    // shift-click = additive range select spanning the last plain-clicked
+    // row (the anchor) to this row, inclusive, in current VISIBLE row order
+    // (rowsEl.children already IS the visible-row list -- collapsed/filtered
+    // rows never get rendered into it). Never a fold gesture, so it runs
+    // immediately: any pendingPin defer is flushed (not lost) and the range
+    // itself never waits on DBLCLICK_MS. No anchor yet -- e.g. the first
+    // click of a session was itself a shift-click -- falls through to plain
+    // click semantics below instead of spanning nothing.
+    if (ev.shiftKey && clickAnchorId != null) {
+      const rowEls = Array.from(rowsEl.children);
+      const anchorIdx = rowEls.findIndex(r => rowPinId(r) === clickAnchorId);
+      const endIdx = rowEls.indexOf(row);
+      if (anchorIdx >= 0 && endIdx >= 0) {
+        if (pendingPin) { clearTimeout(pendingPin.timer); togglePin(pendingPin.pinId); pendingPin = null; }
+        const [lo, hi] = anchorIdx <= endIdx ? [anchorIdx, endIdx] : [endIdx, anchorIdx];
+        pinRange(rowEls.slice(lo, hi + 1).map(rowPinId));
+        return;
+      }
+    }
+    const sameGesture = ev.detail > 1 && row.dataset.key === lastClickKey;
+    lastClickKey = row.dataset.key;
+    if (!ev.shiftKey) clickAnchorId = pinId; // anchor updates on non-shift row clicks only
+    if (sameGesture) return; // second click of a dblclick: never a second pin toggle
+    if (!row.querySelector('.ltri:not(.ltri-none)')) { togglePin(pinId); return; } // leaf: immediate
+    // foldable: defer the pin one dblclick window so a fold gesture can cancel
+    // it. A pending pin for a DIFFERENT row flushes now rather than being lost.
+    if (pendingPin) { clearTimeout(pendingPin.timer); togglePin(pendingPin.pinId); }
+    pendingPin = { pinId, timer: setTimeout(() => { pendingPin = null; togglePin(pinId); }, DBLCLICK_MS) };
+  });
+  rowsEl.addEventListener('dblclick', ev => {
+    if (ev.target.closest('.ltri') || ev.target.closest('.lline')) return;
+    const row = ev.target.closest('.lrow');
+    if (!row || !row.querySelector('.ltri:not(.ltri-none)')) return; // leaf dblclick: no-op
+    if (pendingPin) { clearTimeout(pendingPin.timer); pendingPin = null; } // deferred pin dies here
+    toggleCollapse(row.dataset.key);
+  });
+  // background click OUTSIDE any row (the padding below the last row, the
+  // gutter margins) -- rowsEl's own listener above only ever sees clicks
+  // that land inside #listRows itself, so a click further out never reached
+  // its `else clearPins()` fallback. Guarded by closest('.lrow') so a click
+  // that already toggled a pin (bubbling up from the handler above) never
+  // double-fires a clear.
+  document.getElementById('listScroll').addEventListener('click', ev => {
+    if (ev.target.closest('.lrow')) return;
+    if (ev.target.closest('.listgutter')) return; // arc clicks teleport, never clear
+    clearPins();
+  });
+})();
+
+// trace mode's own row interactions: same open/select behavior as list rows
+// (click :line cell -> open file, click elsewhere on a row -> toggle pin),
+// but self-contained -- togglePin()/refreshHighlight() branch on
+// viewMode === 'list' vs canvas, neither of which is 'trace', so this
+// mutates `pinned` and the row's own class directly rather than routing
+// through machinery that doesn't know this view exists.
+(function wireTraceInteractions() {
+  const rowsEl = document.getElementById('traceRows');
+  let clickAnchorId = null; // own anchor -- trace has its own row set/order, separate from list's
+  rowsEl.addEventListener('mousedown', ev => { if (ev.shiftKey) ev.preventDefault(); });
+  rowsEl.addEventListener('click', ev => {
+    const lineCell = ev.target.closest('.lline');
+    if (lineCell) {
+      const row = lineCell.closest('.lrow-node');
+      const meta = row && listAllNodeMeta.get(row.dataset.id);
+      if (meta && meta.file) host.open(meta.file, meta.line || 1);
+      return;
+    }
+    const row = ev.target.closest('.lrow-node');
+    if (!row) return;
+    const id = row.dataset.id;
+    // shift-click range: same contract as list view's (additive, inclusive,
+    // current visible order = rowsEl.children), but trace mutates `pinned`
+    // and row classes directly rather than through togglePin/refreshHighlight
+    // (see the file header comment above this IIFE -- neither of those know
+    // trace exists). No anchor yet falls through to the plain toggle below.
+    if (ev.shiftKey && clickAnchorId != null) {
+      const rowEls = Array.from(rowsEl.children).filter(r => r.dataset.id);
+      const anchorIdx = rowEls.findIndex(r => r.dataset.id === clickAnchorId);
+      const endIdx = rowEls.indexOf(row);
+      if (anchorIdx >= 0 && endIdx >= 0) {
+        const [lo, hi] = anchorIdx <= endIdx ? [anchorIdx, endIdx] : [endIdx, anchorIdx];
+        for (const r of rowEls.slice(lo, hi + 1)) {
+          pinned.add(r.dataset.id);
+          r.classList.add('pinned');
+        }
+        return;
+      }
+    }
+    if (pinned.has(id)) pinned.delete(id); else pinned.add(id);
+    row.classList.toggle('pinned', pinned.has(id));
+    if (!ev.shiftKey) clickAnchorId = id; // anchor updates on non-shift row clicks only
+  });
+})();
+
+// ── bar height -> --bar-h: the toolbar is a fixed overlay whose height moves
+// with legend wrapping; the list offsets itself below it via the CSS var.
+(function trackBarHeight() {
+  const bar = document.querySelector('.bar');
+  const apply = () => document.documentElement.style.setProperty('--bar-h', (bar.offsetHeight + 10) + 'px');
+  new ResizeObserver(apply).observe(bar);
+  apply();
+})();
+
+// ── mode dispatch: list | canvas | trace, persisted, list default. Switching
+// list<->canvas re-renders from the cached last query result -- never
+// re-queries. `trace` is reachable only FROM list (its chip lives in list's
+// action-chip row) and is not persisted as a restorable state -- readLocalStorage
+// below only recognizes 'canvas', so a reload after leaving the panel in
+// trace mode lands back on list, which is the right fallback (a restored
+// trace view with no pins would just render its empty-state row). ────────
+const MODE_KEY = 'dl-flow-mode';
+let viewMode = readLocalStorage(MODE_KEY) === 'canvas' ? 'canvas' : 'list';
+let lastNodeRows = null, lastEdgeRows = null;
+
+function render(nodeRows, edgeRows) {
+  lastNodeRows = nodeRows; lastEdgeRows = edgeRows;
+  if (viewMode === 'list') renderList(nodeRows, edgeRows);
+  else if (viewMode === 'trace') renderTraceView();
+  else renderCanvas(nodeRows, edgeRows);
+}
+function applyViewMode() {
+  document.getElementById('viewport').hidden = viewMode !== 'canvas';
+  document.getElementById('listport').hidden = viewMode !== 'list';
+  document.getElementById('tracePort').hidden = viewMode !== 'trace';
+  document.getElementById('zoomPill').hidden = viewMode !== 'canvas';
+  document.getElementById('modeBtn').textContent = viewMode + ' view';
+  buildProtoRow();
+}
+applyViewMode();
+document.getElementById('modeBtn').addEventListener('click', () => {
+  // trace has no forward toggle target of its own -- one click always drops
+  // back to the list it was entered from, preserving that list's pins/
+  // collapse/focus state untouched (trace never mutated any of it).
+  if (viewMode === 'trace') { viewMode = 'list'; writeLocalStorage(MODE_KEY, viewMode); applyViewMode(); return; }
+  viewMode = viewMode === 'list' ? 'canvas' : 'list';
+  writeLocalStorage(MODE_KEY, viewMode);
+  applyViewMode();
+  if (lastNodeRows) render(lastNodeRows, lastEdgeRows);
+});
+
+// ── canvas arrows (prototype toggle): one rotated triangle div per edge, at
+// the wire's visual midpoint, pointing along its flow direction. Positions
+// piggyback on runFlips below (rects already fetched there for the flip
+// class) instead of a second measurement pass.
+let flowArrowEls = []; // aligned 1:1 with `edges` by index
+function clearFlowArrows() {
+  for (const el of flowArrowEls) el.remove();
+  flowArrowEls = [];
+}
+function rebuildFlowArrows() {
+  clearFlowArrows();
+  for (const e of edges) {
+    const el = document.createElement('div');
+    el.className = 'flow-arrow';
+    const ec = e.el.style.getPropertyValue('--ec');
+    if (ec) el.style.setProperty('--ec', ec);
+    world.appendChild(el);
+    flowArrowEls.push(el);
+  }
+  scheduleFlips();
 }
 
 // ── flip the curve onto the correct diagonal (the only edge math) ───────────
@@ -573,12 +2682,32 @@ let flipQueued = false;
 function scheduleFlips() { if (!flipQueued) { flipQueued = true; requestAnimationFrame(runFlips); } }
 function runFlips() {
   flipQueued = false;
-  for (const e of edges) {
+  const arrowsOn = protoState.arrows && flowArrowEls.length === edges.length;
+  edges.forEach((e, i) => {
     const a = nodes.get(e.src)?.el.getBoundingClientRect();
     const b = nodes.get(e.dst)?.el.getBoundingClientRect();
-    if (!a || !b) continue;
-    e.el.classList.toggle('flip', (a.left < b.left) !== (a.top < b.top));
-  }
+    if (!a || !b) return;
+    const flip = (a.left < b.left) !== (a.top < b.top);
+    e.el.classList.toggle('flip', flip);
+    if (!arrowsOn) return;
+    // the wire's fixed cubic (M0,0 C50,0 50,100 100,100) passes through the
+    // box center at t=.5 with tangent (75,150) in its 100x100 viewBox; scale
+    // by (boxW/100, boxH/100) for screen px, negate the y term when .flip's
+    // scaleY(-1) mirrors the rendered curve. Path start (t=0) always maps to
+    // src's anchor center and end (t=1) to dst's, flip or not (the flip
+    // transform mirrors around the box's own center, which fixes the two
+    // corners it swaps to land back on src/dst) -- so this angle always
+    // reads src -> dst, matching the arrowhead direction convention below.
+    const ax = a.left + a.width / 2, ay = a.top + a.height / 2;
+    const bx = b.left + b.width / 2, by = b.top + b.height / 2;
+    const boxW = Math.abs(bx - ax) || 1, boxH = Math.abs(by - ay) || 1;
+    const dx = 0.75 * boxW, dy = 1.5 * boxH * (flip ? -1 : 1);
+    const angle = Math.atan2(dy, dx);
+    const w = toWorld((ax + bx) / 2, (ay + by) / 2);
+    const el = flowArrowEls[i];
+    el.style.left = w.x + 'px'; el.style.top = w.y + 'px';
+    el.style.transform = `translate(-50%, -50%) rotate(${angle}rad)`;
+  });
 }
 
 // ── pointer interactions: node drag/click vs background pan/click ──────────
@@ -590,24 +2719,68 @@ function runFlips() {
 // target is excluded up front so its own click listener (open the file) is
 // never shadowed by drag/select handling.
 const DRAG_THRESHOLD = 4;
-let mode = null;   // null | 'maybe' | 'drag' | 'pan'
+let mode = null;   // null | 'maybe' | 'drag' | 'pan' | 'marquee'
 let downNode = null, dragOff = null, panStart = null, downPos = null;
+
+// ── shift-drag marquee select: an absolutely-positioned box dropped straight
+// into `viewport` (position:fixed inset:0), so ev.clientX/Y double as
+// viewport-local px -- no pan/zoom math to draw it, and the pointerup hit
+// test compares its screen-space getBoundingClientRect() directly against
+// each node card's, same coordinate space, still no layout math. Shift held
+// on pointerdown -- background OR starting on a node -- always means
+// marquee, never a pan or a node drag (simpler and predictable: a shifted
+// press is unambiguously a select gesture).
+let marqueeEl = null, marqueeOrigin = null;
+function startMarquee(x, y) {
+  marqueeOrigin = { x, y };
+  marqueeEl = document.createElement('div');
+  marqueeEl.className = 'marquee';
+  viewport.appendChild(marqueeEl);
+  updateMarquee(x, y);
+}
+function updateMarquee(x, y) {
+  const left = Math.min(marqueeOrigin.x, x), top = Math.min(marqueeOrigin.y, y);
+  marqueeEl.style.left = left + 'px';
+  marqueeEl.style.top = top + 'px';
+  marqueeEl.style.width = Math.abs(x - marqueeOrigin.x) + 'px';
+  marqueeEl.style.height = Math.abs(y - marqueeOrigin.y) + 'px';
+}
+function finishMarquee() {
+  const box = marqueeEl.getBoundingClientRect();
+  const ids = [];
+  for (const [id, n] of nodes) {
+    const r = n.el.getBoundingClientRect();
+    if (!r.width || !r.height) continue; // display:none (kind-filtered/folded-out) card
+    if (box.left < r.right && box.right > r.left && box.top < r.bottom && box.bottom > r.top) ids.push(id);
+  }
+  marqueeEl.remove();
+  marqueeEl = null; marqueeOrigin = null;
+  pinRange(ids); // additive, same as list's range-select -- never toggles off
+}
+function cancelMarquee() {
+  if (marqueeEl) { marqueeEl.remove(); marqueeEl = null; marqueeOrigin = null; }
+}
 
 viewport.addEventListener('pointerdown', ev => {
   if (ev.target.closest('.loc')) return; // let its own click handler run untouched
   const nodeEl = ev.target.closest('.node');
   downPos = { x: ev.clientX, y: ev.clientY };
   downNode = nodeEl || null;
-  mode = 'maybe';
-  if (nodeEl) {
+  if (ev.shiftKey) {
+    mode = 'marquee';
+    startMarquee(ev.clientX, ev.clientY);
+  } else if (nodeEl) {
+    mode = 'maybe';
     const w = toWorld(ev.clientX, ev.clientY);
     dragOff = { x: w.x - parseFloat(nodeEl.style.left), y: w.y - parseFloat(nodeEl.style.top) };
   } else {
+    mode = 'maybe';
     panStart = { x: ev.clientX, y: ev.clientY, vx: view.x, vy: view.y };
   }
   viewport.setPointerCapture(ev.pointerId);
 });
 viewport.addEventListener('pointermove', ev => {
+  if (mode === 'marquee') { updateMarquee(ev.clientX, ev.clientY); return; }
   if (mode === 'maybe') {
     const dx = ev.clientX - downPos.x, dy = ev.clientY - downPos.y;
     if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
@@ -626,6 +2799,7 @@ viewport.addEventListener('pointermove', ev => {
   }
 });
 viewport.addEventListener('pointerup', () => {
+  if (mode === 'marquee') { finishMarquee(); }
   if (mode === 'maybe') {
     if (downNode) togglePin(downNode.dataset.id); else clearPins();
   }
@@ -633,6 +2807,9 @@ viewport.addEventListener('pointerup', () => {
   viewport.classList.remove('panning');
   mode = null; downNode = null; dragOff = null; panStart = null; downPos = null;
 });
+// wheel-zoom pauses wire animation too (like .panning) — a debounced class
+// since wheel fires many times per gesture with no natural "end" event
+let zoomTimer = null;
 viewport.addEventListener('wheel', ev => {
   ev.preventDefault();
   const r = viewport.getBoundingClientRect();
@@ -641,17 +2818,54 @@ viewport.addEventListener('wheel', ev => {
   view.z = Math.min(2.5, Math.max(0.15, view.z * (ev.deltaY < 0 ? 1.1 : 1 / 1.1)));
   view.x = sx - wx * view.z; view.y = sy - wy * view.z;
   applyView(); scheduleFlips();
+  viewport.classList.add('zooming');
+  clearTimeout(zoomTimer);
+  zoomTimer = setTimeout(() => viewport.classList.remove('zooming'), 150);
 }, { passive: false });
 
 // ── toolbar ──────────────────────────────────────────────────────────────────
 document.getElementById('runBtn').addEventListener('click', run);
 document.getElementById('resetBtn').addEventListener('click', () => {
+  if (viewMode === 'list') { document.getElementById('listScroll').scrollTop = 0; return; }
   view.x = 40; view.y = 110; view.z = 1; applyView(); scheduleFlips();
 });
 document.getElementById('linkedBtn').addEventListener('click', function () {
   linkedOnly = !linkedOnly;
   this.classList.toggle('on', linkedOnly);
   run();
+});
+
+// ── help overlay ─────────────────────────────────────────────────────────────
+const helpPanel = document.getElementById('helpPanel');
+function openHelp() { helpPanel.hidden = false; }
+function closeHelp() { helpPanel.hidden = true; }
+function toggleHelp() { helpPanel.hidden ? openHelp() : closeHelp(); }
+document.getElementById('helpBtn').addEventListener('click', toggleHelp);
+document.getElementById('helpClose').addEventListener('click', closeHelp);
+helpPanel.addEventListener('click', ev => { if (ev.target === helpPanel) closeHelp(); }); // backdrop
+function isTypingTarget(el) {
+  const tag = el && el.tagName;
+  return tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || (el && el.isContentEditable);
+}
+document.addEventListener('keydown', ev => {
+  // Escape peels one layer per press: an in-flight marquee first (cancels
+  // the drag without touching `pinned` -- it hasn't committed anything yet),
+  // then help overlay, then focus mode, then the pin set -- so exiting focus
+  // never silently throws the selection away.
+  if (ev.key === 'Escape') {
+    if (mode === 'marquee') { cancelMarquee(); mode = null; downNode = null; dragOff = null; panStart = null; downPos = null; return; }
+    if (!helpPanel.hidden) { closeHelp(); return; }
+    if (viewMode === 'trace') { viewMode = 'list'; writeLocalStorage(MODE_KEY, viewMode); applyViewMode(); return; }
+    if (focusMode) { setFocusMode(false); return; }
+    clearPins();
+    return;
+  }
+  if (ev.key === '?' && !isTypingTarget(ev.target)) { ev.preventDefault(); toggleHelp(); }
+  if (ev.key === 'f' && !ev.metaKey && !ev.ctrlKey && !ev.altKey && !isTypingTarget(ev.target)
+      && viewMode === 'list') {
+    ev.preventDefault();
+    toggleFocusMode(); // no-ops unless pinned is non-empty (or focus is already on)
+  }
 });
 
 function savePreset() {
