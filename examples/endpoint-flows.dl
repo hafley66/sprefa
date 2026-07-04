@@ -1,0 +1,113 @@
+# endpoint-flows.dl — "which HTTP endpoints is this function involved in?"
+#
+# Hover any function in the editor and see the endpoint flows it participates
+# in: "in endpoint flows: GET /users, POST /orders". The seam is where an axum
+# app plugs its handlers into a router in main.rs:
+#
+#     Router::new()
+#         .route("/users",  get(list_users))
+#         .route("/orders", post(create_order))
+#
+# From each `.route(PATH, METHOD(HANDLER))` we learn a (path, method, handler)
+# triple, resolve the handler NAME to its def sym, then walk the resolved call
+# graph FORWARD from that handler. Every function the handler reaches (its
+# helpers, their helpers, transitively) is "involved in" that endpoint. The
+# editor then annotates each involved function with the endpoints it serves.
+#
+#   dl examples/endpoint-flows.dl --root <axum-repo> --lsp     # hover / squiggles
+#   dl examples/endpoint-flows.dl --root <axum-repo> --check   # CI listing (info rows)
+#   dl examples/endpoint-flows.dl --root <axum-repo>           # stdout: the ? queries
+#
+# Reach base: call_edge alone (the resolved, SCIP-preferred caller->callee
+# graph), NOT the value-flow graph from std/flow.dl. call_edge is the cheap
+# first cut — "is this function on a path the handler can call" is a callable-
+# reachability question, and call_edge answers it without lifting df_edge or
+# paying closure(flow_edge). To follow a value (a request field) instead of a
+# callable, `use "std/flow.dl".` and seed the recursion from df_node params of
+# the handler over flow_edge; that is a heavier tick and a different question.
+#
+# Aggregation: dl's head aggregates are count/sum/min/max only — there is no
+# group-concat. So the hover diag emits ONE info row per (function, endpoint):
+# a function in two flows gets two diagnostics ("in endpoint flows: GET /users"
+# and "in endpoint flows: POST /orders"), which the editor stacks on the line.
+#
+# sg-pattern assumptions (axum): the router calls `.route(PATH, METHOD(HANDLER))`
+# with a single method+handler per route (the common form). Combined routes
+# (`.route("/x", get(h).post(h2))`) match only their first method; add a rule
+# for that shape if your app uses it. A different framework (actix, rocket,
+# Express) = swap the ONE sg pattern below; everything downstream is generic.
+
+# Populate _file so the call-graph extractor runs, and feed the sg scan below.
+# main.rs lives under src/ in a standard axum layout — widen the glob if not.
+rel src(path: file).
+src(path) <- scan("WORK", "src/**/*.rs", path, rev).
+
+# ---- the router seam: one row per `.route(PATH, METHOD(HANDLER))` -----------
+# Metavars are ALL-CAPS (ast-grep binds $PATH -> dl var PATH, etc.). PATH is a
+# string-literal node, so its matched text still has the quotes — strip them
+# (head funcs are split/replace/int only, so the strip is the one head call).
+# METHOD is the axum verb fn ("get"/"post"), HANDLER the bare callee name we
+# resolve next. $ROUTER (the receiver) is unused but keeps the pattern a valid
+# method call, so it matches every link in a chained `.route(..).route(..)`
+# builder — each `.route` is its own method-call node, hence its own row.
+rel route(url_path: text, http_method: text, handler_name: text, file: file, line: int).
+route(replace(PATH, "\"", ""), METHOD, HANDLER, path, line) <-
+    scan("WORK", "src/**/*.rs", path, rev),
+    sg(path, rev, :rust, "$ROUTER.route($PATH, $METHOD($HANDLER))", line).
+
+# ---- verb table: axum method fn -> HTTP verb label --------------------------
+# Doubles as the verb whitelist (a stray `.route` whose second arg isn't one of
+# these produces no endpoint). Kept as facts because dl's head funcs can't
+# upper-case; add rows for any custom method helper.
+rel method_label(method_fn: text, verb: text).
+method_label("get", "GET").
+method_label("post", "POST").
+method_label("put", "PUT").
+method_label("delete", "DELETE").
+method_label("patch", "PATCH").
+method_label("head", "HEAD").
+method_label("options", "OPTIONS").
+
+# ---- resolve each handler NAME to its def sym, label the endpoint -----------
+# call_name(sym, name) is the indexable def-name -> sym handle; the resolved
+# sym is repo-qualified, matching call_edge's endpoints and call_def's key. The
+# endpoint label is built in the head (string interpolation) so it flows into
+# both the reach seed and the hover message verbatim.
+rel endpoint_seed(endpoint_label: text, handler_sym: text).
+endpoint_seed("${verb} ${url_path}", handler_sym) <-
+    route(url_path, method_fn, handler_name, _, _),
+    method_label(method_fn, verb),
+    call_name(handler_sym, handler_name).
+
+# ---- honest unresolved case: a route whose handler resolves to no def -------
+# (a handler defined in an unscanned module, a macro-generated one, or a typo).
+# Warn at the .route call site rather than silently dropping the endpoint.
+diag(path: file, line: line, severity: "warning", code: "endpoint-handler-unresolved",
+     msg: "route handler `${handler_name}` (${method_fn} ${url_path}) resolved to no def") <-
+    route(url_path, method_fn, handler_name, file, line),
+    !call_name(_, handler_name).
+
+# ---- forward reachability over the resolved call graph ----------------------
+# Recursive derived rule seeded at the handler syms (a closure() rel can't be
+# read unpinned in a rule body, so reachability-from-a-set is a seeded recursive
+# rule, not closure(call_edge)). endpoint_reach(label, sym) = "sym is on some
+# call path the label's handler can reach".
+rel endpoint_reach(endpoint_label: text, involved_sym: text).
+endpoint_reach(endpoint_label, handler_sym) <-
+    endpoint_seed(endpoint_label, handler_sym).
+endpoint_reach(endpoint_label, callee) <-
+    endpoint_reach(endpoint_label, caller),
+    call_edge(caller, callee, _).
+
+# ---- the hover projection: one info diag per (function, endpoint) ------------
+# call_def(repo, sym, kind, file, line, end) gives the involved function's decl
+# site; the diag lands on that line so the editor shows it on hover of the fn.
+diag(path: file, line: line, severity: "info", code: "endpoint-flow",
+     msg: "in endpoint flows: ${endpoint_label}") <-
+    endpoint_reach(endpoint_label, involved_sym),
+    call_def(_, involved_sym, _, file, line, _).
+
+? route(url_path, http_method, handler_name, file, line).
+? endpoint_seed(endpoint_label, handler_sym).
+? endpoint_reach(endpoint_label, involved_sym).
+? diag(path, line, severity: sev, code, msg).

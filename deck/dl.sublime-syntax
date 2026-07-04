@@ -1,0 +1,151 @@
+%YAML 1.2
+---
+# dl (sprefa's datalog-over-code DSL) syntax definition for syntect/bat.
+#
+# Hand-converted from editors/vscode-dl/syntaxes/dl.tmLanguage.json. Not
+# exhaustive -- it covers the scopes that make dl read well on a slide:
+# comments, rule keywords, source ops (scan/match/ast/sg/json/cmd/comment),
+# the `<-` rule arrow, the `?` query marker, strings + regex literals with
+# their placeholder sub-tokens, `:atom`/`:lang` tags, fs:/glob: schemes,
+# kwarg/type-annotation colons, operators, and variables (upper vs lower).
+#
+# ADDED beyond the tmLanguage source: an explicit `@qualifier` context for
+# `@in`/`@out`/`@async`/`@stream`/`@next`/`@recompute` port/effect
+# qualifiers and `@@mark` chat-marks -- the vscode grammar leaves the `@`
+# uncolored (only the trailing identifier matches relation-call), which
+# reads flat on a projector. Regenerate: re-run this hand conversion from
+# editors/vscode-dl/syntaxes/dl.tmLanguage.json when the grammar changes,
+# then `cp deck/dl.sublime-syntax ~/.config/bat/syntaxes/ && bat cache --build`.
+name: dl
+file_extensions:
+  - dl
+scope: source.dl
+
+contexts:
+  main:
+    - include: comment
+    - include: qualifier
+    - include: rule-arrow
+    - include: query-marker
+    - include: keywords
+    - include: rel-annotation
+    - include: kwarg-name
+    - include: scheme-backtick
+    - include: scheme-plain
+    - include: regex
+    - include: string
+    - include: lang-tag
+    - include: relation-call
+    - include: number
+    - include: operators
+    - include: variable
+
+  comment:
+    - match: '#.*$'
+      scope: comment.line.number-sign.dl
+
+  qualifier:
+    # @in(class) / @out(class) ports, @async/@stream/@next/@recompute
+    # effect qualifiers, @@mark chat-marks.
+    - match: '@{1,2}[A-Za-z_][A-Za-z0-9_]*'
+      scope: storage.modifier.dl
+
+  rule-arrow:
+    - match: '<-'
+      scope: keyword.operator.arrow.dl
+
+  query-marker:
+    - match: '(^|\s)(\?)(\s|$)'
+      captures:
+        2: keyword.operator.other.dl
+
+  keywords:
+    - match: '\b(rel|scan|match|ast|sg|ast_yaml|json|cmd|comment|closure|gen|def|use|anchor|type)\b'
+      scope: keyword.other.dl
+
+  rel-annotation:
+    # rel-decl column type annotation: name: type (space-after-colon convention).
+    - match: '\b([a-z_]\w*)\s*:\s+(text|int|path|file|dir|repo|rev)\b'
+      captures:
+        1: variable.parameter.dl
+        2: storage.type.primitive.dl
+
+  kwarg-name:
+    # op-call kwarg form: name: term (end_col: ec, label: lab).
+    - match: '\b([a-z_]\w*)\s*:\s+'
+      captures:
+        1: variable.parameter.dl
+
+  scheme-backtick:
+    - match: '(fs|glob):(`[^`]*`)'
+      captures:
+        1: support.type.dl
+        2: string.interpolated.dl
+
+  scheme-plain:
+    - match: '(fs|glob):([^\s,)\.]+)'
+      captures:
+        1: support.type.dl
+        2: string.interpolated.dl
+
+  regex:
+    - match: '/'
+      scope: punctuation.definition.string.begin.dl
+      push: regex-body
+
+  regex-body:
+    - match: '\\/'
+      scope: constant.character.escape.dl
+    - match: '\?<[A-Za-z_][A-Za-z0-9_]*>|\$[A-Za-z_][A-Za-z0-9_]*|\$'
+      scope: constant.other.placeholder.dl
+    - match: '/'
+      scope: punctuation.definition.string.end.dl
+      pop: true
+    - match: '[^/\n]+'
+      scope: string.regexp.dl
+
+  string:
+    - match: '"'
+      scope: punctuation.definition.string.begin.dl
+      push: string-body
+
+  string-body:
+    - match: '\\.'
+      scope: constant.character.escape.dl
+    - match: '\$\{[^}]*\}'
+      scope: punctuation.definition.interpolated.dl
+    - match: '\{[A-Za-z_][A-Za-z0-9_]*\}'
+      scope: constant.other.placeholder.dl
+    # ast-grep metavariables inside pattern strings: $X (single), $$$X (variadic).
+    - match: '\${3}[A-Za-z_][A-Za-z0-9_]*|\$[A-Za-z_][A-Za-z0-9_]*'
+      scope: constant.other.placeholder.dl
+    - match: '"'
+      scope: punctuation.definition.string.end.dl
+      pop: true
+    - match: '[^"\\$]+'
+      scope: string.quoted.double.dl
+
+  lang-tag:
+    - match: ':(rust|c|kotlin|ts|tsx|js|py|go|json|toml|yaml|cpp)\b'
+      scope: support.constant.language.dl
+
+  relation-call:
+    # any non-keyword ident immediately before ( is a relation name (head
+    # decl, rule head, body atom, query) -- catches diag(/sec(/hit( and
+    # aggregate calls like count(.
+    - match: '\b[a-z_]\w*(?=\()'
+      scope: entity.name.function.dl
+
+  number:
+    - match: '\b\d+\b'
+      scope: constant.numeric.dl
+
+  operators:
+    - match: '=~|~~|!=|<=|>=|=|<|>'
+      scope: keyword.operator.comparison.dl
+
+  variable:
+    - match: '\b[A-Z_][A-Za-z0-9_]*\b'
+      scope: variable.other.constant.dl
+    - match: '\b[a-z][A-Za-z0-9_]*\b'
+      scope: variable.other.readwrite.dl

@@ -1,0 +1,8 @@
+# facts, straight from a scan -- no hand-written parser
+rel call_site(caller_path: file, call_line: int, callee_name: text).
+
+call_site(caller_path, call_line, CalleeName) <-
+    scan("WORK", "src/**/*.rs", caller_path, rev),
+    sg(caller_path, rev, :rust, "$CalleeName(...)", call_line).
+
+? call_site(caller_path, call_line, callee_name).

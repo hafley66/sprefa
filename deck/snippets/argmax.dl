@@ -1,0 +1,17 @@
+# argmax without an aggregate: candidate, beaten, winner
+rel candidate_position(session_id: text, seen_seq: int).
+candidate_position(session_id, seen_seq) <- read_event(session_id, seen_seq).
+
+rel beaten_position(session_id: text, seen_seq: int).
+beaten_position(session_id, seen_seq) <-
+    candidate_position(session_id, seen_seq),
+    candidate_position(session_id, later_seq),
+    later_seq > seen_seq.
+
+# the winner: a candidate that nothing later beats
+rel latest_position(session_id: text, seen_seq: int).
+latest_position(session_id, seen_seq) <-
+    candidate_position(session_id, seen_seq),
+    !beaten_position(session_id, seen_seq).
+
+? latest_position(session_id, seen_seq).

@@ -1,0 +1,23 @@
+# chat-marks: assign each message to the nearest preceding "@@mark" line
+rel mark(session_id: text, mark_seq: int, section_title: text).
+mark(session_id, mark_seq, section_title) <-
+    message(session_id, mark_seq, prompt_text),
+    prompt_text =~ /^@@mark /,
+    section_title = replace_re(prompt_text, "^@@mark ", "").
+
+rel candidate_mark(session_id: text, message_seq: int, mark_seq: int, section_title: text).
+candidate_mark(session_id, message_seq, mark_seq, section_title) <-
+    message(session_id, message_seq, _),
+    mark(session_id, mark_seq, section_title),
+    mark_seq <= message_seq.
+
+rel beaten_mark(session_id: text, message_seq: int, mark_seq: int).
+beaten_mark(session_id, message_seq, mark_seq) <-
+    candidate_mark(session_id, message_seq, mark_seq, _),
+    candidate_mark(session_id, message_seq, later_mark_seq, _),
+    later_mark_seq > mark_seq.
+
+rel section_of(session_id: text, message_seq: int, section_title: text).
+section_of(session_id, message_seq, section_title) <-
+    candidate_mark(session_id, message_seq, mark_seq, section_title),
+    !beaten_mark(session_id, message_seq, mark_seq).

@@ -1,0 +1,6 @@
+# recursion for free: closure() lifts any edge relation to its transitive walk
+rel blast_radius(changed_symbol: text, dependent_symbol: text).
+blast_radius(changed_symbol, dependent_symbol) <-
+    closure(type_edge)(changed_symbol, dependent_symbol).
+
+? blast_radius("Engine::tick", dependent_symbol).

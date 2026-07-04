@@ -1,0 +1,10 @@
+# diag is a reserved, fixed-schema built-in -- a rule heading it is a lint rail
+diag(path: source_path, line: line_number, col: column, end_col: end_column,
+     severity: "error", code: "banned-word",
+     msg: "banned word `${matched_word}` -- rephrase") <-
+    scan("WORK", "**/*.md", source_path, rev),
+    match(source_path, rev, /(?i)(?<matched_word>substrate)/,
+          line_number, column, end_column).
+
+# dl examples/banned-word-guard.dl --root . --check   # exit 2 on a hit
+# dl examples/banned-word-guard.dl --root . --lsp      # squiggles while editing

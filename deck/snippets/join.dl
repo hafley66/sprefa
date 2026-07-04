@@ -1,0 +1,13 @@
+# the join: attribute each call to the function it lives inside
+rel function_decl(source_path: file, decl_line: int, function_name: text).
+function_decl(source_path, decl_line, FunctionName) <-
+    scan("WORK", "src/**/*.rs", source_path, rev),
+    sg(source_path, rev, :rust, "fn $FunctionName", decl_line).
+
+rel call_in_function(source_path: file, function_name: text, callee_name: text).
+call_in_function(source_path, function_name, callee_name) <-
+    call_site(source_path, call_line, callee_name),
+    function_decl(source_path, decl_line, function_name),
+    decl_line <= call_line.
+
+? call_in_function(source_path, function_name, callee_name).

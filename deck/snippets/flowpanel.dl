@@ -1,0 +1,13 @@
+# the VS Code flow panel is a webview around this exact query --
+# point it at a function, walk who is downstream
+rel function_in_file(source_path: file, function_name: text).
+function_in_file(source_path, FunctionName) <-
+    scan("WORK", "src/engine.rs", source_path, rev),
+    sg(source_path, rev, :rust, "fn $FunctionName", _).
+
+rel value_flows_from(function_name: text, dependent_symbol: text).
+value_flows_from(function_name, dependent_symbol) <-
+    function_in_file(_, function_name),
+    closure(flow_edge)(function_name, dependent_symbol).
+
+? value_flows_from(function_name, dependent_symbol).

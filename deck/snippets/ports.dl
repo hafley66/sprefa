@@ -1,0 +1,14 @@
+# ports: rels marked @in/@out are the program's boundary, never a transport
+rel tool_call(request_id: text, tool_name: text, args_json: text) @in(rpc).
+rel tool_result(request_id: text, result_json: text) @out(rpc).
+
+# a lattice relation: one row per key survives, merge() picks the winner
+rel route(request_id: text, result_json: text, priority: int)
+    key(request_id) merge(MaxBy(priority)).
+
+route(request_id, result_json, 100) <-
+    tool_call(request_id, "query_sql", result_json).
+route(request_id, "unknown tool", 1) <-
+    tool_call(request_id, tool_name, _), !known_tool(tool_name).
+
+tool_result(request_id, result_json) <- route(request_id, result_json, _).
