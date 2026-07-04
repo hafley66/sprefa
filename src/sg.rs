@@ -9,16 +9,32 @@ use ast_grep_language::{LanguageExt, SupportLang};
 /// a grammar here without updating the skill matrix fails the matrix-honesty
 /// test. Shared by the `sg` AND `ast_yaml` ops (both call `sg_lang`).
 const SG_LANG_TABLE: &[(&str, &[&str], SupportLang)] = &[
-    ("rust",       &["rs"],          SupportLang::Rust),
-    ("typescript", &["ts"],          SupportLang::TypeScript),
-    ("tsx",        &[],              SupportLang::Tsx),
-    ("javascript", &["js"],          SupportLang::JavaScript),
-    ("python",     &["py"],          SupportLang::Python),
-    ("go",         &[],              SupportLang::Go),
-    ("json",       &[],              SupportLang::Json),
-    ("c",          &[],              SupportLang::C),
-    ("cpp",        &["cc", "cxx"],   SupportLang::Cpp),
-    ("kotlin",     &["kt"],          SupportLang::Kotlin),
+    ("rust",       &["rs"],                SupportLang::Rust),
+    ("typescript", &["ts"],                SupportLang::TypeScript),
+    ("tsx",        &[],                    SupportLang::Tsx),
+    ("javascript", &["js", "jsx"],         SupportLang::JavaScript),
+    ("python",     &["py"],                SupportLang::Python),
+    ("go",         &["golang"],            SupportLang::Go),
+    ("json",       &[],                    SupportLang::Json),
+    ("c",          &[],                    SupportLang::C),
+    ("cpp",        &["cc", "cxx", "c++"],  SupportLang::Cpp),
+    ("kotlin",     &["kt"],                SupportLang::Kotlin),
+    // The rest of ast-grep-language's SupportLang set (every grammar the crate
+    // ships) — the embedded-language seam wants css/html for styled-components and
+    // markdown fences, and the polyglot corpus wants the compiled-language grammars.
+    ("css",        &[],                    SupportLang::Css),
+    ("html",       &[],                    SupportLang::Html),
+    ("bash",       &["sh"],                SupportLang::Bash),
+    ("csharp",     &["cs"],                SupportLang::CSharp),
+    ("java",       &[],                    SupportLang::Java),
+    ("scala",      &[],                    SupportLang::Scala),
+    ("swift",      &[],                    SupportLang::Swift),
+    ("ruby",       &["rb"],                SupportLang::Ruby),
+    ("php",        &[],                    SupportLang::Php),
+    ("lua",        &[],                    SupportLang::Lua),
+    ("elixir",     &["ex"],                SupportLang::Elixir),
+    ("haskell",    &["hs"],                SupportLang::Haskell),
+    ("yaml",       &["yml"],               SupportLang::Yaml),
 ];
 
 fn sg_lang(lang: &str) -> Result<SupportLang> {
@@ -153,5 +169,50 @@ mod tests {
             assert!(sg_lang(name).is_ok(), "sg_langs lists `{name}` but sg_lang rejects it");
         }
         assert_eq!(sg_langs().len(), SG_LANG_TABLE.len());
+    }
+
+    /// Every newly-exposed grammar parses a trivial source and a bare metavar
+    /// pattern matches over it — proof the SupportLang wiring is live, not just
+    /// name-resolvable. One representative pattern per grammar.
+    #[test]
+    fn new_grammars_match_a_trivial_pattern() {
+        let cases: &[(&str, &str, &str)] = &[
+            // (lang, source, pattern) — pattern must produce >=1 hit. Patterns are
+            // grammar-tuned: css declarations need the trailing `;` to parse as a
+            // declaration node, php's `$x` is the whole variable node (no `$$$`).
+            ("css",     ".card { position: fixed; }", "$PROP: $VAL;"),
+            ("html",    "<div class=\"x\">hi</div>",  "<div class=\"x\">hi</div>"),
+            ("bash",    "echo hello",                 "echo $ARG"),
+            ("csharp",  "class C { }",                "class $NAME { }"),
+            ("java",    "class C { }",                "class $NAME { }"),
+            ("scala",   "object O { }",               "object $NAME { }"),
+            ("swift",   "let x = 1",                   "let $NAME = $VAL"),
+            ("ruby",    "def f; end",                 "def $NAME; end"),
+            ("php",     "<?php $x = 1;",              "$VAR = $V"),
+            ("lua",     "local x = 1",                 "local $NAME = $VAL"),
+            ("elixir",  "x = 1",                       "$NAME = $VAL"),
+            ("haskell", "main = putStrLn x",           "main = $BODY"),
+            ("yaml",    "key: value",                  "$K: $V"),
+        ];
+        for (lang, src, pat) in cases {
+            let hits = run_sg(src, lang, pat)
+                .unwrap_or_else(|e| panic!("run_sg({lang}) errored: {e}"));
+            assert!(!hits.is_empty(), "pattern `{pat}` matched nothing in {lang} source `{src}`");
+        }
+    }
+
+    /// The css pattern the styled-components example relies on: over a bare
+    /// declaration block (the body of a `styled.div` template — no selector),
+    /// `$PROP: $VAL;` picks out each declaration and captures property + value.
+    #[test]
+    fn css_declaration_capture() {
+        let css_body = "position: fixed;\ncolor: red;";
+        let hits = run_sg(css_body, "css", "$PROP: $VAL;").unwrap();
+        assert_eq!(hits.len(), 2, "expected two declarations");
+        let position = hits.iter().find(|h| {
+            h.6.iter().any(|(n, t, ..)| n == "PROP" && t == "position")
+        }).expect("a position declaration");
+        let val = position.6.iter().find(|(n, ..)| n == "VAL").map(|(_, t, ..)| t.as_str());
+        assert_eq!(val, Some("fixed"));
     }
 }

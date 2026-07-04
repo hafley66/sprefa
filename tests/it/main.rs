@@ -28,6 +28,7 @@ mod dl_diag;
 mod error_reporting;
 mod authoring_edges;
 mod lang_matrix;
+mod sg_term;
 mod parse_only;
 mod cst_node_rel;
 mod chat_marks;

@@ -425,7 +425,7 @@ pub fn op_docs() -> &'static [(&'static str, &'static str, &'static str, &'stati
         ("scan", "source", "scan([repo,][rev,] glob, path[, rev_out])", "select files; 2-ary omits rev_out, 5-ary names a repo coordinate; outputs path/rev_out take the _ or name: form (rev_out _ or omitted = rev not bound); repo defaults \".\", rev \"WORK\" (WORK/HEAD/any git rev)"),
         ("match", "source", "match(path, rev, /re/, line[, id][, col, end_col])", "regex over file content, one row per match line; (?<cap>..) named groups bind dl vars; $cap is sugar for a lazy named group; trailing id/col bind the whole-match span"),
         ("ast", "source", "ast(path, rev, :lang, \"(query) @cap\", line[, end])", "tree-sitter query; @cap captures bind same-named vars; :lang ∈ rust/c/kotlin/..."),
-        ("sg", "source", "sg(path, rev, :lang, \"$X.unwrap()\", line[, col, end_line, end_col][, id])", "ast-grep pattern; metavar $X binds dl var X (matched text); trailing id binds the whole-match span for structural rewrite via gen(:replace)"),
+        ("sg", "source", "sg(path, rev, :lang, \"$X.unwrap()\", line[, col, end_line, end_col][, id])", "ast-grep pattern; metavar $X binds dl var X (matched text); trailing id binds the whole-match span for structural rewrite via gen(:replace). TERM form sg(:lang, str, \"pat\"[, line, col, end_line, end_col]) parses a STRING bound earlier in the rule (an embedded language body — styled-components css, a code fence) with the ast-grep grammar; spans are RELATIVE to that string, no file, no id (the string form of sg, runs in the join+extract pass like term-form json/jsonp)"),
         ("ast_yaml", "source", "ast_yaml(path, rev, :lang, \"rule yaml\", line, ...)", "ast-grep RuleCore YAML body (inside:/has: relational rule) instead of a pattern string; span outputs share the sg form"),
         ("json", "source", "json(path, rev, q:{ $k: $v })", "declarative brace pattern over json/yaml/toml; each match binds named key AND value captures as dl vars; supports **: recursion, [...$x] spread, re:/glob keys"),
         ("jsonp", "source", "jsonp(path, rev, \"a.*.b\", out)", "dotted path over json/yaml/toml (* = any key/element); the value is located; the string form of json"),
@@ -3976,9 +3976,10 @@ impl Engine {
     /// the extracted vars are post-filtered with `eval_cmp`.
     fn extract_rule_rows(&self, r: &Rule, out_rows: &mut Vec<Vec<Value>>) -> Result<()> {
         let extracts: Vec<&BodyItem> = r.body.iter().filter(|b| matches!(b,
-            BodyItem::JsonP { rev: None, .. } | BodyItem::Json { rev: None, .. })).collect();
+            BodyItem::JsonP { rev: None, .. } | BodyItem::Json { rev: None, .. }
+            | BodyItem::Sg { rev: None, .. })).collect();
         if extracts.len() != 1 {
-            bail!("rule `{}`: a term-form json/jsonp rule must have exactly one extract op \
+            bail!("rule `{}`: a term-form json/jsonp/sg rule must have exactly one extract op \
                    (split a multi-extract rule into chained rules)", r.head.rel);
         }
         let cmps: Vec<&Constraint> = r.body.iter()
@@ -4054,7 +4055,36 @@ impl Engine {
                     }
                 }
             }
-            _ => unreachable!("extracts filtered to JsonP/Json"),
+            // Term-form `sg(:lang, src, "pat", line, col, end_line, end_col)`:
+            // run the ast-grep pattern over each joined row's bound string. Metavar
+            // captures bind by name (like the file form); the span outputs bind the
+            // match's line/col RELATIVE to the bound string (byte 0 = start of the
+            // value). No file, no located id — the caller adds the enclosing
+            // region's own line to reach file coordinates.
+            BodyItem::Sg { src, lang, pattern, line, col, end_line, end_col, .. } => {
+                let srcvar = var_of(src)?;
+                let slv = opt_var(line)?;
+                let clv = opt_var(col)?;
+                let ellv = opt_var(end_line)?;
+                let eclv = opt_var(end_col)?;
+                for jr in &join_rows {
+                    let content = match jr.get(&srcvar) {
+                        Some(Value::Text(s)) => s.clone(),
+                        Some(Value::Int(n)) => n.to_string(),
+                        _ => continue,
+                    };
+                    for (ln, c, eln, ec, _mlo, _mhi, caps) in crate::sg::run_sg(&content, lang, pattern)? {
+                        let mut env = jr.clone();
+                        if let Some(v) = &slv { env.insert(v.clone(), Value::Int(ln)); }
+                        if let Some(v) = &clv { env.insert(v.clone(), Value::Int(c)); }
+                        if let Some(v) = &ellv { env.insert(v.clone(), Value::Int(eln)); }
+                        if let Some(v) = &eclv { env.insert(v.clone(), Value::Int(ec)); }
+                        for (name, text, _lo, _hi) in caps { env.insert(name, Value::Text(text)); }
+                        emit(&env, out_rows)?;
+                    }
+                }
+            }
+            _ => unreachable!("extracts filtered to JsonP/Json/Sg"),
         }
         Ok(())
     }

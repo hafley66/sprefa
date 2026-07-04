@@ -651,9 +651,18 @@ impl Parser {
         Ok(BodyItem::Ast { path, rev, lang, query, line, end, id })
     }
 
+    /// FILE form `sg(path, rev, :lang, "pat", line, col, end_line, end_col, id)`
+    /// vs TERM form `sg(:lang, src, "pat", line, col, end_line, end_col)`. The
+    /// term form LEADS with `:lang` (a colon right after `(`), so a colon in the
+    /// first slot dispatches the term form; anything else is the file form (where
+    /// `:lang` sits third). The term form's `src` is a bound `str` value (an
+    /// embedded-language body); spans are region-relative and there is no `id`.
     fn sg(&mut self) -> Result<BodyItem> {
         self.ident()?; // sg
         self.expect(Tok::LParen)?;
+        if matches!(self.peek(), Some(Tok::Colon)) {
+            return self.sg_term();
+        }
         let path = self.term()?; self.expect(Tok::Comma)?;
         let rev = self.term()?; self.expect(Tok::Comma)?;
         self.expect(Tok::Colon)?;
@@ -681,10 +690,45 @@ impl Parser {
         let id = match &outs[4] { Term::Wild => None, t => Some(t.clone()) };
         self.expect(Tok::RParen)?;
         Ok(BodyItem::Sg {
-            path, rev, lang, pattern,
+            src: path, rev: Some(rev), lang, pattern,
             line: outs[0].clone(), col: outs[1].clone(),
             end_line: outs[2].clone(), end_col: outs[3].clone(),
             id,
+        })
+    }
+
+    /// TERM form `sg(:lang, src, "pat", line, col, end_line, end_col)` — the
+    /// embedded-language seam. `src` is a `str` value bound earlier in the rule
+    /// (a styled-components css body, a markdown fence, a response column). Mirrors
+    /// the term form of `jsonp`/`json`: no file, no `rev`, no `id`; the join binds
+    /// `src` and this op extracts over the bound string. Spans are relative to the
+    /// bound string. The colon after `(` was already peeked by `sg`.
+    fn sg_term(&mut self) -> Result<BodyItem> {
+        self.expect(Tok::Colon)?;
+        let lang = self.ident()?;
+        self.expect(Tok::Comma)?;
+        let src = self.term()?;
+        self.expect(Tok::Comma)?;
+        let pattern = match self.next()? {
+            Tok::Str(s) => s,
+            other => bail!("expected pattern string in sg(:lang, src, \"pat\"), got {:?}", other),
+        };
+        let (pos, named) = if matches!(self.peek(), Some(Tok::Comma)) {
+            self.next()?;
+            self.parse_kwarg_terms()?
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        // No `id` slot: a term source has no file to locate against. Spans are
+        // region-relative (byte 0 = start of `src`); the caller carries the
+        // enclosing region's own line to reach file coordinates.
+        let outs = Self::assign_outputs(&["line", "col", "end_line", "end_col"], pos, named)?;
+        self.expect(Tok::RParen)?;
+        Ok(BodyItem::Sg {
+            src, rev: None, lang, pattern,
+            line: outs[0].clone(), col: outs[1].clone(),
+            end_line: outs[2].clone(), end_col: outs[3].clone(),
+            id: None,
         })
     }
 

@@ -410,8 +410,9 @@ fn rewrite_terms(b: &mut BodyItem, sub: &HashMap<String, Term>, params: &[String
             rewrite_opt(end);
             rewrite_opt(id);
         }
-        BodyItem::Sg { path, rev, line, col, end_line, end_col, id, .. } => {
-            for t in [path, rev, line, col, end_line, end_col] { rewrite_term(t); }
+        BodyItem::Sg { src, rev, line, col, end_line, end_col, id, .. } => {
+            for t in [src, line, col, end_line, end_col] { rewrite_term(t); }
+            if let Some(r) = rev { rewrite_term(r); }
             rewrite_opt(id);
         }
         BodyItem::AstYaml { path, rev, line, col, end_line, end_col, .. } => {

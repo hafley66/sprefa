@@ -1,0 +1,62 @@
+# md-fences.dl — the embedded-language seam over markdown: pull fenced code
+# blocks out of `.md` files and run a language-appropriate `sg` over the fence
+# body, dispatched by the fence's info string (` ```rust `). Demo query: which
+# rust fences call `.unwrap()`.
+#
+# WHY IT LOOKS LIKE THIS: the `match` op is LINE-oriented (one row per matching
+# line), and there is no markdown grammar for `sg`/`ast`, so a fence body cannot
+# be captured as a single multi-line string with today's ops. So the fence body
+# is fed to TERM-form `sg(:rust)` one code line at a time; the doc `line_no`
+# carried from the join is the real file coordinate (the term-form's own span is
+# line-local — always line 1 of the one-line string). A whole-body feed would
+# need a string-concatenating aggregate (a follow-up); the styled-components
+# example shows the whole-body term-form path where a body IS available.
+#
+#   dl examples/md-fences.dl --root <docs-repo> --no-daemon
+
+# --- every fence delimiter line, with its info-string language ---------------
+# An opening ` ```rust ` captures `fence_lang = "rust"`; a closing ` ``` `
+# captures the empty string. So the language of the fence a code line sits in is
+# "the info string of the nearest delimiter above it".
+rel fence_delim(path: file, delim_line: int, fence_lang: text).
+fence_delim(path, delim_line, fence_lang) <-
+  scan("WORK", "**/*.md", path, rev),
+  match(path, rev, /^```(?<fence_lang>[a-zA-Z0-9_]*)/, delim_line).
+
+# --- every source line of the doc (marker lines included; filtered out below) -
+rel doc_line(path: file, line_no: int, line_text: text).
+doc_line(path, line_no, line_text) <-
+  scan("WORK", "**/*.md", path, rev),
+  match(path, rev, /(?<line_text>.+)/, line_no).
+
+# --- the delimiter immediately above each doc line (max delim_line below it) --
+rel line_owner(path: file, line_no: int, owner_delim: int).
+line_owner(path, line_no, max(delim_line)) <-
+  doc_line(path, line_no, _),
+  fence_delim(path, delim_line, _),
+  delim_line < line_no.
+
+# --- code lines that live inside a ```rust fence -----------------------------
+# The owning delimiter is a rust opener, and the line itself is not a delimiter.
+rel rust_fence_line(path: file, fence_line: int, line_no: int, line_text: text).
+rust_fence_line(path, owner_delim, line_no, line_text) <-
+  doc_line(path, line_no, line_text),
+  line_owner(path, line_no, owner_delim),
+  fence_delim(path, owner_delim, "rust"),
+  !fence_delim(path, line_no, _).
+
+# --- extract: run the rust grammar over each rust-fence code line (TERM sg) ---
+# `$RECEIVER.unwrap()` matches a method call whose receiver is any expression.
+# One rel = one rule kind: this term-extract rel is headed ONLY here; the query
+# rules below read it (co-heading it with a derived rule makes the engine bail).
+rel unwrap_call(path: file, fence_line: int, doc_line_no: int, receiver: text).
+unwrap_call(path, fence_line, doc_line_no, RECEIVER) <-
+  rust_fence_line(path, fence_line, doc_line_no, line_text),
+  sg(:rust, line_text, "$RECEIVER.unwrap()").
+
+# --- query: which rust fences (by their opening line) call unwrap ------------
+rel fence_calls_unwrap(path: file, fence_line: int).
+fence_calls_unwrap(path, fence_line) <- unwrap_call(path, fence_line, _, _).
+
+? fence_calls_unwrap(path, fence_line).
+? unwrap_call(path, fence_line, doc_line_no, receiver).

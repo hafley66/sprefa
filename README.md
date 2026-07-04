@@ -746,6 +746,7 @@ between the markers.
 | [`fn-graph.dl`](examples/fn-graph.dl) | fn-graph.dl — the 100%-recall function-level call graph from the RA oracle. |
 | [`fuzzy-traits.dl`](examples/fuzzy-traits.dl) | Fuzzy latent traits over a Rust file (defaults to src/engine.rs). Last session's |
 | [`gen-doc-index.dl`](examples/gen-doc-index.dl) | gen-doc-index.dl — dogfoods the doc tools on v5's own docs + source. |
+| [`gen-doc-indexes.dl`](examples/gen-doc-indexes.dl) | gen-doc-indexes.dl — one scan of book/ drives every hand-maintained doc list. |
 | [`gen-engine-anchors.dl`](examples/gen-engine-anchors.dl) | gen-engine-anchors.dl — index dl's OWN language/engine features through dl's |
 | [`gen-reference.dl`](examples/gen-reference.dl) | gen-reference.dl — programmable rustdoc/jsdoc for the engine's OWN surface. |
 | [`gen-skill-ref.dl`](examples/gen-skill-ref.dl) | gen-skill-ref.dl — keep the SHIPPED skill (assets/sprefa-dl.skill.md) fresh with |
@@ -770,6 +771,7 @@ between the markers.
 | [`madge.dl`](examples/madge.dl) | madge.dl — madge's readout as dl rules: the resolved JS/TS module dependency |
 | [`mcp-echo.dl`](examples/mcp-echo.dl) | mcp-echo.dl — a JSON-RPC server authored as datalog. |
 | [`mcp-server.dl`](examples/mcp-server.dl) | mcp-server.dl — a REAL, registerable MCP server authored as datalog. |
+| [`md-fences.dl`](examples/md-fences.dl) | md-fences.dl — the embedded-language seam over markdown: pull fenced code |
 | [`missing-repo.dl`](examples/missing-repo.dl) | Progressive multi-repo: a missing clone is non-fatal when its config row |
 | [`missing-type.dl`](examples/missing-type.dl) | missing-type.dl — auto-detect "missing type" smells from local-name repetition. |
 | [`module-history.dl`](examples/module-history.dl) | Rev-aware module graph. |
@@ -801,6 +803,7 @@ between the markers.
 | [`rust.dl`](examples/rust.dl) | Rust lint pack — ast-grep patterns surfaced as LSP diagnostics. |
 | [`stale-doc.dl`](examples/stale-doc.dl) | stale-doc.dl — you changed a documented declaration; is its doc still true? |
 | [`string-fns.dl`](examples/string-fns.dl) | string-fns.dl — split / replace / computed binding / unary minus / NULL drop. |
+| [`styled-components.dl`](examples/styled-components.dl) | styled-components.dl — the embedded-language seam: tsx source -> css bodies -> |
 | [`symbol-profile.dl`](examples/symbol-profile.dl) | symbol-profile.dl — the "ask about one symbol" view. Pin a symbol in |
 | [`taint.dl`](examples/taint.dl) | taint.dl — source/sink/sanitizer preset over interprocedural value flow. |
 | [`time.dl`](examples/time.dl) | The time axis: same pattern run against two revs of the tree, then an |

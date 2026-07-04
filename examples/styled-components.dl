@@ -1,0 +1,47 @@
+# styled-components.dl — the embedded-language seam: tsx source -> css bodies ->
+# css declarations, all in one program, no external tool.
+#
+# A styled-components component (`styled.div` + a tagged template literal) carries
+# a css declaration block INSIDE that template. FILE-form `sg(:tsx)` captures the
+# template body per component; TERM-form `sg(:css)` then re-parses that bound
+# string with the css grammar into one row per declaration. This is the embedded-
+# language pattern: one language's source is another language's text value.
+#
+# SPAN CAVEAT: the term-form span (`decl_line`) is RELATIVE to the css body (byte
+# 0 / line 1 = the start of the template literal), NOT the .tsx file. Rewrite-grade
+# ABSOLUTE spans are a follow-up: carry the component's own start line
+# (`component_line`) and add `decl_line` to lift a declaration back to file
+# coordinates. This program keeps them separate and honest.
+#
+#   dl examples/styled-components.dl --root <tsx-repo> --no-daemon
+
+# --- capture: one row per styled component (FILE-form sg over .tsx) -----------
+# `$TAG_NAME` = the html element/component it extends (div/section/button);
+# `$CSS_BODY` = the WHOLE template-literal body (a single metavar captures the
+# template string; `$$$` would match the structure but bind no text). Metavar
+# names are the head vars, so they are UPPERCASE per ast-grep.
+rel styled_component(path: file, tag: text, css_body: text, component_line: int).
+styled_component(path, TAG_NAME, CSS_BODY, component_line) <-
+  scan("WORK", "**/*.tsx", path, rev),
+  sg(path, rev, :tsx, "styled.$TAG_NAME`$CSS_BODY`", component_line).
+
+# --- extract: css declarations out of each captured body (TERM-form sg) -------
+# The join binds `css_body` (a str value held in a relation); term-form
+# `sg(:css)` parses it with the css grammar. `$CSS_PROP: $CSS_VALUE;` picks out
+# each declaration (the trailing `;` is required for css to parse a declaration
+# node). `decl_line` is the declaration's line WITHIN the css body (relative).
+# One rel = one rule kind: this term-extract rel is never co-headed by a derived
+# rule (the engine bails); downstream rules read it.
+rel css_declaration(path: file, tag: text, css_prop: text, css_value: text, decl_line: int).
+css_declaration(path, tag, CSS_PROP, CSS_VALUE, decl_line) <-
+  styled_component(path, tag, css_body, _),
+  sg(:css, css_body, "$CSS_PROP: $CSS_VALUE;", decl_line).
+
+# --- query: which components pin themselves with `position: fixed` ------------
+rel fixed_component(path: file, tag: text, component_line: int).
+fixed_component(path, tag, component_line) <-
+  styled_component(path, tag, _, component_line),
+  css_declaration(path, tag, "position", "fixed", _).
+
+? fixed_component(path, tag, component_line).
+? css_declaration(path, tag, prop, value, decl_line).

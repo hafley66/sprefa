@@ -253,7 +253,17 @@ pub enum BodyItem {
     /// 0-based byte columns). All four accept the kwarg/`_` form: positional in
     /// order, `name: term` to bind a later slot, or unmentioned to bind nothing.
     /// `Term::Wild` marks an unbound output; the engine arm skips it.
-    Sg { path: Term, rev: Term, lang: String, pattern: String, line: Term,
+    ///
+    /// `rev: Some` = the FILE form `sg(path, rev, :lang, "pat", ...)` (`src` is a
+    /// path scanned at `rev`, span-located, id resolvable). `rev: None` = the TERM
+    /// form `sg(:lang, src, "pat", ...)` (`src` is a bound `str` content value — an
+    /// embedded language body, a column, a captured fence — parsed directly, no
+    /// file). The term form runs in the join+extract hybrid pass, like the term
+    /// form of `json`/`jsonp`; its `line`/`col` spans are RELATIVE to the bound
+    /// string (byte 0 = the start of that value, not the enclosing file), and it
+    /// carries no `id` (there is no file to locate against — the caller adds the
+    /// enclosing region's own line to lift spans back to file coordinates).
+    Sg { src: Term, rev: Option<Term>, lang: String, pattern: String, line: Term,
          col: Term, end_line: Term, end_col: Term, id: Option<Term> },
     /// ast-grep relational YAML rule (RuleCore: inside/has/any/all/not/kind/
     /// regex/pattern). `yaml` is the (usually backtick, multiline) body; the
@@ -382,12 +392,13 @@ impl Rule {
     pub fn is_source(&self) -> bool {
         self.body.iter().any(|b| match b {
             BodyItem::Scan { .. } | BodyItem::Match { .. } | BodyItem::Ast { .. }
-            | BodyItem::Sg { .. } | BodyItem::AstYaml { .. }
+            | BodyItem::AstYaml { .. }
             | BodyItem::Cmd { .. } | BodyItem::Comment { .. } => true,
-            // A FILE-form json/jsonp (rev=Some) scans a file = a source op. The
+            // A FILE-form json/jsonp/sg (rev=Some) scans a file = a source op. The
             // TERM form (rev=None) reads a bound value, so it is NOT a source —
             // it runs in the join+extract hybrid pass over already-derived rels.
-            BodyItem::JsonP { rev, .. } | BodyItem::Json { rev, .. } => rev.is_some(),
+            BodyItem::JsonP { rev, .. } | BodyItem::Json { rev, .. }
+            | BodyItem::Sg { rev, .. } => rev.is_some(),
             _ => false,
         })
     }
@@ -397,7 +408,8 @@ impl Rule {
     /// atoms bind the content var) and then extracts — the hybrid evaluator.
     pub fn has_term_extract(&self) -> bool {
         self.body.iter().any(|b| matches!(b,
-            BodyItem::JsonP { rev: None, .. } | BodyItem::Json { rev: None, .. }))
+            BodyItem::JsonP { rev: None, .. } | BodyItem::Json { rev: None, .. }
+            | BodyItem::Sg { rev: None, .. }))
     }
 
     /// Some(edge) iff this rule is exactly `head(..) <- closure(edge).`

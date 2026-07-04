@@ -38,6 +38,14 @@ fail) before a full run.
 - **Pick the op by whether a grammar exists.** `sg`/`ast`/`ast_yaml` when the
   language has a grammar (below); `match` for substrings or a language with no
   grammar handle. Do not reach for `match` on a structural pattern.
+- **Embedded languages: TERM-form `sg`.** `sg(:lang, str_var, "pat"[, line, col,
+  end_line, end_col])` runs the ast-grep grammar over a STRING bound earlier in
+  the rule instead of a file — a styled-components css body captured by an outer
+  `sg(:tsx)`, a markdown code fence, a response column. Spans are RELATIVE to the
+  bound string (byte 0 = its start; carry the region's own line to reach file
+  coordinates). Runs in the join+extract pass like term-form `json`/`jsonp`, so it
+  heads its own rel (never co-headed with a derived rule). See
+  `examples/styled-components.dl` and `examples/md-fences.dl`.
 - **One rel = one rule kind.** Never head a rel with BOTH a source rule
   (`scan`/`match`/`ast`/`sg`/`ast_yaml`/`json`/`cmd`/`comment`) and a derived
   rule — the engine bails. Split into two rels, union in a third.
@@ -53,7 +61,7 @@ tree-sitter (it has `bash`/`hcl`/`gotmpl`/`dockerfile` but NO `tsx`). The real
 tables live in `src/sg.rs` (`SG_LANG_TABLE`) and `src/engine/mod.rs`
 (`AST_LANG_TABLE`); a test keeps this block set-equal to them:
 
-    sg, ast_yaml: rust typescript tsx javascript python go json c cpp kotlin
+    sg, ast_yaml: rust typescript tsx javascript python go json c cpp kotlin css html bash csharp java scala swift ruby php lua elixir haskell yaml
     ast: rust c kotlin python bash go hcl starlark jsonnet gotmpl dockerfile
 
 ## Install
