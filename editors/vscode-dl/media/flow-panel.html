@@ -524,7 +524,7 @@
       <tr><td>Enums ↔ matches</td><td>enum <code>rel_type_entity</code> rows edged to their <code>rel_enum_match_block</code> match-arm sites (.dl/enum-matches.dl)</td></tr>
       <tr><td>Module graph</td><td><code>rel_module_node</code> files edged by <code>rel_module_edge</code> imports</td></tr>
       <tr><td>Member flow</td><td>struct/trait/enum/class/interface owners + their function/method/const members, edged by type links and calls, methods nested under their owner in list view (.dl/flow-panel.dl)</td></tr>
-      <tr><td>Diff (base vs head)</td><td>added/removed/unchanged nodes and edges between two worktree-pair roots (<code>rel_edge_added</code>/<code>rel_edge_removed</code>/<code>rel_node_added</code>/<code>rel_node_removed</code>/<code>rel_bare_edge</code>/<code>rel_bare_node</code> from <code>.dl/graph-diff.dl</code>); canvas view only for the added/removed/unchanged styling (dashed+muted/solid+hot/dimmed) and the class chips + count pill</td></tr>
+      <tr><td>Diff (base vs head)</td><td>added/removed/unchanged nodes and edges between the two revs of <code>diff_pair</code> (base rev vs head rev, default inert WORK/WORK; set <code>diff_pair</code> in <code>.dl/graph-diff.dl</code>) (<code>rel_edge_added</code>/<code>rel_edge_removed</code>/<code>rel_node_added</code>/<code>rel_node_removed</code>/<code>rel_bare_edge</code>/<code>rel_bare_node</code> from <code>.dl/graph-diff.dl</code>); canvas view only for the added/removed/unchanged styling (dashed+muted/solid+hot/dimmed) and the class chips + count pill</td></tr>
       <tr><td>Custom</td><td>whatever SQL is in the two boxes below; editing either box switches here automatically</td></tr>
     </table>
 

@@ -1,0 +1,153 @@
+# pr-diff.dl -- diff a GitHub PR's graph WITHOUT a second checkout (D5.8,
+# PR-as-rows). A `pr_want(number)` fact drives a `gh` read-effect that resolves
+# the PR's base + head commit SHAs; those two SHAs become `scan` rev coordinates
+# on the SELF repo, and the rev-aware extraction twins (type_entity_rev /
+# type_link_rev / call_edge_rev) carry a `rev` column, so the diff is a per-rev
+# anti-join over ONE working tree -- no `git worktree add`, no second clone.
+#
+# THE EFFECT CHAIN (each hop is one tick under the daemon / one drain):
+#   pr_want(number)                         -- the fact: which PR
+#     -> gh_pr(number) -> (body)            -- @async read-effect: one `gh` call
+#     -> pr_view(number, body)              -- drain-only response rel
+#     -> pr_base(number, base_sha)          -- jsonp term-extract (its OWN rel)
+#        pr_head(number, head_sha)          -- jsonp term-extract (its OWN rel)
+#     -> pr_pair(base_sha, head_sha)        -- derived join of the two shas
+#     -> scan(base_sha, ...) / scan(head_sha, ...) -- data-driven rev scans
+#     -> pr_node_added / pr_edge_added ...  -- the per-rev anti-joins
+#
+# WHY THE jsonp EXTRACT HEADS ITS OWN REL (pr_base / pr_head), NEVER co-heading
+# with the pr_pair join: a term-extract rule (a `jsonp`/`json` body predicate
+# over a bound string) filled by `eval_extract_rules` cannot share a head with a
+# derived rule -- `rebuild_derived` runs AFTER the extract pass and would
+# `DELETE FROM rel` the freshly-extracted rows. The engine bails (one rel = one
+# rule kind). So each sha extraction lands in its own rel, and `pr_pair` joins
+# those two ordinary rels. This is the sanctioned split -- the same shape as the
+# pr_number -> change_log route in examples/gh-cache.dl.
+#
+# WHY THIS FILE DUPLICATES THE ANTI-JOIN CORE instead of `use`-ing
+# .dl/graph-diff.dl: that file heads `diff_pair` as a FACT
+# (diff_pair("WORK", "WORK")). A second, DERIVED `diff_pair` here -- the PR's
+# base/head shas are derived, not a literal -- merged with the fact (via a `use`
+# splice or shared .dl/ discovery) would head ONE rel with both a source-fact
+# rule and a derived rule = a mixed source/derived rel, and the engine bails
+# (again: one rel = one rule kind). So pr-diff.dl is self-contained under its
+# own `pr_*` rel names; the short node/edge anti-join core is copied, not shared.
+#
+# SCIP asymmetry (documented, NOT worked around): a SCIP index.scip is a
+# working-tree artifact, so committed revs (both PR shas) resolve syntactically
+# (per-repo name-unique), never scip-backed. A PR diff is committed-vs-committed
+# -- symmetric resolution, so this asymmetry does not bite here (it only matters
+# for a diff_pair that spans "WORK").
+#
+# Run (daemon, live gh):
+#   dl --lsp examples/pr-diff.dl --root <repo>   # then edit pr_want to the PR
+# gh does NOT run under `--check`; the program is structurally valid without it
+# (the scans read an empty pr_pair and yield nothing until the effect drains).
+
+# ---- which PR to diff ------------------------------------------------------
+# One row per PR number. Edit this fact (or seed it from another rule) to point
+# at the PR you want. The number fills the `gh pr view <number>` hole.
+rel pr_want(number: text).
+pr_want("1").
+
+# ---- resolve the PR's base + head SHAs (one gh call, no checkout) -----------
+# `gh pr view <number> --json baseRefOid,headRefOid` returns the two commit
+# SHAs as a JSON object; `tr -d '\n'` compacts it to one line for the body slot.
+# `sh` = a read-effect (the @async kind); `{number}` is the request arg.
+sh gh_pr(number) -> (body: text) =
+  `gh pr view {number} --json baseRefOid,headRefOid 2>/dev/null | tr -d '\n'`.
+
+# The response rel: drain-only (written only by the effect drain). `number`
+# echoes from the request; `body` is the JSON the executor returned.
+rel pr_view(number: text, body: text).
+pr_view(number, body) <- @async pr_want(number), gh_pr(number) -> (body).
+
+# ---- term-extract the two SHAs (each in its OWN rel; see header) ------------
+# jsonp parses the bound `body` value (the hybrid join+extract pass); the base
+# and head shas each land in a dedicated rel so neither co-heads the pr_pair
+# join below.
+rel pr_base(number: text, base_sha: text).
+pr_base(number, base_sha) <- pr_view(number, body), jsonp(body, "baseRefOid", base_sha).
+
+rel pr_head(number: text, head_sha: text).
+pr_head(number, head_sha) <- pr_view(number, body), jsonp(body, "headRefOid", head_sha).
+
+# The rev pair: base -> head, joined per PR number. A derived rel reading the two
+# extract rels (never headed by an extract rule itself).
+rel pr_pair(base_sha: text, head_sha: text).
+pr_pair(base_sha, head_sha) <- pr_base(number, base_sha), pr_head(number, head_sha).
+
+# ---- scan both shas on the SELF repo (data-driven rev coordinates) ----------
+# A bare scan at each sha seeds that rev's file set and triggers the rev-aware
+# type/call extractors; referencing the *_rev twins below opts them in. The rev
+# slot is a var bound by pr_pair, so a coordinate-providing atom precedes each
+# scan (pr_pair supplies it even while empty, so this typechecks under --check).
+rel pr_seen(path: file).
+pr_seen(path) <- pr_pair(_, head_ref), scan(head_ref, "src/**/*.rs", path, rev).
+pr_seen(path) <- pr_pair(base_ref, _), scan(base_ref, "src/**/*.rs", path, rev).
+
+# ---- resolved revs (the sha string the twins actually store) ---------------
+# The scan's rev_out is the RESOLVED rev; for a committed sha it is the sha
+# itself, i.e. exactly what type_entity_rev.rev etc. hold. Capturing it lets the
+# anti-joins bind twin rows without re-deriving the sha.
+rel pr_head_rev(rev: text).
+pr_head_rev(resolved) <- pr_pair(_, head_ref), scan(head_ref, "src/**/*.rs", path, resolved).
+
+rel pr_base_rev(rev: text).
+pr_base_rev(resolved) <- pr_pair(base_ref, _), scan(base_ref, "src/**/*.rs", path, resolved).
+
+# ---- per-rev node set (types + callables), straight from the type twin -----
+# sym is repo-qualified and line-free, so the SAME sym string names the SAME
+# node at base and head -- the whole premise of the sym-set diff.
+rel pr_bare_node(rev: text, sym: text, kind: text).
+pr_bare_node(rev, sym, "struct")    <- type_entity_rev(_, sym, _, "struct", _, _, _, rev).
+pr_bare_node(rev, sym, "enum")      <- type_entity_rev(_, sym, _, "enum", _, _, _, rev).
+pr_bare_node(rev, sym, "trait")     <- type_entity_rev(_, sym, _, "trait", _, _, _, rev).
+pr_bare_node(rev, sym, "class")     <- type_entity_rev(_, sym, _, "class", _, _, _, rev).
+pr_bare_node(rev, sym, "interface") <- type_entity_rev(_, sym, _, "interface", _, _, _, rev).
+pr_bare_node(rev, sym, "function")  <- type_entity_rev(_, sym, _, "function", _, _, _, rev).
+pr_bare_node(rev, sym, "method")    <- type_entity_rev(_, sym, _, "method", _, _, _, rev).
+pr_bare_node(rev, sym, "const")     <- type_entity_rev(_, sym, _, "const", _, _, _, rev).
+
+# ---- per-rev edge set (type links + calls), both endpoints nodes at the rev -
+rel pr_bare_edge(rev: text, a: text, b: text, kind: text).
+pr_bare_edge(rev, src, dst, kind) <-
+  type_link_rev(src, dst, kind, rev),
+  pr_bare_node(rev, src, _),
+  pr_bare_node(rev, dst, _).
+pr_bare_edge(rev, caller, callee, "call") <-
+  call_edge_rev(caller, callee, _, rev),
+  pr_bare_node(rev, caller, _),
+  pr_bare_node(rev, callee, _).
+
+# ---- the diff: rev-pair anti-joins -----------------------------------------
+# added = present at head but not base; removed = present at base but not head.
+# pr_head_rev / pr_base_rev supply the resolved sha each side stored.
+rel pr_node_added(sym: text, kind: text).
+pr_node_added(sym, kind) <-
+  pr_head_rev(head), pr_base_rev(base),
+  pr_bare_node(head, sym, kind),
+  !pr_bare_node(base, sym, kind).
+
+rel pr_node_removed(sym: text, kind: text).
+pr_node_removed(sym, kind) <-
+  pr_head_rev(head), pr_base_rev(base),
+  pr_bare_node(base, sym, kind),
+  !pr_bare_node(head, sym, kind).
+
+rel pr_edge_added(a: text, b: text, kind: text).
+pr_edge_added(a, b, kind) <-
+  pr_head_rev(head), pr_base_rev(base),
+  pr_bare_edge(head, a, b, kind),
+  !pr_bare_edge(base, a, b, kind).
+
+rel pr_edge_removed(a: text, b: text, kind: text).
+pr_edge_removed(a, b, kind) <-
+  pr_head_rev(head), pr_base_rev(base),
+  pr_bare_edge(base, a, b, kind),
+  !pr_bare_edge(head, a, b, kind).
+
+? pr_node_added(sym, kind).
+? pr_node_removed(sym, kind).
+? pr_edge_added(a, b, kind).
+? pr_edge_removed(a, b, kind).

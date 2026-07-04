@@ -1,73 +1,183 @@
-# graph-diff.dl -- PR graph-diff (D1): worktree-pair sym-set difference over
-# flow-panel.dl's member_node/member_edge. See plans/2026-07-03-pr-diff-graph.md
-# (Diff semantics + D1 SPECIFICS) -- this file implements that section as-is.
+# graph-diff.dl -- PR graph-diff (D5.7): rev-pair sym-set difference on ONE
+# checkout. See plans/2026-07-04-d5-rev-aware-extraction.md ("Migration /
+# compat" + "SCIP" sections) -- this file is the consumer swap that retires the
+# two-worktree pair.
 #
-# Route: two checkouts (base worktree + this head worktree) registered as two
-# config repos (bench/graph_diff/diff.config.toml) fake two revs. syms arrive
-# prefixed with the root dir BASENAME (`sprefa-base::…` vs
-# `vscode-flow-panel::…`), so the diff is prefix-strip + set difference --
-# stable because member_node/member_edge are sym-keyed (df-node ids embed
-# line numbers and MUST NOT be diffed raw; this file never touches df_* rows
-# directly, only what member_node/member_edge already curated).
+# Model: `diff_pair(base_rev, head_rev)` names two revs of the SELF repo. Each
+# side is a `scan` coordinate (rev is a scan input; "WORK" = live disk, any
+# other ref = the committed blob at that rev). The rev-aware extraction twins
+# (type_entity_rev / type_link_rev / call_edge_rev / df_node_rev /
+# df_field_rev / df_node_repo_rev) carry a `rev` column, so the diff is a
+# per-rev anti-join -- NO replace_re prefix strip, syms are already comparable
+# across revs (the same sym string is the SAME node at base and head).
 #
-# Same-dir use: flow-panel.dl already assembles member_node/member_edge (and
-# pulls in std/flow.dl via its own `use "../std/entry.dl".`), so importing it
-# here (importer-dir-relative, same directory) reuses that assembly instead
-# of re-deriving it.
-use "flow-panel.dl".
+# Ref-vs-sha: a committed ref ("main", "HEAD", a tag) is resolved to its SHA by
+# the engine (git rev-parse) and the twins store the SHA, not the ref. "WORK"
+# is stored verbatim. So the anti-joins bind through base_rev/head_rev below
+# (the RESOLVED rev each scan produced, captured from the scan's rev_out),
+# never through the diff_pair literal -- that keeps `diff_pair("main", "WORK")`
+# working without any dl-side ref resolution.
+#
+# SCIP asymmetry (documented, NOT worked around here): a SCIP `index.scip` is a
+# working-tree artifact, so `scip_ref` describes rev = WORK only. WORK rows
+# resolve scip-backed when an index exists; a committed rev resolves
+# syntactically (per-repo name-unique). A `diff_pair(committed, "WORK")` can
+# therefore report edges that differ only in resolution PRECISION, not in code.
+# The plan's recommendation (suppress scip for both sides when a diff spans
+# WORK, for symmetric resolution) is DEFERRED, not built -- run committed-vs-
+# committed for a clean diff, or accept WORK's scip advantage.
+#
+# df member edges are NAME-joined, never raw-id-joined: df_node ids are
+# rev-salted (`{rev}\u{1}{raw}`), so base and head ids are disjoint by
+# construction and a raw-id diff is meaningless. The fill edge below resolves
+# the constructed type's NAME to its owner sym within the SAME (repo, rev), the
+# same shape flow-panel.dl's member edges use.
+#
+# `repo` column carries the REV: bare_node/bare_edge declare their diff-side
+# column as `repo` (not `rev`) ONLY so the panel's unchanged-node/edge query
+# (`... HAVING COUNT(DISTINCT repo) >= 2`, editors/vscode-dl/media/flow-panel.html)
+# needs no reship -- the column is the "which side" tag either way, and it now
+# holds the rev. Rule bodies bind a descriptive `rev` var into that slot.
+#
+# Deferred edge kinds: read / param / uses / port need df_edge / df_param /
+# type_sig twins, which D5 does not build (flow inputs run WORK-only). This diff
+# covers type links, call edges, and the ctor-fill member edge -- the sym-keyed
+# graph. When those twins land, add them here the same way.
 
-# HEAD/BASE slugs -- the convention-read pattern (D0 SPECIFICS): sym prefixes
-# come from root dir basenames, not config slugs. base worktree dir is
-# ~/projects/sprefa-base; this head worktree's dir is vscode-flow-panel.
-rel diff_pair(base: text, head: text).
-diff_pair("sprefa-base", "vscode-flow-panel").
+# ---- the rev pair ----
+# base_rev / head_rev are scan REV selectors: "WORK" = live disk, any git ref =
+# the committed blob at that rev. To diff, edit this fact: local dev =
+# diff_pair("main", "WORK"); a PR = diff_pair("<base_sha>", "<head_sha>")
+# (D5.8, PR-as-rows). The SHIPPED default is the inert pair (WORK, WORK): a
+# base scan at a committed rev would union that rev into the legacy rels
+# (type_entity/type_link/call_edge are rev-deduped unions of every scanned
+# rev), polluting the WORK-only presets for every consumer serving this rail.
+# Diffing is an explicit act; the inert default keeps daily serving clean.
+rel diff_pair(base_rev: text, head_rev: text).
+diff_pair("WORK", "WORK").
 
-# bare_node/bare_edge: strip the repo-basename prefix off a member_node/
-# member_edge sym, keeping the repo tag as its own column so added/removed
-# rules below can join back to diff_pair instead of hardcoding slugs.
-# replace_re(sym, "^[^:]*::", "") drops everything up to and including the
-# first "::" (the prefix strip); replace_re(sym, "::.*$", "") keeps only the
-# text before the first "::" (the prefix extract -- greedy match on the
-# REST from the first "::" onward, so this yields exactly the first segment,
-# not a longest-match overreach into later "::" separators).
+# ---- scan both sides of the pair on the SELF repo ----
+# A bare scan seeds the file set at each rev and triggers the rev-aware
+# type/call/dataflow extractors; referencing the *_rev twins below opts them in.
+# Both scans are data-driven (the rev slot is a var bound by diff_pair), so a
+# coordinate-providing atom precedes each scan.
+rel diff_seen(path: file).
+diff_seen(path) <- diff_pair(_, head_ref), scan(head_ref, "src/**/*.rs", path, rev).
+diff_seen(path) <- diff_pair(base_ref, _), scan(base_ref, "src/**/*.rs", path, rev).
+
+# ---- resolved revs (ref -> the rev string the twins actually store) ----
+# The scan's rev_out is the RESOLVED rev (SHA for a committed ref, "WORK"
+# verbatim), i.e. exactly what type_entity_rev.rev etc. hold. Capturing it here
+# lets the anti-joins compare twin rows without knowing whether the diff_pair
+# literal was a ref name or a sha.
+rel head_rev(rev: text).
+head_rev(resolved) <- diff_pair(_, head_ref), scan(head_ref, "src/**/*.rs", path, resolved).
+
+rel base_rev(rev: text).
+base_rev(resolved) <- diff_pair(base_ref, _), scan(base_ref, "src/**/*.rs", path, resolved).
+
+# ---- per-rev node set ----
+# bare_node(rev, sym, kind): every owner type + callable at a rev, straight from
+# the type twin (sym already repo-qualified, comparable across revs). The `repo`
+# column holds the rev (see header). Field nodes are minted further down from
+# the df twins.
 rel bare_node(repo: text, sym: text, kind: text).
-bare_node(replace_re(sym, "::.*$", ""), replace_re(sym, "^[^:]*::", ""), kind) <-
-  member_node(sym, _, kind, _, _, _).
+bare_node(rev, sym, "struct")    <- type_entity_rev(_, sym, _, "struct", _, _, _, rev).
+bare_node(rev, sym, "enum")      <- type_entity_rev(_, sym, _, "enum", _, _, _, rev).
+bare_node(rev, sym, "trait")     <- type_entity_rev(_, sym, _, "trait", _, _, _, rev).
+bare_node(rev, sym, "class")     <- type_entity_rev(_, sym, _, "class", _, _, _, rev).
+bare_node(rev, sym, "interface") <- type_entity_rev(_, sym, _, "interface", _, _, _, rev).
+bare_node(rev, sym, "function")  <- type_entity_rev(_, sym, _, "function", _, _, _, rev).
+bare_node(rev, sym, "method")    <- type_entity_rev(_, sym, _, "method", _, _, _, rev).
+bare_node(rev, sym, "const")     <- type_entity_rev(_, sym, _, "const", _, _, _, rev).
 
+# ---- df-derived field nodes + fill edges (rev-scoped) ----
+# owner_at_rev: an owner type tagged with its repo (the first sym segment) at a
+# rev, so a ctor fill in one repo resolves ONLY that repo's owner of the same
+# NAME (the repo axis is orthogonal to rev -- a multi-repo PR diff wants both).
+rel owner_at_rev(owner_sym: text, name: text, repo: text, rev: text).
+owner_at_rev(owner_sym, name, replace_re(owner_sym, "::.*$", ""), rev) <-
+  type_entity_rev(_, owner_sym, name, "struct", _, _, _, rev).
+owner_at_rev(owner_sym, name, replace_re(owner_sym, "::.*$", ""), rev) <-
+  type_entity_rev(_, owner_sym, name, "enum", _, _, _, rev).
+owner_at_rev(owner_sym, name, replace_re(owner_sym, "::.*$", ""), rev) <-
+  type_entity_rev(_, owner_sym, name, "trait", _, _, _, rev).
+owner_at_rev(owner_sym, name, replace_re(owner_sym, "::.*$", ""), rev) <-
+  type_entity_rev(_, owner_sym, name, "class", _, _, _, rev).
+owner_at_rev(owner_sym, name, replace_re(owner_sym, "::.*$", ""), rev) <-
+  type_entity_rev(_, owner_sym, name, "interface", _, _, _, rev).
+
+# fn_at_rev: the enclosing-fn twin sym bridged to its BARE name (file::kind::name,
+# no repo prefix -- the form df_node_rev.fn carries) and its repo, at a rev. The
+# fill edge joins the df node's `fn` against this to recover the repo-qualified
+# fn sym member_node uses (call_edge is repo-qualified too).
+rel fn_at_rev(fn_sym: text, bare: text, repo: text, rev: text).
+fn_at_rev(fn_sym, replace_re(fn_sym, "^[^:]*::", ""), replace_re(fn_sym, "::.*$", ""), rev) <-
+  type_entity_rev(_, fn_sym, _, "function", _, _, _, rev).
+fn_at_rev(fn_sym, replace_re(fn_sym, "^[^:]*::", ""), replace_re(fn_sym, "::.*$", ""), rev) <-
+  type_entity_rev(_, fn_sym, _, "method", _, _, _, rev).
+
+# Field nodes: one member_node per (owner, field) minted from a ctor fill -- a
+# `new` df node (var = the constructed type's bare NAME) joined to df_field on
+# the same salted id, scoped to the fill's own (repo, rev). `..` (spread /
+# functional-update marker) is excluded -- it names a base value, not a field.
+bare_node(rev, "${owner_sym}::field::${fld}", "field") <-
+  df_node_rev(node, "new", ty, _, _, _, rev),
+  df_node_repo_rev(node, repo, rev),
+  df_field_rev(node, fld, _, rev), fld != "..",
+  owner_at_rev(owner_sym, ty, repo, rev).
+
+# ---- per-rev edge set ----
+# bare_edge(rev, src, dst, kind): type-link + call + fill edges, each restricted
+# to both endpoints already being nodes at the SAME rev (mirrors flow-panel's
+# member_edge). The `repo` column holds the rev; the endpoint columns stay named
+# `a`/`b` (not src/dst) so the panel's unchanged-edge query
+# (`SELECT a, b, kind FROM rel_bare_edge ...`) needs no reship -- rule bodies
+# bind descriptive src/dst vars into them.
 rel bare_edge(repo: text, a: text, b: text, kind: text).
-bare_edge(replace_re(src, "::.*$", ""), replace_re(src, "^[^:]*::", ""),
-          replace_re(dst, "^[^:]*::", ""), kind) <-
-  member_edge(src, dst, kind).
+bare_edge(rev, src, dst, kind) <-
+  type_link_rev(src, dst, kind, rev),
+  bare_node(rev, src, _),
+  bare_node(rev, dst, _).
+bare_edge(rev, caller, callee, "call") <-
+  call_edge_rev(caller, callee, _, rev),
+  bare_node(rev, caller, _),
+  bare_node(rev, callee, _).
+bare_edge(rev, fn_sym, "${owner_sym}::field::${fld}", "fill") <-
+  df_node_rev(node, "new", ty, fill_fn, _, _, rev),
+  df_node_repo_rev(node, repo, rev),
+  df_field_rev(node, fld, _, rev), fld != "..",
+  owner_at_rev(owner_sym, ty, repo, rev),
+  fn_at_rev(fn_sym, fill_fn, repo, rev).
 
-# node_added / node_removed: present under head's bare sym set but not
-# base's (added), or vice versa (removed). Joins diff_pair so the two repo
-# slugs are read, not hardcoded, inside the rule bodies.
+# ---- the diff: rev-pair anti-joins ----
+# added = present at head but not base; removed = present at base but not head.
+# head_rev/base_rev supply the RESOLVED rev each side stored, so the join lands
+# on the twin rows regardless of whether diff_pair carried a ref or a sha.
 rel node_added(sym: text, kind: text).
 node_added(sym, kind) <-
-  diff_pair(base, head),
+  head_rev(head), base_rev(base),
   bare_node(head, sym, kind),
   !bare_node(base, sym, kind).
 
 rel node_removed(sym: text, kind: text).
 node_removed(sym, kind) <-
-  diff_pair(base, head),
+  head_rev(head), base_rev(base),
   bare_node(base, sym, kind),
   !bare_node(head, sym, kind).
 
-# edge_added / edge_removed: same shape over bare_edge triples (a, b, kind).
 rel edge_added(a: text, b: text, kind: text).
 edge_added(a, b, kind) <-
-  diff_pair(base, head),
+  head_rev(head), base_rev(base),
   bare_edge(head, a, b, kind),
   !bare_edge(base, a, b, kind).
 
 rel edge_removed(a: text, b: text, kind: text).
 edge_removed(a, b, kind) <-
-  diff_pair(base, head),
+  head_rev(head), base_rev(base),
   bare_edge(base, a, b, kind),
   !bare_edge(head, a, b, kind).
 
-? bare_edge(repo, a, b, kind).
 ? node_added(sym, kind).
 ? node_removed(sym, kind).
 ? edge_added(a, b, kind).

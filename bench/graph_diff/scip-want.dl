@@ -1,4 +1,0 @@
-# D3 follow-up: merges with .dl/graph-diff.dl on the command line (multi-file
-# merge) to turn SCIP on for the same diff rels D1 already probed without it.
-rel scip_want(repo: text).
-scip_want("base").
