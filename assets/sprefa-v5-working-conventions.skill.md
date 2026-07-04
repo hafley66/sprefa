@@ -51,8 +51,10 @@ Replace `N` with seconds. Sends `SIGALRM` after N seconds, killing the child pro
 | Rule | Detail |
 |---|---|
 | No per-row writes | Collect the full set, call `Db::insert_rows` / `refresh_rel` once. The tick N+1 counter fires on violations. |
-| Plural Db seam | `db.rs` is the chokepoint. `conn()` is a metered escape hatch (grep `.conn()` in engine.rs to count live sites). |
+| Plural Db seam | `db.rs` is the chokepoint. `conn()` is a metered escape hatch (grep `.conn()` across `src/engine/*.rs` to count live sites; `engine.rs` was split into `mod.rs`/`tick.rs`/`extract.rs` in the 2026-06-30 breakdown). |
 | Collect-then-flush | Populate a `Vec`, then one batched write. Never stream rows out one at a time inside a processing loop. |
+| One rel = one rule kind | Never head a rel with both a source rule (`scan`/`match`/`ast`/`sg`/`json`/`cmd`/`comment`) and a derived rule: `rebuild_derived`'s full `DELETE FROM rel` would drop the reconciled source rows. The engine bails; split into two rels and union in a third. Same hazard for a term-extract rule (a `json`/`jsonp` body predicate over a bound string) headed together with a derived rule. |
+| Descriptive dl variable names | Every rule/query/decl variable names the thing it binds (`import_path`, `callee_name`, `severity`), never a single letter (`p`, `l`, `x`, `t`). A rule capture variable names the thing captured. This applies as much to a throwaway scratch `.dl` as to a checked-in `examples/*.dl`. |
 | Banned identifiers | `provenance` → `source`, `substrate` → `base`, `load-bearing` → `critical`, `regime` → `mode`. Flag existing ones for rename. |
 
 ## Branch and build conventions

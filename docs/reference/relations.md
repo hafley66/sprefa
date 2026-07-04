@@ -8,6 +8,7 @@ Generated from the engine's `rel_catalog` by examples/gen-reference.dl. Do not h
 | `agent_touch` | agent | `(harness, session, path)` | the latest agent turn's edited files (harness, session, path) |
 | `allocates` | dataflow | `(fn)` | one row per fn whose body builds a collection (Vec/HashMap/String ctor, .collect/.clone/.to_string) |
 | `call_def` | call | `(repo, sym, kind, file, line, end)` | every callable; sym is file::kind::name |
+| `call_def_rev` | call | `(repo, sym, kind, file, line, end, rev)` | rev-aware call_def (rev is a column, never folded into the sym); legacy call_def is the rev-deduped union |
 | `call_edge` | call | `(caller, callee, kind)` | resolved caller-sym to callee-sym edge (single-def or SCIP override) |
 | `call_edge_rev` | call | `(caller, callee, kind, rev)` | rev-aware call_edge |
 | `call_kind` | call | `(fn, kind)` | per-fn read/write classification from the bare callee name (execute* -> write, query*/prepare -> read); rusqlite-shaped, collection names dropped to avoid false positives |
@@ -21,9 +22,14 @@ Generated from the engine's `rel_catalog` by examples/gen-reference.dl. Do not h
 | `crate_edge` | module | `(src, dst, kind, rev)` | workspace-internal Cargo dependency edges |
 | `created` | created | `(path, name, email, ts)` | files added since their first appearance, with author name/email/timestamp |
 | `df_arg` | dataflow | `(call, pos, arg)` | (call/new df_node id, slot, arg df_node id); 0-based, receiver at -1; aligns with df_param.pos for the positional arg->param hop |
+| `df_arg_rev` | dataflow | `(call, pos, arg, rev)` | rev-aware df_arg; call and arg are salt_rev(raw id, rev), matching df_node_rev.id; legacy df_arg keeps raw ids |
 | `df_edge` | dataflow | `(from, to)` | intra-procedural dataflow dependency edge |
 | `df_field` | dataflow | `(id, field, value)` | (new/call df_node id, field name, value df_node id); struct-literal fields, object-literal properties, Kotlin named args; ".." for spread/functional-update bases |
+| `df_field_rev` | dataflow | `(id, field, value, rev)` | rev-aware df_field; id and value are salt_rev(raw id, rev), matching df_node_rev.id; legacy df_field keeps raw ids |
 | `df_node` | dataflow | `(id, kind, var, fn, file, line)` | intra-procedural dataflow node (call_res/assign/...); id is file::line::kind |
+| `df_node_repo` | dataflow | `(id, repo)` | (df_node id, repo) — the repo (nearest .git basename) each node's file was read from; scopes df joins per-repo (df_node ids are path-keyed) |
+| `df_node_repo_rev` | dataflow | `(id, repo, rev)` | rev-aware df_node_repo; id is salt_rev(raw id, rev), matching df_node_rev.id; legacy df_node_repo keeps the raw id |
+| `df_node_rev` | dataflow | `(id, kind, var, fn, file, line, rev)` | rev-aware df_node; id is salt_rev(raw id, rev) so revs stay disjoint; legacy df_node keeps the raw id |
 | `df_param` | dataflow | `(id, pos)` | (param df_node id, positional index); index counts typed params only (self skipped) so it aligns with type_sig.pos for node-level type joins |
 | `diag` | diag | `(path, line, col, end_line, end_col, severity, code, msg, hint)` | diagnostic sink; head it from a rule to emit an editor squiggle (--lsp), a --check finding, or a daemon-hook message. Fixed 9-col schema — write only the cols you need via named args (diag(path: p, line: l, msg: m)); the rest are NULL and default (severity warn, end_line=line, ints 0). path is TEXT so a synthetic origin isn't file-checked away |
 | `dl_diag` | meta | `(path, line, col, end_line, end_col, severity, code, msg)` | parse/type diagnostics for each scanned `.dl` file (path, line, col, end_line, end_col, severity, code, msg); the engine's own lexer/parser/typechecker run over `file` rows ending in `.dl`, byte spans mapped to 1-based line / 0-based col — join agent_changed for lint-on-edit |
@@ -37,6 +43,7 @@ Generated from the engine's `rel_catalog` by examples/gen-reference.dl. Do not h
 | `fn_catalog` | meta | `(name, arity, group, doc)` | every scalar function callable in a head or comparison with its arity, group, and one-line doc; sourced from fn_docs |
 | `git_ref` | git-ref | `(repo, refname, kind, sha)` | every branch/tag/remote ref plus HEAD across self + config repos (repo, refname, kind, sha); annotated tags peeled to the commit |
 | `head` | daemon | `(repo, name, oid)` | git HEAD per repo (repo, ref name, oid) |
+| `hook_event` | hook | `(kind, session, seq, json)` | harness-hook event log: one accumulating row per `dl --hook` invocation (kind = the event name UserPromptSubmit/PostToolUse/..., session = the event session id, seq = an ingest-time monotone millis stamp ordering events within a session, json = the raw event JSON). Written by the hook feed, never a refresh; extract fields with term-form json/jsonp |
 | `loop_over` | dataflow | `(file, start, end, var, collection, fn)` | one row per loop with its span, iter var, and collection |
 | `module_edge` | module | `(src, dst)` | resolved file-to-file import graph (rev-deduped union) |
 | `module_edge_rev` | module | `(src, dst, rev)` | rev-aware module_edge |
@@ -58,13 +65,13 @@ Generated from the engine's `rel_catalog` by examples/gen-reference.dl. Do not h
 | `rev_advanced` | daemon | `(repo, name, old, new)` | daemon signal that a repo ref advanced (repo, name, old oid, new oid) |
 | `rev_behind` | git-ref | `(repo, refname, upstream, behind, ahead)` | demand-driven ancestry counts: derive rev_cmp_want(repo, refname, upstream) and each wanted pair yields behind/ahead commit counts (ahead>0 = the ref diverged from upstream); one-tick latency like a data-driven scan; unresolvable refs and shallow clones skip loudly |
 | `scip_callee_type` | scip | `(sym, type)` | receiver type parsed from a method moniker's impl/for segment |
-| `scip_def` | scip | `(symbol, file)` | symbol defs from an existing index.scip (root or $SPREFA_SCIP_INDEX) |
-| `scip_edge` | scip | `(src, dst)` | file-to-file SCIP dependency edges |
+| `scip_def` | scip | `(symbol, file, repo)` | symbol defs from an existing index.scip (root or $SPREFA_SCIP_INDEX); repo = origin index |
+| `scip_edge` | scip | `(src, dst, repo)` | file-to-file SCIP dependency edges (with origin repo) |
 | `scip_fn_edge` | scip | `(caller, callee)` | function-level call edge; caller is the innermost enclosing fn def |
 | `scip_impl` | scip | `(impl, iface)` | interface/supertype dispatch edge from SCIP is_implementation (impl to iface) |
 | `scip_local` | scip | `(fn, name)` | local-variable + parameter declarations attributed to their enclosing fn |
 | `scip_name` | scip | `(symbol, name)` | descriptor name (last identifier run) of a moniker, computed in-engine |
-| `scip_ref` | scip | `(file, symbol, def_file)` | compiler-backed references (ref file, symbol, def file) |
+| `scip_ref` | scip | `(file, symbol, def_file, repo)` | compiler-backed references (ref file, symbol, def file, origin repo) |
 | `similar` | embed | `(a, b, score)` | content-addressed nearest-neighbor pairs from the embedding backend, with score |
 | `skill_loaded` | agent | `(harness, session, name)` | skills loaded in the newest agent session (harness, session, name): explicit Skill tool calls + dl's own prior `dl --hook` injections — negate it for a declarative load-once guard |
 | `stmt_ms` | perf | `(rel, ms)` | wall ms of each derived rel's INSERT statements from its most recent rebuild (max across rules/passes); empty until a rebuild has landed in this db, so a one-shot CLI run reports on the second invocation — the slow-rule rail joins here |
@@ -73,7 +80,9 @@ Generated from the engine's `rel_catalog` by examples/gen-reference.dl. Do not h
 | `type_edge` | type | `(from, to, kind, repo)` | type-graph edges across Rust (syn), Kotlin (tree-sitter), TS (oxc); kind is field/variant/impl/generic — Kotlin interface supertypes are generic, class/object impl, val/var ctor params + body properties field, enum entries variant; trailing repo column so two trees scanned together don't collapse same-named types into one node (closure/scc still walk cols 0/1, unaffected) |
 | `type_edge_rev` | type | `(from, to, kind, rev, repo)` | rev-aware type_edge (WORK-vs-HEAD type diff) |
 | `type_entity` | type | `(repo, sym, name, kind, parent, file, line)` | every declared type; sym is file::kind::name, the cross-graph join key; scip_ref overrides name resolution when a SCIP index is present |
+| `type_entity_rev` | type | `(repo, sym, name, kind, parent, file, line, rev)` | rev-aware type_entity (rev is a column, never folded into the sym, so a diff compares the same sym across revs); legacy type_entity is the rev-deduped union |
 | `type_lgg` | type-shape | `(a, b, vars)` | least-general generalization of two type shapes (shape-iso experiment) |
 | `type_link` | type | `(src, dst, kind)` | cross-type links not carried by type_edge (SCIP-resolved sym to sym); src/dst are already repo-prefixed via type_entity's sym, so no separate repo column is needed |
+| `type_link_rev` | type | `(src, dst, kind, rev)` | rev-aware type_link (SCIP-resolved sym-to-sym per rev); legacy type_link is the rev-deduped union |
 | `type_shape` | type-shape | `(name, hash)` | structural type-shape fingerprint per type (shape-iso experiment) |
 | `type_sig` | type | `(sym, slot, pos, ref)` | type signature slots (params, fields) per sym |

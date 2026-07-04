@@ -33,10 +33,14 @@ new relations.
 
 ### 1. Pick (or add) the submodule
 
-Families are bucketed by kind in `src/rels/{git,analysis,catalog,propose,scip,embed}.rs`.
-Put a git-worktree-derived relation in `git.rs`, a static-analysis one in
-`analysis.rs`, etc. A genuinely new bucket is a new `src/rels/<bucket>.rs` +
-a `mod <bucket>;` line in `src/rels/mod.rs`.
+Families are bucketed by kind in
+`src/rels/{git,analysis,catalog,propose,scip,embed,perf,querylog}.rs`. Put a
+git-worktree-derived relation in `git.rs` (also home to `GitRefKind`/
+`RevBehindKind`, not just `changed`/`changed_line`/`created`), a
+static-analysis one in `analysis.rs`, an engine-telemetry one in `perf.rs`
+(pattern: `rel_count`/`stmt_ms`), a request-history one in `querylog.rs`
+(pattern: `query_log`), etc. A genuinely new bucket is a new
+`src/rels/<bucket>.rs` + a `mod <bucket>;` line in `src/rels/mod.rs`.
 
 ### 2. Write the unit struct + impl
 
@@ -103,12 +107,15 @@ tick N+1 counter and is a bug.
 
 ```rust
 pub fn rel_kinds() -> &'static [&'static dyn RelKind] {
-    &[&ChangedKind, &ChangedLineKind, &CreatedKind,
+    &[&ChangedKind, &ChangedLineKind, &CreatedKind, &GitRefKind, &RevBehindKind,
       &AgentKind, &DlDiagKind, &TypeShapeKind, &TypeLggKind, &CatalogKind,
-      &ScipKind, &ProposeExtractKind, &ProposeCloneKind, &EmbedKind,
-      &StagedKind]
+      &ScipKind, &ProposeExtractKind, &ProposeCloneKind, &EmbedKind, &PerfKind,
+      &QueryLogKind, &StagedKind]
 }
 ```
+
+(That's the real list as of this writing, `src/rels/mod.rs:117`; check it
+directly before copying, it grows every time a family lands.)
 
 That's it — the five former call sites (`tick`, `tick_paths`,
 `declare_builtins`, `all_builtin_decls`, the reserved-name guard in
@@ -121,12 +128,19 @@ in sync.
 
 Reserved names a user program can NEVER declare (a `.dl` author hitting one
 must rename): `repo`, `rev`, `content`, `file`, `string`, `ref` (the byte-span
-spine), `type_edge`, `type_edge_rev`, `type_entity`, `type_sig`, `type_link`
-(the `TYPE_RELS` array — all five guard together), the module-graph rels, plus
-every name any `RelKind` in the registry owns. Discovered in practice
-2026-06-12: a deck-row program wanting `ref(node, panel, locator)` had to use
-`node_ref` — anim's atlas-db loader reads `rel_node_ref` for exactly this
-reason.
+spine), the module-graph rels (`MODULE_RELS`), the seven-member type-graph
+family (`TYPE_RELS`: `type_edge`/`type_edge_rev`/`type_entity`/
+`type_entity_rev`/`type_sig`/`type_link`/`type_link_rev`), the call-graph
+family (`CALL_RELS`: `call_def`/`call_def_rev`/`call_site`/`call_edge`/
+`call_edge_rev`/`call_name`/`call_kind`), the dataflow family
+(`DATAFLOW_RELS`, 13 members incl. `df_node`/`df_node_repo`/`df_edge`/
+`df_arg`/`df_param`/`df_field` and their `_rev` twins), `doc_comment`/
+`doc_tag` (`DOC_TEXT_RELS`), `dl_diag`, plus every name any `RelKind` in the
+registry owns; the bail message on a redeclare attempt names the exact
+family, so grepping `*_RELS` in `src/engine/mod.rs` is the authoritative list
+when this paragraph goes stale again. Discovered in practice 2026-06-12: a
+deck-row program wanting `ref(node, panel, locator)` had to use `node_ref`,
+anim's atlas-db loader reads `rel_node_ref` for exactly this reason.
 
 ### 5. Write an e2e test
 
@@ -142,12 +156,33 @@ and `--root`/`--db` flags. Assert on stdout of a `? rel(...)` query.
 - **Delta refresh**: spine (`_where_bytes`/`_strings`/`_files`), `node`/`child`
   (CST), `module_edge`/`module_edge_rev` and friends.
 - **Extracted args**: `every`/`clock` (temporal intervals parsed from decl args).
-- **Always-run, `()` return**: `builtin`, `type_edge`/`type_entity`/`type_sig`/
-  `type_link`, `call_edge`, `df_node`/`df_edge`/dataflow, `doc_comment`/`doc_tag`,
+- **Always-run, `()` return**: `type_edge`/`type_entity`/`type_sig`/`type_link`,
+  `call_edge`, `df_node`/`df_edge`/dataflow, `doc_comment`/`doc_tag`,
   daemon-state (`program`/`head`/`rev_advanced`), the effect runtime.
 
-These are candidates for further staged `RelKind`-style extensions per
-`plans/2026-06-30-engine-breakdown-proposal.md`, not yet done.
+These refresh BODIES still live in `Engine::refresh_module_rels` /
+`refresh_type_rels` / `refresh_call_rels` / `refresh_dataflow_rels` /
+`refresh_doc_rels` / `refresh_spine_rels` in `src/engine/extract.rs`. A new
+member of one of these (a new type-graph kind, a new dataflow node shape) is
+still a hand-edit inside the existing refresher, not a new `RelKind`/
+`ExtractFamily` impl.
+
+DISPATCH for six of these (`module`/`type`/`call`/`dataflow`/`doc`/`spine`) DID
+move to a registry as of the 2026-07-02 engine-trait-refactor Phase R1:
+`trait ExtractFamily` (`src/rels/extract_family.rs`) mirrors `RelKind` in
+shape (`name`/`rels`/`decls`/`reserved_msg`/`used`/`refresh(&mut Engine)`) and
+`extract_families()` is what `tick`/`tick_paths` loop over now instead of a
+hand-written fan-out. It is a SEPARATE trait from `RelKind` (not a case that
+"fits" the `RelKind` checklist above) because these refreshers take `&mut
+Engine` (they mutate per-file fact caches), most carry a persisted
+`extract:<family>` input digest for the perf-gap-A warm-tick skip (`type`/
+`call`/`dataflow`/`doc`; `module`/`spine` always re-derive), and `decls()`/
+`reserved_msg()` still delegate to the free-fn decl tables + hand-written
+guard in `engine/mod.rs` rather than owning them (R1 is dispatch-only; body
+relocation into `src/rels/` is deferred Phase R2, per
+`plans/2026-07-02-engine-trait-refactor-v2.md`). `node` (CST) stays fully
+hand-dispatched, not even in `ExtractFamily`: it must run before `spine` and
+its incremental form has a different signature.
 
 ---
 
