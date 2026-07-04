@@ -313,7 +313,8 @@ pub fn run_index(args: &[String]) -> Result<i32> {
     gitignore_index(&root);
 
     // Confirm with row counts so the user sees SCIP actually loaded.
-    match crate::scip_import::load(&out) {
+    let slug = root.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    match crate::scip_import::load(&out, &root, &slug) {
         Ok(rows) => {
             println!("[dl index] wrote {} ({})", out.display(), human_size(&out));
             println!("[dl index] scip_def={} scip_ref={} scip_edge={} scip_fn_edge={}",
@@ -457,7 +458,8 @@ pub fn run_doctor(args: &[String]) -> Result<i32> {
                 Freshness::Stale => println!("             freshness: STALE — older than HEAD; re-run `dl index`"),
                 Freshness::Unknown => println!("             freshness: unknown (not a git repo or no HEAD)"),
             }
-            match crate::scip_import::load(&path) {
+            let slug = root.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            match crate::scip_import::load(&path, &root, &slug) {
                 Ok(rows) => {
                     println!("             scip_def={} scip_ref={} scip_edge={} scip_fn_edge={} scip_impl={}",
                         rows.defs.len(), rows.refs.len(), rows.edges.len(),
@@ -503,7 +505,7 @@ fn path_join_ok(root: &Path, rows: &crate::scip_import::ScipRows) -> bool {
     if rows.defs.is_empty() {
         return true; // nothing to check; don't warn on an empty index
     }
-    rows.defs.iter().take(64).any(|(_, file)| root.join(file).exists())
+    rows.defs.iter().take(64).any(|(_, file, _)| root.join(file).exists())
 }
 
 fn human_size(path: &Path) -> String {

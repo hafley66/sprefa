@@ -187,3 +187,141 @@ fn maxby_promotes_on_warm_db() {
     assert!(out.contains("v2"), "warm db must promote the prio=9 row:\n{out}");
     assert!(!out.contains("v1"), "the prio=1 incumbent must be displaced:\n{out}");
 }
+
+/// Hot-reload wedge regression: ADD a `key(...) merge(...)` to a rel that ran on
+/// the warm db WITHOUT a key. The columns are identical, so the column-set
+/// migration does not fire — only the PK changes (full-row -> key(id)). Before
+/// the key-drift migration, the cached full-row PK stayed and every tick failed
+/// "ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint",
+/// wedging the daemon. Now `declare` drops+recreates the table when the key set
+/// moves, so the lattice upsert works on the warm db.
+#[test]
+fn add_key_on_warm_db_does_not_wedge() {
+    let d = sandbox("addkey");
+    // p1: no key => full-row PRIMARY KEY, one seed row establishes the table.
+    let p1 = concat!(
+        "rel send(id: int, body: text, prio: int).\n",
+        "rel r(id: int).\n",
+        "r(1).\n",
+        "send(id, \"seed\", 1) <- r(id).\n",
+        "? send(id, body, prio).\n");
+    let (code, _out, err) = run(&d, p1);
+    assert_eq!(code, 0, "p1 (no key) must succeed:\n{err}");
+
+    // p2: SAME columns, now key(id) merge(MaxBy(prio)). Column set is unchanged,
+    // so only the key/PK drifts (the isolated repro of the daemon wedge).
+    let p2 = concat!(
+        "rel send(id: int, body: text, prio: int) key(id) merge(MaxBy(prio)).\n",
+        "rel r(id: int).\n",
+        "r(1).\n",
+        "send(id, \"lo\", 1) <- r(id).\n",
+        "send(id, \"hi\", 9) <- r(id).\n",
+        "? send(id, body, prio).\n");
+    let (code, out, err) = run(&d, p2);
+    assert_eq!(code, 0, "adding key(...) on a warm db must not wedge:\n{err}");
+    assert!(!err.contains("ON CONFLICT"), "no ON CONFLICT wedge:\n{err}");
+    assert!(out.contains("hi"), "MaxBy(prio) must keep the prio=9 row:\n{out}");
+    assert!(!out.contains("lo"), "the prio=1 row must lose after the key is added:\n{out}");
+    assert!(out.contains("(1 rows)"), "key(id) must collapse to one row:\n{out}");
+}
+
+/// Reverse transition: REMOVE a `key(...) merge(...)` on a warm db. The PK
+/// widens from key(id) back to the full row, so rows that the lattice had
+/// collapsed to one now coexist as set-semantics rows. Same drop+recreate path.
+#[test]
+fn remove_key_on_warm_db_widens_pk() {
+    let d = sandbox("removekey");
+    // p1: key(id) merge => one winning row per id.
+    let p1 = concat!(
+        "rel send(id: int, body: text, prio: int) key(id) merge(MaxBy(prio)).\n",
+        "rel r(id: int).\n",
+        "r(1).\n",
+        "send(id, \"lo\", 1) <- r(id).\n",
+        "send(id, \"hi\", 9) <- r(id).\n",
+        "? send(id, body, prio).\n");
+    let (code, out, err) = run(&d, p1);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("(1 rows)"), "keyed p1 collapses to one row:\n{out}");
+
+    // p2: SAME columns, no key => full-row PK. Both distinct rows survive.
+    let p2 = concat!(
+        "rel send(id: int, body: text, prio: int).\n",
+        "rel r(id: int).\n",
+        "r(1).\n",
+        "send(id, \"lo\", 1) <- r(id).\n",
+        "send(id, \"hi\", 9) <- r(id).\n",
+        "? send(id, body, prio).\n");
+    let (code, out, err) = run(&d, p2);
+    assert_eq!(code, 0, "removing key(...) on a warm db must not wedge:\n{err}");
+    assert!(out.contains("(2 rows)"), "full-row PK keeps both rows:\n{out}");
+}
+
+/// Key-column CHANGE on a warm db: key(id) -> key(id, shard). The conflict
+/// target column set differs, so the table is dropped+recreated; the finer key
+/// splits what was one group into two.
+#[test]
+fn change_key_columns_on_warm_db() {
+    let d = sandbox("changekey");
+    // p1: key(id) only => both shards collapse into the single id=1 group.
+    let p1 = concat!(
+        "rel send(id: int, shard: int, body: text, prio: int) key(id) merge(MaxBy(prio)).\n",
+        "rel r(id: int, shard: int).\n",
+        "r(1, 10).\n",
+        "r(1, 20).\n",
+        "send(id, shard, \"lo\", 1) <- r(id, shard).\n",
+        "send(id, shard, \"hi\", 9) <- r(id, shard).\n",
+        "? send(id, shard, body, prio).\n");
+    let (code, out, err) = run(&d, p1);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("(1 rows)"), "key(id) collapses both shards to one row:\n{out}");
+
+    // p2: key(id, shard) => one winner per (id, shard) => two rows.
+    let p2 = concat!(
+        "rel send(id: int, shard: int, body: text, prio: int) key(id, shard) merge(MaxBy(prio)).\n",
+        "rel r(id: int, shard: int).\n",
+        "r(1, 10).\n",
+        "r(1, 20).\n",
+        "send(id, shard, \"lo\", 1) <- r(id, shard).\n",
+        "send(id, shard, \"hi\", 9) <- r(id, shard).\n",
+        "? send(id, shard, body, prio).\n");
+    let (code, out, err) = run(&d, p2);
+    assert_eq!(code, 0, "changing the key column set on a warm db must not wedge:\n{err}");
+    assert!(out.contains("(2 rows)"), "key(id, shard) splits into two groups:\n{out}");
+    assert_eq!(out.matches("hi").count(), 2, "each shard keeps its hi row:\n{out}");
+}
+
+/// Merge-fn-only change on a warm db: key(id) stays, MaxBy(a) -> MaxBy(b). The
+/// PK column set is UNCHANGED, so this fix must NOT drop the table (a merge-fn
+/// change is schema-invariant — the upsert SQL is regenerated by `lower_rule`
+/// each tick). The decision: no drop, so the tick must not wedge. Because the
+/// table is preserved, the warm incumbent survives (a full re-rank across a
+/// merge-fn change is governed by the digest-skip path, out of scope for this
+/// schema fix); the guaranteed property here is no ON CONFLICT wedge + one row.
+#[test]
+fn change_merge_fn_only_on_warm_db() {
+    let d = sandbox("mergefn");
+    // p1: rank by prio => "p-hi" wins (prio 9 > 1).
+    let p1 = concat!(
+        "rel send(id: int, body: text, prio: int, seq: int) key(id) merge(MaxBy(prio)).\n",
+        "rel r(id: int).\n",
+        "r(1).\n",
+        "send(id, \"p-hi\", 9, 1) <- r(id).\n",
+        "send(id, \"s-hi\", 1, 9) <- r(id).\n",
+        "? send(id, body, prio, seq).\n");
+    let (code, out, err) = run(&d, p1);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("p-hi"), "p1 ranks by prio:\n{out}");
+
+    // p2: SAME key(id), rank by seq instead. PK unchanged => no drop, no wedge.
+    let p2 = concat!(
+        "rel send(id: int, body: text, prio: int, seq: int) key(id) merge(MaxBy(seq)).\n",
+        "rel r(id: int).\n",
+        "r(1).\n",
+        "send(id, \"p-hi\", 9, 1) <- r(id).\n",
+        "send(id, \"s-hi\", 1, 9) <- r(id).\n",
+        "? send(id, body, prio, seq).\n");
+    let (code, out, err) = run(&d, p2);
+    assert_eq!(code, 0, "merge-fn-only change on a warm db must not wedge:\n{err}");
+    assert!(!err.contains("ON CONFLICT"), "merge-fn change is schema-invariant, no wedge:\n{err}");
+    assert!(out.contains("(1 rows)"), "still one row per key (table not dropped):\n{out}");
+}

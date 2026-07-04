@@ -42,14 +42,14 @@ impl RelKind for ScipKind {
     }
     fn decls(&self) -> Vec<RelDecl> {
         vec![
-            RelDecl { name: "scip_def".into(), cols: vec![col("symbol", Type::Text), col("file", Type::Path)], group: "scip",
-                doc: "symbol defs from an existing index.scip (root or $SPREFA_SCIP_INDEX)", ..Default::default() },
+            RelDecl { name: "scip_def".into(), cols: vec![col("symbol", Type::Text), col("file", Type::Path), col("repo", Type::Text)], group: "scip",
+                doc: "symbol defs from an existing index.scip (root or $SPREFA_SCIP_INDEX); repo = origin index", ..Default::default() },
             RelDecl { name: "scip_name".into(), cols: vec![col("symbol", Type::Text), col("name", Type::Text)], group: "scip",
                 doc: "descriptor name (last identifier run) of a moniker, computed in-engine", ..Default::default() },
-            RelDecl { name: "scip_ref".into(), cols: vec![col("file", Type::Path), col("symbol", Type::Text), col("def_file", Type::Path)], group: "scip",
-                doc: "compiler-backed references (ref file, symbol, def file)", ..Default::default() },
-            RelDecl { name: "scip_edge".into(), cols: vec![col("src", Type::Path), col("dst", Type::Path)], group: "scip",
-                doc: "file-to-file SCIP dependency edges", ..Default::default() },
+            RelDecl { name: "scip_ref".into(), cols: vec![col("file", Type::Path), col("symbol", Type::Text), col("def_file", Type::Path), col("repo", Type::Text)], group: "scip",
+                doc: "compiler-backed references (ref file, symbol, def file, origin repo)", ..Default::default() },
+            RelDecl { name: "scip_edge".into(), cols: vec![col("src", Type::Path), col("dst", Type::Path), col("repo", Type::Text)], group: "scip",
+                doc: "file-to-file SCIP dependency edges (with origin repo)", ..Default::default() },
             RelDecl { name: "scip_fn_edge".into(), cols: vec![col("caller", Type::Text), col("callee", Type::Text)], group: "scip",
                 doc: "function-level call edge; caller is the innermost enclosing fn def", ..Default::default() },
             RelDecl { name: "scip_callee_type".into(), cols: vec![col("sym", Type::Text), col("type", Type::Text)], group: "scip",
@@ -70,34 +70,53 @@ impl RelKind for ScipKind {
     }
     fn refresh(&self, eng: &Engine) -> Result<bool> {
         let t = |s: &str| Value::Text(s.to_string());
-        let path = self.resolve_index(eng)?;
-        let Some(path) = path else {
-            eng.refresh_rel("scip_def", &["symbol", "file"], &[])?;
+        // Each input index is loaded independently and its rows tagged with the
+        // origin repo, so two roots of the same crate that emit identical
+        // (symbol, relative_path) strings stay distinct instead of collapsing on
+        // a blind pre-merge (the cross-root symbol-collapse bug). Cross-repo
+        // SCIP resolution is intentionally NOT reconstructed: a ref resolves only
+        // within its own index's document set, matching the syntactic resolver's
+        // per-repo scoping.
+        let inputs = self.index_inputs(eng)?;
+        if inputs.is_empty() {
+            eng.refresh_rel("scip_def", &["symbol", "file", "repo"], &[])?;
             eng.refresh_rel("scip_name", &["symbol", "name"], &[])?;
-            eng.refresh_rel("scip_ref", &["file", "symbol", "def_file"], &[])?;
-            eng.refresh_rel("scip_edge", &["src", "dst"], &[])?;
+            eng.refresh_rel("scip_ref", &["file", "symbol", "def_file", "repo"], &[])?;
+            eng.refresh_rel("scip_edge", &["src", "dst", "repo"], &[])?;
             eng.refresh_rel("scip_fn_edge", &["caller", "callee"], &[])?;
             eng.refresh_rel("scip_callee_type", &["sym", "type"], &[])?;
             eng.refresh_rel("scip_local", &["fn", "name"], &[])?;
             eng.refresh_rel("scip_impl", &["impl", "iface"], &[])?;
             return Ok(true);
-        };
-        let rows = scip_import::load(&path)?;
-        let defs: Vec<Vec<Value>> = rows.defs.iter().map(|(sym, file)| vec![t(sym), t(file)]).collect();
+        }
+        let mut all = scip_import::ScipRows::default();
+        for (path, root, slug) in &inputs {
+            let rows = scip_import::load(path, root, slug)?;
+            all.defs.extend(rows.defs);
+            all.refs.extend(rows.refs);
+            all.edges.extend(rows.edges);
+            all.fn_edges.extend(rows.fn_edges);
+            all.callee_types.extend(rows.callee_types);
+            all.locals.extend(rows.locals);
+            all.occ_spans.extend(rows.occ_spans);
+            all.impls.extend(rows.impls);
+        }
+        let rows = all;
+        let defs: Vec<Vec<Value>> = rows.defs.iter().map(|(sym, file, repo)| vec![t(sym), t(file), t(repo)]).collect();
         // The symbol's descriptor name (last identifier run), computed where the
         // SCIP moniker grammar lives. A pure-dl `split` chain can't isolate it:
         // `…/impl#[Type]method().` needs the `[`/`]`/`#` separators that single-
         // separator split can't all honor. One row per distinct (symbol, name).
         let mut name_set: HashSet<(String, String)> = HashSet::new();
-        for (sym, _) in &rows.defs {
+        for (sym, _, _) in &rows.defs {
             if let Some(name) = scip_descriptor_name(sym) {
                 name_set.insert((sym.clone(), name));
             }
         }
         let names: Vec<Vec<Value>> = name_set.iter().map(|(sym, name)| vec![t(sym), t(name)]).collect();
         let refs: Vec<Vec<Value>> = rows.refs.iter()
-            .map(|(file, sym, def)| vec![t(file), t(sym), t(def)]).collect();
-        let edges: Vec<Vec<Value>> = rows.edges.iter().map(|(src, dst)| vec![t(src), t(dst)]).collect();
+            .map(|(file, sym, def, repo)| vec![t(file), t(sym), t(def), t(repo)]).collect();
+        let edges: Vec<Vec<Value>> = rows.edges.iter().map(|(src, dst, repo)| vec![t(src), t(dst), t(repo)]).collect();
         let fn_edges: Vec<Vec<Value>> = rows.fn_edges.iter()
             .map(|(caller, callee)| vec![t(caller), t(callee)]).collect();
         let callee_types: Vec<Vec<Value>> = rows.callee_types.iter()
@@ -106,10 +125,10 @@ impl RelKind for ScipKind {
             .map(|(fn_, name)| vec![t(fn_), t(name)]).collect();
         let impls: Vec<Vec<Value>> = rows.impls.iter()
             .map(|(im, iface)| vec![t(im), t(iface)]).collect();
-        eng.refresh_rel("scip_def", &["symbol", "file"], &defs)?;
+        eng.refresh_rel("scip_def", &["symbol", "file", "repo"], &defs)?;
         eng.refresh_rel("scip_name", &["symbol", "name"], &names)?;
-        eng.refresh_rel("scip_ref", &["file", "symbol", "def_file"], &refs)?;
-        eng.refresh_rel("scip_edge", &["src", "dst"], &edges)?;
+        eng.refresh_rel("scip_ref", &["file", "symbol", "def_file", "repo"], &refs)?;
+        eng.refresh_rel("scip_edge", &["src", "dst", "repo"], &edges)?;
         eng.refresh_rel("scip_fn_edge", &["caller", "callee"], &fn_edges)?;
         eng.refresh_rel("scip_callee_type", &["sym", "type"], &callee_types)?;
         eng.refresh_rel("scip_local", &["fn", "name"], &locals)?;
@@ -119,13 +138,20 @@ impl RelKind for ScipKind {
 }
 
 impl ScipKind {
-    /// The index to load this tick: the self root's `index.scip` alone (the
-    /// existing single-repo path), or — when a user-derived `scip_want(repo)`
-    /// demands more repos — the self index plus each wanted repo's ensured
-    /// index, merged to one temp file so the load resolves refs across repos.
-    /// `None` = no index anywhere (the caller clears the rels).
-    fn resolve_index(&self, eng: &Engine) -> Result<Option<std::path::PathBuf>> {
+    /// The index inputs to load this tick, one per repo: `(index_path, on-disk
+    /// root, repo slug)`. The self root's `index.scip` (the existing single-repo
+    /// path), plus — when a user-derived `scip_want(repo)` demands more repos —
+    /// each wanted repo's ensured index. Each is loaded and tagged independently
+    /// (`refresh` threads root+slug into `scip_import::load`) so identical
+    /// (symbol, relative_path) strings across roots stay distinct rows keyed by
+    /// origin repo. No pre-merge — that lost which input each document came from,
+    /// collapsing the second root's rows. Empty = no index anywhere (the caller
+    /// clears the rels).
+    fn index_inputs(&self, eng: &Engine) -> Result<Vec<(std::path::PathBuf, std::path::PathBuf, String)>> {
+        let self_slug = eng.self_slug();
         let self_index = scip_import::index_path(&eng.root);
+        let mut inputs: Vec<(std::path::PathBuf, std::path::PathBuf, String)> =
+            self_index.into_iter().map(|p| (p, eng.root.clone(), self_slug.clone())).collect();
         let want: Vec<String> = match eng.rels.get("scip_want") {
             None => Vec::new(),
             Some(meta) => {
@@ -141,34 +167,23 @@ impl ScipKind {
             }
         };
         if want.is_empty() {
-            return Ok(self_index);
+            return Ok(inputs);
         }
         let roots = eng.repo_roots();
-        let self_slug = eng.self_slug();
-        let mut parts: Vec<std::path::PathBuf> = self_index.into_iter().collect();
         for repo in want {
             let key = match repo.as_str() {
                 "." | "" | "self" => self_slug.clone(),
                 _ => repo.clone(),
             };
-            if key == self_slug { continue; } // self index already in parts
+            if key == self_slug { continue; } // self index already an input
             let Some(root) = roots.get(&key) else {
                 eprintln!("[scip_want] skip {repo}: unknown repo slug");
                 continue;
             };
             if let Some(p) = crate::scip_setup::ensure_index(root)? {
-                parts.push(p);
+                inputs.push((p, root.clone(), key));
             }
         }
-        match parts.len() {
-            0 => Ok(None),
-            1 => Ok(Some(parts.remove(0))),
-            _ => {
-                let merged = std::env::temp_dir()
-                    .join(format!("dl-scip-want-{}.scip", std::process::id()));
-                scip_import::merge_files(&parts, &merged)?;
-                Ok(Some(merged))
-            }
-        }
+        Ok(inputs)
     }
 }

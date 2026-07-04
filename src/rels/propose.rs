@@ -97,7 +97,7 @@ impl RelKind for ProposeCloneKind {
         let files = eng.node_file_set(None)?;
         let scip_spans: HashMap<String, Vec<(i32, i32, String)>> =
             if let Some(idx) = scip_import::index_path(&root) {
-                match scip_import::load(&idx) {
+                match scip_import::load(&idx, &root, &eng.self_slug()) {
                     Ok(rows) => {
                         let mut map: HashMap<String, Vec<(i32, i32, String)>> = HashMap::new();
                         for (file, l, c, sym) in rows.occ_spans {

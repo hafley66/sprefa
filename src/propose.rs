@@ -1579,7 +1579,7 @@ mod tests {
         let idx = std::path::PathBuf::from(format!("{repo_root}/index.scip"));
         let occ_owned: Vec<(i32, i32, String)>;
         let spans: Vec<(i32, i32, &str)>;
-        match crate::scip_import::load(&idx) {
+        match crate::scip_import::load(&idx, std::path::Path::new(&repo_root), "self") {
             Ok(rows) => {
                 occ_owned = rows
                     .occ_spans

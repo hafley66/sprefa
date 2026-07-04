@@ -2432,7 +2432,8 @@ fn ts_class_entity(c: &ts_ast::Class, file: &str, starts: &[usize], out: &mut Ve
             }
             if let ts_ast::PropertyKey::StaticIdentifier(k) = &m.key {
                 let ty = ts_fn_type(&m.value.type_parameters, &m.value.params, &m.value.return_type);
-                push_entity(out, file, starts, &k.name, m.span.start, EntityKind::Method, Some(&owner), Some(ty));
+                // a TS method's owner is always the enclosing class.
+                push_entity(out, file, starts, &k.name, m.span.start, EntityKind::Method, Some((&owner, EntityKind::Class)), Some(ty));
             }
         }
     }
@@ -2595,6 +2596,10 @@ fn ts_fn_type(
     TypeExpr { params, ret }
 }
 
+// `parent` is `(owner_name, owner_kind)`: the method sym embeds the owner NAME
+// (`Owner.name`), while the stored `parent` field is the owner's OWN entity sym
+// minted with the owner's REAL kind — so `type_entity.parent` joins
+// `type_entity.sym` with no normalization.
 fn push_entity(
     out: &mut Vec<TypeEntity>,
     file: &str,
@@ -2602,14 +2607,14 @@ fn push_entity(
     name: &str,
     span_start: u32,
     kind: EntityKind,
-    parent: Option<&str>,
+    parent: Option<(&str, EntityKind)>,
     ty: Option<TypeExpr>,
 ) {
     out.push(TypeEntity {
-        sym: mint_sym(file, kind, name, parent),
+        sym: mint_sym(file, kind, name, parent.map(|(p, _)| p)),
         name: name.to_string(),
         kind,
-        parent: parent.map(|p| mint_sym(file, EntityKind::Class, p, None)),
+        parent: parent.map(|(p, pk)| mint_sym(file, pk, p, None)),
         file: file.to_string(),
         line: line_at(starts, span_start as usize),
         ty,
@@ -2789,26 +2794,57 @@ fn rust_entities(file: &str, content: &str) -> Vec<TypeEntity> {
 }
 
 fn rust_entities_from(parsed: &syn::File, file: &str) -> Vec<TypeEntity> {
+    let owner_kinds = rust_owner_kinds(parsed);
     let mut out = Vec::new();
     for item in &parsed.items {
-        rust_item_entity(item, file, &mut out);
+        rust_item_entity(item, file, &owner_kinds, &mut out);
     }
     out
+}
+
+/// Map each top-level type declaration's name to its real `EntityKind`, so an
+/// `impl` block's methods can key their `parent` to the owner's OWN entity sym
+/// (`file::struct::Foo`, not a hardcoded `file::class::Foo`). An `impl` for a
+/// type declared in another file has no local owner row, so no parent sym could
+/// join regardless of kind; the default guess is harmless there.
+fn rust_owner_kinds(parsed: &syn::File) -> std::collections::HashMap<String, EntityKind> {
+    let mut m = std::collections::HashMap::new();
+    for item in &parsed.items {
+        match item {
+            Item::Struct(s) => { m.insert(s.ident.to_string(), EntityKind::Struct); }
+            Item::Enum(en) => { m.insert(en.ident.to_string(), EntityKind::Enum); }
+            Item::Union(u) => { m.insert(u.ident.to_string(), EntityKind::Struct); }
+            Item::Trait(t) => { m.insert(t.ident.to_string(), EntityKind::Trait); }
+            _ => {}
+        }
+    }
+    m
 }
 
 fn rust_line(span: proc_macro2::Span) -> u32 {
     span.start().line as u32
 }
 
-fn rust_item_entity(item: &Item, file: &str, out: &mut Vec<TypeEntity>) {
+fn rust_item_entity(
+    item: &Item,
+    file: &str,
+    owner_kinds: &std::collections::HashMap<String, EntityKind>,
+    out: &mut Vec<TypeEntity>,
+) {
     // `parent` is the bare owner name (e.g. "Engine"); the method sym uses it
-    // as `Class.name` while the stored parent field is the minted class sym.
+    // as `Owner.name`, while the stored parent field is the owner's own sym
+    // minted with the owner's REAL kind (looked up in `owner_kinds`) so it
+    // equality-joins `type_entity.sym`.
     let mut e = |name: String, line: u32, kind: EntityKind, parent: Option<String>, ty: Option<TypeExpr>| {
+        let parent_sym = parent.as_deref().map(|p| {
+            let pk = owner_kinds.get(p).copied().unwrap_or(EntityKind::Struct);
+            mint_sym(file, pk, p, None)
+        });
         out.push(TypeEntity {
             sym: mint_sym(file, kind, &name, parent.as_deref()),
             name,
             kind,
-            parent: parent.map(|p| mint_sym(file, EntityKind::Class, &p, None)),
+            parent: parent_sym,
             file: file.to_string(),
             line,
             ty,
@@ -4175,9 +4211,68 @@ impl Engine {
         assert_eq!(run.ret, vec![TypeRef::Named("Report".into())]);
         let tick = by("tick");
         assert_eq!(tick.kind, EntityKind::Method);
-        assert_eq!(tick.parent.as_deref(), Some("src/engine.rs::class::Engine"));
+        assert_eq!(tick.parent.as_deref(), Some("src/engine.rs::struct::Engine"));
         let tty = tick.ty.as_ref().unwrap();
         assert_eq!(tty.params, vec![vec![TypeRef::Named("Db".into())]], "self dropped: {tty:?}");
+    }
+
+    // The invariant: for every entity E with `parent = Some(P)`, P is the EXACT
+    // sym of some other entity in the same file — so `type_entity.parent` joins
+    // `type_entity.sym` with zero normalization. Regression guard for the old
+    // hardcoded `::class::` owner tag (a struct method read `::class::Foo`).
+    #[test]
+    fn entity_parent_joins_owner_sym_across_langs() {
+        let check = |es: &[TypeEntity], lang: &str| {
+            let syms: std::collections::HashSet<&str> = es.iter().map(|e| e.sym.as_str()).collect();
+            for e in es {
+                if let Some(p) = &e.parent {
+                    assert!(syms.contains(p.as_str()), "[{lang}] dangling parent {p} on {}: {es:?}", e.sym);
+                }
+            }
+        };
+        let find = |es: &[TypeEntity], n: &str| {
+            es.iter().find(|e| e.name == n).unwrap_or_else(|| panic!("missing {n}: {es:?}")).clone()
+        };
+
+        // Rust: struct + enum owners each get an impl method; trait present as a
+        // top-level entity (trait default methods aren't emitted as entities, so
+        // a trait is never itself a method owner here).
+        let rust = "\
+struct S { x: i32 }
+enum E { A }
+trait T {}
+impl S { fn sm(&self) {} }
+impl E { fn em(&self) {} }
+";
+        let re = RustTypes.extract("src/lib.rs", rust).entities;
+        check(&re, "rust");
+        assert_eq!(find(&re, "sm").parent.as_deref(), Some("src/lib.rs::struct::S"));
+        assert_eq!(find(&re, "em").parent.as_deref(), Some("src/lib.rs::enum::E"));
+        assert!(re.iter().any(|e| e.sym == "src/lib.rs::trait::T"), "trait entity: {re:?}");
+
+        // TS: interface + class; a class method parents to the class sym.
+        let ts = "\
+export interface I { }
+export class C { m(): void {} }
+";
+        let te = TsTypes.extract("src/m.ts", ts).entities;
+        check(&te, "ts");
+        assert_eq!(find(&te, "m").parent.as_deref(), Some("src/m.ts::class::C"));
+        assert!(te.iter().any(|e| e.sym == "src/m.ts::interface::I"), "interface entity: {te:?}");
+
+        // Kotlin: class + interface top-level entities (member fns are flat,
+        // `parent = None`, so `check` asserts zero dangling parents). An
+        // `object` decl carries a member fn too but isn't itself emitted as an
+        // entity today (grammar gap, unrelated to the parent-kind bug).
+        let kt = "\
+class K { fun km() {} }
+object O { fun om() {} }
+interface Itf { fun im() }
+";
+        let ke = KotlinTypes.extract("src/K.kt", kt).entities;
+        check(&ke, "kotlin");
+        assert!(ke.iter().any(|e| e.sym == "src/K.kt::class::K"), "class entity: {ke:?}");
+        assert!(ke.iter().any(|e| e.sym == "src/K.kt::interface::Itf"), "interface entity: {ke:?}");
     }
 
     #[test]

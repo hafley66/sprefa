@@ -454,12 +454,17 @@ impl Engine {
             fold(&mut acc, &blake3::hash(format!("{repo}\0{path}\0{rev}\0{hash}").as_bytes()));
         }
         if with_scip {
+            // Include the origin `repo`: two roots of the same crate emit
+            // byte-identical (file, symbol, def_file) triples, so folding without
+            // repo would XOR-cancel the second root's rows and leave the digest
+            // unchanged when a wanted repo's index is added — a false skip that
+            // strands the second repo's entities on syntactic-only resolution.
             if let Ok(mut s) = self.db.conn().prepare(
-                &format!("SELECT file, symbol, def_file FROM {}", tbl("scip_ref"))) {
+                &format!("SELECT file, symbol, def_file, repo FROM {}", tbl("scip_ref"))) {
                 if let Ok(rows) = s.query_map([], |r| Ok((
-                    r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))) {
-                    for (f, sym, d) in rows.flatten() {
-                        fold(&mut acc, &blake3::hash(format!("scip\0{f}\0{sym}\0{d}").as_bytes()));
+                    r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))) {
+                    for (f, sym, d, repo) in rows.flatten() {
+                        fold(&mut acc, &blake3::hash(format!("scip\0{f}\0{sym}\0{d}\0{repo}").as_bytes()));
                     }
                 }
             }
@@ -515,13 +520,22 @@ impl Engine {
         let mut sym_at: HashMap<(&str, &str, &str), &str> = HashMap::new();
         for (repo, _, _, f) in &facts {
             for e in &f.entities {
-                by_name.entry((repo.as_str(), e.name.as_str())).or_default().push(e.sym.as_str());
+                // Dedup the ambiguity bucket by def sym: the same physical file
+                // can be scanned under two slugs that collapse to one rid (a
+                // config repo pointing at the self root, or two worktrees sharing
+                // a `.git` basename), so an entity declared ONCE would otherwise
+                // be pushed twice and read as ambiguous. Distinct syms (two real
+                // defs of one name) still stack -> len 2 -> unresolved.
+                let bucket = by_name.entry((repo.as_str(), e.name.as_str())).or_default();
+                if !bucket.iter().any(|s| *s == e.sym.as_str()) {
+                    bucket.push(e.sym.as_str());
+                }
                 sym_at.insert((repo.as_str(), e.file.as_str(), e.name.as_str()), e.sym.as_str());
             }
         }
         let scip = self.scip_name_defs().unwrap_or_default();
         let resolve = |repo: &str, file: &str, name: &str| -> Option<String> {
-            if let Some(def_file) = scip.get(&(file.to_string(), name.to_string())) {
+            if let Some(def_file) = scip.get(&(repo.to_string(), file.to_string(), name.to_string())) {
                 if let Some(sym) = sym_at.get(&(repo, def_file.as_str(), name)) {
                     return Some(format!("{repo}::{sym}"));
                 }
@@ -567,7 +581,31 @@ impl Engine {
                 // cross-rel joins to call_def stay per-repo distinct.
                 let qsym = format!("{repo}::{}", ent.sym);
                 if seen_entity.insert((repo.as_str(), ent.sym.as_str())) {
-                    let qparent = ent.parent.as_deref().map(|p| format!("{repo}::{p}")).unwrap_or_default();
+                    // Method-owner key. The extractor mints `parent` file-scoped
+                    // (`<method-file>::<kind>::<Owner>`), which joins the owner's
+                    // entity sym only when the owner is declared in the SAME file
+                    // (yesterday's per-file owner-kind fix). A Rust `impl Owner`
+                    // in a different file than `struct Owner` dangles: the minted
+                    // key names the impl file, the owner entity names the decl
+                    // file. When the file-scoped key has no matching same-file
+                    // entity, resolve the owner NAME through the same in-repo
+                    // bucket machinery as type_link/call_edge dst syms — a unique
+                    // in-repo def rewrites the parent to the declaring-file sym
+                    // (repo-qualified, carrying the owner's real kind by
+                    // construction); ambiguous/external names stay file-scoped
+                    // (dangling is honest, a wrong join is not). Same-file parents
+                    // are never rewritten (resolve would return the same sym).
+                    let qparent = ent.parent.as_deref().map(|p| {
+                        let owner_name = p.rsplit("::").next().unwrap_or(p);
+                        let same_file =
+                            sym_at.get(&(repo.as_str(), ent.file.as_str(), owner_name)) == Some(&p);
+                        if same_file {
+                            format!("{repo}::{p}")
+                        } else {
+                            resolve(repo, &ent.file, owner_name)
+                                .unwrap_or_else(|| format!("{repo}::{p}"))
+                        }
+                    }).unwrap_or_default();
                     entity_rows.push(vec![
                         t(repo), t(&qsym), t(&ent.name), t(ent.kind.tag()),
                         t(&qparent), t(&ent.file), i(ent.line),
@@ -612,21 +650,24 @@ impl Engine {
     }
 
     /// Best-effort SCIP override for resolution: read `scip_ref(file, symbol,
-    /// def_file)` and key it by (file, trailing-descriptor-name) -> def_file.
-    /// Empty when no index.scip is present, so the syntactic path carries.
-    fn scip_name_defs(&self) -> Result<HashMap<(String, String), String>> {
+    /// def_file, repo)` and key it by (repo, file, trailing-descriptor-name) ->
+    /// def_file. Keying on the origin repo scopes the override to the ref site's
+    /// own index — a head-repo ref never resolves to a base-repo def when two
+    /// roots of the same crate share (file, name). Empty when no index.scip is
+    /// present, so the syntactic path carries.
+    fn scip_name_defs(&self) -> Result<HashMap<(String, String, String), String>> {
         let mut out = HashMap::new();
         let conn = self.db.conn();
-        let Ok(mut s) = conn.prepare(&format!("SELECT file, symbol, def_file FROM {}", tbl("scip_ref"))) else {
+        let Ok(mut s) = conn.prepare(&format!("SELECT file, symbol, def_file, repo FROM {}", tbl("scip_ref"))) else {
             return Ok(out);
         };
         let rows = s.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))
         })?;
         for row in rows.flatten() {
-            let (file, symbol, def_file) = row;
+            let (file, symbol, def_file, repo) = row;
             if let Some(name) = scip_descriptor_name(&symbol) {
-                out.insert((file, name), def_file);
+                out.insert((repo, file, name), def_file);
             }
         }
         Ok(out)
@@ -905,14 +946,20 @@ impl Engine {
         let mut def_by_file: HashMap<(&str, &str), Vec<(u32, u32, &str)>> = HashMap::new();
         for (repo, _, _, f) in &facts {
             for d in &f.defs {
-                by_name.entry((repo.as_str(), d.name.as_str())).or_default().push(d.sym.as_str());
+                // Dedup by callable sym (see refresh_type_rels): a def scanned
+                // twice under two slugs that map to one rid stays unique, while
+                // two distinct callables of one name stay ambiguous.
+                let bucket = by_name.entry((repo.as_str(), d.name.as_str())).or_default();
+                if !bucket.iter().any(|s| *s == d.sym.as_str()) {
+                    bucket.push(d.sym.as_str());
+                }
                 sym_at.insert((repo.as_str(), d.file.as_str(), d.name.as_str()), d.sym.as_str());
                 def_by_file.entry((repo.as_str(), d.file.as_str())).or_default().push((d.line, d.end, d.sym.as_str()));
             }
         }
         let scip = self.scip_name_defs().unwrap_or_default();
         let resolve_callee = |repo: &str, file: &str, callee: &str| -> Option<String> {
-            if let Some(def_file) = scip.get(&(file.to_string(), callee.to_string())) {
+            if let Some(def_file) = scip.get(&(repo.to_string(), file.to_string(), callee.to_string())) {
                 if let Some(sym) = sym_at.get(&(repo, def_file.as_str(), callee)) {
                     return Some(format!("{repo}::{sym}"));
                 }
@@ -1031,16 +1078,26 @@ impl Engine {
         if self.load_rel_digest("extract:dataflow")? == Some(digest) { return Ok(false); }
 
         let root = self.root.clone();
+        // Read each file from its OWN repo root (same as type/call), so a config
+        // repo's WORK content lifts too; reading everything from `self.root`
+        // stranded config-repo files at self-root/path (missing -> empty -> zero
+        // df rows) or a git blob, never their working tree. The derived repo id
+        // (nearest `.git` basename, like type/call) rides each fact so df_node_repo
+        // can attribute every node to the folder it lives in.
+        let roots = self.repo_roots();
         let facts: Vec<(String, String, String, Arc<typegraph::DataflowFacts>)> =
-            cached_facts(&self.df_facts_cache, &files, &self.extract_files_parsed, |_repo, path, rev| {
+            cached_facts(&self.df_facts_cache, &files, &self.extract_files_parsed, |repo, path, rev| {
                 let lang = typegraph::type_langs().iter().find(|l| l.matches(path))?;
-                let content = read_content(&root, rev, path).unwrap_or_default();
-                Some((String::new(), lang.extract_dataflow(path, &content)))
+                let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
+                let content = read_content(froot, rev, path).unwrap_or_default();
+                let rid = repo_id_of(froot, path, repo);
+                Some((rid, lang.extract_dataflow(path, &content)))
             });
 
         let t = |s: &str| Value::Text(s.to_string());
         let i = |n: u32| Value::Int(n as i64);
         let mut node_rows: Vec<Vec<Value>> = Vec::new();
+        let mut node_repo_rows: Vec<Vec<Value>> = Vec::new();
         let mut edge_rows: Vec<Vec<Value>> = Vec::new();
         let mut loop_rows: Vec<Vec<Value>> = Vec::new();
         let mut alloc_rows: Vec<Vec<Value>> = Vec::new();
@@ -1052,13 +1109,28 @@ impl Engine {
         let mut seen_arg: HashSet<(&str, i64, &str)> = HashSet::new();
         let mut seen_field: HashSet<(&str, &str, &str)> = HashSet::new();
         let mut seen_node: HashSet<&str> = HashSet::new();
+        let mut seen_node_repo: HashSet<(&str, &str)> = HashSet::new();
         let mut seen_edge: HashSet<(&str, &str)> = HashSet::new();
         let mut seen_loop: HashSet<(&str, u32)> = HashSet::new();
         let mut seen_nest: HashSet<(&str, &str)> = HashSet::new();
-        for (_, _, _, f) in &facts {
+        for (repo, _, _, f) in &facts {
             for n in &f.nodes {
                 if seen_node.insert(n.id.as_str()) {
                     node_rows.push(vec![t(&n.id), t(&n.kind), t(&n.var), t(&n.fn_sym), t(&n.file), i(n.line)]);
+                }
+                // df_node id is `file:line:col` (path only, no repo). Attribute
+                // each node to EVERY repo it appears in so a downstream join
+                // (member_node field/fill in flow-panel.dl) can scope a fill to
+                // its own repo instead of fanning across every repo that shares
+                // the constructed type's NAME. Emitted per (id, repo) OUTSIDE the
+                // node dedup: two repos with a byte-identical file share one
+                // df_node row but get TWO df_node_repo rows, so the join mints the
+                // field for BOTH (they both really have it). A fill unique to one
+                // repo (a working-tree-only edit) yields a single (id, repo) row,
+                // so it stays a per-repo fact — the property the worktree-pair diff
+                // needs.
+                if seen_node_repo.insert((n.id.as_str(), repo.as_str())) {
+                    node_repo_rows.push(vec![t(&n.id), t(repo)]);
                 }
             }
             for e in &f.edges {
@@ -1097,6 +1169,7 @@ impl Engine {
         }
 
         self.refresh_rel("df_node", &["id", "kind", "var", "fn", "file", "line"], &node_rows)?;
+        self.refresh_rel("df_node_repo", &["id", "repo"], &node_repo_rows)?;
         self.refresh_rel("df_edge", &["from", "to"], &edge_rows)?;
         self.refresh_rel("loop_over", &["file", "start", "end", "var", "collection", "fn"], &loop_rows)?;
         self.refresh_rel("allocates", &["fn"], &alloc_rows)?;

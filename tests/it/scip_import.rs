@@ -65,9 +65,9 @@ fn imports_scip_def_ref_and_edge_relations() {
     write_index(&index);
     let prog = r#"
 rel dep(src: text, dst: text).
-dep(src, dst) <- scip_edge(src, dst).
-? scip_def(symbol, file).
-? scip_ref(file, symbol, def_file).
+dep(src, dst) <- scip_edge(src, dst, _).
+? scip_def(symbol, file, repo).
+? scip_ref(file, symbol, def_file, repo).
 ? dep(src, dst).
 "#;
     let (code, out, err) = run(&d, prog, &index);

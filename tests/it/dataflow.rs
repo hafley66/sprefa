@@ -83,7 +83,7 @@ fn rows(sec: &str) -> Vec<Vec<String>> {
 #[test]
 fn dataflow_rels_are_reserved() {
     let d = sandbox("reserved");
-    for rel in ["df_node", "df_edge", "loop_over", "allocates", "nest", "df_param", "df_arg", "df_field"] {
+    for rel in ["df_node", "df_node_repo", "df_edge", "loop_over", "allocates", "nest", "df_param", "df_arg", "df_field"] {
         let prog = format!("rel {rel}(a: text).\n? {rel}(\"x\").\n");
         let (code, _out, err) = run(&d, &prog);
         assert_ne!(code, 0, "{rel} must be reserved (expected error):\n{err}");
@@ -268,6 +268,117 @@ fn taint_propagates_through_operations_per_language() {
         assert!(reaches.contains(&(binop.clone(), m_id.clone())), "[{lang}] binop must reach m:\n{out}");
         assert!(reaches.contains(&(q_id.clone(), m_id.clone())), "[{lang}] q must reach m THROUGH the binop (taint):\n{out}");
     }
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let ok = Command::new("git").current_dir(dir).args(args).output().expect("git").status.success();
+    assert!(ok, "git {args:?} in {}", dir.display());
+}
+
+/// D5b regression: the dataflow family must read a CONFIG repo's working tree,
+/// exactly like the type/call families. Before the fix `refresh_dataflow_rels`
+/// read every file from `self.root` (the --root), so a config repo whose root
+/// differs was read at the wrong path (missing -> empty) or a git blob, never
+/// its working tree: a WORK-only struct + ctor produced zero `df_node`/`df_field`
+/// rows. type/call read via `repo_roots().get(repo)` and saw the same edit fine.
+///
+/// Setup: `--root` is `host` (a boring committed repo). `cfg` is a SEPARATE
+/// config repo with a committed `src/widget.rs` (a struct, no ctor), then a
+/// working-tree-only edit APPENDS a fn constructing that struct with a field
+/// literal. The ctor is a `new` df_node and the field is a `df_field` — both
+/// present ONLY in the working tree. They must appear, attributed to cfg's file.
+#[test]
+fn config_repo_work_edit_produces_dataflow_rows() {
+    let d = sandbox("cfg_work_df");
+    let host = d.join("host");
+    let cfg = d.join("cfg");
+
+    // host: the --root. A real committed repo with an unrelated file, so a bug
+    // that reads self.root/path would read THIS tree, not cfg's.
+    fs::create_dir_all(host.join("src")).unwrap();
+    fs::write(host.join("src/lib.rs"), "fn main() {}\n").unwrap();
+    git(&host, &["init", "-q"]);
+    git(&host, &["config", "user.email", "t@t"]);
+    git(&host, &["config", "user.name", "t"]);
+    git(&host, &["add", "-A"]);
+    git(&host, &["commit", "-qm", "x"]);
+
+    // cfg: committed a struct with NO constructor. The uniquely-named path means
+    // the buggy self.root read resolves to a nonexistent host/src/widget.rs.
+    fs::create_dir_all(cfg.join("src")).unwrap();
+    fs::write(cfg.join("src/widget.rs"), "pub struct Widget { pub part: i64 }\n").unwrap();
+    git(&cfg, &["init", "-q"]);
+    git(&cfg, &["config", "user.email", "t@t"]);
+    git(&cfg, &["config", "user.name", "t"]);
+    git(&cfg, &["add", "-A"]);
+    git(&cfg, &["commit", "-qm", "x"]);
+
+    // WORK-only edit: append a fn constructing Widget with a field literal. The
+    // ctor (`new` node) and the `part` field exist ONLY in the working tree —
+    // the committed rev has neither.
+    fs::write(
+        cfg.join("src/widget.rs"),
+        "pub struct Widget { pub part: i64 }\n\
+         pub fn mk() -> Widget { Widget { part: 7 } }\n",
+    )
+    .unwrap();
+
+    fs::write(
+        d.join("cfg.toml"),
+        format!(
+            "[[repos]]\n\
+             slug = \"host\"\n\
+             root = \"{host}\"\n\
+             [[repos]]\n\
+             slug = \"cfg\"\n\
+             root = \"{cfg}\"\n",
+            host = host.display(),
+            cfg = cfg.display(),
+        ),
+    )
+    .unwrap();
+
+    // Fan over every config repo at WORK; querying df_node/df_field opts the
+    // dataflow family in over the whole scanned set.
+    fs::write(
+        d.join("p.dl"),
+        "rel seen(p: file).\n\
+         seen(p) <- scan(\"*\", \"WORK\", \"src/**/*.rs\", p, rev).\n\
+         ? df_node(id, kind, var, fn, file, line).\n\
+         ? df_field(id, field, value).\n",
+    )
+    .unwrap();
+
+    let out = Command::new(DL)
+        .arg(d.join("p.dl"))
+        .args(["--root", host.to_str().unwrap(), "--no-daemon", "--db", d.join("db").to_str().unwrap()])
+        .env("SPREFA_CONFIG", d.join("cfg.toml"))
+        .output()
+        .expect("run dl");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "run failed: {stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+
+    let secs = sections(&stdout);
+    assert!(secs.len() >= 2, "expected df_node + df_field sections:\n{stdout}");
+    let node_rows = rows(&secs[0]);
+    let field_rows = rows(&secs[1]);
+
+    // DECISIVE: the WORK-only ctor is a `new` df_node for Widget, attributed to
+    // cfg's file. Absent before the fix (df read host/src/widget.rs -> empty).
+    let widget_ctor: Vec<&Vec<String>> = node_rows
+        .iter()
+        .filter(|r| r.len() >= 6 && r[1] == "new" && r[2] == "Widget" && r[4] == "src/widget.rs")
+        .collect();
+    assert!(
+        !widget_ctor.is_empty(),
+        "expected a `new` df_node for Widget from cfg's WORK edit:\n{stdout}"
+    );
+
+    // ... and the WORK-only field literal is a df_field with field `part`.
+    assert!(
+        field_rows.iter().any(|r| r.len() >= 3 && r[1] == "part"),
+        "expected a df_field for the WORK-only `part` field literal:\n{stdout}"
+    );
 }
 
 fn single(nodes: &HashMap<String, (String, String)>, kind: &str, var: &str, out: &str, lang: &str) -> String {

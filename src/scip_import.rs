@@ -6,9 +6,15 @@ use std::path::{Path, PathBuf};
 
 #[derive(Default, Debug)]
 pub struct ScipRows {
-    pub defs: Vec<(String, String)>,
-    pub refs: Vec<(String, String, String)>,
-    pub edges: Vec<(String, String)>,
+    /// `(symbol, file, repo)` — the `repo` is the origin index's repo id, so two
+    /// roots of the same crate that emit identical (symbol, file) pairs stay
+    /// distinct rows instead of collapsing on merge.
+    pub defs: Vec<(String, String, String)>,
+    /// `(file, symbol, def_file, repo)` — `repo` scopes resolution to the ref
+    /// site's origin index (a head ref never resolves to a base def).
+    pub refs: Vec<(String, String, String, String)>,
+    /// `(src, dst, repo)`.
+    pub edges: Vec<(String, String, String)>,
     /// Function-level call edges (caller_fn moniker, callee moniker). The caller
     /// is the innermost enclosing fn def of the reference's range in the same
     /// file; the callee is the referenced symbol (already resolved by RA to its
@@ -60,10 +66,24 @@ pub fn index_path(root: &Path) -> Option<PathBuf> {
     None
 }
 
-pub fn load(path: &Path) -> Result<ScipRows> {
+/// Load one index and tag every def/ref/edge row with the repo id of its
+/// origin. `root` is the on-disk root the index was produced under, `slug` the
+/// fallback repo name when a document's file has no ancestor `.git`. The repo id
+/// is derived identically to the extractor's `repo_id_of` (nearest-`.git`
+/// basename) so the tagged rows join the resolver's per-repo keys.
+pub fn load(path: &Path, root: &Path, slug: &str) -> Result<ScipRows> {
     let bytes = std::fs::read(path)?;
     let index = Index::parse_from_bytes(&bytes)?;
-    Ok(rows(&index))
+    Ok(rows(&index, root, slug))
+}
+
+/// The repo id a document answers to: the basename of the nearest ancestor
+/// `.git` of `root/relpath`, falling back to `slug`. Mirrors engine
+/// `repo_id_of` so scip_* rows share the resolver's repo keying.
+fn repo_of(root: &Path, relpath: &str, slug: &str) -> String {
+    crate::repo::nearest_git(&root.join(relpath))
+        .and_then(|g| g.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| slug.to_string())
 }
 
 /// Merge several per-language SCIP indexes into one on disk. SCIP is document-
@@ -93,9 +113,21 @@ pub fn merge_files(inputs: &[PathBuf], out: &Path) -> Result<usize> {
     Ok(n_docs)
 }
 
-pub fn rows(index: &Index) -> ScipRows {
+pub fn rows(index: &Index, root: &Path, slug: &str) -> ScipRows {
+    // Per-document repo id (nearest-`.git` basename), computed once per path so
+    // every def/ref/edge from that document carries its origin repo. Because
+    // `rows` runs per-input index (never over a blind pre-merge), `def_file` is
+    // scoped to this index's documents — the cross-root symbol collapse is gone.
+    let mut repo_of_doc: HashMap<&str, String> = HashMap::new();
+    for doc in &index.documents {
+        repo_of_doc.entry(doc.relative_path.as_str())
+            .or_insert_with(|| repo_of(root, &doc.relative_path, slug));
+    }
+    let doc_repo = |path: &str| -> String {
+        repo_of_doc.get(path).cloned().unwrap_or_else(|| slug.to_string())
+    };
     let mut def_file: HashMap<String, String> = HashMap::new();
-    let mut defs: HashSet<(String, String)> = HashSet::new();
+    let mut defs: HashSet<(String, String, String)> = HashSet::new();
     // Per-file fn-def intervals for caller attribution: ((start), (end), symbol).
     // A def qualifies as fn-like when its terminal descriptor is a method/
     // function call descriptor, which every indexer (RA, scip-typescript,
@@ -117,7 +149,7 @@ pub fn rows(index: &Index) -> ScipRows {
             if !usable_symbol(&occ.symbol) { continue; }
             if is_def(occ.symbol_roles) {
                 def_file.entry(occ.symbol.clone()).or_insert_with(|| doc.relative_path.clone());
-                defs.insert((occ.symbol.clone(), doc.relative_path.clone()));
+                defs.insert((occ.symbol.clone(), doc.relative_path.clone(), doc_repo(&doc.relative_path)));
                 if let Some(ty) = receiver_type(&occ.symbol) {
                     callee_types.insert((occ.symbol.clone(), ty));
                 }
@@ -132,8 +164,8 @@ pub fn rows(index: &Index) -> ScipRows {
         }
     }
 
-    let mut refs: HashSet<(String, String, String)> = HashSet::new();
-    let mut edges: HashSet<(String, String)> = HashSet::new();
+    let mut refs: HashSet<(String, String, String, String)> = HashSet::new();
+    let mut edges: HashSet<(String, String, String)> = HashSet::new();
     let mut fn_edges: HashSet<(String, String)> = HashSet::new();
     let mut locals: HashSet<(String, String)> = HashSet::new();
     let mut occ_spans: HashSet<(String, i32, i32, String)> = HashSet::new();
@@ -169,9 +201,10 @@ pub fn rows(index: &Index) -> ScipRows {
             }
             if !usable_symbol(&occ.symbol) || is_def(occ.symbol_roles) { continue; }
             let Some(def) = def_file.get(&occ.symbol) else { continue };
-            refs.insert((doc.relative_path.clone(), occ.symbol.clone(), def.clone()));
+            let repo = doc_repo(&doc.relative_path);
+            refs.insert((doc.relative_path.clone(), occ.symbol.clone(), def.clone(), repo.clone()));
             if def != &doc.relative_path {
-                edges.insert((doc.relative_path.clone(), def.clone()));
+                edges.insert((doc.relative_path.clone(), def.clone(), repo));
             }
             // Attribute this reference to its innermost enclosing fn def. Both
             // ranges come from the same SCIP index, so the 0-based line/col base
@@ -324,6 +357,57 @@ mod tests {
         o
     }
 
+    // Test indexes use synthetic relative paths with no ancestor `.git`, so the
+    // repo id falls back to this slug. The repo column is exercised directly in
+    // `two_roots_keep_symbols_distinct` below via `rows`.
+    fn test_rows(index: &Index) -> ScipRows {
+        rows(index, Path::new("/no/such/scip/root"), "testrepo")
+    }
+
+    #[test]
+    fn two_roots_keep_symbols_distinct() {
+        // Two roots of the same crate emit byte-identical (symbol, relative_path)
+        // pairs. The OLD importer merged their documents blind, so `def_file`'s
+        // first-wins map dropped the second root entirely (zero net rows). Now
+        // each index is loaded per-input with its repo threaded through, so both
+        // roots' defs AND refs survive, tagged by distinct repo.
+        let def = "rust-analyzer cargo sprefa-dl 0.4.1 `crate`/answer().";
+        let mk = || {
+            let mut d = Document::new();
+            d.relative_path = "src/lib.rs".to_string();
+            d.occurrences = vec![
+                occ_r(def, SymbolRole::Definition as i32, [0, 0, 0, 6]),
+            ];
+            let mut r = Document::new();
+            r.relative_path = "src/main.rs".to_string();
+            r.occurrences = vec![occ_r(def, 0, [1, 0, 1, 6])];
+            let mut idx = Index::new();
+            idx.documents = vec![d, r];
+            idx
+        };
+        let a = rows(&mk(), Path::new("/roots/base"), "base");
+        let b = rows(&mk(), Path::new("/roots/head"), "head");
+        // Each index alone produces one def + one ref (identical strings).
+        assert_eq!(a.defs.len(), 1, "base defs: {:?}", a.defs);
+        assert_eq!(b.defs.len(), 1, "head defs: {:?}", b.defs);
+        // The concatenation the caller performs: distinct repo values, both
+        // roots' rows present — the second index adds NET rows (the bug: it added
+        // zero because the merged first-wins map already held every string).
+        let mut defs = a.defs.clone();
+        defs.extend(b.defs.clone());
+        assert_eq!(defs.len(), 2, "both roots' defs survive: {defs:?}");
+        assert_eq!(a.defs[0].2, "base", "base def repo tag: {:?}", a.defs);
+        assert_eq!(b.defs[0].2, "head", "head def repo tag: {:?}", b.defs);
+        // Refs likewise carry the origin repo; def_file resolution is within-index.
+        assert_eq!(a.refs.len(), 1, "base refs: {:?}", a.refs);
+        assert_eq!(a.refs[0].2, "src/lib.rs", "def_file resolved within base");
+        assert_eq!(a.refs[0].3, "base", "base ref repo tag: {:?}", a.refs);
+        assert_eq!(b.refs[0].3, "head", "head ref repo tag: {:?}", b.refs);
+        // Edges too (main.rs -> lib.rs, per repo).
+        assert_eq!(a.edges[0], ("src/main.rs".into(), "src/lib.rs".into(), "base".into()));
+        assert_eq!(b.edges[0], ("src/main.rs".into(), "src/lib.rs".into(), "head".into()));
+    }
+
     #[test]
     fn fn_edge_attributes_ref_to_enclosing_fn() {
         let callee = "pkg/callee().";
@@ -339,7 +423,7 @@ mod tests {
         ];
         let mut index = Index::new();
         index.documents = vec![doc];
-        let rows = rows(&index);
+        let rows = test_rows(&index);
         assert_eq!(rows.fn_edges.len(), 1,
             "expected 1 fn_edge, got {}: {:?}", rows.fn_edges.len(), rows.fn_edges);
         assert_eq!(rows.fn_edges[0].0, caller, "caller attribution");
@@ -365,7 +449,7 @@ mod tests {
         ];
         let mut index = Index::new();
         index.documents = vec![doc];
-        let rows = rows(&index);
+        let rows = test_rows(&index);
         // Self-edge callee→callee (the name-only-range limitation, documented).
         assert_eq!(rows.fn_edges.len(), 1, "self-edge from predecessor search: {:?}", rows.fn_edges);
         assert_eq!(rows.fn_edges[0].0, callee);
@@ -392,7 +476,7 @@ mod tests {
         doc.symbols = vec![si];
         let mut index = Index::new();
         index.documents = vec![doc];
-        let rows = rows(&index);
+        let rows = test_rows(&index);
         assert_eq!(rows.locals.len(), 1, "expected 1 local: {:?}", rows.locals);
         assert_eq!(rows.locals[0].0, caller, "attributed to caller");
         assert_eq!(rows.locals[0].1, "parser_state", "display_name resolved");
@@ -421,7 +505,7 @@ mod tests {
         doc.symbols = vec![si("local 0", "foo"), si("local 1", "foo#1")];
         let mut index = Index::new();
         index.documents = vec![doc];
-        let rows = rows(&index);
+        let rows = test_rows(&index);
         // Deduped: both shadows collapse to (caller, "foo").
         assert_eq!(rows.locals.len(), 1, "shadows deduped: {:?}", rows.locals);
         assert_eq!(rows.locals[0], (caller.to_string(), "foo".to_string()));
@@ -447,7 +531,7 @@ mod tests {
         doc.symbols = vec![si];
         let mut index = Index::new();
         index.documents = vec![doc];
-        let rows = rows(&index);
+        let rows = test_rows(&index);
         assert_eq!(rows.locals.len(), 1, "only def collected: {:?}", rows.locals);
     }
 
@@ -473,7 +557,7 @@ mod tests {
         ];
         let mut index = Index::new();
         index.documents = vec![doc];
-        let rows = rows(&index);
+        let rows = test_rows(&index);
         // exactly one fn_edge: the METHOD calls httpExec (not the parameter).
         let call: Vec<_> = rows.fn_edges.iter().filter(|(_, c)| c == callee).collect();
         assert_eq!(call.len(), 1, "one body call attributed: {:?}", rows.fn_edges);
@@ -508,7 +592,7 @@ mod tests {
         doc.symbols = vec![si_impl, si_ref];
         let mut index = Index::new();
         index.documents = vec![doc];
-        let rows = rows(&index);
+        let rows = test_rows(&index);
         assert_eq!(rows.impls, vec![(impl_m.to_string(), iface.to_string())],
             "only the is_implementation edge, oriented impl→iface: {:?}", rows.impls);
     }
@@ -543,7 +627,7 @@ mod tests {
             doc("src/lib.rs", "alpha"),
             doc("src/daemon.rs", "beta"),
         ];
-        let rows = rows(&index);
+        let rows = test_rows(&index);
         // Two distinct locals: (lib caller, alpha) and (daemon caller, beta).
         // Under the old global-keyed map the second doc would clobber the first
         // and both fns would report `beta`.

@@ -193,7 +193,7 @@ impl ExtractFamily for DataflowFamily {
     fn rels(&self) -> &'static [&'static str] { &engine::DATAFLOW_RELS }
     fn decls(&self) -> Vec<RelDecl> { engine::dataflow_rel_decls() }
     fn reserved_msg(&self) -> &'static str {
-        "a built-in dataflow relation (df_node / df_edge / loop_over / allocates / nest / df_param / df_arg / df_field)"
+        "a built-in dataflow relation (df_node / df_node_repo / df_edge / loop_over / allocates / nest / df_param / df_arg / df_field)"
     }
     fn digest_key(&self) -> Option<&'static str> { Some("extract:dataflow") }
     fn refresh(&self, eng: &mut Engine) -> Result<bool> { eng.refresh_dataflow_rels() }
