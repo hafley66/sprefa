@@ -8,7 +8,7 @@
 # and reusing its Tarjan condensation. This file exercises all of it.
 
 rel seen(path: file).
-seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /fn \w+/, line).
+seen(path) <- scan("src/**/*.rs", path).
 
 rel fan_out(caller: text, n: int).
 rel fan_in(callee: text, n: int).

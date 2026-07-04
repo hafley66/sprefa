@@ -18,7 +18,7 @@
 # Touch the corpus so the lazy type graph populates (any source glob works; widen
 # for a real repo, e.g. "**/*.{rs,kt,ts}").
 rel seen(path: file).
-seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
+seen(path) <- scan("src/**/*.rs", path).
 
 # Declared interfaces/traits, by bare name (the type_edge node key).
 rel iface(name: text).

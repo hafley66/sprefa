@@ -1,6 +1,6 @@
 # dag-layers.dl — longest-path topological tiering of the RA oracle file graph.
 #
-# Input: scip_edge(src, dst) where src depends on dst (src calls into dst).
+# Input: scip_edge(src, dst, _) where src depends on dst (src calls into dst).
 #
 # The oracle graph is NOT a clean DAG — it has mutual edges between the five
 # core runtime files {daemon, engine, lib, lsp, tray} (8 two-cycle edges; the
@@ -33,7 +33,7 @@
 # Recipe:  just dag
 
 rel ra_edge(src: file, dst: file).
-ra_edge(src, dst) <- scip_edge(src, dst).
+ra_edge(src, dst) <- scip_edge(src, dst, _).
 
 # ── cycle collapse ───────────────────────────────────────────────────────
 # Files in a mutual pair. Set semantics dedups; cyclic(f) is the layering

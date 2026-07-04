@@ -11,11 +11,19 @@
 #
 #   Run: dl examples/string-fns.dl --root .
 
-# Every fn name + its file in src.
+# A source rule can only bind head vars from its own source-op captures, so
+# the corpus seed (bare scan) and the call_def/call_name join (purely
+# derived) split into two rules.
+rel src_scanned(file: file).
+src_scanned(file) <- scan("WORK", "src/**/*.rs", file, rev).
+
+# Every fn name + its file in src. call_def's sym is the qualified def
+# coordinate; call_name resolves it back to the bare identifier these string
+# demos want to split/replace.
 rel fn_at(file: text, name: text).
 fn_at(file, name) <-
-    scan("WORK", "src/**/*.rs", file, rev),
-    match(file, rev, /fn (?<name>[a-z_][a-z0-9_]*)/, l).
+    src_scanned(file),
+    call_def(_, sym, _, file, _, _), call_name(sym, name).
 
 # 1. LAST PATH SEGMENT — split(file, "/", -1). Negative idx + unary minus
 #    (no parens around -1). "src/engine.rs" -> "engine.rs".

@@ -14,7 +14,7 @@
 
 # ── distinct locals declared per fn ────────────────────────────────────────
 rel fn_file(fn: text, file: file).
-fn_file(fn, file) <- scip_def(fn, file).
+fn_file(fn, file) <- scip_def(fn, file, _).
 
 rel fn_locals(fn: text, n: int).
 fn_locals(fn, count(name)) <- scip_local(fn, name).

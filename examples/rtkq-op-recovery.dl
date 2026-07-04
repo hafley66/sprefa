@@ -19,13 +19,19 @@ rel spec_op(op: text).
 spec_op(op) <- scan("WORK", "examples/openapi-sim/openapi.json", p, rev),
                jsonp(p, rev, "paths.*.*.operationId", op).
 
-# RTKQ hook call sites in component code. One regex over the codegen naming
-# convention captures the whole `use…Query`/`use…Mutation` identifier. The
-# trailing `\(` keeps it to call sites, so a hook named in a comment is skipped.
+# A source rule can only bind head vars from its own source-op captures, so
+# the corpus seed (bare scan) and the call_site join (purely derived) split
+# into two rules.
+rel components_scanned(p: file).
+components_scanned(p) <- scan("WORK", "examples/openapi-sim/components.tsx", p, rev).
+
+# RTKQ hook call sites in component code. call_site's bare callee text is the
+# codegen naming convention (`use…Query`/`use…Mutation`); a hook named in a
+# comment was never a real call site to begin with.
 rel hook_call(p: file, l: int, hook: text).
 hook_call(p, l, hook) <-
-    scan("WORK", "examples/openapi-sim/components.tsx", p, rev),
-    match(p, rev, /\b(?P<hook>use[A-Z][A-Za-z0-9]*(?:Query|Mutation))\s*\(/, l).
+    components_scanned(p),
+    call_site(_, _, hook, p, l).
 
 # The recovery: hook identifier -> endpoint op name.
 rel recovered(p: file, l: int, hook: text, op: text).

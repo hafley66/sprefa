@@ -17,7 +17,7 @@
 
 # Ingest v5 Rust so type_* and scip_* relations populate.
 rel seen(path: file).
-seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
+seen(path) <- scan("src/**/*.rs", path).
 
 # ══════════════════════════════════════════════════════════════════════════
 # SECTION 1 — TRIAGE: per-type scalar metrics

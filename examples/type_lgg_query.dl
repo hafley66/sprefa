@@ -10,7 +10,7 @@
 # Manual:  dl examples/type_lgg_query.dl --root . --db /tmp/dl-lgg.db --no-daemon
 
 rel seen(path: file).
-seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
+seen(path) <- scan("src/**/*.rs", path).
 
 # Struct filter: has ≥2 field children (not unit variants, not 1-field wrappers).
 rel struct2(t: text).

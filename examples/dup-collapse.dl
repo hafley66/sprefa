@@ -14,11 +14,13 @@
 #
 # Manual:  dl examples/dup-collapse.dl --root . --db /tmp/dl-dc.db --no-daemon
 
+rel seen(path: file).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev).
+
 # Every fn-name defined in v5 src, with its file + line.
 rel fn_def(file: file, line: int, name: text).
 fn_def(file, line, name) <-
-    scan("WORK", "src/**/*.rs", file, rev),
-    match(file, rev, /\s*(pub\s+)?(async\s+)?fn (?<name>[a-z_][a-z0-9_]*)\s*\(/, line).
+    type_entity(_, _, name, k, _, file, line), k =~ /function|method/.
 
 # How many distinct sites define each name WITHIN ONE FILE. The reward-positive
 # tuples were intra-file: render_message ×3 in lsp.rs across 3 impls; the

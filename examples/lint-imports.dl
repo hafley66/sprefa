@@ -12,7 +12,7 @@
 
 # Seed the file set so the resolver runs (it reads the built-in file relation).
 rel seen(path: file).
-seen(path) <- scan("WORK", "**/*.{rs,ts,tsx,js}", path, rev), match(path, rev, /./, line).
+seen(path) <- scan("**/*.{rs,ts,tsx,js}", path).
 
 # Every unresolved reference becomes an error pointing at its line.
 diag(path: p, line: l, severity: "error", code: "broken-import", msg: "unresolved import `${spec}` (${reason})") <-

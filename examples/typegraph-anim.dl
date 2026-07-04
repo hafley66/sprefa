@@ -7,7 +7,7 @@
 #   d2 --animate-interval=1200 examples/typegraph-anim.d2 /tmp/typeviz/typegraph.svg
 
 rel seen(path: file).
-seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
+seen(path) <- scan("src/**/*.rs", path).
 
 # Plain-ident endpoints only: enum-variant nodes (`Tok::Ident`) collide with
 # d2's `:` label syntax and unit variants are leaf noise (101 of 275 edges).

@@ -14,10 +14,16 @@
 #            (gen skips the write when bytes are unchanged, so a no-change tick is
 #            a no-op).
 
+rel note_raw(file: file, line: int, body: text).
+note_raw(p, l, body) <-
+  scan("WORK", "chat_log/**/*.md", p, rev),
+  comment(p, rev, /^\s*@(?<s>[a-z]+\s+.+?)(?:\s*-->)?\s*$/, l, label: body).
+
 rel note(tag: text, msg: text, file: file, line: int).
 note(tag, msg, p, l) <-
-  scan("WORK", "chat_log/**/*.md", p, rev),
-  match(p, rev, /<!--\s*@(?P<tag>[a-z]+)\s+(?P<msg>.+?)\s*-->/, l).
+  note_raw(p, l, body),
+  tag = split(body, " ", 0),
+  msg = replace_re(body, "^[a-z]+ +", "").
 
 gen("PLANS.md", "- **{tag}** {msg}  <sub>({file}:{line})</sub>") <-
   note(tag, msg, file, line).

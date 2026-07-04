@@ -789,7 +789,7 @@
 # Scan markdown into _file so refresh_doc_rels runs the IngestLang registry over it.
 # (doc_node is populated lazily only for files a source rule has touched.)
 rel md(path: file).
-md(path) <- scan("WORK", "{*.md,docs/**/*.md,book/**/*.md,plans/**/*.md,research/**/*.md}", path, rev), match(path, rev, /./, line).
+md(path) <- scan("{*.md,docs/**/*.md,book/**/*.md,plans/**/*.md,research/**/*.md}", path).
 
 # Each markdown doc's title = its top-level heading (parent = "").
 rel doc_title(path: file, title: text).

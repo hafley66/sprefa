@@ -7,7 +7,7 @@
 #   d2 examples/typeports.d2 /tmp/typeviz/typeports.svg
 
 rel seen(path: file).
-seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
+seen(path) <- scan("src/**/*.rs", path).
 
 rel edge0(f: text, t: text, k: text).
 edge0(f, t, k) <- type_edge(f, t, k, _), k != "variant",

@@ -36,18 +36,21 @@ route_fact("client", "cli",      "/reports/%s").          # no server route
 
 # ---- scan rules (edit me): real servers + clients feed the same rel ---------
 rel route_scan(side: text, origin: text, route: text).
-# Express:  app.get("/users/:id", ...)
-route_scan("server", p, t) <-
+# Express:  app.get("/users/:id", ...) — $M covers any verb method.
+route_scan("server", p, T) <-
     scan("WORK", "**/*.{ts,js}", p, rev),
-    match(p, rev, /app\.(?:get|post|put|delete|patch)\(\s*['"](?<t>[^'"]+)/, l).
+    sg(p, rev, :ts, "app.$M($T, $$$REST)").
 # Flask:    @app.route("/users/<id>")
-route_scan("server", p, t) <-
+route_scan("server", p, T) <-
     scan("WORK", "**/*.py", p, rev),
-    match(p, rev, /@\w+\.route\(\s*['"](?<t>[^'"]+)/, l).
+    sg(p, rev, :py, "@$APP.route($T, $$$REST)").
 # fetch-style clients: fetch("/users/..."), axios.get('/users/...')
-route_scan("client", p, t) <-
+route_scan("client", p, T) <-
     scan("WORK", "**/*.{ts,js,tsx}", p, rev),
-    match(p, rev, /(?:fetch|axios\.\w+)\(\s*[`'"](?<t>\/[^`'"$]+)/, l).
+    sg(p, rev, :tsx, "fetch($T, $$$REST)").
+route_scan("client", p, T) <-
+    scan("WORK", "**/*.{ts,js,tsx}", p, rev),
+    sg(p, rev, :tsx, "axios.$M($T, $$$REST)").
 
 # ---- the verdicts -----------------------------------------------------------
 # A client path whose normalized form matches a declared server route.

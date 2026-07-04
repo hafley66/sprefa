@@ -12,7 +12,7 @@ fn_file(sym, file) <- call_def(_, sym, _, file, _, _).
 rel sprf_edge(src: file, dst: file).
 sprf_edge(src, dst) <- call_edge(caller, callee, _), fn_file(caller, src), fn_file(callee, dst), src != dst.
 rel ra_edge(src: file, dst: file).
-ra_edge(src, dst) <- scip_edge(src, dst).
+ra_edge(src, dst) <- scip_edge(src, dst, _).
 
 rel missed(src: file, dst: file).
 missed(src, dst) <- ra_edge(src, dst), !sprf_edge(src, dst).

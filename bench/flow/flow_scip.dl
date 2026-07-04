@@ -24,20 +24,20 @@ gen_file(f) <- scan("WORK", "**/*.rs", f, rev), match(f, rev, /GENERATED from op
 # descriptor name IS the operationId. scip_name is the in-engine descriptor (a
 # pure-dl split leaks `impl#[Type]` on methods).
 rel gen_def(op: text, sym: text, file: file).
-gen_def(op, sym, f) <- spec_op(op), scip_name(sym, op), scip_def(sym, f), gen_file(f).
+gen_def(op, sym, f) <- spec_op(op), scip_name(sym, op), scip_def(sym, f, _), gen_file(f).
 
 # backend implementor: a def whose descriptor IS the operationId, in a Rust file
 # (the handwritten handler the spec is implemented by). The .rs filter is the
 # role; the spec doesn't say "backend", the repo does.
 rel impl_sym(op: text, sym: text, file: file).
-impl_sym(op, sym, f) <- spec_op(op), scip_name(sym, op), scip_def(sym, f),
+impl_sym(op, sym, f) <- spec_op(op), scip_name(sym, op), scip_def(sym, f, _),
   ext = split(f, ".", -1), ext = "rs".
 
 # consumer: every resolved ref to a generated symbol — the import line and each
 # callsite, resolved across the package boundary by SCIP. This is the blast
 # radius of the operation in the consuming codebase.
 rel consumer(op: text, file: file).
-consumer(op, rf) <- gen_def(op, sym, _), scip_ref(rf, sym, _).
+consumer(op, rf) <- gen_def(op, sym, _), scip_ref(rf, sym, _, _).
 
 rel flow_sym(op: text, role: text, file: file).
 flow_sym(op, "impl", f)      <- impl_sym(op, _, f).

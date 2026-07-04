@@ -21,8 +21,7 @@ rel work_type(src: text, dst: text).
 rel work_reaches(src: text, dst: text).
 
 seen(path) <-
-  scan("WORK", "src/**/*.rs", path, rev),
-  match(path, rev, /./, line).
+  scan("src/**/*.rs", path).
 
 type_reaches(src, dst) <- closure(type_edge).
 

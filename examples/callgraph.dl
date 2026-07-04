@@ -1,27 +1,26 @@
-# Call graph of dl's own source, discovered by pattern, queried as a graph.
-# `path: file` is a checked type: rows whose path is not a real file are dropped.
-# calls is file-scoped co-occurrence (caller's file mentions a known fn), a
-# heuristic, not a resolved call graph. reaches is its transitive closure.
+# Call graph of dl's own source, queried as a graph. `path: file` is a checked
+# type: rows whose path is not a real file are dropped. This file predates the
+# engine's own call_def/call_name/call_edge (the resolved, SCIP-preferred call
+# graph); `calls` used to be file-scoped regex co-occurrence (a heuristic, not
+# a resolved graph). Upgraded: def reads call_def+call_name, calls reads
+# call_edge+call_name. reaches is calls' transitive closure.
 # @op closure
 
+rel seen(path: file).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev).
+
 rel def(name: text, path: file, line: int).
-rel use(name: text, path: file, line: int).
 rel calls(caller: text, callee: text).
 rel reaches(src: text, dst: text).
 rel unused(name: text).
 
 def(name, path, line) <-
-  scan("WORK", "src/**/*.rs", path, rev),
-  match(path, rev, /fn\s+(?<name>[a-z_][a-z0-9_]+)/, line).
-
-use(name, path, line) <-
-  scan("WORK", "src/**/*.rs", path, rev),
-  match(path, rev, /(?<name>[a-z_][a-z0-9_]+)\s*\(/, line).
+  call_def(_, sym, _, path, line, _), call_name(sym, name).
 
 calls(caller, callee) <-
-  def(caller, p, _),
-  use(callee, p, _),
-  def(callee, _, _),
+  call_edge(cs, ce, _),
+  call_name(cs, caller),
+  call_name(ce, callee),
   caller != callee.
 
 reaches(src, dst) <- closure(calls).

@@ -69,7 +69,7 @@ if [ -n "${SCIP_API_SED:-}" ]; then
 fi
 
 # --- 4: dl ingest cost vs generation ----------------------------------------
-printf '%s\n' 'seen(s) <- scip_def(s, f).' '? seen(s).' > "$OUT/ingest.dl"
+printf '%s\n' 'seen(s) <- scip_def(s, f, _).' '? seen(s).' > "$OUT/ingest.dl"
 echo "== (4) dl INGEST time of the generated index (compare to GEN above) =="
 SPREFA_SCIP_INDEX="$A/index.scip" /usr/bin/time -p "$DL" "$OUT/ingest.dl" --root "$A" --no-daemon 2>"$OUT/in.t" | grep -E 'rows'
 grep -E 'real|user' "$OUT/in.t"

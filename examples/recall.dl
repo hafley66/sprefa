@@ -7,7 +7,7 @@ rel seen(path: file).
 seen(path) <- scan("src/**/*.rs", path).
 
 rel ra_edge(src: file, dst: file).
-ra_edge(src, dst) <- scip_edge(src, dst).
+ra_edge(src, dst) <- scip_edge(src, dst, _).
 
 rel fn_file(sym: text, file: file).
 fn_file(sym, file) <- call_def(_, sym, _, file, _, _).

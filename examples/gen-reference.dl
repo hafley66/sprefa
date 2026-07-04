@@ -74,7 +74,7 @@ op_used(op) <- op_use(op, _).
 rel op_pin(op: text, ex: file, line: int).
 op_pin(op, ex, l) <-
     scan("WORK", "examples/*.dl", ex, rev),
-    match(ex, rev, /^#\s*@op\s+(?<op>[a-z_][a-z0-9_]*)/, l).
+    comment(ex, rev, /^\s*@op\s+(?<s>[a-z_][a-z0-9_]*)/, l, label: op).
 
 # Representative example per op = the pin if present (and a real op), else the
 # lexicographically first path. op_show carries the basename for `dl examples
@@ -109,10 +109,10 @@ gen(:append, "docs/reference/syntax.md", "| `{op}` | {kind} | `{syntax}` | {doc}
 
 # ── examples.md : the examples/ corpus, first-comment summary per file ─────────
 # example_doc keys each program on its filename and its first `#` comment line
-# (the convention every example opens with). A pure scan+match — no new catalog.
+# (the convention every example opens with). A pure scan+comment — no new catalog.
 rel example_doc(name: text, desc: text).
 example_doc(split(p, "/", -1), desc) <-
-    scan("examples/*.dl", p, rev), match(p, rev, /^#\s?(?<desc>.*)$/, l), l = 1.
+    scan("examples/*.dl", p, rev), comment(p, rev, /^\s?(?<s>.*)$/, l, label: desc), l = 1.
 gen(:append, "docs/reference/examples.md", "# Examples") <- true().
 gen(:append, "docs/reference/examples.md", "") <- true().
 gen(:append, "docs/reference/examples.md",

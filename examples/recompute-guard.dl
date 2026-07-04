@@ -15,33 +15,38 @@
 # Run:  dl examples/recompute-guard.dl --root <repo> --check
 #       dl examples/recompute-guard.dl --root <repo> --lsp
 #
-# Attribution is line-based and self-contained: fn decls, call sites, guards and
-# waivers all come from `match` over the SAME scan, so they share one file key
-# and one line base. The enclosing fn of a line is the nearest fn decl at or
-# above it (no other fn decl in between).
+# Attribution: fn decls come from the resolved def graph (call_def), and the
+# embed_graph/load_rel_digest markers come from the resolved call graph
+# (call_site) rather than a text scan — call_site only fires at call
+# expressions, never at a fn's own signature line, so the old embed_site-
+# minus-embed_def subtraction is gone; call_site's own seed can't match a def.
+# call_site's `caller` column is unreliable inside `#[cfg(test)] mod tests`
+# (the def graph does not index test-module fns, so caller resolves to ""
+# there), so every marker — call site AND the comment waiver — still resolves
+# to its enclosing fn the same way: the nearest fn decl at or above it (no
+# other fn decl in between). That keeps embed/guard/waive consistently
+# attributed even for a call the def graph can't see into.
 
-# --- fn declaration lines (multiline-anchored; name captured) ----------------
+# A source rule can only bind head vars from its own source-op captures, so
+# the corpus seed (bare scan) and the call_def join (purely derived) split
+# into two rules.
+rel src_scanned(f: file).
+src_scanned(f) <- scan("WORK", "src/**/*.rs", f, rev).
+
+# --- fn declarations (from the resolved def graph) -----------------------------
 rel fn_decl(file: file, line: int, name: text).
-fn_decl(f, l, n) <- scan("WORK", "src/**/*.rs", f, rev),
-    match(f, rev, /(?m)^\s*(?:pub(?:\([a-z_]+\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(?P<n>[A-Za-z_][A-Za-z0-9_]*)/, l).
+fn_decl(f, l, n) <- src_scanned(f), call_def(_, n, _, f, l, _).
 
-# --- recompute call sites: embed_graph( minus its own definition --------------
-rel embed_site(file: file, line: int).
-embed_site(f, l) <- scan("WORK", "src/**/*.rs", f, rev),
-    match(f, rev, /embed_graph\(/, l).
-rel embed_def(file: file, line: int).
-embed_def(f, l) <- scan("WORK", "src/**/*.rs", f, rev),
-    match(f, rev, /fn\s+embed_graph/, l).
+# --- recompute call sites: embed_graph(...) calls ------------------------------
 rel embed_call(file: file, line: int).
-embed_call(f, l) <- embed_site(f, l), !embed_def(f, l).
+embed_call(f, l) <- call_site(_, _, "embed_graph", f, l).
 
-# --- guard + waiver markers ---------------------------------------------------
+# --- guard + waiver markers -----------------------------------------------------
 rel guard_site(file: file, line: int).
-guard_site(f, l) <- scan("WORK", "src/**/*.rs", f, rev),
-    match(f, rev, /load_rel_digest\(/, l).
+guard_site(f, l) <- call_site(_, _, "load_rel_digest", f, l).
 rel waive_site(file: file, line: int).
 waive_site(f, l) <- scan("WORK", "src/**/*.rs", f, rev),
-    match(f, rev, /@recompute unguarded/, l).
+    comment(f, rev, /@recompute unguarded/, l).
 
 # --- enclosing fn = nearest fn decl at or above a marker line -----------------
 # `_above` = every fn decl at/above the marker; `_closer` = one with another fn

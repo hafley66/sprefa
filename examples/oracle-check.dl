@@ -5,7 +5,7 @@
 # `call_edge` is a syn-based heuristic. The delta quantifies the undercount.
 #
 # NOTE: sprefa's SCIP ingestion (scip_import.rs) currently emits only FILE-level
-# edges (scip_edge(src_file, dst_file)), so this comparison is per-FILE, not
+# edges (scip_edge(src_file, dst_file, _)), so this comparison is per-FILE, not
 # per-function. A function-level oracle (validate Engine.tick's fan_out=57)
 # needs scip_import extended to map each occurrence's range to its enclosing
 # def symbol -> fn->fn edges. Tracked as the follow-up.
@@ -34,7 +34,7 @@ sprf_edge(src, dst) <- call_edge(caller, callee, _), fn_file(caller, src), fn_fi
 
 # RA's resolved file-level graph (empty without a SCIP index).
 rel ra_edge(src: file, dst: file).
-ra_edge(src, dst) <- scip_edge(src, dst).
+ra_edge(src, dst) <- scip_edge(src, dst, _).
 
 # ── the delta ───────────────────────────────────────────────────────────
 rel missed(src: file, dst: file).     # RA resolves a dep sprefa's heuristic misses = UNDERCOUNT

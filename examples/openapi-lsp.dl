@@ -13,15 +13,23 @@ rel spec_op(op: text).
 spec_op(op) <- scan("WORK", "examples/openapi-sim/openapi.json", p, rev),
                jsonp(p, rev, "paths.*.*.operationId", op).
 
-# TS call sites. One regex over the codegen convention; the spec_op join filters.
-rel call(p: file, l: int, op: text).
-call(p, l, op) <- scan("WORK", "examples/openapi-sim/client.ts", p, rev),
-                  match(p, rev, /\b(?P<op>[A-Za-z_][A-Za-z0-9_]*)\s*\(/, l).
+# A source rule can only bind head vars from its own source-op captures, so
+# the corpus seed (bare scan, triggers extraction) and the call_site/call_def
+# join (purely derived) split into two rules apiece.
+rel client_scanned(p: file).
+client_scanned(p) <- scan("WORK", "examples/openapi-sim/client.ts", p, rev).
+rel server_scanned(p: file).
+server_scanned(p) <- scan("WORK", "examples/openapi-sim/server.rs", p, rev).
 
-# RS definition sites.
+# TS call sites. call_site's bare callee text is the codegen convention; the
+# spec_op join filters.
+rel call(p: file, l: int, op: text).
+call(p, l, op) <- client_scanned(p), call_site(_, _, op, p, l).
+
+# RS definition sites. call_def's sym resolves to the bare fn name via
+# call_name (sym is the qualified def coordinate; call_name is the text join key).
 rel def(p: file, l: int, op: text).
-def(p, l, op) <- scan("WORK", "examples/openapi-sim/server.rs", p, rev),
-                 match(p, rev, /fn\s+(?P<op>[A-Za-z_][A-Za-z0-9_]*)\s*\(/, l).
+def(p, l, op) <- server_scanned(p), call_def(_, sym, _, p, l, _), call_name(sym, op).
 
 # Happy path: a call that hits a spec op.
 rel linked(op: text, p: file, l: int).

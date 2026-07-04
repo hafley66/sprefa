@@ -1,6 +1,6 @@
 # inspect_pairs.dl — dump the field structure of specific LGG pairs
 rel seen(path: file).
-seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
+seen(path) <- scan("src/**/*.rs", path).
 
 rel fields_of(t: text, to: text).
 fields_of(t, to) <- type_edge(t, to, "field", _).

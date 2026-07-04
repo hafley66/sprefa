@@ -13,7 +13,7 @@
 # A clap arg attribute line: `#[arg(long)]` / `#[arg(long = "move")]` / `#[arg(long, hide = true)]`.
 rel arg_attr(line: int).
 arg_attr(line) <- scan("WORK", "src/main.rs", p, rev),
-  match(p, rev, /#\[arg\(long/, line).
+  ast(p, rev, :rust, "(attribute_item) @cap", line).
 
 # A struct field decl: `    fieldname: Type`. Trailing `_` (raw-ident workaround,
 # e.g. `move_`) is dropped so the kebab name matches clap's derived long flag.

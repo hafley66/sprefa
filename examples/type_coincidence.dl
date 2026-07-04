@@ -19,7 +19,7 @@
 # Manual: dl examples/type_coincidence.dl --root . --db /tmp/dl-tc.db --no-daemon
 
 rel seen(path: file).
-seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
+seen(path) <- scan("src/**/*.rs", path).
 
 # A fn "uses" a type if the type appears anywhere in its arrow type (param or
 # ret slot). Normalized to the trailing identifier so bare and fully-qualified

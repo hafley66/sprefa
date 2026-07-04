@@ -13,14 +13,14 @@
 # Rerun converges (gen writes only when bytes differ).
 
 # Op names dispatched in body_item: parse.rs `if s == "scan" { return self.scan(); }`.
-# The `return self.` anchor excludes item-level keywords (`gen`/`anchor`/`def`/
-# `_`) that also match a bare `if s == "..."`. `closure`/`scc`/`node2vec` are body
-# graph constructs, not source ops (they live in syntax.md's op_catalog, not this
-# source-op table) → excluded.
+# The structural if-eq-return shape excludes item-level keywords (`gen`/`anchor`/
+# `def`/`_`) that also test `s == "..."` but through `&&`/`=>` forms, not this
+# exact block. `closure`/`scc`/`node2vec` are body graph constructs, not source
+# ops (they live in syntax.md's op_catalog, not this source-op table) → excluded.
 rel dispatch_op(op: text).
-dispatch_op(op) <- scan("WORK", "src/parse.rs", p, rev),
-  match(p, rev, /if s == "(?<op>\w+)" \{ return self\./, _),
-  op != "closure", op != "scc", op != "node2vec".
+dispatch_op(OP) <- scan("WORK", "src/parse.rs", p, rev),
+  sg(p, rev, :rust, "if s == \"$OP\" { return self.$M(); }"),
+  OP != "closure", OP != "scc", OP != "node2vec".
 
 # The marker pair wrapping the whole table (header + separator + rows).
 rel op_block(p: file, l0: int, l1: int).

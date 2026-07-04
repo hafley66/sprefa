@@ -69,10 +69,12 @@ edge(f, t) <- hub(f, _), edge0(f, t).
 rel tag(node: text, ns: text, value: text).
 tag(f, "tag", "hub") <- hub(f, _).
 
-# where each shown type is declared, as an fs ref (panel rows + periscope)
+# where each shown type is declared, as an fs ref (panel rows + periscope).
+# `seen` above already scans sprefa/src/**/*.rs and triggers extraction, so
+# this reads the syn-backed type_entity table directly instead of re-deriving
+# declarations by regex.
 rel decl(name: text, path: file, line: int).
-decl(name, path, line) <- scan("WORK", "sprefa/src/**/*.rs", path, rev),
-  match(path, rev, /pub (?:struct|enum) (?<name>[A-Za-z]+)/, line).
+decl(name, path, line) <- type_entity(_, _, name, k, _, path, line), k =~ /struct|enum/.
 
 rel node_ref(node: text, panel: text, locator: text).
 node_ref(n, "fs", "${path}:${line}") <- node(n, _, _), decl(n, path, line).

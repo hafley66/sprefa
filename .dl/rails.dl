@@ -22,24 +22,22 @@ diag(path: p, line: l, col: c, end_col: ec, severity: "error", code: "banned-wor
 # enclosing fn via call_site(caller, "conn", p, l); then we ask whether that fn
 # is transitively reachable from any fn containing a call inside a loop nest
 # (nest > 0). A leaf fn with no loop-reachable path stays silent; a fn called
-# per-iteration fires. The .conn() regex is just the seed; the badness is the
-# graph property. db.rs stays exempt because .conn() there IS the seam, not a
-# bypass. Ported from a too-blunt regex-only rule whose path-scope fired on
-# every .conn() in a touched file.
+# per-iteration fires. db.rs stays exempt because .conn() there IS the seam,
+# not a bypass. Ported from a too-blunt regex-only rule whose path-scope fired
+# on every .conn() in a touched file.
 
-# Seed: raw .conn() call sites, excluding db.rs (the seam itself).
-rel conn_site(p: file, l: int, c: int, ec: int).
-conn_site(p, l, c, ec) <-
-    scan("WORK", "src/**/*.rs", p, rev),
-    match(p, rev, /\.conn\(\)/, l, c, ec),
+# Resolve each .conn() call site to its enclosing fn directly via the
+# call-site extractor (mirrors loop_entry_fn's call_site join below, which
+# has no scan of its own either — banned_hit's scan already triggers
+# extraction for src/**/*.rs, and a source rule can only bind head vars from
+# its own source-op captures, so call_site's join has to live in a pure
+# derived rule) — folds the old regex-seed + join into one step; db.rs stays
+# exempt (the seam itself, not a bypass). `caller` is the resolved fn sym;
+# "conn" is the method name (self.db.conn()).
+rel conn_fn(fn: text, p: file, l: int).
+conn_fn(fn, p, l) <-
+    call_site(_, fn, "conn", p, l),
     p != fs:`src/db.rs`.
-
-# Resolve each .conn() site to its enclosing fn via the call-site extractor.
-# `caller` is the resolved fn sym; "conn" is the method name (self.db.conn()).
-rel conn_fn(fn: text, p: file, l: int, c: int, ec: int).
-conn_fn(fn, p, l, c, ec) <-
-    conn_site(p, l, c, ec),
-    call_site(_, fn, "conn", p, l).
 
 # A fn is loop-entry if at least one call TO IT originates from a call site
 # inside a loop nest. Tighter than the old "fn contains any call in a loop"
@@ -87,8 +85,8 @@ loop_reachable_fn(fn) <-
 # loop". The call_kind table is keyed by bare callee name (execute/
 # execute_batch -> write; prepare/query_row/query_map -> read); see
 # classify_call_kind in engine.rs for the table.
-diag(path: p, line: l, col: c, end_col: ec, severity: "warn", code: "conn-loop-reachable", msg: "raw .conn() reachable from a loop; per-row write risk") <-
-    conn_fn(fn, p, l, c, ec),
+diag(path: p, line: l, severity: "warn", code: "conn-loop-reachable", msg: "raw .conn() reachable from a loop; per-row write risk") <-
+    conn_fn(fn, p, l),
     call_kind(fn, "write"),
     loop_reachable_fn(fn),
     changed_line(p, l).

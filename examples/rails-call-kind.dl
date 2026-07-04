@@ -23,7 +23,7 @@
 rel conn_site(p: file, l: int).
 conn_site(p, l) <-
     scan("WORK", "src/**/*.rs", p, rev),
-    match(p, rev, /\.conn\(\)/, l),
+    sg(p, rev, :rust, "$X.conn()", line: l),
     p != fs:`src/db.rs`.
 
 # Resolve each .conn() site to its enclosing fn via call_site.

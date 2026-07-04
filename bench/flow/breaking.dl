@@ -26,11 +26,11 @@ added_op(op) <- op_work(op), !op_head(op).
 rel gen_file(file: file).
 gen_file(f) <- scan("WORK", "**/*.ts", f, rev), match(f, rev, /GENERATED from openapi/, l).
 rel gen_sym(name: text, sym: text, file: file).
-gen_sym(n, sym, f) <- scip_name(sym, n), scip_def(sym, f), gen_file(f).
+gen_sym(n, sym, f) <- scip_name(sym, n), scip_def(sym, f, _), gen_file(f).
 
 # who references a generated symbol (resolved import / callsite).
 rel uses_op(op: text, file: file).
-uses_op(n, rf) <- gen_sym(n, sym, _), scip_ref(rf, sym, _).
+uses_op(n, rf) <- gen_sym(n, sym, _), scip_ref(rf, sym, _, _).
 
 # BREAKING: an op removed from the spec whose generated symbol is still used.
 # These consumers break the moment the library is regenerated.

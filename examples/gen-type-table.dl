@@ -18,7 +18,7 @@
 # (the table lands between the markers above, as `# | type | n |` rows)
 
 rel seen(path: file).
-seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
+seen(path) <- scan("src/**/*.rs", path).
 
 rel fan_out(f: text, n: int).
 fan_out(f, count(t)) <- type_edge(f, t, _, _).

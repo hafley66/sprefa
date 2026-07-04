@@ -75,3 +75,13 @@ mark_reach(marked, id) <- mark_df(marked, id).
 mark_reach(marked, to) <- mark_reach(marked, from), flow_edge(from, to).
 rel mark_flow(src: text, dst: text).
 mark_flow(src, dst) <- mark_reach(src, id), mark_df(dst, id), src != dst.
+
+# ── 4) mark-to-mark call edges ───────────────────────────────────────────────
+# mark_flow above is VALUE flow (seeded at df nodes, so it needs marked
+# VARIABLES at their lines). Two marked FUNCTIONS relate through the call
+# graph instead: resolve each mark to its entity sym (mark_entity) and read
+# call_edge directly — the "one of these calls the other" edge.
+rel mark_call(src: text, dst: text).
+mark_call(a, b) <-
+  mark_entity(a, sa, _, _, _), mark_entity(b, sb, _, _, _),
+  call_edge(sa, sb, _), a != b.

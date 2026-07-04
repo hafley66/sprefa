@@ -10,8 +10,7 @@
 #   dl sprefa/examples/anim-self.dl --root ~/projects/anim --db ~/projects/anim/data/animself.sqlite
 
 rel seen(path: file).
-seen(path) <- scan("WORK", "src/**/*.{ts,tsx}", path, rev),
-  match(path, rev, /./, line).
+seen(path) <- scan("WORK", "src/**/*.{ts,tsx}", path, rev).
 
 # plain-ident edges, TS stdlib/DOM containers dropped (Map in a field is
 # plumbing, not shape)
@@ -64,10 +63,12 @@ card_about("about.today", "RelRows").
 # the scanned rows, so type_entity function pins go in `fpin` and the two are
 # unioned downstream in span_of (which has no scan atom).
 rel pin(name: text, path: file, line: int).
-pin(name, path, line) <- scan("WORK", "bin/*.mjs", path, rev),
-  match(path, rev, /^(?:export )?function (?<name>[A-Za-z][A-Za-z0-9]*)/, line).
+pin(NAME, path, line) <- scan("WORK", "bin/*.mjs", path, rev),
+  sg(path, rev, :javascript, "function $NAME($$$P) { $$$B }", line).
+pin(NAME, path, line) <- scan("WORK", "bin/*.mjs", path, rev),
+  sg(path, rev, :javascript, "export function $NAME($$$P) { $$$B }", line).
 pin("tokenize", path, line) <- scan("WORK", "src/CodeSpotlight.tsx", path, rev),
-  match(path, rev, /tokenize per file/, line).
+  comment(path, rev, /tokenize per file/, line).
 
 rel fpin(name: text, file: file, line: int).
 fpin(name, file, line) <- type_entity(_, sym, name, "function", parent, file, line).

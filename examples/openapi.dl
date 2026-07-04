@@ -1,6 +1,6 @@
 # OpenAPI coverage: which API operations have no frontend hook?
-# spec_op comes from JSON (json matcher), hook comes from a .ts file (regex
-# match), and missing_hook is the anti-join. This is v4's "first real
+# spec_op comes from JSON (jsonp), hook comes from a .ts file (sg structural
+# pattern), and missing_hook is the anti-join. This is v4's "first real
 # composition target" running on the v5 engine.
 
 rel spec_op(op: text).
@@ -11,9 +11,9 @@ spec_op(op) <-
   scan("WORK", "examples/openapi-sim/openapi.json", path, rev),
   jsonp(path, rev, "paths.*.*.operationId", op).
 
-hook(op) <-
+hook(replace(OP, "\"", "")) <-
   scan("WORK", "examples/openapi-sim/hooks.ts", path, rev),
-  match(path, rev, /registerHook\("(?<op>[a-zA-Z]+)"\)/, line).
+  sg(path, rev, :ts, "registerHook($OP)").
 
 missing_hook(op) <- spec_op(op), !hook(op).
 

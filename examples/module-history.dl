@@ -12,12 +12,10 @@ rel work_edge(src: text, dst: text).
 rel work_reaches(src: text, dst: text).
 
 seen(path, rev) <-
-  scan("WORK", "src/**/*.rs", path, rev),
-  match(path, rev, /./, line).
+  scan("WORK", "src/**/*.rs", path, rev).
 
 seen(path, rev) <-
-  scan("HEAD", "src/**/*.rs", path, rev),
-  match(path, rev, /./, line).
+  scan("HEAD", "src/**/*.rs", path, rev).
 
 work_edge(src, dst) <- module_edge_rev(src, dst, "WORK").
 work_reaches(src, dst) <- closure(work_edge).

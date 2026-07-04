@@ -22,7 +22,7 @@ local_in_fns(name, count(fn)) <- scip_local(fn, name).
 
 # distinct files containing a fn that declares this name
 rel fn_file(fn: text, file: file).
-fn_file(fn, file) <- scip_def(fn, file).
+fn_file(fn, file) <- scip_def(fn, file, _).
 
 rel local_in_files(name: text, n_files: int).
 local_in_files(name, count(f)) <- scip_local(fn, name), fn_file(fn, f).
