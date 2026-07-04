@@ -1,0 +1,74 @@
+# graph-diff.dl -- PR graph-diff (D1): worktree-pair sym-set difference over
+# flow-panel.dl's member_node/member_edge. See plans/2026-07-03-pr-diff-graph.md
+# (Diff semantics + D1 SPECIFICS) -- this file implements that section as-is.
+#
+# Route: two checkouts (base worktree + this head worktree) registered as two
+# config repos (bench/graph_diff/diff.config.toml) fake two revs. syms arrive
+# prefixed with the root dir BASENAME (`sprefa-base::…` vs
+# `vscode-flow-panel::…`), so the diff is prefix-strip + set difference --
+# stable because member_node/member_edge are sym-keyed (df-node ids embed
+# line numbers and MUST NOT be diffed raw; this file never touches df_* rows
+# directly, only what member_node/member_edge already curated).
+#
+# Same-dir use: flow-panel.dl already assembles member_node/member_edge (and
+# pulls in std/flow.dl via its own `use "../std/entry.dl".`), so importing it
+# here (importer-dir-relative, same directory) reuses that assembly instead
+# of re-deriving it.
+use "flow-panel.dl".
+
+# HEAD/BASE slugs -- the convention-read pattern (D0 SPECIFICS): sym prefixes
+# come from root dir basenames, not config slugs. base worktree dir is
+# ~/projects/sprefa-base; this head worktree's dir is vscode-flow-panel.
+rel diff_pair(base: text, head: text).
+diff_pair("sprefa-base", "vscode-flow-panel").
+
+# bare_node/bare_edge: strip the repo-basename prefix off a member_node/
+# member_edge sym, keeping the repo tag as its own column so added/removed
+# rules below can join back to diff_pair instead of hardcoding slugs.
+# replace_re(sym, "^[^:]*::", "") drops everything up to and including the
+# first "::" (the prefix strip); replace_re(sym, "::.*$", "") keeps only the
+# text before the first "::" (the prefix extract -- greedy match on the
+# REST from the first "::" onward, so this yields exactly the first segment,
+# not a longest-match overreach into later "::" separators).
+rel bare_node(repo: text, sym: text, kind: text).
+bare_node(replace_re(sym, "::.*$", ""), replace_re(sym, "^[^:]*::", ""), kind) <-
+  member_node(sym, _, kind, _, _, _).
+
+rel bare_edge(repo: text, a: text, b: text, kind: text).
+bare_edge(replace_re(src, "::.*$", ""), replace_re(src, "^[^:]*::", ""),
+          replace_re(dst, "^[^:]*::", ""), kind) <-
+  member_edge(src, dst, kind).
+
+# node_added / node_removed: present under head's bare sym set but not
+# base's (added), or vice versa (removed). Joins diff_pair so the two repo
+# slugs are read, not hardcoded, inside the rule bodies.
+rel node_added(sym: text, kind: text).
+node_added(sym, kind) <-
+  diff_pair(base, head),
+  bare_node(head, sym, kind),
+  !bare_node(base, sym, kind).
+
+rel node_removed(sym: text, kind: text).
+node_removed(sym, kind) <-
+  diff_pair(base, head),
+  bare_node(base, sym, kind),
+  !bare_node(head, sym, kind).
+
+# edge_added / edge_removed: same shape over bare_edge triples (a, b, kind).
+rel edge_added(a: text, b: text, kind: text).
+edge_added(a, b, kind) <-
+  diff_pair(base, head),
+  bare_edge(head, a, b, kind),
+  !bare_edge(base, a, b, kind).
+
+rel edge_removed(a: text, b: text, kind: text).
+edge_removed(a, b, kind) <-
+  diff_pair(base, head),
+  bare_edge(base, a, b, kind),
+  !bare_edge(head, a, b, kind).
+
+? bare_edge(repo, a, b, kind).
+? node_added(sym, kind).
+? node_removed(sym, kind).
+? edge_added(a, b, kind).
+? edge_removed(a, b, kind).

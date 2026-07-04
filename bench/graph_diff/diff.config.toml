@@ -1,0 +1,9 @@
+# PR graph-diff config repos (D0). Loaded via SPREFA_CONFIG for one-shot runs
+# only — do NOT copy over ~/.config/sprefa/config.toml (the live daemon's).
+[[repos]]
+slug = "base"
+root = "/Users/chrishafley/projects/sprefa-base"
+
+[[repos]]
+slug = "head"
+root = "/Users/chrishafley/projects/sprefa/.claude/worktrees/vscode-flow-panel"

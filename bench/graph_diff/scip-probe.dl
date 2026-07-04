@@ -1,0 +1,52 @@
+# D3 SCIP collision probe (plans/2026-07-03-pr-diff-graph.md).
+#
+# Question: when base and head roots (same crate, same commit right now) are
+# both SCIP-indexed and loaded/merged under one config, does symbol
+# resolution cross roots? I.e. can a ref recorded under one root's file path
+# resolve (via scip_ref.def_file) to a def recorded under the OTHER root's
+# file path for the same symbol string?
+#
+# Schemas (per plan): scip_def(symbol, file, _), scip_ref(file, symbol, def_file, _).
+#
+# Run:
+#   SPREFA_CONFIG=$PWD/bench/graph_diff/diff.config.toml \
+#     ~/.cargo/bin/dl bench/graph_diff/scip-probe.dl --root . --no-daemon \
+#     --db <scratch>/d3.sqlite
+
+rel seen(path: file).
+
+# Seed interest over both config repos so scan/scip facts populate. 5-ary fan
+# form: scan("*", "WORK", glob, path, rev) fans over every configured repo.
+seen(path) <- scan("*", "WORK", "src/**/*.rs", path, rev).
+
+# The self root (--root .) is "head" per diff.config.toml; scip_want demands
+# the OTHER configured repo's index be ensured + merged in too (the lazy
+# multi-repo tier documented in src/rels/scip.rs). Without this fact only the
+# self root's index.scip loads (verified: identical row counts with/without
+# a merged config).
+rel scip_want(repo: text).
+scip_want("base").
+
+# Raw dumps for inspection: what do scip_def.file / scip_ref.file / .def_file
+# actually look like once base+head are merged into one engine (bare
+# relative path vs repo-prefixed)?
+rel def_row(symbol: text, file: text).
+def_row(symbol, file) <- scip_def(symbol, file, _).
+
+rel ref_row(file: text, symbol: text, def_file: text).
+ref_row(file, symbol, def_file) <- scip_ref(file, symbol, def_file, _).
+
+# How many DISTINCT def_file values does a single symbol resolve to across
+# all scip_def rows? >1 distinct file for the same symbol string, when two
+# roots hold the identical crate, is the fingerprint of a cross-root
+# collision at the DEFINITION layer (rust-analyzer moniker is
+# package+version scoped, not path-scoped, per `dl index` duplicate-symbol
+# warnings observed on both roots).
+rel def_multi(symbol: text, n: text).
+def_multi(symbol, "collision") <-
+    def_row(symbol, file1), def_row(symbol, file2), file1 != file2.
+
+? seen(path).
+? def_row(symbol, file).
+? ref_row(file, symbol, def_file).
+? def_multi(symbol, n).

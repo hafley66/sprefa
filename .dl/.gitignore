@@ -2,3 +2,4 @@ cache.db*
 daemon.log
 daemon-fg.log
 daemon.pid
+index.scip*

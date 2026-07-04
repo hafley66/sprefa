@@ -1,0 +1,16 @@
+# Identity-gate helper: merge with .dl/graph-diff.dl to turn SCIP genuinely ON
+# for the same diff rels. Declaring scip_want alone does NOT load SCIP — the
+# ScipKind family only refreshes when the program references a scip_* rel
+# (ScipKind::used). This touches scip_ref so the family loads BOTH repos'
+# indexes (scip_want("base") + the self index), tagged per-repo. The internal
+# type/call resolver then reads the populated, repo-scoped scip_ref.
+#
+# Run twice against one db (want-latency), then compare edge_added/edge_removed
+# to the SCIP-off graph-diff run: identical sets prove SCIP-on no longer
+# poisons the diff (per-repo scoping matches the syntactic per-repo resolver).
+
+rel scip_want(repo: text).
+scip_want("base").
+
+rel scip_touch(f: text, s: text, d: text, r: text).
+scip_touch(f, s, d, r) <- scip_ref(f, s, d, r).
