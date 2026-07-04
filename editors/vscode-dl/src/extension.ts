@@ -68,6 +68,7 @@ export function activate(ctx: vscode.ExtensionContext): void {
   }));
   ctx.subscriptions.push(vscode.commands.registerCommand("dl.markSelection", () => addMark(root)));
   ctx.subscriptions.push(vscode.commands.registerCommand("dl.clearMarks", () => clearMarks(root)));
+  ctx.subscriptions.push(vscode.commands.registerCommand("dl.toggleDiagCode", () => toggleDiagCode()));
 
   // marked-line decorations: left stripe + overview-ruler tick, re-read from
   // .dl/marks.dl (same facts the engine joins) so external edits show up live
@@ -166,6 +167,50 @@ function refreshMarkDecorations(root: string, announce: boolean): void {
     }));
   }
   if (announce) vscode.window.setStatusBarMessage(`dl marks: ${count}`, 3000);
+}
+
+// ── diagnostic muting: a session/db-scoped affordance ───────────────────────
+// The server owns the mute set (`diag_mute` rel). This command lists the codes
+// currently in `diag` (each with its muted state) via `dl.listDiagCodes`, shows
+// a quick-pick, and toggles the chosen one via `dl.toggleDiagCode`. The server
+// republishes with muted codes filtered out. Muting never affects `dl --check`
+// (documented in docs/lsp.md).
+
+interface DiagCodeState { code: string; muted: boolean; }
+
+async function toggleDiagCode(): Promise<void> {
+  if (!client) { void vscode.window.showWarningMessage("dl: language server not running"); return; }
+  let states: DiagCodeState[];
+  try {
+    states = await client.sendRequest<DiagCodeState[]>("workspace/executeCommand", {
+      command: "dl.listDiagCodes", arguments: [],
+    });
+  } catch (e) {
+    void vscode.window.showErrorMessage(`dl: could not list diagnostic codes: ${String((e as Error).message ?? e)}`);
+    return;
+  }
+  if (!states || states.length === 0) {
+    void vscode.window.showInformationMessage("dl: no diagnostic codes to mute");
+    return;
+  }
+  const items = states.map((s) => ({
+    label: `${s.muted ? "$(check) " : ""}${s.code}`,
+    description: s.muted ? "muted — select to un-mute" : "select to mute",
+    code: s.code,
+  }));
+  const pick = await vscode.window.showQuickPick(items, {
+    placeHolder: "Toggle a diagnostic code (muting is session-scoped, never affects --check)",
+  });
+  if (!pick) return;
+  try {
+    const res = await client.sendRequest<{ code: string; muted: boolean }>("workspace/executeCommand", {
+      command: "dl.toggleDiagCode", arguments: [pick.code],
+    });
+    vscode.window.setStatusBarMessage(
+      `dl: ${res.code} ${res.muted ? "muted" : "un-muted"}`, 3000);
+  } catch (e) {
+    void vscode.window.showErrorMessage(`dl: toggle failed: ${String((e as Error).message ?? e)}`);
+  }
 }
 
 export function deactivate(): Thenable<void> | undefined {

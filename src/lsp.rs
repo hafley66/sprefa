@@ -3,6 +3,19 @@
 //! didOpen / didSave only; didChange is ignored because the engine reads the
 //! file from disk, and unsaved-buffer support is the RAM-only level of the data
 //! model (deferred).
+//!
+//! ## Diagnostic muting (session/db-scoped, NOT a CI gate)
+//! The server advertises two `workspace/executeCommand` commands:
+//!   * `dl.toggleDiagCode(code)` — flip a diagnostic code in the engine's
+//!     `diag_mute` set (insert if absent, delete if present) and immediately
+//!     republish open diagnostics with muted codes filtered out.
+//!   * `dl.listDiagCodes()` — the distinct codes currently in `diag` plus their
+//!     muted state, for the editor quick-pick.
+//! The mute filter sits at the publish seam (`publish`), NOT inside
+//! `Engine::diags`. This is deliberate: `--check` / `--parse-only` read the
+//! `diag` relation directly and are UNAFFECTED by a mute row. Muting is an
+//! editor-session affordance stored in the db; it never changes the exit code
+//! of a check run or what CI sees.
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
@@ -66,6 +79,10 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Res
         definition_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
         hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
+        execute_command_provider: Some(lsp_types::ExecuteCommandOptions {
+            commands: vec!["dl.toggleDiagCode".into(), "dl.listDiagCodes".into()],
+            ..Default::default()
+        }),
         ..Default::default()
     };
     connection.initialize(serde_json::to_value(caps)?)?;
@@ -142,6 +159,15 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Res
                         let resp = handle_query(&eng, &req);
                         connection.sender.send(Message::Response(resp))?;
                     }
+                    "workspace/executeCommand" => {
+                        // Toggle mutates the mute set and republishes; list is
+                        // read-only. Both answer through the same request id.
+                        let resp = handle_execute_command(&mut eng, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                        if is_toggle_command(&req) {
+                            publish(&connection, &eng, &root, None)?;
+                        }
+                    }
                     _ => { if connection.handle_shutdown(&req)? { break; } }
                 }
             }
@@ -214,15 +240,23 @@ fn spawn_daemon_subscriber(root: PathBuf, sender: crossbeam_channel::Sender<lsp_
 fn publish(connection: &Connection, eng: &Engine, root: &Path, only_abs: Option<&Path>) -> Result<()> {
     let only_rel: Option<String> = only_abs.and_then(|a| rel_of(root, a));
     let rows = eng.diags(only_rel.as_deref())?;
+    // Session mute filter: drop any diag whose code the editor silenced via
+    // `dl.toggleDiagCode`. Applied HERE, at the publish seam, so `--check` (which
+    // reads `eng.diags` directly) is unaffected — see the module doc.
+    let muted = eng.muted_codes()?;
     let mut by: HashMap<String, Vec<Diagnostic>> = HashMap::new();
     if let Some(r) = &only_rel { by.entry(r.clone()).or_default(); }
-    for d in rows { by.entry(d.path.clone()).or_default().push(to_diag(d)); }
+    for d in rows {
+        if muted.contains(&d.code) { continue; }
+        by.entry(d.path.clone()).or_default().push(to_diag(d));
+    }
     // Extraction type-drops: a file whose rows the file/dir/path checks dropped
     // gets a file-level squiggle. Their `path` is repo-relative like `diag.path`,
     // so they route through the same per-file grouping. Filter to the ticked file
     // when this is a single-file republish so we never resurrect another file's
     // stale drop.
     for d in eng.extraction_drops() {
+        if muted.contains(&d.code) { continue; }
         if only_rel.as_deref().map_or(true, |r| r == d.path) {
             by.entry(d.path.clone()).or_default().push(to_diag(d.clone()));
         }
@@ -331,6 +365,49 @@ fn handle_query(eng: &Engine, req: &Request) -> Response {
     match eng.query_sql(sql, &params) {
         Ok(rows) => Response::new_ok(req.id.clone(), serde_json::json!({ "rows": rows })),
         Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
+    }
+}
+
+/// Does this `workspace/executeCommand` request name the mute toggle? Used by
+/// the main loop to decide whether to republish (list is read-only).
+fn is_toggle_command(req: &Request) -> bool {
+    req.params.get("command").and_then(|c| c.as_str()) == Some("dl.toggleDiagCode")
+}
+
+/// `workspace/executeCommand`: the diagnostic-mute affordance.
+///   * `dl.toggleDiagCode` with `arguments: [code]` — flip the code in the
+///     engine's `diag_mute` set; returns the new muted state (bool). The main
+///     loop republishes afterward so the editor's squiggles update at once.
+///   * `dl.listDiagCodes` — returns `[{ "code": string, "muted": bool }, ...]`
+///     for every distinct code in `diag` (plus any muted-with-no-finding code),
+///     powering the quick-pick.
+/// Muting is session/db-scoped and never affects `--check` (see the module doc).
+fn handle_execute_command(eng: &mut Engine, req: &Request) -> Response {
+    let command = req.params.get("command").and_then(|c| c.as_str()).unwrap_or("");
+    let args = req.params.get("arguments").and_then(|a| a.as_array());
+    match command {
+        "dl.toggleDiagCode" => {
+            let Some(code) = args.and_then(|a| a.first()).and_then(|v| v.as_str()) else {
+                return Response::new_err(req.id.clone(), -32602,
+                    "dl.toggleDiagCode needs a code string argument".into());
+            };
+            match eng.toggle_diag_mute(code) {
+                Ok(muted) => Response::new_ok(req.id.clone(),
+                    serde_json::json!({ "code": code, "muted": muted })),
+                Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
+            }
+        }
+        "dl.listDiagCodes" => match eng.diag_code_states() {
+            Ok(states) => {
+                let list: Vec<serde_json::Value> = states.into_iter()
+                    .map(|(code, muted)| serde_json::json!({ "code": code, "muted": muted }))
+                    .collect();
+                Response::new_ok(req.id.clone(), serde_json::json!(list))
+            }
+            Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
+        },
+        other => Response::new_err(req.id.clone(), -32601,
+            format!("unknown command: {other}")),
     }
 }
 

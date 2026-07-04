@@ -68,6 +68,20 @@ Each match renders as one markdown block (`**kind** \`sym\`` + `file:line`),
 separated by `---`. The program opts in by referencing `type_entity` or
 `call_def` (the lazy indexers populate those tables only when referenced).
 
+## Muting a diagnostic code (session-scoped)
+
+Run `dl: Toggle Diagnostic Code` (bound to `cmd+alt+d cmd+alt+d` / `ctrl+alt+d
+ctrl+alt+d`) — a quick-pick of the codes currently in `diag`, each with a muted
+checkmark. Toggling one flips it in the engine's `diag_mute` set and instantly
+republishes with muted codes filtered out (the `dl.toggleDiagCode` /
+`dl.listDiagCodes` `workspace/executeCommand` pair). The first user is the
+`std/suppress.dl` `dl-directive` info dots.
+
+Muting is session/db-scoped — the mute row persists in the db, so it survives a
+daemon restart — and it is filtered at the LSP publish seam only. `--check` /
+`--parse-only` read the `diag` relation directly and are never affected: a mute
+is an editor affordance, never a CI gate.
+
 ## How it ticks
 
 | event | action |

@@ -324,6 +324,16 @@ const DIAG_RELS: [&str; 1] = ["diag"];
 /// `mcp_request` carries raw JSON. Lazy per `hook_rels_used`.
 const HOOK_RELS: [&str; 1] = ["hook_event"];
 
+/// The diagnostic-mute set. `diag_mute(code)` holds one row per diagnostic code
+/// the editor session has silenced. Engine-owned and WRITABLE, but only through
+/// `toggle_diag_mute` (the LSP `dl.toggleDiagCode` command), never a rule head —
+/// so it mirrors `hook_event`'s out-of-tick write shape, not `diag`'s
+/// rule-headed one. Rows persist in the db, so a mute survives a daemon restart.
+/// Read at the LSP publish seam to drop muted `diag` rows before they reach the
+/// editor; `--check` / `--parse-only` read `diag` directly and are UNAFFECTED
+/// (mute is an editor affordance, not a CI gate — see the lsp.rs module doc).
+const MUTE_RELS: [&str; 1] = ["diag_mute"];
+
 fn builtin_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -363,6 +373,7 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
         .chain(effect_rel_decls())
         .chain(hook_rel_decls())
         .chain(diag_rel_decls())
+        .chain(diag_mute_rel_decls())
         .collect()
 }
 
@@ -477,6 +488,19 @@ fn diag_rel_decls() -> Vec<RelDecl> {
             c("msg", Type::Text), c("hint", Type::Text)],
             group: "diag",
             doc: "diagnostic sink; head it from a rule to emit an editor squiggle (--lsp), a --check finding, or a daemon-hook message. Fixed 9-col schema — write only the cols you need via named args (diag(path: p, line: l, msg: m)); the rest are NULL and default (severity warn, end_line=line, ints 0). path is TEXT so a synthetic origin isn't file-checked away",
+            ..Default::default() },
+    ]
+}
+
+/// The diagnostic-mute set relation (see `MUTE_RELS`). One TEXT column, `code`.
+/// Written only via `toggle_diag_mute`; the LSP publish path reads it to filter
+/// `diag` rows.
+fn diag_mute_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "diag_mute".into(), cols: vec![c("code", Type::Text)],
+            group: "diag",
+            doc: "diagnostic-mute set: one row per diag code silenced in the editor session (via the LSP `dl.toggleDiagCode` command). The --lsp publish path drops `diag` rows whose code is muted; --check/--parse-only read `diag` directly and ignore this set. Written only by the toggle command, never a rule head",
             ..Default::default() },
     ]
 }
@@ -3135,6 +3159,9 @@ impl Engine {
                 if DIAG_RELS.contains(&d.name.as_str()) {
                     bail!("diag is the built-in diagnostic sink (fixed schema: path, line, col, end_line, end_col, severity, code, msg, hint); drop the `rel diag(...)` decl and write it directly — name only the columns you use, e.g. `diag(path: p, line: l, msg: m) <- ...`");
                 }
+                if MUTE_RELS.contains(&d.name.as_str()) {
+                    bail!("diag_mute is the built-in diagnostic-mute set (code); it is written only by the LSP toggle command, never a rule — pick another name");
+                }
                 match closures.get(&d.name) {
                     Some(edge) => self.declare_closure(d, edge)?,
                     None => self.declare(d)?,
@@ -3175,6 +3202,7 @@ impl Engine {
         for d in effect_rel_decls() { self.declare(&d)?; }
         for d in hook_rel_decls() { self.declare(&d)?; }
         for d in diag_rel_decls() { self.declare(&d)?; }
+        for d in diag_mute_rel_decls() { self.declare(&d)?; }
         Ok(())
     }
 
@@ -3418,6 +3446,60 @@ impl Engine {
             &[vec![Value::Text(kind.into()), Value::Text(session.into()),
                    Value::Int(seq), Value::Text(json.into())]])?;
         Ok(())
+    }
+
+    /// Toggle a diagnostic code in the built-in `diag_mute` set: insert the row
+    /// if absent (returns `true` = now muted), delete it if present (returns
+    /// `false` = now unmuted). Persisted in the db, so a mute survives a daemon
+    /// restart. Written out-of-tick, never by a refresh; the LSP publish seam
+    /// reads the set to drop muted `diag` rows. `--check` never consults it.
+    pub fn toggle_diag_mute(&mut self, code: &str) -> Result<bool> {
+        if !self.rels.contains_key("diag_mute") {
+            bail!("diag_mute rel is not declared; run a tick before toggling a mute");
+        }
+        let already: i64 = self.db.conn().query_row(
+            &format!("SELECT COUNT(*) FROM {} WHERE \"code\" = ?1", tbl("diag_mute")),
+            rusqlite::params![code], |r| r.get(0))?;
+        if already > 0 {
+            self.db.conn().execute(
+                &format!("DELETE FROM {} WHERE \"code\" = ?1", tbl("diag_mute")),
+                rusqlite::params![code])?;
+            Ok(false)
+        } else {
+            self.db.insert_rows(&tbl("diag_mute"), &["code"],
+                &[vec![Value::Text(code.into())]])?;
+            Ok(true)
+        }
+    }
+
+    /// The set of currently-muted diagnostic codes (the `diag_mute` rows). The
+    /// LSP publish path filters `diag` rows against this before sending them.
+    pub fn muted_codes(&self) -> Result<std::collections::HashSet<String>> {
+        if !self.rels.contains_key("diag_mute") {
+            return Ok(std::collections::HashSet::new());
+        }
+        let conn = self.db.conn();
+        let mut stmt = conn.prepare(&format!("SELECT \"code\" FROM {}", tbl("diag_mute")))?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        Ok(rows.filter_map(|x| x.ok()).collect())
+    }
+
+    /// Every distinct diagnostic code currently in the `diag` relation, paired
+    /// with whether it is muted. Powers the editor quick-pick behind
+    /// `dl.listDiagCodes`. Codes that appear only in the mute set (muted but no
+    /// live finding) are included too, so a user can un-mute a code with no
+    /// current occurrences.
+    pub fn diag_code_states(&self) -> Result<Vec<(String, bool)>> {
+        let muted = self.muted_codes()?;
+        let mut codes: std::collections::BTreeSet<String> = muted.iter().cloned().collect();
+        if self.rels.contains_key("diag") {
+            let conn = self.db.conn();
+            let mut stmt = conn.prepare(
+                &format!("SELECT DISTINCT \"code\" FROM {} WHERE \"code\" IS NOT NULL AND \"code\" != ''", tbl("diag")))?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            for c in rows.filter_map(|x| x.ok()) { codes.insert(c); }
+        }
+        Ok(codes.into_iter().map(|c| { let m = muted.contains(&c); (c, m) }).collect())
     }
 
     /// Drain an `@out(rpc)` port rel: return its rows, clear the table, and

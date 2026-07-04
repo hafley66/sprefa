@@ -27,6 +27,7 @@ mod config_repos;
 mod created_perf;
 mod cst_node_perf;
 mod dl_diag;
+mod diag_mute;
 mod error_reporting;
 mod authoring_edges;
 mod lang_matrix;
