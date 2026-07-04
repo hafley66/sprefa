@@ -46,6 +46,11 @@ not:
 # range over them (line/next-line suppression needs no such contract).
 lint_candidate(p, l) <- hit(p, l, _, _).
 
+# Contribute the PRE-suppression findings so std/suppress.dl can warn on any
+# `dl-disable no-unwrap` that covered no actual unwrap (the eslint
+# reportUnusedDisableDirectives discipline). One extra head, like lint_candidate.
+rail_finding(p, l, "no-unwrap") <- hit(p, l, _, _).
+
 # Emit unless suppressed: check the specific code AND the unscoped `"*"` row.
 diag(path, line, col, end_col, severity: "warn", code: "no-unwrap", msg: "unwrap() outside test code: use ? or expect(\"reason\")") <-
   hit(path, line, col, end_col),

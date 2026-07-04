@@ -7,6 +7,23 @@
 #   # `suppressed(path, line, code)`, `suppress_reason(path, line, reason)`,
 #   # and `suppress_span(path, code, start, end)` come into scope.
 #
+# ── exports ──────────────────────────────────────────────────────────────────
+#   suppressed(path, line, code)        the check a rail negates against
+#   suppress_reason(path, line, reason) the free text after ` -- `
+#   suppress_span(path, code, start, e) block ranges (dl-disable .. dl-enable)
+#   rail_finding(path, line, code)      the CONTRACT a rail heads to opt into
+#                                       the unused-suppression rail (below)
+#   suppress_unused(path, line, code)   a suppressed row that caught no finding
+#
+# ── directive visibility (shipped ON by default) ─────────────────────────────
+# dl is unknown to most readers, so every recognized directive comment earns a
+# subtle INFO editor marker (code `dl-directive`) naming its effect, and a typo
+# (`dl-disable-nextline`) that would otherwise fail silent earns a WARN
+# (`dl-directive-malformed`). These flow through the importer's `? diag(...)` /
+# `--lsp` automatically — no extra wiring. Hate the dots? Silence one in place,
+# self-hosting, with `// dl-disable-line dl-directive` (it hides its own dot
+# too); the whole family is off if the importer never queries `diag`.
+#
 # The directives (a leading token in any comment — line, block, or doc; the
 # `dl-` prefix keeps them distinct from eslint's own):
 #
@@ -49,21 +66,21 @@
 # four regexes are mutually exclusive: `dl-disable-line` and
 # `dl-disable-next-line` and `dl-disable` differ at the character after
 # `dl-disable`, so `^dl-disable($| )` never matches the longer forms.
-rel dir_raw(path: file, line: int, kind: text, args: text).
-dir_raw(p, l, "next", args) <-
-    comment_node(p, l, _, _, _, comment_text, _),
+rel dir_raw(path: file, line: int, col: int, end_col: int, kind: text, args: text).
+dir_raw(p, l, dc, ec, "next", args) <-
+    comment_node(p, l, dc, _, ec, comment_text, _),
     comment_text =~ /^dl-disable-next-line($| )/,
     args = trim(replace_re(comment_text, "^dl-disable-next-line", "")).
-dir_raw(p, l, "line", args) <-
-    comment_node(p, l, _, _, _, comment_text, _),
+dir_raw(p, l, dc, ec, "line", args) <-
+    comment_node(p, l, dc, _, ec, comment_text, _),
     comment_text =~ /^dl-disable-line($| )/,
     args = trim(replace_re(comment_text, "^dl-disable-line", "")).
-dir_raw(p, l, "disable", args) <-
-    comment_node(p, l, _, _, _, comment_text, _),
+dir_raw(p, l, dc, ec, "disable", args) <-
+    comment_node(p, l, dc, _, ec, comment_text, _),
     comment_text =~ /^dl-disable($| )/,
     args = trim(replace_re(comment_text, "^dl-disable", "")).
-dir_raw(p, l, "enable", args) <-
-    comment_node(p, l, _, _, _, comment_text, _),
+dir_raw(p, l, dc, ec, "enable", args) <-
+    comment_node(p, l, dc, _, ec, comment_text, _),
     comment_text =~ /^dl-enable($| )/,
     args = trim(replace_re(comment_text, "^dl-enable", "")).
 
@@ -72,14 +89,14 @@ dir_raw(p, l, "enable", args) <-
 # (e.g. `no-unwrap`) is not a separator.
 rel suppress_reason(path: file, line: int, reason: text).
 suppress_reason(p, l, reason) <-
-    dir_raw(p, l, _, args),
+    dir_raw(p, l, _, _, _, args),
     args =~ /--/,
     reason = trim(replace_re(args, "^.*?--", "")).
 
 # ── codes: strip the reason, normalize the separator to a comma ──────────────
 rel dir_codes(path: file, line: int, kind: text, codes: text).
 dir_codes(p, l, k, codes) <-
-    dir_raw(p, l, k, args),
+    dir_raw(p, l, _, _, k, args),
     without_reason = replace_re(args, " *--.*$", ""),
     codes = replace_re(trim(without_reason), "[ ,]+", ",").
 
@@ -142,12 +159,140 @@ suppressed(p, l, c) <-
     lint_candidate(p, l),
     suppress_span(p, c, s, e), s <= l, l <= e.
 
-# ── optional rail: reason-required (the biome discipline) ────────────────────
-# A disable with no `-- reason` is a warn diagnostic. Uncomment in a program
-# that wants to enforce it (needs `?`/diag in the importer, not here):
+# ── directive visibility (shipped ON: dl is unknown to most, so every
+#    recognized directive earns a subtle editor marker) ───────────────────────
+# One INFO diagnostic per recognized directive comment, sitting on the comment's
+# own byte span (col/end_col from `comment_node`, not the whole line), code
+# `dl-directive`, message naming the effect precisely. INFO is the subtlest
+# severity that reliably renders (HINT exists in the mapping but many editors
+# draw it invisibly). Turn a marker off in-place — self-hosting — with
+# `// dl-disable-line dl-directive` on that line (it silences its own dot too).
+
+# The code label a directive scopes to: "" -> "all", else the comma list spaced.
+rel dir_label(path: file, line: int, label: text).
+dir_label(p, l, "all") <- dir_codes(p, l, _, "").
+dir_label(p, l, pretty) <-
+    dir_codes(p, l, _, codes), codes != "",
+    pretty = replace_re(codes, ",", ", ").
+
+# Everything a directive-marker diag needs in one row (position + kind + label).
+rel dir_view(path: file, line: int, col: int, end_col: int, kind: text, label: text).
+dir_view(p, l, dc, ec, k, lab) <- dir_raw(p, l, dc, ec, k, _), dir_label(p, l, lab).
+
+rel has_reason(path: file, line: int).
+has_reason(p, l) <- suppress_reason(p, l, _).
+
+# The closing `dl-enable` line for a block open (the sentinel row is filtered:
+# an unclosed block is reported as running to end-of-file instead).
+rel dir_close(path: file, line: int, endl: int).
+dir_close(p, s, e) <- suppress_span(p, _, s, e), e < 1000000000.
+rel dir_is_closed(path: file, line: int).
+dir_is_closed(p, s) <- dir_close(p, s, _).
+
+# line / next-line, reason and no-reason variants.
+diag(path: p, line: l, col: dc, end_col: ec, severity: "info", code: "dl-directive",
+     msg: "suppresses ${lab} on this line") <-
+    dir_view(p, l, dc, ec, "line", lab), !has_reason(p, l), !suppressed(p, l, "dl-directive").
+diag(path: p, line: l, col: dc, end_col: ec, severity: "info", code: "dl-directive",
+     msg: "suppresses ${lab} on this line (reason: ${reason})") <-
+    dir_view(p, l, dc, ec, "line", lab), suppress_reason(p, l, reason), !suppressed(p, l, "dl-directive").
+diag(path: p, line: l, col: dc, end_col: ec, severity: "info", code: "dl-directive",
+     msg: "suppresses ${lab} on the next line") <-
+    dir_view(p, l, dc, ec, "next", lab), !has_reason(p, l), !suppressed(p, l, "dl-directive").
+diag(path: p, line: l, col: dc, end_col: ec, severity: "info", code: "dl-directive",
+     msg: "suppresses ${lab} on the next line (reason: ${reason})") <-
+    dir_view(p, l, dc, ec, "next", lab), suppress_reason(p, l, reason), !suppressed(p, l, "dl-directive").
+
+# block open: closed (name the paired dl-enable line) vs unclosed (end of file).
+diag(path: p, line: l, col: dc, end_col: ec, severity: "info", code: "dl-directive",
+     msg: "suppresses ${lab} until dl-enable (line ${endl})") <-
+    dir_view(p, l, dc, ec, "disable", lab), dir_close(p, l, endl),
+    !has_reason(p, l), !suppressed(p, l, "dl-directive").
+diag(path: p, line: l, col: dc, end_col: ec, severity: "info", code: "dl-directive",
+     msg: "suppresses ${lab} until dl-enable (line ${endl}) (reason: ${reason})") <-
+    dir_view(p, l, dc, ec, "disable", lab), dir_close(p, l, endl),
+    suppress_reason(p, l, reason), !suppressed(p, l, "dl-directive").
+diag(path: p, line: l, col: dc, end_col: ec, severity: "info", code: "dl-directive",
+     msg: "suppresses ${lab} until end of file (no dl-enable)") <-
+    dir_view(p, l, dc, ec, "disable", lab), !dir_is_closed(p, l),
+    !has_reason(p, l), !suppressed(p, l, "dl-directive").
+diag(path: p, line: l, col: dc, end_col: ec, severity: "info", code: "dl-directive",
+     msg: "suppresses ${lab} until end of file (no dl-enable) (reason: ${reason})") <-
+    dir_view(p, l, dc, ec, "disable", lab), !dir_is_closed(p, l),
+    suppress_reason(p, l, reason), !suppressed(p, l, "dl-directive").
+
+# block close: name the effect so an isolated dl-enable is still legible.
+diag(path: p, line: l, col: dc, end_col: ec, severity: "info", code: "dl-directive",
+     msg: "ends the dl-disable block for ${lab}") <-
+    dir_view(p, l, dc, ec, "enable", lab), !suppressed(p, l, "dl-directive").
+
+# ── malformed directive (typos fail silent otherwise — the worst failure mode
+#    for a suppression) ─────────────────────────────────────────────────────
+# A comment whose FIRST token starts with `dl-disable`/`dl-enable` but matches
+# none of the four recognized forms (e.g. `dl-disable-nextline`) gets a WARN.
+rel dir_prefix(path: file, line: int, col: int, end_col: int, text: text).
+dir_prefix(p, l, dc, ec, t) <-
+    comment_node(p, l, dc, _, ec, t, _),
+    t =~ /^dl-(disable|enable)/.
+rel dir_recognized(path: file, line: int).
+dir_recognized(p, l) <- dir_raw(p, l, _, _, _, _).
+diag(path: p, line: l, col: dc, end_col: ec, severity: "warn", code: "dl-directive-malformed",
+     msg: "unrecognized dl directive `${t}` — expected dl-disable-line / dl-disable-next-line / dl-disable / dl-enable") <-
+    dir_prefix(p, l, dc, ec, t), !dir_recognized(p, l).
+
+# ── unused-suppression rail (eslint reportUnusedDisableDirectives) ────────────
+# A rail contributes its PRE-suppression findings here (one extra head per rail,
+# same shape as `lint_candidate`):
 #
-#   rel has_reason(path: file, line: int).
-#   has_reason(p, l) <- suppress_reason(p, l, _).
-#   diag(path: p, line: l, severity: "warn", code: "suppress-reason",
-#        msg: "suppression directive needs a `-- reason`") <-
-#       dir_raw(p, l, _, _), !has_reason(p, l).
+#   rail_finding(p, l, "my-code") <- hit(p, l, _, _).
+#
+# The lib then warns on any directive whose scope caught no matching finding.
+rel rail_finding(path: file, line: int, code: text).
+rel finding_line(path: file, line: int).
+finding_line(p, l) <- rail_finding(p, l, _).
+
+# exact-line directives: the effect line each covers (disable-line same, next +1).
+rel exact_scope(path: file, dline: int, effect: int, code: text).
+exact_scope(p, dl, dl, c) <- scoped(p, dl, "line", c).
+exact_scope(p, dl, e, c)  <- scoped(p, dl, "next", c), e = dl + 1.
+
+# The visibility diags above are shipped-on, not user-rail findings, so a
+# directive that suppresses one of THEIR codes must not itself read as unused.
+rel meta_code(code: text).
+meta_code("dl-directive").
+meta_code("dl-directive-malformed").
+meta_code("dl-suppress-unused").
+
+rel suppress_unused(path: file, line: int, code: text).
+# specific-code exact directive: no finding of THAT code on its effect line.
+suppress_unused(p, dl, c) <-
+    exact_scope(p, dl, e, c), c != "*", !meta_code(c), !rail_finding(p, e, c).
+# wildcard exact directive: unused only if NO finding of ANY code fell in scope.
+suppress_unused(p, dl, "*") <-
+    exact_scope(p, dl, e, "*"), !finding_line(p, e).
+
+# block directives: unused = the whole span covered no matching finding.
+rel span_used(path: file, start: int, code: text).
+span_used(p, s, c) <-
+    suppress_span(p, c, s, e), c != "*", rail_finding(p, l, c), s <= l, l <= e.
+rel span_used_any(path: file, start: int).
+span_used_any(p, s) <-
+    suppress_span(p, "*", s, e), rail_finding(p, l, _), s <= l, l <= e.
+suppress_unused(p, s, c)   <- suppress_span(p, c, s, e), c != "*", !meta_code(c), !span_used(p, s, c).
+suppress_unused(p, s, "*") <- suppress_span(p, "*", s, e), !span_used_any(p, s).
+
+# The warn sits on the directive's own comment span (join back to dir_raw).
+diag(path: p, line: l, col: dc, end_col: ec, severity: "warn", code: "dl-suppress-unused",
+     msg: "unused suppression: no `${codename}` finding in its scope — remove the directive") <-
+    suppress_unused(p, l, codename), codename != "*", dir_raw(p, l, dc, ec, _, _).
+diag(path: p, line: l, col: dc, end_col: ec, severity: "warn", code: "dl-suppress-unused",
+     msg: "unused suppression: nothing in its scope needed suppressing — remove the directive") <-
+    suppress_unused(p, l, "*"), dir_raw(p, l, dc, ec, _, _).
+
+# ── optional rail: reason-required (the biome discipline) ────────────────────
+# A disable with no `-- reason` is a warn diagnostic. `has_reason` is already
+# exported above; uncomment in a program that wants to enforce the discipline:
+#
+#   diag(path: p, line: l, col: dc, end_col: ec, severity: "warn",
+#        code: "suppress-reason", msg: "suppression directive needs a `-- reason`") <-
+#       dir_raw(p, l, dc, ec, _, _), !has_reason(p, l).

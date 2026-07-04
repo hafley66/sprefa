@@ -34,6 +34,13 @@ fail) before a full run.
   string is never a row. `std/suppress.dl` rides it for the eslint/biome
   `dl-disable-line`/`dl-disable`/`dl-enable` grammar. The regex `comment` op still
   only detects whole-line comments by prefix — use it for files with no grammar.
+- **`std/suppress.dl` ships visibility diags ON.** Every recognized directive
+  gets a subtle INFO marker (code `dl-directive`, on the comment's byte span)
+  naming its effect; a typo like `dl-disable-nextline` WARNs (`dl-directive-malformed`);
+  a rail that heads `rail_finding(path, line, code)` also gets an unused-directive
+  WARN (`dl-suppress-unused`). Silence a marker in place, self-hosting, with
+  `// dl-disable-line dl-directive`. `examples/gen-zone-info.dl` is the opt-in
+  twin for `BEGIN:`/`END:` generated-zone markers.
 - **Anchor disjunct markers.** In an alternation, a shorter marker substring-
   matches a longer one (`dl-disable` inside `dl-disable-next-line`); anchor each
   branch (`^`, `\b`, trailing `$`) so they do not collide.

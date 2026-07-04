@@ -1,0 +1,41 @@
+# Make dl's generated-zone markers VISIBLE in the editor: a subtle info dot on
+# every `BEGIN:` marker saying the block is machine-written, so a reader edits
+# the generator instead of the rendered text (which the next tick overwrites).
+# Opt-in (zone conventions vary) — run it live:  dl examples/gen-zone-info.dl --root . --lsp
+#
+# Two marker dialects, two extractors:
+#   * markdown `<!-- BEGIN: name -->` in README/docs — the regex `comment` op
+#     (markdown has no comment grammar; the op pairs BEGIN/END by line).
+#   * Rust `// BEGIN: gen name` in the doc-command source — `comment_node`, so
+#     the dot sits on the marker's exact byte span, not the whole line.
+# Both markers are anchored with `^` so a line MENTIONING a marker (prose about
+# them) is never mistaken for one.
+
+# ── markdown zones (line-granular) ───────────────────────────────────────────
+rel md_zone(path: file, line: int, zone: text).
+md_zone(p, l0, zone) <-
+    scan("WORK", "README.md", p, rev),
+    comment(p, rev, /^BEGIN:\s+(?<z>.+?)\s*(?:-->)?\s*$/, /^END:/, l0, l1, zone).
+
+diag(path: p, line: l, severity: "info", code: "dl-gen-zone",
+     msg: "generated zone `${zone}` — edit the generator, not this block") <-
+    md_zone(p, l, zone).
+
+# ── Rust zones (col-granular, on the marker comment itself) ───────────────────
+# A bare `scan` registers the file so its grammar-backed `comment_node` rows
+# exist; a separate DERIVED rule then reads them (a `scan`-carrying source rule
+# cannot also join a builtin rel, nor head the derived `diag`).
+rel scanned_gen_src(p: file).
+scanned_gen_src(p) <- scan("WORK", "src/docs_cmd.rs", p, rev).
+
+rel rs_zone(path: file, line: int, col: int, end_col: int, zone: text).
+rs_zone(p, l, dc, ec, zone) <-
+    comment_node(p, l, dc, _, ec, marker, _),
+    marker =~ /^BEGIN: gen /,
+    zone = trim(replace_re(marker, "^BEGIN: gen ", "")).
+
+diag(path: p, line: l, col: dc, end_col: ec, severity: "info", code: "dl-gen-zone",
+     msg: "generated zone `${zone}` — edit the generator, not this block") <-
+    rs_zone(p, l, dc, ec, zone).
+
+? diag(path, line, col, end_col, severity, code, msg).
