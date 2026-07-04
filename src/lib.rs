@@ -9,6 +9,7 @@ pub mod daemon;
 pub mod datapath;
 pub mod db;
 pub mod desc;
+pub mod docs_cmd;
 pub mod embed;
 pub mod engine;
 pub mod effect;
@@ -357,6 +358,28 @@ fn run_check_inproc(programs: &[String], db_path: Option<&str>, root: PathBuf, j
     let n_type = type_diags.iter().filter(|d| d.severity == ast::Severity::Error).count();
     if n_type > 0 { anyhow::bail!("{n_type} type error(s) in the program"); }
     Ok(diags.iter().filter(|d| d.severity == "error").count())
+}
+
+/// `--parse-only`: parse + typecheck + op resolution + metavar sanity over the
+/// program file(s), with NO scan and NO db writes (sub-second). The authoring
+/// loop's fast fail — a parse/type error surfaces without paying a full scan.
+/// Reuses `prepare_paths` (same acceptance as a real run) and renders the
+/// diagnostics to stderr in the `--check` style. Returns the process exit code:
+/// 0 clean (warns are fine), 1 if any error-severity diagnostic. A hard parse
+/// failure returns `Err`, which `main` reports and exits 1 on.
+pub fn run_parse_only(programs: &[String], root: PathBuf) -> Result<i32> {
+    let files = resolve_programs(programs, &root)?;
+    let (prog, type_diags, display) = prepare_paths(&files)?;
+    // Compile every regex literal the program carries (`match`, `comment`, `=~`)
+    // exactly as the scan/eval path will, so an unsupported pattern (`/(?!-)/`)
+    // fails here instead of surviving to a real scan. Same construction point as
+    // the runtime; the error carries the dl authoring note.
+    let regex_diags = engine::regex_literal_diags(&prog, &display);
+    render_type_diags(&type_diags, false);
+    render_type_diags(&regex_diags, false);
+    let n_errors = type_diags.iter().chain(&regex_diags)
+        .filter(|d| d.severity == ast::Severity::Error).count();
+    Ok(if n_errors > 0 { 1 } else { 0 })
 }
 
 /// Drive one incremental tick over an existing db for a set of changed paths

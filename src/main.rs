@@ -2,8 +2,27 @@ use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
 
+/// Trailer for `dl --help`: the five pre-clap subcommands (clap never sees
+/// them, so list them by hand) plus where to read more.
+const SUBCOMMANDS_HELP: &str = "\
+SUBCOMMANDS (run `dl <cmd> -h` for detail):
+  setup      install the skill + wire agents, hooks, and the pre-commit rail
+  examples   browse the embedded programs (list / search / --show / --std)
+  index      turnkey SCIP: detect the language(s), run the right indexer
+  doctor     SCIP health screen (index freshness, indexer availability)
+  docs       read the embedded guides (reference pages + the book)
+
+LEARN MORE:
+  dl docs        topic list, then `dl docs syntax` or `dl docs book 1`
+  dl examples    browse the runnable programs baked into the binary
+
+AUTHORING RULES:
+  dl setup --print   dump the rules survival guide + language matrix (the skill)
+  dl docs authoring  read that same guide via the docs reader
+  dl PROG --parse-only   parse + typecheck a program, no scan (the fast fail)";
+
 #[derive(Parser)]
-#[command(name = "dl", about = "datalog over files in repo/rev/time space")]
+#[command(name = "dl", about = "datalog over files in repo/rev/time space", after_help = SUBCOMMANDS_HELP)]
 struct Cli {
     /// The .dl program(s) to run. Multiple files merge into one program (in the
     /// given order, with `use` includes spliced). When omitted, discovery: every
@@ -13,37 +32,37 @@ struct Cli {
     /// Persist derived tables to a SQLite db at this path (default: in-memory;
     /// discovery mode defaults to `<root>/.dl/cache.db`). Derived relations land
     /// as plain-TEXT `rel_<name>` tables, queryable by anything that reads SQLite.
-    #[arg(long)]
+    #[arg(long, help_heading = "Output & storage")]
     db: Option<String>,
     /// Source root. When omitted, defaults to the nearest `.git` ancestor of
     /// the program file (the repo it lives in), else the current directory.
-    #[arg(long)]
+    #[arg(long, help_heading = "Output & storage")]
     root: Option<PathBuf>,
     /// Re-tick on file changes in the source root (in-process watcher, the
     /// pre-daemon path). For the warm long-lived watcher, use `--daemon`.
-    #[arg(long)]
+    #[arg(long, help_heading = "Run modes")]
     watch: bool,
     /// Run as an LSP server over stdio: the program's `diag` relation becomes
     /// live editor diagnostics (lint on open/save). See docs/lsp.md.
-    #[arg(long)]
+    #[arg(long, help_heading = "Run modes")]
     lsp: bool,
     /// Ignored no-op alias for `--lsp`. vscode-languageclient, coc.nvim, and
     /// neovim's lspconfig all append `--stdio` when spawning an LSP server;
     /// accept it so `dl` drops into any client without extension-specific
     /// arg gymnastics. Stdio is the only transport either way.
-    #[arg(long)]
+    #[arg(long, help_heading = "Run modes")]
     stdio: bool,
     /// Lint/ban mode: render the `diag` relation to stderr. Exit 0 clean, 2 if
     /// any `error`-severity row exists (Claude Code's blocking-hook code), 1 on
     /// a broken program. For pre-commit / CI / Claude Code hooks. See docs/rails.md.
-    #[arg(long)]
+    #[arg(long, help_heading = "Run modes")]
     check: bool,
     /// Harness-hook mode: read a Claude Code hook event (PostToolUse JSON) on
     /// stdin, tick the rules, emit the hook output (additionalContext / block)
     /// on stdout. The program heads `inject`/`inject_skill`/`block` over the
     /// agent built-ins. The condition is a dl rule; no editor, no bash. See
     /// docs/skill-injection.md.
-    #[arg(long)]
+    #[arg(long, help_heading = "Run modes")]
     hook: bool,
     /// Serve the program as an MCP (JSON-RPC stdio, newline-delimited) server:
     /// binds the program's rpc-class ports to stdio. Each inbound request
@@ -51,74 +70,80 @@ struct Cli {
     /// tick, and the `@out(rpc)` rel's rows (id, result) drain back as
     /// responses. Dispatch is a lattice rel (`key(id) merge(MaxBy(prio))`).
     /// See examples/mcp-echo.dl.
-    #[arg(long)]
+    #[arg(long, help_heading = "Run modes")]
     mcp: bool,
     /// Like --check but emit the diagnostics as a JSON array on stdout.
-    #[arg(long)]
+    #[arg(long, help_heading = "Run modes")]
     diag_json: bool,
+    /// Parse + typecheck + op resolution + metavar sanity over the program
+    /// file(s), with NO scan and NO db writes (sub-second). The authoring
+    /// fast-fail: a parse/type error surfaces without paying a full scan. Exit 0
+    /// clean, 1 on any error; diagnostics render to stderr in the --check style.
+    #[arg(long, help_heading = "Run modes")]
+    parse_only: bool,
     /// Emit `?` query results as JSON-lines (one object per query:
     /// {query, columns, rows, count}) instead of the human TSV block.
-    #[arg(long)]
+    #[arg(long, help_heading = "Run modes")]
     query_json: bool,
     /// Drive one incremental tick for these changed paths (the delta path the
     /// watcher uses), instead of a full run. Repeatable.
-    #[arg(long)]
+    #[arg(long, help_heading = "Run modes")]
     changed: Vec<PathBuf>,
     /// Auto-refactor: rewrite `use`-path references for a module move
     /// `OLD_FILE=NEW_FILE` (repo-relative Rust paths). Dry-run unless --fix.
     /// Repeatable. Ignores the `program` positional.
-    #[arg(long = "move")]
+    #[arg(long = "move", help_heading = "Refactor")]
     move_: Vec<String>,
     /// With --move, which repo to rewrite: a config slug, or `*`/`all` for every
     /// configured repo. Omitted = the --root repo (self).
-    #[arg(long)]
+    #[arg(long, help_heading = "Refactor")]
     repo: Option<String>,
     /// With --move, write the rewritten files instead of previewing.
-    #[arg(long)]
+    #[arg(long, help_heading = "Refactor")]
     fix: bool,
     /// Verify-rollback: run the program (applying `gen` edits), then run this
     /// shell command as a checker in the root. Keep the edits only if it exits
     /// 0; otherwise restore every touched file to its pre-run state and exit 1.
     /// Transactional codemod — apply, test, keep-if-pass. See christmas #14.
-    #[arg(long)]
+    #[arg(long, help_heading = "Refactor")]
     verify: Option<String>,
     /// Profile mode (or DL_PROFILE=1): log slow SQL statements (threshold
     /// DL_PROFILE_SQL_MS, default 25), per-repo scan times, tick phase
     /// breakdown, and per-tick statement counts.
-    #[arg(long)]
+    #[arg(long, help_heading = "Perf & debug")]
     profile: bool,
     /// Cap `cmd` invocations per tick (or DL_CMD_BUDGET); over budget is a loud
     /// error, never a silent truncation. Default: unlimited.
-    #[arg(long)]
+    #[arg(long, help_heading = "Perf & debug")]
     cmd_budget: Option<u32>,
     /// After each tick, print every relation's row count (or DL_TICK_AUDIT=1).
-    #[arg(long)]
+    #[arg(long, help_heading = "Perf & debug")]
     tick_audit: bool,
     /// Run as the long-lived daemon foreground (logs to stderr, ignores idle
     /// timeout). Usually invoked internally by spawn-if-missing; passing this
     /// flag explicitly is the debug path. See plans/2026-06-21-daemon-and-menu-bar.md.
-    #[arg(long)]
+    #[arg(long, help_heading = "Daemon")]
     daemon: bool,
     /// With --daemon: spawn the menu bar tray icon (macOS v1; Windows/Linux
     /// deferred). The main thread runs the tray event loop; the accept loop
     /// moves off-main. Implies --daemon.
-    #[arg(long)]
+    #[arg(long, help_heading = "Daemon")]
     tray: bool,
     /// Send `shutdown` to the daemon on `<root>/.dl/daemon.sock` and exit.
-    #[arg(long)]
+    #[arg(long, help_heading = "Daemon")]
     stop: bool,
     /// Force the in-process path this invocation (do not auto-attach). Same as
     /// `DL_NO_DAEMON=1`. Useful when the daemon socket is wedged.
-    #[arg(long)]
+    #[arg(long, help_heading = "Daemon")]
     no_daemon: bool,
     /// Load a script into the running daemon as a WATCHED program: joins the
     /// loaded set, runs on every tick, hot-reloads on edit. Omit `--root` to
     /// target the global rootless serving daemon.
-    #[arg(long = "load")]
+    #[arg(long = "load", help_heading = "Daemon")]
     load: Option<String>,
     /// Load a script ONE-TIME: eval it on a throwaway engine, print the `?`
     /// query results, persist nothing. Same target rules as `--load`.
-    #[arg(long)]
+    #[arg(long, help_heading = "Daemon")]
     load_once: Option<String>,
 }
 
@@ -190,6 +215,12 @@ fn main() -> Result<()> {
     if raw.first().map(String::as_str) == Some("doctor") {
         std::process::exit(sprefa_v5::scip_setup::run_doctor(&raw[1..])?);
     }
+    // `dl docs [topic]`: read the guides embedded at build time (reference
+    // pages + book chapters), so a bare prebuilt binary is self-documenting.
+    // Same pre-clap intercept as `examples`.
+    if raw.first().map(String::as_str) == Some("docs") {
+        std::process::exit(sprefa_v5::docs_cmd::run(&raw[1..])?);
+    }
     // `dl update`: self-update to the latest published release (turnkey; reuses
     // the cargo-dist release installer). Same pre-clap intercept as the others.
     if raw.first().map(String::as_str) == Some("update") {
@@ -235,6 +266,11 @@ fn main() -> Result<()> {
     let root = resolve_root(&cli)?;
     if !cli.move_.is_empty() {
         return sprefa_v5::run_move(cli.db.as_deref(), root, cli.repo, cli.move_, cli.fix);
+    }
+    // `--parse-only`: no scan, no db. Dispatch BEFORE the db-defaulting block so
+    // it never opens (or `.gitignore`-writes into) `<root>/.dl/`.
+    if cli.parse_only {
+        std::process::exit(sprefa_v5::run_parse_only(&cli.programs, root)?);
     }
     // Discovery mode (no positional) defaults the db to <root>/.dl/cache.db so
     // repeated hook/check invocations get warm incremental ticks instead of a

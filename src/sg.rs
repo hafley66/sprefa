@@ -3,20 +3,36 @@ use ast_grep_config::{DeserializeEnv, SerializableRuleCore};
 use ast_grep_core::{AstGrep, Pattern};
 use ast_grep_language::{LanguageExt, SupportLang};
 
+/// The ast-grep grammar table: `(canonical name, [extra aliases], SupportLang)`.
+/// Single source of truth so `sg_lang` (the resolver) and `sg_langs` (the
+/// canonical list the skill language matrix must match) can never drift. Adding
+/// a grammar here without updating the skill matrix fails the matrix-honesty
+/// test. Shared by the `sg` AND `ast_yaml` ops (both call `sg_lang`).
+const SG_LANG_TABLE: &[(&str, &[&str], SupportLang)] = &[
+    ("rust",       &["rs"],          SupportLang::Rust),
+    ("typescript", &["ts"],          SupportLang::TypeScript),
+    ("tsx",        &[],              SupportLang::Tsx),
+    ("javascript", &["js"],          SupportLang::JavaScript),
+    ("python",     &["py"],          SupportLang::Python),
+    ("go",         &[],              SupportLang::Go),
+    ("json",       &[],              SupportLang::Json),
+    ("c",          &[],              SupportLang::C),
+    ("cpp",        &["cc", "cxx"],   SupportLang::Cpp),
+    ("kotlin",     &["kt"],          SupportLang::Kotlin),
+];
+
 fn sg_lang(lang: &str) -> Result<SupportLang> {
-    Ok(match lang {
-        "rust" | "rs" => SupportLang::Rust,
-        "ts" | "typescript" => SupportLang::TypeScript,
-        "tsx" => SupportLang::Tsx,
-        "js" | "javascript" => SupportLang::JavaScript,
-        "py" | "python" => SupportLang::Python,
-        "go" => SupportLang::Go,
-        "json" => SupportLang::Json,
-        "c" => SupportLang::C,
-        "cpp" | "cc" | "cxx" => SupportLang::Cpp,
-        "kotlin" | "kt" => SupportLang::Kotlin,
-        other => bail!("no ast-grep grammar for :{other}"),
-    })
+    for (canon, aliases, sl) in SG_LANG_TABLE {
+        if lang == *canon || aliases.contains(&lang) { return Ok(*sl); }
+    }
+    bail!("no ast-grep grammar for :{lang}")
+}
+
+/// Canonical language names the `sg` / `ast_yaml` ops accept (one per grammar).
+/// The skill's per-op language matrix is checked set-equal against this in
+/// `tests/it/lang_matrix.rs`, so a stale matrix fails CI.
+pub fn sg_langs() -> Vec<&'static str> {
+    SG_LANG_TABLE.iter().map(|(canon, ..)| *canon).collect()
 }
 
 fn metavar_names(pattern: &str) -> Vec<String> {
@@ -123,4 +139,19 @@ pub fn run_ast_yaml(content: &str, lang: &str, yaml: &str) -> Result<Vec<SgHit>>
         out.push((sl as i64 + 1, sc as i64, el as i64 + 1, ec as i64, mr.start, mr.end, caps));
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every canonical name in `sg_langs()` resolves through `sg_lang` (the list
+    /// and the resolver read one table, so this catches a typo'd canonical name).
+    #[test]
+    fn sg_langs_all_resolve() {
+        for name in sg_langs() {
+            assert!(sg_lang(name).is_ok(), "sg_langs lists `{name}` but sg_lang rejects it");
+        }
+        assert_eq!(sg_langs().len(), SG_LANG_TABLE.len());
+    }
 }

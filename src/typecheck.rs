@@ -641,8 +641,53 @@ pub fn check_and_normalize(prog: &mut Program, dl_path: &str) -> Vec<TypeDiag> {
             msg: format!("relation `{head}` is {role} but never declared — add `rel {head}(...)`"),
         });
     }
+    diags.extend(metavar_case_diags(prog, dl_path));
     diags.extend(stratify_diags(prog, dl_path));
     diags.extend(normalize_program(prog, dl_path));
+    diags
+}
+
+/// Warn on an `sg`/`ast_yaml` pattern containing `$name` with a LOWERCASE
+/// leading letter: ast-grep metavars are UPPERCASE (`$NAME`, `$$$ARGS`), so a
+/// lowercase `$name` matches as LITERAL text, not a capture — the silent
+/// zero-match sharp edge. Warn, not error: a literal `$` before lowercase is
+/// legal (a shell snippet, a template var), so this is guidance, not a gate.
+/// Surfaced through the normal TypeDiag path so --check / --lsp / --parse-only
+/// all show it. Source ops carry no per-pattern byte span, so it lands at line 1
+/// (span 0,0) like the brand/stratify diagnostics. One warn per distinct
+/// lowercase name per pattern.
+pub fn metavar_case_diags(prog: &Program, dl_path: &str) -> Vec<TypeDiag> {
+    let re = regex::Regex::new(r"\$([a-z][A-Za-z0-9_]*)").unwrap();
+    let mut diags = Vec::new();
+    let scan = |pat: &str, diags: &mut Vec<TypeDiag>| {
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for c in re.captures_iter(pat) {
+            let name = c.get(1).unwrap().as_str();
+            if !seen.insert(name) { continue; }
+            diags.push(TypeDiag {
+                path: dl_path.to_string(), span: (0, 0),
+                severity: Severity::Warn, code: "lowercase-metavar".into(),
+                msg: format!(
+                    "lowercase ${name} is literal text, not a capture; metavars are UPPERCASE ($NAME)"),
+            });
+        }
+    };
+    let visit = |body: &[BodyItem], diags: &mut Vec<TypeDiag>| {
+        for b in body {
+            match b {
+                BodyItem::Sg { pattern, .. } => scan(pattern, diags),
+                BodyItem::AstYaml { yaml, .. } => scan(yaml, diags),
+                _ => {}
+            }
+        }
+    };
+    for item in &prog.items {
+        match item {
+            Item::Rule(r) => visit(&r.body, &mut diags),
+            Item::Gen(g) => visit(&g.body, &mut diags),
+            _ => {}
+        }
+    }
     diags
 }
 

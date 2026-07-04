@@ -1195,7 +1195,8 @@ mod tests {
     /// Oracle: the two hand-extracted fns' free vars must equal their params
     /// (plus any module-level helper they call, which `free_vars` sees as a bare
     /// identifier). `bind_whole_match_span` reads its 8 params and delegates the
-    /// intern to `bind_span_id`; `bind_match_op` reads exactly its 12 params.
+    /// intern to `bind_span_id`; `bind_match_op` reads its 12 params and
+    /// compiles the regex through the shared `compile_dl_regex` helper.
     /// Regression for the proposer's inference core.
     #[test]
     fn oracle_extracted_fn_signatures() {
@@ -1212,7 +1213,7 @@ mod tests {
                "bind_span_id"]),
             ("bind_match_op",
              &["binds", "regex", "mlv", "idv", "colv", "ecv", "content", "where_file",
-              "re_cache", "where_bytes", "repo", "path"]),
+              "re_cache", "where_bytes", "repo", "path", "compile_dl_regex"]),
         ];
         for (name, expected) in cases {
             let mut cur = tree.root_node().walk();
