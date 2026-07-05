@@ -2,7 +2,7 @@
   "name": "dl-lsp",
   "displayName": "dl LSP",
   "description": "sprefa dl datalog linter. Drop a .dl file in .dl/, get live squiggles on rust/ts/py/go/kt and the .dl itself.",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "publisher": "sprefa",
   "license": "MIT",
   "engines": {
@@ -31,13 +31,13 @@
         "title": "dl: Clear Marks"
       },
       {
-        "command": "dl.toggleDiagCode",
+        "command": "dl.pickDiagCode",
         "title": "dl: Toggle Diagnostic Code"
       }
     ],
     "keybindings": [
       {
-        "command": "dl.toggleDiagCode",
+        "command": "dl.pickDiagCode",
         "key": "ctrl+alt+d ctrl+alt+d",
         "mac": "cmd+alt+d cmd+alt+d"
       },

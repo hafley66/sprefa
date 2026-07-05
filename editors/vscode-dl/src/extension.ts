@@ -68,7 +68,7 @@ export function activate(ctx: vscode.ExtensionContext): void {
   }));
   ctx.subscriptions.push(vscode.commands.registerCommand("dl.markSelection", () => addMark(root)));
   ctx.subscriptions.push(vscode.commands.registerCommand("dl.clearMarks", () => clearMarks(root)));
-  ctx.subscriptions.push(vscode.commands.registerCommand("dl.toggleDiagCode", () => toggleDiagCode()));
+  ctx.subscriptions.push(vscode.commands.registerCommand("dl.pickDiagCode", () => toggleDiagCode()));
 
   // marked-line decorations: left stripe + overview-ruler tick, re-read from
   // .dl/marks.dl (same facts the engine joins) so external edits show up live
