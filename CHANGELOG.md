@@ -6,6 +6,25 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-07-05
+
+### Fixed
+- **Daemon self-write tick loop.** The watcher watches the scan root
+  recursively, but the daemon writes its own bookkeeping there every tick
+  (`.dl/cache.db*` sqlite WAL, `.dl/daemon.log` stderr redirect). Those writes
+  re-fired the watcher and re-ticked forever — a no-op "files 0/0 parsed" loop
+  that also kept resetting the idle timer, so the daemon never idled out (seen
+  as a daemon pinned at high CPU doing nothing). The watcher now drops its own
+  bookkeeping paths (`is_daemon_internal`) from each batch; a batch that is
+  entirely self-writes is skipped before it can tick or reset idle. Program
+  files (`.dl`, `marks.dl`) are unaffected and still trigger reloads.
+- **Rebuilt/reinstalled `dl` attached to a stale daemon.** `ensure_daemon` only
+  checked that a socket answered `ping`, so a freshly built binary attached to
+  the old daemon and the new code never ran. The daemon now reports a
+  `build_id` (crate version + exe mtime) captured at startup; the client
+  respawns on mismatch, attaches on match, and leaves a pre-`build_id` daemon
+  alone.
+
 ## [0.4.3] - 2026-07-05
 
 ### Fixed
