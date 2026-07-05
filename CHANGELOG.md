@@ -6,6 +6,18 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-07-05
+
+### Fixed
+- **VS Code extension: LSP client failed to start with `command
+  'dl.toggleDiagCode' already exists`.** v0.4.2 registered the diag-mute
+  quick-pick under the same id the server advertises in
+  `executeCommandProvider`, so vscode-languageclient's auto-registration
+  collided, initialize failed, and every flow-panel query returned "Client is
+  not running". The palette command is now `dl.pickDiagCode`; the server-side
+  `dl.toggleDiagCode` / `dl.listDiagCodes` executeCommand ids are unchanged.
+  Extension 0.4.3 (`dl-lsp-0.4.3.vsix`); no engine changes.
+
 ## [0.4.2] - 2026-07-04
 
 ### Added
