@@ -375,6 +375,70 @@ fn discovery_mode_content_edit_hot_reloads() {
     assert!(status.success());
 }
 
+/// `ping` must report the `build_id` the client uses to decide whether to
+/// attach or respawn (a rebuilt/reinstalled `dl` reports a different id and
+/// replaces the stale daemon instead of attaching to it). Also a light smoke
+/// check that an idle discovery daemon — db defaulted to `.dl/cache.db` under
+/// the watched root, stderr redirected to `.dl/daemon.log` under it too — does
+/// not spin the tick counter. NOTE: this does not reproduce the production
+/// self-write loop, which is db-scale/timing dependent (a 173 MB WAL write
+/// lands as a fresh FSEvent after the debounce closes; a tiny synthetic db
+/// coalesces it away). The watcher's self-write DISCRIMINATION is pinned by the
+/// `is_daemon_internal` unit test in the lib crate; this is the RPC-surface half.
+#[test]
+fn ping_reports_build_id_and_idle_is_quiet() {
+    use std::io::Write;
+    let dir = sandbox("buildid");
+    fs::create_dir_all(dir.join(".dl")).unwrap();
+    fs::write(dir.join(".dl").join("prog.dl"),
+        "rel t(a: text).\nt(\"x\").\n? t(a).\n").unwrap();
+
+    let logf = fs::File::create(dir.join(".dl").join("daemon.log")).unwrap();
+    let mut child = DaemonGuard(Command::new(DL)
+        .args(["--daemon"]).arg("--root").arg(&dir)
+        .stdout(Stdio::null()).stderr(Stdio::from(logf))
+        .spawn().expect("spawn dl --daemon"));
+    let sock = dir.join(".dl").join("daemon.sock");
+    let mut ready = false;
+    for _ in 0..100 {
+        if sock.exists() && std::os::unix::net::UnixStream::connect(&sock).is_ok() {
+            ready = true; break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(ready, "daemon socket not ready");
+
+    let ping = |id: u64| -> serde_json::Value {
+        let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+        let body = format!(r#"{{"jsonrpc":"2.0","id":{id},"method":"ping","params":{{}}}}"#);
+        write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+        let resp = read_frame(&mut s).expect("ping response");
+        serde_json::from_str(&resp).expect("ping json")
+    };
+
+    let first = ping(1);
+    let result = first.get("result").expect("ping result");
+    let build_id = result.get("build_id").and_then(|v| v.as_str());
+    assert!(build_id.is_some_and(|s| !s.is_empty()),
+        "ping must report a non-empty build_id for the rebuild handshake: {first}");
+    let t0 = result.get("tick_count").and_then(|v| v.as_u64()).expect("tick_count");
+
+    std::thread::sleep(std::time::Duration::from_millis(2000));
+
+    let t1 = ping(2).get("result").and_then(|r| r.get("tick_count"))
+        .and_then(|v| v.as_u64()).expect("tick_count");
+    assert!(t1 - t0 <= 1,
+        "idle daemon self-ticked {} times in 2s (expected 0-1)", t1 - t0);
+
+    let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+    let body = r#"{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}"#;
+    write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+    let _ = read_frame(&mut s);
+    let status = child.wait_timeout(std::time::Duration::from_secs(5))
+        .expect("daemon exit after shutdown");
+    assert!(status.success());
+}
+
 // ---------- helpers ----------
 
 fn read_frame(s: &mut std::os::unix::net::UnixStream) -> Option<String> {

@@ -121,6 +121,11 @@ pub struct Daemon {
     /// (socket/pid). `None` = the singleton rootless daemon at the XDG home.
     pub home: Option<PathBuf>,
     pub program_display: String,
+    /// Identity of the binary this daemon is RUNNING, captured at startup
+    /// (`env!("CARGO_PKG_VERSION")` + the exe's mtime). A client that rebuilt
+    /// or reinstalled `dl` computes a different id from the on-disk exe and
+    /// respawns instead of attaching to a stale daemon. See `build_id`.
+    pub build_id: String,
     /// Canonicalized absolute paths the daemon parsed. Edit-exact detection
     /// compares against this list, not "any .dl file under .dl/" (the v1
     /// heuristic that fired on unrelated .dl edits and on residual FSEvents
@@ -523,6 +528,7 @@ pub fn run_daemon(
         root: eng_root.clone(),
         home: home.clone(),
         program_display: display,
+        build_id: build_id(),
         program_files: Mutex::new(canon_files),
         discovery_mode: programs.is_empty(),
         // Hot-reload (not respawn) when the daemon is tray-driven OR a rootless
@@ -710,6 +716,16 @@ fn watcher_loop(d: Arc<Daemon>) {
                 paths.extend(ev.paths);
             }
         }
+        // Drop the daemon's OWN bookkeeping writes (`.dl/cache.db*`,
+        // `daemon.log`/`.sock`/`.pid`). They live under the recursively-watched
+        // root, so every tick's sqlite commit + stderr-log append would re-fire
+        // this watcher and re-tick forever (a no-op "files 0/0 parsed" loop that
+        // also keeps `touch` resetting the idle timer, so the daemon never dies).
+        let had_paths = !paths.is_empty();
+        paths.retain(|p| !is_daemon_internal(p));
+        if had_paths && paths.is_empty() {
+            continue;  // batch was entirely self-writes: not activity, no tick
+        }
         d.touch();  // any watcher event resets idle, even if no tick results
         let touches_cfg = cfg_path.as_ref().is_some_and(|c|
             paths.iter().any(|p| p.canonicalize().ok().as_deref() == Some(c) || p == c));
@@ -827,6 +843,47 @@ fn watcher_loop(d: Arc<Daemon>) {
                 }
             }
         }
+    }
+}
+
+/// Identity of the currently-running `dl` binary: the compiled crate version
+/// plus the on-disk exe's mtime (seconds). The version alone can't tell two
+/// same-version rebuilds apart; the mtime does. Computed once at daemon startup
+/// and echoed by `ping`; a client recomputes it from the on-disk exe and
+/// respawns on mismatch. Falls back to the bare version if the exe path or its
+/// mtime is unreadable (best-effort; a missing mtime just disables the rebuild
+/// check, never forces a spurious respawn since both sides see the same fallback).
+fn build_id() -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    let mtime = std::env::current_exe().ok()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs());
+    match mtime {
+        Some(secs) => format!("{version}:{secs}"),
+        None => version.to_string(),
+    }
+}
+
+/// True for the daemon's own bookkeeping files: the sqlite store (`cache.db`,
+/// `cache.db-wal`, `cache.db-shm`) and the discovery-home runtime files
+/// (`daemon.log`, `daemon.sock`, `daemon.pid`). These are matched by basename
+/// so the filter works for both a per-root `.dl/` home and the rootless XDG
+/// home. `.dl/*.dl` program files (incl. `marks.dl`) are deliberately NOT
+/// matched — those must still fire program/discovery reloads.
+fn is_daemon_internal(path: &Path) -> bool {
+    match path.file_name().and_then(|n| n.to_str()) {
+        Some(name) => {
+            // `cache.db` + its sqlite sidecars (`-wal`, `-shm`, `-journal`),
+            // but not an unrelated source file that merely starts "cache.db".
+            name == "cache.db"
+                || name.starts_with("cache.db-")
+                || name == "daemon.log"
+                || name == "daemon.sock"
+                || name == "daemon.pid"
+        }
+        None => false,
     }
 }
 
@@ -953,6 +1010,7 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
     match req.method.as_str() {
         "ping" => Response::ok(req.id, json!({
             "ok": true,
+            "build_id": d.build_id,
             "root": d.root.to_string_lossy(),
             "tick_count": d.tick_count.load(Ordering::Relaxed),
             "program": d.program_display,
@@ -1366,12 +1424,29 @@ pub fn ensure_daemon(root: &Path, program: Option<&str>) -> Result<()> {
         // Ping to confirm it's our daemon and not a stale socket.
         let mut s = connect(Some(root))?;
         let req = Request::new(0, "ping", json!({}));
-        match rpc_call(&mut s, &req) {
-            Ok(r) if r.error.is_none() => return Ok(()),
-            _ => {}  // fall through to respawn
+        if let Ok(r) = rpc_call(&mut s, &req) {
+            if r.error.is_none() {
+                // Attach only if the daemon runs THIS binary. A rebuilt or
+                // reinstalled `dl` reports a different build_id than the daemon
+                // captured at startup; replace the stale daemon so the new code
+                // actually takes effect (otherwise the old daemon owns the
+                // socket forever and the fresh binary never runs).
+                let running = r.result.as_ref()
+                    .and_then(|v| v.get("build_id"))
+                    .and_then(|v| v.as_str());
+                match running {
+                    Some(id) if id == build_id() => return Ok(()),
+                    Some(_) => {
+                        eprintln!("[daemon] running binary changed — restarting daemon");
+                        let _ = stop(Some(root));
+                    }
+                    // Pre-handshake daemon (no build_id field): leave it be.
+                    None => return Ok(()),
+                }
+            }
         }
     }
-    // Stale or missing. Spawn detached.
+    // Stale, mismatched, or missing. Spawn detached.
     spawn_detached(root, program)?;
     wait_ready(root, program)
 }
@@ -1463,5 +1538,37 @@ fn load_repos_eager() -> Vec<config::RepoConfig> {
         }
         Ok(_) => Vec::new(),
         Err(e) => { eprintln!("[config] ignored: {e}"); Vec::new() }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn daemon_internal_matches_bookkeeping_not_programs() {
+        let dl = Path::new("/repo/.dl");
+        // Own bookkeeping: filtered.
+        for name in ["cache.db", "cache.db-wal", "cache.db-shm", "daemon.log",
+                     "daemon.sock", "daemon.pid"] {
+            assert!(is_daemon_internal(&dl.join(name)), "{name} should be internal");
+        }
+        // Program files (incl. marks) must still fire: NOT filtered.
+        for name in ["prog.dl", "marks.dl", "mark-lens.dl", "rails.dl"] {
+            assert!(!is_daemon_internal(&dl.join(name)), "{name} must not be internal");
+        }
+        // Ordinary source under the root: NOT filtered.
+        assert!(!is_daemon_internal(Path::new("/repo/src/main.rs")));
+        // A source file that merely starts "cache.db" must NOT be filtered.
+        assert!(!is_daemon_internal(Path::new("/repo/src/cache.dbx.rs")));
+    }
+
+    #[test]
+    fn build_id_is_stable_and_version_prefixed() {
+        let a = build_id();
+        let b = build_id();
+        assert_eq!(a, b, "build_id must be stable within one process");
+        assert!(a.starts_with(env!("CARGO_PKG_VERSION")),
+            "build_id should carry the crate version: {a}");
     }
 }
