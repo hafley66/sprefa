@@ -33,7 +33,11 @@ that root's per-root daemon. Every other mode resolves a concrete root (explicit
 
 Discovery files written under a daemon home (`src/daemon.rs:8`):
 
-- `daemon.sock` — Unix domain socket, mode `0600`.
+- `daemon.sock` — Unix domain socket, mode `0600`. A deeply-nested root whose
+  `<root>/.dl/daemon.sock` path would overrun the OS `sun_path` cap (104 bytes on
+  macOS) relocates just the socket to a short hashed path under
+  `$TMPDIR/dl-sock/<hash>.sock`; bind and every connect derive it from the same
+  root, so they always agree. The pid/log/cache files stay root-local.
 - `daemon.pid` — text: `pid\nstart_secs\nprogram_path\n`. A stale socket from a
   `kill -9`'d daemon is reaped on the next bind (connect-probe, then unlink).
 
@@ -43,9 +47,16 @@ Discovery files written under a daemon home (`src/daemon.rs:8`):
   the per-root daemon, spawning `dl --daemon --root <X>` detached if no live
   socket. A workspace WITHOUT `.dl/` stays in-process — a one-off `dl p.dl` in a
   tempdir never spawns a side process (`enabled_for`, `src/daemon.rs:1091`).
-- **Idle timeout.** A spawned daemon exits after 30 min idle (any watcher event
-  or RPC resets the clock). Override with `DL_DAEMON_IDLE_SECS=N`. A foreground
+- **Idle timeout.** A spawned daemon exits after 30 min idle. A watcher batch
+  resets the clock only if it survives the gate (see below) — pure noise
+  (gitignored build output, `.git/objects` churn) no longer keeps the daemon
+  awake — as does any RPC. Override with `DL_DAEMON_IDLE_SECS=N`. A foreground
   `dl --daemon` ignores the idle timeout (it stays up for debugging).
+- **Watcher gate.** The recursive file watcher mirrors the scan corpus: it ticks
+  only for files the engine could actually scan (`.gitignore`-honored, `.git`
+  pruned to the narrow `HEAD`/`packed-refs`/`refs/` ref paths, the daemon's own
+  bookkeeping dropped). Bursts coalesce through a short quiet-period debounce;
+  a dropped/overflowed event forces a loud full-corpus recovery tick.
 - **Hot-reload vs respawn.** A `.dl` program edit normally exits the daemon for a
   cold respawn (re-parse from scratch). Tray-driven daemons and the rootless
   serving daemon hot-reload in place instead (no startup program to respawn

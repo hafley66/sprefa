@@ -27,6 +27,7 @@ use std::time::{Duration, Instant, SystemTime};
 use crate::ast::Program;
 use crate::engine::{DiagRow, Engine};
 use crate::rpc::{self, Request, Response, INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND};
+use crate::watchgate::WatchGate;
 use crate::{config, db};
 
 const DEFAULT_IDLE_SECS: u64 = 30 * 60;
@@ -77,9 +78,62 @@ fn home_dir(root: Option<&Path>) -> PathBuf {
     }
 }
 
-/// `<home>/daemon.sock`.
+/// macOS caps `sockaddr_un.sun_path` at 104 bytes; Linux at 108. A deep project
+/// root's `<root>/.dl/daemon.sock` overruns it, so `UnixListener::bind` fails and
+/// the daemon silently dies (every invocation then falls back to in-process
+/// after the attach timeout). Below this length we keep the natural root-local
+/// path (discoverable, self-cleaning); at or above it, `socket_path` relocates
+/// only the socket to a short hashed path. Leave slack for the trailing NUL.
+const SUN_MAX: usize = 100;
+
+/// `<home>/daemon.sock`, unless that path is too long for `sun_path` — then a
+/// short, deterministic path under a short base dir keyed by the root's hash.
+/// Both bind and every connect derive it from the same `root`, so they always
+/// agree. Only the socket moves; the pid/log/cache files stay root-local.
 pub fn socket_path(root: Option<&Path>) -> PathBuf {
-    home_dir(root).join("daemon.sock")
+    let natural = home_dir(root).join("daemon.sock");
+    if natural.as_os_str().len() < SUN_MAX {
+        natural
+    } else {
+        short_socket_path(root)
+    }
+}
+
+/// A short, collision-free socket path for a root whose natural socket path is
+/// too long for `sun_path`. Keyed by the blake3 hash of the canonicalized root
+/// (lexical fallback if canonicalize fails — bind and connect both see the same
+/// pre-canonicalize string, so they still agree). `<tmp>/dl-sock/<16hex>.sock`
+/// is ~30 bytes, well under the cap.
+fn short_socket_path(root: Option<&Path>) -> PathBuf {
+    let key = match root {
+        Some(r) => {
+            let canon = r.canonicalize().unwrap_or_else(|_| r.to_path_buf());
+            let hash = blake3::hash(canon.as_os_str().as_encoded_bytes());
+            hash.to_hex()[..16].to_string()
+        }
+        // Rootless singleton: hash its (short) home so it stays deterministic.
+        None => {
+            let hash = blake3::hash(daemon_home().as_os_str().as_encoded_bytes());
+            hash.to_hex()[..16].to_string()
+        }
+    };
+    short_sock_dir().join(format!("{key}.sock"))
+}
+
+/// Short base directory for relocated sockets. `TMPDIR`-derived so it stays on a
+/// short path; created 0700 on first use.
+fn short_sock_dir() -> PathBuf {
+    let base = std::env::temp_dir().join("dl-sock");
+    if let Err(e) = std::fs::create_dir_all(&base) {
+        // Best-effort; bind will surface the real error if the dir is unusable.
+        tracing::debug!("short_sock_dir create {}: {e}", base.display());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o700));
+    }
+    base
 }
 
 /// `<home>/daemon.pid`.
@@ -645,11 +699,24 @@ fn watcher_loop(d: Arc<Daemon>) {
         eprintln!("[daemon] watch root failed: {e}");
         return;
     }
+    // The receive-side gate: mirrors the scan corpus's include decision so the
+    // watcher only ticks for files the engine could scan. Built over the self
+    // root + every config repo; grows via `add_root` when a tick pulls a repo.
+    let mut gate = WatchGate::new(std::slice::from_ref(&d.root));
+    // Count of active watch registrations (FSEvents streams on macOS; the root
+    // watch above already succeeded, so start at 1). This is the number the
+    // watcher itself installs — on macOS one per subtree, so it IS the watch
+    // count; on Linux notify expands each Recursive registration to one inotify
+    // watch per subdirectory internally, so the real kernel count is higher (see
+    // /proc/<pid>/fdinfo). Logged whenever it changes so a pull is visible.
+    let mut watch_count: usize = 1;
     // Watch every folder in view (config repos), so a rootless serving daemon
     // reacts to source edits across the whole view, not just its own root.
     for rc in load_repos_eager() {
         if rc.root.exists() && rc.root != d.root
             && watcher.watch(&rc.root, RecursiveMode::Recursive).is_ok() {
+            watch_count += 1;
+            gate.add_root(&rc.root);
             eprintln!("[daemon] watching repo {} ({})", rc.slug, rc.root.display());
         }
     }
@@ -658,35 +725,22 @@ fn watcher_loop(d: Arc<Daemon>) {
     if let Some(cp) = &cfg_path {
         if let Some(dir) = cp.parent() {
             if dir.exists() && watcher.watch(dir, RecursiveMode::NonRecursive).is_ok() {
+                watch_count += 1;
                 eprintln!("[daemon] watching config {}", cp.display());
             }
         }
     }
-    // Always watch the `.git` dir of the self root and every config repo, so a
+    // Narrow-watch the `.git` dir of the self root and every config repo, so a
     // HEAD move (commit, checkout, pull) is observed even when the program only
-    // scans WORK. `git_dirs` = canonical git-dir paths; a watcher event under any
-    // of them routes to `on_git_event` (rev-cursor diff + broadcast, no re-tick).
-    let mut git_dirs: Vec<PathBuf> = Vec::new();
-    let mut watch_git = |root: &Path| {
-        if let Ok(out) = std::process::Command::new("git").arg("-C").arg(root)
-            .args(["rev-parse", "--git-dir"]).output() {
-            if out.status.success() {
-                let gd = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                let gdp = if Path::new(&gd).is_absolute() { PathBuf::from(&gd) } else { root.join(&gd) };
-                if gdp.exists() && watcher.watch(&gdp, RecursiveMode::Recursive).is_ok() {
-                    if let Some(c) = gdp.canonicalize().ok() {
-                        if !git_dirs.contains(&c) { git_dirs.push(c); }
-                    }
-                }
-            }
-        }
-    };
-    watch_git(&d.root);
+    // scans WORK — but WITHOUT the `.git/objects` churn a `git status`/checkout
+    // produces. The gate keeps only `HEAD`/`packed-refs`/`refs/` under a git dir
+    // and routes them to `on_git_event` (rev-cursor diff + broadcast, no re-tick).
+    watch_count += watch_git_narrow(&mut watcher, &mut gate, &d.root);
     for rc in load_repos_eager() {
-        if rc.root.exists() { watch_git(&rc.root); }
+        if rc.root.exists() { watch_count += watch_git_narrow(&mut watcher, &mut gate, &rc.root); }
     }
 
-    eprintln!("[daemon] watcher ready ({})", d.root.display());
+    eprintln!("[daemon] watcher ready ({}) — {watch_count} watch(es)", d.root.display());
     let watcher_start = std::time::Instant::now();
     const STARTUP_GRACE: Duration = Duration::from_secs(1);
     // Roots already watched (self + config + pulled). A successful tick may pull
@@ -706,31 +760,64 @@ fn watcher_loop(d: Arc<Daemon>) {
             std::thread::sleep(Duration::from_millis(50));
             continue;
         }
+        // Quiet-period debounce: coalesce a burst (an editor's multi-file save,
+        // a `git checkout`'s rewrite stream) into one tick. Drain until QUIET ms
+        // of silence, capped at MAX_WINDOW so sustained churn (a running build)
+        // still ticks within a bounded latency. A `notify::Error` or a rescan
+        // signal in the stream forces a full-corpus recovery tick (Phase 4).
+        const QUIET: Duration = Duration::from_millis(120);
+        const MAX_WINDOW: Duration = Duration::from_millis(600);
         let mut paths: Vec<PathBuf> = Vec::new();
-        if let Ok(ev) = first {
-            paths.extend(ev.paths);
-        }
-        std::thread::sleep(Duration::from_millis(150));
-        while let Ok(ev) = rx.try_recv() {
-            if let Ok(ev) = ev {
-                paths.extend(ev.paths);
+        let mut rescan = false;
+        match first {
+            Ok(ev) => {
+                if ev.need_rescan() { rescan = true; } else { paths.extend(ev.paths); }
+            }
+            Err(e) => {
+                eprintln!("[daemon] watch error, forcing full tick: {e}");
+                rescan = true;
             }
         }
-        // Drop the daemon's OWN bookkeeping writes (`.dl/cache.db*`,
-        // `daemon.log`/`.sock`/`.pid`). They live under the recursively-watched
-        // root, so every tick's sqlite commit + stderr-log append would re-fire
-        // this watcher and re-tick forever (a no-op "files 0/0 parsed" loop that
-        // also keeps `touch` resetting the idle timer, so the daemon never dies).
-        let had_paths = !paths.is_empty();
-        paths.retain(|p| !is_daemon_internal(p));
-        if had_paths && paths.is_empty() {
-            continue;  // batch was entirely self-writes: not activity, no tick
+        let window_start = Instant::now();
+        loop {
+            match rx.recv_timeout(QUIET) {
+                Ok(Ok(ev)) => {
+                    if ev.need_rescan() { rescan = true; } else { paths.extend(ev.paths); }
+                    if window_start.elapsed() > MAX_WINDOW { break; }
+                }
+                Ok(Err(e)) => {
+                    eprintln!("[daemon] watch error, forcing full tick: {e}");
+                    rescan = true;
+                    if window_start.elapsed() > MAX_WINDOW { break; }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,      // burst settled
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return, // watcher gone
+            }
         }
-        d.touch();  // any watcher event resets idle, even if no tick results
+        // Dropped/overflowed events: recover with a whole-corpus tick, loudly.
+        if rescan {
+            let tick_num = d.tick_count.load(Ordering::Relaxed);
+            match d.tick_full(false) {
+                Ok(()) => eprintln!("[daemon] tick #{tick_num} (rescan recovery) ok"),
+                Err(e) => eprintln!("[daemon] tick #{tick_num} (rescan recovery) error: {e}"),
+            }
+            d.touch();
+            continue;
+        }
+        // Gate the batch to files the engine could scan (mirrors the scan
+        // corpus: gitignore-honored, `.git` pruned to the narrow ref paths, the
+        // daemon's own `.dl/cache.db*`/`daemon.*` bookkeeping dropped). Pure
+        // noise (all-gitignored, all-`.git/objects`) yields an empty set: no
+        // tick, and (Phase 5) no `touch`, so the daemon can idle out.
+        let touches_git = gate.touches_git(&paths);
+        let paths: Vec<PathBuf> = gate.filter(paths);
+        if paths.is_empty() && !touches_git {
+            continue;  // noise only: no activity, no tick, idle timer untouched
+        }
+        d.touch();  // real activity: reset the idle timer
         let touches_cfg = cfg_path.as_ref().is_some_and(|c|
             paths.iter().any(|p| p.canonicalize().ok().as_deref() == Some(c) || p == c));
-        let touches_git = !git_dirs.is_empty()
-            && paths.iter().any(|p| git_dirs.iter().any(|g| p.starts_with(g)));
+        let mut paths = paths;
         let touches_program = d.program_in_paths(&paths);
         tracing::debug!(n_paths = paths.len(), program = touches_program,
             cfg = touches_cfg, git = touches_git, "watcher event");
@@ -832,18 +919,52 @@ fn watcher_loop(d: Arc<Daemon>) {
             Err(e) => eprintln!("[daemon] tick #{tick_num} ({tick_label}, {n_paths} paths) error: {e}"),
         }
         // A tick may have pulled new repos (a `repo`-sink drained). Watch any
-        // root not yet watched so the next edit there is reactive. Git-dir
-        // watching for pulled repos is deferred (commit reactivity follow-up).
+        // root not yet watched — source tree, gate entry, and narrow git dir —
+        // so the next edit or commit there is reactive.
         if tick_ok {
+            let before = watch_count;
             for rc in lock(&d.eng).snapshot_repos() {
-                if rc.root.exists() && watched.insert(rc.root.clone()) {
-                    if watcher.watch(&rc.root, RecursiveMode::Recursive).is_ok() {
-                        eprintln!("[daemon] watching (pulled) {} ({})", rc.slug, rc.root.display());
-                    }
+                if rc.root.exists() && watched.insert(rc.root.clone())
+                    && watcher.watch(&rc.root, RecursiveMode::Recursive).is_ok() {
+                    watch_count += 1;
+                    gate.add_root(&rc.root);
+                    watch_count += watch_git_narrow(&mut watcher, &mut gate, &rc.root);
+                    eprintln!("[daemon] watching (pulled) {} ({})", rc.slug, rc.root.display());
                 }
+            }
+            if watch_count != before {
+                eprintln!("[daemon] watch count now {watch_count} (+{})", watch_count - before);
             }
         }
     }
+}
+
+/// Narrow-watch a repo's `.git` dir: the git dir itself NonRecursive (delivers
+/// `HEAD`/`packed-refs`, not the `objects/` churn) and `refs/` Recursive, and
+/// register it with the gate so those ref paths route to `on_git_event` while
+/// everything else under `.git` is dropped. Resolves the real git dir via
+/// `rev-parse --git-dir` so worktrees/submodules (`.git` file pointer) land on
+/// the actual dir. A free fn (not a closure) so its `&mut` borrows do not
+/// persist across the watch loop's own use of `watcher`/`gate`. Returns the
+/// number of watch registrations it successfully installed (for the log count).
+fn watch_git_narrow(watcher: &mut notify::RecommendedWatcher, gate: &mut WatchGate, root: &Path) -> usize {
+    use notify::{RecursiveMode, Watcher};
+    let out = match std::process::Command::new("git").arg("-C").arg(root)
+        .args(["rev-parse", "--git-dir"]).output() {
+        Ok(o) if o.status.success() => o,
+        _ => return 0,
+    };
+    let gd = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let gdp = if Path::new(&gd).is_absolute() { PathBuf::from(&gd) } else { root.join(&gd) };
+    if !gdp.exists() { return 0; }
+    gate.add_git_dir(&gdp);
+    let mut added = 0;
+    for (path, recursive) in gate.git_watch_targets(&gdp) {
+        if !path.exists() { continue; }
+        let mode = if recursive { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
+        if watcher.watch(&path, mode).is_ok() { added += 1; }
+    }
+    added
 }
 
 /// Identity of the currently-running `dl` binary: the compiled crate version
@@ -863,27 +984,6 @@ fn build_id() -> String {
     match mtime {
         Some(secs) => format!("{version}:{secs}"),
         None => version.to_string(),
-    }
-}
-
-/// True for the daemon's own bookkeeping files: the sqlite store (`cache.db`,
-/// `cache.db-wal`, `cache.db-shm`) and the discovery-home runtime files
-/// (`daemon.log`, `daemon.sock`, `daemon.pid`). These are matched by basename
-/// so the filter works for both a per-root `.dl/` home and the rootless XDG
-/// home. `.dl/*.dl` program files (incl. `marks.dl`) are deliberately NOT
-/// matched — those must still fire program/discovery reloads.
-fn is_daemon_internal(path: &Path) -> bool {
-    match path.file_name().and_then(|n| n.to_str()) {
-        Some(name) => {
-            // `cache.db` + its sqlite sidecars (`-wal`, `-shm`, `-journal`),
-            // but not an unrelated source file that merely starts "cache.db".
-            name == "cache.db"
-                || name.starts_with("cache.db-")
-                || name == "daemon.log"
-                || name == "daemon.sock"
-                || name == "daemon.pid"
-        }
-        None => false,
     }
 }
 
@@ -1544,24 +1644,6 @@ fn load_repos_eager() -> Vec<config::RepoConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn daemon_internal_matches_bookkeeping_not_programs() {
-        let dl = Path::new("/repo/.dl");
-        // Own bookkeeping: filtered.
-        for name in ["cache.db", "cache.db-wal", "cache.db-shm", "daemon.log",
-                     "daemon.sock", "daemon.pid"] {
-            assert!(is_daemon_internal(&dl.join(name)), "{name} should be internal");
-        }
-        // Program files (incl. marks) must still fire: NOT filtered.
-        for name in ["prog.dl", "marks.dl", "mark-lens.dl", "rails.dl"] {
-            assert!(!is_daemon_internal(&dl.join(name)), "{name} must not be internal");
-        }
-        // Ordinary source under the root: NOT filtered.
-        assert!(!is_daemon_internal(Path::new("/repo/src/main.rs")));
-        // A source file that merely starts "cache.db" must NOT be filtered.
-        assert!(!is_daemon_internal(Path::new("/repo/src/cache.dbx.rs")));
-    }
 
     #[test]
     fn build_id_is_stable_and_version_prefixed() {

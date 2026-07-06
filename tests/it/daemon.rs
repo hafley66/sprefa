@@ -439,6 +439,335 @@ fn ping_reports_build_id_and_idle_is_quiet() {
     assert!(status.success());
 }
 
+/// P0: a root whose natural `.dl/daemon.sock` path exceeds the `sun_path` cap
+/// must relocate the socket to a short hashed path, and the daemon must bind
+/// there. Deterministic on the path derivation; the spawn confirms the bind.
+#[test]
+fn deep_root_uses_short_socket() {
+    use sprefa_v5::daemon::socket_path;
+    // A deeply nested root whose `<root>/.dl/daemon.sock` overruns 100 bytes.
+    let deep = std::env::temp_dir().join(format!(
+        "dl_deep_{}/{}",
+        std::process::id(),
+        "nested_component_padding_to_overflow_the_sun_path_limit_x".repeat(2),
+    ));
+    fs::create_dir_all(&deep).unwrap();
+    let natural = deep.join(".dl").join("daemon.sock");
+    assert!(natural.as_os_str().len() >= 100, "fixture root not deep enough: {}", natural.display());
+
+    let sock = socket_path(Some(&deep));
+    assert!(sock.as_os_str().len() < 100, "relocated socket still too long: {}", sock.display());
+    assert!(sock.starts_with(std::env::temp_dir().join("dl-sock")),
+        "relocated socket should live under the short base dir: {}", sock.display());
+    assert_ne!(sock, natural, "deep root must not use the natural socket path");
+    // Determinism: same root -> same short path (bind and connect must agree).
+    assert_eq!(sock, socket_path(Some(&deep)), "short socket path must be stable");
+
+    // The daemon binds the short socket and answers a ping.
+    let _ = fs::remove_file(&sock);
+    fs::write(deep.join("p.dl"),
+        "rel mark(t: text).\nmark(\"a\").\n? mark(t).\n").unwrap();
+    fs::create_dir_all(deep.join(".dl")).unwrap();
+    let mut child = DaemonGuard(Command::new(DL)
+        .args(["--daemon"]).arg("--root").arg(&deep)
+        .arg(deep.join("p.dl"))
+        .stdout(Stdio::null()).stderr(Stdio::null())
+        .spawn().expect("spawn dl --daemon on deep root"));
+    let mut ready = false;
+    for _ in 0..100 {
+        if sock.exists() && std::os::unix::net::UnixStream::connect(&sock).is_ok() {
+            ready = true; break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(ready, "deep-root daemon never bound the short socket {}", sock.display());
+    {
+        use std::io::Write;
+        let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"shutdown","params":{}}"#;
+        write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+        let _ = read_frame(&mut s);
+    }
+    let _ = child.wait_timeout(std::time::Duration::from_secs(5));
+    let _ = fs::remove_dir_all(std::env::temp_dir().join(format!("dl_deep_{}", std::process::id())));
+}
+
+/// P1/P5: writes under a gitignored directory must not advance the tick count.
+/// The gate mirrors the scan corpus, so `target/`-style build output the engine
+/// would never scan produces no tick (and, by P5, no idle-timer reset).
+#[test]
+fn gitignored_writes_do_not_tick() {
+    let dir = sandbox("noise");
+    fs::create_dir_all(dir.join(".dl")).unwrap();
+    fs::create_dir_all(dir.join("junk")).unwrap();
+    fs::write(dir.join(".gitignore"), "junk/\n").unwrap();
+    fs::write(dir.join("p.dl"), r#"rel seen(path: file, line: int).
+seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
+  match(path, rev, /fn \w+/, line).
+? seen(path, line).
+"#).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(dir.join("src/a.rs"), "fn a() {}\n").unwrap();
+
+    let mut child = run_daemon_explicit(&dir);
+    let sock = dir.join(".dl").join("daemon.sock");
+    for _ in 0..100 {
+        if sock.exists() && std::os::unix::net::UnixStream::connect(&sock).is_ok() { break; }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let tick = |id: u64| -> u64 {
+        use std::io::Write;
+        let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+        let body = format!(r#"{{"jsonrpc":"2.0","id":{id},"method":"ping","params":{{}}}}"#);
+        write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+        let resp = read_frame(&mut s).expect("ping response");
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        v["result"]["tick_count"].as_u64().expect("tick_count")
+    };
+    // Settle past the 1s startup grace and any cold tick.
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let t0 = tick(1);
+    // 50 writes under the gitignored dir.
+    for i in 0..50 {
+        fs::write(dir.join(format!("junk/f{i}.o")), "build output").unwrap();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let t1 = tick(2);
+    assert_eq!(t0, t1, "gitignored writes advanced the tick count ({t0} -> {t1})");
+
+    {
+        use std::io::Write;
+        let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+        let body = r#"{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}"#;
+        write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+        let _ = read_frame(&mut s);
+    }
+    let _ = child.wait_timeout(std::time::Duration::from_secs(5));
+}
+
+/// P2: a burst of source edits coalesces into a single tick via the quiet-period
+/// debounce, rather than one tick per file.
+#[test]
+fn source_burst_coalesces_into_one_tick() {
+    let dir = sandbox("debounce");
+    fs::create_dir_all(dir.join(".dl")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(dir.join("p.dl"), r#"rel seen(path: file, line: int).
+seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
+  match(path, rev, /fn \w+/, line).
+? seen(path, line).
+"#).unwrap();
+    fs::write(dir.join("src/a.rs"), "fn a() {}\n").unwrap();
+
+    let mut child = run_daemon_explicit(&dir);
+    let sock = dir.join(".dl").join("daemon.sock");
+    for _ in 0..100 {
+        if sock.exists() && std::os::unix::net::UnixStream::connect(&sock).is_ok() { break; }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let tick = |id: u64| -> u64 {
+        use std::io::Write;
+        let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+        let body = format!(r#"{{"jsonrpc":"2.0","id":{id},"method":"ping","params":{{}}}}"#);
+        write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+        let resp = read_frame(&mut s).expect("ping response");
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        v["result"]["tick_count"].as_u64().expect("tick_count")
+    };
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let t0 = tick(1);
+    // Five source files written in a tight loop (< the 120ms quiet period).
+    for i in 0..5 {
+        fs::write(dir.join(format!("src/b{i}.rs")), format!("fn b{i}() {{}}\n")).unwrap();
+    }
+    // Wait well past debounce + tick.
+    std::thread::sleep(std::time::Duration::from_millis(2000));
+    let t1 = tick(2);
+    let delta = t1 - t0;
+    assert!(delta >= 1, "burst produced no tick ({t0} -> {t1})");
+    assert!(delta <= 2, "burst of 5 edits produced {delta} ticks; debounce should coalesce to 1 (~2 max)");
+
+    {
+        use std::io::Write;
+        let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+        let body = r#"{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}"#;
+        write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+        let _ = read_frame(&mut s);
+    }
+    let _ = child.wait_timeout(std::time::Duration::from_secs(5));
+}
+
+/// Scale test (macOS-runnable): a large gitignored subtree churning must
+/// produce ZERO ticks, and a single real source edit buried in that churn must
+/// still tick — proving the gate scales as a filter, not just as a blanket
+/// suppressor. This is `gitignored_writes_do_not_tick` blown up ~40x with a
+/// needle-in-haystack follow-up and timing output. It does NOT measure watcher
+/// *count* — on macOS FSEvents is one stream per root regardless of tree size;
+/// the per-directory inotify-watch explosion is the Linux test below.
+#[test]
+fn event_volume_gitignored_subtree_scale() {
+    const DIRS: usize = 40;
+    const FILES_PER_DIR: usize = 50; // 2000 gitignored files total
+
+    let dir = sandbox("scale");
+    fs::create_dir_all(dir.join(".dl")).unwrap();
+    fs::write(dir.join(".gitignore"), "target/\n").unwrap();
+    fs::write(dir.join("p.dl"), r#"rel seen(path: file, line: int).
+seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
+  match(path, rev, /fn \w+/, line).
+? seen(path, line).
+"#).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(dir.join("src/a.rs"), "fn a() {}\n").unwrap();
+    // Pre-create the gitignored subtree dirs (dir creation itself is an event;
+    // do it before the daemon starts so the burst below is pure file writes).
+    for d in 0..DIRS {
+        fs::create_dir_all(dir.join(format!("target/build/{d}"))).unwrap();
+    }
+
+    let mut child = run_daemon_explicit(&dir);
+    let sock = dir.join(".dl").join("daemon.sock");
+    for _ in 0..100 {
+        if sock.exists() && std::os::unix::net::UnixStream::connect(&sock).is_ok() { break; }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let tick = |id: u64| -> u64 {
+        use std::io::Write;
+        let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+        let body = format!(r#"{{"jsonrpc":"2.0","id":{id},"method":"ping","params":{{}}}}"#);
+        write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+        let resp = read_frame(&mut s).expect("ping response");
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        v["result"]["tick_count"].as_u64().expect("tick_count")
+    };
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let t0 = tick(1);
+
+    // Burst: 2000 writes across the gitignored subtree, timed.
+    let start = std::time::Instant::now();
+    for d in 0..DIRS {
+        for f in 0..FILES_PER_DIR {
+            fs::write(dir.join(format!("target/build/{d}/obj{f}.o")), "build output").unwrap();
+        }
+    }
+    let write_ms = start.elapsed().as_millis();
+    // Let every FSEvents batch drain through the gate.
+    std::thread::sleep(std::time::Duration::from_millis(2500));
+    let t1 = tick(2);
+    eprintln!("[scale] wrote {} gitignored files in {write_ms}ms; tick delta {} (want 0)",
+        DIRS * FILES_PER_DIR, t1 - t0);
+    assert_eq!(t0, t1, "{} gitignored writes advanced the tick count ({t0} -> {t1})",
+        DIRS * FILES_PER_DIR);
+
+    // Needle in the haystack: one real source edit must still tick, proving the
+    // gate KEEPS a scanned file rather than dropping the whole batch.
+    fs::write(dir.join("src/needle.rs"), "fn needle() {}\n").unwrap();
+    let mut ticked = false;
+    for _ in 0..40 {
+        if tick(3) > t1 { ticked = true; break; }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(ticked, "a source edit buried in gitignored churn never ticked (gate over-dropped)");
+    // Daemon still responsive after the storm.
+    assert!(tick(4) >= t1, "daemon unresponsive after the churn storm");
+
+    {
+        use std::io::Write;
+        let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+        let body = r#"{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}"#;
+        write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+        let _ = read_frame(&mut s);
+    }
+    let _ = child.wait_timeout(std::time::Duration::from_secs(5));
+}
+
+/// Scale test (Linux only, IGNORED until per-directory watch pruning lands):
+/// the real "large amounts of watchers" problem. notify 6 recursive on Linux
+/// installs one `inotify_add_watch` per subdirectory with no exclude hook
+/// (`ignore` is not consulted), so a gitignored `target/` of N subdirs costs N
+/// kernel watches the engine will never scan. This asserts the daemon's inotify
+/// watch count tracks the UN-ignored directory count, not the whole tree.
+///
+/// It FAILS today by design (notify watches every dir) — that failure is the
+/// spec for the deferred Linux per-dir pruning (walk with `ignore::WalkBuilder`,
+/// `watch(dir, NonRecursive)` per surviving dir). Remove `#[ignore]` when that
+/// lands. Reads `/proc/<pid>/fdinfo` to count `inotify wd:` lines.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "fails until Linux per-directory watch pruning lands; this test is its spec"]
+fn linux_inotify_watch_count_tracks_unignored() {
+    const UNIGNORED_DIRS: usize = 20;
+    const IGNORED_DIRS: usize = 2000;
+
+    let dir = sandbox("inotify_count");
+    fs::create_dir_all(dir.join(".dl")).unwrap();
+    fs::write(dir.join(".gitignore"), "target/\n").unwrap();
+    fs::write(dir.join("p.dl"), r#"rel seen(path: file, line: int).
+seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
+  match(path, rev, /fn \w+/, line).
+? seen(path, line).
+"#).unwrap();
+    for d in 0..UNIGNORED_DIRS {
+        let sub = dir.join(format!("src/mod{d}"));
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join("f.rs"), "fn f() {}\n").unwrap();
+    }
+    for d in 0..IGNORED_DIRS {
+        fs::create_dir_all(dir.join(format!("target/build/{d}"))).unwrap();
+    }
+
+    let mut child = run_daemon_explicit(&dir);
+    let sock = dir.join(".dl").join("daemon.sock");
+    for _ in 0..100 {
+        if sock.exists() && std::os::unix::net::UnixStream::connect(&sock).is_ok() { break; }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    // Give the recursive walk time to install every watch.
+    std::thread::sleep(std::time::Duration::from_millis(2000));
+
+    let pid = child.id();
+    let watches = linux_inotify_watch_count(pid);
+
+    {
+        use std::io::Write;
+        let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+        let body = r#"{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}"#;
+        write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+        let _ = read_frame(&mut s);
+    }
+    let _ = child.wait_timeout(std::time::Duration::from_secs(5));
+
+    eprintln!("[inotify] {watches} watches for {UNIGNORED_DIRS} unignored + {IGNORED_DIRS} ignored dirs");
+    // The gitignored subtree must NOT cost kernel watches. Allow generous slack
+    // for root/.dl/.git/src parents; the point is it is O(unignored), not
+    // O(total). Today's un-pruned watcher installs ~IGNORED_DIRS+ and trips this.
+    assert!(watches < UNIGNORED_DIRS + 50,
+        "inotify watch count {watches} scales with the ignored subtree; \
+         per-dir pruning not in effect");
+}
+
+/// Count the inotify watches held by `pid` via `/proc/<pid>/fdinfo`. An inotify
+/// fd's fdinfo lists one `inotify wd:...` line per installed watch; sum across
+/// every inotify fd the process holds.
+#[cfg(target_os = "linux")]
+fn linux_inotify_watch_count(pid: u32) -> usize {
+    let fd_dir = format!("/proc/{pid}/fd");
+    let mut total = 0;
+    let entries = match fs::read_dir(&fd_dir) { Ok(e) => e, Err(_) => return 0 };
+    for entry in entries.flatten() {
+        // An inotify fd's symlink target is "anon_inode:inotify".
+        let target = fs::read_link(entry.path()).unwrap_or_default();
+        if target.to_string_lossy().contains("inotify") {
+            let fd_name = entry.file_name();
+            let fdinfo = format!("/proc/{pid}/fdinfo/{}", fd_name.to_string_lossy());
+            if let Ok(text) = fs::read_to_string(&fdinfo) {
+                total += text.lines().filter(|l| l.starts_with("inotify ")).count();
+            }
+        }
+    }
+    total
+}
+
 // ---------- helpers ----------
 
 fn read_frame(s: &mut std::os::unix::net::UnixStream) -> Option<String> {

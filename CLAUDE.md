@@ -519,6 +519,41 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       Tests tests/it/diag_mute.rs (4, incl. --check-unchanged e2e + full
       LSP round-trip). Suites 209 lib / 515 it.
 
+- [x] **File-watcher scaling + deep-root daemon** (2026-07-06, local
+      uncommitted): the daemon watcher woke on every write under a served root
+      (no ignore filter, whole `.git` recursive) — `target/`/`node_modules/`/
+      `.git/objects` churn the engine never scans, each event taking the drain +
+      engine lock + git-family refresh + idle-timer reset. NEW `src/watchgate.rs`
+      `WatchGate`: a receive-side gate mirroring the scan corpus's include
+      decision (per-root `GitignoreBuilder` incl. `.git/info/exclude` + global,
+      `matched_path_or_any_parents` so a file under `target/` drops; `.git`
+      pruned to the narrow `HEAD`/`packed-refs`/`refs/` ref paths; daemon
+      bookkeeping dropped — `is_daemon_internal` moved here). Both prefix forms
+      (as-given + canonical) stored per root/git-dir since notify paths are
+      canonical on macOS (FSEvents) but as-watched on Linux. **P0** =
+      `socket_path` relocates the socket to `/tmp/dl-sock/<blake3-16hex>.sock`
+      when `<root>/.dl/daemon.sock` ≥ 100 bytes (macOS `sun_path` cap); single
+      chokepoint so bind + every connect agree; pid/log/cache stay root-local.
+      **P2** = fixed 150ms drain → `recv_timeout` quiet-period debounce
+      (QUIET 120ms, MAX_WINDOW 600ms cap) in both `watcher_loop` and the
+      pre-daemon `run_watch` twin. **P3** = narrow git watch (git dir
+      NonRecursive + `refs/` Recursive, NOT `objects/`); applied to
+      dynamically-pulled repos too (closed the deferred gap). **P4** =
+      `need_rescan()`/`notify::Error` → loud `tick_full` recovery (was silently
+      dropped). **P5** = `d.touch()` gated behind the filter, so pure noise no
+      longer resets the idle timer. Linux per-dir inotify pruning deferred
+      (FSEvents is one stream/root; sketch in plan). Tests: watchgate units (6),
+      3 daemon e2e (deep_root short socket + bind, gitignored-writes-no-tick,
+      source-burst-coalesces). SCALE: `event_volume_gitignored_subtree_scale`
+      (macOS-runnable) writes 2000 gitignored files (~108ms) → 0 ticks + a
+      needle source edit STILL ticks (gate scales as a filter, not a blanket
+      drop); `linux_inotify_watch_count_tracks_unignored` (#[cfg(linux)] +
+      #[ignore]) reads /proc/<pid>/fdinfo and asserts watch count is
+      O(unignored dirs) — FAILS today by design, it IS the spec for the deferred
+      per-dir pruning (drop #[ignore] when that lands). Suites 215 lib / 520 it
+      (+1 scale, +1 ignored linux). Binary reinstalled; live daemon restart
+      still Chris-only (served-copy divergence item).
+
 ### Open (sprefa type graph)
 - [x] **BUG FIXED: lattice hot-reload wedge** (found 2026-07-03 live,
       fixed 2026-07-04, local uncommitted): `Engine::declare`

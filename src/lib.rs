@@ -40,6 +40,7 @@ pub mod trace;
 pub mod update;
 pub mod typecheck;
 pub mod typegraph;
+pub mod watchgate;
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
@@ -429,37 +430,69 @@ pub fn run_watch(programs: &[String], db_path: Option<&str>, root: PathBuf) -> R
         }
     }
 
-    // If the program scans any git rev, watch the git dir too so a moving ref
-    // (commit, checkout, branch/tag update) fires a tick even when root is a
-    // subdir of the repo and `.git` is not under it.
+    // The receive-side gate mirrors the scan corpus (gitignore-honored, `.git`
+    // pruned to the narrow ref paths), so build output and `.git/objects` churn
+    // never fire a tick.
+    let mut gate = watchgate::WatchGate::new(std::slice::from_ref(&root));
+    // If the program scans any git rev, narrow-watch the git dir too so a moving
+    // ref (commit, checkout, branch/tag update) fires a tick even when root is a
+    // subdir of the repo and `.git` is not under it — without the objects churn.
     let scans_git = prog.items.iter().any(|i| matches!(i, ast::Item::Rule(r)
         if r.body.iter().any(|b| matches!(b, ast::BodyItem::Scan { rev: ast::Term::Str(s), .. } if s.as_str() != "WORK"))));
-    let mut git_dir: Option<PathBuf> = None;
     if scans_git {
         if let Ok(out) = std::process::Command::new("git").arg("-C").arg(&root).args(["rev-parse", "--git-dir"]).output() {
             if out.status.success() {
                 let gd = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 let gdp = if std::path::Path::new(&gd).is_absolute() { PathBuf::from(&gd) } else { root.join(&gd) };
-                if gdp.exists() && watcher.watch(&gdp, RecursiveMode::Recursive).is_ok() {
+                if gdp.exists() {
+                    gate.add_git_dir(&gdp);
+                    for (path, recursive) in gate.git_watch_targets(&gdp) {
+                        if !path.exists() { continue; }
+                        let mode = if recursive { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
+                        let _ = watcher.watch(&path, mode);
+                    }
                     eprintln!("[watch] also watching refs in {}", gdp.display());
-                    git_dir = gdp.canonicalize().ok();
                 }
             }
         }
     }
 
+    const QUIET: std::time::Duration = std::time::Duration::from_millis(120);
+    const MAX_WINDOW: std::time::Duration = std::time::Duration::from_millis(600);
     while let Ok(first) = rx.recv() {
+        // Quiet-period debounce, capped; a rescan/error forces a full tick.
         let mut paths: Vec<PathBuf> = Vec::new();
-        if let Ok(ev) = first { paths.extend(ev.paths); }
-        std::thread::sleep(std::time::Duration::from_millis(150));
-        while let Ok(ev) = rx.try_recv() {
-            if let Ok(ev) = ev { paths.extend(ev.paths); }
+        let mut rescan = false;
+        match first {
+            Ok(ev) => { if ev.need_rescan() { rescan = true; } else { paths.extend(ev.paths); } }
+            Err(_) => rescan = true,
         }
-        // A config edit re-registers repos; a ref move under the git dir needs
-        // the full sweep (git revs); a plain file edit reconciles changed paths.
+        let window_start = std::time::Instant::now();
+        loop {
+            match rx.recv_timeout(QUIET) {
+                Ok(Ok(ev)) => {
+                    if ev.need_rescan() { rescan = true; } else { paths.extend(ev.paths); }
+                    if window_start.elapsed() > MAX_WINDOW { break; }
+                }
+                Ok(Err(_)) => { rescan = true; if window_start.elapsed() > MAX_WINDOW { break; } }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+            }
+        }
+        if rescan {
+            eprintln!("[watch] watch error/overflow; full re-tick");
+            eng.tick(&prog, false)?;
+            continue;
+        }
+        // A config edit re-registers repos; a ref move under a narrow git path
+        // needs the full sweep (git revs); a plain file edit reconciles paths.
         let touches_cfg = cfg_path.as_ref().is_some_and(|c|
             paths.iter().any(|p| p.canonicalize().ok().as_deref() == Some(c) || p == c));
-        let touches_git = git_dir.as_ref().is_some_and(|g| paths.iter().any(|p| p.starts_with(g)));
+        let touches_git = gate.touches_git(&paths);
+        let paths = gate.filter(paths);
+        if paths.is_empty() && !touches_git && !touches_cfg {
+            continue;  // noise only (build output, objects churn): no tick
+        }
         if touches_cfg {
             eng.set_repos(load_repos());
             eprintln!("[watch] config changed; repos reloaded");
