@@ -236,6 +236,15 @@
   .bar .chip.disabled { cursor: default; opacity: .45; }
   .bar .chip.disabled:hover { border-color: #213650; }
 
+  /* layer list: schema-discovered rel_<name>_node/_edge pairs. Each checkbox
+     toggles a layer into the composed UNION ALL graph. Reuses .chip pill style. */
+  .bar .layers { flex-wrap: wrap; gap: 5px; }
+  .bar .layers:empty { display: none; }
+  .bar .layer-chip input { margin: 0; width: 12px; height: 12px; accent-color: var(--cyan); }
+  .bar .layer-refresh { font-size: 13px; line-height: 1; padding: 2px 6px; cursor: pointer;
+    background: none; border: 1px solid #213650; border-radius: 4px; color: var(--muted); }
+  .bar .layer-refresh:hover { border-color: var(--cyan); color: var(--cyan); }
+
   /* query-failure banner: loud, over the grid — a silent empty grid reads as
      "no data" when the real story is "the LSP/daemon is down" */
   .banner { position: fixed; left: 50%; top: 42%; transform: translateX(-50%);
@@ -431,10 +440,12 @@
     <option value="madge">Module graph</option>
     <option value="memberFlow">Member flow</option>
     <option value="diff">Diff (base vs head)</option>
+    <option value="layers">Layers (discovered)</option>
     <option value="custom">Custom</option>
   </select></div>
   <div class="row"><label>nodes</label><input id="nodesSql" spellcheck="false" /></div>
   <div class="row"><label>edges</label><input id="edgesSql" spellcheck="false" /></div>
+  <div class="row layers" id="layerRow"><label>layers</label><div id="layerList"></div><button class="layer-refresh" id="layerRefresh" title="re-scan schema for new _node/_edge rels">↻</button></div>
   <div class="row legend" id="legend"></div>
   <div class="row legend" id="diffLegend" hidden></div>
   <div class="row proto" id="protoRow"></div>
@@ -532,6 +543,7 @@
       <tr><td>Member flow</td><td>struct/trait/enum/class/interface owners + their function/method/const members, edged by type links and calls, methods nested under their owner in list view (.dl/flow-panel.dl)</td></tr>
       <tr><td>Diff (base vs head)</td><td>added/removed/unchanged nodes and edges between the two revs of <code>diff_pair</code> (base rev vs head rev, default inert WORK/WORK; set <code>diff_pair</code> in <code>.dl/graph-diff.dl</code>) (<code>rel_edge_added</code>/<code>rel_edge_removed</code>/<code>rel_node_added</code>/<code>rel_node_removed</code>/<code>rel_bare_edge</code>/<code>rel_bare_node</code> from <code>.dl/graph-diff.dl</code>); canvas view only for the added/removed/unchanged styling (dashed+muted/solid+hot/dimmed) and the class chips + count pill</td></tr>
       <tr><td>Custom</td><td>whatever SQL is in the two boxes below; editing either box switches here automatically</td></tr>
+      <tr><td>Layers (discovered)</td><td>checkbox list of every <code>rel_<i>&lt;name&gt;</i>_node</code> + <code>rel_<i>&lt;name&gt;</i>_edge</code> pair the daemon's schema exposes; toggle one or more to UNION ALL them into a composed graph. Column names bind to roles by name (<code>id</code>/<code>sym</code>→identity, <code>label</code>/<code>name</code>→display, <code>kind</code>→chip, <code>file</code>/<code>path</code>→fs-tree, <code>line</code>→jump, <code>parent</code>→nesting). Write a <code>.dl</code> declaring <code>foo_node(sym,name,kind,file,line)</code> + <code>foo_edge(src,dst,kind)</code>, click <code>↻</code>, and it appears — no preset edit, no SQL</td></tr>
     </table>
 
     <h3>troubleshooting</h3>
@@ -730,6 +742,160 @@ const PRESETS = {
 const PRESET_KEY = 'dl-flow-preset';
 let currentPreset = 'typeAll';
 
+// ── schema-driven layer discovery ───────────────────────────────────────────
+// The panel discovers graph layers by querying the daemon's SQLite schema for
+// rel_<name>_node / rel_<name>_edge pairs. Each pair is a toggleable layer;
+// active layers UNION ALL into one composed node+edge set. Column names in the
+// dl declaration bind to view roles by name (id/sym → identity, label/name →
+// display, kind → chip, file/path → fs-tree, line → jump, parent → nesting),
+// so a newly-written .dl that declares foo_node(sym,name,kind,file,line) +
+// foo_edge(src,dst,kind) shows up here with no preset edit and no SQL.
+// Presets (above) stay as curated quick-access for views that need joins or
+// CASE expressions name-binding can't express; layers are the turnkey surface.
+const NODE_ID_COLS = ['id', 'sym'];
+const NODE_LABEL_COLS = ['label', 'name'];
+const NODE_KIND_COLS = ['kind'];
+const EDGE_SRC_COLS = ['src', 'source', 'a'];
+const EDGE_DST_COLS = ['dst', 'dest', 'target', 'b'];
+const EDGE_KIND_COLS = ['kind', 'type'];
+
+function pickCol(cols, candidates, fallback) {
+  for (const c of candidates) { const i = cols.indexOf(c); if (i >= 0) return `"${c}"`; }
+  return fallback;
+}
+
+// Build a positional SELECT (id, label, kind, file, line, parent) for a
+// discovered node rel by binding declared column names to renderer slots.
+// The repo-prefix CASE fires only for sym-id'd rels (type-graph convention:
+// sym carries a ::repo:: segment the fs-tree groups on).
+function layerNodeSql(table, cols) {
+  const idCol = pickCol(cols, NODE_ID_COLS, `"${cols[0] || 'rowid'}"`);
+  const labelCol = pickCol(cols, NODE_LABEL_COLS, idCol);
+  const kindCol = pickCol(cols, NODE_KIND_COLS, "'layer'");
+  let fileCol;
+  if (idCol === '"sym"' && cols.includes('file'))
+    fileCol = `CASE WHEN instr("sym",'::')>0 THEN substr("sym",1,instr("sym",'::')-1)||'/'||"file" ELSE "file" END`;
+  else if (cols.includes('file')) fileCol = '"file"';
+  else if (cols.includes('path')) fileCol = '"path"';
+  else fileCol = 'NULL';
+  const lineCol = cols.includes('line') ? '"line"' : 'NULL';
+  const parentCol = cols.includes('parent') ? '"parent"' : 'NULL';
+  return `SELECT ${idCol}, ${labelCol}, ${kindCol}, ${fileCol}, ${lineCol}, ${parentCol} FROM ${table} LIMIT 600`;
+}
+
+function layerEdgeSql(table, cols) {
+  const srcCol = pickCol(cols, EDGE_SRC_COLS, `"${cols[0] || 'rowid'}"`);
+  const dstCol = pickCol(cols, EDGE_DST_COLS, `"${cols[1] || srcCol}"`);
+  const kindCol = pickCol(cols, EDGE_KIND_COLS, "'edge'");
+  return `SELECT ${srcCol}, ${dstCol}, ${kindCol} FROM ${table} LIMIT 1200`;
+}
+
+// Built-in engine rels that are graph-shaped but don't follow the _node/_edge
+// suffix convention (they predate the panel). Listed here so the discovery
+// picks them up without a .dl wrapper. Column binding is the same — PRAGMA
+// introspection + name → role mapping.
+const BUILTIN_LAYERS = [
+  { name: 'type', nodeTable: 'rel_type_entity', edgeTable: 'rel_type_link' },
+];
+
+let layers = [];
+const activeLayers = new Set();
+
+async function discoverLayers() {
+  let tables = [];
+  try {
+    tables = await host.query(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'rel_%_node' ORDER BY name");
+  } catch (e) { /* daemon not serving yet — empty list, retry on refresh */ }
+  const found = [];
+  for (const row of tables) {
+    const nodeTable = row[0];
+    const edgeTable = nodeTable.replace(/_node$/, '_edge');
+    let has = [];
+    try {
+      has = await host.query(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='${edgeTable}'`);
+    } catch (e) { has = []; }
+    if (!has.length) continue;
+    let info = [];
+    try { info = await host.query(`PRAGMA table_info(${nodeTable})`); } catch (e) { continue; }
+    const nodeCols = info.map(r => r[1]);
+    let edgeInfo = [];
+    try { edgeInfo = await host.query(`PRAGMA table_info(${edgeTable})`); } catch (e) { edgeInfo = []; }
+    const edgeCols = edgeInfo.map(r => r[1]);
+    const name = nodeTable.replace(/^rel_/, '').replace(/_node$/, '');
+    found.push({ name, nodeTable, edgeTable, nodeCols, edgeCols });
+  }
+  // fill in built-in graph pairs that don't follow the _node/_edge convention
+  for (const bl of BUILTIN_LAYERS) {
+    if (found.some(l => l.nodeTable === bl.nodeTable)) continue;
+    let exists = [];
+    try {
+      exists = await host.query(
+        `SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('${bl.nodeTable}','${bl.edgeTable}')`);
+    } catch (e) { exists = []; }
+    if (exists[0]?.[0] !== 2) continue;
+    let info = [], edgeInfo = [];
+    try { info = await host.query(`PRAGMA table_info(${bl.nodeTable})`); } catch (e) { continue; }
+    try { edgeInfo = await host.query(`PRAGMA table_info(${bl.edgeTable})`); } catch (e) { edgeInfo = []; }
+    found.push({ name: bl.name, nodeTable: bl.nodeTable, edgeTable: bl.edgeTable,
+                 nodeCols: info.map(r => r[1]), edgeCols: edgeInfo.map(r => r[1]) });
+  }
+  found.sort((a, b) => a.name.localeCompare(b.name));
+  const names = new Set(found.map(l => l.name));
+  for (const n of [...activeLayers]) if (!names.has(n)) activeLayers.delete(n);
+  layers = found;
+  renderLayerList();
+  if (currentPreset === 'layers' && activeLayers.size) runLayers();
+}
+
+function renderLayerList() {
+  const container = document.getElementById('layerList');
+  if (!container) return;
+  container.innerHTML = '';
+  if (!layers.length) {
+    container.innerHTML = '<span style="color:var(--muted);font-size:11px">no _node/_edge pairs found</span>';
+    return;
+  }
+  for (const layer of layers) {
+    const id = 'layer-' + layer.name;
+    const lbl = document.createElement('label');
+    lbl.className = 'chip layer-chip' + (activeLayers.has(layer.name) ? ' on' : '');
+    lbl.title = `${layer.nodeTable} (${layer.nodeCols.join(', ')})\n+ ${layer.edgeTable} (${layer.edgeCols.join(', ')})`;
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.id = id;
+    cb.checked = activeLayers.has(layer.name);
+    cb.addEventListener('change', () => {
+      if (cb.checked) activeLayers.add(layer.name);
+      else activeLayers.delete(layer.name);
+      lbl.classList.toggle('on', cb.checked);
+      runLayers();
+    });
+    lbl.appendChild(cb);
+    lbl.appendChild(document.createTextNode(layer.name));
+    container.appendChild(lbl);
+  }
+}
+
+async function runLayers() {
+  document.getElementById('presetSel').value = 'layers';
+  currentPreset = 'layers';
+  if (!activeLayers.size) { render([], []); savePreset(); return; }
+  clearError();
+  const active = layers.filter(l => activeLayers.has(l.name));
+  const nodeSql = active.map(l => layerNodeSql(l.nodeTable, l.nodeCols)).join(' UNION ALL ');
+  const edgeSql = active.map(l => layerEdgeSql(l.edgeTable, l.edgeCols)).join(' UNION ALL ');
+  document.getElementById('nodesSql').value = nodeSql;
+  document.getElementById('edgesSql').value = edgeSql;
+  savePreset();
+  try {
+    const [nodeRows, edgeRows] = await Promise.all([host.query(nodeSql), host.query(edgeSql)]);
+    render(nodeRows, edgeRows);
+    updateDiffPanel(nodeRows, edgeRows);
+    loadGateways();
+  } catch (e) { showError(String(e.message || e)); }
+}
+
 function readLocalStorage(key) {
   try { return localStorage.getItem(key); } catch (e) { return null; } // e.g. sandboxed webview
 }
@@ -822,6 +988,9 @@ document.getElementById('edgesSql').value = DEFAULT_EDGES;
     document.getElementById('nodesSql').value = saved.nodes;
     document.getElementById('edgesSql').value = saved.edges || '';
     currentPreset = 'custom';
+  } else if (saved && saved.preset === 'layers' && Array.isArray(saved.layers)) {
+    for (const l of saved.layers) activeLayers.add(l);
+    currentPreset = 'layers';
   } else if (saved && PRESETS[saved.preset]) {
     document.getElementById('nodesSql').value = PRESETS[saved.preset].nodes;
     document.getElementById('edgesSql').value = PRESETS[saved.preset].edges;
@@ -2903,11 +3072,16 @@ function savePreset() {
     writeLocalStorage(PRESET_KEY, JSON.stringify({ preset: 'custom',
       nodes: document.getElementById('nodesSql').value,
       edges: document.getElementById('edgesSql').value }));
+  } else if (currentPreset === 'layers') {
+    writeLocalStorage(PRESET_KEY, JSON.stringify({ preset: 'layers', layers: [...activeLayers] }));
   } else {
     writeLocalStorage(PRESET_KEY, JSON.stringify({ preset: currentPreset }));
   }
 }
 document.getElementById('presetSel').addEventListener('change', function () {
+  if (this.value === 'layers') { currentPreset = 'layers'; runLayers(); return; }
+  activeLayers.clear();
+  renderLayerList();
   const p = PRESETS[this.value];
   if (!p) { currentPreset = 'custom'; savePreset(); return; }
   document.getElementById('nodesSql').value = p.nodes;
@@ -2923,18 +3097,21 @@ for (const id of ['nodesSql', 'edgesSql']) {
   });
   el.addEventListener('input', () => {
     if (currentPreset === 'custom') return;
+    if (currentPreset === 'layers') { activeLayers.clear(); renderLayerList(); }
     currentPreset = 'custom';
     document.getElementById('presetSel').value = 'custom';
     savePreset();
   });
 }
+document.getElementById('layerRefresh').addEventListener('click', () => discoverLayers());
 
 function esc(s) {
   return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
 applyView();
-run();
+discoverLayers();
+if (currentPreset !== 'layers') run();
 </script>
 </body>
 </html>
