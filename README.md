@@ -640,6 +640,13 @@ allow_missing = true                    # missing root is non-fatal: scan yields
                                         # The slug is omitted from `repo(...)` so a
                                         # program can derive `missing_repo(S)` via
                                         # antijoin against its referenced set.
+
+[[org]]                                 # the multi-root shape: point at a folder
+dir = "~/orgs/grafana"                  # of checkouts and every git repo under it
+# max_depth = 3                         # expands into a [[repos]] at load. Slug =
+                                        # <dir-basename>/<path-under-dir>; descent
+                                        # stops at each .git. An explicit [[repos]]
+                                        # at the same root wins.
 ```
 
 `scan("alpha/one", "WORK", glob, p, rev)` targets one repo;

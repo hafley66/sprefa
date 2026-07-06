@@ -119,6 +119,32 @@ dl --stop --root /tmp/dl-tour
 cat .dl/daemon.log | tail
 ```
 
+## Without a daemon: `--settle`
+
+Everything above needed the daemon, because the daemon is what *drains* effects
+between ticks. A bare one-shot `dl prog.dl` ticks exactly once, so the request
+lands in the queue and nothing ever runs it — the answer never appears.
+
+`--settle` is the one-shot that finishes the job. It drives tick + drain in a
+loop, in-process, until the program is *quiescent*, then prints once:
+
+```sh
+dl --settle poller.dl --root /tmp/dl-tour
+```
+
+Quiescent means one tick moved no real relation, staged no `@next` carry, and
+left no effect in-flight — the recurring `every`/`clock`/`sh*` timers are steady
+state and do not count, so a polling program settles at its first quiet point
+instead of looping forever. If a program genuinely cannot settle (a counter that
+grows every tick), `--settle-max N` (default 200) caps it and it bails loudly
+naming what is still moving, rather than hanging.
+
+This is the CI and scripting path: an effectful program, a demand hop
+(`scip_want`), or a `repo`-sink pull runs to completion as a single command, no
+resident daemon required. When a daemon *is* already running, `dl --await-settle`
+is the mirror image — you wait for *its* loop to reach the same quiescent point
+before querying.
+
 ## The wider family
 
 `sh` is the read-only kind. Its siblings, same shape, different contracts:

@@ -66,6 +66,48 @@ Discovery files written under a daemon home (`src/daemon.rs:8`):
 - **Shutdown.** `dl --stop` sends `shutdown` over the socket and waits for the
   daemon to close it. `--root` selects which daemon; omitted = the rootless one.
 
+## Running effectful programs to completion (`--settle`)
+
+A plain one-shot `dl prog.dl` (no daemon) runs **exactly one tick**. That is
+correct for a pure query program, but several kinds of program need more than one
+tick and an off-tick effect drain to produce their answer:
+
+| program shape | why one tick is not enough |
+|---|---|
+| `@async` / `sh` / `sh*` effect | the request lands in `pending_effect` queued; the subprocess runs OFF-tick, and the response only surfaces on a later tick |
+| demand hop (`scip_want`, `rev_behind`) | the want derives on tick 1, the index/compare lands tick 2, a consumer reads it tick 3 |
+| `repo`-sink pull | the repo is cloned + registered post-fixpoint; it is scannable only on the NEXT tick |
+| `@next` carry | a staged row surfaces as the live rel one generation later |
+
+For a long time the effect runtime (`drain_effects` / `drain_streams`) ran **only
+inside the daemon's poll loop**, so an effectful program had no non-daemon way to
+finish: a bare `dl prog.dl` left its requests stuck `queued`. `--settle` closes
+that gap.
+
+- **`dl --settle prog.dl`** drives `tick → drain_effects → drain_streams` in a
+  loop, in-process, until the program is **quiescent**, then prints `?` once. It
+  is the CI / script / test path for effectful and demand-tier programs — the
+  org-scale one-shot that actually completes (`scip_want` fetches, `pin-skew`
+  demand chains, `discover-orgs` pulls, `flow-services` spec reads).
+- **Quiescent** means, for one tick: no non-timer relation moved, no `@next`
+  carry is staged, and no non-stream effect is in-flight. The recurring timers
+  (`every`, `clock`, and `@stream` subscriptions) are steady state and are
+  **excluded** — so a polling program still settles at a quiet point instead of
+  looping forever.
+- **Bounded.** `--settle-max N` (default 200) caps the loop; a program that keeps
+  changing every tick (a `@next` counter, a poll whose args never stabilize) is
+  reported as non-convergent — it bails loudly, naming the relations/effects
+  still moving, rather than hanging.
+- **`dl --await-settle`** is the same guarantee against a **running daemon**: you
+  do not own the loop (the daemon's poll loop drives it), you block until it
+  reports quiescent (the `await_quiescent` RPC), then exit 0 (settled) or 3
+  (timed out). Use it to wait out a daemon that is mid-cascade (a fresh pull, a
+  demand fetch) before you query.
+
+`--settle` runs in-process and never attaches or spawns a daemon; `--await-settle`
+only talks to an already-running one. Neither is a watch loop — both return after
+one converged state.
+
 ## Tray (menu bar)
 
 `dl --tray` implies `--daemon` and adds a macOS status-bar icon (accessory mode:
