@@ -55,7 +55,13 @@ const LESSON_04: &str = include_str!("../book/tutorial/04-graphs-for-free.md");
 const LESSON_05: &str = include_str!("../book/tutorial/05-negation-and-argmax.md");
 const LESSON_06: &str = include_str!("../book/tutorial/06-make-it-a-rail.md");
 const LESSON_07: &str = include_str!("../book/tutorial/07-make-it-write.md");
-const LESSON_08: &str = include_str!("../book/tutorial/08-where-next.md");
+const LESSON_08: &str = include_str!("../book/tutorial/08-one-winner-per-key.md");
+const LESSON_09: &str = include_str!("../book/tutorial/09-follow-the-value.md");
+const LESSON_10: &str = include_str!("../book/tutorial/10-move-a-file.md");
+const LESSON_11: &str = include_str!("../book/tutorial/11-suppress-a-finding.md");
+const LESSON_12: &str = include_str!("../book/tutorial/12-effects-and-the-daemon.md");
+const LESSON_13: &str = include_str!("../book/tutorial/13-a-server-made-of-rules.md");
+const LESSON_14: &str = include_str!("../book/tutorial/14-where-next.md");
 // END: gen lesson-consts
 
 /// A reference page: CLI topic name, one-line blurb, embedded body.
@@ -95,7 +101,13 @@ const LESSONS: &[(u32, &str, &str)] = &[
     (5, "newest-per-group with the candidate / beaten / winner shape.", LESSON_05),
     (6, "`diag` rows, `--check` exit codes, the `--lsp` one-liner.", LESSON_06),
     (7, "a `gen` splice into a markdown file, and the marker discipline.", LESSON_07),
-    (8, "the examples browser, the book, the `std/` libs, the reference.", LESSON_08),
+    (8, "the `key(...) merge(MaxBy(...))` lattice declaration: lesson 5's argmax as one line, then rule priority as dispatch.", LESSON_08),
+    (9, "the dataflow facts (`df_node`, `df_edge`), `std/flow.dl`'s cross-function `flow_edge`, and a five-line taint walk.", LESSON_09),
+    (10, "the `--move` codemod: use-path rewrite, physical rename, and `mod`-decl surgery, always dry-run first.", LESSON_10),
+    (11, "`std/suppress.dl`: eslint-style disable comments for your own rails, directive visibility, and the unused-suppression check.", LESSON_11),
+    (12, "`sh` effects, `@async`, the clock, and why results only arrive under the daemon.", LESSON_12),
+    (13, "`@in`/`@out` ports and `--mcp`: a JSON-RPC server as three routing rules and a lattice.", LESSON_13),
+    (14, "the examples browser, the book, the `std/` libs, the reference.", LESSON_14),
     // END: gen lessons-table
 ];
 

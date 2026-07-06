@@ -39,5 +39,11 @@ Two things keep your output matching the lessons:
 5. [Negation and argmax](05-negation-and-argmax.md) — newest-per-group with the candidate / beaten / winner shape.
 6. [Make it a rail](06-make-it-a-rail.md) — `diag` rows, `--check` exit codes, the `--lsp` one-liner.
 7. [Make it write](07-make-it-write.md) — a `gen` splice into a markdown file, and the marker discipline.
-8. [Where to go next](08-where-next.md) — the examples browser, the book, the `std/` libs, the reference.
+8. [One winner per key](08-one-winner-per-key.md) — the `key(...) merge(MaxBy(...))` lattice declaration: lesson 5's argmax as one line, then rule priority as dispatch.
+9. [Follow the value](09-follow-the-value.md) — the dataflow facts (`df_node`, `df_edge`), `std/flow.dl`'s cross-function `flow_edge`, and a five-line taint walk.
+10. [Move a file](10-move-a-file.md) — the `--move` codemod: use-path rewrite, physical rename, and `mod`-decl surgery, always dry-run first.
+11. [Suppress a finding](11-suppress-a-finding.md) — `std/suppress.dl`: eslint-style disable comments for your own rails, directive visibility, and the unused-suppression check.
+12. [Effects and the daemon](12-effects-and-the-daemon.md) — `sh` effects, `@async`, the clock, and why results only arrive under the daemon.
+13. [A server made of rules](13-a-server-made-of-rules.md) — `@in`/`@out` ports and `--mcp`: a JSON-RPC server as three routing rules and a lattice.
+14. [Where to go next](14-where-next.md) — the examples browser, the book, the `std/` libs, the reference.
 <!-- END: tutorial-index -->

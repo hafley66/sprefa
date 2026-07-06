@@ -25,7 +25,7 @@ as feedback the agent should act on.
 
 ## Claude Code hook
 
-Install once (`cargo install --path v5 --bin dl` puts `dl` on PATH), then
+Install once (`cargo install --path . --bin dl` puts `dl` on PATH), then
 `.claude/settings.json` in the repo:
 
 ```json

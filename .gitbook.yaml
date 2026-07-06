@@ -1,0 +1,5 @@
+root: ./
+
+structure:
+  readme: book/quickstart.md
+  summary: book/SUMMARY.md

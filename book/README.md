@@ -5,7 +5,9 @@ incremental, reactive datalog engine over code facts, stored on disk, with
 bounded memory. It starts from "what is a fact" and ends at how Glean and Zoekt
 do it at scale and how your `dl` engine embodies the same ideas.
 
-Prefer to learn by writing programs rather than reading theory? The [hands-on tutorial track](tutorial/README.md) is the practical counterpart to this theory track: you build a tiny fixture repo and type real `.dl` programs against it, one lesson at a time.
+In a hurry? The [quickstart](quickstart.md) goes from install to a working query and a CI gate against your own repo in ten minutes.
+
+Prefer to learn by writing programs rather than reading theory? The [hands-on tutorial track](tutorial/README.md) is the practical counterpart to this theory track: you build a tiny fixture repo and type real `.dl` programs against it, one lesson at a time. [SUMMARY.md](SUMMARY.md) is the GitBook table of contents over all of it (quickstart, both tracks, the math companion, the reference).
 
 Read in order; each chapter depends on the previous one. Chapter 0 is the
 exception: read it first, and again whenever the work feels like despair instead
@@ -24,6 +26,11 @@ of curiosity.
 <!-- END: book-index -->
 
 For the math behind these chapters (lattices, fixpoints, semirings, evaluation, graph cores, incremental maintenance), see the [math sub-series](math/README.md).
+
+The [what-if essays](what-if/README.md) hold the crazy ideas against the
+engine that exists: rendering HTML trees from relations (a JSX/hiccup-mood
+extension), the exits from stratification (time, lattices, structure), and
+what bridging back to v0's nested-block DSL spirit would actually cost.
 
 Two side surveys map the neighbouring territory:
 

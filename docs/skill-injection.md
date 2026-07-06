@@ -46,7 +46,7 @@ No state files; the dedup is a fact in the engine, refreshed each tick alongside
 
 ## Setup
 
-Install dl on PATH (`cargo install --path v5 --bin dl`), drop your rule at
+Install dl on PATH (`cargo install --path . --bin dl`), drop your rule at
 `<repo>/.dl/` (or pass a path), and register the hook in
 `<repo>/.claude/settings.json`:
 

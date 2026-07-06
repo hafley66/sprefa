@@ -30,7 +30,7 @@ From source (needs a Rust toolchain):
 
 ```sh
 cargo install --git https://github.com/hafley66/sprefa sprefa-dl --bin dl  # any machine
-cargo install --path v5                                                    # from a checkout
+cargo install --path .                                                     # from a checkout
 ```
 
 Then:

@@ -119,6 +119,45 @@ tutorial_index_zone(readme, l0, l1) <- scan("WORK", "book/tutorial/README.md", r
 gen(readme, l0, l1, "{number}. [{title}]({slug}.md) — {blurb}") <-
     tutorial_index_zone(readme, l0, l1), lesson(number, slug, title, blurb, _, _).
 
+# ── math + what-if pages : numbered H1, no blurb required ──────────────────────
+# book/math/NN-slug.md and book/what-if/NN-slug.md carry `# N. Title` H1s like
+# chapters do, but no `>` blurb convention; SUMMARY.md lists need only
+# number/title/slug, so one extraction rel per folder suffices.
+rel side_page_h1(page_path: file, number: int, title: text).
+side_page_h1(page_path, int(num), title) <-
+    scan("WORK", "book/*/*.md", page_path, rev),
+    match(page_path, rev, /^# (?<num>\d+)\. (?<title>.+)$/, heading_line).
+rel side_page(parent_dir: text, number: int, slug: text, title: text).
+side_page(split(page_path, "/", -2), number, replace(split(page_path, "/", -1), ".md", ""), title) <-
+    side_page_h1(page_path, number, title).
+
+# ── splice (d) : book/SUMMARY.md — the GitBook table of contents ───────────────
+# Four zones, one per numbered folder. Section headers, survey links, and the
+# reference list stay hand-written; only the file-derived lists are spliced.
+rel summary_lessons_zone(summary: file, l0: int, l1: int).
+summary_lessons_zone(summary, l0, l1) <- scan("WORK", "book/SUMMARY.md", summary, rev),
+    comment(summary, rev, /BEGIN: summary-lessons/, /END: summary-lessons/, l0, l1).
+gen(summary, l0, l1, "  - [{number}. {title}](tutorial/{slug}.md)") <-
+    summary_lessons_zone(summary, l0, l1), lesson(number, slug, title, _, _, _).
+
+rel summary_chapters_zone(summary: file, l0: int, l1: int).
+summary_chapters_zone(summary, l0, l1) <- scan("WORK", "book/SUMMARY.md", summary, rev),
+    comment(summary, rev, /BEGIN: summary-chapters/, /END: summary-chapters/, l0, l1).
+gen(summary, l0, l1, "  - [{number}. {title}]({slug}.md)") <-
+    summary_chapters_zone(summary, l0, l1), chapter(number, slug, title, _, _, _).
+
+rel summary_math_zone(summary: file, l0: int, l1: int).
+summary_math_zone(summary, l0, l1) <- scan("WORK", "book/SUMMARY.md", summary, rev),
+    comment(summary, rev, /BEGIN: summary-math/, /END: summary-math/, l0, l1).
+gen(summary, l0, l1, "  - [{number}. {title}](math/{slug}.md)") <-
+    summary_math_zone(summary, l0, l1), side_page("math", number, slug, title).
+
+rel summary_whatif_zone(summary: file, l0: int, l1: int).
+summary_whatif_zone(summary, l0, l1) <- scan("WORK", "book/SUMMARY.md", summary, rev),
+    comment(summary, rev, /BEGIN: summary-what-if/, /END: summary-what-if/, l0, l1).
+gen(summary, l0, l1, "  - [{number}. {title}](what-if/{slug}.md)") <-
+    summary_whatif_zone(summary, l0, l1), side_page("what-if", number, slug, title).
+
 # ── splice (c) : src/docs_cmd.rs — four Rust zones (real code, must compile) ────
 # Chapter include_str consts.
 rel chapter_consts_zone(dc: file, l0: int, l1: int).
@@ -195,6 +234,36 @@ diag(path: lesson_path, line: 1, severity: "error", code: "tutorial-index-drift"
 diag(path: lesson_path, line: 1, severity: "error", code: "docs-lessons-drift",
      msg: "tutorial lesson ${slug} on disk but absent from src/docs_cmd.rs LESSONS; rerun examples/gen-doc-indexes.dl") <-
     lesson(number, slug, _, _, _, lesson_path), !lessons_table_has(number).
+
+# book/SUMMARY.md list-row numbers, scoped per zone (indented GitBook rows).
+rel summary_row(summary: file, number: int, line: int).
+summary_row(summary, int(num), line) <- scan("WORK", "book/SUMMARY.md", summary, rev),
+    match(summary, rev, /^  - \[(?<num>\d+)\. /, line).
+rel summary_lessons_has(number: int).
+summary_lessons_has(number) <- summary_row(summary, number, line),
+    summary_lessons_zone(summary, l0, l1), line > l0, line < l1.
+rel summary_chapters_has(number: int).
+summary_chapters_has(number) <- summary_row(summary, number, line),
+    summary_chapters_zone(summary, l0, l1), line > l0, line < l1.
+rel summary_math_has(number: int).
+summary_math_has(number) <- summary_row(summary, number, line),
+    summary_math_zone(summary, l0, l1), line > l0, line < l1.
+rel summary_whatif_has(number: int).
+summary_whatif_has(number) <- summary_row(summary, number, line),
+    summary_whatif_zone(summary, l0, l1), line > l0, line < l1.
+
+diag(path: lesson_path, line: 1, severity: "error", code: "summary-drift",
+     msg: "tutorial lesson ${slug} on disk but absent from book/SUMMARY.md summary-lessons; rerun examples/gen-doc-indexes.dl") <-
+    lesson(number, slug, _, _, _, lesson_path), !summary_lessons_has(number).
+diag(path: chapter_path, line: 1, severity: "error", code: "summary-drift",
+     msg: "book chapter ${slug} on disk but absent from book/SUMMARY.md summary-chapters; rerun examples/gen-doc-indexes.dl") <-
+    chapter(number, slug, _, _, _, chapter_path), !summary_chapters_has(number).
+diag(path: "book/SUMMARY.md", line: 1, severity: "error", code: "summary-drift",
+     msg: "book/math/${slug}.md on disk but absent from book/SUMMARY.md summary-math; rerun examples/gen-doc-indexes.dl") <-
+    side_page("math", number, slug, _), !summary_math_has(number).
+diag(path: "book/SUMMARY.md", line: 1, severity: "error", code: "summary-drift",
+     msg: "book/what-if/${slug}.md on disk but absent from book/SUMMARY.md summary-what-if; rerun examples/gen-doc-indexes.dl") <-
+    side_page("what-if", number, slug, _), !summary_whatif_has(number).
 
 # Reverse drift: a zone lists a number with no matching file (a delete not regenerated).
 diag(path: readme, line: 1, severity: "error", code: "book-index-orphan",

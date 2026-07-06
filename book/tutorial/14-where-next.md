@@ -1,13 +1,15 @@
-# 8. Where to go next
+# 14. Where to go next
 
 > the examples browser, the book, the `std/` libs, the reference.
 
 **Goal:** know where to look when a real question outruns this track.
 
 You can now scan files, extract with regex and syntax trees, join into derived
-relations, walk the built-in call and type graphs, write argmax, ship a `--check`
-rail, and splice generated docs. That is the whole loop. The rest is surface area,
-and it is all discoverable from the binary.
+relations, walk the built-in call and type graphs, write argmax two ways, ship
+a `--check` rail with a suppression grammar, trace a value across function
+boundaries, move a file with its imports, run effects under the daemon, splice
+generated docs, and serve JSON-RPC. That is the whole loop. The rest is surface
+area, and it is all discoverable from the binary.
 
 ## The examples browser
 

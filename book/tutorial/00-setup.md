@@ -67,7 +67,7 @@ embedded examples (104):
 ```
 
 `dl examples --show <name>` prints one program to stdout. `dl examples <words>`
-searches by meaning. You will return to these in lesson 8.
+searches by meaning. You will return to these in lesson 14.
 
 ## Build the fixture
 
