@@ -476,6 +476,26 @@ impl Engine {
     /// from the request args, unbound head terms take the executor's outputs in
     /// order. The response rel persists (it is neither source nor derived), so the
     /// next tick reads it like any fact. Returns the number of requests drained.
+    /// Count `pending_effect` rows still owed an off-tick drain — queued or
+    /// running, EXCLUDING `@stream` (`sh*`) subscriptions (which stay 'running'
+    /// forever by design and are steady state, not in-flight work). The settle
+    /// report reads this; a program with an undrained `@async`/`sh` request is
+    /// not settled until the daemon (or `dl --settle`) runs `drain_effects`.
+    pub fn inflight_nonstream(&self, prog: &Program) -> Result<usize> {
+        let kinds = shell_kinds(prog);
+        let rows: Vec<String> = {
+            let mut stmt = self.db.conn().prepare(
+                "SELECT kind FROM pending_effect WHERE state IN ('queued','running')")?;
+            let v = stmt.query_map([], |r| r.get(0))?.filter_map(|x| x.ok()).collect();
+            v
+        };
+        // A kind with no `sh` decl defaults to Read (the legacy effect_cmd path),
+        // so it counts as in-flight, matching drain_effects' `kind_of` default.
+        Ok(rows.into_iter()
+            .filter(|k| kinds.get(k).copied() != Some(ShellKind::Stream))
+            .count())
+    }
+
     pub fn drain_effects(&mut self, prog: &Program, exec: &dyn EffectExec) -> Result<usize> {
         // Per-kind head reassembly plan, keyed by the @async head rel name. After
         // desugar the head is rebuilt over (full body solution) ∪ (response outs):

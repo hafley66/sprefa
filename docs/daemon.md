@@ -84,7 +84,8 @@ A client speaking this codec is transport-agnostic. Methods (`handle_request`,
 
 | method | params | returns |
 |---|---|---|
-| `ping` | — | `{ok, root, tick_count, program, program_files}` |
+| `ping` | — | `{ok, root, tick_count, settled, program, program_files}` (`settled` = last full tick left the program quiescent) |
+| `await_quiescent` | `{timeout_ms?}` | blocks until the program is quiescent (no non-timer rel moved, no `@next` carry staged, no non-stream effect in-flight) or the timeout elapses; returns `{settled, tick_count}`. The daemon owns the effect runtime, so this is the daemon-side twin of `dl --settle` |
 | `status` | — | root, program, tick_count, subscriber count, `_program`/`_repo`/`_ref` rows, last 50 ref advances |
 | `query` | — | every `?` query's `{rel, columns, rows}` |
 | `query_sql` | `{sql, params[]}` | raw rows against the warm SQLite db |
@@ -115,6 +116,8 @@ daemon when `--root` is omitted.
 | `--check` | render `diag` to stderr. Exit 0 clean, 2 on any `error`-severity row (blocking-hook code), 1 broken program |
 | `--diag-json` | `--check` with diagnostics as a JSON array on stdout |
 | `--query-json` | `?` results as JSON-lines `{query, columns, rows, count}` |
+| `--settle` | run in-process, draining `@async`/`sh`/`sh*` effects off-tick, until the program QUIESCES (no non-timer rel moves, no `@next` carry pending, no effect in-flight), then print `?` once. Guarantees every cascade ran ≥1×; bails loudly if it cannot settle. See `plans/2026-07-06-settle-quiescence.md` |
+| `--settle-max N` | tick budget for `--settle` (default 200); over budget bails, naming the still-moving rels/effects |
 | `--watch` | re-tick on file changes (in-process, pre-daemon path) |
 | `--changed <path>` | one incremental tick for changed paths (repeatable) |
 | `--move OLD=NEW [--repo slug\|*] [--fix]` | file-move refactor; dry-run unless `--fix`. See the README CLI table for the per-language detail |
@@ -125,6 +128,7 @@ daemon when `--root` is omitted.
 | `--daemon` | run the long-lived daemon in the foreground (logs to stderr, ignores idle timeout). Usually spawned internally; explicit is the debug path |
 | `--tray` | spawn the menu-bar tray icon (implies `--daemon`; macOS only today) |
 | `--stop` | send `shutdown` to the daemon (`--root` selects which; omitted = rootless) and exit |
+| `--await-settle [--await-settle-ms N]` | block on the running daemon until the program is quiescent (the `await_quiescent` RPC), print `settled=<bool> tick=<n>`, exit 0 (settled) or 3 (timed out). The daemon-side twin of `--settle` |
 | `--no-daemon` (or `DL_NO_DAEMON=1`) | force the in-process path; never attach or spawn |
 | `--load <script>` | push a script to the running daemon as a WATCHED program (reactive, hot-reloaded) |
 | `--load-once <script>` | eval a script once on a throwaway engine, print `?` results, persist nothing |

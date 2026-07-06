@@ -26,6 +26,7 @@ mod extract;
 // module too; both stay `pub` and reach this module's privates directly
 // (engine breakdown Stage 6).
 mod tick;
+pub use tick::{TickReport, is_timer_rel};
 
 fn scc_node_tbl(edge: &str) -> String { format!("scc_node_{edge}") }
 fn scc_edge_tbl(edge: &str) -> String { format!("scc_edge_{edge}") }
@@ -2567,7 +2568,6 @@ impl Engine {
     /// no two rows are identical and the XOR never self-cancels. Used by
     /// `load_carry` to tell whether a carried rel actually moved this tick.
     fn rel_content_digest(&self, rel: &str, meta: &RelMeta) -> Result<[u8; 32]> {
-        let mut acc = [0u8; 32];
         let sql = if meta.cols.is_empty() {
             format!("SELECT COUNT(*) FROM {}", tbl(rel))
         } else {
@@ -2575,9 +2575,32 @@ impl Engine {
                 .collect::<Vec<_>>().join(", ");
             format!("SELECT {cl} FROM {}", tbl(rel))
         };
-        let mut stmt = self.db.conn().prepare(&sql)?;
+        self.digest_of_query(&sql, [])
+    }
+
+    /// Whether the @next carry staged at `tx` differs from `rel`'s live rows —
+    /// the non-destructive twin of `load_carry` (which applies the carry as its
+    /// only mode). Used by the settle report to peek "will next tick move".
+    fn carry_differs(&self, rel: &str, meta: &RelMeta, tx: i64) -> Result<bool> {
+        let live = self.rel_content_digest(rel, meta)?;
+        let cl = if meta.cols.is_empty() {
+            "COUNT(*)".to_string()
+        } else {
+            meta.cols.iter().map(|c| format!("\"{}\"", c.name))
+                .collect::<Vec<_>>().join(", ")
+        };
+        let sql = format!("SELECT {cl} FROM {} WHERE tx = ?1", carry_tbl(rel));
+        let staged = self.digest_of_query(&sql, [tx])?;
+        Ok(live != staged)
+    }
+
+    /// Order-independent (XOR-folded) content digest of a query's rows. Shared
+    /// by `rel_content_digest` and `carry_differs`.
+    fn digest_of_query(&self, sql: &str, params: impl rusqlite::Params) -> Result<[u8; 32]> {
+        let mut acc = [0u8; 32];
+        let mut stmt = self.db.conn().prepare(sql)?;
         let ncol = stmt.column_count();
-        let mut rows = stmt.query([])?;
+        let mut rows = stmt.query(params)?;
         while let Some(row) = rows.next()? {
             let mut h = blake3::Hasher::new();
             for i in 0..ncol {

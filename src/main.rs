@@ -85,6 +85,18 @@ struct Cli {
     /// {query, columns, rows, count}) instead of the human TSV block.
     #[arg(long, help_heading = "Run modes")]
     query_json: bool,
+    /// Run in-process until the program SETTLES: drive ticks (draining `@async`/
+    /// `sh`/`sh*` effects off-tick, the way the daemon does) until no non-timer
+    /// relation moves, no `@next` carry is pending, and no effect is in-flight —
+    /// then print `?` results once. Guarantees every cascade (effects, demand
+    /// hops, repo-sink pulls) ran at least once. Bails loudly if the program
+    /// cannot settle within --settle-max ticks. See plans/2026-07-06-settle-quiescence.md.
+    #[arg(long, help_heading = "Run modes")]
+    settle: bool,
+    /// Tick budget for --settle (default 200). A program that has not settled by
+    /// this many ticks bails, naming the relations/effects still moving.
+    #[arg(long, help_heading = "Run modes")]
+    settle_max: Option<usize>,
     /// Drive one incremental tick for these changed paths (the delta path the
     /// watcher uses), instead of a full run. Repeatable.
     #[arg(long, help_heading = "Run modes")]
@@ -132,6 +144,15 @@ struct Cli {
     /// Send `shutdown` to the daemon on `<root>/.dl/daemon.sock` and exit.
     #[arg(long, help_heading = "Daemon")]
     stop: bool,
+    /// Block until the running daemon reports the program QUIESCENT (every
+    /// cascade — effects, demand hops, repo pulls — has run at least once), then
+    /// print `settled=<bool> tick=<n>` and exit 0 (settled) or 3 (timed out).
+    /// The daemon-side twin of `--settle`. Omit `--root` for the rootless daemon.
+    #[arg(long, help_heading = "Daemon")]
+    await_settle: bool,
+    /// Timeout in ms for `--await-settle` (default 30000).
+    #[arg(long, help_heading = "Daemon")]
+    await_settle_ms: Option<u64>,
     /// Force the in-process path this invocation (do not auto-attach). Same as
     /// `DL_NO_DAEMON=1`. Useful when the daemon socket is wedged.
     #[arg(long, help_heading = "Daemon")]
@@ -244,6 +265,13 @@ fn main() -> Result<()> {
     if cli.stop {
         return sprefa_v5::daemon::stop(root_opt.as_deref());
     }
+    if cli.await_settle {
+        let (settled, tick) = sprefa_v5::daemon::await_quiescent(
+            root_opt.as_deref(), cli.await_settle_ms.unwrap_or(30_000))?;
+        println!("settled={settled} tick={tick}");
+        if !settled { std::process::exit(3); }
+        return Ok(());
+    }
     // `--load` / `--load-once`: push a script to the running daemon and exit.
     // watched joins the program (reactive); once evals ephemerally + prints.
     if let Some(p) = cli.load_once.clone() {
@@ -317,6 +345,12 @@ fn main() -> Result<()> {
         let kept = sprefa_v5::run_verify(programs, db.as_deref(), root, cmd)?;
         if !kept { std::process::exit(1); }
         Ok(())
+    } else if cli.settle {
+        // In-process settle loop: drive ticks + effect drains to a fixpoint,
+        // then print `?` once. Runs in-process (it owns the effect drain the
+        // daemon otherwise owns), so no attach/spawn.
+        sprefa_v5::run_settle(programs, db.as_deref(), root,
+            cli.settle_max.unwrap_or(200), cli.query_json)
     } else if !cli.changed.is_empty() {
         sprefa_v5::run_changed(programs, db.as_deref(), root, cli.changed)
     } else if cli.watch {

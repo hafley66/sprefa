@@ -201,6 +201,13 @@ pub struct Daemon {
     pub last_activity: Mutex<Instant>,
     pub tick_count: AtomicU64,
     pub shutdown_requested: AtomicBool,
+    /// Whether the last FULL tick left the program quiescent — no non-timer rel
+    /// moved, no `@next` carry staged, no non-stream effect in-flight (the
+    /// `TickReport::is_settled` predicate). The poll loop keeps ticking + draining
+    /// toward this; `await_quiescent` blocks a client until it flips true. An
+    /// incremental (source-change) tick clears it. Starts false: not-yet-known
+    /// until the first full tick runs.
+    pub settled: AtomicBool,
     /// The paths touched by the most recent tick (absolute). Empty after a
     /// full tick (paths unknown) — subscribers treat empty as "re-publish
     /// everything". Targeted publish on incremental ticks is the v1.1
@@ -221,9 +228,12 @@ impl Daemon {
     fn tick_full(&self, quiet: bool) -> Result<()> {
         let prog = lock(&self.prog);
         let mut eng = lock(&self.eng);
-        eng.tick(&prog, quiet)?;
+        let report = eng.tick_report(&prog, quiet)?;
         drop(eng);
         drop(prog);
+        // A full tick knows everything that moved, so it is the authoritative
+        // settle observation (`await_quiescent` reads this).
+        self.settled.store(report.is_settled(), Ordering::Relaxed);
         self.tick_count.fetch_add(1, Ordering::Relaxed);
         self.touch();
         // Full tick: changed paths unknown, subscribers re-publish everything.
@@ -238,6 +248,9 @@ impl Daemon {
         eng.tick_paths(&prog, paths, quiet)?;
         drop(eng);
         drop(prog);
+        // A source change happened; the poll loop's next full tick + effect drain
+        // decides whether we are quiescent again, so clear the flag now.
+        self.settled.store(false, Ordering::Relaxed);
         self.tick_count.fetch_add(1, Ordering::Relaxed);
         self.touch();
         // Incremental tick: only these paths' rows could have moved; subscribers
@@ -595,6 +608,7 @@ pub fn run_daemon(
         last_activity: Mutex::new(Instant::now()),
         tick_count: AtomicU64::new(1),
         shutdown_requested: AtomicBool::new(false),
+        settled: AtomicBool::new(false),
         last_changed_paths: Mutex::new(Vec::new()),
         subscribers: Mutex::new(Vec::new()),
     });
@@ -1113,10 +1127,36 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
             "build_id": d.build_id,
             "root": d.root.to_string_lossy(),
             "tick_count": d.tick_count.load(Ordering::Relaxed),
+            "settled": d.settled.load(Ordering::Relaxed),
             "program": d.program_display,
             "program_files": lock(&d.program_files).iter()
                 .map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
         })),
+        // Block until the program is quiescent (the poll loop keeps ticking +
+        // draining toward it) or `timeout_ms` elapses. The daemon owns the effect
+        // runtime, so this is the daemon-side twin of `dl --settle`: a client can
+        // wait for every cascade (effects, demand hops, repo pulls) to run at
+        // least once. Polls the flag from this connection's own thread; the poll
+        // loop / watcher threads set it. Default timeout 30s.
+        "await_quiescent" => {
+            let timeout_ms = req.params.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(30_000);
+            let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+            loop {
+                if d.settled.load(Ordering::Relaxed) {
+                    return Response::ok(req.id, json!({
+                        "settled": true,
+                        "tick_count": d.tick_count.load(Ordering::Relaxed),
+                    }));
+                }
+                if Instant::now() >= deadline {
+                    return Response::ok(req.id, json!({
+                        "settled": false,
+                        "tick_count": d.tick_count.load(Ordering::Relaxed),
+                    }));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
         "query" => {
             let prog = lock(&d.prog);
             let eng = lock(&d.eng);
@@ -1616,6 +1656,27 @@ pub fn stop(root: Option<&Path>) -> Result<()> {
         std::thread::sleep(Duration::from_millis(20));
     }
     bail!("daemon did not close socket after shutdown")
+}
+
+/// Block until the daemon at this home reports the program quiescent (every
+/// cascade — effects, demand hops, repo pulls — has run at least once) or
+/// `timeout_ms` elapses. Returns `(settled, tick_count)`. The daemon-side twin
+/// of `dl --settle`: `--settle` owns the effect runtime in-process; this waits
+/// on the already-running daemon that owns it. `root=None` targets the rootless
+/// serving daemon.
+pub fn await_quiescent(root: Option<&Path>, timeout_ms: u64) -> Result<(bool, u64)> {
+    let mut s = connect(root)?;
+    // The socket read timeout must outlast the daemon's blocking wait, else the
+    // client gives up before the answer arrives.
+    let _ = s.set_read_timeout(Some(Duration::from_millis(timeout_ms + 5_000)));
+    let req = Request::new(0, "await_quiescent", json!({"timeout_ms": timeout_ms}));
+    let resp = rpc_call(&mut s, &req)?;
+    if let Some(e) = resp.error {
+        bail!("await_quiescent failed: {}", e.message);
+    }
+    let r = resp.result.unwrap_or(json!({}));
+    Ok((r.get("settled").and_then(|v| v.as_bool()).unwrap_or(false),
+        r.get("tick_count").and_then(|v| v.as_u64()).unwrap_or(0)))
 }
 
 /// Load a script into the daemon at this home. mode="watched" joins the program

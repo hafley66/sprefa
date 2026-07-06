@@ -8,11 +8,58 @@
 
 use super::*;
 
+/// What a full `tick` moved this pass, for settle/quiescence detection
+/// (`plans/2026-07-06-settle-quiescence.md`). Every field is surfaced from a
+/// local the tick already computes; `tick` (the `()` wrapper) drops it.
+#[derive(Default, Clone, Debug)]
+pub struct TickReport {
+    /// The tick's internal `changed` flag (reconcile delta ∪ carry ∪ clock ∪
+    /// family/effect-digest moves). Coarse — a clock boundary sets it.
+    pub changed: bool,
+    /// `derived:program` digest moved (a derived rule's shape/inputs changed).
+    pub derived_moved: bool,
+    /// Source/family rels attributed as changed this tick (the affected-derived
+    /// seed set). `every`/`clock` here are the steady-state timers.
+    pub changed_rels: Vec<String>,
+    /// A `@next` carry staged at tx+1 differs from the live rel — next tick will
+    /// move (Phase 2, non-destructive peek).
+    pub staged_next: bool,
+    /// `pending_effect` rows queued|running whose kind is NOT a `@stream`
+    /// subscription — an off-tick drain still owes a response (Phase 3).
+    pub inflight_effects: usize,
+}
+
+impl TickReport {
+    /// Settled = this tick produced no NON-timer motion and nothing is pending.
+    /// `every`/`clock`/`@stream` are steady-state and excluded, so a
+    /// timer-driven program still reports settled at a quiet point instead of
+    /// spinning forever.
+    pub fn is_settled(&self) -> bool {
+        !self.derived_moved
+            && self.changed_rels.iter().all(|r| is_timer_rel(r))
+            && !self.staged_next
+            && self.inflight_effects == 0
+    }
+}
+
+/// The rels whose motion is a recurring timer, not real progress.
+pub fn is_timer_rel(rel: &str) -> bool {
+    rel == "every" || rel == "clock"
+}
+
 impl Engine {
-    /// One reactive tick: declare, reconcile sources incrementally, rebuild
-    /// derived only if a source fact changed, then run queries.
+    /// One reactive tick, discarding the settle report (the common path). See
+    /// `tick_report` for the settle/quiescence driver.
     #[tracing::instrument(skip_all, level = "info")]
     pub fn tick(&mut self, prog: &Program, quiet: bool) -> Result<()> {
+        self.tick_report(prog, quiet).map(|_| ())
+    }
+
+    /// One reactive tick: declare, reconcile sources incrementally, rebuild
+    /// derived only if a source fact changed, then run queries. Returns a
+    /// `TickReport` of what moved (`dl --settle` drives this to a fixpoint).
+    #[tracing::instrument(skip_all, level = "info")]
+    pub fn tick_report(&mut self, prog: &Program, quiet: bool) -> Result<TickReport> {
         self.rev_cache.clear();
         self.extraction_drops.clear();
         CMD_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
@@ -480,7 +527,24 @@ impl Engine {
             self.set_tx(cur_tx + 1)?;
         }
         self.last_n1 = self.db.tick_end();
-        Ok(())
+
+        // Settle report: peek whether any @next carry just staged at cur_tx+1
+        // differs from the live rel (non-destructively — load_carry that applies
+        // it runs at the START of the next tick), and count non-stream effects
+        // still owed a drain.
+        let mut staged_next = false;
+        for rel in &next_rels {
+            if let Some(meta) = self.rels.get(rel).cloned() {
+                staged_next |= self.carry_differs(rel, &meta, cur_tx + 1)?;
+            }
+        }
+        Ok(TickReport {
+            changed,
+            derived_moved,
+            changed_rels: changed_source_rels.into_iter().collect(),
+            staged_next,
+            inflight_effects: self.inflight_nonstream(prog)?,
+        })
     }
 
     /// Reactive tick driven by a known set of changed paths (from the file

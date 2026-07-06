@@ -19,6 +19,7 @@ mod extract_cache;
 mod graph_diff_rev;
 mod perf_rels;
 mod scoped_tick;
+mod settle;
 mod cmd_op;
 mod comment_op;
 mod comment_node;

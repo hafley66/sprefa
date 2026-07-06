@@ -768,6 +768,74 @@ fn linux_inotify_watch_count(pid: u32) -> usize {
     total
 }
 
+/// P6: `--await-settle` blocks on the daemon until the program is quiescent. The
+/// program emits an `sh` effect; the daemon drains it off-tick (poll loop), the
+/// response lands, and the tick that observes no further motion flips `settled`.
+/// The client returns `settled=true` and the response is queryable — proving the
+/// daemon drove every cascade to a fixpoint (the daemon-side `--settle`).
+#[test]
+fn await_settle_blocks_until_effect_drains() {
+    use std::io::Write;
+    // Short tag: keep the canonical socket path under the sun_path cap so it
+    // stays at `<root>/.dl/daemon.sock` (relocation is covered by the deep-root
+    // test); this test's raw-socket query needs the natural path.
+    let dir = sandbox("aws");
+    fs::create_dir_all(dir.join(".dl")).unwrap();
+    fs::write(dir.join("p.dl"),
+        "sh greet(name) -> (line: text) = `echo hi-{name}`.\n\
+         rel want(name: text).\n\
+         want(\"bob\").\n\
+         rel greet(name: text, line: text).\n\
+         greet(name, line) <- @async want(name).\n\
+         rel done(line: text).\n\
+         done(line) <- greet(_, line).\n\
+         ? done(line).\n").unwrap();
+
+    // Fast poll so the off-tick drain happens within the test window.
+    let logf = fs::File::create(dir.join(".dl").join("daemon.log")).unwrap();
+    let mut child = DaemonGuard(Command::new(DL)
+        .args(["--daemon"]).arg("--root").arg(&dir)
+        .arg(dir.join("p.dl"))
+        .env("DL_POLL_SECS", "1")
+        .stdout(Stdio::null()).stderr(Stdio::from(logf))
+        .spawn().expect("spawn dl --daemon"));
+    let sock = dir.join(".dl").join("daemon.sock");
+    let mut ready = false;
+    for _ in 0..200 {
+        if sock.exists() && std::os::unix::net::UnixStream::connect(&sock).is_ok() {
+            ready = true; break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(ready, "daemon socket not ready; log:\n{}",
+        fs::read_to_string(dir.join(".dl").join("daemon.log")).unwrap_or_default());
+
+    // Block on quiescence via the CLI front-end (its own process, connecting to
+    // the running daemon — no spawn).
+    let out = Command::new(DL)
+        .args(["--await-settle", "--await-settle-ms", "20000"])
+        .arg("--root").arg(&dir)
+        .output().expect("run dl --await-settle");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0),
+        "await-settle should exit 0 when quiescent: {stdout} {}",
+        String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("settled=true"), "reports settled: {stdout}");
+
+    // The effect response reached the derived rel — the cascade actually ran.
+    let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+    let body = r#"{"jsonrpc":"2.0","id":2,"method":"query","params":{}}"#;
+    write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+    let resp = read_frame(&mut s).expect("query response");
+    assert!(resp.contains("hi-bob"), "the sh response drained into done: {resp}");
+
+    let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+    let body = r#"{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}"#;
+    write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+    let _ = read_frame(&mut s);
+    let _ = child.wait_timeout(std::time::Duration::from_secs(5));
+}
+
 // ---------- helpers ----------
 
 fn read_frame(s: &mut std::os::unix::net::UnixStream) -> Option<String> {

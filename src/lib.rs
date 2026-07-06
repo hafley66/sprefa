@@ -396,6 +396,81 @@ pub fn run_changed(programs: &[String], db_path: Option<&str>, root: PathBuf, ch
     eng.tick_paths(&prog, &abs, false)
 }
 
+/// `--settle`: drive ticks + off-tick effect drains to a fixpoint, then print
+/// `?` results once. The ONLY non-daemon caller of `drain_effects`/
+/// `drain_streams` — it owns the effect runtime the daemon otherwise owns, so a
+/// one-shot with `@async`/`sh`/`sh*` effects, demand hops (`scip_want`), or
+/// `repo`-sink pulls converges (every cascade runs at least once) instead of
+/// leaving requests stuck 'queued'. Bails loudly if the program cannot settle
+/// within `budget` ticks (a `@next` counter, an always-changing poll), naming
+/// the still-moving rels/effects. See plans/2026-07-06-settle-quiescence.md.
+pub fn run_settle(programs: &[String], db_path: Option<&str>, root: PathBuf,
+                  budget: usize, query_json: bool) -> Result<()> {
+    let files = resolve_programs(programs, &root)?;
+    let (prog, type_diags, _) = prepare_paths(&files)?;
+    render_type_diags(&type_diags, false);
+    let n_errors = type_diags.iter().filter(|d| d.severity == ast::Severity::Error).count();
+    if n_errors > 0 {
+        anyhow::bail!("{n_errors} type error(s) in path literals / brands / stratification");
+    }
+    let conn = db::open(db_path)?;
+    let mut eng = engine::Engine::new(conn, root);
+    eng.set_query_json(query_json);
+    eng.set_repos(load_repos());
+    // Drive the loop quietly (prime_tick skips `?` eval); the answers print once
+    // at the end via `run` (a final non-quiet tick).
+    eng.set_prime_tick(true);
+
+    // No-progress guard: `remaining` counts every not-yet-quiet signal each tick.
+    // If it stops improving for STALL consecutive ticks, the program cannot
+    // settle (mirrors the fixpoint iters-cap bail, but names the offenders).
+    const STALL: usize = 10;
+    let mut best_remaining = usize::MAX;
+    let mut stall = 0usize;
+    let arity = engine::async_effect_arity(&prog);
+    for iter in 0..budget {
+        let report = eng.tick_report(&prog, true)?;
+        // Drain whatever effect this tick emitted — the daemon does this off-tick
+        // in `poll_tick`; here we do it inline so a one-shot converges. Rebuild
+        // the exec each pass so a dynamic `effect_cmd(kind, template)` overlay is
+        // picked up (same construction as poll_tick).
+        let drained = if arity.is_empty() { 0 } else {
+            let mut templates = engine::shell_templates(&prog);
+            if let Ok(rows) = eng.query_sql("SELECT kind, template FROM rel_effect_cmd", &[]) {
+                for row in rows {
+                    if let (Some(k), Some(t)) = (row.first().and_then(|v| v.as_str()),
+                                                 row.get(1).and_then(|v| v.as_str())) {
+                        templates.insert(k.to_string(), t.to_string());
+                    }
+                }
+            }
+            let exec = engine::ShellEffectExec { templates, n_out: arity.clone(), cwd: eng.root() };
+            eng.drain_effects(&prog, &exec)? + eng.drain_streams(&prog, &exec)?
+        };
+        // Settled AND nothing drained this pass (a drain lands a response the
+        // NEXT tick re-derives, so it is not settled until that tick is quiet).
+        if report.is_settled() && drained == 0 {
+            eng.set_prime_tick(false);
+            eng.run(&prog)?;
+            eprintln!("[settle] converged after {} tick(s)", iter + 1);
+            return Ok(());
+        }
+        let non_timer: Vec<&String> = report.changed_rels.iter()
+            .filter(|rel| !engine::is_timer_rel(rel)).collect();
+        let remaining = non_timer.len() + report.inflight_effects
+            + report.staged_next as usize + drained;
+        if remaining < best_remaining { best_remaining = remaining; stall = 0; }
+        else { stall += 1; }
+        if stall >= STALL {
+            anyhow::bail!("program did not settle (no progress for {STALL} ticks): still \
+                moving = rels {non_timer:?}, in-flight effects {}, staged @next {}",
+                report.inflight_effects, report.staged_next);
+        }
+    }
+    anyhow::bail!("program did not settle within {budget} ticks (raise --settle-max, or it \
+        has a non-converging @next/effect loop)");
+}
+
 /// Run as an LSP server over stdio. The program's `diag` relation becomes live
 /// editor diagnostics; lint fires on file open / save. See docs/lsp.md.
 pub fn run_lsp(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Result<()> {

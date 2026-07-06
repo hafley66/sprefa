@@ -34,7 +34,8 @@ fn main() {
     let repo_root = format!("{}/..", env!("CARGO_MANIFEST_DIR"));
     let idx = std::path::PathBuf::from(std::env::var("SPREFA_SCIP_INDEX")
         .unwrap_or_else(|_| format!("{repo_root}/index.scip")));
-    let (sym, call) = match sprefa_v5::scip_import::load(&idx) {
+    let (sym, call) = match sprefa_v5::scip_import::load(
+        &idx, std::path::Path::new(env!("CARGO_MANIFEST_DIR")), "sprefa") {
         Ok(rows) => {
             let rel = path.strip_prefix(&format!("{}/", env!("CARGO_MANIFEST_DIR")))
                 .unwrap_or(&path).to_string();
