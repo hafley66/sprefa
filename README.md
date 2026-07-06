@@ -644,9 +644,12 @@ allow_missing = true                    # missing root is non-fatal: scan yields
 [[org]]                                 # the multi-root shape: point at a folder
 dir = "~/orgs/grafana"                  # of checkouts and every git repo under it
 # max_depth = 3                         # expands into a [[repos]] at load. Slug =
-                                        # <dir-basename>/<path-under-dir>; descent
+                                        # <foldername>/<path-under-dir>; descent
                                         # stops at each .git. An explicit [[repos]]
                                         # at the same root wins.
+# foldername = "."                      # override the slug prefix (default: dir
+                                        # basename); "." FLATTENS it away so the
+                                        # slug is the bare path under dir.
 ```
 
 `scan("alpha/one", "WORK", glob, p, rev)` targets one repo;

@@ -6,6 +6,16 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-07-06
+
+### Added
+- **`[[org]] foldername`** overrides the slug prefix (default: the `dir`
+  basename). Set `foldername = "."` to FLATTEN — drop the org prefix so a repo
+  addresses by its bare path under `dir` (`~/projects/my-long-ass-org-name/repo-a`
+  → slug `repo-a`, not `my-long-ass-org-name/repo-a`). Only the slug flattens;
+  the on-disk path is unchanged. Flattening can collide same-named repos across
+  subfolders — the caller's call.
+
 ## [0.6.1] - 2026-07-06
 
 ### Changed

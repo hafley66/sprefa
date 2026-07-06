@@ -45,6 +45,8 @@
 //! [[org]]
 //! dir = "~/orgs/grafana"   # leading ~ expands to $HOME
 //! # max_depth = 3          # directory levels below `dir` to search (default 3)
+//! # foldername = "gf"      # override the slug prefix (default: `dir` basename)
+//! # foldername = "."       # FLATTEN: drop the prefix, slug = bare path under dir
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -84,6 +86,14 @@ pub struct OrgConfig {
     /// tree of non-repos.
     #[serde(default)]
     pub max_depth: Option<usize>,
+    /// Override the slug prefix (default: the basename of `dir`). Set to `"."`
+    /// to FLATTEN — drop the org prefix entirely so a repo addresses by its bare
+    /// path under `dir` (`~/projects/my-long-ass-org-name/repo-a` → slug
+    /// `repo-a`, not `my-long-ass-org-name/repo-a`). Flattening risks slug
+    /// collisions between same-named repos under different subfolders; that is
+    /// the caller's call. Written `foldername = "..."` in TOML (`folder` alias).
+    #[serde(default, alias = "folder")]
+    pub foldername: Option<String>,
 }
 
 /// The whole config. `repos` are listed explicitly; `orgs` expand into more
@@ -157,15 +167,19 @@ impl SprfConfig {
     /// Expand each `[[org]]` into one `RepoConfig` per git checkout under its
     /// `dir`, appended to `repos`. An explicit `[[repos]]` at the same root wins
     /// (org-discovered duplicates are dropped); a missing / unreadable `dir`
-    /// logs one stderr line and is skipped. Slug = `<dir-basename>/<rel-path>`
-    /// so repos of the same name under different org folders never collide.
+    /// logs one stderr line and is skipped. Slug = `<prefix>/<rel-path>` where
+    /// `prefix` is `foldername` (default: `dir` basename), so repos of the same
+    /// name under different org folders never collide — unless `foldername = "."`
+    /// FLATTENS the prefix away (slug = the bare rel-path).
     fn expand_orgs(&mut self) {
         use std::collections::HashSet;
         let mut seen: HashSet<PathBuf> = self.repos.iter().map(|r| r.root.clone()).collect();
         for org in &self.orgs {
             let dir = expand_tilde(&org.dir);
-            let org_name = dir.file_name().map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "org".to_string());
+            let org_name = org.foldername.clone().filter(|s| !s.is_empty())
+                .unwrap_or_else(|| dir.file_name().map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "org".to_string()));
+            let flatten = org_name == ".";
             if !dir.is_dir() {
                 eprintln!("[config] org dir {} is not a directory; skipping", dir.display());
                 continue;
@@ -179,13 +193,16 @@ impl SprfConfig {
                 let rel = root.strip_prefix(&dir).unwrap_or(&root);
                 let suffix = rel.components()
                     .map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/");
-                let suffix = if suffix.is_empty() { org_name.clone() } else { suffix };
-                self.repos.push(RepoConfig {
-                    slug: format!("{org_name}/{suffix}"),
-                    root,
-                    url: None,
-                    allow_missing: false,
-                });
+                // `dir` itself is a repo (empty suffix) → fall back to its basename.
+                let leaf = || root.file_name().map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "repo".to_string());
+                let slug = if flatten {
+                    if suffix.is_empty() { leaf() } else { suffix }
+                } else {
+                    let suffix = if suffix.is_empty() { org_name.clone() } else { suffix };
+                    format!("{org_name}/{suffix}")
+                };
+                self.repos.push(RepoConfig { slug, root, url: None, allow_missing: false });
             }
         }
     }
@@ -344,6 +361,39 @@ mod tests {
         // Roots point at the checkout dirs.
         let mimir = cfg.repos.iter().find(|r| r.slug == "grafana/mimir").unwrap();
         assert_eq!(mimir.root, base.join("grafana/mimir"));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn org_foldername_dot_flattens_the_slug() {
+        let base = org_fixture("flat");
+        // foldername = "." drops the org prefix: slugs are the bare rel-path.
+        let p = write_tmp("orgflat", &format!("\
+            [[org]]\n\
+            dir = \"{}/grafana\"\n\
+            foldername = \".\"\n", base.display()));
+        let cfg = SprfConfig::load_from_path(&p).unwrap();
+        let mut slugs: Vec<_> = cfg.repos.iter().map(|r| r.slug.clone()).collect();
+        slugs.sort();
+        assert_eq!(slugs, vec![
+            "group/svc".to_string(), "loki".to_string(), "mimir".to_string(),
+        ], "foldername=. flattens: no `grafana/` prefix");
+        // Root is unchanged — only the slug (address) flattens, not the path.
+        let mimir = cfg.repos.iter().find(|r| r.slug == "mimir").unwrap();
+        assert_eq!(mimir.root, base.join("grafana/mimir"));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn org_foldername_overrides_the_prefix() {
+        let base = org_fixture("rename");
+        let p = write_tmp("orgrename", &format!("\
+            [[org]]\n\
+            dir = \"{}/grafana\"\n\
+            foldername = \"gf\"\n", base.display()));
+        let cfg = SprfConfig::load_from_path(&p).unwrap();
+        assert!(cfg.repos.iter().any(|r| r.slug == "gf/mimir"),
+            "foldername renames the prefix: {:?}", cfg.repos.iter().map(|r| &r.slug).collect::<Vec<_>>());
         let _ = std::fs::remove_dir_all(&base);
     }
 
