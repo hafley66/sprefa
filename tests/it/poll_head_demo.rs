@@ -134,7 +134,6 @@ fn per_row_cwd_routes_each_effect_to_its_repo() {
             "rel watch(name: str, cwd: str).\n\
              watch(\"a\", \"{}\").\n\
              watch(\"b\", \"{}\").\n\
-             rel effect_cmd(kind: str, template: str).\n\
              effect_cmd(\"head_at\", \"git rev-parse HEAD\").\n\
              rel head_at(name: str, oid: str).\n\
              head_at(name, oid) <- @async watch(name, cwd), every(1).\n\

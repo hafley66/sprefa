@@ -32,7 +32,6 @@ rel pin(consumer: text, dep: text, ref: text).
 pin(a, b, v) <- gomod_pin(a, m, v), module_id(b, m), a != b.
 
 # demand ancestry for every pinned ref vs the dep's checked-out main line
-rel rev_cmp_want(repo: text, refname: text, upstream: text).
 rev_cmp_want(b, v, "HEAD") <- pin(_, b, v).
 
 # behind: main moved past the pin (n = how many commits the consumer trails)

@@ -65,8 +65,7 @@ fn scip_want_loads_wanted_repo_indexes_per_repo() {
     ]);
 
     fs::write(d.join("p.dl"),
-        "rel scip_want(repo: text).\n\
-         scip_want(\"dep\").\n\
+        "scip_want(\"dep\").\n\
          rel r(file: text, symbol: text, def_file: text, repo: text).\n\
          r(F, S, D, R) <- scip_ref(F, S, D, R).\n").unwrap();
     let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
@@ -113,8 +112,7 @@ fn scip_want_skips_unindexable_repo() {
         vec![document("app/main.go", vec![occurrence(SYM, SymbolRole::Definition as i32)])]);
 
     fs::write(d.join("p.dl"),
-        "rel scip_want(repo: text).\n\
-         scip_want(\"bare\").\n\
+        "scip_want(\"bare\").\n\
          scip_want(\"no-such-slug\").\n\
          rel r(symbol: text, file: text).\n\
          r(S, F) <- scip_def(S, F, _).\n").unwrap();

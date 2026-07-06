@@ -6,6 +6,27 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-07-06
+
+### Changed
+- **Magic-rel pattern eliminated: demand/overlay conventions are now first-class
+  builtin sinks.** `scip_want`, `rev_cmp_want`, `def_target`, and `effect_cmd`
+  used to be relations the engine read back by a hardcoded string name with
+  nothing in `rel_catalog` advertising them — an invisible API. They are now
+  pre-declared, catalogued builtin **sinks** (group `demand`), head-written from
+  a rule exactly like `diag`/`repo`. Head them directly; a `rel scip_want(...)`
+  declaration now bails ("head it directly, like diag/repo"). They appear in
+  `dl docs relations` and `docs/reference/magic-rels.md`.
+
+### Added
+- **Magic-rel ban rail (`.dl/magic-rel-audit.dl`).** Dogfood check: scans the
+  engine's own `src/**/*.rs` for any `rels.get("<name>")` / `FROM rel_<name>`
+  literal and fails `dl --check` (exit 2) if the name is not a catalogued
+  relation. Runs in CI's bare `dl --check` and the PostToolUse hook, so the set
+  of name-matched relations can only shrink or become catalogued, never silently
+  grow. Regression test `tests/it/magic_rel_audit.rs`; maintainer skill
+  `assets/sprefa-v5-no-magic-rels.skill.md`.
+
 ## [0.6.0] - 2026-07-06
 
 ### Added

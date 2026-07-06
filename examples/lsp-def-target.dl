@@ -30,7 +30,6 @@ index_over(p) <- scan("src/**/*.rs", p).
 # Type-defined targets: structs, enums, traits, aliases. The `=~` constraint
 # is the unified regex literal (same form `match` takes); a name can only be
 # one kind, so a row lands in at most one of the two def_target rules below.
-rel def_target(name: text, file: file, line: int, kind: text).
 def_target(name, f, l, "type") <- type_entity(_, _, name, k, _, f, l), k =~ /struct|enum|trait|alias/.
 
 # Function-defined targets: free fns and methods.

@@ -17,7 +17,6 @@ watch("self", "git rev-parse HEAD").
 
 # The effect-command template, keyed by the @async head rel name (`head_at`).
 # `{cmd}` is filled from the request args; stdout is the single output slot (oid).
-rel effect_cmd(kind: str, template: str).
 effect_cmd("head_at", "{cmd}").
 
 # Every 2 seconds, fire each watched command. `name` echoes from the request;

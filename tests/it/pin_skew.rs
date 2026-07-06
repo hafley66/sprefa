@@ -74,7 +74,6 @@ gomod_pin(r, mod, ver) <- repo(r, _, _), scan(r, "HEAD", "go.mod", p, rev),
                           match(p, rev, /(?<mod>\S+\/\S+)\s+(?<ver>v[0-9]\S*)/, l).
 rel pin(consumer: text, dep: text, ref: text).
 pin(a, b, v) <- gomod_pin(a, m, v), module_id(b, m), a != b.
-rel rev_cmp_want(repo: text, refname: text, upstream: text).
 rev_cmp_want(b, v, "HEAD") <- pin(_, b, v).
 rel stale_pin(consumer: text, dep: text, ref: text, behind: int).
 stale_pin(a, b, v, n) <- pin(a, b, v), rev_behind(b, v, "HEAD", n, _), n > 0.

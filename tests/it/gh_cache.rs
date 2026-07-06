@@ -423,7 +423,6 @@ fn gh_cache_live_against_github() {
              poll(ep, \"\",  b) <- watch(ep), !etag(ep, _),   clock(300, b).\n\
              rel resp(ep: text, status: int, tag: text, body: text).\n\
              resp(ep, status, tag, body) <- @async poll(ep, prev, bucket).\n\
-             rel effect_cmd(kind: text, template: text).\n\
              effect_cmd(\"resp\", {tmpl:?}).\n\
              etag_next(ep, tag) <- resp(ep, 200, tag, _).\n\
              etag_next(ep, old) <- resp(ep, 304, _, _), etag(ep, old).\n\

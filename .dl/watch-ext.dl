@@ -18,7 +18,6 @@ ext_seen(path) <- scan("WORK", "editors/vscode-dl/package.json", path, rev).
 rel ext_src(path: file, hash: text).
 ext_src(path, hash) <- ext_seen(path), file(_, "WORK", path, content_id), content(content_id, hash).
 
-rel effect_cmd(kind: text, template: text).
 effect_cmd("ext_built", "just ext-reload").
 
 # One request per (source, content-hash); `out` is the build log tail.

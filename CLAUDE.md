@@ -554,6 +554,33 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       (+1 scale, +1 ignored linux). Binary reinstalled; live daemon restart
       still Chris-only (served-copy divergence item).
 
+- [x] **Magic-rel ban — ELIMINATED** (2026-07-06, local uncommitted): the
+      invisible-API pattern (engine reads a rel by LITERAL string name to trigger
+      IO — `rels.get("scip_want")`, `FROM rel_effect_cmd`) is RETIRED, not just
+      documented. The four demand/overlay conventions (scip_want / rev_cmp_want /
+      def_target / effect_cmd) are now first-class **builtin SINKS** like
+      diag/repo: pre-declared in `demand_rel_decls()` + reserved via
+      `DEMAND_RELS` (src/engine/mod.rs, mirrors diag_rel_decls/DIAG_RELS),
+      catalogued group `demand`, head-written from a rule (no `rel` decl — the
+      guard bails "head it directly, like diag/repo"). Consumers migrated: 10
+      `rel <name>` decls dropped across 4 examples/.dl + 6 test programs. The
+      first-pass `special_rel` REGISTRY was DELETED (src/rels/special.rs gone,
+      SpecialKind unwired, read-site consts reverted to literals — clean now that
+      the names are catalogued). Precedent: `repo` (catalogued group `core`,
+      head-written, triggers cloning). Rail `.dl/magic-rel-audit.dl` scans
+      `src/**/*.rs`, anti-joins `rel_catalog` ONLY (one known-set),
+      `magic-rel-unregistered` --check exit 2 (CI bare-check + PostToolUse hook).
+      Agent-side: `assets/sprefa-v5-no-magic-rels.skill.md` (wired by `dl setup
+      --project`) + `.claude/agents/magic-rel-auditor.md` subagent — adding a
+      demand convention = a RelDecl in demand_rel_decls() + DEMAND_RELS, never a
+      hidden name. Docs `docs/reference/magic-rels.md` generated from rel_catalog
+      group demand by gen-reference.dl. Test `tests/it/magic_rel_audit.rs` (3)
+      guards the rail from rotting. NO `@`-qualifier, no new syntax — Chris
+      rejected an at-symbol binding; the answer was "they were always just
+      builtin sinks we forgot to declare." Suites lib 219 / it 530 green; binary
+      reinstalled (installed dl needs the `demand` catalog group + pre-declared
+      heads). Plan: plans/2026-07-06-magic-rel-audit.md.
+
 ### Open (sprefa type graph)
 - [x] **BUG FIXED: lattice hot-reload wedge** (found 2026-07-03 live,
       fixed 2026-07-04, local uncommitted): `Engine::declare`

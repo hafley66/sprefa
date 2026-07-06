@@ -1,1 +1,1 @@
-20260704.0.overnight-scope-fixes-d5b-parents-lattice-d5plan.md
+20260706.0.magic-rel-ban-eliminate-builtin-sinks.md

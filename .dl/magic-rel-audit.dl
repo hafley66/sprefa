@@ -1,0 +1,59 @@
+# The magic-rel ban rail (sprefa over its own source).
+#
+# A "magic rel" is a relation the engine special-cases by a LITERAL string name
+# in its own Rust source — `eng.rels.get("scip_want")`, `FROM rel_effect_cmd` —
+# where nothing in `rel_catalog` tells a program author the name is critical.
+# That invisible API surface is banned: every name the engine reads by literal
+# string must be a catalogued relation. The demand/overlay conventions that used
+# to be invisible
+# (`scip_want`, `rev_cmp_want`, `def_target`, `effect_cmd`) are now first-class
+# builtin SINKS — pre-declared, head-written from a rule like `diag`/`repo`, and
+# carried in `rel_catalog` (group `demand`). So there is exactly ONE known-set:
+# `rel_catalog`.
+#
+# This program turns a new, UNREGISTERED literal name into a build error:
+# `dl --check` exits 2 and `dl --lsp` squiggles the offending source line. To
+# clear a finding, give the name a `RelDecl` (a real catalogued builtin) — for a
+# user-headed demand/overlay sink, add it to `demand_rel_decls()` + `DEMAND_RELS`
+# in src/engine/mod.rs, mirroring the existing four. Either way the name stops
+# being magic. The set can only shrink or be catalogued, never silently grow.
+#
+# Run:  dl .dl/magic-rel-audit.dl --root <repo> --check
+#       dl .dl/magic-rel-audit.dl --root <repo> --lsp
+#
+# The name pattern is lowercase-leading (`[a-z][a-z0-9_]*`) so uppercase
+# placeholder names in prose (`rels.get("N")`) are not mistaken for real rels.
+# Match is a text scan, so keep example literals in comments spelled `<name>`.
+
+# Every `rels.get("<name>")` reference in engine source, with its line.
+rel ref_get(file: file, line: int, name: text).
+ref_get(source_file, line, mrel) <-
+    scan("WORK", "src/**/*.rs", source_file, rev),
+    match(source_file, rev, /rels\.get\("(?<mrel>[a-z][a-z0-9_]*)"\)/, line).
+
+# Every literal `FROM rel_<name>` SQL reference in engine source, with its line.
+# (Table reads built through `tbl(name)` use a format placeholder and are
+# correctly NOT matched — only a hardcoded name is the magic being audited.)
+rel ref_from(file: file, line: int, name: text).
+ref_from(source_file, line, mrel) <-
+    scan("WORK", "src/**/*.rs", source_file, rev),
+    match(source_file, rev, /FROM rel_(?<mrel>[a-z][a-z0-9_]*)/, line).
+
+# Unified magic-name reference set.
+rel magic_ref(file: file, line: int, name: text).
+magic_ref(source_file, line, rel_name) <- ref_get(source_file, line, rel_name).
+magic_ref(source_file, line, rel_name) <- ref_from(source_file, line, rel_name).
+
+# A name is KNOWN iff it is a catalogued builtin.
+rel known(name: text).
+known(rel_name) <- rel_catalog(rel_name, _, _, _).
+
+# The ban: an engine-source literal that names no catalogued relation.
+diag(path: source_file, line: line, severity: "error", code: "magic-rel-unregistered",
+     msg: "engine reads rel `${rel_name}` by literal name but it is not a catalogued builtin — give it a RelDecl (for a user-headed demand/overlay sink, add it to demand_rel_decls() + DEMAND_RELS in src/engine/mod.rs, like scip_want)") <-
+    magic_ref(source_file, line, rel_name), !known(rel_name).
+
+? diag(path, line, severity, code, msg).
+
+# The audit view: the demand/overlay sink conventions, from the catalog.
+? rel_catalog(name, "demand", cols, doc).

@@ -91,8 +91,7 @@ fn rev_behind_counts_wanted_pairs() {
     git(&d, &["checkout", "-q", "main"]);
 
     fs::write(d.join("p.dl"),
-        "rel rev_cmp_want(repo: text, refname: text, upstream: text).\n\
-         rev_cmp_want(\".\", \"v1\", \"main\").\n\
+        "rev_cmp_want(\".\", \"v1\", \"main\").\n\
          rev_cmp_want(\".\", \"div\", \"main\").\n\
          rel skew(refname: text, behind: int, ahead: int).\n\
          skew(N, B, A) <- rev_behind(R, N, U, B, A).\n").unwrap();
@@ -126,8 +125,7 @@ fn rev_behind_skips_unresolvable_refs() {
     commit(&d, "b.rs", "c2");
 
     fs::write(d.join("p.dl"),
-        "rel rev_cmp_want(repo: text, refname: text, upstream: text).\n\
-         rev_cmp_want(\".\", \"v1\", \"main\").\n\
+        "rev_cmp_want(\".\", \"v1\", \"main\").\n\
          rev_cmp_want(\".\", \"no-such-ref\", \"main\").\n\
          rev_cmp_want(\"no-such-repo\", \"v1\", \"main\").\n\
          rel skew(refname: text, behind: int, ahead: int).\n\

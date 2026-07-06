@@ -335,6 +335,18 @@ const HOOK_RELS: [&str; 1] = ["hook_event"];
 /// (mute is an editor affordance, not a CI gate — see the lsp.rs module doc).
 const MUTE_RELS: [&str; 1] = ["diag_mute"];
 
+/// The demand / overlay SINK relations. A user HEADS these from a rule (like
+/// `diag` / `repo`), and the rows drive engine behavior the name is bound to:
+/// `scip_want` → SCIP index demand, `rev_cmp_want` → git ancestry demand,
+/// `def_target` → LSP go-to-definition, `effect_cmd` → per-kind effect-template
+/// overlay. Pre-declared builtins (so the binding shows in `rel_catalog` /
+/// `dl docs relations`) and reserved against a `rel` re-declaration — head them
+/// directly, do not `rel`-declare them, exactly like `diag`. This is what makes
+/// them first-class instead of magic: the engine reading them by name is reading
+/// a catalogued builtin, not an undocumented convention. See docs/reference/
+/// magic-rels.md and the `.dl/magic-rel-audit.dl` rail.
+const DEMAND_RELS: [&str; 4] = ["scip_want", "rev_cmp_want", "def_target", "effect_cmd"];
+
 fn builtin_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -375,6 +387,7 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
         .chain(hook_rel_decls())
         .chain(diag_rel_decls())
         .chain(diag_mute_rel_decls())
+        .chain(demand_rel_decls())
         .collect()
 }
 
@@ -502,6 +515,35 @@ fn diag_mute_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "diag_mute".into(), cols: vec![c("code", Type::Text)],
             group: "diag",
             doc: "diagnostic-mute set: one row per diag code silenced in the editor session (via the LSP `dl.toggleDiagCode` command). The --lsp publish path drops `diag` rows whose code is muted; --check/--parse-only read `diag` directly and ignore this set. Written only by the toggle command, never a rule head",
+            ..Default::default() },
+    ]
+}
+
+/// The demand / overlay sink relations (see `DEMAND_RELS`). Pre-declared
+/// builtins a user heads from a rule; deriving rows drives the bound engine
+/// behavior. Catalogued (group "demand") so the binding is visible; reserved
+/// against a `rel` re-declaration.
+fn demand_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "scip_want".into(), cols: vec![c("repo", Type::Text)],
+            group: "demand",
+            doc: "SCIP index demand sink: head scip_want(repo) to make the importer ensure + load that repo's index.scip (runs installed indexers when missing, merges, loads into scip_def/scip_ref/scip_edge); one-tick latency, shallow clones skip loudly",
+            ..Default::default() },
+        RelDecl { name: "rev_cmp_want".into(), cols: vec![
+            c("repo", Type::Text), c("refname", Type::Text), c("upstream", Type::Text)],
+            group: "demand",
+            doc: "git ancestry demand sink: head rev_cmp_want(repo, refname, upstream) and each wanted triple runs git rev-list, filling rev_behind(repo, refname, upstream, behind, ahead); unresolvable refs and shallow clones skip loudly",
+            ..Default::default() },
+        RelDecl { name: "def_target".into(), cols: vec![
+            c("name", Type::Text), c("file", Type::Path), c("line", Type::Int), c("kind", Type::Text)],
+            group: "demand",
+            doc: "LSP go-to-definition sink: head def_target(name, file, line, kind) and textDocument/definition resolves a symbol reference to (file, line) by name; falls back to the module-edge specifier match when empty. Read by column name, so a subset written via named args works",
+            ..Default::default() },
+        RelDecl { name: "effect_cmd".into(), cols: vec![
+            c("kind", Type::Text), c("template", Type::Text)],
+            group: "demand",
+            doc: "effect-template overlay sink: head effect_cmd(kind, template) to override the shell command for an effect kind at drain time (dynamic per-kind template), read as the effect executor is built",
             ..Default::default() },
     ]
 }
@@ -3185,6 +3227,9 @@ impl Engine {
                 if MUTE_RELS.contains(&d.name.as_str()) {
                     bail!("diag_mute is the built-in diagnostic-mute set (code); it is written only by the LSP toggle command, never a rule — pick another name");
                 }
+                if DEMAND_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is a built-in demand sink (scip_want / rev_cmp_want / def_target / effect_cmd) — drop the `rel {}(...)` decl and head it directly from a rule, like diag/repo", d.name, d.name);
+                }
                 match closures.get(&d.name) {
                     Some(edge) => self.declare_closure(d, edge)?,
                     None => self.declare(d)?,
@@ -3226,6 +3271,7 @@ impl Engine {
         for d in hook_rel_decls() { self.declare(&d)?; }
         for d in diag_rel_decls() { self.declare(&d)?; }
         for d in diag_mute_rel_decls() { self.declare(&d)?; }
+        for d in demand_rel_decls() { self.declare(&d)?; }
         Ok(())
     }
 

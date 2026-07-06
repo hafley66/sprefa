@@ -389,7 +389,6 @@ fn definition_via_def_target_lands_at_real_line() {
         "match(f, rev, /fn (?<name>[a-z_]+)/, l).\n",
         // Phase E: the program drives go-to-def. type_entity populates because
         // the rule references it; def_target resolves each name to its def row.
-        "rel def_target(name: text, file: file, line: int, kind: text).\n",
         "def_target(name, f, l, \"fn\") <- type_entity(_, _, name, \"function\", _, f, l).\n",
     )).unwrap();
 
