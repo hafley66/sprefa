@@ -6,6 +6,38 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-06
+
+### Added
+- **`dl --settle` — run a program to a fixpoint.** A plain one-shot ticks once,
+  which leaves effectful (`@async`/`sh`/`sh*`), demand-tier (`scip_want`), and
+  `repo`-sink programs half-run — their requests stuck queued, their demanded
+  rows absent. `--settle` drives tick + off-tick effect drain in-process until
+  the program is quiescent (no non-timer rel moved, no `@next` carry staged, no
+  non-stream effect in-flight), then prints `?` once. It is the first non-daemon
+  path that runs the effect runtime. `--settle-max N` (default 200) bounds it; a
+  non-converging program bails loudly naming the still-moving rels/effects
+  instead of hanging. Recurring timers (`every`/`clock`/`@stream`) are steady
+  state and excluded, so a poller still settles at a quiet point.
+- **`dl --await-settle` + `await_quiescent` RPC.** The daemon-side twin: block on
+  a running daemon until its poll loop reaches the same quiescent state (exit 0
+  settled / 3 timed out). `ping` gains a `settled` field.
+- **`[[org]] dir=` multi-root config.** Point at a folder of checkouts and every
+  git repo under it expands, at load, into a `[[repos]]` entry (slug
+  `<dir-basename>/<path-under-dir>`, descent stops at each `.git`, an explicit
+  `[[repos]]` at the same root wins). `max_depth` (default 3) caps the walk; a
+  leading `~` in `dir` expands to `$HOME`. The declarative multi-root shape,
+  usable from one-shot / `--check` with no daemon — the single way to point `dl`
+  at an org-of-repos folder.
+
+### Changed
+- Documented the effect/settle model in `docs/daemon.md` (a "Running effectful
+  programs to completion" section) and `book/tutorial/12`.
+
+### Fixed
+- Two stale examples (`propose_demo`, `kernel_compare`) called the 1-arg
+  `scip_import::load`; updated to the 3-arg `(path, root, slug)` form.
+
 ## [0.5.0] - 2026-07-06
 
 ### Added
