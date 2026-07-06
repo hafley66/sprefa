@@ -6,6 +6,42 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-06
+
+### Added
+- **Learner GitBook** (`book/`, `.gitbook.yaml`). A `quickstart` (install → query
+  → CI gate against your own repo), a hands-on `tutorial` track (setup through a
+  server-made-of-rules, one lesson at a time, every transcript a real capture),
+  the existing theory + math tracks, and `what-if` essays (rendering HTML trees
+  from relations, the exits from stratification, bridging to v0's nested-block
+  DSL). Every list — `SUMMARY.md` zones, both track READMEs, `dl docs` indexes —
+  is spliced from one scan of `book/` by `gen-doc-indexes.dl`, with `--check`
+  drift rails.
+- **Turnkey VSCode extension install.** `dl setup --vscode` now builds a fresh
+  VSIX from `editors/vscode-dl` when run in a checkout (always current), falling
+  back to the VSIX embedded at build time for a prebuilt `dl`. It installs
+  uninstall-first to dodge the same-version reinstall no-op. A new `.dl/`
+  drift rail (`vsix-version-drift`) fails `dl --check` if the embedded VSIX
+  version and `editors/vscode-dl/package.json` disagree — the coupling that
+  silently rotted the embedded VSIX to 0.3.0.
+- **VSCode "Add Type Seed"** command + keybinding (extension 0.4.4).
+
+### Changed
+- **File-watcher scaling.** The daemon watcher now mirrors the scan corpus: a
+  shared `WatchGate` drops gitignored build output and `.git/objects` churn the
+  engine would never scan, watching `.git` only at the narrow
+  `HEAD`/`packed-refs`/`refs/` ref paths. Bursts coalesce through a quiet-period
+  debounce (was a fixed 150 ms drain); a dropped/overflowed event forces a loud
+  full-corpus recovery tick; and the idle timer resets only on events that
+  survive the gate, so a repo under pure build churn can finally idle out.
+
+### Fixed
+- **Deep-root daemon could not bind.** `<root>/.dl/daemon.sock` for a deeply
+  nested root overran the macOS `sun_path` cap (104 bytes), so `bind` failed and
+  every invocation fell back to in-process after the attach timeout. The socket
+  now relocates to a short hashed path under `$TMPDIR/dl-sock/` when the natural
+  path is too long; bind and every connect derive it from the same root.
+
 ## [0.4.4] - 2026-07-05
 
 ### Fixed
