@@ -473,7 +473,12 @@ impl Engine {
         }
         // The priming tick skips `?` evaluation: it exists only to derive the
         // coordinates a data-driven scan / repo-sink reads on the real tick.
-        if !self.prime_tick {
+        // A quiet tick (the daemon's reactive path) also skips PRINTING the
+        // query tables — the RPC `query` capture is the daemon's read path, so
+        // re-rendering every `?` table to daemon.log on each tick is pure noise
+        // that grows the log without bound. Foreground `dl prog.dl` / `--watch`
+        // pass quiet=false and still print.
+        if !self.prime_tick && !quiet {
             for item in &prog.items {
                 // Each `?` query is independent: a failed or malformed query
                 // (unknown rel, bad point-query shape) reports and the rest still
@@ -854,10 +859,15 @@ impl Engine {
             }
         }
         // Independent `?` queries: one failure reports and the chain continues.
-        for item in &prog.items {
-            if let Item::Query(q) = item {
-                if let Err(e) = self.run_query(q, &closures) {
-                    eprintln!("[dl] query `{}` failed: {e}", q.head.rel);
+        // Quiet (daemon reactive) ticks skip PRINTING — the RPC `query` capture
+        // is the read path; re-rendering the tables to daemon.log every tick is
+        // unbounded noise (see the full-tick loop above).
+        if !quiet {
+            for item in &prog.items {
+                if let Item::Query(q) = item {
+                    if let Err(e) = self.run_query(q, &closures) {
+                        eprintln!("[dl] query `{}` failed: {e}", q.head.rel);
+                    }
                 }
             }
         }

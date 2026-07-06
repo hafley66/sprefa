@@ -6,6 +6,22 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-07-06
+
+### Fixed
+- **daemon.log no longer floods**. Three per-tick spam sources were writing to
+  the log on every reactive wake-up (observed 3.9 MB / 118k lines):
+  (1) the tick re-rendered every `?` query table to stdout on each tick — now
+  suppressed on quiet (reactive) ticks; the RPC `query` capture is the daemon's
+  read path (foreground `dl prog.dl` / `--watch` still print). The daemon's
+  reactive tick calls now pass `quiet=true`, so the `[tick]` telemetry line is
+  suppressed too. (2) `load_repos_eager` printed `[config] N repo(s)
+  registered` on every call, and it is called from `on_git_event` (every `.git`
+  change) — silenced; the cold-serve path announces the count once. (3) the
+  `[daemon] git change` line logged even for pure metadata churn (`0 refs
+  advanced, 0 files`) — now only logs a real advance/diff. Plus a backstop:
+  a respawn starts the log fresh once it exceeds 8 MB.
+
 ## [0.6.4] - 2026-07-06
 
 ### Added

@@ -578,6 +578,7 @@ pub fn run_daemon(
     // scans / gen writes in loaded scripts then target each rule's own repo.
     if root.is_none() { eng.set_root_implicit(true); }
     let repos = load_repos_eager();
+    if !repos.is_empty() { eprintln!("[config] {} repo(s) registered", repos.len()); }
     eng.set_repos(repos.clone());
     eng.tick(&prog, false)?;
     let canon_files: Vec<PathBuf> = files
@@ -811,7 +812,7 @@ fn watcher_loop(d: Arc<Daemon>) {
         // Dropped/overflowed events: recover with a whole-corpus tick, loudly.
         if rescan {
             let tick_num = d.tick_count.load(Ordering::Relaxed);
-            match d.tick_full(false) {
+            match d.tick_full(true) {
                 Ok(()) => eprintln!("[daemon] tick #{tick_num} (rescan recovery) ok"),
                 Err(e) => eprintln!("[daemon] tick #{tick_num} (rescan recovery) error: {e}"),
             }
@@ -903,7 +904,12 @@ fn watcher_loop(d: Arc<Daemon>) {
         // metadata churn (no ref advance → empty diff) continues without a tick.
         if touches_git {
             let (n, changed) = d.on_git_event();
-            eprintln!("[daemon] git change — {n} ref(s) advanced, {} worktree file(s)", changed.len());
+            // Pure metadata churn (`.git` write with no ref advance and no
+            // worktree diff) is a no-op — don't log it, or the git-watch stream
+            // floods daemon.log. Only announce a real advance/diff.
+            if n > 0 || !changed.is_empty() {
+                eprintln!("[daemon] git change — {n} ref(s) advanced, {} worktree file(s)", changed.len());
+            }
             if changed.is_empty() { continue; }
             paths = changed;
         }
@@ -917,13 +923,13 @@ fn watcher_loop(d: Arc<Daemon>) {
             if let Err(e) = lock(&d.eng).save_repos_meta() {
                 eprintln!("[daemon] save_repos_meta: {e}");
             }
-            d.tick_full(false)
+            d.tick_full(true)
         } else if paths.is_empty() {
             tick_label = "empty event";
-            d.tick_full(false)
+            d.tick_full(true)
         } else {
             tick_label = "source change";
-            d.tick_paths(&paths, false)
+            d.tick_paths(&paths, true)
         };
         let n_paths = paths.len();
         let tick_num = d.tick_count.load(Ordering::Relaxed);
@@ -1596,8 +1602,18 @@ fn spawn_detached(root: &Path, program: Option<&str>) -> Result<()> {
         .context("locate current exe for daemon spawn")?;
     let log = root.join(".dl").join("daemon.log");
     if let Some(p) = log.parent() { std::fs::create_dir_all(p)?; }
+    // Backstop against unbounded growth: start a respawn's log fresh once it has
+    // grown past the cap (the reactive-tick path is quiet, so steady growth is
+    // just the one-line `[daemon] tick #N` heartbeat, but a long-lived storm or
+    // a chatty program can still accumulate). Truncate on respawn, else append.
+    const LOG_CAP_BYTES: u64 = 8 * 1024 * 1024;
+    let oversized = std::fs::metadata(&log).map(|m| m.len() > LOG_CAP_BYTES).unwrap_or(false);
     let log_file = std::fs::OpenOptions::new()
-        .create(true).append(true).open(&log)?;
+        .create(true)
+        .append(!oversized)
+        .write(oversized)
+        .truncate(oversized)
+        .open(&log)?;
     let stderr = log_file.try_clone()?;
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("--daemon").arg("--root").arg(root);
@@ -1691,12 +1707,12 @@ pub fn load(root: Option<&Path>, path: &str, mode: &str) -> Result<Response> {
 
 // ---------- small helpers shared with lib.rs ----------
 
+// Silent: called on every git event (`on_git_event` rebuilds the repo set to
+// diff refs), so an announcement here floods daemon.log. The cold-serve path
+// logs the count once; a config error still surfaces.
 fn load_repos_eager() -> Vec<config::RepoConfig> {
     match config::SprfConfig::load_default() {
-        Ok(cfg) if !cfg.repos.is_empty() => {
-            eprintln!("[config] {} repo(s) registered", cfg.repos.len());
-            cfg.repos
-        }
+        Ok(cfg) if !cfg.repos.is_empty() => cfg.repos,
         Ok(_) => Vec::new(),
         Err(e) => { eprintln!("[config] ignored: {e}"); Vec::new() }
     }
