@@ -1130,6 +1130,64 @@ fn ts_for_in_of(
 
 /// Post-order value flow for one TS expression. Returns the node id carrying
 /// its value, or a generic node when the variant isn't chased (conservative).
+/// `f(args)` / `recv.m(args)`: each argument flows into the call result, with
+/// `df_arg` recording its 0-based slot for the positional interprocedural hop.
+/// A member callee flows its receiver in at slot -1; a bare callee is the
+/// target, not a value in, so it is skipped. Shared by the plain-call arm and
+/// the optional-chained-call (`recv?.m()`) arm.
+fn ts_flow_call(
+    c: &ts_ast::CallExpression,
+    off: u32,
+    file: &str,
+    starts: &[usize],
+    fn_sym: &str,
+    scope: &mut std::collections::HashMap<String, String>,
+    out: &mut DataflowFacts,
+) -> String {
+    use ts_ast::Expression as E;
+    let recv = match &c.callee {
+        E::StaticMemberExpression(m) => Some(ts_flow_expr(&m.object, file, starts, fn_sym, scope, out)),
+        E::ComputedMemberExpression(m) => Some(ts_flow_expr(&m.object, file, starts, fn_sym, scope, out)),
+        _ => None,
+    };
+    let mut child_ids = Vec::new();
+    for arg in &c.arguments {
+        if let Some(id) = arg.as_expression() {
+            child_ids.push(ts_flow_expr(id, file, starts, fn_sym, scope, out));
+        }
+    }
+    let id = ts_push(out, file, starts, off, "call_res", "", fn_sym);
+    if let Some(r) = recv {
+        out.edges.push(DfEdge { from: r.clone(), to: id.clone() });
+        out.args.push((id.clone(), -1, r));
+    }
+    for (pos, cid) in child_ids.into_iter().enumerate() {
+        out.edges.push(DfEdge { from: cid.clone(), to: id.clone() });
+        out.args.push((id.clone(), pos as i64, cid));
+    }
+    id
+}
+
+/// `recv.prop` / `recv?.prop` / `recv[expr]`: the receiver flows into a
+/// `member` node whose var is the accessed name (empty for a computed access),
+/// so a `df_field` write of the same field name matches the read. Shared by
+/// the static/computed member arms and the optional-chained member arm.
+fn ts_flow_member(
+    object: &ts_ast::Expression,
+    prop: &str,
+    off: u32,
+    file: &str,
+    starts: &[usize],
+    fn_sym: &str,
+    scope: &mut std::collections::HashMap<String, String>,
+    out: &mut DataflowFacts,
+) -> String {
+    let obj = ts_flow_expr(object, file, starts, fn_sym, scope, out);
+    let id = ts_push(out, file, starts, off, "member", prop, fn_sym);
+    out.edges.push(DfEdge { from: obj, to: id.clone() });
+    id
+}
+
 fn ts_flow_expr(
     e: &ts_ast::Expression,
     file: &str,
@@ -1160,29 +1218,7 @@ fn ts_flow_expr(
         // recording its 0-based slot for the positional interprocedural hop.
         // A member callee `recv.m(a)` flows the receiver in at slot -1; a bare
         // callee is the target, not a value in, so it is skipped.
-        E::CallExpression(c) => {
-            let recv = match &c.callee {
-                E::StaticMemberExpression(m) => Some(ts_flow_expr(&m.object, file, starts, fn_sym, scope, out)),
-                E::ComputedMemberExpression(m) => Some(ts_flow_expr(&m.object, file, starts, fn_sym, scope, out)),
-                _ => None,
-            };
-            let mut child_ids = Vec::new();
-            for arg in &c.arguments {
-                if let Some(id) = arg.as_expression() {
-                    child_ids.push(ts_flow_expr(id, file, starts, fn_sym, scope, out));
-                }
-            }
-            let id = ts_push(out, file, starts, off, "call_res", "", fn_sym);
-            if let Some(r) = recv {
-                out.edges.push(DfEdge { from: r.clone(), to: id.clone() });
-                out.args.push((id.clone(), -1, r));
-            }
-            for (pos, cid) in child_ids.into_iter().enumerate() {
-                out.edges.push(DfEdge { from: cid.clone(), to: id.clone() });
-                out.args.push((id.clone(), pos as i64, cid));
-            }
-            id
-        }
+        E::CallExpression(c) => ts_flow_call(c, off, file, starts, fn_sym, scope, out),
         // `new Foo(args)`: an instantiation — a `new` node carrying the class
         // name, args recorded positionally like a call.
         E::NewExpression(n) => {
@@ -1247,18 +1283,8 @@ fn ts_flow_expr(
         // node; a static property records its name so a `df_field` write can
         // be matched against the read of the same field. oxc flattens
         // MemberExpression into StaticMemberExpression / ComputedMemberExpression.
-        E::StaticMemberExpression(m) => {
-            let obj = ts_flow_expr(&m.object, file, starts, fn_sym, scope, out);
-            let id = ts_push(out, file, starts, off, "member", &m.property.name, fn_sym);
-            out.edges.push(DfEdge { from: obj, to: id.clone() });
-            id
-        }
-        E::ComputedMemberExpression(m) => {
-            let obj = ts_flow_expr(&m.object, file, starts, fn_sym, scope, out);
-            let id = ts_push(out, file, starts, off, "member", "", fn_sym);
-            out.edges.push(DfEdge { from: obj, to: id.clone() });
-            id
-        }
+        E::StaticMemberExpression(m) => ts_flow_member(&m.object, &m.property.name, off, file, starts, fn_sym, scope, out),
+        E::ComputedMemberExpression(m) => ts_flow_member(&m.object, "", off, file, starts, fn_sym, scope, out),
         E::BinaryExpression(b) => {
             let l = ts_flow_expr(&b.left, file, starts, fn_sym, scope, out);
             let r = ts_flow_expr(&b.right, file, starts, fn_sym, scope, out);
@@ -1288,6 +1314,131 @@ fn ts_flow_expr(
             }
             None => ts_push(out, file, starts, off, "expr", "", fn_sym),
         },
+        // `(value)`: parens are preserved in the oxc AST (preserve_parens); the
+        // value is exactly the inner expression, so pass it through with no
+        // node of our own. Without this a parenthesized prop value
+        // (`prop={(cond ? a : b)}`) dead-ends at an unlinked `expr` node.
+        E::ParenthesizedExpression(p) => ts_flow_expr(&p.expression, file, starts, fn_sym, scope, out),
+        // `x as T`, `x satisfies T`, `x!`, `await x`: type-level / effect
+        // wrappers that are transparent to the runtime value — flow the inner
+        // expression straight through.
+        E::TSAsExpression(t) => ts_flow_expr(&t.expression, file, starts, fn_sym, scope, out),
+        E::TSSatisfiesExpression(t) => ts_flow_expr(&t.expression, file, starts, fn_sym, scope, out),
+        E::TSNonNullExpression(t) => ts_flow_expr(&t.expression, file, starts, fn_sym, scope, out),
+        E::AwaitExpression(a) => ts_flow_expr(&a.argument, file, starts, fn_sym, scope, out),
+        E::TSTypeAssertion(t) => ts_flow_expr(&t.expression, file, starts, fn_sym, scope, out),
+        E::TSInstantiationExpression(t) => ts_flow_expr(&t.expression, file, starts, fn_sym, scope, out),
+        // `obj?.title`, `handlers?.save()`: optional chaining wraps a member or
+        // call. It is transparent to the value — flow the underlying access the
+        // same way its unwrapped form would. `title={obj?.title}` is a routine
+        // prop shape the catch-all otherwise dropped.
+        E::ChainExpression(ch) => {
+            use ts_ast::ChainElement as CE;
+            use ts_ast::MemberExpression as ME;
+            match &ch.expression {
+                CE::CallExpression(c) => ts_flow_call(c, off, file, starts, fn_sym, scope, out),
+                other => match other.member_expression() {
+                    Some(ME::StaticMemberExpression(m)) => ts_flow_member(&m.object, &m.property.name, off, file, starts, fn_sym, scope, out),
+                    Some(ME::ComputedMemberExpression(m)) => ts_flow_member(&m.object, "", off, file, starts, fn_sym, scope, out),
+                    Some(ME::PrivateFieldExpression(m)) => ts_flow_member(&m.object, "", off, file, starts, fn_sym, scope, out),
+                    None => ts_push(out, file, starts, off, "expr", "", fn_sym),
+                },
+            }
+        }
+        // `x = y` as a value: the expression evaluates to the assigned value.
+        E::AssignmentExpression(a) => ts_flow_expr(&a.right, file, starts, fn_sym, scope, out),
+        // `[a, b, ...rest]`: a list value. Each element flows into an array
+        // `new` node (spread under ".."), so `items={[first, second]}` carries
+        // both elements. Holes in a sparse array carry nothing.
+        E::ArrayExpression(arr) => {
+            let mut child_ids: Vec<(String, String)> = Vec::new();
+            for el in &arr.elements {
+                match el {
+                    ts_ast::ArrayExpressionElement::SpreadElement(sp) => {
+                        let v = ts_flow_expr(&sp.argument, file, starts, fn_sym, scope, out);
+                        child_ids.push(("..".into(), v));
+                    }
+                    ts_ast::ArrayExpressionElement::Elision(_) => {}
+                    _ => {
+                        if let Some(e) = el.as_expression() {
+                            let v = ts_flow_expr(e, file, starts, fn_sym, scope, out);
+                            child_ids.push((String::new(), v));
+                        }
+                    }
+                }
+            }
+            let id = ts_push(out, file, starts, off, "new", "", fn_sym);
+            for (name, v) in child_ids {
+                out.edges.push(DfEdge { from: v.clone(), to: id.clone() });
+                if !name.is_empty() {
+                    out.fields.push((id.clone(), name, v));
+                }
+            }
+            id
+        }
+        // `test ? consequent : alternate`: the value is EITHER branch, so both
+        // flow into a `cond` node; `test` is a guard (walked for its own nested
+        // facts — a call in the test still records — but never edged in as a
+        // value). This is the common JSX prop shape `prop={ok ? a : b}`.
+        E::ConditionalExpression(c) => {
+            let _test = ts_flow_expr(&c.test, file, starts, fn_sym, scope, out);
+            let cons = ts_flow_expr(&c.consequent, file, starts, fn_sym, scope, out);
+            let alt = ts_flow_expr(&c.alternate, file, starts, fn_sym, scope, out);
+            let id = ts_push(out, file, starts, off, "cond", "", fn_sym);
+            out.edges.push(DfEdge { from: cons, to: id.clone() });
+            out.edges.push(DfEdge { from: alt, to: id.clone() });
+            id
+        }
+        // `left && right`, `left || right`, `left ?? right`: short-circuit
+        // logic. For `&&` the value is `right` (left is a truthiness guard); for
+        // `||` / `??` the value is EITHER operand. `cond && <Foo/>` and
+        // `value ?? fallback` are both routine prop shapes. Walk the guard for
+        // its nested facts even when it isn't edged in.
+        E::LogicalExpression(b) => {
+            use ts_ast::LogicalOperator as Op;
+            let l = ts_flow_expr(&b.left, file, starts, fn_sym, scope, out);
+            let r = ts_flow_expr(&b.right, file, starts, fn_sym, scope, out);
+            let id = ts_push(out, file, starts, off, "logic", "", fn_sym);
+            if matches!(b.operator, Op::Or | Op::Coalesce) {
+                out.edges.push(DfEdge { from: l, to: id.clone() });
+            }
+            out.edges.push(DfEdge { from: r, to: id.clone() });
+            id
+        }
+        // `(a, b, c)`: the value is the LAST expression; earlier ones are
+        // evaluated for effect (walked, not edged in).
+        E::SequenceExpression(s) => {
+            let mut last = ts_push(out, file, starts, off, "expr", "", fn_sym);
+            for sub in &s.expressions {
+                last = ts_flow_expr(sub, file, starts, fn_sym, scope, out);
+            }
+            last
+        }
+        // `` `hello ${name}, you have ${count}` ``: a string built from its
+        // interpolations — each `${...}` value flows into a `template` node,
+        // the same shape as a concatenation. `title={`Hi ${secret}`}` then
+        // carries `secret` into the prop.
+        E::TemplateLiteral(t) => {
+            let id = ts_push(out, file, starts, off, "template", "", fn_sym);
+            for sub in &t.expressions {
+                let v = ts_flow_expr(sub, file, starts, fn_sym, scope, out);
+                out.edges.push(DfEdge { from: v, to: id.clone() });
+            }
+            id
+        }
+        // `` styled.div`color: ${c}` ``, `` sql`... ${id}` ``: a call in tagged
+        // costume — tag(quasis, ...exprs). The tag can transform, but the
+        // conservative value carries each interpolation through, matching the
+        // plain-template treatment. The tag itself is walked for its own facts.
+        E::TaggedTemplateExpression(t) => {
+            let _tag = ts_flow_expr(&t.tag, file, starts, fn_sym, scope, out);
+            let id = ts_push(out, file, starts, off, "template", "", fn_sym);
+            for sub in &t.quasi.expressions {
+                let v = ts_flow_expr(sub, file, starts, fn_sym, scope, out);
+                out.edges.push(DfEdge { from: v, to: id.clone() });
+            }
+            id
+        }
         // template strings, control flow, remaining variants: mint a node,
         // don't chase. Conservative — may miss, never invents.
         _ => ts_push(out, file, starts, off, "expr", "", fn_sym),

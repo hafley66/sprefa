@@ -6,6 +6,31 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-07-06
+
+### Added
+- **JSX/TSX prop-value dataflow** now chases the expression shapes that
+  previously dead-ended at an unlinked node, so `df_field` prop values flow in
+  both diet-SCIP and SCIP modes: conditional (`ok ? a : b` — both branches),
+  logical (`a && b` flows the value side, `a || b` / `a ?? b` flow both;
+  the `&&` guard is excluded), parenthesized, template + tagged-template
+  interpolations, optional chaining (`obj?.title`), arrays (`[a, b, ...rest]`),
+  sequence, assignment value, and the transparent TS casts (`as` / `satisfies`
+  / `<T>x` / `x!` / `f<T>` / `await`). `UnaryExpression` is a deliberate
+  non-flow (a `!x` value is a fresh boolean). The call/member arms were
+  factored into `ts_flow_call` / `ts_flow_member` so optional-chained calls and
+  members reuse the exact positional-`df_arg` and member-name logic.
+- **Flow-panel saved queries**: name any node/edge SQL and store it locally;
+  saved queries appear under a "Saved" group in the preset dropdown and render
+  in both the graph and list views (same node/edge path as the built-in
+  presets). vsix bumped to 0.4.6.
+
+### Fixed
+- **`.dl` discovery walks the ancestry**: a subdir with no `.dl/` inherits the
+  nearest ancestor's chain, and every `.dl/` up to (and not past) the git root
+  merges into one program. Unblocks `--lsp` when the editor opens a nested
+  folder whose parent holds the `.dl/`. No new flag.
+
 ## [0.6.2] - 2026-07-06
 
 ### Added

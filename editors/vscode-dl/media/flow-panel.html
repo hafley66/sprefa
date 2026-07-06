@@ -445,6 +445,11 @@
   </select></div>
   <div class="row"><label>nodes</label><input id="nodesSql" spellcheck="false" /></div>
   <div class="row"><label>edges</label><input id="edgesSql" spellcheck="false" /></div>
+  <div class="row"><label>saved</label>
+    <input id="saveName" placeholder="name this query…" spellcheck="false" style="flex:0 0 140px" />
+    <button id="saveBtn" title="save the current nodes/edges SQL under this name (persists locally; appears in the preset list, renders in graph OR list)">save</button>
+    <button id="delBtn" title="delete the selected saved query">del</button>
+  </div>
   <div class="row layers" id="layerRow"><label>layers</label><div id="layerList"></div><button class="layer-refresh" id="layerRefresh" title="re-scan schema for new _node/_edge rels">↻</button></div>
   <div class="row legend" id="legend"></div>
   <div class="row legend" id="diffLegend" hidden></div>
@@ -742,6 +747,48 @@ const PRESETS = {
 const PRESET_KEY = 'dl-flow-preset';
 let currentPreset = 'typeAll';
 
+// ── saved queries: a named library of node/edge SQL pairs ────────────────────
+// The built-in presets are hardcoded SQL blocks; these are the user's OWN. A
+// saved query is just the current `nodes`/`edges` SQL under a name, persisted to
+// localStorage and injected as a <optgroup> in the preset dropdown. It renders
+// through the exact same node/edge path as any preset, so it works in BOTH the
+// graph and list views for free. Value form in the dropdown is `saved:<name>`.
+const SAVED_KEY = 'dl-saved-queries';
+function loadSaved() {
+  try { const a = JSON.parse(readLocalStorage(SAVED_KEY) || '[]'); return Array.isArray(a) ? a : []; }
+  catch (e) { return []; }
+}
+function writeSaved(list) { writeLocalStorage(SAVED_KEY, JSON.stringify(list)); }
+/// Rebuild the "Saved" optgroup from localStorage (hidden when empty).
+function renderSavedOptions() {
+  const sel = document.getElementById('presetSel');
+  let grp = document.getElementById('savedGroup');
+  if (!grp) {
+    grp = document.createElement('optgroup');
+    grp.id = 'savedGroup';
+    grp.label = 'Saved';
+    const customOpt = [...sel.options].find(o => o.value === 'custom') || null;
+    sel.insertBefore(grp, customOpt);
+  }
+  grp.innerHTML = '';
+  for (const q of loadSaved()) {
+    const o = document.createElement('option');
+    o.value = 'saved:' + q.name;
+    o.textContent = q.name;
+    grp.appendChild(o);
+  }
+  grp.style.display = grp.children.length ? '' : 'none';
+}
+/// Load a saved query's SQL into the inputs (does not run).
+function applySaved(name) {
+  const q = loadSaved().find(x => x.name === name);
+  if (!q) return false;
+  document.getElementById('nodesSql').value = q.nodes;
+  document.getElementById('edgesSql').value = q.edges || '';
+  document.getElementById('saveName').value = q.name;
+  return true;
+}
+
 // ── schema-driven layer discovery ───────────────────────────────────────────
 // The panel discovers graph layers by querying the daemon's SQLite schema for
 // rel_<name>_node / rel_<name>_edge pairs. Each pair is a toggleable layer;
@@ -981,10 +1028,14 @@ function onProtoToggle(key) {
 document.getElementById('nodesSql').value = DEFAULT_NODES;
 document.getElementById('edgesSql').value = DEFAULT_EDGES;
 
+renderSavedOptions(); // build the "Saved" optgroup so the restore below can select one
 (function restorePreset() {
   let saved = null;
   try { saved = JSON.parse(readLocalStorage(PRESET_KEY) || 'null'); } catch (e) { /* ignore */ }
-  if (saved && saved.preset === 'custom' && typeof saved.nodes === 'string') {
+  if (saved && typeof saved.preset === 'string' && saved.preset.startsWith('saved:')
+      && applySaved(saved.preset.slice(6))) {
+    currentPreset = saved.preset;
+  } else if (saved && saved.preset === 'custom' && typeof saved.nodes === 'string') {
     document.getElementById('nodesSql').value = saved.nodes;
     document.getElementById('edgesSql').value = saved.edges || '';
     currentPreset = 'custom';
@@ -3079,6 +3130,11 @@ function savePreset() {
   }
 }
 document.getElementById('presetSel').addEventListener('change', function () {
+  if (this.value.startsWith('saved:')) {
+    activeLayers.clear(); renderLayerList();
+    if (applySaved(this.value.slice(6))) { currentPreset = this.value; savePreset(); run(); }
+    return;
+  }
   if (this.value === 'layers') { currentPreset = 'layers'; runLayers(); return; }
   activeLayers.clear();
   renderLayerList();
@@ -3089,6 +3145,30 @@ document.getElementById('presetSel').addEventListener('change', function () {
   currentPreset = this.value;
   savePreset();
   run();
+});
+document.getElementById('saveBtn').addEventListener('click', () => {
+  const name = document.getElementById('saveName').value.trim();
+  if (!name) { showError('name the query before saving'); return; }
+  const list = loadSaved().filter(q => q.name !== name); // upsert by name
+  list.push({ name,
+    nodes: document.getElementById('nodesSql').value,
+    edges: document.getElementById('edgesSql').value });
+  list.sort((a, b) => a.name.localeCompare(b.name));
+  writeSaved(list);
+  renderSavedOptions();
+  document.getElementById('presetSel').value = 'saved:' + name;
+  currentPreset = 'saved:' + name;
+  savePreset();
+  clearError();
+});
+document.getElementById('delBtn').addEventListener('click', () => {
+  const v = document.getElementById('presetSel').value;
+  if (!v.startsWith('saved:')) { showError('pick a saved query to delete'); return; }
+  writeSaved(loadSaved().filter(q => q.name !== v.slice(6)));
+  renderSavedOptions();
+  currentPreset = 'custom';
+  document.getElementById('presetSel').value = 'custom';
+  savePreset();
 });
 for (const id of ['nodesSql', 'edgesSql']) {
   const el = document.getElementById(id);

@@ -53,13 +53,32 @@ use std::path::{Path, PathBuf};
 /// by checking nothing.
 pub fn resolve_programs(programs: &[String], root: &Path) -> Result<Vec<PathBuf>> {
     if !programs.is_empty() { return Ok(programs.iter().map(PathBuf::from).collect()); }
-    let dir = root.join(".dl");
-    let rd = std::fs::read_dir(&dir)
-        .map_err(|_| anyhow::anyhow!("no program argument and no {} directory", dir.display()))?;
-    let mut files: Vec<PathBuf> = rd.flatten().map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "dl")).collect();
-    if files.is_empty() { anyhow::bail!("no .dl files in {}", dir.display()); }
-    files.sort();
+    // Discover the `.dl` CHAIN: `<root>/.dl` plus any `.dl/` in ancestors, up to
+    // and including the nearest git root (the natural workspace boundary). A
+    // plain repo root collects one dir and stops at its own `.git`, byte-for-byte
+    // the old behavior; a nested folder inherits the repo-root rails above it.
+    // Merged outermost-first so a nearer `.dl` layers over (and can override) the
+    // rails it sits inside.
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for anc in root.ancestors() {
+        let d = anc.join(".dl");
+        if d.is_dir() { dirs.push(d); }
+        if anc.join(".git").exists() { break; } // a root: stop the walk (inclusive)
+    }
+    if dirs.is_empty() {
+        anyhow::bail!("no program argument and no .dl/ directory in {} or any ancestor up to the repo root", root.display());
+    }
+    dirs.reverse(); // outermost first
+    let mut files: Vec<PathBuf> = Vec::new();
+    for dir in &dirs {
+        let mut in_dir: Vec<PathBuf> = std::fs::read_dir(dir).into_iter().flatten().flatten()
+            .map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "dl")).collect();
+        in_dir.sort();
+        files.extend(in_dir);
+    }
+    if files.is_empty() {
+        anyhow::bail!("no .dl files in the .dl chain from {}", root.display());
+    }
     Ok(files)
 }
 

@@ -108,8 +108,8 @@ fn print_help() {
 /// no source tree (mirrors the SKILL_MD / starter embedding). Rebuild + bump:
 /// `(cd editors/vscode-dl && npm run compile && npx vsce package)`, then point
 /// this at the new VSIX. The committed VSIX is the install artifact.
-const VSCODE_VSIX: &[u8] = include_bytes!("../editors/vscode-dl/dl-lsp-0.4.5.vsix");
-const VSCODE_VSIX_NAME: &str = "dl-lsp-0.4.5.vsix";
+const VSCODE_VSIX: &[u8] = include_bytes!("../editors/vscode-dl/dl-lsp-0.4.6.vsix");
+const VSCODE_VSIX_NAME: &str = "dl-lsp-0.4.6.vsix";
 
 /// `dl setup --vscode`: install the dl LSP VSCode extension via the `code` CLI.
 /// The extension starts `dl --root <workspace> --lsp` and proxies LSP over

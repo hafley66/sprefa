@@ -21,6 +21,7 @@ mod perf_rels;
 mod scoped_tick;
 mod settle;
 mod magic_rel_audit;
+mod dl_chain_discovery;
 mod cmd_op;
 mod comment_op;
 mod comment_node;

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Trailer for `dl --help`: the five pre-clap subcommands (clap never sees
 /// them, so list them by hand) plus where to read more.
@@ -35,7 +35,10 @@ struct Cli {
     #[arg(long, help_heading = "Output & storage")]
     db: Option<String>,
     /// Source root. When omitted, defaults to the nearest `.git` ancestor of
-    /// the program file (the repo it lives in), else the current directory.
+    /// the program file (the repo it lives in), else the current directory. In
+    /// discovery mode (no program file) a root with no `.dl/` walks up to the
+    /// nearest ancestor that has one, so an editor opened on a subdir inherits
+    /// the workspace rails.
     #[arg(long, help_heading = "Output & storage")]
     root: Option<PathBuf>,
     /// Re-tick on file changes in the source root (in-process watcher, the
@@ -172,22 +175,41 @@ struct Cli {
 /// `--root` is given, walk up from cwd to find the nearest `.dl/`
 /// directory and use its parent — the tray auto-discovers its workspace.
 /// Otherwise default to the repo the program file lives in (nearest `.git`
-/// ancestor of its dir), falling back to the current directory.
+/// ancestor of its dir), falling back to the current directory. Finally, in
+/// discovery mode (no positional program — `--lsp`, `--check`, a bare `dl`) a
+/// resolved root with no `.dl/` walks up to the nearest ancestor that has one,
+/// so an editor opened on a subdir (the vscode ext passes the workspace folder
+/// as `--root`) inherits the workspace rails instead of failing "no .dl".
 fn resolve_root(cli: &Cli) -> Result<PathBuf> {
-    if let Some(r) = &cli.root {
-        return Ok(r.canonicalize()?);
+    let raw = if let Some(r) = &cli.root {
+        r.canonicalize()?
+    } else if cli.tray && find_workspace_root().is_some() {
+        return Ok(find_workspace_root().unwrap());
+    } else {
+        let base = cli.programs.first().map(|s| s.as_str())
+            .and_then(|p| std::fs::canonicalize(p).ok())
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .map(Ok)
+            .unwrap_or_else(std::env::current_dir)?;
+        sprefa_v5::repo::nearest_git(&base).unwrap_or(base)
+    };
+    // Discovery mode (no positional program — the vscode ext's `--root <folder>
+    // --lsp`, or a bare `dl` in a repo): the root must OWN a `.dl/`. When the
+    // opened folder is a subdir with none, walk up to the nearest ancestor that
+    // has one so it inherits the workspace rails instead of failing "no .dl".
+    // With an explicit program, respect the root exactly.
+    if cli.programs.is_empty() {
+        return Ok(nearest_dl_ancestor(&raw).unwrap_or(raw));
     }
-    if cli.tray {
-        if let Some(root) = find_workspace_root() {
-            return Ok(root);
-        }
-    }
-    let base = cli.programs.first().map(|s| s.as_str())
-        .and_then(|p| std::fs::canonicalize(p).ok())
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .map(Ok)
-        .unwrap_or_else(std::env::current_dir)?;
-    Ok(sprefa_v5::repo::nearest_git(&base).unwrap_or(base))
+    Ok(raw)
+}
+
+/// If `dir` has no `.dl/`, the nearest ancestor that does (the `.dl` chain's
+/// innermost root). `None` when `dir` itself owns a `.dl/` (use it as-is) or no
+/// ancestor has one (caller keeps `dir`; discovery then errors loudly).
+fn nearest_dl_ancestor(dir: &Path) -> Option<PathBuf> {
+    if dir.join(".dl").is_dir() { return None; }
+    dir.ancestors().find(|a| a.join(".dl").is_dir()).map(|a| a.to_path_buf())
 }
 
 /// Walk up from cwd, looking for a `.dl/` directory. Return its parent

@@ -124,6 +124,93 @@ fn jsx_props_flow_into_the_component_by_name() {
     );
 }
 
+/// Conditional / logical / parenthesized prop values dataflow through to the
+/// component. `title={ok ? secret : fallback}` must carry BOTH branch reads;
+/// `subtitle={secret ?? backup}` carries both `??` operands; `note={(guarded
+/// && secret)}` carries the `&&` VALUE (`secret`) through the parens but NOT
+/// the guard (`guarded`). Without the expression arms these prop values
+/// dead-end at an unlinked `expr` node and nothing reaches the param.
+#[test]
+fn jsx_conditional_and_logical_prop_values_flow_through() {
+    let d = sandbox("exprs");
+    fs::write(
+        d.join("src/app.tsx"),
+        "function Card({title, subtitle, note, label, opt, items}: any) {\n    \
+             return <div>{title}{subtitle}{note}{label}{opt}{items}</div>;\n\
+         }\n\
+         function App(secret: string, fallback: string, backup: string, ok: boolean, guarded: boolean, bag: any, first: string) {\n    \
+             return <Card title={ok ? secret : fallback} subtitle={secret ?? backup} note={(guarded && secret)} label={`hi ${secret}`} opt={bag?.secret} items={[first, secret]} />;\n\
+         }\n",
+    )
+    .unwrap();
+
+    // Self-contained reach program: the JSX prop hop from flow-jsx.dl, unioned
+    // into std/flow.dl's flow_edge, then a seeded transitive reach so a named
+    // source read reaching a resolved prop target proves the branch flowed.
+    let prog = r#"
+use "std/flow.dl".
+rel src(p: file).
+src(p) <- scan("WORK", "src/**/*.{ts,tsx}", p, rev).
+
+rel prop_edge(value: text, comp: text, prop: text, target: text).
+prop_edge(value, comp, prop, target) <-
+    df_node(elem, "new", comp, caller_bare, _, _),
+    df_field(elem, prop, value),
+    call_edge_bare(caller_bare, callee_bare, _, callee_q),
+    call_name(callee_q, comp),
+    df_node(target, "param", prop, callee_bare, _, _).
+flow_edge(value, target) <- prop_edge(value, _, _, target).
+
+rel reach(from: text, to: text).
+reach(a, b) <- flow_edge(a, b).
+reach(a, c) <- reach(a, b), flow_edge(b, c).
+
+rel src_read(id: text, name: text).
+src_read(id, name) <- df_node(id, "var_read", name, _, _, _).
+
+rel prop_reaches(name: text, comp: text, prop: text).
+prop_reaches(name, comp, prop) <-
+    src_read(from, name),
+    reach(from, target),
+    prop_edge(_, comp, prop, target).
+
+? prop_reaches(name, comp, prop).
+"#;
+    fs::write(d.join("p.dl"), prog).unwrap();
+    let out = Command::new(DL)
+        .arg(d.join("p.dl"))
+        .args(["--root", d.to_str().unwrap(), "--db", d.join("db").to_str().unwrap()])
+        .output()
+        .expect("run dl");
+    let code = out.status.code().unwrap_or(-1);
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(code, 0, "must not error:\n{stderr}");
+
+    let secs = sections(&stdout);
+    let reaches = rows(&secs[0]);
+    let hit = |name: &str, prop: &str| {
+        reaches.iter().any(|r| r.len() >= 3 && r[0] == name && r[1] == "Card" && r[2] == prop)
+    };
+    // Conditional: both branches reach the title prop.
+    assert!(hit("secret", "title"), "conditional consequent must flow to title:\n{stdout}");
+    assert!(hit("fallback", "title"), "conditional alternate must flow to title:\n{stdout}");
+    // `??`: both operands reach subtitle.
+    assert!(hit("secret", "subtitle"), "?? left must flow to subtitle:\n{stdout}");
+    assert!(hit("backup", "subtitle"), "?? right must flow to subtitle:\n{stdout}");
+    // `(guarded && secret)`: the value (`secret`) flows through the parens.
+    assert!(hit("secret", "note"), "&& value must flow through parens to note:\n{stdout}");
+    // `` `hi ${secret}` ``: the interpolation flows through the template.
+    assert!(hit("secret", "label"), "template interpolation must flow to label:\n{stdout}");
+    // `bag?.secret`: optional chaining is transparent to the base object.
+    assert!(hit("bag", "opt"), "optional-chain base must flow to opt:\n{stdout}");
+    // `[first, secret]`: both array elements flow through.
+    assert!(hit("first", "items"), "array element must flow to items:\n{stdout}");
+    assert!(hit("secret", "items"), "array element must flow to items:\n{stdout}");
+    // DECISIVE negative: `&&` left is a truthiness guard, not a value.
+    assert!(!hit("guarded", "note"), "&& guard must NOT flow as a value:\n{stdout}");
+}
+
 /// The member-read target shape: a component that keeps `props` whole and
 /// reads `props.title` still receives the flow (df_node member var carries
 /// the accessed name; the second prop_edge rule matches it).
