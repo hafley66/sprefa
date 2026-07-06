@@ -423,6 +423,9 @@
   <div class="row"><label>preset</label><select id="presetSel" title="panel preset">
     <option value="typeAll">Type graph (all)</option>
     <option value="typeCurated">Type graph (curated)</option>
+    <option value="typeRefs">Type references</option>
+    <option value="typeNeighbors">Type neighbors</option>
+    <option value="prGraph">PR graph (GraphQL)</option>
     <option value="marks">Marks</option>
     <option value="enumMatches">Enums ↔ matches</option>
     <option value="madge">Module graph</option>
@@ -520,6 +523,9 @@
     <table>
       <tr><td>Type graph (all)</td><td>every <code>rel_type_entity</code> node, every <code>rel_type_link</code> edge — the full cross-file type graph</td></tr>
       <tr><td>Type graph (curated)</td><td>a hand-filtered subset via <code>rel_panel_node</code>/<code>rel_panel_edge</code> (.dl/flow-panel.dl)</td></tr>
+      <tr><td>Type references</td><td>every type owner + its members (methods/fns/consts + fields) edged by <code>rel_type_link</code> only — impl/uses/param/returns/field/generic, <b>no</b> call_edge or df_* (the callsite-free cut of memberFlow); kind chips isolate one edge kind</td></tr>
+      <tr><td>Type neighbors</td><td>1-hop neighborhood of a <code>type_seed</code> fact (<code>cmd+alt+t</code> writes one): seed + its impls + direct type refs (both directions) + those refs' own impls; empty until seeded (<code>rel_type_neighbor_node</code>/<code>rel_type_neighbor_edge</code>, .dl/flow-panel.dl)</td></tr>
+      <tr><td>PR graph (GraphQL)</td><td>open PRs + authors + head branches from one <code>gh api graphql</code> call (<code>rel_graph_node</code>/<code>rel_graph_edge</code>, .dl/git-graph.dl); edit <code>gh_owner</code>/<code>gh_name</code> facts for your repo; needs <code>gh</code> authed + the daemon for the <code>sh</code> effect to drain</td></tr>
       <tr><td>Marks</td><td>marked terms + selector nodes from <code>rel_mark</code>/<code>rel_mark_selector</code>, edged by <code>rel_mark_flow</code> plus selector→mark "covers" (.dl/mark-lens.dl)</td></tr>
       <tr><td>Enums ↔ matches</td><td>enum <code>rel_type_entity</code> rows edged to their <code>rel_enum_match_block</code> match-arm sites (.dl/enum-matches.dl)</td></tr>
       <tr><td>Module graph</td><td><code>rel_module_node</code> files edged by <code>rel_module_edge</code> imports</td></tr>
@@ -650,6 +656,30 @@ const PRESETS = {
   typeCurated: {
     nodes: `SELECT sym, name, kind, ${REPO_FILE_COL}, line FROM rel_panel_node`,
     edges: "SELECT src, dst, kind FROM rel_panel_edge",
+  },
+  // Static type graph, no runtime layer: every type_entity owner + its members
+  // (methods/fns/consts + fields) as nodes, type_link (impl/uses/param/returns/
+  // field/generic) as edges. No call_edge, no df_* — the callsite-free cut of
+  // memberFlow. Use the kind-filter chips to isolate one kind (e.g. impl, uses).
+  typeRefs: {
+    nodes: `SELECT sym, name, kind, ${REPO_FILE_COL}, line, parent FROM rel_type_refs_node`,
+    edges: "SELECT src, dst, kind FROM rel_type_refs_edge",
+  },
+  // 1-hop neighborhood of a type_seed fact (.dl/type-seed.dl, written by the
+  // dl.typeSeed command, cmd+alt+t): the seed owner + its members + direct
+  // type_link neighbors (both directions) + those neighbors' own members.
+  // Empty until a seed is written; switch to "Type references" for the whole
+  // graph.
+  typeNeighbors: {
+    nodes: `SELECT sym, name, kind, ${REPO_FILE_COL}, line, parent FROM rel_type_neighbor_node`,
+    edges: "SELECT src, dst, kind FROM rel_type_neighbor_edge",
+  },
+  // GitHub PR graph from one GraphQL query (.dl/git-graph.dl): PR + author +
+  // branch nodes, opened/head edges. Edit gh_owner/gh_name facts in that file
+  // for your repo. Empty until the sh effect drains (needs the daemon + gh auth).
+  prGraph: {
+    nodes: "SELECT id, label, kind, NULL, NULL FROM rel_graph_node",
+    edges: "SELECT src, dst, kind FROM rel_graph_edge",
   },
   marks: {
     nodes: "SELECT marked, marked, 'mark', path, line FROM rel_mark UNION ALL " +

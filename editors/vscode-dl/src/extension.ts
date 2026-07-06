@@ -68,6 +68,8 @@ export function activate(ctx: vscode.ExtensionContext): void {
   }));
   ctx.subscriptions.push(vscode.commands.registerCommand("dl.markSelection", () => addMark(root)));
   ctx.subscriptions.push(vscode.commands.registerCommand("dl.clearMarks", () => clearMarks(root)));
+  ctx.subscriptions.push(vscode.commands.registerCommand("dl.typeSeed", () => addTypeSeed(root)));
+  ctx.subscriptions.push(vscode.commands.registerCommand("dl.clearTypeSeeds", () => clearTypeSeeds(root)));
   ctx.subscriptions.push(vscode.commands.registerCommand("dl.pickDiagCode", () => toggleDiagCode()));
 
   // marked-line decorations: left stripe + overview-ruler tick, re-read from
@@ -127,6 +129,40 @@ function clearMarks(root: string): void {
   fs.writeFileSync(marksPath(root), MARKS_HEADER);
   refreshMarkDecorations(root, false);
   vscode.window.setStatusBarMessage("dl marks cleared", 3000);
+}
+
+// ── type seeds: a selected type name -> a type_seed fact the "Type neighbors"
+//    panel preset joins against. Same shape as marks (facts-only file, decl
+//    lives in .dl/flow-panel.dl so an empty file is harmless). The seed
+//    resolves to sym(s) by type_entity name inside dl, so the editor writes the
+//    bare selected text — no sym lookup or LSP round-trip needed here.
+
+const TYPE_SEEDS_HEADER =
+  "# type-seed.dl — written by the dl VS Code extension (dl.typeSeed / cmd+alt+t).\n" +
+  "# Facts only; `rel type_seed(seed: text).` is declared in flow-panel.dl.\n";
+
+function typeSeedsPath(root: string): string {
+  return path.join(root, ".dl", "type-seed.dl");
+}
+
+function addTypeSeed(root: string): void {
+  const ed = vscode.window.activeTextEditor;
+  if (!ed) return;
+  const sel = ed.selection;
+  const text = (sel.isEmpty
+    ? ed.document.getText(ed.document.getWordRangeAtPosition(sel.active))
+    : ed.document.getText(sel)).trim();
+  if (!text) { void vscode.window.showWarningMessage("dl: nothing selected to seed"); return; }
+  const fact = `type_seed(${JSON.stringify(text)}).\n`;
+  const p = typeSeedsPath(root);
+  const cur = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : TYPE_SEEDS_HEADER;
+  if (!cur.includes(fact)) fs.writeFileSync(p, cur + fact);
+  vscode.window.setStatusBarMessage(`dl type seed: ${text}`, 3000);
+}
+
+function clearTypeSeeds(root: string): void {
+  fs.writeFileSync(typeSeedsPath(root), TYPE_SEEDS_HEADER);
+  vscode.window.setStatusBarMessage("dl type seeds cleared", 3000);
 }
 
 // ── mark line decorations: stripe + ruler tick on every marked line ─────────

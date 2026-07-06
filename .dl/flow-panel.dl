@@ -448,3 +448,68 @@ trace_step_not_min(seed, sym, d) <-
 rel trace_step(seed: text, sym: text, d: int).
 trace_step(seed, sym, d) <-
   trace_step_sym_raw(seed, sym, d), !trace_step_not_min(seed, sym, d).
+
+# Type references + type neighbors — two static-type presets that exclude the
+# runtime layer (call_edge, df_*). `type_seed` facts are written by the VS Code
+# extension (dl.typeSeed, cmd+alt+t) into .dl/type-seed.dl; the decl lives here
+# so the program loads cleanly with no seeds, same pattern as mark/mark-lens.dl.
+#
+# Panel SQL (dl: Flow Panel):
+#   preset "Type references":
+#     nodes: SELECT sym, name, kind, file, line, parent FROM rel_type_refs_node
+#     edges: SELECT src, dst, kind FROM rel_type_refs_edge
+#   preset "Type neighbors":
+#     nodes: SELECT sym, name, kind, file, line, parent FROM rel_type_neighbor_node
+#     edges: SELECT src, dst, kind FROM rel_type_neighbor_edge
+#
+# member_node (above) already mints owners + methods/fns/consts + fields; the
+# field rows ride df_field ctor fills to LOCATE the field's decl line, but the
+# edge set below stays static (type_link only), so no fill/read/call edges show.
+rel type_seed(seed: text).
+
+# L1: every type_entity owner + its members (methods/fns/consts + fields),
+# minus the param/ret port nodes (those exist only for the node-editor port
+# view; type_link's param/returns edges land fn->type directly, so dropping the
+# port nodes loses no type references).
+rel type_refs_node(sym: text, name: text, kind: text, file: file, line: int, parent: text).
+type_refs_node(sym, name, kind, file, line, parent) <-
+  member_node(sym, name, kind, file, line, parent),
+  kind != "param", kind != "ret".
+
+rel type_refs_edge(src: text, dst: text, kind: text).
+type_refs_edge(src, dst, kind) <-
+  type_link(src, dst, kind),
+  type_refs_node(sym: src),
+  type_refs_node(sym: dst).
+
+# L2: bounded neighborhood of a seeded type. type_nb_hop carries a depth so the
+# closure halts: d0 = seed owner + its members; d1 = direct type_link neighbors
+# (both directions) + their members. The `d < 1` cap keeps this to the seed's
+# immediate world ("a struct, its impls, the types it references, who
+# references it, and those types' own impls"); raise to `d < 2` for one more
+# hop. Membership is gated by type_refs_node, so a non-scanned hub type
+# (String, Vec, an external crate) halts expansion at that edge.
+rel type_nb_hop(sym: text, depth: int).
+type_nb_hop(owner, 0) <-
+  type_seed(seed_name), type_entity(sym: owner, name: seed_name).
+type_nb_hop(member, d) <-
+  type_nb_hop(owner, d), type_refs_node(sym: member, parent: owner).
+type_nb_hop(neighbor, d + 1) <-
+  type_nb_hop(seen, d), type_link(src: seen, dst: neighbor),
+  type_refs_node(sym: neighbor), d < 1.
+type_nb_hop(neighbor, d + 1) <-
+  type_nb_hop(seen, d), type_link(src: neighbor, dst: seen),
+  type_refs_node(sym: neighbor), d < 1.
+
+rel type_nb_seen(sym: text).
+type_nb_seen(sym) <- type_nb_hop(sym, _).
+
+rel type_neighbor_node(sym: text, name: text, kind: text, file: file, line: int, parent: text).
+type_neighbor_node(sym, name, kind, file, line, parent) <-
+  type_nb_seen(sym), type_refs_node(sym, name, kind, file, line, parent).
+
+rel type_neighbor_edge(src: text, dst: text, kind: text).
+type_neighbor_edge(src, dst, kind) <-
+  type_link(src, dst, kind),
+  type_nb_seen(sym: src),
+  type_nb_seen(sym: dst).

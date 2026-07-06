@@ -1,0 +1,5 @@
+# type-seed.dl — written by the dl VS Code extension (dl.typeSeed / cmd+alt+t).
+# Facts only; `rel type_seed(seed: text).` is declared in flow-panel.dl so an
+# absent file never breaks the program. Each fact seeds the "Type neighbors"
+# panel preset (the seed's impls + type references, bounded 1 hop). Clear with
+# dl.clearTypeSeeds (cmd+alt+shift+t).

@@ -97,7 +97,8 @@ fn print_help() {
     eprintln!("  --project [DIR]    bootstrap a repo: .dl/ rails + AGENTS/CLAUDE always;");
     eprintln!("                     Claude Code hook / git pre-commit / VSCode ext prompt on");
     eprintln!("                     a TTY, are skipped when piped, or forced with --yes");
-    eprintln!("  --vscode           install the bundled dl LSP VSCode extension (needs `code`)");
+    eprintln!("  --vscode           install the dl LSP VSCode extension (needs `code`); builds a");
+    eprintln!("                     fresh VSIX from editors/vscode-dl in a checkout, else embedded");
     eprintln!("  -y, --yes          wire every integration without prompting (scripts / CI)");
     eprintln!("  --skills-dir DIR   override the skill destination");
     eprintln!("  --print            print the embedded skill to stdout");
@@ -107,25 +108,42 @@ fn print_help() {
 /// no source tree (mirrors the SKILL_MD / starter embedding). Rebuild + bump:
 /// `(cd editors/vscode-dl && npm run compile && npx vsce package)`, then point
 /// this at the new VSIX. The committed VSIX is the install artifact.
-const VSCODE_VSIX: &[u8] = include_bytes!("../editors/vscode-dl/dl-lsp-0.3.0.vsix");
-const VSCODE_VSIX_NAME: &str = "dl-lsp-0.3.0.vsix";
+const VSCODE_VSIX: &[u8] = include_bytes!("../editors/vscode-dl/dl-lsp-0.4.4.vsix");
+const VSCODE_VSIX_NAME: &str = "dl-lsp-0.4.4.vsix";
 
-/// `dl setup --vscode`: write the embedded VSIX to a temp file and install it
-/// via the VSCode `code` CLI (`code --install-extension`). The extension starts
-/// `dl --root <workspace> --lsp` and proxies LSP over stdio, so `.dl/*.dl` rules
-/// give live squiggles. No-op with a clear message if `code` is not on PATH.
+/// `dl setup --vscode`: install the dl LSP VSCode extension via the `code` CLI.
+/// The extension starts `dl --root <workspace> --lsp` and proxies LSP over
+/// stdio, so `.dl/*.dl` rules give live squiggles. Turnkey both ways: from a
+/// repo checkout it builds a FRESH VSIX from `editors/vscode-dl` (always current
+/// — no "did I rebuild the vsix?" step); a prebuilt `dl` run outside the source
+/// falls back to the VSIX embedded at build time. Either path installs
+/// uninstall-first to dodge the same-version reinstall no-op. No-op with a clear
+/// message if `code` is not on PATH.
 fn install_vscode_extension() -> Result<i32> {
-    let vsix = std::env::temp_dir().join(VSCODE_VSIX_NAME);
-    std::fs::write(&vsix, VSCODE_VSIX)
-        .with_context(|| format!("write {}", vsix.display()))?;
+    // Prefer a fresh build from the checked-out source; fall back to embedded.
+    let (vsix, from_source) = match build_vscode_vsix() {
+        Some(built) => (built, true),
+        None => {
+            let embedded = std::env::temp_dir().join(VSCODE_VSIX_NAME);
+            std::fs::write(&embedded, VSCODE_VSIX)
+                .with_context(|| format!("write {}", embedded.display()))?;
+            (embedded, false)
+        }
+    };
+    // The same-version trap: `code --install-extension --force` silently no-ops
+    // on a same-version reinstall while VSCode is running (a fresh build carries
+    // the same version). Uninstall first so the new bits always land.
+    let _ = std::process::Command::new("code")
+        .args(["--uninstall-extension", "sprefa.dl-lsp"]).status();
     let status = std::process::Command::new("code")
         .arg("--install-extension").arg(&vsix).arg("--force")
         .status();
     match status {
         Ok(s) if s.success() => {
-            println!("[dl setup] installed the dl LSP VSCode extension ({VSCODE_VSIX_NAME}).");
+            let how = if from_source { "freshly built from editors/vscode-dl" } else { "embedded" };
+            println!("[dl setup] installed the dl LSP VSCode extension ({how}).");
             println!("[dl setup] reload VSCode; open any file your .dl rules scan for live squiggles.");
-            let _ = std::fs::remove_file(&vsix);
+            if !from_source { let _ = std::fs::remove_file(&vsix); }
             Ok(0)
         }
         Ok(s) => {
@@ -139,6 +157,42 @@ fn install_vscode_extension() -> Result<i32> {
             println!("[dl setup] (in VSCode, enable the `code` command via Shell Command: Install 'code' in PATH).");
             Ok(0)
         }
+    }
+}
+
+/// Build a fresh VSIX from the checked-out extension source when the tree and
+/// toolchain are present (`editors/vscode-dl` under CWD + `npm` + `npx vsce`).
+/// Returns the built VSIX path, or `None` to fall back to the embedded artifact
+/// (a prebuilt `dl` run outside the repo, or any build step failing). `npm ci`
+/// only when `node_modules` is missing, so a repeat install just compiles.
+fn build_vscode_vsix() -> Option<PathBuf> {
+    let src = Path::new("editors/vscode-dl");
+    if !src.join("package.json").exists() {
+        return None;
+    }
+    let run = |args: &[&str]| -> bool {
+        std::process::Command::new(args[0]).args(&args[1..]).current_dir(src)
+            .status().map(|st| st.success()).unwrap_or(false)
+    };
+    eprintln!("[dl setup] building the extension from {} ...", src.display());
+    if !src.join("node_modules").exists() && !run(&["npm", "ci"]) && !run(&["npm", "install"]) {
+        eprintln!("[dl setup] npm install failed; using the embedded VSIX instead");
+        return None;
+    }
+    if !run(&["npm", "run", "compile"]) {
+        eprintln!("[dl setup] extension compile failed; using the embedded VSIX instead");
+        return None;
+    }
+    let out = std::env::temp_dir().join("dl-lsp-fresh.vsix");
+    let _ = std::fs::remove_file(&out);
+    let packaged = std::process::Command::new("npx")
+        .args(["vsce", "package", "-o"]).arg(&out).current_dir(src)
+        .status().map(|st| st.success()).unwrap_or(false);
+    if packaged && out.exists() {
+        Some(out)
+    } else {
+        eprintln!("[dl setup] `vsce package` failed; using the embedded VSIX instead");
+        None
     }
 }
 

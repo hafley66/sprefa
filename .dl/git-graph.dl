@@ -1,0 +1,134 @@
+# git-graph.dl — GitHub PR graph at scale: conditional sync + batched GraphQL.
+#
+# Two-stage effect chain, both GraphQL (no REST stitching):
+#   STAGE 1 (discovery): ONE `viewer{repositories(first:100, orderBy:PUSHED_AT)}`
+#     call returns the 100 most-recently-pushed repos. `first:100` IS the
+#     conditional-sync cap — repos beyond it are dormant by definition.
+#   STAGE 2 (cutoff): repos newer than `cutoff` become `active_repo` candidates.
+#   STAGE 3 (batched fetch): `collect(slug, 100)` batches the active repos into
+#     ceil(N/100) aliased GraphQL queries (100 repo-aliases per call, each up to
+#     100 PRs via pullRequests(first:100)). Dormant repos cost zero PR queries.
+#
+# Cost at 500 repos, 20 active/week:  1 discovery + 1 batched PR call = 2 calls.
+# Cost at 500 repos, 120 active/week: 1 discovery + 2 batched PR calls = 3 calls.
+# (Per-repo sh template = 500 calls — that's the shape this replaces.)
+#
+# Author{name,email} use `... on User` (Actor only exposes login). Email is the
+# account's PUBLIC email; null if hidden → bound as empty text.
+#
+# Panel SQL (dl: Flow Panel, preset "PR graph"):
+#   nodes: SELECT id, label, kind, NULL, NULL FROM rel_graph_node
+#   edges: SELECT src, dst, kind FROM rel_graph_edge
+
+use "../std/entry.dl".
+
+# ---- sync control ----------------------------------------------------------
+# cutoff: ISO timestamp. Repos pushed AFTER this sync. Edit to widen/narrow the
+# active window. (Dynamic: a sh rule running `date -u -v-7d` can populate this;
+# kept as a fact for cross-platform portability + editability.)
+rel cutoff(ts: text).
+cutoff("2026-06-29T00:00:00Z").
+
+# forced-sync override: always sync these regardless of activity (e.g. a repo
+# you watch but didn't push to). Unioned into active_repo below.
+rel watch_pr(slug: text).
+
+# ---- STAGE 1: candidate discovery (one GraphQL call, viewer's 100 recent) ---
+# viewer.repositories(first:100, orderBy:PUSHED_AT, affiliations:[...]) covers
+# every repo the authed user owns/collabs/is a member of — the whole watchable
+# set, sorted by last push. The cutoff filters in jq (`select(.pushedAt > $c)`)
+# so {cutoff} is genuinely interpolated in the template AND the active set is
+# computed shell-side; dl just reads the survivors. Editing the cutoff fact →
+# new arg → new cache key → re-fire.
+sh gh_pushed(cutoff) -> (body: text) =
+  `gh api graphql -f query='{ viewer { repositories(first:100, orderBy:{field:PUSHED_AT, direction:DESC}, affiliations:[OWNER,COLLABORATOR,ORGANIZATION_MEMBER]) { nodes { nameWithOwner pushedAt } } } }' 2>/dev/null | jq -c --arg c "{cutoff}" '[.data.viewer.repositories.nodes[] | select(.pushedAt > $c) | {nameWithOwner, pushedAt}]' 2>/dev/null`.
+
+# @async gates on cutoff(ts): the body binds ts (a positive atom with a var),
+# and gh_pushed(ts) carries it as its request arg — both required for an @async
+# rule. Add a `clock(600, b)` atom before cutoff(ts) to re-discover every 10 min.
+rel gh_pushed_resp(body: text).
+gh_pushed_resp(body) <- @async cutoff(ts), gh_pushed(ts) -> (body).
+
+# the body already carries only active repos (jq pre-filtered); pushed_at is
+# kept for debug display, not re-filtered in dl.
+rel candidate(slug: text, pushed_at: text).
+candidate(slug, pushed_at) <-
+  gh_pushed_resp(body),
+  json(body, q:[... { nameWithOwner: $slug, pushedAt: $pushed_at }]).
+
+# ---- STAGE 2: active set (jq-filtered candidates + forced overrides) --------
+# watch_pr forces a repo in regardless of activity (a watch-only repo you don't
+# push to but care about).
+rel active_repo(slug: text).
+active_repo(slug) <- candidate(slug: slug).
+active_repo(slug) <- watch_pr(slug).
+
+# ---- STAGE 3: batched PR fetch (aliased GraphQL, 100 repos per call) --------
+# The shell loop assembles one aliased `repository(){pullRequests}` block per
+# slug. CRITICAL: `{repos}` lands as a LITERAL comma-string, so `for slug in
+# <literal>` does NOT split on IFS (POSIX word-splitting applies only to
+# variable expansions, not literals). Assigning to SLUGS first and expanding
+# `$SLUGS` under `IFS=,` is what makes the loop iterate per-repo. jq flattens
+# the aliased `data` object into one array of repo-tagged PR objects. Template
+# lifted from examples/gh-cache-batch.dl (which has the same latent literal-split
+# bug), extended with author{login,name,email} + base/head OIDs + branch.
+rel pr_resp(body: text).
+sh pr_batch(repos) -> (body: text) =
+  `SLUGS="{repos}"
+   Q='query {'
+   i=0
+   IFS=, ; for slug in $SLUGS; do
+     o=${slug%%/*}; n=${slug#*/}
+     Q="$Q r$i: repository(owner:\"$o\", name:\"$n\") {
+          nameWithOwner
+          pullRequests(states: OPEN, first: 100) {
+            nodes { number title state
+                    author { login ... on User { name email } }
+                    baseRefOid headRefOid headRefName } } }"
+     i=$((i+1))
+   done
+   Q="$Q }"
+   gh api graphql -f query="$Q" 2>/dev/null \
+     | jq -c '[ .data | to_entries[] | .value as $r
+                | $r.pullRequests.nodes[]
+                | { repo: $r.nameWithOwner, number: .number, title: .title,
+                    state: .state, login: .author.login,
+                    author_name: .author.name, author_email: .author.email,
+                    base: .baseRefOid, head: .headRefOid,
+                    branch: .headRefName } ]'`.
+
+# One body per batch of <=100 active repos. The @async gate is active_repo, so
+# dormant repos (no active_repo row) contribute zero batches — they never fire.
+pr_resp(body) <- @async active_repo(slug), pr_batch(collect(slug, 100)) -> (body).
+
+# one row per PR across all batched repos. number is a JSON int; stringify in
+# the head. author_name/author_email are "" when the author is a bot or has no
+# public email (the inline fragment returns null → json op binds empty text).
+rel pr_row(repo: text, num: text, title: text, state: text, login: text, author_name: text, author_email: text, base: text, head: text, branch: text).
+pr_row(repo, "${num}", title, state, login, author_name, author_email, base, head, branch) <-
+  pr_resp(body),
+  json(body, q:[... {
+    repo: $repo, number: $num, title: $title, state: $state,
+    login: $login, author_name: $author_name, author_email: $author_email,
+    base: $base, head: $head, branch: $branch
+  }]).
+
+# ---- panel nodes + edges ---------------------------------------------------
+# Node id scheme namespaces by repo so 500 repos' PRs/branches never collide;
+# author nodes are the bare login so the SAME person links across repos (the
+# cross-repo collaboration picture).
+rel graph_node(id: text, label: text, kind: text).
+graph_node("${repo}#PR-${num}", title, "pr") <- pr_row(repo: repo, num: num, title: title).
+graph_node(login, author_name, "author") <- pr_row(login: login, author_name: author_name).
+graph_node("${repo}#${branch}", branch, "branch") <- pr_row(repo: repo, branch: branch).
+
+rel graph_edge(src: text, dst: text, kind: text).
+graph_edge(login, "${repo}#PR-${num}", "opened") <- pr_row(repo: repo, num: num, login: login).
+graph_edge("${repo}#PR-${num}", "${repo}#${branch}", "head") <- pr_row(repo: repo, num: num, branch: branch).
+
+# ---- debug query ------------------------------------------------------------
+? candidate(slug, pushed_at).
+? active_repo(slug).
+? pr_row(repo, num, title, state, login, author_name, author_email, base, head, branch).
+? graph_node(id, label, kind).
+? graph_edge(src, dst, kind).
