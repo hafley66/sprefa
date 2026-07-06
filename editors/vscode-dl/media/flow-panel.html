@@ -431,6 +431,8 @@
   </div>
   <div class="row"><label>preset</label><select id="presetSel" title="panel preset">
     <option value="typeAll">Type graph (all)</option>
+    <option value="callGraph">Call graph (all)</option>
+    <option value="dataFlow">Data flow (all)</option>
     <option value="typeCurated">Type graph (curated)</option>
     <option value="typeRefs">Type references</option>
     <option value="typeNeighbors">Type neighbors</option>
@@ -449,6 +451,7 @@
     <input id="saveName" placeholder="name this query…" spellcheck="false" style="flex:0 0 140px" />
     <button id="saveBtn" title="save the current nodes/edges SQL under this name (persists locally; appears in the preset list, renders in graph OR list)">save</button>
     <button id="delBtn" title="delete the selected saved query">del</button>
+    <label style="flex:0 0 auto;margin-left:8px" title="highlight and center the graph node under the editor cursor as you move it (VS Code only)"><input type="checkbox" id="followCursor" style="vertical-align:middle" /> follow cursor</label>
   </div>
   <div class="row layers" id="layerRow"><label>layers</label><div id="layerList"></div><button class="layer-refresh" id="layerRefresh" title="re-scan schema for new _node/_edge rels">↻</button></div>
   <div class="row legend" id="legend"></div>
@@ -670,6 +673,30 @@ const DEFAULT_EDGES =
 // (.dl/flow-panel.dl, .dl/mark-lens.dl, .dl/enum-matches.dl)
 const PRESETS = {
   typeAll: { nodes: DEFAULT_NODES, edges: DEFAULT_EDGES },
+  // Self-contained on a bare `scan` — queries only PREBAKED builtin rels
+  // (rel_call_def / rel_call_name / rel_call_edge), no derived .dl needed.
+  // Nodes = every callable (sym labelled by its bare name); edges = the
+  // resolved caller->callee graph. sym is `repo::file::kind::name`, so
+  // REPO_FILE_COL puts the repo at the fs-tree top tier.
+  callGraph: {
+    nodes:
+      "SELECT d.sym, COALESCE(n.name, d.sym), d.kind, " +
+      "CASE WHEN instr(d.sym, '::') > 0 THEN substr(d.sym, 1, instr(d.sym, '::') - 1) || '/' || d.file ELSE d.file END, " +
+      "d.line FROM rel_call_def d LEFT JOIN rel_call_name n ON n.sym = d.sym LIMIT 800",
+    edges: "SELECT caller, callee, kind FROM rel_call_edge LIMIT 1600",
+  },
+  // Self-contained on a bare `scan` — the raw intra-procedural dataflow graph
+  // straight from the builtin rel_df_node / rel_df_edge (no derived .dl). Node
+  // label falls back to the kind when the node carries no var (call_res, lit,
+  // ...). This is low-level and dense repo-wide — pair it with the "follow
+  // cursor" toggle to scope it to the symbol under the caret. `from`/`to` are
+  // SQL keywords, hence the quotes.
+  dataFlow: {
+    nodes:
+      "SELECT id, CASE WHEN var <> '' THEN var ELSE kind END, kind, file, line " +
+      "FROM rel_df_node LIMIT 800",
+    edges: "SELECT \"from\", \"to\", 'flow' FROM rel_df_edge LIMIT 1600",
+  },
   typeCurated: {
     nodes: `SELECT sym, name, kind, ${REPO_FILE_COL}, line FROM rel_panel_node`,
     edges: "SELECT src, dst, kind FROM rel_panel_edge",
@@ -1662,6 +1689,82 @@ function togglePin(id) {
   if (pinned.has(id)) pinned.delete(id); else pinned.add(id);
   afterPinChange();
 }
+
+// ── follow the editor cursor ────────────────────────────────────────────────
+// The VS Code host posts {type:'cursor', file, line, word} on every selection
+// change (see the bootstrap in extension.ts). When the "follow cursor" box is
+// on, locate the node at that file:line (df/call/type nodes all carry file +
+// line) and highlight + center it. Purely visual — no pin, no re-query. In the
+// plain-HTTP fallback host there is no cursor stream, so this stays inert.
+let followCursorOn = false;
+let lastFollowId = null;
+function onEditorCursor(m) {
+  if (!followCursorOn || !m) return;
+  const id = findNodeAt(m);
+  if (!id || id === lastFollowId) return;
+  lastFollowId = id;
+  if (viewMode === 'list') {
+    hoverNode(id);
+    const row = listRowEls.get(id);
+    if (row) row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  } else {
+    const n = nodes.get(id);
+    if (n) { hoverNode(id); centerOnNode(n); }
+  }
+}
+// The node whose file:line best matches the cursor. A df/call node sits on the
+// decl or callsite line, so an exact or within-2-lines match wins; failing
+// that, the bare word under the caret matched against a node id/label. `file`
+// may be repo-prefixed (`slug/path`), so match on a path-suffix either way.
+function fileMatches(nodeFile, cursorFile) {
+  if (!nodeFile || !cursorFile) return false;
+  return nodeFile === cursorFile
+    || nodeFile.endsWith('/' + cursorFile) || cursorFile.endsWith('/' + nodeFile);
+}
+function findNodeAt(m) {
+  const metaFor = viewMode === 'list'
+    ? (id => listNodeMeta.get(id) || listAllNodeMeta.get(id))
+    : (id => nodes.get(id));
+  const ids = viewMode === 'list'
+    ? new Set([...listNodeMeta.keys(), ...listAllNodeMeta.keys()])
+    : nodes.keys();
+  let best = null, bestDelta = Infinity;
+  for (const id of ids) {
+    const n = metaFor(id);
+    if (n && fileMatches(n.file, m.file)) {
+      const d = Math.abs((Number(n.line) || 0) - (Number(m.line) || 0));
+      if (d < bestDelta) { bestDelta = d; best = id; }
+    }
+  }
+  if (best != null && bestDelta <= 2) return best;
+  if (m.word) {
+    for (const id of (viewMode === 'list'
+        ? new Set([...listNodeMeta.keys(), ...listAllNodeMeta.keys()])
+        : nodes.keys())) {
+      if (id === m.word || id.endsWith('::' + m.word) || id.endsWith(':' + m.word)) return id;
+      const n = metaFor(id);
+      if (n && (n.label === m.word || n.sym === m.word)) return id;
+    }
+  }
+  return best; // nearest-line even if beyond 2, or null
+}
+// Pan (and keep the zoom) so the node's card sits at the viewport center.
+function centerOnNode(n) {
+  const el = n && n.el;
+  if (!el) return;
+  const r = viewport.getBoundingClientRect();
+  const wx = el.offsetLeft + el.offsetWidth / 2;
+  const wy = el.offsetTop + el.offsetHeight / 2;
+  view.x = r.width / 2 - wx * view.z;
+  view.y = r.height / 2 - wy * view.z;
+  applyView();
+  if (typeof scheduleFlips === 'function') scheduleFlips();
+}
+if (window.dlHost) { window.__dlCursor = onEditorCursor; }
+document.getElementById('followCursor').addEventListener('change', function () {
+  followCursorOn = this.checked;
+  lastFollowId = null;
+});
 // shift-click range (list view) and shift-drag marquee (canvas) both ADD a
 // batch of ids to the selection in one shot -- never toggle-off inside the
 // batch, matching mainstream file-manager range/marquee select. Same tail

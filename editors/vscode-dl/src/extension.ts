@@ -285,7 +285,32 @@ function openFlowPanel(ctx: vscode.ExtensionContext, root: string, slice: SliceD
     enableScripts: true,
     retainContextWhenHidden: true,
   });
-  panel.onDidDispose(() => { panel = undefined; slice.set([]); }, null, ctx.subscriptions);
+  // Follow the editor cursor: post the caret's file:line + word-under-caret to
+  // the webview on every selection change (debounced). The panel's "follow
+  // cursor" toggle decides whether to act on it — highlight + center the node
+  // at that location. Disposed with the panel.
+  let cursorTimer: ReturnType<typeof setTimeout> | undefined;
+  const selSub = vscode.window.onDidChangeTextEditorSelection((e) => {
+    if (!panel) return;
+    const doc = e.textEditor.document;
+    const rel = path.relative(root, doc.uri.fsPath).replace(/\\/g, "/");
+    if (rel.startsWith("..")) return; // outside the scan root
+    const pos = e.selections[0]?.active;
+    if (!pos) return;
+    const wr = doc.getWordRangeAtPosition(pos);
+    const word = wr ? doc.getText(wr) : "";
+    if (cursorTimer) clearTimeout(cursorTimer);
+    cursorTimer = setTimeout(() => {
+      void panel?.webview.postMessage({ type: "cursor", file: rel, line: pos.line + 1, word });
+    }, 120);
+  });
+
+  panel.onDidDispose(() => {
+    if (cursorTimer) clearTimeout(cursorTimer);
+    selSub.dispose();
+    panel = undefined;
+    slice.set([]);
+  }, null, ctx.subscriptions);
 
   // The dlHost bootstrap replaces the panel's HTTP fallback: query rides the
   // LSP custom request `dl/query`; hover and open post back to this file.
@@ -297,6 +322,8 @@ function openFlowPanel(ctx: vscode.ExtensionContext, root: string, slice: SliceD
       if ((m.type === 'rows' || m.type === 'error') && pending.has(m.id)) {
         const p = pending.get(m.id); pending.delete(m.id);
         m.type === 'rows' ? p.resolve(m.rows) : p.reject(new Error(m.message));
+      } else if (m.type === 'cursor' && window.__dlCursor) {
+        window.__dlCursor(m);
       }
     });
     return {

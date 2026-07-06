@@ -6,6 +6,20 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-07-06
+
+### Added
+- **Self-contained flow-panel presets**: "Call graph (all)" and "Data flow
+  (all)" query only PREBAKED builtin rels (`rel_call_def` / `rel_call_name` /
+  `rel_call_edge`, `rel_df_node` / `rel_df_edge`), so they render on a bare
+  `scan` with no derived `.dl`. The older flow-oriented presets still depend on
+  their program's derived `rel_*` tables.
+- **"Follow cursor" toggle** in the flow panel: with it on, moving the editor
+  caret highlights and centers the graph/list node at the cursor's file:line
+  (falls back to the word under the caret). The extension posts a debounced
+  selection event to the webview; the panel acts on it only when the box is
+  checked. Purely visual — no pin, no re-query. vsix bumped to 0.4.7.
+
 ## [0.6.3] - 2026-07-06
 
 ### Added
