@@ -264,7 +264,20 @@ impl Daemon {
     /// by the watcher when `no_respawn` is set and a program file changed.
     /// A parse or type error keeps the last good program.
     fn reload_program(&self) -> Result<()> {
-        let files = lock(&self.program_files).clone();
+        let all = lock(&self.program_files).clone();
+        // Parse only the files that currently exist: a deleted watched path must
+        // not wedge the tick loop (prepare_paths would fail to read it). The
+        // watched SET is left intact — an atomic save (delete+create) or a
+        // re-created file reloads on its next event. If every file is (this
+        // instant) missing, keep the last-good program rather than parsing an
+        // empty set (which has no root path).
+        let files: Vec<PathBuf> = all.iter().filter(|f| f.exists()).cloned().collect();
+        if files.is_empty() {
+            if !all.is_empty() {
+                eprintln!("[daemon] all {} watched program file(s) missing; keeping last-good program", all.len());
+            }
+            return Ok(());
+        }
         let (new_prog, type_diags, _display) = crate::prepare_paths(&files)?;
         let n_err = type_diags
             .iter()
@@ -278,7 +291,7 @@ impl Daemon {
             let mut p = lock(&self.prog);
             *p = new_prog;
         }
-        if let Err(e) = lock(&self.eng).save_program_meta(&files) {
+        if let Err(e) = lock(&self.eng).save_program_meta(&all) {
             eprintln!("[daemon] save_program_meta: {e}");
         }
         self.tick_full(false)?;
@@ -1438,7 +1451,18 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                                 "program_files": files,
                             }))
                         }
-                        Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("reload: {e}")),
+                        Err(e) => {
+                            // Roll back the just-added file. reload_program
+                            // re-parses ALL program_files, so leaving a bad file
+                            // in the set would fail every future reload/tick —
+                            // the daemon would wedge. Removing it (only if this
+                            // load added it) keeps the daemon on its last-good
+                            // program; the load fails cleanly.
+                            if !already {
+                                lock(&d.program_files).retain(|f| f != &canon);
+                            }
+                            Response::err(req.id, INTERNAL_ERROR, format!("reload: {e}"))
+                        }
                     }
                 }
                 other => Response::err(req.id, INVALID_PARAMS,

@@ -90,6 +90,41 @@ fn scan_matching_no_files_warns() {
     let _ = fs::remove_dir_all(&d);
 }
 
+/// Polyglot fan-out: a rel headed by several scans (one per language) where a
+/// SIBLING glob matched must not warn about the empty ones — the rel has rows,
+/// the empty glob is intentional (this sandbox has `.rs` but no `.zzz`).
+#[test]
+fn polyglot_sibling_zero_match_is_silent() {
+    let d = sandbox("sibling");
+    let (_code, _out, err) = run(&d, concat!(
+        "rel hit(p: file).\n",
+        "hit(p) <- scan(\"src/**/*.rs\", p, rev).\n",
+        "hit(p) <- scan(\"nope/**/*.zzz\", p, rev).\n",
+        "? hit(p).\n",
+    ));
+    assert!(!err.contains("matched 0 files"),
+        "a sibling glob matched, so the empty polyglot glob stays silent:\n{err}");
+    let _ = fs::remove_dir_all(&d);
+}
+
+/// A scan whose rel feeds a downstream rule (consumed) but matched nothing gets
+/// the QUIET one-liner, not the loud fix-it note — an empty helper mid-edit is
+/// transient, not a glob/root mistake.
+#[test]
+fn consumed_zero_match_scan_is_quiet_not_loud() {
+    let d = sandbox("consumed");
+    let (_code, _out, err) = run(&d, concat!(
+        "rel helper(p: file).\n",
+        "helper(p) <- scan(\"nope/**/*.zzz\", p, rev).\n",
+        "rel uses(p: file).\n",
+        "uses(p) <- helper(p).\n",
+        "? uses(p).\n",
+    ));
+    assert!(err.contains("matched 0 files this tick"), "consumed helper warns quietly:\n{err}");
+    assert!(!err.contains("working root"), "the quiet form drops the fix-it note:\n{err}");
+    let _ = fs::remove_dir_all(&d);
+}
+
 /// A scan that DOES match must not spuriously warn.
 #[test]
 fn scan_with_matches_does_not_warn() {

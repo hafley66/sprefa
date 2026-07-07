@@ -6,6 +6,28 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.8] - 2026-07-07
+
+### Fixed
+- **A bad `dl --load` no longer wedges the daemon.** A watched load that fails
+  to reload (parse/type error) rolls the file back out of the program set, so
+  the daemon keeps ticking on its last-good program and a subsequent good load
+  still succeeds. A deleted watched program file is skipped on reload (parse the
+  files that still exist) instead of failing every tick.
+- **Zero-match scan warning is quieter for expected-empty shapes.** A polyglot
+  rel headed by several scans (one per language) no longer warns about the empty
+  globs when a sibling glob matched (`seen` scanning both Rust and `{ts,tsx}` in
+  a Rust-only repo went silent); a scan whose rel feeds a downstream rule
+  (consumed) gets a one-line note instead of the loud fix-it text. Only a
+  genuinely dead scan (unmatched, no sibling, unread) still gets the full
+  warning — now worded for the cwd root (there is no `--root`).
+
+### Added
+- **Unknown config keys warn instead of silently vanishing.** A typo'd or
+  renamed key in `config.toml` (`folder` vs `foldername`, a misspelled
+  `[[repos]]`/`[[org]]` field) now prints a `[config] unknown key` line naming
+  the table and key, rather than deserializing to the default and being ignored.
+
 ## [0.6.7] - 2026-07-07
 
 ### Changed

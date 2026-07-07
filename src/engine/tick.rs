@@ -253,7 +253,17 @@ impl Engine {
             }
         };
         let t = std::time::Instant::now();
-        let recon = self.reconcile_sources(&source_rules, &source_rels)?;
+        // Rels read as a body predicate anywhere (source or derived): a scan whose
+        // head feeds a rule is "consumed", so an empty tick softens rather than
+        // shouting (see the zero-match diagnostic in reconcile_sources).
+        let consumed: std::collections::HashSet<String> = derived_rules.iter()
+            .chain(source_rules.iter())
+            .flat_map(|r| r.body.iter().filter_map(|b| match b {
+                crate::ast::BodyItem::Pos(a) | crate::ast::BodyItem::Neg(a) => Some(a.rel.clone()),
+                _ => None,
+            }))
+            .collect();
+        let recon = self.reconcile_sources(&source_rules, &source_rels, &consumed)?;
         phase("reconcile-sources", t);
         // A carried-in @next rel that moved is an EDB change for this tick's
         // derived rules (e.g. a `poll` rule that reads the carried `etag`).

@@ -118,6 +118,47 @@ pub struct SprfConfig {
 /// is omitted.
 const ORG_DEFAULT_DEPTH: usize = 3;
 
+/// Known keys per config table, for the unknown-key warning. Aliases included so
+/// the accepted spelling never warns.
+const TOP_KEYS: &[&str] = &["repos", "orgs", "org", "default_org"];
+const REPO_KEYS: &[&str] = &["slug", "root", "url", "allow_missing"];
+const ORG_KEYS: &[&str] = &["dir", "max_depth", "foldername", "folder"];
+
+/// Every config key not in the known set for its table, as `(table_label, key)`.
+/// A renamed or misspelled field otherwise deserializes to its default and is
+/// silently dropped — the classic "I set it and nothing happened" config trap.
+fn unknown_keys(raw: &toml::Value) -> Vec<(&'static str, String)> {
+    let mut out = Vec::new();
+    let toml::Value::Table(top) = raw else { return out };
+    for (k, v) in top {
+        if !TOP_KEYS.contains(&k.as_str()) { out.push(("the config root", k.clone())); }
+        // [[repos]] / [[org]] / [[orgs]] are arrays of tables; check each entry.
+        let (entry_keys, label) = match k.as_str() {
+            "repos" => (REPO_KEYS, "a [[repos]] entry"),
+            "org" | "orgs" => (ORG_KEYS, "an [[org]] entry"),
+            _ => continue,
+        };
+        if let toml::Value::Array(entries) = v {
+            for entry in entries {
+                if let toml::Value::Table(t) = entry {
+                    for ek in t.keys() {
+                        if !entry_keys.contains(&ek.as_str()) { out.push((label, ek.clone())); }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Warn (stderr) on each unknown config key, naming the table and key.
+fn warn_unknown_keys(raw: &toml::Value, path: &Path) {
+    for (table, key) in unknown_keys(raw) {
+        eprintln!("[config] {}: unknown key `{key}` in {table} — ignored (typo or renamed field?)",
+            path.display());
+    }
+}
+
 impl SprfConfig {
     /// The search paths, highest precedence first. `$SPREFA_CONFIG` is taken
     /// verbatim; otherwise the XDG config dir, then `~/.config`.
@@ -157,6 +198,15 @@ impl SprfConfig {
     pub fn load_from_path(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("read config {}", path.display()))?;
+        // Warn (don't fail) on unknown keys: a typo'd or renamed field
+        // (`folder` → `foldername`, `depth` vs `max_depth`) otherwise deserializes
+        // to the default and is silently ignored. serde's `deny_unknown_fields`
+        // would hard-error and break forward-compat; a raw-key diff warns and
+        // proceeds. Parsed separately from the typed load so the struct derives
+        // (Eq — toml::Value is not Eq) stay intact.
+        if let Ok(raw) = toml::from_str::<toml::Value>(&text) {
+            warn_unknown_keys(&raw, path);
+        }
         let mut cfg: SprfConfig =
             toml::from_str(&text).with_context(|| format!("parse config {}", path.display()))?;
         cfg.expand_orgs();
@@ -342,6 +392,36 @@ mod tests {
         }
         std::fs::create_dir_all(base.join("grafana/not-a-repo/src")).unwrap();
         base
+    }
+
+    #[test]
+    fn unknown_config_keys_are_flagged_not_silently_dropped() {
+        // A typo'd top-level key, a renamed org field, and an unknown repo key.
+        let raw: toml::Value = toml::from_str("\
+            default_orgz = \"acme\"\n\
+            [[org]]\n\
+            dir = \"/tmp/x\"\n\
+            depth = 5\n\
+            [[repos]]\n\
+            slug = \"a\"\n\
+            root = \"/tmp/a\"\n\
+            urls = \"x\"\n").unwrap();
+        let mut found = unknown_keys(&raw);
+        found.sort();
+        assert_eq!(found, vec![
+            ("a [[repos]] entry", "urls".to_string()),
+            ("an [[org]] entry", "depth".to_string()),
+            ("the config root", "default_orgz".to_string()),
+        ], "each unknown key is reported with its table; known keys + `folder` alias never flagged");
+
+        // The accepted spellings + aliases must NOT warn.
+        let ok: toml::Value = toml::from_str("\
+            default_org = \"acme\"\n\
+            [[org]]\n\
+            dir = \"/tmp/x\"\n\
+            folder = \".\"\n\
+            max_depth = 2\n").unwrap();
+        assert!(unknown_keys(&ok).is_empty(), "known keys + folder alias are clean");
     }
 
     #[test]

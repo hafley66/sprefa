@@ -36,14 +36,15 @@ cargo install --path .                                                     # fro
 Then:
 
 ```sh
-dl examples/glean.dl --root .                  # run a program, print ? queries
-dl --check --root <repo>                       # discovery mode: runs <repo>/.dl/*.dl
-dl examples/lint-unwrap.dl --root <repo> --lsp # live LSP diagnostics
+dl examples/glean.dl                       # run a program, print ? queries
+cd <repo> && dl --check                    # discovery mode: runs <repo>/.dl/*.dl
+cd <repo> && dl examples/lint-unwrap.dl --lsp  # live LSP diagnostics
 ```
 
-`--root` defaults to the nearest `.git` ancestor of the program file (or of the
-cwd in discovery mode). Multi-repo analysis is configured in
-`~/.config/sprefa/config.toml` (see [Multi-repo](#multi-repo)).
+There is no `--root` flag: the working root is the current directory (point `dl`
+at a folder by `cd`-ing there or spawning it with that cwd). Multi-repo analysis
+is configured in `~/.config/sprefa/config.toml` (see [Multi-repo](#multi-repo));
+the daemon serves that repo set with no privileged root.
 
 ### Turnkey setup
 
@@ -68,8 +69,8 @@ TTY, are skipped when piped/CI, and are forced with `-y`/`--yes`:
 | VSCode dl LSP extension (`code --install-extension`) | live editor squiggles | prompt / `--yes` |
 
 The VSCode extension (`dl setup --vscode`, or `editors/vscode-dl/`) runs
-`dl --root <ws> --lsp` over stdio: drop a rule in `.dl/`, get live squiggles on
-the rust/ts/py/go/kt the rule scans and on the `.dl` itself.
+`dl --lsp` over stdio (workspace folder as cwd): drop a rule in `.dl/`, get live
+squiggles on the rust/ts/py/go/kt the rule scans and on the `.dl` itself.
 
 ## The model
 
@@ -486,6 +487,8 @@ surface, and env vars: [docs/daemon.md](docs/daemon.md).
 <!-- BEGIN: cli -->
 | flag | effect |
 |---|---|
+| `--await-settle-ms` | _undocumented_ |
+| `--await-settle` | _undocumented_ |
 | `--changed <CHANGED>` | Drive one incremental tick for these changed paths (the delta path the watcher uses), instead of a full run. Repeatable |
 | `--check` | Lint/ban mode: render the `diag` relation to stderr. Exit 0 clean, 2 if any `error`-severity row exists (Claude Code's blocking-hook code), 1 on a broken program. For pre-commit / CI / Claude Code hooks. See docs/rails.md |
 | `--cmd-budget <CMD_BUDGET>` | Cap `cmd` invocations per tick (or DL_CMD_BUDGET); over budget is a loud error, never a silent truncation. Default: unlimited |
@@ -494,15 +497,18 @@ surface, and env vars: [docs/daemon.md](docs/daemon.md).
 | `--diag-json` | Like --check but emit the diagnostics as a JSON array on stdout |
 | `--fix` | With --move, write the rewritten files instead of previewing |
 | `--hook` | Harness-hook mode: read a Claude Code hook event (PostToolUse JSON) on stdin, tick the rules, emit the hook output (additionalContext / block) on stdout. The program heads `inject`/`inject_skill`/`block` over the agent built-ins. The condition is a dl rule; no editor, no bash. See docs/skill-injection.md |
-| `--load <LOAD>` | Load a script into the running daemon as a WATCHED program: joins the loaded set, runs on every tick, hot-reloads on edit. Omit `--root` to target the global rootless serving daemon |
+| `--load <LOAD>` | Load a script into the running daemon as a WATCHED program: joins the loaded set, runs on every tick, hot-reloads on edit. Targets the global rootless serving daemon |
 | `--load-once <LOAD_ONCE>` | Load a script ONE-TIME: eval it on a throwaway engine, print the `?` query results, persist nothing. Same target rules as `--load` |
 | `--lsp` | Run as an LSP server over stdio: the program's `diag` relation becomes live editor diagnostics (lint on open/save). See docs/lsp.md |
+| `--mcp` | _undocumented_ |
 | `--move <MOVE>` | Auto-refactor: rewrite `use`-path references for a module move `OLD_FILE=NEW_FILE` (repo-relative Rust paths). Dry-run unless --fix. Repeatable. Ignores the `program` positional |
 | `--no-daemon` | Force the in-process path this invocation (do not auto-attach). Same as `DL_NO_DAEMON=1`. Useful when the daemon socket is wedged |
+| `--parse-only` | _undocumented_ |
 | `--profile` | Profile mode (or DL_PROFILE=1): log slow SQL statements (threshold DL_PROFILE_SQL_MS, default 25), per-repo scan times, tick phase breakdown, and per-tick statement counts |
 | `--query-json` | Emit `?` query results as JSON-lines (one object per query: {query, columns, rows, count}) instead of the human TSV block |
-| `--repo <REPO>` | With --move, which repo to rewrite: a config slug, or `*`/`all` for every configured repo. Omitted = the --root repo (self) |
-| `--root <ROOT>` | Source root. When omitted, defaults to the nearest `.git` ancestor of the program file (the repo it lives in), else the current directory |
+| `--repo <REPO>` | With --move, which repo to rewrite: a config slug, or `*`/`all` for every configured repo. Omitted = the cwd repo (self) |
+| `--settle-max` | _undocumented_ |
+| `--settle` | _undocumented_ |
 | `--stdio` | Ignored no-op alias for `--lsp`. vscode-languageclient, coc.nvim, and neovim's lspconfig all append `--stdio` when spawning an LSP server; accept it so `dl` drops into any client without extension-specific arg gymnastics. Stdio is the only transport either way |
 | `--stop` | Send `shutdown` to the daemon on `<root>/.dl/daemon.sock` and exit |
 | `--tick-audit` | After each tick, print every relation's row count (or DL_TICK_AUDIT=1) |
@@ -603,7 +609,7 @@ tools/call over stdio); `mcp_daemon` covers the daemon-attached mode.
 ## LSP
 
 ```sh
-dl <rules.dl> --root <repo> --lsp
+cd <repo> && dl <rules.dl> --lsp
 ```
 
 Any program with a `diag` relation becomes a live linter: save a file, the
@@ -660,7 +666,7 @@ dir = "~/orgs/grafana"                  # of checkouts and every git repo under 
 
 `scan("alpha/one", "WORK", glob, p, rev)` targets one repo;
 `scan("*", "WORK", ...)` fans the rule over every configured repo. Or point
-`--root` at a parent directory and use root-relative globs
+`--root`-free: run from a parent directory and use root-relative globs
 (`"sprefa/src/**/*.rs"`), as [examples/anim-deck.dl](examples/anim-deck.dl) does.
 
 **Progressive analysis.** A multi-repo program does not have to bail when one
@@ -684,7 +690,7 @@ Worked example: [examples/missing-repo.dl](examples/missing-repo.dl).
 
 ## Examples
 
-All in [examples/](examples/), runnable as `dl examples/<name>.dl --root .`:
+All in [examples/](examples/), runnable as `dl examples/<name>.dl` (root = cwd):
 
 | file | shows |
 |---|---|

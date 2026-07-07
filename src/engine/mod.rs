@@ -2786,7 +2786,8 @@ impl Engine {
     }
 
     #[tracing::instrument(skip_all, fields(n_rules = source_rules.len()), level = "debug")]
-    fn reconcile_sources(&mut self, source_rules: &[&Rule], source_rels: &[String]) -> Result<Reconcile> {
+    fn reconcile_sources(&mut self, source_rules: &[&Rule], source_rels: &[String],
+        consumed: &HashSet<String>) -> Result<Reconcile> {
         // Load prior file metadata first so enumerate can use the mtime fast-path.
         let prev = self.load_file_meta()?;
 
@@ -2847,9 +2848,23 @@ impl Engine {
         // is almost always a glob/root mismatch, which otherwise fails silently as
         // "0 rows" far downstream. Warn with the rule, glob, and where it looked so
         // the miss is self-diagnosing instead of a mystery.
+        //
+        // Softened for two expected-empty shapes so a helper-in-progress isn't
+        // noisy: (a) POLYGLOT SIBLING — another scan heading the SAME rel matched
+        // (e.g. `seen` scanned for both Rust and `{ts,tsx}`, and this repo has no
+        // TS); the rel already has rows, so the empty glob is intentional
+        // fan-out → silent. (b) CONSUMED — the rel feeds a downstream rule; the
+        // author wired it up, an empty tick is transient → one quiet line, no
+        // fix-it note. Only a genuinely dead scan (unmatched, no sibling, unread)
+        // gets the loud two-line "check your glob/root" warning.
         let matched: HashSet<usize> = rule_files.iter().map(|(idx, ..)| *idx).collect();
+        let rel_matched: HashSet<&str> = source_rules.iter().enumerate()
+            .filter(|(idx, _)| matched.contains(idx))
+            .map(|(_, r)| r.head.rel.as_str()).collect();
         for (idx, rule) in source_rules.iter().enumerate() {
             if matched.contains(&idx) { continue; }
+            let rel = rule.head.rel.as_str();
+            if rel_matched.contains(rel) { continue; } // (a) sibling glob matched — silent
             let Ok(spec) = scan_spec_of(rule) else { continue };
             let Term::Str(glob) = &spec.glob else { continue };
             let targets: Vec<String> = groups.iter()
@@ -2860,12 +2875,17 @@ impl Engine {
                 })
                 .collect();
             let where_ = if targets.is_empty() { "no repo/rev resolved".into() } else { targets.join(", ") };
-            eprintln!("[dl] source `{}` matched 0 files: scan(\"{glob}\") under {where_}", rule.head.rel);
-            // The glob matches paths relative to the repo root. The usual miss is
-            // an anchored glob (`src/…`) while --root points ABOVE the repo, or a
-            // rev with no such path. `*` already crosses `/`, so recursion is not
-            // the issue.
-            eprintln!("       note: the glob matches repo-root-relative paths; check --root points at the repo (not a parent) and the leading path segments match");
+            if consumed.contains(rel) {
+                // (b) consumed helper — quiet, no fix-it note.
+                eprintln!("[dl] source `{rel}` matched 0 files this tick: scan(\"{glob}\") under {where_} (feeds a rule — transient if mid-edit)");
+                continue;
+            }
+            eprintln!("[dl] source `{rel}` matched 0 files: scan(\"{glob}\") under {where_}", );
+            // The glob matches paths relative to the working root (the cwd `dl`
+            // ran in). The usual miss is an anchored glob (`src/…`) run from ABOVE
+            // the repo, or a rev with no such path. `*` already crosses `/`, so
+            // recursion is not the issue.
+            eprintln!("       note: the glob matches paths relative to the working root; run `dl` from the repo (its cwd is the root — there is no --root) and check the leading path segments match");
         }
 
         let hash_of = |m: &FileMeta, repo: &str, p: &str, r: &str|

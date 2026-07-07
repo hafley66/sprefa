@@ -91,6 +91,57 @@ fn ping_query_diag_shutdown_round_trip() {
     assert!(status.success(), "daemon should exit 0 after shutdown");
 }
 
+/// A bad `--load` (watched) must fail cleanly and NOT wedge the daemon: the bad
+/// file is rolled back out of the program set, so a subsequent GOOD load still
+/// succeeds. Before the fix, the bad file lingered in `program_files` and every
+/// future reload re-parsed it → failed → the daemon could never reload again.
+#[test]
+fn bad_load_rolls_back_and_daemon_keeps_loading() {
+    use std::io::Write;
+    let dir = sandbox("badload");
+    fs::create_dir_all(dir.join(".dl")).unwrap();
+    fs::write(dir.join("p.dl"),
+        "rel edge(a: text, b: text).\nedge(\"a\", \"b\").\n? edge(a, b).\n").unwrap();
+    // A file with a type error (undeclared rel in the body): reload_program
+    // parses it, counts an error diag, and bails — the failure path under test.
+    fs::write(dir.join("bad.dl"),
+        "rel bad(a: text).\nbad(a) <- undeclared_rel(a).\n").unwrap();
+    fs::write(dir.join("good.dl"),
+        "rel good(a: text).\ngood(\"hi\").\n? good(a).\n").unwrap();
+
+    let mut child = run_daemon_explicit(&dir);
+    let sock = dir.join(".dl").join("daemon.sock");
+    let mut ready = false;
+    for _ in 0..100 {
+        if sock.exists() && std::os::unix::net::UnixStream::connect(&sock).is_ok() { ready = true; break; }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(ready, "daemon socket not ready");
+
+    let rpc = |id: u32, path: &str| -> String {
+        let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":{id},"method":"load","params":{{"path":"{path}","mode":"watched"}}}}"#);
+        write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+        read_frame(&mut s).expect("load response")
+    };
+
+    // Bad load → error response, file rolled back.
+    let bad = rpc(1, dir.join("bad.dl").to_str().unwrap());
+    assert!(bad.contains("\"error\""), "bad load must return an error: {bad}");
+
+    // Good load → success, proving the bad file did NOT poison the program set.
+    let good = rpc(2, dir.join("good.dl").to_str().unwrap());
+    assert!(good.contains("\"result\"") && good.contains("loaded"),
+        "a good load after a bad one must still succeed (rollback worked): {good}");
+
+    let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+    let sd = r#"{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}"#;
+    write!(s, "Content-Length: {}\r\n\r\n{}", sd.len(), sd).unwrap();
+    let _ = read_frame(&mut s);
+    let _ = child.wait_timeout(std::time::Duration::from_secs(5));
+}
+
 /// Every `query_sql` RPC appends one row to the query-history log
 /// (`_query_log`, projected by the built-in `query_log` relation). Sends two
 /// `query_sql` requests over the same daemon session (no file changes, no
