@@ -254,6 +254,16 @@
   .banner b { color: var(--err); display: block; margin-bottom: 4px; }
   .banner[hidden] { display: none; }
 
+  /* empty-state: calm (not alarming) centered hint when a query returns zero
+     rows. Guides toward the likely cause instead of a mute blank canvas. */
+  .emptyState { position: fixed; left: 50%; top: 44%; transform: translateX(-50%);
+    max-width: 68%; padding: 16px 20px; border-radius: 10px; z-index: 25;
+    background: #0d1828f0; border: 1px solid #284060; color: var(--muted);
+    font-size: 12px; line-height: 1.6; text-align: center; box-shadow: 0 10px 40px #0008; }
+  .emptyState b { color: #cfe3ff; display: block; margin-bottom: 6px; font-size: 13px; }
+  .emptyState code { color: var(--cyan); }
+  .emptyState[hidden] { display: none; }
+
   /* ── HELP OVERLAY ──────────────────────────────────────────────────── */
   .help { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center;
     background: #000a; padding: 24px; }
@@ -436,7 +446,7 @@
     <option value="typeCurated">Type graph (curated)</option>
     <option value="typeRefs">Type references</option>
     <option value="typeNeighbors">Type neighbors</option>
-    <option value="prGraph">PR graph (GraphQL)</option>
+    <option value="graph">Graph (node/edge sink)</option>
     <option value="marks">Marks</option>
     <option value="enumMatches">Enums ↔ matches</option>
     <option value="madge">Module graph</option>
@@ -493,6 +503,11 @@
 
 <div class="banner" id="errBanner" hidden></div>
 
+<!-- Empty-state: shown by render() when a query succeeds but returns zero
+     nodes, so a blank canvas doesn't read as "broken". Distinguishes "no
+     daemon/data" from "this preset has nothing yet". -->
+<div class="emptyState" id="emptyState" hidden></div>
+
 <div class="help" id="helpPanel" hidden>
   <div class="help-card">
     <button class="help-close" id="helpClose" aria-label="close">×</button>
@@ -544,10 +559,10 @@
       <tr><td>Type graph (curated)</td><td>a hand-filtered subset via <code>rel_panel_node</code>/<code>rel_panel_edge</code> (.dl/flow-panel.dl)</td></tr>
       <tr><td>Type references</td><td>every type owner + its members (methods/fns/consts + fields) edged by <code>rel_type_link</code> only — impl/uses/param/returns/field/generic, <b>no</b> call_edge or df_* (the callsite-free cut of memberFlow); kind chips isolate one edge kind</td></tr>
       <tr><td>Type neighbors</td><td>1-hop neighborhood of a <code>type_seed</code> fact (<code>cmd+alt+t</code> writes one): seed + its impls + direct type refs (both directions) + those refs' own impls; empty until seeded (<code>rel_type_neighbor_node</code>/<code>rel_type_neighbor_edge</code>, .dl/flow-panel.dl)</td></tr>
-      <tr><td>PR graph (GraphQL)</td><td>open PRs + authors + head branches from one <code>gh api graphql</code> call (<code>rel_graph_node</code>/<code>rel_graph_edge</code>, .dl/git-graph.dl); edit <code>gh_owner</code>/<code>gh_name</code> facts for your repo; needs <code>gh</code> authed + the daemon for the <code>sh</code> effect to drain</td></tr>
+      <tr><td>Graph (node/edge sink)</td><td>the builtin <code>graph_node</code>/<code>graph_edge</code> sink — any .dl that heads them (like <code>diag</code>) draws here with zero SQL. Always available (empty until headed). One producer in-tree: .dl/git-graph.dl (GitHub PRs + authors + branches via <code>gh api graphql</code>; needs <code>gh</code> authed + the daemon)</td></tr>
       <tr><td>Marks</td><td>marked terms + selector nodes from <code>rel_mark</code>/<code>rel_mark_selector</code>, edged by <code>rel_mark_flow</code> plus selector→mark "covers" (.dl/mark-lens.dl)</td></tr>
       <tr><td>Enums ↔ matches</td><td>enum <code>rel_type_entity</code> rows edged to their <code>rel_enum_match_block</code> match-arm sites (.dl/enum-matches.dl)</td></tr>
-      <tr><td>Module graph</td><td><code>rel_module_node</code> files edged by <code>rel_module_edge</code> imports</td></tr>
+      <tr><td>Module graph</td><td>module files (endpoints of <code>rel_module_edge</code>) edged by their import edges — builtin, works on a bare scan</td></tr>
       <tr><td>Member flow</td><td>struct/trait/enum/class/interface owners + their function/method/const members, edged by type links and calls, methods nested under their owner in list view (.dl/flow-panel.dl)</td></tr>
       <tr><td>Diff (base vs head)</td><td>added/removed/unchanged nodes and edges between the two revs of <code>diff_pair</code> (base rev vs head rev, default inert WORK/WORK; set <code>diff_pair</code> in <code>.dl/graph-diff.dl</code>) (<code>rel_edge_added</code>/<code>rel_edge_removed</code>/<code>rel_node_added</code>/<code>rel_node_removed</code>/<code>rel_bare_edge</code>/<code>rel_bare_node</code> from <code>.dl/graph-diff.dl</code>); canvas view only for the added/removed/unchanged styling (dashed+muted/solid+hot/dimmed) and the class chips + count pill</td></tr>
       <tr><td>Custom</td><td>whatever SQL is in the two boxes below; editing either box switches here automatically</td></tr>
@@ -718,11 +733,13 @@ const PRESETS = {
     nodes: `SELECT sym, name, kind, ${REPO_FILE_COL}, line, parent FROM rel_type_neighbor_node`,
     edges: "SELECT src, dst, kind FROM rel_type_neighbor_edge",
   },
-  // GitHub PR graph from one GraphQL query (.dl/git-graph.dl): PR + author +
-  // branch nodes, opened/head edges. Edit gh_owner/gh_name facts in that file
-  // for your repo. Empty until the sh effect drains (needs the daemon + gh auth).
-  prGraph: {
-    nodes: "SELECT id, label, kind, NULL, NULL FROM rel_graph_node",
+  // The builtin drawable-graph sink: ANY .dl that heads graph_node/graph_edge
+  // (like diag) lands here with zero bespoke SQL. The tables are builtin so this
+  // preset is ALWAYS available (empty until some program heads the sink). One
+  // producer ships in-tree: .dl/git-graph.dl (GitHub PRs -> PR/author/branch
+  // nodes, opened/head edges; needs the daemon + gh auth to drain).
+  graph: {
+    nodes: "SELECT id, label, kind, file, line, parent FROM rel_graph_node",
     edges: "SELECT src, dst, kind FROM rel_graph_edge",
   },
   marks: {
@@ -738,8 +755,14 @@ const PRESETS = {
       "SELECT DISTINCT file || ':' || start, file || ':' || start, 'match', file, start FROM rel_enum_match_block",
     edges: "SELECT DISTINCT enum_name, file || ':' || start, 'match' FROM rel_enum_match_block",
   },
+  // Self-contained: synthesize nodes from the builtin rel_module_edge
+  // endpoints (populated on a bare scan) so this works without a derived
+  // rel_module_node. Cycle classification lives in .dl/flow-panel.dl's
+  // module_node preset; here every endpoint is a plain 'module'.
   madge: {
-    nodes: "SELECT path, path, kind, path, 1 FROM rel_module_node",
+    nodes:
+      "SELECT src, src, 'module', src, 1 FROM rel_module_edge UNION " +
+      "SELECT dst, dst, 'module', dst, 1 FROM rel_module_edge",
     edges: "SELECT src, dst, 'import' FROM rel_module_edge",
   },
   memberFlow: {
@@ -875,7 +898,42 @@ const BUILTIN_LAYERS = [
 let layers = [];
 const activeLayers = new Set();
 
+// ── preset availability: no magic, no red walls ─────────────────────────────
+// Every preset is just node/edge SQL over rel_ tables. A derived rel (marks,
+// diff, member-flow, ...) only exists when the running daemon serves the .dl
+// that heads it; a builtin rel (call/type/df/module graph) exists after any
+// tick. We introspect the live schema once, parse each preset's rel_ table
+// refs, and DISABLE (not hide) any preset whose tables aren't all present --
+// labeled "needs .dl" -- so you can't select one that would `no such table`.
+let existingRels = new Set();
+async function refreshExistingRels() {
+  try {
+    const rows = await host.query(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'rel_%'");
+    existingRels = new Set(rows.map(r => r[0]));
+  } catch (e) { /* daemon not up yet — leave the set as-is, retry on refresh */ }
+}
+function presetRels(key) {
+  const p = PRESETS[key]; if (!p) return [];
+  const sql = (p.nodes || '') + ' ' + (p.edges || '');
+  return [...new Set(sql.match(/\brel_[a-z0-9_]+/gi) || [])];
+}
+function updatePresetAvailability() {
+  const sel = document.getElementById('presetSel');
+  if (!sel || !existingRels.size) return; // no schema yet: judge nothing
+  for (const opt of sel.options) {
+    const key = opt.value;
+    if (!PRESETS[key]) continue; // layers / custom / saved: always selectable
+    const base = opt.dataset.baseLabel || (opt.dataset.baseLabel = opt.textContent);
+    const missing = presetRels(key).filter(t => !existingRels.has(t));
+    opt.disabled = missing.length > 0;
+    opt.textContent = missing.length ? base + ' — needs .dl' : base;
+  }
+}
+
 async function discoverLayers() {
+  await refreshExistingRels();
+  updatePresetAvailability();
   let tables = [];
   try {
     tables = await host.query(
@@ -1108,17 +1166,19 @@ async function run() {
     ]);
   } catch (e) {
     const msg = String(e.message || e);
-    // diff preset, missing-table tolerance (same pattern as loadGateways
-    // below): rel_edge_added/rel_edge_removed/rel_node_added/rel_node_removed/
-    // rel_bare_edge/rel_bare_node only exist when the running daemon is
-    // serving .dl/graph-diff.dl against a base+head config-repo pair -- that's
-    // an empty-state, not a query error, so skip showError's scary banner.
-    if (currentPreset === 'diff' &&
-        /no such table: rel_(edge_added|edge_removed|node_added|node_removed|bare_edge|bare_node)\b/.test(msg)) {
+    // Missing-rel tolerance for EVERY preset: a `no such table: rel_X` means the
+    // running daemon isn't serving a .dl that derives rel_X. That's an empty
+    // state, not a failure -- render nothing and leave a quiet one-line note
+    // instead of the red banner. updatePresetAvailability() disables such
+    // presets in the dropdown proactively; this covers saved queries + races
+    // (schema changed between the availability check and the query).
+    const missing = /no such table: rel_(\w+)/.exec(msg);
+    if (missing) {
       render([], []);
-      updateDiffPanel([], []);
+      if (currentPreset === 'diff') updateDiffPanel([], []);
       document.getElementById('errLine').textContent =
-        'no diff rels — serve .dl/graph-diff.dl against a base+head pair';
+        `rel_${missing[1]} isn't loaded — serve a .dl that derives it, or pick a` +
+        ' builtin preset (Call graph / Type graph / Data flow / Module graph).';
       return;
     }
     showError(msg +
@@ -2984,9 +3044,31 @@ let lastNodeRows = null, lastEdgeRows = null;
 
 function render(nodeRows, edgeRows) {
   lastNodeRows = nodeRows; lastEdgeRows = edgeRows;
+  updateEmptyState(nodeRows);
   if (viewMode === 'list') renderList(nodeRows, edgeRows);
   else if (viewMode === 'trace') renderTraceView();
   else renderCanvas(nodeRows, edgeRows);
+}
+// A query that succeeds but yields zero nodes reads as a broken panel unless we
+// say why. Builtin presets (call/type/df/module rels exist after any tick) that
+// come back empty => nothing scanned / no daemon on this workspace. Derived
+// presets => the .dl that heads them isn't being served (updatePresetAvailability
+// already disables those, so this is mostly the builtin case).
+function updateEmptyState(nodeRows) {
+  const el = document.getElementById('emptyState');
+  if (!el) return;
+  if (nodeRows && nodeRows.length) { el.hidden = true; return; }
+  const builtinPreset = ['typeAll', 'callGraph', 'dataFlow', 'madge', 'graph', 'layers'].includes(currentPreset);
+  const body = builtinPreset
+    ? 'No graph data for this workspace yet. A <code>dl</code> daemon must be ' +
+      'serving this folder with something scanned.<br>Start one with ' +
+      '<code>dl --daemon --root .</code> (or open a <code>.dl</code> file so the ' +
+      'LSP ticks), then hit ↻ / Run.'
+    : 'This preset is empty — its rel isn’t being served. Pick a builtin ' +
+      'preset (Call graph / Type graph / Data flow / Module graph), or serve the ' +
+      '<code>.dl</code> that heads this graph.';
+  el.innerHTML = '<b>nothing to draw</b>' + body;
+  el.hidden = false;
 }
 function applyViewMode() {
   document.getElementById('viewport').hidden = viewMode !== 'canvas';

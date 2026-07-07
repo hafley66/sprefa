@@ -315,6 +315,20 @@ const EFFECT_RELS: [&str; 1] = ["effect_log"];
 /// program's rules like any other derived rel.
 const DIAG_RELS: [&str; 1] = ["diag"];
 
+/// The drawable-graph SINK relations. A user HEADS these from a rule (like
+/// `diag`) to emit a graph the flow panel draws with ZERO bespoke SQL:
+/// `graph_node(id, label, kind, file, line, parent)` is one vertex,
+/// `graph_edge(src, dst, kind)` one edge. Fixed schema so any program's graph
+/// composes into the same two tables the panel's always-available "Graph"
+/// preset reads (`rel_graph_node` / `rel_graph_edge`). Pre-declared (catalogued,
+/// so the binding shows in `rel_catalog`) and reserved against a `rel`
+/// re-declaration — head them directly, name only the columns you use (the rest
+/// lower to NULL: no file/line/parent = an unplaced, unnested node). Read only,
+/// never populated by a refresh — `rebuild_derived` fills them from the
+/// program's rules like any other derived rel, so an unheaded program leaves
+/// them empty (and the preset shows the "nothing to draw" hint).
+const GRAPH_RELS: [&str; 2] = ["graph_node", "graph_edge"];
+
 /// The harness-hook event log. `hook_event(kind, session, seq, json)` accumulates
 /// one row per coding-agent hook invocation (`dl --hook`): kind = the harness
 /// event name (UserPromptSubmit / PostToolUse / ...), session = the event's
@@ -386,6 +400,7 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
         .chain(effect_rel_decls())
         .chain(hook_rel_decls())
         .chain(diag_rel_decls())
+        .chain(graph_rel_decls())
         .chain(diag_mute_rel_decls())
         .chain(demand_rel_decls())
         .collect()
@@ -486,6 +501,8 @@ pub fn op_docs() -> &'static [(&'static str, &'static str, &'static str, &'stati
         ("query", "sink", "? rel(from, to). / ? rel(col: value).", "print a TSV block (or JSON-lines with --query-json); a literal in any position filters; args may be named by column (`col: value`), unmentioned columns are don't-cares; no where clause"),
         ("diag", "sink", "diag(path: hit_path, line: hit_line, msg: message[, col: , end_line: , end_col: , severity: , code: , hint: ]) <- ...", "head the built-in diagnostic sink; fixed 9-col schema (path/line/col/end_line/end_col/severity/code/msg/hint), name only the columns you use, the rest default (severity warn, end_line=line); feeds editor diagnostics (--lsp) and check output (--check)"),
         ("gen", "sink", "gen([:mode,] path, [l0, l1,] \"{var} template\")", "codegen; file form renders body rows through a path+row template, splice form replaces lines between comment marker pairs; convergent (skips write when bytes match); never runs under --check/--lsp"),
+        ("graph_node", "sink", "graph_node(id: node_id, label: label, kind: kind[, file: , line: , parent: ]) <- ...", "head the built-in drawable-graph vertex sink; fixed 6-col schema (id/label/kind/file/line/parent), name only the columns you use; the flow panel's always-available Graph preset draws graph_node/graph_edge with no bespoke SQL"),
+        ("graph_edge", "sink", "graph_edge(src: src_id, dst: dst_id, kind: kind) <- ...", "head the built-in drawable-graph edge sink; connects two graph_node ids, kind is the wire label; read by the Graph preset alongside graph_node"),
     ]
 }
 
@@ -502,6 +519,28 @@ fn diag_rel_decls() -> Vec<RelDecl> {
             c("msg", Type::Text), c("hint", Type::Text)],
             group: "diag",
             doc: "diagnostic sink; head it from a rule to emit an editor squiggle (--lsp), a --check finding, or a daemon-hook message. Fixed 9-col schema — write only the cols you need via named args (diag(path: p, line: l, msg: m)); the rest are NULL and default (severity warn, end_line=line, ints 0). path is TEXT so a synthetic origin isn't file-checked away",
+            ..Default::default() },
+    ]
+}
+
+/// The drawable-graph sink relations (see `GRAPH_RELS`). Fixed schema so every
+/// program's graph unions into the same two tables. `id` columns are TEXT (a
+/// node id is any string — a sym, a path:line, a synthetic label); `file` is
+/// TEXT (not the checked `file` type) so a non-path grouping key or a NULL is
+/// not row-dropped, mirroring `diag.path`.
+fn graph_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "graph_node".into(), cols: vec![
+            c("id", Type::Text), c("label", Type::Text), c("kind", Type::Text),
+            c("file", Type::Text), c("line", Type::Int), c("parent", Type::Text)],
+            group: "graph",
+            doc: "drawable-graph vertex sink: head graph_node(id, label, kind[, file, line, parent]) from a rule and the flow panel's always-available Graph preset draws it — no bespoke node SQL. Fixed 6-col schema; write only the cols you need via named args (graph_node(id: sym, label: name, kind: k)); file/line place the node in the fs-tree + jump target, parent nests it in list view, all NULL by default",
+            ..Default::default() },
+        RelDecl { name: "graph_edge".into(), cols: vec![
+            c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text)],
+            group: "graph",
+            doc: "drawable-graph edge sink: head graph_edge(src, dst, kind) from a rule to connect two graph_node ids; kind is the wire label/style. Read by the Graph preset alongside graph_node",
             ..Default::default() },
     ]
 }
@@ -3224,6 +3263,9 @@ impl Engine {
                 if DIAG_RELS.contains(&d.name.as_str()) {
                     bail!("diag is the built-in diagnostic sink (fixed schema: path, line, col, end_line, end_col, severity, code, msg, hint); drop the `rel diag(...)` decl and write it directly — name only the columns you use, e.g. `diag(path: p, line: l, msg: m) <- ...`");
                 }
+                if GRAPH_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is a built-in drawable-graph sink (graph_node(id, label, kind[, file, line, parent]) / graph_edge(src, dst, kind)); drop the `rel {}(...)` decl and head it directly from a rule, like diag — name only the columns you use", d.name, d.name);
+                }
                 if MUTE_RELS.contains(&d.name.as_str()) {
                     bail!("diag_mute is the built-in diagnostic-mute set (code); it is written only by the LSP toggle command, never a rule — pick another name");
                 }
@@ -3270,6 +3312,7 @@ impl Engine {
         for d in effect_rel_decls() { self.declare(&d)?; }
         for d in hook_rel_decls() { self.declare(&d)?; }
         for d in diag_rel_decls() { self.declare(&d)?; }
+        for d in graph_rel_decls() { self.declare(&d)?; }
         for d in diag_mute_rel_decls() { self.declare(&d)?; }
         for d in demand_rel_decls() { self.declare(&d)?; }
         Ok(())

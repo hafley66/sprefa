@@ -117,18 +117,19 @@ pr_row(repo, "${num}", title, state, login, author_name, author_email, base, hea
 # Node id scheme namespaces by repo so 500 repos' PRs/branches never collide;
 # author nodes are the bare login so the SAME person links across repos (the
 # cross-repo collaboration picture).
-rel graph_node(id: text, label: text, kind: text).
-graph_node("${repo}#PR-${num}", title, "pr") <- pr_row(repo: repo, num: num, title: title).
-graph_node(login, author_name, "author") <- pr_row(login: login, author_name: author_name).
-graph_node("${repo}#${branch}", branch, "branch") <- pr_row(repo: repo, branch: branch).
+# graph_node / graph_edge are BUILTIN drawable-graph sinks (fixed schema, head
+# them directly like diag — no `rel` decl). Name only the columns you use; the
+# panel's always-available Graph preset reads rel_graph_node / rel_graph_edge.
+graph_node(id: "${repo}#PR-${num}", label: title, kind: "pr") <- pr_row(repo: repo, num: num, title: title).
+graph_node(id: login, label: author_name, kind: "author") <- pr_row(login: login, author_name: author_name).
+graph_node(id: "${repo}#${branch}", label: branch, kind: "branch") <- pr_row(repo: repo, branch: branch).
 
-rel graph_edge(src: text, dst: text, kind: text).
-graph_edge(login, "${repo}#PR-${num}", "opened") <- pr_row(repo: repo, num: num, login: login).
-graph_edge("${repo}#PR-${num}", "${repo}#${branch}", "head") <- pr_row(repo: repo, num: num, branch: branch).
+graph_edge(src: login, dst: "${repo}#PR-${num}", kind: "opened") <- pr_row(repo: repo, num: num, login: login).
+graph_edge(src: "${repo}#PR-${num}", dst: "${repo}#${branch}", kind: "head") <- pr_row(repo: repo, num: num, branch: branch).
 
 # ---- debug query ------------------------------------------------------------
 ? candidate(slug, pushed_at).
 ? active_repo(slug).
 ? pr_row(repo, num, title, state, login, author_name, author_email, base, head, branch).
-? graph_node(id, label, kind).
+? graph_node(id, label, kind, file, line, parent).
 ? graph_edge(src, dst, kind).

@@ -6,6 +6,35 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-07-07
+
+### Added
+- **`graph_node` / `graph_edge` builtin sinks** (group `graph`): head-writable
+  builtin rels (mirror the `diag`/`repo` pattern) for drawing a graph in the
+  flow panel without bespoke per-preset SQL. `graph_node(id, label, kind, file,
+  line, parent)` and `graph_edge(src, dst, kind)`; the tables always exist
+  (empty until a rule heads them), so the panel's "Graph (node/edge sink)"
+  preset is always available. `.dl/git-graph.dl` migrated to the named-head
+  form; `examples/madge.dl`'s 1-ary module node renamed `graph_node` ->
+  `mod_node` to free the reserved name.
+- **diag messages render markdown on hover**: the VS Code extension registers a
+  HoverProvider that re-renders any dl-sourced diagnostic overlapping the cursor
+  as a MarkdownString (the LSP `Diagnostic.message` field is plain-text-only).
+  `.dl` programs can now write markdown (links, `code`, lists) into diag's
+  msg/hint and it renders in the editor hover.
+
+### Fixed
+- **Flow panel no longer shows a red wall of text** when a preset's `rel_*`
+  tables are missing: `run()` renders an empty graph plus a one-line grey note
+  for any `no such table: rel_X`, `updatePresetAvailability()` disables presets
+  whose tables are absent (labelled " - needs .dl"), and an empty-state overlay
+  names the daemon/data cause. The `madge` preset synthesizes nodes from builtin
+  `rel_module_edge` endpoints so it works on a bare scan.
+- **VS Code extension is no longer blank under a GUI-launched editor**: probe
+  `~/.cargo/bin` (and Homebrew paths) for the `dl` binary, augment the server's
+  spawn PATH, and surface an actionable error with an "Open Settings" action
+  when the binary is missing (GUI editors don't inherit the shell PATH).
+
 ## [0.6.5] - 2026-07-06
 
 ### Fixed

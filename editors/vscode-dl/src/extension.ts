@@ -5,44 +5,92 @@
 // `window.dlHost` bootstrap that bridges the panel's three host calls
 // (query/hover/open) onto VS Code machinery.
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, State } from "vscode-languageclient/node";
 
 let client: LanguageClient | undefined;
 
+// Install dirs a GUI-launched editor's PATH typically misses. `cargo install`
+// drops `dl` in ~/.cargo/bin, which a macOS app launched from Finder/Dock does
+// NOT inherit (the shell-set PATH only exists in a terminal session). Homebrew
+// prefixes cover a `brew`-tapped install. Probed on disk AND prepended to the
+// spawn PATH so a bare `dl` resolves too.
+function dlBinDirs(): string[] {
+  return [path.join(os.homedir(), ".cargo", "bin"), "/opt/homebrew/bin", "/usr/local/bin"];
+}
+
+// Resolve the `dl` command. An explicit absolute `dl.binaryPath` wins; otherwise
+// probe the common install dirs on disk. `found` is false only when nothing on
+// disk matched — we still return a command (the bare name, spawned against the
+// augmented PATH), but the caller warns the user so a blank panel isn't a
+// mystery (the #1 "installs but blank on another machine" cause).
+function resolveBinary(configured: string): { command: string; found: boolean } {
+  if (configured && configured !== "dl") {
+    // A user-set path (absolute or a custom name): trust it, report existence.
+    if (path.isAbsolute(configured)) return { command: configured, found: fs.existsSync(configured) };
+    return { command: configured, found: true };
+  }
+  for (const dir of dlBinDirs()) {
+    const cand = path.join(dir, "dl");
+    if (fs.existsSync(cand)) return { command: cand, found: true };
+  }
+  return { command: "dl", found: false };
+}
+
 export function activate(ctx: vscode.ExtensionContext): void {
   const folders = vscode.workspace.workspaceFolders;
   if (!folders) return;
 
   const cfg = vscode.workspace.getConfiguration("dl");
-  const binary = cfg.get<string>("binaryPath", "dl");
+  const configuredBinary = cfg.get<string>("binaryPath", "dl");
+  const resolved = resolveBinary(configuredBinary);
   const program = cfg.get<string>("program", "");
   const root = cfg.get<string>("root", "") || folders[0].uri.fsPath;
 
-  const args = program ? [program, "--root", root, "--lsp"] : ["--root", root, "--lsp"];
+  if (!resolved.found) {
+    void vscode.window.showErrorMessage(
+      "dl: binary not found on PATH or in ~/.cargo/bin. GUI-launched editors don't " +
+      "inherit your shell PATH. Install with `cargo install --git " +
+      "https://github.com/hafley66/sprefa sprefa-dl`, or set `dl.binaryPath` to its full path.",
+      "Open Settings",
+    ).then((pick) => {
+      if (pick === "Open Settings") void vscode.commands.executeCommand("workbench.action.openSettings", "dl.binaryPath");
+    });
+  }
 
-  const serverOptions: ServerOptions = {
-    run: { command: binary, args, transport: TransportKind.stdio },
-    debug: { command: binary, args, transport: TransportKind.stdio },
+  const args = program ? [program, "--root", root, "--lsp"] : ["--root", root, "--lsp"];
+  // Prepend the known install dirs so a bare `dl` (or a `dl` that shells out to
+  // a sibling tool) resolves even under the truncated GUI PATH.
+  const spawnEnv = {
+    ...process.env,
+    PATH: [...dlBinDirs(), process.env.PATH || ""].join(path.delimiter),
   };
 
+  const serverOptions: ServerOptions = {
+    run: { command: resolved.command, args, transport: TransportKind.stdio, options: { env: spawnEnv } },
+    debug: { command: resolved.command, args, transport: TransportKind.stdio, options: { env: spawnEnv } },
+  };
+
+  const documentSelector: vscode.DocumentSelector = [
+    { scheme: "file", language: "dl" },
+    { scheme: "file", language: "rust" },
+    { scheme: "file", language: "typescript" },
+    { scheme: "file", language: "typescriptreact" },
+    { scheme: "file", language: "javascript" },
+    { scheme: "file", language: "javascriptreact" },
+    { scheme: "file", language: "python" },
+    { scheme: "file", language: "go" },
+    { scheme: "file", language: "kotlin" },
+    { scheme: "file", language: "json" },
+    { scheme: "file", language: "yaml" },
+    { scheme: "file", language: "toml" },
+    { scheme: "file", language: "shell" },
+  ];
+
   const clientOptions: LanguageClientOptions = {
-    documentSelector: [
-      { scheme: "file", language: "dl" },
-      { scheme: "file", language: "rust" },
-      { scheme: "file", language: "typescript" },
-      { scheme: "file", language: "typescriptreact" },
-      { scheme: "file", language: "javascript" },
-      { scheme: "file", language: "javascriptreact" },
-      { scheme: "file", language: "python" },
-      { scheme: "file", language: "go" },
-      { scheme: "file", language: "kotlin" },
-      { scheme: "file", language: "json" },
-      { scheme: "file", language: "yaml" },
-      { scheme: "file", language: "toml" },
-      { scheme: "file", language: "shell" },
-    ],
+    documentSelector: documentSelector as { scheme: string; language: string }[],
     synchronize: { fileEvents: vscode.workspace.createFileSystemWatcher("**/*") },
   };
 
@@ -60,6 +108,30 @@ export function activate(ctx: vscode.ExtensionContext): void {
   });
   ctx.subscriptions.push({ dispose: () => { void client?.stop(); } });
   void client.start();
+
+  // dl diagnostics render markdown: the LSP `Diagnostic.message` field is
+  // plain-text-only (VS Code shows it verbatim), so a hover provider re-renders
+  // any dl-sourced diagnostic overlapping the cursor as a MarkdownString. `.dl`
+  // programs write markdown into diag's msg/hint (links, `code`, lists) and it
+  // renders here on hover.
+  ctx.subscriptions.push(vscode.languages.registerHoverProvider(documentSelector, {
+    provideHover(document, position) {
+      const hits = vscode.languages.getDiagnostics(document.uri)
+        .filter((d) => d.source === "dl" && d.range.contains(position));
+      if (hits.length === 0) return undefined;
+      const md = new vscode.MarkdownString();
+      md.isTrusted = true;
+      md.supportHtml = false;
+      for (const d of hits) {
+        const code = typeof d.code === "object" ? d.code.value : d.code;
+        if (code) md.appendMarkdown(`**\`${code}\`** `);
+        md.appendMarkdown(d.message + "\n\n");
+      }
+      const range = hits.reduce<vscode.Range | undefined>(
+        (acc, d) => (acc ? acc.union(d.range) : d.range), undefined);
+      return new vscode.Hover(md, range);
+    },
+  }));
 
   const slice = new SliceDecorations(root);
   ctx.subscriptions.push(vscode.window.registerFileDecorationProvider(slice));

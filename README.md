@@ -389,6 +389,7 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `content` | core | `(id, hash)` | content addresses |
 | `crate_edge` | module | `(src, dst, kind, rev)` | workspace-internal Cargo dependency edges |
 | `created` | created | `(path, name, email, ts)` | files added since their first appearance, with author name/email/timestamp |
+| `def_target` | demand | `(name, file, line, kind)` | LSP go-to-definition sink: head def_target(name, file, line, kind) and textDocument/definition resolves a symbol reference to (file, line) by name; falls back to the module-edge specifier match when empty. Read by column name, so a subset written via named args works |
 | `df_arg` | dataflow | `(call, pos, arg)` | (call/new df_node id, slot, arg df_node id); 0-based, receiver at -1; aligns with df_param.pos for the positional arg->param hop |
 | `df_arg_rev` | dataflow | `(call, pos, arg, rev)` | rev-aware df_arg; call and arg are salt_rev(raw id, rev), matching df_node_rev.id; legacy df_arg keeps raw ids |
 | `df_edge` | dataflow | `(from, to)` | intra-procedural dataflow dependency edge |
@@ -406,11 +407,14 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `doc_node` | doc | `(repo, file, line, kind, name, parent)` | structural nodes from non-source text (markdown headings + code blocks via tree-sitter-md: ATX/setext headings, fenced/indented blocks); parent is the enclosing heading |
 | `doc_ref` | doc | `(repo, file, line, sym, kind, matched_name)` | doc-to-code bridge: name-matches doc_node headings to type_entity symbols (exact + normalized) and scans code blocks for identifier mentions; empty unless the program also uses type relations |
 | `doc_tag` | type | `(repo, sym, tag, arg, text)` | structured doc tags per sym: (repo, sym, tag, arg, text); @param/@returns/@deprecated for JSDoc/KDoc, # Section headings for rustdoc |
+| `effect_cmd` | demand | `(kind, template)` | effect-template overlay sink: head effect_cmd(kind, template) to override the shell command for an effect kind at drain time (dynamic per-kind template), read as the effect executor is built |
 | `effect_log` | effect | `(id, kind, head, state, args, req_tx)` | the @async/@stream drain queue: one row per request (id, kind, head rel, state queued/running/done/failed, args JSON, req_tx); the dl-native call log, queryable live and parity-comparable to an external cache's call log |
 | `every` | clock | `(secs)` | holds interval N only on ticks that cross an N-second boundary (and the first tick); an every(30) body atom self-throttles its rule |
 | `file` | core | `(repo, rev, path, content)` | scanned files, keyed by (repo, rev, path, content) |
 | `fn_catalog` | meta | `(name, arity, group, doc)` | every scalar function callable in a head or comparison with its arity, group, and one-line doc; sourced from fn_docs |
 | `git_ref` | git-ref | `(repo, refname, kind, sha)` | every branch/tag/remote ref plus HEAD across self + config repos (repo, refname, kind, sha); annotated tags peeled to the commit |
+| `graph_edge` | graph | `(src, dst, kind)` | drawable-graph edge sink: head graph_edge(src, dst, kind) from a rule to connect two graph_node ids; kind is the wire label/style. Read by the Graph preset alongside graph_node |
+| `graph_node` | graph | `(id, label, kind, file, line, parent)` | drawable-graph vertex sink: head graph_node(id, label, kind[, file, line, parent]) from a rule and the flow panel's always-available Graph preset draws it — no bespoke node SQL. Fixed 6-col schema; write only the cols you need via named args (graph_node(id: sym, label: name, kind: k)); file/line place the node in the fs-tree + jump target, parent nests it in list view, all NULL by default |
 | `head` | daemon | `(repo, name, oid)` | git HEAD per repo (repo, ref name, oid) |
 | `hook_event` | hook | `(kind, session, seq, json)` | harness-hook event log: one accumulating row per `dl --hook` invocation (kind = the event name UserPromptSubmit/PostToolUse/..., session = the event session id, seq = an ingest-time monotone millis stamp ordering events within a session, json = the raw event JSON). Written by the hook feed, never a refresh; extract fields with term-form json/jsonp |
 | `loop_over` | dataflow | `(file, start, end, var, collection, fn)` | one row per loop with its span, iter var, and collection |
@@ -433,6 +437,7 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `rev` | core | `(id, repo, oid, ts)` | git revs seen by scans |
 | `rev_advanced` | daemon | `(repo, name, old, new)` | daemon signal that a repo ref advanced (repo, name, old oid, new oid) |
 | `rev_behind` | git-ref | `(repo, refname, upstream, behind, ahead)` | demand-driven ancestry counts: derive rev_cmp_want(repo, refname, upstream) and each wanted pair yields behind/ahead commit counts (ahead>0 = the ref diverged from upstream); one-tick latency like a data-driven scan; unresolvable refs and shallow clones skip loudly |
+| `rev_cmp_want` | demand | `(repo, refname, upstream)` | git ancestry demand sink: head rev_cmp_want(repo, refname, upstream) and each wanted triple runs git rev-list, filling rev_behind(repo, refname, upstream, behind, ahead); unresolvable refs and shallow clones skip loudly |
 | `scip_callee_type` | scip | `(sym, type)` | receiver type parsed from a method moniker's impl/for segment |
 | `scip_def` | scip | `(symbol, file, repo)` | symbol defs from an existing index.scip (root or $SPREFA_SCIP_INDEX); repo = origin index |
 | `scip_edge` | scip | `(src, dst, repo)` | file-to-file SCIP dependency edges (with origin repo) |
@@ -441,6 +446,7 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `scip_local` | scip | `(fn, name)` | local-variable + parameter declarations attributed to their enclosing fn |
 | `scip_name` | scip | `(symbol, name)` | descriptor name (last identifier run) of a moniker, computed in-engine |
 | `scip_ref` | scip | `(file, symbol, def_file, repo)` | compiler-backed references (ref file, symbol, def file, origin repo) |
+| `scip_want` | demand | `(repo)` | SCIP index demand sink: head scip_want(repo) to make the importer ensure + load that repo's index.scip (runs installed indexers when missing, merges, loads into scip_def/scip_ref/scip_edge); one-tick latency, shallow clones skip loudly |
 | `similar` | embed | `(a, b, score)` | content-addressed nearest-neighbor pairs from the embedding backend, with score |
 | `skill_loaded` | agent | `(harness, session, name)` | skills loaded in the newest agent session (harness, session, name): explicit Skill tool calls + dl's own prior `dl --hook` injections — negate it for a declarative load-once guard |
 | `stmt_ms` | perf | `(rel, ms)` | wall ms of each derived rel's INSERT statements from its most recent rebuild (max across rules/passes); empty until a rebuild has landed in this db, so a one-shot CLI run reports on the second invocation — the slow-rule rail joins here |
@@ -726,8 +732,6 @@ pages: [relations.md](docs/reference/relations.md),
 [magic-rels.md](docs/reference/magic-rels.md) (the demand/overlay sink
 relations a program heads from a rule, the `demand` group of `rel_catalog`).
 Do not hand-edit between the markers.
-
-<!-- BEGIN: examples-index -->
 | example | summary |
 |---|---|
 | [`agent-live.dl`](examples/agent-live.dl) | Live probe for the built-in agent-harness relations (agent.rs). |
@@ -838,6 +842,8 @@ Do not hand-edit between the markers.
 | [`typegraph-anim.dl`](examples/typegraph-anim.dl) | Animated type-graph reveal: three d2 `steps:` boards, hottest hubs first. |
 | [`typegraph.dl`](examples/typegraph.dl) | Self-hosted Rust type graph. |
 | [`typeports.dl`](examples/typeports.dl) | Node-editor rendering of the type graph: each hub struct is a d2 sql_table |
+| [`vendored-drift.dl`](examples/vendored-drift.dl) | vendored-drift.dl — has the vendored copy drifted from its upstream? |
+| [`version-skew.dl`](examples/version-skew.dl) | version-skew.dl — one dependency, how many pinned versions across the org? |
 | [`vendored-drift.dl`](examples/vendored-drift.dl) | vendored-drift.dl — has the vendored copy drifted from its upstream? |
 | [`version-skew.dl`](examples/version-skew.dl) | version-skew.dl — one dependency, how many pinned versions across the org? |
 <!-- END: examples-index -->
