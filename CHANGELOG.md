@@ -6,6 +6,13 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.10] - 2026-07-07
+
+Consolidated release: builds the prebuilt binaries for all the 0.6.6–0.6.9 work
+(diag markdown hover + graph sinks + panel fixes, the `--root` removal, the
+`--load`/zero-match/config-warn trio, and use-yell) plus the CI dogfood fix.
+This is the version `dl update` fetches.
+
 ## [0.6.9] - 2026-07-07
 
 ### Fixed
