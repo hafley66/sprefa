@@ -13,6 +13,8 @@
 use std::path::Path;
 
 fn main() {
+    assert_vsix_version_parity();
+
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor/grammars");
 
     // go-template: parser.c only, no external scanner.
@@ -76,6 +78,34 @@ fn embed_corpus(manifest: &Path) {
     println!("cargo:rerun-if-changed={}", std_root.display());
 
     std::fs::write(&out, s).unwrap();
+}
+
+/// The `dl` binary embeds the VS Code extension VSIX (src/setup.rs,
+/// include_bytes!), so the two ship as one version. Cargo.toml is the single
+/// source; `scripts/build-vsix.sh` stamps the extension's package.json to it and
+/// rebuilds `editors/vscode-dl/dl-lsp.vsix`. If the extension version drifts from
+/// the crate version, REFUSE to compile — a drifted pair must never be released
+/// (the loud twin of the `.dl/vsix-version-drift.dl` rail for a source build).
+fn assert_vsix_version_parity() {
+    let crate_ver = env!("CARGO_PKG_VERSION");
+    let pkg = Path::new(env!("CARGO_MANIFEST_DIR")).join("editors/vscode-dl/package.json");
+    println!("cargo:rerun-if-changed={}", pkg.display());
+    let Ok(text) = std::fs::read_to_string(&pkg) else { return };
+    // First top-level `"version": "X"` line (dependency ranges are keyed by
+    // package name, so the version key appears once).
+    let ext_ver = text.lines().find_map(|raw| {
+        let rest = raw.trim().strip_prefix("\"version\"")?;
+        let rest = rest.trim_start().strip_prefix(':')?.trim_start();
+        rest.strip_prefix('"')?.split('"').next()
+    });
+    if let Some(found) = ext_ver {
+        assert!(
+            found == crate_ver,
+            "VSIX version drift: editors/vscode-dl/package.json is {found} but the crate is \
+             {crate_ver}. Run scripts/build-vsix.sh to rebuild dl-lsp.vsix at {crate_ver}, then \
+             commit it."
+        );
+    }
 }
 
 /// Recursively collect `*.dl` under `dir`, pushing (path-relative-to-base, abspath).

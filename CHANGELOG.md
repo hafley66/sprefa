@@ -6,6 +6,20 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+### Changed
+
+- The VS Code extension and the `dl` binary now ship as ONE version. Cargo.toml
+  is the single source of truth: `scripts/build-vsix.sh` stamps the extension's
+  `package.json` to the crate version and rebuilds the VSIX at a FIXED filename
+  (`editors/vscode-dl/dl-lsp.vsix`, no version in it), so `src/setup.rs`'s
+  `include_bytes!` never changes per release. `build.rs` refuses to compile if
+  the two versions drift, and `.dl/vsix-version-drift.dl` is the same guard for
+  `dl --check` / the LSP. No more hand-bumping `package.json` + re-embedding.
+- Flow panel empty-state now tells you what to do instead of going blank:
+  seed-driven presets say "press `cmd+alt+t` / follow cursor", scan presets name
+  the SCIP index (`dl index`), and derived presets name the missing rel. Dropped
+  the stale `dl --daemon --root .` hint (`--root` was removed).
+
 ## [0.6.10] - 2026-07-07
 
 Consolidated release: builds the prebuilt binaries for all the 0.6.6–0.6.9 work

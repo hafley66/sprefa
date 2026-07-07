@@ -1,45 +1,34 @@
-# VSIX freshness rail: the embedded VS Code extension must match its source.
+# VSIX version-parity rail: the embedded VS Code extension and the `dl` binary
+# ship as ONE version.
 #
 # `dl setup --vscode` installs a VSIX baked into the `dl` binary via
-# `include_bytes!` (src/setup.rs, VSCODE_VSIX / VSCODE_VSIX_NAME). That embedded
-# artifact rotted once (embedded 0.3.0 while the source was 0.4.3), so a fresh
-# `dl setup --vscode` shipped a stale extension and `--force` install hid it.
-# `.dl/watch-ext.dl` only rebuilds the LIVE extension (code --install-extension)
-# — it never re-embeds the const, so nothing connected the two version strings.
+# `include_bytes!` (src/setup.rs). The filename is now FIXED (`dl-lsp.vsix`, no
+# version in it), so the single source of truth for the version is Cargo.toml;
+# `scripts/build-vsix.sh` stamps editors/vscode-dl/package.json to the crate
+# version and rebuilds the VSIX. `build.rs` refuses to compile if the two
+# disagree; this rail is the same guard for `dl --check` and the LSP squiggles.
 #
-# This rail declares that missing invariant: if editors/vscode-dl/package.json's
-# version and the embedded VSIX filename version in src/setup.rs disagree,
-# CI's `dl --check --root .` exits 2 and the LSP squiggles line 1.
-#
-# The fix when it fires: rebuild the VSIX at the package.json version
-#   (cd editors/vscode-dl && npm ci && npm run compile && npx vsce package -o dl-lsp-<ver>.vsix)
-# then point VSCODE_VSIX / VSCODE_VSIX_NAME at it and `git add -f` the new VSIX.
+# The fix when it fires: run `scripts/build-vsix.sh` (stamps package.json to the
+# Cargo.toml version, rebuilds + stages editors/vscode-dl/dl-lsp.vsix), commit.
+
+# The crate version (Cargo.toml [package] version — the ONLY line that starts
+# with `version = "`; dependency pins are `name = "..."`).
+rel crate_version(version: text).
+crate_version(version) <-
+    scan("WORK", "Cargo.toml", cargo_path, rev),
+    match(cargo_path, rev, /^version = "(?<version>\d+\.\d+\.\d+)"/, line).
 
 # The extension's own declared version (top-level "version" key; dependency
 # ranges are keyed by package name, so only this one line matches).
-rel pkg_version(version: text).
-pkg_version(version) <-
+rel ext_version(version: text).
+ext_version(version) <-
     scan("WORK", "editors/vscode-dl/package.json", manifest_path, rev),
     match(manifest_path, rev, /"version"\s*:\s*"(?<version>\d+\.\d+\.\d+)"/, line).
 
-# The version baked into the binary, read off the embedded VSIX filename in the
-# two src/setup.rs consts (both lines carry the same version).
-rel embedded_version(version: text).
-embedded_version(version) <-
-    scan("WORK", "src/setup.rs", setup_path, rev),
-    match(setup_path, rev, /dl-lsp-(?<version>\d+\.\d+\.\d+)\.vsix/, line).
-
-# Drift, both directions: a declared version with no matching embedded VSIX
-# (bumped the extension, forgot to rebuild + re-embed), and an embedded version
-# the manifest no longer declares (a hand-edited const).
+# Drift: the extension's package.json version and the crate version disagree.
 diag(path: "editors/vscode-dl/package.json", line: 1, severity: "error",
      code: "vsix-version-drift",
-     msg: "extension is package.json ${declared} but src/setup.rs embeds a different VSIX — rebuild (vsce package) at ${declared} and point VSCODE_VSIX_NAME at it") <-
-    pkg_version(declared), !embedded_version(declared).
-
-diag(path: "src/setup.rs", line: 1, severity: "error",
-     code: "vsix-version-drift",
-     msg: "src/setup.rs embeds VSIX ${embedded} but editors/vscode-dl/package.json no longer declares that version — the two must agree") <-
-    embedded_version(embedded), !pkg_version(embedded).
+     msg: "extension package.json is ${ext} but Cargo.toml crate is ${crate} — run scripts/build-vsix.sh to rebuild dl-lsp.vsix at the crate version") <-
+    crate_version(crate), ext_version(ext), crate != ext.
 
 ? diag(path, line, severity, code, msg).

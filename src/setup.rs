@@ -105,11 +105,14 @@ fn print_help() {
 }
 
 /// The dl LSP VSCode extension, embedded so a prebuilt `dl` can install it with
-/// no source tree (mirrors the SKILL_MD / starter embedding). Rebuild + bump:
-/// `(cd editors/vscode-dl && npm run compile && npx vsce package)`, then point
-/// this at the new VSIX. The committed VSIX is the install artifact.
-const VSCODE_VSIX: &[u8] = include_bytes!("../editors/vscode-dl/dl-lsp-0.4.10.vsix");
-const VSCODE_VSIX_NAME: &str = "dl-lsp-0.4.10.vsix";
+/// no source tree (mirrors the SKILL_MD / starter embedding). The filename is
+/// FIXED (`dl-lsp.vsix`, no version) so this line never changes per release; the
+/// extension is same-versioned with the binary because `scripts/build-vsix.sh`
+/// stamps the extension's package.json to the crate version and rebuilds this
+/// artifact, and `build.rs` refuses to compile if the two drift. The committed
+/// VSIX is the install artifact for a prebuilt `dl`.
+const VSCODE_VSIX: &[u8] = include_bytes!("../editors/vscode-dl/dl-lsp.vsix");
+const VSCODE_VSIX_NAME: &str = concat!("dl-lsp-", env!("CARGO_PKG_VERSION"), ".vsix");
 
 /// `dl setup --vscode`: install the dl LSP VSCode extension via the `code` CLI.
 /// The extension starts `dl --lsp` with the workspace folder as cwd and proxies LSP over

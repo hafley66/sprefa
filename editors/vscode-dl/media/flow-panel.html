@@ -3050,23 +3050,46 @@ function render(nodeRows, edgeRows) {
   else renderCanvas(nodeRows, edgeRows);
 }
 // A query that succeeds but yields zero nodes reads as a broken panel unless we
-// say why. Builtin presets (call/type/df/module rels exist after any tick) that
-// come back empty => nothing scanned / no daemon on this workspace. Derived
-// presets => the .dl that heads them isn't being served (updatePresetAvailability
-// already disables those, so this is mostly the builtin case).
+// say why — and, more usefully, what to DO. Three preset shapes get three hints:
+//   SEED    — empty until you mark/seed something (mark it, or follow cursor).
+//   SCAN    — builtin graph rels; empty => nothing scanned / no daemon; and
+//             cross-file edges want a SCIP index (dl index).
+//   DERIVED — a sink whose rel a `.dl` must head; name the rel + the fix.
+const SEED_HINT = {
+  typeNeighbors: 'Put the cursor on a type and press <code>cmd+alt+t</code> to seed it — ' +
+    'or tick <b>follow cursor</b> (top bar) to track the symbol under the caret. ' +
+    'For the whole graph instead, pick <b>Type references</b>.',
+  marks: 'Nothing marked yet. Select a symbol and press <code>cmd+alt+m</code> ' +
+    '(<b>dl: Mark Selection</b>); marks drive this graph.',
+};
+const DERIVED_REL = {
+  typeCurated: 'rel_panel_node', typeRefs: 'rel_type_refs_node',
+  memberFlow: 'rel_member_node', graph: 'rel_graph_node',
+  diff: 'rel_node_added', enumMatches: 'rel_enum_match_block',
+};
+const SCAN_PRESETS = ['typeAll', 'callGraph', 'dataFlow', 'madge', 'layers'];
 function updateEmptyState(nodeRows) {
   const el = document.getElementById('emptyState');
   if (!el) return;
   if (nodeRows && nodeRows.length) { el.hidden = true; return; }
-  const builtinPreset = ['typeAll', 'callGraph', 'dataFlow', 'madge', 'graph', 'layers'].includes(currentPreset);
-  const body = builtinPreset
-    ? 'No graph data for this workspace yet. A <code>dl</code> daemon must be ' +
-      'serving this folder with something scanned.<br>Start one with ' +
-      '<code>dl --daemon --root .</code> (or open a <code>.dl</code> file so the ' +
-      'LSP ticks), then hit ↻ / Run.'
-    : 'This preset is empty — its rel isn’t being served. Pick a builtin ' +
-      'preset (Call graph / Type graph / Data flow / Module graph), or serve the ' +
+  let body;
+  if (SEED_HINT[currentPreset]) {
+    body = SEED_HINT[currentPreset];
+  } else if (SCAN_PRESETS.includes(currentPreset)) {
+    body = 'Nothing scanned for this folder yet — a <code>dl</code> daemon must be ' +
+      'serving it. Open a file the rules scan (the LSP ticks) or run ' +
+      '<code>dl --daemon</code> here, then hit ↻ / Run.<br>' +
+      'Cross-file edges (calls/types spanning files) need a SCIP index: run ' +
+      '<code>dl index</code> once, or set <code>SPREFA_SCIP_INDEX</code>.';
+  } else if (DERIVED_REL[currentPreset]) {
+    body = 'This preset is derived — <code>' + DERIVED_REL[currentPreset] + '</code> ' +
+      'isn’t populated. Serve the <code>.dl</code> that heads it, or switch to a builtin ' +
+      'preset (Call graph / Type references / Data flow / Module graph).';
+  } else {
+    body = 'Empty. Pick a builtin preset, seed a symbol ' +
+      '(<code>cmd+alt+t</code> type / <code>cmd+alt+m</code> mark), or serve the ' +
       '<code>.dl</code> that heads this graph.';
+  }
   el.innerHTML = '<b>nothing to draw</b>' + body;
   el.hidden = false;
 }
