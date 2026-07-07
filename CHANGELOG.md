@@ -6,6 +6,8 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.12] - 2026-07-07
+
 ### Added
 - **Multi-root workspaces: one daemon, one database, every open folder.** The VS
   Code extension writes the open workspace folders as `[[repos]]` into a
