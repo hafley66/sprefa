@@ -6,6 +6,22 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+### Added
+- **Multi-root workspaces: one daemon, one database, every open folder.** The VS
+  Code extension writes the open workspace folders as `[[repos]]` into a
+  per-workspace `$SPREFA_CONFIG`, so a single dl engine (and its single
+  `cache.db`) serves them all instead of only `folders[0]`. The flow panel spans
+  every repo (nodes prefixed by folder); jump-to-disk, follow-cursor, marks, and
+  type-seed resolve to the folder that OWNS each file. A git-excluded
+  `_workspace-scan.dl` dropped into the primary folder's `.dl/` fans extraction
+  over all repos (`scan("*")`) beside the existing rails, and both the LSP and
+  the daemon it attaches to discover the same set — one shared database, no
+  clobber. The LSP engine now loads the same repo set as the daemon
+  (`set_repos`), and `load_repos_eager` is reused for that. Single-folder
+  workspaces (empty config) are byte-for-byte unchanged. (Connected cross-repo
+  *flow edges* — a call in repo A resolving into repo B — remain a follow-up: the
+  resolver deliberately repo-scopes today.)
+
 ## [0.6.11] - 2026-07-07
 
 ### Changed

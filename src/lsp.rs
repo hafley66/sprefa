@@ -67,6 +67,13 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Res
         crate::ast::Item::Query(_) | crate::ast::Item::Gen(_)));
     let conn = db::open(db_path)?;
     let mut eng = Engine::new(conn, root.clone());
+    // Serve the SAME repo set the daemon does (config `[[repos]]`/`[[org]]`, or a
+    // `$SPREFA_CONFIG` a client points us at — e.g. the VS Code extension writing
+    // the open workspace folders as repos). Empty config -> `set_repos([])`,
+    // which falls back to single-root scanning, so this is a no-op for the common
+    // one-repo case. Without it the LSP engine ticks single-root over the SHARED
+    // cache.db and clobbers the multi-repo rel_* rows the daemon wrote.
+    eng.set_repos(crate::daemon::load_repos_eager());
 
     let (connection, io_threads) = Connection::stdio();
     let caps = ServerCapabilities {

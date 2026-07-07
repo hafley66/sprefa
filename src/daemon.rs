@@ -1738,7 +1738,7 @@ pub fn load(root: Option<&Path>, path: &str, mode: &str) -> Result<Response> {
 // Silent: called on every git event (`on_git_event` rebuilds the repo set to
 // diff refs), so an announcement here floods daemon.log. The cold-serve path
 // logs the count once; a config error still surfaces.
-fn load_repos_eager() -> Vec<config::RepoConfig> {
+pub(crate) fn load_repos_eager() -> Vec<config::RepoConfig> {
     match config::SprfConfig::load_default() {
         Ok(cfg) if !cfg.repos.is_empty() => cfg.repos,
         Ok(_) => Vec::new(),
