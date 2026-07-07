@@ -6,6 +6,8 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.11] - 2026-07-07
+
 ### Changed
 
 - The VS Code extension and the `dl` binary now ship as ONE version. Cargo.toml
