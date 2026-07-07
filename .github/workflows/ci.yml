@@ -56,7 +56,8 @@ jobs:
         run: cargo build -p sprefa-dl --release --bin dl
 
       - name: Dogfood rails (dl --check on this repo)
-        run: ./target/release/dl --check --no-daemon --root .
+        # There is no `--root` flag: the working root is the cwd (the checkout).
+        run: ./target/release/dl --check --no-daemon
 
       # The pre-commit hook (.githooks/pre-commit, core.hooksPath=.githooks) must
       # stay wired to `dl --check`, so a contributor's commit hits the same gate.
