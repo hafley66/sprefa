@@ -2,7 +2,7 @@
   "name": "dl-lsp",
   "displayName": "dl LSP",
   "description": "sprefa dl datalog linter. Drop a .dl file in .dl/, get live squiggles on rust/ts/py/go/kt and the .dl itself.",
-  "version": "0.6.12",
+  "version": "0.6.13",
   "publisher": "sprefa",
   "license": "MIT",
   "engines": {
@@ -133,6 +133,7 @@
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
+    "cytoscape": "^3.34.0",
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.82.0",
     "@vscode/vsce": "^3.9.2",

@@ -6,6 +6,22 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.13] - 2026-07-07
+
+### Changed
+- **Flow panel canvas view now renders on a real `<canvas>` via cytoscape.** The
+  hand-rolled renderer built one DOM card per node plus one SVG per edge and ran
+  its own layered layout, which hung or crashed the webview at high volume
+  (custom queries and the graph-layer UNIONs out-run the presets' `LIMIT`s, and
+  the multi-repo db is much larger). Cytoscape (vendored into `media/`, loaded
+  before the panel script — CSP blocks CDNs) owns layout, pan, zoom, and edges on
+  canvas; the query rows map straight to cy elements. Two volume guards added
+  regardless of view: the `dl/query` postMessage caps at 20000 rows, and
+  `render()` slices to 2000 nodes / 4000 edges with a warn pill showing the true
+  total. Canvas mode drops the per-node DOM affordances that lived on the old
+  cards (member pins, hover cards, mark highlight, follow-cursor centering,
+  marquee select, flip arrows); **list view keeps all of them**.
+
 ## [0.6.12] - 2026-07-07
 
 ### Added
