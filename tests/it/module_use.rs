@@ -102,15 +102,20 @@ fn conflicting_cols_hard_error() {
     assert!(err.contains("declared twice"), "error names the conflict: {err}");
 }
 
-/// A `use` of a missing file is a hard error that lists every root tried, so a
-/// typo does not silently resolve to an empty program.
+/// A `use` of a missing file DEGRADES: it emits a `use-unresolved` diagnostic
+/// (the import is skipped, the rest of the program still loads) rather than
+/// bailing the whole load — which, in the LSP, would kill the server. The exit
+/// is still non-zero (an Error-severity diag) and the message lists the roots
+/// tried, so a typo does not silently resolve to an empty program.
 #[test]
-fn missing_module_lists_searched_roots() {
+fn missing_module_yells_and_degrades() {
     let d = sandbox("missing");
     let (code, out, err) = run(&d, "use \"nope.dl\".\nrel t(x: int).\nt(1).\n? t(x).\n");
-    assert_ne!(code, 0, "missing module must hard-error: {out}");
-    assert!(err.contains("not found"), "error names the missing module: {err}");
-    assert!(err.contains("nope.dl"), "error names the path: {err}");
+    assert_ne!(code, 0, "missing module is still an error: {out}");
+    assert!(err.contains("use-unresolved"), "diagnostic carries the code: {err}");
+    assert!(err.contains("cannot resolve") && err.contains("nope.dl"),
+        "message names the failed import: {err}");
+    assert!(err.contains("not found"), "message lists the roots tried: {err}");
 }
 
 /// `use` requires a string literal. The lookahead is `use` followed by

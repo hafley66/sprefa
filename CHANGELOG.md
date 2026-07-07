@@ -6,6 +6,18 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.9] - 2026-07-07
+
+### Fixed
+- **An unresolvable `use` no longer crashes the LSP server (or aborts the
+  load).** A `use "missing.dl"` that resolves on no disk root and has no
+  embedded-std fallback now emits a `use-unresolved` **diagnostic** at the
+  `use` line and skips that import, so the rest of the program still loads —
+  the LSP stays up and squiggles the bad line instead of dying, and `--check`
+  reports it (exit non-zero) with the roots it tried. Downstream unknown-rel
+  diagnostics from the missing import fire too, which is intended and more
+  informative than a single opaque bail.
+
 ## [0.6.8] - 2026-07-07
 
 ### Fixed

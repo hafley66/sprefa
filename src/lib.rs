@@ -96,7 +96,7 @@ pub fn resolve_programs(programs: &[String], root: &Path) -> Result<Vec<PathBuf>
 /// returns a flat core `Program`. With no `use` in any source file this is
 /// byte-for-byte identical to the old parse-only path.
 pub fn prepare_paths(paths: &[PathBuf]) -> Result<(ast::Program, Vec<ast::TypeDiag>, String)> {
-    let items = if paths.len() == 1 {
+    let (items, import_diags) = if paths.len() == 1 {
         frontend::load_program(&paths[0])
     } else {
         frontend::load_program_set(paths)
@@ -107,7 +107,12 @@ pub fn prepare_paths(paths: &[PathBuf]) -> Result<(ast::Program, Vec<ast::TypeDi
         format!("{}/*.dl", paths[0].parent().unwrap_or(Path::new(".dl")).display())
     };
     let mut prog = ast::Program { items };
-    let diags = typecheck::check_and_normalize(&mut prog, &display);
+    // Import-resolution diagnostics (an unresolvable `use`) ride the same channel
+    // as typecheck diags: a squiggle on the `.dl` in the LSP, an exit-2 row under
+    // `--check`. The program loaded WITHOUT the failed import, so downstream
+    // unknown-rel diags may also fire — intended, and more informative.
+    let mut diags = import_diags;
+    diags.extend(typecheck::check_and_normalize(&mut prog, &display));
     Ok((prog, diags, display))
 }
 
@@ -218,7 +223,7 @@ fn run_file_inproc(programs: &[String], db_path: Option<&str>, root: PathBuf, qu
         eng.run(&prog)?;
     }
     if n_errors > 0 {
-        anyhow::bail!("{n_errors} type error(s) in path literals / brands / stratification");
+        anyhow::bail!("{n_errors} error(s): unresolved use / path literals / brands / stratification (see diagnostics above)");
     }
     Ok(())
 }

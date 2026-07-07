@@ -34,15 +34,16 @@ use crate::{lex, parse};
 /// entry path's own surface is the starting set; transitive `use`s splice in;
 /// `def` templates are collected into a table and inlined at every call site
 /// in the surrounding rules.
-pub fn load_program(entry: &Path) -> Result<Vec<Item>> {
+pub fn load_program(entry: &Path) -> Result<(Vec<Item>, Vec<ast::TypeDiag>)> {
     let mut loader = ModuleLoader::new(entry);
     let surface = loader.load_entry(entry)?;
     let origin = entry.canonicalize().unwrap_or_else(|_| entry.to_path_buf());
-    let mut items = expand_program(surface, &mut loader, origin)?;
+    let mut diags = Vec::new();
+    let mut items = expand_program(surface, &mut loader, origin, &mut diags)?;
     resolve_named_args(&mut items)?;
     desugar_effects(&mut items);
     dedup_rels(&mut items)?;
-    Ok(items)
+    Ok((items, diags))
 }
 
 /// D-3: lower the head-response `@async`/`@stream` form to the canonical
@@ -89,15 +90,16 @@ fn pos_bound_vars(body: &[BodyItem]) -> Vec<String> {
 /// Resolve and expand the multi-file discovery shape (a `<dir>/*.dl` set). Each
 /// file's surface is loaded with a shared loader so a `use` cached by file A is
 /// a hit from file B. The merged items splice in file (lexicographic) order.
-pub fn load_program_set(entry_paths: &[PathBuf]) -> Result<Vec<Item>> {
+pub fn load_program_set(entry_paths: &[PathBuf]) -> Result<(Vec<Item>, Vec<ast::TypeDiag>)> {
     if entry_paths.is_empty() { bail!("no program files to load"); }
     let mut loader = ModuleLoader::new(&entry_paths[0]);
     let mut items = Vec::new();
+    let mut diags = Vec::new();
     let mut templates: HashMap<String, ast::RuleTemplate> = HashMap::new();
     for p in entry_paths {
         let surface = loader.load_entry(p)?;
         let origin = p.canonicalize().unwrap_or_else(|_| p.clone());
-        items.extend(expand_with(surface, &mut loader, &mut templates, origin)?);
+        items.extend(expand_with(surface, &mut loader, &mut templates, origin, &mut diags)?);
     }
     cycle_check(&templates)?;
     let mut counter = 0u32;
@@ -109,7 +111,7 @@ pub fn load_program_set(entry_paths: &[PathBuf]) -> Result<Vec<Item>> {
     resolve_named_args(&mut items)?;
     desugar_effects(&mut items);
     dedup_rels(&mut items)?;
-    Ok(items)
+    Ok((items, diags))
 }
 
 /// Fold `col: term` named args in body and `?` atoms into positional slots using
@@ -230,13 +232,30 @@ fn resolve_atom(a: &mut ast::Atom, schema: &HashMap<String, Vec<String>>) -> Res
 /// Top-level expand: same as `expand_with` but owns the templates table and
 /// runs the cycle check + inline pass once everything (including transitive
 /// `use`s) is collected.
+/// Byte span of the `use "path".` line in its source, for the unresolved-import
+/// squiggle. Matches the first line that starts with `use` and mentions the
+/// import path; falls back to `(0, 0)` (whole-file) when the line can't be
+/// located (e.g. an embedded caller with no on-disk source).
+fn use_line_span(src: &str, import_path: &str) -> (u32, u32) {
+    let mut off = 0u32;
+    for line in src.split_inclusive('\n') {
+        let indent = (line.len() - line.trim_start().len()) as u32;
+        if line.trim_start().starts_with("use") && line.contains(import_path) {
+            return (off + indent, off + line.trim_end_matches('\n').len() as u32);
+        }
+        off += line.len() as u32;
+    }
+    (0, 0)
+}
+
 fn expand_program(
     surface: Vec<SurfaceItem>,
     loader: &mut ModuleLoader,
     origin: PathBuf,
+    diags: &mut Vec<ast::TypeDiag>,
 ) -> Result<Vec<Item>> {
     let mut templates: HashMap<String, ast::RuleTemplate> = HashMap::new();
-    let mut items = expand_with(surface, loader, &mut templates, origin)?;
+    let mut items = expand_with(surface, loader, &mut templates, origin, diags)?;
     cycle_check(&templates)?;
     let mut counter = 0u32;
     for item in &mut items {
@@ -255,6 +274,7 @@ fn expand_with(
     loader: &mut ModuleLoader,
     templates: &mut HashMap<String, ast::RuleTemplate>,
     origin: PathBuf,
+    diags: &mut Vec<ast::TypeDiag>,
 ) -> Result<Vec<Item>> {
     let mut out: Vec<Item> = Vec::with_capacity(items.len());
     for it in items {
@@ -273,7 +293,7 @@ fn expand_with(
                         }
                         let surface = loader.load_entry(&path)?;
                         // The included items were authored in `path`, not the entry.
-                        let expanded = expand_with(surface, loader, templates, path)?;
+                        let expanded = expand_with(surface, loader, templates, path, diags)?;
                         out.extend(expanded);
                     }
                     Err(disk_err) => {
@@ -281,7 +301,20 @@ fn expand_with(
                         // into the binary (`use "std/callgraph.dl".` with no source
                         // tree). Disk always wins; this is the last resort.
                         let Some(src) = crate::corpus::std_lib(&imp.path) else {
-                            return Err(disk_err);
+                            // Unresolvable import: DEGRADE, don't bail. A hard error
+                            // here would abort the whole program load — and in the
+                            // LSP that kills the server. Instead squiggle the `use`
+                            // line and skip the import so the rest of the program
+                            // still loads (LSP stays up, `--check` reports it).
+                            let text = std::fs::read_to_string(&origin).unwrap_or_default();
+                            diags.push(ast::TypeDiag {
+                                path: origin.to_string_lossy().into_owned(),
+                                span: use_line_span(&text, &imp.path),
+                                severity: ast::Severity::Error,
+                                code: "use-unresolved".into(),
+                                msg: format!("cannot resolve `use \"{}\"`: {disk_err}", imp.path),
+                            });
+                            continue;
                         };
                         if !loader.loaded_embedded.insert(imp.path.clone()) {
                             continue; // already spliced this embedded lib
@@ -290,7 +323,7 @@ fn expand_with(
                             .and_then(parse::parse_surface)
                             .with_context(|| format!("in embedded {}", imp.path))?;
                         let key = PathBuf::from(format!("<embedded>/{}", imp.path));
-                        let expanded = expand_with(surface, loader, templates, key)?;
+                        let expanded = expand_with(surface, loader, templates, key, diags)?;
                         out.extend(expanded);
                     }
                 }
@@ -557,4 +590,30 @@ fn dedup_rels(items: &mut Vec<Item>) -> Result<()> {
         items.remove(*i);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::use_line_span;
+
+    #[test]
+    fn use_line_span_points_at_the_use_line() {
+        // Line 1 is a comment; the `use` is on line 2. The span must cover the
+        // `use "dep.dl".` text (offset of line 2 start .. its trimmed end), so
+        // the LSP squiggle lands on line 2, not line 1.
+        let src = "# header\nuse \"dep.dl\".\nrel t(x: int).\n";
+        let (lo, hi) = use_line_span(src, "dep.dl");
+        assert_eq!(lo, 9, "span starts at the `use` on line 2 (after `# header\\n`)");
+        assert_eq!(&src[lo as usize..hi as usize], "use \"dep.dl\".");
+    }
+
+    #[test]
+    fn use_line_span_indented_and_missing() {
+        // Leading indentation is skipped; the span starts at `use`.
+        let src = "  use \"a/b.dl\".\n";
+        let (lo, hi) = use_line_span(src, "a/b.dl");
+        assert_eq!(&src[lo as usize..hi as usize], "use \"a/b.dl\".");
+        // A path not present yields the whole-file fallback.
+        assert_eq!(use_line_span(src, "nope.dl"), (0, 0));
+    }
 }
