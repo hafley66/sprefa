@@ -28,8 +28,9 @@ fn sandbox(tag: &str) -> PathBuf {
 fn run_verify(dir: &std::path::Path, checker: &str) -> std::process::Output {
     Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--root", dir.to_str().unwrap(), "--db", dir.join("db").to_str().unwrap(),
+        .args(["--db", dir.join("db").to_str().unwrap(),
                "--no-daemon", "--verify", checker])
+        .current_dir(dir)
         .output().expect("run dl")
 }
 

@@ -31,7 +31,8 @@ fn config_repos_populate_the_repo_relation() {
 
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
-        .args(["--root", d.to_str().unwrap(), "--db", d.join("db").to_str().unwrap()])
+        .args(["--db", d.join("db").to_str().unwrap()])
+        .current_dir(&d)
         .env("SPREFA_CONFIG", d.join("cfg.toml"))
         .output().expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -45,7 +46,8 @@ fn config_repos_populate_the_repo_relation() {
     // No config -> the single --root repo (one row), not the configured two.
     let out2 = Command::new(DL)
         .arg(d.join("p.dl"))
-        .args(["--root", d.to_str().unwrap(), "--db", d.join("db2").to_str().unwrap()])
+        .args(["--db", d.join("db2").to_str().unwrap()])
+        .current_dir(&d)
         .env_remove("SPREFA_CONFIG")
         .env("XDG_CONFIG_HOME", d.join("noconfig").to_str().unwrap())
         .env("HOME", d.join("noconfig").to_str().unwrap())
@@ -94,7 +96,8 @@ fn config_repo_with_url_is_cloned_on_first_scan() {
 
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
-        .args(["--root", upstream.to_str().unwrap(), "--db", d.join("db").to_str().unwrap()])
+        .args(["--db", d.join("db").to_str().unwrap()])
+        .current_dir(&upstream)
         .env("SPREFA_CONFIG", d.join("cfg.toml"))
         .output().expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -132,7 +135,8 @@ fn scan_star_fans_out_over_every_config_repo() {
 
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
-        .args(["--root", d.join("ra").to_str().unwrap(), "--db", d.join("db").to_str().unwrap()])
+        .args(["--db", d.join("db").to_str().unwrap()])
+        .current_dir(d.join("ra"))
         .env("SPREFA_CONFIG", d.join("cfg.toml"))
         .output().expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -173,7 +177,8 @@ fn byte_identical_files_across_repos_keep_distinct_located_rows() {
 
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
-        .args(["--root", d.join("ra").to_str().unwrap(), "--db", d.join("db").to_str().unwrap()])
+        .args(["--db", d.join("db").to_str().unwrap()])
+        .current_dir(d.join("ra"))
         .env("SPREFA_CONFIG", d.join("cfg.toml"))
         .output().expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -234,7 +239,8 @@ fn allow_missing_repo_runs_to_completion_and_is_omitted_from_repo_rel() {
         fs::write(d.join("p.dl"), format!("{prog}\n{query}\n")).unwrap();
         let out = Command::new(DL)
             .arg(d.join("p.dl"))
-            .args(["--root", d.join("present").to_str().unwrap(), "--db", d.join("db").to_str().unwrap()])
+            .args(["--db", d.join("db").to_str().unwrap()])
+            .current_dir(d.join("present"))
             .env("SPREFA_CONFIG", d.join("cfg.toml"))
             .output().expect("run dl");
         (String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -298,7 +304,8 @@ fn cross_repo_scan_and_file_attribution_hardness() {
 
     let out = Command::new(DL)
         .arg(org.join("p.dl"))
-        .args(["--root", alpha.to_str().unwrap(), "--db", org.join("db").to_str().unwrap()])
+        .args(["--db", org.join("db").to_str().unwrap()])
+        .current_dir(&alpha)
         .env("SPREFA_CONFIG", org.join("cfg.toml"))
         .output().expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -347,7 +354,8 @@ fn missing_repo_without_flag_bails() {
 
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
-        .args(["--root", d.join("present").to_str().unwrap(), "--db", d.join("db").to_str().unwrap()])
+        .args(["--db", d.join("db").to_str().unwrap()])
+        .current_dir(d.join("present"))
         .env("SPREFA_CONFIG", d.join("cfg.toml"))
         .output().expect("run dl");
     assert!(!out.status.success(), "missing root without allow_missing must bail: {}",

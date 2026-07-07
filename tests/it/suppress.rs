@@ -32,8 +32,8 @@ fn run(dir: &Path, prog: &str) -> String {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--root", dir.to_str().unwrap(),
-               "--db", dir.join("db").to_str().unwrap(), "--no-daemon"])
+        .args(["--db", dir.join("db").to_str().unwrap(), "--no-daemon"])
+        .current_dir(dir)
         .output()
         .expect("run dl");
     String::from_utf8_lossy(&out.stdout).into_owned()
@@ -107,8 +107,8 @@ fn lint_unwrap_rail_inline_suppression() {
     fs::write(d.join("p.dl"), rail).unwrap();
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
-        .args(["--root", d.to_str().unwrap(),
-               "--db", d.join("db").to_str().unwrap(), "--no-daemon"])
+        .args(["--db", d.join("db").to_str().unwrap(), "--no-daemon"])
+        .current_dir(&d)
         .output().expect("run dl");
     let out = String::from_utf8_lossy(&out.stdout).into_owned();
     // line 2 (unannotated) fires the no-unwrap WARN; line 1 (annotated) does not.

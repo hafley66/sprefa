@@ -53,7 +53,8 @@ impl Session {
     fn spawn(prog: &Path, root: &Path, db: &Path) -> Session {
         let mut child = Command::new(DL)
             .arg(prog)
-            .args(["--lsp", "--root", root.to_str().unwrap(), "--db", db.to_str().unwrap()])
+            .args(["--lsp", "--db", db.to_str().unwrap()])
+            .current_dir(root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

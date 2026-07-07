@@ -34,11 +34,10 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
         .args([
-            "--root",
-            dir.to_str().unwrap(),
             "--db",
             dir.join("db").to_str().unwrap(),
         ])
+        .current_dir(dir)
         .output()
         .expect("run dl");
     (
@@ -351,7 +350,8 @@ fn config_repo_work_edit_produces_dataflow_rows() {
 
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
-        .args(["--root", host.to_str().unwrap(), "--no-daemon", "--db", d.join("db").to_str().unwrap()])
+        .args(["--no-daemon", "--db", d.join("db").to_str().unwrap()])
+        .current_dir(host)
         .env("SPREFA_CONFIG", d.join("cfg.toml"))
         .output()
         .expect("run dl");

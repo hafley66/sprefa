@@ -79,7 +79,8 @@ fn run_seam(repo: &Path, seam: &str, query: &str) -> serde_json::Value {
     let db = std::env::temp_dir().join(format!("seam_bench_{seam}_{}_{nonce}.db", std::process::id()));
     let _ = fs::remove_file(&db);
     let out = Command::new(DL).arg(&prog)
-        .args(["--root", repo.to_str().unwrap(), "--db", db.to_str().unwrap(), "--query-json"])
+        .current_dir(repo)
+        .args(["--db", db.to_str().unwrap(), "--query-json"])
         .output().expect("run dl");
     assert!(out.status.success(),
         "{seam}: dl failed\n{}", String::from_utf8_lossy(&out.stderr));

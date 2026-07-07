@@ -18,8 +18,8 @@ fn sandbox(tag: &str) -> PathBuf {
 
 fn run_move(dir: &Path, spec: &str, fix: bool) -> (i32, String, String) {
     let mut cmd = Command::new(DL);
-    cmd.args(["--move", spec, "--root", dir.to_str().unwrap(),
-        "--db", dir.join("db").to_str().unwrap()]);
+    cmd.args(["--move", spec, "--db", dir.join("db").to_str().unwrap()]);
+    cmd.current_dir(dir);
     if fix { cmd.arg("--fix"); }
     let out = cmd.output().expect("run dl --move");
     (out.status.code().unwrap_or(-1),

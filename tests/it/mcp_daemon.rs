@@ -54,7 +54,8 @@ fn mcp_pumps_through_daemon() {
     let dir = sandbox("pump");
     fs::write(dir.join("p.dl"), PROG).unwrap();
     let mut daemon = DaemonGuard(Command::new(DL)
-        .args(["--daemon"]).arg("--root").arg(&dir).arg(dir.join("p.dl"))
+        .args(["--daemon"]).arg(dir.join("p.dl"))
+        .current_dir(&dir).env("DL_DAEMON_ROOT", &dir)
         .stdout(Stdio::null()).stderr(Stdio::null())
         .spawn().expect("spawn daemon"));
 
@@ -74,7 +75,8 @@ fn mcp_pumps_through_daemon() {
     // no --db), so the answer must come from the daemon's engine.
     let mut mcp = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--mcp", "--root", dir.to_str().unwrap()])
+        .arg("--mcp")
+        .current_dir(&dir).env("DL_DAEMON_ROOT", &dir)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .spawn().expect("spawn dl --mcp");
     {
@@ -105,7 +107,8 @@ fn daemon_refuses_non_port_rel() {
     let dir = sandbox("refuse");
     fs::write(dir.join("p.dl"), "rel plain(x: text).\nplain(\"a\").\n").unwrap();
     let mut daemon = DaemonGuard(Command::new(DL)
-        .args(["--daemon"]).arg("--root").arg(&dir).arg(dir.join("p.dl"))
+        .args(["--daemon"]).arg(dir.join("p.dl"))
+        .current_dir(&dir).env("DL_DAEMON_ROOT", &dir)
         .stdout(Stdio::null()).stderr(Stdio::null())
         .spawn().expect("spawn daemon"));
     let sock = dir.join(".dl").join("daemon.sock");

@@ -19,7 +19,7 @@ fn sandbox(tag: &str) -> PathBuf {
 fn run(dir: &PathBuf, prog: &str) -> String {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
-        .arg(dir.join("p.dl")).arg("--root").arg(dir)
+        .arg(dir.join("p.dl")).current_dir(dir)
         .arg("--db").arg(dir.join("db").to_str().unwrap())
         .env("DL_NO_DAEMON", "1")
         .output().expect("run dl");

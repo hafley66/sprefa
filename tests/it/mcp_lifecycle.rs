@@ -35,8 +35,8 @@ fn serve(dir: &Path, prog: &Path, requests: &[&str]) -> (i32, Vec<serde_json::Va
     let mut child = Command::new(DL)
         .arg(prog)
         .args(["--mcp", "--no-daemon",
-               "--root", dir.to_str().unwrap(),
                "--db", dir.join("db").to_str().unwrap()])
+        .current_dir(dir)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .spawn().expect("spawn dl --mcp");
     {

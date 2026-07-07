@@ -87,7 +87,8 @@ fn diag_code_states_includes_muted_with_no_finding() {
 fn check_broken_import(d: &Path, dbp: &Path, prog_path: &str) -> String {
     let out = Command::new(DL)
         .arg(prog_path)
-        .args(["--check", "--root", d.to_str().unwrap(), "--db", dbp.to_str().unwrap(), "--no-daemon"])
+        .args(["--check", "--db", dbp.to_str().unwrap(), "--no-daemon"])
+        .current_dir(d)
         .output()
         .expect("run dl --check");
     String::from_utf8_lossy(&out.stderr).into_owned()
@@ -136,7 +137,8 @@ impl Session {
     fn spawn(prog: &Path, root: &Path, db: &Path) -> Session {
         let mut child = Command::new(DL)
             .arg(prog)
-            .args(["--lsp", "--root", root.to_str().unwrap(), "--db", db.to_str().unwrap()])
+            .args(["--lsp", "--db", db.to_str().unwrap()])
+            .current_dir(root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

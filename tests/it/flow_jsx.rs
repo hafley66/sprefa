@@ -28,7 +28,8 @@ fn run(dir: &Path) -> (i32, String, String) {
     fs::write(dir.join("p.dl"), PROG).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--root", dir.to_str().unwrap(), "--db", dir.join("db").to_str().unwrap()])
+        .args(["--db", dir.join("db").to_str().unwrap()])
+        .current_dir(dir)
         .output()
         .expect("run dl");
     (
@@ -179,7 +180,8 @@ prop_reaches(name, comp, prop) <-
     fs::write(d.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
-        .args(["--root", d.to_str().unwrap(), "--db", d.join("db").to_str().unwrap()])
+        .args(["--db", d.join("db").to_str().unwrap()])
+        .current_dir(&d)
         .output()
         .expect("run dl");
     let code = out.status.code().unwrap_or(-1);

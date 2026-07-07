@@ -40,7 +40,8 @@ fn sandbox(tag: &str) -> PathBuf {
 fn cold(dir: &Path) {
     let st = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--root", dir.to_str().unwrap(), "--db", dir.join("db").to_str().unwrap()])
+        .current_dir(dir)
+        .args(["--db", dir.join("db").to_str().unwrap()])
         .output().expect("cold run");
     assert!(st.status.success(), "cold run failed: {}", String::from_utf8_lossy(&st.stderr));
 }
@@ -49,7 +50,8 @@ fn cold(dir: &Path) {
 fn changed(dir: &Path, rel: &str) -> String {
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--root", dir.to_str().unwrap(), "--db", dir.join("db").to_str().unwrap(),
+        .current_dir(dir)
+        .args(["--db", dir.join("db").to_str().unwrap(),
                "--changed", rel])
         .output().expect("changed run");
     String::from_utf8_lossy(&out.stderr).into_owned()

@@ -32,7 +32,8 @@ fn sandbox(tag: &str) -> PathBuf {
 fn check(dir: &PathBuf, rs_body: &str) -> (i32, String, String) {
     fs::write(dir.join("src/planted.rs"), rs_body).unwrap();
     let out = Command::new(DL)
-        .args([&rail(), "--root", dir.to_str().unwrap(), "--no-daemon", "--check"])
+        .args([&rail(), "--no-daemon", "--check"])
+        .current_dir(dir)
         .output()
         .expect("run dl --check on the magic-rel rail");
     (out.status.code().unwrap_or(-1),

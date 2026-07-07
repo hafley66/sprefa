@@ -27,13 +27,14 @@ fn write(root: &Path, rel: &str, body: &str) {
     fs::write(root.join(rel), body).unwrap();
 }
 
-/// Run `dl ban.dl --root <root> --db <fresh> <extra...>`; return (exit_code, stdout, stderr).
+/// Run `dl ban.dl --db <fresh> <extra...>` with cwd set to `<root>`; return (exit_code, stdout, stderr).
 fn run(root: &Path, extra: &[&str]) -> (i32, String, String) {
     let db = root.join("p.db");
     let _ = fs::remove_file(&db); // fresh db each run, no stale state
     let out = Command::new(DL)
         .arg(root.join("ban.dl"))
-        .args(["--root", root.to_str().unwrap(), "--db", db.to_str().unwrap()])
+        .current_dir(root)
+        .args(["--db", db.to_str().unwrap()])
         .args(extra)
         .output()
         .expect("run dl");

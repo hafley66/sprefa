@@ -28,7 +28,8 @@ fn sandbox(tag: &str) -> PathBuf {
 fn diag_json(dir: &std::path::Path) -> serde_json::Value {
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--root", dir.to_str().unwrap(), "--db", dir.join("db").to_str().unwrap(),
+        .current_dir(dir)
+        .args(["--db", dir.join("db").to_str().unwrap(),
                "--diag-json"])
         .output().expect("run dl");
     serde_json::from_slice(&out.stdout).expect("valid JSON")

@@ -22,8 +22,9 @@ fn run(dir: &Path, prog: &str, db: &Path) -> (i32, String, String) {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--root", dir.to_str().unwrap(), "--no-daemon",
+        .args(["--no-daemon",
                "--parse-only", "--db", db.to_str().unwrap()])
+        .current_dir(dir)
         .output().expect("run dl --parse-only");
     (out.status.code().unwrap_or(-1),
      String::from_utf8_lossy(&out.stdout).into_owned(),

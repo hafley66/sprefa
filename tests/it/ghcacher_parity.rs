@@ -229,7 +229,8 @@ fn parity_query_json_is_ndjson() {
     fs::write(d.join("p.dl"), src).unwrap();
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
-        .args(["--root", d.to_str().unwrap(), "--db", d.join("db").to_str().unwrap(), "--query-json"])
+        .args(["--db", d.join("db").to_str().unwrap(), "--query-json"])
+        .current_dir(d)
         .output().expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let line = stdout.lines().find(|l| l.trim_start().starts_with('{'))

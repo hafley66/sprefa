@@ -19,11 +19,10 @@ fn run(dir: &Path, prog: &str) {
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
         .args([
-            "--root",
-            dir.to_str().unwrap(),
             "--db",
             dir.join("db").to_str().unwrap(),
         ])
+        .current_dir(dir)
         .output()
         .expect("run dl");
     assert!(
@@ -39,11 +38,10 @@ fn run_out(dir: &Path, prog: &str) -> (i32, String) {
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
         .args([
-            "--root",
-            dir.to_str().unwrap(),
             "--db",
             dir.join("db").to_str().unwrap(),
         ])
+        .current_dir(dir)
         .output()
         .expect("run dl");
     (
@@ -354,10 +352,10 @@ rel located(text: text, lo: int, hi: int).
     let _ = Command::new(DL)
         .arg(d.join("p.dl"))
         .args([
-            "--root", d.to_str().unwrap(),
             "--db", d.join("db").to_str().unwrap(),
             "--changed", "src/a.rs",
         ])
+        .current_dir(&d)
         .output()
         .expect("run dl --changed");
 

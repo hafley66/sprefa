@@ -33,7 +33,8 @@ fn run(dir: &Path, query: &str, cap: Option<&str>) -> (i32, String, String) {
     fs::write(dir.join("p.dl"), format!("{PROG}\n{query}\n")).unwrap();
     let mut cmd = Command::new(DL);
     cmd.arg(dir.join("p.dl"))
-        .args(["--root", dir.to_str().unwrap(), "--db", dir.join("db").to_str().unwrap()]);
+        .current_dir(dir)
+        .args(["--db", dir.join("db").to_str().unwrap()]);
     if let Some(cap) = cap { cmd.env("DL_CLOSURE_QUERY_MAX_EDGES", cap); }
     let out = cmd.output().expect("run dl");
     (

@@ -1562,8 +1562,9 @@ pub fn rpc_call(stream: &mut UnixStream, req: &Request) -> Result<Response> {
 }
 
 /// Spawn-if-missing: ensure a daemon is running on `<root>/.dl/daemon.sock`.
-/// If already up, returns immediately. Otherwise spawns `dl --daemon --root X`
-/// detached (foreground=false so idle timeout applies) and poll-connects until
+/// If already up, returns immediately. Otherwise spawns `dl --daemon` detached
+/// (rooted at X via `DL_DAEMON_ROOT`+cwd, foreground=false so idle timeout
+/// applies) and poll-connects until
 /// the daemon responds to `ping` or the connect-time budget is exhausted.
 pub fn ensure_daemon(root: &Path, program: Option<&str>) -> Result<()> {
     if is_running(Some(root)) {
@@ -1616,7 +1617,10 @@ fn spawn_detached(root: &Path, program: Option<&str>) -> Result<()> {
         .open(&log)?;
     let stderr = log_file.try_clone()?;
     let mut cmd = std::process::Command::new(exe);
-    cmd.arg("--daemon").arg("--root").arg(root);
+    // No `--root` flag exists: the spawned per-repo daemon learns its root from
+    // the internal `DL_DAEMON_ROOT` env (main.rs reads it) + cwd. A terminal
+    // `dl --daemon` with neither is the rootless singleton at the XDG home.
+    cmd.arg("--daemon").env("DL_DAEMON_ROOT", root).current_dir(root);
     if let Some(p) = program { cmd.arg(p); }
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::from(log_file))

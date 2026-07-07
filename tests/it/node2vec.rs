@@ -50,7 +50,7 @@ fn run(dir: &Path) -> (i32, String, String) {
     fs::write(dir.join("p.dl"), PROG).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--root", dir.to_str().unwrap()])
+        .current_dir(dir)
         // Deterministic + enough signal for a clean split on a tiny graph.
         .env("SPREFA_N2V_DIM", "32")
         .env("SPREFA_N2V_NUMWALKS", "40")
@@ -118,7 +118,8 @@ fn run_db_edges(dir: &Path, db: &Path, edges: &str) -> String {
     fs::write(dir.join("p.dl"), PROG).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--root", dir.to_str().unwrap(), "--db", db.to_str().unwrap(), "--no-daemon"])
+        .args(["--db", db.to_str().unwrap(), "--no-daemon"])
+        .current_dir(dir)
         .env("SPREFA_N2V_DIM", "32")
         .env("SPREFA_N2V_NUMWALKS", "40")
         .env("SPREFA_N2V_WALKLEN", "20")
@@ -204,7 +205,8 @@ fn node2vec_w2_cache_is_bounded() {
         fs::write(dir.join("p.dl"), PROG).unwrap();
         let out = Command::new(DL)
             .arg(dir.join("p.dl"))
-            .args(["--root", dir.to_str().unwrap(), "--db", db.to_str().unwrap(), "--no-daemon"])
+            .args(["--db", db.to_str().unwrap(), "--no-daemon"])
+            .current_dir(&dir)
             .env("SPREFA_N2V_DIM", "32").env("SPREFA_N2V_NUMWALKS", "40")
             .env("SPREFA_N2V_WALKLEN", "20").env("SPREFA_N2V_EPOCHS", "3")
             .env("SPREFA_N2V_SEED", "1").env("SPREFA_NODE_SIM_K", "7")

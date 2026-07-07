@@ -87,7 +87,8 @@ fn resolver_scopes_candidates_to_the_ref_site_repo() {
 
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
-        .args(["--root", alpha.to_str().unwrap(), "--no-daemon", "--db", d.join("db").to_str().unwrap()])
+        .args(["--no-daemon", "--db", d.join("db").to_str().unwrap()])
+        .current_dir(&alpha)
         .env("SPREFA_CONFIG", d.join("cfg.toml"))
         .output()
         .expect("run dl");

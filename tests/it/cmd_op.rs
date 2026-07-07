@@ -22,7 +22,8 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--root", dir.to_str().unwrap(), "--db", dir.join("db").to_str().unwrap()])
+        .current_dir(dir)
+        .args(["--db", dir.join("db").to_str().unwrap()])
         .output().expect("run dl");
     (out.status.code().unwrap_or(-1),
      String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -103,7 +104,8 @@ fn cmd_budget_caps_invocations() {
     fs::write(d.join("p.dl"), prog).unwrap();
     let over = Command::new(DL)
         .arg(d.join("p.dl"))
-        .args(["--root", d.to_str().unwrap(), "--db", d.join("db1").to_str().unwrap(),
+        .current_dir(&d)
+        .args(["--db", d.join("db1").to_str().unwrap(),
                "--cmd-budget", "2"])
         .output().expect("run dl");
     assert_eq!(over.status.code(), Some(1), "3 files > budget 2 must fail");
@@ -112,7 +114,8 @@ fn cmd_budget_caps_invocations() {
     assert!(err.contains("cat {file}"), "diag names the command: {err}");
     let under = Command::new(DL)
         .arg(d.join("p.dl"))
-        .args(["--root", d.to_str().unwrap(), "--db", d.join("db2").to_str().unwrap(),
+        .current_dir(&d)
+        .args(["--db", d.join("db2").to_str().unwrap(),
                "--cmd-budget", "3"])
         .output().expect("run dl");
     assert_eq!(under.status.code(), Some(0), "3 files at budget 3 runs clean: {}",

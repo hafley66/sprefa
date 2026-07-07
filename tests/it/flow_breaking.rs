@@ -106,7 +106,8 @@ fn removed_spec_op_flags_breaking_consumers() {
 
     let out = Command::new(DL)
         .arg(root.join("breaking.dl"))
-        .args(["--root", root.to_str().unwrap(), "--db", root.join("b.db").to_str().unwrap()])
+        .current_dir(&root)
+        .args(["--db", root.join("b.db").to_str().unwrap()])
         .output().expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "dl failed: {}", String::from_utf8_lossy(&out.stderr));

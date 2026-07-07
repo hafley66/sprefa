@@ -27,12 +27,12 @@ const AGENTS_SECTION: &str = r#"
 `dl` (sprefa v5) is datalog over code. Reach for it instead of grep when you need
 structured facts: call graph, import/type graph, blast radius, lint rails, codemods.
 
-- Run a program: `dl prog.dl --root .` (prints `?` rows). Let it use the daemon; `--no-daemon` is a last resort for a wedged socket, not the default.
+- Run a program: `dl prog.dl` (prints `?` rows; the root is the cwd — there is no `--root`). Let it use the daemon; `--no-daemon` is a last resort for a wedged socket, not the default.
 - Discovery rail: `dl --check` runs every `.dl/*.dl`; exits 2 on a `diag` row.
 - The `.dl/dl-self-lint.dl` rail makes a broken/mistyped `.dl` a `--check` failure
   (the engine lints `.dl` via the built-in `dl_diag` relation, like rust-analyzer).
 - Surface reference: see the engine's generated `docs/reference/{relations,functions,syntax,examples}.md`.
-- `agent_edit`/`agent_touch` are git-free (keyed on `--root` dir); `changed`/`created` need git.
+- `agent_edit`/`agent_touch` are git-free (keyed on the cwd root dir); `changed`/`created` need git.
 - `dl setup --project` wired a `dl --hook` PostToolUse hook in `.claude/settings.json`:
   a `.dl/` rule heading `inject`/`inject_skill`/`block` fires on a matching tool use
   (see `.dl/hook-skill-on-test.dl`). Editor-independent context injection, no bash glue.
@@ -108,11 +108,11 @@ fn print_help() {
 /// no source tree (mirrors the SKILL_MD / starter embedding). Rebuild + bump:
 /// `(cd editors/vscode-dl && npm run compile && npx vsce package)`, then point
 /// this at the new VSIX. The committed VSIX is the install artifact.
-const VSCODE_VSIX: &[u8] = include_bytes!("../editors/vscode-dl/dl-lsp-0.4.9.vsix");
-const VSCODE_VSIX_NAME: &str = "dl-lsp-0.4.9.vsix";
+const VSCODE_VSIX: &[u8] = include_bytes!("../editors/vscode-dl/dl-lsp-0.4.10.vsix");
+const VSCODE_VSIX_NAME: &str = "dl-lsp-0.4.10.vsix";
 
 /// `dl setup --vscode`: install the dl LSP VSCode extension via the `code` CLI.
-/// The extension starts `dl --root <workspace> --lsp` and proxies LSP over
+/// The extension starts `dl --lsp` with the workspace folder as cwd and proxies LSP over
 /// stdio, so `.dl/*.dl` rules give live squiggles. Turnkey both ways: from a
 /// repo checkout it builds a FRESH VSIX from `editors/vscode-dl` (always current
 /// — no "did I rebuild the vsix?" step); a prebuilt `dl` run outside the source

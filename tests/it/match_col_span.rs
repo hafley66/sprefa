@@ -21,7 +21,8 @@ fn run_json(dir: &PathBuf, prog: &str) -> Vec<serde_json::Value> {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--root", dir.to_str().unwrap(), "--db", dir.join("db").to_str().unwrap(),
+        .current_dir(dir)
+        .args(["--db", dir.join("db").to_str().unwrap(),
                "--no-daemon", "--query-json"])
         .output().expect("run dl");
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));

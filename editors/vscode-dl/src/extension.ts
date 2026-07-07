@@ -60,7 +60,10 @@ export function activate(ctx: vscode.ExtensionContext): void {
     });
   }
 
-  const args = program ? [program, "--root", root, "--lsp"] : ["--root", root, "--lsp"];
+  // No `--root`: `dl` derives the working root from its cwd (there is no root
+  // flag — the daemon serves a config repo set, one-shots resolve from cwd). We
+  // point the server at the workspace folder by spawning it with that `cwd`.
+  const args = program ? [program, "--lsp"] : ["--lsp"];
   // Prepend the known install dirs so a bare `dl` (or a `dl` that shells out to
   // a sibling tool) resolves even under the truncated GUI PATH.
   const spawnEnv = {
@@ -68,9 +71,10 @@ export function activate(ctx: vscode.ExtensionContext): void {
     PATH: [...dlBinDirs(), process.env.PATH || ""].join(path.delimiter),
   };
 
+  const spawnOpts = { env: spawnEnv, cwd: root };
   const serverOptions: ServerOptions = {
-    run: { command: resolved.command, args, transport: TransportKind.stdio, options: { env: spawnEnv } },
-    debug: { command: resolved.command, args, transport: TransportKind.stdio, options: { env: spawnEnv } },
+    run: { command: resolved.command, args, transport: TransportKind.stdio, options: spawnOpts },
+    debug: { command: resolved.command, args, transport: TransportKind.stdio, options: spawnOpts },
   };
 
   const documentSelector: vscode.DocumentSelector = [

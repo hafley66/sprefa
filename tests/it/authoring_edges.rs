@@ -24,7 +24,8 @@ fn run(dir: &Path, prog: &str, extra: &[&str]) -> (i32, String, String) {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let mut cmd = Command::new(DL);
     cmd.arg(dir.join("p.dl"))
-        .args(["--root", dir.to_str().unwrap(), "--no-daemon"])
+        .arg("--no-daemon")
+        .current_dir(dir)
         .args(extra);
     let out = cmd.output().expect("run dl");
     (out.status.code().unwrap_or(-1),

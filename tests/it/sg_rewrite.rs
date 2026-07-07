@@ -38,7 +38,8 @@ gen(:replace, p, lo, hi, "{x}.expect(\"checked\")") <-
 
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
-        .args(["--root", d.to_str().unwrap(), "--db", d.join("db").to_str().unwrap(), "--no-daemon"])
+        .args(["--db", d.join("db").to_str().unwrap(), "--no-daemon"])
+        .current_dir(&d)
         .output().expect("run dl");
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
 

@@ -51,7 +51,8 @@ fn scip_names(root: &Path, index: &Path) -> Vec<String> {
     std::fs::write(root.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(root.join("p.dl"))
-        .args(["--root", root.to_str().unwrap(), "--db", root.join("p.db").to_str().unwrap()])
+        .args(["--db", root.join("p.db").to_str().unwrap()])
+        .current_dir(root)
         .env("SPREFA_SCIP_INDEX", index)
         .output().expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);

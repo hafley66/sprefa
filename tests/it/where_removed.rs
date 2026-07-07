@@ -53,7 +53,8 @@ fn run(dir: &Path, prog: &str) -> (bool, String, String) {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--root", dir.to_str().unwrap(), "--db", dir.join("db").to_str().unwrap()])
+        .args(["--db", dir.join("db").to_str().unwrap()])
+        .current_dir(dir)
         .output().expect("run dl");
     (out.status.success(),
      String::from_utf8_lossy(&out.stdout).into_owned(),

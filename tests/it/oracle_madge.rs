@@ -147,8 +147,9 @@ fn dl_rows(dir: &Path) -> std::collections::HashMap<String, Vec<Vec<String>>> {
     let prog = PathBuf::from(V5).join("examples/madge.dl");
     let out = Command::new(DL)
         .arg(&prog)
-        .args(["--root", dir.to_str().unwrap(), "--no-daemon",
+        .args(["--no-daemon",
                "--db", dir.join("madge.db").to_str().unwrap()])
+        .current_dir(dir)
         .output().expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let mut rows: std::collections::HashMap<String, Vec<Vec<String>>> = Default::default();

@@ -34,7 +34,8 @@ fn run(dir: &Path) -> (i32, String, String) {
     fs::write(dir.join("p.dl"), PROG).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--root", dir.to_str().unwrap(), "--db", dir.join("db").to_str().unwrap()])
+        .current_dir(dir)
+        .args(["--db", dir.join("db").to_str().unwrap()])
         .output().expect("run dl");
     (out.status.code().unwrap_or(-1),
      String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -69,7 +70,8 @@ fn perf_rel_names_are_reserved() {
     fs::write(d.join("p.dl"), "rel rel_count(rel: text, rows: int).\n").unwrap();
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
-        .args(["--root", d.to_str().unwrap(), "--db", d.join("db").to_str().unwrap()])
+        .current_dir(&d)
+        .args(["--db", d.join("db").to_str().unwrap()])
         .output().expect("run dl");
     let err = String::from_utf8_lossy(&out.stderr);
     assert_ne!(out.status.code().unwrap_or(-1), 0, "declaration refused");

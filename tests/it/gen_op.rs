@@ -21,7 +21,8 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--root", dir.to_str().unwrap(), "--db", dir.join("db").to_str().unwrap()])
+        .args(["--db", dir.join("db").to_str().unwrap()])
+        .current_dir(dir)
         .output().expect("run dl");
     (out.status.code().unwrap_or(-1),
      String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -170,8 +171,8 @@ fn escaping_path_is_rejected() {
     fs::write(d.join("inner/p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(d.join("inner/p.dl"))
-        .args(["--root", d.join("inner").to_str().unwrap(),
-               "--db", d.join("db").to_str().unwrap()])
+        .args(["--db", d.join("db").to_str().unwrap()])
+        .current_dir(d.join("inner"))
         .output().expect("run dl");
     assert_eq!(out.status.code().unwrap_or(-1), 1, "path escape must be a loud error");
     assert!(!d.join("oops.txt").exists());

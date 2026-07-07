@@ -56,11 +56,12 @@ fn write_transcript(store: &Path, root: &Path, lines: &[String]) {
     fs::write(proj.join("sess1.jsonl"), body).unwrap();
 }
 
-/// Run `dl --hook PROG --root ROOT` feeding `event` on stdin. Returns stdout.
+/// Run `dl --hook PROG` with cwd set to ROOT, feeding `event` on stdin. Returns stdout.
 fn run_hook(root: &Path, store: &Path, prog_path: &Path, event: &str) -> String {
     let mut child = Command::new(DL)
         .arg("--hook").arg(prog_path)
-        .args(["--root", root.to_str().unwrap(), "--db", root.join("db").to_str().unwrap(), "--no-daemon"])
+        .current_dir(root)
+        .args(["--db", root.join("db").to_str().unwrap(), "--no-daemon"])
         .env("SPREFA_CLAUDE_PROJECTS", store)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .spawn().unwrap();
@@ -140,7 +141,8 @@ fn setup_bootstrap_then_hook_injects() {
     // No program arg: discovery globs <root>/.dl/*.dl (the just-written example).
     let mut child = Command::new(DL)
         .arg("--hook")
-        .args(["--root", root.to_str().unwrap(), "--db", root.join("db").to_str().unwrap(), "--no-daemon"])
+        .current_dir(&root)
+        .args(["--db", root.join("db").to_str().unwrap(), "--no-daemon"])
         .env("SPREFA_CLAUDE_PROJECTS", &store)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .spawn().unwrap();

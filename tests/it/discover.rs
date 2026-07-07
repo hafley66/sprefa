@@ -20,7 +20,7 @@ fn sandbox(tag: &str) -> PathBuf {
 /// Run `dl` with NO program positional against `dir` as root.
 fn run(dir: &Path, extra: &[&str]) -> (i32, String, String) {
     let out = Command::new(DL)
-        .args(["--root", dir.to_str().unwrap()])
+        .current_dir(dir)
         .args(extra)
         .output().expect("run dl");
     (out.status.code().unwrap_or(-1),
@@ -119,7 +119,7 @@ fn explicit_program_bypasses_discovery() {
     )).unwrap();
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
-        .args(["--root", d.to_str().unwrap()])
+        .current_dir(&d)
         .output().expect("run dl");
     assert_eq!(out.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&out.stdout);

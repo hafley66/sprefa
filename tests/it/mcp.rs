@@ -45,8 +45,8 @@ fn serve(dir: &Path, prog: &str, requests: &[&str]) -> (i32, Vec<serde_json::Val
     let mut child = Command::new(DL)
         .arg(dir.join("p.dl"))
         .args(["--mcp", "--no-daemon",
-               "--root", dir.to_str().unwrap(),
                "--db", dir.join("db").to_str().unwrap()])
+        .current_dir(dir)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .spawn().expect("spawn dl --mcp");
     {
@@ -147,8 +147,9 @@ fn rule_heading_in_port_bails() {
     fs::write(d.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
-        .args(["--no-daemon", "--root", d.to_str().unwrap(),
+        .args(["--no-daemon",
                "--db", d.join("db").to_str().unwrap()])
+        .current_dir(&d)
         .output().expect("run dl");
     assert!(!out.status.success(), "heading an @in port must fail");
     let err = String::from_utf8_lossy(&out.stderr);
@@ -164,8 +165,9 @@ fn rpc_envelope_checked_at_declare() {
     fs::write(d.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
-        .args(["--no-daemon", "--root", d.to_str().unwrap(),
+        .args(["--no-daemon",
                "--db", d.join("db").to_str().unwrap()])
+        .current_dir(&d)
         .output().expect("run dl");
     assert!(!out.status.success(), "bad rpc envelope must fail");
     let err = String::from_utf8_lossy(&out.stderr);
@@ -180,8 +182,9 @@ fn mcp_without_ports_bails() {
     fs::write(d.join("p.dl"), "rel f(x: int).\nf(1).\n").unwrap();
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
-        .args(["--mcp", "--no-daemon", "--root", d.to_str().unwrap(),
+        .args(["--mcp", "--no-daemon",
                "--db", d.join("db").to_str().unwrap()])
+        .current_dir(&d)
         .stdin(Stdio::null())
         .output().expect("run dl");
     assert!(!out.status.success(), "--mcp without ports must fail");

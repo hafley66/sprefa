@@ -146,11 +146,10 @@ fn run_settle(dir: &PathBuf, prog: &str, extra: &[&str]) -> (i32, String, String
     fs::write(dir.join("p.dl"), prog).unwrap();
     let mut args = vec![
         dir.join("p.dl").to_str().unwrap().to_string(),
-        "--root".into(), dir.to_str().unwrap().to_string(),
         "--no-daemon".into(), "--settle".into(),
     ];
     for e in extra { args.push((*e).into()); }
-    let out = Command::new(DL).args(&args).output().expect("run dl --settle");
+    let out = Command::new(DL).args(&args).current_dir(dir).output().expect("run dl --settle");
     (out.status.code().unwrap_or(-1),
      String::from_utf8_lossy(&out.stdout).into_owned(),
      String::from_utf8_lossy(&out.stderr).into_owned())

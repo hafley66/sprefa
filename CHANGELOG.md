@@ -6,6 +6,25 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-07-07
+
+### Changed
+- **`--root` is gone. `dl` is a daemon over a repo SET, not a rooted tool.**
+  The CLI no longer has a `--root` flag. The working root is the current
+  directory: a client (the vscode extension, a test harness, a shell) points
+  `dl` at a folder by spawning it with that `cwd`.
+  - `dl --daemon` / `--stop` / `--load` / `--settle` address the **rootless
+    singleton** at the XDG state home, which serves the config repo set (static
+    `[[repos]]` / `[[org]]` allowlist) plus dynamic runtime adds (the `repo`
+    sink). No privileged self repo — `df_node`/`type`/`call`/`doc` lift every
+    repo in view, not just one root.
+  - One-shots (`dl prog.dl`, `--check`, `--lsp`, `--move`) resolve the root
+    from cwd; the program path itself may live anywhere.
+  - The per-repo auto-attach daemon a one-shot spawns learns its root from the
+    internal `DL_DAEMON_ROOT` env (+ cwd), never a user-facing flag.
+  - The VS Code extension spawns the LSP server with `cwd` = the workspace
+    folder instead of passing `--root`.
+
 ## [0.6.6] - 2026-07-07
 
 ### Added

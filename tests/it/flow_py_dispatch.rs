@@ -80,7 +80,8 @@ fn py_interface_dispatch_finds_function_on_two_op_paths() {
 
     let out = Command::new(DL)
         .arg(PathBuf::from(FLOW).join("dispatch_flow.dl"))
-        .args(["--root", FIXTURE, "--db", dbp.to_str().unwrap()])
+        .args(["--db", dbp.to_str().unwrap()])
+        .current_dir(FIXTURE)
         .env("SPREFA_SCIP_INDEX", &index)
         .output().expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);

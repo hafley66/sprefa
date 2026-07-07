@@ -20,12 +20,11 @@ fn run(dir: &Path, prog: &str, extra: &[&str]) -> (i32, String, String) {
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
         .args([
-            "--root",
-            dir.to_str().unwrap(),
             "--db",
             dir.join("db").to_str().unwrap(),
         ])
         .args(extra)
+        .current_dir(dir)
         .output()
         .expect("run dl");
     (
@@ -161,7 +160,8 @@ fn type_edge_distinguishes_repos() {
 
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
-        .args(["--root", d.join("ra").to_str().unwrap(), "--db", d.join("db").to_str().unwrap()])
+        .args(["--db", d.join("db").to_str().unwrap()])
+        .current_dir(d.join("ra"))
         .env("SPREFA_CONFIG", d.join("cfg.toml"))
         .output()
         .expect("run dl");

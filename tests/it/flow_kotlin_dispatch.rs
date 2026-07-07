@@ -127,7 +127,8 @@ fn interface_dispatch_finds_function_on_two_op_paths() {
 
     let out = Command::new(DL)
         .arg(root.join("dispatch_flow.dl"))
-        .args(["--root", root.to_str().unwrap(), "--db", root.join("kt.db").to_str().unwrap()])
+        .current_dir(&root)
+        .args(["--db", root.join("kt.db").to_str().unwrap()])
         .output().expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "dl failed: {}\n{stdout}", String::from_utf8_lossy(&out.stderr));

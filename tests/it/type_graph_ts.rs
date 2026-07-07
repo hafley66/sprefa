@@ -21,11 +21,10 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
         .args([
-            "--root",
-            dir.to_str().unwrap(),
             "--db",
             dir.join("db").to_str().unwrap(),
         ])
+        .current_dir(dir)
         .output()
         .expect("run dl");
     (

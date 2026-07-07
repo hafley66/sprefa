@@ -34,13 +34,6 @@ struct Cli {
     /// as plain-TEXT `rel_<name>` tables, queryable by anything that reads SQLite.
     #[arg(long, help_heading = "Output & storage")]
     db: Option<String>,
-    /// Source root. When omitted, defaults to the nearest `.git` ancestor of
-    /// the program file (the repo it lives in), else the current directory. In
-    /// discovery mode (no program file) a root with no `.dl/` walks up to the
-    /// nearest ancestor that has one, so an editor opened on a subdir inherits
-    /// the workspace rails.
-    #[arg(long, help_heading = "Output & storage")]
-    root: Option<PathBuf>,
     /// Re-tick on file changes in the source root (in-process watcher, the
     /// pre-daemon path). For the warm long-lived watcher, use `--daemon`.
     #[arg(long, help_heading = "Run modes")]
@@ -110,7 +103,7 @@ struct Cli {
     #[arg(long = "move", help_heading = "Refactor")]
     move_: Vec<String>,
     /// With --move, which repo to rewrite: a config slug, or `*`/`all` for every
-    /// configured repo. Omitted = the --root repo (self).
+    /// configured repo. Omitted = the cwd repo (self).
     #[arg(long, help_heading = "Refactor")]
     repo: Option<String>,
     /// With --move, write the rewritten files instead of previewing.
@@ -150,7 +143,7 @@ struct Cli {
     /// Block until the running daemon reports the program QUIESCENT (every
     /// cascade — effects, demand hops, repo pulls — has run at least once), then
     /// print `settled=<bool> tick=<n>` and exit 0 (settled) or 3 (timed out).
-    /// The daemon-side twin of `--settle`. Omit `--root` for the rootless daemon.
+    /// The daemon-side twin of `--settle`, addressing the rootless daemon.
     #[arg(long, help_heading = "Daemon")]
     await_settle: bool,
     /// Timeout in ms for `--await-settle` (default 30000).
@@ -161,8 +154,8 @@ struct Cli {
     #[arg(long, help_heading = "Daemon")]
     no_daemon: bool,
     /// Load a script into the running daemon as a WATCHED program: joins the
-    /// loaded set, runs on every tick, hot-reloads on edit. Omit `--root` to
-    /// target the global rootless serving daemon.
+    /// loaded set, runs on every tick, hot-reloads on edit. Targets the global
+    /// rootless serving daemon.
     #[arg(long = "load", help_heading = "Daemon")]
     load: Option<String>,
     /// Load a script ONE-TIME: eval it on a throwaway engine, print the `?`
@@ -171,33 +164,21 @@ struct Cli {
     load_once: Option<String>,
 }
 
-/// Explicit `--root` wins (canonicalized). When `--tray` is on and no
-/// `--root` is given, walk up from cwd to find the nearest `.dl/`
-/// directory and use its parent — the tray auto-discovers its workspace.
-/// Otherwise default to the repo the program file lives in (nearest `.git`
-/// ancestor of its dir), falling back to the current directory. Finally, in
-/// discovery mode (no positional program — `--lsp`, `--check`, a bare `dl`) a
-/// resolved root with no `.dl/` walks up to the nearest ancestor that has one,
-/// so an editor opened on a subdir (the vscode ext passes the workspace folder
-/// as `--root`) inherits the workspace rails instead of failing "no .dl".
+/// The working root is the current directory, never a flag: a client (the
+/// vscode ext, a test harness, a shell) points `dl` at a folder by spawning it
+/// with that `cwd`. With `--tray` on, walk up from cwd to the nearest `.dl/`
+/// and use its parent (the tray auto-discovers its workspace). In discovery
+/// mode (no positional program — `--lsp`, `--check`, a bare `dl`) a cwd with no
+/// `.dl/` walks up to the nearest ancestor that has one, so an editor opened on
+/// a subdir inherits the workspace rails instead of failing "no .dl". With an
+/// explicit program, cwd is respected exactly (the program path itself may live
+/// anywhere — it is read as given).
 fn resolve_root(cli: &Cli) -> Result<PathBuf> {
-    let raw = if let Some(r) = &cli.root {
-        r.canonicalize()?
-    } else if cli.tray && find_workspace_root().is_some() {
-        return Ok(find_workspace_root().unwrap());
-    } else {
-        let base = cli.programs.first().map(|s| s.as_str())
-            .and_then(|p| std::fs::canonicalize(p).ok())
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-            .map(Ok)
-            .unwrap_or_else(std::env::current_dir)?;
-        sprefa_v5::repo::nearest_git(&base).unwrap_or(base)
-    };
-    // Discovery mode (no positional program — the vscode ext's `--root <folder>
-    // --lsp`, or a bare `dl` in a repo): the root must OWN a `.dl/`. When the
-    // opened folder is a subdir with none, walk up to the nearest ancestor that
-    // has one so it inherits the workspace rails instead of failing "no .dl".
-    // With an explicit program, respect the root exactly.
+    if cli.tray {
+        if let Some(w) = find_workspace_root() { return Ok(w); }
+    }
+    let cwd = std::env::current_dir()?;
+    let raw = cwd.canonicalize().unwrap_or(cwd);
     if cli.programs.is_empty() {
         return Ok(nearest_dl_ancestor(&raw).unwrap_or(raw));
     }
@@ -277,19 +258,22 @@ fn main() -> Result<()> {
         // Propagate to children + the daemon module's enabled() check.
         std::env::set_var("DL_NO_DAEMON", "1");
     }
-    // The daemon and `--stop` take `--root` as an OPTION: omitted = the
-    // singleton rootless serving daemon at the XDG home, serving the config
-    // folders. Move + one-shots still resolve a concrete root.
-    let root_opt: Option<PathBuf> = match &cli.root {
-        Some(r) => Some(r.canonicalize()?),
-        None => None,
-    };
+    // The daemon is rootless: a single serving daemon at the XDG home serving
+    // the config repo set (static org/allowlist + dynamic runtime adds). There
+    // is no `--root` flag. A terminal `dl --daemon`/`--stop`/`--load`/`--settle`
+    // addresses the rootless singleton (XDG home, serving the config repo set).
+    // The per-repo auto-attach daemon a one-shot spawns targets a specific root
+    // via the internal `DL_DAEMON_ROOT` env (set by spawn_detached; the test
+    // harness sets it too) — never a CLI flag. All daemon control ops read the
+    // same env so they address the same daemon. Move + one-shots resolve from cwd.
+    let daemon_root: Option<PathBuf> = std::env::var_os("DL_DAEMON_ROOT")
+        .map(|p| PathBuf::from(p).canonicalize()).transpose()?;
     if cli.stop {
-        return sprefa_v5::daemon::stop(root_opt.as_deref());
+        return sprefa_v5::daemon::stop(daemon_root.as_deref());
     }
     if cli.await_settle {
         let (settled, tick) = sprefa_v5::daemon::await_quiescent(
-            root_opt.as_deref(), cli.await_settle_ms.unwrap_or(30_000))?;
+            daemon_root.as_deref(), cli.await_settle_ms.unwrap_or(30_000))?;
         println!("settled={settled} tick={tick}");
         if !settled { std::process::exit(3); }
         return Ok(());
@@ -297,18 +281,18 @@ fn main() -> Result<()> {
     // `--load` / `--load-once`: push a script to the running daemon and exit.
     // watched joins the program (reactive); once evals ephemerally + prints.
     if let Some(p) = cli.load_once.clone() {
-        let resp = sprefa_v5::daemon::load(root_opt.as_deref(), &p, "once")?;
+        let resp = sprefa_v5::daemon::load(daemon_root.as_deref(), &p, "once")?;
         return print_load_response(resp);
     }
     if let Some(p) = cli.load.clone() {
-        let resp = sprefa_v5::daemon::load(root_opt.as_deref(), &p, "watched")?;
+        let resp = sprefa_v5::daemon::load(daemon_root.as_deref(), &p, "watched")?;
         return print_load_response(resp);
     }
     if cli.daemon || cli.tray {
         return sprefa_v5::daemon::run_daemon(
             &cli.programs,
             cli.db.as_deref(),
-            root_opt,
+            daemon_root,
             true,
             cli.tray,
         );

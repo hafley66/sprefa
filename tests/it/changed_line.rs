@@ -22,7 +22,8 @@ fn run(dir: &Path, prog: &str, extra: &[&str]) -> (i32, String, String) {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--root", dir.to_str().unwrap(), "--db", dir.join("db").to_str().unwrap()])
+        .current_dir(dir)
+        .args(["--db", dir.join("db").to_str().unwrap()])
         .args(extra)
         .output().expect("run dl");
     (out.status.code().unwrap_or(-1),

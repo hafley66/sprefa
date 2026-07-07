@@ -18,7 +18,8 @@ fn sandbox(tag: &str) -> PathBuf {
 /// Discovery run (no positional program) rooted at `dir`; returns stdout.
 fn run(dir: &PathBuf) -> String {
     let out = Command::new(DL)
-        .args(["--root", dir.to_str().unwrap(), "--no-daemon"])
+        .current_dir(dir)
+        .args(["--no-daemon"])
         .output().expect("run dl discovery");
     format!("{}{}",
         String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))

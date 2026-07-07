@@ -83,7 +83,8 @@ seen(path) <- scan("WORK", "**/*.rs", path, rev), match(path, rev, /./, line).
     std::fs::write(dir.join("mg.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("mg.dl"))
-        .args(["--root", dir.to_str().unwrap(), "--db", dir.join("mg.db").to_str().unwrap()])
+        .args(["--db", dir.join("mg.db").to_str().unwrap()])
+        .current_dir(dir)
         .output().expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let mut edges = HashSet::new();

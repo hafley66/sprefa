@@ -25,9 +25,8 @@ fn run(dir: &Path, prog: &str, extra: &[&str]) -> (i32, String, String) {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
+        .current_dir(dir)
         .args([
-            "--root",
-            dir.to_str().unwrap(),
             "--db",
             dir.join("db").to_str().unwrap(),
         ])

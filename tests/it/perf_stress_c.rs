@@ -82,8 +82,9 @@ fn c_stress_cold_and_incremental_on_large_repo() {
     // Cold: full scan + extract. The heavy pass.
     let t = Instant::now();
     let cold = Command::new(DL)
-        .arg(PROG).arg("--root").arg(&root)
+        .arg(PROG)
         .arg("--db").arg(&db)
+        .current_dir(&root)
         .output().expect("run dl");
     let cold_ms = t.elapsed().as_secs_f64() * 1000.0;
     assert!(cold.status.success(), "cold tick failed:\n{}",
@@ -98,9 +99,10 @@ fn c_stress_cold_and_incremental_on_large_repo() {
     let Some(target) = first_c(&root) else { return };
     let t = Instant::now();
     let incr = Command::new(DL)
-        .arg(PROG).arg("--root").arg(&root)
+        .arg(PROG)
         .arg("--db").arg(&db)
         .arg("--changed").arg(&target)
+        .current_dir(&root)
         .output().expect("run dl --changed");
     let incr_ms = t.elapsed().as_secs_f64() * 1000.0;
     assert!(incr.status.success(), "incremental tick failed:\n{}",

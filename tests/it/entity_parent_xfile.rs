@@ -40,7 +40,8 @@ fn dump_entities(dir: &std::path::Path, root: &std::path::Path) -> String {
     .unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--root", root.to_str().unwrap(), "--no-daemon", "--db", dir.join("db").to_str().unwrap()])
+        .current_dir(root)
+        .args(["--no-daemon", "--db", dir.join("db").to_str().unwrap()])
         .output()
         .expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();

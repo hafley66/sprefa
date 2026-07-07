@@ -28,7 +28,8 @@ fn sandbox(tag: &str) -> PathBuf {
 fn check(root: &Path) -> (i32, String) {
     let out = Command::new(DL)
         .arg(RAIL)
-        .args(["--root", root.to_str().unwrap(), "--no-daemon", "--check"])
+        .args(["--no-daemon", "--check"])
+        .current_dir(root)
         .output()
         .expect("run dl");
     (out.status.code().unwrap_or(-1),

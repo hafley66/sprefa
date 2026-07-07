@@ -32,7 +32,8 @@ fn fixture(tag: &str) -> (PathBuf, PathBuf) {
 fn feed(root: &Path, db: &Path, event: &str) {
     let mut child = Command::new(DL)
         .arg("--hook").arg(PROG)
-        .args(["--root", root.to_str().unwrap(), "--db", db.to_str().unwrap(), "--no-daemon"])
+        .args(["--db", db.to_str().unwrap(), "--no-daemon"])
+        .current_dir(root)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .spawn().unwrap();
     child.stdin.take().unwrap().write_all(event.as_bytes()).unwrap();
@@ -45,7 +46,8 @@ fn feed(root: &Path, db: &Path, event: &str) {
 fn sections(root: &Path, db: &Path) -> String {
     let out = Command::new(DL)
         .arg(PROG)
-        .args(["--root", root.to_str().unwrap(), "--db", db.to_str().unwrap(), "--no-daemon"])
+        .args(["--db", db.to_str().unwrap(), "--no-daemon"])
+        .current_dir(root)
         .output().unwrap();
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
@@ -57,7 +59,8 @@ fn hook_events(root: &Path, db: &Path) -> String {
     fs::write(&qf, "? hook_event(kind, session, seq, json).").unwrap();
     let out = Command::new(DL)
         .arg(&qf)
-        .args(["--root", root.to_str().unwrap(), "--db", db.to_str().unwrap(), "--no-daemon"])
+        .args(["--db", db.to_str().unwrap(), "--no-daemon"])
+        .current_dir(root)
         .output().unwrap();
     String::from_utf8_lossy(&out.stdout).into_owned()
 }

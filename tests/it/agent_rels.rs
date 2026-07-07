@@ -67,7 +67,8 @@ fn run(dir: &Path, store: &Path, prog: &str) -> (i32, String, String) {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--root", dir.to_str().unwrap(), "--db", dir.join("db").to_str().unwrap(), "--no-daemon"])
+        .args(["--db", dir.join("db").to_str().unwrap(), "--no-daemon"])
+        .current_dir(dir)
         .env("SPREFA_CLAUDE_PROJECTS", store)
         .output().expect("run dl");
     (out.status.code().unwrap_or(-1),

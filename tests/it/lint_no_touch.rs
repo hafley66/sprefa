@@ -76,7 +76,8 @@ fn fixture(tag: &str) -> (PathBuf, PathBuf) {
 fn run(dir: &Path, store: Option<&Path>) -> String {
     let mut cmd = Command::new(DL);
     cmd.arg(PROG)
-        .args(["--root", dir.to_str().unwrap(), "--db", dir.join("db").to_str().unwrap(), "--no-daemon"]);
+        .args(["--db", dir.join("db").to_str().unwrap(), "--no-daemon"])
+        .current_dir(dir);
     if let Some(s) = store { cmd.env("SPREFA_CLAUDE_PROJECTS", s); }
     let out = cmd.output().expect("run dl");
     assert!(out.status.success(), "dl failed: {}", String::from_utf8_lossy(&out.stderr));

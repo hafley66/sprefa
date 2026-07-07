@@ -23,8 +23,9 @@ fn run_daemon_explicit(dir: &PathBuf) -> DaemonGuard {
     // must never write over the suite summary or hold a pipe open. The guard
     // kills the child on drop if a test panics before its clean shutdown.
     DaemonGuard(Command::new(DL)
-        .args(["--daemon"]).arg("--root").arg(dir)
+        .args(["--daemon"])
         .arg(dir.join("p.dl"))
+        .current_dir(dir).env("DL_DAEMON_ROOT", &dir)
         .stdout(Stdio::null()).stderr(Stdio::null())
         .spawn().expect("spawn dl --daemon"))
 }
@@ -162,7 +163,7 @@ fn stop_flag_sends_shutdown() {
     }
 
     // dl --stop should retire the daemon.
-    let out = Command::new(DL).arg("--stop").arg("--root").arg(&dir)
+    let out = Command::new(DL).arg("--stop").current_dir(&dir).env("DL_DAEMON_ROOT", &dir)
         .output().expect("run dl --stop");
     assert!(out.status.success(),
         "dl --stop should exit 0; stderr={}",
@@ -182,7 +183,7 @@ fn no_daemon_env_opts_out() {
 
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .arg("--root").arg(&dir)
+        .current_dir(&dir).env("DL_DAEMON_ROOT", &dir)
         .env("DL_NO_DAEMON", "1")
         .output().expect("run dl");
     assert!(out.status.success(),
@@ -304,9 +305,10 @@ fn discovery_mode_content_edit_hot_reloads() {
          mark(\"a\").\n\
          ? mark(t).\n").unwrap();
 
-    // Discovery mode: no positional program file, just --root.
+    // Discovery mode: no positional program file, root comes from cwd.
     let mut child = DaemonGuard(Command::new(DL)
-        .args(["--daemon"]).arg("--root").arg(&dir)
+        .args(["--daemon"])
+        .current_dir(&dir).env("DL_DAEMON_ROOT", &dir)
         .stdout(Stdio::null()).stderr(Stdio::null())
         .spawn().expect("spawn dl --daemon (discovery)"));
 
@@ -395,7 +397,8 @@ fn ping_reports_build_id_and_idle_is_quiet() {
 
     let logf = fs::File::create(dir.join(".dl").join("daemon.log")).unwrap();
     let mut child = DaemonGuard(Command::new(DL)
-        .args(["--daemon"]).arg("--root").arg(&dir)
+        .args(["--daemon"])
+        .current_dir(&dir).env("DL_DAEMON_ROOT", &dir)
         .stdout(Stdio::null()).stderr(Stdio::from(logf))
         .spawn().expect("spawn dl --daemon"));
     let sock = dir.join(".dl").join("daemon.sock");
@@ -469,8 +472,9 @@ fn deep_root_uses_short_socket() {
         "rel mark(t: text).\nmark(\"a\").\n? mark(t).\n").unwrap();
     fs::create_dir_all(deep.join(".dl")).unwrap();
     let mut child = DaemonGuard(Command::new(DL)
-        .args(["--daemon"]).arg("--root").arg(&deep)
+        .args(["--daemon"])
         .arg(deep.join("p.dl"))
+        .current_dir(&deep).env("DL_DAEMON_ROOT", &deep)
         .stdout(Stdio::null()).stderr(Stdio::null())
         .spawn().expect("spawn dl --daemon on deep root"));
     let mut ready = false;
@@ -794,8 +798,9 @@ fn await_settle_blocks_until_effect_drains() {
     // Fast poll so the off-tick drain happens within the test window.
     let logf = fs::File::create(dir.join(".dl").join("daemon.log")).unwrap();
     let mut child = DaemonGuard(Command::new(DL)
-        .args(["--daemon"]).arg("--root").arg(&dir)
+        .args(["--daemon"])
         .arg(dir.join("p.dl"))
+        .current_dir(&dir).env("DL_DAEMON_ROOT", &dir)
         .env("DL_POLL_SECS", "1")
         .stdout(Stdio::null()).stderr(Stdio::from(logf))
         .spawn().expect("spawn dl --daemon"));
@@ -814,7 +819,7 @@ fn await_settle_blocks_until_effect_drains() {
     // the running daemon — no spawn).
     let out = Command::new(DL)
         .args(["--await-settle", "--await-settle-ms", "20000"])
-        .arg("--root").arg(&dir)
+        .current_dir(&dir).env("DL_DAEMON_ROOT", &dir)
         .output().expect("run dl --await-settle");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(out.status.code(), Some(0),
