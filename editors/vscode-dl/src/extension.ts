@@ -234,8 +234,16 @@ export function activate(ctx: vscode.ExtensionContext): void {
       md.supportHtml = false;
       for (const d of hits) {
         const code = typeof d.code === "object" ? d.code.value : d.code;
-        if (code) md.appendMarkdown(`**\`${code}\`** `);
-        md.appendMarkdown(d.message + "\n\n");
+        if (code) md.appendMarkdown(`**\`${code}\`**\n\n`);
+        // The server joins the diagnostic as "msg\nhint: h" with a SINGLE
+        // newline, which markdown collapses onto one line (so any formatting
+        // reads as plain). Promote the hint to its own paragraph, and turn the
+        // remaining lone newlines into markdown hard breaks, so whatever
+        // markdown the `.dl` wrote into msg/hint (links, `code`, lists) renders.
+        const body = d.message
+          .replace(/\nhint:[ \t]*/g, "\n\n**hint:** ")
+          .replace(/([^\n])\n(?!\n)/g, "$1  \n");
+        md.appendMarkdown(body + "\n\n");
       }
       const range = hits.reduce<vscode.Range | undefined>(
         (acc, d) => (acc ? acc.union(d.range) : d.range), undefined);
