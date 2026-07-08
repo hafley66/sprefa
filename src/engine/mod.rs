@@ -1791,13 +1791,47 @@ impl Engine {
             bail!("git rev-parse {rev} missing in {} and DL_NO_FETCH is set (offline; would have fetched)",
                 repo_root.display());
         }
-        let _ = Command::new("git").arg("-C").arg(repo_root)
-            .args(["fetch", "--quiet", "origin", rev]).output()?;
-        match Self::rev_parse(repo_root, rev)? {
+        // Escalating on-demand fetch, cheapest first, re-resolving after each
+        // and stopping at the first hit. rev-parse of a NAME needs the ref to
+        // exist locally and the object to be present — a bare `fetch origin
+        // <rev>` only writes FETCH_HEAD (lands a full SHA's object, but creates
+        // no tag/branch ref), so a tag/branch name needs a step that writes the
+        // ref, and a shallow clone whose target is beyond the boundary needs
+        // history deepened:
+        //   1. `origin <rev>`        — full-SHA fast path (object into the odb).
+        //   2. `origin tag <rev>`    — creates refs/tags/<rev> (the tag case).
+        //   3. `--tags origin`       — all tag refs (name that step 2 missed).
+        //   4. `--unshallow --tags`  — shallow only: deepen full history + tags.
+        let mut resolved: Option<String> = None;
+        let ladder: [&[&str]; 3] = [
+            &["fetch", "--quiet", "origin", rev],
+            &["fetch", "--quiet", "origin", "tag", rev],
+            &["fetch", "--quiet", "--tags", "origin"],
+        ];
+        for args in ladder {
+            let _ = Command::new("git").arg("-C").arg(repo_root).args(args).output()?;
+            if let Some(sha) = Self::rev_parse(repo_root, rev)? { resolved = Some(sha); break; }
+        }
+        if resolved.is_none() && Self::is_shallow(repo_root)? {
+            let _ = Command::new("git").arg("-C").arg(repo_root)
+                .args(["fetch", "--quiet", "--unshallow", "--tags", "origin"]).output()?;
+            resolved = Self::rev_parse(repo_root, rev)?;
+        }
+        match resolved {
             Some(sha) => { self.rev_cache.insert(key, sha.clone()); Ok(sha) }
-            None => bail!("git rev-parse {rev} still missing in {} after fetching from origin",
+            None => bail!("git rev-parse {rev} still missing in {} after fetching tags/unshallowing from origin",
                 repo_root.display()),
         }
+    }
+
+    /// `git rev-parse --is-shallow-repository` == "true". A shallow clone may be
+    /// missing a target object even after a tag fetch (it lives below the
+    /// shallow boundary), so `resolve_rev` deepens with `--unshallow` only when
+    /// this holds — `--unshallow` errors on a complete repo.
+    fn is_shallow(repo_root: &Path) -> Result<bool> {
+        let out = Command::new("git").arg("-C").arg(repo_root)
+            .args(["rev-parse", "--is-shallow-repository"]).output()?;
+        Ok(out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "true")
     }
 
     /// `git rev-parse <rev>` in `repo_root`: `Some(sha)` when the rev is present,
