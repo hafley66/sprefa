@@ -6,6 +6,26 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.14] - 2026-07-08
+
+### Added
+- **`norm(str)` string builtin** — normalize for comparison (keep ASCII
+  alphanumerics, lowercase, drop the rest; the same fold as the
+  `string(id,text,norm)` rel's `norm` column). `nx = norm(a), nx = norm(b)` is a
+  punctuation/case-blind compare, and arbitrary text joins against `string.norm`.
+- **VS Code extension activates on startup** (`onStartupFinished`), so the LSP
+  and the daemon it attaches to serve a workspace that has no `.dl` file yet
+  (pure source repos, background indexing from the moment the window opens).
+  Empty windows still no-op via the existing no-folders guard.
+
+### Changed
+- **`resolve_rev` fetches a missing rev on demand instead of bailing.** A scanned
+  `repo`/`rev` whose object is absent locally — an unknown ref/name, or a pinned
+  full SHA not in the object db — now triggers `git fetch origin <rev>` and one
+  re-resolve rather than failing the tick. Offline mode (`DL_NO_FETCH=1`) skips
+  the network and throws instead. Present revs are untouched: the sha returned
+  and the `rev_cache` behavior are identical; only the miss path is new.
+
 ## [0.6.13] - 2026-07-07
 
 ### Changed
