@@ -6,6 +6,20 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.16] - 2026-07-08
+
+### Changed
+- **Rev resolution stops re-spawning git for revs it already has.** `resolve_rev`
+  cleared its whole cache every tick, so each scanned `repo`/`rev` re-ran
+  `git rev-parse` (plus a `cat-file` existence probe) on every tick — re-resolving
+  immutable data. Now: an immutable hex-SHA rev is cached ACROSS ticks
+  (`rev_sha_cache`, resolved once for the daemon's lifetime), while a movable ref
+  (branch/tag/HEAD name) keeps the per-tick cache so it re-resolves as the ref
+  advances. The `cat-file -e` probe (needed only because a hex SHA echoes back
+  from `rev-parse` without proving its object exists) is skipped for names, whose
+  `rev-parse` success already implies presence — 2 spawns down to 1. Both caches
+  are checked before any spawn.
+
 ## [0.6.15] - 2026-07-08
 
 ### Changed
