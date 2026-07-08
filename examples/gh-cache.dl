@@ -16,6 +16,10 @@
 # old etag forward and lands no entity rows, so `change_log` is untouched (the
 # parity-critical behavior).
 #
+# ghcacher has a SECOND half this file does not cover: keeping local git
+# checkouts current on disk (clone-missing + fetch + fast-forward). That is
+# `examples/gh-checkout.dl` (the built-in `checkout` demand sink).
+#
 # RATE SAFETY: two intervals, do not confuse them. DL_POLL_SECS is how often the
 # DAEMON re-ticks (cheap, in-process, no network). `clock(300, b)` is how often a
 # watched endpoint is actually RE-FETCHED from GitHub. Between clock-bucket

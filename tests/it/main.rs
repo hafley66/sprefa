@@ -27,6 +27,7 @@ mod comment_op;
 mod comment_node;
 mod suppress;
 mod config_repos;
+mod checkout_sweep;
 mod created_perf;
 mod cst_node_perf;
 mod dl_diag;

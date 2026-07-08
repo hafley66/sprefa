@@ -507,6 +507,12 @@ impl Engine {
         // new repo is scannable / appears in the `repo` builtin on the NEXT tick
         // (mid-tick registration would shift the repo set under derived rules).
         self.run_repo_pulls(&repo_sinks)?;
+        // Drain `checkout`-sinks after the pull: this tick's derived
+        // `checkout(repo, branch, pr_heads)` rows keep each named repo's checkout
+        // current (clone-if-missing + fetch + fast-forward the default branch).
+        if rules.iter().any(|r| r.is_checkout_sink()) {
+            self.run_checkout_sweeps()?;
+        }
         if self.dropped > 0 {
             eprintln!("[checked-type] dropped {} rows failing file/dir/path checks", self.dropped);
             self.dropped = 0;
@@ -583,8 +589,8 @@ impl Engine {
         // invisible to the path-scoped reconcile.) A data-driven scan (variable
         // repo/rev) reads last tick's coordinate relation at reconcile time too,
         // so it also defers.
-        if rules.iter().any(|r| r.is_repo_sink() || scan_has_var_coords(r)) {
-            tracing::debug!("full-tick fallback: program has a repo-sink or data-driven scan");
+        if rules.iter().any(|r| r.is_repo_sink() || r.is_checkout_sink() || scan_has_var_coords(r)) {
+            tracing::debug!("full-tick fallback: program has a repo-sink, checkout-sink, or data-driven scan");
             return self.tick(prog, quiet);
         }
 

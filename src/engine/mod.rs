@@ -353,13 +353,15 @@ const MUTE_RELS: [&str; 1] = ["diag_mute"];
 /// `diag` / `repo`), and the rows drive engine behavior the name is bound to:
 /// `scip_want` → SCIP index demand, `rev_cmp_want` → git ancestry demand,
 /// `def_target` → LSP go-to-definition, `effect_cmd` → per-kind effect-template
-/// overlay. Pre-declared builtins (so the binding shows in `rel_catalog` /
+/// overlay, `checkout` → git checkout sweep (clone-missing + fetch +
+/// fast-forward the default branch to origin, the ghcacher keep-current half).
+/// Pre-declared builtins (so the binding shows in `rel_catalog` /
 /// `dl docs relations`) and reserved against a `rel` re-declaration — head them
 /// directly, do not `rel`-declare them, exactly like `diag`. This is what makes
 /// them first-class instead of magic: the engine reading them by name is reading
 /// a catalogued builtin, not an undocumented convention. See docs/reference/
 /// magic-rels.md and the `.dl/magic-rel-audit.dl` rail.
-const DEMAND_RELS: [&str; 4] = ["scip_want", "rev_cmp_want", "def_target", "effect_cmd"];
+const DEMAND_RELS: [&str; 5] = ["scip_want", "rev_cmp_want", "def_target", "effect_cmd", "checkout"];
 
 fn builtin_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
@@ -584,6 +586,11 @@ fn demand_rel_decls() -> Vec<RelDecl> {
             c("kind", Type::Text), c("template", Type::Text)],
             group: "demand",
             doc: "effect-template overlay sink: head effect_cmd(kind, template) to override the shell command for an effect kind at drain time (dynamic per-kind template), read as the effect executor is built",
+            ..Default::default() },
+        RelDecl { name: "checkout".into(), cols: vec![
+            c("repo", Type::Text), c("branch", Type::Text), c("pr_heads", Type::Text)],
+            group: "demand",
+            doc: "git checkout demand sink (the ghcacher keep-current half): head checkout(repo, branch, pr_heads) and each row clones a missing config repo, fetches origin, then fast-forwards `branch` to origin/<branch> — hard-reset (stashing dirty work) when that IS the current branch, else `git branch -f` the ref without touching the checkout. branch empty = discover origin/HEAD; pr_heads \"1\"/\"true\" also mirrors +refs/pull/*/head. DL_NO_FETCH skips the network (re-points to already-fetched refs only). Repos sweep in parallel; failures skip loudly",
             ..Default::default() },
     ]
 }
@@ -3389,7 +3396,7 @@ impl Engine {
                     bail!("diag_mute is the built-in diagnostic-mute set (code); it is written only by the LSP toggle command, never a rule — pick another name");
                 }
                 if DEMAND_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in demand sink (scip_want / rev_cmp_want / def_target / effect_cmd) — drop the `rel {}(...)` decl and head it directly from a rule, like diag/repo", d.name, d.name);
+                    bail!("{} is a built-in demand sink (scip_want / rev_cmp_want / def_target / effect_cmd / checkout) — drop the `rel {}(...)` decl and head it directly from a rule, like diag/repo", d.name, d.name);
                 }
                 match closures.get(&d.name) {
                     Some(edge) => self.declare_closure(d, edge)?,
@@ -3889,6 +3896,109 @@ impl Engine {
         }
         if pulled { self.save_repos_meta()?; }
         Ok(())
+    }
+
+    /// Drain `checkout` demand-sink rows: keep each named repo's checkout current
+    /// on disk (the ghcacher `checkout.rs` half). For every derived
+    /// `checkout(repo, branch, pr_heads)` row we resolve the repo to a root
+    /// (cloning a missing config repo via `resolve_repo`'s `ensure_cloned`), then
+    /// sweep the roots in parallel — each an independent disk/network op. Runs
+    /// AFTER the fixpoint + `run_repo_pulls` so a repo pulled this tick is
+    /// sweepable, and so the rows reflect this tick's derivations.
+    fn run_checkout_sweeps(&mut self) -> Result<()> {
+        let Some(meta) = self.rels.get("checkout").cloned() else { return Ok(()); };
+        if meta.cols.len() < 3 {
+            bail!("checkout needs 3 columns (repo, branch, pr_heads); found {}", meta.cols.len());
+        }
+        let rows: Vec<(String, String, String)> = {
+            let conn = self.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT DISTINCT \"{}\",\"{}\",\"{}\" FROM {} ORDER BY 1,2",
+                meta.col_name(0), meta.col_name(1), meta.col_name(2), tbl("checkout")))?;
+            let rs = s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+                                    r.get::<_, String>(2)?)))?;
+            rs.filter_map(|x| x.ok()).collect()
+        };
+        if rows.is_empty() { return Ok(()); }
+        let offline = std::env::var_os("DL_NO_FETCH").is_some();
+        // Resolve (and clone-if-missing) each repo up front — resolve_repo needs
+        // &self, so keep it out of the parallel section.
+        let mut jobs: Vec<(String, PathBuf, String, bool)> = Vec::new();
+        for (repo, branch, pr) in rows {
+            let pr_heads = matches!(pr.as_str(), "1" | "true" | "yes" | "pr");
+            match self.resolve_repo(&repo) {
+                Ok((slug, root)) => jobs.push((slug, root, branch, pr_heads)),
+                Err(e) => eprintln!("[checkout] skip {repo}: {e}"),
+            }
+        }
+        let results: Vec<(String, String)> = jobs.par_iter()
+            .map(|(slug, root, branch, pr)| {
+                (slug.clone(), Self::checkout_one(root, branch, *pr, offline))
+            }).collect();
+        for (slug, msg) in results { eprintln!("[checkout] {slug}: {msg}"); }
+        Ok(())
+    }
+
+    /// One repo's keep-current sweep, mirroring ghcacher's `checkout_one`. Static
+    /// (no `&self`) so the caller can run it under rayon. Fetches origin (unless
+    /// `offline`), resolves the default branch (given, else `origin/HEAD`), then:
+    /// on that branch → stash dirty work + `reset --hard origin/<branch>`; on any
+    /// other branch or detached → `git branch -f <branch> origin/<branch>` (move
+    /// the ref, leave the working tree). Returns a one-line status.
+    fn checkout_one(root: &Path, branch: &str, pr_heads: bool, offline: bool) -> String {
+        if !root.exists() { return format!("root {} missing", root.display()); }
+        let git = |args: &[&str]| Command::new("git").arg("-C").arg(root).args(args).output();
+        if !offline {
+            let _ = git(&["fetch", "--quiet", "origin"]);
+            if pr_heads {
+                let _ = git(&["fetch", "--prune", "--quiet", "origin",
+                              "+refs/pull/*/head:refs/remotes/pr/*/head"]);
+            }
+        }
+        let default = if !branch.is_empty() {
+            branch.to_string()
+        } else {
+            match git(&["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]) {
+                Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+                    .trim().rsplit('/').next().unwrap_or("").to_string(),
+                _ => String::new(),
+            }
+        };
+        if default.is_empty() {
+            return "no branch given and origin/HEAD unset (run `git remote set-head origin -a`)".into();
+        }
+        let remote_ref = format!("origin/{default}");
+        let have_remote = git(&["rev-parse", "--verify", "--quiet", &remote_ref])
+            .map(|o| o.status.success()).unwrap_or(false);
+        if !have_remote {
+            return format!("no {remote_ref}{}", if offline { " (DL_NO_FETCH; never fetched)" } else { " (fetch failed / wrong branch)" });
+        }
+        let cur = git(&["symbolic-ref", "--short", "HEAD"]).ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+        if cur.as_deref() == Some(default.as_str()) {
+            let dirty = git(&["status", "--porcelain"]).map(|o| !o.stdout.is_empty()).unwrap_or(false);
+            if dirty {
+                let _ = git(&["stash", "push", "--include-untracked", "-m",
+                              &format!("dl checkout {}", unix_secs())]);
+            }
+            match git(&["reset", "--hard", &remote_ref]) {
+                Ok(o) if o.status.success() => format!(
+                    "reset {default} -> {remote_ref}{}", if dirty { " (stashed local changes)" } else { "" }),
+                Ok(o) => format!("reset --hard {remote_ref} failed: {}",
+                    String::from_utf8_lossy(&o.stderr).trim()),
+                Err(e) => format!("reset --hard {remote_ref} errored: {e}"),
+            }
+        } else {
+            match git(&["branch", "-f", &default, &remote_ref]) {
+                Ok(o) if o.status.success() => format!(
+                    "branch -f {default} -> {remote_ref} (checkout left on {})",
+                    cur.as_deref().unwrap_or("detached HEAD")),
+                Ok(o) => format!("branch -f {default} failed: {}",
+                    String::from_utf8_lossy(&o.stderr).trim()),
+                Err(e) => format!("branch -f {default} errored: {e}"),
+            }
+        }
     }
 
     /// Parse the org from a github URL: `https://github.com/<org>/<repo>(.git)?`

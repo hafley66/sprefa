@@ -442,6 +442,7 @@ impl Rule {
     /// the engine-emitted registered set). Excluded from source/derived
     /// classification so neither reconcile nor rebuild touches the `repo` table.
     pub fn is_repo_sink(&self) -> bool { self.head.rel == "repo" }
+    pub fn is_checkout_sink(&self) -> bool { self.head.rel == "checkout" }
 }
 
 /// A `? atom.` query. Filtering is done by nesting (a literal head term pins a

@@ -4,6 +4,7 @@ Built-in SINK relations a program HEADS from a rule (like `diag`/`repo`): derivi
 
 | relation | columns | what heading it does |
 |---|---|---|
+| `checkout` | `(repo, branch, pr_heads)` | git checkout demand sink (the ghcacher keep-current half): head checkout(repo, branch, pr_heads) and each row clones a missing config repo, fetches origin, then fast-forwards `branch` to origin/<branch> — hard-reset (stashing dirty work) when that IS the current branch, else `git branch -f` the ref without touching the checkout. branch empty = discover origin/HEAD; pr_heads "1"/"true" also mirrors +refs/pull/*/head. DL_NO_FETCH skips the network (re-points to already-fetched refs only). Repos sweep in parallel; failures skip loudly |
 | `def_target` | `(name, file, line, kind)` | LSP go-to-definition sink: head def_target(name, file, line, kind) and textDocument/definition resolves a symbol reference to (file, line) by name; falls back to the module-edge specifier match when empty. Read by column name, so a subset written via named args works |
 | `effect_cmd` | `(kind, template)` | effect-template overlay sink: head effect_cmd(kind, template) to override the shell command for an effect kind at drain time (dynamic per-kind template), read as the effect executor is built |
 | `rev_cmp_want` | `(repo, refname, upstream)` | git ancestry demand sink: head rev_cmp_want(repo, refname, upstream) and each wanted triple runs git rev-list, filling rev_behind(repo, refname, upstream, behind, ahead); unresolvable refs and shallow clones skip loudly |

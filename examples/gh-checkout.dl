@@ -1,0 +1,33 @@
+# gh-checkout.dl — ghcacher's OTHER half, as a datalog program.
+#
+# ghcacher (~/projects/ghcacher) does two things. gh-cache.dl is the first:
+# poll the GitHub API into SQLite. This is the second: keep local git CHECKOUTS
+# current on disk (ghcacher's checkout.rs). For every configured repo it clones
+# what is missing, fetches origin, and fast-forwards the default branch to
+# origin/<branch>. A `dl --lsp` daemon on an interval IS the watch loop.
+#
+# `checkout(repo, branch, pr_heads)` is the built-in demand sink that runs the
+# sweep. Per row:
+#   * repo     = a config slug (or "." for self / a path). A config repo whose
+#                root is absent but has a `url` is cloned first.
+#   * branch   = the branch to keep current. Empty = discover origin/HEAD.
+#   * pr_heads = "1"/"true" also mirrors +refs/pull/*/head into refs/remotes/pr/*
+#                (the ghcacher fetch_pr_branches option); "0" skips it.
+# On the branch it fast-forwards, dirty work is stashed and it hard-resets to
+# origin/<branch>. On any OTHER branch (or detached) it moves the ref with
+# `git branch -f` and leaves the working tree alone. Repos sweep in parallel;
+# a failure skips loudly. `DL_NO_FETCH=1` skips the network (offline).
+#
+# Run (daemon):  dl --lsp examples/gh-checkout.dl --root <repo>
+# One-shot:      dl examples/gh-checkout.dl --root <repo>
+
+# --- read our own config ----------------------------------------------------
+# The repo set is the built-in `repo` relation, populated from the `[[repos]]`
+# config (the same config gh-cache.dl and every multi-repo program reads). Keep
+# every configured repo (one with a clone `url`) current on its default branch:
+# empty `branch` lets the sink follow each repo's origin/HEAD, so a repo tracking
+# `master` and one tracking `main` both work from one rule.
+checkout(slug, "", "0") <- repo(slug, root, url), url != "".
+
+# Read it back: the rows that drove the sweep (one per repo kept current).
+? checkout(slug, branch, pr_heads).

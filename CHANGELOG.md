@@ -6,6 +6,26 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+### Added
+- **`checkout` demand sink: the git keep-current sweep (ghcacher's second half).**
+  The dl port of ghcacher only did one of its two jobs — caching the GitHub API
+  into SQLite (`examples/gh-cache.dl`). The other job, keeping local git
+  *checkouts* current on disk (ghcacher's `checkout.rs`), was missing. It now
+  exists as a built-in demand sink: a rule heads
+  `checkout(repo, branch, pr_heads)` and each row, in parallel, clones a missing
+  config repo, fetches origin, and fast-forwards `branch` to `origin/<branch>` —
+  hard-resetting (after stashing dirty work) when that IS the current branch, or
+  `git branch -f`-ing the ref without touching the working tree when it is not.
+  `branch` empty discovers `origin/HEAD`; `pr_heads` `"1"`/`"true"` also mirrors
+  `+refs/pull/*/head` into `refs/remotes/pr/*`. `DL_NO_FETCH=1` skips the network
+  (re-points to already-fetched refs only). It reads its own config: head it off
+  the `repo` builtin to keep every configured repo current from one rule. A
+  `dl --lsp` daemon on an interval IS the watch loop. Catalogued as the `demand`
+  group (reserved like `scip_want`/`repo`, so `rel checkout(...)` bails). New
+  `examples/gh-checkout.dl`; `examples/gh-cache.dl` cross-links it. Tests:
+  `tests/it/checkout_sweep.rs` (hard-reset on-branch, `branch -f` off-branch,
+  offline no-op).
+
 ## [0.6.17] - 2026-07-08
 
 ### Fixed
