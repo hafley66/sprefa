@@ -6,6 +6,8 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.18] - 2026-07-08
+
 ### Added
 - **`checkout` demand sink: the git keep-current sweep (ghcacher's second half).**
   The dl port of ghcacher only did one of its two jobs — caching the GitHub API
