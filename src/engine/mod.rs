@@ -1638,7 +1638,13 @@ pub struct Engine {
     /// re-embedded (the W1 digest-skip leaves it unchanged when the edge set's
     /// digest matched). A tick over an unchanged graph must not bump it.
     pub node2vec_recomputed: usize,
+    /// Movable-ref resolutions (a branch, HEAD, a repointable tag), cleared each
+    /// tick so they re-resolve as the ref advances.
     rev_cache: HashMap<String, String>,
+    /// Immutable-rev resolutions (a full/prefix hex SHA — its object mapping
+    /// can't change), kept ACROSS ticks so a pinned rev spawns git exactly once
+    /// for the daemon's lifetime instead of once per tick.
+    rev_sha_cache: HashMap<String, String>,
     /// (repo slug, rev, path) of every tracked source file this tick — the
     /// existence oracle for `:file`/`:path`/`:dir` type checks against off-disk
     /// revs (where the filesystem cannot answer).
@@ -1737,6 +1743,7 @@ impl Engine {
             node2vec_recomputed: 0,
             closure_cache: HashMap::new(),
             rev_cache: HashMap::new(),
+            rev_sha_cache: HashMap::new(),
             rev_index: std::collections::HashSet::new(),
             repos: Vec::new(),
             query_json: false,
@@ -1775,12 +1782,15 @@ impl Engine {
     fn resolve_rev(&mut self, repo_root: &Path, rev: &str) -> Result<String> {
         if rev == "WORK" { return Ok("WORK".to_string()); }
         // Cache by (repo, rev): the same tag resolves to different shas per repo.
+        // Immutable (hex-SHA) revs live in the cross-tick cache; movable refs in
+        // the per-tick one. A hit in either means we already have it — no spawn.
         let key = format!("{}::{rev}", repo_root.display());
+        if let Some(s) = self.rev_sha_cache.get(&key) { return Ok(s.clone()); }
         if let Some(s) = self.rev_cache.get(&key) { return Ok(s.clone()); }
         // Present rev: unchanged fast path — rev-parse resolves, cache, return
         // the identical sha the caller has always seen.
         if let Some(sha) = Self::rev_parse(repo_root, rev)? {
-            self.rev_cache.insert(key, sha.clone());
+            self.cache_rev(key, rev, sha.clone());
             return Ok(sha);
         }
         // Miss: the rev isn't in this repo's object db. Offline mode throws
@@ -1818,7 +1828,7 @@ impl Engine {
             resolved = Self::rev_parse(repo_root, rev)?;
         }
         match resolved {
-            Some(sha) => { self.rev_cache.insert(key, sha.clone()); Ok(sha) }
+            Some(sha) => { self.cache_rev(key, rev, sha.clone()); Ok(sha) }
             None => bail!("git rev-parse {rev} still missing in {} after fetching tags/unshallowing from origin",
                 repo_root.display()),
         }
@@ -1847,10 +1857,30 @@ impl Engine {
             .args(["rev-parse", rev]).output()?;
         if !out.status.success() { return Ok(None); }
         let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        let present = Command::new("git").arg("-C").arg(repo_root)
-            .args(["cat-file", "-e", &sha]).output()?;
-        if !present.status.success() { return Ok(None); }
+        // Only a hex-SHA rev echoes back from rev-parse WITHOUT proving the
+        // object exists, so the existence probe is needed just there. A name
+        // (tag/branch/HEAD) only rev-parses when its ref — hence object — is
+        // present, so skip the second spawn for it.
+        if Self::is_immutable_rev(rev) {
+            let present = Command::new("git").arg("-C").arg(repo_root)
+                .args(["cat-file", "-e", &sha]).output()?;
+            if !present.status.success() { return Ok(None); }
+        }
         Ok(Some(sha))
+    }
+
+    /// A rev whose object mapping can't change: a full or prefix hex SHA. Movable
+    /// refs (branch/tag/HEAD names) are not hex. Gates both the cross-tick cache
+    /// and the `cat-file` existence probe.
+    fn is_immutable_rev(rev: &str) -> bool {
+        rev.len() >= 7 && rev.chars().all(|c| c.is_ascii_hexdigit())
+    }
+
+    /// Record a resolution in the cross-tick cache for an immutable SHA, else the
+    /// per-tick cache for a movable ref.
+    fn cache_rev(&mut self, key: String, rev: &str, sha: String) {
+        if Self::is_immutable_rev(rev) { self.rev_sha_cache.insert(key, sha); }
+        else { self.rev_cache.insert(key, sha); }
     }
 
     /// Resolve a `scan` repo coordinate to `(slug, root)`. The slug is the
