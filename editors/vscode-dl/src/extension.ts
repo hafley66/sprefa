@@ -482,6 +482,7 @@ function openFlowPanel(ctx: vscode.ExtensionContext, root: string, slice: SliceD
   panel = vscode.window.createWebviewPanel("dlFlow", "dl flow", vscode.ViewColumn.Beside, {
     enableScripts: true,
     retainContextWhenHidden: true,
+    localResourceRoots: [vscode.Uri.file(path.join(ctx.extensionPath, "media"))],
   });
   // Follow the editor cursor: post the caret's file:line + word-under-caret to
   // the webview on every selection change (debounced). The panel's "follow
@@ -537,7 +538,13 @@ function openFlowPanel(ctx: vscode.ExtensionContext, root: string, slice: SliceD
     };
   })();</script>`;
   const html = fs.readFileSync(path.join(ctx.extensionPath, "media", "flow-panel.html"), "utf8");
-  panel.webview.html = html.replace("<!-- DL_HOST -->", bootstrap);
+  // Bundled graph engine: cytoscape is vendored into media/ (CSP blocks CDNs)
+  // and loaded before the panel's own script so `window.cytoscape` is ready.
+  const cyUri = panel.webview.asWebviewUri(
+    vscode.Uri.file(path.join(ctx.extensionPath, "media", "cytoscape.min.js")));
+  panel.webview.html = html
+    .replace("<!-- DL_CYTOSCAPE -->", `<script src="${cyUri}"></script>`)
+    .replace("<!-- DL_HOST -->", bootstrap);
 
   panel.webview.onDidReceiveMessage(async (m) => {
     if (m.type === "query") {
@@ -545,7 +552,14 @@ function openFlowPanel(ctx: vscode.ExtensionContext, root: string, slice: SliceD
         const result: { rows: unknown[][] } = await client!.sendRequest("dl/query", {
           sql: m.sql, params: m.params ?? [],
         });
-        void panel?.webview.postMessage({ type: "rows", id: m.id, rows: result.rows });
+        // Guard the postMessage boundary: a giant result (custom SQL with no
+        // LIMIT over a multi-repo db) serializes into the webview and OOMs the
+        // renderer. Cap the crossing; the panel still slices to a renderable
+        // count below and shows the true total.
+        const QUERY_ROW_CAP = 20000;
+        const all = result.rows ?? [];
+        const rows = all.length > QUERY_ROW_CAP ? all.slice(0, QUERY_ROW_CAP) : all;
+        void panel?.webview.postMessage({ type: "rows", id: m.id, rows, total: all.length });
       } catch (e) {
         void panel?.webview.postMessage({ type: "error", id: m.id, message: String((e as Error).message ?? e) });
       }

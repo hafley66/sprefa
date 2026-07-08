@@ -17,6 +17,7 @@ pub const STR_FNS: &[(&str, &str, usize)] = &[
     ("strip_prefix", "sprf_strip_prefix", 2),
     ("strip_suffix", "sprf_strip_suffix", 2),
     ("replace_re", "sprf_replace_re", 3),
+    ("norm", "sprf_norm", 1),
 ];
 
 fn esc(s: &str) -> String { s.replace('\'', "''") }

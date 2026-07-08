@@ -191,6 +191,12 @@ fn register_string_fns(conn: &Connection) -> Result<()> {
         |ctx| Ok(map_first(&ctx.get::<String>(0)?, true)))?;
     conn.create_scalar_function("sprf_trim", 1, det,
         |ctx| Ok(ctx.get::<String>(0)?.trim().to_string()))?;
+    // Same normalization the ref-spine folds into `_strings.norm` / the
+    // `string(id,text,norm)` rel: ASCII-alnum only, lowercased. Exposed as a
+    // scalar so `norm(a) = norm(b)` is a punctuation/case-blind compare, and
+    // arbitrary text joins against `string.norm`.
+    conn.create_scalar_function("sprf_norm", 1, det,
+        |ctx| Ok(crate::spine::normalize(&ctx.get::<String>(0)?)))?;
 
     conn.create_scalar_function("sprf_strip_prefix", 2, det, |ctx| {
         let s = ctx.get::<String>(0)?;

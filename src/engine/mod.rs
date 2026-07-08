@@ -448,6 +448,7 @@ pub fn fn_docs() -> &'static [(&'static str, usize, &'static str, &'static str)]
         ("strip_prefix", 2, "string", "drop a leading affix if present, else return the input unchanged (idempotent cleanup, not a filter — pair with =~ /^p/ for drop-on-miss)"),
         ("strip_suffix", 2, "string", "drop a trailing affix if present, else return the input unchanged"),
         ("replace_re", 3, "string", "regex replace-all with $1 group refs; the pattern shares the process-wide compile cache"),
+        ("norm", 1, "string", "normalize for comparison: keep ASCII alphanumerics, lowercase, drop the rest — the same fold as the `string(id,text,norm)` rel's norm column, so `norm(a) = norm(b)` is a punctuation/case-blind compare and text joins against `string.norm`"),
     ]
 }
 
@@ -1776,12 +1777,46 @@ impl Engine {
         // Cache by (repo, rev): the same tag resolves to different shas per repo.
         let key = format!("{}::{rev}", repo_root.display());
         if let Some(s) = self.rev_cache.get(&key) { return Ok(s.clone()); }
+        // Present rev: unchanged fast path — rev-parse resolves, cache, return
+        // the identical sha the caller has always seen.
+        if let Some(sha) = Self::rev_parse(repo_root, rev)? {
+            self.rev_cache.insert(key, sha.clone());
+            return Ok(sha);
+        }
+        // Miss: the rev isn't in this repo's object db. Offline mode throws
+        // without touching the network; otherwise fetch this specific rev
+        // on demand and re-resolve exactly once. rev_cache still only records
+        // a successful resolution, so a fetched rev is cached like any other.
+        if std::env::var_os("DL_NO_FETCH").is_some() {
+            bail!("git rev-parse {rev} missing in {} and DL_NO_FETCH is set (offline; would have fetched)",
+                repo_root.display());
+        }
+        let _ = Command::new("git").arg("-C").arg(repo_root)
+            .args(["fetch", "--quiet", "origin", rev]).output()?;
+        match Self::rev_parse(repo_root, rev)? {
+            Some(sha) => { self.rev_cache.insert(key, sha.clone()); Ok(sha) }
+            None => bail!("git rev-parse {rev} still missing in {} after fetching from origin",
+                repo_root.display()),
+        }
+    }
+
+    /// `git rev-parse <rev>` in `repo_root`: `Some(sha)` when the rev is present,
+    /// `None` when it is missing — the signal `resolve_rev` uses to decide
+    /// whether to fetch. Two miss shapes: an unknown ref/name (rev-parse exits
+    /// non-zero), and a pinned full SHA whose object is absent (rev-parse echoes
+    /// it back regardless, so a `cat-file -e` existence check is required). The
+    /// returned value is the PLAIN rev-parse sha — unchanged for a present rev
+    /// (an annotated tag stays the tag-object sha, not the peeled commit).
+    /// Propagates only a spawn failure (git absent).
+    fn rev_parse(repo_root: &Path, rev: &str) -> Result<Option<String>> {
         let out = Command::new("git").arg("-C").arg(repo_root)
             .args(["rev-parse", rev]).output()?;
-        if !out.status.success() { bail!("git rev-parse {rev} failed in {}", repo_root.display()); }
+        if !out.status.success() { return Ok(None); }
         let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        self.rev_cache.insert(key, sha.clone());
-        Ok(sha)
+        let present = Command::new("git").arg("-C").arg(repo_root)
+            .args(["cat-file", "-e", &sha]).output()?;
+        if !present.status.success() { return Ok(None); }
+        Ok(Some(sha))
     }
 
     /// Resolve a `scan` repo coordinate to `(slug, root)`. The slug is the

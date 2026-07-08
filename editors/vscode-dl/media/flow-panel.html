@@ -25,6 +25,7 @@
   - edge query: src, dst, kind?                   (src/dst are node ids)
   Edges whose src/dst id has no node row are dropped and counted.
 -->
+<!-- DL_CYTOSCAPE -->
 <!-- DL_HOST -->
 <style>
   :root {
@@ -214,6 +215,8 @@
   .bar .toggle.on { color: #fff; border-color: var(--cyan); background: #173a52; }
   .bar .pill { padding: 6px 10px; border-radius: 8px; background: #0d1828aa;
     border: 1px solid #213650; color: var(--muted); }
+  .bar .pill.warn { color: #ffcf6b; border-color: #6b4e17; background: #2a1f0daa; }
+  .bar .pill[hidden] { display: none; }
   .bar input { pointer-events: auto; flex: 1; padding: 6px 10px; border-radius: 8px;
     background: #0d1828dd; border: 1px solid #213650; color: var(--ink); font: inherit; }
   .bar input:focus { outline: none; border-color: var(--cyan); }
@@ -436,6 +439,7 @@
     <span class="spacer"></span>
     <button id="helpBtn" title="help (?)">?</button>
     <span class="pill" id="countPill">–</span>
+    <span class="pill warn" id="volPill" hidden>–</span>
     <span class="pill" id="diffCountPill" hidden>–</span>
     <span class="pill" id="zoomPill">100%</span>
   </div>
@@ -626,6 +630,9 @@ let anchorSeq = 0;
 
 const view = { x: 40, y: 110, z: 1 };
 function applyView() {
+  // canvas mode: cytoscape owns the transform on its own canvas; never CSS-
+  // transform its container (would double-transform the whole graph).
+  if (typeof viewMode !== 'undefined' && viewMode === 'canvas') return;
   world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.z})`;
   document.getElementById('zoomPill').textContent = Math.round(view.z * 100) + '%';
 }
@@ -1364,80 +1371,67 @@ function partitionPins(rows) {
   return { main, pins };
 }
 
+// Canvas view = cytoscape on a real <canvas> (scales to thousands of nodes
+// where the old DOM-card/SVG-per-edge renderer OOM'd). Smallest glue: map the
+// query rows straight to cy elements, let cytoscape own layout + pan/zoom.
+// The viewport pointer/wheel handlers no-op in canvas mode (see their guards)
+// so cy's own gestures win.
+let cy = null;
 function renderCanvas(nodeRows, edgeRows) {
-  world.innerHTML = '';
-  nodes.clear(); edges.length = 0; flowArrowEls = []; // world.innerHTML already dropped their DOM
-  pinned.clear(); hoveredId = null; kindFilter.clear(); hoverCardEl.hidden = true; pinInfo.clear();
-
   const ids = new Set(nodeRows.map(r => String(r[0])));
   const keptEdges = edgeRows.filter(r => ids.has(String(r[0])) && ids.has(String(r[1])));
-  const dropped = edgeRows.length - keptEdges.length;
   const linked = new Set();
   for (const [s, d] of keptEdges) { linked.add(String(s)); linked.add(String(d)); }
   const keptNodes = nodeRows.filter(r => !linkedOnly || linked.has(String(r[0])));
 
-  // Pins never enter the layered-card layout below — only the "main" rows
-  // (owners) get laid out and get a card at all; pinRows get docked inside
-  // their owner's card afterward (see addPins), once that card exists.
-  const { main: mainRows, pins: pinRows } = partitionPins(keptNodes);
+  const els = [];
+  for (const r of keptNodes) {
+    const id = String(r[0]);
+    const kind = r[2] != null ? String(r[2]) : '';
+    els.push({ data: {
+      id, kind,
+      label: String(r[1] ?? id),
+      file: r[3] != null ? String(r[3]) : '',
+      line: r[4] != null ? Number(r[4]) : 0,
+      color: kind ? kindColor(kind) : '#5b7fa6',
+    }});
+  }
+  const seen = new Set();
+  for (const r of keptEdges) {
+    const key = String(r[0]) + '\0' + String(r[1]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    els.push({ data: { id: 'e' + seen.size, source: String(r[0]), target: String(r[1]) } });
+  }
 
-  const rowById = new Map(mainRows.map(r => [String(r[0]), r]));
-  const nodeIds = mainRows.map(r => String(r[0]));
-  const edgePairs = keptEdges.map(r => [String(r[0]), String(r[1])]);
-
-  // 1. longest-path layering (bounded passes so a cyclic subgraph settles
-  //    instead of spinning), same as before.
-  const layer = computeLayers(nodeIds, edgePairs);
-  const maxLayer = nodeIds.reduce((m, id) => Math.max(m, layer.get(id) || 0), 0);
-  const byLayer = [];
-  for (let l = 0; l <= maxLayer; l++) byLayer.push([]);
-  for (const id of nodeIds) byLayer[layer.get(id) || 0].push(id);
-
-  // 2. initial order within a layer: alphabetical (today's baseline), then
-  //    8 alternating down/up barycenter sweeps settle the crossings.
-  const labelOf = id => String((rowById.get(id) || [])[1] ?? id);
-  for (const layerIds of byLayer) layerIds.sort((a, b) => labelOf(a).localeCompare(labelOf(b)));
-  crossingReductionPasses(byLayer, edgePairs, 8);
-
-  // 3. y = order*ROW seed, then relaxation toward neighbor mean + overlap
-  //    resolution + layer-midpoint centering. x stays layer*COL.
-  const COL = 340, ROW = 100;
-  const yById = assignY(byLayer, edgePairs, ROW);
-  byLayer.forEach((layerIds, l) => {
-    for (const id of layerIds) addNode(rowById.get(id), l * COL, yById.get(id));
+  if (cy) cy.destroy();
+  world.style.transform = 'none';
+  cy = cytoscape({
+    container: world,
+    elements: els,
+    wheelSensitivity: 0.2,
+    style: [
+      { selector: 'node', style: {
+        'background-color': 'data(color)', 'label': 'data(label)',
+        'color': '#dfeefc', 'font-size': 9, 'text-valign': 'center',
+        'text-halign': 'center', 'text-wrap': 'ellipsis', 'text-max-width': 150,
+        'shape': 'round-rectangle', 'width': 'label', 'height': 16, 'padding': 5,
+        'border-width': 1, 'border-color': '#0d1828' } },
+      { selector: 'edge', style: {
+        'width': 1.4, 'line-color': '#33507a', 'target-arrow-color': '#33507a',
+        'target-arrow-shape': 'triangle', 'arrow-scale': 0.8, 'curve-style': 'bezier' } },
+    ],
+    layout: keptEdges.length
+      ? { name: 'breadthfirst', directed: true, spacingFactor: 1.15, padding: 24 }
+      : { name: 'grid', padding: 24 },
+  });
+  cy.on('tap', 'node', evt => {
+    const d = evt.target.data();
+    if (d.file) host.open(d.file, d.line || 1);
   });
 
-  // 3b. dock each pin row into its (now-rendered) owner card. Every pinRow
-  // survived partitionPins() because its parent id was present among
-  // keptNodes, and every present non-pin row goes through addNode above —
-  // so the owner card always exists by this point; the `nodes.get` guard is
-  // defensive, not a real-world path (matches the "no crash" contract, not
-  // the "resolveEndpoint" fallback below, which is a different case: an
-  // EDGE whose endpoint pin never got minted at all).
-  const pinsByOwner = new Map();
-  for (const r of pinRows) {
-    const owner = String(r[5]);
-    if (!pinsByOwner.has(owner)) pinsByOwner.set(owner, []);
-    pinsByOwner.get(owner).push(r);
-  }
-  for (const [ownerId, rows] of pinsByOwner) {
-    const ownerNode = nodes.get(ownerId);
-    if (ownerNode) addPins(ownerNode, rows);
-  }
-
-  // 4. dedup: identical (src,dst) rows (direction-sensitive) become one DOM
-  //    edge with a multiplicity — one arrow instead of N overlapping ones.
-  const mergedEdges = mergeEdgeRows(keptEdges);
-  for (const m of mergedEdges) addEdge(m);
-
   document.getElementById('countPill').textContent =
-    `${nodes.size} nodes · ${keptEdges.length} edges`
-    + (edges.length !== keptEdges.length ? ` · ${edges.length} drawn` : '')
-    + (dropped ? ` · ${dropped} dropped` : '');
-  buildLegend();
-  if (protoState.arrows) rebuildFlowArrows();
-  scheduleFlips();
-  requestAnimationFrame(measureNodeBoxes);
+    `${keptNodes.length} nodes · ${keptEdges.length} edges`;
 }
 
 function mergeEdgeRows(rows) {
@@ -3042,7 +3036,28 @@ const MODE_KEY = 'dl-flow-mode';
 let viewMode = readLocalStorage(MODE_KEY) === 'canvas' ? 'canvas' : 'list';
 let lastNodeRows = null, lastEdgeRows = null;
 
+// Hard render cap: renderCanvas/renderList each build one DOM card per node and
+// one SVG per edge synchronously, so an uncapped result (custom SQL, the
+// graph-layer UNIONs, or just a big multi-repo db) hangs or crashes the webview.
+// Slice to a renderable count and surface the true total in the warn pill —
+// dropped nodes take their edges with them (renderCanvas already filters edges
+// to surviving node ids). Presets carry their own tighter LIMITs; this only
+// bites when a query out-runs them.
+const NODE_RENDER_CAP = 2000, EDGE_RENDER_CAP = 4000;
 function render(nodeRows, edgeRows) {
+  const nTotal = nodeRows.length, eTotal = edgeRows.length;
+  const over = nTotal > NODE_RENDER_CAP || eTotal > EDGE_RENDER_CAP;
+  if (over) {
+    nodeRows = nodeRows.slice(0, NODE_RENDER_CAP);
+    edgeRows = edgeRows.slice(0, EDGE_RENDER_CAP);
+  }
+  const volPill = document.getElementById('volPill');
+  if (over) {
+    volPill.textContent = `showing ${nodeRows.length}/${nTotal} nodes · tighten the query`;
+    volPill.hidden = false;
+  } else {
+    volPill.hidden = true;
+  }
   lastNodeRows = nodeRows; lastEdgeRows = edgeRows;
   updateEmptyState(nodeRows);
   if (viewMode === 'list') renderList(nodeRows, edgeRows);
@@ -3220,6 +3235,7 @@ function cancelMarquee() {
 }
 
 viewport.addEventListener('pointerdown', ev => {
+  if (viewMode === 'canvas') return; // cytoscape owns drag/pan on its own canvas
   if (ev.target.closest('.loc')) return; // let its own click handler run untouched
   const nodeEl = ev.target.closest('.node');
   downPos = { x: ev.clientX, y: ev.clientY };
@@ -3269,6 +3285,7 @@ viewport.addEventListener('pointerup', () => {
 // since wheel fires many times per gesture with no natural "end" event
 let zoomTimer = null;
 viewport.addEventListener('wheel', ev => {
+  if (viewMode === 'canvas') return; // cytoscape owns wheel-zoom
   ev.preventDefault();
   const r = viewport.getBoundingClientRect();
   const sx = ev.clientX - r.left, sy = ev.clientY - r.top;
