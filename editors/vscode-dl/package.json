@@ -2,7 +2,7 @@
   "name": "dl-lsp",
   "displayName": "dl LSP",
   "description": "sprefa dl datalog linter. Drop a .dl file in .dl/, get live squiggles on rust/ts/py/go/kt and the .dl itself.",
-  "version": "0.6.16",
+  "version": "0.6.17",
   "publisher": "sprefa",
   "license": "MIT",
   "engines": {

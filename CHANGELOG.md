@@ -6,6 +6,18 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.17] - 2026-07-08
+
+### Fixed
+- **Diagnostic hover actually renders its markdown now.** The server joins a
+  diagnostic as `msg\nhint: …` with a SINGLE newline, which markdown collapses
+  onto one line — so `code`, links, and lists a `.dl` wrote into the diag read as
+  plain text in the squiggle hover. The extension's hover provider now promotes
+  the hint to its own paragraph and turns lone newlines into markdown hard
+  breaks, so the formatting shows. (VS Code still stacks its own plain copy of
+  the message above the rich block — `Diagnostic.message` is plain-text by LSP
+  protocol and can't be suppressed; markdown lives in the hover section.)
+
 ## [0.6.16] - 2026-07-08
 
 ### Changed
