@@ -6,6 +6,19 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.15] - 2026-07-08
+
+### Changed
+- **On-demand rev fetch now handles tag/branch names and shallow clones.** The
+  0.6.14 single `git fetch origin <rev>` only wrote `FETCH_HEAD` (it lands a full
+  SHA's object but creates no ref), so a tag or branch NAME never resolved on the
+  `rev-parse` retry. `resolve_rev` now escalates, cheapest first, re-resolving
+  after each and stopping at the first hit: `origin <rev>` (full-SHA fast path) →
+  `origin tag <rev>` (creates `refs/tags/<rev>`) → `--tags origin` → and, for a
+  shallow clone only, `--unshallow --tags origin` (deepen history for an object
+  below the shallow boundary). `DL_NO_FETCH=1` still bails offline before any
+  fetch; present revs and `rev_cache` are unchanged.
+
 ## [0.6.14] - 2026-07-08
 
 ### Added
