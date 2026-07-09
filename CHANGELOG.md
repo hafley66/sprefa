@@ -6,6 +6,18 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+### Changed
+- **`sprefa-dl` skill gained a "Common tasks" recipe section.** So an agent stops
+  re-deriving the basics each session: a most-important-commands table, how to
+  check for more (`dl docs`/`dl examples`/`rel_catalog`), how to config a repo set
+  (`[[repos]]`/`[[org]]` + `SPREFA_CONFIG` precedence), how to load files (the
+  `scan` forms, that a bare `scan` already triggers AST/SCIP extraction, `use`/
+  `--load`), how to watch (`--lsp`/`--daemon`/`--watch`), and both ghcacher halves
+  (`gh-cache.dl` + `gh-checkout.dl`). Plus a "Which extractor (NEVER default to
+  `match`)" ladder — SCIP > `ast`/`sg` > built-in graph rels from a bare scan >
+  `match` as last resort — and how to run SCIP without token-burn (`dl index
+  --install` / `scip_want` / `$SPREFA_SCIP_INDEX` / `dl doctor`).
+
 ## [0.6.20] - 2026-07-08
 
 ### Added
