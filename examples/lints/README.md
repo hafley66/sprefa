@@ -15,14 +15,14 @@ turns ast-grep matches into editor diagnostics and a commit gate.
 
 ```sh
 # live squiggles in the editor (updates on save)
-dl examples/lints/rust.dl --root /path/to/repo --lsp
+dl examples/lints/rust.dl --lsp
 
 # block a commit — exits non-zero iff any `error`-severity row exists
-dl examples/lints/rust.dl --root /path/to/repo --check      # husky pre-commit
-dl examples/lints/rust.dl --root /path/to/repo --diag-json  # CI / JSON
+dl examples/lints/rust.dl --check      # husky pre-commit
+dl examples/lints/rust.dl --diag-json  # CI / JSON
 
 # just print the hits
-dl examples/lints/rust.dl --root /path/to/repo
+dl examples/lints/rust.dl
 ```
 
 `scan("*", ...)` fans every rule over all repos in your `config.toml`; swap to

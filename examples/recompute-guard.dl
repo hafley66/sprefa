@@ -12,8 +12,8 @@
 # The first thing it guards is `eval_node2vec_rule` itself (cleared by the W1
 # digest skip); the primitive's own unit test is cleared by a waiver.
 #
-# Run:  dl examples/recompute-guard.dl --root <repo> --check
-#       dl examples/recompute-guard.dl --root <repo> --lsp
+# Run:  dl examples/recompute-guard.dl --check
+#       dl examples/recompute-guard.dl --lsp
 #
 # Attribution: fn decls come from the resolved def graph (call_def), and the
 # embed_graph/load_rel_digest markers come from the resolved call graph

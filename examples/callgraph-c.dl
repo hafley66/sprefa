@@ -3,7 +3,7 @@
 #   function span:  (function_definition declarator: (function_declarator
 #                      declarator: (identifier) @name)) @fn
 #   call site:      (call_expression function: (identifier) @callee)
-# Point the glob at a kernel subtree and run with --root /path/to/linux.
+# Point the glob at a kernel subtree and run with
 
 rel fndef(name: text, path: file, s: int, e: int).
 rel callsite(callee: text, path: file, line: int).

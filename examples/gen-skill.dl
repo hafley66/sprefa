@@ -10,7 +10,7 @@
 # `match` is deliberately NOT used for anchors — it is line/term parsing (break a
 # line down, pull a sub-term), NOT a checked reference to a declaration.
 #
-#   Run:  dl examples/gen-skill.dl --root .   (root = repo root)
+#   Run:  dl examples/gen-skill.dl   (root = repo root)
 
 rel src(p: file).
 src(p) <- scan("src/relkind.rs", p).

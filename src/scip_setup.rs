@@ -155,7 +155,6 @@ fn resolve_dir(args: &[String]) -> Result<(PathBuf, Args)> {
             "--force" | "-f" => parsed.force = true,
             "-h" | "--help" => parsed.help = true,
             "--rev" => { i += 1; parsed.rev = args.get(i).cloned(); }
-            "--root" => { i += 1; dir = args.get(i).cloned(); }
             other if !other.starts_with('-') => dir = Some(other.to_string()),
             other => { parsed.unknown = Some(other.to_string()); }
         }
@@ -321,13 +320,13 @@ pub fn run_index(args: &[String]) -> Result<i32> {
                 rows.defs.len(), rows.refs.len(), rows.edges.len(), rows.fn_edges.len());
             if !path_join_ok(&root, &rows) {
                 eprintln!("[dl index] WARNING: index paths do not join under {} — \
-                    the scip_* rules will return empty. Run `dl index` from the same \
-                    dir you pass as --root.", root.display());
+                    the scip_* rules will return empty. Run `dl index` from the \
+                    workspace root (or pass it as DIR).", root.display());
             }
         }
         Err(e) => eprintln!("[dl index] wrote {} but failed to read it back: {e}", out.display()),
     }
-    println!("[dl index] scip_* relations now load automatically for `dl … --root {}`.", root.display());
+    println!("[dl index] scip_* relations now load automatically when you run dl from {}.", root.display());
     Ok(0)
 }
 
@@ -410,7 +409,7 @@ fn run_install(cmd: &str) {
 
 fn print_index_help() {
     eprintln!("usage: dl index [DIR] [--install] [--rev REV] [--force]");
-    eprintln!("  DIR (or --root DIR)  workspace root to index (default: cwd)");
+    eprintln!("  DIR                  workspace root to index (default: cwd)");
     eprintln!("  --install            run the install command for any missing indexer");
     eprintln!("  --rev REV            print the worktree-and-index recipe for a git rev");
     eprintln!("  detects rust / typescript / python / go / kotlin-java / cpp by marker files,");

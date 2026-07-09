@@ -53,14 +53,14 @@ todo_count(source_path, count(source_line)) <-
 
 Read it bottom-up: `?` prints a relation, `todo_count` aggregates, and
 `todo_comment` is filled by two chained operators. `scan` selects files by
-glob (against the repo at `--root`, defaulting to the nearest `.git`
-ancestor), and `match` runs a regex over each one; the named capture group
+glob (against the repo at the current directory), and `match` runs a regex over
+each one; the named capture group
 `(?<todo_text>...)` binds the variable of the same name.
 
 Run it against a repo of yours (adjust the glob to your layout):
 
 ```sh
-dl todos.dl --root ~/code/my-repo --no-daemon
+dl todos.dl --no-daemon
 ```
 
 ```
@@ -129,8 +129,8 @@ diag(path: source_path, line: source_line, severity: "error",
 three renderers share:
 
 ```sh
-dl todos.dl --root ~/code/my-repo --check   # exit 2 if any error rows: CI, pre-commit
-dl todos.dl --root ~/code/my-repo --lsp     # the same rows as live editor squiggles
+dl todos.dl --check   # exit 2 if any error rows: CI, pre-commit
+dl todos.dl --lsp     # the same rows as live editor squiggles
 ```
 
 A TODO in a file you have touched now fails the build, points at its exact

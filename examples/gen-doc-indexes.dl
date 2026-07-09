@@ -11,7 +11,7 @@
 #   Run:     dl examples/gen-doc-indexes.dl        (root-relative; --root = nearest .git)
 #   Check:   dl examples/gen-doc-indexes.dl --check  (drift rail, exit non-zero on a
 #            file added without a regen)
-#   Daemon:  dl --load examples/gen-doc-indexes.dl  (regens on a book/ edit)
+#   Daemon:  dl daemon load examples/gen-doc-indexes.dl  (regens on a book/ edit)
 # Rerun converges (gen writes only when bytes differ).
 #
 # THE BLURB CONVENTION (documented once, applied to every numbered file):

@@ -53,7 +53,7 @@ green, and there is no side channel.
 
 ## Fixing a rail finding
 
-`dl .dl/magic-rel-audit.dl --root . --check` (or bare `dl --check --root .`)
+`dl .dl/magic-rel-audit.dl --check` (or bare `dl --check`)
 reports `magic-rel-unregistered` at the offending `file:line`. To clear it, give
 the name a `RelDecl` so it is catalogued:
 

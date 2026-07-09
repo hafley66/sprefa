@@ -26,6 +26,15 @@ fail) before a full run.
   (`next_line(scan_path, line + 1) <- ...`) or on a comparison side, never as a
   body binding. To COMPUTE a value, put the expression in the head, not `l = m+1`.
   (Same for `replace`/`split`/etc. — compute in the head, not a body `x = ...`.)
+- **Concat strings by interpolation, not `+`.** There is NO `+`/`concat`
+  operator on text. Build a string with `${var}` holes in a double-quoted
+  literal, in a HEAD term (same compute-in-head rule as above):
+  `node_ref(sym, "fs", "${path}:${line}") <- decl(sym, path, line).` The holes
+  also fill `sh` templates (`sh curl("https://api/${owner}/${name}") -> ...`).
+- **`_` is the don't-care var.** Use it for a body column you never read
+  (`caller(fn) <- call_edge(fn, _).`) or a fixed-schema sink column you skip.
+  With KWARGS you just OMIT the column instead (unmentioned = NULL), so a named
+  head rarely needs `_` at all.
 - **KWARGS exist — name head columns.** Any atom with one `col: term` goes into
   named mode: `diag(path: p, line: l, msg: m)` fills a fixed-schema sink by name
   (order-free, unmentioned columns NULL); a bare `edge(from, to)` puns to its own
@@ -144,15 +153,18 @@ attaches, it just re-ticks on file changes) does NOT self-heal and will keep
 running stale code. After reinstalling:
 
 ```sh
-dl --restart    # stop + respawn the daemon for this root with the CURRENT binary
-dl --stop       # just shut it down
+dl daemon status    # is it up? build_id, tick_count, settled, program
+dl daemon restart   # stop + respawn for this root with the CURRENT binary
+dl daemon stop      # just shut it down
 ```
 
-`dl --restart` is the one-liner — no `kill`/`nohup`/pid-file dance.
+`dl daemon restart` is the one-liner — no `kill`/`nohup`/pid-file dance. (The old
+`--restart`/`--stop`/`--rows` flags still work, hidden, but prefer the subcommand.)
 
-**Inspect the live daemon:** `dl --rows <REL>` prints a relation's current rows
-from the running daemon (e.g. `dl --rows checkout_done`, `dl --rows call_edge`) —
-the `?`-query shortcut for "what did this actually resolve to", no temp file.
+**Inspect the live daemon:** `dl daemon rows <REL>` prints a relation's current
+rows from the running daemon (e.g. `dl daemon rows checkout_done`, `dl daemon rows
+call_edge`) — the `?`-query shortcut for "what did this actually resolve to", no
+temp file. `dl daemon status` confirms which binary the daemon is running.
 
 ## Common tasks (copy-paste, stop guessing)
 
@@ -161,20 +173,30 @@ the `?`-query shortcut for "what did this actually resolve to", no temp file.
 | do | command |
 |---|---|
 | run a program | `dl prog.dl` (from the repo dir) |
+| run inline, no file | `dl 'seen(path) <- scan("**/*.rs", path, rev). ? seen(path).'` |
+| run a folder of rails | `dl some/rails/` (merges its `*.dl` once) |
+| watch reactively | `dl watch prog.dl` (or `dl watch some/rails/`) — daemon serves it, hot-reloads |
 | run all repo rails | `dl --check` (exit 2 on any `diag`) |
 | fast validate, no scan | `dl prog.dl --parse-only` |
 | live editor diagnostics | `dl prog.dl --lsp` |
-| inspect a live rel | `dl --rows call_edge` |
-| reset daemon after reinstall | `dl --restart` |
+| inspect a live rel | `dl daemon rows call_edge` |
+| daemon status / reset after reinstall | `dl daemon status` / `dl daemon restart` |
 | build a SCIP index | `dl index --install` |
 | SCIP health screen | `dl doctor` |
+| search the docs | `dl docs search '<anything>'` |
 | read a guide / browse examples | `dl docs`, `dl examples` |
 
-**Check for more (self-documenting, don't guess the surface):** `dl --help` (the
-trailer lists everything), `dl docs` (topic list → `dl docs syntax`, `dl docs
-book 1`, `dl docs authoring`), `dl examples` (`dl examples <query>` searches, `dl
-examples --show <name>` prints one), `dl --rows rel_catalog` / `? rel_catalog(name,
-group, cols, doc).` (every builtin relation), `? fn_catalog(...)` / `? op_catalog(...)`.
+Root is always the current directory — there is NO `--root` flag. Point `dl` at a
+repo by running from it (or configure it in `config.toml`). Inline source and a
+folder run once in-process; `dl watch` is the reactive form.
+
+**Check for more (self-documenting, don't guess the surface):** `dl docs search
+'<words>'` ranks every guide + the CLI help (e.g. `dl docs search concat`); `dl
+--help` (the trailer lists everything); `dl docs` (topic list → `dl docs syntax`,
+`dl docs book 1`, `dl docs authoring`); `dl examples` (`dl examples <query>`
+searches, `dl examples --show <name>` prints one); `dl daemon rows rel_catalog` /
+`? rel_catalog(name, group, cols, doc).` (every builtin relation), `? fn_catalog(...)`
+/ `? op_catalog(...)`.
 
 **Config a repo set** (multi-repo, ghcacher, cross-repo): a TOML at
 `$SPREFA_CONFIG` (else `$XDG_CONFIG_HOME/sprefa/config.toml`, else
@@ -208,14 +230,15 @@ A BARE `scan` rule is enough: it populates `_file` AND triggers AST/SCIP/type/
 call/dataflow extraction for the matched files. You never need a dummy `match` to
 "force" a scan. Reuse library rules with `use "std/callgraph.dl".` (resolves from
 disk or the embedded copy). Push a program into a running daemon with
-`dl --load prog.dl` (watched, hot-reloads) or `dl --load-once prog.dl` (eval once).
+`dl daemon load prog.dl` (watched, hot-reloads) or `dl daemon load-once prog.dl`
+(eval once).
 
 **Watch files (reactive):**
 
 | want | command |
 |---|---|
 | editor diagnostics, live | `dl prog.dl --lsp` |
-| background daemon for a repo | `dl --daemon` (from the repo; or it auto-spawns on first one-shot) |
+| background daemon for a repo | `dl daemon start` (from the repo; or it auto-spawns on first one-shot) |
 | in-process re-tick on change | `dl prog.dl --watch` (no daemon, foreground) |
 
 **ghcacher (both halves):** the config `[[repos]]`/`[[org]]` above is the repo set.
@@ -224,7 +247,7 @@ disk or the embedded copy). Push a program into a running daemon with
   etag carry, entity extraction; `DL_POLL_SECS` = daemon re-tick cadence).
 - Keep local checkouts current: `dl examples/gh-checkout.dl --lsp` (the `checkout`
   sink: clone-missing + fetch + fast-forward). Confirm it fired with
-  `dl --rows checkout_done`.
+  `dl daemon rows checkout_done`.
 
 ## Which extractor (NEVER default to `match`)
 

@@ -40,7 +40,7 @@ keeps one per key.
 ## Run it
 
 ```sh
-dl 08.dl --root notes-app --no-daemon
+dl 08.dl --no-daemon
 ```
 
 ## Expected output

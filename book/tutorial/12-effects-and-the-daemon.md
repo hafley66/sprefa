@@ -62,7 +62,7 @@ and the cache (below) would serve one's answer to the other.
 ## Run it one-shot: nothing
 
 ```sh
-dl 12.dl --root /tmp/dl-tour --no-daemon
+dl 12.dl --no-daemon
 ```
 
 ```
@@ -82,9 +82,9 @@ in `<root>/.dl/` and keeps a daemon running for that root:
 
 ```sh
 cp 12.dl .dl/12.dl
-dl --root /tmp/dl-tour        # first call spawns the daemon, prints 0 rows
+dl        # first call spawns the daemon, prints 0 rows
 sleep 8
-dl --root /tmp/dl-tour        # attaches to the warm daemon
+dl        # attaches to the warm daemon
 ```
 
 ```
@@ -115,7 +115,7 @@ When you are done, stop the daemon and check its log; effect failures land
 there, not in your terminal:
 
 ```sh
-dl --stop --root /tmp/dl-tour
+cd /tmp/dl-tour && dl daemon stop
 cat .dl/daemon.log | tail
 ```
 
@@ -129,7 +129,7 @@ lands in the queue and nothing ever runs it — the answer never appears.
 loop, in-process, until the program is *quiescent*, then prints once:
 
 ```sh
-dl --settle poller.dl --root /tmp/dl-tour
+dl --settle poller.dl
 ```
 
 Quiescent means one tick moved no real relation, staged no `@next` carry, and
@@ -141,7 +141,7 @@ naming what is still moving, rather than hanging.
 
 This is the CI and scripting path: an effectful program, a demand hop
 (`scip_want`), or a `repo`-sink pull runs to completion as a single command, no
-resident daemon required. When a daemon *is* already running, `dl --await-settle`
+resident daemon required. When a daemon *is* already running, `dl daemon await-settle`
 is the mirror image — you wait for *its* loop to reach the same quiescent point
 before querying.
 

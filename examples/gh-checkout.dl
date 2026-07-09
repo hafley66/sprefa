@@ -18,8 +18,8 @@
 # `git branch -f` and leaves the working tree alone. Repos sweep in parallel;
 # a failure skips loudly. `DL_NO_FETCH=1` skips the network (offline).
 #
-# Run (daemon):  dl --lsp examples/gh-checkout.dl --root <repo>
-# One-shot:      dl examples/gh-checkout.dl --root <repo>
+# Run (daemon):  dl --lsp examples/gh-checkout.dl
+# One-shot:      dl examples/gh-checkout.dl
 
 # --- read our own config ----------------------------------------------------
 # The repo set is the built-in `repo` relation, populated from the `[[repos]]`

@@ -13,9 +13,9 @@
 #
 # Both rules emit `diag` rows; render via the usual surfaces:
 #
-#   dl examples/lint-docs.dl --root .            # stdout
-#   dl examples/lint-docs.dl --root . --check    # human, exit 1 on any row
-#   dl examples/lint-docs.dl --root . --lsp      # squiggles in the editor
+#   dl examples/lint-docs.dl            # stdout
+#   dl examples/lint-docs.dl --check    # human, exit 1 on any row
+#   dl examples/lint-docs.dl --lsp      # squiggles in the editor
 
 
 # ---- Rule 1: needs-doc -------------------------------------------------------

@@ -7,8 +7,8 @@
 # linter cannot see. We turn them into `error` diagnostics, so `dl --check` fails
 # CI / a pre-commit hook and `dl --lsp` squiggles the offending line in-editor.
 #
-# Run:  dl examples/lint-imports.dl --root <repo> --check
-#       dl examples/lint-imports.dl --root <repo> --lsp
+# Run:  dl examples/lint-imports.dl --check
+#       dl examples/lint-imports.dl --lsp
 
 # Seed the file set so the resolver runs (it reads the built-in file relation).
 rel seen(path: file).

@@ -4,7 +4,7 @@
 # canonical code-navigation questions. No compiler, no index format — the answers
 # fall out of datalog rules over syn + tree-sitter facts.
 #
-#   Run: dl examples/glean.dl --root .
+#   Run: dl examples/glean.dl
 #
 # Questions answered (each is a `?` query at the bottom):
 #   1. WHERE IS IT DEFINED?   def(name, path, line)

@@ -8,7 +8,7 @@
 # Signature facts come from type_sig (the arrow exploded, refs resolved). `self` is
 # dropped by the extractor, so this is the param/return shape, not the receiver.
 #
-#   dl examples/fuzzy-traits.dl --root . --no-daemon
+#   dl examples/fuzzy-traits.dl --no-daemon
 #
 # Read: `decision` (each near-miss pair + the slot that differs), `exact_bucket`
 # (identical-shape groups = the exact traits), `ftrait` (one-edit-connected groups

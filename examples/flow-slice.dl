@@ -12,7 +12,7 @@
 # closure), so the seed + recursion IS the idiom, and it is cheaper anyway
 # (magic-set: the fixpoint only touches what the seed reaches).
 #
-#   dl examples/flow-slice.dl --root .
+#   dl examples/flow-slice.dl
 #
 # To target a DIFFERENT variable, edit the seed's var literal (and, if the
 # name is shadowed across functions, pin `fn`/`file`/`line` too — every

@@ -23,7 +23,7 @@ region is what `gen` will own.
 
 ## The program
 
-Save as `07.dl` (next to the fixture, run with `--root notes-app`):
+Save as `07.dl` inside the fixture (run it from `notes-app`):
 
 ```dl
 rel seen(path: file).
@@ -58,7 +58,7 @@ Three moving parts:
 ## Run it
 
 ```sh
-dl 07.dl --root notes-app --no-daemon
+dl 07.dl --no-daemon
 ```
 
 ```
@@ -88,7 +88,7 @@ heading and the sentence, is untouched.
 Run the exact same command again:
 
 ```sh
-dl 07.dl --root notes-app --no-daemon
+dl 07.dl --no-daemon
 ```
 
 This time there is no `[gen] wrote API.md` line. `gen` is convergent: it skips

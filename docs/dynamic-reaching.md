@@ -40,7 +40,7 @@ src(p) <- scan("*", "WORK", "src/**/*.rs", p, rev).
 ? repo(slug, root, url).
 ```
 
-Run: `dl prog.dl --root <self>`. `anim` clones into `/work/anim` and registers;
+Run: `dl prog.dl`. `anim` clones into `/work/anim` and registers;
 `evil` is skipped. Leave `root` empty to clone into `$XDG_STATE_HOME/sprefa/repos/<slug>`.
 
 Pulls are idempotent — re-asserting each tick is cheap (an already-registered slug
@@ -66,15 +66,15 @@ seen(V, p) <- pin(R, V), scan(R, V, "src/**/*.rs", p, rout).
 ? seen(V, p).
 ```
 
-Run: `dl prog.dl --root <repo>`. Repo and rev can both be variables, or either can
+Run: `dl prog.dl`. Repo and rev can both be variables, or either can
 stay literal (`scan(".", V, …)` = variable rev only). **Glob stays literal.**
 
 ## 3. Tracing — find hotspots
 
 ```bash
-DL_TRACE=info  dl prog.dl --root .     # tick timings
-DL_TRACE=debug dl prog.dl --root .     # per-phase durations + full-tick-fallback reasons
-DL_TRACE=trace dl prog.dl --root .     # + per-file parse_file
+DL_TRACE=info  dl prog.dl     # tick timings
+DL_TRACE=debug dl prog.dl     # per-phase durations + full-tick-fallback reasons
+DL_TRACE=trace dl prog.dl     # + per-file parse_file
 ```
 
 Span CLOSE carries `time.busy`; the hierarchy is `tick > reconcile_sources >
@@ -85,9 +85,9 @@ older `DL_PROFILE` SQL/scan logging.
 ## 4. Daemon + watched scripts
 
 ```bash
-dl --daemon                       # rootless singleton at the XDG state home
-dl --load /path/to/script.dl      # join to the running daemon; hot-reloads on edit
-dl --load-once /path/to/script.dl # ephemeral eval; prints `?` results, persists nothing
+dl daemon start                        # rootless singleton at the XDG state home
+dl daemon load /path/to/script.dl      # join the daemon (starts it if down); hot-reloads on edit
+dl daemon load-once /path/to/script.dl # ephemeral eval; prints `?` results, persists nothing
 ```
 
 ## Gotchas
@@ -107,5 +107,5 @@ dl --load-once /path/to/script.dl # ephemeral eval; prints `?` results, persists
 The `repo`/`rev`/`content`/`file` column shapes in the README's built-in-relations
 block are regenerated from `engine.rs` by `examples/builtin-rels.dl` (same match +
 comment + gen twine as `examples/op-table.dl`, which regenerates the source-op
-table). Run either manually, or `dl --load` it into the daemon so it regens on
+table). Run either manually, or `dl daemon load` it into the daemon so it regens on
 source edits. Prose tables are hand-maintained.

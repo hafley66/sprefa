@@ -1,6 +1,6 @@
 # LSP mode: declarative diagnostics
 
-`dl --lsp <program.dl> --root <dir>` runs the engine as a Language Server. Any
+`dl --lsp <program.dl>` runs the engine as a Language Server. Any
 `.dl` program that declares a relation named `diag` becomes a live linter: edit a
 file, the engine ticks the changed path, and the rows in `diag` become squiggles
 in the editor (and in any LSP client, including Claude Code's IDE bridge).
@@ -98,7 +98,7 @@ squiggle.
 
 ```
 cargo build --release
-./target/release/dl examples/lint-unwrap.dl --root /path/to/repo --lsp
+./target/release/dl examples/lint-unwrap.dl --lsp
 ```
 
 The server speaks LSP over stdio. It logs one line to stderr on startup

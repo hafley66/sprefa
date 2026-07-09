@@ -4,7 +4,7 @@ use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use crate::ast::*;
 use crate::ingest;
@@ -147,6 +147,24 @@ const BUILTIN_RELS: [&str; 5] = ["repo", "rev", "content", "file", "true"];
 /// glance — dead extractors, blown-up joins, closure explosion.
 static TICK_AUDIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 pub fn set_tick_audit(on: bool) { TICK_AUDIT.store(on, std::sync::atomic::Ordering::Relaxed); }
+
+/// Configure the GLOBAL rayon pool from `DL_RAYON_THREADS` (unset = rayon's
+/// default, one thread per core). Capping it (e.g. `DL_RAYON_THREADS=4`)
+/// bounds the CPU the daemon's extract/hash paths can burn — the lever when the
+/// fans spin on a many-core box. Must run before any rayon parallelism (called
+/// first thing from `cli::run`). The checkout sink has its OWN narrower pool
+/// (`DL_CHECKOUT_WIDTH`), so this caps the extract/hash hot paths.
+pub fn init_thread_pool() {
+    if let Some(n) = std::env::var("DL_RAYON_THREADS").ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+    {
+        let _ = rayon::ThreadPoolBuilder::new()
+            .num_threads(n)
+            .thread_name(|i| format!("dl-{i}"))
+            .build_global();
+    }
+}
 pub fn tick_audit() -> bool {
     TICK_AUDIT.load(std::sync::atomic::Ordering::Relaxed)
         || std::env::var("DL_TICK_AUDIT").is_ok_and(|v| !v.is_empty() && v != "0")
@@ -1715,11 +1733,12 @@ pub struct Engine {
     /// pass); an edit bumps it by the changed-file count per family, not the
     /// corpus. The structural proof of perf gap A.
     pub extract_files_parsed: std::cell::Cell<usize>,
-    /// Test/bench instrumentation: the pre-stratum derived rels the LAST full
-    /// `tick` actually rebuilt. A scoped tick (perf gap B) lists only the rels
-    /// dependency-reachable from what changed; a full rebuild lists every
-    /// pre-stratum rel; a no-change tick leaves it empty. The structural proof
-    /// the full tick's rebuild is affected-scoped.
+    /// Test/bench instrumentation: the pre-stratum derived rels the LAST tick
+    /// (full or incremental) actually rebuilt. A scoped tick (perf gap B) lists
+    /// only the rels dependency-reachable from what changed; a full rebuild
+    /// lists every pre-stratum rel; a no-change/comment-only tick leaves it
+    /// empty. The structural proof the tick's rebuild is affected-scoped, not a
+    /// full re-derivation on every edit.
     pub last_derived_rebuilt: Vec<String>,
     /// Verify-rollback journal (christmas #14). `None` = not in verify mode (gen
     /// writes go straight to disk, no capture). `Some(...)` = every gen write
@@ -1766,6 +1785,7 @@ struct FileNodes {
 
 impl Engine {
     pub fn new(db: crate::db::Db, root: PathBuf) -> Self {
+        crate::perflog::set_root(&root);
         Engine {
             db, rels: HashMap::new(), root, dropped: 0, extraction_drops: Vec::new(), recondensed: 0,
             node2vec_recomputed: 0,
@@ -3951,6 +3971,41 @@ impl Engine {
     }
 
     /// Drain `checkout` demand-sink rows: keep each named repo's checkout current
+    /// Min seconds between fetches of the SAME repo by the checkout sink
+    /// (DL_CHECKOUT_MIN_SECS, default 300). 0 disables the gate. Stops a short
+    /// clock from re-fetching every repo every tick.
+    fn checkout_min_secs() -> u64 {
+        std::env::var("DL_CHECKOUT_MIN_SECS").ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(300)
+    }
+
+    /// Per-repo last-fetch timestamps (in-process; the daemon is one warm
+    /// engine for its lifetime). Used by the min-interval gate.
+    fn checkout_last_fetch() -> &'static Mutex<HashMap<String, std::time::Instant>> {
+        static LAST: OnceLock<Mutex<HashMap<String, std::time::Instant>>> = OnceLock::new();
+        LAST.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    /// A dedicated, narrow rayon pool for checkout sweeps (DL_CHECKOUT_WIDTH,
+    /// default 2). `git fetch` is network+disk bound, so a 2-wide sweep is as
+    /// fast as a full-core one and keeps the sink from eating the whole default
+    /// pool (and every CPU core) when many repos are in view.
+    fn checkout_pool() -> &'static rayon::ThreadPool {
+        static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+        POOL.get_or_init(|| {
+            let n = std::env::var("DL_CHECKOUT_WIDTH").ok()
+                .and_then(|s| s.parse::<usize>().ok())
+                .filter(|&n| n > 0)
+                .unwrap_or(2);
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(n)
+                .thread_name(|i| format!("dl-checkout-{i}"))
+                .build()
+                .expect("checkout thread pool")
+        })
+    }
+
     /// on disk (the ghcacher `checkout.rs` half). For every derived
     /// `checkout(repo, branch, pr_heads)` row we resolve the repo to a root
     /// (cloning a missing config repo via `resolve_repo`'s `ensure_cloned`), then
@@ -3983,11 +4038,56 @@ impl Engine {
                 Err(e) => eprintln!("[checkout] skip {repo}: {e}"),
             }
         }
-        let results: Vec<(String, String, CheckoutOutcome)> = jobs.par_iter()
-            .map(|(slug, root, branch, pr)| {
-                let out = Self::checkout_one(root, branch, *pr, offline);
-                (slug.clone(), branch.clone(), out)
-            }).collect();
+        // Min-interval gate: a `checkout` rule driven by a short clock used to
+        // `git fetch` every repo on every tick that crossed the clock boundary,
+        // pinning all cores every 5 minutes. Now a repo can't be fetched more
+        // often than DL_CHECKOUT_MIN_SECS (default 300s) regardless of the rule.
+        // Throttled repos surface a `skip` checkout_done row so a program sees
+        // they were intentionally held, not silently dropped.
+        let min_secs = Self::checkout_min_secs();
+        let now = std::time::Instant::now();
+        let mut throttled: Vec<(String, String)> = Vec::new();
+        let eligible: Vec<(String, PathBuf, String, bool)> = if min_secs == 0 {
+            jobs
+        } else {
+            let last = Self::checkout_last_fetch();
+            let mut guard = last.lock().unwrap_or_else(|p| p.into_inner());
+            jobs.into_iter().filter(|(slug, _, branch, _)| {
+                let allowed = guard.get(slug)
+                    .map(|t| now.duration_since(*t).as_secs() >= min_secs)
+                    .unwrap_or(true);
+                if allowed {
+                    guard.insert(slug.clone(), now);
+                    true
+                } else {
+                    throttled.push((slug.clone(), branch.clone()));
+                    false
+                }
+            }).collect()
+        };
+        // Run the sweep on a DEDICATED narrow pool (DL_CHECKOUT_WIDTH, default
+        // 2). `git fetch` is network+disk bound, so a 2-wide sweep is as fast as
+        // a full-core one and stops the checkout sink from consuming the whole
+        // rayon pool (and every CPU core) when many repos are in view.
+        let mut results: Vec<(String, String, CheckoutOutcome)> = if eligible.is_empty() {
+            Vec::new()
+        } else {
+            Self::checkout_pool().install(|| {
+                eligible.par_iter()
+                    .map(|(slug, root, branch, pr)| {
+                        let out = Self::checkout_one(root, branch, *pr, offline);
+                        (slug.clone(), branch.clone(), out)
+                    }).collect()
+            })
+        };
+        // Surface throttled repos so the program can tell fetch-skipped from
+        // git-failed (ok=1, action="skip", detail names the gate).
+        for (slug, branch) in throttled {
+            results.push((slug, branch, CheckoutOutcome {
+                action: "skip", ok: true,
+                detail: format!("min-interval {min_secs}s (DL_CHECKOUT_MIN_SECS)"),
+            }));
+        }
         // Log AND surface an outcome rel: stderr goes to daemon.log under the
         // daemon (invisible to a query), so `checkout_done` is how a program /
         // live query confirms the sweep fired and reacts to failures.
@@ -4646,6 +4746,8 @@ impl Engine {
                     .map(|&ri| Ok((derived_rules[ri].head.rel.as_str(),
                                    lower_rule(derived_rules[ri], &self.rels)?)))
                     .collect::<Result<_>>()?;
+                crate::activity::detail(format!(
+                    "derived: {}", stmts.iter().map(|(r, _)| *r).collect::<Vec<_>>().join(", ")));
                 if !recursive {
                     for (rel, sql) in &stmts { timed(rel, sql)?; }
                     continue;
@@ -4693,6 +4795,20 @@ impl Engine {
         for edge in edges {
             let n: i64 = self.db.conn().query_row(
                 &format!("SELECT COUNT(*) FROM {}", scc_node_tbl(edge)), [], |r| r.get(0))?;
+            if n == 0 { return Ok(true); }
+        }
+        Ok(false)
+    }
+
+    /// True if any named rel's table is empty or absent — the cold-populate
+    /// guard for corpus-gated families (spine): skip the family only when file
+    /// content is unchanged AND its rels are already populated. A not-yet-
+    /// created table counts as empty (cold start must run).
+    fn any_rel_empty(&self, rels: &[&str]) -> Result<bool> {
+        for rel in rels {
+            let n: i64 = self.db.conn().query_row(
+                &format!("SELECT COUNT(*) FROM {}", tbl(rel)), [], |r| r.get(0))
+                .unwrap_or(0);
             if n == 0 { return Ok(true); }
         }
         Ok(false)

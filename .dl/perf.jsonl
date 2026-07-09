@@ -1,0 +1,56 @@
+{"ts_ms":1783613831468,"type":"phase","tick":0,"phase":"declare","ms":64,"detail":""}
+{"ts_ms":1783613843603,"type":"phase","tick":0,"phase":"declare","ms":25,"detail":""}
+{"ts_ms":1783613844544,"type":"phase","tick":0,"phase":"reconcile","ms":940,"detail":""}
+{"ts_ms":1783613844548,"type":"phase","tick":0,"phase":"derived","ms":3,"detail":"derived: author_file"}
+{"ts_ms":1783613844561,"type":"tick","tick":0,"kind":"full","files":{"parsed":0,"total":0,"extracted":0,"retracted":0},"derived":{"strategy":"full","rebuilt":["author_file"]},"changed_rels":["created"],"effects_inflight":0,"total_ms":984}
+{"ts_ms":1783613844604,"type":"phase","tick":0,"phase":"declare","ms":22,"detail":""}
+{"ts_ms":1783613853206,"type":"phase","tick":0,"phase":"reconcile","ms":21737,"detail":""}
+{"ts_ms":1783613853426,"type":"phase","tick":0,"phase":"extract","ms":219,"detail":"type-rels"}
+{"ts_ms":1783613853426,"type":"phase","tick":0,"phase":"derived","ms":0,"detail":"derived: fan_out"}
+{"ts_ms":1783613853427,"type":"tick","tick":0,"kind":"full","files":{"parsed":66,"total":66,"extracted":66,"retracted":0},"derived":{"strategy":"full","rebuilt":["fan_out"]},"changed_rels":["true","type_edge_rev","seen","repo","type_sig","type_link_rev","rev","content","type_link","type_entity","file","doc_tag","doc_comment","type_edge","type_entity_rev"],"effects_inflight":0,"total_ms":22023}
+{"ts_ms":1783613870078,"type":"phase","tick":0,"phase":"reconcile","ms":25473,"detail":""}
+{"ts_ms":1783613870351,"type":"phase","tick":0,"phase":"extract","ms":272,"detail":"type-rels"}
+{"ts_ms":1783613870357,"type":"phase","tick":0,"phase":"derived","ms":6,"detail":"derived: shared"}
+{"ts_ms":1783613870360,"type":"tick","tick":0,"kind":"full","files":{"parsed":223,"total":223,"extracted":223,"retracted":0},"derived":{"strategy":"full","rebuilt":["decl","shared"]},"changed_rels":["type_link","true","rev","type_entity_rev","doc_tag","file","repo","type_sig","type_edge","type_entity","seen","content","type_link_rev","doc_comment","type_edge_rev"],"effects_inflight":0,"total_ms":25778}
+{"ts_ms":1783614011496,"type":"phase","tick":0,"phase":"declare","ms":11,"detail":""}
+{"ts_ms":1783614011535,"type":"phase","tick":0,"phase":"reconcile","ms":39,"detail":""}
+{"ts_ms":1783614011535,"type":"phase","tick":0,"phase":"derived","ms":0,"detail":""}
+{"ts_ms":1783614011535,"type":"tick","tick":0,"kind":"full","files":{"parsed":66,"total":66,"extracted":58,"retracted":0},"derived":{"strategy":"full","rebuilt":[]},"changed_rels":["true","content","repo","file","hit","rev"],"effects_inflight":0,"total_ms":51}
+{"ts_ms":1783614039901,"type":"phase","tick":0,"phase":"cold-tick","ms":0,"detail":"/tmp/disc2/p.dl"}
+{"ts_ms":1783614039913,"type":"phase","tick":0,"phase":"declare","ms":11,"detail":""}
+{"ts_ms":1783614039958,"type":"phase","tick":0,"phase":"reconcile","ms":44,"detail":""}
+{"ts_ms":1783614039958,"type":"phase","tick":0,"phase":"derived","ms":0,"detail":""}
+{"ts_ms":1783614039959,"type":"tick","tick":0,"kind":"full","files":{"parsed":66,"total":66,"extracted":58,"retracted":0},"derived":{"strategy":"full","rebuilt":[]},"changed_rels":["repo","true","rev","content","file","hit"],"effects_inflight":0,"total_ms":57}
+{"ts_ms":1783614039959,"type":"phase","tick":0,"phase":"query","ms":0,"detail":""}
+{"ts_ms":1783614250233,"type":"tick","tick":2,"kind":"incremental","files":{"parsed":1,"total":1,"extracted":0,"retracted":0},"derived":{"strategy":"unchanged","rebuilt":[]},"changed_rels":[],"effects_inflight":0,"total_ms":8}
+{"ts_ms":1783614250234,"type":"phase","tick":2,"phase":"reconcile","ms":8,"detail":"1 changed path(s)"}
+{"ts_ms":1783614275113,"type":"tick","tick":3,"kind":"incremental","files":{"parsed":1,"total":1,"extracted":0,"retracted":0},"derived":{"strategy":"unchanged","rebuilt":[]},"changed_rels":[],"effects_inflight":0,"total_ms":6}
+{"ts_ms":1783614275113,"type":"phase","tick":3,"phase":"reconcile","ms":6,"detail":"1 changed path(s)"}
+{"ts_ms":1783614602574,"type":"tick","tick":4,"kind":"incremental","files":{"parsed":1,"total":1,"extracted":0,"retracted":0},"derived":{"strategy":"unchanged","rebuilt":[]},"changed_rels":[],"effects_inflight":0,"total_ms":6}
+{"ts_ms":1783614602574,"type":"phase","tick":4,"phase":"reconcile","ms":6,"detail":"1 changed path(s)"}
+{"ts_ms":1783614614297,"type":"tick","tick":5,"kind":"incremental","files":{"parsed":1,"total":1,"extracted":0,"retracted":0},"derived":{"strategy":"unchanged","rebuilt":[]},"changed_rels":[],"effects_inflight":0,"total_ms":8}
+{"ts_ms":1783614614297,"type":"phase","tick":5,"phase":"reconcile","ms":8,"detail":"1 changed path(s)"}
+{"ts_ms":1783614664431,"type":"phase","tick":0,"phase":"declare","ms":60,"detail":""}
+{"ts_ms":1783614669781,"type":"tick","tick":6,"kind":"incremental","files":{"parsed":0,"total":0,"extracted":0,"retracted":0},"derived":{"strategy":"unchanged","rebuilt":[]},"changed_rels":[],"effects_inflight":0,"total_ms":2}
+{"ts_ms":1783614669781,"type":"phase","tick":6,"phase":"reconcile","ms":2,"detail":"1 changed path(s)"}
+{"ts_ms":1783614671348,"type":"tick","tick":7,"kind":"incremental","files":{"parsed":0,"total":0,"extracted":0,"retracted":0},"derived":{"strategy":"unchanged","rebuilt":[]},"changed_rels":[],"effects_inflight":0,"total_ms":5}
+{"ts_ms":1783614671348,"type":"phase","tick":7,"phase":"reconcile","ms":5,"detail":"2 changed path(s)"}
+{"ts_ms":1783614676024,"type":"phase","tick":0,"phase":"declare","ms":41,"detail":""}
+{"ts_ms":1783614676877,"type":"phase","tick":0,"phase":"reconcile","ms":852,"detail":""}
+{"ts_ms":1783614676884,"type":"phase","tick":0,"phase":"derived","ms":7,"detail":"derived: author_file"}
+{"ts_ms":1783614676902,"type":"tick","tick":0,"kind":"full","files":{"parsed":0,"total":0,"extracted":0,"retracted":0},"derived":{"strategy":"full","rebuilt":["author_file"]},"changed_rels":["created"],"effects_inflight":0,"total_ms":919}
+{"ts_ms":1783614676962,"type":"phase","tick":0,"phase":"declare","ms":34,"detail":""}
+{"ts_ms":1783614677052,"type":"tick","tick":8,"kind":"incremental","files":{"parsed":0,"total":0,"extracted":0,"retracted":0},"derived":{"strategy":"unchanged","rebuilt":[]},"changed_rels":[],"effects_inflight":0,"total_ms":10}
+{"ts_ms":1783614677052,"type":"phase","tick":8,"phase":"reconcile","ms":11,"detail":"1 changed path(s)"}
+{"ts_ms":1783614686261,"type":"phase","tick":0,"phase":"reconcile","ms":21829,"detail":""}
+{"ts_ms":1783614686494,"type":"phase","tick":0,"phase":"extract","ms":232,"detail":"type-rels"}
+{"ts_ms":1783614686494,"type":"phase","tick":0,"phase":"derived","ms":0,"detail":"derived: fan_out"}
+{"ts_ms":1783614686495,"type":"tick","tick":0,"kind":"full","files":{"parsed":66,"total":66,"extracted":66,"retracted":0},"derived":{"strategy":"full","rebuilt":["fan_out"]},"changed_rels":["true","type_sig","type_entity_rev","content","type_link_rev","doc_tag","rev","seen","type_entity","type_edge","type_edge_rev","type_link","file","doc_comment","repo"],"effects_inflight":0,"total_ms":22124}
+{"ts_ms":1783614686656,"type":"tick","tick":9,"kind":"incremental","files":{"parsed":0,"total":0,"extracted":0,"retracted":0},"derived":{"strategy":"unchanged","rebuilt":[]},"changed_rels":[],"effects_inflight":0,"total_ms":2}
+{"ts_ms":1783614686656,"type":"phase","tick":9,"phase":"reconcile","ms":3,"detail":"1 changed path(s)"}
+{"ts_ms":1783614702271,"type":"phase","tick":0,"phase":"reconcile","ms":25308,"detail":""}
+{"ts_ms":1783614702582,"type":"phase","tick":0,"phase":"extract","ms":310,"detail":"type-rels"}
+{"ts_ms":1783614702588,"type":"phase","tick":0,"phase":"derived","ms":6,"detail":"derived: shared"}
+{"ts_ms":1783614702591,"type":"tick","tick":0,"kind":"full","files":{"parsed":223,"total":223,"extracted":223,"retracted":0},"derived":{"strategy":"full","rebuilt":["decl","shared"]},"changed_rels":["seen","type_edge","type_sig","file","true","type_link","type_link_rev","doc_comment","doc_tag","rev","repo","type_edge_rev","type_entity_rev","content","type_entity"],"effects_inflight":0,"total_ms":25663}
+{"ts_ms":1783614702755,"type":"tick","tick":10,"kind":"incremental","files":{"parsed":0,"total":0,"extracted":0,"retracted":0},"derived":{"strategy":"unchanged","rebuilt":[]},"changed_rels":[],"effects_inflight":0,"total_ms":5}
+{"ts_ms":1783614702755,"type":"phase","tick":10,"phase":"reconcile","ms":5,"detail":"1 changed path(s)"}

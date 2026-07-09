@@ -3,9 +3,9 @@
 # doc_comment is AST-located per language (rustdoc `///`, JSDoc `/** */`, KDoc),
 # this one rule fires across Rust, Kotlin, and TS without naming a language.
 #
-#   dl examples/doc-coverage.dl --root .          # stdout
-#   dl examples/doc-coverage.dl --root . --check  # exit 1 on any finding
-#   dl examples/doc-coverage.dl --root . --lsp    # squiggles
+#   dl examples/doc-coverage.dl          # stdout
+#   dl examples/doc-coverage.dl --check  # exit 1 on any finding
+#   dl examples/doc-coverage.dl --lsp    # squiggles
 #
 # Tier 2 bonus: a function documented but missing an @param/section for an arg
 # is a sharper lint — join doc_tag instead. Left as an exercise; this is the

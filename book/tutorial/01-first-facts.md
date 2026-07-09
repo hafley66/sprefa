@@ -28,7 +28,7 @@ Three things are happening.
   real file is dropped.
 - `seen(path) <- scan("src/**/*.rs", path)` is the rule. Read `<-` as "if". It
   says: for every file matching the glob, assert `seen(path)`. The glob is
-  relative to `--root`.
+  relative to the repo root (the current directory).
 - The two `?` lines are queries. Each prints the rows of a relation. `file` is a
   built-in relation the engine fills for you the moment any `scan` runs. A bare
   variable in a query puns to the column of the same name, so `file(repo, rev,
@@ -38,7 +38,7 @@ Three things are happening.
 ## Run it
 
 ```sh
-dl 01.dl --root notes-app --no-daemon
+dl 01.dl --no-daemon
 ```
 
 ## Expected output

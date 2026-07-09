@@ -1,8 +1,8 @@
 # Ban a code move with ast-grep + the CLI. Each rule is one banned pattern.
 # Run it as a gate (exits non-zero if any `error`-severity row exists):
 #
-#   dl examples/ban.dl --root . --check        # human output on stderr
-#   dl examples/ban.dl --root . --diag-json     # JSON for a hook / CI
+#   dl examples/ban.dl --check        # human output on stderr
+#   dl examples/ban.dl --diag-json     # JSON for a hook / CI
 #
 # `diag` is a plain relation; --check is one renderer of it, --lsp is another.
 # Columns are mapped by name: path/line/msg required; severity/code/hint optional.

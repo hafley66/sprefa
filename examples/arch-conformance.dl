@@ -4,8 +4,8 @@
 # violation. The whole architecture document is ~6 facts; the enforcement is
 # one negation.
 #
-#   dl examples/arch-conformance.dl --root .           # report
-#   dl examples/arch-conformance.dl --root . --check   # exit 1 on violations
+#   dl examples/arch-conformance.dl           # report
+#   dl examples/arch-conformance.dl --check   # exit 1 on violations
 #
 # The facts below describe THIS repo (rels/ and ingest/ may depend on the
 # engine, nothing depends back). Run it here and the violations query is a

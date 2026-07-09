@@ -27,7 +27,7 @@
 # of how fast the daemon ticks. One endpoint at clock(300, _) is <=12 conditional
 # requests per hour against a 5000/hour authed limit.
 #
-# Run (daemon):  DL_POLL_SECS=5 dl --lsp examples/gh-cache.dl --root <repo>
+# Run (daemon):  DL_POLL_SECS=5 dl --lsp examples/gh-cache.dl
 
 # --- what to poll -----------------------------------------------------------
 # One row per endpoint. `gh api {ep} -H "If-None-Match: {prev}"` is the call; the

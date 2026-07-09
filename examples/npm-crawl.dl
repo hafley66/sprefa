@@ -8,8 +8,8 @@
 # Effects fire off-tick, so this needs the persistent daemon. Easiest:
 #     examples/crawl wrap-ansi          # driver: daemon up, load, render, down
 # or by hand, from the repo root:
-#     dl --daemon --root . &
-#     dl --load examples/npm-crawl.dl --root .
+#     dl daemon start &
+#     dl daemon load examples/npm-crawl.dl
 #     d2 examples/_npm/graph.d2 examples/_npm/graph.svg && open examples/_npm/graph.svg
 #
 # Change the seed(s) below, or drive a different package via the `crawl` script.

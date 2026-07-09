@@ -9,7 +9,7 @@
 #
 # READ-ONLY. Surfaces candidates; does not refactor.
 #
-# Manual:  dl examples/param-fan-out.dl --root . --db /tmp/dl-pf.db --no-daemon
+# Manual:  dl examples/param-fan-out.dl --db /tmp/dl-pf.db --no-daemon
 #          (needs SPREFA_SCIP_INDEX=<repo>/index.scip; `just oracle-index` first)
 
 # ── distinct locals declared per fn ────────────────────────────────────────

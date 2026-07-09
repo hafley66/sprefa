@@ -58,10 +58,8 @@ stratification) is required.
 ## Run it
 
 ```sh
-dl 05.dl --root notes-app --no-daemon
+dl 05.dl --no-daemon
 ```
-
-(The `--root` is ignored here since nothing scans, but keep the habit.)
 
 ## Expected output
 

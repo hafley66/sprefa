@@ -1,7 +1,7 @@
 # Make dl's generated-zone markers VISIBLE in the editor: a subtle info dot on
 # every `BEGIN:` marker saying the block is machine-written, so a reader edits
 # the generator instead of the rendered text (which the next tick overwrites).
-# Opt-in (zone conventions vary) — run it live:  dl examples/gen-zone-info.dl --root . --lsp
+# Opt-in (zone conventions vary) — run it live:  dl examples/gen-zone-info.dl --lsp
 #
 # Two marker dialects, two extractors:
 #   * markdown `<!-- BEGIN: name -->` in README/docs — the regex `comment` op

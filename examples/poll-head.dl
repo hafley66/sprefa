@@ -8,7 +8,7 @@
 # and lands each response in `head_at` for the next tick to read. The drain runs
 # the subprocesses across the rayon pool, so N watched repos poll in parallel.
 #
-# Run (daemon):  DL_POLL_SECS=1 dl --lsp examples/poll-head.dl --root <repo>
+# Run (daemon):  DL_POLL_SECS=1 dl --lsp examples/poll-head.dl
 # The poll_head_demo integration test drives the same program against live git.
 
 # What to watch, and the shell command that reads its head. Add a row per repo.

@@ -14,7 +14,7 @@
 # real Rust grammar node, then a `=~` filter narrows the bound name. A comment
 # that happens to say `const FOO_RELS` never matches — it is not a const_item.
 #
-#   Run:  dl examples/gen-engine-anchors.dl --root .
+#   Run:  dl examples/gen-engine-anchors.dl
 
 rel feature_at(feature: text, name: text, file: text, line: int).
 

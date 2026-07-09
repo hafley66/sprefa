@@ -27,7 +27,7 @@
 #     exact 20-per-call discipline, now a `collect` arg (no per-row request).
 #
 #   Run (daemon, needs a working gh GraphQL endpoint):
-#     DL_POLL_SECS=5 dl --lsp examples/gh-cache-batch.dl --root <repo>
+#     DL_POLL_SECS=5 dl --lsp examples/gh-cache-batch.dl
 
 # Full "owner/name" slugs (avoids a concat builtin; the shell splits them).
 rel watch_pr(slug: text).

@@ -60,6 +60,7 @@ impl Engine {
     /// `TickReport` of what moved (`dl --settle` drives this to a fixpoint).
     #[tracing::instrument(skip_all, level = "info")]
     pub fn tick_report(&mut self, prog: &Program, quiet: bool) -> Result<TickReport> {
+        let t_tick = std::time::Instant::now();
         self.rev_cache.clear();
         self.extraction_drops.clear();
         CMD_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
@@ -68,6 +69,7 @@ impl Engine {
             Item::Rule(r) => Some(r), _ => None,
         }).collect();
         let closures = closure_map(&rules);
+        crate::activity::set(crate::activity::Phase::Declare, "");
         self.declare_all(prog, &closures)?;
         self.ensure_meta()?;
 
@@ -263,12 +265,12 @@ impl Engine {
                 _ => None,
             }))
             .collect();
+        crate::activity::set(crate::activity::Phase::Reconcile, "");
         let recon = self.reconcile_sources(&source_rules, &source_rels, &consumed)?;
         phase("reconcile-sources", t);
         // A carried-in @next rel that moved is an EDB change for this tick's
         // derived rules (e.g. a `poll` rule that reads the carried `etag`).
-        let mut changed = recon.changed || carry_changed;
-        // Per-rel change attribution for the scoped rebuild below (perf gap B):
+        let mut changed = recon.changed || carry_changed;        // Per-rel change attribution for the scoped rebuild below (perf gap B):
         // every source/built-in relation whose rows moved this tick lands here,
         // and only the derived rels dependency-reachable from the set re-derive.
         // Baselining each source relation's content digest doubles as the
@@ -312,8 +314,15 @@ impl Engine {
         // `node` (CST) is not a member (it must run BEFORE spine — its walk
         // writes the `_strings`/`_where_bytes` meta tables spine projects),
         // so it stays hand-dispatched between the pre/post-node slices.
+        let any_extract = crate::rels::extract_families_pre_node().iter().any(|f| f.used(prog))
+            || crate::rels::extract_families_post_node().iter().any(|f| f.used(prog))
+            || node_rels_used(prog);
+        if any_extract {
+            crate::activity::set(crate::activity::Phase::ParseExtract, "extract");
+        }
         for fam in crate::rels::extract_families_pre_node() {
             if !fam.used(prog) { continue; }
+            crate::activity::detail(fam.name());
             let t = std::time::Instant::now();
             if fam.refresh(self)? {
                 for r in fam.rels() { changed_source_rels.insert(r.to_string()); }
@@ -321,6 +330,7 @@ impl Engine {
             phase(fam.name(), t);
         }
         if node_rels_used(prog) {
+            crate::activity::detail("node");
             let t = std::time::Instant::now();
             if self.refresh_node_rels()? {
                 changed = true;
@@ -330,8 +340,21 @@ impl Engine {
         }
         for fam in crate::rels::extract_families_post_node() {
             if !fam.used(prog) { continue; }
+            crate::activity::detail(fam.name());
             let t = std::time::Instant::now();
-            if fam.refresh(self)? {
+            // Spine is corpus-gated: its output is a pure function of file
+            // content, so skip it (and its changed mark) when no file moved AND
+            // its rels are already populated. Before this gate spine returned
+            // Ok(true) every tick it was used, forcing every dependent to
+            // re-derive on every clock-driven full tick even with zero file
+            // changes.
+            let run = if fam.corpus_gated() {
+                recon.changed || self.any_rel_empty(fam.rels())?
+            } else {
+                true
+            };
+            let moved = if run { fam.refresh(self)? } else { false };
+            if moved {
                 for r in fam.rels() { changed_source_rels.insert(r.to_string()); }
             }
             phase(fam.name(), t);
@@ -405,6 +428,9 @@ impl Engine {
         let mut affected: HashSet<String> = HashSet::new();
         let mut dirty_edges: HashSet<&str> = HashSet::new();
         self.last_derived_rebuilt = Vec::new();
+        if changed || need_full {
+            crate::activity::set(crate::activity::Phase::Derived, "");
+        }
         if need_full {
             self.rebuild_derived(&strata.pre_rules, &strata.pre_rels)?;
             self.rebuild_closures(&edges)?;
@@ -448,6 +474,9 @@ impl Engine {
         // cache (scoped or full); the digest check inside still skips the
         // Tarjan for edges whose rows didn't move.
         let cond_edges = cond_edges_for(&edges, &scc_rules);
+        if !scc_rules.is_empty() || !node2vec_rules.is_empty() || !edges.is_empty() {
+            crate::activity::set(crate::activity::Phase::Operators, "");
+        }
         self.refresh_cond_cache(&cond_edges, &dirty_edges)?;
         for (r, cs) in &seed_rules { self.eval_closure_seed_rule(r, cs)?; }
         for r in &scc_rules { self.eval_scc_rule(r)?; }
@@ -489,6 +518,7 @@ impl Engine {
         // that grows the log without bound. Foreground `dl prog.dl` / `--watch`
         // pass quiet=false and still print.
         if !self.prime_tick && !quiet {
+            crate::activity::set(crate::activity::Phase::Query, "");
             for item in &prog.items {
                 // Each `?` query is independent: a failed or malformed query
                 // (unknown rel, bad point-query shape) reports and the rest still
@@ -559,12 +589,32 @@ impl Engine {
                 staged_next |= self.carry_differs(rel, &meta, cur_tx + 1)?;
             }
         }
+        let changed_rels: Vec<String> = changed_source_rels.into_iter().collect();
+        let inflight_effects = self.inflight_nonstream(prog)?;
+        // One perf-log record per tick: what moved, what re-derived, the whole
+        // tick's wall cost. `derived_strategy` names WHY everything re-ran
+        // ("full" = program/blank-slate/carry; "scoped" = only reachable rels;
+        // "unchanged" = nothing propagated) — the fact the spike hunter wants.
+        let derived_strategy = if need_full { "full" } else if changed { "scoped" } else { "unchanged" };
+        crate::perflog::emit_tick(&crate::perflog::TickRec {
+            tick: crate::activity::snapshot().tick,
+            kind: "full",
+            files_parsed: recon.parsed,
+            files_total: recon.total,
+            extracted: recon.extracted,
+            retracted: recon.retracted,
+            derived_strategy,
+            derived_rebuilt: &self.last_derived_rebuilt,
+            changed_rels: &changed_rels,
+            effects_inflight: inflight_effects,
+            total_ms: t_tick.elapsed().as_millis() as u64,
+        });
         Ok(TickReport {
             changed,
             derived_moved,
-            changed_rels: changed_source_rels.into_iter().collect(),
+            changed_rels,
             staged_next,
-            inflight_effects: self.inflight_nonstream(prog)?,
+            inflight_effects,
         })
     }
 
@@ -898,6 +948,20 @@ impl Engine {
         if tick_ms >= tick_log_ms() {
             eprintln!("[tick] incremental tick took {tick_ms:.1}ms over {} changed path(s)", changed.len());
         }
+        self.last_derived_rebuilt = rebuilt.clone();
+        crate::perflog::emit_tick(&crate::perflog::TickRec {
+            tick: crate::activity::snapshot().tick,
+            kind: "incremental",
+            files_parsed: npaths,
+            files_total: npaths,
+            extracted,
+            retracted,
+            derived_strategy: if rebuilt.is_empty() { "unchanged" } else { "scoped" },
+            derived_rebuilt: &rebuilt,
+            changed_rels: &[],
+            effects_inflight: 0,
+            total_ms: tick_ms as u64,
+        });
         Ok(())
     }
 }

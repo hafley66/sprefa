@@ -9,7 +9,7 @@
 #   examples/crawl cross-spawn 2
 #
 # Effects fire off-tick under the persistent daemon; the poll loop below is why
-# you don't hand-manage `dl --daemon` + DL_POLL_SECS + `dl --load` + render.
+# you don't hand-manage `dl daemon start` + DL_POLL_SECS + `dl daemon load` + render.
 set -eu
 PKG="${1:?usage: crawl <npm-package> [max-depth]}"
 DEPTH="${2:-3}"
@@ -26,10 +26,10 @@ rm -f "$DB" "$OUT/graph.d2"
 # scoped `@scope/name`.
 sed -e "s|\"wrap-ansi\"|\"$PKG\"|" -e "s|d < 3|d < $DEPTH|" examples/npm-crawl.dl > "$PROG"
 
-dl --stop --root . >/dev/null 2>&1 || true
-DL_POLL_SECS=2 dl --daemon --root . --db "$DB" >/dev/null 2>&1 &
+dl daemon stop >/dev/null 2>&1 || true
+DL_POLL_SECS=2 dl daemon start --db "$DB" >/dev/null 2>&1 &
 sleep 2
-dl --load "$PROG" --root . --db "$DB" >/dev/null 2>&1
+dl daemon load "$PROG" >/dev/null 2>&1
 echo "crawling $PKG (max-depth $DEPTH) ..."
 
 # Poll until the edge count holds steady across THREE checks = crawl reached its
@@ -46,7 +46,7 @@ for _ in $(seq 1 90); do
   prev="$n"
 done
 echo
-dl --stop --root . >/dev/null 2>&1 || true
+dl daemon stop >/dev/null 2>&1 || true
 
 if [ -f "$OUT/graph.d2" ] && command -v d2 >/dev/null 2>&1; then
   d2 "$OUT/graph.d2" "$OUT/graph.svg" >/dev/null 2>&1

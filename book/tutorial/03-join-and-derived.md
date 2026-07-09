@@ -45,7 +45,7 @@ is "anything, do not bind it."
 ## Run it
 
 ```sh
-dl 03.dl --root notes-app --no-daemon
+dl 03.dl --no-daemon
 ```
 
 ## Expected output
@@ -91,7 +91,7 @@ thing(name, path, line) <-
 self-reference) at once.
 
 ```sh
-dl 03-bail.dl --root notes-app --no-daemon
+dl 03-bail.dl --no-daemon
 ```
 
 ```

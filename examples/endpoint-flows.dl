@@ -14,9 +14,9 @@
 # helpers, their helpers, transitively) is "involved in" that endpoint. The
 # editor then annotates each involved function with the endpoints it serves.
 #
-#   dl examples/endpoint-flows.dl --root <axum-repo> --lsp     # hover / squiggles
-#   dl examples/endpoint-flows.dl --root <axum-repo> --check   # CI listing (info rows)
-#   dl examples/endpoint-flows.dl --root <axum-repo>           # stdout: the ? queries
+#   dl examples/endpoint-flows.dl --lsp     # hover / squiggles
+#   dl examples/endpoint-flows.dl --check   # CI listing (info rows)
+#   dl examples/endpoint-flows.dl           # stdout: the ? queries
 #
 # Reach base: call_edge alone (the resolved, SCIP-preferred caller->callee
 # graph), NOT the value-flow graph from std/flow.dl. call_edge is the cheap

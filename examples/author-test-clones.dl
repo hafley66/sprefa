@@ -7,7 +7,7 @@
 #   (a test-file filter on the path)
 #
 # Run:
-#   dl examples/author-test-clones.dl --root . --no-daemon
+#   dl examples/author-test-clones.dl --no-daemon
 # Set AUTHOR below to the email you want to scope to (substring-exact via ==).
 
 # propose_clone runs over the SCANNED file set, so name the corpus. Scope the

@@ -1,7 +1,7 @@
 # Maintains the machine-written regions of the sprefa chapter in the anim deck
 # (~/projects/anim/src/deck/02-sprefa.md). The root spans both repos:
 #
-#   dl examples/anim-deck.dl --root ~/projects
+#   dl examples/anim-deck.dl
 #
 # Rebuild the deck after: cd ~/projects/anim && npm run check
 

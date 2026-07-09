@@ -80,7 +80,7 @@ fails, point `SPREFA_STD` at a checkout's `std/` directory.
 ## Run it
 
 ```sh
-dl 09.dl --root notes-app --no-daemon
+dl 09.dl --no-daemon
 ```
 
 ## Expected output

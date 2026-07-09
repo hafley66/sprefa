@@ -1,0 +1,13 @@
+{
+  "name": "sprefa-local",
+  "owner": {
+    "name": "sprefa"
+  },
+  "plugins": [
+    {
+      "name": "dl-rails",
+      "source": "./claude-plugin",
+      "description": "sprefa dl: rails LSP diagnostics, the authoring skill, an MCP query server, and the rail hook — the whole dl surface in one install."
+    }
+  ]
+}

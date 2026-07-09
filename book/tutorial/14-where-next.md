@@ -26,7 +26,7 @@ dl examples --std                # the reusable std/ libraries
 Run one straight from the binary without copying it to disk:
 
 ```sh
-dl <(dl examples --show lint-imports) --root notes-app --no-daemon
+dl <(dl examples --show lint-imports) --no-daemon
 ```
 
 Good next reads, by the thing you want:

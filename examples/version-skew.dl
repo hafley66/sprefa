@@ -6,7 +6,7 @@
 # (SPREFA_CONFIG=all.config.toml) and the skew table IS the org's dependency
 # drift, one scan, no builds.
 #
-#   SPREFA_CONFIG=~/orgs/all.config.toml dl examples/version-skew.dl --root .
+#   SPREFA_CONFIG=~/orgs/all.config.toml dl examples/version-skew.dl
 #
 # Bespoke lockfiles union in: head `dep_pin` with another rule per format (a
 # json() rule over package-lock.json, a match() over anything). Honest limit:

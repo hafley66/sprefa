@@ -133,7 +133,7 @@ adjustment pattern.
 
 ### 7. Update docs and add a test
 
-- Regenerate the op table: `dl examples/gen-reference.dl --root .` (writes
+- Regenerate the op table: `dl examples/gen-reference.dl` (writes
   `docs/reference/syntax.md` + the `README.md` op table; never hand-edit
   those spliced blocks).
 - Add an e2e test to `tests/it/data_ops.rs` (registered in `tests/it/main.rs`,

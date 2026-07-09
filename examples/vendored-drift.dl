@@ -7,7 +7,7 @@
 # drift (a local patch, an upstream fix you're missing, or both); no upstream
 # file at that path = local-only (added here, or deleted upstream).
 #
-#   SPREFA_CONFIG=vendored.config.toml dl examples/vendored-drift.dl --root .
+#   SPREFA_CONFIG=vendored.config.toml dl examples/vendored-drift.dl
 #
 # Both the app and its upstream must be config repos (the upstream slug in
 # vendor_map names one). `scan("*")` fans one rule over every config repo to

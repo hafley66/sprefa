@@ -1,11 +1,11 @@
 {
   "name": "dl-rails",
-  "description": "dl language server: rails diagnostics + definition/references over the ref spine",
-  "version": "0.1.0",
+  "description": "sprefa dl in one install: rails LSP diagnostics, the authoring skill, an MCP query server, and the rail hook. The whole dl surface, namespaced.",
+  "version": "0.2.0",
   "lspServers": {
     "dl": {
       "command": "dl",
-      "args": ["--lsp", "--root", "${CLAUDE_PROJECT_DIR}"],
+      "args": ["--lsp"],
       "extensionToLanguage": {
         ".rs": "rust"
       },
@@ -14,5 +14,12 @@
       "startupTimeout": 10000,
       "maxRestarts": 3
     }
-  }
+  },
+  "mcpServers": {
+    "dl": {
+      "command": "dl",
+      "args": ["--mcp", "${CLAUDE_PLUGIN_ROOT}/mcp-server.dl"]
+    }
+  },
+  "hooks": "./hooks/hooks.json"
 }

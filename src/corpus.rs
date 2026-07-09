@@ -9,7 +9,7 @@
 //!   dl examples -n K <query…>     top-K (default 8)
 //!
 //! "Loadable from the CLI without being on disk": `dl examples --show NAME`
-//! prints the body, so `dl <(dl examples --show openapi-lsp) --root .` runs an
+//! prints the body, so `dl <(dl examples --show openapi-lsp)` runs an
 //! embedded example directly, and `use "std/callgraph.dl".` resolves from the
 //! binary when the file is absent on disk (see frontend.rs).
 

@@ -54,7 +54,7 @@ fn mcp_pumps_through_daemon() {
     let dir = sandbox("pump");
     fs::write(dir.join("p.dl"), PROG).unwrap();
     let mut daemon = DaemonGuard(Command::new(DL)
-        .args(["--daemon"]).arg(dir.join("p.dl"))
+        .args(["daemon", "start"]).arg(dir.join("p.dl"))
         .current_dir(&dir).env("DL_DAEMON_ROOT", &dir)
         .stdout(Stdio::null()).stderr(Stdio::null())
         .spawn().expect("spawn daemon"));
@@ -107,7 +107,7 @@ fn daemon_refuses_non_port_rel() {
     let dir = sandbox("refuse");
     fs::write(dir.join("p.dl"), "rel plain(x: text).\nplain(\"a\").\n").unwrap();
     let mut daemon = DaemonGuard(Command::new(DL)
-        .args(["--daemon"]).arg(dir.join("p.dl"))
+        .args(["daemon", "start"]).arg(dir.join("p.dl"))
         .current_dir(&dir).env("DL_DAEMON_ROOT", &dir)
         .stdout(Stdio::null()).stderr(Stdio::null())
         .spawn().expect("spawn daemon"));

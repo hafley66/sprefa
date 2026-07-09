@@ -17,6 +17,7 @@ mod closure_incremental_bench;
 mod closure_query_guard;
 mod extract_cache;
 mod graph_diff_rev;
+mod perf_facts;
 mod perf_rels;
 mod scoped_tick;
 mod settle;

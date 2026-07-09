@@ -12,7 +12,7 @@
 # row per declared type / fn / method. Two `=~` filters route by kind. The
 # `=~` literal is the unified regex form (same as `match` takes).
 #
-#   Run:     dl examples/auto-doc.dl --root .
+#   Run:     dl examples/auto-doc.dl
 #   Output:  examples/_auto-doc/v5-reference.md
 #
 # Swap the path template to `"{file}.md"` (one doc per source file) or to a

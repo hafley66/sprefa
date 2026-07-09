@@ -19,7 +19,7 @@
 # is no `env()` builtin — process env / .env files are NOT readable from a
 # program; a scanned config file is the supported (and reactive) path.
 #
-#   Run (daemon):  DL_POLL_SECS=5 dl --lsp examples/gh-cache-config.dl --root <repo>
+#   Run (daemon):  DL_POLL_SECS=5 dl --lsp examples/gh-cache-config.dl
 #   (the config file must sit at <root>/examples/gh-cache.config.json, or edit
 #    the scan path to wherever you keep it)
 

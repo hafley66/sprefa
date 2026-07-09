@@ -384,6 +384,8 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `call_site` | call | `(repo, caller, callee, file, line)` | each call occurrence; caller is the resolved fn sym, callee the bare text; changed_line joins here for line-scoped rails |
 | `changed` | changed | `(path)` | git status --porcelain -uall vs HEAD (modified/added/renamed/untracked); empty outside git; the rails join |
 | `changed_line` | changed | `(path, line)` | new-side lines of git diff -U0 HEAD hunks plus every line of untracked files; pure-deletion hunks emit nothing; line-scoped rails precision |
+| `checkout` | demand | `(repo, branch, pr_heads)` | git checkout demand sink (the ghcacher keep-current half): head checkout(repo, branch, pr_heads) and each row clones a missing config repo, fetches origin, then fast-forwards `branch` to origin/<branch> — hard-reset (stashing dirty work) when that IS the current branch, else `git branch -f` the ref without touching the checkout. branch empty = discover origin/HEAD; pr_heads "1"/"true" also mirrors +refs/pull/*/head. DL_NO_FETCH skips the network (re-points to already-fetched refs only). Repos sweep in parallel; failures skip loudly |
+| `checkout_done` | demand | `(repo, branch, action, ok, detail)` | checkout-sweep outcome (written by the `checkout` sink, read-only): one row per swept repo — action is reset/branch-f/skip, ok is 1/0, detail is the git result. Confirms the sweep fired from a live daemon (stderr goes to daemon.log) and lets a program diag failures (ok=0); one-tick latency like other demand outputs |
 | `child` | node | `(parent, child)` | CST parent-child edges (exactly 2 cols, so closure(child) gives ancestry) |
 | `clock` | clock | `(secs, bucket)` | the current time bucket now/secs per named period, present EVERY tick (not edge-triggered like every); clock(300,b) binds b to a monotone int advancing once per 300s — join it to vary a digest or gate on cadence, no @next counter |
 | `comment_node` | comment | `(path, line, col, end_line, end_col, text, kind)` | every comment in every parsed file: (path, line, col, end_line, end_col, text, kind is line/block/doc); grammar-backed (oxc for TS/TSX, tree-sitter for Rust, Kotlin, Python, Go, C, ...), so a comment marker inside a string is never a row; text has the comment tokens stripped; std/suppress.dl parses it into the eslint/biome disable grammar |
@@ -464,7 +466,7 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `type_sig` | type | `(sym, slot, pos, ref)` | type signature slots (params, fields) per sym |
 <!-- END: builtin-rels -->
 
-The table above is generated from the engine's self-describing `rel_catalog` by `examples/builtin-rels.dl` (run it, or `dl --load` it; the daemon regenerates on `engine.rs` edits). It is the single source of relation docs: group, columns, and the one-line summary all come from `builtin_rel_docs` + the `*_rel_decls` functions in [src/engine.rs](src/engine.rs), so the table can't drift from the declarations, and a new built-in is forced to appear by the doc-completeness test (`tests/it/rel_catalog.rs`). To document a new relation, add its `(name, group, summary)` row to `builtin_rel_docs` — do not hand-edit the block above; it is regenerated.
+The table above is generated from the engine's self-describing `rel_catalog` by `examples/builtin-rels.dl` (run it, or `dl daemon load` it; the daemon regenerates on `engine.rs` edits). It is the single source of relation docs: group, columns, and the one-line summary all come from `builtin_rel_docs` + the `*_rel_decls` functions in [src/engine.rs](src/engine.rs), so the table can't drift from the declarations, and a new built-in is forced to appear by the doc-completeness test (`tests/it/rel_catalog.rs`). To document a new relation, add its `(name, group, summary)` row to `builtin_rel_docs` — do not hand-edit the block above; it is regenerated.
 
 ## CLI
 
@@ -476,29 +478,23 @@ Two usage forms, then the flag reference:
 | `dl` (no positional) | discovery: merge every `<root>/.dl/*.dl` (filename order, shared `rel` decls dedupe); auto-cache at `.dl/cache.db` (gitignored automatically) |
 
 The flag table below is generated from the clap `Cli` struct (each flag's
-`///` doc-comment) by [examples/cli-doc.dl](examples/cli-doc.dl) via `dl
---cli-md`, so it can't drift from the parser: every flag auto-appears, and a
-flag with no doc-comment renders an empty cell (visible drift). Do not
-hand-edit between the markers; to change a row, edit the doc-comment in
-[src/main.rs](src/main.rs), rebuild, and rerun the generator. Daemon
-lifecycle, the two-daemon model (per-root vs rootless serving), the RPC
-surface, and env vars: [docs/daemon.md](docs/daemon.md).
+`///` doc-comment) by [examples/cli-doc.dl](examples/cli-doc.dl), so it can't
+drift from the parser: every flag auto-appears, and a flag with no doc-comment
+renders an empty cell (visible drift). Daemon control is the `dl daemon <verb>`
+subcommand (not a flag), so it lives in [docs/daemon.md](docs/daemon.md), not
+this table. Do not hand-edit between the markers; to change a row, edit the
+doc-comment in [src/cli/mod.rs](src/cli/mod.rs) and rerun the generator.
 
 <!-- BEGIN: cli -->
 | flag | effect |
 |---|---|
-| `--await-settle-ms` | _undocumented_ |
-| `--await-settle` | _undocumented_ |
 | `--changed <CHANGED>` | Drive one incremental tick for these changed paths (the delta path the watcher uses), instead of a full run. Repeatable |
 | `--check` | Lint/ban mode: render the `diag` relation to stderr. Exit 0 clean, 2 if any `error`-severity row exists (Claude Code's blocking-hook code), 1 on a broken program. For pre-commit / CI / Claude Code hooks. See docs/rails.md |
 | `--cmd-budget <CMD_BUDGET>` | Cap `cmd` invocations per tick (or DL_CMD_BUDGET); over budget is a loud error, never a silent truncation. Default: unlimited |
-| `--daemon` | Run as the long-lived daemon foreground (logs to stderr, ignores idle timeout). Usually invoked internally by spawn-if-missing; passing this flag explicitly is the debug path. See plans/2026-06-21-daemon-and-menu-bar.md |
 | `--db <DB>` | Persist derived tables to a SQLite db at this path (default: in-memory; discovery mode defaults to `<root>/.dl/cache.db`). Derived relations land as plain-TEXT `rel_<name>` tables, queryable by anything that reads SQLite |
 | `--diag-json` | Like --check but emit the diagnostics as a JSON array on stdout |
 | `--fix` | With --move, write the rewritten files instead of previewing |
 | `--hook` | Harness-hook mode: read a Claude Code hook event (PostToolUse JSON) on stdin, tick the rules, emit the hook output (additionalContext / block) on stdout. The program heads `inject`/`inject_skill`/`block` over the agent built-ins. The condition is a dl rule; no editor, no bash. See docs/skill-injection.md |
-| `--load <LOAD>` | Load a script into the running daemon as a WATCHED program: joins the loaded set, runs on every tick, hot-reloads on edit. Targets the global rootless serving daemon |
-| `--load-once <LOAD_ONCE>` | Load a script ONE-TIME: eval it on a throwaway engine, print the `?` query results, persist nothing. Same target rules as `--load` |
 | `--lsp` | Run as an LSP server over stdio: the program's `diag` relation becomes live editor diagnostics (lint on open/save). See docs/lsp.md |
 | `--mcp` | _undocumented_ |
 | `--move <MOVE>` | Auto-refactor: rewrite `use`-path references for a module move `OLD_FILE=NEW_FILE` (repo-relative Rust paths). Dry-run unless --fix. Repeatable. Ignores the `program` positional |
@@ -509,12 +505,9 @@ surface, and env vars: [docs/daemon.md](docs/daemon.md).
 | `--repo <REPO>` | With --move, which repo to rewrite: a config slug, or `*`/`all` for every configured repo. Omitted = the cwd repo (self) |
 | `--settle-max` | _undocumented_ |
 | `--settle` | _undocumented_ |
-| `--stdio` | Ignored no-op alias for `--lsp`. vscode-languageclient, coc.nvim, and neovim's lspconfig all append `--stdio` when spawning an LSP server; accept it so `dl` drops into any client without extension-specific arg gymnastics. Stdio is the only transport either way |
-| `--stop` | Send `shutdown` to the daemon on `<root>/.dl/daemon.sock` and exit |
 | `--tick-audit` | After each tick, print every relation's row count (or DL_TICK_AUDIT=1) |
-| `--tray` | With --daemon: spawn the menu bar tray icon (macOS v1; Windows/Linux deferred). The main thread runs the tray event loop; the accept loop moves off-main. Implies --daemon |
 | `--verify <VERIFY>` | Verify-rollback: run the program (applying `gen` edits), then run this shell command as a checker in the root. Keep the edits only if it exits 0; otherwise restore every touched file to its pre-run state and exit 1. Transactional codemod — apply, test, keep-if-pass. See christmas #14 |
-| `--watch` | Re-tick on file changes in the source root (in-process watcher, the pre-daemon path). For the warm long-lived watcher, use `--daemon` |
+| `--watch` | Re-tick on file changes in the source root (in-process watcher, the pre-daemon path). For the warm long-lived watcher, use `dl daemon start` |
 <!-- END: cli -->
 
 ## Git hook / Claude Code hook
@@ -927,7 +920,7 @@ None are blockers; all are cheap wins.
   `agent_*` relation is empty because the store wasn't reachable.
 - **daemon-attach banner + 5s wait on every ad-hoc invocation** — `[daemon]
   attach failed, falling back to in-process: daemon did not become ready in 5s`
-  prints (and stalls 5s) on a plain `dl prog.dl --root .`. `--no-daemon` skips it
+  prints (and stalls 5s) on a plain `dl prog.dl`. `--no-daemon` skips it
   but isn't the default for a one-off. Consider a shorter attach timeout, or
   suppressing the banner unless `--verbose`. Root cause found: the daemon runs
   its cold `eng.tick` BEFORE binding the socket (`daemon.rs` run_daemon:
@@ -957,8 +950,8 @@ None are blockers; all are cheap wins.
 Verification tasks for whoever picks these up (observed, not yet confirmed):
 - Confirm whether the in-process path reads the agent harness store at all, or
   whether the store read is gated on the daemon path (`agent.rs`). Symptom was an
-  empty `agent_touch` from `--root .` right after edits — points at in-process not
-  populating rather than a `--root` keying mismatch.
+  empty `agent_touch` from a plain in-process run right after edits — points at
+  in-process not populating rather than a root-keying mismatch.
 - A/B whether a bare `sg(:rust, "JoyButton")` pattern matches `use …::JoyButton`
   and `try_cast::<InputEventKey>()` type/use positions. If ast-grep catches those,
   `sg` beats `match` for any-position symbol fencing (skips comments/strings) and
@@ -986,11 +979,11 @@ round-trips to locate; documented so the next run (human or agent) skips them.
   rule is a source rule and binds head vars only from the source op, so the
   `file()` join can't supply `r`. Cost a full run to diagnose.
 - **`@async`/`sh` effects only drain under the *persistent* daemon** (FIXED: it
-  now drains by default). A plain `dl prog --root X` (and `--no-daemon`) ticks once
+  now drains by default). A plain `dl prog` (and `--no-daemon`) ticks once
   and does NOT run the effect drain — `effect_log` stays empty and nothing fires.
   `dl --lsp prog </dev/null` is worse: the LSP front-end hits EOF immediately
   (`Error: disconnected channel`) and takes the daemon down with it. So run
-  `dl --daemon --root X` (backgrounded) **plus** `dl --load prog --root X`. This
+  `dl daemon start` (backgrounded) **plus** `dl daemon load prog`. This
   used to *also* silently sit at `state='queued'` forever unless you knew to set
   `DL_POLL_SECS` — the drain runs inside `poll_tick`, which was opt-in. That was
   the footgun (cost a debug cycle every time). **Now the daemon drains effects by

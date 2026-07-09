@@ -16,7 +16,7 @@ No program file this time; `--move` is a flag that takes `OLD=NEW` paths,
 relative to the repo root:
 
 ```sh
-dl --move src/note.rs=src/model/note.rs --root notes-app --no-daemon
+dl --move src/note.rs=src/model/note.rs --no-daemon
 ```
 
 ```
@@ -47,7 +47,7 @@ not a string replace:
 ## Apply it
 
 ```sh
-dl --move src/note.rs=src/model/note.rs --root notes-app --no-daemon --fix
+dl --move src/note.rs=src/model/note.rs --no-daemon --fix
 ```
 
 Same plan, ending in `applied`. Inspect what changed:

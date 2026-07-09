@@ -96,6 +96,6 @@ repo is a three-line change, and nothing about the transport knows or cares.
 
 Add a `"version"` method that answers `"13.0"`, and a `"loc"` method that
 answers with the number of files in the fixture: put a `scan` rule and a
-`count` aggregate in the program (lesson 3 and lesson 5 shapes), run with
-`--root notes-app`, and drive it with `printf`. You have now joined a live
+`count` aggregate in the program (lesson 3 and lesson 5 shapes), run it from
+inside `notes-app`, and drive it with `printf`. You have now joined a live
 JSON-RPC response against a parsed codebase in a 20-line file.

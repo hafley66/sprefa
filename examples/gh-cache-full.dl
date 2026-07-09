@@ -13,7 +13,7 @@
 #   gap B  PR upsert      latest-wins is the relational argmax: max(tx) per number,
 #                         joined back to the winning row. No new builtin.
 #
-#   Run (daemon):  DL_POLL_SECS=5 dl --lsp examples/gh-cache-full.dl --root <repo>
+#   Run (daemon):  DL_POLL_SECS=5 dl --lsp examples/gh-cache-full.dl
 
 # ============================================================================
 # 1. CONDITIONAL SINGLE-GET (repo metadata) — etag/304 cache + rate capture

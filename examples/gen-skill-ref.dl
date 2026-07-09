@@ -4,8 +4,8 @@
 # no longer resolves. The skill is what `dl setup` installs, so it must not drift
 # from the engine's real surface.
 #
-#   Regen:  dl examples/gen-skill-ref.dl --root .
-#   Gate:   dl examples/gen-skill-ref.dl --root . --check   (exit 2 on a dead claim)
+#   Regen:  dl examples/gen-skill-ref.dl
+#   Gate:   dl examples/gen-skill-ref.dl --check   (exit 2 on a dead claim)
 #
 # NOTE: the skill is include_str!'d into the binary (setup.rs), so a regen only
 # SHIPS after `cargo install --path v5 --force`. gen skips under --check/--lsp;

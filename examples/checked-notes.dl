@@ -8,8 +8,8 @@
 # (--lsp), or the daemon hook on every save. A comment rots silently; a checked
 # note fails loudly.
 #
-#   dl examples/checked-notes.dl --root .           # list stale notes
-#   dl examples/checked-notes.dl --root . --check   # exit 1 if any note is stale
+#   dl examples/checked-notes.dl           # list stale notes
+#   dl examples/checked-notes.dl --check   # exit 1 if any note is stale
 #
 # TWO kinds of pointer:
 #   note(claim, target)          — target is the bare name of a fn/type you rely

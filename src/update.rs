@@ -82,6 +82,12 @@ pub fn run(args: &[String]) -> Result<i32> {
                 bail!("release installer exited {status}");
             }
             println!("[dl update] done. Run `dl update --check` to confirm, or `dl --help`.");
+            // Refresh the on-disk artifacts that embed version-pinned content
+            // (the skill + the VSCode extension if installed). Project-level
+            // wiring (.claude hooks, .githooks, AGENTS section) is per-repo;
+            // re-run `dl setup --project` in any repo you bootstrapped.
+            crate::setup::refresh_after_update();
+            println!("[dl update] project repos: re-run `dl setup --project` in any bootstrapped repo to refresh its AGENTS/CLAUDE dl section + hooks.");
             Ok(0)
         }
     }

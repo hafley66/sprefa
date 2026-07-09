@@ -10,8 +10,8 @@
 //!   - `daemon.pid`   text file: `pid\nstart_secs\nprogram_path\n`
 //!
 //! Lifecycle:
-//!   - `dl --daemon`  foreground daemon (logs to stderr, ignores idle timeout)
-//!   - `dl --stop`    sends `shutdown` over the socket
+//!   - `dl daemon start`  foreground daemon (logs to stderr, ignores idle timeout)
+//!   - `dl daemon stop`    sends `shutdown` over the socket
 //!   - default invocation auto-attaches; spawns if no socket / dead PID
 //!   - `DL_NO_DAEMON=1` opts out (in-process, the pre-daemon path; used by tests)
 //!   - `DL_DAEMON_IDLE_SECS=N` overrides the 30 min default
@@ -35,7 +35,7 @@ const IDLE_TICK_SECS: u64 = 30;
 /// Default effect-drain cadence when `DL_POLL_SECS` is unset. A program with
 /// `@async`/`@stream` effects needs SOME poll to drain its queue off-tick; making
 /// this a default (rather than opt-in) is what stops effects silently sitting at
-/// `state='queued'` under a bare `dl --daemon`. The poll loop no-ops cheaply when
+/// `state='queued'` under a bare `dl daemon start`. The poll loop no-ops cheaply when
 /// the loaded program has no effects, so a non-effect daemon pays ~nothing.
 const DEFAULT_POLL_SECS: u64 = 2;
 
@@ -226,11 +226,14 @@ impl Daemon {
     }
 
     fn tick_full(&self, quiet: bool) -> Result<()> {
+        let tick_next = self.tick_count.load(Ordering::Relaxed) + 1;
+        crate::activity::begin_tick(tick_next, &self.program_display);
         let prog = lock(&self.prog);
         let mut eng = lock(&self.eng);
         let report = eng.tick_report(&prog, quiet)?;
         drop(eng);
         drop(prog);
+        crate::activity::end_tick();
         // A full tick knows everything that moved, so it is the authoritative
         // settle observation (`await_quiescent` reads this).
         self.settled.store(report.is_settled(), Ordering::Relaxed);
@@ -243,11 +246,18 @@ impl Daemon {
     }
 
     fn tick_paths(&self, paths: &[PathBuf], quiet: bool) -> Result<()> {
+        let tick_next = self.tick_count.load(Ordering::Relaxed) + 1;
+        crate::activity::begin_tick(tick_next, &self.program_display);
+        crate::activity::set(
+            crate::activity::Phase::Reconcile,
+            format!("{} changed path(s)", paths.len()),
+        );
         let prog = lock(&self.prog);
         let mut eng = lock(&self.eng);
         eng.tick_paths(&prog, paths, quiet)?;
         drop(eng);
         drop(prog);
+        crate::activity::end_tick();
         // A source change happened; the poll loop's next full tick + effect drain
         // decides whether we are quiescent again, so clear the flag now.
         self.settled.store(false, Ordering::Relaxed);
@@ -393,6 +403,7 @@ impl Daemon {
             let mut eng = lock(&self.eng);
             // One-shot @async requests, then long-lived @stream subscriptions: a
             // stream yields N head rows per drain and stays 'running'.
+            crate::activity::set(crate::activity::Phase::Effects, "drain");
             let a = eng.drain_effects(&prog, &exec)?;
             let s = eng.drain_streams(&prog, &exec)?;
             a + s
@@ -593,7 +604,13 @@ pub fn run_daemon(
     let repos = load_repos_eager();
     if !repos.is_empty() { eprintln!("[config] {} repo(s) registered", repos.len()); }
     eng.set_repos(repos.clone());
+    crate::activity::set(crate::activity::Phase::ColdTick, display.as_str());
+    // Ensure `.dl/` exists before the cold tick so the perf log (default path
+    // `<root>/.dl/perf.jsonl`) is writable from tick 1 — perflog never creates
+    // `.dl/` itself (it must not side-effect a fresh dir), so the daemon does.
+    let _ = std::fs::create_dir_all(home_dir(home.as_deref()));
     eng.tick(&prog, false)?;
+    crate::activity::end_tick();
     let canon_files: Vec<PathBuf> = files
         .iter()
         .map(|f| std::fs::canonicalize(f).unwrap_or_else(|_| f.clone()))
@@ -644,6 +661,9 @@ pub fn run_daemon(
     write_pid_file(home.as_deref(), programs.first().map(|s| s.as_str()))?;
     eprintln!("[daemon] listening on {} (pid {}, idle {}s)",
         sock.display(), std::process::id(), idle_secs);
+    if let Some(p) = crate::perflog::path() {
+        eprintln!("[daemon] perf log {} (tail -f | jq .total_ms, .phase, .ms)", p.display());
+    }
 
     let d = daemon.clone();
     std::thread::Builder::new().name("dl-watch".into())
@@ -1058,7 +1078,7 @@ fn idle_timeout_secs() -> u64 {
 /// The effect-drain cadence. `DL_POLL_SECS` overrides it: `N>0` = every N
 /// seconds; `0` = OFF (the explicit escape hatch, for a program that manages its
 /// own drain or wants none). UNSET = drain by default at `DEFAULT_POLL_SECS` —
-/// so `@async`/`@stream` effects fire under a bare `dl --daemon` without the
+/// so `@async`/`@stream` effects fire under a bare `dl daemon start` without the
 /// caller having to know an env var exists. The poll loop gates on the program
 /// actually having effects, so this default costs a non-effect daemon nothing.
 /// A DSL `every(secs)` clock source (per-program cadence) is the follow-up.
@@ -1123,7 +1143,7 @@ fn handle_connection(d: Arc<Daemon>, mut stream: UnixStream) {
             d.shutdown_requested.store(true, Ordering::Relaxed);
             // The accept loop is blocked in `listener.incoming().next()`;
             // setting the flag alone does not wake it. Cleanup + exit here so
-            // `dl --stop` returns promptly. A graceful wake (self-pipe, non-
+            // `dl daemon stop` returns promptly. A graceful wake (self-pipe, non-
             // blocking accept) is the v1.1 polish item.
             shutdown_cleanup(&d);
             std::process::exit(0);
@@ -1141,16 +1161,26 @@ fn parse_request(v: Value) -> Option<Request> {
 
 fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex<UnixStream>>>) -> Response {
     match req.method.as_str() {
-        "ping" => Response::ok(req.id, json!({
-            "ok": true,
-            "build_id": d.build_id,
-            "root": d.root.to_string_lossy(),
-            "tick_count": d.tick_count.load(Ordering::Relaxed),
-            "settled": d.settled.load(Ordering::Relaxed),
-            "program": d.program_display,
-            "program_files": lock(&d.program_files).iter()
-                .map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
-        })),
+        "ping" => {
+            let act = crate::activity::snapshot();
+            Response::ok(req.id, json!({
+                "ok": true,
+                "build_id": d.build_id,
+                "root": d.root.to_string_lossy(),
+                "tick_count": d.tick_count.load(Ordering::Relaxed),
+                "settled": d.settled.load(Ordering::Relaxed),
+                "program": d.program_display,
+                "program_files": lock(&d.program_files).iter()
+                    .map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+                "activity": {
+                    "phase": act.phase.as_str(),
+                    "detail": act.detail,
+                    "program": act.program,
+                    "tick": act.tick,
+                    "elapsed_ms": act.elapsed_ms,
+                },
+            }))
+        }
         // Block until the program is quiescent (the poll loop keeps ticking +
         // draining toward it) or `timeout_ms` elapses. The daemon owns the effect
         // runtime, so this is the daemon-side twin of `dl --settle`: a client can
@@ -1267,7 +1297,7 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
             Response::ok(req.id, json!({"relations": relations}))
         }
         // Dump a relation's live rows by name: column names from the engine's rel
-        // metadata + the stringified rows (the `dl --rows REL` shortcut). Answers
+        // metadata + the stringified rows (the `dl daemon rows REL` shortcut). Answers
         // "what did this demand sink resolve to?" without hand-writing a `?` query.
         "query_rel" => {
             let rel = match req.params.get("rel").and_then(|v| v.as_str()) {
@@ -1603,7 +1633,7 @@ pub fn rpc_call(stream: &mut UnixStream, req: &Request) -> Result<Response> {
 }
 
 /// Spawn-if-missing: ensure a daemon is running on `<root>/.dl/daemon.sock`.
-/// If already up, returns immediately. Otherwise spawns `dl --daemon` detached
+/// If already up, returns immediately. Otherwise spawns `dl daemon start` detached
 /// (rooted at X via `DL_DAEMON_ROOT`+cwd, foreground=false so idle timeout
 /// applies) and poll-connects until
 /// the daemon responds to `ping` or the connect-time budget is exhausted.
@@ -1640,7 +1670,7 @@ pub fn ensure_daemon(root: &Path, program: Option<&str>) -> Result<()> {
 }
 
 /// Stop the daemon for `root` (if running) and respawn it detached with the
-/// CURRENT binary, rediscovering `<root>/.dl/*.dl`. The `dl --restart` backend:
+/// CURRENT binary, rediscovering `<root>/.dl/*.dl`. The `dl daemon restart` backend:
 /// the one-liner after `cargo install`, since a long-running daemon keeps its
 /// old in-memory image until it is replaced. Prints what it did.
 pub fn restart(root: &Path) -> Result<()> {
@@ -1679,9 +1709,10 @@ fn spawn_detached(root: &Path, program: Option<&str>) -> Result<()> {
     let stderr = log_file.try_clone()?;
     let mut cmd = std::process::Command::new(exe);
     // No `--root` flag exists: the spawned per-repo daemon learns its root from
-    // the internal `DL_DAEMON_ROOT` env (main.rs reads it) + cwd. A terminal
-    // `dl --daemon` with neither is the rootless singleton at the XDG home.
-    cmd.arg("--daemon").env("DL_DAEMON_ROOT", root).current_dir(root);
+    // the internal `DL_DAEMON_ROOT` env (the `daemon` subcommand reads it) + cwd.
+    // A terminal `dl daemon start` with neither is the rootless singleton at the
+    // XDG home.
+    cmd.args(["daemon", "start"]).env("DL_DAEMON_ROOT", root).current_dir(root);
     if let Some(p) = program { cmd.arg(p); }
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::from(log_file))
@@ -1717,7 +1748,7 @@ fn wait_ready(root: &Path, _program: Option<&str>) -> Result<()> {
 
 /// Send `shutdown` to the daemon at this home (`Some(root)` → per-root,
 /// `None` → the singleton XDG serving daemon). Ok if it acknowledged or was not
-/// running. Used by `dl --stop` / `dl --stop --root X`.
+/// running. Used by `dl daemon stop` / `dl daemon stop`.
 pub fn stop(root: Option<&Path>) -> Result<()> {
     if !is_running(root) {
         // Stale files; clean up.
@@ -1771,7 +1802,7 @@ pub fn load(root: Option<&Path>, path: &str, mode: &str) -> Result<Response> {
 }
 
 /// Fetch relation `rel`'s current rows from the running daemon: returns the
-/// column names and the stringified rows (the `dl --rows REL` backend).
+/// column names and the stringified rows (the `dl daemon rows REL` backend).
 /// `root=None` targets the global rootless serving daemon.
 pub fn query_rel(root: Option<&Path>, rel: &str) -> Result<(Vec<String>, Vec<Vec<String>>)> {
     let mut s = connect(root)?;
@@ -1793,6 +1824,21 @@ pub fn query_rel(root: Option<&Path>, rel: &str) -> Result<(Vec<String>, Vec<Vec
         })).collect())
         .unwrap_or_default();
     Ok((cols, rows))
+}
+
+/// Ping the running daemon and return its status JSON (build_id, root,
+/// tick_count, settled, program). `Ok(None)` when no daemon answers on this
+/// root's socket. The `dl daemon status` backend.
+pub fn status(root: Option<&Path>) -> Result<Option<Value>> {
+    let mut s = match connect(root) {
+        Ok(s) => s,
+        Err(_) => return Ok(None),
+    };
+    let req = Request::new(0, "ping", json!({}));
+    match rpc_call(&mut s, &req) {
+        Ok(r) if r.error.is_none() => Ok(r.result),
+        _ => Ok(None),
+    }
 }
 
 // ---------- small helpers shared with lib.rs ----------

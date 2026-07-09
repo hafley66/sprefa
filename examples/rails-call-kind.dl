@@ -14,7 +14,7 @@
 # (fn is called FROM a loop-nested site, not just transitively reachable
 # from a fn that has a loop). Both cuts compose by joining on the same fn.
 #
-#   Run: dl examples/rails-call-kind.dl --root . --check
+#   Run: dl examples/rails-call-kind.dl --check
 
 
 # Seed: raw .conn() call sites, exempt the db.rs seam (that's where .conn()

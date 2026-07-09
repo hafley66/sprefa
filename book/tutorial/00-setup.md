@@ -150,16 +150,17 @@ and the `rev` comes from git. Lesson 1 is about that coordinate.
 
 ## Where the programs go
 
-Keep your `.dl` programs anywhere you like. The lessons write them next to the
-fixture and point `dl` at the repo with `--root`. A program from a directory
-called `dl-lessons` beside `notes-app` would run as:
+The working root is always the current directory — there is no `--root` flag. So
+run every lesson from inside the fixture (`cd notes-app`, which the setup above
+already left you in) and save each program there. A lesson's program then runs as:
 
 ```sh
-dl dl-lessons/01.dl --root notes-app --no-daemon
+dl 01.dl --no-daemon
 ```
 
-Adjust the paths to wherever you saved the fixture. Every command in this track
-ends in `--no-daemon` for the reasons in the [track index](README.md).
+To point `dl` at a repo somewhere else, `cd` into it first (or configure it in
+`config.toml`); the root is never a command-line argument. Every command in this
+track ends in `--no-daemon` for the reasons in the [track index](README.md).
 
 ## Exercise
 

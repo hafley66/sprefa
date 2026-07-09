@@ -1,10 +1,10 @@
 # Rust lint pack — ast-grep patterns surfaced as LSP diagnostics.
 #
 # Load it live in any repo:
-#   dl examples/lints/rust.dl --root /path/to/repo --lsp     # squiggles in the editor
+#   dl examples/lints/rust.dl --lsp     # squiggles in the editor
 # Gate a commit (exits non-zero iff any `error`-severity row exists):
-#   dl examples/lints/rust.dl --root /path/to/repo --check    # husky pre-commit
-#   dl examples/lints/rust.dl --root /path/to/repo --diag-json # CI / JSON
+#   dl examples/lints/rust.dl --check    # husky pre-commit
+#   dl examples/lints/rust.dl --diag-json # CI / JSON
 #
 # To add a rule: ask the AI for an ast-grep pattern, paste it into a new `diag`
 # rule below. `$X` = one node, `$$$A` = a variadic list. The trailing
@@ -32,5 +32,5 @@ diag(path, line, col, end_line: el, end_col: ec, severity: "warn", code: "no-tod
   scan("*", "WORK", "**/*.rs", path, rev),
   sg(path, rev, :rust, "todo!($$$A)", line, col, el, ec).
 
-# Plain-run view (ignored under --lsp/--check, shown by `dl rust.dl --root .`)
+# Plain-run view (ignored under --lsp/--check, shown by `dl rust.dl`)
 ? diag(path, line, col, end_line, end_col, severity, code, msg, hint).

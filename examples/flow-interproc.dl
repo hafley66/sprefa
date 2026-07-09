@@ -14,8 +14,8 @@
 # program shares ONE copy (this file used to carry its own; so did taint.dl and
 # flow-jsx.dl). This program adds the transitive closure and the typed views.
 #
-#   dl examples/flow-interproc.dl --root .
-#   SPREFA_SCIP_INDEX=index.scip dl examples/flow-interproc.dl --root .   # SCIP-resolved
+#   dl examples/flow-interproc.dl
+#   SPREFA_SCIP_INDEX=index.scip dl examples/flow-interproc.dl   # SCIP-resolved
 #
 # Precision notes (honest, inherited from std/flow.dl):
 #   - The argument -> parameter hop is POSITIONAL (df_arg slot = df_param slot,

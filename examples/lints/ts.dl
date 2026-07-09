@@ -1,7 +1,7 @@
 # TypeScript/JS lint pack — ast-grep patterns surfaced as LSP diagnostics.
 #
-#   dl examples/lints/ts.dl --root /path/to/repo --lsp
-#   dl examples/lints/ts.dl --root /path/to/repo --check
+#   dl examples/lints/ts.dl --lsp
+#   dl examples/lints/ts.dl --check
 #
 # `sg` lang tokens: :ts :tsx :js. Globs pick the files. Same pattern syntax as
 # Rust ($X one node, $$$A variadic).

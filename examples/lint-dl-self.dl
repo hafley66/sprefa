@@ -12,9 +12,9 @@
 # by contrast, ARE git and empty outside a repo.)
 #
 #   Block on a broken .dl the agent touched (Claude Code hook / pre-commit):
-#     dl examples/lint-dl-self.dl --root . --check
+#     dl examples/lint-dl-self.dl --check
 #   Live editor squiggles (--lsp surfaces the `diag` rel):
-#     dl examples/lint-dl-self.dl --root . --lsp
+#     dl examples/lint-dl-self.dl --lsp
 #
 # Drop the `agent_changed` atom from the `diag` rule to lint EVERY scanned .dl
 # (CI gate over the whole corpus) instead of just the agent's turn.

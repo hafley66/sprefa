@@ -7,8 +7,8 @@
 # auto-appears as a stub row (ast_yaml today) so drift is visible in the doc;
 # a human fills the prose and the next tick preserves it verbatim.
 #
-# Manual:  dl examples/op-table.dl --root .
-# Daemon:  dl --daemon examples/op-table.dl --root .
+# Manual:  dl examples/op-table.dl
+# Daemon:  dl daemon start examples/op-table.dl
 #          Writes README.md (a watched non-program file) → converges, no respawn.
 # Rerun converges (gen writes only when bytes differ).
 

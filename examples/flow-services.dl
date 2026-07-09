@@ -17,8 +17,8 @@
 # has no spec to scan — assert `service_op("name").` facts for those, the
 # same convention-read pattern as rev_cmp_want.
 #
-#   dl examples/flow-services.dl --root .          # single repo
-#   dl examples/flow-services.dl --root . --config all.config.toml   # multi-repo:
+#   dl examples/flow-services.dl          # single repo
+#   dl examples/flow-services.dl --config all.config.toml   # multi-repo:
 #     make the scans `scan("*", ...)` to fan over every config repo and the
 #     wire hop joins ACROSS repos — the endpoint may live in another service's
 #     checkout entirely.

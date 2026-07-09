@@ -24,7 +24,7 @@ seen(path) <- scan("src/**/*.rs", path).
 ```
 
 ```sh
-dl 04-probe.dl --root notes-app --no-daemon
+dl 04-probe.dl --no-daemon
 ```
 
 ```
@@ -100,7 +100,7 @@ calls `callee_name`, you reach that too. The engine runs this to a fixpoint
 (chapter 2 of the book).
 
 ```sh
-dl 04-reaches.dl --root notes-app --no-daemon
+dl 04-reaches.dl --no-daemon
 ```
 
 ```
@@ -157,7 +157,7 @@ two_hop(caller_name, callee_name) <-
 ```
 
 ```sh
-dl 04-closure-read.dl --root notes-app --no-daemon
+dl 04-closure-read.dl --no-daemon
 ```
 
 ```

@@ -9,8 +9,8 @@
 # recursively, stop propagation at sanitized nodes, report sink hits as
 # diagnostics.
 #
-#   dl examples/taint.dl --root .           # stdout
-#   dl examples/taint.dl --root . --check   # exit 1 on any finding
+#   dl examples/taint.dl           # stdout
+#   dl examples/taint.dl --check   # exit 1 on any finding
 #
 # Presets are substring matches on the bare callee name — edit the facts to
 # your codebase's API. A library callee that PROPAGATES taint without an

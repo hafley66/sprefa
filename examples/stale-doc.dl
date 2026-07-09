@@ -6,9 +6,9 @@
 # carry a doc), changed_line (the new-side lines of `git diff -U0 HEAD`) — so
 # this is a rail that fires only on UNCOMMITTED edits, not a whole-tree audit.
 #
-#   dl examples/stale-doc.dl --root .           # stdout
-#   dl examples/stale-doc.dl --root . --check   # exit 1 while any decl is unreviewed
-#   dl examples/stale-doc.dl --root . --lsp     # squiggle on the decl line
+#   dl examples/stale-doc.dl           # stdout
+#   dl examples/stale-doc.dl --check   # exit 1 while any decl is unreviewed
+#   dl examples/stale-doc.dl --lsp     # squiggle on the decl line
 #
 # Precision, honestly: this flags EVERY documented decl whose declaration line
 # changed, including ones whose doc you correctly updated in the same commit.

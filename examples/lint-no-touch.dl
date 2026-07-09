@@ -11,9 +11,9 @@
 #             open marker requires the colon so it can't substring-match the close
 #             (`END-NO-TOUCH` contains `NO-TOUCH` but not `NO-TOUCH:`).
 #
-# Run:  dl examples/lint-no-touch.dl --root <repo> --check
-#       dl examples/lint-no-touch.dl --root <repo> --lsp
-#       dl --load examples/lint-no-touch.dl    (daemon: live squiggle while editing)
+# Run:  dl examples/lint-no-touch.dl --check
+#       dl examples/lint-no-touch.dl --lsp
+#       dl daemon load examples/lint-no-touch.dl    (daemon: live squiggle while editing)
 
 # A sprefa-generated block. `comment` pairs BEGIN/END with LIFO nesting; the
 # trailing `name` binds the open regex's first named group (which generator owns

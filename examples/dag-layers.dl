@@ -28,7 +28,7 @@
 #             in the condensation (arithmetic only in the head: t + 1).
 #   phase 2 — a stratified max(t) collapses the lengths to the longest per rep.
 #
-# Manual:  dl examples/dag-layers.dl --root v5 --db /tmp/dl-dag.db --no-daemon
+# Manual:  dl examples/dag-layers.dl --db /tmp/dl-dag.db --no-daemon
 #          (SPREFA_SCIP_INDEX=<repo>/index.scip; needs `just oracle-index` first)
 # Recipe:  just dag
 

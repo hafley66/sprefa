@@ -73,6 +73,14 @@ pub trait ExtractFamily: Sync {
     /// this family has one. The skip itself stays inside the refresher;
     /// `None` for the wholesale `module`/`spine` rebuilds.
     fn digest_key(&self) -> Option<&'static str>;
+    /// Whether this family's output is a pure function of file content alone, so
+    /// the tick can skip it when no file moved (gated on `recon.changed`). Default
+    /// false: `module` self-gates via its own input digest (`refresh_module_rels`),
+    /// and `type`/`call`/`dataflow`/`doc` self-gate via their `extract:<f>` digests
+    /// (and depend on the scip index, so they cannot be gated on file content
+    /// alone). `spine` overrides true: it projects `_strings`/`_where_bytes`,
+    /// which node walks only rewrite from file content.
+    fn corpus_gated(&self) -> bool { false }
     /// Whole-corpus recompute. `Ok(true)` iff the tick should mark this
     /// family's rels changed — a real input-digest diff for `type`/`call`/
     /// `dataflow`/`doc`, unconditional `true` for the wholesale
@@ -109,10 +117,7 @@ impl ExtractFamily for ModuleFamily {
     fn reserved_msg(&self) -> &'static str { "a built-in module-graph relation" }
     fn digest_key(&self) -> Option<&'static str> { None }
     fn refresh(&self, eng: &mut Engine) -> Result<bool> {
-        eng.refresh_module_rels()?;
-        // No change report from the wholesale rebuild, so the tick marks
-        // these rels conservatively changed whenever the family runs.
-        Ok(true)
+        eng.refresh_module_rels()
     }
     fn used(&self, prog: &Program) -> bool { engine::module_rels_used(prog) }
 }
@@ -231,6 +236,7 @@ impl ExtractFamily for SpineFamily {
         "a built-in ref-spine relation (string / ref)"
     }
     fn digest_key(&self) -> Option<&'static str> { None }
+    fn corpus_gated(&self) -> bool { true }
     fn refresh(&self, eng: &mut Engine) -> Result<bool> {
         eng.refresh_spine_rels()?;
         // Wholesale projection with no change report; conservative mark.

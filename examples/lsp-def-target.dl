@@ -18,7 +18,7 @@
 # `scan` rule in this program pulls in. The `index_over` rule below is the
 # interest declaration; without it, type_entity stays empty.
 #
-#   Run as LSP:   dl examples/lsp-def-target.dl --root . --lsp
+#   Run as LSP:   dl examples/lsp-def-target.dl --lsp
 #   See:          docs/lsp.md, README.md § LSP
 
 # Interest declaration: pull src into the file set so the lazy type/call

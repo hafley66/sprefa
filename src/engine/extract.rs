@@ -347,8 +347,23 @@ impl Engine {
     /// relations for ones that should have resolved.
     /// Wholesale wipe + repopulate; gated by `module_rels_used` at the call site.
     /// Edges are resolved within a single rev (cross-rev merge is a Stage-1 corner).
-    pub(crate) fn refresh_module_rels(&self) -> Result<()> {
+    pub(crate) fn refresh_module_rels(&self) -> Result<bool> {
         let by_rev = self.module_files_by_rev()?;
+        // Perf gap A twin: skip the wholesale rebuild when no rev's input digest
+        // moved. Module output is a pure function of file content AND manifests
+        // (Cargo.toml/package.json), which reconcile does NOT track — so this
+        // self-digest (files + manifests) is the only sound skip signal. Returns
+        // false (no changed mark) when nothing moved; the tick then leaves the
+        // module rels and their dependents untouched, instead of the old
+        // unconditional `Ok(true)` that forced every dependent to re-derive on
+        // every tick the family was merely `used`.
+        let mut moved: Vec<(String, [u8; 32])> = Vec::new();
+        for (rev, files) in &by_rev {
+            let d = self.module_input_digest(rev, files);
+            if self.load_rel_digest(&format!("extract:module:{rev}"))? == Some(d) { continue; }
+            moved.push((rev.clone(), d));
+        }
+        if moved.is_empty() { return Ok(false); }
         let mut rows = ModuleRows::default();
         for (rev, files) in &by_rev {
             rows.extend(self.module_rows_for_rev(rev, files, None, true));
@@ -359,7 +374,30 @@ impl Engine {
         self.refresh_rel("crate_edge", &["src", "dst", "kind", "rev"], &rows.crate_edges)?;
         self.insert_module_spans(&rows)?;
         self.rebuild_legacy_module_rels()?;
-        Ok(())
+        for (rev, d) in &moved {
+            self.save_rel_digest(&format!("extract:module:{rev}"), d)?;
+        }
+        Ok(true)
+    }
+
+    /// Per-rev module input digest: XOR-folds the rev's (path, hash) file set
+    /// plus every manifest `collect_manifests` resolves for it. Mirrors
+    /// `extract_input_digest` but folds manifests (module's Cargo.toml/
+    /// package.json input that reconcile does not see).
+    fn module_input_digest(&self, rev: &str, files: &[(String, String)]) -> [u8; 32] {
+        let mut acc = [0u8; 32];
+        let fold = |acc: &mut [u8; 32], h: &blake3::Hash| {
+            for (a, b) in acc.iter_mut().zip(h.as_bytes()) { *a ^= b; }
+        };
+        fold(&mut acc, &blake3::hash(format!("module\0{rev}\0{:032x}", exe_stamp()).as_bytes()));
+        for (path, hash) in files {
+            fold(&mut acc, &blake3::hash(format!("{path}\0{hash}").as_bytes()));
+        }
+        let fileset: HashSet<String> = files.iter().map(|(p, _)| p.clone()).collect();
+        for (mrel, content) in self.collect_manifests(rev, &fileset) {
+            fold(&mut acc, &blake3::hash(format!("manifest\0{mrel}\0{content}").as_bytes()));
+        }
+        acc
     }
 
     pub(crate) fn refresh_module_rels_for_revs(&self, revs: &[&str]) -> Result<()> {
@@ -561,10 +599,10 @@ impl Engine {
     /// rebuild — the gone rev's rows would vanish from the twin but linger in
     /// legacy for another tick or more. Rebuilding legacy directly here is
     /// what makes a gone rev disappear from twin AND legacy within the SAME
-    /// tick, independent of whether any family's digest moved. `module` has no
-    /// digest gate (`refresh_module_rels` always rebuilds its legacy when the
-    /// family runs), so this call is redundant-but-harmless there; it is not
-    /// redundant for type/call.
+    /// tick, independent of whether any family's digest moved. `module` now has
+    /// its own digest gate (`refresh_module_rels`), so its `extract:module:<rev>`
+    /// digest is swept here like the rest — without that, a gone rev's surviving
+    /// digest would make the next tick skip repopulating the wiped module rels.
     ///
     /// Called once per tick, right after `refresh_builtin_rels` settles this
     /// tick's `_file` set and before the extraction families run — see the
@@ -582,9 +620,14 @@ impl Engine {
         }
 
         // `extract:<family>:<rev>` digest rows, one family prefix at a time
-        // (the families whose skip-check is keyed per rev: type/call/
-        // dataflow/doc/comment — see `moved_extract_revs` call sites).
-        for family in ["type", "call", "dataflow", "doc", "comment"] {
+        // (the families whose skip-check is keyed per rev: module/type/call/
+        // dataflow/doc/comment — see `moved_extract_revs` and
+        // `refresh_module_rels`'s digest gate). A rev that disappeared MUST take
+        // its digest with it: the digest certifies "I built and STORED this
+        // rev's outputs," and the twin DELETE above just wiped those outputs, so
+        // a surviving digest would make the next tick's gate skip repopulating
+        // them (the lint-imports/diag_mute regression).
+        for family in ["module", "type", "call", "dataflow", "doc", "comment"] {
             let prefix = format!("extract:{family}:");
             self.db.exec(&format!(
                 "DELETE FROM _reldigest WHERE rel LIKE '{prefix}%' \

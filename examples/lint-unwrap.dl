@@ -1,5 +1,5 @@
 # Lint: flag `.unwrap()` outside test code. Run as a live linter:
-#   dl examples/lint-unwrap.dl --root . --lsp
+#   dl examples/lint-unwrap.dl --lsp
 # and any LSP client (VSCode, Claude Code) shows a squiggle per match.
 # @op ast_yaml
 #

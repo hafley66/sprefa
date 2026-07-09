@@ -6,8 +6,8 @@
 # (tests/it/rel_catalog.rs) fails the build until it carries a summary. No
 # source-scraping regex anymore — the engine introspects itself.
 #
-# Manual:  dl examples/builtin-rels.dl --root .
-# Daemon:  dl --load examples/builtin-rels.dl   (regens on engine.rs edits)
+# Manual:  dl examples/builtin-rels.dl
+# Daemon:  dl daemon load examples/builtin-rels.dl   (regens on engine.rs edits)
 # Rerun converges (gen writes only when bytes differ; catalog order is the
 # stable declaration order, so the rendered rows are deterministic).
 

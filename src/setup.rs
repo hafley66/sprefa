@@ -200,7 +200,7 @@ fn build_vscode_vsix() -> Option<PathBuf> {
 }
 
 // ── global: install the skill where the agents read it ────────────────────────
-fn wire_global(skills_dir: Option<String>) -> Result<i32> {
+pub(crate) fn wire_global(skills_dir: Option<String>) -> Result<i32> {
     let dest = resolve_skills_dir(skills_dir)?;
     let skill_dir = dest.join("sprefa-dl");
     std::fs::create_dir_all(&skill_dir)?;
@@ -225,6 +225,49 @@ fn wire_global(skills_dir: Option<String>) -> Result<i32> {
     }
     println!("[dl setup] done. agents will pick up the skill on next launch.");
     Ok(0)
+}
+
+/// Refresh the on-disk artifacts that embed version-pinned content, so a
+/// `dl update` that swapped in a new binary also updates what agents/editors
+/// read off disk. Called from `dl update` after a successful install.
+///
+/// - **Skill (global):** re-writes `SKILL.md` from the new binary's embedded
+///   copy at every location `dl setup` wrote it (the resolved skills dir, the
+///   `~/.claude/skills` copy, and the opencode path). Idempotent overwrite.
+/// - **VSCode extension:** reinstalled from the new embedded VSIX ONLY when the
+///   user already has it (preserves their opt-in; never installs on a machine
+///   that opted out).
+///
+/// Project-level wiring (`.claude/settings.json` hooks, `.githooks`, the
+/// AGENTS/CLAUDE dl section, `.dl/` starters) lives in arbitrary repos, so it
+/// cannot be refreshed from here without walking the filesystem; the caller
+/// prints a hint to re-run `dl setup --project` in any bootstrapped repo. MCP
+/// has no on-disk wiring (agents spawn `dl --mcp` fresh, picking up the new
+/// binary automatically), so there is nothing to refresh there.
+pub(crate) fn refresh_after_update() {
+    println!("[dl update] refreshing the on-disk skill from the new binary...");
+    match wire_global(None) {
+        Ok(_) => {}
+        Err(e) => eprintln!("[dl update] skill refresh failed ({e}); run `dl setup` by hand"),
+    }
+    if vscode_extension_installed() {
+        println!("[dl update] reinstalling the dl LSP VSCode extension...");
+        let _ = install_vscode_extension();
+    }
+}
+
+/// Whether the dl LSP VSCode extension is currently installed (so `dl update`
+/// reinstalls only for users who opted in). `code --list-extensions` prints one
+/// id per line; we look for the extension's publisher.id. Returns false when
+/// `code` is absent (not installed / not on PATH).
+fn vscode_extension_installed() -> bool {
+    let out = match std::process::Command::new("code")
+        .arg("--list-extensions").output() {
+        Ok(o) => o,
+        Err(_) => return false, // `code` CLI not present
+    };
+    out.status.success()
+        && String::from_utf8_lossy(&out.stdout).lines().any(|l| l == "sprefa.dl-lsp")
 }
 
 /// Pick the skill destination: explicit flag > $SPREFA_SKILLS_DIR > opencode's

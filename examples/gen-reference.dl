@@ -14,7 +14,7 @@
 #   Run:     dl examples/gen-reference.dl   (paths are root-relative; default
 #            --root = nearest .git, same convention as the other generators)
 #   Output:  docs/reference/{relations,functions,syntax,examples,magic-rels}.md
-#   Daemon:  dl --load examples/gen-reference.dl   (regens on engine.rs edits)
+#   Daemon:  dl daemon load examples/gen-reference.dl   (regens on engine.rs edits)
 #
 # Add a page by adding a catalog and a block of :append rules — the doc layout is
 # entirely in dl, however you want it. This is the "auto-doc folder": a page is a

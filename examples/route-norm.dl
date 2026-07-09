@@ -6,7 +6,7 @@
 # every non-alphanumeric and lowercase — the same transform the string spine
 # stores as `string.norm` — and all three collapse to `usersid`, one join key.
 #
-#   dl examples/route-norm.dl --root .
+#   dl examples/route-norm.dl
 #
 # The demo facts below show the join working; the scan rules show how to feed
 # it from real trees (edit the globs + regexes to your framework). Honest

@@ -16,7 +16,7 @@
 # std/flow.dl; this file adds the JSX-specific prop hop on top and unions it
 # into flow_edge for closure() composition by a consumer.
 #
-#   dl examples/flow-jsx.dl --root .
+#   dl examples/flow-jsx.dl
 
 use "std/flow.dl".
 

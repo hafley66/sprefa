@@ -7,8 +7,8 @@
 # an agent feedback loop (pre-commit hook, Claude Code PostToolUse hook):
 # non-zero exit + diagnostic text comes back to the model, scoped to its diff.
 #
-# Run:   dl examples/rails.dl --root <repo> --check
-# Hook:  dl examples/rails.dl --root <repo> --db .dl/rails.db --check
+# Run:   dl examples/rails.dl --check
+# Hook:  dl examples/rails.dl --db .dl/rails.db --check
 #
 # Source rules (scan + match/sg) extract per file and cannot join relations, so
 # each rail is one extraction rule plus one derived rule joining `changed`.

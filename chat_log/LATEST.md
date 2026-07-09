@@ -1,1 +1,1 @@
-20260706.0.magic-rel-ban-eliminate-builtin-sinks.md
+20260707.0.dl-panel-graphsink-extension-pathfix.md

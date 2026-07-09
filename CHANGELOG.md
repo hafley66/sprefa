@@ -6,6 +6,54 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.22] - 2026-07-09
+
+### Added
+- **Daemon live activity status.** `dl daemon status` (and the `ping` RPC) now
+  report *what the current tick is doing and why* — which phase, which file/rel,
+  how long — instead of just `tick_count`/`settled`. A new `doing` line reads,
+  e.g., `doing extract call — src/engine/mod.rs (1.8s, tick 42)`, or `doing idle`
+  when settled. The activity slot lives off the engine Mutex (swapped in
+  microseconds at phase boundaries), so `status` never blocks mid-tick. Phases:
+  cold-tick, declare, reconcile, extract, derived, operators, effects, query.
+- **Tail-able perf log (`<root>/.dl/perf.jsonl`).** One JSONL record per phase
+  transition + one per tick, so `tail -f <root>/.dl/perf.jsonl | jq` shows where
+  each tick spends its time and what moved: `select(.type=="phase") |
+  select(.ms>100)` for the slow step, `select(.type=="tick") |
+  {tick,total_ms,strategy:.derived.strategy}` for the spike timeline. Default on;
+  `DL_PERF_LOG=0` off, `DL_PERF_LOG=<path>` to redirect.
+- **Hard perf-facts test matrix** (`tests/it/perf_facts.rs`): cold/warm/
+  incremental/comment-only-digest-skip/source-rule-fallback/derived-edit, each
+  asserting the exact set of rels re-derived (`last_derived_rebuilt`). The
+  "reactivity is not atrocious" proof, pinned.
+- **`dl update` is in `--help`** and now refreshes on-disk wiring after install:
+  re-writes the embedded `SKILL.md` everywhere `dl setup` wrote it, and reinstalls
+  the VSCode extension *only if already installed* (opt-in preserved). Project
+  repos get a hint to re-run `dl setup --project`.
+
+### Changed
+- **Checkout (ghcacher) sink throttled — stops the all-core storm.** The
+  `checkout(repo, branch, pr_heads)` sink used to `git fetch`+`reset --hard` every
+  repo across every CPU core (rayon default pool) on every tick it had rows. Behind
+  an `every(N)` clock that was a full-core pin every N seconds. Now: a dedicated
+  narrow pool (`DL_CHECKOUT_WIDTH`, default **2** — fetch is network+disk bound, 2
+  is as fast as full-core), and a per-repo min-fetch gate (`DL_CHECKOUT_MIN_SECS`,
+  default **300** — a repo can't be re-fetched more often than this regardless of
+  the rule). Throttled repos surface a `checkout_done` `skip` row. `DL_NO_FETCH=1`
+  remains the hard kill switch.
+- **Global rayon cap (`DL_RAYON_THREADS`)** for the extract/hash hot paths — the
+  lever when the fans spin on a many-core box. Honored at startup; default
+  unchanged.
+- **Family reactivity gates (perf gap D).** The `module` and `spine` extract
+  families used to return "changed" every tick they were `used`, forcing every
+  dependent to re-derive on clock-driven full ticks even with zero file changes.
+  `module` now self-gates on a real per-rev input digest (files **+ manifests**, so
+  a Cargo.toml/package.json edit still moves it); `spine` is corpus-gated on
+  `recon.changed` (its output is a pure function of file content). A warm no-change
+  tick no longer re-derives their dependents — pinned by new tests. (The
+  type/call/dataflow/doc families were already digest-self-skipping and depend on
+  the scip index, so they are unchanged.)
+
 ## [0.6.21] - 2026-07-09
 
 ### Changed

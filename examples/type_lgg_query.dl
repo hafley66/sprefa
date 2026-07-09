@@ -7,7 +7,7 @@
 #   2. near_iso: 1-var LGG (one field type differs)
 #   3. mild_div: 2-3 var LGG (shared structure, few holes)
 #
-# Manual:  dl examples/type_lgg_query.dl --root . --db /tmp/dl-lgg.db --no-daemon
+# Manual:  dl examples/type_lgg_query.dl --db /tmp/dl-lgg.db --no-daemon
 
 rel seen(path: file).
 seen(path) <- scan("src/**/*.rs", path).

@@ -13,7 +13,7 @@
 # (`component_line`) and add `decl_line` to lift a declaration back to file
 # coordinates. This program keeps them separate and honest.
 #
-#   dl examples/styled-components.dl --root <tsx-repo> --no-daemon
+#   dl examples/styled-components.dl --no-daemon
 
 # --- capture: one row per styled component (FILE-form sg over .tsx) -----------
 # `$TAG_NAME` = the html element/component it extends (div/section/button);

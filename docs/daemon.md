@@ -6,7 +6,24 @@ an LSP server, a long-lived daemon, or a menu-bar tray depending on flags and
 context. This doc is the reference for the daemon lifecycle and for every CLI
 flag, including the ones the README CLI table summarizes.
 
-Source: [src/main.rs](../src/main.rs) (flag parsing + dispatch),
+**The daemon is "everything on."** It is one warm `Engine` + SQLite db + file
+watcher, resident per root. Every consumer — an LSP editor (`dl --lsp`), an MCP
+client (`dl --mcp`), a CI check (`dl --check`), an agent hook (`dl --hook`), a
+query — is a thin adapter that ATTACHES to it over the Unix socket; they are not
+modes you choose between. You turn the daemon on (or a one-shot auto-attaches
+one) and control it with the `dl daemon <verb>` subcommand:
+
+| verb | does |
+|---|---|
+| `dl daemon load prog.dl` | serve a program reactively (starts the daemon if down, hot-reloads on edit) |
+| `dl daemon status` | is it up? build_id, tick_count, settled, program |
+| `dl daemon rows REL` | print a relation's live rows |
+| `dl daemon restart` | stop + respawn with the current binary (after `cargo install`) |
+| `dl daemon stop` | shut it down |
+| `dl daemon start [prog]` | run the daemon in the foreground (the debug path; auto-attach spawns this detached) |
+| `dl daemon await-settle [--ms N]` | block until the program is quiescent |
+
+Source: [src/cli/](../src/cli/) (flag parsing + dispatch),
 [src/daemon.rs](../src/daemon.rs) (daemon + spawn-if-missing client),
 [src/rpc.rs](../src/rpc.rs) (the wire codec). Design plan:
 [plans/2026-06-21-daemon-and-menu-bar.md](../plans/2026-06-21-daemon-and-menu-bar.md).
@@ -23,13 +40,14 @@ tables instead of cold-ticking. The gradle shape, in one binary.
 
 | kind | home | socket | serves | started by |
 |---|---|---|---|---|
-| **per-root** | `<root>/.dl/` | `<root>/.dl/daemon.sock` | one workspace root | spawn-if-missing on any one-shot when `<root>/.dl/` exists, or `dl --daemon --root <dir>` |
-| **rootless serving** | `$XDG_STATE_HOME/sprefa` (else `~/.local/state/sprefa`) | `<home>/daemon.sock` | the config-folder repos, no project root | `dl --daemon` (no `--root`) |
+| **per-root** | `<root>/.dl/` | `<root>/.dl/daemon.sock` | one workspace root | spawn-if-missing on any one-shot when `<root>/.dl/` exists, or `dl daemon start` from that root |
+| **rootless serving** | `$XDG_STATE_HOME/sprefa` (else `~/.local/state/sprefa`) | `<home>/daemon.sock` | the config-folder repos, no project root | `dl daemon start` with no root context |
 
-`--root` is an **option** for the daemon and for `--stop` / `--load`: omit it to
-target the singleton rootless serving daemon at the XDG home; pass it to target
-that root's per-root daemon. Every other mode resolves a concrete root (explicit
-`--root` wins, else nearest `.git` ancestor of the program file, else cwd).
+There is **no `--root` flag**. The root is the cwd (a one-shot resolves it from
+where it runs); a spawned daemon carries its root in the internal
+`DL_DAEMON_ROOT` env. A `dl daemon <verb>` in a repo targets that repo's per-root
+daemon; run it where no `.dl/` ancestor exists (or with `DL_DAEMON_ROOT` unset)
+to address the rootless serving daemon at the XDG home.
 
 Discovery files written under a daemon home (`src/daemon.rs:8`):
 
@@ -44,14 +62,14 @@ Discovery files written under a daemon home (`src/daemon.rs:8`):
 ## Lifecycle
 
 - **Spawn-if-missing.** A one-shot in a workspace with a `.dl/` dir attaches to
-  the per-root daemon, spawning `dl --daemon --root <X>` detached if no live
-  socket. A workspace WITHOUT `.dl/` stays in-process — a one-off `dl p.dl` in a
-  tempdir never spawns a side process (`enabled_for`, `src/daemon.rs:1091`).
+  the per-root daemon, spawning `dl daemon start` detached (with `DL_DAEMON_ROOT`
+  set) if no live socket. A workspace WITHOUT `.dl/` stays in-process — a one-off
+  `dl p.dl` in a tempdir never spawns a side process (`enabled_for`).
 - **Idle timeout.** A spawned daemon exits after 30 min idle. A watcher batch
   resets the clock only if it survives the gate (see below) — pure noise
   (gitignored build output, `.git/objects` churn) no longer keeps the daemon
   awake — as does any RPC. Override with `DL_DAEMON_IDLE_SECS=N`. A foreground
-  `dl --daemon` ignores the idle timeout (it stays up for debugging).
+  `dl daemon start` ignores the idle timeout (it stays up for debugging).
 - **Watcher gate.** The recursive file watcher mirrors the scan corpus: it ticks
   only for files the engine could actually scan (`.gitignore`-honored, `.git`
   pruned to the narrow `HEAD`/`packed-refs`/`refs/` ref paths, the daemon's own
@@ -63,8 +81,9 @@ Discovery files written under a daemon home (`src/daemon.rs:8`):
   from). Source files (`.rs`/`.kt`/...) editing just re-ticks.
 - **Opt out.** `DL_NO_DAEMON=1` (or `--no-daemon`) forces the in-process path —
   no attach, no spawn. Used by tests and when a socket is wedged.
-- **Shutdown.** `dl --stop` sends `shutdown` over the socket and waits for the
-  daemon to close it. `--root` selects which daemon; omitted = the rootless one.
+- **Shutdown.** `dl daemon stop` sends `shutdown` over the socket and waits for
+  the daemon to close it. It targets the cwd's per-root daemon (or the rootless
+  one where no `.dl/` ancestor exists).
 
 ## Running effectful programs to completion (`--settle`)
 
@@ -98,24 +117,24 @@ that gap.
   changing every tick (a `@next` counter, a poll whose args never stabilize) is
   reported as non-convergent — it bails loudly, naming the relations/effects
   still moving, rather than hanging.
-- **`dl --await-settle`** is the same guarantee against a **running daemon**: you
+- **`dl daemon await-settle`** is the same guarantee against a **running daemon**: you
   do not own the loop (the daemon's poll loop drives it), you block until it
   reports quiescent (the `await_quiescent` RPC), then exit 0 (settled) or 3
   (timed out). Use it to wait out a daemon that is mid-cascade (a fresh pull, a
   demand fetch) before you query.
 
-`--settle` runs in-process and never attaches or spawns a daemon; `--await-settle`
-only talks to an already-running one. Neither is a watch loop — both return after
-one converged state.
+`--settle` runs in-process and never attaches or spawns a daemon;
+`dl daemon await-settle` only talks to an already-running one. Neither is a watch
+loop — both return after one converged state.
 
 ## Tray (menu bar)
 
-`dl --tray` implies `--daemon` and adds a macOS status-bar icon (accessory mode:
-no Dock icon, no cmd-tab entry; `LSUIElement`). The tray event loop owns the main
-thread; the socket accept loop moves off-main. The menu shows the workspace +
-tick count and a Quit item. When `--tray` is set with no `--root`, the daemon
-walks up from cwd to the nearest `.dl/` dir and uses its parent as the workspace
-root. Windows/Linux trays are deferred. Source: [src/tray.rs](../src/tray.rs).
+`dl daemon start --tray` runs the daemon with a macOS status-bar icon (accessory
+mode: no Dock icon, no cmd-tab entry; `LSUIElement`). The tray event loop owns the
+main thread; the socket accept loop moves off-main. The menu shows the workspace +
+tick count and a Quit item. The daemon resolves its root from cwd (the nearest
+`.dl/` ancestor). Windows/Linux trays are deferred. Source:
+[src/tray.rs](../src/tray.rs).
 
 ## RPC surface
 
@@ -140,24 +159,29 @@ A client speaking this codec is transport-agnostic. Methods (`handle_request`,
 | `load` | `{path, mode}` | `mode="watched"` joins the script to the program (reactive, hot-reloaded); `mode="once"` evals on a throwaway engine and returns `?` results |
 | `shutdown` | — | `{ok}`, then the daemon exits |
 
-`--load <script>` / `--load-once <script>` are the CLI front-ends for `load`.
-`--load` adds the script to the running daemon's watched set (joins the loaded
-program, runs every tick, hot-reloads on edit); `--load-once` evals it once,
-prints the `?` results, persists nothing. Both target the rootless serving
-daemon when `--root` is omitted.
+`dl daemon load <script>` / `dl daemon load-once <script>` are the CLI
+front-ends for `load` (both start the daemon first if it is down). `load` adds
+the script to the running daemon's watched set (joins the loaded program, runs
+every tick, hot-reloads on edit); `load-once` evals it once, prints the `?`
+results, persists nothing. Both target the cwd's daemon (the rootless serving
+daemon where no `.dl/` ancestor exists).
 
 ## Full flag reference
+
+One-shot / mode flags (there is **no `--root`**; the root is the cwd):
 
 | flag | effect |
 |---|---|
 | `dl prog.dl` | run once; print `?` queries as TSV |
 | `dl` (no positional) | discovery: merge every `<root>/.dl/*.dl` (filename order); auto-cache at `.dl/cache.db` |
-| `--root <dir>` | source root (default: nearest `.git` ancestor of the program; cwd in discovery). An OPTION for `--daemon`/`--stop`/`--load`: omitted = rootless serving daemon |
 | `--db <path>` | persist to SQLite (default in-memory; discovery defaults to `.dl/cache.db`). Derived tables are plain-TEXT `rel_<name>` |
-| `--lsp` / `--stdio` | LSP server over stdio; `diag` rows become live squiggles. `--stdio` is a no-op alias clients append |
+| `--lsp` | LSP server over stdio; `diag` rows become live squiggles. Accepts `--stdio` as an alias (clients append it) |
+| `--mcp` | MCP (JSON-RPC over stdio) server; binds the program's `rpc`-class `@in`/`@out` ports |
 | `--check` | render `diag` to stderr. Exit 0 clean, 2 on any `error`-severity row (blocking-hook code), 1 broken program |
+| `--hook` | Claude Code hook mode: read the event on stdin, emit `inject`/`block` JSON on stdout |
 | `--diag-json` | `--check` with diagnostics as a JSON array on stdout |
 | `--query-json` | `?` results as JSON-lines `{query, columns, rows, count}` |
+| `--parse-only` | parse + typecheck + op resolution, NO scan, NO db (sub-second fast fail) |
 | `--settle` | run in-process, draining `@async`/`sh`/`sh*` effects off-tick, until the program QUIESCES (no non-timer rel moves, no `@next` carry pending, no effect in-flight), then print `?` once. Guarantees every cascade ran ≥1×; bails loudly if it cannot settle. See `plans/2026-07-06-settle-quiescence.md` |
 | `--settle-max N` | tick budget for `--settle` (default 200); over budget bails, naming the still-moving rels/effects |
 | `--watch` | re-tick on file changes (in-process, pre-daemon path) |
@@ -167,13 +191,21 @@ daemon when `--root` is omitted.
 | `--profile` (or `DL_PROFILE=1`) | log slow SQL, per-repo×rev scan times, tick phase breakdown, per-tick statement counts |
 | `--cmd-budget N` (or `DL_CMD_BUDGET`) | cap `cmd` invocations per tick; over budget errors loudly. Default unlimited |
 | `--tick-audit` (or `DL_TICK_AUDIT=1`) | after each tick, print every relation's row count |
-| `--daemon` | run the long-lived daemon in the foreground (logs to stderr, ignores idle timeout). Usually spawned internally; explicit is the debug path |
-| `--tray` | spawn the menu-bar tray icon (implies `--daemon`; macOS only today) |
-| `--stop` | send `shutdown` to the daemon (`--root` selects which; omitted = rootless) and exit |
-| `--await-settle [--await-settle-ms N]` | block on the running daemon until the program is quiescent (the `await_quiescent` RPC), print `settled=<bool> tick=<n>`, exit 0 (settled) or 3 (timed out). The daemon-side twin of `--settle` |
 | `--no-daemon` (or `DL_NO_DAEMON=1`) | force the in-process path; never attach or spawn |
-| `--load <script>` | push a script to the running daemon as a WATCHED program (reactive, hot-reloaded) |
-| `--load-once <script>` | eval a script once on a throwaway engine, print `?` results, persist nothing |
+
+Daemon control is the `dl daemon <verb>` subcommand (root = cwd, or
+`DL_DAEMON_ROOT` for a spawned daemon):
+
+| verb | effect |
+|---|---|
+| `dl daemon start [prog] [--tray]` | run the daemon in the foreground (logs to stderr, ignores idle timeout). Usually spawned internally; explicit is the debug path. `--tray` adds the macOS status-bar icon |
+| `dl daemon status` | ping: is it up? `build_id`, `tick_count`, `settled`, `program`. Exit 0 running, 1 not |
+| `dl daemon stop` | send `shutdown` to the daemon and exit |
+| `dl daemon restart` | stop + respawn with the current binary (the post-`cargo install` one-liner) |
+| `dl daemon load <script>` | push a script as a WATCHED program (reactive, hot-reloaded); starts the daemon first if down |
+| `dl daemon load-once <script>` | eval a script once on a throwaway engine, print `?` results, persist nothing; starts the daemon first if down |
+| `dl daemon rows <rel>` | print a relation's current rows from the running daemon |
+| `dl daemon await-settle [--ms N]` | block until the program is quiescent (`await_quiescent` RPC), print `settled=<bool> tick=<n>`, exit 0 (settled) or 3 (timed out) |
 
 ## Environment variables
 

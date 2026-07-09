@@ -13,7 +13,7 @@
 #                            object-literal property, Kotlin named argument;
 #                            ".." is a spread / functional-update base.
 #
-#   dl examples/flow-ctor.dl --root .
+#   dl examples/flow-ctor.dl
 
 rel src(p: file).
 src(p) <- scan("WORK", "src/**/*.{rs,ts,kt}", p, rev).

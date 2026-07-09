@@ -16,9 +16,9 @@
 #   rustup component add rust-analyzer
 #   rust-analyzer scip ./v5 -o index.scip     # (confirm exact flags via --help)
 #
-# Manual:  dl examples/oracle-check.dl --root v5 --db /tmp/oracle.db
+# Manual:  dl examples/oracle-check.dl --db /tmp/oracle.db
 #          (SPREFA_SCIP_INDEX=<repo>/index.scip if the index lives outside --root)
-# Run with --root v5 so sprefa's file paths (src/…) match RA's SCIP paths
+# Run with so sprefa's file paths (src/…) match RA's SCIP paths
 # (also src/…, since RA indexed v5 as the project root). A repo-root --root
 # gives sprefa `src/…` keys that won't join against scip_edge's `src/…`.
 

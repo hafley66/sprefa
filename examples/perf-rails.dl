@@ -21,7 +21,7 @@
 # the program under watch (multiple files merge into one program), or drop both
 # in <root>/.dl/ for the daemon's discovery mode:
 #
-#   dl examples/flow-interproc.dl examples/perf-rails.dl --root . --check
+#   dl examples/flow-interproc.dl examples/perf-rails.dl --check
 #
 # Budgets are facts — edit to your repo's scale.
 

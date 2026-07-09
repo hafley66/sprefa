@@ -5,7 +5,7 @@
 #
 # Run pointed at the harness transcript dir (Claude Code shown):
 #   target/debug/dl examples/banned-word-guard.dl \
-#     --root ~/.claude/projects/<repo-slug> --no-daemon
+#     --no-daemon
 #   ... or --lsp for squiggles (col/end_col are the exact byte span of the word).
 #
 # Banned set is hardcoded in the regex alternation (same shape as .dl/rails.dl:

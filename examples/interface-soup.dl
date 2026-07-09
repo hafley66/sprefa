@@ -9,9 +9,9 @@
 # keep).
 #
 # Run on this repo (dogfood -- finds IngestLang = 1 impl):
-#   dl examples/interface-soup.dl --root . --no-daemon
+#   dl examples/interface-soup.dl --no-daemon
 # Point at a Kotlin/Java-biased repo to see the real soup:
-#   dl examples/interface-soup.dl --root /path/to/kotlin/repo --no-daemon
+#   dl examples/interface-soup.dl --no-daemon
 # Then render the emitted graph:
 #   d2 examples/interface-soup.d2 /tmp/soup.svg && open /tmp/soup.svg
 

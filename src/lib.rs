@@ -1,6 +1,8 @@
+pub mod activity;
 pub mod agent;
 pub mod ast;
 pub mod channel;
+pub mod cli;
 pub mod comment;
 pub mod config;
 pub mod corpus;
@@ -23,6 +25,7 @@ pub mod lsp;
 pub mod mcp;
 pub mod modgraph;
 pub mod parse;
+pub mod perflog;
 pub mod propose;
 pub mod rpc;
 pub mod refactor;

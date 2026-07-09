@@ -8,7 +8,7 @@
 # Same relations, one node. The pinned-endpoint closure restriction is what
 # makes "ask about one symbol" a one-liner per dimension: pin S, read the row.
 #
-# Manual:  dl examples/symbol-profile.dl --root .
+# Manual:  dl examples/symbol-profile.dl
 # Edit the target fact below to x-ray a different symbol. Sym format is the
 # resolved call-graph key, e.g. "sprefa::src/engine.rs::method::Engine.tick"
 # (run refactor-discovery.dl ? cluster(...) to find one).

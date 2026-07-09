@@ -10,7 +10,7 @@
 #      closure. Closure reads need a literal endpoint (see symbol-profile.dl),
 #      so the pin lives inline in section 2 — edit the literal to switch type.
 #
-# Manual:  dl examples/type_profile.dl --root . --db /tmp/dl-tp.db --no-daemon
+# Manual:  dl examples/type_profile.dl --db /tmp/dl-tp.db --no-daemon
 #          SCIP index optional: export SPREFA_SCIP_INDEX to also populate
 #          scip_ref/scip_fn_edge (not yet consumed by this recipe — file reach
 #          needs the descriptor->name bridge, deferred).

@@ -1,7 +1,7 @@
 # Live probe for the built-in agent-harness relations (agent.rs).
 #
 # Run from the repo root after any turn where the agent edited a file:
-#   target/debug/dl examples/agent-live.dl --root . --no-daemon
+#   target/debug/dl examples/agent-live.dl --no-daemon
 # (rebuild first if needed: cd v5 && cargo build)
 #
 # agent_edit  = every file edit in the newest session per detected harness,

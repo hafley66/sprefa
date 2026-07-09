@@ -140,8 +140,88 @@ fn print_topics() {
     for (number, blurb, _) in LESSONS {
         println!("  {number:<12}{blurb}");
     }
+    println!("\nSEARCH      (dl docs search <words> — rank every guide + the CLI help)");
+    println!("  {:<12}{}", "search", "e.g. `dl docs search concat`, `dl docs search daemon restart`");
     println!("\naddress a chapter as `dl docs book 3` or `dl docs 03-the-cycle-problem`;");
     println!("a lesson as `dl docs tutorial 2`.");
+}
+
+/// Every searchable doc: a "read" label (which is also the command that prints
+/// it) paired with its body. Reference pages, book chapters, tutorial lessons,
+/// and the CLI help trailer (so a flag/subcommand search lands too).
+fn search_corpus() -> Vec<(String, &'static str)> {
+    let mut docs: Vec<(String, &'static str)> = Vec::new();
+    for (name, _, body) in REFERENCE {
+        docs.push((format!("dl docs {name}"), *body));
+    }
+    for (number, slug, _, body) in CHAPTERS {
+        docs.push((format!("dl docs book {number}  ({slug})"), *body));
+    }
+    for (number, _, body) in LESSONS {
+        docs.push((format!("dl docs tutorial {number}"), *body));
+    }
+    docs.push(("dl --help".to_string(), crate::cli::SUBCOMMANDS_HELP));
+    docs
+}
+
+/// `dl docs search <words>`: keyword-rank every embedded guide + the CLI help by
+/// query-term hits, and print the top docs with their best matching lines (the
+/// label is the command that reads the full page). No embedder — deterministic
+/// substring ranking, so it works offline and cheaply.
+fn run_search(query: &[String]) -> i32 {
+    let joined = query.join(" ");
+    let terms: Vec<String> = joined.split_whitespace().map(|t| t.to_lowercase()).collect();
+    if terms.is_empty() {
+        eprintln!("usage: dl docs search <words>");
+        return 1;
+    }
+    // (total hits, distinct terms matched, label, best lines) per doc.
+    let mut ranked: Vec<(usize, usize, String, Vec<(usize, String)>)> = Vec::new();
+    for (label, body) in search_corpus() {
+        let mut hits = 0usize;
+        let mut terms_seen = std::collections::HashSet::new();
+        let mut lines: Vec<(usize, usize, String)> = Vec::new();
+        for (idx, line) in body.lines().enumerate() {
+            let lower = line.to_lowercase();
+            let mut line_hits = 0usize;
+            let mut line_terms = 0usize;
+            for term in &terms {
+                let count = lower.matches(term.as_str()).count();
+                if count > 0 {
+                    line_hits += count;
+                    line_terms += 1;
+                    terms_seen.insert(term.clone());
+                }
+            }
+            if line_hits > 0 {
+                hits += line_hits;
+                lines.push((line_terms, idx + 1, line.trim().to_string()));
+            }
+        }
+        if hits > 0 {
+            // Best lines first: most distinct terms, then earliest.
+            lines.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+            let best: Vec<(usize, String)> =
+                lines.into_iter().take(3).map(|(_, ln, text)| (ln, text)).collect();
+            ranked.push((hits, terms_seen.len(), label, best));
+        }
+    }
+    if ranked.is_empty() {
+        println!("no matches for {joined:?}. Try `dl docs` for the topic list.");
+        return 0;
+    }
+    // Docs matching more distinct terms rank first, then by raw hit count.
+    ranked.sort_by(|a, b| b.1.cmp(&a.1).then(b.0.cmp(&a.0)));
+    println!("matches for {joined:?} (read the full page with the command shown):\n");
+    for (hits, _, label, lines) in ranked.iter().take(8) {
+        println!("{label}   ({hits} hit{})", if *hits == 1 { "" } else { "s" });
+        for (ln, text) in lines {
+            let snippet: String = text.chars().take(100).collect();
+            println!("    {ln}: {snippet}");
+        }
+        println!();
+    }
+    0
 }
 
 /// `dl docs …`. Returns the process exit code.
@@ -153,6 +233,9 @@ pub fn run(args: &[String]) -> Result<i32> {
     if topic == "-h" || topic == "--help" {
         print_topics();
         return Ok(0);
+    }
+    if topic == "search" {
+        return Ok(run_search(&args[1..]));
     }
     if topic == "book" {
         match args.get(1) {

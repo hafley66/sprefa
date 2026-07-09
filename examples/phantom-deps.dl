@@ -6,8 +6,8 @@
 # an external import path covered by no `require` line in the repo's own
 # go.mod (and not under the repo's own module path).
 #
-#   dl examples/phantom-deps.dl --root .
-#   SPREFA_CONFIG=~/orgs/all.config.toml dl examples/phantom-deps.dl --root .
+#   dl examples/phantom-deps.dl
+#   SPREFA_CONFIG=~/orgs/all.config.toml dl examples/phantom-deps.dl
 #
 # Honest limits: imports are matched by line shape (a quoted domain-ish path,
 # optionally aliased) rather than parsed, so a string literal that LOOKS like

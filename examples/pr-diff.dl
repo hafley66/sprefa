@@ -40,7 +40,7 @@
 # for a diff_pair that spans "WORK").
 #
 # Run (daemon, live gh):
-#   dl --lsp examples/pr-diff.dl --root <repo>   # then edit pr_want to the PR
+#   dl --lsp examples/pr-diff.dl   # then edit pr_want to the PR
 # gh does NOT run under `--check`; the program is structurally valid without it
 # (the scans read an empty pr_pair and yield nothing until the effect drains).
 

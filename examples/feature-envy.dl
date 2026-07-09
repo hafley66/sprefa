@@ -14,7 +14,7 @@
 #
 # READ-ONLY analysis. Surfaces hints; does not refactor.
 #
-# Manual:  dl examples/feature-envy.dl --root v5 --db /tmp/dl-envy.db --no-daemon
+# Manual:  dl examples/feature-envy.dl --db /tmp/dl-envy.db --no-daemon
 #          (SPREFA_SCIP_INDEX=<repo>/index.scip; needs `just oracle-index` first)
 # Recipe:  just envy
 

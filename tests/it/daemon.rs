@@ -23,7 +23,7 @@ fn run_daemon_explicit(dir: &PathBuf) -> DaemonGuard {
     // must never write over the suite summary or hold a pipe open. The guard
     // kills the child on drop if a test panics before its clean shutdown.
     DaemonGuard(Command::new(DL)
-        .args(["--daemon"])
+        .args(["daemon", "start"])
         .arg(dir.join("p.dl"))
         .current_dir(dir).env("DL_DAEMON_ROOT", &dir)
         .stdout(Stdio::null()).stderr(Stdio::null())
@@ -166,7 +166,7 @@ fn restart_replaces_the_running_daemon() {
 
     // Restart via the CLI (targets DL_DAEMON_ROOT).
     let out = Command::new(DL)
-        .args(["--restart"]).current_dir(&dir).env("DL_DAEMON_ROOT", &dir)
+        .args(["daemon", "restart"]).current_dir(&dir).env("DL_DAEMON_ROOT", &dir)
         .output().expect("run dl --restart");
     assert!(out.status.success(), "restart failed: {}", String::from_utf8_lossy(&out.stderr));
 
@@ -183,7 +183,7 @@ fn restart_replaces_the_running_daemon() {
     assert_ne!(pid_after, pid_before, "restart spawned a new daemon process");
 
     // Clean up the respawned (untracked) daemon.
-    let _ = Command::new(DL).args(["--stop"]).current_dir(&dir).env("DL_DAEMON_ROOT", &dir).output();
+    let _ = Command::new(DL).args(["daemon", "stop"]).current_dir(&dir).env("DL_DAEMON_ROOT", &dir).output();
 }
 
 /// `dl --rows REL` dumps a relation's live rows from the running daemon (the
@@ -212,7 +212,7 @@ fn rows_flag_dumps_a_rel_from_the_daemon() {
     let mut stdout = String::new();
     for _ in 0..100 {
         let out = Command::new(DL)
-            .args(["--rows", "edge"])
+            .args(["daemon", "rows", "edge"])
             .current_dir(&dir).env("DL_DAEMON_ROOT", &dir)
             .output().expect("run dl --rows");
         stdout = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -297,7 +297,7 @@ fn stop_flag_sends_shutdown() {
     }
 
     // dl --stop should retire the daemon.
-    let out = Command::new(DL).arg("--stop").current_dir(&dir).env("DL_DAEMON_ROOT", &dir)
+    let out = Command::new(DL).args(["daemon", "stop"]).current_dir(&dir).env("DL_DAEMON_ROOT", &dir)
         .output().expect("run dl --stop");
     assert!(out.status.success(),
         "dl --stop should exit 0; stderr={}",
@@ -441,7 +441,7 @@ fn discovery_mode_content_edit_hot_reloads() {
 
     // Discovery mode: no positional program file, root comes from cwd.
     let mut child = DaemonGuard(Command::new(DL)
-        .args(["--daemon"])
+        .args(["daemon", "start"])
         .current_dir(&dir).env("DL_DAEMON_ROOT", &dir)
         .stdout(Stdio::null()).stderr(Stdio::null())
         .spawn().expect("spawn dl --daemon (discovery)"));
@@ -531,7 +531,7 @@ fn ping_reports_build_id_and_idle_is_quiet() {
 
     let logf = fs::File::create(dir.join(".dl").join("daemon.log")).unwrap();
     let mut child = DaemonGuard(Command::new(DL)
-        .args(["--daemon"])
+        .args(["daemon", "start"])
         .current_dir(&dir).env("DL_DAEMON_ROOT", &dir)
         .stdout(Stdio::null()).stderr(Stdio::from(logf))
         .spawn().expect("spawn dl --daemon"));
@@ -606,7 +606,7 @@ fn deep_root_uses_short_socket() {
         "rel mark(t: text).\nmark(\"a\").\n? mark(t).\n").unwrap();
     fs::create_dir_all(deep.join(".dl")).unwrap();
     let mut child = DaemonGuard(Command::new(DL)
-        .args(["--daemon"])
+        .args(["daemon", "start"])
         .arg(deep.join("p.dl"))
         .current_dir(&deep).env("DL_DAEMON_ROOT", &deep)
         .stdout(Stdio::null()).stderr(Stdio::null())
@@ -932,7 +932,7 @@ fn await_settle_blocks_until_effect_drains() {
     // Fast poll so the off-tick drain happens within the test window.
     let logf = fs::File::create(dir.join(".dl").join("daemon.log")).unwrap();
     let mut child = DaemonGuard(Command::new(DL)
-        .args(["--daemon"])
+        .args(["daemon", "start"])
         .arg(dir.join("p.dl"))
         .current_dir(&dir).env("DL_DAEMON_ROOT", &dir)
         .env("DL_POLL_SECS", "1")
@@ -952,7 +952,7 @@ fn await_settle_blocks_until_effect_drains() {
     // Block on quiescence via the CLI front-end (its own process, connecting to
     // the running daemon — no spawn).
     let out = Command::new(DL)
-        .args(["--await-settle", "--await-settle-ms", "20000"])
+        .args(["daemon", "await-settle", "--ms", "20000"])
         .current_dir(&dir).env("DL_DAEMON_ROOT", &dir)
         .output().expect("run dl --await-settle");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -973,6 +973,70 @@ fn await_settle_blocks_until_effect_drains() {
     write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
     let _ = read_frame(&mut s);
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
+}
+
+/// `ping` must report an `activity` object with all four fields. Because the
+/// socket binds only AFTER the cold tick finishes, a connectable daemon is
+/// already past its cold tick, so `activity.phase` reads `idle` for an
+/// effect-free program (the cold tick's terminal `end_tick`). The "non-idle
+/// mid-tick" half is covered by the activity unit test; this pins the RPC
+/// surface and the cold-tick→idle transition deterministically.
+#[test]
+fn ping_reports_activity_object() {
+    use std::io::Write;
+    let dir = sandbox("activity");
+    fs::create_dir_all(dir.join(".dl")).unwrap();
+    fs::write(dir.join("p.dl"),
+        "rel edge(a: text, b: text).\n\
+         edge(\"a\", \"b\").\n\
+         rel reach(a: text, b: text).\n\
+         reach(x, y) <- edge(x, y).\n\
+         reach(x, z) <- edge(x, y), reach(y, z).\n\
+         ? reach(x, y).\n").unwrap();
+
+    let mut child = run_daemon_explicit(&dir);
+    let sock = dir.join(".dl").join("daemon.sock");
+    let mut ready = false;
+    for _ in 0..100 {
+        if sock.exists() && std::os::unix::net::UnixStream::connect(&sock).is_ok() {
+            ready = true; break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(ready, "daemon socket not ready");
+
+    // The cold tick has finished by the time the socket is connectable, so a
+    // plain (effect-free) daemon reads phase=idle. Sample a few times so a
+    // coincidental watcher/poll re-tick (which momentarily lifts phase off
+    // idle) does not flake the field-shape assertions.
+    let mut saw_idle = false;
+    for i in 0..20 {
+        let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+        let body = format!(r#"{{"jsonrpc":"2.0","id":{i},"method":"ping","params":{{}}}}"#);
+        write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+        let resp = read_frame(&mut s).expect("ping response");
+        let v: serde_json::Value = serde_json::from_str(&resp).expect("ping json");
+        let activity = v.get("result").and_then(|r| r.get("activity"))
+            .expect("ping must carry an activity object");
+        assert!(activity.get("phase").and_then(|v| v.as_str()).is_some(), "phase: {activity}");
+        assert!(activity.get("detail").and_then(|v| v.as_str()).is_some(), "detail: {activity}");
+        assert!(activity.get("program").and_then(|v| v.as_str()).is_some(), "program: {activity}");
+        assert!(activity.get("tick").and_then(|v| v.as_u64()).is_some(), "tick: {activity}");
+        assert!(activity.get("elapsed_ms").and_then(|v| v.as_u64()).is_some(), "elapsed_ms: {activity}");
+        if activity.get("phase").and_then(|v| v.as_str()) == Some("idle") {
+            saw_idle = true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(saw_idle, "activity.phase never read idle after the cold tick");
+
+    let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+    let body = r#"{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}"#;
+    write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+    let _ = read_frame(&mut s);
+    let status = child.wait_timeout(std::time::Duration::from_secs(5))
+        .expect("daemon exit after shutdown");
+    assert!(status.success());
 }
 
 // ---------- helpers ----------

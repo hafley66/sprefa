@@ -28,7 +28,7 @@
 # Reference: Mitchell, Mancoridis. "Modularity and the MOOSE suite of tools."
 # IEE Proceedings — Software, 2002.
 #
-# Manual:  dl examples/graph_score.dl --root . --db /tmp/dl-gs.db --no-daemon
+# Manual:  dl examples/graph_score.dl --db /tmp/dl-gs.db --no-daemon
 
 rel seen(path: file).
 seen(path) <- scan("src/**/*.rs", path).

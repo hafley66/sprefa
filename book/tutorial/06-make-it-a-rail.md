@@ -40,7 +40,7 @@ never a callee in `call_edge`, skipping `main` (an entry point nobody calls). Th
 ## Run it as a check
 
 ```sh
-dl 06.dl --root notes-app --no-daemon --check
+dl 06.dl --no-daemon --check
 ```
 
 ```
@@ -65,7 +65,7 @@ diag(path: file, line: line, severity: "error", code: "unused-fn",
 ```
 
 ```sh
-dl 06.dl --root notes-app --no-daemon --check
+dl 06.dl --no-daemon --check
 echo "exit: $?"
 ```
 
@@ -85,7 +85,7 @@ The `diag` relation feeds two renderers off the one rule. `--check` is the CI
 one. `--lsp` is the editor one:
 
 ```sh
-dl 06.dl --root notes-app --lsp
+dl 06.dl --lsp
 ```
 
 runs `dl` as a language server over stdio, and every `diag` row becomes a squiggle

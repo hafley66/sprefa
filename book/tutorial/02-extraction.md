@@ -30,7 +30,7 @@ The `scan` now takes a third argument, `rev`. `match` needs the revision to know
 which version of the file to read, so the scan binds it and passes it along.
 
 ```sh
-dl 02-match.dl --root notes-app --no-daemon
+dl 02-match.dl --no-daemon
 ```
 
 ```
@@ -65,7 +65,7 @@ call_by_regex(callee, path, line) <-
 ```
 
 ```sh
-dl 02-calls-regex.dl --root notes-app --no-daemon
+dl 02-calls-regex.dl --no-daemon
 ```
 
 ```
@@ -115,7 +115,7 @@ identifier as `callee`. A method call or a `Type::assoc()` call is a different
 node shape, so it does not match.
 
 ```sh
-dl 02-calls-ast.dl --root notes-app --no-daemon
+dl 02-calls-ast.dl --no-daemon
 ```
 
 ```
@@ -157,7 +157,7 @@ worth burning in:
   alike. Reach for `$$$` when you want "the whole argument list."
 
 ```sh
-dl 02-sg.dl --root notes-app --no-daemon
+dl 02-sg.dl --no-daemon
 ```
 
 ```

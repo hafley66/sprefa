@@ -37,6 +37,31 @@ use crate::{ast, db};
 use tree_sitter::Parser;
 
 pub fn run_lsp(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Result<()> {
+    // Stand up the connection and complete the initialize handshake FIRST: the
+    // client sends its workspace in `rootUri`, which overrides the process cwd
+    // as the scan root. This is how the root reaches an editor-spawned server —
+    // there is no `--root` flag. Falls back to the cwd root when the client
+    // sends no rootUri (older clients, a bare stdio pipe under test).
+    let (connection, io_threads) = Connection::stdio();
+    let caps = ServerCapabilities {
+        text_document_sync: Some(TextDocumentSyncCapability::Options(TextDocumentSyncOptions {
+            open_close: Some(true),
+            change: Some(TextDocumentSyncKind::NONE),
+            save: Some(TextDocumentSyncSaveOptions::Supported(true)),
+            ..Default::default()
+        })),
+        definition_provider: Some(OneOf::Left(true)),
+        references_provider: Some(OneOf::Left(true)),
+        hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
+        execute_command_provider: Some(lsp_types::ExecuteCommandOptions {
+            commands: vec!["dl.toggleDiagCode".into(), "dl.listDiagCodes".into()],
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let init_params = connection.initialize(serde_json::to_value(caps)?)?;
+    let root = client_root_uri(&init_params).unwrap_or(root);
+
     let files = crate::resolve_programs(programs, &root)?;
     // prepare_paths resolves typed path literals (`fs:`/`glob:`) to canonical
     // text before any tick and keeps the TypeDiags: a brand mismatch / escaping
@@ -74,25 +99,6 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Res
     // one-repo case. Without it the LSP engine ticks single-root over the SHARED
     // cache.db and clobbers the multi-repo rel_* rows the daemon wrote.
     eng.set_repos(crate::daemon::load_repos_eager());
-
-    let (connection, io_threads) = Connection::stdio();
-    let caps = ServerCapabilities {
-        text_document_sync: Some(TextDocumentSyncCapability::Options(TextDocumentSyncOptions {
-            open_close: Some(true),
-            change: Some(TextDocumentSyncKind::NONE),
-            save: Some(TextDocumentSyncSaveOptions::Supported(true)),
-            ..Default::default()
-        })),
-        definition_provider: Some(OneOf::Left(true)),
-        references_provider: Some(OneOf::Left(true)),
-        hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
-        execute_command_provider: Some(lsp_types::ExecuteCommandOptions {
-            commands: vec!["dl.toggleDiagCode".into(), "dl.listDiagCodes".into()],
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-    connection.initialize(serde_json::to_value(caps)?)?;
 
     // Cold tick over the whole tree, then publish every file that has diags.
     eng.tick(&prog, true)?;
@@ -202,6 +208,29 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Res
     drop(connection);
     io_threads.join()?;
     Ok(())
+}
+
+/// The workspace root the client declared in `initialize` — `rootUri`, else the
+/// first `workspaceFolders` entry. `None` when the client sent neither (the
+/// caller keeps the process cwd). Converts a `file://` URI to a local path.
+fn client_root_uri(init_params: &serde_json::Value) -> Option<PathBuf> {
+    // Canonicalize to match the engine's path keys (macOS temp dirs are
+    // symlinks: `/var` -> `/private/var`); the cwd fallback is canonicalized too.
+    let to_path = |uri: &str| {
+        let rest = uri.strip_prefix("file://")?;
+        let p = PathBuf::from(percent_decode(rest));
+        Some(p.canonicalize().unwrap_or(p))
+    };
+    if let Some(p) = init_params.get("rootUri").and_then(|v| v.as_str()).and_then(to_path) {
+        return Some(p);
+    }
+    init_params
+        .get("workspaceFolders")
+        .and_then(|v| v.as_array())
+        .and_then(|folders| folders.first())
+        .and_then(|f| f.get("uri"))
+        .and_then(|v| v.as_str())
+        .and_then(to_path)
 }
 
 /// Best-effort daemon subscription thread. Tries to attach, send `subscribe`,

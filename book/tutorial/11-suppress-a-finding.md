@@ -51,7 +51,7 @@ Three things beyond lesson 6's rail:
 ## Run it: red
 
 ```sh
-dl 11.dl --root notes-app --no-daemon --check; echo "exit: $?"
+dl 11.dl --no-daemon --check; echo "exit: $?"
 ```
 
 ```
@@ -77,7 +77,7 @@ recorded reason. There are three siblings: `dl-disable-next-line`, and the
 Run again:
 
 ```sh
-dl 11.dl --root notes-app --no-daemon --check; echo "exit: $?"
+dl 11.dl --no-daemon --check; echo "exit: $?"
 ```
 
 ```

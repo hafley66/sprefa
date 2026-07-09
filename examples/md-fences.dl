@@ -12,7 +12,7 @@
 # need a string-concatenating aggregate (a follow-up); the styled-components
 # example shows the whole-body term-form path where a body IS available.
 #
-#   dl examples/md-fences.dl --root <docs-repo> --no-daemon
+#   dl examples/md-fences.dl --no-daemon
 
 # --- every fence delimiter line, with its info-string language ---------------
 # An opening ` ```rust ` captures `fence_lang = "rust"`; a closing ` ``` `

@@ -19,7 +19,7 @@
 #     DIFFERENT device depending which VRF the packet is in.
 #
 # Run:
-#   dl examples/net-atlas.dl --root . --no-daemon
+#   dl examples/net-atlas.dl --no-daemon
 #
 # Honest limits (the toy corners cut on purpose):
 #   - cidr matching is STRING-PREFIX only (strip_prefix + a regex that drops

@@ -204,7 +204,7 @@ rotting.
 Regenerate + read (from the **repo root**, not `v5/`):
 
     cargo build -q --bin dl
-    target/debug/dl examples/gen-engine-anchors.dl --root .
+    target/debug/dl examples/gen-engine-anchors.dl
     cat examples/_auto-doc/engine-anchors.md   # the live anchor table
 
 `examples/gen-engine-anchors.dl` matches `const *_RELS` (the remaining

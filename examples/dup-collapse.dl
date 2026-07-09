@@ -12,7 +12,7 @@
 # as a "next move to investigate." It does not claim the move is correct — it
 # surfaces candidates whose state-shape matched past reward-positive collapses.
 #
-# Manual:  dl examples/dup-collapse.dl --root . --db /tmp/dl-dc.db --no-daemon
+# Manual:  dl examples/dup-collapse.dl --db /tmp/dl-dc.db --no-daemon
 
 rel seen(path: file).
 seen(path) <- scan("WORK", "src/**/*.rs", path, rev).

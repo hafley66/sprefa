@@ -1,5 +1,5 @@
 # refactor-discovery.dl — refactor signals from the engine's resolved call graph.
-# PURE query. Run:  dl examples/refactor-discovery.dl --root .
+# PURE query. Run:  dl examples/refactor-discovery.dl
 #
 # Originally a theory test: is "discovery free"? The per-fn signals (fan-in/out,
 # move-candidates, seeded blast radius) always were. SCC clustering was BLOCKED

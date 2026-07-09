@@ -9,7 +9,7 @@
 # of that is tick/tick_paths calling outward (a facade boundary, not real debt).
 #
 # Point it at a file by editing the scan glob. Run:
-#   dl examples/call-seams.dl --root <repo> --no-daemon
+#   dl examples/call-seams.dl --no-daemon
 # then read `seam` (low n = thin cut) and `bridge` (who couples a given cut).
 
 rel seen(path: file).

@@ -5,7 +5,7 @@
 # it into a 2-column relation before closure when comparing WORK vs HEAD.
 # `crate_edge(src,dst,kind,rev)` records workspace-internal Cargo dependencies.
 #
-# Run: dl examples/module-history.dl --root .
+# Run: dl examples/module-history.dl
 
 rel seen(path: file, rev: text).
 rel work_edge(src: text, dst: text).

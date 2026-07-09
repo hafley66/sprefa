@@ -16,7 +16,7 @@
 # Pure dl on type_sig. Companion to type_profile.dl (per-type scalar view) and
 # feature-envy.dl (per-fn call-receiver view).
 #
-# Manual: dl examples/type_coincidence.dl --root . --db /tmp/dl-tc.db --no-daemon
+# Manual: dl examples/type_coincidence.dl --db /tmp/dl-tc.db --no-daemon
 
 rel seen(path: file).
 seen(path) <- scan("src/**/*.rs", path).
