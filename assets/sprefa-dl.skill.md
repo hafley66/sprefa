@@ -154,6 +154,102 @@ dl --stop       # just shut it down
 from the running daemon (e.g. `dl --rows checkout_done`, `dl --rows call_edge`) —
 the `?`-query shortcut for "what did this actually resolve to", no temp file.
 
+## Common tasks (copy-paste, stop guessing)
+
+**Most important commands**
+
+| do | command |
+|---|---|
+| run a program | `dl prog.dl` (from the repo dir) |
+| run all repo rails | `dl --check` (exit 2 on any `diag`) |
+| fast validate, no scan | `dl prog.dl --parse-only` |
+| live editor diagnostics | `dl prog.dl --lsp` |
+| inspect a live rel | `dl --rows call_edge` |
+| reset daemon after reinstall | `dl --restart` |
+| build a SCIP index | `dl index --install` |
+| SCIP health screen | `dl doctor` |
+| read a guide / browse examples | `dl docs`, `dl examples` |
+
+**Check for more (self-documenting, don't guess the surface):** `dl --help` (the
+trailer lists everything), `dl docs` (topic list → `dl docs syntax`, `dl docs
+book 1`, `dl docs authoring`), `dl examples` (`dl examples <query>` searches, `dl
+examples --show <name>` prints one), `dl --rows rel_catalog` / `? rel_catalog(name,
+group, cols, doc).` (every builtin relation), `? fn_catalog(...)` / `? op_catalog(...)`.
+
+**Config a repo set** (multi-repo, ghcacher, cross-repo): a TOML at
+`$SPREFA_CONFIG` (else `$XDG_CONFIG_HOME/sprefa/config.toml`, else
+`~/.config/sprefa/config.toml`). It populates the `repo` builtin.
+
+```toml
+[[repos]]
+slug = "alpha/one"
+root = "/path/to/checkout-a"
+
+[[repos]]                       # not on disk yet? give a url, cloned on first scan
+slug = "beta/two"
+root = "/path/to/cache/beta"
+url  = "git@github.com:org/beta.git"
+
+[[org]]                         # expand a folder of checkouts into one [[repos]] each
+dir  = "/path/to/orgs/hashicorp"
+```
+
+`dl setup --project .` bootstraps a repo (`.dl/` rail + AGENTS.md/CLAUDE.md section).
+
+**Load files (scan) — the source op that feeds everything:**
+
+```dl
+src(scan_path) <- scan("src/**/*.rs", scan_path, rev).           # WORK tree (cwd)
+old(scan_path) <- scan("HEAD~5", "src/**/*.rs", scan_path, rev). # a git rev
+all(scan_path) <- scan("*", "WORK", "**/*.ts", scan_path, rev).  # every config repo
+```
+
+A BARE `scan` rule is enough: it populates `_file` AND triggers AST/SCIP/type/
+call/dataflow extraction for the matched files. You never need a dummy `match` to
+"force" a scan. Reuse library rules with `use "std/callgraph.dl".` (resolves from
+disk or the embedded copy). Push a program into a running daemon with
+`dl --load prog.dl` (watched, hot-reloads) or `dl --load-once prog.dl` (eval once).
+
+**Watch files (reactive):**
+
+| want | command |
+|---|---|
+| editor diagnostics, live | `dl prog.dl --lsp` |
+| background daemon for a repo | `dl --daemon` (from the repo; or it auto-spawns on first one-shot) |
+| in-process re-tick on change | `dl prog.dl --watch` (no daemon, foreground) |
+
+**ghcacher (both halves):** the config `[[repos]]`/`[[org]]` above is the repo set.
+
+- API cache → SQLite: `dl examples/gh-cache.dl --lsp` (conditional GitHub polls,
+  etag carry, entity extraction; `DL_POLL_SECS` = daemon re-tick cadence).
+- Keep local checkouts current: `dl examples/gh-checkout.dl --lsp` (the `checkout`
+  sink: clone-missing + fetch + fast-forward). Confirm it fired with
+  `dl --rows checkout_done`.
+
+## Which extractor (NEVER default to `match`)
+
+`match` is a regex over raw text — the LAST resort, for a language with no grammar
+and no index. Prefer, in order:
+
+1. **SCIP** (`scip_def`/`scip_ref`/`call_edge`/`type_link`) — compiler-accurate
+   resolution. Turn it on with `dl index --install` (writes `.dl/index.scip`), or
+   demand it per repo by heading `scip_want(repo)` from a rule, or point
+   `$SPREFA_SCIP_INDEX` at an existing index. `dl doctor` says what's missing.
+2. **`ast` / `sg` / `ast_yaml`** — structural patterns when the language has a
+   grammar (see the matrix above). `$UPPERCASE` metavars capture with byte spans.
+3. **built-in graph rels from a bare `scan`** — `call_edge`, `type_entity`,
+   `df_edge`, `module_edge`, `comment_node`, `doc_comment` are already extracted;
+   query them directly instead of re-parsing with regex.
+4. **`match`** — only for substrings / a grammar-less file. Never `match(/./)` to
+   force a scan (a bare `scan` already extracts). If you catch yourself regexing a
+   call or an import, stop and use the graph rel or SCIP.
+
+**SCIP without the token-burn:** `dl index --install` (detects languages, installs
++ runs the right indexer, merges to `.dl/index.scip`) then run your program — the
+`scip_*` rels are populated. For a multi-repo config, head `scip_want(repo)` and
+the importer indexes that repo lazily on demand. Don't hand-roll indexer commands;
+`dl index` / `dl doctor` own it.
+
 ## Rule heads: named args, kwargs, bare puns (v0.4.0)
 
 Once ANY atom carries a `col: term`, the whole atom is in named mode: a term
