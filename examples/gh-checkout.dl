@@ -24,10 +24,22 @@
 # --- read our own config ----------------------------------------------------
 # The repo set is the built-in `repo` relation, populated from the `[[repos]]`
 # config (the same config gh-cache.dl and every multi-repo program reads). Keep
-# every configured repo (one with a clone `url`) current on its default branch:
-# empty `branch` lets the sink follow each repo's origin/HEAD, so a repo tracking
-# `master` and one tracking `main` both work from one rule.
-checkout(slug, "", "0") <- repo(slug, root, url), url != "".
+# every configured repo current on its default branch: empty `branch` lets the
+# sink follow each repo's origin/HEAD, so a repo tracking `master` and one
+# tracking `main` both work from one rule.
+#
+# Do NOT gate on `url`: the `repo` rel carries a `url` only for repos configured
+# WITH a clone url, and an already-cloned staging repo (slug + root, no url) has
+# an EMPTY url — gating `url != ""` would silently sweep nothing in exactly the
+# ghcacher deployment this is for. Every row of `repo` is a configured repo.
+#
+# WARNING: when NO config is loaded, `repo` is just the self `--root` repo, so
+# this rule would target YOUR dev checkout (a hard-reset to origin on your
+# current branch, after stashing). Run it against a config of STAGING clones,
+# not bare in a working repo.
+checkout(slug, "", "0") <- repo(slug, root, url).
 
-# Read it back: the rows that drove the sweep (one per repo kept current).
-? checkout(slug, branch, pr_heads).
+# Read the sweep OUTCOME back (one row per repo): action is
+# clone/reset/branch-f/skip, ok is 1/0, detail is the git result. Queryable from
+# a live daemon (stderr goes to daemon.log; this rel is how you confirm it fired).
+? checkout_done(repo, branch, action, ok, detail).

@@ -142,6 +142,45 @@ fn bad_load_rolls_back_and_daemon_keeps_loading() {
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
 }
 
+/// `dl --rows REL` dumps a relation's live rows from the running daemon (the
+/// `query_rel` RPC) — the `?`-query shortcut for confirming what a demand sink
+/// resolved to, without hand-writing a query file.
+#[test]
+fn rows_flag_dumps_a_rel_from_the_daemon() {
+    let dir = sandbox("rowsflag");
+    fs::create_dir_all(dir.join(".dl")).unwrap();
+    fs::write(dir.join("p.dl"),
+        "rel edge(a: text, b: text).\n\
+         edge(\"a\", \"b\").\n\
+         edge(\"b\", \"c\").\n\
+         ? edge(a, b).\n").unwrap();
+
+    let _child = run_daemon_explicit(&dir);
+    let sock = dir.join(".dl").join("daemon.sock");
+    let mut ready = false;
+    for _ in 0..100 {
+        if sock.exists() && std::os::unix::net::UnixStream::connect(&sock).is_ok() { ready = true; break; }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(ready, "daemon socket not ready");
+
+    // Poll `dl --rows edge` until the daemon has ticked and populated the rel.
+    let mut stdout = String::new();
+    for _ in 0..100 {
+        let out = Command::new(DL)
+            .args(["--rows", "edge"])
+            .current_dir(&dir).env("DL_DAEMON_ROOT", &dir)
+            .output().expect("run dl --rows");
+        stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        if out.status.success() && stdout.contains("(2 rows)") { break; }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    // header (column names) + both edge rows + the count line
+    assert!(stdout.contains("a\tb"), "column header present: {stdout}");
+    assert!(stdout.contains("a\tb\n") || stdout.contains("a\tb"), "edge row present: {stdout}");
+    assert!(stdout.contains("(2 rows)"), "two edge rows dumped: {stdout}");
+}
+
 /// Every `query_sql` RPC appends one row to the query-history log
 /// (`_query_log`, projected by the built-in `query_log` relation). Sends two
 /// `query_sql` requests over the same daemon session (no file changes, no

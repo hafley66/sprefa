@@ -405,6 +405,7 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
         .chain(graph_rel_decls())
         .chain(diag_mute_rel_decls())
         .chain(demand_rel_decls())
+        .chain(checkout_out_rel_decls())
         .collect()
 }
 
@@ -594,6 +595,26 @@ fn demand_rel_decls() -> Vec<RelDecl> {
             ..Default::default() },
     ]
 }
+
+/// `checkout_done` — the OUTCOME rel the `checkout` sweep writes (read-only, like
+/// `rev_behind` is the output of `rev_cmp_want`). One row per swept repo; a
+/// program reads it to confirm the sweep fired and diag failures. Reserved:
+/// engine-written, never a rule head.
+const CHECKOUT_OUT_RELS: [&str; 1] = ["checkout_done"];
+
+fn checkout_out_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![RelDecl { name: "checkout_done".into(), cols: vec![
+        c("repo", Type::Text), c("branch", Type::Text), c("action", Type::Text),
+        c("ok", Type::Int), c("detail", Type::Text)], group: "demand",
+        doc: "checkout-sweep outcome (written by the `checkout` sink, read-only): one row per swept repo — action is reset/branch-f/skip, ok is 1/0, detail is the git result. Confirms the sweep fired from a live daemon (stderr goes to daemon.log) and lets a program diag failures (ok=0); one-tick latency like other demand outputs",
+        ..Default::default() }]
+}
+
+/// The structured result of one `checkout_one` sweep. `action` ∈
+/// reset|branch-f|skip; `ok` = the git op succeeded; `detail` = the human line.
+/// Fed into both the `[checkout]` log line and the `checkout_done` rel.
+struct CheckoutOutcome { action: &'static str, ok: bool, detail: String }
 
 fn effect_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
@@ -3398,6 +3419,9 @@ impl Engine {
                 if DEMAND_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in demand sink (scip_want / rev_cmp_want / def_target / effect_cmd / checkout) — drop the `rel {}(...)` decl and head it directly from a rule, like diag/repo", d.name, d.name);
                 }
+                if CHECKOUT_OUT_RELS.contains(&d.name.as_str()) {
+                    bail!("checkout_done is the built-in checkout-sweep outcome (repo, branch, action, ok, detail); it is written by the `checkout` sink, so READ it — do not `rel`-declare or head it");
+                }
                 match closures.get(&d.name) {
                     Some(edge) => self.declare_closure(d, edge)?,
                     None => self.declare(d)?,
@@ -3441,6 +3465,7 @@ impl Engine {
         for d in graph_rel_decls() { self.declare(&d)?; }
         for d in diag_mute_rel_decls() { self.declare(&d)?; }
         for d in demand_rel_decls() { self.declare(&d)?; }
+        for d in checkout_out_rel_decls() { self.declare(&d)?; }
         Ok(())
     }
 
@@ -3840,24 +3865,51 @@ impl Engine {
         };
         let mut pulled = false;
         for rule in sinks {
-            // The head must be all variables (slug, root, url), selected in
-            // order. A literal head term is a filter the gen lowering can't
-            // express; reject it loudly so the author fixes the shape.
-            let vars: Vec<String> = rule.head.terms.iter().filter_map(|t| match t {
-                Term::Var(v) => Some(v.clone()),
-                _ => None,
-            }).collect();
-            if vars.len() != rule.head.terms.len() {
-                eprintln!("[repo-sink] head must be all variables (slug, root, url); skipping");
-                continue;
-            }
-            let sql = crate::lower::lower_gen(&vars, &rule.body, &self.rels)?;
-            let rows: Vec<(String, String, String)> = self.db.conn().prepare(&sql)?
-                .query_map([], |r| Ok((r.get::<_, String>(0)?,
-                                       r.get::<_, String>(1)?,
-                                       r.get::<_, String>(2)?)))?
-                .filter_map(|x| x.ok()).collect();
-            for (slug, root_str, url) in rows {
+            // A GROUND FACT — `repo("slug", "/root", "url").` — has an empty body
+            // and an all-literal head. Take the literals directly; the SELECT-body
+            // path (lower_gen) can't express a bodiless rule, which is why a bare
+            // fact used to be rejected (the author had to route through an extra
+            // rel). Otherwise the head must be all variables (slug, root, url),
+            // selected in order: a literal head term over a body is a filter the
+            // gen lowering can't express, so reject it loudly.
+            // `explicit` = this row is an author-written ground fact (not derived
+            // from a body over the org corpus). An explicit repo bypasses the
+            // github-org allowlist (the allowlist gates DYNAMIC pulls, not a repo
+            // the author named by hand) and registers a present root without a
+            // clone.
+            let rows: Vec<(String, String, String, bool)> = if rule.body.is_empty() {
+                let lit = |t: &Term| match t {
+                    Term::Str(s) => Some(s.clone()),
+                    Term::Wild => Some(String::new()),
+                    _ => None,
+                };
+                let vals: Option<Vec<String>> = rule.head.terms.iter().map(lit).collect();
+                match vals.as_deref() {
+                    Some([slug]) => vec![(slug.clone(), String::new(), String::new(), true)],
+                    Some([slug, root]) => vec![(slug.clone(), root.clone(), String::new(), true)],
+                    Some([slug, root, url]) => vec![(slug.clone(), root.clone(), url.clone(), true)],
+                    _ => {
+                        eprintln!("[repo-sink] ground-fact head must be literal (slug[, root[, url]]); skipping");
+                        continue;
+                    }
+                }
+            } else {
+                let vars: Vec<String> = rule.head.terms.iter().filter_map(|t| match t {
+                    Term::Var(v) => Some(v.clone()),
+                    _ => None,
+                }).collect();
+                if vars.len() != rule.head.terms.len() {
+                    eprintln!("[repo-sink] head must be all variables (slug, root, url) or an all-literal ground fact; skipping");
+                    continue;
+                }
+                let sql = crate::lower::lower_gen(&vars, &rule.body, &self.rels)?;
+                self.db.conn().prepare(&sql)?
+                    .query_map([], |r| Ok((r.get::<_, String>(0)?,
+                                           r.get::<_, String>(1)?,
+                                           r.get::<_, String>(2)?, false)))?
+                    .filter_map(|x| x.ok()).collect()
+            };
+            for (slug, root_str, url, explicit) in rows {
                 if slug.is_empty() {
                     eprintln!("[repo-sink] skip row with empty slug");
                     continue;
@@ -3868,7 +3920,7 @@ impl Engine {
                     continue; // already registered
                 }
                 let org = Self::parse_github_org(&url);
-                let allowed = org.as_ref().is_some_and(|o| allowlist.contains(o));
+                let allowed = explicit || org.as_ref().is_some_and(|o| allowlist.contains(o));
                 if !allowed {
                     eprintln!("[repo-sink] skip {slug}: org {:?} not in allowlist ({} listed)",
                         org, allowlist.len());
@@ -3931,11 +3983,27 @@ impl Engine {
                 Err(e) => eprintln!("[checkout] skip {repo}: {e}"),
             }
         }
-        let results: Vec<(String, String)> = jobs.par_iter()
+        let results: Vec<(String, String, CheckoutOutcome)> = jobs.par_iter()
             .map(|(slug, root, branch, pr)| {
-                (slug.clone(), Self::checkout_one(root, branch, *pr, offline))
+                let out = Self::checkout_one(root, branch, *pr, offline);
+                (slug.clone(), branch.clone(), out)
             }).collect();
-        for (slug, msg) in results { eprintln!("[checkout] {slug}: {msg}"); }
+        // Log AND surface an outcome rel: stderr goes to daemon.log under the
+        // daemon (invisible to a query), so `checkout_done` is how a program /
+        // live query confirms the sweep fired and reacts to failures.
+        let mut done_rows: Vec<Vec<Value>> = Vec::with_capacity(results.len());
+        for (slug, branch, out) in &results {
+            eprintln!("[checkout] {slug}: {} {}", out.action, out.detail);
+            done_rows.push(vec![
+                Value::Text(slug.clone()),
+                Value::Text(branch.clone()),
+                Value::Text(out.action.to_string()),
+                Value::Int(if out.ok { 1 } else { 0 }),
+                Value::Text(out.detail.clone()),
+            ]);
+        }
+        self.refresh_rel("checkout_done",
+            &["repo", "branch", "action", "ok", "detail"], &done_rows)?;
         Ok(())
     }
 
@@ -3944,9 +4012,11 @@ impl Engine {
     /// `offline`), resolves the default branch (given, else `origin/HEAD`), then:
     /// on that branch → stash dirty work + `reset --hard origin/<branch>`; on any
     /// other branch or detached → `git branch -f <branch> origin/<branch>` (move
-    /// the ref, leave the working tree). Returns a one-line status.
-    fn checkout_one(root: &Path, branch: &str, pr_heads: bool, offline: bool) -> String {
-        if !root.exists() { return format!("root {} missing", root.display()); }
+    /// the ref, leave the working tree). Returns the structured outcome that
+    /// `checkout_done` and the log line are built from.
+    fn checkout_one(root: &Path, branch: &str, pr_heads: bool, offline: bool) -> CheckoutOutcome {
+        let skip = |detail: String| CheckoutOutcome { action: "skip", ok: false, detail };
+        if !root.exists() { return skip(format!("root {} missing", root.display())); }
         let git = |args: &[&str]| Command::new("git").arg("-C").arg(root).args(args).output();
         if !offline {
             let _ = git(&["fetch", "--quiet", "origin"]);
@@ -3965,13 +4035,14 @@ impl Engine {
             }
         };
         if default.is_empty() {
-            return "no branch given and origin/HEAD unset (run `git remote set-head origin -a`)".into();
+            return skip("no branch given and origin/HEAD unset (run `git remote set-head origin -a`)".into());
         }
         let remote_ref = format!("origin/{default}");
         let have_remote = git(&["rev-parse", "--verify", "--quiet", &remote_ref])
             .map(|o| o.status.success()).unwrap_or(false);
         if !have_remote {
-            return format!("no {remote_ref}{}", if offline { " (DL_NO_FETCH; never fetched)" } else { " (fetch failed / wrong branch)" });
+            return skip(format!("no {remote_ref}{}",
+                if offline { " (DL_NO_FETCH; never fetched)" } else { " (fetch failed / wrong branch)" }));
         }
         let cur = git(&["symbolic-ref", "--short", "HEAD"]).ok()
             .filter(|o| o.status.success())
@@ -3983,20 +4054,21 @@ impl Engine {
                               &format!("dl checkout {}", unix_secs())]);
             }
             match git(&["reset", "--hard", &remote_ref]) {
-                Ok(o) if o.status.success() => format!(
-                    "reset {default} -> {remote_ref}{}", if dirty { " (stashed local changes)" } else { "" }),
-                Ok(o) => format!("reset --hard {remote_ref} failed: {}",
-                    String::from_utf8_lossy(&o.stderr).trim()),
-                Err(e) => format!("reset --hard {remote_ref} errored: {e}"),
+                Ok(o) if o.status.success() => CheckoutOutcome { action: "reset", ok: true, detail: format!(
+                    "{default} -> {remote_ref}{}", if dirty { " (stashed local changes)" } else { "" }) },
+                Ok(o) => CheckoutOutcome { action: "reset", ok: false,
+                    detail: format!("reset --hard {remote_ref} failed: {}", String::from_utf8_lossy(&o.stderr).trim()) },
+                Err(e) => CheckoutOutcome { action: "reset", ok: false,
+                    detail: format!("reset --hard {remote_ref} errored: {e}") },
             }
         } else {
             match git(&["branch", "-f", &default, &remote_ref]) {
-                Ok(o) if o.status.success() => format!(
-                    "branch -f {default} -> {remote_ref} (checkout left on {})",
-                    cur.as_deref().unwrap_or("detached HEAD")),
-                Ok(o) => format!("branch -f {default} failed: {}",
-                    String::from_utf8_lossy(&o.stderr).trim()),
-                Err(e) => format!("branch -f {default} errored: {e}"),
+                Ok(o) if o.status.success() => CheckoutOutcome { action: "branch-f", ok: true, detail: format!(
+                    "{default} -> {remote_ref} (checkout left on {})", cur.as_deref().unwrap_or("detached HEAD")) },
+                Ok(o) => CheckoutOutcome { action: "branch-f", ok: false,
+                    detail: format!("branch -f {default} failed: {}", String::from_utf8_lossy(&o.stderr).trim()) },
+                Err(e) => CheckoutOutcome { action: "branch-f", ok: false,
+                    detail: format!("branch -f {default} errored: {e}") },
             }
         }
     }

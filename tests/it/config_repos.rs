@@ -62,6 +62,43 @@ fn git(dir: &std::path::Path, args: &[&str]) {
     assert!(ok, "git {args:?} in {}", dir.display());
 }
 
+/// A `repo` sink GROUND FACT — `repo("slug", "/root", "").` with an empty body —
+/// registers the repo directly (bypassing the github-org allowlist, which gates
+/// only DYNAMIC pulls). Previously the sink rejected any literal head term, so an
+/// author had to route through an intermediary rel; a bare fact now works.
+#[test]
+fn repo_sink_accepts_a_ground_fact() {
+    let d = std::env::temp_dir().join("repo_ground_fact_test");
+    let _ = fs::remove_dir_all(&d);
+    // the extra repo the ground fact names (an existing local root, no url)
+    let extra = d.join("extra");
+    fs::create_dir_all(extra.join("src")).unwrap();
+    fs::write(extra.join("src/lib.rs"), "fn extra_fn() {}\n").unwrap();
+    // a self root to run from
+    let selfdir = d.join("selfrepo");
+    fs::create_dir_all(selfdir.join("src")).unwrap();
+    fs::write(selfdir.join("src/main.rs"), "fn main() {}\n").unwrap();
+
+    // Ground fact heads the built-in `repo` sink directly — no body, all literals.
+    fs::write(d.join("p.dl"), format!("\
+        repo(\"extra\", \"{root}\", \"\").\n\
+        ? repo(slug, root, url).\n", root = extra.display())).unwrap();
+
+    // --settle drives ticks to a fixpoint: the sink registers the repo AFTER the
+    // query phase (one-tick registration latency, same as any repo sink), so a
+    // single tick would not yet show it; settle converges and prints once.
+    let out = Command::new(DL)
+        .arg("--settle")
+        .arg(d.join("p.dl"))
+        .args(["--db", d.join("db").to_str().unwrap()])
+        .current_dir(&selfdir)
+        .output().expect("run dl");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "run failed: {stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+    // the ground-fact repo is registered and shows in the repo relation
+    assert!(stdout.contains("extra"), "ground-fact repo registered in repo rel: {stdout}");
+}
+
 /// A configured repo whose `root` is not on disk but has a `url` is cloned on
 /// first scan, then its committed rev is ingested into the `file` relation.
 #[test]

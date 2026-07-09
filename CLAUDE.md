@@ -683,6 +683,79 @@ dup than today). Ref-spine **C** stays separate (orthogonal, deferrable).
       changes node identity (names -> syms), so tour/card/view name references
       and atlas styling must move together.
 
+### Open (demand-sink + daemon ergonomics — 2026-07-08 agent-session feedback)
+Five complaints from other AI sessions after the `checkout` sink shipped (v0.6.18).
+ALL ADDRESSED 2026-07-08 (v0.6.19); #2 was a misread (no code change). Kept as the
+record; see CHANGELOG 0.6.19. Fixes: #3 example url-gate dropped + warning; #1 repo
+sink takes ground facts (explicit=allowlist-bypass); #4 new `checkout_done` outcome
+rel; #5 `dl --rows <REL>` + `query_rel` daemon RPC.
+- [x] **#3 SHIPPED BUG — gh-checkout.dl sweeps ZERO repos against a real config.**
+      The example gates `<- repo(slug, root, url), url != ""`, but `refresh_builtin_rels`
+      (mod.rs:3484) fills the `repo` rel's url column from `r.url.unwrap_or_default()`,
+      and an already-cloned config repo carries slug+root with EMPTY url (url is a
+      clone-time hint, dropped once on disk). So the intended deployment (cloned
+      staging repos, no url) matches nothing and the example silently produces no
+      rows. FIX: drop the `url != ""` gate — head `checkout(slug, "", "0") <-
+      repo(slug, _, _).`. Note self is EXCLUDED from `repo` when a config is loaded
+      (repo_rows = self.repos only, mod.rs:3484-3490), so sweeping every `repo` row
+      is safe (no self hard-reset) in the ghcacher deployment; without a config
+      `repo`=self, so add a header warning not to run it config-less (would
+      hard-reset the dev checkout). CONSIDER: a `config_repo`/`is_self` marker column
+      or rel so the safe filter is expressible, not just "happens to exclude self".
+- [x] **#1 repo sink refuses ground facts.** `run_repo_pulls` (mod.rs:3839-3846)
+      rejects any literal head term ("head must be all variables (slug, root, url)")
+      because it compiles the BODY as a SELECT via `lower_gen` — a bare fact
+      `repo("s","/r","u").` has no body, so you must route through an intermediary
+      rel. (The `checkout` sink does NOT have this limit — it reads its derived
+      table, so ground facts work.) FIX shape: let the repo sink accept literal head
+      terms (materialize them directly) the way a normal fact rule does.
+- [x] **#2 leading-edge cadence (MISREAD, verify which op).** Complaint: "clock
+      without leading edge, waits N." VERIFIED FALSE for `clock`: `refresh_clock`
+      (mod.rs:3550) writes bucket=now/secs on EVERY tick incl. tick 0, so
+      `clock(300,b)` binds immediately and the first poll fires without waiting. The
+      edge-triggered op that DOES wait N is `every(N)`. Likely the session used
+      `every` for cadence and wanted fire-now-then-every-N. REAL ask (if any): a
+      leading-edge variant of `every`, or doc the clock-not-every pattern louder.
+- [x] **#4 demand sink success is invisible in the daemon.** `checkout` DOES
+      eprintln one line per repo incl. success (`[checkout] slug: reset main ->
+      origin/main`, asserted in tests), but under the daemon stderr goes to
+      daemon.log, so a `--load-once` query can't SEE that it fired. FIX: write a
+      queryable result rel `checkout_done(repo, branch, action, ok, detail)` (a
+      demand sink that also surfaces its outcome as a rel), so the program can react
+      (diag on failures) and a live query confirms the sweep. Generalizes: demand
+      sinks that do IO should optionally emit an outcome rel.
+- [x] **#5 no "print rows of rel X from the live daemon."** Daemon query surface is
+      `--load`/`--load-once` (push a script, get query_json back), `--await-settle`.
+      To inspect a rel you must write a temp .dl containing `? rel(...)` and
+      `--load-once` it; there's no `dl --query 'rel(...)'` one-liner and no plain rel
+      dump. Also daemon-vs-oneshot is muddy: three candidate roots, rootless global,
+      ad-hoc runs get hijacked by a running daemon, `--no-daemon` was the only
+      reliable isolate. FIX shape: a `dl --rows <rel>` (or `--query`) that hits the
+      daemon's query_sql RPC and prints rows; document the root/daemon-selection
+      rules in one place.
+
+### Open (scip / language-surface — 2026-07-08 agent-session feedback, batch 2)
+Five more complaints (SCIP + dl-surface). NOT yet triaged against code; capture only.
+- [ ] **S1 scip_ref has no line/column.** Positional tag->symbol mapping is
+      impossible from scip_ref alone, which is the entire reason the alias fix leaked
+      into Python. Need occurrence ranges (line/col) on scip_ref, or a distinct
+      occurrence rel. VERIFY what the importer drops from Occurrence.range
+      (src/rels/scip.rs / scip_setup.rs).
+- [ ] **S2 scip_name returns the canonical export name, not the local binding.** Any
+      aliased or default import silently fails a name-based join, and because the
+      call_def join was REQUIRED the whole resolution drops. Need the LOCAL binding
+      name (alias) alongside the canonical. Ties to [[reference_scip_name_not_dl_split]].
+- [ ] **S3 computed values cannot bind in the body (`x = replace(...)`).** Must inline
+      into the HEAD; error message is good but surprises SQL/datalog-with-assignment
+      intuition, and nesting `replace(split(...))` in the head hurts readability. ASK:
+      body-level bind for pure-fn values (Call/Arith binding position, ast.rs), or
+      accept the cost.
+- [ ] **S4 no `+` operator for strings.** Concat only via template interp, which reads
+      oddly for URL building. ASK: a `concat(...)` fn or `+` on text -> SQLite `||`.
+- [ ] **S5 ast-grep patterns are exact-shape.** `{ element: <$C/> }` matched nothing
+      (shape strictness / metavar-in-JSX). Repro + narrow: grammar, intended match,
+      sg pattern-compilation limit vs grammar gap. S1/S2 pair is the SCIP crux.
+
 ### Style notes for this repo
 - dl variable names are descriptive, never single-letter: `path`/`line`/`callee_name`, not `p`/`l`/`q`. Applies to every snippet in skills, examples, book, tests, and agent prompts; rename opportunistically when touching old files.
 - N+1: never a per-row write. Collect the set, call `Db::insert_rows` once. The tick counter screams if you don't.

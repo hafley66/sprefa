@@ -1266,6 +1266,23 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
             }
             Response::ok(req.id, json!({"relations": relations}))
         }
+        // Dump a relation's live rows by name: column names from the engine's rel
+        // metadata + the stringified rows (the `dl --rows REL` shortcut). Answers
+        // "what did this demand sink resolve to?" without hand-writing a `?` query.
+        "query_rel" => {
+            let rel = match req.params.get("rel").and_then(|v| v.as_str()) {
+                Some(s) => s,
+                None => return Response::err(req.id, INVALID_PARAMS, "missing rel"),
+            };
+            let eng = lock(&d.eng);
+            let Some(meta) = eng.rels.get(rel) else {
+                return Response::err(req.id, INVALID_PARAMS,
+                    format!("unknown relation {rel:?}"));
+            };
+            let cols: Vec<String> = meta.cols.iter().map(|c| c.name.clone()).collect();
+            let rows = eng.rel_rows(rel, cols.len());
+            Response::ok(req.id, json!({"columns": cols, "rows": rows}))
+        }
         "query_sql" => {
             let sql_raw = match req.params.get("sql").and_then(|v| v.as_str()) {
                 Some(s) => s,
@@ -1731,6 +1748,31 @@ pub fn load(root: Option<&Path>, path: &str, mode: &str) -> Result<Response> {
     let mut s = connect(root)?;
     let req = Request::new(0, "load", json!({"path": path, "mode": mode}));
     rpc_call(&mut s, &req)
+}
+
+/// Fetch relation `rel`'s current rows from the running daemon: returns the
+/// column names and the stringified rows (the `dl --rows REL` backend).
+/// `root=None` targets the global rootless serving daemon.
+pub fn query_rel(root: Option<&Path>, rel: &str) -> Result<(Vec<String>, Vec<Vec<String>>)> {
+    let mut s = connect(root)?;
+    let req = Request::new(0, "query_rel", json!({"rel": rel}));
+    let resp = rpc_call(&mut s, &req)?;
+    if let Some(err) = resp.error {
+        anyhow::bail!("{}", err.message);
+    }
+    let result = resp.result.unwrap_or_default();
+    let cols: Vec<String> = result.get("columns").and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let rows: Vec<Vec<String>> = result.get("rows").and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|r| r.as_array().map(|cells| {
+            cells.iter().map(|c| match c {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            }).collect()
+        })).collect())
+        .unwrap_or_default();
+    Ok((cols, rows))
 }
 
 // ---------- small helpers shared with lib.rs ----------

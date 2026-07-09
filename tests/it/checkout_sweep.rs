@@ -92,6 +92,14 @@ fn checkout_sink_fast_forwards_current_branch_via_hard_reset() {
         "checkout logged a hard reset: {stderr}");
     // and the clone actually advanced to upstream's HEAD
     assert_eq!(head(&work), upstream_head, "work clone fast-forwarded to upstream HEAD");
+
+    // the outcome is queryable via the checkout_done rel (repo, branch, action, ok, detail)
+    let conn = rusqlite::Connection::open(d.join("db")).unwrap();
+    let (repo, action, ok): (String, String, i64) = conn.query_row(
+        "SELECT repo, action, ok FROM rel_checkout_done", [],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).expect("checkout_done row");
+    assert_eq!((repo.as_str(), action.as_str(), ok), ("work", "reset", 1),
+        "checkout_done records the successful reset");
 }
 
 /// On a NON-default branch, the sink moves the `main` ref (`git branch -f`) to
@@ -150,8 +158,8 @@ fn checkout_sink_moves_ref_off_current_branch() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "run failed: {}\n{stderr}", String::from_utf8_lossy(&out.stdout));
 
-    assert!(stderr.contains("[checkout] work: branch -f main -> origin/main"),
-        "checkout logged a branch -f (checkout left on feature): {stderr}");
+    assert!(stderr.contains("[checkout] work: branch-f main -> origin/main"),
+        "checkout logged a branch-f (checkout left on feature): {stderr}");
     // working tree untouched: still on feature at the local commit
     assert_eq!(head(&work), feature_head, "feature checkout left in place");
     // but the main ref now points at upstream HEAD

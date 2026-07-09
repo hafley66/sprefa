@@ -6,6 +6,30 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+### Fixed
+- **`gh-checkout.dl` swept ZERO repos against a real config.** The shipped example
+  gated `repo(slug, root, url), url != ""`, but the `repo` relation fills its `url`
+  column only for repos configured WITH a clone url — an already-cloned staging
+  repo (slug + root, no url) has an empty url, so the ghcacher deployment the
+  example is FOR matched nothing and produced no rows. The gate is gone
+  (`checkout(slug, "", "0") <- repo(slug, root, url).`), with a header warning that
+  a config-less run targets the self checkout.
+
+### Added
+- **`checkout_done(repo, branch, action, ok, detail)`** — the checkout sweep now
+  writes a queryable outcome relation (action reset/branch-f/skip, ok 1/0). Under
+  the daemon the `[checkout]` log goes to daemon.log (invisible to a query); this
+  rel is how a program confirms the sweep fired and diags failures (`ok=0`).
+- **`dl --rows <REL>`** prints a relation's current rows from the running daemon
+  (its live engine state) — the `?`-query shortcut for inspecting a demand sink's
+  output, e.g. `dl --rows checkout_done`. Backed by a new `query_rel` daemon RPC.
+- **The `repo` sink accepts ground facts.** `repo("slug", "/root", "url").` (a
+  body-less, all-literal head) now registers the repo directly; previously any
+  literal head term was rejected (the body compiled to a SELECT), forcing an
+  intermediary rel. A ground fact is treated as explicit: it bypasses the
+  github-org allowlist (which gates dynamic pulls) and registers a present root
+  without cloning.
+
 ## [0.6.18] - 2026-07-08
 
 ### Added

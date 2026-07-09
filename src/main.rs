@@ -162,6 +162,11 @@ struct Cli {
     /// query results, persist nothing. Same target rules as `--load`.
     #[arg(long, help_heading = "Daemon")]
     load_once: Option<String>,
+    /// Print the current rows of relation REL from the running daemon (its live
+    /// engine state) and exit — the `?`-query shortcut for a demand sink's output
+    /// (e.g. `--rows checkout_done`). Targets the same daemon as `--load`.
+    #[arg(long, value_name = "REL", help_heading = "Daemon")]
+    rows: Option<String>,
 }
 
 /// The working root is the current directory, never a flag: a client (the
@@ -276,6 +281,14 @@ fn main() -> Result<()> {
             daemon_root.as_deref(), cli.await_settle_ms.unwrap_or(30_000))?;
         println!("settled={settled} tick={tick}");
         if !settled { std::process::exit(3); }
+        return Ok(());
+    }
+    // `--rows REL`: dump a relation's current rows from the running daemon.
+    if let Some(rel) = cli.rows.clone() {
+        let (cols, rows) = sprefa_v5::daemon::query_rel(daemon_root.as_deref(), &rel)?;
+        if !cols.is_empty() { println!("{}", cols.join("\t")); }
+        for row in &rows { println!("{}", row.join("\t")); }
+        println!("({} rows)", rows.len());
         return Ok(());
     }
     // `--load` / `--load-once`: push a script to the running daemon and exit.
