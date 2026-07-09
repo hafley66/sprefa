@@ -6,6 +6,8 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.20] - 2026-07-08
+
 ### Added
 - **`dl --restart` — the post-`cargo install` one-liner.** A long-running daemon
   keeps its OLD in-memory image after you reinstall `dl`; an auto-attaching
