@@ -6,6 +6,8 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.19] - 2026-07-08
+
 ### Fixed
 - **`gh-checkout.dl` swept ZERO repos against a real config.** The shipped example
   gated `repo(slug, root, url), url != ""`, but the `repo` relation fills its `url`
