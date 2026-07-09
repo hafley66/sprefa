@@ -23,11 +23,17 @@ use crate::scc;
 #[derive(Clone, Debug, Default)]
 pub struct Brands {
     parent: HashMap<String, String>,
+    /// Enum brands: brand name -> its closed set of allowed text literals. A brand
+    /// declared `type sev = "a" | "b"` lands here (its `parent` is `"text"`); the
+    /// `<:` form does not. A sub-brand `type x <: sev` inherits the set by walking
+    /// the parent chain (see `enum_variants`).
+    variants: HashMap<String, Vec<String>>,
 }
 
 impl Brands {
     pub fn from_program(prog: &Program) -> Result<Brands, String> {
         let mut parent: HashMap<String, String> = HashMap::new();
+        let mut variants: HashMap<String, Vec<String>> = HashMap::new();
         for item in &prog.items {
             if let Item::Brand(b) = item {
                 if parent.contains_key(&b.name) {
@@ -37,9 +43,12 @@ impl Brands {
                     return Err(format!("brand `{}` shadows a base type", b.name));
                 }
                 parent.insert(b.name.clone(), b.parent.clone());
+                if let Some(vs) = &b.variants {
+                    variants.insert(b.name.clone(), vs.clone());
+                }
             }
         }
-        let brands = Brands { parent };
+        let brands = Brands { parent, variants };
         // Every parent must terminate at a base type without cycling.
         for name in brands.parent.keys() {
             brands.base_type(name)
@@ -49,6 +58,18 @@ impl Brands {
     }
 
     pub fn is_brand(&self, name: &str) -> bool { self.parent.contains_key(name) }
+
+    /// The closed variant set of an enum brand, or of the nearest enum brand up
+    /// the parent chain (so `type x <: sev` inherits `sev`'s literals). `None`
+    /// when neither `name` nor any ancestor is an enum brand.
+    pub fn enum_variants(&self, name: &str) -> Option<&[String]> {
+        let mut cur = name.to_string();
+        for _ in 0..self.parent.len() + 1 {
+            if let Some(vs) = self.variants.get(&cur) { return Some(vs); }
+            cur = self.parent.get(&cur)?.clone();
+        }
+        None
+    }
 
     /// Walk the parent chain to a base `Type`. None on an unknown parent or a cycle.
     pub fn base_type(&self, name: &str) -> Option<Type> {
@@ -186,7 +207,7 @@ pub fn normalize_program(prog: &mut Program, dl_path: &str) -> Vec<TypeDiag> {
                 }
                 for b in &mut g.body { normalize_body_item(b, dl_path, &mut diags); }
             }
-            Item::Rel(_) | Item::Anchor(_) | Item::Brand(_) | Item::Shell(_) => {}
+            Item::Rel(_) | Item::Anchor(_) | Item::Brand(_) | Item::Shape(_) | Item::Shell(_) => {}
         }
     }
     diags
@@ -317,6 +338,13 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                         severity: Severity::Error, code: "brand-mismatch".into(),
                         msg: format!("string literal cannot fill int column `{}`", meta.cols[i].name),
                     });
+                }
+                // A string literal filling an enum-branded column must be one of
+                // the closed variant set (rule head, fact head, or a body pin).
+                Term::Str(s) => {
+                    if let Some(brand) = &cty.brand {
+                        enum_lit_check(brand, s, brands, &meta.cols[i].name, dl_path, diags);
+                    }
                 }
                 Term::Int(_) if is_path_base(cty.base) || cty.brand.is_some() => {
                     let what = match &cty.brand { Some(b) => format!("brand `{b}`"), None => "a path".into() };
@@ -474,6 +502,90 @@ fn coerce(var: &str, brand: &str, dl_path: &str, diags: &mut Vec<TypeDiag>) {
     });
 }
 
+/// Check a string literal against an enum brand's closed variant set. A member is
+/// silent; a non-member emits `enum-variant-unknown` with the allowed set and a
+/// nearest-variant suggestion. A non-enum brand (the `<:` form) is a no-op.
+/// Literals carry no per-occurrence span, so the diagnostic lands at line 1.
+fn enum_lit_check(brand: &str, val: &str, brands: &Brands, col_name: &str, dl_path: &str, diags: &mut Vec<TypeDiag>) {
+    let Some(variants) = brands.enum_variants(brand) else { return; };
+    if variants.iter().any(|v| v == val) { return; }
+    let allowed = variants.iter().map(|v| format!("\"{v}\"")).collect::<Vec<_>>().join(" | ");
+    let hint = nearest_variant(val, variants)
+        .map(|s| format!(" — did you mean \"{s}\"?"))
+        .unwrap_or_default();
+    diags.push(TypeDiag {
+        path: dl_path.to_string(), span: (0, 0),
+        severity: Severity::Error, code: "enum-variant-unknown".into(),
+        msg: format!("\"{val}\" is not a variant of enum brand `{brand}` on column `{col_name}` (allowed: {allowed}){hint}"),
+    });
+}
+
+/// The variant closest to `val` by Levenshtein distance, tie-broken by declaration
+/// order. `None` when the set is empty. No distance cutoff — a suggestion always
+/// helps against a closed set this small.
+fn nearest_variant<'a>(val: &str, variants: &'a [String]) -> Option<&'a str> {
+    variants.iter()
+        .min_by_key(|v| edit_distance(val, v))
+        .map(|s| s.as_str())
+}
+
+/// Levenshtein edit distance (single-row DP). Small inputs (enum variants), so the
+/// allocation is negligible.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for (i, &ca) in a.iter().enumerate() {
+        cur[0] = i + 1;
+        for (j, &cb) in b.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
+
+/// Resolve every `rel <name>: <shape>.` decl to a plain `RelDecl` whose columns
+/// are the referenced `type <shape>(...)` shape's, then drop the `Item::Shape`
+/// declarations. Runs at load (frontend + the top of `check_and_normalize`) so all
+/// downstream code — including the engine — only ever sees plain `RelDecl`s.
+/// Idempotent: a second call finds no shapes and no `shape_ref`, so it is a no-op.
+/// An unknown shape name (or a duplicate shape declaration) emits an error diag.
+pub fn expand_shapes(items: &mut Vec<Item>, dl_path: &str, diags: &mut Vec<TypeDiag>) {
+    let mut shapes: HashMap<String, Vec<Col>> = HashMap::new();
+    for item in items.iter() {
+        if let Item::Shape(s) = item {
+            if shapes.insert(s.name.clone(), s.cols.clone()).is_some() {
+                diags.push(TypeDiag {
+                    path: dl_path.to_string(), span: (0, 0),
+                    severity: Severity::Error, code: "duplicate-shape".into(),
+                    msg: format!("duplicate shape `{}`", s.name),
+                });
+            }
+        }
+    }
+    for item in items.iter_mut() {
+        if let Item::Rel(d) = item {
+            let Some(sname) = d.shape_ref.take() else { continue; };
+            match shapes.get(&sname) {
+                Some(cols) => { d.cols = cols.clone(); }
+                None => {
+                    diags.push(TypeDiag {
+                        path: dl_path.to_string(), span: (0, 0),
+                        severity: Severity::Error, code: "unknown-shape".into(),
+                        msg: format!(
+                            "rel `{}`: unknown shape `{sname}` — declare `type {sname}(...)` or use `rel {}(cols)`",
+                            d.name, d.name),
+                    });
+                }
+            }
+        }
+    }
+    items.retain(|item| !matches!(item, Item::Shape(_)));
+}
+
 fn coerce_base(var: &str, base: Type, dl_path: &str, diags: &mut Vec<TypeDiag>) {
     let name = match base { Type::Path => "path", Type::File => "file", Type::Dir => "dir", _ => "path" };
     diags.push(TypeDiag {
@@ -596,6 +708,10 @@ fn temporal_word(t: Temporal) -> &'static str {
 /// error it returns a single error diagnostic (span 0,0) rather than panicking.
 pub fn check_and_normalize(prog: &mut Program, dl_path: &str) -> Vec<TypeDiag> {
     let mut diags = Vec::new();
+    // Expand `rel <name>: <shape>.` into plain RelDecls before any brand/rel table
+    // is built. Idempotent for the frontend path (already expanded there); does the
+    // work for the daemon `run_eval` snippet path that bypasses the frontend.
+    expand_shapes(&mut prog.items, dl_path, &mut diags);
     let brands = match validate_brands(prog) {
         Ok(b) => b,
         Err(e) => {
@@ -620,6 +736,22 @@ pub fn check_and_normalize(prog: &mut Program, dl_path: &str) -> Vec<TypeDiag> {
         if let Item::Rule(r) = item {
             diags.extend(check_rule_types(r, &rels, &brands, dl_path));
             check_effect(r, &shell_fns, dl_path, &mut diags);
+        }
+        // A query pin against an enum-branded column is checked too (rule heads and
+        // facts flow through `check_rule_types`; queries do not, so cover them here).
+        if let Item::Query(q) = item {
+            if let Some(meta) = rels.get(&q.head.rel) {
+                if q.head.terms.len() == meta.cols.len() {
+                    for (i, term) in q.head.terms.iter().enumerate() {
+                        if let Term::Str(s) = term {
+                            let cty = col_ty(&meta.cols[i], &brands);
+                            if let Some(brand) = &cty.brand {
+                                enum_lit_check(brand, s, &brands, &meta.cols[i].name, dl_path, &mut diags);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     // Every rule/query head must target a declared relation. Tables are created
@@ -817,4 +949,94 @@ fn prog_rels(prog: &Program) -> Rels {
         }
     }
     rels
+}
+
+#[cfg(test)]
+mod shape_enum_tests {
+    use super::*;
+
+    fn program(src: &str) -> Program {
+        crate::parse::parse(crate::lex::lex(src).unwrap()).unwrap()
+    }
+    fn diags(src: &str) -> Vec<TypeDiag> {
+        let mut prog = program(src);
+        check_and_normalize(&mut prog, "t.dl")
+    }
+    fn err_codes(src: &str) -> Vec<String> {
+        diags(src).into_iter().filter(|d| d.severity == Severity::Error).map(|d| d.code).collect()
+    }
+
+    #[test]
+    fn enum_variants_walk_inherits() {
+        let prog = program(r#"type severity = "error" | "warn"."#);
+        let brands = Brands::from_program(&prog).unwrap();
+        assert_eq!(brands.enum_variants("severity"), Some(&["error".to_string(), "warn".to_string()][..]));
+        // A sub-brand inherits the parent enum's set.
+        let prog = program(r#"type severity = "error" | "warn". type sev2 <: severity."#);
+        let brands = Brands::from_program(&prog).unwrap();
+        assert!(brands.enum_variants("sev2").is_some());
+        // A plain nominal brand carries no variants.
+        let prog = program("type sha <: text.");
+        let brands = Brands::from_program(&prog).unwrap();
+        assert!(brands.enum_variants("sha").is_none());
+    }
+
+    #[test]
+    fn nearest_variant_picks_closest() {
+        let vs = vec!["error".to_string(), "warn".to_string(), "info".to_string()];
+        assert_eq!(nearest_variant("wrn", &vs), Some("warn"));
+        assert_eq!(nearest_variant("eror", &vs), Some("error"));
+        assert_eq!(edit_distance("warn", "warn"), 0);
+        assert_eq!(edit_distance("wrn", "warn"), 1);
+    }
+
+    #[test]
+    fn enum_literal_accept_and_reject() {
+        let ok = r#"type severity = "error" | "warn".
+rel finding(path: text, sev: severity).
+finding("a.rs", "error").
+? finding(path, "warn")."#;
+        assert!(err_codes(ok).is_empty(), "valid enum literals must pass: {:?}", diags(ok));
+
+        let bad_head = r#"type severity = "error" | "warn".
+rel finding(path: text, sev: severity).
+finding("a.rs", "wrn")."#;
+        assert_eq!(err_codes(bad_head), ["enum-variant-unknown"]);
+
+        let bad_query = r#"type severity = "error" | "warn".
+rel finding(path: text, sev: severity).
+finding("a.rs", "error").
+? finding(path, "eror")."#;
+        assert_eq!(err_codes(bad_query), ["enum-variant-unknown"]);
+    }
+
+    #[test]
+    fn shape_expands_and_unknown_shape_errors() {
+        // A shape-referencing rel expands to the shape's columns.
+        let src = r#"type finding(path: text, line: int, sev: text).
+rel finding_rel: finding.
+finding_rel("a.rs", 1, "x")."#;
+        let mut prog = program(src);
+        let ds = check_and_normalize(&mut prog, "t.dl");
+        assert!(ds.iter().all(|d| d.severity != Severity::Error), "{ds:?}");
+        // No Item::Shape survives; the rel now has the shape's 3 columns.
+        assert!(!prog.items.iter().any(|i| matches!(i, Item::Shape(_))));
+        let rel = prog.items.iter().find_map(|i| if let Item::Rel(d) = i { Some(d) } else { None }).unwrap();
+        assert_eq!(rel.cols.len(), 3);
+        assert!(rel.shape_ref.is_none());
+
+        // An unknown shape name is an error naming the fix.
+        let bad = "rel finding_rel: finding.\nfinding_rel().";
+        let codes = err_codes(bad);
+        assert!(codes.iter().any(|c| c == "unknown-shape"), "{codes:?}");
+    }
+
+    #[test]
+    fn plain_brand_still_checks() {
+        // A `<:` brand keeps its existing mismatch behavior (int literal in a brand col).
+        let bad = "type sha <: text.\nrel commit(id: sha).\ncommit(5).";
+        assert!(err_codes(bad).iter().any(|c| c == "brand-mismatch"));
+        let ok = "type sha <: text.\nrel commit(id: sha).\ncommit(\"abc\").";
+        assert!(err_codes(ok).is_empty());
+    }
 }

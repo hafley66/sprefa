@@ -1040,7 +1040,8 @@ pub(crate) fn rels_used(prog: &Program, rels: &[&str]) -> bool {
                     _ => {}
                 }
             },
-            Item::Rel(_) | Item::Anchor(_) | Item::Brand(_) | Item::Shell(_) => {}
+            // Shapes are expanded to plain RelDecls at load, so none reach here.
+            Item::Rel(_) | Item::Anchor(_) | Item::Brand(_) | Item::Shape(_) | Item::Shell(_) => {}
         }
     }
     false

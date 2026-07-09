@@ -6,6 +6,21 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+### Added
+- **Enum brands (typecheck-time).** `type severity = "error" | "warn" | "info" |
+  "hint".` declares a brand whose value set is a closed list of text literals. A
+  string literal filling an enum-branded column (rule head, fact, or query pin)
+  that is not in the set is an `enum-variant-unknown` error, with a
+  nearest-variant suggestion (Levenshtein). A sub-brand `type x <: severity`
+  inherits the variant set. Storage stays text; the check is load-time only.
+- **Named row shapes (typecheck-time).** `type finding(path: text, line: int,
+  sev: severity).` declares a reusable column list; `rel finding_rel: finding.`
+  declares a rel whose columns come from the shape. The shape reference expands
+  into a plain `RelDecl` at load (frontend + typecheck seam) so the engine only
+  ever sees ordinary rel decls. A shape column may reference a brand or enum
+  brand. An unknown shape name is an `unknown-shape` load error naming the fix.
+  No shape introspection rels, exhaustiveness, or json validation (later rungs).
+
 ## [0.6.23] - 2026-07-09
 
 ### Added

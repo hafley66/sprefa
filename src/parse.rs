@@ -123,7 +123,7 @@ impl Parser {
         match self.peek() {
             Some(Tok::Ident(s)) if s == "rel" => Ok(Item::Rel(self.rel_decl()?)),
             Some(Tok::Ident(s)) if s == "anchor" => Ok(Item::Anchor(self.anchor_decl()?)),
-            Some(Tok::Ident(s)) if s == "type" => Ok(Item::Brand(self.brand_decl()?)),
+            Some(Tok::Ident(s)) if s == "type" => self.type_decl(),
             Some(Tok::Ident(s)) if s == "gen" => Ok(Item::Gen(self.gen_rule()?)),
             // `sh`/`sh!`/`sh*` heading an ident (the fn name) is a shell-fn decl;
             // a rule/rel literally named `sh` (`sh(...)`) still parses as such
@@ -158,19 +158,78 @@ impl Parser {
         Ok(AnchorDecl { name, body, span })
     }
 
-    /// `type <ident> <: <parent>.`
-    fn brand_decl(&mut self) -> Result<BrandDecl> {
+    /// A `type` decl in one of three forms, disambiguated on the token after the
+    /// name: `<:` = nominal brand, `=` = enum brand (closed literal set), `(` =
+    /// named row shape.
+    ///   `type <ident> <: <parent>.`
+    ///   `type <ident> = "lit" | "lit" | ... .`
+    ///   `type <ident>(col: ty, ...).`
+    fn type_decl(&mut self) -> Result<Item> {
         self.ident()?; // "type"
         let name = self.ident()?;
-        self.expect(Tok::Lt2)?;
-        let parent = self.ident()?;
-        self.expect(Tok::Dot)?;
-        Ok(BrandDecl { name, parent })
+        match self.peek() {
+            Some(Tok::Lt2) => {
+                self.next()?;
+                let parent = self.ident()?;
+                self.expect(Tok::Dot)?;
+                Ok(Item::Brand(BrandDecl { name, parent, variants: None }))
+            }
+            Some(Tok::Eq) => {
+                self.next()?;
+                let mut variants = vec![self.str_lit()?];
+                while matches!(self.peek(), Some(Tok::Pipe)) {
+                    self.next()?; // `|`
+                    variants.push(self.str_lit()?);
+                }
+                self.expect(Tok::Dot)?;
+                Ok(Item::Brand(BrandDecl { name, parent: "text".into(), variants: Some(variants) }))
+            }
+            Some(Tok::LParen) => {
+                self.next()?; // `(`
+                let mut cols = Vec::new();
+                loop {
+                    let cname = self.ident()?;
+                    self.expect(Tok::Colon)?;
+                    let tname = self.ident()?;
+                    let col = match Type::parse(&tname) {
+                        Some(ty) => Col { name: cname, ty, brand: None },
+                        None => Col { name: cname, ty: Type::Text, brand: Some(tname) },
+                    };
+                    cols.push(col);
+                    match self.next()? {
+                        Tok::Comma => continue,
+                        Tok::RParen => break,
+                        other => bail!("expected , or ) in type shape `{name}`, got {:?}", other),
+                    }
+                }
+                self.expect(Tok::Dot)?;
+                Ok(Item::Shape(ShapeDecl { name, cols }))
+            }
+            other => bail!("type `{name}`: expected `<:` (brand), `=` (enum), or `(` (shape), got {:?}", other),
+        }
+    }
+
+    /// A bare string literal (enum variant). Rejects any non-string token with a
+    /// message naming the fix, since enum variants are text literals.
+    fn str_lit(&mut self) -> Result<String> {
+        match self.next()? {
+            Tok::Str(s) => Ok(s),
+            other => bail!("enum brand variants must be string literals like \"warn\", got {:?}", other),
+        }
     }
 
     fn rel_decl(&mut self) -> Result<RelDecl> {
         self.ident()?; // "rel"
         let name = self.ident()?;
+        // `rel <name>: <shape>.` — the columns come from a named `type` shape,
+        // resolved at load by `typecheck::expand_shapes`. `cols` stays empty until
+        // then; no qualifiers are accepted on this form.
+        if matches!(self.peek(), Some(Tok::Colon)) {
+            self.next()?; // `:`
+            let shape = self.ident()?;
+            self.expect(Tok::Dot)?;
+            return Ok(RelDecl { name, shape_ref: Some(shape), ..Default::default() });
+        }
         self.expect(Tok::LParen)?;
         let mut cols = Vec::new();
         loop {
@@ -1310,6 +1369,54 @@ mod tests {
             Item::Rule(r) => r,
             other => panic!("expected a rule, got {other:?}"),
         }
+    }
+
+    fn one_item(src: &str) -> Item {
+        super::parse(lex(src).unwrap()).unwrap().items.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn type_decl_three_arms() {
+        // `<:` nominal brand: parent set, no variants.
+        match one_item("type sha <: text.") {
+            Item::Brand(b) => { assert_eq!(b.name, "sha"); assert_eq!(b.parent, "text"); assert!(b.variants.is_none()); }
+            other => panic!("expected a brand, got {other:?}"),
+        }
+        // `=` enum brand: closed string set, parent defaults to text.
+        match one_item(r#"type severity = "error" | "warn" | "info"."#) {
+            Item::Brand(b) => {
+                assert_eq!(b.name, "severity");
+                assert_eq!(b.parent, "text");
+                assert_eq!(b.variants.as_deref(), Some(&["error".to_string(), "warn".to_string(), "info".to_string()][..]));
+            }
+            other => panic!("expected an enum brand, got {other:?}"),
+        }
+        // `(cols)` named shape: column list captured.
+        match one_item("type finding(path: text, line: int, sev: severity).") {
+            Item::Shape(s) => {
+                assert_eq!(s.name, "finding");
+                let names: Vec<&str> = s.cols.iter().map(|c| c.name.as_str()).collect();
+                assert_eq!(names, ["path", "line", "sev"]);
+                // A non-base column type is recorded as a brand reference.
+                assert_eq!(s.cols[2].brand.as_deref(), Some("severity"));
+            }
+            other => panic!("expected a shape, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rel_shape_ref_and_type_arm_errors() {
+        // `rel name: shape.` records the shape name, cols empty (expanded at load).
+        match one_item("rel finding_rel: finding.") {
+            Item::Rel(d) => { assert_eq!(d.name, "finding_rel"); assert_eq!(d.shape_ref.as_deref(), Some("finding")); assert!(d.cols.is_empty()); }
+            other => panic!("expected a rel, got {other:?}"),
+        }
+        // A bogus token after the type name names the fix.
+        let e = super::parse(lex("type foo bar.").unwrap()).unwrap_err().to_string();
+        assert!(e.contains("expected `<:` (brand), `=` (enum), or `(` (shape)"), "{e}");
+        // Enum variants must be string literals.
+        let e = super::parse(lex("type sev = warn | info.").unwrap()).unwrap_err().to_string();
+        assert!(e.contains("enum brand variants must be string literals"), "{e}");
     }
 
     #[test]

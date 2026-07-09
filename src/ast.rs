@@ -128,6 +128,10 @@ pub struct RelDecl {
     /// `undocumented_builtins` (and its test) fail while a built-in decl leaves
     /// this empty. Avoid `|` so it renders inside a markdown table cell.
     pub doc: &'static str,
+    /// `rel <name>: <shape>.` records the referenced shape name here (with `cols`
+    /// left empty). Resolved to the shape's columns by `typecheck::expand_shapes`
+    /// at load; `None` (and expanded) before the engine sees the decl.
+    pub shape_ref: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -459,10 +463,22 @@ pub struct Query { pub head: Atom }
 #[derive(Clone, Debug)]
 pub struct AnchorDecl { pub name: String, pub body: String, pub span: (u32, u32) }
 
-/// `type <ident> <: <parent>.` A brand: a named subtype of a base type or a prior
-/// brand. Stored in the relation schema metadata; runtime storage stays text.
+/// A brand: a named subtype used only at typecheck time (runtime storage stays
+/// text). Two surface forms:
+///   `type <ident> <: <parent>.`         — nominal brand over a base type/brand.
+///   `type <ident> = "a" | "b" | ... .`  — an ENUM brand: a closed set of text
+///     literals. `parent` is `"text"` (the base storage type) and `variants` is
+///     `Some([...])`. A literal filling an enum-branded column must be in the set
+///     (`enum-variant-unknown` otherwise). `variants` is `None` for the `<:` form.
 #[derive(Clone, Debug)]
-pub struct BrandDecl { pub name: String, pub parent: String }
+pub struct BrandDecl { pub name: String, pub parent: String, pub variants: Option<Vec<String>> }
+
+/// `type <name>(col: ty, ...).` A named row SHAPE: a reusable column list. A
+/// `rel <name>: <shape>.` decl expands to an ordinary `RelDecl` whose columns are
+/// the shape's, at load (frontend + typecheck seam), so downstream code only ever
+/// sees plain `RelDecl`s. A shape column may reference a brand or an enum brand.
+#[derive(Clone, Debug)]
+pub struct ShapeDecl { pub name: String, pub cols: Vec<Col> }
 
 /// Where a `gen` rule's rendered rows land.
 #[derive(Clone, Debug)]
@@ -528,7 +544,7 @@ pub struct GenRule {
 }
 
 #[derive(Clone, Debug)]
-pub enum Item { Rel(RelDecl), Rule(Rule), Query(Query), Anchor(AnchorDecl), Brand(BrandDecl), Gen(GenRule), Shell(ShellFn) }
+pub enum Item { Rel(RelDecl), Rule(Rule), Query(Query), Anchor(AnchorDecl), Brand(BrandDecl), Shape(ShapeDecl), Gen(GenRule), Shell(ShellFn) }
 
 /// The read/mutate/stream axis of a `sh` decl: `sh` = `Read` (cached, deduped,
 /// at-least-once, retryable), `sh!` = `Mutate` (idempotency-keyed, exactly-once,
