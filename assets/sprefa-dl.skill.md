@@ -25,6 +25,11 @@ fail) before a full run.
 - **Arithmetic is head/comparison only.** `line + 1` is legal in a rule head
   (`next_line(scan_path, line + 1) <- ...`) or on a comparison side, never as a
   body binding. To COMPUTE a value, put the expression in the head, not `l = m+1`.
+  (Same for `replace`/`split`/etc. — compute in the head, not a body `x = ...`.)
+- **KWARGS exist — name head columns.** Any atom with one `col: term` goes into
+  named mode: `diag(path: p, line: l, msg: m)` fills a fixed-schema sink by name
+  (order-free, unmentioned columns NULL); a bare `edge(from, to)` puns to its own
+  columns. Full rules in "Rule heads: named args, kwargs, bare puns" below.
 - **Regexes are Rust-flavor.** No lookahead/lookbehind (`(?!...)`), no backrefs.
   Anchor with `^`, `$`, `\b`, and character classes instead.
 - **`comment_node` sees ALL comments; the regex `comment` op is whole-line only.**
@@ -106,23 +111,48 @@ dl examples                      # list every embedded example (name + summary)
 dl examples scip dataflow        # semantic search (cosine, offline stub embedder)
 dl examples --show openapi-lsp   # print one to stdout (read/load without disk)
 dl examples --std                # the use-able std libs
-dl <(dl examples --show openapi-lsp) --root .   # run an embedded example directly
+dl <(dl examples --show openapi-lsp)            # run an embedded example directly
 ```
 
 Reusable tools: `use "std/callgraph.dl".` resolves from disk if present, else
 from the embedded copy — a stdlib that works with no source tree. (Real semantic
 search: build with `--features embed-fastembed` to swap the stub for an ONNX model.)
 
-## Three ways to run
+## Root, daemon, no-daemon (read this — it wastes the most time)
 
-| mode | command | when |
+**ROOT is the current directory. There is NO `--root` flag.** Point `dl` at a
+repo by running it FROM that directory (`cd <repo> && dl ...`). A spawned daemon
+learns its root from `DL_DAEMON_ROOT`; you set that only when scripting a daemon.
+
+| mode | command (run from the repo dir) | when |
 |---|---|---|
-| ad-hoc | `dl prog.dl --root .` | one-off query, prints `?` rows |
-| discovery | `dl --check --root <repo>` | runs every `<repo>/.dl/*.dl`; exit 2 on any `diag` row (CI rail) |
-| LSP | `dl prog.dl --root <repo> --lsp` | live editor diagnostics from `diag` rows |
+| ad-hoc | `dl prog.dl` | one-off query, prints `?` rows |
+| discovery | `dl --check` | runs every `<cwd>/.dl/*.dl`; exit 2 on any `diag` row (CI rail) |
+| LSP | `dl prog.dl --lsp` | live editor diagnostics from `diag` rows |
+| isolated | `dl prog.dl --no-daemon` | in-process, do NOT attach/spawn a daemon |
 
-`--root` defaults to the nearest `.git` ancestor. Add `--no-daemon` for an
-isolated ad-hoc run (the daemon otherwise hijacks ad-hoc invocations).
+A one-shot AUTO-ATTACHES to a per-root daemon (warm incremental ticks). This
+usually helps, but for a clean, reproducible one-off run — or when a daemon is
+misbehaving — add `--no-daemon` (or `DL_NO_DAEMON=1`) to force the in-process
+path. A generator/rail that must NOT see stale daemon state (e.g. regenerating
+docs) should always use `--no-daemon`.
+
+**Daemon lifecycle (the reinstall trap):** a long-running daemon holds its OLD
+in-memory image after you `cargo install` a new `dl`. An auto-attaching one-shot
+detects the drift and restarts it, but a purely reactive daemon (nothing
+attaches, it just re-ticks on file changes) does NOT self-heal and will keep
+running stale code. After reinstalling:
+
+```sh
+dl --restart    # stop + respawn the daemon for this root with the CURRENT binary
+dl --stop       # just shut it down
+```
+
+`dl --restart` is the one-liner — no `kill`/`nohup`/pid-file dance.
+
+**Inspect the live daemon:** `dl --rows <REL>` prints a relation's current rows
+from the running daemon (e.g. `dl --rows checkout_done`, `dl --rows call_edge`) —
+the `?`-query shortcut for "what did this actually resolve to", no temp file.
 
 ## Rule heads: named args, kwargs, bare puns (v0.4.0)
 
@@ -237,27 +267,6 @@ inject_skill("testing") <-
 
 ## Self-documenting (read these, don't guess the surface)
 
-The engine generates its own reference from self-describing catalogs
-(`rel_catalog`, `fn_catalog`, `op_catalog`) via `examples/gen-reference.dl`:
-
-- `docs/reference/relations.md` — every built-in relation
-- `docs/reference/functions.md` — every scalar function
-- `docs/reference/syntax.md` — every source/body/sink op (syntax + semantics)
-- `docs/reference/examples.md` — the `examples/` corpus, one line each
-- `README.md` — the full human+agent reference
-
-Regenerate after touching the engine: `dl examples/gen-reference.dl --root .`
-(repo root, not `v5/`, see Install). Docs are spliced/convergent; never
-hand-edit inside `<!-- BEGIN -->`/`<!-- END -->`.
-
-### Op quick-reference
-
-Every source/body/sink op, spliced from `op_catalog` by
-`examples/gen-skill-ref.dl` (do not hand-edit between the markers). That same
-program is a `--check` freshness rail: it fails if this skill names a relation or
-op that no longer resolves in a catalog.
-
-<!-- BEGIN: op-quickref -->
 | op | kind | syntax |
 |---|---|---|
 | `aggregation` | body | `count sum min max` |
@@ -272,6 +281,29 @@ op that no longer resolves in a catalog.
 | `diag` | sink | `diag(path: hit_path, line: hit_line, msg: message[, col: , end_line: , end_col: , severity: , code: , hint: ]) <- ...` |
 | `gen` | sink | `gen([:mode,] path, [l0, l1,] "{var} template")` |
 | `glob` | body | `path ~~ "src/*"` |
+| `graph_edge` | sink | `graph_edge(src: src_id, dst: dst_id, kind: kind) <- ...` |
+| `graph_node` | sink | `graph_node(id: node_id, label: label, kind: kind[, file: , line: , parent: ]) <- ...` |
+| `json` | source | `json(path, rev, q:{ $k: $v })` |
+| `jsonp` | source | `jsonp(path, rev, "a.*.b", out)` |
+| `match` | source | `match(path, rev, /re/, line[, id][, col, end_col])` |
+| `negation` | body | `!edge(from, _)` |
+| `node2vec` | body | `head(node_a, node_b, score) <- node2vec(edge)` |
+| `query` | sink | `? rel(from, to). / ? rel(col: value).` |
+| `regex` | body | `name =~ /^[A-Za-z]+$/` |
+| `scan` | source | `scan([repo,][rev,] glob, path[, rev_out])` |
+| `scc` | body | `head(rep, member) <- scc(edge)` |
+| `sg` | source | `sg(path, rev, :lang, "$X.unwrap()", line[, col, end_line, end_col][, id])` |
+| `strfn` | body | `split(text, sep, idx) / replace(text, from, to)` |
+| `atom` | body | `edge(from, to) / edge(to: dst) / edge("x", 1, kind: edge_kind)` |
+| `closure` | body | `closure(edge)` |
+| `cmd` | source | `cmd(path, rev, "tool {file}", line, out)` |
+| `comment` | source | `comment(path, rev, /open/[, /close/], l0, l1, label)` |
+| `comparison` | body | `= != < <= > >=` |
+| `diag` | sink | `diag(path: hit_path, line: hit_line, msg: message[, col: , end_line: , end_col: , severity: , code: , hint: ]) <- ...` |
+| `gen` | sink | `gen([:mode,] path, [l0, l1,] "{var} template")` |
+| `glob` | body | `path ~~ "src/*"` |
+| `graph_edge` | sink | `graph_edge(src: src_id, dst: dst_id, kind: kind) <- ...` |
+| `graph_node` | sink | `graph_node(id: node_id, label: label, kind: kind[, file: , line: , parent: ]) <- ...` |
 | `json` | source | `json(path, rev, q:{ $k: $v })` |
 | `jsonp` | source | `jsonp(path, rev, "a.*.b", out)` |
 | `match` | source | `match(path, rev, /re/, line[, id][, col, end_col])` |
@@ -304,8 +336,8 @@ diag(path: changed_path, line: line, col: col, end_line: end_line, end_col: end_
 
 ## Git-free agent relations
 
-`agent_edit` / `agent_touch` read the harness session store keyed on the
-`--root` DIRECTORY — no git, the file need not be tracked or committed. Only
+`agent_edit` / `agent_touch` read the harness session store keyed on the ROOT
+directory (the cwd) — no git, the file need not be tracked or committed. Only
 `changed` / `changed_line` / `created` need a git repo (empty outside one).
 
 ## Authoring gotchas

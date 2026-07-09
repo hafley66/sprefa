@@ -142,6 +142,50 @@ fn bad_load_rolls_back_and_daemon_keeps_loading() {
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
 }
 
+/// `dl --restart` stops the running daemon and respawns a fresh one for the same
+/// root — the post-`cargo install` one-liner. Proves the daemon is replaced (new
+/// pid) and answers again afterward.
+#[test]
+fn restart_replaces_the_running_daemon() {
+    let dir = sandbox("restart");
+    fs::create_dir_all(dir.join(".dl")).unwrap();
+    fs::write(dir.join("p.dl"), "rel e(a: text).\ne(\"x\").\n? e(a).\n").unwrap();
+
+    let _child = run_daemon_explicit(&dir);
+    let sock = dir.join(".dl").join("daemon.sock");
+    let pidfile = dir.join(".dl").join("daemon.pid");
+    let mut ready = false;
+    for _ in 0..100 {
+        if sock.exists() && std::os::unix::net::UnixStream::connect(&sock).is_ok() { ready = true; break; }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(ready, "daemon socket not ready");
+    let pid_before = fs::read_to_string(&pidfile).ok()
+        .and_then(|t| t.lines().next().map(String::from)).unwrap_or_default();
+    assert!(!pid_before.is_empty(), "pid file present before restart");
+
+    // Restart via the CLI (targets DL_DAEMON_ROOT).
+    let out = Command::new(DL)
+        .args(["--restart"]).current_dir(&dir).env("DL_DAEMON_ROOT", &dir)
+        .output().expect("run dl --restart");
+    assert!(out.status.success(), "restart failed: {}", String::from_utf8_lossy(&out.stderr));
+
+    // A daemon is running again, with a DIFFERENT pid.
+    let mut pid_after = String::new();
+    for _ in 0..100 {
+        if sock.exists() && std::os::unix::net::UnixStream::connect(&sock).is_ok() {
+            pid_after = fs::read_to_string(&pidfile).ok()
+                .and_then(|t| t.lines().next().map(String::from)).unwrap_or_default();
+            if !pid_after.is_empty() && pid_after != pid_before { break; }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert_ne!(pid_after, pid_before, "restart spawned a new daemon process");
+
+    // Clean up the respawned (untracked) daemon.
+    let _ = Command::new(DL).args(["--stop"]).current_dir(&dir).env("DL_DAEMON_ROOT", &dir).output();
+}
+
 /// `dl --rows REL` dumps a relation's live rows from the running daemon (the
 /// `query_rel` RPC) — the `?`-query shortcut for confirming what a demand sink
 /// resolved to, without hand-writing a query file.

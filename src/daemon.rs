@@ -1639,6 +1639,26 @@ pub fn ensure_daemon(root: &Path, program: Option<&str>) -> Result<()> {
     wait_ready(root, program)
 }
 
+/// Stop the daemon for `root` (if running) and respawn it detached with the
+/// CURRENT binary, rediscovering `<root>/.dl/*.dl`. The `dl --restart` backend:
+/// the one-liner after `cargo install`, since a long-running daemon keeps its
+/// old in-memory image until it is replaced. Prints what it did.
+pub fn restart(root: &Path) -> Result<()> {
+    let was_running = is_running(Some(root));
+    if was_running { let _ = stop(Some(root)); }
+    spawn_detached(root, None)?;
+    // Do NOT fail on a slow first tick: a large repo's cold extraction can exceed
+    // the connect budget. Poll briefly for a fast confirmation on small repos; a
+    // timeout just means the daemon is still warming up in the background (it was
+    // spawned detached), which is not an error — restart is fire-and-forget.
+    let ready = wait_ready(root, None).is_ok();
+    eprintln!("[daemon] {} at {} (build {}){}",
+        if was_running { "restarted" } else { "started" },
+        root.display(), build_id(),
+        if ready { "" } else { " — starting (first tick still in progress)" });
+    Ok(())
+}
+
 fn spawn_detached(root: &Path, program: Option<&str>) -> Result<()> {
     let exe = std::env::current_exe()
         .context("locate current exe for daemon spawn")?;

@@ -5,6 +5,29 @@ use std::path::{Path, PathBuf};
 /// Trailer for `dl --help`: the five pre-clap subcommands (clap never sees
 /// them, so list them by hand) plus where to read more.
 const SUBCOMMANDS_HELP: &str = "\
+QUICK START:
+  dl prog.dl                 run a program (root = cwd; auto-attaches a daemon)
+  dl                         discovery: merge + run every <cwd>/.dl/*.dl
+  dl prog.dl --parse-only    parse + typecheck, NO scan (sub-second fast fail)
+  dl prog.dl --no-daemon     run in-process, do NOT attach/spawn a daemon
+  dl --rows REL              print a relation's live rows from the daemon
+
+ROOT & DAEMON (the two things that bite):
+  ROOT is the cwd. There is NO --root flag: point dl at a repo by running it
+    from that directory (or set DL_DAEMON_ROOT for a spawned daemon).
+  A one-shot AUTO-ATTACHES to a per-root daemon and auto-restarts it when the
+    binary changed. Reactive-only daemons (nothing attaches) do NOT self-heal:
+  dl --restart               after `cargo install`, respawn the daemon fresh
+  dl --stop                  shut the daemon down
+  dl --no-daemon / DL_NO_DAEMON=1   force in-process, bypass the daemon entirely
+
+RULE BASICS:
+  head <- body.              a rule; head is a fact/relation, body joins atoms
+  diag(path: p, line: l)     KWARGS: name head columns by name (order-free);
+                             a bare `diag(p, l)` fills by position. Mix freely.
+  ? rel(a, b).               a query, printed after the tick
+  scan/match/ast/sg/json     source ops (extract facts); everything else derives
+
 SUBCOMMANDS (run `dl <cmd> -h` for detail):
   setup      install the skill + wire agents, hooks, and the pre-commit rail
   examples   browse the embedded programs (list / search / --show / --std)
@@ -18,8 +41,7 @@ LEARN MORE:
 
 AUTHORING RULES:
   dl setup --print   dump the rules survival guide + language matrix (the skill)
-  dl docs authoring  read that same guide via the docs reader
-  dl PROG --parse-only   parse + typecheck a program, no scan (the fast fail)";
+  dl docs authoring  read that same guide via the docs reader";
 
 #[derive(Parser)]
 #[command(name = "dl", about = "datalog over files in repo/rev/time space", after_help = SUBCOMMANDS_HELP)]
@@ -140,6 +162,12 @@ struct Cli {
     /// Send `shutdown` to the daemon on `<root>/.dl/daemon.sock` and exit.
     #[arg(long, help_heading = "Daemon")]
     stop: bool,
+    /// Stop the daemon for this root (if any) and respawn it with the CURRENT
+    /// binary — the one-liner to run after `cargo install` so the reinstalled
+    /// engine actually takes effect (a long-running daemon holds its old image
+    /// in memory until restarted). Rediscovers `<root>/.dl/*.dl`.
+    #[arg(long, help_heading = "Daemon")]
+    restart: bool,
     /// Block until the running daemon reports the program QUIESCENT (every
     /// cascade — effects, demand hops, repo pulls — has run at least once), then
     /// print `settled=<bool> tick=<n>` and exit 0 (settled) or 3 (timed out).
@@ -275,6 +303,17 @@ fn main() -> Result<()> {
         .map(|p| PathBuf::from(p).canonicalize()).transpose()?;
     if cli.stop {
         return sprefa_v5::daemon::stop(daemon_root.as_deref());
+    }
+    // `--restart`: stop + respawn the per-root daemon with the current binary.
+    // The fix for post-`cargo install` drift (the running daemon keeps its old
+    // in-memory image until it is replaced). Targets DL_DAEMON_ROOT if set, else
+    // the root resolved from cwd.
+    if cli.restart {
+        let root = match daemon_root.clone() {
+            Some(r) => r,
+            None => resolve_root(&cli)?,
+        };
+        return sprefa_v5::daemon::restart(&root);
     }
     if cli.await_settle {
         let (settled, tick) = sprefa_v5::daemon::await_quiescent(

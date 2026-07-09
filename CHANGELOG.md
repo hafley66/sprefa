@@ -6,6 +6,25 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+### Added
+- **`dl --restart` — the post-`cargo install` one-liner.** A long-running daemon
+  keeps its OLD in-memory image after you reinstall `dl`; an auto-attaching
+  one-shot detects the drift and replaces it, but a purely reactive daemon
+  (nothing attaches, it just re-ticks on file changes) never self-heals and keeps
+  running stale code (silently reverting generated files from its old catalog).
+  `dl --restart` stops the daemon for this root and respawns it with the current
+  binary — no `kill`/`nohup`/pid-file dance. Fire-and-forget: a slow cold first
+  tick on a big repo reports "starting", not a failure.
+
+### Changed
+- **`dl --help` now leads with QUICK START, ROOT & DAEMON, and RULE BASICS.**
+  Surfaces the two things that waste the most time — ROOT is the cwd (there is NO
+  `--root` flag) and the daemon/`--no-daemon`/`--restart` lifecycle — plus that
+  KWARGS (named head columns, `diag(path: p, line: l)`) exist. The installed
+  `sprefa-dl` skill got the same treatment: a dedicated "Root, daemon, no-daemon"
+  section, the reinstall trap + `--restart`/`--stop`/`--rows`, a kwargs bullet up
+  top, and every fictional `--root` flag purged (it never existed).
+
 ## [0.6.19] - 2026-07-08
 
 ### Fixed
