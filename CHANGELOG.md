@@ -6,6 +6,8 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.21] - 2026-07-09
+
 ### Changed
 - **`sprefa-dl` skill gained a "Common tasks" recipe section.** So an agent stops
   re-deriving the basics each session: a most-important-commands table, how to
