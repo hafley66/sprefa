@@ -446,6 +446,39 @@ pub fn builtin_rel_names() -> std::collections::HashSet<String> {
     all_builtin_decls().into_iter().map(|d| d.name).collect()
 }
 
+/// Ambient enum brands carried by BUILTIN relation columns: brand name -> the
+/// closed literal vocabulary. Injected into `typecheck::Brands` without any user
+/// `type` decl, so a literal pin against e.g. `type_edge.kind` outside the set is
+/// an `enum-variant-unknown` error (the documented #1 agent failure mode: pin
+/// `kind = "fields"`, get silent zero rows). Each set mirrors its extractor's
+/// literal emit sites — adding a kind string there means adding it HERE (the
+/// enum check turns a missed entry into loud false errors, never silent rows).
+/// A user `type` decl reusing one of these names is a load error.
+pub fn builtin_enum_brands() -> &'static [(&'static str, &'static [&'static str])] {
+    &[
+        // typegraph.rs edge emitters (push/bound_edge literal kind args, all 3 langs).
+        ("type_edge_kind", &["field", "variant", "impl", "generic", "param", "returns", "uses"]),
+        // typegraph.rs EntityKind::tag.
+        ("type_entity_kind",
+         &["struct", "enum", "trait", "class", "interface", "alias", "function", "method", "const"]),
+        // typegraph.rs push_node + ts_push literal kind args (union across the
+        // Rust/Kotlin/TS lifts; the two variable-kind call sites resolve to
+        // new/call_res).
+        ("df_node_kind",
+         &["binop", "block", "borrow", "call_res", "closure", "cond", "expr", "if", "let_bind",
+           "lit", "logic", "loop", "match", "member", "new", "param", "ret", "template", "unop",
+           "var_read", "var_write"]),
+        // CheckoutOutcome.action literals (checkout_one / the throttle skip row).
+        ("checkout_action", &["ff", "branch-f", "skip"]),
+    ]
+}
+
+/// The variant set of one ambient builtin enum brand, or `None` for a user brand
+/// (or any unknown name).
+pub fn builtin_enum_variants(brand: &str) -> Option<&'static [&'static str]> {
+    builtin_enum_brands().iter().find(|(name, _)| *name == brand).map(|(_, vs)| *vs)
+}
+
 /// Built-in relation names whose decl carries an empty `doc`. The
 /// doc-completeness invariant: this must be empty. A test asserts it, so adding
 /// a built-in without documenting it on its `RelDecl` fails CI rather than
@@ -639,7 +672,7 @@ const CHECKOUT_OUT_RELS: [&str; 2] = ["checkout_done", "checkout_plan"];
 fn checkout_out_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     let cols = || vec![
-        c("repo", Type::Text), c("branch", Type::Text), c("action", Type::Text),
+        c("repo", Type::Text), c("branch", Type::Text), Col::branded("action", "checkout_action"),
         c("ok", Type::Int), c("detail", Type::Text)];
     vec![
         RelDecl { name: "checkout_done".into(), cols: cols(), group: "demand",
@@ -709,16 +742,16 @@ pub(crate) fn module_rel_decls() -> Vec<RelDecl> {
 pub(crate) fn type_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
-        RelDecl { name: "type_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text), c("repo", Type::Text)], group: "type",
+        RelDecl { name: "type_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), Col::branded("kind", "type_edge_kind"), c("repo", Type::Text)], group: "type",
             doc: "type-graph edges across Rust (syn), Kotlin (tree-sitter), TS (oxc); kind is field/variant/impl/generic — Kotlin interface supertypes are generic, class/object impl, val/var ctor params + body properties field, enum entries variant; trailing repo column so two trees scanned together don't collapse same-named types into one node (closure/scc still walk cols 0/1, unaffected)", ..Default::default() },
-        RelDecl { name: "type_edge_rev".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text), c("rev", Type::Text), c("repo", Type::Text)], group: "type",
+        RelDecl { name: "type_edge_rev".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), Col::branded("kind", "type_edge_kind"), c("rev", Type::Text), c("repo", Type::Text)], group: "type",
             doc: "rev-aware type_edge (WORK-vs-HEAD type diff)", ..Default::default() },
         RelDecl { name: "type_entity".into(), cols: vec![
-            c("repo", Type::Text), c("sym", Type::Text), c("name", Type::Text), c("kind", Type::Text),
+            c("repo", Type::Text), c("sym", Type::Text), c("name", Type::Text), Col::branded("kind", "type_entity_kind"),
             c("parent", Type::Text), c("file", Type::Path), c("line", Type::Int)], group: "type",
             doc: "every declared type; sym is file::kind::name, the cross-graph join key; scip_ref overrides name resolution when a SCIP index is present", ..Default::default() },
         RelDecl { name: "type_entity_rev".into(), cols: vec![
-            c("repo", Type::Text), c("sym", Type::Text), c("name", Type::Text), c("kind", Type::Text),
+            c("repo", Type::Text), c("sym", Type::Text), c("name", Type::Text), Col::branded("kind", "type_entity_kind"),
             c("parent", Type::Text), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Text)], group: "type",
             doc: "rev-aware type_entity (rev is a column, never folded into the sym, so a diff compares the same sym across revs); legacy type_entity is the rev-deduped union", ..Default::default() },
         RelDecl { name: "type_sig".into(), cols: vec![
@@ -797,7 +830,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "df_node".into(), cols: vec![
-            c("id", Type::Text), c("kind", Type::Text), c("var", Type::Text),
+            c("id", Type::Text), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
             c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int)], group: "dataflow",
             doc: "intra-procedural dataflow node (call_res/assign/...); id is file::line::kind", ..Default::default() },
         // rev-aware df_node: id is salt_rev(raw id, rev) so two revs' file:line:col
@@ -806,7 +839,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // raw id; a diff reads df_node_rev where the salt makes base/head ids
         // disjoint and the member-edge diff is name-joined, never raw-id-joined.
         RelDecl { name: "df_node_rev".into(), cols: vec![
-            c("id", Type::Text), c("kind", Type::Text), c("var", Type::Text),
+            c("id", Type::Text), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
             c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Text)], group: "dataflow",
             doc: "rev-aware df_node; id is salt_rev(raw id, rev) so revs stay disjoint; legacy df_node keeps the raw id", ..Default::default() },
         // (df_node id, repo) — the repo (nearest `.git` basename) the node's file

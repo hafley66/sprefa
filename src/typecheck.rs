@@ -48,6 +48,18 @@ impl Brands {
                 }
             }
         }
+        // Ambient builtin enum brands (type_edge_kind, df_node_kind, ...): the
+        // closed vocabularies carried by builtin relation columns, present
+        // without any user `type` decl. A user decl reusing one of these names
+        // is an error — the builtin set is engine-owned.
+        for (name, vs) in crate::engine::builtin_enum_brands() {
+            if parent.contains_key(*name) {
+                return Err(format!(
+                    "brand `{name}` shadows a built-in enum brand (its variants are engine-defined) — pick another name"));
+            }
+            parent.insert(name.to_string(), "text".into());
+            variants.insert(name.to_string(), vs.iter().map(|v| v.to_string()).collect());
+        }
         let brands = Brands { parent, variants };
         // Every parent must terminate at a base type without cycling.
         for name in brands.parent.keys() {
@@ -480,8 +492,15 @@ fn unify(var: &str, a: &ColTy, b: &ColTy, brands: &Brands, dl_path: &str, diags:
             }
         }
         // A branded/path var meeting a plain text column: grandfather with a warn.
-        (Some(x), None) if b.base == Type::Text => coerce(var, x, dl_path, diags),
-        (None, Some(y)) if a.base == Type::Text => coerce(var, y, dl_path, diags),
+        // An ENUM brand is exempt: its values ARE plain text (the brand is a
+        // vocabulary gate on literals, not a path-like refinement), so joining
+        // e.g. df_node.kind into a user text column is silent by design.
+        (Some(x), None) if b.base == Type::Text => {
+            if brands.enum_variants(x).is_none() { coerce(var, x, dl_path, diags); }
+        }
+        (None, Some(y)) if a.base == Type::Text => {
+            if brands.enum_variants(y).is_none() { coerce(var, y, dl_path, diags); }
+        }
         // A path-shaped base type meeting a plain text column also warns.
         (None, None) => {
             if a.base == Type::Text && is_path_base(b.base) {
@@ -943,6 +962,16 @@ pub fn stratify_diags(prog: &Program, dl_path: &str) -> Vec<TypeDiag> {
 /// are simply skipped during checking (the lowerer reports unknown relations).
 fn prog_rels(prog: &Program) -> Rels {
     let mut rels = Rels::new();
+    // Builtin rels carrying an enum-branded column (type_edge, df_node,
+    // checkout_done, ...) join the checked map so a literal pin against e.g.
+    // `type_edge.kind` is vocabulary-checked. Builtins WITHOUT a branded column
+    // stay out — their atoms skip type checking exactly as before (narrow blast
+    // radius: only the closed-vocabulary rels opt in).
+    for d in crate::engine::all_builtin_decls() {
+        if d.cols.iter().any(|col| col.brand.is_some()) {
+            rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone(), ..Default::default() });
+        }
+    }
     for item in &prog.items {
         if let Item::Rel(d) = item {
             rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone(), ..Default::default() });
@@ -1029,6 +1058,22 @@ finding_rel("a.rs", 1, "x")."#;
         let bad = "rel finding_rel: finding.\nfinding_rel().";
         let codes = err_codes(bad);
         assert!(codes.iter().any(|c| c == "unknown-shape"), "{codes:?}");
+    }
+
+    #[test]
+    fn ambient_builtin_brands_present_and_guarded() {
+        // The builtin enum brands are present with NO user `type` decl.
+        let brands = Brands::from_program(&program("rel unrelated(name: text).")).unwrap();
+        let kinds = brands.enum_variants("type_edge_kind").expect("ambient brand");
+        assert!(kinds.iter().any(|k| k == "field") && kinds.iter().any(|k| k == "uses"));
+        assert!(brands.enum_variants("checkout_action").is_some());
+        // A user decl reusing the name is an error naming the conflict.
+        let err = Brands::from_program(&program(r#"type type_edge_kind = "mine"."#)).unwrap_err();
+        assert!(err.contains("shadows a built-in enum brand"), "{err}");
+        // A literal pin against the builtin column routes the enum check.
+        let bad = r#"hit(from_type) <- type_edge(from_type, to_type, "fields", repo).
+rel hit(from_type: text)."#;
+        assert_eq!(err_codes(bad), ["enum-variant-unknown"]);
     }
 
     #[test]

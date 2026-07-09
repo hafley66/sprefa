@@ -116,3 +116,77 @@ fn plain_nominal_brand_still_works() {
     assert_eq!(code, 0, "nominal brand must still pass:\n{err}");
     assert!(out.contains("abc123") && out.contains("init"), "{out}");
 }
+
+// --- Phase 2: enum brands on BUILTIN rels + variant introspection -------------
+//
+// The agent failure mode: pinning `kind = "fields"` against `type_edge` and
+// getting silent zero rows. The builtin kind/action columns now carry ambient
+// enum brands (engine::builtin_enum_brands), so a bad pin is a loud
+// `enum-variant-unknown` at typecheck; `rel_col` exposes the allowed sets.
+
+/// (a) A typo'd literal pin against `type_edge.kind` is rejected at typecheck
+/// with the diag code and a nearest-variant suggestion — no silent zero rows.
+#[test]
+fn builtin_kind_typo_rejected_with_suggestion() {
+    let dir = sandbox("builtin_typo");
+    let prog = concat!(
+        "rel field_edge(from_type: text, to_type: text).\n",
+        "field_edge(from_type, to_type) <- type_edge(from_type, to_type, \"fields\", repo).\n",
+        "? field_edge(from_type, to_type).\n");
+    let (code, out, err) = run(&dir, prog);
+    let all = format!("{out}{err}");
+    assert_ne!(code, 0, "a typo'd builtin kind pin must fail loudly:\n{all}");
+    assert!(all.contains("enum-variant-unknown"), "diag code expected:\n{all}");
+    assert!(all.contains("did you mean \"field\"?"), "nearest-variant suggestion expected:\n{all}");
+    assert!(all.contains("type_edge_kind"), "the brand name orients the fix:\n{all}");
+}
+
+/// (b) The correct literal passes typecheck AND joins real extractor rows end
+/// to end: a Rust struct field produces a `type_edge(.., "field", ..)` row.
+#[test]
+fn builtin_kind_correct_literal_accepted() {
+    let dir = sandbox("builtin_ok");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(dir.join("src/lib.rs"), concat!(
+        "struct Id;\n",
+        "struct User { id: Id }\n")).unwrap();
+    let prog = concat!(
+        "rel seen(path: file).\n",
+        "seen(path) <- scan(\"WORK\", \"src/**/*.rs\", path, rev).\n",
+        "rel field_edge(from_type: text, to_type: text).\n",
+        "field_edge(from_type, to_type) <- type_edge(from_type, to_type, \"field\", repo).\n",
+        "? field_edge(from_type, to_type).\n");
+    let (code, out, err) = run(&dir, prog);
+    assert_eq!(code, 0, "a valid kind pin must pass:\n{err}");
+    assert!(out.contains("User") && out.contains("Id"),
+        "the field edge User -> Id must surface:\n{out}");
+}
+
+/// (c) `rel_col` exposes the variant set: an agent queries the allowed values
+/// for type_edge.kind instead of guessing.
+#[test]
+fn rel_col_exposes_type_edge_kind_variants() {
+    let dir = sandbox("introspect");
+    let prog = "? rel_col(\"type_edge\", pos, col_name, ty, variants).\n";
+    let (code, out, err) = run(&dir, prog);
+    assert_eq!(code, 0, "rel_col query must run:\n{err}");
+    assert!(out.contains("(4 rows)"), "type_edge has 4 columns:\n{out}");
+    for kind in ["\"field\"", "\"variant\"", "\"impl\"", "\"generic\"", "\"param\"", "\"returns\"", "\"uses\""] {
+        assert!(out.contains(kind), "variants JSON must list {kind}:\n{out}");
+    }
+}
+
+/// (d) A user `type` decl reusing a builtin enum brand name is a load error
+/// naming the conflict (the builtin vocabulary is engine-owned).
+#[test]
+fn user_decl_colliding_with_builtin_brand_errors() {
+    let dir = sandbox("brand_collide");
+    let prog = concat!(
+        "type type_edge_kind = \"mine\" | \"yours\".\n",
+        "rel tagged(name: text, kind: type_edge_kind).\n",
+        "tagged(\"a\", \"mine\").\n");
+    let (code, out, err) = run(&dir, prog);
+    let all = format!("{out}{err}");
+    assert_ne!(code, 0, "shadowing a builtin enum brand must fail:\n{all}");
+    assert!(all.contains("shadows a built-in enum brand"), "message names the conflict:\n{all}");
+}

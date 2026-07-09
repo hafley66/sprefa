@@ -95,3 +95,76 @@ expand_shapes runs in frontend `load_program`/`load_program_set` (so
 `resolve_named_args` and `dedup_rels` see real cols) AND idempotently at the top of
 `check_and_normalize` (covers the daemon `run_eval` snippet path that bypasses the
 frontend). Enum checks run inside `check_and_normalize` after expansion.
+
+## Phase 2 — enum brands on BUILTIN rels + variant introspection
+
+The agent failure mode: pinning `kind = "fields"` against `type_edge` and
+getting silent zero rows. Make the Phase-1 enum machinery bite on builtin
+decls, and expose the variant sets as a queryable rel.
+
+### Variant sets (source of truth, verified)
+
+| brand | column(s) | set | source |
+|---|---|---|---|
+| type_edge_kind | type_edge.kind, type_edge_rev.kind | field, variant, impl, generic, param, returns, uses | typegraph.rs push()/bound_edge call sites (grep of all literal kind args) |
+| type_entity_kind | type_entity.kind, type_entity_rev.kind | struct, enum, trait, class, interface, alias, function, method, const | typegraph.rs EntityKind::tag (line 42) |
+| df_node_kind | df_node.kind, df_node_rev.kind | binop, block, borrow, call_res, closure, cond, expr, if, let_bind, lit, logic, loop, match, member, new, param, ret, template, unop, var_read, var_write | typegraph.rs push_node + ts_push literal args (union; the two variable-kind sites resolve to new/call_res) |
+| checkout_action | checkout_done.action, checkout_plan.action | ff, branch-f, skip | engine/mod.rs CheckoutOutcome literals 4180-4295 |
+
+`doc_tag.tag` SKIPPED: parse_jsdoc_tags passes through ANY `@word` (open set).
+`same-package` is a `module_import.kind` value, not type_edge — out of scope.
+
+### Type signatures
+
+    // ast.rs
+    impl Col { fn branded(name: &str, brand: &str) -> Col }  // ty = Text
+
+    // engine/mod.rs
+    pub fn builtin_enum_brands() -> &'static [(&'static str, &'static [&'static str])]
+    pub fn builtin_enum_variants(brand: &str) -> Option<&'static [&'static str]>
+
+    // typecheck.rs
+    Brands::from_program: inject ambient brands AFTER user decls; a user decl
+      colliding with an ambient name -> Err naming the builtin brand.
+    fn prog_rels: seed with builtin decls that carry a branded column
+      (user decls override; builtins without enum cols stay out as before).
+    unify/coerce: an ENUM brand flowing into plain text is SILENT (it IS text;
+      the coerce warn is for path-like refinements) — else every flow program
+      joining df_node.kind into a user rel would warn.
+
+    // rels/catalog.rs
+    CatalogKind rels += "rel_col";
+    rel_col(rel: text, pos: int, col: text, ty: text, variants: text)
+      variants = JSON array for enum-branded cols, "" otherwise.
+
+### Introspection surface pick
+
+New `rel_col` rel on CatalogKind, NOT widened rel_catalog: dl arity is exact,
+so widening rel_catalog means sweeping every in-tree positional reader
+(gen-reference.dl, builtin-rels.dl, magic-rel-audit.dl, tests). rel_col is
+additive, registered on the existing catalog RelKind (decl + reserve + catalog
+row for free), and per-column rows are the natural shape for "what values can
+this column take".
+
+### Instance lifetimes / storage
+
+- Ambient brand table: &'static, no allocation until Brands::from_program
+  clones names into its maps (per check_and_normalize call, dropped after).
+- Branded builtin Cols: constructed per *_rel_decls() call as today; brand is
+  typecheck-only, Type::sql unchanged, no table migration (column names and
+  types identical).
+- rel_col rows: rebuilt by CatalogKind::refresh (static input, batched
+  refresh_rel — no per-row writes).
+
+### Reads/writes sequence
+
+parse (unchanged) -> frontend expand (unchanged) -> check_and_normalize:
+expand_shapes -> validate_brands (user + ambient) -> prog_rels (user + branded
+builtins) -> check_rule_types / query loop -> enum_lit_check fires on literal
+pins against builtin kind columns. Engine tick unchanged.
+
+### Uniqueness
+
+- Ambient brand names are engine-owned; a user `type type_edge_kind ...` is a
+  load error (the shadow rule, same channel as duplicate-brand).
+- rel_col keyed (rel, pos) by construction (one row per decl column).

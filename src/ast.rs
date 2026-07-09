@@ -46,6 +46,13 @@ pub struct Col {
 
 impl Col {
     pub fn plain(name: String, ty: Type) -> Col { Col { name, ty, brand: None } }
+    /// A text column carrying an enum brand: a builtin decl's closed kind
+    /// vocabulary (e.g. `type_edge.kind`). Storage stays text; the brand name
+    /// resolves through the ambient `engine::builtin_enum_brands` table, so a
+    /// literal pin outside the set is an `enum-variant-unknown` typecheck error.
+    pub fn branded(name: &str, brand: &str) -> Col {
+        Col { name: name.to_string(), ty: Type::Text, brand: Some(brand.to_string()) }
+    }
 }
 
 /// A lattice merge function on key conflict: among rows sharing a `key(...)`

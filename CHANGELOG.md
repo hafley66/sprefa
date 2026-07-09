@@ -7,6 +7,24 @@ tags consumed by cargo-dist.
 ## [Unreleased]
 
 ### Added
+- **Builtin kind columns are enum-checked.** `type_edge.kind` /
+  `type_edge_rev.kind`, `type_entity.kind` / `type_entity_rev.kind`,
+  `df_node.kind` / `df_node_rev.kind`, and `checkout_done.action` /
+  `checkout_plan.action` carry ambient enum brands (`type_edge_kind`,
+  `type_entity_kind`, `df_node_kind`, `checkout_action`) whose variant sets
+  mirror the extractor emit sites. A literal pin outside the set — the #1 agent
+  failure mode, e.g. `type_edge(_, _, "fields", _)` — is a loud
+  `enum-variant-unknown` error with a did-you-mean suggestion instead of silent
+  zero rows. No user `type` decl needed; a user `type` reusing one of these
+  names is a load error. Variables and joins are unchanged (an enum-branded var
+  flowing into a plain text column is silent — the brand is a vocabulary gate on
+  literals, not a path-like refinement). `doc_tag.tag` stays unbranded (open
+  set: any `@word` passes through).
+- **`rel_col` introspection rel.** `rel_col(rel, pos, col, ty, variants)` — one
+  row per builtin relation column; `variants` is the JSON array of allowed
+  values for an enum-vocabulary column ("" for open columns). Query
+  `? rel_col("type_edge", pos, col, ty, variants).` instead of guessing a kind
+  literal. Registered on the catalog RelKind beside rel_catalog.
 - **Enum brands (typecheck-time).** `type severity = "error" | "warn" | "info" |
   "hint".` declares a brand whose value set is a closed list of text literals. A
   string literal filling an enum-branded column (rule head, fact, or query pin)
