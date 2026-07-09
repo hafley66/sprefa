@@ -49,11 +49,12 @@ fn repo_sink_pulls_only_allowlisted_orgs_and_registers() {
     assert_eq!(errs, 0, "program should typecheck");
     eng.set_repos(vec![]); // no config repos; every repo arrives via the sink
 
-    // Tick 1: candidate + org derive, then the sink drains. good-org is listed,
-    // so `ok` clones (no-op, root exists) and registers; evil-org is not listed,
-    // so `no` is skipped. The `repo` builtin is emitted from self.repos BEFORE
-    // the drain, so it is still empty this tick (1-tick latency).
+    // Tick 1: candidate + org derive. The `repo` builtin is emitted from
+    // self.repos BEFORE the drain, so it is still empty this tick (1-tick
+    // latency). Sinks drain in a separate phase from tick_report (a `?` query
+    // is a pure read); call drain_external_sinks to fire the pull explicitly.
     eng.tick(&prog, true).unwrap();
+    eng.drain_external_sinks(&prog).unwrap();
     let registered: Vec<String> = eng.snapshot_repos().iter()
         .map(|r| r.slug.clone()).collect();
     assert!(registered.contains(&"ok".to_string()),
@@ -71,10 +72,12 @@ fn repo_sink_pulls_only_allowlisted_orgs_and_registers() {
         "filtered repo must not appear in repo builtin: {:?}", eng.repo_relation());
 }
 
-/// A repo-sink rule whose body carries a scan/match/... op is rejected: the
-/// drain compiles the body as a SELECT over derived relations, so a source-style
-/// body has no lowered SELECT. The error keeps the author from writing a sink
-/// that silently does nothing.
+/// A repo-sink rule whose body carries a scan/match/... op is rejected somewhere
+/// in the pipeline: the head-var binding check (a scan binds head vars only from
+/// its own captures, and `slug`/`root`/`url` are not scan captures) fires at tick
+/// time; the drain-time "derived-style" check is the defense-in-depth if the
+/// binding validator ever loosens. Either error keeps the author from writing a
+/// sink that silently does nothing.
 #[test]
 fn repo_sink_with_source_body_is_rejected() {
     let d = sandbox("reject");
@@ -85,8 +88,17 @@ fn repo_sink_with_source_body_is_rejected() {
     let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, d.clone());
     let (prog, _, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
-    let err = eng.tick(&prog, true).unwrap_err();
-    let msg = format!("{err}");
-    assert!(msg.contains("repo-sink") && msg.contains("derived-style"),
-        "expected a repo-sink source-body rejection, got: {msg}");
+    // Collect the FIRST rejection (tick or drain), then assert it names a
+    // repo-sink source-body problem (either error message is acceptable).
+    let msg = match eng.tick(&prog, true) {
+        Ok(()) => match eng.drain_external_sinks(&prog) {
+            Ok(_) => String::new(),
+            Err(e) => format!("{e}"),
+        },
+        Err(e) => format!("{e}"),
+    };
+    assert!(
+        (msg.contains("repo-sink") && msg.contains("derived-style"))
+            || msg.contains("head var"),
+        "expected a repo-sink source-body rejection (drain-time OR head-var binding), got: {msg}");
 }

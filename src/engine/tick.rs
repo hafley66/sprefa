@@ -74,17 +74,10 @@ impl Engine {
         self.ensure_meta()?;
 
         let source_rules: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_source()).collect();
-        // `repo`-sink rules: head rel `repo`. Drained post-fixpoint (clone +
-        // register), never inserted by reconcile/rebuild (which would wipe the
-        // engine-emitted registered set). Must be derived-style: the drain
-        // compiles the body as a SELECT, so a scan/match/... body is rejected.
-        let repo_sinks: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_repo_sink()).collect();
-        for r in &repo_sinks {
-            if r.is_source() {
-                bail!("repo-sink rule must be derived-style (no scan/match/ast/...); \
-                       its body is compiled as a SELECT over already-derived relations");
-            }
-        }
+        // `repo`-sink + `checkout`-sink rules are NOT drained here: they hit the
+        // network and rewrite checkouts, so they live in `drain_external_sinks`
+        // and are run by the daemon poll loop / explicit `--apply` (a `?` query
+        // is a pure read). Their shape validation also moved there.
         // `@next` carry rules: staged into carry_<rel> at tx+1 after the tick
         // converges, NOT derived into the head rel this tick. `@async` rules emit
         // a `pending_effect` request per body solution; the off-tick daemon runs
@@ -532,17 +525,11 @@ impl Engine {
             }
         }
         self.run_gens(prog, quiet)?;
-        // Drain `repo`-sinks AFTER the fixpoint + gens so their bodies see this
-        // tick's derived rows. A pull clones + registers into self.repos; the
-        // new repo is scannable / appears in the `repo` builtin on the NEXT tick
-        // (mid-tick registration would shift the repo set under derived rules).
-        self.run_repo_pulls(&repo_sinks)?;
-        // Drain `checkout`-sinks after the pull: this tick's derived
-        // `checkout(repo, branch, pr_heads)` rows keep each named repo's checkout
-        // current (clone-if-missing + fetch + fast-forward the default branch).
-        if rules.iter().any(|r| r.is_checkout_sink()) {
-            self.run_checkout_sweeps()?;
-        }
+        // External sinks (`repo` pulls + `checkout` sweeps) used to drain here.
+        // They hit the network + rewrite checkouts, so a `?` / --check / LSP /
+        // MCP read tick must NOT run them. The daemon's poll loop calls
+        // `drain_external_sinks` off-tick on its cadence; one-shot CLI runs opt
+        // in via `--apply` / `DL_APPLY_SINKS=1`.
         if self.dropped > 0 {
             eprintln!("[checked-type] dropped {} rows failing file/dir/path checks", self.dropped);
             self.dropped = 0;

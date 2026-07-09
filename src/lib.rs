@@ -224,6 +224,13 @@ fn run_file_inproc(programs: &[String], db_path: Option<&str>, root: PathBuf, qu
             eng.set_prime_tick(false);
         }
         eng.run(&prog)?;
+        // `?` is a pure READ by default: never trigger the network/mutating
+        // sinks from a query. `--apply` / `DL_APPLY_SINKS=1` opts this one-shot
+        // into draining them (the daemon poll loop and --watch/--settle always
+        // drain on their own cadence).
+        if engine::apply_sinks_enabled() {
+            eng.drain_external_sinks(&prog)?;
+        }
     }
     if n_errors > 0 {
         anyhow::bail!("{n_errors} error(s): unresolved use / path literals / brands / stratification (see diagnostics above)");
@@ -457,6 +464,11 @@ pub fn run_settle(programs: &[String], db_path: Option<&str>, root: PathBuf,
     let arity = engine::async_effect_arity(&prog);
     for iter in 0..budget {
         let report = eng.tick_report(&prog, true)?;
+        // External sinks (`repo` pulls + `checkout` sweeps) drain here too:
+        // settle is the in-process daemon twin, so a `checkout`/`repo` rule
+        // actually fires at least once (no --apply needed). Returns the row
+        // count landed so the re-tick guard below accounts for new facts.
+        let sinks_drained = eng.drain_external_sinks(&prog)?;
         // Drain whatever effect this tick emitted — the daemon does this off-tick
         // in `poll_tick`; here we do it inline so a one-shot converges. Rebuild
         // the exec each pass so a dynamic `effect_cmd(kind, template)` overlay is
@@ -473,7 +485,7 @@ pub fn run_settle(programs: &[String], db_path: Option<&str>, root: PathBuf,
             }
             let exec = engine::ShellEffectExec { templates, n_out: arity.clone(), cwd: eng.root() };
             eng.drain_effects(&prog, &exec)? + eng.drain_streams(&prog, &exec)?
-        };
+        } + sinks_drained;
         // Settled AND nothing drained this pass (a drain lands a response the
         // NEXT tick re-derives, so it is not settled until that tick is quiet).
         if report.is_settled() && drained == 0 {
@@ -513,6 +525,10 @@ pub fn run_watch(programs: &[String], db_path: Option<&str>, root: PathBuf) -> R
     let mut eng = engine::Engine::new(conn, root.clone());
     eng.set_repos(load_repos());
     eng.tick(&prog, false)?;
+    // `--watch` is the foreground daemon twin: drain network/mutating sinks
+    // (repo pulls + checkout sweeps) on each re-tick, the way the daemon poll
+    // loop does. (No --apply needed; --watch is explicit "do work reactively".)
+    let _ = eng.drain_external_sinks(&prog);
     eprintln!("[watch] watching {} (ctrl-c to stop)", root.display());
 
     let (tx, rx) = std::sync::mpsc::channel();
@@ -584,6 +600,7 @@ pub fn run_watch(programs: &[String], db_path: Option<&str>, root: PathBuf) -> R
         if rescan {
             eprintln!("[watch] watch error/overflow; full re-tick");
             eng.tick(&prog, false)?;
+            let _ = eng.drain_external_sinks(&prog);
             continue;
         }
         // A config edit re-registers repos; a ref move under a narrow git path
@@ -599,8 +616,10 @@ pub fn run_watch(programs: &[String], db_path: Option<&str>, root: PathBuf) -> R
             eng.set_repos(load_repos());
             eprintln!("[watch] config changed; repos reloaded");
             eng.tick(&prog, false)?;
+            let _ = eng.drain_external_sinks(&prog);
         } else if touches_git || paths.is_empty() {
             eng.tick(&prog, false)?;
+            let _ = eng.drain_external_sinks(&prog);
         } else {
             eng.tick_paths(&prog, &paths, false)?;
         }

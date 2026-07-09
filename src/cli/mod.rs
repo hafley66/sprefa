@@ -37,12 +37,17 @@ ROOT & DAEMON (the two things that bite):
   dl daemon rows REL         print a relation's live rows from the daemon
   dl --no-daemon / DL_NO_DAEMON=1   force in-process, bypass the daemon entirely
 
-RULE BASICS:
-  head <- body.              a rule; head is a fact/relation, body joins atoms
-  diag(path: p, line: l)     KWARGS: name head columns by name (order-free);
-                             a bare `diag(p, l)` fills by position. Mix freely.
-  ? rel(a, b).               a query, printed after the tick
-  scan/match/ast/sg/json     source ops (extract facts); everything else derives
+ RULE BASICS:
+   head <- body.              a rule; head is a fact/relation, body joins atoms
+   diag(path: p, line: l)     KWARGS: name head columns by name (order-free);
+                              a bare `diag(p, l)` fills by position. Mix freely.
+   ? rel(a, b).               a query, printed after the tick
+   use std/<name>             splice an embedded std lib OR example (real std
+                             wins on clash; examples fill in the std/ namespace
+                             — e.g. std/gh-checkout resolves the embedded example
+                             of that name). Demo query lines strip on splice so
+                             an example loads as a library, not a demo
+   scan/match/ast/sg/json     source ops (extract facts); everything else derives
 
 SUBCOMMANDS (run `dl <cmd> -h` for detail):
   daemon     control the background daemon (status/start/stop/restart/rows/...)
@@ -168,6 +173,13 @@ struct Cli {
     /// `DL_NO_DAEMON=1`. Useful when the daemon socket is wedged.
     #[arg(long, help_heading = "Daemon")]
     no_daemon: bool,
+    /// Run the network/mutating sinks (`repo` pulls, `checkout` sweeps) on this
+    /// one-shot. By default a bare `dl prog.dl` is a pure READ: a `?` query never
+    /// triggers a fetch/reset. The daemon's poll loop and `--watch`/`--settle`
+    /// always drain on their cadence; this flag opts a one-shot in (so
+    /// `dl gh-checkout.dl --apply` actually sweeps). Same as `DL_APPLY_SINKS=1`.
+    #[arg(long, help_heading = "Daemon")]
+    apply: bool,
 }
 
 /// The `dl` entry point. `main` is a one-liner over this.
@@ -226,6 +238,12 @@ fn apply_global_toggles(cli: &Cli) {
     if cli.no_daemon {
         // Propagate to children + the daemon module's enabled() check.
         std::env::set_var("DL_NO_DAEMON", "1");
+    }
+    if cli.apply {
+        // Opt this one-shot into draining the network/mutating sinks. The daemon
+        // poll loop and --watch/--settle ignore this (they always drain on
+        // cadence); run_file_inproc is the only consumer.
+        std::env::set_var("DL_APPLY_SINKS", "1");
     }
 }
 

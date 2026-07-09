@@ -6,6 +6,60 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.23] - 2026-07-09
+
+### Added
+- **Raw strings for JS/HTML/regex gen.** `r"..."`, `` r`...` ``, and Rust-style
+  `r#"..."#` (any number of `#`s) disable dl's `${NAME}` interp and `\` escape
+  — every byte is literal until the matching close. A JS template literal like
+  `` `hello ${name}` `` survives verbatim. Use `r#"..."#` when the body contains
+  BOTH `"` and `` ` `` (plain `r"..."` closes at the first inner `"`).
+- **`$${...}` literal-dollar escape in plain `"..."` strings.** Collapses one
+  literal `${...}` that would otherwise interp. Scoped to `$${` so ast-grep
+  variadic metavars (`$$$NAME`) are untouched. For whole-hog no-interp, use a
+  raw string.
+- **Mustache `{{` / `}}` escape in `gen` templates.** `{{x}}` renders as literal
+  `{x}` (NOT a hole), so a gen template targeting a language with its own
+  `{...}` syntax (JSON, CSS, Go text/template) no longer collides with dl's
+  `{var}` hole form. Bare `{`/`}` not part of a `{ident}` run also pass through.
+- **`gen(:zone, path, name, tmpl)` named-marker splice.** Replace the content
+  STRICTLY between a `BEGIN: name` / `END:` marker pair, keeping the markers.
+  Immune to surrounding-text edits (the trap with the line-number `gen(p, l0,
+  l1, ...)` form). Comment-prefix-tolerant (`//`, `#`, `/*`, `;`, `<!--`).
+  Unknown name bails loudly. Indentation inherited from the BEGIN marker line.
+- **Embedded examples load via `use "std/<name>".`** Real std libs still win on
+  name clash; examples now fill in the same `std/` library namespace, so
+  `use "std/gh-checkout.dl"` resolves the embedded `examples/gh-checkout.dl`
+  from a prebuilt binary with no source tree. The `std/` prefix is required
+  for examples (bare names reject — the namespace is the discipline). Demo `?`
+  queries are stripped on splice so an example loads as a library, not a demo;
+  rules / `rel` / `gen` / `sh` / `def` splice in unchanged. (Std libs have no
+  `?` items, so the strip is a no-op for them.)
+
+### Changed
+- **`checkout` sink is non-destructive.** It no longer stashes dirty work or
+  `reset --hard`s. On the default branch + clean working tree it fast-forwards
+  via `merge --ff-only origin/<branch>` (the only mutation). On the default
+  branch + dirty, it SKIPs (the operator's work is left untouched, no stash
+  created). On the default branch + diverged, it SKIPs (no force-update, no
+  reset). On any other branch it moves only the ref pointer (`git branch -f`)
+  and leaves HEAD + the working tree exactly as they are. Outcome action names
+  are now `ff`/`branch-f`/`skip` (was `reset`/`branch-f`/`skip`).
+- **Effectful sinks no longer fire on read paths.** `tick_report` is now pure:
+  the `repo` pulls + `checkout` sweeps (the network/mutating sinks) moved to a
+  separate `drain_external_sinks` phase. The daemon's poll loop calls it on
+  cadence; `--watch` and `--settle` drain inline (they are the in-process daemon
+  twins). A bare `dl prog.dl` one-shot is a READ by default — a `?` query never
+  triggers a 90s destructive network sweep. Opt a one-shot in with `--apply`
+  (or `DL_APPLY_SINKS=1`). `--check`, LSP, MCP, and `--parse-only` never drain.
+
+### Added
+- **`checkout` dry-run preview.** `DL_CHECKOUT_DRY_RUN=1` makes the sink compute
+  each repo's planned action (ff/branch-f/skip-dirty/skip-diverged) WITHOUT
+  running `merge --ff-only` or `git branch -f` — nothing in any checkout is
+  mutated. The rows land in a new `checkout_plan` rel (same shape as
+  `checkout_done`). Implies `--apply` so it works as a bare one-shot.
+
 ## [0.6.22] - 2026-07-09
 
 ### Added

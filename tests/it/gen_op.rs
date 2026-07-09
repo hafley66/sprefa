@@ -505,3 +505,172 @@ fn delete_with_template_is_a_parse_error() {
     assert_ne!(code, 0, ":delete must reject a trailing template");
     assert_eq!(fs::read_to_string(d.join("data.txt")).unwrap(), "ABCDEF");
 }
+
+/// Mustache escapes `{{` / `}}` keep a `{name}` run in a template literal (the
+/// target language's own brace syntax — JS template literals, JSON, CSS, Go
+/// templates — survive verbatim). `{{x}}` renders as literal `{x}`; `{y}` still
+/// interps from a body binding.
+#[test]
+fn gen_template_mustache_escape_emits_literal_braces() {
+    let d = sandbox("mustache");
+    let (code, out, err) = run(&d, concat!(
+        "rel row(name: text, code: text).\n",
+        "row(\"a\", \"alpha\").\n",
+        "row(\"b\", \"bravo\").\n",
+        // The dl template is `lit {{name}}  interp {code}`. The `{{name}}` is
+        // the mustache escape — `{{` and `}}` collapse to literal `{` and `}`,
+        // emitting the literal text `{name}` (NOT a hole). The single-braced
+        // `{code}` IS a hole — fills from the body binding.
+        // This is a Rust string literal, so `{{` is two literal `{` chars
+        // passed verbatim to dl — NOT a Rust format-string escape.
+        "gen(\"out.txt\", \"lit {{name}}  interp {code}\") <- row(name, code).\n",
+    ));
+    assert_eq!(code, 0, "mustache template rendered: {err}");
+    let body = fs::read_to_string(d.join("out.txt")).unwrap();
+    // Each row carries the LITERAL `{name}` (the `{{...}}` collapsed to `{...}`)
+    // AND the interpolated `code` value. `.contains` arg is a plain &str.
+    assert!(body.contains("lit {name}  interp alpha"), "row a: literal + interp: {body}");
+    assert!(body.contains("lit {name}  interp bravo"), "row b: literal + interp: {body}");
+    // `out` is empty: gen wrote to a file, not stdout.
+    assert!(out.is_empty(), "no stdout noise from a gen rule: {out}");
+}
+
+/// `gen(:zone, path, name, tmpl)` replaces the content strictly between a NAMED
+/// `BEGIN: name` / `END:` marker pair, keeping the markers. Survives a
+/// surrounding-text edit between ticks without re-anchoring line numbers (the
+/// trap with the line-number `Splice` form). Comment-prefix-tolerant: `//`,
+/// `#`, `/*`, `;`, `<!--` all work.
+#[test]
+fn zone_form_replaces_between_named_markers_and_keeps_them() {
+    let d = sandbox("zone");
+    // Two zones with two different comment prefixes; both must be found + rewritten.
+    fs::write(d.join("page.html"), "\
+<!-- BEGIN: nav -->\n\
+<li>old nav A</li>\n\
+<!-- END: -->\n\
+<p>unchanged surrounding text</p>\n\
+<!-- BEGIN: js -->\n\
+// old js\n\
+<!-- END: -->\n").unwrap();
+    let (code, _, err) = run(&d, concat!(
+        "rel nav(label: text).\n",
+        "nav(\"Home\").  nav(\"About\").  nav(\"Docs\").\n",
+        "rel js(line: text).\n",
+        // A JS template literal in the gen output: the `${name}` MUST survive
+        // verbatim (not interpolated by dl). Written as a raw string r\"...\".
+        "js(r\"const greet = (n) => `hello ${n}`;\").\n",
+        "js(\"window.greet = greet;\").\n",
+        "gen(:zone, \"page.html\", \"nav\", \"  <li>{label}</li>\") <- nav(label).\n",
+        "gen(:zone, \"page.html\", \"js\", \"  {line}\") <- js(line).\n",
+    ));
+    assert_eq!(code, 0, "zone gen ran: {err}");
+    let body = fs::read_to_string(d.join("page.html")).unwrap();
+    // Markers stay (both `<!-- BEGIN: nav -->` and `<!-- END: -->`).
+    assert!(body.contains("<!-- BEGIN: nav -->") && body.contains("<!-- END: -->"),
+        "markers preserved: {body}");
+    // Old content gone; new rows present.
+    assert!(!body.contains("old nav A"), "old zone content replaced: {body}");
+    assert!(body.contains("<li>Home</li>") && body.contains("<li>About</li>"),
+        "new nav rows interpolated from body: {body}");
+    // Surrounding text outside any zone is untouched.
+    assert!(body.contains("<p>unchanged surrounding text</p>"),
+        "non-zone text preserved: {body}");
+    // The JS template literal `${n}` survived verbatim (raw string did its job).
+    // The `.contains` arg is a plain &str (not a format string), so `${n}` is literal.
+    assert!(body.contains("const greet = (n) => `hello ${n}`;"),
+        "JS template literal intact in the gen output: {body}");
+}
+
+/// `gen(:zone, ...)` on a name that's not in the file bails loudly. A typo
+/// should never silently drop the rewrite — that's the worst silent failure.
+#[test]
+fn zone_unknown_name_bails_loudly() {
+    let d = sandbox("zone_missing");
+    fs::write(d.join("page.html"), "<html>\n  <body>nothing here</body>\n</html>\n").unwrap();
+    let (code, _out, err) = run(&d, concat!(
+        "gen(:zone, \"page.html\", \"does-not-exist\", \"x\") <- true().\n",
+    ));
+    assert_ne!(code, 0, "missing zone name must bail");
+    assert!(err.contains("does-not-exist") && err.contains("BEGIN:"),
+        "error names the missing zone + the expected marker: {err}");
+    // File untouched on the bail.
+    assert_eq!(fs::read_to_string(d.join("page.html")).unwrap(),
+        "<html>\n  <body>nothing here</body>\n</html>\n");
+}
+
+/// `gen(:zone, ...)` is IDEMPOTENT across ticks: a second run with the same
+/// body produces byte-identical output (no duplicate rows, no growing file).
+/// The byte-converge gate `[gen] wrote` only fires on the first run.
+#[test]
+fn zone_converges_on_second_run() {
+    let d = sandbox("zone_converge");
+    fs::write(d.join("p.html"), "<!-- BEGIN: x -->\nold\n<!-- END: -->\n").unwrap();
+    let prog = "rel r(v: text).\nr(\"new\").\ngen(:zone, \"p.html\", \"x\", \"  {v}\") <- r(v).\n";
+    let (c1, _, e1) = run(&d, prog);
+    assert_eq!(c1, 0, "first run: {e1}");
+    assert!(e1.contains("[gen] wrote p.html"), "first run wrote: {e1}");
+    let after1 = fs::read_to_string(d.join("p.html")).unwrap();
+    // Re-run against the SAME db (warm): same program, same body → same bytes.
+    let (c2, _, e2) = run(&d, prog);
+    assert_eq!(c2, 0, "second run: {e2}");
+    let after2 = fs::read_to_string(d.join("p.html")).unwrap();
+    assert_eq!(after1, after2, "second run byte-identical (converged):\nfirst:  {after1}\nsecond: {after2}");
+    // The second run is a no-op write — `[gen] wrote` must NOT re-fire.
+    assert!(!e2.contains("[gen] wrote"), "second run skipped the write (bytes match): {e2}");
+}
+
+/// Raw strings `r"..."` (and the backtick form) skip `${NAME}` interp and `\`
+/// escapes — every byte is literal. The dollar-brace and backslash survive
+/// verbatim, so a JS template literal `\`hello ${name}\`` written into a dl
+/// string needs no escaping. `r` must be a lone word (not the start of `replace`
+/// or any other identifier) — boundary check.
+#[test]
+fn raw_string_keeps_dollar_brace_and_backslash_verbatim() {
+    let d = sandbox("raw_string");
+    let (code, out, err) = run(&d, concat!(
+        // Three raw strings exercise the cases that would collide with dl
+        // interp: a `${name}` (JS template literal), a backslash + dollar (would
+        // be a `\$` escape in a plain string), and a CSS-like `{{class}}` (no
+        // interp either way, but documents the raw form's no-touch guarantee).
+        // These are Rust STRING LITERALS (not format strings), so `${name}` and
+        // `{{cls}}` are literal text — passed verbatim into the dl source.
+        "rel s(name: text, body: text).\n",
+        "s(\"js\",     r\"`hello ${name}`\").\n",
+        "s(\"escape\", r\"\\$not-interp\").\n",
+        "s(\"braces\", r\".{{cls}} { color: red; }\").\n",
+        "? s(name, body).\n",
+    ));
+    assert_eq!(code, 0, "raw strings parsed + queried: {err}");
+    // Each body is the literal source text — `${name}`, `\$`, `{{` all survive.
+    // The `.contains` args are plain &str literals, so `${name}` / `{{` are
+    // literal text (not Rust format-string holes).
+    assert!(out.contains("`hello ${name}`"),       "JS template literal kept verbatim: {out}");
+    assert!(out.contains("\\$not-interp"),          "backslash + dollar kept verbatim: {out}");
+    assert!(out.contains(".{{cls}} { color: red; }"), "double-brace kept verbatim: {out}");
+}
+
+/// `$${name}` in a plain `"..."` string escapes a literal `${name}` (collapses
+/// to `${name}` in the stored value, blocking dl interp). Scoped to `$${` so
+/// ast-grep variadic metavars like `$$$NAME` are untouched (the third `$` plus
+/// identifier is the variadic prefix, NOT an interp escape).
+#[test]
+fn dollar_dollar_brace_escapes_literal_dollar_brace() {
+    let d = sandbox("dollar_dollar_brace");
+    let (code, out, err) = run(&d, concat!(
+        "rel s(name: text, body: text).\n",
+        // `$${js}` → literal `${js}` (the dl interp is blocked).
+        "s(\"escaped\",   \"$${js}\").\n",
+        // `$$$VAR` → still `$$$VAR` (ast-grep variadic prefix; the third `$`
+        // opens the metavar, the first two survive as literal dollars).
+        "s(\"variadic\",  \"$$$VAR\").\n",
+        "? s(name, body).\n",
+    ));
+    assert_eq!(code, 0, "$$-escape parsed + queried: {err}");
+    // The `.contains` arg is a plain &str (not a format string), so `${js}` is
+    // literal text. The assert MESSAGE is a format string, so its literal
+    // `${js}` text needs `${{js}}` (Rust format-string brace escape).
+    assert!(out.contains("escaped\t${js}"),
+        "$${{js}} -> literal ${{js}}: {out}");
+    assert!(out.contains("variadic\t$$$VAR"),
+        "$$$VAR untouched (ast-grep variadic): {out}");
+}

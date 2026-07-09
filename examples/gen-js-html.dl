@@ -1,0 +1,87 @@
+# gen-js-html.dl — generate JS / HTML / CSS with `gen` without fighting the
+# target language's own `${...}` / `{...}` / `{{...}}` syntax.
+#
+# Four ergonomics primitives combine here. Each is shown once, minimally:
+#
+#   1. RAW STRINGS `r"..."` / `` r`...` `` / `r#"..."#` — every byte literal,
+#      dl's `${NAME}` interp and `\` escape are OFF. A JS template literal
+#      `` `hello ${name}` `` survives verbatim. Use `r#"..."#` (Rust-style
+#      hash delimiters) when the body contains BOTH `"` and `` ` ``; the
+#      hash count is the close sequence, so any inner char is safe.
+#
+#   2. `$${...}` ESCAPE (plain `"..."` strings only) — collapses one literal
+#      `${...}`. Scoped to `$${` so ast-grep variadic metavars (`$$$NAME`)
+#      still work.
+#
+#   3. MUSTACHE `{{` / `}}` ESCAPE (gen templates only) — `{{x}}` renders as
+#      literal `{x}`. A gen template can target a language with its own `{...}`
+#      syntax (JSON, CSS, Go templates) without `{name}` colliding with dl's
+#      `{var}` hole.
+#
+#   4. `gen(:zone, path, name, tmpl)` — replace content STRICTLY between a
+#      NAMED `BEGIN: name` / `END:` marker pair, keeping the markers. Immune
+#      to surrounding-text edits. Comment-prefix-tolerant.
+#
+# Run:  dl examples/gen-js-html.dl --apply    (a bare `dl` is a read; --apply
+#                                              drains the gen sink for a one-shot)
+# `--apply` writes the demo files into the CWD; pick a scratch dir first.
+
+# --- body rows the templates interpolate ------------------------------------
+rel nav(label: text, href: text).
+nav("Home",   "/").
+nav("Docs",   "/docs").
+nav("Source", "https://github.com/hafley66/sprefa").
+
+# A JS template literal stored as a raw hash-string: `${i.href}` and
+# `${i.label}` are JS-runtime interps, NOT dl's. `r#"..."#` is used because the
+# body contains BOTH `"` (the href attribute) AND `` ` `` (the template
+# literal) — plain `r"..."` would close at the first inner `"`, and `` r`...` ``
+# at the first inner backtick. The `#` delimiter sidesteps both.
+rel js_fn(body: text).
+js_fn(r#"const nav = (items) => items.map(i => `<a href="${i.href}">${i.label}</a>`).join('');"#).
+
+# --- 1 + 4: HTML page with a nav :zone and a js :zone, markers stay --------
+# Plain File form writes the whole page once (constant shell with two marker
+# pairs); then two :zone rules fill each region. The fence-string body keeps
+# real newlines (dl's "..." form does not process `\n`).
+gen("page.html", `<!doctype html>
+<html>
+<body>
+<!-- BEGIN: nav -->
+<!-- END: -->
+<p>hand-edited prose survives a re-tick</p>
+<!-- BEGIN: js -->
+<!-- END: -->
+</body>
+</html>
+`) <- true().
+
+# nav zone: `{label}` / `{href}` ARE dl holes (single brace = interp from body).
+gen(:zone, "page.html", "nav", "  <li><a href=\"{href}\">{label}</a></li>") <- nav(label, href).
+
+# js zone: the template is just `  {body}`; body itself was raw at the fact
+# site, so its internal `${...}` already survived.
+gen(:zone, "page.html", "js", "  {body}") <- js_fn(body).
+
+# --- 3: literal `{x}` in the output via mustache `{{x}}` -------------------
+# `{{name}}` and `{{id}}` collapse to literal `{name}` / `{id}` on render —
+# dl does NOT treat them as holes. The output is a JSON shape whose KEY text
+# is literally `{name}` / `{id}` (placeholders a downstream JS runtime fills
+# via its OWN templating). Bare `{name}` would make dl treat `name` as a hole
+# to fill from the body; the `{{...}}` escape blocks that.
+gen("json-shape.json", `{
+  "{{name}}": "value",
+  "{{id}}": 42
+}
+`) <- true().
+
+# --- 2: JSON, where a literal `${id}` is $$-escaped ------------------------
+# `$${id}` collapses to literal `${id}` in the stored string. The `{label}` is
+# a real hole. The output line keeps the JS-style template literal marker
+# `${id}` intact for a downstream JS runtime to interp.
+rel json_row(id: int, label: text).
+json_row(1, "alpha").
+gen(:append, "data.json", `{`) <- true().
+gen(:append, "data.json", "  \"{label}\": \"value $${id}\"") <- json_row(id, label).
+gen(:append, "data.json", `
+}`) <- true().

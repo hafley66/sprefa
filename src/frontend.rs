@@ -297,9 +297,12 @@ fn expand_with(
                         out.extend(expanded);
                     }
                     Err(disk_err) => {
-                        // No file on any disk root: fall back to the std lib baked
-                        // into the binary (`use "std/callgraph.dl".` with no source
-                        // tree). Disk always wins; this is the last resort.
+                        // No file on any disk root: fall back to the std lib
+                        // (or example) baked into the binary. `use "std/foo.dl"`
+                        // resolves real std libs first, then examples under the
+                        // same `std/` namespace (`use "std/gh-checkout.dl"` →
+                        // embedded examples/gh-checkout.dl). Disk always wins;
+                        // this is the last resort.
                         let Some(src) = crate::corpus::std_lib(&imp.path) else {
                             // Unresolvable import: DEGRADE, don't bail. A hard error
                             // here would abort the whole program load — and in the
@@ -322,6 +325,14 @@ fn expand_with(
                         let surface = lex::lex(src)
                             .and_then(parse::parse_surface)
                             .with_context(|| format!("in embedded {}", imp.path))?;
+                        // Library splice: drop `?` queries (the example's DEMO, not
+                        // its library surface — they would print after every parent
+                        // tick). Std libs have no `?` items so this is a no-op for
+                        // them; examples keep their rules/rel/gen/sh/defs. Same
+                        // shape as the strip in mcp.rs/lsp.rs/hook.rs/lib.rs.
+                        let surface: Vec<SurfaceItem> = surface.into_iter()
+                            .filter(|it| !matches!(it, SurfaceItem::Core(Item::Query(_))))
+                            .collect();
                         let key = PathBuf::from(format!("<embedded>/{}", imp.path));
                         let expanded = expand_with(surface, loader, templates, key, diags)?;
                         out.extend(expanded);

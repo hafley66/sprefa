@@ -170,6 +170,18 @@ pub fn tick_audit() -> bool {
         || std::env::var("DL_TICK_AUDIT").is_ok_and(|v| !v.is_empty() && v != "0")
 }
 
+/// Whether the network/mutating sinks (`repo` pulls + `checkout` sweeps) should
+/// drain on a ONE-SHOT read path. The daemon's poll loop and `--watch`/`--settle`
+/// (the in-process daemon twins) always drain on their cadence; this gate is
+/// only consulted by `run_file_inproc` so a bare `dl prog.dl` is a pure read
+/// (no 90s destructive network sweep from a `?` query). Set by `--apply` /
+/// `DL_APPLY_SINKS=1`. `DL_CHECKOUT_DRY_RUN=1` implies it (a preview must
+/// actually run the plan pass), so it works alone.
+pub fn apply_sinks_enabled() -> bool {
+    std::env::var_os("DL_APPLY_SINKS").is_some()
+        || std::env::var_os("DL_CHECKOUT_DRY_RUN").is_some()
+}
+
 /// The module-graph relations (modgraph.rs). Reserved like BUILTIN_RELS, declared
 /// every tick, but populated by `refresh_module_rels` only when the program
 /// references one (resolution parses every file, so it is lazy). `module_edge` is
@@ -522,7 +534,7 @@ pub fn op_docs() -> &'static [(&'static str, &'static str, &'static str, &'stati
         // sinks.
         ("query", "sink", "? rel(from, to). / ? rel(col: value).", "print a TSV block (or JSON-lines with --query-json); a literal in any position filters; args may be named by column (`col: value`), unmentioned columns are don't-cares; no where clause"),
         ("diag", "sink", "diag(path: hit_path, line: hit_line, msg: message[, col: , end_line: , end_col: , severity: , code: , hint: ]) <- ...", "head the built-in diagnostic sink; fixed 9-col schema (path/line/col/end_line/end_col/severity/code/msg/hint), name only the columns you use, the rest default (severity warn, end_line=line); feeds editor diagnostics (--lsp) and check output (--check)"),
-        ("gen", "sink", "gen([:mode,] path, [l0, l1,] \"{var} template\")", "codegen; file form renders body rows through a path+row template, splice form replaces lines between comment marker pairs; convergent (skips write when bytes match); never runs under --check/--lsp"),
+        ("gen", "sink", "gen([:mode,] path, [l0, l1,] \"{var} template\")", "codegen; file form renders body rows through a path+row template; :zone replaces content between a NAMED `BEGIN:/END:` marker pair (markers stay, immune to surrounding edits); splice form replaces between two line numbers; raw `r\"...\"` / `r#\"...\"#` keep dollar-brace verbatim; `{{x}}` in a template emits literal `{x}`; convergent (skips write when bytes match); never runs under --check/--lsp; one-shot needs --apply"),
         ("graph_node", "sink", "graph_node(id: node_id, label: label, kind: kind[, file: , line: , parent: ]) <- ...", "head the built-in drawable-graph vertex sink; fixed 6-col schema (id/label/kind/file/line/parent), name only the columns you use; the flow panel's always-available Graph preset draws graph_node/graph_edge with no bespoke SQL"),
         ("graph_edge", "sink", "graph_edge(src: src_id, dst: dst_id, kind: kind) <- ...", "head the built-in drawable-graph edge sink; connects two graph_node ids, kind is the wire label; read by the Graph preset alongside graph_node"),
     ]
@@ -609,29 +621,38 @@ fn demand_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "checkout".into(), cols: vec![
             c("repo", Type::Text), c("branch", Type::Text), c("pr_heads", Type::Text)],
             group: "demand",
-            doc: "git checkout demand sink (the ghcacher keep-current half): head checkout(repo, branch, pr_heads) and each row clones a missing config repo, fetches origin, then fast-forwards `branch` to origin/<branch> — hard-reset (stashing dirty work) when that IS the current branch, else `git branch -f` the ref without touching the checkout. branch empty = discover origin/HEAD; pr_heads \"1\"/\"true\" also mirrors +refs/pull/*/head. DL_NO_FETCH skips the network (re-points to already-fetched refs only). Repos sweep in parallel; failures skip loudly",
+            doc: "git checkout demand sink (the ghcacher keep-current half): head checkout(repo, branch, pr_heads) and each row clones a missing config repo, fetches origin, then NON-DESTRUCTIVELY keeps `branch` current — `merge --ff-only origin/<branch>` when that IS the current branch + the working tree is clean (skip on dirty or diverged; never stash, never reset), else `git branch -f` the ref without touching HEAD or the working tree. branch empty = discover origin/HEAD; pr_heads \"1\"/\"true\" also mirrors +refs/pull/*/head. DL_NO_FETCH skips the network (re-points to already-fetched refs only). DL_CHECKOUT_DRY_RUN=1 previews the plan without mutating. The sink drains on the daemon poll loop / --watch / --settle / one-shot --apply (not on a bare `?` read). Repos sweep in parallel on a narrow pool; failures skip loudly",
             ..Default::default() },
     ]
 }
 
-/// `checkout_done` — the OUTCOME rel the `checkout` sweep writes (read-only, like
-/// `rev_behind` is the output of `rev_cmp_want`). One row per swept repo; a
+/// `checkout_done` — the OUTCOME rel the `checkout` sweep writes (read-only,
+/// like `rev_behind` is the output of `rev_cmp_want`). One row per swept repo; a
 /// program reads it to confirm the sweep fired and diag failures. Reserved:
 /// engine-written, never a rule head.
-const CHECKOUT_OUT_RELS: [&str; 1] = ["checkout_done"];
+///
+/// `checkout_plan` — the dry-run twin (same schema): `DL_CHECKOUT_DRY_RUN=1`
+/// emits the planned action per repo (ff/branch-f/skip) WITHOUT running
+/// `merge --ff-only` or `git branch -f`, so a program/CLI can preview a sweep.
+const CHECKOUT_OUT_RELS: [&str; 2] = ["checkout_done", "checkout_plan"];
 
 fn checkout_out_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
-    vec![RelDecl { name: "checkout_done".into(), cols: vec![
+    let cols = || vec![
         c("repo", Type::Text), c("branch", Type::Text), c("action", Type::Text),
-        c("ok", Type::Int), c("detail", Type::Text)], group: "demand",
-        doc: "checkout-sweep outcome (written by the `checkout` sink, read-only): one row per swept repo — action is reset/branch-f/skip, ok is 1/0, detail is the git result. Confirms the sweep fired from a live daemon (stderr goes to daemon.log) and lets a program diag failures (ok=0); one-tick latency like other demand outputs",
-        ..Default::default() }]
+        c("ok", Type::Int), c("detail", Type::Text)];
+    vec![
+        RelDecl { name: "checkout_done".into(), cols: cols(), group: "demand",
+            doc: "checkout-sweep outcome (written by the `checkout` sink, read-only): one row per swept repo — action is ff/branch-f/skip, ok is 1/0, detail is the git result. Confirms the sweep fired from a live daemon (stderr goes to daemon.log) and lets a program diag failures (ok=0); one-tick latency like other demand outputs", ..Default::default() },
+        RelDecl { name: "checkout_plan".into(), cols: cols(), group: "demand",
+            doc: "checkout-sweep PREVIEW (written when DL_CHECKOUT_DRY_RUN=1, read-only): same shape as checkout_done, but the sink computes the action without running `merge --ff-only` or `git branch -f` — nothing in any checkout is mutated. Use to preview what `checkout` would do before opting in via --apply / DL_APPLY_SINKS=1", ..Default::default() },
+    ]
 }
 
 /// The structured result of one `checkout_one` sweep. `action` ∈
-/// reset|branch-f|skip; `ok` = the git op succeeded; `detail` = the human line.
-/// Fed into both the `[checkout]` log line and the `checkout_done` rel.
+/// ff|branch-f|skip; `ok` = the git op succeeded (skip-dirty carries ok=true —
+/// the SKIP is intentional); `detail` = the human line. Fed into both the
+/// `[checkout]` log line and the `checkout_done` / `checkout_plan` rel.
 struct CheckoutOutcome { action: &'static str, ok: bool, detail: String }
 
 fn effect_rel_decls() -> Vec<RelDecl> {
@@ -3971,6 +3992,13 @@ impl Engine {
     }
 
     /// Drain `checkout` demand-sink rows: keep each named repo's checkout current
+    /// on its default branch NON-DESTRUCTIVELY. The sink never stashes, never
+    /// `reset --hard`s, and never moves HEAD off its current branch. On the
+    /// default branch it fast-forwards via `merge --ff-only` only when the
+    /// working tree is clean (dirty or diverged → skip, surface why). On any
+    /// other branch it moves only the ref pointer (`git branch -f`); the working
+    /// tree is left exactly as it is.
+    ///
     /// Min seconds between fetches of the SAME repo by the checkout sink
     /// (DL_CHECKOUT_MIN_SECS, default 300). 0 disables the gate. Stops a short
     /// clock from re-fetching every repo every tick.
@@ -4004,6 +4032,65 @@ impl Engine {
                 .build()
                 .expect("checkout thread pool")
         })
+    }
+
+    /// Drain the NETWORK/MUTATING sinks (`repo` pulls + `checkout` sweeps) AFTER
+    /// the read-only fixpoint + query + gens ran in `tick_report`. This is the
+    /// half of the tick that hits the network and rewrites checkouts, so it is
+    /// split out from `tick_report` to keep read paths (`?` queries, `--check`,
+    /// LSP, MCP) pure: a query must never trigger a 90s destructive sweep.
+    ///
+    /// The daemon's poll loop calls this off-tick on its cadence; one-shot CLI
+    /// runs opt in via `--apply` / `DL_APPLY_SINKS=1` (so `dl prog.dl` on a
+    /// gh-checkout program is a read by default and surfaces nothing new
+    /// unless the operator opted in). `DL_CHECKOUT_DRY_RUN=1` previews the
+    /// checkout sweep as `checkout_plan` rows without mutating anything.
+    /// Returns the number of sink rows that landed (repos pulled + checkout
+    /// outcomes), so a settle loop knows whether to re-tick to derive from them.
+    pub fn drain_external_sinks(&mut self, prog: &Program) -> Result<usize> {
+        use crate::ast::Item;
+        let rules: Vec<&Rule> = prog.items.iter().filter_map(|i| match i { Item::Rule(r) => Some(r), _ => None }).collect();
+        let repo_sinks: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_repo_sink()).collect();
+        // Validate repo-sink shape here (not in tick_report) so a read-only tick
+        // does not pay it, and a malformed sink only bails when something would
+        // actually try to drain it.
+        for r in &repo_sinks {
+            if r.is_source() {
+                bail!("repo-sink rule must be derived-style (no scan/match/ast/...); \
+                       its body is compiled as a SELECT over already-derived relations");
+            }
+        }
+        // Repo pulls first: a pull clones + registers into self.repos; the new
+        // repo is scannable / appears in the `repo` builtin on the NEXT tick
+        // (mid-tick registration would shift the repo set under derived rules).
+        let repos_before = self.repos.len();
+        self.run_repo_pulls(&repo_sinks)?;
+        let repos_pulled = self.repos.len().saturating_sub(repos_before);
+        // Checkout sweeps after the pull: this tick's derived
+        // `checkout(repo, branch, pr_heads)` rows keep each named repo's
+        // checkout current (fetch + non-destructive fast-forward).
+        let mut sink_rows = repos_pulled;
+        if rules.iter().any(|r| r.is_checkout_sink()) {
+            let outcomes_before = self.checkout_outcome_count()?;
+            self.run_checkout_sweeps()?;
+            sink_rows += self.checkout_outcome_count()?.saturating_sub(outcomes_before);
+        }
+        Ok(sink_rows)
+    }
+
+    /// Count rows in whichever checkout outcome rel currently exists (done or
+    /// plan). Used by `drain_external_sinks` to surface "did this drain land
+    /// new facts the next tick must derive from" without juggling schema.
+    fn checkout_outcome_count(&self) -> Result<usize> {
+        let conn = self.db.conn();
+        for rel in ["checkout_done", "checkout_plan"] {
+            if self.rels.contains_key(rel) {
+                let n: i64 = conn.query_row(
+                    &format!("SELECT COUNT(*) FROM {}", tbl(rel)), [], |r| r.get(0))?;
+                return Ok(n as usize);
+            }
+        }
+        Ok(0)
     }
 
     /// on disk (the ghcacher `checkout.rs` half). For every derived
@@ -4069,13 +4156,18 @@ impl Engine {
         // 2). `git fetch` is network+disk bound, so a 2-wide sweep is as fast as
         // a full-core one and stops the checkout sink from consuming the whole
         // rayon pool (and every CPU core) when many repos are in view.
+        // DL_CHECKOUT_DRY_RUN=1 previews the sweep: each outcome reports what
+        // WOULD happen (ff/branch-f/skip-dirty/skip-diverged) without running
+        // `merge --ff-only` or `git branch -f`, and the rows land in
+        // `checkout_plan` instead of `checkout_done`.
+        let dry_run = std::env::var_os("DL_CHECKOUT_DRY_RUN").is_some();
         let mut results: Vec<(String, String, CheckoutOutcome)> = if eligible.is_empty() {
             Vec::new()
         } else {
             Self::checkout_pool().install(|| {
                 eligible.par_iter()
                     .map(|(slug, root, branch, pr)| {
-                        let out = Self::checkout_one(root, branch, *pr, offline);
+                        let out = Self::checkout_one(root, branch, *pr, offline, dry_run);
                         (slug.clone(), branch.clone(), out)
                     }).collect()
             })
@@ -4089,11 +4181,13 @@ impl Engine {
             }));
         }
         // Log AND surface an outcome rel: stderr goes to daemon.log under the
-        // daemon (invisible to a query), so `checkout_done` is how a program /
-        // live query confirms the sweep fired and reacts to failures.
+        // daemon (invisible to a query), so the rel is how a program / live
+        // query confirms the sweep fired and reacts to failures. Dry-run emits
+        // `checkout_plan` (what would happen); apply emits `checkout_done`.
+        let sink_rel = if dry_run { "checkout_plan" } else { "checkout_done" };
         let mut done_rows: Vec<Vec<Value>> = Vec::with_capacity(results.len());
         for (slug, branch, out) in &results {
-            eprintln!("[checkout] {slug}: {} {}", out.action, out.detail);
+            eprintln!("[checkout{}] {slug}: {} {}", if dry_run { " (plan)" } else { "" }, out.action, out.detail);
             done_rows.push(vec![
                 Value::Text(slug.clone()),
                 Value::Text(branch.clone()),
@@ -4102,19 +4196,24 @@ impl Engine {
                 Value::Text(out.detail.clone()),
             ]);
         }
-        self.refresh_rel("checkout_done",
+        self.refresh_rel(sink_rel,
             &["repo", "branch", "action", "ok", "detail"], &done_rows)?;
         Ok(())
     }
 
-    /// One repo's keep-current sweep, mirroring ghcacher's `checkout_one`. Static
-    /// (no `&self`) so the caller can run it under rayon. Fetches origin (unless
-    /// `offline`), resolves the default branch (given, else `origin/HEAD`), then:
-    /// on that branch → stash dirty work + `reset --hard origin/<branch>`; on any
-    /// other branch or detached → `git branch -f <branch> origin/<branch>` (move
-    /// the ref, leave the working tree). Returns the structured outcome that
-    /// `checkout_done` and the log line are built from.
-    fn checkout_one(root: &Path, branch: &str, pr_heads: bool, offline: bool) -> CheckoutOutcome {
+    /// One repo's keep-current sweep, NON-DESTRUCTIVE. Static (no `&self`) so the
+    /// caller can run it under rayon. Fetches origin (unless `offline`), resolves
+    /// the default branch (given, else `origin/HEAD`), then:
+    ///   * on that branch + clean working tree → `merge --ff-only origin/<branch>`
+    ///     (the only mutation; fails loud on divergence, leaving everything as-is);
+    ///   * on that branch + dirty working tree → SKIP (the operator's work — we do
+    ///     not stash, overwrite, or reset anything);
+    ///   * on any other branch or detached → `git branch -f <branch> origin/<branch>`
+    ///     (move ONLY the ref pointer; HEAD + working tree are untouched).
+    /// When `dry_run` is true the mutations are skipped and the outcome carries
+    /// what WOULD have happened (driven by `merge-base --is-ancestor`), so a
+    /// program/CLI can preview the sweep without touching any checkout.
+    fn checkout_one(root: &Path, branch: &str, pr_heads: bool, offline: bool, dry_run: bool) -> CheckoutOutcome {
         let skip = |detail: String| CheckoutOutcome { action: "skip", ok: false, detail };
         if !root.exists() { return skip(format!("root {} missing", root.display())); }
         let git = |args: &[&str]| Command::new("git").arg("-C").arg(root).args(args).output();
@@ -4148,20 +4247,45 @@ impl Engine {
             .filter(|o| o.status.success())
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
         if cur.as_deref() == Some(default.as_str()) {
+            // On the default branch. NEVER stash, NEVER reset --hard. The only
+            // mutation is a clean fast-forward; dirty or diverged checkouts are
+            // the operator's work and are left untouched.
             let dirty = git(&["status", "--porcelain"]).map(|o| !o.stdout.is_empty()).unwrap_or(false);
             if dirty {
-                let _ = git(&["stash", "push", "--include-untracked", "-m",
-                              &format!("dl checkout {}", unix_secs())]);
+                return CheckoutOutcome { action: "skip", ok: true,
+                    detail: format!("{default}: working tree dirty; left untouched") };
             }
-            match git(&["reset", "--hard", &remote_ref]) {
-                Ok(o) if o.status.success() => CheckoutOutcome { action: "reset", ok: true, detail: format!(
-                    "{default} -> {remote_ref}{}", if dirty { " (stashed local changes)" } else { "" }) },
-                Ok(o) => CheckoutOutcome { action: "reset", ok: false,
-                    detail: format!("reset --hard {remote_ref} failed: {}", String::from_utf8_lossy(&o.stderr).trim()) },
-                Err(e) => CheckoutOutcome { action: "reset", ok: false,
-                    detail: format!("reset --hard {remote_ref} errored: {e}") },
+            if dry_run {
+                // merge-base --is-ancestor HEAD <remote>: exit 0 = HEAD is an
+                // ancestor of remote (ff would succeed); non-zero = diverged.
+                // No mutation: the rel name (checkout_plan) carries the preview.
+                let ff_ok = git(&["merge-base", "--is-ancestor", "HEAD", &remote_ref])
+                    .map(|o| o.status.success()).unwrap_or(false);
+                return if ff_ok {
+                    CheckoutOutcome { action: "ff", ok: true,
+                        detail: format!("{default} -> {remote_ref}") }
+                } else {
+                    CheckoutOutcome { action: "skip", ok: false,
+                        detail: format!("{default}: diverged from {remote_ref}; left untouched") }
+                };
+            }
+            match git(&["merge", "--ff-only", &remote_ref]) {
+                Ok(o) if o.status.success() => CheckoutOutcome { action: "ff", ok: true,
+                    detail: format!("{default} -> {remote_ref}") },
+                Ok(o) => CheckoutOutcome { action: "skip", ok: false,
+                    detail: format!("{default}: --ff-only {remote_ref} failed (diverged?); left untouched: {}",
+                        String::from_utf8_lossy(&o.stderr).trim()) },
+                Err(e) => CheckoutOutcome { action: "skip", ok: false,
+                    detail: format!("{default}: merge --ff-only {remote_ref} errored; left untouched: {e}") },
             }
         } else {
+            // NOT on the default branch: move ONLY the ref pointer. HEAD + the
+            // working tree stay exactly where they are.
+            if dry_run {
+                return CheckoutOutcome { action: "branch-f", ok: true, detail: format!(
+                    "{default} -> {remote_ref} (checkout left on {})",
+                    cur.as_deref().unwrap_or("detached HEAD")) };
+            }
             match git(&["branch", "-f", &default, &remote_ref]) {
                 Ok(o) if o.status.success() => CheckoutOutcome { action: "branch-f", ok: true, detail: format!(
                     "{default} -> {remote_ref} (checkout left on {})", cur.as_deref().unwrap_or("detached HEAD")) },
@@ -5337,6 +5461,8 @@ impl Engine {
         // Byte cursors (gen(:mode, ...)) accumulate the same way, separate from
         // line splices because their coordinates and apply semantics differ.
         let mut cursors = Cursors::default();
+        // Named-marker zones (gen(:zone, ...)) — `BEGIN:/END:` by name.
+        let mut zones = Zones::default();
         // File targets claimed by a gen rule this tick. A second gen rule
         // rendering the SAME path would silently overwrite the first (the v0
         // last-wins trap: file emits don't concatenate across rules), so the
@@ -5349,11 +5475,12 @@ impl Engine {
         let mut appends = Appends::default();
         for item in &prog.items {
             if let Item::Gen(g) = item {
-                self.run_gen(g, &mut written, &mut splices, &mut cursors, &mut claimed, &mut appends, &write_roots)?;
+                self.run_gen(g, &mut written, &mut splices, &mut cursors, &mut zones, &mut claimed, &mut appends, &write_roots)?;
             }
         }
         self.apply_splices(&splices, &mut written, &write_roots)?;
         self.apply_cursors(&cursors, &mut written, &write_roots)?;
+        self.apply_zones(&zones, &mut written, &write_roots)?;
         self.apply_appends(&appends, &claimed, &mut written, &write_roots)?;
         if !written.is_empty() && !quiet {
             eprintln!("[gen] wrote {}", written.join(", "));
@@ -5361,13 +5488,24 @@ impl Engine {
         Ok(())
     }
 
-    fn run_gen(&mut self, g: &GenRule, written: &mut Vec<String>, splices: &mut Splices, cursors: &mut Cursors, claimed: &mut HashMap<String, ()>, appends: &mut Appends, write_roots: &[PathBuf]) -> Result<()> {
+    fn run_gen(&mut self, g: &GenRule, written: &mut Vec<String>, splices: &mut Splices, cursors: &mut Cursors, zones: &mut Zones, claimed: &mut HashMap<String, ()>, appends: &mut Appends, write_roots: &[PathBuf]) -> Result<()> {
         // Target vars lead the SELECT so grouping reads prefix columns; the
         // ORDER BY over all vars makes render order deterministic.
         let target_vars: Vec<String> = match &g.target {
             GenTarget::File { path_tmpl, .. } => tmpl_holes(path_tmpl),
             GenTarget::Splice { path, l0, l1 } => vec![var_of(path)?, var_of(l0)?, var_of(l1)?],
             GenTarget::Cursor { path, lo, hi, .. } => vec![var_of(path)?, var_of(lo)?, var_of(hi)?],
+            GenTarget::Zone { path_tmpl, name_tmpl } => {
+                // Templates carry their own {var} holes; pull them in
+                // first-appearance order (tmpl_holes dedups), ahead of the row
+                // template's holes (the run_gen loop already merges target vars
+                // first, then row vars, so this is consistent).
+                let mut v: Vec<String> = Vec::new();
+                for h in tmpl_holes(path_tmpl).into_iter().chain(tmpl_holes(name_tmpl)) {
+                    if !v.contains(&h) { v.push(h); }
+                }
+                v
+            }
         };
         let mut vars = target_vars.clone();
         for v in tmpl_holes(&g.row_tmpl) {
@@ -5477,6 +5615,23 @@ impl Engine {
                     let key = (path.clone(), lo, hi, *mode);
                     if !cursors.groups.contains_key(&key) { cursors.keys.push(key.clone()); }
                     cursors.groups.entry(key).or_default().push(render_tmpl(&g.row_tmpl, m));
+                }
+            }
+            GenTarget::Zone { path_tmpl, name_tmpl } => {
+                // Named-marker zone: path + name are {var}-hole templates,
+                // rendered per row. At apply time the engine resolves each
+                // rendered name to a `BEGIN: <name>`/`END:` line pair and
+                // rewrites the content between them, so the rule is immune to
+                // surrounding-text edits without re-anchoring line numbers.
+                for m in &rows {
+                    let path = render_tmpl(path_tmpl, m);
+                    let name = render_tmpl(name_tmpl, m);
+                    if name.is_empty() {
+                        bail!("gen :zone name rendered empty in {path}");
+                    }
+                    let key = (path, name);
+                    if !zones.groups.contains_key(&key) { zones.keys.push(key.clone()); }
+                    zones.groups.entry(key).or_default().push(render_tmpl(&g.row_tmpl, m));
                 }
             }
         }
@@ -5618,6 +5773,111 @@ impl Engine {
         }
         Ok(())
     }
+
+    /// Flush the named-marker `gen(:zone, ...)` regions: per file, locate each
+    /// zone by name (a `BEGIN: <name>` line through the next `END:` line,
+    /// tolerant of comment prefixes), then replace the lines STRICTLY between
+    /// them. The markers themselves stay. One read-modify-write per file;
+    /// multiple zones in one file apply bottom-up so earlier line numbers stay
+    /// valid. An unknown name bails loudly (a typo should never silently drop
+    /// the rewrite). Indentation: each emitted row inherits the BEGIN marker's
+    /// leading whitespace when present, so a zone inside an indented block
+    /// stays indented without per-row whitespace in the template.
+    fn apply_zones(&self, zones: &Zones, written: &mut Vec<String>, write_roots: &[PathBuf]) -> Result<()> {
+        if zones.keys.is_empty() { return Ok(()); }
+        // Group zone keys by file (one read per file).
+        let mut files: Vec<&str> = Vec::new();
+        for (p, _) in &zones.keys { if !files.contains(&p.as_str()) { files.push(p); } }
+        for p in files {
+            let full = resolve_write_full(write_roots, p);
+            let old = std::fs::read_to_string(&full)
+                .map_err(|e| anyhow::anyhow!("gen :zone target {p}: {e}"))?;
+            let mut lines: Vec<String> = old.lines().map(|s| s.to_string()).collect();
+            // Zones of this file, bottom-up by BEGIN line so earlier zones' line
+            // numbers stay valid as later ones splice (mirrors apply_splices).
+            let mut found: Vec<(usize, usize, &str, &Vec<String>)> = Vec::new();
+            for (path, name) in zones.keys.iter().filter(|(pp, _)| pp == p) {
+                let payload = &zones.groups[&(path.clone(), name.clone())];
+                let (begin_line, end_line) = find_zone(&lines, name)
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "gen :zone `{name}` not found in {p}; expected a `BEGIN: {name}` line \
+                         followed by an `END:` line (any comment prefix works: // # /* ; <!--)"))?;
+                found.push((begin_line, end_line, name.as_str(), payload));
+            }
+            found.sort_by_key(|(b, _, _, _)| std::cmp::Reverse(*b));
+            for (begin, end, name, payload) in found {
+                // Indentation inherited from the BEGIN marker line, applied to
+                // every payload row that does not already carry it (avoid
+                // double-indenting a template that already includes leading
+                // whitespace).
+                let indent: String = lines[begin].chars()
+                    .take_while(|c| *c == ' ' || *c == '\t').collect();
+                let rendered: Vec<String> = payload.iter().map(|row| {
+                    if !indent.is_empty() && !row.starts_with(&indent) {
+                        format!("{indent}{row}")
+                    } else {
+                        row.clone()
+                    }
+                }).collect();
+                // Replace lines STRICTLY between begin and end (exclusive both):
+                // indices [begin+1, end). The markers stay.
+                lines.splice((begin + 1)..end, rendered);
+                let _ = name; // surfaced in the error above; nothing else to do
+            }
+            let content = format!("{}\n", lines.join("\n"));
+            if content != old {
+                self.journaled_write(&full, p, content.as_bytes())?;
+                written.push(p.to_string());
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Locate a NAMED zone in a file's line list. Returns `(begin_idx, end_idx)`
+/// 0-based LINE INDICES where `lines[begin_idx]` carries `BEGIN: <name>` and
+/// `lines[end_idx]` carries the matching `END:`. The caller splices the
+/// strictly-inside range `[begin_idx+1, end_idx)`. Comment-prefix-tolerant:
+/// `// BEGIN: name`, `# BEGIN: name`, `/* BEGIN: name */`, `; BEGIN: name`,
+/// `<!-- BEGIN: name -->`, or a bare `BEGIN: name` all match. The first END
+/// after the BEGIN closes the zone (END carries no name). `None` if no pair.
+fn find_zone(lines: &[String], name: &str) -> Option<(usize, usize)> {
+    let mut begin: Option<usize> = None;
+    for (i, line) in lines.iter().enumerate() {
+        if begin.is_none() {
+            if zone_marker_name(line, "BEGIN").as_deref() == Some(name) {
+                begin = Some(i);
+            }
+        } else if zone_marker_name(line, "END").is_some() {
+            return Some((begin.unwrap(), i));
+        }
+    }
+    None
+}
+
+/// Pull `<name>` out of a `BEGIN: <name>` / `END: <name>` marker line, stripped
+/// of any comment prefix (`//`, `#`, `/*`, `*`, `;`, `<!--`, `-->`, `*/`),
+/// leading/trailing whitespace, and a trailing comment closer. `None` when the
+/// line is not a marker of the requested kind or has no name on `END:` form
+/// (END: always matches regardless of name — name is informational there).
+fn zone_marker_name(line: &str, kind: &str) -> Option<String> {
+    let trimmed = line.trim();
+    // Strip a leading comment prefix if present (any of the common forms).
+    let body = trimmed.trim_start_matches("//")
+        .trim_start_matches('#')
+        .trim_start_matches("/*")
+        .trim_start_matches('*')
+        .trim_start_matches(';')
+        .trim_start_matches("<!--")
+        .trim();
+    // Strip a trailing comment closer.
+    let body = body.trim_end_matches("-->")
+        .trim_end_matches("*/")
+        .trim();
+    let keyword = format!("{kind}:");
+    let after = body.strip_prefix(&keyword)?;
+    let name = after.trim();
+    Some(name.to_string())
 }
 
 /// Splice regions collected across every gen rule in a tick: key order is
@@ -5650,30 +5910,95 @@ struct Appends {
     groups: HashMap<String, Vec<String>>,
 }
 
-/// `{var}` holes in a gen template, first-appearance order, deduped. A brace
-/// pair whose inside is not a plain identifier is literal text.
+/// Named-marker zones collected across every `gen(:zone, p, name, ...)` rule in
+/// a tick. The key is (path, name); rows per zone join into one payload at
+/// apply time. Flushed once in `apply_zones` after every gen rule ran, mirroring
+/// `Splices`/`Appends`. The engine resolves `name` to a `BEGIN: name`/`END:`
+/// line pair in the file at apply time, so the rule stays valid across
+/// surrounding-text edits without re-anchoring line numbers.
+#[derive(Default)]
+struct Zones {
+    keys: Vec<(String, String)>,
+    groups: HashMap<(String, String), Vec<String>>,
+}
+
+/// `{var}` holes in a gen template, first-appearance order, deduped. Honors
+/// mustache-style escapes: `{{` and `}}` are literal braces, NOT a hole open/
+/// close, so `{{name}}` in a template emits the literal text `{name}` (lets a
+/// template target language with its own `{x}` syntax — JS template literals,
+/// JSON, CSS classes, Go templates — survive into the output verbatim).
 fn tmpl_holes(t: &str) -> Vec<String> {
+    let b = t.as_bytes();
     let mut out: Vec<String> = Vec::new();
-    let mut rest = t;
-    while let Some(i) = rest.find('{') {
-        rest = &rest[i + 1..];
-        let Some(j) = rest.find('}') else { break };
-        let name = &rest[..j];
-        if !name.is_empty()
-            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-            && !out.iter().any(|v| v == name)
-        {
-            out.push(name.to_string());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'{' {
+            // `{{` → literal `{`, skip past both so the inner text is not parsed
+            // as a hole name.
+            if b.get(i + 1) == Some(&b'{') { i += 2; continue; }
+            // `{name}` → hole ONLY if every byte from i+1 to the closing `}` is
+            // a plain identifier char. Bail on the first non-identifier byte
+            // (treat the `{` as literal); otherwise we'd greedy-scan past an
+            // inner `{{x}}` mustache run and mis-parse it as a hole.
+            let mut j = i + 1;
+            while j < b.len() && b[j] != b'}'
+                && (b[j].is_ascii_alphanumeric() || b[j] == b'_') {
+                j += 1;
+            }
+            if j < b.len() && b[j] == b'}' && j > i + 1 {
+                let name = &t[i + 1..j];
+                if !out.iter().any(|v| v == name) { out.push(name.to_string()); }
+                i = j + 1;
+                continue;
+            }
+            // Not a hole (no closing `}` in identifier position): literal `{`.
+            i += 1;
+        } else {
+            i += 1;
         }
-        rest = &rest[j + 1..];
     }
     out
 }
 
+/// Render a gen template: `{var}` holes filled from `vals`, `{{` → `{`, `}}`
+/// → `}`. Walks left to right so the mustache escapes bind greedily and a hole
+/// never matches inside a literal-brace run.
 fn render_tmpl(t: &str, vals: &HashMap<String, String>) -> String {
-    let mut out = t.to_string();
-    for (k, v) in vals {
-        out = out.replace(&format!("{{{k}}}"), v);
+    let b = t.as_bytes();
+    let mut out = String::with_capacity(t.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'{' {
+            if b.get(i + 1) == Some(&b'{') {
+                out.push('{'); i += 2; continue;
+            }
+            // Hole ONLY if every byte from i+1 to the closing `}` is a plain
+            // identifier char. Same bail-on-non-identifier rule as tmpl_holes,
+            // so a `{` followed by `"`, `{`, whitespace, etc. is literal text.
+            let mut j = i + 1;
+            while j < b.len() && b[j] != b'}'
+                && (b[j].is_ascii_alphanumeric() || b[j] == b'_') {
+                j += 1;
+            }
+            if j < b.len() && b[j] == b'}' && j > i + 1 {
+                let name = &t[i + 1..j];
+                out.push_str(vals.get(name).map(String::as_str).unwrap_or(""));
+                i = j + 1;
+                continue;
+            }
+            out.push('{'); i += 1;
+        } else if b[i] == b'}' {
+            if b.get(i + 1) == Some(&b'}') {
+                out.push('}'); i += 2; continue;
+            }
+            out.push('}'); i += 1;
+        } else {
+            // Byte-by-byte would corrupt multibyte UTF-8; slice the next run of
+            // non-brace bytes (same approach as the lexer's run scanner).
+            let start = i;
+            while i < b.len() && b[i] != b'{' && b[i] != b'}' { i += 1; }
+            out.push_str(&t[start..i]);
+        }
     }
     out
 }

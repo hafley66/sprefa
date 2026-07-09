@@ -10,8 +10,12 @@
 //!
 //! "Loadable from the CLI without being on disk": `dl examples --show NAME`
 //! prints the body, so `dl <(dl examples --show openapi-lsp)` runs an
-//! embedded example directly, and `use "std/callgraph.dl".` resolves from the
-//! binary when the file is absent on disk (see frontend.rs).
+//! embedded example directly. `use "std/foo.dl"` resolves a real std lib first,
+//! then an EMBEDDED EXAMPLE of the same name (`use "std/gh-checkout.dl"` →
+//! examples/gh-checkout.dl) — examples fill in the std/ library namespace. The
+//! `std/` prefix is required for examples; bare names reject. Demo `?` queries
+//! are stripped on splice so an example loads as a library, not a demo (see
+//! frontend.rs).
 
 use anyhow::Result;
 
@@ -20,9 +24,23 @@ include!(concat!(env!("OUT_DIR"), "/embedded_corpus.rs"));
 pub fn examples() -> &'static [(&'static str, &'static str)] { EMBEDDED_EXAMPLES }
 pub fn std_libs() -> &'static [(&'static str, &'static str)] { EMBEDDED_STD }
 
-/// Embedded std lib body for a `use` path like `"std/callgraph.dl"`.
+/// Embedded std lib body for a `use` path like `"std/callgraph.dl"`. Real std
+/// libs win on name clash; otherwise an example of the same name fills in under
+/// the `std/` namespace, so `use "std/gh-checkout.dl"` resolves to the embedded
+/// `examples/gh-checkout.dl` from a prebuilt binary with no source tree. The
+/// `std/` prefix is required for examples (the path is the library namespace —
+/// a bare `use "gh-checkout"` does NOT resolve).
 pub fn std_lib(path: &str) -> Option<&'static str> {
-    EMBEDDED_STD.iter().find(|(n, _)| *n == path).map(|(_, b)| *b)
+    if let Some((_, b)) = EMBEDDED_STD.iter().find(|(n, _)| *n == path) {
+        return Some(b);
+    }
+    // Examples fill in the std/ namespace. Strip the prefix + optional .dl so
+    // `std/foo.dl`, `std/foo` all match `examples/foo.dl`.
+    let stripped = path.strip_prefix("std/")?;
+    let want = stripped.trim_end_matches(".dl");
+    EMBEDDED_EXAMPLES.iter()
+        .find(|(n, _)| n.trim_end_matches(".dl") == want)
+        .map(|(_, b)| *b)
 }
 
 /// Example body by name, with or without the `.dl` suffix.

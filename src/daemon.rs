@@ -373,11 +373,24 @@ impl Daemon {
         // Advance the clock + re-stage requests. tick_full takes its own locks,
         // so hold none here.
         self.tick_full(true)?;
+        // Drain network/mutating sinks (repo pulls + checkout sweeps) on the
+        // daemon's cadence. `tick_full` is now a pure read; this is the only
+        // place the daemon fires those rows + registers newly-pulled repos.
+        // (A bare `?` query path goes through `query` RPC and never calls this.)
+        let sinks_drained = {
+            let prog = lock(&self.prog);
+            let mut eng = lock(&self.eng);
+            crate::activity::set(crate::activity::Phase::Effects, "external sinks");
+            eng.drain_external_sinks(&prog).unwrap_or_else(|e| {
+                eprintln!("[daemon] drain_external_sinks: {e}");
+                0
+            })
+        };
         let arity = {
             let prog = lock(&self.prog);
             crate::engine::async_effect_arity(&prog)
         };
-        if arity.is_empty() { return Ok(0); }
+        if arity.is_empty() { return Ok(sinks_drained); }
         let (templates, cwd) = {
             // Typed `sh` decls supply the base registry; the dynamic
             // `effect_cmd(kind, template)` relation overlays them (a data-driven
@@ -408,6 +421,7 @@ impl Daemon {
             let s = eng.drain_streams(&prog, &exec)?;
             a + s
         };
+        let n = n + sinks_drained;
         self.touch();
         if n > 0 {
             // Responses landed in their rel; re-tick so downstream derived rules

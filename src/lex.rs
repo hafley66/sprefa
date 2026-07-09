@@ -69,6 +69,32 @@ fn lex_scheme_body(b: &[u8], src: &str, i: &mut usize) -> Result<String> {
     Ok(src[start..*i].to_string())
 }
 
+/// Find the body-end index of a raw string whose body starts at `start` in
+/// `b`. The close sequence is `delim` (`"` or `` ` ``) followed by exactly
+/// `hashes` `#` bytes. Returns the index of the `delim` (so the body is
+/// `b[start..ret]`); the caller advances past `delim + hashes`. `None` when no
+/// such close exists (unterminated). With `hashes == 0` this is just "the next
+/// delim"; with N>0 the body may contain `delim` not followed by N `#`s.
+fn find_raw_close(b: &[u8], start: usize, delim: u8, hashes: usize) -> Option<usize> {
+    let mut i = start;
+    while i < b.len() {
+        if b[i] == delim {
+            // For hashes==0, this `delim` closes. Else require `hashes` `#`s
+            // immediately after; otherwise keep scanning (an inner `delim` not
+            // followed by enough `#`s is a literal body byte).
+            if hashes == 0 {
+                return Some(i);
+            }
+            let tail = &b[i + 1..];
+            if tail.len() >= hashes && tail[..hashes].iter().all(|&c| c == b'#') {
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
 pub fn lex(src: &str) -> Result<Vec<Tok>> {
     let b = src.as_bytes();
     let mut i = 0;
@@ -139,6 +165,15 @@ pub fn lex(src: &str) -> Result<Vec<Tok>> {
                         if i >= b.len() { bail!("unterminated ${{ in string"); }
                         parts.push(StrPart::Var(src[start..i].to_string()));
                         i += 1; // skip }
+                    } else if b[i] == b'$' && b.get(i + 1) == Some(&b'$') && b.get(i + 2) == Some(&b'{') {
+                        // `$${...}` escapes a literal `${...}` that would otherwise
+                        // open a `${NAME}` interp. Emits `${` and advances past
+                        // all three, so `$${name}` survives verbatim (a JS template
+                        // literal `\`hello ${jsName}\`` written into a dl `"..."`
+                        // needs this — the JS dollar must not be read as dl interp).
+                        // Scoped to `$${` so ast-grep variadic metavars (`$$$NAME`)
+                        // are untouched; for whole-hog no-interp, use `r"..."` / `` r`...` ``.
+                        cur.push_str("${"); i += 3;
                     } else if b[i] == b'$' {
                         // A bare `$` not opening `${...}`: a literal dollar, as in
                         // ast-grep metavars ($X, $$$A) inside an sg/ast pattern.
@@ -228,6 +263,44 @@ pub fn lex(src: &str) -> Result<Vec<Tok>> {
                 let start = i;
                 while i < b.len() && (b[i] == b'_' || b[i].is_ascii_alphanumeric()) { i += 1; }
                 let word = &src[start..i];
+                // Raw string prefix: `r"..."`, `` r`...` ``, or with hash
+                // delimiters `r#"..."#` / `r##"..."##` / ... like Rust. Disables
+                // `${NAME}` interp AND `\` escapes — every byte inside is literal
+                // until the matching closing sequence. Hash delimiters let the
+                // body contain the delim char (a JS template literal carrying
+                // both `"` and `` ` `` needs `r#"..."#` since `r"..."` would
+                // close at the first inner `"`). `r` must be a lone word.
+                if word == "r" && i < b.len() && (b[i] == b'"' || b[i] == b'`' || b[i] == b'#') {
+                    // Count opening `#`s (0 for `r"` / `` r` ``). Hash form is
+                    // only valid before a `"` (Rust gates `r#`...`#` to double-
+                    // quote bodies; dl mirrors that).
+                    let mut hashes = 0usize;
+                    let saved = i;
+                    while b.get(i) == Some(&b'#') { i += 1; hashes += 1; }
+                    let delim = match b.get(i) {
+                        Some(&b'"') => b'"',
+                        Some(&b'`') if hashes == 0 => b'`',
+                        _ => {
+                            // Not a raw string after all (`r#ident`, `r##stuff`);
+                            // reset and fall through to the scheme/ident paths.
+                            i = saved;
+                            out.push(Tok::Ident(word.to_string()));
+                            continue;
+                        }
+                    };
+                    i += 1;
+                    let body_start = i;
+                    // Closing sequence is `delim` followed by exactly `hashes`
+                    // `#`s. With hashes==0 the close is just the next `delim`.
+                    let close = find_raw_close(b, i, delim, hashes)
+                        .ok_or_else(|| anyhow::anyhow!(
+                            "unterminated raw string (started at byte {body_start}; \
+                             expected closing `{delim}` followed by {hashes} `#`)"))?;
+                    let body = src[body_start..close].to_string();
+                    i = close + 1 + hashes; // past delim + hashes
+                    out.push(Tok::Str(body));
+                    continue;
+                }
                 // A typed path literal: an identifier IMMEDIATELY followed by `:`
                 // (no space) where the identifier is a registered scheme. The
                 // `, :rust` form in ast()/sg() has a space before the colon and no

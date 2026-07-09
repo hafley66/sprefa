@@ -181,6 +181,7 @@ pub fn normalize_program(prog: &mut Program, dl_path: &str) -> Vec<TypeDiag> {
                     GenTarget::Cursor { path, lo, hi, .. } => {
                         for t in [path, lo, hi] { normalize_term(t, dl_path, &mut diags); }
                     }
+                    GenTarget::Zone { .. } => {}
                     GenTarget::File { .. } => {}
                 }
                 for b in &mut g.body { normalize_body_item(b, dl_path, &mut diags); }

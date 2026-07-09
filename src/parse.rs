@@ -878,17 +878,53 @@ impl Parser {
         let (target, row_tmpl) = if matches!(self.peek(), Some(Tok::Colon)) {
             self.next()?; // colon
             let mode_ident = self.ident()?;
+            // :zone is its own dispatch (no SpliceMode — it targets named
+            // markers, not byte ranges); peel off before the SpliceMode match.
+            if mode_ident == "zone" {
+                self.expect(Tok::Comma)?;
+                let mut args: Vec<Term> = vec![self.term()?];
+                while matches!(self.peek(), Some(Tok::Comma)) {
+                    self.next()?;
+                    args.push(self.term()?);
+                }
+                self.expect(Tok::RParen)?;
+                if args.len() != 3 {
+                    bail!("gen(:zone, ...) expects p, name, \"tmpl\" (got {} args after the mode)", args.len());
+                }
+                let tmpl_of = |t: Term| -> Result<String> {
+                    match t {
+                        Term::Str(s) => Ok(s),
+                        other => bail!("gen expects a template string here, got {other:?}"),
+                    }
+                };
+                let mut it = args.into_iter();
+                let (path, name) = (it.next().unwrap(), it.next().unwrap());
+                let row_tmpl = tmpl_of(it.next().unwrap())?;
+                let body = self.collect_gen_body()?;
+                // Path + name are `{var}`-hole templates (literal when no holes),
+                // same shape as a `File` path_tmpl — a rule can fan over many
+                // files / zones via body bindings.
+                let (path_tmpl, name_tmpl) = match (path, name) {
+                    (Term::Str(p), Term::Str(n)) => (p, n),
+                    (other_p, other_n) => bail!(
+                        "gen(:zone, ...) path and name must be string literals (got {:?}, {:?}); \
+                         use a `{{var}}` hole inside the literal to fan over body bindings",
+                        other_p, other_n),
+                };
+                return Ok(GenRule { target: GenTarget::Zone { path_tmpl, name_tmpl }, row_tmpl, body });
+            }
             let (mode, is_delete) = match mode_ident.as_str() {
                 "replace" => (SpliceMode::Replace, false),
                 "append" | "insert_after" => (SpliceMode::Append, false),
                 "prepend" | "insert_before" => (SpliceMode::Prepend, false),
                 "wrap" => (SpliceMode::Wrap, false),
                 "delete" => (SpliceMode::Replace, true),
-                other => bail!("unknown splice mode :{other}; expected :replace|:append|:prepend|:wrap|:insert_after|:insert_before|:delete"),
+                other => bail!("unknown splice mode :{other}; expected :replace|:append|:prepend|:wrap|:insert_after|:insert_before|:delete|:zone"),
             };
             // Collect every term after the mode tag; arity disambiguates the
             // File-append form (`:append, "path", "tmpl"` = 2) from the byte
-            // Cursor form (`:mode, p, lo, hi[, "tmpl"]` = 3 for :delete, 4 else).
+            // Cursor form (`:mode, p, lo, hi[, "tmpl"]` = 3 for :delete, 4 else)
+            // from the named-marker Zone form (`:zone, p, name, "tmpl"` = 3).
             self.expect(Tok::Comma)?;
             let mut args: Vec<Term> = vec![self.term()?];
             while matches!(self.peek(), Some(Tok::Comma)) {
@@ -944,9 +980,18 @@ impl Parser {
                     let (path, l0, l1) = (it.next().unwrap(), it.next().unwrap(), it.next().unwrap());
                     (GenTarget::Splice { path, l0, l1 }, tmpl_of(it.next().unwrap())?)
                 }
-                n => bail!("gen expects 2 args (\"path\", \"tmpl\"), 4 (p, l0, l1, \"tmpl\"), or 5 (:mode, p, lo, hi, \"tmpl\"); got {n}"),
+                n => bail!("gen expects 2 args (\"path\", \"tmpl\"), 4 (p, l0, l1, \"tmpl\"), 5 (:mode, p, lo, hi, \"tmpl\"), or 4 (:zone, p, name, \"tmpl\"); got {n}"),
             }
         };
+        let body = self.collect_gen_body()?;
+        Ok(GenRule { target, row_tmpl, body })
+    }
+
+    /// Shared body collector for every `gen` target form: `<- body [, body]*.`.
+    /// A `gen` body is the same shape as a rule body (positive atoms + negation
+    /// + comparison), so this is `body_item` separated by `,` and terminated by
+    /// `.` — extracted so the early-return forms (`:zone`) share it.
+    fn collect_gen_body(&mut self) -> Result<Vec<BodyItem>> {
         self.expect(Tok::Arrow)?;
         let mut body = Vec::new();
         loop {
@@ -957,7 +1002,7 @@ impl Parser {
                 other => bail!("expected , or . in gen body, got {:?}", other),
             }
         }
-        Ok(GenRule { target, row_tmpl, body })
+        Ok(body)
     }
 
     /// Parse trailing op output args, each a bare `term` (positional) or

@@ -146,3 +146,45 @@ fn use_as_rel_name_still_parses() {
     assert_eq!(code, 0, "`use` as a rel name must parse: {err}");
     assert!(out.contains("lex"), "fact present: {out}");
 }
+
+/// `use "std/<example>.dl"` resolves an EMBEDDED example from the binary when
+/// the file is absent on disk. Real std libs win on name clash; examples fill
+/// in the std/ namespace. The gh-checkout example has
+/// `checkout(slug, "", "0") <- repo(slug, root, url).` plus a demo
+/// `? checkout_done(...)` query — the rule splices in, the demo `?` is stripped
+/// (library vs demo), so only the parent's own `?` query fires.
+#[test]
+fn use_std_resolves_embedded_example_and_strips_demo_query() {
+    let d = sandbox("std_example");
+    // No source tree + no examples/ on disk: the only way `use` resolves is the
+    // embedded copy in the binary. SPREFA_CONFIG=empty so `repo` is just the
+    // self `--root` repo (one row), which the spliced rule sees.
+    let (code, out, err) = run(&d, "\
+        use \"std/gh-checkout.dl\".\n\
+        ? checkout(slug, branch, pr).\n");
+    assert_eq!(code, 0, "embedded example `use` resolved: {err}");
+    // The example's rule spliced in: its `checkout(slug, "", "0") <- repo(...)`
+    // produced a row for the self repo.
+    assert!(out.contains("? checkout"),
+        "the spliced-in rule produced a checkout row: {out}");
+    // The example's demo `? checkout_done(...)` query was STRIPPED (library
+    // splice). Only the parent's `? checkout(...)` query should fire — exactly
+    // one `? ...` section in stdout.
+    let query_count = out.lines().filter(|l| l.starts_with("? ")).count();
+    assert_eq!(query_count, 1,
+        "demo query stripped on splice (1 = parent only): {out}");
+}
+
+/// A bare `use "gh-checkout.dl"` (no `std/` prefix) does NOT resolve to the
+/// embedded example. The `std/` prefix is the library namespace; bare names
+/// would silently shadow user files. Reject with a `use-unresolved` squiggle.
+#[test]
+fn use_bare_name_does_not_resolve_embedded_example() {
+    let d = sandbox("bare_rejected");
+    let (code, _out, err) = run(&d, "\
+        use \"gh-checkout.dl\".\n\
+        ? checkout(slug, branch, pr).\n");
+    assert_ne!(code, 0, "a bare example name must not resolve silently");
+    assert!(err.contains("use-unresolved") && err.contains("gh-checkout.dl"),
+        "bare name rejected with a use-unresolved squiggle naming the path: {err}");
+}

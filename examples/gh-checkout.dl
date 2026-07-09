@@ -3,8 +3,8 @@
 # ghcacher (~/projects/ghcacher) does two things. gh-cache.dl is the first:
 # poll the GitHub API into SQLite. This is the second: keep local git CHECKOUTS
 # current on disk (ghcacher's checkout.rs). For every configured repo it clones
-# what is missing, fetches origin, and fast-forwards the default branch to
-# origin/<branch>. A `dl --lsp` daemon on an interval IS the watch loop.
+# what is missing, fetches origin, and NON-DESTRUCTIVELY keeps the named branch
+# current. A `dl --lsp` daemon on an interval IS the watch loop.
 #
 # `checkout(repo, branch, pr_heads)` is the built-in demand sink that runs the
 # sweep. Per row:
@@ -13,13 +13,23 @@
 #   * branch   = the branch to keep current. Empty = discover origin/HEAD.
 #   * pr_heads = "1"/"true" also mirrors +refs/pull/*/head into refs/remotes/pr/*
 #                (the ghcacher fetch_pr_branches option); "0" skips it.
-# On the branch it fast-forwards, dirty work is stashed and it hard-resets to
-# origin/<branch>. On any OTHER branch (or detached) it moves the ref with
-# `git branch -f` and leaves the working tree alone. Repos sweep in parallel;
-# a failure skips loudly. `DL_NO_FETCH=1` skips the network (offline).
+# On the default branch + clean working tree it fast-forwards via
+# `merge --ff-only origin/<branch>`. On the default branch + dirty, it SKIPs
+# (the operator's work — never stashed, never overwritten). On the default
+# branch + diverged, it SKIPs (no force-update, no reset). On any OTHER branch
+# (or detached) it moves only the ref pointer with `git branch -f` and leaves
+# HEAD + the working tree exactly where they are. Repos sweep in parallel on a
+# narrow pool; a failure skips loudly. `DL_NO_FETCH=1` skips the network.
+#
+# A bare `dl gh-checkout.dl` is a READ: the sink does NOT fire from a `?`
+# query (a query must never trigger a destructive network sweep). To fire it
+# one-shot, opt in with `--apply` (or `DL_APPLY_SINKS=1`). To PREVIEW what it
+# would do without mutating anything, set `DL_CHECKOUT_DRY_RUN=1` (rows land
+# in `checkout_plan`, not `checkout_done`). The daemon's poll loop and
+# `--watch`/`--settle` always drain on their cadence.
 #
 # Run (daemon):  dl --lsp examples/gh-checkout.dl
-# One-shot:      dl examples/gh-checkout.dl
+# One-shot:      dl examples/gh-checkout.dl --apply
 
 # --- read our own config ----------------------------------------------------
 # The repo set is the built-in `repo` relation, populated from the `[[repos]]`
@@ -34,12 +44,14 @@
 # ghcacher deployment this is for. Every row of `repo` is a configured repo.
 #
 # WARNING: when NO config is loaded, `repo` is just the self `--root` repo, so
-# this rule would target YOUR dev checkout (a hard-reset to origin on your
-# current branch, after stashing). Run it against a config of STAGING clones,
-# not bare in a working repo.
+# this rule would target YOUR dev checkout (a `merge --ff-only` against origin on
+# your current branch). Run it against a config of STAGING clones, not bare in a
+# working repo.
 checkout(slug, "", "0") <- repo(slug, root, url).
 
 # Read the sweep OUTCOME back (one row per repo): action is
-# clone/reset/branch-f/skip, ok is 1/0, detail is the git result. Queryable from
-# a live daemon (stderr goes to daemon.log; this rel is how you confirm it fired).
+# ff/branch-f/skip, ok is 1/0, detail is the git result. Queryable from
+# a live daemon (stderr goes to daemon.log; this rel is how you confirm it
+# fired). `DL_CHECKOUT_DRY_RUN=1` writes the same shape to `checkout_plan`
+# instead, previewing each action without running `merge --ff-only` or `branch -f`.
 ? checkout_done(repo, branch, action, ok, detail).

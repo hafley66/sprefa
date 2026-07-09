@@ -485,6 +485,15 @@ pub enum GenTarget {
     /// sites are editable in place. One read-modify-write per file, regions
     /// applied right-to-left so earlier offsets stay valid across the batch.
     Cursor { mode: SpliceMode, path: Term, lo: Term, hi: Term },
+    /// `gen(:zone, p, name, ...)`: replace the content between a NAMED marker
+    /// pair in a WORK file. The engine finds `BEGIN: name` and the next `END:`
+    /// after it (comment-prefix-tolerant: `//`, `#`, `/*`, `;`, `<!--`) and
+    /// rewrites everything strictly between them, keeping the markers. Survives
+    /// surrounding-text edits without re-anchoring line numbers (the trap with
+    /// `Splice`). Rows group by (path, name). `path_tmpl`/`name_tmpl` are
+    /// `{var}`-hole templates (literal when no holes) so a single rule can fan
+    /// over many files / many zones via body bindings.
+    Zone { path_tmpl: String, name_tmpl: String },
 }
 
 /// Mode for `GenTarget::Cursor`, ported from v4's `WriteMode`:

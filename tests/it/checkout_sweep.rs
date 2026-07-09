@@ -1,7 +1,9 @@
 //! The `checkout` demand sink: the ghcacher keep-current half. A rule heads
-//! `checkout(repo, branch, pr_heads)` and the engine fetches origin + fast-
-//! forwards `branch` to origin/<branch> for each named repo — hard-reset when
-//! on that branch, `git branch -f` otherwise.
+//! `checkout(repo, branch, pr_heads)` and the engine fetches origin, then
+//! NON-DESTRUCTIVELY keeps the named branch current:
+//!   * on that branch + clean → fast-forward via `merge --ff-only origin/<branch>`
+//!   * on that branch + dirty → SKIP (never stash, never reset)
+//!   * on any other branch    → `git branch -f` the ref only, working tree alone
 
 use std::fs;
 use std::path::Path;
@@ -27,11 +29,11 @@ fn init_repo(dir: &Path) {
 }
 
 /// A config repo cloned from an upstream, upstream advances, the checkout sink
-/// fast-forwards the clone's `main` to origin/main via hard reset (it is on
-/// main). Reads the repo set from config (`repo(slug, root, url)`), the
-/// "keep every configured repo current" shape.
+/// fast-forwards the clone's `main` to origin/main via `merge --ff-only` (it is
+/// on main, working tree clean). Reads the repo set from config
+/// (`repo(slug, root, url)`), the "keep every configured repo current" shape.
 #[test]
-fn checkout_sink_fast_forwards_current_branch_via_hard_reset() {
+fn checkout_sink_fast_forwards_current_branch_via_ff_only() {
     let d = std::env::temp_dir().join("checkout_ff_test");
     let _ = fs::remove_dir_all(&d);
     fs::create_dir_all(&d).unwrap();
@@ -82,14 +84,15 @@ fn checkout_sink_fast_forwards_current_branch_via_hard_reset() {
         .args(["--db", d.join("db").to_str().unwrap()])
         .current_dir(&selfdir)
         .env("SPREFA_CONFIG", d.join("cfg.toml"))
+        .env("DL_APPLY_SINKS", "1")
         .output().expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "run failed: {stdout}\n{stderr}");
 
     // the sink logged the sweep
-    assert!(stderr.contains("[checkout] work: reset main -> origin/main"),
-        "checkout logged a hard reset: {stderr}");
+    assert!(stderr.contains("[checkout] work: ff main -> origin/main"),
+        "checkout logged a fast-forward: {stderr}");
     // and the clone actually advanced to upstream's HEAD
     assert_eq!(head(&work), upstream_head, "work clone fast-forwarded to upstream HEAD");
 
@@ -98,8 +101,8 @@ fn checkout_sink_fast_forwards_current_branch_via_hard_reset() {
     let (repo, action, ok): (String, String, i64) = conn.query_row(
         "SELECT repo, action, ok FROM rel_checkout_done", [],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).expect("checkout_done row");
-    assert_eq!((repo.as_str(), action.as_str(), ok), ("work", "reset", 1),
-        "checkout_done records the successful reset");
+    assert_eq!((repo.as_str(), action.as_str(), ok), ("work", "ff", 1),
+        "checkout_done records the successful fast-forward");
 }
 
 /// On a NON-default branch, the sink moves the `main` ref (`git branch -f`) to
@@ -154,6 +157,7 @@ fn checkout_sink_moves_ref_off_current_branch() {
         .args(["--db", d.join("db").to_str().unwrap()])
         .current_dir(&selfdir)
         .env("SPREFA_CONFIG", d.join("cfg.toml"))
+        .env("DL_APPLY_SINKS", "1")
         .output().expect("run dl");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "run failed: {}\n{stderr}", String::from_utf8_lossy(&out.stdout));
@@ -216,10 +220,222 @@ fn checkout_sink_offline_does_not_fetch() {
         .args(["--db", d.join("db").to_str().unwrap()])
         .current_dir(&selfdir)
         .env("SPREFA_CONFIG", d.join("cfg.toml"))
+        .env("DL_APPLY_SINKS", "1")
         .env("DL_NO_FETCH", "1")
         .output().expect("run dl");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "run failed: {}\n{stderr}", String::from_utf8_lossy(&out.stdout));
     // offline: no new objects, clone stays at its original HEAD
     assert_eq!(head(&work), work_before, "offline sweep did not advance the clone");
+}
+
+/// On the default branch with a DIRTY working tree, the sink MUST leave it
+/// alone: no stash, no reset, no overwrite. Surfaces a skip outcome naming the
+/// dirty state; HEAD and the dirty file are byte-identical after the sweep.
+#[test]
+fn checkout_sink_dirty_working_tree_left_untouched() {
+    let d = std::env::temp_dir().join("checkout_dirty_test");
+    let _ = fs::remove_dir_all(&d);
+    fs::create_dir_all(&d).unwrap();
+
+    let upstream = d.join("upstream");
+    init_repo(&upstream);
+    fs::write(upstream.join("a.txt"), "one\n").unwrap();
+    git(&upstream, &["add", "-A"]);
+    git(&upstream, &["commit", "-qm", "c1"]);
+
+    let work = d.join("work");
+    let ok = Command::new("git").args(["clone", "-q", upstream.to_str().unwrap(), work.to_str().unwrap()])
+        .output().expect("git clone").status.success();
+    assert!(ok, "clone");
+    let work_before = head(&work);
+
+    // upstream advances on main
+    fs::write(upstream.join("a.txt"), "two\n").unwrap();
+    git(&upstream, &["add", "-A"]);
+    git(&upstream, &["commit", "-qm", "c2"]);
+    let upstream_head = head(&upstream);
+
+    // the clone has UNCOMMITTED local work on main — must not be touched
+    fs::write(work.join("local-dirty.txt"), "scratch\n").unwrap();
+    let dirty_blob_before = fs::read(work.join("local-dirty.txt")).unwrap();
+
+    let selfdir = d.join("selfrepo");
+    init_repo(&selfdir);
+    fs::write(selfdir.join("x.txt"), "x\n").unwrap();
+    git(&selfdir, &["add", "-A"]);
+    git(&selfdir, &["commit", "-qm", "s1"]);
+
+    fs::write(d.join("cfg.toml"), format!("\
+        [[repos]]\n\
+        slug = \"work\"\n\
+        root = \"{root}\"\n\
+        url = \"{url}\"\n",
+        root = work.display(), url = upstream.display())).unwrap();
+    fs::write(d.join("p.dl"), "\
+        checkout(\"work\", \"main\", \"0\") <- repo(\"work\", root, url).\n").unwrap();
+
+    let out = Command::new(DL)
+        .arg(d.join("p.dl"))
+        .args(["--db", d.join("db").to_str().unwrap()])
+        .current_dir(&selfdir)
+        .env("SPREFA_CONFIG", d.join("cfg.toml"))
+        .env("DL_APPLY_SINKS", "1")
+        .output().expect("run dl");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "run failed: {}\n{stderr}", String::from_utf8_lossy(&out.stdout));
+
+    // skip outcome naming the dirty state
+    assert!(stderr.contains("[checkout] work: skip main: working tree dirty; left untouched"),
+        "dirty working tree skipped, not mutated: {stderr}");
+    // HEAD did not move (no merge, no reset)
+    assert_eq!(head(&work), work_before, "dirty clone's HEAD must not move");
+    // the dirty file is byte-identical (no stash created, no overwrite)
+    assert_eq!(fs::read(work.join("local-dirty.txt")).unwrap(), dirty_blob_before,
+        "dirty file content preserved");
+    // upstream advanced but we did not pull it in
+    assert_ne!(head(&work), upstream_head, "dirty clone did not fast-forward");
+    // no stash was created: stash list is empty
+    let stash_out = Command::new("git").current_dir(&work).args(["stash", "list"]).output().unwrap();
+    assert!(String::from_utf8_lossy(&stash_out.stdout).trim().is_empty(),
+        "no stash created: {}", String::from_utf8_lossy(&stash_out.stdout));
+
+    // checkout_done carries the skip row
+    let conn = rusqlite::Connection::open(d.join("db")).unwrap();
+    let (action, ok): (String, i64) = conn.query_row(
+        "SELECT action, ok FROM rel_checkout_done", [], |r| Ok((r.get(0)?, r.get(1)?)))
+        .expect("checkout_done row");
+    assert_eq!((action.as_str(), ok), ("skip", 1),
+        "checkout_done records the dirty-skip with ok=1 (intentional)");
+}
+
+/// On the default branch, clean, but DIVERGED from origin (a local commit not
+/// on the remote). `merge --ff-only` fails and the sink MUST leave HEAD where
+/// it is — no force-update, no reset. The local commit survives.
+#[test]
+fn checkout_sink_diverged_left_untouched() {
+    let d = std::env::temp_dir().join("checkout_diverged_test");
+    let _ = fs::remove_dir_all(&d);
+    fs::create_dir_all(&d).unwrap();
+
+    let upstream = d.join("upstream");
+    init_repo(&upstream);
+    fs::write(upstream.join("a.txt"), "one\n").unwrap();
+    git(&upstream, &["add", "-A"]);
+    git(&upstream, &["commit", "-qm", "c1"]);
+
+    let work = d.join("work");
+    let ok = Command::new("git").args(["clone", "-q", upstream.to_str().unwrap(), work.to_str().unwrap()])
+        .output().expect("git clone").status.success();
+    assert!(ok, "clone");
+
+    // upstream advances on main
+    fs::write(upstream.join("a.txt"), "two\n").unwrap();
+    git(&upstream, &["add", "-A"]);
+    git(&upstream, &["commit", "-qm", "c2"]);
+
+    // the clone ALSO advances on main with a different commit → diverged
+    fs::write(work.join("a.txt"), "local-two\n").unwrap();
+    git(&work, &["add", "-A"]);
+    git(&work, &["commit", "-qm", "local-c2"]);
+    let work_before = head(&work);
+
+    let selfdir = d.join("selfrepo");
+    init_repo(&selfdir);
+    fs::write(selfdir.join("x.txt"), "x\n").unwrap();
+    git(&selfdir, &["add", "-A"]);
+    git(&selfdir, &["commit", "-qm", "s1"]);
+
+    fs::write(d.join("cfg.toml"), format!("\
+        [[repos]]\n\
+        slug = \"work\"\n\
+        root = \"{root}\"\n\
+        url = \"{url}\"\n",
+        root = work.display(), url = upstream.display())).unwrap();
+    fs::write(d.join("p.dl"), "\
+        checkout(\"work\", \"main\", \"0\") <- repo(\"work\", root, url).\n").unwrap();
+
+    let out = Command::new(DL)
+        .arg(d.join("p.dl"))
+        .args(["--db", d.join("db").to_str().unwrap()])
+        .current_dir(&selfdir)
+        .env("SPREFA_CONFIG", d.join("cfg.toml"))
+        .env("DL_APPLY_SINKS", "1")
+        .output().expect("run dl");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "run failed: {}\n{stderr}", String::from_utf8_lossy(&out.stdout));
+
+    // skip outcome naming divergence
+    assert!(stderr.contains("[checkout] work: skip main:")
+        && stderr.contains("diverged"),
+        "diverged clone skipped, not force-updated: {stderr}");
+    // HEAD did not move (no merge, no reset, no force-update)
+    assert_eq!(head(&work), work_before, "diverged clone's HEAD must not move");
+}
+
+/// DL_CHECKOUT_DRY_RUN=1: the sink previews what it WOULD do without running
+/// `merge --ff-only` or `git branch -f`. Rows land in `checkout_plan`, not
+/// `checkout_done`. Here a clean clone that WOULD fast-forward reports `ff`
+/// without advancing HEAD.
+#[test]
+fn checkout_sink_dry_run_emits_plan_without_mutating() {
+    let d = std::env::temp_dir().join("checkout_dryrun_test");
+    let _ = fs::remove_dir_all(&d);
+    fs::create_dir_all(&d).unwrap();
+
+    let upstream = d.join("upstream");
+    init_repo(&upstream);
+    fs::write(upstream.join("a.txt"), "one\n").unwrap();
+    git(&upstream, &["add", "-A"]);
+    git(&upstream, &["commit", "-qm", "c1"]);
+
+    let work = d.join("work");
+    let ok = Command::new("git").args(["clone", "-q", upstream.to_str().unwrap(), work.to_str().unwrap()])
+        .output().expect("git clone").status.success();
+    assert!(ok, "clone");
+    let work_before = head(&work);
+
+    // upstream advances; dry-run would ff but must not actually advance the clone
+    fs::write(upstream.join("a.txt"), "two\n").unwrap();
+    git(&upstream, &["add", "-A"]);
+    git(&upstream, &["commit", "-qm", "c2"]);
+
+    let selfdir = d.join("selfrepo");
+    init_repo(&selfdir);
+    fs::write(selfdir.join("x.txt"), "x\n").unwrap();
+    git(&selfdir, &["add", "-A"]);
+    git(&selfdir, &["commit", "-qm", "s1"]);
+
+    fs::write(d.join("cfg.toml"), format!("\
+        [[repos]]\n\
+        slug = \"work\"\n\
+        root = \"{root}\"\n\
+        url = \"{url}\"\n",
+        root = work.display(), url = upstream.display())).unwrap();
+    fs::write(d.join("p.dl"), "\
+        checkout(\"work\", \"main\", \"0\") <- repo(\"work\", root, url).\n").unwrap();
+
+    let out = Command::new(DL)
+        .arg(d.join("p.dl"))
+        .args(["--db", d.join("db").to_str().unwrap()])
+        .current_dir(&selfdir)
+        .env("SPREFA_CONFIG", d.join("cfg.toml"))
+        .env("DL_CHECKOUT_DRY_RUN", "1")
+        .output().expect("run dl");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "run failed: {}\n{stderr}", String::from_utf8_lossy(&out.stdout));
+
+    // plan outcome names a would-ff
+    assert!(stderr.contains("[checkout (plan)] work: ff main -> origin/main"),
+        "dry-run logs the planned ff: {stderr}");
+    // HEAD did NOT move — no merge ran
+    assert_eq!(head(&work), work_before, "dry-run must not advance the clone");
+    // rows land in checkout_plan (not checkout_done)
+    let conn = rusqlite::Connection::open(d.join("db")).unwrap();
+    let plan_count: i64 = conn.query_row("SELECT COUNT(*) FROM rel_checkout_plan", [], |r| r.get(0))
+        .unwrap_or(0);
+    assert_eq!(plan_count, 1, "checkout_plan has the one preview row");
+    let done_count: i64 = conn.query_row("SELECT COUNT(*) FROM rel_checkout_done", [], |r| r.get(0))
+        .unwrap_or(0);
+    assert_eq!(done_count, 0, "checkout_done empty in dry-run (nothing was done)");
 }
