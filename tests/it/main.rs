@@ -104,6 +104,7 @@ mod path_types;
 mod perf_stress;
 mod pin_skew;
 mod pr_diff;
+mod python;
 mod perf_stress_c;
 mod propose_extract;
 mod query_agg;
