@@ -5,8 +5,9 @@
 # timing. A failed test is re-run ALONE; passing solo = flake (reported),
 # failing solo = real. Everything is observed, nothing is assumed green.
 #
-# Rails run on the just-built branch binary with --no-daemon and an isolated
-# --db so a running daemon can never serve a stale cached program.
+# Rails run on the just-built branch binary with DL_NO_DAEMON=1 and an isolated
+# --db so a running daemon can never serve a stale cached program (root = cwd;
+# the --root/--no-daemon flags were retired by the de-root arc).
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -39,8 +40,8 @@ fi
 
 dl=target/debug/dl
 echo "[verify] rail: magic-rel audit"
-"$dl" .dl/magic-rel-audit.dl --root . --no-daemon --db "$(mktemp -d)/rail.sqlite" --check || exit 2
+DL_NO_DAEMON=1 "$dl" .dl/magic-rel-audit.dl --db "$(mktemp -d)/rail.sqlite" --check || exit 2
 echo "[verify] rail: recompute guard"
-"$dl" examples/recompute-guard.dl --root . --no-daemon --db "$(mktemp -d)/rail.sqlite" --check || exit 2
+DL_NO_DAEMON=1 "$dl" examples/recompute-guard.dl --db "$(mktemp -d)/rail.sqlite" --check || exit 2
 
 echo "[verify] green"

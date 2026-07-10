@@ -4,7 +4,7 @@
 #
 # Encoded gotchas (learned the slow way):
 # - A running daemon built from an OLDER binary re-ticks on these writes and
-#   can silently revert a regen. We warn and run --no-daemon; if a daemon is
+#   can silently revert a regen. We warn and run with DL_NO_DAEMON=1; if a daemon is
 #   up, eyeball `git diff --stat` again a few seconds after this exits.
 # - A warm db from an older schema misses rows (first gen pass looks
 #   incomplete). Every generator gets a FRESH --db.
@@ -36,9 +36,9 @@ gens=(
 for g in "${gens[@]}"; do
   db="$(mktemp -d)/regen.sqlite"
   echo "[regen-docs] $g"
-  "$dl" "$g" --root . --no-daemon --db "$db"
+  DL_NO_DAEMON=1 "$dl" "$g" --db "$db"
   pass1=$(git diff | shasum | cut -d' ' -f1)
-  "$dl" "$g" --root . --no-daemon --db "$db"
+  DL_NO_DAEMON=1 "$dl" "$g" --db "$db"
   pass2=$(git diff | shasum | cut -d' ' -f1)
   if [ "$pass1" != "$pass2" ]; then
     echo "[regen-docs] $g did NOT converge on second pass — generator bug, fix it (never the output)" >&2
@@ -47,7 +47,7 @@ for g in "${gens[@]}"; do
 done
 
 echo "[regen-docs] checked-claims rail (skill cites must resolve)"
-"$dl" examples/gen-skill-ref.dl --root . --no-daemon --db "$(mktemp -d)/rail.sqlite" --check
+DL_NO_DAEMON=1 "$dl" examples/gen-skill-ref.dl --db "$(mktemp -d)/rail.sqlite" --check
 
 echo "[regen-docs] drift:"
 git diff --stat
