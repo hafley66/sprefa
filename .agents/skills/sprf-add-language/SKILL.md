@@ -51,16 +51,16 @@ drift rail: a marker added or removed without a regen fails; line-number drift
 alone never fails. Never hand-edit inside the markers.
 
 <!-- BEGIN: lang-junctions -->
-- `src/anchor.rs:60` anchor-source-exts: the extension list that classifies a bare `dl what` anchor as a path (and the module's probe program's scan globs further down); a new language's extension belongs here for path anchors to classify
+- `src/anchor.rs:62` anchor-source-exts: the extension list that classifies a bare `dl what` anchor as a path (and the module's probe program's scan globs further down); a new language's extension belongs here for path anchors to classify
 - `src/cst.rs:155` comment-cst-extensions: the extension -> grammar-label map feeding `comment_node` and CST node/child extraction; a label here must exist in the ast-grammars table (`ts_lang` resolves it)
 - `src/engine/extract.rs:541` extract-file-set: the extension LIKE list gating which files reach TypeLang extraction; a new TypeLang's extensions must be added to this SQL too or its extractor never sees a file
-- `src/engine/mod.rs:5107` manifest-probe: the manifest filename list probed above the scanned file set; a language whose module resolver reads a manifest (Cargo.toml, package.json, go.mod) must add its name here or the resolver gets no manifest content
-- `src/engine/mod.rs:7665` ast-grammars: one table row = `ast` op support (tree-sitter constructor keyed by label); `comment_node` and the CST node/child rels also dispatch through `ts_lang`, via `cst::lang_label_for_path`
-- `src/lib.rs:640` move-rewriter: per-language `--move` path rewriting (rspath = Rust use-paths + mod surgery, ktpath = Kotlin package math); a new language adds its rewriter module and dispatches from this driver
+- `src/engine/mod.rs:6010` manifest-probe: the manifest filename list probed above the scanned file set; a language whose module resolver reads a manifest (Cargo.toml, package.json, go.mod) must add its name here or the resolver gets no manifest content
+- `src/engine/mod.rs:8582` ast-grammars: one table row = `ast` op support (tree-sitter constructor keyed by label); `comment_node` and the CST node/child rels also dispatch through `ts_lang`, via `cst::lang_label_for_path`
+- `src/lib.rs:641` move-rewriter: per-language `--move` path rewriting (rspath = Rust use-paths + mod surgery, ktpath = Kotlin package math); a new language adds its rewriter module and dispatches from this driver
 - `src/modgraph.rs:148` module-resolvers: per-language import resolver registration; buys module_edge/module_unresolved/module_binding plus the name resolver's alias hop and import-scoped ambiguity narrowing
 - `src/scip_setup.rs:50` scip-indexers: the real-SCIP tier; one Indexer row (marker files, binary, install hint, argv) = `dl index` / `dl doctor` / `scip_want` support for the language
 - `src/sg.rs:6` sg-grammars: one table row = `sg` + `ast_yaml` op support for a grammar (canonical name, aliases, ast-grep SupportLang); the skill language matrix test asserts this table
-- `src/typegraph.rs:355` typelang-registry: impl `TypeLang { name, matches, extract }` and register it here; buys type_entity/type_edge/type_sig/call_*/df_*/doc_comment for the language (the index-free diet tier, Kotlin-sized)
+- `src/typegraph.rs:357` typelang-registry: impl `TypeLang { name, matches, extract }` and register it here; buys type_entity/type_edge/type_sig/call_*/df_*/doc_comment for the language (the index-free diet tier, Kotlin-sized)
 <!-- END: lang-junctions -->
 
 ## Diet-tier checklist (the M-L lift)
