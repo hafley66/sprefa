@@ -7,6 +7,12 @@ tags consumed by cargo-dist.
 ## [Unreleased]
 
 ### Added
+- **`env(name, value)` built-in relation.** Projects the process environment
+  captured at start, scoped to a prefix allowlist (`SPREFA_`/`DL_`/`SG_`) plus
+  the `CI`/`GITHUB_ACTIONS`/`GITLAB_CI` markers so tokens and credentials never
+  reach the on-disk db. Constant for the process lifetime (fills once, then
+  self-diffs to a no-op). Enables env-gated rails, e.g.
+  `diag(...) <- hit(path), env("CI", "true").`
 - **`dl/refs` grouped references lens (B1).** New custom LSP request: params
   `{uri|path, line, character}` (0-based) -> a `RefLens`
   `{tier, symbol, display_name, declarations, uses, containing_types, callers,
