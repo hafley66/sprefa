@@ -42,8 +42,20 @@
       {
         "command": "dl.pickDiagCode",
         "title": "dl: Toggle Diagnostic Code"
+      },
+      {
+        "command": "dl.findReferences",
+        "title": "dl: Find References (lens)"
       }
     ],
+    "views": {
+      "explorer": [
+        {
+          "id": "dlReferences",
+          "name": "dl References"
+        }
+      ]
+    },
     "keybindings": [
       {
         "command": "dl.pickDiagCode",
@@ -65,6 +77,12 @@
         "command": "dl.typeSeed",
         "key": "ctrl+alt+t",
         "mac": "cmd+alt+t",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "dl.findReferences",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r",
         "when": "editorTextFocus"
       },
       {

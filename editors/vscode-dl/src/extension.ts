@@ -9,6 +9,7 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, State } from "vscode-languageclient/node";
+import { RefsTreeProvider, RefLens } from "./refsTree";
 
 let client: LanguageClient | undefined;
 
@@ -221,6 +222,13 @@ export function activate(ctx: vscode.ExtensionContext): void {
   ctx.subscriptions.push({ dispose: () => { void client?.stop(); } });
   void client.start();
 
+  // A5 push-refresh v1: the server pulses `dl/graphChanged` after a graph tick
+  // (daemon broadcast or in-process didSave). Forward it to the flow panel so it
+  // can debounce + re-run its preset, the same channel as the cursor message.
+  ctx.subscriptions.push(client.onNotification("dl/graphChanged", () => {
+    void panel?.webview.postMessage({ type: "graphChanged" });
+  }));
+
   // dl diagnostics render markdown: the LSP `Diagnostic.message` field is
   // plain-text-only (VS Code shows it verbatim), so a hover provider re-renders
   // any dl-sourced diagnostic overlapping the cursor as a MarkdownString. `.dl`
@@ -263,6 +271,14 @@ export function activate(ctx: vscode.ExtensionContext): void {
   ctx.subscriptions.push(vscode.commands.registerCommand("dl.typeSeed", () => addTypeSeed(root)));
   ctx.subscriptions.push(vscode.commands.registerCommand("dl.clearTypeSeeds", () => clearTypeSeeds(root)));
   ctx.subscriptions.push(vscode.commands.registerCommand("dl.pickDiagCode", () => toggleDiagCode()));
+
+  // "dl References" TreeView (Track B): dl.findReferences resolves the cursor's
+  // dl/refs lens and renders it grouped tier -> repo -> role. A hit leaf reuses
+  // the repo-slug -> workspace-folder resolution the flow panel jumps with.
+  const refsProvider = new RefsTreeProvider((repo, file) => resolveOpenUri(`${repo}/${file}`, root));
+  ctx.subscriptions.push(vscode.window.registerTreeDataProvider("dlReferences", refsProvider));
+  ctx.subscriptions.push(vscode.commands.registerCommand("dl.findReferences",
+    () => findReferences(refsProvider)));
 
   // marked-line decorations: left stripe + overview-ruler tick, re-read from
   // .dl/marks.dl (same facts the engine joins) so external edits show up live
@@ -454,6 +470,32 @@ async function toggleDiagCode(): Promise<void> {
       `dl: ${res.code} ${res.muted ? "muted" : "un-muted"}`, 3000);
   } catch (e) {
     void vscode.window.showErrorMessage(`dl: toggle failed: ${String((e as Error).message ?? e)}`);
+  }
+}
+
+// ── dl References: resolve the cursor's refs lens and drive the TreeView ─────
+// Sends the custom `dl/refs` request (uri + 0-based line/character) and hands
+// the RefLens to the provider, then reveals the view. A null lens (cursor not on
+// a located identifier) clears the tree with a status note.
+async function findReferences(provider: RefsTreeProvider): Promise<void> {
+  if (!client) { void vscode.window.showWarningMessage("dl: language server not running"); return; }
+  const ed = vscode.window.activeTextEditor;
+  if (!ed) return;
+  const pos = ed.selection.active;
+  try {
+    const lens = await client.sendRequest<RefLens | null>("dl/refs", {
+      uri: ed.document.uri.toString(),
+      line: pos.line,
+      character: pos.character,
+    });
+    provider.show(lens ?? undefined);
+    if (lens) {
+      await vscode.commands.executeCommand("dlReferences.focus");
+    } else {
+      vscode.window.setStatusBarMessage("dl: no references at the cursor", 3000);
+    }
+  } catch (e) {
+    void vscode.window.showErrorMessage(`dl: find references failed: ${String((e as Error).message ?? e)}`);
   }
 }
 

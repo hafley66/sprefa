@@ -150,6 +150,11 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Res
                         }
                     }
                 }
+                // A5 push-refresh v1: a graph tick landed, so nudge the flow
+                // panel (via the extension) to re-run its preset. Params is an
+                // object (not null) so a later version can grow tick/moved-rel
+                // fields without a wire break.
+                let _ = send_graph_changed(&connection);
                 continue;
             }
         }
@@ -162,6 +167,10 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Res
                     }
                     "textDocument/references" => {
                         let resp = handle_references(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
+                    "dl/refs" => {
+                        let resp = handle_refs(&eng, &root, &req);
                         connection.sender.send(Message::Response(resp))?;
                     }
                     "textDocument/hover" => {
@@ -200,6 +209,8 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Res
                         publish_dl_parse_errors(&connection, &abs)?;
                     }
                     publish(&connection, &eng, &root, Some(&abs))?;
+                    // A5: the in-process didSave tick also moved the graph.
+                    let _ = send_graph_changed(&connection);
                 }
             }
             Message::Response(_) => {}
@@ -502,34 +513,86 @@ fn handle_execute_command(eng: &mut Engine, req: &Request) -> Response {
     }
 }
 
-/// textDocument/references over the ref spine: cursor -> innermost located span
-/// -> every WORK span interning the same `StringId` (engine `string_spans`),
-/// i.e. every located occurrence of the exact string, across files. Includes
-/// the span under the cursor. Null when the cursor is not on a located string.
+/// textDocument/references over the refs lens (Track B): cursor -> `refs_lens`,
+/// then flatten declarations + uses to `Location[]`. Each hit carries its OWN
+/// repo, so a multi-repo hit maps to that repo's on-disk root (the `root.join`
+/// multi-repo fix) instead of being mislocated under the primary root. Null when
+/// the cursor is not on a located string.
 fn handle_references(eng: &Engine, root: &Path, req: &Request) -> Response {
     let params: ReferenceParams = match serde_json::from_value(req.params.clone()) {
         Ok(p) => p,
         Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
     };
-    let hit = resolve_span(eng, root, &params.text_document_position);
-    let Some((_path, string_id, _text, _lo, _hi)) = hit else {
+    let Some((rel, byte)) = resolve_path_byte(root, &params.text_document_position) else {
         return Response::new_ok(req.id.clone(), serde_json::Value::Null);
     };
-    // Per-file content cache: each span needs its file's bytes for the
-    // byte -> position conversion, and one file often holds many spans.
-    let mut contents: HashMap<String, String> = HashMap::new();
+    let lens = match eng.refs_lens(&rel, byte as usize) {
+        Ok(Some(l)) => l,
+        Ok(None) => return Response::new_ok(req.id.clone(), serde_json::Value::Null),
+        Err(e) => return Response::new_err(req.id.clone(), -32603, e.to_string()),
+    };
+    let roots = eng.repo_roots();
     let mut locations = Vec::new();
-    for (path, lo, hi) in eng.string_spans(&string_id).unwrap_or_default() {
-        let content = contents.entry(path.clone()).or_insert_with(|| {
-            std::fs::read_to_string(root.join(&path)).unwrap_or_default()
-        });
-        let Some(uri) = path_to_uri(&root.join(&path)) else { continue };
-        locations.push(Location { uri, range: span_to_range(content, lo, hi) });
+    for hit in lens.declarations.iter().chain(lens.uses.iter()) {
+        if let Some(loc) = refhit_location(&roots, root, hit) { locations.push(loc); }
     }
     if locations.is_empty() {
         return Response::new_ok(req.id.clone(), serde_json::Value::Null);
     }
     Response::new_ok(req.id.clone(), serde_json::to_value(locations).unwrap_or_default())
+}
+
+/// Custom request `dl/refs`: the grouped references lens (declarations, uses,
+/// containing types, callers, callees) for one cursor, feeding the "dl
+/// References" TreeView and the flow panel. Params:
+/// `{"uri": string} | {"path": string}` (path is root-relative) plus
+/// `"line"` and `"character"` (0-based, LSP convention). Returns the serialized
+/// `RefLens`, or null when the cursor is not on a located identifier.
+fn handle_refs(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let line = req.params.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let character = req.params.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let abs: Option<PathBuf> = if let Some(uri) = req.params.get("uri").and_then(|v| v.as_str()) {
+        Uri::from_str(uri).ok().and_then(|u| uri_to_path(&u))
+    } else {
+        req.params.get("path").and_then(|v| v.as_str()).map(|p| root.join(p))
+    };
+    let Some(abs) = abs else {
+        return Response::new_err(req.id.clone(), -32602, "dl/refs needs a uri or path".into());
+    };
+    let Some((rel, byte)) = resolve_abs_byte(root, &abs, Position::new(line, character)) else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    match eng.refs_lens(&rel, byte as usize) {
+        Ok(Some(lens)) => Response::new_ok(req.id.clone(),
+            serde_json::to_value(lens).unwrap_or(serde_json::Value::Null)),
+        Ok(None) => Response::new_ok(req.id.clone(), serde_json::Value::Null),
+        Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
+    }
+}
+
+/// A `RefHit` -> LSP `Location`, mapping the hit's repo slug to its on-disk root
+/// (`repo_roots`). An unknown slug falls back to the primary root join, matching
+/// the pre-fix single-repo behavior rather than dropping the hit.
+fn refhit_location(
+    roots: &HashMap<String, PathBuf>, primary: &Path, hit: &crate::engine::RefHit,
+) -> Option<Location> {
+    let base = roots.get(&hit.repo).map(|p| p.as_path()).unwrap_or(primary);
+    let uri = path_to_uri(&base.join(&hit.path))?;
+    let range = Range::new(
+        Position::new(hit.line, hit.col),
+        Position::new(hit.end_line, hit.end_col));
+    Some(Location { uri, range })
+}
+
+/// Send the outbound `dl/graphChanged` pulse (A5 push-refresh v1). Params is a
+/// JSON object (not null) so a later version can add tick/moved-rel fields
+/// without breaking the wire contract.
+fn send_graph_changed(connection: &Connection) -> Result<()> {
+    connection.sender.send(Message::Notification(Notification {
+        method: "dl/graphChanged".into(),
+        params: serde_json::json!({}),
+    }))?;
+    Ok(())
 }
 
 /// (uri, position) -> the innermost located span under the cursor, as
@@ -548,6 +611,26 @@ fn resolve_span(eng: &Engine, root: &Path, pos: &TextDocumentPositionParams)
     let byte = position_to_byte(&content, pos.position)?;
     let (string_id, text, lo, hi) = eng.span_at(&rel, byte).ok().flatten()?;
     Some((rel, string_id, text, lo, hi))
+}
+
+/// (uri, position) -> (repo-relative path, byte offset), reading the file from
+/// disk to convert the position. The refs lens does its own span resolution
+/// (it needs the path + byte, not the located span), so this is `resolve_span`
+/// without the `span_at` lookup.
+fn resolve_path_byte(root: &Path, pos: &TextDocumentPositionParams) -> Option<(String, u32)> {
+    let abs = uri_to_path(&pos.text_document.uri)?;
+    resolve_abs_byte(root, &abs, pos.position)
+}
+
+/// (abs path, position) -> (repo-relative path, byte offset). Canonicalizes the
+/// path (macOS `/var` -> `/private/var`) before stripping the root, the same as
+/// `resolve_span`. None when the file is outside the root or unreadable.
+fn resolve_abs_byte(root: &Path, abs: &Path, position: Position) -> Option<(String, u32)> {
+    let abs = std::fs::canonicalize(abs).unwrap_or_else(|_| abs.to_path_buf());
+    let rel = rel_of(root, &abs)?;
+    let content = std::fs::read_to_string(&abs).ok()?;
+    let byte = position_to_byte(&content, position)?;
+    Some((rel, byte))
 }
 
 /// LSP Position (0-based line, char-ish column) -> byte offset. Column is a

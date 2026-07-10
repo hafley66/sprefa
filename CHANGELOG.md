@@ -7,6 +7,48 @@ tags consumed by cargo-dist.
 ## [Unreleased]
 
 ### Added
+- **`dl/refs` grouped references lens (B1).** New custom LSP request: params
+  `{uri|path, line, character}` (0-based) -> a `RefLens`
+  `{tier, symbol, display_name, declarations, uses, containing_types, callers,
+  callees}`, every hit carrying `{repo, path, line, col, end_line, end_col,
+  role, container}`. Tier `resolved` joins the identifier by name through
+  `type_entity`/`call_def` (declarations), `type_link`/`call_site`/
+  `module_import` (uses by role), and 1-hop `call_edge` (callers/callees, no
+  closure); tier `textual` is the ref-spine same-string fallback, role `text`.
+  Backed by `Engine::refs_lens`. The extension gains a "dl References"
+  explorer TreeView (tier -> repo -> role) behind `dl.findReferences`
+  (cmd+alt+r).
+- **`dl/graphChanged` push (A5 v1).** The LSP sends an outbound
+  `dl/graphChanged {}` notification after a daemon `diag_changed` broadcast or
+  an in-process didSave tick; the extension forwards it to the flow panel,
+  which re-runs its query debounced 250ms behind a new default-off "auto"
+  toolbar toggle (visible tab only).
+- **Flow panel list virtualization (A6).** The list view windows its rows
+  (fixed 22px rows, viewport + 10 rows overscan, absolute positioning in a
+  full-height spacer) instead of rebuilding up to 2,000 divs per toggle.
+  Gutter arcs still draw for all rows; centering on an off-screen row scrolls
+  it into the window.
+
+### Fixed
+- **madge oracle vs colorized madge.** Newer madge (chalk) colorizes even
+  non-tty stdout, so ANSI escapes broke the text-parsed `--warning` skip list
+  in `tests/it/oracle_madge.rs`. The test now sets `NO_COLOR=1` /
+  `FORCE_COLOR=0` on every madge invocation and strips ANSI sequences before
+  parsing.
+
+### Changed
+- **`textDocument/references` rides the refs lens.** Results flatten
+  declarations + uses; each hit's URI is built from its OWN repo's root
+  (`repo_roots`), fixing the multi-repo bug where every location was joined
+  against the primary root. Unknown slugs keep the old primary-root fallback.
+- **Dead pre-cytoscape canvas renderer deleted (A7, -413 lines).** The DOM-card
+  renderer, Sugiyama layout stack, pan/drag/marquee gesture system, and flip
+  overlay were unreachable (canvas mode renders via cytoscape); the empty
+  `nodes`/`edges` Maps they fed were WHY hover cards, pins, and centering were
+  silently broken in canvas mode. Canvas interactivity is rebuilt on
+  cytoscape's own API (A8): mouseover hover card, class-toggle pin/highlight
+  styling, sym-equality `cy.animate` centering, tap-to-open.
+
 - **`dl/query` paging (A3).** The custom LSP request grows optional `limit`
   (int), `offset` (int, default 0), and `count` (bool) params, backward
   compatible with the bare `{sql, params}` form the browser bridge uses.

@@ -734,6 +734,47 @@ rel; #5 `dl --rows <REL>` + `query_rel` daemon RPC.
       daemon's query_sql RPC and prints rows; document the root/daemon-selection
       rules in one place.
 
+### Open (vscode ext review — plan approved 2026-07-10)
+Full eval + 3-track design at **plans/2026-07-10-vscode-ext-review.md** (perf
+remediation A / references lens B / BOM structure view C, waves 1-4). Staffing:
+Opus/Sonnet subagents implement, orchestrator verifies+commits.
+- [x] **Wave 1 (A1-A4)** (main 9f4b5b6): dl/query {limit,offset,count} paging
+      (page = subquery LIMIT/OFFSET + unpaged total; count mode; legacy shape
+      preserved for browser bridge); LSP panel reads no longer write _query_log
+      (daemon RPCs still log); `**/*` client watcher DELETED (server has no
+      didChangeWatchedFiles handler — events were decoded and dropped); panel
+      sends limit = render caps so the wire never exceeds 2k/4k rows (was 20k
+      serialized, 18k dropped); linked-only/view-mode toggles re-render from
+      cached rows. Suites lib 253/0/1, it lsp 13/0, tsc clean. vsix NOT rebuilt.
+- [x] **Wave 2** (main, 2026-07-10, 2 Opus agents): A5 dl/graphChanged {} pulse
+      (daemon diag_changed arm + in-process didSave) -> extension forward ->
+      panel 250ms-debounced re-run behind default-off "auto" toggle (window
+      'message' contract, host-agnostic); A6 list virtualization (ROW_H=22
+      exact windowing +10 overscan, full-height spacer, arcs untouched,
+      off-screen centering = scrollListToIndex); A7 dead DOM-card renderer +
+      Sugiyama + pan/marquee gesture system DELETED (-413 lines net) with A8
+      canvas interactivity rebuilt on cy API (mouseover hover card, class-
+      toggle pins/highlight, sym-EQUALITY cy.animate centering, tap-to-open);
+      B1 Engine::refs_lens (tiers resolved/textual; SCIP tier = wave 3) +
+      dl/refs request + textDocument/references rewired w/ multi-repo fix
+      (every hit's URI from its OWN repo root via repo_roots) + dlReferences
+      TreeView (tier->repo->role, dl.findReferences cmd+alt+r). BONUS fix:
+      madge oracle went red on clean main (madge/chalk now colorizes non-tty
+      stdout, ANSI codes broke the --warning text parse) — NO_COLOR/
+      FORCE_COLOR=0 env + strip_ansi in oracle_madge.rs, green again. Suites
+      lib 253/0/1, it full green (daemon scale test load-flaky under a
+      parallel full run, passes solo). tsc clean. vsix NOT
+      rebuilt. PORTABILITY LAW (Chris): flow-panel.html stays host-agnostic —
+      window.dlHost {query,hover,open} + window messages are the ONLY host
+      coupling (panel reuse planned in ~/projects/instant).
+- [ ] **Wave 3**: B2 documentHighlight/workspaceSymbol/documentSymbol; B3 SCIP
+      tier + role_label widening (scip_import.rs:322 discards read/write bits);
+      C2 BOM rollup + where-used; A9 daemon query routing; A10 perf harness.
+- [ ] **Wave 4**: B4 dl/locate follow-the-user; B5 call/type hierarchy; C3
+      exploded stratum view (welded-subassembly cycle cards); C4 3D iso go/no-go.
+- [ ] C1 BOM table (.dl/bom.dl bom_node counts + panel numeric columns + fan-in
+      sort) — S, was slated wave 1, deferred to next session for context budget.
+
 ### Open (scip / language-surface — 2026-07-08 agent-session feedback, batch 2)
 Five more complaints (SCIP + dl-surface). NOT yet triaged against code; capture only.
 - [ ] **S1 scip_ref has no line/column.** Positional tag->symbol mapping is

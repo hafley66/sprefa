@@ -63,9 +63,7 @@
   /* ── NODES ─────────────────────────────────────────────────────────── */
   .node {
     position: absolute; width: max-content; min-width: 168px; max-width: 300px; z-index: 2;
-    content-visibility: auto; /* off-screen nodes skip layout/paint; contain-intrinsic-size
-      is set post-render (see measureNodeBoxes) so a skipped node keeps its exact
-      box and edge anchors don't shift */
+    content-visibility: auto; /* off-screen nodes skip layout/paint */
     background: linear-gradient(180deg, #16223400, #0e1622cc), var(--node);
     border: 1px solid var(--node-border); border-radius: 12px;
     border-left: 3px solid var(--kc, var(--node-border));
@@ -348,6 +346,12 @@
     white-space: nowrap; padding-right: 10px; border-radius: 4px;
     user-select: none; /* dblclick is now a fold gesture -- don't let it select label text */
     content-visibility: auto; contain-intrinsic-size: auto 22px; }
+  /* list view is virtualized: #listRows is a full-height spacer (its inline
+     height = visibleRows*ROW_H) and only the rows intersecting the viewport are
+     materialized, each absolutely positioned at index*ROW_H (inline top). Trace
+     view (#traceRows, same .listrows class) is NOT windowed, so scope the
+     absolute positioning to #listRows only -- trace rows keep block flow. */
+  #listRows .lrow { position: absolute; left: 0; right: 0; }
   .lrow-node { cursor: pointer; }
   .lrow-node:hover, .lrow-dir:hover { background: #ffffff08; }
   .lrow-dir { color: var(--muted); }
@@ -437,6 +441,7 @@
   <div class="row">
     <span class="title">dl <b>flow</b></span>
     <button id="runBtn">Run</button>
+    <label class="autochip" style="pointer-events:auto;flex:0 0 auto;color:var(--muted)" title="auto-refresh: re-run the current query when the daemon graph changes (only while this tab is visible)"><input type="checkbox" id="autoRefresh" style="vertical-align:middle" /> auto</label>
     <button id="resetBtn">Reset view</button>
     <button id="linkedBtn" class="toggle on">linked only</button>
     <button id="modeBtn" class="toggle" title="switch between list and canvas view">list view</button>
@@ -616,34 +621,14 @@ if (!window.dlHost) {
 const host = window.dlHost;
 
 // ── state ───────────────────────────────────────────────────────────────────
+// `world` is cytoscape's container (renderCanvas); `viewport` carries the
+// diff-visibility class toggles (applyDiffVisibility). Canvas nodes/edges live
+// in the cy instance now -- there is no DOM-card map.
 const world = document.getElementById('world');
 const viewport = document.getElementById('viewport');
-const nodes = new Map();   // nodeId(sym) -> {sym, el, file, line, anchor}
-const edges = [];          // {src, dst, el}
 const pinned = new Set();  // nodeIds pinned by click, persist highlight+hover
-// pin(port sym) -> {anchor, label}. Ports (member_node kind param/field/ret
-// whose `parent` resolves to another rendered card) render as small dots
-// INSIDE the owner's card (see addPins) instead of getting their own
-// top-level card -- so they live in this separate map, not in `nodes`, and
-// deliberately don't participate in layering/drag/hover-highlight/kind-filter
-// (all keyed on `nodes`). addEdge's resolveEndpoint is the only reader.
-const pinInfo = new Map();
 const kindFilter = new Set(); // legend-selected kinds; empty = show everything
 let hoveredId = null;
-let anchorSeq = 0;
-
-const view = { x: 40, y: 110, z: 1 };
-function applyView() {
-  // canvas mode: cytoscape owns the transform on its own canvas; never CSS-
-  // transform its container (would double-transform the whole graph).
-  if (typeof viewMode !== 'undefined' && viewMode === 'canvas') return;
-  world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.z})`;
-  document.getElementById('zoomPill').textContent = Math.round(view.z * 100) + '%';
-}
-function toWorld(sx, sy) {
-  const r = viewport.getBoundingClientRect();
-  return { x: (sx - r.left - view.x) / view.z, y: (sy - r.top - view.y) / view.z };
-}
 
 // ── kind colors: fixed hues for the common kinds, stable hash for the rest ──
 const KIND_HUES = {
@@ -1061,7 +1046,7 @@ const protoState = { chevrons: false, arrows: false, hoverCard: true };
 function saveProto() { writeLocalStorage(PROTO_KEY, JSON.stringify(protoState)); }
 const PROTO_CHIPS = {
   list:   [['chevrons', 'chevrons'], ['hoverCard', 'hover card']],
-  canvas: [['arrows', 'arrows'], ['hoverCard', 'hover card']],
+  canvas: [['hoverCard', 'hover card']],
 };
 function buildProtoRow() {
   const row = document.getElementById('protoRow');
@@ -1109,15 +1094,12 @@ function buildProtoRow() {
     row.appendChild(traceChip);
   }
 }
-// side effects per toggle: chevrons/arrows need a geometry rebuild (new
-// marker attrs / new DOM triangles), hoverCard just needs to hide immediately
-// when turned off (positionHoverCard already gates on protoState.hoverCard
-// for turning back on, driven by the next mousemove/hover).
+// side effects per toggle: chevrons need a list geometry rebuild (new marker
+// attrs), hoverCard just needs to hide immediately when turned off
+// (positionHoverCard already gates on protoState.hoverCard for turning back
+// on, driven by the next mousemove/hover).
 function onProtoToggle(key) {
   if (key === 'chevrons' && viewMode === 'list') refreshListView();
-  if (key === 'arrows' && viewMode === 'canvas') {
-    if (protoState.arrows) rebuildFlowArrows(); else clearFlowArrows();
-  }
   if (key === 'hoverCard' && !protoState.hoverCard) hoverCardEl.hidden = true;
 }
 
@@ -1270,117 +1252,6 @@ async function loadGateways() {
   gatewaysByFn = next;
 }
 
-// ── layered layout (Sugiyama-lite) ───────────────────────────────────────────
-// Longest-path layering (unchanged shape) gives each node an x-layer. Left on
-// its own, alphabetical order within a layer tangles edges badly — these
-// functions add a barycenter crossing-reduction pass and a neighbor-relaxation
-// y-assignment pass on top. Pure functions of (ids, edge pairs) so they're
-// unit-testable without a DOM.
-function computeLayers(nodeIds, edgePairs) {
-  const layer = new Map(nodeIds.map(id => [id, 0]));
-  for (let pass = 0; pass < 40; pass++) {
-    let moved = false;
-    for (const [s, d] of edgePairs) {
-      if (!layer.has(s) || !layer.has(d)) continue;
-      const want = layer.get(s) + 1;
-      if (want > layer.get(d) && want < 60) { layer.set(d, want); moved = true; }
-    }
-    if (!moved) break;
-  }
-  return layer;
-}
-function buildAdjacency(edgePairs) {
-  // undirected: crossing reduction and y-relaxation both want "neighbor in
-  // some layer", not "successor" — direction only mattered for layering
-  const adj = new Map();
-  const add = (a, b) => { if (!adj.has(a)) adj.set(a, []); adj.get(a).push(b); };
-  for (const [s, d] of edgePairs) { add(s, d); add(d, s); }
-  return adj;
-}
-function sweepLayer(byLayer, l, adjacentL, adj) {
-  // reorder byLayer[l] by the mean order-index of each node's neighbors that
-  // land in byLayer[adjacentL]; a node with no such neighbor keeps its current
-  // slot (barycenter falls back to its pre-sweep index, so a stable sort
-  // leaves it in place relative to its un-mentioned peers)
-  const layerIds = byLayer[l];
-  if (!layerIds || adjacentL < 0 || adjacentL >= byLayer.length) return;
-  const adjIndex = new Map(byLayer[adjacentL].map((id, i) => [id, i]));
-  const curIndex = new Map(layerIds.map((id, i) => [id, i]));
-  const bary = new Map();
-  for (const id of layerIds) {
-    const neigh = (adj.get(id) || []).filter(n => adjIndex.has(n));
-    bary.set(id, neigh.length
-      ? neigh.reduce((sum, n) => sum + adjIndex.get(n), 0) / neigh.length
-      : curIndex.get(id));
-  }
-  byLayer[l] = layerIds.slice().sort((a, b) => bary.get(a) - bary.get(b));
-}
-function crossingReductionPasses(byLayer, edgePairs, passes) {
-  const adj = buildAdjacency(edgePairs);
-  const n = byLayer.length;
-  for (let p = 0; p < passes; p++) {
-    if (p % 2 === 0) { for (let l = 1; l < n; l++) sweepLayer(byLayer, l, l - 1, adj); }
-    else { for (let l = n - 2; l >= 0; l--) sweepLayer(byLayer, l, l + 1, adj); }
-  }
-  return byLayer;
-}
-function assignY(byLayer, edgePairs, row) {
-  const y = new Map();
-  for (const layerIds of byLayer) layerIds.forEach((id, i) => y.set(id, i * row));
-  const adj = buildAdjacency(edgePairs);
-  for (let pass = 0; pass < 3; pass++) {
-    // move each node halfway toward the mean y of ALL its graph neighbors,
-    // regardless of which layer they're in
-    const next = new Map();
-    for (const layerIds of byLayer) {
-      for (const id of layerIds) {
-        const neigh = adj.get(id) || [];
-        if (neigh.length === 0) { next.set(id, y.get(id)); continue; }
-        const mean = neigh.reduce((sum, n) => sum + y.get(n), 0) / neigh.length;
-        next.set(id, (y.get(id) + mean) / 2);
-      }
-    }
-    for (const [id, v] of next) y.set(id, v);
-    // resolve overlaps within each layer top-down, walking the layer's fixed
-    // order (crossing reduction already decided it) so relaxation can't
-    // reintroduce a crossing by re-sorting on y
-    for (const layerIds of byLayer) {
-      for (let i = 1; i < layerIds.length; i++) {
-        const prev = layerIds[i - 1], cur = layerIds[i];
-        if (y.get(cur) - y.get(prev) < row) y.set(cur, y.get(prev) + row);
-      }
-    }
-  }
-  // center each layer vertically so layer midpoints align
-  const means = byLayer.map(layerIds => layerIds.length
-    ? layerIds.reduce((sum, id) => sum + y.get(id), 0) / layerIds.length : 0);
-  const globalMean = means.length ? means.reduce((a, b) => a + b, 0) / means.length : 0;
-  byLayer.forEach((layerIds, l) => {
-    const shift = globalMean - means[l];
-    for (const id of layerIds) y.set(id, y.get(id) + shift);
-  });
-  return y;
-}
-
-// A member_node row is a PIN of its parent's card, not its own card, when
-// its own kind is param/field/ret AND its `parent` (row[5]) names another
-// row that's also present in this render — i.e. the owner card is going to
-// exist. Everything else (structs/traits/enums/fns/methods, and a stray
-// param/field/ret whose owner didn't survive the linkedOnly filter) still
-// gets a plain top-level card, unchanged from before ports existed.
-const PIN_KINDS = new Set(['param', 'field', 'ret']);
-function partitionPins(rows) {
-  const idSet = new Set(rows.map(r => String(r[0])));
-  const main = [], pins = [];
-  for (const r of rows) {
-    const kind = r[2] != null ? String(r[2]) : '';
-    const parent = r[5] != null && r[5] !== '' ? String(r[5]) : null;
-    if (PIN_KINDS.has(kind) && parent && parent !== String(r[0]) && idSet.has(parent)) pins.push(r);
-    else main.push(r);
-  }
-  return { main, pins };
-}
-
 // Canvas view = cytoscape on a real <canvas> (scales to thousands of nodes
 // where the old DOM-card/SVG-per-edge renderer OOM'd). Smallest glue: map the
 // query rows straight to cy elements, let cytoscape own layout + pan/zoom.
@@ -1406,13 +1277,16 @@ function renderCanvas(nodeRows, edgeRows) {
       color: kind ? kindColor(kind) : '#5b7fa6',
     }});
   }
-  const seen = new Set();
-  for (const r of keptEdges) {
-    const key = String(r[0]) + '\0' + String(r[1]);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    els.push({ data: { id: 'e' + seen.size, source: String(r[0]), target: String(r[1]) } });
-  }
+  // one cy edge per merged (src,dst) pair; `kinds` rides along for the hover
+  // card (edgesFor reads it) and edge coloring, same shape list mode uses.
+  const merged = mergeEdgeRows(keptEdges);
+  merged.forEach((rec, i) => {
+    const uniq = [...new Set(rec.kinds.filter(Boolean))];
+    els.push({ data: {
+      id: 'e' + i, source: rec.src, target: rec.dst, kinds: rec.kinds,
+      color: uniq.length ? kindColor(uniq[0]) : '#33507a',
+    }});
+  });
 
   if (cy) cy.destroy();
   world.style.transform = 'none';
@@ -1428,20 +1302,38 @@ function renderCanvas(nodeRows, edgeRows) {
         'shape': 'round-rectangle', 'width': 'label', 'height': 16, 'padding': 5,
         'border-width': 1, 'border-color': '#0d1828' } },
       { selector: 'edge', style: {
-        'width': 1.4, 'line-color': '#33507a', 'target-arrow-color': '#33507a',
+        'width': 1.4, 'line-color': 'data(color)', 'target-arrow-color': 'data(color)',
         'target-arrow-shape': 'triangle', 'arrow-scale': 0.8, 'curve-style': 'bezier' } },
+      // highlight tiers mirror the DOM/list channels: .pinned (selection) owns a
+      // gold border, .hl (hover) adds gold border + label, .active (edge off a
+      // pinned node) a flat gold stroke, .dim fades everything outside the slice.
+      { selector: 'node.pinned', style: { 'border-width': 2, 'border-color': '#ffd166' } },
+      { selector: 'node.hl', style: { 'border-width': 2, 'border-color': '#ffd166', 'color': '#ffd166' } },
+      { selector: 'edge.active', style: { 'line-color': '#ffd166', 'target-arrow-color': '#ffd166' } },
+      { selector: 'edge.hl', style: { 'line-color': '#ffd166', 'target-arrow-color': '#ffd166', 'width': 2.4 } },
+      { selector: '.dim', style: { 'opacity': 0.22 } },
     ],
     layout: keptEdges.length
       ? { name: 'breadthfirst', directed: true, spacingFactor: 1.15, padding: 24 }
       : { name: 'grid', padding: 24 },
   });
+  // tap a node = jump to its file:line through the host (list mode's :line
+  // cell equivalent); hover = highlight its slice + float the hover card.
   cy.on('tap', 'node', evt => {
     const d = evt.target.data();
     if (d.file) host.open(d.file, d.line || 1);
   });
+  cy.on('mouseover', 'node', evt => hoverNode(evt.target.id()));
+  cy.on('mouseout', 'node', () => hoverNode(null));
+  const zoomPill = document.getElementById('zoomPill');
+  const showZoom = () => { zoomPill.textContent = Math.round(cy.zoom() * 100) + '%'; };
+  cy.on('zoom', showZoom);
+  showZoom();
+
+  refreshHighlight(); // re-apply pins carried over from list view / a prior render
 
   document.getElementById('countPill').textContent =
-    `${keptNodes.length} nodes · ${keptEdges.length} edges`;
+    `${keptNodes.length} nodes · ${merged.length} edges`;
 }
 
 function mergeEdgeRows(rows) {
@@ -1463,197 +1355,11 @@ function mergeEdgeRows(rows) {
   return order;
 }
 
-// content-visibility:auto skips layout for off-screen nodes; without a
-// contain-intrinsic-size a skipped node reports a 0x0 box, which would drag
-// its anchor (and every edge tethered to it) to nothing. Measure once the
-// layout above has settled and pin the box. A drag can't change a node's
-// size (no re-measure needed there — content is fixed once rendered).
-function measureNodeBoxes() {
-  for (const n of nodes.values()) {
-    const w = n.el.offsetWidth, h = n.el.offsetHeight;
-    if (w && h) n.el.style.containIntrinsicSize = `${w}px ${h}px`;
-  }
-}
-
-function addNode(row, x, y) {
-  const [id, label, kind, file, line] = [String(row[0]), row[1], row[2], row[3], row[4]];
-  if (nodes.has(id)) return;
-  // diff-class column (7th, index 6) -- absent for every non-diff preset,
-  // so this stays '' and every diff-* branch below is a no-op for them.
-  const diffClass = row[6] != null && row[6] !== '' ? String(row[6]) : '';
-  const anchor = 'n' + (anchorSeq++);
-  const el = document.createElement('div');
-  el.className = 'node' + (diffClass ? ' diff-' + diffClass : '');
-  el.style.left = x + 'px'; el.style.top = y + 'px';
-  el.style.anchorName = '--' + anchor;
-  el.dataset.id = id;
-
-  const kindStr = kind != null && kind !== '' ? String(kind) : '';
-  if (kindStr) el.style.setProperty('--kc', kindColor(kindStr));
-
-  const head = document.createElement('div');
-  head.className = 'head';
-  const full = String(label ?? id);
-  // selector-style label (axis=value) -> stacked axis + middle-truncated value
-  const sel = /^([\w.-]+)=([\s\S]+)$/.exec(full);
-  const labelHtml = sel
-    ? `<span class="axis">${esc(sel[1])}</span><span class="val">${esc(truncValue(sel[2], 34))}</span>`
-    : esc(truncLabel(full, 72));
-  head.innerHTML = `<span class="dot"></span><span class="label">${labelHtml}</span>`
-    + (kindStr ? `<span class="kind">${esc(kindStr)}</span>` : '')
-    // removed nodes are ghost rows synthesized from rel_node_removed (don't
-    // exist at head) -- the "removed" badge is the only cue besides the
-    // dashed/muted card styling that this row is gone, not just quiet.
-    + (diffClass === 'removed' ? `<span class="diff-badge">removed</span>` : '');
-  el.appendChild(head);
-
-  // native tooltip: nothing is ever unreachable behind truncation
-  el.title = full
-    + (kindStr ? `\nkind: ${kindStr}` : '')
-    + (file ? `\n${file}${line != null ? ':' + line : ''}` : '')
-    + (id !== full ? `\n${id}` : '');
-
-  if (file) {
-    const loc = document.createElement('div');
-    loc.className = 'loc';
-    const locText = `${file}${line != null ? ':' + line : ''}`;
-    loc.textContent = locText.length > 40 ? tailTruncPath(locText, 40) : locText;
-    loc.title = locText;
-    loc.addEventListener('click', e => { e.stopPropagation(); host.open(String(file), Number(line) || 1); });
-    el.appendChild(loc);
-  }
-  for (const k of ['in', 'out']) {
-    const p = document.createElement('span');
-    p.className = 'port ' + k;
-    el.appendChild(p);
-  }
-
-  el.addEventListener('pointerenter', () => hoverNode(id));
-  el.addEventListener('pointerleave', () => hoverNode(null));
-  world.appendChild(el);
-  nodes.set(id, { sym: id, el, file: file ? String(file) : null, line, anchor,
-                  label: full, kind: kindStr, diffClass });
-}
-
-// One pin per port row, docked inside the owner card: params+fields on the
-// LEFT column (in), ret on the RIGHT column (out) — same in/out convention
-// as the decorative .port dots every card already has. Each pin's dot gets
-// its own anchor-name (see resolveEndpoint) so a wire lands on the exact
-// pin, not the card's center; --kc is set on the dot itself (not inherited
-// from the owner's card-level --kc) so the dot's color reflects the PIN's
-// own kind (param/field/ret) via kindColor.
-function addPins(ownerNode, rows) {
-  const inRows = rows.filter(r => String(r[2]) !== 'ret');
-  const outRows = rows.filter(r => String(r[2]) === 'ret');
-  if (!inRows.length && !outRows.length) return;
-  const wrap = document.createElement('div');
-  wrap.className = 'pins';
-  const buildCol = (colRows, side) => {
-    if (!colRows.length) return null;
-    const col = document.createElement('div');
-    col.className = 'pin-col ' + side;
-    for (const r of colRows) {
-      const id = String(r[0]);
-      const label = r[1] != null ? String(r[1]) : id;
-      const kindStr = r[2] != null ? String(r[2]) : '';
-      const anchor = 'p' + (anchorSeq++);
-      const pin = document.createElement('div');
-      pin.className = 'pin';
-      pin.title = label + (kindStr ? `\nkind: ${kindStr}` : '') + `\n${id}`;
-      const dot = document.createElement('span');
-      dot.className = 'pin-dot';
-      dot.style.anchorName = '--' + anchor;
-      if (kindStr) dot.style.setProperty('--kc', kindColor(kindStr));
-      const lab = document.createElement('span');
-      lab.className = 'pin-label';
-      lab.textContent = truncLabel(label, 18);
-      pin.appendChild(dot); pin.appendChild(lab);
-      col.appendChild(pin);
-      pinInfo.set(id, { anchor, label });
-    }
-    return col;
-  };
-  const colIn = buildCol(inRows, 'in'), colOut = buildCol(outRows, 'out');
-  if (colIn) wrap.appendChild(colIn);
-  if (colOut) wrap.appendChild(colOut);
-  ownerNode.el.appendChild(wrap);
-}
-
-// The owner id behind a port sym, derived from the id text alone (no row
-// lookup) — the fallback path when the port's own pin never got minted (its
-// owner card was filtered out, linkedOnly hid it, etc). Mirrors the three
-// mint shapes in flow-panel.dl: "<fn>::param::<var>", "<owner>::field::<fld>",
-// "<fn>::ret".
-function stripPortSuffix(id) {
-  let m = /^(.*)::ret$/.exec(id);
-  if (m) return m[1];
-  m = /^(.*)::(?:param|field)::[^:]*$/.exec(id);
-  return m ? m[1] : null;
-}
-
-// Resolve an edge endpoint id to an {anchor, label} to tether a wire to.
-// Three-tier fallback: the id's own pin (precise dot), else the id's own
-// top-level card (a plain, non-pin node), else its owner card's anchor
-// (pin absent/collapsed — land on the card itself instead). null means
-// neither exists; addEdge skips the edge rather than crash.
-function resolveEndpoint(id) {
-  const pin = pinInfo.get(id);
-  if (pin) return pin;
-  const n = nodes.get(id);
-  if (n) return { anchor: n.anchor, label: n.label };
-  const ownerId = stripPortSuffix(id);
-  if (ownerId) {
-    const o = nodes.get(ownerId);
-    if (o) return { anchor: o.anchor, label: o.label };
-  }
-  return null;
-}
-
-const PATH = 'M0,0 C50,0 50,100 100,100';
-// one DOM edge per merged (src,dst) record — see mergeEdgeRows. `kinds` is one
-// entry per underlying row (duplicates kept, for the legend's count-by-kind).
-function addEdge(rec) {
-  const { src, dst, kinds, diffClass } = rec;
-  const f = resolveEndpoint(src), t = resolveEndpoint(dst);
-  if (!f || !t || f.anchor === t.anchor) return;
-  const n = kinds.length;
-  const uniqKinds = [...new Set(kinds.filter(Boolean))];
-  const kindStr = uniqKinds[0] || '';
-  const el = document.createElement('div');
-  el.className = 'edge' + (uniqKinds.includes('wire') ? ' port-wire' : '')
-    + (diffClass ? ' diff-' + diffClass : '');
-  el.style.setProperty('--a', '--' + f.anchor);
-  el.style.setProperty('--b', '--' + t.anchor);
-  if (kindStr) el.style.setProperty('--ec', kindColor(kindStr));
-  // stroke width scales with multiplicity so a bundled edge reads as "thicker",
-  // not as N identical overlapping lines
-  if (n > 1) el.style.setProperty('--ew', String(Math.min(7, 2.5 + 1.5 * Math.log2(n))));
-  // svg <title> = native tooltip; the stroke alone takes pointer events, the
-  // edge's (huge) bounding box stays click-through for pan/hover
-  const kindsLabel = uniqKinds.join(', ');
-  const countLabel = n > 1 ? `×${n}` : '';
-  const suffix = kindsLabel || countLabel ? ` (${[kindsLabel, countLabel].filter(Boolean).join(' ')})` : '';
-  const tip = `${f.label} → ${t.label}${suffix}`;
-  el.innerHTML = `<svg viewBox="0 0 100 100" preserveAspectRatio="none">`
-    + `<path class="wire" d="${PATH}"><title>${esc(tip)}</title></path></svg>`;
-  world.appendChild(el);
-  // `kinds` keeps every underlying row's kind (dupes included) — buildLegend
-  // sums multiplicities from it, applyKindFilter just needs membership.
-  // src/dst stay the RAW ids (not the resolved anchor) so applyKindFilter/
-  // refreshHighlight — both keyed on `nodes.get(e.src/e.dst)` — degrade
-  // gracefully for a pin-based edge (their `if (!n) continue`/`f &&` guards
-  // already handle a miss): the wire still renders via --a/--b above, it
-  // just doesn't get the hover-glow/kind-dim treatment a pin isn't wired
-  // into. Out of scope here — those two functions are core highlight/filter
-  // machinery, not the edge-rendering seam this task touches.
-  edges.push({ src, dst, el, kinds, n, diffClass });
-}
-
 // ── hover card: a floating detail popup for whatever node is hovered, in
 // either view. Content is rebuilt only when hoveredId changes (hoverNode);
 // position tracks the cursor every mousemove, throttled to one rAF. View-mode
-// agnostic via nodeMetaFor/edgesFor, which read from `nodes`/`edges` (canvas)
-// or `listNodeMeta`/`listArcs` (list) depending on `viewMode`.
+// agnostic via nodeMetaFor/edgesFor, which read from `listNodeMeta`/`listArcs`
+// (list) or the cy instance's node/edge data (canvas) depending on `viewMode`.
 const hoverCardEl = document.getElementById('hoverCard');
 function nodeMetaFor(id) {
   if (id == null) return null;
@@ -1661,8 +1367,11 @@ function nodeMetaFor(id) {
     const m = listNodeMeta.get(id);
     return m ? { id, label: m.label, kind: m.kind, file: m.file, line: m.line } : null;
   }
-  const n = nodes.get(id);
-  return n ? { id, label: n.label, kind: n.kind, file: n.file, line: n.line } : null;
+  if (!cy) return null;
+  const ele = cy.getElementById(String(id));
+  if (ele.empty()) return null;
+  const d = ele.data();
+  return { id, label: d.label, kind: d.kind, file: d.file, line: d.line };
 }
 function edgesFor(id) {
   const out = [];
@@ -1671,11 +1380,12 @@ function edgesFor(id) {
       if (a.srcKey === id) out.push({ other: a.dstKey, kinds: a.kinds, dir: 'out' });
       else if (a.dstKey === id) out.push({ other: a.srcKey, kinds: a.kinds, dir: 'in' });
     }
-  } else {
-    for (const e of edges) {
-      if (e.src === id) out.push({ other: e.dst, kinds: e.kinds, dir: 'out' });
-      else if (e.dst === id) out.push({ other: e.src, kinds: e.kinds, dir: 'in' });
-    }
+  } else if (cy) {
+    cy.edges().forEach(e => {
+      const d = e.data();
+      if (d.source === id) out.push({ other: d.target, kinds: d.kinds || [], dir: 'out' });
+      else if (d.target === id) out.push({ other: d.source, kinds: d.kinds || [], dir: 'in' });
+    });
   }
   return out;
 }
@@ -1771,9 +1481,9 @@ function onEditorCursor(m) {
     hoverNode(id);
     const row = listRowEls.get(id);
     if (row) row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    else if (listRowIndexById.has(id)) scrollListToIndex(listRowIndexById.get(id)); // off-screen: scroll re-windows it
   } else {
-    const n = nodes.get(id);
-    if (n) { hoverNode(id); centerOnNode(n); }
+    if (cy && !cy.getElementById(id).empty()) { hoverNode(id); centerOnNode(id); }
   }
 }
 // The node whose file:line best matches the cursor. A df/call node sits on the
@@ -1786,14 +1496,22 @@ function fileMatches(nodeFile, cursorFile) {
     || nodeFile.endsWith('/' + cursorFile) || cursorFile.endsWith('/' + nodeFile);
 }
 function findNodeAt(m) {
+  // canvas: read node meta straight off cy element data; list: the meta maps.
+  const canvasMeta = id => {
+    if (!cy) return null;
+    const ele = cy.getElementById(id);
+    if (ele.empty()) return null;
+    const d = ele.data();
+    return { file: d.file, line: d.line, label: d.label, sym: d.id };
+  };
   const metaFor = viewMode === 'list'
     ? (id => listNodeMeta.get(id) || listAllNodeMeta.get(id))
-    : (id => nodes.get(id));
-  const ids = viewMode === 'list'
-    ? new Set([...listNodeMeta.keys(), ...listAllNodeMeta.keys()])
-    : nodes.keys();
+    : canvasMeta;
+  const idList = viewMode === 'list'
+    ? [...new Set([...listNodeMeta.keys(), ...listAllNodeMeta.keys()])]
+    : (cy ? cy.nodes().map(el => el.id()) : []);
   let best = null, bestDelta = Infinity;
-  for (const id of ids) {
+  for (const id of idList) {
     const n = metaFor(id);
     if (n && fileMatches(n.file, m.file)) {
       const d = Math.abs((Number(n.line) || 0) - (Number(m.line) || 0));
@@ -1802,9 +1520,7 @@ function findNodeAt(m) {
   }
   if (best != null && bestDelta <= 2) return best;
   if (m.word) {
-    for (const id of (viewMode === 'list'
-        ? new Set([...listNodeMeta.keys(), ...listAllNodeMeta.keys()])
-        : nodes.keys())) {
+    for (const id of idList) {
       if (id === m.word || id.endsWith('::' + m.word) || id.endsWith(':' + m.word)) return id;
       const n = metaFor(id);
       if (n && (n.label === m.word || n.sym === m.word)) return id;
@@ -1812,22 +1528,45 @@ function findNodeAt(m) {
   }
   return best; // nearest-line even if beyond 2, or null
 }
-// Pan (and keep the zoom) so the node's card sits at the viewport center.
-function centerOnNode(n) {
-  const el = n && n.el;
-  if (!el) return;
-  const r = viewport.getBoundingClientRect();
-  const wx = el.offsetLeft + el.offsetWidth / 2;
-  const wy = el.offsetTop + el.offsetHeight / 2;
-  view.x = r.width / 2 - wx * view.z;
-  view.y = r.height / 2 - wy * view.z;
-  applyView();
-  if (typeof scheduleFlips === 'function') scheduleFlips();
+// Center the cy viewport on the node with this sym (id-EQUALITY, not suffix
+// match); cytoscape animates the pan + a modest zoom so a followed node
+// actually reveals itself. Inert until cy exists.
+function centerOnNode(sym) {
+  if (!cy) return;
+  const ele = cy.getElementById(String(sym));
+  if (ele.empty()) return;
+  cy.stop();
+  cy.animate({ center: { eles: ele }, zoom: Math.max(cy.zoom(), 1) }, { duration: 220 });
 }
 if (window.dlHost) { window.__dlCursor = onEditorCursor; }
 document.getElementById('followCursor').addEventListener('change', function () {
   followCursorOn = this.checked;
   lastFollowId = null;
+});
+
+// ── auto-refresh on graphChanged ────────────────────────────────────────────
+// The VS Code host posts {type:'graphChanged'} after a daemon tick (extra
+// fields may ride along; ignored). When the "auto" toggle is on and this tab
+// is visible, re-run the current query, debounced so a burst of ticks coalesces
+// into one re-query. Inert under the browser bridge -- no such message arrives.
+const AUTO_KEY = 'dl-flow-auto';
+let autoRefreshOn = readLocalStorage(AUTO_KEY) === '1';
+(function initAutoRefresh() {
+  const cb = document.getElementById('autoRefresh');
+  cb.checked = autoRefreshOn;
+  cb.addEventListener('change', function () {
+    autoRefreshOn = this.checked;
+    writeLocalStorage(AUTO_KEY, autoRefreshOn ? '1' : '0');
+  });
+})();
+let graphChangedTimer = null;
+window.addEventListener('message', ev => {
+  const m = ev.data;
+  if (!m || m.type !== 'graphChanged') return;
+  clearTimeout(graphChangedTimer);
+  graphChangedTimer = setTimeout(() => {
+    if (autoRefreshOn && document.visibilityState === 'visible') run();
+  }, 250);
 });
 // shift-click range (list view) and shift-drag marquee (canvas) both ADD a
 // batch of ids to the selection in one shot -- never toggle-off inside the
@@ -1856,92 +1595,59 @@ function clearPins() {
   if (focusMode && viewMode === 'list') { setFocusMode(false); return; }
   refreshHighlight();
 }
+// Canvas highlight rides the cy instance's own classes (the DOM-card channels
+// are gone): .pinned (selection), .hl (hovered slice), .active (edge off a
+// pinned node), .dim (everything outside the hovered slice). Pins carry over
+// from list view, so this honors `pinned` whether or not anything is hovered.
 function refreshHighlight() {
   if (viewMode === 'list') { refreshListHighlight(); return; }
-  world.classList.toggle('hovering', !!hoveredId);
+  if (!cy) return;
   const files = new Set();
-  for (const n of nodes.values()) { n.el.classList.remove('hl', 'pinned', 'ghost'); }
-  for (const e of edges) e.el.classList.remove('hl', 'active', 'ghost');
-  const pinnedVisible = new Set();
-  for (const pid of pinned) {
-    const n = nodes.get(pid);
-    if (!n) continue;
-    n.el.classList.add('pinned');
-    pinnedVisible.add(pid);
-    if (n.file) files.add(n.file);
-  }
-  // persistent tier: every edge touching a pinned node stays highlighted
-  // (flat stroke, no animation) whether or not anything is hovered right now.
-  if (pinnedVisible.size) {
-    for (const e of edges) {
-      if (pinnedVisible.has(e.src) || pinnedVisible.has(e.dst)) e.el.classList.add('active');
+  cy.batch(() => {
+    cy.elements().removeClass('hl pinned active dim');
+    for (const pid of pinned) {
+      const ele = cy.getElementById(pid);
+      if (ele.empty() || !ele.isNode()) continue;
+      ele.addClass('pinned');
+      const f = ele.data('file'); if (f) files.add(f);
     }
-  }
-  if (hoveredId) {
-    const slice = new Set([hoveredId]);
-    for (const e of edges) {
-      if (e.src === hoveredId) slice.add(e.dst);
-      if (e.dst === hoveredId) slice.add(e.src);
+    if (pinned.size) {
+      cy.edges().forEach(e => {
+        if (pinned.has(e.data('source')) || pinned.has(e.data('target'))) e.addClass('active');
+      });
     }
-    // a hovered node can only ever be a currently-VISIBLE one (a .fout node
-    // has display:none, so it never receives pointerenter in the first
-    // place) -- so hoveredId itself is never .fout, only its neighbors can
-    // be. A .fout neighbor gets 'ghost' (faded reveal) instead of 'hl'
-    // (the gold highlight is reserved for nodes that actually pass the
-    // filter); its edge follows the same split.
-    for (const e of edges) {
-      if (e.src !== hoveredId && e.dst !== hoveredId) continue;
-      const other = nodes.get(e.src === hoveredId ? e.dst : e.src);
-      e.el.classList.add(other && other.el.classList.contains('fout') ? 'ghost' : 'hl');
+    if (hoveredId) {
+      const node = cy.getElementById(hoveredId);
+      const slice = new Set([hoveredId]);
+      if (!node.empty()) {
+        node.connectedEdges().forEach(e => {
+          e.addClass('hl');
+          slice.add(e.data('source')); slice.add(e.data('target'));
+        });
+      }
+      for (const sid of slice) {
+        const ele = cy.getElementById(sid);
+        if (ele.empty() || !ele.isNode()) continue;
+        ele.addClass('hl');
+        const f = ele.data('file'); if (f) files.add(f);
+      }
+      // dim anything outside the hovered slice (pinned stays lit)
+      cy.elements().forEach(ele => {
+        const inSlice = ele.isNode()
+          ? slice.has(ele.id())
+          : (slice.has(ele.data('source')) && slice.has(ele.data('target')));
+        if (!inSlice && !ele.hasClass('pinned')) ele.addClass('dim');
+      });
     }
-    for (const sid of slice) {
-      const n = nodes.get(sid);
-      if (!n) continue;
-      n.el.classList.add(n.el.classList.contains('fout') ? 'ghost' : 'hl');
-      if (n.file) files.add(n.file);
-    }
-  }
+  });
   host.hover([...files]);
 }
 
-// ── legend: a chip per kind in the current result; click = filter-by-kind ───
-function buildLegend() {
-  const leg = document.getElementById('legend');
-  leg.innerHTML = '';
-  const counts = new Map(); // kind -> count (node + edge kinds share the row)
-  for (const n of nodes.values()) if (n.kind) counts.set(n.kind, (counts.get(n.kind) || 0) + 1);
-  // sum multiplicities (every underlying row), not one per merged DOM edge
-  for (const e of edges) for (const k of e.kinds) if (k) counts.set(k, (counts.get(k) || 0) + 1);
-  for (const [k, c] of [...counts].sort((a, b) => b[1] - a[1])) {
-    const chip = document.createElement('span');
-    chip.className = 'chip';
-    chip.dataset.kind = k;
-    chip.title = `click to show only "${k}" (click again to restore)`;
-    chip.innerHTML = `<span class="swatch" style="background:${kindColor(k)}"></span>${esc(k)} ${c}`;
-    chip.addEventListener('click', () => {
-      if (kindFilter.has(k)) kindFilter.delete(k); else kindFilter.add(k);
-      applyKindFilter();
-    });
-    leg.appendChild(chip);
-  }
-  applyKindFilter();
-}
+// The legend/kind-filter chips are a list-view affordance (buildLegendList +
+// applyKindFilterList). Canvas mode has no kind filter; applyKindFilter stays
+// only as the list dispatcher its callers (buildLegendList) already use.
 function applyKindFilter() {
-  if (viewMode === 'list') { applyKindFilterList(); return; }
-  const active = kindFilter.size > 0;
-  for (const n of nodes.values()) n.el.classList.toggle('fout', active && !kindFilter.has(n.kind));
-  // an edge hides if EITHER endpoint is filtered out, or none of its own
-  // (possibly several, merged) kinds survive the filter
-  for (const e of edges) {
-    const f = nodes.get(e.src), t = nodes.get(e.dst);
-    const endpointOut = active && ((f && !kindFilter.has(f.kind)) || (t && !kindFilter.has(t.kind)));
-    const kindsOut = active && !e.kinds.some(k => kindFilter.has(k));
-    e.el.classList.toggle('fout', endpointOut || kindsOut);
-  }
-  for (const chip of document.getElementById('legend').children) {
-    chip.classList.toggle('on', kindFilter.has(chip.dataset.kind));
-  }
-  refreshHighlight(); // re-derive hl/ghost now that some nodes just left/rejoined layout
+  if (viewMode === 'list') applyKindFilterList();
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -2466,6 +2172,8 @@ function renderList(nodeRows, edgeRows) {
 // toggle, AND every kind-filter toggle (no re-query, buildRows/applyCollapse
 // are both pure; kindFilter is threaded straight in as another visibility
 // predicate ANDed with collapse -- see applyCollapse's isFilteredOut).
+let listVisibleRows = [];          // all post-collapse/filter rows; DOM is windowed
+let listWindow = { first: 0, last: 0 }; // materialized [first, last) range
 function refreshListView() {
   const focusKeep = focusMode ? computeFocusSlice() : null;
   const { visibleRows, arcs, collapsedCount, filteredCount } =
@@ -2479,8 +2187,9 @@ function refreshListView() {
     listNodeMeta.set(r.id, { file: r.file, line: r.line, label: r.label, kind: r.kind });
   });
 
-  renderListRows(visibleRows);
-  drawGutterArcs(arcs, visibleRows.length);
+  listVisibleRows = visibleRows;
+  renderWindow();
+  drawGutterArcs(arcs, visibleRows.length); // full-height, all arcs (DOM-independent)
 
   document.getElementById('countPill').textContent =
     `${listRowIndexById.size} nodes · ${lastKeptEdgeCount} edges`
@@ -2498,30 +2207,63 @@ function toggleCollapse(key) {
   refreshListView();
 }
 
-function renderListRows(rows) {
-  let html = '';
-  for (const r of rows) {
-    const pad = 8 + r.depth * 14;
-    const collapsed = r.hasChildren && collapsedKeys.has(r.key);
-    const tri = r.hasChildren
-      ? `<span class="ltri" data-key="${esc(r.key)}">${collapsed ? '▸' : '▾'}</span>`
-      : `<span class="ltri ltri-none"></span>`;
-    if (r.type === 'dir') {
-      html += `<div class="lrow lrow-dir" data-key="${esc(r.key)}" style="padding-left:${pad}px">`
-        + tri + `<span class="ldot"></span><span class="llabel" title="${esc(r.label)}">${esc(r.label)}</span></div>`;
-      continue;
-    }
-    const kc = r.kind ? kindColor(r.kind) : '';
-    const lineCell = r.line != null
-      ? `<span class="lline" title="open ${esc(r.file || '')}:${r.line}">:${r.line}</span>` : '';
-    html += `<div class="lrow lrow-node" data-id="${esc(r.id)}" data-key="${esc(r.key)}" style="padding-left:${pad}px">`
-      + tri
-      + `<span class="ldot"${kc ? ` style="background:${kc}"` : ''}></span>`
-      + `<span class="llabel" title="${esc(r.label)}">${esc(r.label)}</span>`
-      + (r.kind ? `<span class="lkind">${esc(r.kind)}</span>` : '')
-      + lineCell + `</div>`;
+// The set of row keys highlighted by the current hover (the hovered row +
+// its arc counterparts) -- rowHtml paints .hl inline so a row scrolled into
+// view mid-hover comes back lit without a full refreshListHighlight pass.
+function currentHlSlice() {
+  if (!hoveredId) return null;
+  const slice = new Set([hoveredId]);
+  for (const a of listArcs) {
+    if (a.srcKey === hoveredId) slice.add(a.dstKey);
+    if (a.dstKey === hoveredId) slice.add(a.srcKey);
   }
+  return slice;
+}
+
+// One absolutely-positioned row div (top = index*ROW_H). Selection/hover
+// classes are baked in so a freshly-windowed row is correct on arrival.
+function rowHtml(r, i, hlSlice) {
+  const pad = 8 + r.depth * 14;
+  const top = i * ROW_H;
+  const collapsed = r.hasChildren && collapsedKeys.has(r.key);
+  const tri = r.hasChildren
+    ? `<span class="ltri" data-key="${esc(r.key)}">${collapsed ? '▸' : '▾'}</span>`
+    : `<span class="ltri ltri-none"></span>`;
+  const pinCls = pinned.has(r.key) || (r.type === 'node' && pinned.has(r.id)) ? ' pinned' : '';
+  const hlCls = hlSlice && (hlSlice.has(r.key) || (r.type === 'node' && hlSlice.has(r.id))) ? ' hl' : '';
+  const style = `style="top:${top}px;padding-left:${pad}px"`;
+  if (r.type === 'dir') {
+    return `<div class="lrow lrow-dir${pinCls}${hlCls}" data-key="${esc(r.key)}" ${style}>`
+      + tri + `<span class="ldot"></span><span class="llabel" title="${esc(r.label)}">${esc(r.label)}</span></div>`;
+  }
+  const kc = r.kind ? kindColor(r.kind) : '';
+  const lineCell = r.line != null
+    ? `<span class="lline" title="open ${esc(r.file || '')}:${r.line}">:${r.line}</span>` : '';
+  return `<div class="lrow lrow-node${pinCls}${hlCls}" data-id="${esc(r.id)}" data-key="${esc(r.key)}" ${style}>`
+    + tri
+    + `<span class="ldot"${kc ? ` style="background:${kc}"` : ''}></span>`
+    + `<span class="llabel" title="${esc(r.label)}">${esc(r.label)}</span>`
+    + (r.kind ? `<span class="lkind">${esc(r.kind)}</span>` : '')
+    + lineCell + `</div>`;
+}
+
+// Materialize only the rows intersecting the scroll viewport (+ overscan);
+// #listRows carries the full virtual height as a spacer. Rebuilt on every
+// data/filter/collapse change and (rAF-throttled) on scroll.
+const ROW_OVERSCAN = 10;
+function renderWindow() {
+  const rows = listVisibleRows;
   const rowsEl = document.getElementById('listRows');
+  rowsEl.style.height = (rows.length * ROW_H) + 'px';
+  const scroll = document.getElementById('listScroll');
+  const gutterTop = document.getElementById('gutterLeft').offsetTop; // resolved --bar-h
+  const viewTop = Math.max(0, scroll.scrollTop - gutterTop);
+  let first = Math.max(0, Math.floor(viewTop / ROW_H) - ROW_OVERSCAN);
+  let last = Math.min(rows.length,
+    Math.ceil((viewTop + scroll.clientHeight) / ROW_H) + ROW_OVERSCAN);
+  const hlSlice = currentHlSlice();
+  let html = '';
+  for (let i = first; i < last; i++) html += rowHtml(rows[i], i, hlSlice);
   rowsEl.innerHTML = html;
   listRowEls.clear();
   listRowElByKey.clear();
@@ -2529,6 +2271,15 @@ function renderListRows(rows) {
     listRowElByKey.set(el.dataset.key, el);
     if (el.classList.contains('lrow-node')) listRowEls.set(el.dataset.id, el);
   }
+  listWindow = { first, last };
+}
+// Scroll a visible-row index to the viewport center (used when centering on a
+// row that isn't currently materialized -- the scroll re-windows it in).
+function scrollListToIndex(idx) {
+  const scroll = document.getElementById('listScroll');
+  const gutterTop = document.getElementById('gutterLeft').offsetTop;
+  scroll.scrollTo({ top: Math.max(0, gutterTop + idx * ROW_H + ROW_H / 2 - scroll.clientHeight / 2),
+    behavior: 'smooth' });
 }
 
 // arcs are rebuilt only from refreshListView (data/filter/collapse/mode
@@ -2979,6 +2730,15 @@ function buildOverlapBadges(highlightedArcs) {
     if (ev.target.closest('.listgutter')) return; // arc clicks teleport, never clear
     clearPins();
   });
+  // re-window the materialized row slice as the list scrolls (rAF-throttled).
+  // The gutter svgs are full-height and scroll for free -- only the row DOM is
+  // virtualized, so scrolling never touches drawGutterArcs.
+  let winRaf = false;
+  document.getElementById('listScroll').addEventListener('scroll', () => {
+    if (winRaf) return;
+    winRaf = true;
+    requestAnimationFrame(() => { winRaf = false; if (viewMode === 'list') renderWindow(); });
+  }, { passive: true });
 })();
 
 // trace mode's own row interactions: same open/select behavior as list rows
@@ -3151,181 +2911,11 @@ document.getElementById('modeBtn').addEventListener('click', () => {
   if (lastNodeRows) render(lastNodeRows, lastEdgeRows, lastNodeTotal, lastEdgeTotal);
 });
 
-// ── canvas arrows (prototype toggle): one rotated triangle div per edge, at
-// the wire's visual midpoint, pointing along its flow direction. Positions
-// piggyback on runFlips below (rects already fetched there for the flip
-// class) instead of a second measurement pass.
-let flowArrowEls = []; // aligned 1:1 with `edges` by index
-function clearFlowArrows() {
-  for (const el of flowArrowEls) el.remove();
-  flowArrowEls = [];
-}
-function rebuildFlowArrows() {
-  clearFlowArrows();
-  for (const e of edges) {
-    const el = document.createElement('div');
-    el.className = 'flow-arrow';
-    const ec = e.el.style.getPropertyValue('--ec');
-    if (ec) el.style.setProperty('--ec', ec);
-    world.appendChild(el);
-    flowArrowEls.push(el);
-  }
-  scheduleFlips();
-}
-
-// ── flip the curve onto the correct diagonal (the only edge math) ───────────
-let flipQueued = false;
-function scheduleFlips() { if (!flipQueued) { flipQueued = true; requestAnimationFrame(runFlips); } }
-function runFlips() {
-  flipQueued = false;
-  const arrowsOn = protoState.arrows && flowArrowEls.length === edges.length;
-  edges.forEach((e, i) => {
-    const a = nodes.get(e.src)?.el.getBoundingClientRect();
-    const b = nodes.get(e.dst)?.el.getBoundingClientRect();
-    if (!a || !b) return;
-    const flip = (a.left < b.left) !== (a.top < b.top);
-    e.el.classList.toggle('flip', flip);
-    if (!arrowsOn) return;
-    // the wire's fixed cubic (M0,0 C50,0 50,100 100,100) passes through the
-    // box center at t=.5 with tangent (75,150) in its 100x100 viewBox; scale
-    // by (boxW/100, boxH/100) for screen px, negate the y term when .flip's
-    // scaleY(-1) mirrors the rendered curve. Path start (t=0) always maps to
-    // src's anchor center and end (t=1) to dst's, flip or not (the flip
-    // transform mirrors around the box's own center, which fixes the two
-    // corners it swaps to land back on src/dst) -- so this angle always
-    // reads src -> dst, matching the arrowhead direction convention below.
-    const ax = a.left + a.width / 2, ay = a.top + a.height / 2;
-    const bx = b.left + b.width / 2, by = b.top + b.height / 2;
-    const boxW = Math.abs(bx - ax) || 1, boxH = Math.abs(by - ay) || 1;
-    const dx = 0.75 * boxW, dy = 1.5 * boxH * (flip ? -1 : 1);
-    const angle = Math.atan2(dy, dx);
-    const w = toWorld((ax + bx) / 2, (ay + by) / 2);
-    const el = flowArrowEls[i];
-    el.style.left = w.x + 'px'; el.style.top = w.y + 'px';
-    el.style.transform = `translate(-50%, -50%) rotate(${angle}rad)`;
-  });
-}
-
-// ── pointer interactions: node drag/click vs background pan/click ──────────
-// Standard editor idiom: a press that starts on a NODE never starts a pan
-// (panning the background is only reachable from the background). A press
-// anywhere is first a *candidate* ('maybe') — it only becomes a real drag/pan
-// once the pointer has moved past DRAG_THRESHOLD px; below that, release is a
-// click (node -> toggle pin, background -> clear all pins). The `.loc` hit
-// target is excluded up front so its own click listener (open the file) is
-// never shadowed by drag/select handling.
-const DRAG_THRESHOLD = 4;
-let mode = null;   // null | 'maybe' | 'drag' | 'pan' | 'marquee'
-let downNode = null, dragOff = null, panStart = null, downPos = null;
-
-// ── shift-drag marquee select: an absolutely-positioned box dropped straight
-// into `viewport` (position:fixed inset:0), so ev.clientX/Y double as
-// viewport-local px -- no pan/zoom math to draw it, and the pointerup hit
-// test compares its screen-space getBoundingClientRect() directly against
-// each node card's, same coordinate space, still no layout math. Shift held
-// on pointerdown -- background OR starting on a node -- always means
-// marquee, never a pan or a node drag (simpler and predictable: a shifted
-// press is unambiguously a select gesture).
-let marqueeEl = null, marqueeOrigin = null;
-function startMarquee(x, y) {
-  marqueeOrigin = { x, y };
-  marqueeEl = document.createElement('div');
-  marqueeEl.className = 'marquee';
-  viewport.appendChild(marqueeEl);
-  updateMarquee(x, y);
-}
-function updateMarquee(x, y) {
-  const left = Math.min(marqueeOrigin.x, x), top = Math.min(marqueeOrigin.y, y);
-  marqueeEl.style.left = left + 'px';
-  marqueeEl.style.top = top + 'px';
-  marqueeEl.style.width = Math.abs(x - marqueeOrigin.x) + 'px';
-  marqueeEl.style.height = Math.abs(y - marqueeOrigin.y) + 'px';
-}
-function finishMarquee() {
-  const box = marqueeEl.getBoundingClientRect();
-  const ids = [];
-  for (const [id, n] of nodes) {
-    const r = n.el.getBoundingClientRect();
-    if (!r.width || !r.height) continue; // display:none (kind-filtered/folded-out) card
-    if (box.left < r.right && box.right > r.left && box.top < r.bottom && box.bottom > r.top) ids.push(id);
-  }
-  marqueeEl.remove();
-  marqueeEl = null; marqueeOrigin = null;
-  pinRange(ids); // additive, same as list's range-select -- never toggles off
-}
-function cancelMarquee() {
-  if (marqueeEl) { marqueeEl.remove(); marqueeEl = null; marqueeOrigin = null; }
-}
-
-viewport.addEventListener('pointerdown', ev => {
-  if (viewMode === 'canvas') return; // cytoscape owns drag/pan on its own canvas
-  if (ev.target.closest('.loc')) return; // let its own click handler run untouched
-  const nodeEl = ev.target.closest('.node');
-  downPos = { x: ev.clientX, y: ev.clientY };
-  downNode = nodeEl || null;
-  if (ev.shiftKey) {
-    mode = 'marquee';
-    startMarquee(ev.clientX, ev.clientY);
-  } else if (nodeEl) {
-    mode = 'maybe';
-    const w = toWorld(ev.clientX, ev.clientY);
-    dragOff = { x: w.x - parseFloat(nodeEl.style.left), y: w.y - parseFloat(nodeEl.style.top) };
-  } else {
-    mode = 'maybe';
-    panStart = { x: ev.clientX, y: ev.clientY, vx: view.x, vy: view.y };
-  }
-  viewport.setPointerCapture(ev.pointerId);
-});
-viewport.addEventListener('pointermove', ev => {
-  if (mode === 'marquee') { updateMarquee(ev.clientX, ev.clientY); return; }
-  if (mode === 'maybe') {
-    const dx = ev.clientX - downPos.x, dy = ev.clientY - downPos.y;
-    if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
-    if (downNode) { mode = 'drag'; downNode.classList.add('dragging'); }
-    else { mode = 'pan'; viewport.classList.add('panning'); }
-  }
-  if (mode === 'drag') {
-    const w = toWorld(ev.clientX, ev.clientY);
-    downNode.style.left = (w.x - dragOff.x) + 'px';
-    downNode.style.top  = (w.y - dragOff.y) + 'px';
-    scheduleFlips();
-  } else if (mode === 'pan') {
-    view.x = panStart.vx + (ev.clientX - panStart.x);
-    view.y = panStart.vy + (ev.clientY - panStart.y);
-    applyView(); scheduleFlips();
-  }
-});
-viewport.addEventListener('pointerup', () => {
-  if (mode === 'marquee') { finishMarquee(); }
-  if (mode === 'maybe') {
-    if (downNode) togglePin(downNode.dataset.id); else clearPins();
-  }
-  if (downNode) downNode.classList.remove('dragging');
-  viewport.classList.remove('panning');
-  mode = null; downNode = null; dragOff = null; panStart = null; downPos = null;
-});
-// wheel-zoom pauses wire animation too (like .panning) — a debounced class
-// since wheel fires many times per gesture with no natural "end" event
-let zoomTimer = null;
-viewport.addEventListener('wheel', ev => {
-  if (viewMode === 'canvas') return; // cytoscape owns wheel-zoom
-  ev.preventDefault();
-  const r = viewport.getBoundingClientRect();
-  const sx = ev.clientX - r.left, sy = ev.clientY - r.top;
-  const wx = (sx - view.x) / view.z, wy = (sy - view.y) / view.z;
-  view.z = Math.min(2.5, Math.max(0.15, view.z * (ev.deltaY < 0 ? 1.1 : 1 / 1.1)));
-  view.x = sx - wx * view.z; view.y = sy - wy * view.z;
-  applyView(); scheduleFlips();
-  viewport.classList.add('zooming');
-  clearTimeout(zoomTimer);
-  zoomTimer = setTimeout(() => viewport.classList.remove('zooming'), 150);
-}, { passive: false });
-
 // ── toolbar ──────────────────────────────────────────────────────────────────
 document.getElementById('runBtn').addEventListener('click', run);
 document.getElementById('resetBtn').addEventListener('click', () => {
   if (viewMode === 'list') { document.getElementById('listScroll').scrollTop = 0; return; }
-  view.x = 40; view.y = 110; view.z = 1; applyView(); scheduleFlips();
+  if (cy) cy.fit(undefined, 24); // canvas: cytoscape owns pan/zoom now
 });
 document.getElementById('linkedBtn').addEventListener('click', function () {
   linkedOnly = !linkedOnly;
@@ -3350,12 +2940,10 @@ function isTypingTarget(el) {
   return tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || (el && el.isContentEditable);
 }
 document.addEventListener('keydown', ev => {
-  // Escape peels one layer per press: an in-flight marquee first (cancels
-  // the drag without touching `pinned` -- it hasn't committed anything yet),
-  // then help overlay, then focus mode, then the pin set -- so exiting focus
-  // never silently throws the selection away.
+  // Escape peels one layer per press: help overlay, then trace, then focus
+  // mode, then the pin set -- so exiting focus never silently throws the
+  // selection away.
   if (ev.key === 'Escape') {
-    if (mode === 'marquee') { cancelMarquee(); mode = null; downNode = null; dragOff = null; panStart = null; downPos = null; return; }
     if (!helpPanel.hidden) { closeHelp(); return; }
     if (viewMode === 'trace') { viewMode = 'list'; writeLocalStorage(MODE_KEY, viewMode); applyViewMode(); return; }
     if (focusMode) { setFocusMode(false); return; }
@@ -3441,7 +3029,6 @@ function esc(s) {
   return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
-applyView();
 discoverLayers();
 if (currentPreset !== 'layers') run();
 </script>
