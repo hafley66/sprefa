@@ -143,3 +143,65 @@ e(caller, callee) <- scip_fn_edge(caller, callee).
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
     assert!(out.contains("callee()"), "self-edge should appear: stdout={out}\nstderr={err}");
 }
+
+/// S1: `scip_occurrence` surfaces the 0-based line/col span + role that
+/// `scip_ref` lacked. A def and a reference of the same symbol on different
+/// lines produce two rows, distinguished by role, positions intact. The
+/// co-queried `scip_def` proves this is a PURE ADDITION — the def/ref/edge
+/// rels are unchanged.
+#[test]
+fn imports_occurrence_spans_with_roles() {
+    let d = sandbox("occurrence");
+    let index = d.join("index.scip");
+    let sym = "pkg/foo().";
+    let mut idx = Index::new();
+    idx.documents = vec![document("src/lib.rs", vec![
+        occurrence_r(sym, SymbolRole::Definition as i32, [3, 4, 3, 7]),
+        occurrence_r(sym, 0, [7, 8, 7, 11]),
+    ])];
+    scip::write_message_to_file(&index, idx).unwrap();
+    let prog = r#"
+? scip_occurrence(file, symbol, line, col, end_line, end_col, role, repo).
+? scip_def(symbol, file, repo).
+"#;
+    let (code, out, err) = run(&d, prog, &index);
+    assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
+    // The definition occurrence: exact file/symbol/span/role prefix (repo is the
+    // sandbox slug, not asserted).
+    assert!(out.contains("src/lib.rs\tpkg/foo().\t3\t4\t3\t7\tdefinition"),
+        "definition occurrence with span+role: {out}");
+    assert!(out.contains("src/lib.rs\tpkg/foo().\t7\t8\t7\t11\treference"),
+        "reference occurrence with span+role: {out}");
+    // scip_def still emits — pure addition, def rel untouched.
+    assert!(out.contains("pkg/foo().\tsrc/lib.rs"), "scip_def unchanged: {out}");
+}
+
+/// S2: the LOCAL binding name is joinable to the canonical symbol. An aliased
+/// import `import { foo as bar }` has the canonical `foo` symbol occurring over
+/// `bar`'s range; `scip_binding` slices "bar" from the source and pairs it with
+/// the canonical symbol, so a name-based join on the local name — which
+/// `scip_name` (canonical-only) silently dropped — now lands.
+#[test]
+fn binds_aliased_import_local_name() {
+    let d = sandbox("binding_alias");
+    let index = d.join("index.scip");
+    // The aliased import must exist ON DISK — scip_binding slices WORK content.
+    fs::write(d.join("app.ts"), "import { foo as bar } from \"./mod\"\n").unwrap();
+    let canonical = "scip-typescript npm mod 1.0.0 `mod`/foo#";
+    let mut idx = Index::new();
+    // `bar` is UTF-16 cols [16, 19) on line 0.
+    idx.documents = vec![document("app.ts", vec![
+        occurrence_r(canonical, 0, [0, 16, 0, 19]),
+    ])];
+    scip::write_message_to_file(&index, idx).unwrap();
+    let prog = r#"
+rel resolved(local: text, sym: text).
+resolved(local, sym) <- scip_binding(_, sym, local, _, _, _).
+? resolved(local, sym).
+"#;
+    let (code, out, err) = run(&d, prog, &index);
+    assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
+    // The join on the LOCAL name "bar" resolves to the CANONICAL symbol.
+    assert!(out.contains("bar\tscip-typescript npm mod 1.0.0 `mod`/foo#"),
+        "local name bar joins to canonical foo symbol: {out}");
+}

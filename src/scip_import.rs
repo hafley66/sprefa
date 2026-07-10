@@ -37,6 +37,15 @@ pub struct ScipRows {
     /// opaque locals) instead of erasing all names uniformly — the basis of the
     /// symbol/type-shape clone kernel.
     pub occ_spans: Vec<(String, i32, i32, String)>,
+    /// Full per-occurrence rows for the `scip_occurrence` relation:
+    /// `(file, symbol, start_line, start_col, end_line, end_col, role, repo)`.
+    /// 0-based line/col (raw SCIP); `role` ∈ {definition, reference} from the
+    /// `symbol_roles` bitmask; `repo` is the document's origin repo id (same
+    /// keying as `defs`/`refs`). Records EVERY occurrence, incl. locals, so a
+    /// detector sees the same breadth `occ_spans` does — this is the S1 fix
+    /// (`scip_ref` had no line/column). Kept separate from `occ_spans` so the
+    /// in-process clone kernel (`propose.rs`) keeps its narrow tuple shape.
+    pub occurrences: Vec<(String, String, i32, i32, i32, i32, String, String)>,
     /// Interface/supertype dispatch edges from SCIP
     /// `SymbolInformation.relationships` (the `is_implementation` flag). Each row
     /// is (impl_sym, iface_sym): the implementing/overriding symbol declares a
@@ -169,12 +178,23 @@ pub fn rows(index: &Index, root: &Path, slug: &str) -> ScipRows {
     let mut fn_edges: HashSet<(String, String)> = HashSet::new();
     let mut locals: HashSet<(String, String)> = HashSet::new();
     let mut occ_spans: HashSet<(String, i32, i32, String)> = HashSet::new();
+    let mut occurrences: HashSet<(String, String, i32, i32, i32, i32, String, String)> =
+        HashSet::new();
     let disp_names = display_names(index);
     for doc in &index.documents {
         let fns = fn_defs.get(&doc.relative_path);
         for occ in &doc.occurrences {
-            if let Some(((sl, sc), (_el, _ec))) = parse_range(&occ.range) {
+            if let Some(((sl, sc), (el, ec))) = parse_range(&occ.range) {
                 occ_spans.insert((doc.relative_path.clone(), sl, sc, occ.symbol.clone()));
+                if !occ.symbol.is_empty() {
+                    occurrences.insert((
+                        doc.relative_path.clone(),
+                        occ.symbol.clone(),
+                        sl, sc, el, ec,
+                        role_label(occ.symbol_roles).to_string(),
+                        doc_repo(&doc.relative_path),
+                    ));
+                }
             }
             // Local symbols (params + lets) are filtered from the main path by
             // `usable_symbol`. They get their own collection: a local DEF is the
@@ -246,6 +266,7 @@ pub fn rows(index: &Index, root: &Path, slug: &str) -> ScipRows {
         callee_types: callee_types.into_iter().collect(),
         locals: locals.into_iter().collect(),
         occ_spans: occ_spans.into_iter().collect(),
+        occurrences: occurrences.into_iter().collect(),
         impls: impls.into_iter().collect(),
     };
     rows.defs.sort();
@@ -255,6 +276,7 @@ pub fn rows(index: &Index, root: &Path, slug: &str) -> ScipRows {
     rows.callee_types.sort();
     rows.locals.sort();
     rows.occ_spans.sort();
+    rows.occurrences.sort();
     rows.impls.sort();
     rows
 }
@@ -291,6 +313,64 @@ fn enclosing_fn(
 
 fn is_def(roles: i32) -> bool {
     roles & (SymbolRole::Definition as i32) != 0
+}
+
+/// Closed-vocabulary role for a `scip_occurrence` row, off the `symbol_roles`
+/// bitmask. `Definition` set → `definition`; everything else (a plain reference,
+/// or an Import/Read/Write reference) → `reference`. The occurrence rel only
+/// needs the def-vs-ref split; finer roles stay in the raw index.
+fn role_label(roles: i32) -> &'static str {
+    if is_def(roles) { "definition" } else { "reference" }
+}
+
+/// The local binding text at a single-line occurrence: the source slice
+/// `[start_col, end_col)` of `line_text`, measured in UTF-16 code units (the
+/// SCIP/LSP default column encoding). ASCII identifiers — the overwhelming
+/// majority — slice identically under bytes/chars/UTF-16, so this only matters
+/// for a line with a wide character before the occurrence. Returns "" for an
+/// out-of-range or inverted span.
+fn slice_local_name(line_text: &str, start_col: i32, end_col: i32) -> String {
+    if start_col < 0 || end_col <= start_col { return String::new(); }
+    let units: Vec<u16> = line_text.encode_utf16().collect();
+    let (lo, hi) = (start_col as usize, end_col as usize);
+    if hi > units.len() { return String::new(); }
+    String::from_utf16_lossy(&units[lo..hi])
+}
+
+/// Local binding names for a batch of occurrences produced under one on-disk
+/// `root` (one input index). Reads each distinct file's WORK content ONCE
+/// (cached — never a per-occurrence read), then slices each single-line
+/// occurrence range to its source text. Returns
+/// `(file, symbol, local_name, start_line, start_col, repo)`, deduped. This is
+/// the S2 fix: the LOCAL binding (e.g. `bar` from `import { foo as bar }`) is
+/// the source text at the range, joinable to the canonical `symbol` — a
+/// name-based join that `scip_name` (canonical only) silently dropped now lands.
+/// SCIP is WORK-only, so the slice reflects the current on-disk tree; a stale
+/// index vs a later edit can mis-name (the importer's standing staleness).
+/// Multi-line and unreadable ranges are skipped.
+pub fn local_bindings(
+    occurrences: &[(String, String, i32, i32, i32, i32, String, String)],
+    root: &Path,
+) -> Vec<(String, String, String, i32, i32, String)> {
+    let mut lines_of: HashMap<&str, Option<Vec<String>>> = HashMap::new();
+    let mut out: HashSet<(String, String, String, i32, i32, String)> = HashSet::new();
+    for (file, symbol, sl, sc, el, ec, _role, repo) in occurrences {
+        if sl != el { continue; } // single-line occurrences only
+        let lines = lines_of.entry(file.as_str()).or_insert_with(|| {
+            std::fs::read_to_string(root.join(file))
+                .ok()
+                .map(|content| content.lines().map(str::to_string).collect())
+        });
+        let Some(lines) = lines else { continue };
+        let Some(line_text) = lines.get(*sl as usize) else { continue };
+        let name = slice_local_name(line_text, *sc, *ec);
+        if !name.is_empty() {
+            out.insert((file.clone(), symbol.clone(), name, *sl, *sc, repo.clone()));
+        }
+    }
+    let mut out: Vec<_> = out.into_iter().collect();
+    out.sort();
+    out
 }
 
 fn usable_symbol(symbol: &str) -> bool {
@@ -595,6 +675,99 @@ mod tests {
         let rows = test_rows(&index);
         assert_eq!(rows.impls, vec![(impl_m.to_string(), iface.to_string())],
             "only the is_implementation edge, oriented impl→iface: {:?}", rows.impls);
+    }
+
+    #[test]
+    fn parse_range_four_and_three_element_forms() {
+        // 4-el: explicit end line/col.
+        assert_eq!(parse_range(&[2, 4, 3, 9]), Some(((2, 4), (3, 9))));
+        // 3-el short form: end line == start line, third value is end col.
+        assert_eq!(parse_range(&[2, 4, 9]), Some(((2, 4), (2, 9))));
+        // malformed lengths → None.
+        assert_eq!(parse_range(&[1, 2]), None);
+        assert_eq!(parse_range(&[1, 2, 3, 4, 5]), None);
+    }
+
+    #[test]
+    fn role_label_maps_definition_and_reference() {
+        assert_eq!(role_label(SymbolRole::Definition as i32), "definition");
+        // Definition co-set with another bit is still a definition.
+        assert_eq!(
+            role_label(SymbolRole::Definition as i32 | SymbolRole::Import as i32),
+            "definition"
+        );
+        // No Definition bit → reference (plain, Import, Read, Write all fold in).
+        assert_eq!(role_label(0), "reference");
+        assert_eq!(role_label(SymbolRole::Import as i32), "reference");
+    }
+
+    #[test]
+    fn slice_local_name_ascii_and_utf16() {
+        // `import { foo as bar }` — `bar` is UTF-16 units [16, 19).
+        let line = "import { foo as bar }";
+        assert_eq!(slice_local_name(line, 16, 19), "bar");
+        // A wide char before the occurrence shifts UTF-16 columns; the slice
+        // still lands on the identifier when the index is UTF-16-based.
+        let wide = "let 😀 = bar";           // 😀 = 2 UTF-16 units
+        // "let " = 4, "😀" = 2 (→6), " = " = 3 (→9), "bar" = [9, 12).
+        assert_eq!(slice_local_name(wide, 9, 12), "bar");
+        // Out-of-range / inverted spans yield "".
+        assert_eq!(slice_local_name(line, 100, 103), "");
+        assert_eq!(slice_local_name(line, 5, 5), "");
+    }
+
+    #[test]
+    fn occurrences_carry_end_position_role_and_repo() {
+        let def = "pkg/answer().";
+        let mut d = Document::new();
+        d.relative_path = "src/lib.rs".to_string();
+        d.occurrences = vec![
+            occ_r(def, SymbolRole::Definition as i32, [0, 0, 0, 6]),
+            occ_r(def, 0, [4, 8, 4, 14]), // a reference to the same symbol
+        ];
+        let mut idx = Index::new();
+        idx.documents = vec![d];
+        let rows = rows(&idx, Path::new("/roots/head"), "head");
+        // Two occurrence rows, one per span, tagged def vs ref, repo = slug.
+        assert_eq!(rows.occurrences.len(), 2, "{:?}", rows.occurrences);
+        let def_row = rows.occurrences.iter().find(|o| o.6 == "definition").unwrap();
+        assert_eq!(*def_row, ("src/lib.rs".into(), def.into(), 0, 0, 0, 6, "definition".into(), "head".into()));
+        let ref_row = rows.occurrences.iter().find(|o| o.6 == "reference").unwrap();
+        assert_eq!(*ref_row, ("src/lib.rs".into(), def.into(), 4, 8, 4, 14, "reference".into(), "head".into()));
+    }
+
+    #[test]
+    fn local_bindings_slice_source_text_for_alias() {
+        // Write a file whose import aliases `foo` to `bar`; the occurrence of the
+        // CANONICAL `foo` symbol sits over `bar`'s range. local_bindings slices
+        // "bar" (the local name scip_name can't give).
+        let dir = std::env::temp_dir().join("scip_local_bindings_unit");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("app.ts"), "import { foo as bar } from \"./mod\"\n").unwrap();
+        let canonical = "scip-typescript npm mod 1.0.0 `mod`/foo#";
+        // `bar` starts at UTF-16 col 16, ends at 19 (0-based).
+        let occ = vec![(
+            "app.ts".to_string(), canonical.to_string(),
+            0, 16, 0, 19, "reference".to_string(), "app".to_string(),
+        )];
+        let binds = local_bindings(&occ, &dir);
+        assert_eq!(binds.len(), 1, "{binds:?}");
+        assert_eq!(binds[0],
+            ("app.ts".into(), canonical.into(), "bar".into(), 0, 16, "app".into()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn local_bindings_skip_multiline_and_missing_files() {
+        // Multi-line occurrence (sl != el) is skipped; a file that isn't on disk
+        // yields nothing (no panic).
+        let occ = vec![
+            ("gone.ts".to_string(), "sym".to_string(), 0, 0, 0, 3, "reference".to_string(), "r".to_string()),
+            ("gone.ts".to_string(), "sym".to_string(), 0, 0, 5, 3, "reference".to_string(), "r".to_string()),
+        ];
+        let binds = local_bindings(&occ, Path::new("/no/such/root"));
+        assert!(binds.is_empty(), "{binds:?}");
     }
 
     #[test]

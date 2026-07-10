@@ -6,6 +6,25 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+### Added
+- **`scip_occurrence` — SCIP occurrence spans (S1).** The importer already
+  decoded every occurrence's range but dropped it at the rel layer (only
+  `scip_ref`'s file-level rows survived). New
+  `scip_occurrence(file, symbol, line, col, end_line, end_col, role, repo)`
+  surfaces the 0-based line/col span and `role` (`definition`|`reference`, from
+  the `symbol_roles` bitmask) for every occurrence, so a positional tag→symbol
+  mapping is finally possible from SCIP alone. Pure addition —
+  `scip_def`/`scip_ref`/`scip_edge` output is byte-identical.
+- **`scip_binding` — local binding names (S2).** New
+  `scip_binding(file, symbol, local_name, line, col, repo)` pairs each
+  occurrence's LOCAL source text (sliced from WORK content at the occurrence
+  range) with its canonical symbol. An aliased/default import
+  (`import { foo as bar }`) now joins on the local name `bar` — a name-based
+  join that `scip_name` (canonical-only) silently dropped. WORK-only (SCIP
+  indexes reflect the on-disk tree); file content read once per file, never
+  per-occurrence. Both rels are catalogued (group `scip`), reserved, and carried
+  through the `scip_want` multi-repo merge with per-repo attribution.
+
 ## [0.6.23] - 2026-07-09
 
 ### Added

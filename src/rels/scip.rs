@@ -38,7 +38,8 @@ pub struct ScipKind;
 impl RelKind for ScipKind {
     fn rels(&self) -> &'static [&'static str] {
         &["scip_def", "scip_name", "scip_ref", "scip_edge",
-          "scip_fn_edge", "scip_callee_type", "scip_local", "scip_impl"]
+          "scip_fn_edge", "scip_callee_type", "scip_local", "scip_impl",
+          "scip_occurrence", "scip_binding"]
     }
     fn decls(&self) -> Vec<RelDecl> {
         vec![
@@ -58,6 +59,18 @@ impl RelKind for ScipKind {
                 doc: "local-variable + parameter declarations attributed to their enclosing fn", ..Default::default() },
             RelDecl { name: "scip_impl".into(), cols: vec![col("impl", Type::Text), col("iface", Type::Text)], group: "scip",
                 doc: "interface/supertype dispatch edge from SCIP is_implementation (impl to iface)", ..Default::default() },
+            RelDecl { name: "scip_occurrence".into(), cols: vec![
+                    col("file", Type::Path), col("symbol", Type::Text),
+                    col("line", Type::Int), col("col", Type::Int),
+                    col("end_line", Type::Int), col("end_col", Type::Int),
+                    col("role", Type::Text), col("repo", Type::Text)], group: "scip",
+                doc: "every SCIP occurrence with its 0-based line/col span, role (definition or reference), and origin repo — the position handle scip_ref lacked", ..Default::default() },
+            RelDecl { name: "scip_binding".into(), cols: vec![
+                    col("file", Type::Path), col("symbol", Type::Text),
+                    col("local_name", Type::Text),
+                    col("line", Type::Int), col("col", Type::Int),
+                    col("repo", Type::Text)], group: "scip",
+                doc: "an occurrence's LOCAL binding text (source slice at its range) joined to the canonical symbol — resolves an alias/default import (import { foo as bar }) that scip_name's canonical-only name drops; WORK content slice, 0-based line/col", ..Default::default() },
         ]
     }
     fn reserved_msg(&self) -> &'static str {
@@ -87,11 +100,20 @@ impl RelKind for ScipKind {
             eng.refresh_rel("scip_callee_type", &["sym", "type"], &[])?;
             eng.refresh_rel("scip_local", &["fn", "name"], &[])?;
             eng.refresh_rel("scip_impl", &["impl", "iface"], &[])?;
+            eng.refresh_rel("scip_occurrence",
+                &["file", "symbol", "line", "col", "end_line", "end_col", "role", "repo"], &[])?;
+            eng.refresh_rel("scip_binding",
+                &["file", "symbol", "local_name", "line", "col", "repo"], &[])?;
             return Ok(true);
         }
         let mut all = scip_import::ScipRows::default();
+        // Local binding names are computed per-input (the on-disk root is known
+        // only inside this loop, before the merge erases which index each
+        // occurrence came from) so `scip_binding` slices the RIGHT tree.
+        let mut all_bindings: Vec<(String, String, String, i32, i32, String)> = Vec::new();
         for (path, root, slug) in &inputs {
             let rows = scip_import::load(path, root, slug)?;
+            all_bindings.extend(scip_import::local_bindings(&rows.occurrences, root));
             all.defs.extend(rows.defs);
             all.refs.extend(rows.refs);
             all.edges.extend(rows.edges);
@@ -99,6 +121,7 @@ impl RelKind for ScipKind {
             all.callee_types.extend(rows.callee_types);
             all.locals.extend(rows.locals);
             all.occ_spans.extend(rows.occ_spans);
+            all.occurrences.extend(rows.occurrences);
             all.impls.extend(rows.impls);
         }
         let rows = all;
@@ -125,6 +148,15 @@ impl RelKind for ScipKind {
             .map(|(fn_, name)| vec![t(fn_), t(name)]).collect();
         let impls: Vec<Vec<Value>> = rows.impls.iter()
             .map(|(im, iface)| vec![t(im), t(iface)]).collect();
+        let n = |v: &i32| Value::Int(*v as i64);
+        let occurrences: Vec<Vec<Value>> = rows.occurrences.iter()
+            .map(|(file, sym, sl, sc, el, ec, role, repo)|
+                vec![t(file), t(sym), n(sl), n(sc), n(el), n(ec), t(role), t(repo)])
+            .collect();
+        let bindings: Vec<Vec<Value>> = all_bindings.iter()
+            .map(|(file, sym, name, sl, sc, repo)|
+                vec![t(file), t(sym), t(name), n(sl), n(sc), t(repo)])
+            .collect();
         eng.refresh_rel("scip_def", &["symbol", "file", "repo"], &defs)?;
         eng.refresh_rel("scip_name", &["symbol", "name"], &names)?;
         eng.refresh_rel("scip_ref", &["file", "symbol", "def_file", "repo"], &refs)?;
@@ -133,6 +165,10 @@ impl RelKind for ScipKind {
         eng.refresh_rel("scip_callee_type", &["sym", "type"], &callee_types)?;
         eng.refresh_rel("scip_local", &["fn", "name"], &locals)?;
         eng.refresh_rel("scip_impl", &["impl", "iface"], &impls)?;
+        eng.refresh_rel("scip_occurrence",
+            &["file", "symbol", "line", "col", "end_line", "end_col", "role", "repo"], &occurrences)?;
+        eng.refresh_rel("scip_binding",
+            &["file", "symbol", "local_name", "line", "col", "repo"], &bindings)?;
         Ok(true)
     }
 }
