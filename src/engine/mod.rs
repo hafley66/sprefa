@@ -345,6 +345,16 @@ const EFFECT_RELS: [&str; 1] = ["effect_log"];
 /// program's rules like any other derived rel.
 const DIAG_RELS: [&str; 1] = ["diag"];
 
+/// The hover-note sink. Same shape as `diag` (engine-declared, USER-WRITTEN): a
+/// rule heads `hover_note(path, line, col, end_line, end_col, md)` to attach
+/// markdown to a source span; the LSP hover path appends each matching row's
+/// `md` to the hover it synthesizes at that position. Positions are 0-based,
+/// the same convention as `diag`. Fixed 6-col schema. Read only, never
+/// populated by a refresh — `rebuild_derived` fills it from the program's
+/// rules like any other derived rel; a program that never heads it leaves the
+/// table empty (or undeclared, tolerated by `Engine::hover_notes_at`).
+const HOVER_RELS: [&str; 1] = ["hover_note"];
+
 /// The drawable-graph SINK relations. A user HEADS these from a rule (like
 /// `diag`) to emit a graph the flow panel draws with ZERO bespoke SQL:
 /// `graph_node(id, label, kind, file, line, parent)` is one vertex,
@@ -446,6 +456,7 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
         .chain(effect_rel_decls())
         .chain(hook_rel_decls())
         .chain(diag_rel_decls())
+        .chain(hover_note_rel_decls())
         .chain(graph_rel_decls())
         .chain(diag_mute_rel_decls())
         .chain(demand_rel_decls())
@@ -592,6 +603,7 @@ pub fn op_docs() -> &'static [(&'static str, &'static str, &'static str, &'stati
         ("gen", "sink", "gen([:mode,] path, [l0, l1,] \"{var} template\")", "codegen; file form renders body rows through a path+row template; :zone replaces content between a NAMED `BEGIN:/END:` marker pair (markers stay, immune to surrounding edits); splice form replaces between two line numbers; raw `r\"...\"` / `r#\"...\"#` keep dollar-brace verbatim; `{{x}}` in a template emits literal `{x}`; convergent (skips write when bytes match); never runs under --check/--lsp; one-shot needs --apply"),
         ("graph_node", "sink", "graph_node(id: node_id, label: label, kind: kind[, file: , line: , parent: ]) <- ...", "head the built-in drawable-graph vertex sink; fixed 6-col schema (id/label/kind/file/line/parent), name only the columns you use; the flow panel's always-available Graph preset draws graph_node/graph_edge with no bespoke SQL"),
         ("graph_edge", "sink", "graph_edge(src: src_id, dst: dst_id, kind: kind) <- ...", "head the built-in drawable-graph edge sink; connects two graph_node ids, kind is the wire label; read by the Graph preset alongside graph_node"),
+        ("hover_note", "sink", "hover_note(path: hit_path, line: hit_line, end_line: hit_line, end_col: hit_end_col, md: note_text[, col: ]) <- ...", "head the built-in hover-note sink; fixed 6-col schema (path/line/col/end_line/end_col/md), name only the columns you use; the LSP hover path appends md to the hover shown at any position inside [line,col]..[end_line,end_col], 0-based like diag"),
     ]
 }
 
@@ -608,6 +620,20 @@ fn diag_rel_decls() -> Vec<RelDecl> {
             c("msg", Type::Text), c("hint", Type::Text)],
             group: "diag",
             doc: "diagnostic sink; head it from a rule to emit an editor squiggle (--lsp), a --check finding, or a daemon-hook message. Fixed 9-col schema — write only the cols you need via named args (diag(path: p, line: l, msg: m)); the rest are NULL and default (severity warn, end_line=line, ints 0). path is TEXT so a synthetic origin isn't file-checked away",
+            ..Default::default() },
+    ]
+}
+
+/// The hover-note sink relation (see `HOVER_RELS`). Fixed 6-col schema, same
+/// span convention as `diag` (0-based line/col, end_line/end_col inclusive).
+fn hover_note_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "hover_note".into(), cols: vec![
+            c("path", Type::File), c("line", Type::Int), c("col", Type::Int),
+            c("end_line", Type::Int), c("end_col", Type::Int), c("md", Type::Text)],
+            group: "diag",
+            doc: "markdown hover note attached to a source span; head it from a rule, shown by the LSP on hover. Positions are 0-based, same convention as diag (end_line/end_col inclusive); several notes on one span all show, appended after the synthesized entity hover",
             ..Default::default() },
     ]
 }
@@ -2521,6 +2547,25 @@ impl Engine {
         Ok(Some(md))
     }
 
+    /// User-headed markdown notes covering the point (`line`, `character`) in
+    /// `path` — the `hover_note` sink (see `HOVER_RELS`). Positions are
+    /// 0-based, `end_line`/`end_col` inclusive, the same convention as `diag`.
+    /// Sorted by `md` so the merge order is stable across ticks. Tolerates a
+    /// db where `hover_note` never derived (undeclared/empty table): returns
+    /// an empty Vec rather than erroring, via `try_rows`.
+    pub fn hover_notes_at(&self, path: &str, line: u32, character: u32) -> Result<Vec<String>> {
+        let hn = tbl("hover_note");
+        Ok(self.try_rows(
+            &format!(
+                "SELECT \"md\" FROM {hn} WHERE \"path\" = ?1 \
+                 AND (\"line\" < ?2 OR (\"line\" = ?2 AND \"col\" <= ?3)) \
+                 AND (\"end_line\" > ?2 OR (\"end_line\" = ?2 AND \"end_col\" >= ?3)) \
+                 ORDER BY \"md\""),
+            &[&path, &line, &character],
+            |r| r.get::<_, String>(0),
+        ))
+    }
+
     /// One-line type profile for `sym`: `Ca=N Ce=M fields=F variants=V impls=I`.
     /// `sym` is the type_entity sym; type_edge is name-keyed, so the trailing
     /// identifier of the sym (the bare name) is the join key. Returns None if
@@ -4105,6 +4150,9 @@ impl Engine {
                 if DIAG_RELS.contains(&d.name.as_str()) {
                     bail!("diag is the built-in diagnostic sink (fixed schema: path, line, col, end_line, end_col, severity, code, msg, hint); drop the `rel diag(...)` decl and write it directly — name only the columns you use, e.g. `diag(path: p, line: l, msg: m) <- ...`");
                 }
+                if HOVER_RELS.contains(&d.name.as_str()) {
+                    bail!("hover_note is the built-in hover-note sink (fixed schema: path, line, col, end_line, end_col, md); drop the `rel hover_note(...)` decl and head it directly from a rule, like diag — name only the columns you use, e.g. `hover_note(path: p, line: l, end_line: l, end_col: c, md: text) <- ...`");
+                }
                 if GRAPH_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in drawable-graph sink (graph_node(id, label, kind[, file, line, parent]) / graph_edge(src, dst, kind)); drop the `rel {}(...)` decl and head it directly from a rule, like diag — name only the columns you use", d.name, d.name);
                 }
@@ -4165,6 +4213,7 @@ impl Engine {
         for d in effect_rel_decls() { self.declare(&d)?; }
         for d in hook_rel_decls() { self.declare(&d)?; }
         for d in diag_rel_decls() { self.declare(&d)?; }
+        for d in hover_note_rel_decls() { self.declare(&d)?; }
         for d in graph_rel_decls() { self.declare(&d)?; }
         for d in diag_mute_rel_decls() { self.declare(&d)?; }
         for d in demand_rel_decls() { self.declare(&d)?; }

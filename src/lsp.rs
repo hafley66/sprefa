@@ -395,32 +395,62 @@ fn handle_definition(eng: &Engine, root: &Path, req: &Request) -> Response {
 
 /// textDocument/hover over the ref spine: cursor -> innermost located span ->
 /// its string text -> engine `hover` (auto-synthesizes markdown from
-/// type_entity + call_def). Returns a Hover with the span's range and the
-/// markdown content, or null when no entity/callable matches the bare name.
+/// type_entity + call_def), MERGED with any `hover_note` sink rows covering
+/// the cursor position (a program-authored markdown note, see
+/// `Engine::hover_notes_at`). Entity markdown and note markdown are joined by
+/// a `---` rule, in that order; notes alone (no entity match) still produce a
+/// hover; neither present is null, exactly as before this rel existed.
 fn handle_hover(eng: &Engine, root: &Path, req: &Request) -> Response {
     let params: TextDocumentPositionParams = match serde_json::from_value(req.params.clone()) {
         Ok(p) => p,
         Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
     };
     let hit = resolve_span(eng, root, &params);
-    let Some((path, _id, text, lo, hi)) = hit else {
-        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    let entity = hit.as_ref().and_then(|(path, _id, text, lo, hi)| {
+        eng.hover(path, text).unwrap_or(None).map(|md| (path.clone(), *lo, *hi, md))
+    });
+    // hover_note lookup needs the rel path even when the entity resolver found
+    // nothing (the cursor may sit on unlocated text a note still covers) — the
+    // entity hit's path when present, else resolved independently from the URI.
+    let note_path = entity.as_ref().map(|(path, ..)| path.clone())
+        .or_else(|| resolve_rel_path(root, &params.text_document.uri));
+    let notes: Vec<String> = match &note_path {
+        Some(path) => eng.hover_notes_at(path, params.position.line, params.position.character)
+            .unwrap_or_default(),
+        None => Vec::new(),
     };
-    let md = match eng.hover(&path, &text).unwrap_or(None) {
-        Some(m) => m,
-        None => return Response::new_ok(req.id.clone(), serde_json::Value::Null),
+
+    let md = match (entity.as_ref().map(|(_, _, _, md)| md.clone()), notes.is_empty()) {
+        (Some(entity_md), true) => entity_md,
+        (Some(entity_md), false) => format!("{entity_md}\n\n---\n\n{}", notes.join("\n\n---\n\n")),
+        (None, false) => notes.join("\n\n---\n\n"),
+        (None, true) => return Response::new_ok(req.id.clone(), serde_json::Value::Null),
     };
-    // Range is the located span so the editor highlights what the hover resolves.
-    let content = std::fs::read_to_string(root.join(&path)).unwrap_or_default();
-    let range = span_to_range(&content, lo, hi);
+    // Range is the located entity span when one resolved (highlights what the
+    // entity hover names); a notes-only hover carries no range.
+    let range = entity.as_ref().map(|(path, lo, hi, _)| {
+        let content = std::fs::read_to_string(root.join(path)).unwrap_or_default();
+        span_to_range(&content, *lo, *hi)
+    });
     let hover = lsp_types::Hover {
-        range: Some(range),
+        range,
         contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
             kind: lsp_types::MarkupKind::Markdown,
             value: md,
         }),
     };
     Response::new_ok(req.id.clone(), serde_json::to_value(hover).unwrap_or_default())
+}
+
+/// `Uri` -> repo-relative path, WITHOUT resolving a located span (unlike
+/// `resolve_span`, which fails when the cursor sits on unlocated text). Used
+/// by the `hover_note` merge so a note can still be found at a position the
+/// entity resolver has nothing to say about. Canonicalizes before stripping
+/// root, matching `resolve_span`/`resolve_abs_byte`.
+fn resolve_rel_path(root: &Path, uri: &Uri) -> Option<String> {
+    let abs = uri_to_path(uri)?;
+    let abs = std::fs::canonicalize(&abs).unwrap_or(abs);
+    rel_of(root, &abs)
 }
 
 /// Wrap a user SQL as a paginated subquery. The `LIMIT ?`/`OFFSET ?` placeholders
