@@ -79,6 +79,7 @@ mod mcp_daemon;
 mod mcp_lifecycle;
 mod lint_no_touch;
 mod lsp_protocol;
+mod lsp_query_paging;
 mod match_col_span;
 mod node2vec;
 mod sg_rewrite;

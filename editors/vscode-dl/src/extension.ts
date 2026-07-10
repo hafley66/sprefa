@@ -199,9 +199,11 @@ export function activate(ctx: vscode.ExtensionContext): void {
     { scheme: "file", language: "shell" },
   ];
 
+  // No synchronize.fileEvents watcher: the server declares change:NONE and has
+  // no didChangeWatchedFiles handler (it consumes didSave/didOpen only), so a
+  // workspace-wide watcher here only decoded and dropped events client-side.
   const clientOptions: LanguageClientOptions = {
     documentSelector: documentSelector as { scheme: string; language: string }[],
-    synchronize: { fileEvents: vscode.workspace.createFileSystemWatcher("**/*") },
   };
 
   const bar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
@@ -531,15 +533,20 @@ function openFlowPanel(ctx: vscode.ExtensionContext, root: string, slice: SliceD
       const m = e.data;
       if ((m.type === 'rows' || m.type === 'error') && pending.has(m.id)) {
         const p = pending.get(m.id); pending.delete(m.id);
-        m.type === 'rows' ? p.resolve(m.rows) : p.reject(new Error(m.message));
+        // Surface the server's true row count as a property on the resolved
+        // array (rows stays a plain any[][] everywhere else it's consumed).
+        if (m.type === 'rows') { const rows = m.rows; rows.total = m.total; p.resolve(rows); }
+        else p.reject(new Error(m.message));
       } else if (m.type === 'cursor' && window.__dlCursor) {
         window.__dlCursor(m);
       }
     });
     return {
-      query: (sql, params = []) => new Promise((resolve, reject) => {
+      // opts.limit threads through to dl/query's optional limit param; the
+      // server truncates server-side and the true count comes back as total.
+      query: (sql, params = [], opts = {}) => new Promise((resolve, reject) => {
         const id = ++seq; pending.set(id, { resolve, reject });
-        vscode.postMessage({ type: 'query', id, sql, params });
+        vscode.postMessage({ type: 'query', id, sql, params, limit: opts.limit });
       }),
       hover: files => vscode.postMessage({ type: 'hover', files }),
       open: (file, line) => vscode.postMessage({ type: 'open', file, line }),
@@ -557,17 +564,21 @@ function openFlowPanel(ctx: vscode.ExtensionContext, root: string, slice: SliceD
   panel.webview.onDidReceiveMessage(async (m) => {
     if (m.type === "query") {
       try {
-        const result: { rows: unknown[][] } = await client!.sendRequest("dl/query", {
-          sql: m.sql, params: m.params ?? [],
+        // m.limit (dl/query's optional {limit,offset,count} params) forwards
+        // only when the panel sent one; omitting it keeps old-server behavior.
+        const result: { rows: unknown[][]; total?: number } = await client!.sendRequest("dl/query", {
+          sql: m.sql, params: m.params ?? [], ...(m.limit != null ? { limit: m.limit } : {}),
         });
         // Guard the postMessage boundary: a giant result (custom SQL with no
         // LIMIT over a multi-repo db) serializes into the webview and OOMs the
         // renderer. Cap the crossing; the panel still slices to a renderable
-        // count below and shows the true total.
+        // count below and shows the true total. Prefer the server's own total
+        // (accurate even when `limit` already truncated result.rows) over the
+        // pre-cap length, for a server that hasn't grown `total` yet.
         const QUERY_ROW_CAP = 20000;
         const all = result.rows ?? [];
         const rows = all.length > QUERY_ROW_CAP ? all.slice(0, QUERY_ROW_CAP) : all;
-        void panel?.webview.postMessage({ type: "rows", id: m.id, rows, total: all.length });
+        void panel?.webview.postMessage({ type: "rows", id: m.id, rows, total: result.total ?? all.length });
       } catch (e) {
         void panel?.webview.postMessage({ type: "error", id: m.id, message: String((e as Error).message ?? e) });
       }

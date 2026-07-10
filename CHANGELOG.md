@@ -6,6 +6,24 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+### Added
+- **`dl/query` paging (A3).** The custom LSP request grows optional `limit`
+  (int), `offset` (int, default 0), and `count` (bool) params, backward
+  compatible with the bare `{sql, params}` form the browser bridge uses.
+  `count == true` -> `{"total": int}` (a `SELECT COUNT(*) FROM (<sql>)`);
+  `limit` present -> `{"rows": [...], "total": int}` where the page runs
+  `SELECT * FROM (<sql>) LIMIT ? OFFSET ?` with the two placeholders bound after
+  the caller's own params; neither -> `{"rows": [...]}`, exactly as before. The
+  user SQL is embedded verbatim (never parsed or rewritten), so a malformed
+  query surfaces as the same `-32603` error it did.
+
+### Changed
+- **LSP `dl/query` no longer logs to `_query_log` (A4).** The panel auto-refresh
+  polls this door and every read took two writes (`log_query` +
+  `refresh_query_log`) on the single engine lock before the read — hot-path
+  waste. The `query_log` relation now reflects daemon `query`/`query_sql` RPCs
+  only (`src/daemon.rs` unchanged).
+
 ## [0.6.24] - 2026-07-10
 
 ### Added

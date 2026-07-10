@@ -384,20 +384,75 @@ fn handle_hover(eng: &Engine, root: &Path, req: &Request) -> Response {
     Response::new_ok(req.id.clone(), serde_json::to_value(hover).unwrap_or_default())
 }
 
+/// Wrap a user SQL as a paginated subquery. The `LIMIT ?`/`OFFSET ?` placeholders
+/// bind AFTER the caller's own positional params (the user SQL is embedded
+/// verbatim, never parsed or rewritten). Malformed user SQL surfaces as the same
+/// prepare error it would on a bare query.
+fn paged_sql(sql: &str) -> String {
+    format!("SELECT * FROM ({sql}) LIMIT ? OFFSET ?")
+}
+
+/// Wrap a user SQL as a COUNT over the same subquery — the unpaged total.
+fn count_sql(sql: &str) -> String {
+    format!("SELECT COUNT(*) FROM ({sql})")
+}
+
+/// Run the count subquery and read the single scalar back.
+fn run_count(eng: &Engine, sql: &str, params: &[serde_json::Value]) -> Result<i64> {
+    let rows = eng.query_sql(&count_sql(sql), params)?;
+    Ok(rows.first().and_then(|r| r.first()).and_then(|v| v.as_i64()).unwrap_or(0))
+}
+
 /// Custom request `dl/query`: SQL against the engine's SQLite, the same surface
 /// as the daemon's `query_sql` RPC but reachable through the editor's existing
 /// LSP channel (the flow-panel webview is the caller). Params:
-/// `{"sql": string, "params": [scalar, ...]}`. Result: `{"rows": [[col, ...]]}`
-/// — positional values; callers select explicit columns.
+/// `{"sql": string, "params": [scalar, ...], "limit"?: int, "offset"?: int,
+/// "count"?: bool}`.
+///
+/// Paging is backward compatible:
+///   * `count == true` -> `{"total": int}` (COUNT over the user query only).
+///   * `limit` present -> `{"rows": [[col, ...]], "total": int}` — one page plus
+///     the unpaged total; the page runs `SELECT * FROM (<sql>) LIMIT ? OFFSET ?`
+///     with `limit`/`offset` bound after the user params (`offset` defaults 0).
+///   * neither -> `{"rows": [[col, ...]]}`, exactly the pre-paging behavior (the
+///     browser bridge and older clients keep working).
+///
+/// This path does NOT log to `_query_log`: panel auto-refresh polls it and every
+/// read taking two writes on the single engine lock was hot-path waste. The
+/// daemon's `query`/`query_sql` RPCs still log (`src/daemon.rs`).
 fn handle_query(eng: &Engine, req: &Request) -> Response {
     let Some(sql) = req.params.get("sql").and_then(|v| v.as_str()) else {
         return Response::new_err(req.id.clone(), -32602, "missing sql".into());
     };
     let params: Vec<serde_json::Value> = req.params.get("params")
         .and_then(|v| v.as_array()).cloned().unwrap_or_default();
-    let params_json = serde_json::to_string(&params).unwrap_or_else(|_| "[]".into());
-    let _ = eng.log_query("lsp", "dl/query", sql, &params_json);
-    let _ = crate::rels::refresh_query_log(eng);
+    let count = req.params.get("count").and_then(|v| v.as_bool()).unwrap_or(false);
+    let limit = req.params.get("limit").and_then(|v| v.as_i64());
+    let offset = req.params.get("offset").and_then(|v| v.as_i64()).unwrap_or(0);
+
+    // count mode: just the total, no rows.
+    if count {
+        return match run_count(eng, sql, &params) {
+            Ok(total) => Response::new_ok(req.id.clone(), serde_json::json!({ "total": total })),
+            Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
+        };
+    }
+    // paged mode: a window of rows plus the unpaged total.
+    if let Some(limit) = limit {
+        let mut page_params = params.clone();
+        page_params.push(serde_json::json!(limit));
+        page_params.push(serde_json::json!(offset));
+        let rows = match eng.query_sql(&paged_sql(sql), &page_params) {
+            Ok(rows) => rows,
+            Err(e) => return Response::new_err(req.id.clone(), -32603, e.to_string()),
+        };
+        return match run_count(eng, sql, &params) {
+            Ok(total) => Response::new_ok(req.id.clone(),
+                serde_json::json!({ "rows": rows, "total": total })),
+            Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
+        };
+    }
+    // legacy path: exactly today's behavior.
     match eng.query_sql(sql, &params) {
         Ok(rows) => Response::new_ok(req.id.clone(), serde_json::json!({ "rows": rows })),
         Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
@@ -711,6 +766,27 @@ fn collect_parse_errors(node: tree_sitter::Node, source_text: &str) -> Vec<(usiz
                 return errors;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{count_sql, paged_sql};
+
+    #[test]
+    fn paged_sql_wraps_as_subquery_with_placeholders() {
+        assert_eq!(
+            paged_sql("SELECT method FROM rel_query_log ORDER BY ts"),
+            "SELECT * FROM (SELECT method FROM rel_query_log ORDER BY ts) LIMIT ? OFFSET ?",
+        );
+    }
+
+    #[test]
+    fn count_sql_wraps_as_count_subquery() {
+        assert_eq!(
+            count_sql("SELECT method FROM rel_query_log WHERE method = ?"),
+            "SELECT COUNT(*) FROM (SELECT method FROM rel_query_log WHERE method = ?)",
+        );
     }
 }
 

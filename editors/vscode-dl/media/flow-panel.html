@@ -8,7 +8,11 @@
   Host-agnostic dl graph panel. All host coupling goes through `window.dlHost`:
 
     window.dlHost = {
-      query(sql, params?) -> Promise<rows: any[][]>   // positional columns
+      query(sql, params?, opts?) -> Promise<rows: any[][]>  // positional columns.
+        // opts = {limit}: a hint the host may forward as dl/query's optional
+        // limit param. When it does, it also sets rows.total (the server's true
+        // row count) -- a host that doesn't support limit just leaves it unset,
+        // and callers fall back to rows.length (see render()'s cap logic).
       hover(files: string[])                          // union of hovered-slice + pinned node files; [] clears
       open(file, line)                                // ask the host to open a file
     }
@@ -1167,9 +1171,12 @@ async function run() {
   clearError();
   let nodeRows, edgeRows;
   try {
+    // Ask the host to truncate server-side to the render cap -- a host that
+    // doesn't support `limit` yet just ignores opts, and render()'s own slice
+    // is still the safety net.
     [nodeRows, edgeRows] = await Promise.all([
-      host.query(document.getElementById('nodesSql').value),
-      host.query(document.getElementById('edgesSql').value),
+      host.query(document.getElementById('nodesSql').value, [], { limit: NODE_RENDER_CAP }),
+      host.query(document.getElementById('edgesSql').value, [], { limit: EDGE_RENDER_CAP }),
     ]);
   } catch (e) {
     const msg = String(e.message || e);
@@ -1193,7 +1200,10 @@ async function run() {
       ' (is the dl daemon/LSP running?)');
     return;
   }
-  render(nodeRows, edgeRows);
+  // nodeRows/edgeRows.total: set by the VS Code host when it forwarded `limit`
+  // (see extension.ts); undefined for the browser-bridge host, which render()
+  // treats as "no server total, use nodeRows.length" (its existing safety net).
+  render(nodeRows, edgeRows, nodeRows.total, edgeRows.total);
   updateDiffPanel(nodeRows, edgeRows);
   loadGateways(); // fire-and-forget: the hover card shouldn't wait on it
 }
@@ -3035,6 +3045,11 @@ function buildOverlapBadges(highlightedArcs) {
 const MODE_KEY = 'dl-flow-mode';
 let viewMode = readLocalStorage(MODE_KEY) === 'canvas' ? 'canvas' : 'list';
 let lastNodeRows = null, lastEdgeRows = null;
+// True row counts behind the cache above. Mirrors lastNodeRows/lastEdgeRows so
+// a re-render FROM the cache (view-mode toggle, linkedOnly toggle -- no fresh
+// query) keeps reporting the server's real total in the volPill instead of
+// silently reverting to the already-capped local length.
+let lastNodeTotal = 0, lastEdgeTotal = 0;
 
 // Hard render cap: renderCanvas/renderList each build one DOM card per node and
 // one SVG per edge synchronously, so an uncapped result (custom SQL, the
@@ -3044,10 +3059,17 @@ let lastNodeRows = null, lastEdgeRows = null;
 // to surviving node ids). Presets carry their own tighter LIMITs; this only
 // bites when a query out-runs them.
 const NODE_RENDER_CAP = 2000, EDGE_RENDER_CAP = 4000;
-function render(nodeRows, edgeRows) {
-  const nTotal = nodeRows.length, eTotal = edgeRows.length;
+// nodeTotal/edgeTotal (optional): the server's true row count when the query
+// already carried a `limit` (see run()) -- nodeRows.length there is <= cap, so
+// the local .length alone can't tell us truncation happened. Falls back to
+// nodeRows.length for callers that don't have a server total (runLayers, the
+// browser-bridge host, or a re-render from cache -- see lastNodeTotal above).
+function render(nodeRows, edgeRows, nodeTotal, edgeTotal) {
+  const nTotal = nodeTotal ?? nodeRows.length, eTotal = edgeTotal ?? edgeRows.length;
   const over = nTotal > NODE_RENDER_CAP || eTotal > EDGE_RENDER_CAP;
   if (over) {
+    // Safety net: still slice even when the server already truncated (opts.limit
+    // no-ops here) and for hosts that don't support limit at all.
     nodeRows = nodeRows.slice(0, NODE_RENDER_CAP);
     edgeRows = edgeRows.slice(0, EDGE_RENDER_CAP);
   }
@@ -3059,6 +3081,7 @@ function render(nodeRows, edgeRows) {
     volPill.hidden = true;
   }
   lastNodeRows = nodeRows; lastEdgeRows = edgeRows;
+  lastNodeTotal = nTotal; lastEdgeTotal = eTotal;
   updateEmptyState(nodeRows);
   if (viewMode === 'list') renderList(nodeRows, edgeRows);
   else if (viewMode === 'trace') renderTraceView();
@@ -3125,7 +3148,7 @@ document.getElementById('modeBtn').addEventListener('click', () => {
   viewMode = viewMode === 'list' ? 'canvas' : 'list';
   writeLocalStorage(MODE_KEY, viewMode);
   applyViewMode();
-  if (lastNodeRows) render(lastNodeRows, lastEdgeRows);
+  if (lastNodeRows) render(lastNodeRows, lastEdgeRows, lastNodeTotal, lastEdgeTotal);
 });
 
 // ── canvas arrows (prototype toggle): one rotated triangle div per edge, at
@@ -3307,7 +3330,11 @@ document.getElementById('resetBtn').addEventListener('click', () => {
 document.getElementById('linkedBtn').addEventListener('click', function () {
   linkedOnly = !linkedOnly;
   this.classList.toggle('on', linkedOnly);
-  run();
+  // Client-side filter only (see keptNodes in renderCanvas/renderList) -- no
+  // SQL changed, so re-render from the cache; fall back to a real query only
+  // before the panel has ever run one.
+  if (lastNodeRows) render(lastNodeRows, lastEdgeRows, lastNodeTotal, lastEdgeTotal);
+  else run();
 });
 
 // ── help overlay ─────────────────────────────────────────────────────────────
