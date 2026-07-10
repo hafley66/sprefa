@@ -7,6 +7,22 @@ tags consumed by cargo-dist.
 ## [Unreleased]
 
 ### Added
+- **Text `+` concatenation (S4).** `+` is overloaded by operand type: int + int
+  stays SQL addition, text + text lowers to SQLite `||` (source rules
+  concatenate in `val_of`), so `url = "https://" + host + "/v1"` builds the
+  string instead of silently returning `0` (the old numeric coercion). Mixed
+  int/text is a `plus-mismatch` typecheck error naming the fix (interpolate or
+  `int(..)`); `- * / %` stay int-only and now reject text operands at
+  typecheck. Works in head position and in body binds.
+- **Body-bind hardening (S3).** The body computed-bind
+  (`callee = replace(callee_q, ".", "::")`, already shipped) gains: a
+  typecheck-time `unbound-bind` error naming the fix ("bind `callee_q` before
+  computing `callee`") when a bind's RHS var is bound by nothing or only a
+  LATER bind (was a lower-time abort); a bind var referenced in a NEGATION now
+  joins the outer row (the Cmp pass runs before the Neg pass — previously the
+  var silently became an unconstrained subquery local); the source-rule
+  refusal note now names both escape hatches (head-inline for source rules,
+  body binds for derived rules).
 - **Builtin kind columns are enum-checked.** `type_edge.kind` /
   `type_edge_rev.kind`, `type_entity.kind` / `type_entity_rev.kind`,
   `df_node.kind` / `df_node_rev.kind`, and `checkout_done.action` /

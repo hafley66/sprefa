@@ -1553,4 +1553,21 @@ mod tests {
         }
         panic!("no ast body item");
     }
+
+    /// A body bind (`callee = replace(..)`) and a bare var-var equality parse
+    /// as DIFFERENT Cmp shapes: the RHS Term (Call vs Var) is the bind gate
+    /// downstream (lower's has_computation), so `alias = other` can never be
+    /// misread as a computed bind and stays the equality filter it always was.
+    #[test]
+    fn body_bind_and_var_equality_parse_apart() {
+        let body = body_of(r#"resolved(callee) <- raw_edge(callee_q), callee = replace(callee_q, ".", "::")."#);
+        let cmp = body.iter().find_map(|b| if let BodyItem::Cmp(c) = b { Some(c) } else { None }).unwrap();
+        assert!(matches!(&cmp.lhs, Term::Var(v) if v == "callee"));
+        assert!(matches!(&cmp.rhs, Term::Call { name, .. } if name == "replace"));
+
+        let body = body_of("same(a) <- pair(a, b), a = b.");
+        let cmp = body.iter().find_map(|b| if let BodyItem::Cmp(c) = b { Some(c) } else { None }).unwrap();
+        assert!(matches!(&cmp.lhs, Term::Var(v) if v == "a"));
+        assert!(matches!(&cmp.rhs, Term::Var(v) if v == "b"), "var=var stays a plain equality");
+    }
 }

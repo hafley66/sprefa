@@ -561,8 +561,8 @@ pub fn op_docs() -> &'static [(&'static str, &'static str, &'static str, &'stati
         ("closure", "body", "closure(edge)", "transitive closure of a 2-col relation as the entire body (SCC-condensed); pin an endpoint for a point query; mixed-body closure is literal-seeded only"),
         ("scc", "body", "head(rep, member) <- scc(edge)", "strongly-connected-component condensation of a 2-col relation as the entire body; binds (representative, member) per node; mirrors closure, evaluated outside SQL"),
         ("node2vec", "body", "head(node_a, node_b, score) <- node2vec(edge)", "structural graph embedding of a 2-col relation as the entire body; binds node pairs with a similarity score (the graph-position sibling of the text `similar` rel); evaluated outside SQL"),
-        ("arith", "body", "+ - * / %", "int arithmetic in rule heads and comparison sides (rank(path, line+1)); usual precedence, parens OK; never in a binding atom"),
-        ("strfn", "body", "split(text, sep, idx) / replace(text, from, to)", "string functions in heads and comparison sides; idx 0-based, negative counts from the end; a computed binding (ext = split(path, \".\", -1)) binds for later use in the same body"),
+        ("arith", "body", "+ - * / %", "arithmetic in rule heads and comparison sides (rank(path, line+1)); `+` is overloaded — int + int adds, text + text concatenates (url = \"https://\" + host), mixed int/text is a typecheck error (interpolate or int(..)); - * / % stay int-only; usual precedence, parens OK; never in a binding atom"),
+        ("strfn", "body", "split(text, sep, idx) / replace(text, from, to)", "string functions in heads and comparison sides; idx 0-based, negative counts from the end; a computed binding (ext = split(path, \".\", -1)) binds for later use in the same body — later joins, negations, and the head all see it (derived rules only; a source rule inlines into the head)"),
         ("aggregation", "body", "count sum min max", "head-position-only aggregation; non-aggregate head terms are the grouping key; count/sum produce int, min/max carry the arg type; count in body is a parse error"),
         // sinks.
         ("query", "sink", "? rel(from, to). / ? rel(col: value).", "print a TSV block (or JSON-lines with --query-json); a literal in any position filters; args may be named by column (`col: value`), unmentioned columns are don't-cares; no where clause"),
@@ -6994,8 +6994,9 @@ fn cast_int(s: &str) -> i64 {
 fn val_of(t: &Term, b: &Bind) -> Result<Value> {
     match t {
         Term::Var(v) => b.get(v).cloned().ok_or_else(|| anyhow::anyhow!(
-            "unbound var {v} in constraint\nnote: to compute a new value, put the expression in the \
-             rule head: head(path, line+1) <- ...")),
+            "unbound var {v} in constraint\nnote: to compute a new value in a SOURCE rule \
+             (scan/match/ast/...), put the expression in the rule head: head(path, line+1) <- ...; \
+             body binds (`ext = split(path, \".\", -1)`) work in derived-rule bodies only")),
         Term::Str(s) => Ok(Value::Text(s.clone())),
         Term::Int(n) => Ok(Value::Int(*n)),
         Term::Interp(parts) => interp_value(parts, b),
@@ -7003,7 +7004,15 @@ fn val_of(t: &Term, b: &Bind) -> Result<Value> {
         Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
         Term::Arith { op, lhs, rhs } => {
             let (l, r) = (val_of(lhs, b)?, val_of(rhs, b)?);
+            // `+` over two text values concatenates (the source-rule twin of the
+            // derived `||` lowering); every other combination stays int-only.
+            if let (ArithOp::Add, Value::Text(ls), Value::Text(rs)) = (op, &l, &r) {
+                return Ok(Value::Text(format!("{ls}{rs}")));
+            }
             let (Value::Int(a), Value::Int(c)) = (&l, &r) else {
+                if matches!(op, ArithOp::Add) {
+                    bail!("cannot `+` int and text — interpolate (\"${{count}}${{name}}\") or convert with int(..)");
+                }
                 bail!("arithmetic needs int operands, got {l:?} {} {r:?}", op.sql());
             };
             Ok(Value::Int(match op {

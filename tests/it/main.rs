@@ -8,6 +8,7 @@ mod ast_grammars;
 mod ast_whole_match_id;
 mod ast_yaml;
 mod ban_gate;
+mod body_binds;
 mod builtin_file_rel;
 mod call_rels;
 mod changed;

@@ -380,27 +380,28 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                         }
                     }
                 }
-                // An arithmetic expression produces an int: the column it fills
-                // must be int, and every var operand unifies as int.
+                // An arithmetic expression fills a column matching its inferred
+                // type: an int tree needs an int column (the historical rule); a
+                // text `+` concatenation tree needs a text-base column. Operand
+                // typing (incl. the mixed int/text `+` error) lives in `arith_ty`.
                 Term::Arith { .. } => {
-                    if cty.base != Type::Int {
-                        diags.push(TypeDiag {
-                            path: dl_path.to_string(), span: (0, 0),
-                            severity: Severity::Error, code: "brand-mismatch".into(),
-                            msg: format!("arithmetic expression cannot fill non-int column `{}`", meta.cols[i].name),
-                        });
-                    }
-                    let int_ty = ColTy { base: Type::Int, brand: None };
-                    let mut stack = vec![term];
-                    while let Some(t) = stack.pop() {
-                        match t {
-                            Term::Arith { lhs, rhs, .. } => { stack.push(lhs); stack.push(rhs); }
-                            Term::Var(v) if v != "_" => match seen.get(v).cloned() {
-                                None => { seen.insert(v.clone(), int_ty.clone()); }
-                                Some(prev) => unify(v, &prev, &int_ty, brands, dl_path, diags),
-                            },
-                            _ => {}
-                        }
+                    match arith_ty(term, seen, dl_path, diags) {
+                        Some(Type::Int) => if cty.base != Type::Int {
+                            diags.push(TypeDiag {
+                                path: dl_path.to_string(), span: (0, 0),
+                                severity: Severity::Error, code: "brand-mismatch".into(),
+                                msg: format!("arithmetic expression cannot fill non-int column `{}`", meta.cols[i].name),
+                            });
+                        },
+                        Some(_) => if cty.base == Type::Int {
+                            diags.push(TypeDiag {
+                                path: dl_path.to_string(), span: (0, 0),
+                                severity: Severity::Error, code: "brand-mismatch".into(),
+                                msg: format!("text `+` concatenation cannot fill int column `{}`", meta.cols[i].name),
+                            });
+                        },
+                        // None = already diagnosed (mixed `+`) — don't cascade.
+                        None => {}
                     }
                 }
                 // A string function call (`split`/`replace`) produces text: the
@@ -465,14 +466,185 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
         }
     };
 
-    visit_atom(&rule.head, &mut diags, &mut seen);
+    // Body atoms first, then computed binds, then the HEAD: a head expression
+    // (`label(name + count)`) types its vars from the body's columns, and a
+    // head over a bind var sees the bind's computed type. Literal/unification
+    // checks inside visit_atom are order-independent.
     for b in &rule.body {
         match b {
             BodyItem::Pos(a) | BodyItem::Neg(a) => visit_atom(a, &mut diags, &mut seen),
             _ => {}
         }
     }
+    check_body_binds(rule, &mut seen, dl_path, &mut diags);
+    visit_atom(&rule.head, &mut diags, &mut seen);
     diags
+}
+
+/// Is this term a value-producing computation (Call or Arith)? The typecheck
+/// twin of lower's `has_computation` — the gate that separates a body BIND
+/// (`callee = replace(callee_q, ".", "::")`) from a plain Var=Var / Var=lit
+/// equality filter.
+fn is_computation(t: &Term) -> bool {
+    matches!(t, Term::Call { .. } | Term::Arith { .. })
+}
+
+/// Every variable a computed expression consumes, recursively (Call args,
+/// Arith sides). Wildcards excluded.
+fn term_vars(t: &Term, out: &mut Vec<String>) {
+    match t {
+        Term::Var(v) if v != "_" => out.push(v.clone()),
+        Term::Call { args, .. } => for a in args { term_vars(a, out); },
+        Term::Arith { lhs, rhs, .. } => { term_vars(lhs, out); term_vars(rhs, out); }
+        _ => {}
+    }
+}
+
+/// Boundness + typing for body-level computed binds, derived-shaped bodies only
+/// (a source rule's regex/AST captures are invisible here; the engine's `val_of`
+/// refuses its constraints with the head-inline note at eval). Mirrors lower's
+/// semantics exactly: a bind's RHS may consume any positive-atom var (SQL joins
+/// are order-free — lower's canon holds every atom var before the Cmp pass) or
+/// a var bound by an EARLIER bind; a later-bind or nowhere-bound var errors
+/// naming the fix. Also records each bind var's type (so a text bind can feed
+/// text `+` later) and runs `arith_ty` over filters for the mixed-`+` check.
+fn check_body_binds(rule: &Rule, seen: &mut HashMap<String, ColTy>, dl_path: &str, diags: &mut Vec<TypeDiag>) {
+    let derived_shape = !rule.body.is_empty() && rule.body.iter()
+        .all(|b| matches!(b, BodyItem::Pos(_) | BodyItem::Neg(_) | BodyItem::Cmp(_)));
+    if !derived_shape { return; }
+    let mut atom_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for item in &rule.body {
+        if let BodyItem::Pos(a) = item {
+            for t in &a.terms {
+                if let Term::Var(v) = t {
+                    if v != "_" { atom_vars.insert(v.clone()); }
+                }
+            }
+        }
+    }
+    let mut bind_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for item in &rule.body {
+        let BodyItem::Cmp(c) = item else { continue };
+        let bind = if c.op == CmpOp::Eq {
+            match (&c.lhs, &c.rhs) {
+                (Term::Var(v), rhs) if v != "_" && !atom_vars.contains(v)
+                    && !bind_vars.contains(v) && is_computation(rhs) => Some((v, rhs)),
+                (lhs, Term::Var(v)) if v != "_" && !atom_vars.contains(v)
+                    && !bind_vars.contains(v) && is_computation(lhs) => Some((v, lhs)),
+                _ => None,
+            }
+        } else { None };
+        match bind {
+            Some((target, expr)) => {
+                let mut consumed = Vec::new();
+                term_vars(expr, &mut consumed);
+                for used in consumed {
+                    if !atom_vars.contains(&used) && !bind_vars.contains(&used) {
+                        diags.push(TypeDiag {
+                            path: dl_path.to_string(), span: (0, 0),
+                            severity: Severity::Error, code: "unbound-bind".into(),
+                            msg: format!(
+                                "bind `{used}` before computing `{target}` — `{used}` is not bound by a body atom or an earlier bind"),
+                        });
+                    }
+                }
+                let ety = match expr {
+                    Term::Arith { .. } => arith_ty(expr, seen, dl_path, diags),
+                    Term::Call { name, .. } => Some(if name == "int" { Type::Int } else { Type::Text }),
+                    _ => None,
+                };
+                if let Some(base) = ety {
+                    seen.entry(target.clone()).or_insert(ColTy { base, brand: None });
+                }
+                bind_vars.insert(target.clone());
+            }
+            None => {
+                // A plain filter: type any Arith side so a mixed `+` in a
+                // comparison errors here instead of surprising at lower time.
+                for side in [&c.lhs, &c.rhs] {
+                    if matches!(side, Term::Arith { .. }) {
+                        arith_ty(side, seen, dl_path, diags);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Infer an arithmetic tree's type. `+` is polymorphic: int + int = addition
+/// (Some(Int)), text + text = concatenation (Some(Text)), mixed = the
+/// `plus-mismatch` error naming the fix (returns None so callers don't
+/// cascade). An unknown side (a var with no type yet) adopts the other side's
+/// type; both-unknown keeps the historical int default. `-`/`*`/`/`/`%` stay
+/// int-only, unifying var operands as int exactly like the pre-overload walk.
+fn arith_ty(t: &Term, seen: &mut HashMap<String, ColTy>, dl_path: &str, diags: &mut Vec<TypeDiag>) -> Option<Type> {
+    match t {
+        Term::Int(_) => Some(Type::Int),
+        Term::Str(_) | Term::Interp(_) => Some(Type::Text),
+        Term::Call { name, .. } => Some(if name == "int" { Type::Int } else { Type::Text }),
+        Term::Var(v) if v != "_" => seen.get(v).map(|c| c.base),
+        Term::Arith { op: ArithOp::Add, lhs, rhs } => {
+            let lt = arith_ty(lhs, seen, dl_path, diags);
+            let rt = arith_ty(rhs, seen, dl_path, diags);
+            let is_text = |x: Type| x != Type::Int;
+            match (lt, rt) {
+                (Some(Type::Int), Some(Type::Int)) => Some(Type::Int),
+                (Some(a), Some(b)) if is_text(a) && is_text(b) => Some(Type::Text),
+                (Some(_), Some(_)) => {
+                    diags.push(TypeDiag {
+                        path: dl_path.to_string(), span: (0, 0),
+                        severity: Severity::Error, code: "plus-mismatch".into(),
+                        msg: "cannot `+` int and text — build the string with interpolation (\"${count}${name}\") or convert with int(..)".into(),
+                    });
+                    None
+                }
+                (Some(a), None) | (None, Some(a)) => {
+                    // Adopt the known side's type for an untyped var operand.
+                    let unknown = if lt.is_none() { lhs } else { rhs };
+                    if let Term::Var(v) = unknown.as_ref() {
+                        if v != "_" {
+                            seen.entry(v.clone()).or_insert(ColTy { base: a, brand: None });
+                        }
+                    }
+                    Some(a)
+                }
+                (None, None) => {
+                    // Historical default: an arith over untyped vars is int.
+                    for side in [lhs, rhs] {
+                        if let Term::Var(v) = side.as_ref() {
+                            if v != "_" {
+                                seen.entry(v.clone()).or_insert(ColTy { base: Type::Int, brand: None });
+                            }
+                        }
+                    }
+                    Some(Type::Int)
+                }
+            }
+        }
+        Term::Arith { op, lhs, rhs } => {
+            for side in [lhs, rhs] {
+                match arith_ty(side, seen, dl_path, diags) {
+                    Some(x) if x != Type::Int => {
+                        diags.push(TypeDiag {
+                            path: dl_path.to_string(), span: (0, 0),
+                            severity: Severity::Error, code: "plus-mismatch".into(),
+                            msg: format!("`{}` needs int operands — only `+` concatenates text", op.sql()),
+                        });
+                    }
+                    Some(_) => {}
+                    None => {
+                        if let Term::Var(v) = side.as_ref() {
+                            if v != "_" {
+                                seen.entry(v.clone()).or_insert(ColTy { base: Type::Int, brand: None });
+                            }
+                        }
+                    }
+                }
+            }
+            Some(Type::Int)
+        }
+        _ => None,
+    }
 }
 
 /// Compare two column types a var unifies across. A brand vs a different,
@@ -1083,5 +1255,69 @@ rel hit(from_type: text)."#;
         assert!(err_codes(bad).iter().any(|c| c == "brand-mismatch"));
         let ok = "type sha <: text.\nrel commit(id: sha).\ncommit(\"abc\").";
         assert!(err_codes(ok).is_empty());
+    }
+
+    // --- body binds + `+` overload (S3/S4) ------------------------------------
+
+    #[test]
+    fn bind_unbound_rhs_var_names_the_fix() {
+        // The RHS var is bound nowhere: error names both vars and the fix.
+        let bad = r#"rel raw_edge(caller: text).
+rel out_edge(callee: text).
+out_edge(callee) <- raw_edge(caller), callee = replace(callee_q, ".", "::")."#;
+        let ds = diags(bad);
+        let hit = ds.iter().find(|d| d.code == "unbound-bind").expect("unbound-bind diag");
+        assert!(hit.msg.contains("bind `callee_q` before computing `callee`"), "{}", hit.msg);
+
+        // A LATER bind does not satisfy an earlier bind's RHS (bind chains are
+        // ordered; only atom vars are order-free).
+        let late = r#"rel raw_edge(caller: text).
+rel out_edge(callee: text).
+out_edge(callee) <- raw_edge(caller),
+  callee = replace(stripped, ".", "::"),
+  stripped = replace(caller, "()", "")."#;
+        assert!(err_codes(late).contains(&"unbound-bind".to_string()), "{:?}", diags(late));
+
+        // In-order chain is clean.
+        let ok = r#"rel raw_edge(caller: text).
+rel out_edge(callee: text).
+out_edge(callee) <- raw_edge(caller),
+  stripped = replace(caller, "()", ""),
+  callee = replace(stripped, ".", "::")."#;
+        assert!(err_codes(ok).is_empty(), "{:?}", diags(ok));
+    }
+
+    #[test]
+    fn plus_mixed_and_text_typing() {
+        // int + text = plus-mismatch naming the interp/int() fix.
+        let mixed = r#"rel item(name: text, count: int).
+rel label(text_out: text).
+label(name + count) <- item(name, count)."#;
+        let ds = diags(mixed);
+        let hit = ds.iter().find(|d| d.code == "plus-mismatch").expect("plus-mismatch diag");
+        assert!(hit.msg.contains("interpolation") || hit.msg.contains("int(.."), "{}", hit.msg);
+
+        // text + text is fine into a text column, an error into an int column.
+        let ok = r#"rel base_url(host: text).
+rel endpoint(url: text).
+endpoint("https://" + host) <- base_url(host)."#;
+        assert!(err_codes(ok).is_empty(), "{:?}", diags(ok));
+        let bad_col = r#"rel base_url(host: text).
+rel endpoint(url: int).
+endpoint("https://" + host) <- base_url(host)."#;
+        assert!(diags(bad_col).iter().any(|d| d.msg.contains("cannot fill int column")), "{:?}", diags(bad_col));
+
+        // int + int into an int column stays clean (regression).
+        let int_ok = r#"rel hit(line: int).
+rel next_line(value: int).
+next_line(line + 1) <- hit(line)."#;
+        assert!(err_codes(int_ok).is_empty(), "{:?}", diags(int_ok));
+
+        // `-` stays int-only: a text operand errors.
+        let sub_text = r#"rel base_url(host: text).
+rel weird(value: int).
+weird(host - 1) <- base_url(host)."#;
+        assert!(diags(sub_text).iter().any(|d| d.code == "plus-mismatch" && d.msg.contains("needs int operands")),
+            "{:?}", diags(sub_text));
     }
 }

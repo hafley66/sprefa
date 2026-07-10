@@ -239,8 +239,9 @@ needs both is two rules: extract, then join (see [Rails](#git-hook--claude-code-
 | regex constraint | `name =~ /^[A-Za-z]+$/` (SQLite REGEXP; the `/.../` is the unified regex literal — same form `match`/`comment`/`sg` use) |
 | glob constraint | `path ~~ "src/*"` (SQLite GLOB) |
 | closure | `closure(edge)` as the entire body — see below |
-| int arithmetic | `+ - * / %` in rule heads (derived AND source) and comparison sides: `rank(path, line + 1) <- fns(path, line).`, `line * 2 > 4`. Usual precedence, parens OK. Never in a body atom (binding position). `/` after a value is division; elsewhere it opens a `/regex/` |
-| string functions | `split(text, sep, idx)` and `replace(text, from, to)` in rule heads and comparison sides: `seg(path, split(path, "/", -1)) <- file(path).`, `kebab(word, replace(word, "_", "-")) <- name(word).`. `idx` is 0-based; negative counts from the end (`-1` = last segment). Out-of-range `split` drops the row (NULL filter). Unary minus parses (`-1` not `0 - 1`). A computed binding `ext = split(path, ".", -1)` binds `ext` for later use in the same body. `replace` is SQLite-native; `split` is the `sprf_split` UDF |
+| arithmetic | `+ - * / %` in rule heads (derived AND source) and comparison sides: `rank(path, line + 1) <- fns(path, line).`, `line * 2 > 4`. `+` is overloaded: int + int adds, text + text concatenates (`url = "https://" + host + "/v1"`); mixed int/text is a typecheck error (`plus-mismatch` — interpolate `"${count}${name}"` or convert with `int(..)`); `- * / %` stay int-only. Usual precedence, parens OK. Never in a body atom (binding position). `/` after a value is division; elsewhere it opens a `/regex/` |
+| string functions | `split(text, sep, idx)` and `replace(text, from, to)` in rule heads and comparison sides: `seg(path, split(path, "/", -1)) <- file(path).`, `kebab(word, replace(word, "_", "-")) <- name(word).`. `idx` is 0-based; negative counts from the end (`-1` = last segment). Out-of-range `split` drops the row (NULL filter). Unary minus parses (`-1` not `0 - 1`). `replace` is SQLite-native; `split` is the `sprf_split` UDF |
+| body bind | `callee = replace(callee_q, ".", "::")` in a DERIVED body binds the computed value: later join atoms, negations, and the head all see `callee`. The RHS may consume any body-atom var or an earlier bind (`unbound-bind` names the fix otherwise); bare `alias = other` stays an equality filter. Source rules (scan/match/ast/...) keep the head-inline form |
 
 **Aggregation** is head-position only: `count` `sum` `min` `max`.
 Non-aggregate head terms are the grouping key. `count`/`sum` produce `int`;
@@ -895,10 +896,10 @@ original coordinate model in `../sprefa-archive-20260428`.
 
 ## Known gaps
 
-- **`Value` is `Text | Int`** — no float; `<` on text is lexical. Int
-  arithmetic (`+ - * / %`) works in heads and comparisons.
-- **String manipulation** — `${}` concat; `split(text, sep, idx)` and
-  `replace(text, from, to)` in heads/comparisons (see Body constructs above);
+- **`Value` is `Text | Int`** — no float; `<` on text is lexical. Arithmetic
+  (`+ - * / %`) works in heads and comparisons; `+` concatenates text.
+- **String manipulation** — `${}` interp or `+` concat; `split(text, sep, idx)`
+  and `replace(text, from, to)` in heads/comparisons (see Body constructs above);
   no substr, no regex capture over an already-bound value (use the `match`
   source op at scan time with `(?<name>...)` groups instead).
 - **Closure in a mixed rule body is literal-seeded only** — dynamic transitive
