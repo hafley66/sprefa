@@ -1146,6 +1146,27 @@ fn classify_call_kind(callee: &str) -> Option<&'static str> {
 
 pub(crate) fn module_rels_used(prog: &Program) -> bool { rels_used(prog, &MODULE_RELS) }
 
+/// Whether the module family must run THIS tick: either the program
+/// directly references a module_* relation, or it references type_link/
+/// call_edge (or their dependent analyses type_shape/type_lgg, or the
+/// doc_comment/doc_tag pair riding the same parse). Win D's import-scoped
+/// ambiguity narrowing in `refresh_type_rels`/`refresh_call_rels` reads
+/// `module_edge_rev`, so those families need a FRESH module graph even when
+/// the program never asks for a module_* relation itself. Without this, a
+/// program that only queries `type_link`/`call_edge` would silently never
+/// populate `module_edge_rev`, and every ambiguous name would stay bare
+/// forever (the narrowing looks like a no-op, not an error). Used by both
+/// `ModuleFamily::used` (the full tick's per-family loop) and `tick_paths`'
+/// `wants_module_rels` (the incremental path, which reads this directly
+/// rather than through the trait).
+pub(crate) fn module_rels_needed(prog: &Program) -> bool {
+    module_rels_used(prog)
+        || type_rels_used(prog)
+        || rels_used(prog, &["type_shape", "type_lgg"])
+        || doc_text_rels_used(prog)
+        || call_rels_used(prog)
+}
+
 pub(crate) fn type_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_RELS) }
 
 pub(crate) fn doc_text_rels_used(prog: &Program) -> bool { rels_used(prog, &DOC_TEXT_RELS) }

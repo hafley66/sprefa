@@ -101,6 +101,60 @@ fn cached_facts<T: Send + Sync>(
     out
 }
 
+/// Directory portion of a `/`-separated relative path (empty string for a
+/// bare filename, never a trailing slash). Used only by `narrow_ambiguous`'s
+/// same-directory criterion.
+fn path_dir(path: &str) -> &str {
+    match path.rsplit_once('/') {
+        Some((dir, _)) => dir,
+        None => "",
+    }
+}
+
+/// Win D, import-scoped ambiguity narrowing. `resolve`/`resolve_callee` in
+/// `refresh_type_rels`/`refresh_call_rels` call this only when a name's
+/// def bucket already has more than one candidate symbol (the plain
+/// unique-in-repo path stays untouched). A candidate survives the filter when
+/// its declaring file is:
+///   (a) the referencing file itself,
+///   (b) directly imported by the referencing file (a `module_edge_rev` row
+///       at this rev), or
+///   (c) in the same directory as the referencing file.
+/// Exactly one survivor resolves the ambiguity only when it survived via (a)
+/// or (b) ("strong" reasons); a survivor that only matches via (c) stays
+/// bare. Directory co-location is a weak signal (sibling files that never
+/// import each other are common), so a same-directory-ONLY tie is honest
+/// ambiguity, not a resolution: a wrong join is worse than a missing one.
+/// More than one survivor (still genuinely ambiguous after narrowing) or zero
+/// survivors also stay bare.
+fn narrow_ambiguous<'a>(
+    candidates: &[&'a str],
+    repo: &str,
+    rev: &str,
+    referencing_file: &str,
+    sym_file: &HashMap<(&str, &str, &str), &str>,
+    imports: &HashMap<(String, String), HashSet<String>>,
+) -> Option<&'a str> {
+    let referencing_dir = path_dir(referencing_file);
+    let imported = imports.get(&(rev.to_string(), referencing_file.to_string()));
+    let mut survivor: Option<(&'a str, bool)> = None;
+    let mut survivor_count = 0u32;
+    for sym in candidates {
+        let Some(def_file) = sym_file.get(&(repo, rev, *sym)) else { continue };
+        let is_self = *def_file == referencing_file;
+        let is_imported = imported.map(|set| set.contains(*def_file)).unwrap_or(false);
+        let is_same_dir = path_dir(def_file) == referencing_dir;
+        if is_self || is_imported || is_same_dir {
+            survivor_count += 1;
+            survivor = Some((sym, is_self || is_imported));
+        }
+    }
+    match (survivor_count, survivor) {
+        (1, Some((sym, true))) => Some(sym),
+        _ => None,
+    }
+}
+
 impl Engine {
     /// Project the durable `_strings` / `_where_bytes` meta tables into the
     /// query-facing `string` / `ref` relations. Wholesale wipe + repopulate,
@@ -454,12 +508,14 @@ impl Engine {
     /// The extraction corpus: every `_file` row in a TypeLang extension, with
     /// its content address. One query serves the type/call/dataflow refreshers;
     /// the hash column is what makes both the whole-pass digest skip and the
-    /// per-file fact cache content-keyed (perf gap A).
+    /// per-file fact cache content-keyed (perf gap A). The four plain-JS
+    /// extensions ride `TsTypes` alongside `.ts`/`.tsx` (Win H).
     fn extract_file_set(&self) -> Result<Vec<ExtractFile>> {
         let mut files: Vec<ExtractFile> = Vec::new();
         let mut sel = self.db.conn().prepare(
             "SELECT repo, path, rev, hash FROM _file WHERE path LIKE '%.rs' OR path LIKE '%.kt' OR path LIKE '%.kts' \
-             OR path LIKE '%.ts' OR path LIKE '%.tsx'")?;
+             OR path LIKE '%.ts' OR path LIKE '%.tsx' \
+             OR path LIKE '%.js' OR path LIKE '%.jsx' OR path LIKE '%.mjs' OR path LIKE '%.cjs'")?;
         let rows = sel.query_map([], |r| Ok((
             r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
             r.get::<_, Option<String>>(3)?.unwrap_or_default())))?;
@@ -471,7 +527,18 @@ impl Engine {
     /// per (repo, path, rev, content hash) corpus row for that rev's file subset,
     /// plus the `scip_ref` override table (WORK only — SCIP indexes are
     /// working-tree artifacts, so a committed rev's resolution can't move when
-    /// the index changes), plus the running binary's identity (see `exe_stamp`).
+    /// the index changes), plus (when `with_scip`) the `module_edge_rev` rows at
+    /// this rev, plus the running binary's identity (see `exe_stamp`).
+    /// `with_scip` really means "this family's resolver reads outside inputs
+    /// beyond the corpus itself": both the SCIP override and the Win D
+    /// import-scoped ambiguity narrowing feed the SAME `resolve`/`resolve_callee`
+    /// closures in `refresh_type_rels`/`refresh_call_rels`, so one flag gates
+    /// both folds; `dataflow`/`comment` pass `false` because neither family
+    /// resolves names. Unlike the SCIP fold, the module-edge fold is NOT
+    /// restricted to `rev == "WORK"`: `module_edge_rev` is rev-aware (a
+    /// committed rev has its own import graph), and the narrowing reads
+    /// exactly that rev's edges, so a committed rev's digest must move when
+    /// ITS import rows change too.
     /// Persisted under `extract:<family>:<rev>` in `_reldigest`; an unchanged
     /// digest means that rev's output rows are already in this db, so the parse +
     /// resolve + write pass skips for that rev. A row with an empty content hash
@@ -508,6 +575,20 @@ impl Engine {
                     r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))) {
                     for (f, sym, d, repo) in rows.flatten() {
                         fold(&mut acc, &blake3::hash(format!("scip\0{f}\0{sym}\0{d}\0{repo}").as_bytes()));
+                    }
+                }
+            }
+        }
+        // Win D: the import-scoped ambiguity narrowing reads `module_edge_rev`
+        // at this rev, so a moved import (an added/removed/retargeted `use`)
+        // must flip this digest or a stale resolution would survive a warm
+        // tick. Folded for every rev, not just WORK; see the doc comment above.
+        if with_scip {
+            if let Ok(mut s) = self.db.conn().prepare(
+                &format!("SELECT src, dst FROM {} WHERE \"rev\" = ?1", tbl("module_edge_rev"))) {
+                if let Ok(rows) = s.query_map([rev], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
+                    for (src, dst) in rows.flatten() {
+                        fold(&mut acc, &blake3::hash(format!("module\0{src}\0{dst}").as_bytes()));
                     }
                 }
             }
@@ -694,6 +775,10 @@ impl Engine {
         // (D5.6); committed revs resolve syntactically.
         let mut by_name: HashMap<(&str, &str, &str), Vec<&str>> = HashMap::new();
         let mut sym_at: HashMap<(&str, &str, &str, &str), &str> = HashMap::new();
+        // (repo, rev, sym) -> declaring file, the reverse of `sym_at`'s (repo,
+        // file, rev, name) key. Feeds `narrow_ambiguous`'s same-file/same-
+        // directory checks when a bucket has more than one candidate (Win D).
+        let mut sym_file: HashMap<(&str, &str, &str), &str> = HashMap::new();
         for (repo, _, rev, f) in &facts {
             for e in &f.entities {
                 // Dedup the ambiguity bucket by def sym: the same physical file
@@ -707,9 +792,13 @@ impl Engine {
                     bucket.push(e.sym.as_str());
                 }
                 sym_at.insert((repo.as_str(), e.file.as_str(), rev.as_str(), e.name.as_str()), e.sym.as_str());
+                sym_file.insert((repo.as_str(), rev.as_str(), e.sym.as_str()), e.file.as_str());
             }
         }
         let scip = self.scip_name_defs().unwrap_or_default();
+        // Win D: the referencing file's own imports, read once for the whole
+        // family (never per lookup), see `module_import_map`.
+        let imports = self.module_import_map().unwrap_or_default();
         let resolve = |repo: &str, rev: &str, file: &str, name: &str| -> Option<String> {
             if rev == "WORK" {
                 if let Some(def_file) = scip.get(&(repo.to_string(), file.to_string(), name.to_string())) {
@@ -720,6 +809,11 @@ impl Engine {
             }
             match by_name.get(&(repo, rev, name)) {
                 Some(v) if v.len() == 1 => Some(format!("{repo}::{}", v[0])),
+                // More than one candidate: narrow to the referencing file's own
+                // import neighborhood (Win D) before giving up bare.
+                Some(v) if v.len() > 1 =>
+                    narrow_ambiguous(v, repo, rev, file, &sym_file, &imports)
+                        .map(|sym| format!("{repo}::{sym}")),
                 _ => None,
             }
         };
@@ -855,6 +949,33 @@ impl Engine {
             if let Some(name) = scip_descriptor_name(&symbol) {
                 out.insert((repo, file, name), def_file);
             }
+        }
+        Ok(out)
+    }
+
+    /// Win D input: `module_edge_rev(src, dst, rev)` read once per family
+    /// refresh (never per lookup, same shape as `scip_name_defs`) into
+    /// (rev, importing file) -> {imported files}, for the resolver's
+    /// import-scoped ambiguity narrowing (see `narrow_ambiguous`). Empty when
+    /// the module graph hasn't populated yet, so narrowing is simply a no-op
+    /// (every candidate fails the filter, stays bare, same as today).
+    /// NOTE: `module_edge_rev` carries no `repo` column (a pre-existing gap:
+    /// the module graph itself is not yet repo-scoped), so this map is a
+    /// flat path->paths join; two repos sharing a relative path could in
+    /// theory cross-pollinate here. Same residual as the rest of the
+    /// module-graph/repo-scoping gap noted in CLAUDE.md.
+    fn module_import_map(&self) -> Result<HashMap<(String, String), HashSet<String>>> {
+        let mut out: HashMap<(String, String), HashSet<String>> = HashMap::new();
+        let conn = self.db.conn();
+        let Ok(mut s) = conn.prepare(&format!("SELECT src, dst, \"rev\" FROM {}", tbl("module_edge_rev"))) else {
+            return Ok(out);
+        };
+        let rows = s.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+        })?;
+        for row in rows.flatten() {
+            let (src, dst, rev) = row;
+            out.entry((rev, src)).or_default().insert(dst);
         }
         Ok(out)
     }
@@ -1230,6 +1351,9 @@ impl Engine {
         let mut by_name: HashMap<(&str, &str, &str), Vec<&str>> = HashMap::new();
         let mut sym_at: HashMap<(&str, &str, &str, &str), &str> = HashMap::new();
         let mut def_by_file: HashMap<(&str, &str, &str), Vec<(u32, u32, &str)>> = HashMap::new();
+        // (repo, rev, sym) -> declaring file (Win D narrowing input, see
+        // refresh_type_rels' twin map).
+        let mut sym_file: HashMap<(&str, &str, &str), &str> = HashMap::new();
         for (repo, _, rev, f) in &facts {
             for d in &f.defs {
                 // Dedup by callable sym (see refresh_type_rels): a def scanned
@@ -1240,10 +1364,14 @@ impl Engine {
                     bucket.push(d.sym.as_str());
                 }
                 sym_at.insert((repo.as_str(), d.file.as_str(), rev.as_str(), d.name.as_str()), d.sym.as_str());
+                sym_file.insert((repo.as_str(), rev.as_str(), d.sym.as_str()), d.file.as_str());
                 def_by_file.entry((repo.as_str(), d.file.as_str(), rev.as_str())).or_default().push((d.line, d.end, d.sym.as_str()));
             }
         }
         let scip = self.scip_name_defs().unwrap_or_default();
+        // Win D: see refresh_type_rels, the same import map feeds both
+        // resolvers' ambiguity narrowing.
+        let imports = self.module_import_map().unwrap_or_default();
         let resolve_callee = |repo: &str, rev: &str, file: &str, callee: &str| -> Option<String> {
             if rev == "WORK" {
                 if let Some(def_file) = scip.get(&(repo.to_string(), file.to_string(), callee.to_string())) {
@@ -1254,6 +1382,9 @@ impl Engine {
             }
             match by_name.get(&(repo, rev, callee)) {
                 Some(v) if v.len() == 1 => Some(format!("{repo}::{}", v[0])),
+                Some(v) if v.len() > 1 =>
+                    narrow_ambiguous(v, repo, rev, file, &sym_file, &imports)
+                        .map(|sym| format!("{repo}::{sym}")),
                 _ => None,
             }
         };
