@@ -1,0 +1,59 @@
+# experiment.toml — the S1 preregistration freeze
+# (plans/2026-07-10-agent-eval-harness.md, anti-grift protocol #3).
+#
+# Primary endpoint: C2 locate rate (exact file, line within +/- score_window_lines)
+# per cell, with token cost per solved task. 3 reps per task x cell, all
+# reported, median scored (protocol #1/#3). A change to prompt text, filters,
+# cells, or seeds after the first committed results is a NEW `version` string
+# with its own results file — never edit this file's numbers to match a run.
+
+version = "v0-smoke"          # bumped to "v1" for the first real preregistered run
+repo_root = "."                # the corpus dl scans; parameterized for plan item 5
+                                # (foreign-corpus runs point this at another checkout)
+reps = 3
+timeout_secs = 180
+parallelism = 4
+
+[filters]
+# Committed numeric filters (protocol #4): every number here is fixed BEFORE
+# the first model sees a task; changing one is a new experiment version.
+tasks_per_kind = 10             # top-N per mutation kind, sym-hash ordered
+min_bound = 2                   # off-by-one candidate loop-bound range (dl's
+max_bound = 10000               #   own `for x in 0..N {` sites, filtered here)
+score_window_lines = 2           # C2 "exact file + line-window" tolerance
+
+[[models]]
+id = "haiku"
+claude_model = "haiku"          # --model alias claude -p accepts
+
+[[models]]
+id = "sonnet"
+claude_model = "sonnet"
+
+# {haiku, sonnet} x {bash/grep/read, same + dl MCP tools} — the preregistered
+# 2x2. allowed_tools is IDENTICAL in shape between the two tool cells for a
+# given model (full Bash/Read/Grep/Glob, no dl hint), the ONLY difference is
+# whether dl's MCP server is attached (protocol #2: symmetric cells).
+[[cells]]
+name = "haiku-bash"
+model = "haiku"
+allowed_tools = "Bash,Read,Grep,Glob"
+mcp = false
+
+[[cells]]
+name = "haiku-dl"
+model = "haiku"
+allowed_tools = "Bash,Read,Grep,Glob,mcp__dl__dl.what,mcp__dl__dl.verb,mcp__dl__dl.rows"
+mcp = true
+
+[[cells]]
+name = "sonnet-bash"
+model = "sonnet"
+allowed_tools = "Bash,Read,Grep,Glob"
+mcp = false
+
+[[cells]]
+name = "sonnet-dl"
+model = "sonnet"
+allowed_tools = "Bash,Read,Grep,Glob,mcp__dl__dl.what,mcp__dl__dl.verb,mcp__dl__dl.rows"
+mcp = true
