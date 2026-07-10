@@ -6,6 +6,47 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+### Added
+- **Dev-loop just recipes (deterministic ceremony as scripts, not agents).**
+  `just verify` = build + full suite with the FSEvents flake solo-rerun policy +
+  the magic-rel/recompute-guard rails; `just regen-docs` = every doc generator
+  with a fresh db, second-pass convergence required, checked-claims rail;
+  `just cut X.Y.Z` = verify + changelog gate + `scripts/release.sh` + commit
+  audit (never pushes). Gotchas live as header comments in
+  `scripts/verify.sh`/`scripts/regen-docs.sh`.
+- **Tracked agent + memory homes under `.agents/`.** `.agents/agents/` carries
+  the subagent definitions (magic-rel-auditor, builtin-rel-implementer,
+  extraction-op-implementer) and `.agents/memory/` the session-memory corpus;
+  `.claude/` stays gitignored. `assets/sprefa-flow-panel-layers.skill.md` gains
+  the tracked backing the other skills already had.
+- **`env(name, value)` built-in relation.** Projects the process environment
+  captured at start, scoped to a prefix allowlist (`SPREFA_`/`DL_`/`SG_`) plus
+  the `CI`/`GITHUB_ACTIONS`/`GITLAB_CI` markers so tokens and credentials never
+  reach the on-disk db. Constant for the process lifetime (fills once, then
+  self-diffs to a no-op). Enables env-gated rails, e.g.
+  `diag(...) <- hit(path), env("CI", "true").`
+- **`dl/refs` grouped references lens (B1).** New custom LSP request: params
+  `{uri|path, line, character}` (0-based) -> a `RefLens`
+  `{tier, symbol, display_name, declarations, uses, containing_types, callers,
+  callees}`, every hit carrying `{repo, path, line, col, end_line, end_col,
+  role, container}`. Tier `resolved` joins the identifier by name through
+  `type_entity`/`call_def` (declarations), `type_link`/`call_site`/
+  `module_import` (uses by role), and 1-hop `call_edge` (callers/callees, no
+  closure); tier `textual` is the ref-spine same-string fallback, role `text`.
+  Backed by `Engine::refs_lens`. The extension gains a "dl References"
+  explorer TreeView (tier -> repo -> role) behind `dl.findReferences`
+  (cmd+alt+r).
+- **`dl/graphChanged` push (A5 v1).** The LSP sends an outbound
+  `dl/graphChanged {}` notification after a daemon `diag_changed` broadcast or
+  an in-process didSave tick; the extension forwards it to the flow panel,
+  which re-runs its query debounced 250ms behind a new default-off "auto"
+  toolbar toggle (visible tab only).
+- **Flow panel list virtualization (A6).** The list view windows its rows
+  (fixed 22px rows, viewport + 10 rows overscan, absolute positioning in a
+  full-height spacer) instead of rebuilding up to 2,000 divs per toggle.
+  Gutter arcs still draw for all rows; centering on an off-screen row scrolls
+  it into the window.
+
 ### Fixed
 - **`--lsp` no longer auto-spawns a daemon when `--db` is explicit.** `run_lsp`'s
   subscriber thread spawned a DETACHED `dl daemon start` whenever the root owned
@@ -20,20 +61,48 @@ tags consumed by cargo-dist.
   serving the /tmp program (observed wedging reactive doc regen for a day). An
   absolute program that canonicalizes outside the root now exits 2 with the
   mismatch named; set `DL_DAEMON_ROOT` to serve cross-root deliberately.
+- **`--lsp --stdio` killed the LSP at spawn.** `--stdio` is an alias of `--lsp`
+  (added v0.6.22), and newer vscode-languageclient appends `--stdio` to stdio
+  servers even when the extension already passed `--lsp` — clap's SetTrue
+  rejects the repeat, so the server exited code 2 five times and VS Code gave
+  up ("dl stopped"). The flag now self-overrides (`overrides_with`), so any
+  mix of the two spellings parses.
+- **madge oracle vs colorized madge.** Newer madge (chalk) colorizes even
+  non-tty stdout, so ANSI escapes broke the text-parsed `--warning` skip list
+  in `tests/it/oracle_madge.rs`. The test now sets `NO_COLOR=1` /
+  `FORCE_COLOR=0` on every madge invocation and strips ANSI sequences before
+  parsing.
 
-### Added
-- **Dev-loop just recipes (deterministic ceremony as scripts, not agents).**
-  `just verify` = build + full suite with the FSEvents flake solo-rerun policy +
-  the magic-rel/recompute-guard rails; `just regen-docs` = every doc generator
-  with a fresh db, second-pass convergence required, checked-claims rail;
-  `just cut X.Y.Z` = verify + changelog gate + `scripts/release.sh` + commit
-  audit (never pushes). Gotchas live as header comments in
-  `scripts/verify.sh`/`scripts/regen-docs.sh`.
-- **Tracked agent + memory homes under `.agents/`.** `.agents/agents/` carries
-  the subagent definitions (magic-rel-auditor, builtin-rel-implementer,
-  extraction-op-implementer) and `.agents/memory/` the session-memory corpus;
-  `.claude/` stays gitignored. `assets/sprefa-flow-panel-layers.skill.md` gains
-  the tracked backing the other skills already had.
+### Changed
+- **`textDocument/references` rides the refs lens.** Results flatten
+  declarations + uses; each hit's URI is built from its OWN repo's root
+  (`repo_roots`), fixing the multi-repo bug where every location was joined
+  against the primary root. Unknown slugs keep the old primary-root fallback.
+- **Dead pre-cytoscape canvas renderer deleted (A7, -413 lines).** The DOM-card
+  renderer, Sugiyama layout stack, pan/drag/marquee gesture system, and flip
+  overlay were unreachable (canvas mode renders via cytoscape); the empty
+  `nodes`/`edges` Maps they fed were WHY hover cards, pins, and centering were
+  silently broken in canvas mode. Canvas interactivity is rebuilt on
+  cytoscape's own API (A8): mouseover hover card, class-toggle pin/highlight
+  styling, sym-equality `cy.animate` centering, tap-to-open.
+
+- **`dl/query` paging (A3).** The custom LSP request grows optional `limit`
+  (int), `offset` (int, default 0), and `count` (bool) params, backward
+  compatible with the bare `{sql, params}` form the browser bridge uses.
+  `count == true` -> `{"total": int}` (a `SELECT COUNT(*) FROM (<sql>)`);
+  `limit` present -> `{"rows": [...], "total": int}` where the page runs
+  `SELECT * FROM (<sql>) LIMIT ? OFFSET ?` with the two placeholders bound after
+  the caller's own params; neither -> `{"rows": [...]}`, exactly as before. The
+  user SQL is embedded verbatim (never parsed or rewritten), so a malformed
+  query surfaces as the same `-32603` error it did.
+
+### Changed
+- **LSP `dl/query` no longer logs to `_query_log` (A4).** The panel auto-refresh
+  polls this door and every read took two writes (`log_query` +
+  `refresh_query_log`) on the single engine lock before the read — hot-path
+  waste. The `query_log` relation now reflects daemon `query`/`query_sql` RPCs
+  only (`src/daemon.rs` unchanged).
+
 
 ## [0.6.24] - 2026-07-10
 

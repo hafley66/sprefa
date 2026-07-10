@@ -1226,6 +1226,42 @@ pub struct QueryResult {
     pub rows: Vec<Vec<serde_json::Value>>,
 }
 
+/// One located reference for the `refs_lens` navigation surface (Track B). A hit
+/// carries its OWN repo so the LSP can map the slug back to that repo's on-disk
+/// root (the multi-repo `root.join` fix), plus a 0-based line/col range matching
+/// what `resolve_span` produces. `role` labels the edge (declaration kind, `call`,
+/// an import, a `type_link` kind, `caller`/`callee`, or `text`); `container` names
+/// the enclosing symbol when known.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct RefHit {
+    pub repo: String,
+    pub path: String,
+    pub line: u32,
+    pub col: u32,
+    pub end_line: u32,
+    pub end_col: u32,
+    pub role: String,
+    pub container: String,
+}
+
+/// The grouped references result for one cursor position, produced by
+/// `Engine::refs_lens`. `tier` is the resolution grade (`resolved` = joined
+/// through the type/call graph by name, `textual` = the ref-spine same-string
+/// fallback). `symbol` is the preferred definition symbol (same-repo-then-same-
+/// file wins when a name maps to several); `display_name` is the bare identifier
+/// under the cursor.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct RefLens {
+    pub tier: String,
+    pub symbol: String,
+    pub display_name: String,
+    pub declarations: Vec<RefHit>,
+    pub uses: Vec<RefHit>,
+    pub containing_types: Vec<RefHit>,
+    pub callers: Vec<RefHit>,
+    pub callees: Vec<RefHit>,
+}
+
 /// Carry set for `refresh_spine_rels_delta`. Accumulates the new rows produced
 /// during a single tick so the incremental Some() path can replay only those rows
 /// rather than projecting the full `_strings` / `_where_bytes` tables.
@@ -2493,6 +2529,261 @@ impl Engine {
             return None;
         }
         Some(format!("Ca={ca} Ce={ce} fields={fields} variants={variants} impls={impls}"))
+    }
+
+    /// Best-effort SELECT that tolerates a missing table (a builtin type/call/
+    /// module rel the program never referenced, so its `rel_<name>` table was
+    /// never created). Any prepare/query error yields an empty vec, so
+    /// `refs_lens` degrades to whatever families ARE populated instead of
+    /// erroring out.
+    fn try_rows<T, F>(&self, sql: &str, params: &[&dyn rusqlite::types::ToSql], mut f: F) -> Vec<T>
+    where
+        F: FnMut(&rusqlite::Row) -> rusqlite::Result<T>,
+    {
+        let conn = self.db.conn();
+        let Ok(mut stmt) = conn.prepare(sql) else { return Vec::new(); };
+        let Ok(rows) = stmt.query_map(params, |r| f(r)) else { return Vec::new(); };
+        rows.filter_map(|x| x.ok()).collect()
+    }
+
+    /// The repo slug a WORK file answers to, from the `_file` cache. Used to
+    /// attribute a `module_import` hit (whose rel carries no repo column) to the
+    /// right repo; falls back to the self slug when the path isn't cached.
+    fn repo_for_path(&self, path: &str) -> String {
+        self.try_rows(
+            "SELECT repo FROM _file WHERE path = ?1 AND rev = 'WORK' LIMIT 1",
+            &[&path],
+            |r| r.get::<_, String>(0),
+        )
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| self.self_slug())
+    }
+
+    /// A resolved-tier `RefHit` off a rel row: 1-based `line` from the graph
+    /// becomes a 0-based whole-token-start range (the type/call rels carry no
+    /// column, so col is 0).
+    fn rel_hit(repo: String, file: String, line: i64, role: &str, container: String) -> RefHit {
+        let line0 = (line - 1).max(0) as u32;
+        RefHit { repo, path: file, line: line0, col: 0, end_line: line0, end_col: 0,
+            role: role.to_string(), container }
+    }
+
+    /// Resolve a definition symbol (`file::kind::name`) to a located `RefHit`,
+    /// trying `type_entity` (has a parent) then `call_def`. None when neither
+    /// family knows the sym (so an edge to an un-indexed target is dropped rather
+    /// than pointing nowhere).
+    fn resolve_sym_hit(&self, sym: &str, role: &str) -> Option<RefHit> {
+        let te = tbl("type_entity");
+        if let Some((repo, file, line, parent)) = self.try_rows(
+            &format!("SELECT \"repo\", \"file\", \"line\", \"parent\" FROM {te} WHERE \"sym\" = ?1 LIMIT 1"),
+            &[&sym],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?)),
+        ).into_iter().next() {
+            let container = if parent.is_empty() { sym.to_string() } else { parent };
+            return Some(Self::rel_hit(repo, file, line, role, container));
+        }
+        let cd = tbl("call_def");
+        if let Some((repo, file, line)) = self.try_rows(
+            &format!("SELECT \"repo\", \"file\", \"line\" FROM {cd} WHERE \"sym\" = ?1 LIMIT 1"),
+            &[&sym],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)),
+        ).into_iter().next() {
+            return Some(Self::rel_hit(repo, file, line, role, sym.to_string()));
+        }
+        None
+    }
+
+    /// Grouped references for the identifier at (`path`, `byte`), for the LSP
+    /// `dl/refs` request and `textDocument/references`. Skips the compiler/SCIP
+    /// tier (Track B wave 3): tier "resolved" joins the identifier text by name
+    /// against the type graph (`type_entity`) and call graph (`call_def` via
+    /// `call_name`) for declarations, then collects uses from `type_link`,
+    /// `call_site`, and `module_import`, containing types from the declaration
+    /// parents, and 1-hop callers/callees over `call_edge` (no closure — unpinned
+    /// closure reads are refused). When the identifier resolves to zero syms it
+    /// falls back to tier "textual": every same-string span from the ref spine.
+    /// None when the cursor is not on a located string.
+    pub fn refs_lens(&self, path: &str, byte: usize) -> Result<Option<RefLens>> {
+        let Some((_string_id, text, _lo, _hi)) = self.span_at(path, byte as u32)? else {
+            return Ok(None);
+        };
+
+        // --- tier "resolved": declarations by name ---
+        let mut declarations: Vec<RefHit> = Vec::new();
+        // (sym, repo, file) per declaration, for the ambiguity preference.
+        let mut decl_meta: Vec<(String, String, String)> = Vec::new();
+        let mut syms: Vec<String> = Vec::new();
+        let mut parents: Vec<String> = Vec::new();
+
+        let te = tbl("type_entity");
+        for (repo, sym, kind, parent, file, line) in self.try_rows(
+            &format!("SELECT \"repo\", \"sym\", \"kind\", \"parent\", \"file\", \"line\" \
+                      FROM {te} WHERE \"name\" = ?1"),
+            &[&text],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, i64>(5)?)),
+        ) {
+            declarations.push(Self::rel_hit(repo.clone(), file.clone(), line, &kind, parent.clone()));
+            decl_meta.push((sym.clone(), repo, file));
+            if !syms.contains(&sym) { syms.push(sym); }
+            if !parent.is_empty() && !parents.contains(&parent) { parents.push(parent); }
+        }
+
+        let cd = tbl("call_def");
+        let cn = tbl("call_name");
+        for (repo, sym, kind, file, line) in self.try_rows(
+            &format!("SELECT d.\"repo\", d.\"sym\", d.\"kind\", d.\"file\", d.\"line\" \
+                      FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" WHERE n.\"name\" = ?1"),
+            &[&text],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?, r.get::<_, i64>(4)?)),
+        ) {
+            if !syms.contains(&sym) {
+                declarations.push(Self::rel_hit(repo.clone(), file.clone(), line, &kind, String::new()));
+                decl_meta.push((sym.clone(), repo, file));
+                syms.push(sym);
+            }
+        }
+
+        if syms.is_empty() {
+            return Ok(Some(self.textual_lens(&text)?));
+        }
+
+        // Ambiguity preference: same-repo-then-same-file wins the `symbol`
+        // display slot, but every declaration stays in the list (the lens shows
+        // the split rather than silently dropping).
+        let path_repo = self.repo_for_path(path);
+        let symbol = decl_meta.iter().find(|(_, repo, file)| *repo == path_repo && file == path)
+            .or_else(|| decl_meta.iter().find(|(_, repo, _)| *repo == path_repo))
+            .map(|(sym, _, _)| sym.clone())
+            .unwrap_or_else(|| decl_meta[0].0.clone());
+
+        // --- uses ---
+        let mut uses: Vec<RefHit> = Vec::new();
+        // type_link(src, dst, kind): a use of this symbol as a type. Resolve the
+        // using `src` sym back to its declaration site.
+        let tl = tbl("type_link");
+        for sym in &syms {
+            for (src, kind) in self.try_rows(
+                &format!("SELECT \"src\", \"kind\" FROM {tl} WHERE \"dst\" = ?1"),
+                &[sym],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+            ) {
+                if let Some(hit) = self.resolve_sym_hit(&src, &kind) { uses.push(hit); }
+            }
+        }
+        // call_site(repo, caller, callee, file, line): callee is the bare name.
+        let cs = tbl("call_site");
+        for (repo, caller, file, line) in self.try_rows(
+            &format!("SELECT \"repo\", \"caller\", \"file\", \"line\" FROM {cs} WHERE \"callee\" = ?1"),
+            &[&text],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?)),
+        ) {
+            uses.push(Self::rel_hit(repo, file, line, "call", caller));
+        }
+        // module_import(file, rev, specifier, kind, line): an import whose
+        // specifier names this identifier as one of its path segments.
+        let mi = tbl("module_import");
+        for (file, specifier, line) in self.try_rows(
+            &format!("SELECT \"file\", \"specifier\", \"line\" FROM {mi} \
+                      WHERE \"kind\" IN ('use', 'import') AND \"specifier\" LIKE ?1"),
+            &[&format!("%{text}%")],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)),
+        ) {
+            let names = specifier.split(|c: char| c == ':' || c == '/' || c == '.')
+                .any(|seg| seg == text);
+            if !names { continue; }
+            let repo = self.repo_for_path(&file);
+            uses.push(Self::rel_hit(repo, file, line, "import", specifier));
+        }
+
+        // --- containing types: each declaration's parent, resolved ---
+        let mut containing_types: Vec<RefHit> = Vec::new();
+        for parent in &parents {
+            if let Some(hit) = self.resolve_sym_hit(parent, "container") {
+                containing_types.push(hit);
+            }
+        }
+
+        // --- callers / callees: 1-hop over call_edge(caller, callee, kind) ---
+        let mut callers: Vec<RefHit> = Vec::new();
+        let mut callees: Vec<RefHit> = Vec::new();
+        let ce = tbl("call_edge");
+        for sym in &syms {
+            for caller in self.try_rows(
+                &format!("SELECT \"caller\" FROM {ce} WHERE \"callee\" = ?1"),
+                &[sym], |r| r.get::<_, String>(0),
+            ) {
+                if let Some(hit) = self.resolve_sym_hit(&caller, "caller") { callers.push(hit); }
+            }
+            for callee in self.try_rows(
+                &format!("SELECT \"callee\" FROM {ce} WHERE \"caller\" = ?1"),
+                &[sym], |r| r.get::<_, String>(0),
+            ) {
+                if let Some(hit) = self.resolve_sym_hit(&callee, "callee") { callees.push(hit); }
+            }
+        }
+
+        dedup_hits(&mut declarations);
+        dedup_hits(&mut uses);
+        dedup_hits(&mut containing_types);
+        dedup_hits(&mut callers);
+        dedup_hits(&mut callees);
+
+        Ok(Some(RefLens {
+            tier: "resolved".to_string(),
+            symbol,
+            display_name: text,
+            declarations, uses, containing_types, callers, callees,
+        }))
+    }
+
+    /// tier "textual": the ref-spine same-string fallback. Every located WORK
+    /// span whose interned `_strings.content` equals `text`, converted to a
+    /// 0-based range by reading each file from its own repo root. Role "text"
+    /// (grep-grade). Used when the identifier resolves to no symbol.
+    fn textual_lens(&self, text: &str) -> Result<RefLens> {
+        let candidates: Vec<(String, String, String, u32, u32)> = self.try_rows(
+            "SELECT w.repo, w.path, w.file_id, w.lo, w.hi FROM _where_bytes w \
+             JOIN _strings s ON s.id = w.string_id \
+             WHERE s.content = ?1 AND w.id != '0' AND w.path != '' \
+             ORDER BY w.path, w.lo",
+            &[&text],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)? as u32, r.get::<_, i64>(4)? as u32)),
+        );
+        let roots = self.repo_roots();
+        let mut work_ids: HashMap<String, Option<String>> = HashMap::new();
+        let mut contents: HashMap<(String, String), String> = HashMap::new();
+        let mut uses: Vec<RefHit> = Vec::new();
+        for (repo, path, fid, lo, hi) in candidates {
+            let want = match work_ids.get(&path) {
+                Some(w) => w.clone(),
+                None => {
+                    let w = self.work_file_id(&path)?.map(|f| f.to_string());
+                    work_ids.insert(path.clone(), w.clone());
+                    w
+                }
+            };
+            if want.as_deref() != Some(fid.as_str()) { continue; }
+            let key = (repo.clone(), path.clone());
+            let content = contents.entry(key).or_insert_with(|| {
+                let root = roots.get(&repo).cloned().unwrap_or_else(|| self.root.clone());
+                read_content(&root, "WORK", &path).unwrap_or_default()
+            });
+            let (sl, sc) = byte_to_lc0(content, lo);
+            let (el, ec) = byte_to_lc0(content, hi);
+            uses.push(RefHit { repo, path, line: sl, col: sc, end_line: el, end_col: ec,
+                role: "text".to_string(), container: String::new() });
+        }
+        Ok(RefLens {
+            tier: "textual".to_string(),
+            symbol: String::new(),
+            display_name: text.to_string(),
+            declarations: Vec::new(), uses,
+            containing_types: Vec::new(), callers: Vec::new(), callees: Vec::new(),
+        })
     }
 
     /// Distinct WORK source paths from the `_file` cache. Feeds crate-root
@@ -6497,6 +6788,31 @@ fn check_type(ty: Type, v: &Value, repo: &str, rev: &str, root: &Path, rev_index
         Type::Path => full.exists(),
         Type::Text | Type::Int | Type::Repo | Type::Rev => true,
     }
+}
+
+/// Drop duplicate `RefHit`s (same repo/path/range/role), preserving first-seen
+/// order. The refs-lens buckets fan out over per-sym queries, so the same
+/// location can surface more than once (two syms sharing a caller, a symbol used
+/// twice on one line).
+fn dedup_hits(hits: &mut Vec<RefHit>) {
+    let mut seen: HashSet<(String, String, u32, u32, u32, u32, String)> = HashSet::new();
+    hits.retain(|h| seen.insert((h.repo.clone(), h.path.clone(), h.line, h.col,
+        h.end_line, h.end_col, h.role.clone())));
+}
+
+/// UTF-8 byte offset -> (0-based line, 0-based char column) in `content`. The
+/// 0-based line matches what `resolve_span` -> `span_to_range` produces on the
+/// LSP side; a past-end offset clamps to the last position.
+fn byte_to_lc0(content: &str, byte: u32) -> (u32, u32) {
+    let byte = (byte as usize).min(content.len());
+    let mut line = 0u32;
+    let mut line_start = 0usize;
+    for (i, b) in content.bytes().enumerate() {
+        if i >= byte { break; }
+        if b == b'\n' { line += 1; line_start = i + 1; }
+    }
+    let col = content[line_start..byte].chars().count() as u32;
+    (line, col)
 }
 
 /// Literal identifier tokens a pattern requires (metavars stripped). Used as a

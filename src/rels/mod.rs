@@ -44,6 +44,7 @@ use crate::engine::{rels_used, Engine};
 mod analysis;
 mod catalog;
 mod embed;
+mod env;
 pub mod extract_family;
 mod git;
 mod perf;
@@ -54,6 +55,7 @@ mod scip;
 use analysis::{AgentKind, DlDiagKind, TypeLggKind, TypeShapeKind};
 use catalog::CatalogKind;
 use embed::EmbedKind;
+use env::EnvKind;
 use git::{ChangedKind, ChangedLineKind, CreatedKind, GitRefKind, RevBehindKind};
 use perf::PerfKind;
 use propose::{ProposeCloneKind, ProposeExtractKind};
@@ -118,7 +120,7 @@ pub fn rel_kinds() -> &'static [&'static dyn RelKind] {
     &[&ChangedKind, &ChangedLineKind, &CreatedKind, &GitRefKind, &RevBehindKind,
       &AgentKind, &DlDiagKind, &TypeShapeKind, &TypeLggKind, &CatalogKind,
       &ScipKind, &ProposeExtractKind, &ProposeCloneKind, &EmbedKind, &PerfKind,
-      &QueryLogKind]
+      &QueryLogKind, &EnvKind]
 }
 
 /// Flattened column decls across the registry, for `all_builtin_decls` /

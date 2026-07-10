@@ -176,8 +176,8 @@ pub fn print_load_response(resp: crate::rpc::Response) -> Result<()> {
     Ok(())
 }
 
-/// Print a relation dump (header row + tab-separated rows + count). Shared by
-/// `dl --rows` and `dl daemon rows`.
+/// Print a relation dump (header row + tab-separated rows + count) for
+/// `dl daemon rows`.
 pub fn print_rows(cols: &[String], rows: &[Vec<String>]) {
     if !cols.is_empty() {
         println!("{}", cols.join("\t"));

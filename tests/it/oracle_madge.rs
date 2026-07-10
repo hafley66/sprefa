@@ -68,12 +68,34 @@ fn write_fixture(dir: &Path) {
     fs::write(dir.join("src/withjson.ts"), "import data from './data.json';\nimport { a } from './a';\nexport const wj = a + data.k;\n").unwrap();
 }
 
+/// Drop ANSI escape sequences (`ESC [ ... <final byte @-~>`). Newer madge
+/// colorizes even non-tty stdout via chalk, so the text-parsed `--warning`
+/// output carries color codes; the env vars below usually suppress them, this
+/// strip is the belt-and-suspenders for chalk versions that ignore NO_COLOR.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for e in chars.by_ref() {
+                if ('@'..='~').contains(&e) { break; }
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// Run madge with the given extra args (always `--extensions ts,js` so the
 /// grown fixture's CommonJS `.js` files are in scope), parse stdout as JSON.
+/// NO_COLOR/FORCE_COLOR keep chalk from colorizing the output.
 fn madge_json(madge: &Path, dir: &Path, args: &[&str]) -> serde_json::Value {
     let mut full_args = vec!["--extensions", "ts,js"];
     full_args.extend_from_slice(args);
     let out = Command::new(madge).args(&full_args).current_dir(dir)
+        .env("NO_COLOR", "1").env("FORCE_COLOR", "0")
         .output().unwrap_or_else(|e| panic!("run madge {args:?}: {e}"));
     serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!(
         "madge {args:?} --json unparsable: {e}\nstdout: {}\nstderr: {}",
@@ -134,8 +156,9 @@ fn madge_depends(madge: &Path, dir: &Path, target: &str) -> BTreeSet<String> {
 /// graph, dropping the skip list entirely).
 fn madge_warnings(madge: &Path, dir: &Path) -> BTreeSet<String> {
     let out = Command::new(madge).args(["--extensions", "ts,js", "--warning", "."])
+        .env("NO_COLOR", "1").env("FORCE_COLOR", "0")
         .current_dir(dir).output().expect("run madge --warning");
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stdout = strip_ansi(&String::from_utf8_lossy(&out.stdout));
     let after = stdout.split("Skipped").nth(1).unwrap_or("");
     after.lines().skip(1) // the "N files" remainder of the "Skipped" line
         .map(str::trim).filter(|l| !l.is_empty())

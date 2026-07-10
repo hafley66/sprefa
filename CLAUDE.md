@@ -734,17 +734,113 @@ rel; #5 `dl --rows <REL>` + `query_rel` daemon RPC.
       daemon's query_sql RPC and prints rows; document the root/daemon-selection
       rules in one place.
 
+### Open (vscode ext review — plan approved 2026-07-10)
+Full eval + 3-track design at **plans/2026-07-10-vscode-ext-review.md** (perf
+remediation A / references lens B / BOM structure view C, waves 1-4). Staffing:
+Opus/Sonnet subagents implement, orchestrator verifies+commits.
+- [x] **Wave 1 (A1-A4)** (main 9f4b5b6): dl/query {limit,offset,count} paging
+      (page = subquery LIMIT/OFFSET + unpaged total; count mode; legacy shape
+      preserved for browser bridge); LSP panel reads no longer write _query_log
+      (daemon RPCs still log); `**/*` client watcher DELETED (server has no
+      didChangeWatchedFiles handler — events were decoded and dropped); panel
+      sends limit = render caps so the wire never exceeds 2k/4k rows (was 20k
+      serialized, 18k dropped); linked-only/view-mode toggles re-render from
+      cached rows. Suites lib 253/0/1, it lsp 13/0, tsc clean. vsix NOT rebuilt.
+- [x] **Wave 2** (main, 2026-07-10, 2 Opus agents): A5 dl/graphChanged {} pulse
+      (daemon diag_changed arm + in-process didSave) -> extension forward ->
+      panel 250ms-debounced re-run behind default-off "auto" toggle (window
+      'message' contract, host-agnostic); A6 list virtualization (ROW_H=22
+      exact windowing +10 overscan, full-height spacer, arcs untouched,
+      off-screen centering = scrollListToIndex); A7 dead DOM-card renderer +
+      Sugiyama + pan/marquee gesture system DELETED (-413 lines net) with A8
+      canvas interactivity rebuilt on cy API (mouseover hover card, class-
+      toggle pins/highlight, sym-EQUALITY cy.animate centering, tap-to-open);
+      B1 Engine::refs_lens (tiers resolved/textual; SCIP tier = wave 3) +
+      dl/refs request + textDocument/references rewired w/ multi-repo fix
+      (every hit's URI from its OWN repo root via repo_roots) + dlReferences
+      TreeView (tier->repo->role, dl.findReferences cmd+alt+r). BONUS fix:
+      madge oracle went red on clean main (madge/chalk now colorizes non-tty
+      stdout, ANSI codes broke the --warning text parse) — NO_COLOR/
+      FORCE_COLOR=0 env + strip_ansi in oracle_madge.rs, green again. Suites
+      lib 253/0/1, it full green (daemon scale test load-flaky under a
+      parallel full run, passes solo). tsc clean. vsix NOT
+      rebuilt. PORTABILITY LAW (Chris): flow-panel.html stays host-agnostic —
+      window.dlHost {query,hover,open} + window messages are the ONLY host
+      coupling (panel reuse planned in ~/projects/instant).
+- [ ] **Wave 3**: B2 documentHighlight/workspaceSymbol/documentSymbol; B3 SCIP
+      tier + role_label widening (scip_import.rs:322 discards read/write bits);
+      C2 BOM rollup + where-used; A9 daemon query routing; A10 perf harness.
+- [ ] **Wave 4**: B4 dl/locate follow-the-user; B5 call/type hierarchy; C3
+      exploded stratum view (welded-subassembly cycle cards); C4 3D iso go/no-go.
+- [ ] C1 BOM table (.dl/bom.dl bom_node counts + panel numeric columns + fan-in
+      sort) — S, was slated wave 1, deferred to next session for context budget.
+- [ ] **LSP thin client over the daemon (Gradle model)** — plan approved
+      2026-07-10 at plans/2026-07-10-lsp-thin-client-daemon.md: `--lsp` becomes
+      a stdio<->socket adapter (LspPump mirrors mcp::Pump), in-process engine
+      demoted to the --no-daemon arm; new RPCs refs/saved/repo_roots/diag_mute
+      + {path,byte} widening of definition/hover/diag; reconnect =
+      ensure_daemon so the build_id fingerprint respawns a stale daemon
+      mid-session; subsumes wave-3 A9; retires the served-copy divergence
+      class. Stages T1-T5, ~M total. LAW to land with it: a mode flag binds a
+      transport client-side; engine work routes through daemon RPC with a
+      Local fallback (Pump-shaped), never a second resident engine on a
+      shared db.
+
+### Open (turnkey query surface — plan plans/2026-07-10-turnkey-query-surface.md)
+Goal: dl useful from the first command for devs + agents, no .dl authoring.
+Tiers: `dl what` meta-query / `dl q` concept verbs / `dl find` schema-driven filter.
+- [x] **Items 1-2** (main 50bc092, Opus agent): anchor resolver `src/anchor.rs`
+      (classify name|path|path:line, glob->LIKE, resolve_name unions
+      type_entity/call_name/scip_name/scip_binding/df_node.var, missing-family
+      = zero rows, split_repo_sym; all reads via lower::tbl so the magic-rel
+      audit stays green) + `dl what <anchor>` / `dl summary <path>`
+      (src/cli/query.rs; daemon-first `what`/`summary` RPCs in src/daemon.rs;
+      in-process fallback forces extraction families via a synthetic probe
+      program — `?` items flip ExtractFamily::used). scip honesty note when
+      scip_def empty. 6 e2e tests/it/what.rs; post-rebase suites 265 lib /
+      608 it green.
+- [ ] **Item 3**: `dl q <verb>` runner — param injection (synthesized
+      `target("...")` fact merged into an embedded program, the --move
+      precedent) + verb_catalog meta rel + who-calls/where-defined first.
+- [ ] **Next arc**: blast-radius/dependents verbs via run_reaches_pair (NOT
+      materialized closure); built-in MCP tools dl.what/dl.verb/dl.rows in the
+      --mcp adapter (the decided-unbuilt eval-bridge ledger item); `dl find`
+      schema-driven filter over rel_col anchor columns (Tier 3, deferred).
+- [ ] **Implementer-debrief pain points** (from the Opus agent, 2026-07-10):
+      (a) crate::daemon vs crate::cli::daemon module-name collision is trappy
+      (RPC clients in one, verbs/print_rows in the other); (b) no public
+      `eng.ensure_families(&[...])` — forcing extraction for a read requires
+      ticking a synthetic program (~40 lines of probe scaffolding), and cold
+      `dl what` re-extracts the corpus without --db; (c) TS dataflow silently
+      sparse (`return lookup()` body -> 0 df_nodes, no doc says per-lang df
+      coverage is thin); (d) scip_ref lacks line/col that scip_occurrence/
+      scip_binding have — rel choice needs that asymmetry known up front.
+      Chris's own dogfood add (env-rel arc): daemon hijacks ad-hoc gen runs
+      with no visible signal — wants a loud "daemon is serving this root,
+      writes went there / use --no-daemon" warning.
+
+### Open (pseudo-scip coverage — plan plans/2026-07-10-pseudo-scip-coverage.md)
+Best syntactic wins per language short of a compiler (Fable research 2026-07-10).
+Ranked: H (JS/JSX rides TsTypes, 0.05 KU) + D (import-scoped ambiguity narrowing
+in the extract.rs resolve closures, 0.15 KU) first; then Go TypeLang (1.2 KU),
+generic def/ref tags tier over SG_LANG_TABLE (0.4 KU), Python TypeLang (1.2+ KU,
+type_link scoped out). stack-graphs ruled OUT (frozen upstream, .tsg cost,
+foreign resolution model).
+- [ ] **H+D in flight** (Sonnet agent worktree, 2026-07-10): TsTypes matches
+      .js/.jsx/.mjs/.cjs + SourceType per ext + engine file-selection globs;
+      len>1 bucket narrowed to import-reachable defs (module_edge read like
+      scip_ref, unique survivor only, digest fold so module-graph changes
+      re-resolve). Needs the double-check pass before merge.
+
 ### Open (scip / language-surface — 2026-07-08 agent-session feedback, batch 2)
 Five more complaints (SCIP + dl-surface). NOT yet triaged against code; capture only.
-- [ ] **S1 scip_ref has no line/column.** Positional tag->symbol mapping is
-      impossible from scip_ref alone, which is the entire reason the alias fix leaked
-      into Python. Need occurrence ranges (line/col) on scip_ref, or a distinct
-      occurrence rel. VERIFY what the importer drops from Occurrence.range
-      (src/rels/scip.rs / scip_setup.rs).
-- [ ] **S2 scip_name returns the canonical export name, not the local binding.** Any
-      aliased or default import silently fails a name-based join, and because the
-      call_def join was REQUIRED the whole resolution drops. Need the LOCAL binding
-      name (alias) alongside the canonical. Ties to [[reference_scip_name_not_dl_split]].
+- [x] **S1 scip_ref has no line/column** — FIXED in v0.6.24: `scip_occurrence(file,
+      symbol, line, col, end_line, end_col, role, repo)` carries every occurrence's
+      0-based span + role (src/rels/scip.rs:62).
+- [x] **S2 scip_name returns the canonical export name, not the local binding** —
+      FIXED in v0.6.24: `scip_binding(file, symbol, local_name, line, col, repo)`
+      joins an occurrence's local source slice (alias/default import) to the
+      canonical symbol (src/rels/scip.rs:68).
 - [ ] **S3 computed values cannot bind in the body (`x = replace(...)`).** Must inline
       into the HEAD; error message is good but surprises SQL/datalog-with-assignment
       intuition, and nesting `replace(split(...))` in the head hurts readability. ASK:

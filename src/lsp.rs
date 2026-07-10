@@ -159,6 +159,11 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, db_defaulted: bool, r
                         }
                     }
                 }
+                // A5 push-refresh v1: a graph tick landed, so nudge the flow
+                // panel (via the extension) to re-run its preset. Params is an
+                // object (not null) so a later version can grow tick/moved-rel
+                // fields without a wire break.
+                let _ = send_graph_changed(&connection);
                 continue;
             }
         }
@@ -171,6 +176,10 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, db_defaulted: bool, r
                     }
                     "textDocument/references" => {
                         let resp = handle_references(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
+                    "dl/refs" => {
+                        let resp = handle_refs(&eng, &root, &req);
                         connection.sender.send(Message::Response(resp))?;
                     }
                     "textDocument/hover" => {
@@ -209,6 +218,8 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, db_defaulted: bool, r
                         publish_dl_parse_errors(&connection, &abs)?;
                     }
                     publish(&connection, &eng, &root, Some(&abs))?;
+                    // A5: the in-process didSave tick also moved the graph.
+                    let _ = send_graph_changed(&connection);
                 }
             }
             Message::Response(_) => {}
@@ -393,20 +404,75 @@ fn handle_hover(eng: &Engine, root: &Path, req: &Request) -> Response {
     Response::new_ok(req.id.clone(), serde_json::to_value(hover).unwrap_or_default())
 }
 
+/// Wrap a user SQL as a paginated subquery. The `LIMIT ?`/`OFFSET ?` placeholders
+/// bind AFTER the caller's own positional params (the user SQL is embedded
+/// verbatim, never parsed or rewritten). Malformed user SQL surfaces as the same
+/// prepare error it would on a bare query.
+fn paged_sql(sql: &str) -> String {
+    format!("SELECT * FROM ({sql}) LIMIT ? OFFSET ?")
+}
+
+/// Wrap a user SQL as a COUNT over the same subquery — the unpaged total.
+fn count_sql(sql: &str) -> String {
+    format!("SELECT COUNT(*) FROM ({sql})")
+}
+
+/// Run the count subquery and read the single scalar back.
+fn run_count(eng: &Engine, sql: &str, params: &[serde_json::Value]) -> Result<i64> {
+    let rows = eng.query_sql(&count_sql(sql), params)?;
+    Ok(rows.first().and_then(|r| r.first()).and_then(|v| v.as_i64()).unwrap_or(0))
+}
+
 /// Custom request `dl/query`: SQL against the engine's SQLite, the same surface
 /// as the daemon's `query_sql` RPC but reachable through the editor's existing
 /// LSP channel (the flow-panel webview is the caller). Params:
-/// `{"sql": string, "params": [scalar, ...]}`. Result: `{"rows": [[col, ...]]}`
-/// — positional values; callers select explicit columns.
+/// `{"sql": string, "params": [scalar, ...], "limit"?: int, "offset"?: int,
+/// "count"?: bool}`.
+///
+/// Paging is backward compatible:
+///   * `count == true` -> `{"total": int}` (COUNT over the user query only).
+///   * `limit` present -> `{"rows": [[col, ...]], "total": int}` — one page plus
+///     the unpaged total; the page runs `SELECT * FROM (<sql>) LIMIT ? OFFSET ?`
+///     with `limit`/`offset` bound after the user params (`offset` defaults 0).
+///   * neither -> `{"rows": [[col, ...]]}`, exactly the pre-paging behavior (the
+///     browser bridge and older clients keep working).
+///
+/// This path does NOT log to `_query_log`: panel auto-refresh polls it and every
+/// read taking two writes on the single engine lock was hot-path waste. The
+/// daemon's `query`/`query_sql` RPCs still log (`src/daemon.rs`).
 fn handle_query(eng: &Engine, req: &Request) -> Response {
     let Some(sql) = req.params.get("sql").and_then(|v| v.as_str()) else {
         return Response::new_err(req.id.clone(), -32602, "missing sql".into());
     };
     let params: Vec<serde_json::Value> = req.params.get("params")
         .and_then(|v| v.as_array()).cloned().unwrap_or_default();
-    let params_json = serde_json::to_string(&params).unwrap_or_else(|_| "[]".into());
-    let _ = eng.log_query("lsp", "dl/query", sql, &params_json);
-    let _ = crate::rels::refresh_query_log(eng);
+    let count = req.params.get("count").and_then(|v| v.as_bool()).unwrap_or(false);
+    let limit = req.params.get("limit").and_then(|v| v.as_i64());
+    let offset = req.params.get("offset").and_then(|v| v.as_i64()).unwrap_or(0);
+
+    // count mode: just the total, no rows.
+    if count {
+        return match run_count(eng, sql, &params) {
+            Ok(total) => Response::new_ok(req.id.clone(), serde_json::json!({ "total": total })),
+            Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
+        };
+    }
+    // paged mode: a window of rows plus the unpaged total.
+    if let Some(limit) = limit {
+        let mut page_params = params.clone();
+        page_params.push(serde_json::json!(limit));
+        page_params.push(serde_json::json!(offset));
+        let rows = match eng.query_sql(&paged_sql(sql), &page_params) {
+            Ok(rows) => rows,
+            Err(e) => return Response::new_err(req.id.clone(), -32603, e.to_string()),
+        };
+        return match run_count(eng, sql, &params) {
+            Ok(total) => Response::new_ok(req.id.clone(),
+                serde_json::json!({ "rows": rows, "total": total })),
+            Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
+        };
+    }
+    // legacy path: exactly today's behavior.
     match eng.query_sql(sql, &params) {
         Ok(rows) => Response::new_ok(req.id.clone(), serde_json::json!({ "rows": rows })),
         Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
@@ -456,34 +522,86 @@ fn handle_execute_command(eng: &mut Engine, req: &Request) -> Response {
     }
 }
 
-/// textDocument/references over the ref spine: cursor -> innermost located span
-/// -> every WORK span interning the same `StringId` (engine `string_spans`),
-/// i.e. every located occurrence of the exact string, across files. Includes
-/// the span under the cursor. Null when the cursor is not on a located string.
+/// textDocument/references over the refs lens (Track B): cursor -> `refs_lens`,
+/// then flatten declarations + uses to `Location[]`. Each hit carries its OWN
+/// repo, so a multi-repo hit maps to that repo's on-disk root (the `root.join`
+/// multi-repo fix) instead of being mislocated under the primary root. Null when
+/// the cursor is not on a located string.
 fn handle_references(eng: &Engine, root: &Path, req: &Request) -> Response {
     let params: ReferenceParams = match serde_json::from_value(req.params.clone()) {
         Ok(p) => p,
         Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
     };
-    let hit = resolve_span(eng, root, &params.text_document_position);
-    let Some((_path, string_id, _text, _lo, _hi)) = hit else {
+    let Some((rel, byte)) = resolve_path_byte(root, &params.text_document_position) else {
         return Response::new_ok(req.id.clone(), serde_json::Value::Null);
     };
-    // Per-file content cache: each span needs its file's bytes for the
-    // byte -> position conversion, and one file often holds many spans.
-    let mut contents: HashMap<String, String> = HashMap::new();
+    let lens = match eng.refs_lens(&rel, byte as usize) {
+        Ok(Some(l)) => l,
+        Ok(None) => return Response::new_ok(req.id.clone(), serde_json::Value::Null),
+        Err(e) => return Response::new_err(req.id.clone(), -32603, e.to_string()),
+    };
+    let roots = eng.repo_roots();
     let mut locations = Vec::new();
-    for (path, lo, hi) in eng.string_spans(&string_id).unwrap_or_default() {
-        let content = contents.entry(path.clone()).or_insert_with(|| {
-            std::fs::read_to_string(root.join(&path)).unwrap_or_default()
-        });
-        let Some(uri) = path_to_uri(&root.join(&path)) else { continue };
-        locations.push(Location { uri, range: span_to_range(content, lo, hi) });
+    for hit in lens.declarations.iter().chain(lens.uses.iter()) {
+        if let Some(loc) = refhit_location(&roots, root, hit) { locations.push(loc); }
     }
     if locations.is_empty() {
         return Response::new_ok(req.id.clone(), serde_json::Value::Null);
     }
     Response::new_ok(req.id.clone(), serde_json::to_value(locations).unwrap_or_default())
+}
+
+/// Custom request `dl/refs`: the grouped references lens (declarations, uses,
+/// containing types, callers, callees) for one cursor, feeding the "dl
+/// References" TreeView and the flow panel. Params:
+/// `{"uri": string} | {"path": string}` (path is root-relative) plus
+/// `"line"` and `"character"` (0-based, LSP convention). Returns the serialized
+/// `RefLens`, or null when the cursor is not on a located identifier.
+fn handle_refs(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let line = req.params.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let character = req.params.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let abs: Option<PathBuf> = if let Some(uri) = req.params.get("uri").and_then(|v| v.as_str()) {
+        Uri::from_str(uri).ok().and_then(|u| uri_to_path(&u))
+    } else {
+        req.params.get("path").and_then(|v| v.as_str()).map(|p| root.join(p))
+    };
+    let Some(abs) = abs else {
+        return Response::new_err(req.id.clone(), -32602, "dl/refs needs a uri or path".into());
+    };
+    let Some((rel, byte)) = resolve_abs_byte(root, &abs, Position::new(line, character)) else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    match eng.refs_lens(&rel, byte as usize) {
+        Ok(Some(lens)) => Response::new_ok(req.id.clone(),
+            serde_json::to_value(lens).unwrap_or(serde_json::Value::Null)),
+        Ok(None) => Response::new_ok(req.id.clone(), serde_json::Value::Null),
+        Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
+    }
+}
+
+/// A `RefHit` -> LSP `Location`, mapping the hit's repo slug to its on-disk root
+/// (`repo_roots`). An unknown slug falls back to the primary root join, matching
+/// the pre-fix single-repo behavior rather than dropping the hit.
+fn refhit_location(
+    roots: &HashMap<String, PathBuf>, primary: &Path, hit: &crate::engine::RefHit,
+) -> Option<Location> {
+    let base = roots.get(&hit.repo).map(|p| p.as_path()).unwrap_or(primary);
+    let uri = path_to_uri(&base.join(&hit.path))?;
+    let range = Range::new(
+        Position::new(hit.line, hit.col),
+        Position::new(hit.end_line, hit.end_col));
+    Some(Location { uri, range })
+}
+
+/// Send the outbound `dl/graphChanged` pulse (A5 push-refresh v1). Params is a
+/// JSON object (not null) so a later version can add tick/moved-rel fields
+/// without breaking the wire contract.
+fn send_graph_changed(connection: &Connection) -> Result<()> {
+    connection.sender.send(Message::Notification(Notification {
+        method: "dl/graphChanged".into(),
+        params: serde_json::json!({}),
+    }))?;
+    Ok(())
 }
 
 /// (uri, position) -> the innermost located span under the cursor, as
@@ -502,6 +620,26 @@ fn resolve_span(eng: &Engine, root: &Path, pos: &TextDocumentPositionParams)
     let byte = position_to_byte(&content, pos.position)?;
     let (string_id, text, lo, hi) = eng.span_at(&rel, byte).ok().flatten()?;
     Some((rel, string_id, text, lo, hi))
+}
+
+/// (uri, position) -> (repo-relative path, byte offset), reading the file from
+/// disk to convert the position. The refs lens does its own span resolution
+/// (it needs the path + byte, not the located span), so this is `resolve_span`
+/// without the `span_at` lookup.
+fn resolve_path_byte(root: &Path, pos: &TextDocumentPositionParams) -> Option<(String, u32)> {
+    let abs = uri_to_path(&pos.text_document.uri)?;
+    resolve_abs_byte(root, &abs, pos.position)
+}
+
+/// (abs path, position) -> (repo-relative path, byte offset). Canonicalizes the
+/// path (macOS `/var` -> `/private/var`) before stripping the root, the same as
+/// `resolve_span`. None when the file is outside the root or unreadable.
+fn resolve_abs_byte(root: &Path, abs: &Path, position: Position) -> Option<(String, u32)> {
+    let abs = std::fs::canonicalize(abs).unwrap_or_else(|_| abs.to_path_buf());
+    let rel = rel_of(root, &abs)?;
+    let content = std::fs::read_to_string(&abs).ok()?;
+    let byte = position_to_byte(&content, position)?;
+    Some((rel, byte))
 }
 
 /// LSP Position (0-based line, char-ish column) -> byte offset. Column is a
@@ -720,6 +858,27 @@ fn collect_parse_errors(node: tree_sitter::Node, source_text: &str) -> Vec<(usiz
                 return errors;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{count_sql, paged_sql};
+
+    #[test]
+    fn paged_sql_wraps_as_subquery_with_placeholders() {
+        assert_eq!(
+            paged_sql("SELECT method FROM rel_query_log ORDER BY ts"),
+            "SELECT * FROM (SELECT method FROM rel_query_log ORDER BY ts) LIMIT ? OFFSET ?",
+        );
+    }
+
+    #[test]
+    fn count_sql_wraps_as_count_subquery() {
+        assert_eq!(
+            count_sql("SELECT method FROM rel_query_log WHERE method = ?"),
+            "SELECT COUNT(*) FROM (SELECT method FROM rel_query_log WHERE method = ?)",
+        );
     }
 }
 

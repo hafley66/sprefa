@@ -7,6 +7,7 @@
 
 mod daemon;
 mod inputs;
+mod query;
 mod root;
 
 use anyhow::Result;
@@ -50,6 +51,8 @@ ROOT & DAEMON (the two things that bite):
    scan/match/ast/sg/json     source ops (extract facts); everything else derives
 
 SUBCOMMANDS (run `dl <cmd> -h` for detail):
+  what       resolve an anchor (name / glob / path / path:line) + its neighborhood
+  summary    per-file report: entities, imports in/out, callable fan, doc coverage
   daemon     control the background daemon (status/start/stop/restart/rows/...)
   setup      install the skill + wire agents, hooks, and the pre-commit rail
   update     self-update to the latest published release (--check to preview)
@@ -87,8 +90,10 @@ struct Cli {
     /// live editor diagnostics (lint on open/save). See docs/lsp.md. Accepts
     /// `--stdio` as an alias (vscode-languageclient, coc.nvim, and neovim's
     /// lspconfig all append it when spawning an LSP server; stdio is the only
-    /// transport either way).
-    #[arg(long, alias = "stdio", help_heading = "Run modes")]
+    /// transport either way). Self-override lets `--lsp --stdio` coexist: a
+    /// client that passes the flag AND a client library that appends the alias
+    /// must not kill the server with clap's duplicate-arg error.
+    #[arg(long, alias = "stdio", overrides_with = "lsp", help_heading = "Run modes")]
     lsp: bool,
     /// Lint/ban mode: render the `diag` relation to stderr. Exit 0 clean, 2 if
     /// any `error`-severity row exists (Claude Code's blocking-hook code), 1 on
@@ -219,6 +224,8 @@ fn dispatch_subcommand(raw: &[String]) -> Result<Option<i32>> {
         "update" => crate::update::run(rest)?,
         "daemon" => daemon::run_cmd(rest)?,
         "watch" => daemon::run_watch(rest)?,
+        "what" => query::run_what(rest)?,
+        "summary" => query::run_summary(rest)?,
         _ => return Ok(None),
     };
     Ok(Some(code))
@@ -335,5 +342,28 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
         crate::run_watch(programs, db.as_deref(), root)
     } else {
         crate::run_file(programs, db.as_deref(), db_defaulted, root, cli.query_json)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    /// vscode-languageclient appends `--stdio` (the alias) even when the
+    /// spawning extension already passed `--lsp`; both spellings on one command
+    /// line must parse instead of dying with clap's duplicate-arg error.
+    #[test]
+    fn lsp_flag_tolerates_the_stdio_alias_appended_by_lsp_clients() {
+        for argv in [
+            vec!["dl", "--lsp"],
+            vec!["dl", "--stdio"],
+            vec!["dl", "--lsp", "--stdio"],
+            vec!["dl", "--stdio", "--lsp"],
+        ] {
+            let cli = Cli::try_parse_from(&argv)
+                .unwrap_or_else(|e| panic!("{argv:?} must parse: {e}"));
+            assert!(cli.lsp, "{argv:?} must set lsp");
+        }
     }
 }

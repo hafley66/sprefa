@@ -9,6 +9,7 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, State } from "vscode-languageclient/node";
+import { RefsTreeProvider, RefLens } from "./refsTree";
 
 let client: LanguageClient | undefined;
 
@@ -199,9 +200,11 @@ export function activate(ctx: vscode.ExtensionContext): void {
     { scheme: "file", language: "shell" },
   ];
 
+  // No synchronize.fileEvents watcher: the server declares change:NONE and has
+  // no didChangeWatchedFiles handler (it consumes didSave/didOpen only), so a
+  // workspace-wide watcher here only decoded and dropped events client-side.
   const clientOptions: LanguageClientOptions = {
     documentSelector: documentSelector as { scheme: string; language: string }[],
-    synchronize: { fileEvents: vscode.workspace.createFileSystemWatcher("**/*") },
   };
 
   const bar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
@@ -218,6 +221,13 @@ export function activate(ctx: vscode.ExtensionContext): void {
   });
   ctx.subscriptions.push({ dispose: () => { void client?.stop(); } });
   void client.start();
+
+  // A5 push-refresh v1: the server pulses `dl/graphChanged` after a graph tick
+  // (daemon broadcast or in-process didSave). Forward it to the flow panel so it
+  // can debounce + re-run its preset, the same channel as the cursor message.
+  ctx.subscriptions.push(client.onNotification("dl/graphChanged", () => {
+    void panel?.webview.postMessage({ type: "graphChanged" });
+  }));
 
   // dl diagnostics render markdown: the LSP `Diagnostic.message` field is
   // plain-text-only (VS Code shows it verbatim), so a hover provider re-renders
@@ -261,6 +271,14 @@ export function activate(ctx: vscode.ExtensionContext): void {
   ctx.subscriptions.push(vscode.commands.registerCommand("dl.typeSeed", () => addTypeSeed(root)));
   ctx.subscriptions.push(vscode.commands.registerCommand("dl.clearTypeSeeds", () => clearTypeSeeds(root)));
   ctx.subscriptions.push(vscode.commands.registerCommand("dl.pickDiagCode", () => toggleDiagCode()));
+
+  // "dl References" TreeView (Track B): dl.findReferences resolves the cursor's
+  // dl/refs lens and renders it grouped tier -> repo -> role. A hit leaf reuses
+  // the repo-slug -> workspace-folder resolution the flow panel jumps with.
+  const refsProvider = new RefsTreeProvider((repo, file) => resolveOpenUri(`${repo}/${file}`, root));
+  ctx.subscriptions.push(vscode.window.registerTreeDataProvider("dlReferences", refsProvider));
+  ctx.subscriptions.push(vscode.commands.registerCommand("dl.findReferences",
+    () => findReferences(refsProvider)));
 
   // marked-line decorations: left stripe + overview-ruler tick, re-read from
   // .dl/marks.dl (same facts the engine joins) so external edits show up live
@@ -455,6 +473,32 @@ async function toggleDiagCode(): Promise<void> {
   }
 }
 
+// ── dl References: resolve the cursor's refs lens and drive the TreeView ─────
+// Sends the custom `dl/refs` request (uri + 0-based line/character) and hands
+// the RefLens to the provider, then reveals the view. A null lens (cursor not on
+// a located identifier) clears the tree with a status note.
+async function findReferences(provider: RefsTreeProvider): Promise<void> {
+  if (!client) { void vscode.window.showWarningMessage("dl: language server not running"); return; }
+  const ed = vscode.window.activeTextEditor;
+  if (!ed) return;
+  const pos = ed.selection.active;
+  try {
+    const lens = await client.sendRequest<RefLens | null>("dl/refs", {
+      uri: ed.document.uri.toString(),
+      line: pos.line,
+      character: pos.character,
+    });
+    provider.show(lens ?? undefined);
+    if (lens) {
+      await vscode.commands.executeCommand("dlReferences.focus");
+    } else {
+      vscode.window.setStatusBarMessage("dl: no references at the cursor", 3000);
+    }
+  } catch (e) {
+    void vscode.window.showErrorMessage(`dl: find references failed: ${String((e as Error).message ?? e)}`);
+  }
+}
+
 export function deactivate(): Thenable<void> | undefined {
   return client?.stop();
 }
@@ -531,15 +575,20 @@ function openFlowPanel(ctx: vscode.ExtensionContext, root: string, slice: SliceD
       const m = e.data;
       if ((m.type === 'rows' || m.type === 'error') && pending.has(m.id)) {
         const p = pending.get(m.id); pending.delete(m.id);
-        m.type === 'rows' ? p.resolve(m.rows) : p.reject(new Error(m.message));
+        // Surface the server's true row count as a property on the resolved
+        // array (rows stays a plain any[][] everywhere else it's consumed).
+        if (m.type === 'rows') { const rows = m.rows; rows.total = m.total; p.resolve(rows); }
+        else p.reject(new Error(m.message));
       } else if (m.type === 'cursor' && window.__dlCursor) {
         window.__dlCursor(m);
       }
     });
     return {
-      query: (sql, params = []) => new Promise((resolve, reject) => {
+      // opts.limit threads through to dl/query's optional limit param; the
+      // server truncates server-side and the true count comes back as total.
+      query: (sql, params = [], opts = {}) => new Promise((resolve, reject) => {
         const id = ++seq; pending.set(id, { resolve, reject });
-        vscode.postMessage({ type: 'query', id, sql, params });
+        vscode.postMessage({ type: 'query', id, sql, params, limit: opts.limit });
       }),
       hover: files => vscode.postMessage({ type: 'hover', files }),
       open: (file, line) => vscode.postMessage({ type: 'open', file, line }),
@@ -557,17 +606,21 @@ function openFlowPanel(ctx: vscode.ExtensionContext, root: string, slice: SliceD
   panel.webview.onDidReceiveMessage(async (m) => {
     if (m.type === "query") {
       try {
-        const result: { rows: unknown[][] } = await client!.sendRequest("dl/query", {
-          sql: m.sql, params: m.params ?? [],
+        // m.limit (dl/query's optional {limit,offset,count} params) forwards
+        // only when the panel sent one; omitting it keeps old-server behavior.
+        const result: { rows: unknown[][]; total?: number } = await client!.sendRequest("dl/query", {
+          sql: m.sql, params: m.params ?? [], ...(m.limit != null ? { limit: m.limit } : {}),
         });
         // Guard the postMessage boundary: a giant result (custom SQL with no
         // LIMIT over a multi-repo db) serializes into the webview and OOMs the
         // renderer. Cap the crossing; the panel still slices to a renderable
-        // count below and shows the true total.
+        // count below and shows the true total. Prefer the server's own total
+        // (accurate even when `limit` already truncated result.rows) over the
+        // pre-cap length, for a server that hasn't grown `total` yet.
         const QUERY_ROW_CAP = 20000;
         const all = result.rows ?? [];
         const rows = all.length > QUERY_ROW_CAP ? all.slice(0, QUERY_ROW_CAP) : all;
-        void panel?.webview.postMessage({ type: "rows", id: m.id, rows, total: all.length });
+        void panel?.webview.postMessage({ type: "rows", id: m.id, rows, total: result.total ?? all.length });
       } catch (e) {
         void panel?.webview.postMessage({ type: "error", id: m.id, message: String((e as Error).message ?? e) });
       }
