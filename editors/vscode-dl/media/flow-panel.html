@@ -327,6 +327,12 @@
     filter: drop-shadow(0 0 3px #ffd16699); }
   .listgutter .arrow.hl { fill: var(--sel) !important; }
   .overlap-badge text { user-select: none; }
+  /* exploded-mode arc multiplicity label (drawGutterArcs, arcMidpointY): a
+     halo via paint-order+stroke instead of a background rect, so it reads
+     over the wire without needing its own positioned box. */
+  .arc-mult { font: 9px ui-monospace, "SF Mono", Menlo, monospace; fill: var(--ink);
+    text-anchor: middle; dominant-baseline: middle; paint-order: stroke;
+    stroke: var(--bg); stroke-width: 3px; stroke-linejoin: round; user-select: none; }
 
   /* ghost reveal (list view only -- canvas nodes keep their coordinates and
      just toggle .ghost, see the .fout.ghost rule above). A filtered-hidden
@@ -355,6 +361,13 @@
   .lrow-node { cursor: pointer; }
   .lrow-node:hover, .lrow-dir:hover { background: #ffffff08; }
   .lrow-dir { color: var(--muted); }
+  /* exploded-mode stratum header (explodeRows) -- a band, not a dir/node: no
+     triangle, no dot, no pin (the row click handler skips it explicitly).
+     Sits slightly raised off the background so it reads as a section rule
+     between strata, not just another indistinguishable row. */
+  .lrow-band { color: var(--cyan); font-size: 11px; letter-spacing: .3px;
+    background: #12b8bc14; border-top: 1px solid #ffffff12; cursor: default; }
+  .lbandlabel { overflow: hidden; text-overflow: ellipsis; }
   /* two channels: .pinned (selected) owns the background wash + a permanent
      inset stripe so it still reads once hover moves off; .hl (hover =
      "pointed at") owns an outline + text color only, never the fill -- so a
@@ -834,9 +847,23 @@ const PRESETS = {
   // fan_out (depends-on), weight (a callable's span lines). renderList reads
   // r[6..9] into the right-aligned numeric band; the sort chips (list view)
   // reorder siblings by any of them (fan-in desc = most depended-on first).
+  // Three MORE trailing columns (r[10..12]) ride the same query for the
+  // "exploded" list mode (Track C, C3): tier (stratum assignment) + the
+  // welded-cluster rep/size, LEFT JOINed by file so a file outside
+  // bom_tier/bom_weld's domain (shouldn't happen, both are total over
+  // bom_file) degrades to NULL rather than dropping the row. explodeRows()
+  // reads these three; buildRows/rowHtml never look past r[9], so this is a
+  // no-op everywhere else.
   bomTable: {
-    nodes: `SELECT sym, name, kind, ${REPO_FILE_COL}, line, parent, ` +
-      "member_count, fan_in, fan_out, weight FROM rel_bom_node",
+    // REPO_FILE_COL's CASE expression reads bare `sym`/`file` -- fine for a
+    // single-table preset, but this query joins THREE tables that all carry
+    // a `file` column, so the bare identifiers must be qualified to `n.*`
+    // here or SQLite throws "ambiguous column name".
+    nodes: `SELECT n.sym, n.name, n.kind, ${REPO_FILE_COL.replace(/sym/g, 'n.sym').replace(/file/g, 'n.file')}, n.line, n.parent, ` +
+      "n.member_count, n.fan_in, n.fan_out, n.weight, t.tier, w.rep, w.size " +
+      "FROM rel_bom_node n " +
+      "LEFT JOIN rel_bom_tier t ON t.file = n.file " +
+      "LEFT JOIN rel_bom_weld w ON w.file = n.file",
     edges: "SELECT src, dst, kind FROM rel_bom_edge",
   },
   // Diff (base vs head), D2 of plans/2026-07-03-pr-diff-graph.md. Node/edge
@@ -1130,7 +1157,7 @@ function writeLocalStorage(key, value) {
 // One persisted object covers both views -- a chip only renders in the view
 // it applies to, and switching views never resets the other's setting.
 const PROTO_KEY = 'dl-flow-proto';
-const protoState = { chevrons: false, arrows: false, hoverCard: true };
+const protoState = { chevrons: false, arrows: false, hoverCard: true, exploded: false };
 (function restoreProto() {
   try {
     const saved = JSON.parse(readLocalStorage(PROTO_KEY) || 'null');
@@ -1138,8 +1165,12 @@ const protoState = { chevrons: false, arrows: false, hoverCard: true };
   } catch (e) { /* ignore */ }
 })();
 function saveProto() { writeLocalStorage(PROTO_KEY, JSON.stringify(protoState)); }
+// exploded (list only, Track C C3): tier-major stratum reorder over the
+// bomTable preset's tier/weld columns (explodeRows) -- see PRESETS.bomTable
+// and explodeRows' own header comment. Degrades to a single "no layering"
+// band on any preset without tier data, so the chip is safe everywhere.
 const PROTO_CHIPS = {
-  list:   [['chevrons', 'chevrons'], ['hoverCard', 'hover card']],
+  list:   [['chevrons', 'chevrons'], ['hoverCard', 'hover card'], ['exploded', 'exploded']],
   canvas: [['hoverCard', 'hover card']],
 };
 function buildProtoRow() {
@@ -1214,6 +1245,15 @@ function buildProtoRow() {
 function onProtoToggle(key) {
   if (key === 'chevrons' && viewMode === 'list') refreshListView();
   if (key === 'hoverCard' && !protoState.hoverCard) hoverCardEl.hidden = true;
+  // exploded changes the ROW STRUCTURE itself (tier-major regroup), unlike
+  // chevrons (geometry only) -- rebuild lastListRows from the cached kept
+  // nodes, same re-derive-without-re-query shape setBomSort already uses.
+  // collapsedKeys deliberately survives: real file/sym keys are stable
+  // across modes, only the new synthetic band/weld keys are unseen either way.
+  if (key === 'exploded' && viewMode === 'list' && lastKeptNodes.length) {
+    lastListRows = currentRows(lastKeptNodes);
+    refreshListView();
+  }
 }
 
 document.getElementById('nodesSql').value = DEFAULT_NODES;
@@ -2052,19 +2092,104 @@ function buildRows(nodeRows) {
   return rows;
 }
 
+// ── explodeRows: pure. "exploded" list mode (Track C, C3) -- the SAME
+// nodeRows buildRows takes, but positional cols 10/11/12 (tier, weld rep,
+// weld cluster size -- only the bomTable preset's query supplies them, see
+// PRESETS.bomTable) reorder the listing TIER-MAJOR instead of by file path.
+//
+// Shape: partition the kept node rows by tier (ascending = dependencies
+// first), emit a synthetic BAND row per stratum ("stratum N — M files"),
+// then within a stratum reuse buildRows/siblingCmp UNCHANGED for the plain
+// (non-welded) files -- "keep the existing path-trie order" -- and wrap any
+// file whose weld cluster has >1 member under a single synthetic weld-card
+// NODE row (kind 'weld', hasChildren true, nums null). The weld card is a
+// completely ordinary buildRows-shaped node: applyCollapse/toggleCollapse/
+// the BOM rollup all already handle "a hasChildren node the user can fold",
+// so folding a weld card rolls up its members' numeric band for free, no new
+// collapse machinery. depth is bumped by however many synthetic wrapper
+// levels a row sits under (band, and weld card when welded).
+//
+// A row with no tier column at all (any non-bomTable preset) defaults tier 0
+// for every row, so singleStratum is always true there -- the degenerate
+// "no layering" note, not a crash.
+function explodeRows(nodeRows) {
+  const parsed = nodeRows.map(r => ({
+    raw: r,
+    file: r[3] != null && r[3] !== '' ? String(r[3]) : null,
+    tier: r.length > 10 && r[10] != null && r[10] !== '' ? Number(r[10]) : 0,
+    sccRep: r.length > 11 && r[11] != null && r[11] !== '' ? String(r[11]) : null,
+    sccSize: r.length > 12 && r[12] != null && r[12] !== '' ? Number(r[12]) : 1,
+  }));
+
+  const tiers = [...new Set(parsed.map(p => p.tier))].sort((a, b) => a - b);
+  const singleStratum = tiers.length <= 1;
+
+  const rows = [];
+  for (const tier of tiers) {
+    const inTier = parsed.filter(p => p.tier === tier);
+    const filesInTier = new Set(inTier.map(p => p.file).filter(Boolean));
+
+    // group by weld rep: only a rep with >1 DISTINCT file actually present in
+    // this result set renders as a welded card -- a rep whose only surviving
+    // member (after linked-only/kind filtering upstream) is a single file
+    // renders plain, same as any non-cyclic file.
+    const repFiles = new Map(); // rep -> Set(file)
+    for (const p of inTier) {
+      if (p.sccRep && p.sccSize > 1) {
+        if (!repFiles.has(p.sccRep)) repFiles.set(p.sccRep, new Set());
+        repFiles.get(p.sccRep).add(p.file);
+      }
+    }
+    const weldedReps = [...repFiles.entries()].filter(([, files]) => files.size > 1);
+    const weldedFileSet = new Set(weldedReps.flatMap(([, files]) => [...files]));
+
+    rows.push({ type: 'band', depth: 0, tier, fileCount: filesInTier.size,
+      weldedCount: weldedReps.length, single: singleStratum, key: `band:${tier}` });
+
+    // plain (non-welded) files in this tier: the existing path-trie, verbatim.
+    const plainRaw = inTier.filter(p => !weldedFileSet.has(p.file)).map(p => p.raw);
+    for (const r of buildRows(plainRaw)) rows.push(Object.assign({}, r, { depth: r.depth + 1 }));
+
+    // welded groups: one collapsed card per rep, member file blocks nested
+    // under it via a SEPARATE path-trie run over just that rep's own files.
+    for (const [rep, files] of weldedReps) {
+      const weldKey = `weld:${tier}:${rep}`;
+      rows.push({ type: 'node', depth: 1, id: weldKey, key: weldKey,
+        label: `⚭ welded cycle — ${files.size} files`, kind: 'weld',
+        file: null, line: null, nums: null, hasChildren: true });
+      const memberRaw = inTier.filter(p => weldedFileSet.has(p.file) && p.sccRep === rep).map(p => p.raw);
+      for (const r of buildRows(memberRaw)) rows.push(Object.assign({}, r, { depth: r.depth + 2 }));
+    }
+  }
+  return { rows, singleStratum };
+}
+
+// buildRows vs explodeRows, gated on the `exploded` proto chip -- every call
+// site that turns raw kept node rows into the flat row list (renderList, the
+// BOM sort chips, the exploded toggle itself) goes through this ONE switch
+// so none of them can drift out of sync with the other.
+function currentRows(nodeRows) {
+  return protoState.exploded ? explodeRows(nodeRows).rows : buildRows(nodeRows);
+}
+
 // filteredKinds = the active kindFilter Set (or falsy/empty = no filter). A
 // 'dir' row's own visibility rides on whether ANYTHING in its raw subtree
 // (ignoring fold state -- a COLLAPSED dir must not look empty just because
 // its real children are individually skipDepth-hidden) would pass the
 // filter; a folded-but-nonempty dir stays as the re-expand affordance, an
 // entirely-filtered-out dir vanishes. One forward pass, no recursion.
+// 'band' (the exploded-mode stratum header, explodeRows) is a header row in
+// exactly the same sense as 'dir' -- no kind of its own, visible only while
+// something in its stratum passes -- so it rides the identical openDirs
+// tracking; the name stays `openDirs`, the mechanism is really "open header
+// rows" for either row shape.
 function dirsWithFilteredContent(rows, nodePasses) {
   const has = new Array(rows.length).fill(false);
-  const openDirs = []; // indexes of dir rows currently "open" (ancestor of the cursor)
+  const openDirs = []; // indexes of dir/band rows currently "open" (ancestor of the cursor)
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     while (openDirs.length && rows[openDirs[openDirs.length - 1]].depth >= r.depth) openDirs.pop();
-    if (r.type === 'dir') { openDirs.push(i); continue; }
+    if (r.type === 'dir' || r.type === 'band') { openDirs.push(i); continue; }
     if (nodePasses(r)) for (const d of openDirs) has[d] = true;
   }
   return has;
@@ -2244,6 +2369,18 @@ function arcPathChevron(xInner, xLane, y1, y2, r, spacing) {
   return d;
 }
 
+// ── arc multiplicity label (exploded mode only, drawGutterArcs): the
+// midpoint of the SAME vertical run arcPathChevron's vertex loop walks
+// (y1b..y2a, the bracket's straight lane segment between its two rounded
+// corners -- see arcPathChevron above) is where an "×N" count reads as
+// sitting ON the wire rather than floating near a corner bend.
+function arcMidpointY(y1, y2, r) {
+  const vSign = y2 >= y1 ? 1 : -1;
+  const rr = Math.min(r, Math.abs(y2 - y1) / 2 || r);
+  const y1b = y1 + vSign * rr, y2a = y2 - vSign * rr;
+  return (y1b + y2a) / 2;
+}
+
 // ── list-view mutable state (parallels the canvas `nodes`/`edges` maps) ─────
 const listRowEls = new Map();      // id -> row <div>, NODE rows only (pin targets)
 const listRowElByKey = new Map();  // key -> row <div>, EVERY row incl. dirs (hl targets,
@@ -2278,7 +2415,7 @@ function setBomSort(mode) {
   bomSort = mode;
   buildProtoRow(); // relight the active chip
   if (viewMode === 'list' && lastKeptNodes.length) {
-    lastListRows = buildRows(lastKeptNodes);
+    lastListRows = currentRows(lastKeptNodes);
     refreshListView();
   }
 }
@@ -2422,7 +2559,7 @@ function renderList(nodeRows, edgeRows) {
   const keptNodes = nodeRows.filter(r => !linkedOnly || linked.has(String(r[0])));
 
   lastKeptNodes = keptNodes;
-  lastListRows = buildRows(keptNodes);
+  lastListRows = currentRows(keptNodes);
   lastListMergedEdges = mergeEdgeRows(keptEdges);
   lastKeptEdgeCount = keptEdges.length;
   lastDroppedCount = dropped;
@@ -2538,6 +2675,17 @@ function rowHtml(r, i, hlSlice) {
   const pinCls = pinned.has(r.key) || (r.type === 'node' && pinned.has(r.id)) ? ' pinned' : '';
   const hlCls = hlSlice && (hlSlice.has(r.key) || (r.type === 'node' && hlSlice.has(r.id))) ? ' hl' : '';
   const style = `style="top:${top}px;padding-left:${pad}px"`;
+  // exploded-mode stratum header (explodeRows). Not foldable (no .ltri), not
+  // a pin target -- the row click handler explicitly skips .lrow-band.
+  if (r.type === 'band') {
+    const fileWord = r.fileCount === 1 ? 'file' : 'files';
+    const label = r.single
+      ? `no layering — all one stratum (${r.fileCount} ${fileWord})`
+      : `stratum ${r.tier} — ${r.fileCount} ${fileWord}`
+        + (r.weldedCount ? ` · ${r.weldedCount} welded` : '');
+    return `<div class="lrow lrow-band" data-key="${esc(r.key)}" style="top:${top}px">`
+      + `<span class="lbandlabel">${esc(label)}</span></div>`;
+  }
   if (r.type === 'dir') {
     return `<div class="lrow lrow-dir${pinCls}${hlCls}" data-key="${esc(r.key)}" ${style}>`
       + tri + `<span class="ldot"></span><span class="llabel" title="${esc(r.label)}">${esc(r.label)}</span>`
@@ -2656,6 +2804,21 @@ function drawGutterArcs(arcs, totalRows) {
     poly.setAttribute('fill', color);
     poly.setAttribute('class', 'arrow');
     svg.appendChild(poly);
+
+    // exploded mode: label the multiplicity ON the wire, at the same
+    // vertical-run midpoint the chevron subdivision walks (arcMidpointY) --
+    // gutter arcs stay on as the leader lines between strata, this is what
+    // makes "how many edges collapsed onto this one line" legible without a
+    // hover. Only when there's more than one to count; a straight 1:1 arc is
+    // already unambiguous.
+    if (protoState.exploded && n > 1) {
+      const text = document.createElementNS(svgNS, 'text');
+      text.setAttribute('x', String(xLane));
+      text.setAttribute('y', arcMidpointY(y1, y2, 4).toFixed(1));
+      text.setAttribute('class', 'arc-mult');
+      text.textContent = `×${n}`;
+      svg.appendChild(text);
+    }
 
     const arc = { srcKey: m.srcKey, dstKey: m.dstKey, kinds: m.kinds, rolled: m.rolled,
                    pathEl: path, arrowEl: poly, svg, y1, y2 };
@@ -2995,6 +3158,7 @@ function buildOverlapBadges(highlightedArcs) {
     }
     const row = ev.target.closest('.lrow');
     if (!row) { clearPins(); return; }
+    if (row.classList.contains('lrow-band')) return; // stratum header: not a pin target
     const pinId = rowPinId(row);
     // shift-click = additive range select spanning the last plain-clicked
     // row (the anchor) to this row, inclusive, in current VISIBLE row order
