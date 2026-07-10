@@ -520,6 +520,12 @@ pub fn fn_docs() -> &'static [(&'static str, usize, &'static str, &'static str)]
         ("split", 3, "string", "split text on a separator; idx 0-based, negative counts from the end (-1 = last); out-of-range drops the row (NULL filter); the sprf_split UDF"),
         ("replace", 3, "string", "replace ALL occurrences of `from` with `to`; SQLite-native"),
         ("int", 1, "cast", "text->int coercion (leading-int prefix, else 0); fills an int column or compares numerically; SQLite CAST"),
+        // json constructors: variadic (arity shown is the minimum). Build a JSON
+        // string in a head or comparison; SQLite-native. Pair with the json_group_*
+        // head aggregates for nested output.
+        ("json_object", 2, "json", "build a JSON object from (key, value, ...) pairs; even arity >= 2; values keep their type (int -> number, text -> string); SQLite-native json_object"),
+        ("json_array", 1, "json", "build a JSON array from the arg values; arity >= 1; SQLite-native json_array"),
+        ("json", 1, "json", "validate and minify a JSON string (passthrough); SQLite-native json()"),
         // pass-through string builtins (STR_FNS in lower.rs -> sprf_* UDFs).
         ("lower", 1, "string", "lowercase (Unicode-aware)"),
         ("upper", 1, "string", "uppercase (Unicode-aware)"),
@@ -539,7 +545,8 @@ pub fn fn_docs() -> &'static [(&'static str, usize, &'static str, &'static str)]
 pub fn undocumented_fns() -> Vec<String> {
     let documented: std::collections::HashSet<(&str, usize)> =
         fn_docs().iter().map(|(n, a, _, _)| (*n, *a)).collect();
-    let native: [(&str, usize); 3] = [("split", 3), ("replace", 3), ("int", 1)];
+    let native: [(&str, usize); 6] = [("split", 3), ("replace", 3), ("int", 1),
+        ("json_object", 2), ("json_array", 1), ("json", 1)];
     let mut missing: Vec<String> = crate::lower::STR_FNS.iter()
         .map(|(n, _, a)| (*n, *a))
         .chain(native)
@@ -578,7 +585,7 @@ pub fn op_docs() -> &'static [(&'static str, &'static str, &'static str, &'stati
         ("node2vec", "body", "head(node_a, node_b, score) <- node2vec(edge)", "structural graph embedding of a 2-col relation as the entire body; binds node pairs with a similarity score (the graph-position sibling of the text `similar` rel); evaluated outside SQL"),
         ("arith", "body", "+ - * / %", "arithmetic in rule heads and comparison sides (rank(path, line+1)); `+` is overloaded — int + int adds, text + text concatenates (url = \"https://\" + host), mixed int/text is a typecheck error (interpolate or int(..)); - * / % stay int-only; usual precedence, parens OK; never in a binding atom"),
         ("strfn", "body", "split(text, sep, idx) / replace(text, from, to)", "string functions in heads and comparison sides; idx 0-based, negative counts from the end; a computed binding (ext = split(path, \".\", -1)) binds for later use in the same body — later joins, negations, and the head all see it (derived rules only; a source rule inlines into the head)"),
-        ("aggregation", "body", "count sum min max", "head-position-only aggregation; non-aggregate head terms are the grouping key; count/sum produce int, min/max carry the arg type; count in body is a parse error"),
+        ("aggregation", "body", "count sum min max json_group_array json_group_object", "head-position-only aggregation; non-aggregate head terms are the grouping key; count/sum produce int, min/max carry the arg type; json_group_array(x) / json_group_object(k, v) build a JSON array/object per group (deterministic, ORDER BY inside the agg); count in body is a parse error"),
         // sinks.
         ("query", "sink", "? rel(from, to). / ? rel(col: value).", "print a TSV block (or JSON-lines with --query-json); a literal in any position filters; args may be named by column (`col: value`), unmentioned columns are don't-cares; no where clause"),
         ("diag", "sink", "diag(path: hit_path, line: hit_line, msg: message[, col: , end_line: , end_col: , severity: , code: , hint: ]) <- ...", "head the built-in diagnostic sink; fixed 9-col schema (path/line/col/end_line/end_col/severity/code/msg/hint), name only the columns you use, the rest default (severity warn, end_line=line); feeds editor diagnostics (--lsp) and check output (--check)"),

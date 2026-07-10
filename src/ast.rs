@@ -222,9 +222,12 @@ pub struct Atom {
 }
 
 /// An aggregation function in a rule head: `count(T)`, `sum(T)`, `min(T)`,
-/// `max(T)`. Count/Sum produce an `Int`; Min/Max produce the argument's type.
+/// `max(T)`, `json_group_array(T)`, `json_group_object(K, V)`. Count/Sum produce
+/// an `Int`; Min/Max produce the argument's type; the two json aggregates produce
+/// `Text` (a JSON array / object built by SQLite). `json_group_object` is the only
+/// TWO-ARG aggregate — its value arg rides `Rule::agg_args2`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AggFn { Count, Sum, Min, Max }
+pub enum AggFn { Count, Sum, Min, Max, JsonGroupArray, JsonGroupObject }
 
 impl AggFn {
     pub fn parse(s: &str) -> Option<AggFn> {
@@ -233,17 +236,30 @@ impl AggFn {
             "sum" => AggFn::Sum,
             "min" => AggFn::Min,
             "max" => AggFn::Max,
+            "json_group_array" => AggFn::JsonGroupArray,
+            "json_group_object" => AggFn::JsonGroupObject,
             _ => return None,
         })
     }
     pub fn sql(self) -> &'static str {
-        match self { AggFn::Count => "COUNT", AggFn::Sum => "SUM", AggFn::Min => "MIN", AggFn::Max => "MAX" }
+        match self {
+            AggFn::Count => "COUNT", AggFn::Sum => "SUM", AggFn::Min => "MIN", AggFn::Max => "MAX",
+            AggFn::JsonGroupArray => "json_group_array", AggFn::JsonGroupObject => "json_group_object",
+        }
     }
-    /// The output type of the aggregate. Count/Sum are always Int; Min/Max carry
-    /// the argument column's type (resolved by the caller from the arg var).
+    /// The output type of the aggregate. Count/Sum are always Int; the two json
+    /// aggregates always Text; Min/Max carry the argument column's type (resolved
+    /// by the caller from the arg var).
     pub fn fixed_out(self) -> Option<Type> {
-        match self { AggFn::Count | AggFn::Sum => Some(Type::Int), AggFn::Min | AggFn::Max => None }
+        match self {
+            AggFn::Count | AggFn::Sum => Some(Type::Int),
+            AggFn::JsonGroupArray | AggFn::JsonGroupObject => Some(Type::Text),
+            AggFn::Min | AggFn::Max => None,
+        }
     }
+    /// `json_group_object(key, value)` is the only two-arg aggregate. The value
+    /// arg is carried in `Rule::agg_args2` parallel to the key in `Rule::head.terms`.
+    pub fn is_two_arg(self) -> bool { matches!(self, AggFn::JsonGroupObject) }
 }
 
 #[derive(Clone, Debug)]
@@ -354,6 +370,11 @@ pub struct Rule {
     /// Kept off `Atom` so query heads, body atoms, and source rules stay untouched;
     /// only a derived rule head ever carries aggs (see plan T4, head-position only).
     pub aggs: Vec<Option<AggFn>>,
+    /// The SECOND argument of a two-arg aggregate, parallel to `head.terms`:
+    /// `agg_args2[i] == Some(v)` means head slot `i` is `json_group_object(key, v)`
+    /// (the key rides `head.terms[i]`, the value is `v`). `None` at every other slot.
+    /// Empty (the common case) whenever the head carries no aggregate, mirroring `aggs`.
+    pub agg_args2: Vec<Option<Term>>,
     /// The file this rule was parsed from (canonical). Lets a self-form scan
     /// (`scan("WORK", …)` / `.` / `self`) resolve to the rule's own `.git`
     /// ancestor instead of the engine's `self.root`, so a script loaded into a

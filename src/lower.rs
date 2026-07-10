@@ -107,13 +107,23 @@ fn term_sql(t: &Term, canon: &HashMap<String, String>, tys: &HashMap<String, Typ
                 // compared numerically instead of as text against "0".
                 "int" if args.len() == 1 =>
                     Ok(format!("CAST({} AS INTEGER)", arg_sqls[0])),
+                // SQLite native JSON constructors (core since 3.38). Variadic:
+                // json_object takes (key, value) pairs (even arity >= 2),
+                // json_array takes >= 1 element, json(x) validates/minifies.
+                "json_object" if args.len() >= 2 && args.len() % 2 == 0 =>
+                    Ok(format!("json_object({})", arg_sqls.join(", "))),
+                "json_array" if !args.is_empty() =>
+                    Ok(format!("json_array({})", arg_sqls.join(", "))),
+                "json" if args.len() == 1 =>
+                    Ok(format!("json({})", arg_sqls[0])),
                 // Registered string UDFs (db.rs::register_string_fns), all
                 // text->text. STR_FNS = (dsl name, sql fn, arity).
                 _ if STR_FNS.iter().any(|(n, _, k)| *n == name && *k == args.len()) => {
                     let (_, sql, _) = STR_FNS.iter().find(|(n, _, _)| *n == name).unwrap();
                     Ok(format!("{sql}({})", arg_sqls.join(", ")))
                 }
-                other => bail!("unknown or mis-arity function `{other}` (known: split/3, replace/3, int/1, {})",
+                other => bail!("unknown or mis-arity function `{other}` (known: split/3, replace/3, int/1, \
+                    json_object/even>=2, json_array/>=1, json/1, {})",
                     STR_FNS.iter().map(|(n, _, k)| format!("{n}/{k}")).collect::<Vec<_>>().join(", ")),
             }
         }
@@ -350,20 +360,41 @@ pub fn lower_rule_to(rule: &Rule, rels: &Rels, target: &str, extra: &[(String, S
         for (i, term) in rule.head.terms.iter().enumerate() {
             match rule.aggs.get(i).copied().flatten() {
                 Some(f) => {
+                    use crate::ast::AggFn;
                     let arg = match term {
                         Term::Wild => "*".to_string(),
                         _ => term_sql(term, &canon, &tys)?,
                     };
-                    // SUM over zero rows is SQL NULL; INSERT OR IGNORE never
-                    // dedups NULLs (NULL != NULL), so the fixpoint loop would
-                    // diverge re-inserting the same NULL each iteration. Pin
-                    // empty-sum to 0. COUNT/MIN/MAX don't need it (COUNT is
-                    // never NULL; MIN/MAX of nothing being NULL is the
-                    // intended "no value" semantics).
-                    if matches!(f, crate::ast::AggFn::Sum) {
-                        exprs.push(format!("COALESCE({}({arg}), 0)", f.sql()));
-                    } else {
-                        exprs.push(format!("{}({arg})", f.sql()));
+                    match f {
+                        // SUM over zero rows is SQL NULL; INSERT OR IGNORE never
+                        // dedups NULLs (NULL != NULL), so the fixpoint loop would
+                        // diverge re-inserting the same NULL each iteration. Pin
+                        // empty-sum to 0. COUNT/MIN/MAX don't need it (COUNT is
+                        // never NULL; MIN/MAX of nothing being NULL is the
+                        // intended "no value" semantics).
+                        AggFn::Sum => exprs.push(format!("COALESCE(SUM({arg}), 0)")),
+                        // `ORDER BY <arg>` inside the aggregate makes element order
+                        // a pure function of the group's rows — otherwise SQLite's
+                        // aggregate order is arbitrary and the rel's content digest
+                        // would flap every tick, forcing spurious daemon rebuilds.
+                        AggFn::JsonGroupArray => {
+                            if matches!(term, Term::Wild) {
+                                bail!("json_group_array(_) has no value to collect — pass a column, not `_`");
+                            }
+                            exprs.push(format!("json_group_array({arg} ORDER BY {arg})"));
+                        }
+                        AggFn::JsonGroupObject => {
+                            if matches!(term, Term::Wild) {
+                                bail!("json_group_object(_, ..) has no key to build — pass a column, not `_`");
+                            }
+                            let val = rule.agg_args2.get(i).and_then(|a| a.as_ref())
+                                .ok_or_else(|| anyhow::anyhow!(
+                                    "json_group_object expects (key, value) — the value arg is missing"))?;
+                            let val_sql = term_sql(val, &canon, &tys)?;
+                            exprs.push(format!("json_group_object({arg}, {val_sql} ORDER BY {arg})"));
+                        }
+                        AggFn::Count | AggFn::Min | AggFn::Max =>
+                            exprs.push(format!("{}({arg})", f.sql())),
                     }
                 }
                 None => {
@@ -555,6 +586,56 @@ mod tests {
             "next_line(line + 1) <- hit(line).\n"));
         let sql = lower_rule(&rule, &rels).unwrap();
         assert!(sql.contains("r0.\"line\" + 1"), "int + stays addition: {sql}");
+    }
+
+    /// json aggregates lower to `json_group_array/object(... ORDER BY key)` —
+    /// determinism rides the ORDER BY. The object form reads its value arg from
+    /// `Rule::agg_args2`.
+    #[test]
+    fn json_aggs_lower_with_order_by() {
+        let (rule, rels) = rule_and_rels(concat!(
+            "rel src(g: text, name: text).\n",
+            "rel arr(g: text, names: text).\n",
+            "arr(g, json_group_array(name)) <- src(g, name).\n"));
+        let sql = lower_rule(&rule, &rels).unwrap();
+        assert!(sql.contains("json_group_array(r0.\"name\" ORDER BY r0.\"name\")"),
+            "array agg orders inside the call: {sql}");
+        assert!(sql.contains("GROUP BY r0.\"g\""), "group key present: {sql}");
+
+        let (rule, rels) = rule_and_rels(concat!(
+            "rel src(g: text, k: text, v: text).\n",
+            "rel obj(g: text, payload: text).\n",
+            "obj(g, json_group_object(k, v)) <- src(g, k, v).\n"));
+        let sql = lower_rule(&rule, &rels).unwrap();
+        assert!(sql.contains("json_group_object(r0.\"k\", r0.\"v\" ORDER BY r0.\"k\")"),
+            "object agg reads key + value, orders by key: {sql}");
+    }
+
+    /// The json scalar constructors lower to their SQLite natives; odd-arity
+    /// json_object is a loud mis-arity bail at lowering.
+    #[test]
+    fn json_scalar_fns_lower_and_arity() {
+        let (rule, rels) = rule_and_rels(concat!(
+            "rel src(a: text, b: text).\n",
+            "rel out(payload: text).\n",
+            "out(json_object(\"k\", a, \"j\", b)) <- src(a, b).\n"));
+        let sql = lower_rule(&rule, &rels).unwrap();
+        assert!(sql.contains("json_object('k', r0.\"a\", 'j', r0.\"b\")"), "json_object native: {sql}");
+
+        let (rule, rels) = rule_and_rels(concat!(
+            "rel src(a: text).\n",
+            "rel out(payload: text).\n",
+            "out(json_array(a)) <- src(a).\n"));
+        let sql = lower_rule(&rule, &rels).unwrap();
+        assert!(sql.contains("json_array(r0.\"a\")"), "json_array native: {sql}");
+
+        // Odd-arity json_object: no matching arm -> the mis-arity bail.
+        let (rule, rels) = rule_and_rels(concat!(
+            "rel src(a: text, b: text, c: text).\n",
+            "rel out(payload: text).\n",
+            "out(json_object(a, b, c)) <- src(a, b, c).\n"));
+        let e = lower_rule(&rule, &rels).unwrap_err().to_string();
+        assert!(e.contains("mis-arity") || e.contains("json_object"), "odd json_object bails: {e}");
     }
 
     /// A bind var referenced inside a NEGATION joins the outer row (Cmp pass

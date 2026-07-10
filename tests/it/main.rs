@@ -3,6 +3,7 @@
 // autotests=false), so `mod foo;` resolves to its sibling tests/it/foo.rs.
 mod agent_rels;
 mod agg;
+mod json_agg;
 mod arith;
 mod ast_grammars;
 mod ast_whole_match_id;

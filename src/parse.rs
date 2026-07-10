@@ -364,7 +364,7 @@ impl Parser {
     }
 
     fn rule(&mut self) -> Result<Rule> {
-        let (head, aggs) = self.head_atom()?;
+        let (head, aggs, agg_args2) = self.head_atom()?;
         // ground fact: `slide(1, "intro").` is a rule with an empty body; the
         // head must be all literals (lowering rejects unbound vars)
         match self.next()? {
@@ -372,7 +372,7 @@ impl Parser {
                 if aggs.iter().any(|a| a.is_some()) {
                     bail!("aggregate not allowed in a fact head");
                 }
-                return Ok(Rule { head, body: Vec::new(), aggs, origin: None, temporal: None });
+                return Ok(Rule { head, body: Vec::new(), aggs, agg_args2, origin: None, temporal: None });
             }
             Tok::Arrow => {}
             other => bail!("expected <- or . after rule head, got {:?}", other),
@@ -400,7 +400,7 @@ impl Parser {
                 other => bail!("expected , or . in rule body, got {:?}", other),
             }
         }
-        Ok(Rule { head, body, aggs, origin: None, temporal })
+        Ok(Rule { head, body, aggs, agg_args2, origin: None, temporal })
     }
 
     /// Parse a rule head, allowing aggregate calls in term positions:
@@ -409,11 +409,14 @@ impl Parser {
     /// aggregated. Aggregates are head-position only; a body `count(...)` parses as
     /// a relation atom against a relation named `count` and is rejected at lowering
     /// if no such relation exists (an agg call in the body is never special).
-    fn head_atom(&mut self) -> Result<(Atom, Vec<Option<AggFn>>)> {
+    fn head_atom(&mut self) -> Result<(Atom, Vec<Option<AggFn>>, Vec<Option<Term>>)> {
         let rel = self.ident()?;
         self.expect(Tok::LParen)?;
         let mut terms = Vec::new();
         let mut aggs: Vec<Option<AggFn>> = Vec::new();
+        // Parallel to `aggs`: the second arg of a two-arg aggregate
+        // (`json_group_object(key, value)`), else `None`.
+        let mut agg_args2: Vec<Option<Term>> = Vec::new();
         let mut named: Vec<(String, Term)> = Vec::new();
         if !matches!(self.peek(), Some(Tok::RParen)) {
             loop {
@@ -443,12 +446,22 @@ impl Parser {
                     let f = AggFn::parse(&fname).unwrap();
                     self.expect(Tok::LParen)?;
                     let arg = self.term()?;
+                    // `json_group_object(key, value)` is two-arg: parse the value
+                    // into `agg_args2`. Every other aggregate is one-arg.
+                    let arg2 = if f.is_two_arg() {
+                        self.expect(Tok::Comma)?;
+                        Some(self.term()?)
+                    } else {
+                        None
+                    };
                     self.expect(Tok::RParen)?;
                     terms.push(arg);
                     aggs.push(Some(f));
+                    agg_args2.push(arg2);
                 } else {
                     terms.push(self.expr()?);
                     aggs.push(None);
+                    agg_args2.push(None);
                 }
                 match self.next()? {
                     Tok::Comma => continue,
@@ -462,8 +475,8 @@ impl Parser {
         if !named.is_empty() && aggs.iter().any(|a| a.is_some()) {
             bail!("a rule head can't mix named args with an aggregate; write the aggregate head fully positional");
         }
-        if !aggs.iter().any(|a| a.is_some()) { aggs.clear(); }
-        Ok((Atom { rel, terms, named }, aggs))
+        if !aggs.iter().any(|a| a.is_some()) { aggs.clear(); agg_args2.clear(); }
+        Ok((Atom { rel, terms, named }, aggs, agg_args2))
     }
 
     fn query(&mut self) -> Result<Query> {
@@ -1373,6 +1386,31 @@ mod tests {
 
     fn one_item(src: &str) -> Item {
         super::parse(lex(src).unwrap()).unwrap().items.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn json_agg_parse_round_trip() {
+        use crate::ast::AggFn;
+        // One-arg json_group_array: the arg lands in terms, no second arg.
+        let r = one_rule("group_rels(rel_group, json_group_array(rel_name)) <- rel_catalog(rel_name, rel_group, cols, doc).");
+        assert_eq!(r.aggs, vec![None, Some(AggFn::JsonGroupArray)]);
+        assert!(r.agg_args2.iter().all(|a| a.is_none()));
+        assert!(matches!(&r.head.terms[1], Term::Var(v) if v == "rel_name"));
+
+        // Two-arg json_group_object: key in terms, value in agg_args2.
+        let r = one_rule("obj_of(g, json_group_object(k, v)) <- src(g, k, v).");
+        assert_eq!(r.aggs, vec![None, Some(AggFn::JsonGroupObject)]);
+        assert!(matches!(&r.head.terms[1], Term::Var(v) if v == "k"));
+        assert!(matches!(&r.agg_args2[1], Some(Term::Var(v)) if v == "v"));
+
+        // A one-arg call in the two-arg slot is a parse error (missing value).
+        let e = super::parse(lex("obj_of(g, json_group_object(k)) <- src(g, k, v).").unwrap()).unwrap_err().to_string();
+        assert!(e.contains("expected") || e.contains(','), "{e}");
+
+        // No aggregate anywhere: both parallel vecs are empty.
+        let r = one_rule("plain(a, b) <- src2(a, b).");
+        assert!(r.aggs.is_empty());
+        assert!(r.agg_args2.is_empty());
     }
 
     #[test]

@@ -315,6 +315,26 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
     // per occurrence (so a mismatch points at the second, conflicting site).
     let mut seen: HashMap<String, ColTy> = HashMap::new();
 
+    // A SOURCE rule's head is filled from scan/regex/AST captures via `val_of`, which
+    // has no json machinery — the SQL agg/json lowering never runs for it. Refuse a
+    // json aggregate or json constructor in a source-rule head loudly and derived-only,
+    // the same style as the body-bind source-rule refusal (`val_of`'s head-inline note).
+    if rule.is_source() {
+        let is_json_fn = |t: &Term| matches!(t, Term::Call { name, .. }
+            if matches!(name.as_str(), "json" | "json_object" | "json_array"));
+        let json_agg = rule.aggs.iter().any(|a| matches!(a,
+            Some(AggFn::JsonGroupArray) | Some(AggFn::JsonGroupObject)));
+        if json_agg || rule.head.terms.iter().any(is_json_fn) {
+            diags.push(TypeDiag {
+                path: dl_path.to_string(), span: (0, 0),
+                severity: Severity::Error, code: "json-in-source".into(),
+                msg: format!("relation `{}` is a source rule (scan/match/ast/...); json aggregates \
+                    and json constructors are derived-only — split the extraction into its own \
+                    relation and build the json in a derived rule that reads it", rule.head.rel),
+            });
+        }
+    }
+
     let visit_atom = |a: &Atom, diags: &mut Vec<TypeDiag>, seen: &mut HashMap<String, ColTy>| {
         let Some(meta) = rels.get(&a.rel) else { return; };
         if a.terms.len() != meta.cols.len() { return; }
@@ -411,30 +431,57 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                 Term::Call { name, args } => {
                     // `int/1` produces an int (fills an int column); split/replace
                     // and the STR_FNS pass-throughs produce text (fill a text-base
-                    // column). All take text args.
+                    // column). The json constructors produce text too (a JSON
+                    // string) but are VARIADIC. All take text args.
                     let is_int = name == "int";
                     let str_fn = crate::lower::STR_FNS.iter().find(|(n, _, _)| *n == name.as_str());
-                    let known = is_int || matches!(name.as_str(), "split" | "replace") || str_fn.is_some();
+                    let is_json = matches!(name.as_str(), "json_object" | "json_array" | "json");
+                    let known = is_int || matches!(name.as_str(), "split" | "replace")
+                        || str_fn.is_some() || is_json;
                     if !known {
                         let extra = crate::lower::STR_FNS.iter()
                             .map(|(n, _, _)| *n).collect::<Vec<_>>().join(", ");
                         diags.push(TypeDiag {
                             path: dl_path.to_string(), span: (0, 0),
                             severity: Severity::Error, code: "unknown-function".into(),
-                            msg: format!("unknown function `{name}` (known: split, replace, int, {extra})"),
+                            msg: format!("unknown function `{name}` (known: split, replace, int, \
+                                json_object, json_array, json, {extra})"),
                         });
                     }
-                    let want = match (is_int, str_fn) {
-                        (true, _) => 1,
-                        (_, Some((_, _, k))) => *k,
-                        _ => 3, // split/replace
-                    };
-                    if args.len() != want {
-                        diags.push(TypeDiag {
-                            path: dl_path.to_string(), span: (0, 0),
-                            severity: Severity::Error, code: "arity".into(),
-                            msg: format!("function `{name}` expects {want} args, got {}", args.len()),
-                        });
+                    // Fixed-arity fns check an exact count; the json constructors
+                    // enforce a variadic shape (json_object even>=2, json_array>=1,
+                    // json==1) and emit the same `arity` code on a miss.
+                    if is_json {
+                        let ok = match name.as_str() {
+                            "json_object" => args.len() >= 2 && args.len() % 2 == 0,
+                            "json_array" => !args.is_empty(),
+                            _ /* json */ => args.len() == 1,
+                        };
+                        if !ok {
+                            let want = match name.as_str() {
+                                "json_object" => "an even number of args >= 2 (key, value, ...)",
+                                "json_array" => "at least 1 arg",
+                                _ => "exactly 1 arg",
+                            };
+                            diags.push(TypeDiag {
+                                path: dl_path.to_string(), span: (0, 0),
+                                severity: Severity::Error, code: "arity".into(),
+                                msg: format!("function `{name}` expects {want}, got {}", args.len()),
+                            });
+                        }
+                    } else {
+                        let want = match (is_int, str_fn) {
+                            (true, _) => 1,
+                            (_, Some((_, _, k))) => *k,
+                            _ => 3, // split/replace
+                        };
+                        if args.len() != want {
+                            diags.push(TypeDiag {
+                                path: dl_path.to_string(), span: (0, 0),
+                                severity: Severity::Error, code: "arity".into(),
+                                msg: format!("function `{name}` expects {want} args, got {}", args.len()),
+                            });
+                        }
                     }
                     if is_int {
                         if cty.base != Type::Int {
@@ -451,13 +498,18 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                             msg: format!("string function `{name}` cannot fill non-text column `{}`", meta.cols[i].name),
                         });
                     }
-                    let text_ty = ColTy { base: Type::Text, brand: None };
-                    for a in args {
-                        if let Term::Var(v) = a {
-                            if v != "_" { match seen.get(v).cloned() {
-                                None => { seen.insert(v.clone(), text_ty.clone()); }
-                                Some(prev) => unify(v, &prev, &text_ty, brands, dl_path, diags),
-                            }}
+                    // The json constructors accept mixed-type values (an int column
+                    // becomes a JSON number, text a JSON string), so their args do
+                    // NOT unify as text — only split/replace/STR_FNS take text operands.
+                    if !is_json {
+                        let text_ty = ColTy { base: Type::Text, brand: None };
+                        for a in args {
+                            if let Term::Var(v) = a {
+                                if v != "_" { match seen.get(v).cloned() {
+                                    None => { seen.insert(v.clone(), text_ty.clone()); }
+                                    Some(prev) => unify(v, &prev, &text_ty, brands, dl_path, diags),
+                                }}
+                            }
                         }
                     }
                 }
@@ -1120,8 +1172,9 @@ pub fn stratify_diags(prog: &Program, dl_path: &str) -> Vec<TypeDiag> {
         }
     }
 
-    // Agg head decl type check: Count/Sum land an Int, so a non-int head column for
-    // a count/sum term is a brand-mismatch.
+    // Agg head decl type check: Count/Sum land an Int (non-int col = mismatch);
+    // the json aggregates land a Text json string (int col = mismatch). Min/Max
+    // carry the arg's type (fixed_out None) and stay with per-var unification.
     for item in &prog.items {
         let Item::Rule(r) = item else { continue; };
         if !r.has_agg() { continue; }
@@ -1129,12 +1182,21 @@ pub fn stratify_diags(prog: &Program, dl_path: &str) -> Vec<TypeDiag> {
         if r.head.terms.len() != meta.cols.len() { continue; }
         for (i, f) in r.aggs.iter().enumerate() {
             let Some(f) = f else { continue; };
-            if f.fixed_out() == Some(Type::Int) && meta.cols[i].ty != Type::Int && meta.cols[i].brand.is_none() {
+            let mismatch = match f.fixed_out() {
+                // Count/Sum produce int: any non-int, non-branded column conflicts.
+                Some(Type::Int) => meta.cols[i].ty != Type::Int && meta.cols[i].brand.is_none(),
+                // json aggregates produce a text json string: an int column conflicts
+                // (every path/text/branded column stores TEXT and is fine).
+                Some(Type::Text) => meta.cols[i].ty == Type::Int,
+                _ => false,
+            };
+            if mismatch {
+                let out = f.fixed_out().map(|t| t.sql()).unwrap_or("value");
                 diags.push(TypeDiag {
                     path: dl_path.to_string(), span: (0, 0),
                     severity: Severity::Error, code: "brand-mismatch".into(),
-                    msg: format!("`{}(...)` produces an int but head column `{}` of `{}` is `{}`",
-                        f.sql().to_lowercase(), meta.cols[i].name, r.head.rel, meta.cols[i].ty.sql()),
+                    msg: format!("`{}(...)` produces {} but head column `{}` of `{}` is `{}`",
+                        f.sql().to_lowercase(), out, meta.cols[i].name, r.head.rel, meta.cols[i].ty.sql()),
                 });
             }
         }

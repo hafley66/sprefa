@@ -7,6 +7,23 @@ tags consumed by cargo-dist.
 ## [Unreleased]
 
 ### Added
+- **JSON output: aggregation heads + json scalar fns.** dl stays flat in storage;
+  nesting is OUTPUT, built by SQLite's own json functions (bundled SQLite 3.45).
+  Two new head-position aggregates beside count/sum/min/max: `json_group_array(x)`
+  (the group's values as a JSON array) and `json_group_object(k, v)` (the group's
+  key/value pairs as a JSON object — the first two-arg aggregate; its value arg
+  rides a new `Rule::agg_args2` vec parallel to the head terms). Three new scalar
+  head/comparison fns: `json_object(k1, v1, ...)` (variadic, even arity >= 2),
+  `json_array(x1, ...)` (variadic >= 1), and `json(x)` (validate/minify). Both
+  aggregates emit `ORDER BY` inside the aggregate call so element order is a pure
+  function of the group's rows — the rel's content digest is stable tick to tick
+  (no spurious daemon rebuild). Composition is by stratification, no new value
+  model: `item_json(order_id, json_group_array(item_name)) <- order_item(...)`
+  then `order_json(json_object("id", order_id, "items", json(items))) <- orders(...),
+  item_json(...)`. A json aggregate into an int column is a `brand-mismatch` diag;
+  a json fn/agg in a SOURCE-rule head is refused as `json-in-source` (derived-only).
+  `examples/json-out.dl` (corpus-free, over `rel_catalog`): one JSON object per
+  builtin rel group with the rel names as an array, embedded across two strata.
 - **Derived shapes: `type_decl_row(shape, pos, col, type)`.** A reserved builtin
   sink a DERIVED rule may head to compute a relation schema from data. The
   engine persists the sink's rows to a new `_shapes` meta table at the end of
