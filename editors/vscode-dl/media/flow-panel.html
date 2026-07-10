@@ -2434,7 +2434,7 @@ function renderWindow() {
   const rowsEl = document.getElementById('listRows');
   rowsEl.style.height = (rows.length * ROW_H) + 'px';
   const scroll = document.getElementById('listScroll');
-  const gutterTop = document.getElementById('gutterLeft').offsetTop; // resolved --bar-h
+  const gutterTop = document.getElementById('listRows').offsetTop; // resolved --bar-h (svg gutter has no offsetTop; the rows div does)
   const viewTop = Math.max(0, scroll.scrollTop - gutterTop);
   let first = Math.max(0, Math.floor(viewTop / ROW_H) - ROW_OVERSCAN);
   let last = Math.min(rows.length,
@@ -2455,7 +2455,7 @@ function renderWindow() {
 // row that isn't currently materialized -- the scroll re-windows it in).
 function scrollListToIndex(idx) {
   const scroll = document.getElementById('listScroll');
-  const gutterTop = document.getElementById('gutterLeft').offsetTop;
+  const gutterTop = document.getElementById('listRows').offsetTop;
   scroll.scrollTo({ top: Math.max(0, gutterTop + idx * ROW_H + ROW_H / 2 - scroll.clientHeight / 2),
     behavior: 'smooth' });
 }
@@ -2545,7 +2545,7 @@ function drawGutterArcs(arcs, totalRows) {
 let lastTeleport = null; // { arc, to: 'src' | 'dst' }
 function teleportArc(a) {
   const scroll = document.getElementById('listScroll');
-  const gutterTop = document.getElementById('gutterLeft').offsetTop; // == resolved --bar-h
+  const gutterTop = document.getElementById('listRows').offsetTop; // == resolved --bar-h
   let to;
   if (lastTeleport && lastTeleport.arc === a) {
     to = lastTeleport.to === 'dst' ? 'src' : 'dst';
