@@ -534,13 +534,15 @@ impl Engine {
     /// its content address. One query serves the type/call/dataflow refreshers;
     /// the hash column is what makes both the whole-pass digest skip and the
     /// per-file fact cache content-keyed (perf gap A). The four plain-JS
-    /// extensions ride `TsTypes` alongside `.ts`/`.tsx` (Win H).
+    /// extensions ride `TsTypes` alongside `.ts`/`.tsx` (Win H); `.go` rides
+    /// `GoTypes`.
     fn extract_file_set(&self) -> Result<Vec<ExtractFile>> {
         let mut files: Vec<ExtractFile> = Vec::new();
         let mut sel = self.db.conn().prepare(
             "SELECT repo, path, rev, hash FROM _file WHERE path LIKE '%.rs' OR path LIKE '%.kt' OR path LIKE '%.kts' \
              OR path LIKE '%.ts' OR path LIKE '%.tsx' \
-             OR path LIKE '%.js' OR path LIKE '%.jsx' OR path LIKE '%.mjs' OR path LIKE '%.cjs'")?;
+             OR path LIKE '%.js' OR path LIKE '%.jsx' OR path LIKE '%.mjs' OR path LIKE '%.cjs' \
+             OR path LIKE '%.go'")?;
         let rows = sel.query_map([], |r| Ok((
             r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
             r.get::<_, Option<String>>(3)?.unwrap_or_default())))?;

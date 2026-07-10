@@ -60,8 +60,8 @@ pub struct CrateEdge {
 
 /// Per-(repo,rev) context shared across a language's `edges()` calls in one
 /// refresh. `files` is the project-relative path set; `manifests` maps each
-/// `Cargo.toml`/`package.json` path to its contents (used to build the crate /
-/// package registries lazily).
+/// `Cargo.toml`/`package.json`/`go.mod` path to its contents (used to build the
+/// crate / package / module registries lazily).
 pub struct ProjectCx<'a> {
     pub root: &'a Path,
     pub files: &'a HashSet<String>,
@@ -73,6 +73,7 @@ pub struct ProjectCx<'a> {
     rust_crates: OnceLock<RustCrates>,
     ts_packages: OnceLock<HashMap<String, String>>,
     kotlin: OnceLock<KotlinIndex>,
+    go: OnceLock<GoIndex>,
 }
 
 impl<'a> ProjectCx<'a> {
@@ -89,6 +90,7 @@ impl<'a> ProjectCx<'a> {
             rust_crates: OnceLock::new(),
             ts_packages: OnceLock::new(),
             kotlin: OnceLock::new(),
+            go: OnceLock::new(),
         }
     }
 
@@ -108,6 +110,10 @@ impl<'a> ProjectCx<'a> {
     fn rust_crates(&self) -> &RustCrates {
         self.rust_crates
             .get_or_init(|| RustCrates::build(self.files, self.manifests))
+    }
+
+    fn go_index(&self) -> &GoIndex {
+        self.go.get_or_init(|| GoIndex::build(self.files, self.manifests))
     }
 
     /// npm/pnpm workspace package name -> the package's directory (manifest parent).
@@ -141,6 +147,7 @@ pub fn resolvers(root: &Path) -> Vec<Box<dyn ModuleResolver + Send + Sync>> {
         v.push(Box::new(ts));
     }
     v.push(Box::new(KotlinResolver));
+    v.push(Box::new(GoResolver));
     v
 }
 
@@ -1392,6 +1399,192 @@ impl ModuleResolver for KotlinResolver {
     }
 }
 
+// ── Go ──────────────────────────────────────────────────────────────────────
+//
+// Static resolution without the go tool. `go.mod`'s `module <path>` line is the
+// import-path namespace root for the tree under it; every directory below that
+// root is one package (Go's "one package per directory" rule), so an import
+// resolves to the WHOLE set of `.go` files in its target directory — same
+// wildcard-style fan-out as a Kotlin `import a.b.*`, just unconditional (Go has
+// no per-symbol import). Aliased imports (`import f "some/path"`) carry a local
+// binding whose source name is the import path's last segment (the package's
+// conventional default name — Go does not require the alias to match the
+// package's actual `package` clause, but the last path segment IS that
+// convention in the overwhelming majority of real code, and this tier is
+// syntax-only by design). Cross-module resolution (an import naming a
+// DIFFERENT module than any `go.mod` in the file set) is a non-goal: it lands
+// `External`, honestly, same as a stdlib import.
+pub struct GoResolver;
+
+struct GoIndex {
+    /// (module import-path prefix, project-relative root directory) pairs,
+    /// longest prefix first so a nested module's `go.mod` wins over an
+    /// enclosing one for the same import path.
+    modules: Vec<(String, String)>,
+    /// project-relative directory (`""` for the repo/module root) -> its `.go`
+    /// files, sorted for deterministic output.
+    dirs: HashMap<String, Vec<String>>,
+}
+
+fn go_module_re() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?m)^[ \t]*module[ \t]+(\S+)").unwrap())
+}
+
+/// A single-line `import "path"` or `import alias "path"` (alias absent for a
+/// plain import, `_`/`.` for a blank/dot import). Anchored to `^import` so an
+/// arbitrary quoted string elsewhere in the file (a struct tag, a format
+/// string) is never mistaken for one.
+fn go_import_single_re() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(
+        r#"(?m)^[ \t]*import[ \t]+(?:(_|\.|\w+)[ \t]+)?"([^"]*)""#).unwrap())
+}
+
+/// The parenthesized body of a grouped `import (...)` block. Go import blocks
+/// never contain literal parens, so a non-nesting `[^()]*` is exact.
+fn go_import_block_re() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?s)import[ \t]*\(([^()]*)\)").unwrap())
+}
+
+/// One import line INSIDE a block's body (see `go_import_block_re`): same shape
+/// as the single-line form, applied per line of the block's inner text.
+fn go_import_line_re() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(
+        r#"(?m)^[ \t]*(?:(_|\.|\w+)[ \t]+)?"([^"]*)""#).unwrap())
+}
+
+fn go_join_dir(root_dir: &str, rest: &str) -> String {
+    match (root_dir.is_empty(), rest.is_empty()) {
+        (true, _) => rest.to_string(),
+        (false, true) => root_dir.to_string(),
+        (false, false) => format!("{root_dir}/{rest}"),
+    }
+}
+
+impl GoIndex {
+    fn build(files: &HashSet<String>, manifests: &HashMap<String, String>) -> Self {
+        let mut modules: Vec<(String, String)> = Vec::new();
+        for (path, content) in manifests {
+            if !path.ends_with("go.mod") {
+                continue;
+            }
+            let Some(m) = go_module_re().captures(content) else { continue };
+            modules.push((m[1].to_string(), parent_dir(path)));
+        }
+        modules.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+
+        let mut dirs: HashMap<String, Vec<String>> = HashMap::new();
+        for f in files {
+            if !f.ends_with(".go") {
+                continue;
+            }
+            dirs.entry(parent_dir(f)).or_default().push(f.clone());
+        }
+        for v in dirs.values_mut() {
+            v.sort();
+        }
+        GoIndex { modules, dirs }
+    }
+
+    /// Longest-module-prefix resolution: the import path either equals a
+    /// module's own root package or names a directory under it; either way the
+    /// whole target directory's files resolve (Go's one-package-per-dir rule
+    /// makes narrower, symbol-level resolution unnecessary). No module claims
+    /// the prefix (a stdlib or third-party import, or a sibling module outside
+    /// this file set) -> External.
+    fn resolve(&self, spec: &str) -> Vec<Resolution> {
+        for (module_path, root_dir) in &self.modules {
+            let dir = if spec == module_path.as_str() {
+                Some(root_dir.clone())
+            } else {
+                spec.strip_prefix(module_path.as_str())
+                    .and_then(|rest| rest.strip_prefix('/'))
+                    .map(|rest| go_join_dir(root_dir, rest))
+            };
+            let Some(dir) = dir else { continue };
+            return match self.dirs.get(&dir) {
+                Some(fs) if !fs.is_empty() => fs.iter().map(|f| Resolution::File(f.clone())).collect(),
+                _ => vec![Resolution::Unresolved(format!("{spec}: no .go files in \"{dir}\""))],
+            };
+        }
+        vec![Resolution::External(spec.to_string())]
+    }
+}
+
+/// Emit zero or more `ModuleRef` rows for one `import` occurrence: one File
+/// row per file in the target directory (Go's whole-package fan-out), or one
+/// Unresolved/External row. A blank (`spec` empty, a malformed capture) import
+/// is skipped.
+fn push_go_import(
+    out: &mut Vec<ModuleRef>,
+    idx: &GoIndex,
+    clean: &str,
+    alias: Option<&str>,
+    spec: &str,
+    start: usize,
+    end: usize,
+) {
+    if spec.is_empty() {
+        return;
+    }
+    let line = line_of(clean, start);
+    let span = Some((start as u32, end as u32));
+    for target in idx.resolve(spec) {
+        let bindings = match (alias, &target) {
+            (Some(a), Resolution::File(_)) if a != "_" && a != "." => {
+                let source = spec.rsplit('/').next().unwrap_or(spec).to_string();
+                vec![(a.to_string(), source)]
+            }
+            _ => vec![],
+        };
+        out.push(ModuleRef {
+            specifier: spec.to_string(),
+            kind: "import",
+            line,
+            span,
+            target,
+            bindings,
+        });
+    }
+}
+
+impl ModuleResolver for GoResolver {
+    fn exts(&self) -> &'static [&'static str] {
+        &["go"]
+    }
+
+    fn edges(&self, file: &str, content: &str, cx: &ProjectCx) -> Vec<ModuleRef> {
+        let _ = file;
+        // Go string literals ARE the specifiers (like TS), so keep their
+        // content; only comments are blanked.
+        let clean = strip_noise(content, false);
+        let idx = cx.go_index();
+        let mut out = Vec::new();
+        // A single-line import inside the SAME file as a block needs no dedup
+        // guard: `go_import_single_re` is anchored to a line starting
+        // literally with `import`, and no line inside a `(...)` block does —
+        // the two passes never double-count the same specifier.
+        for c in go_import_block_re().captures_iter(&clean) {
+            let inner = c.get(1).unwrap();
+            let base = inner.start();
+            for lc in go_import_line_re().captures_iter(inner.as_str()) {
+                let alias = lc.get(1).map(|m| m.as_str());
+                let spec_m = lc.get(2).unwrap();
+                push_go_import(&mut out, idx, &clean, alias, spec_m.as_str(), base + spec_m.start(), base + spec_m.end());
+            }
+        }
+        for c in go_import_single_re().captures_iter(&clean) {
+            let alias = c.get(1).map(|m| m.as_str());
+            let spec_m = c.get(2).unwrap();
+            push_go_import(&mut out, idx, &clean, alias, spec_m.as_str(), spec_m.start(), spec_m.end());
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1882,5 +2075,80 @@ mod tests {
             Resolution::File("crateB/src/foo.rs".into()),
             "package= rename must resolve: {e:?}"
         );
+    }
+
+    fn go_manifest(module: &str) -> HashMap<String, String> {
+        let mut m = HashMap::new();
+        m.insert("go.mod".to_string(), format!("module {module}\n\ngo 1.22\n"));
+        m
+    }
+
+    #[test]
+    fn go_single_import_resolves_to_package_dir() {
+        let files = set(&["main.go", "pkg/store/store.go", "pkg/store/repo.go"]);
+        let m = go_manifest("example.com/app");
+        let c = cx(Path::new("/repo"), &files, &m);
+        let content = "package main\n\nimport \"example.com/app/pkg/store\"\n\nfunc main() {}\n";
+        let e = GoResolver.edges("main.go", content, &c);
+        // whole-package fan-out: BOTH files in the target dir resolve.
+        let mut got: Vec<&str> = e.iter().filter_map(|r| match &r.target {
+            Resolution::File(f) => Some(f.as_str()),
+            _ => None,
+        }).collect();
+        got.sort();
+        assert_eq!(got, vec!["pkg/store/repo.go", "pkg/store/store.go"], "{e:?}");
+    }
+
+    #[test]
+    fn go_grouped_import_block_aliased_and_unresolved() {
+        let files = set(&["main.go", "pkg/store/store.go"]);
+        let m = go_manifest("example.com/app");
+        let c = cx(Path::new("/repo"), &files, &m);
+        let content = "\
+package main
+
+import (
+\t\"fmt\"
+\ts \"example.com/app/pkg/store\"
+\t\"example.com/app/pkg/missing\"
+)
+
+func main() {}
+";
+        let e = GoResolver.edges("main.go", content, &c);
+        let fmt_row = e.iter().find(|r| r.specifier == "fmt").expect("fmt row");
+        assert_eq!(fmt_row.target, Resolution::External("fmt".into()));
+        let store_row = e.iter().find(|r| r.specifier == "example.com/app/pkg/store").expect("store row");
+        assert_eq!(store_row.target, Resolution::File("pkg/store/store.go".into()));
+        assert_eq!(store_row.bindings, vec![("s".to_string(), "store".to_string())]);
+        let missing_row = e.iter().find(|r| r.specifier == "example.com/app/pkg/missing").expect("missing row");
+        assert!(matches!(missing_row.target, Resolution::Unresolved(_)), "{missing_row:?}");
+    }
+
+    #[test]
+    fn go_blank_and_dot_imports_carry_no_binding() {
+        let files = set(&["main.go", "pkg/store/store.go"]);
+        let m = go_manifest("example.com/app");
+        let c = cx(Path::new("/repo"), &files, &m);
+        let content = "\
+package main
+
+import (
+\t_ \"example.com/app/pkg/store\"
+\t. \"example.com/app/pkg/store\"
+)
+";
+        let e = GoResolver.edges("main.go", content, &c);
+        assert!(e.iter().all(|r| r.bindings.is_empty()), "{e:?}");
+        assert_eq!(e.len(), 2, "{e:?}");
+    }
+
+    #[test]
+    fn go_no_module_leaves_every_import_external() {
+        let files = set(&["main.go"]);
+        let m = no_manifests();
+        let c = cx(Path::new("/repo"), &files, &m);
+        let e = GoResolver.edges("main.go", "package main\n\nimport \"example.com/app/pkg/store\"\n", &c);
+        assert_eq!(e[0].target, Resolution::External("example.com/app/pkg/store".into()));
     }
 }

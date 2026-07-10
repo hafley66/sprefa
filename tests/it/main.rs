@@ -73,6 +73,7 @@ mod flow_xlang_scip;
 mod flow_xlang_scip_real;
 mod gen_op;
 mod git_ref;
+mod go;
 mod kotlin;
 mod lattice;
 mod lex_utf8;
