@@ -1,6 +1,6 @@
 # type-from-json.dl — a relation SCHEMA derived from data, not written by hand.
 #
-# The `type_decl_row(shape, pos, col, ty)` sink lets a DERIVED rule compute a
+# The `type_decl_row(shape, pos, col, type)` sink lets a DERIVED rule compute a
 # shape (column names + base types). The engine persists it at the end of a tick;
 # a `rel name: shape.` decl whose shape has no syntax `type name(...)` resolves
 # its columns from those rows on the NEXT tick (a one-tick phase delay, the @next
@@ -32,16 +32,16 @@ rel payload_intval(key: text, value: text).
 payload_intval(key, value) <- payload_kv(key, value), value =~ /^-?[0-9]+$/.
 rel payload_nonint(key: text).
 payload_nonint(key) <- payload_kv(key, value), !payload_intval(key, value).
-rel payload_ty(key: text, ty: text).
-payload_ty(key, "int")  <- payload_key(key), !payload_nonint(key).
-payload_ty(key, "text") <- payload_nonint(key).
+rel payload_type(key: text, type: text).
+payload_type(key, "int")  <- payload_key(key), !payload_nonint(key).
+payload_type(key, "text") <- payload_nonint(key).
 
 # column position = the key's 1-based alphabetical rank (count of keys <= it).
 rel payload_pos(key: text, pos: int).
 payload_pos(key, count(other)) <- payload_key(key), payload_key(other), other <= key.
 
 # the schema: one type_decl_row per (pos, column, type). `shape` = "payload".
-type_decl_row("payload", pos, key, ty) <- payload_pos(key, pos), payload_ty(key, ty).
+type_decl_row("payload", pos, key, type) <- payload_pos(key, pos), payload_type(key, type).
 
 # NEXT tick this resolves to a checked rel with columns (age:int, city:text,
 # name:text). A rule can then write typed rows against the inferred schema. Each
@@ -60,8 +60,8 @@ payload_rel(age, city, name) <- payload_age(age), payload_city(city), payload_na
 ? payload_rel(age, city, name).
 
 # --- 2. the mapped-type trick: partial_<rel> per built-in relation --------------
-# `rel_col(rel, pos, col, ty, variants)` is the engine's own column catalog. One
+# `rel_col(rel, pos, col, type, variants)` is the engine's own column catalog. One
 # derived type_decl_row per column mints a `partial_<rel>` shape mirroring each
 # built-in relation's schema — a computed family of shapes from live introspection.
 # The head builds the shape name with the text `+` concat operator (Phase 4).
-type_decl_row("partial_" + rel, pos, col, ty) <- rel_col(rel, pos, col, ty, _).
+type_decl_row("partial_" + rel, pos, col, type) <- rel_col(rel, pos, col, type, _).

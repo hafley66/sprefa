@@ -28,7 +28,7 @@ impl RelKind for CatalogKind {
                 doc: "this table: every built-in relation with its group, columns, and one-line doc", ..Default::default() },
             RelDecl { name: "rel_col".into(), cols: vec![
                 col("rel", Type::Text), col("pos", Type::Int), col("col", Type::Text),
-                col("ty", Type::Text), col("variants", Type::Text)], group: "meta",
+                col("type", Type::Text), col("variants", Type::Text)], group: "meta",
                 doc: "one row per built-in relation column: (rel, 0-based pos, col name, type keyword, variants); variants is the JSON array of allowed values for an enum-vocabulary column (e.g. type_edge.kind), empty for an open column — query it instead of guessing a kind literal", ..Default::default() },
             RelDecl { name: "fn_catalog".into(), cols: vec![
                 col("name", Type::Text), col("arity", Type::Int),
@@ -71,7 +71,7 @@ impl RelKind for CatalogKind {
                      Value::Text(variants)]
             }).collect::<Vec<_>>()
         }).collect();
-        eng.refresh_rel("rel_col", &["rel", "pos", "col", "ty", "variants"], &col_rows)?;
+        eng.refresh_rel("rel_col", &["rel", "pos", "col", "type", "variants"], &col_rows)?;
 
         let fn_rows: Vec<Vec<Value>> = fn_docs().iter().map(|(n, a, g, d)| {
             vec![Value::Text(n.to_string()), Value::Int(*a as i64),

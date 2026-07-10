@@ -1,4 +1,4 @@
-//! Derived shapes (2026-07-09, Phase 5): the `type_decl_row(shape, pos, col, ty)`
+//! Derived shapes (2026-07-09, Phase 5): the `type_decl_row(shape, pos, col, type)`
 //! sink lets a DERIVED rule compute a relation schema. The engine persists the
 //! sink's rows to the `_shapes` meta table at the END of a tick; a
 //! `rel name: shape.` decl whose shape has no syntax `type name(...)` resolves
@@ -6,7 +6,7 @@
 //! delay (the @next carry precedent). Until then the rel is pending: rules
 //! heading it are skipped, queries over it fail loudly, and --check carries a
 //! `shape-pending` info diag. Syntax shapes win a name clash (`shape-shadowed`
-//! warn); an unknown ty keeps the shape pending (`shape-unknown-ty` warn).
+//! warn); an unknown type keeps the shape pending (`shape-unknown-type` warn).
 //! Same sandbox harness as tests/it/type_decls.rs; each tick = one `dl` run
 //! against the same --db.
 
@@ -51,10 +51,10 @@ fn check(dir: &Path, prog: &str) -> (i32, String) {
 /// The base program: a derived rule computes the `point` shape and a
 /// `rel point_rel: point.` references it before it exists.
 const POINT: &str = concat!(
-    "rel col_spec(shape: text, pos: int, col_name: text, ty: text).\n",
+    "rel col_spec(shape: text, pos: int, col_name: text, type: text).\n",
     "col_spec(\"point\", 0, \"x\", \"int\").\n",
     "col_spec(\"point\", 1, \"y\", \"int\").\n",
-    "type_decl_row(shape, pos, col, ty) <- col_spec(shape, pos, col, ty).\n",
+    "type_decl_row(shape, pos, col, type) <- col_spec(shape, pos, col, type).\n",
     "rel point_rel: point.\n",
     "point_rel(3, 4).\n",
     "? point_rel(x, y).\n");
@@ -81,9 +81,9 @@ fn derived_shape_resolves_on_next_tick() {
 fn shape_pending_diag_then_clears() {
     let dir = sandbox("pending");
     let prog = concat!(
-        "rel col_spec(shape: text, pos: int, col_name: text, ty: text).\n",
+        "rel col_spec(shape: text, pos: int, col_name: text, type: text).\n",
         "col_spec(\"point\", 0, \"x\", \"int\").\n",
-        "type_decl_row(shape, pos, col, ty) <- col_spec(shape, pos, col, ty).\n",
+        "type_decl_row(shape, pos, col, type) <- col_spec(shape, pos, col, type).\n",
         "rel point_rel: point.\n");
     let (_code1, out1) = check(&dir, prog);
     assert!(out1.contains("shape-pending") && out1.contains("point_rel"),
@@ -102,9 +102,9 @@ fn syntax_shape_shadows_derived() {
     let dir = sandbox("shadow");
     let prog = concat!(
         "type point(x: int, y: int).\n",
-        "rel col_spec(shape: text, pos: int, col_name: text, ty: text).\n",
+        "rel col_spec(shape: text, pos: int, col_name: text, type: text).\n",
         "col_spec(\"point\", 0, \"only_x\", \"int\").\n",
-        "type_decl_row(shape, pos, col, ty) <- col_spec(shape, pos, col, ty).\n",
+        "type_decl_row(shape, pos, col, type) <- col_spec(shape, pos, col, type).\n",
         "rel point_rel: point.\n",
         "point_rel(1, 2).\n",
         "? point_rel(x, y).\n");
@@ -117,31 +117,31 @@ fn syntax_shape_shadows_derived() {
         "persisted derived rows under a syntax shape name warn:\n{out2}");
 }
 
-/// A derived shape row naming an unknown ty: `shape-unknown-ty` warn, and the
+/// A derived shape row naming an unknown type: `shape-unknown-type` warn, and the
 /// shape never persists, so the rel referencing it stays pending on tick 2.
 #[test]
 fn unknown_ty_keeps_shape_pending() {
     let dir = sandbox("badty");
     let prog = concat!(
-        "rel col_spec(shape: text, pos: int, col_name: text, ty: text).\n",
+        "rel col_spec(shape: text, pos: int, col_name: text, type: text).\n",
         "col_spec(\"point\", 0, \"x\", \"flavor\").\n",
-        "type_decl_row(shape, pos, col, ty) <- col_spec(shape, pos, col, ty).\n",
+        "type_decl_row(shape, pos, col, type) <- col_spec(shape, pos, col, type).\n",
         "rel point_rel: point.\n");
     let (_code1, out1) = check(&dir, prog);
-    assert!(out1.contains("shape-unknown-ty") && out1.contains("flavor"),
-        "the unknown ty is named:\n{out1}");
+    assert!(out1.contains("shape-unknown-type") && out1.contains("flavor"),
+        "the unknown type is named:\n{out1}");
     let (_code2, out2) = check(&dir, prog);
     assert!(out2.contains("shape-pending"),
         "the shape never persisted, still pending on tick 2:\n{out2}");
-    assert!(out2.contains("shape-unknown-ty"),
-        "the ty warn is steady, not one-shot:\n{out2}");
+    assert!(out2.contains("shape-unknown-type"),
+        "the type warn is steady, not one-shot:\n{out2}");
 }
 
 /// `rel type_decl_row(...)` bails: the sink is reserved, head it directly.
 #[test]
 fn rel_decl_of_the_sink_bails() {
     let dir = sandbox("redecl");
-    let prog = "rel type_decl_row(shape: text, pos: int, col: text, ty: text).\n";
+    let prog = "rel type_decl_row(shape: text, pos: int, col: text, type: text).\n";
     let (code, _out, err) = run(&dir, prog);
     assert_ne!(code, 0, "reserved-name decl must fail");
     assert!(err.contains("derived-shape sink") && err.contains("head it directly"),
@@ -155,10 +155,10 @@ fn rel_decl_of_the_sink_bails() {
 fn shape_row_change_migrates_the_rel() {
     let dir = sandbox("migrate");
     let two_cols = concat!(
-        "rel col_spec(shape: text, pos: int, col_name: text, ty: text).\n",
+        "rel col_spec(shape: text, pos: int, col_name: text, type: text).\n",
         "col_spec(\"point\", 0, \"x\", \"int\").\n",
         "col_spec(\"point\", 1, \"y\", \"int\").\n",
-        "type_decl_row(shape, pos, col, ty) <- col_spec(shape, pos, col, ty).\n",
+        "type_decl_row(shape, pos, col, type) <- col_spec(shape, pos, col, type).\n",
         "rel point_rel: point.\n",
         "? point_rel(x, y).\n");
     run(&dir, two_cols);
@@ -167,11 +167,11 @@ fn shape_row_change_migrates_the_rel() {
     assert!(out2.contains("(0 rows)"), "2-col shape live on tick 2:\n{out2}");
 
     let three_cols = concat!(
-        "rel col_spec(shape: text, pos: int, col_name: text, ty: text).\n",
+        "rel col_spec(shape: text, pos: int, col_name: text, type: text).\n",
         "col_spec(\"point\", 0, \"x\", \"int\").\n",
         "col_spec(\"point\", 1, \"y\", \"int\").\n",
         "col_spec(\"point\", 2, \"z\", \"int\").\n",
-        "type_decl_row(shape, pos, col, ty) <- col_spec(shape, pos, col, ty).\n",
+        "type_decl_row(shape, pos, col, type) <- col_spec(shape, pos, col, type).\n",
         "rel point_rel: point.\n",
         "? point_rel(x, y, z).\n");
     let (code3, _out3, err3) = run(&dir, three_cols);
@@ -208,7 +208,7 @@ fn json_inference_example_end_to_end() {
 fn mapped_type_mints_partial_shapes() {
     let dir = sandbox("mapped");
     let prog = concat!(
-        "type_decl_row(\"partial_\" + rel, pos, col, ty) <- rel_col(rel, pos, col, ty, _).\n",
+        "type_decl_row(\"partial_\" + rel, pos, col, type) <- rel_col(rel, pos, col, type, _).\n",
         "rel partial_checkout: partial_checkout_done.\n",
         "? partial_checkout(repo, branch, action, ok, detail).\n");
     run(&dir, prog);

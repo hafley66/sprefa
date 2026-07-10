@@ -7,7 +7,7 @@ tags consumed by cargo-dist.
 ## [Unreleased]
 
 ### Added
-- **Derived shapes: `type_decl_row(shape, pos, col, ty)`.** A reserved builtin
+- **Derived shapes: `type_decl_row(shape, pos, col, type)`.** A reserved builtin
   sink a DERIVED rule may head to compute a relation schema from data. The
   engine persists the sink's rows to a new `_shapes` meta table at the end of
   a tick (digest-guarded full replace); a `rel name: shape.` decl whose shape
@@ -16,7 +16,7 @@ tags consumed by cargo-dist.
   invisible under the daemon). Until then the rel is pending: rules heading it
   are skipped for the tick and --check carries a `shape-pending` info diag.
   Syntax shapes win a name clash (`shape-shadowed` warn); a shape row naming
-  an unknown ty stays pending (`shape-unknown-ty` warn, ty = base type or a
+  an unknown type stays pending (`shape-unknown-type` warn, ty = base type or a
   declared brand). A shape's row set changing migrates the rels using it via
   the existing column-drift migration (re-derives next tick). A user
   `rel type_decl_row(...)` decl bails — head it directly, like diag.

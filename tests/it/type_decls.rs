@@ -167,7 +167,7 @@ fn builtin_kind_correct_literal_accepted() {
 #[test]
 fn rel_col_exposes_type_edge_kind_variants() {
     let dir = sandbox("introspect");
-    let prog = "? rel_col(\"type_edge\", pos, col_name, ty, variants).\n";
+    let prog = "? rel_col(\"type_edge\", pos, col_name, type, variants).\n";
     let (code, out, err) = run(&dir, prog);
     assert_eq!(code, 0, "rel_col query must run:\n{err}");
     assert!(out.contains("(4 rows)"), "type_edge has 4 columns:\n{out}");

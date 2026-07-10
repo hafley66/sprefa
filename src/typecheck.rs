@@ -1252,8 +1252,8 @@ finding_rel("a.rs", 1, "x")."#;
         // A program HEADING type_decl_row derives shapes at runtime: an
         // unresolved shape_ref is deferred (kept, columns empty), not an
         // unknown-shape error — the engine resolves it from `_shapes` next tick.
-        let src = r#"rel col_spec(shape: text, pos: int, col_name: text, ty: text).
-type_decl_row(shape, pos, col, ty) <- col_spec(shape, pos, col, ty).
+        let src = r#"rel col_spec(shape: text, pos: int, col_name: text, type: text).
+type_decl_row(shape, pos, col, type) <- col_spec(shape, pos, col, type).
 rel point_rel: point."#;
         let mut prog = program(src);
         let ds = check_and_normalize(&mut prog, "t.dl");

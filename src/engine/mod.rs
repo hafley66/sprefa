@@ -699,15 +699,15 @@ fn checkout_out_rel_decls() -> Vec<RelDecl> {
 
 /// The derived-shape sink relation (see `TYPE_DECL_RELS`). Fixed 4-col schema.
 /// `shape` is TEXT (a shape name; any string, computed via concat is fine),
-/// `pos` is the 0-based column position, `col` the column name, `ty` the base
+/// `pos` is the 0-based column position, `col` the column name, `type` the base
 /// type keyword (text/int/path/...) OR a declared brand name.
 fn type_decl_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "type_decl_row".into(), cols: vec![
-            c("shape", Type::Text), c("pos", Type::Int), c("col", Type::Text), c("ty", Type::Text)],
+            c("shape", Type::Text), c("pos", Type::Int), c("col", Type::Text), c("type", Type::Text)],
             group: "types",
-            doc: "derived-shape sink: head type_decl_row(shape, pos, col, ty) from a derived rule to compute a relation schema from data. At end of tick its rows persist; on the next tick a `rel name: shape.` decl with no syntax `type name(...)` resolves its columns from them (shape-pending info diag until then, shape-shadowed warn if a syntax shape shares the name). ty is a base type keyword or a declared brand; an unknown ty keeps that shape pending. Derived-only (route a jsonp/json extract through its own rel first)",
+            doc: "derived-shape sink: head type_decl_row(shape, pos, col, type) from a derived rule to compute a relation schema from data. At end of tick its rows persist; on the next tick a `rel name: shape.` decl with no syntax `type name(...)` resolves its columns from them (shape-pending info diag until then, shape-shadowed warn if a syntax shape shares the name). the type column is a base type keyword or a declared brand; an unknown type keeps that shape pending. Derived-only (route a jsonp/json extract through its own rel first)",
             ..Default::default() },
     ]
 }
@@ -1769,7 +1769,7 @@ pub struct Engine {
     /// read once after the tick; never a per-row publish.
     extraction_drops: Vec<DiagRow>,
     /// Structural diagnostics from the derived-shape resolver (Phase 5):
-    /// shape-pending / shape-shadowed / shape-unknown-ty. Produced at declare +
+    /// shape-pending / shape-shadowed / shape-unknown-type. Produced at declare +
     /// end-of-tick persist, cleared at tick start, and appended by `diags()` so
     /// --check and --lsp both surface them (they are not rule-derived `diag`
     /// rows). All non-error severity, so the error gate stays green.
@@ -2650,7 +2650,7 @@ impl Engine {
              -- declare to resolve a `rel name: shape.` whose shape was computed,
              -- not written by hand. Digest-guarded full replace (see
              -- persist_type_decl_shapes); the one-tick phase delay.
-             CREATE TABLE IF NOT EXISTS _shapes (shape TEXT, pos INTEGER, col TEXT, ty TEXT, PRIMARY KEY (shape, pos));
+             CREATE TABLE IF NOT EXISTS _shapes (shape TEXT, pos INTEGER, col TEXT, type TEXT, PRIMARY KEY (shape, pos));
              -- Wall ms of each derived rel's INSERT statements from its most
              -- recent rebuild (max across the rel's rules/passes). Written
              -- batched by rebuild_derived; projected by the perf built-in
@@ -2888,14 +2888,14 @@ impl Engine {
     }
 
     /// Load the persisted derived shapes from `_shapes` (Phase 5): shape name ->
-    /// its columns in `pos` order. A `ty` that names a base type builds a plain
+    /// its columns in `pos` order. A `type` value that names a base type builds a plain
     /// column; anything else is a validated brand name (checked at persist time),
     /// so it lands a TEXT column carrying that brand. Read at the START of a tick
     /// (declare) to resolve a computed `rel name: shape.`.
     fn load_persisted_shapes(&self) -> Result<HashMap<String, Vec<Col>>> {
         let mut out: HashMap<String, Vec<Col>> = HashMap::new();
         let mut stmt = self.db.conn()
-            .prepare("SELECT shape, col, ty FROM _shapes ORDER BY shape, pos")?;
+            .prepare("SELECT shape, col, type FROM _shapes ORDER BY shape, pos")?;
         let rows = stmt.query_map([], |r| Ok((
             r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
         for row in rows {
@@ -2971,9 +2971,9 @@ impl Engine {
     /// of a tick (after the derived fixpoint filled `rel_type_decl_row`). Digest-
     /// guarded on the sink's content (a `shape:type_decl_row` key in `_reldigest`)
     /// so an unchanged sink does NOT re-persist or re-migrate every tick (the
-    /// repo's recompute-guard rail). Each row's `ty` must name a base type, an
-    /// ambient builtin enum brand, or a program-declared brand; an unknown ty
-    /// records a `shape-unknown-ty` warn and that whole shape is dropped from the
+    /// repo's recompute-guard rail). Each row's `type` must name a base type, an
+    /// ambient builtin enum brand, or a program-declared brand; an unknown type
+    /// records a `shape-unknown-type` warn and that whole shape is dropped from the
     /// persist (it stays pending). Full replace, batched (no per-row write).
     fn persist_type_decl_shapes(&mut self, prog: &Program) -> Result<()> {
         if !type_decl_row_used(prog) { return Ok(()); }
@@ -2987,21 +2987,21 @@ impl Engine {
             || prog_brands.contains(ty);
 
         let mut stmt = self.db.conn()
-            .prepare(&format!("SELECT shape, pos, col, ty FROM {} ORDER BY shape, pos", tbl("type_decl_row")))?;
+            .prepare(&format!("SELECT shape, pos, col, type FROM {} ORDER BY shape, pos", tbl("type_decl_row")))?;
         let raw: Vec<(String, i64, String, String)> = stmt.query_map([], |r| Ok((
             r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
             .filter_map(|x| x.ok()).collect();
         drop(stmt);
 
-        // Validate ty every tick (cheap, O(rows)) so the shape-unknown-ty diag is
+        // Validate ty every tick (cheap, O(rows)) so the shape-unknown-type diag is
         // steady, not just on the tick the sink changed. Drop any shape carrying
-        // an unknown ty (loud diag), keep the rest.
+        // an unknown type (loud diag), keep the rest.
         let mut bad_shapes: std::collections::HashSet<String> = std::collections::HashSet::new();
         for (shape, _, _, ty) in &raw {
             if !ty_ok(ty) && bad_shapes.insert(shape.clone()) {
                 self.shape_diags.push(DiagRow {
                     path: "(shapes)".into(), line: 1, col: 0, end_line: 1, end_col: 0,
-                    severity: "warn".into(), code: "shape-unknown-ty".into(),
+                    severity: "warn".into(), code: "shape-unknown-type".into(),
                     msg: format!("derived shape `{shape}` names an unknown type `{ty}` — use a base \
                         type (text/int/path/file/dir/repo/rev) or a declared brand; the shape stays pending"),
                     hint: None,
@@ -3020,7 +3020,7 @@ impl Engine {
                 Value::Text(col.clone()), Value::Text(ty.clone())])
             .collect();
         self.db.conn().execute("DELETE FROM _shapes", [])?;
-        self.db.insert_rows("_shapes", &["shape", "pos", "col", "ty"], &rows)?;
+        self.db.insert_rows("_shapes", &["shape", "pos", "col", "type"], &rows)?;
         self.save_rel_digest("shape:type_decl_row", &digest)?;
         Ok(())
     }
@@ -3697,7 +3697,7 @@ impl Engine {
                     bail!("checkout_done is the built-in checkout-sweep outcome (repo, branch, action, ok, detail); it is written by the `checkout` sink, so READ it — do not `rel`-declare or head it");
                 }
                 if TYPE_DECL_RELS.contains(&d.name.as_str()) {
-                    bail!("type_decl_row is the built-in derived-shape sink (shape, pos, col, ty); drop the `rel type_decl_row(...)` decl and head it directly from a derived rule, like diag/graph_node");
+                    bail!("type_decl_row is the built-in derived-shape sink (shape, pos, col, type); drop the `rel type_decl_row(...)` decl and head it directly from a derived rule, like diag/graph_node");
                 }
                 match closures.get(&d.name) {
                     Some(edge) => self.declare_closure(d, edge)?,
