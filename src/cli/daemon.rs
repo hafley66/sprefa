@@ -29,6 +29,18 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
                 .filter(|a| !a.starts_with("--"))
                 .cloned()
                 .collect();
+            if let Some(outside) = program_outside_unset_root(&programs, &root) {
+                eprintln!(
+                    "dl daemon start: {outside} is outside the resolved root {} \
+                     (no DL_DAEMON_ROOT set, so the root fell back to the nearest \
+                     `.dl/` ancestor of the current directory). Refusing to start: \
+                     this shape has silently bound a daemon.sock under an unrelated \
+                     repo before. Run this from inside the target repo, or set \
+                     DL_DAEMON_ROOT=<dir> explicitly.",
+                    root.display()
+                );
+                return Ok(2);
+            }
             crate::daemon::run_daemon(&programs, db, Some(root), true, tray)?;
             Ok(0)
         }
@@ -188,4 +200,31 @@ fn flag_value<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
         .position(|a| a == name)
         .and_then(|i| args.get(i + 1))
         .map(String::as_str)
+}
+
+/// The first `program` path that lies outside `root`, when `root` was NOT
+/// pinned by an explicit `DL_DAEMON_ROOT` (an env-set root is trusted as-is —
+/// the caller named it on purpose). `None` when `DL_DAEMON_ROOT` is set, no
+/// program is absolute, or every absolute program canonicalizes under `root`.
+///
+/// Guards a real footgun: `dl daemon start <program>` derives its serving root
+/// from `DL_DAEMON_ROOT`, else the nearest `.dl/` ancestor of the CURRENT
+/// DIRECTORY — never from the program path. Running it from inside an
+/// unrelated already-`.dl`'d repo (a habit, a copy-pasted command, a test
+/// helper that forgot to set the env) silently binds THAT repo's
+/// `daemon.sock` to whatever program was named, with no warning. Seen live:
+/// `dl daemon start /tmp/disc2/p.dl` run from a real checkout bound the real
+/// checkout's socket for a day.
+fn program_outside_unset_root(programs: &[String], root: &Path) -> Option<String> {
+    if std::env::var_os("DL_DAEMON_ROOT").is_some() {
+        return None;
+    }
+    programs.iter().find_map(|program| {
+        let program_path = Path::new(program);
+        if !program_path.is_absolute() {
+            return None;
+        }
+        let canon_program = program_path.canonicalize().unwrap_or_else(|_| program_path.to_path_buf());
+        if canon_program.starts_with(root) { None } else { Some(program.clone()) }
+    })
 }

@@ -139,6 +139,14 @@ impl Session {
             .arg(prog)
             .args(["--lsp", "--db", db.to_str().unwrap()])
             .current_dir(root)
+            // Belt-and-suspenders: this session passes its own `--db`, which
+            // already keeps `--lsp`'s daemon-subscriber thread from touching a
+            // daemon (see the `db_defaulted` gate in src/lsp.rs). Force it
+            // anyway so this test can never leak a real `dl daemon start`
+            // regardless of future gate changes — a leaked daemon is
+            // detached (no owning Child here), so nothing could kill it
+            // after the fact.
+            .env("DL_NO_DAEMON", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

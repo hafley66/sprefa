@@ -1,0 +1,66 @@
+# Memory Index
+
+- [Scripts over agents; pin models](feedback_pin_subagent_models_haiku.md) — deterministic ceremony = justfile/bash (just verify / regen-docs / cut), never an agent; kept agents pin model: explicitly (haiku default, sonnet for Rust-writing implementers)
+- [.agents not .claude](feedback_agents_dir_open_convention.md) — agent+skill defs live under tracked `.agents/` (skills/<name>/SKILL.md, agents/<name>.md), open tool-agnostic convention; `.claude/` is gitignored + Anthropic-specific; "open ball or none at all"
+
+- [VS Code ext review: wave 1 SHIPPED](project_vscode_ext_review.md) — plan at plans/2026-07-10-vscode-ext-review.md; wave 1 committed main 9f4b5b6 (dl/query paging, telemetry off panel path, watcher delete, wire budget = render caps), suites green, vsix NOT rebuilt; waves 2-4 + C1 in the CLAUDE.md ledger
+- [Type arc SHIPPED v0.6.24](project_type_shapes_prototype.md) — main 43852bd tagged+pushed 2026-07-10: brands/shapes/type_decl_row/json aggs/scip occurrences; roadmap docs/type-comptime-roadmap.md; json(x) wrapper when embedding json text; daemon restart still Chris-only
+
+- [No ty abbreviation](feedback_no_ty_abbreviation.md) — dl surface says `type` not `ty`; Rust internals keep ty; spell out "typescript" vs tree-sitter ambiguity
+- [Descriptive dl var names](feedback_descriptive_dl_var_names.md) — HARD RULE: no single-letter vars in any dl snippet (skills/examples/docs/prompts); carry the rule into agent prompts
+- [Wasm built-ins generality](project_wasm_builtins_generality.md) — built-ins shaped as if user-registrable; engine ships generic seams, policy strings live in .dl
+- [Sonnet 5 for coding tasks](feedback_sonnet5_for_coding.md) — delegate implementation edits to well-advised Sonnet subagents (exact paths/lines/verify commands in the prompt); main session specs and verifies
+- [diag built-in + named heads](project_diag_builtin_named_heads.md) — diag is a RESERVED fixed-schema built-in (never `rel diag`); named args + bare puns + positional literals in rule heads; gen suppressed under --lsp
+- [No regex scan-forcer](feedback_no_regex_scan_forcer.md) — never `match(/./)` to force a scan; a BARE `scan` rule populates `_file` + triggers AST/SCIP extraction; prefer ast/sg/scip rels over regex match
+- [Backprop repo scope](feedback_backprop_repo_scope.md) — repo-specific learnings stay IN the repo (ledger/CHANGELOG/examples); backprop only for cross-repo tool-general knowledge
+- [Perf-under-reactivity arc](project_perf_reactivity_arc.md) — COMPLETE 2026-07-02 (main 041cf1b): one-pass fixpoint, closure-query guard + lint, rel_count/stmt_ms telemetry, extract:<family> digest skip + per-file fact cache (warm tick 1.5s->35ms), scoped full tick w/ async:<rel> content digest; RelDecl carries group/doc; dl setup wires assets/*.skill.md
+- [Want-tier demand built-ins](project_want_tier_builtins.md) — git_ref + rev_cmp_want->rev_behind (shallow-clone loud skip) + scip_want lazy multi-repo merge; pin-skew.dl proving query; ~/orgs clones SHALLOW depth-1; main 8111515
+- [v5 lifted to repo root](project_repo_lift_root.md) — 2026-07-01: v5/ IS the root; v3/v4 archived to ~/projects/sprefa-archive-20260701; v5/<p> paths in older memories mean <p>
+- [Org-scale bench + manifest seams](project_org_scale_bench.md) — 800-repo corpus at ~/orgs (all.config.toml); MANIFESTS give cross-repo seams FREE before SCIP (go.mod -> module_id/dep/repo_dep); go.mod VERSION = the pinned rev -> data-driven scan(repo,rev) fan (var in scan's repo slot, NOT join file())
+- [SCIP turnkey + cross-repo](project_scip_turnkey_xrepo.md) — dl index/doctor turnkey SCIP (.dl/index.scip gitignored, polyglot merge) + EXPLOSION GUARD (single-root, --force for nested); xrepo_link seeded from OpenAPI/transport specs unions into flow_edge
+- [dl harness hooks](project_dl_harness_hooks.md) — `dl --hook` = the Claude Code PostToolUse command; condition is a dl rule heading inject/inject_skill/block; skill_loaded rel = declarative load-once; main ae03783
+- [dl productionization](project_dl_productionization.md) — root workspace, macOS-only CI, cargo-dist releases (tag v*); GOTCHA: tracked .cargo/config.toml forced nightly and broke stable consumers (untracked it); resp latest-wins via clock-bucket max
+- [dl self-validation + dogfood docs](project_dl_self_validation_docs.md) — dl_diag lints dl itself (same as --check, positioned); AGENT RELATIONS ARE GIT-FREE (harness store keyed by --root); op_catalog + reference generated via gen-reference.dl
+- [Rx operators when sensible](feedback_rx_operators_when_sensible.md) — think RxJS (switchMap=latest-wins, mergeMap=concurrent drain, shareReplay=digest cache) for the effect runtime WHEN it fits; no bolted-on Rx layer
+- [sh effect runtime](project_sh_effect_runtime.md) — sh/sh!/sh* template effects on the rev/tx temporal spine; branch feat/temporal-next-async (~/projects/sprefa-temporal); phases 1/1b/3/4 landed, native http deferred; NOT pushed to main
+- [node2vec graph embed](project_node2vec_graph_embed.md) — node2vec(edge) INTERNAL operator (no shell-out); node_sim rel; digest-skip + recompute-guard rail + vector cache on main 2026-06-29; switchMap async + warm-start deferred
+- [engine.rs refactor epic](project_engine_refactor_epic.md) — break down engine.rs via TRAIT extraction (file-split ruled dead); RelKind = Phase 1; coupling-metrics.dl measured before=93 family members/89 dispatch sites
+- [Refactor exploration with dl](project_refactor_exploration_dl.md) — docs/refactor-exploration.md formula; --no-daemon for ad-hoc runs (daemon hijacks); name-scatter killed; WINNER = signature-shape buckets -> latent traits; embedding only pays at low naming-coverage
+- [Interprocedural value flow](project_interproc_flow.md) — std/flow.dl shared `use` base (roadmap 1-6 landed 2026-07-02): call_target pins hops PER CALL SITE (factor big joins, stmt_ms finds them); flow_summary/sanitizer = SUPPRESSION models; closure rels can't be read unpinned in a rule body — seed a recursive rule; taint dogfood 161->9
+- [Doc-comment spine](project_doc_comment_spine.md) — doc_comment/doc_tag rels ride TypeFacts (Rust syn, Kotlin KDoc, TS oxc); only the 3 TypeLang langs; NOT a CI gate
+- [Never edit autogen zones](feedback_never_edit_autogen_zones.md) — HARD RULE: never hand-edit inside `BEGIN:`/`END:` marker spans; fix the GENERATOR (examples/builtin-rels.dl, op-table.dl); prose below markers is hand-editable
+- [SCIP multi-lang indexers](reference_scip_multilang_indexers.md) — new lang: Tier 1 (SCIP) nearly free, Tier 2 (TypeLang) is Kotlin-sized; scip-go MOVED to github.com/scip-code; scip-python crashes in bare /tmp (index in-place + SPREFA_SCIP_INDEX)
+- [CST ancestry via nested-set spans](reference_cst_ancestry_nested_set.md) — node/child CST rels on main (ae01cbc); interval predicate wins point/containment/innermost, closure(child) wins FULL anc materialization (91ms vs 484ms) — complementary
+- [DSL functional, no statements](feedback_dsl_functional_no_statements.md) — derivable things are facts/relations + typed values, NOT top-level statements; rejected `repo nearest.` keyword, made it the --root default
+- [Refactor detection direction](project_refactor_detection_direction.md) — shape-iso detectors ruled a DEAD END 2026-06-27 (coincidence-dominated); LLM = candidate brain, dl = deterministic executor; don't re-pitch shape-iso
+- [scip_name not dl split](reference_scip_name_not_dl_split.md) — SCIP descriptor-name extraction belongs in-engine (scip_name rel); dl-split MEASURED 42% wrong on real RA monikers; don't re-attempt
+- [v5 dl engine](project_v5_dl_engine.md) — reactive datalog-over-code, SQLite-welded; SCC-condensed reaches wired (closure() form; a view can't seed point queries -> Rust path); has research doc + book
+- [v5 data model](project_v5_data_model.md) — PINNED contract at docs/data-model.md: repo/rev/content/file layers, content-separate-from-location; invariant = never re-collapse
+- [No casual code names](feedback_no_casual_codenames.md) — say the actual thing, not "E5"/phase labels; shorthand in parens only when repeating
+- [Markdown formatting](feedback_markdown_formatting.md) — lists/tables/links render clean in VSCode webview; code fences for runnable code only; no ASCII diagrams
+- [Build don't analyze](feedback_build_dont_analyze.md) — when Chris is stuck/low, bias to smallest RUNNABLE thing; verify don't assert; be scaffolder, not where the architecture lives
+- [Parallel worktree workflow](feedback_parallel_worktree_workflow.md) — stale-base gotcha, verify-before-merge discipline, worktree cleanup, no green-faking
+- [Genericization initiative](project_genericization_initiative.md) — "move the graph up" into effect_runtime; COMPLETE 2026-05-16
+- [Rule is a function, not a channel](feedback_rule_is_function_not_channel.md) — vocabulary ban: no send/sink/chan; rule = fn, write = return/yield, r?() = read returns
+- [Dots/types/nesting initiative](project_dots_types_nesting.md) — COMPLETE 2026-05-18, main fe88ccd5; 3 rocks deferred
+- [Dots/types/ts-import initiative](project_dots_types_tsimport.md) — rename+chained-dots MERGED main 36f15733; feat/ts-import-wip PARKED (ast declare panic repro) on a stale base
+- [Cross-file entity graph](project_cross_file_entity_graph.md) — REIFY MACRO green on feat/rs-entity-graph 952d7832, NOT merged; t.i64 deferred behind 3 stacked preconditions; IR≠SCIP (symbol-string key at U2 only)
+- [No tag/fact, use rule()](feedback_no_tag_fact_use_rule.md) — tag/fact deprecated, slated for deletion; rule() declares + sinks
+- [Recursion surface gaps](project_recursion_surface_gaps.md) — recursion+retraction+owner-subscribe MERGED (main 37bb93a5); incremental skip env-gated (SPREFA_REC_INCREMENTAL) pending per-rule source oracle
+- [re DSL hole literal rule](reference_re_dsl_hole_literal_rule.md) — re body with ${} holes = literal text (metachars escaped); no holes = raw regex passthrough; main e0a92c20
+- [Types in value space](project_types_in_value_space.md) — 2026-05-19 ruling: types live in VALUE space (quicktype/TypeSpec/Zig-comptime direction); must not block the entity-graph spine
+- [?-then-ref intra-row self-eq](reference_qmark_then_ref_intra_row.md) — ?-bind then same-name ref in the same call = intra-row equality (not input.term); MERGED main 294d60db
+- [Callable as a Value](project_callable_value.md) — ValueKind::Callable + apply, MERGED main e3ea0aa (an earlier note said unmerged — wrong); precondition for typed cols; `x?:` lexes as neither kwarg nor typed-col
+- [Cons/calling unification](project_cons_calling_unification.md) — list+kwarg = one Cons cell, root = implicit body; DECIDED v2 2026-05-19; ROUTE A cons-as-op under grammar validation
+- [LSP maintenance debt](project_lsp_maintenance_debt.md) — large unpaid LSP debt (flag 2026-05-19); weigh against green-field plans touching walker/lower/cons/callable
+- [Host-LSP trait architecture](project_host_lsp_trait_architecture.md) — plan got 6 FATAL findings from the trait-design lens; needs v2 (sealed payload enum) before buildable
+- [Type-IR value-space plan](project_type_ir_value_space_plan.md) — DRAFT in sprefa-types worktree; 3 fork picks, 8 steps, 3 open Qs; precondition callable-value (now merged)
+- [Rule form + call surface](feedback_rule_form_and_call.md) — keep `rule(:name){body}` nested; if not running post-auto_run removal, ADD bare `name();` not inline the body
+- [No imperative seed pipes](feedback_no_imperative_seed_pipes.md) — no top-level "rule append"; prefers `rule(:r, cols?){body}`; exact body semantics unconfirmed, ask before extrapolating
+- [Instance leak + memory control](project_instance_leak_memory_control.md) — DRAFT plan 2026-05-20; L1-L7 taxonomy, 5 phases ending in watch_this_file(); depends on clock-seam plan
+- [Lowering vs runtime separation](feedback_lowering_vs_runtime_separation.md) — OperatorDef (lowering) and Component (runtime) stay in SEPARATE file trees; coupling is the registry op-name key
+- [No DD vocabulary](feedback_no_dd_vocabulary.md) — exorcise FactStore/RuntimeGraph/owner/supports/witness; propose React/Rx/graph vocabulary instead
+- [frame-anim animator](reference_frame_anim_animator.md) — /animate command + frame-anim template; live app at anim/; relation-graph (predicate dep graph) supported
+- [d2: no PNG raster](feedback_d2_no_png_raster.md) — `d2 *.png` spawns headless Chromium (ballooned to 11GB); render SVG only, view via qlmanage
+- [gh proxy no rate decrement](reference_gh_proxy_no_rate_decrement.md) — `gh api` does NOT decrement core rate limit in this env; compare request count + 304 ratio; repeatable cmp = bench/ghcacher_vs_dl.sh
+- [VS Code same-version install trap](reference_vscode_samever_install_trap.md) — same-version vsix reinstall silently no-ops while VS Code runs; uninstall+rm+install+md5-verify

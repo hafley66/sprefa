@@ -294,7 +294,7 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
     // program it watches). Empty = `.dl/*.dl` discovery inside resolve_programs.
     let programs = &programs;
     if cli.lsp {
-        crate::run_lsp(programs, db.as_deref(), root)
+        crate::run_lsp(programs, db.as_deref(), db_defaulted, root)
     } else if cli.hook {
         // Harness-hook: stdin event -> tick -> stdout hook JSON. Exit 0 normally
         // (block rides the JSON), 1 if the program is broken (user-facing only).

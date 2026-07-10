@@ -512,8 +512,8 @@ pub fn run_settle(programs: &[String], db_path: Option<&str>, root: PathBuf,
 
 /// Run as an LSP server over stdio. The program's `diag` relation becomes live
 /// editor diagnostics; lint fires on file open / save. See docs/lsp.md.
-pub fn run_lsp(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Result<()> {
-    lsp::run_lsp(programs, db_path, root)
+pub fn run_lsp(programs: &[String], db_path: Option<&str>, db_defaulted: bool, root: PathBuf) -> Result<()> {
+    lsp::run_lsp(programs, db_path, db_defaulted, root)
 }
 
 pub fn run_watch(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Result<()> {

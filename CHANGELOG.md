@@ -6,6 +6,35 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+### Fixed
+- **`--lsp` no longer auto-spawns a daemon when `--db` is explicit.** `run_lsp`'s
+  subscriber thread spawned a DETACHED `dl daemon start` whenever the root owned
+  `.dl/`, ignoring the explicit `--db` every e2e test passes for isolation — each
+  LSP test sandbox leaked a live daemon (12 found running against real sandboxes
+  and, via an unrelated cwd accident, the dev repo's own socket). The gate now
+  mirrors `run_file` (`db_path.is_none() || db_defaulted`); the lsp_protocol and
+  diag_mute test harnesses additionally set `DL_NO_DAEMON=1` as defense in depth.
+- **`dl daemon start <program>` refuses a program outside the resolved root.**
+  Root resolution never looked at the program path, so `dl daemon start
+  /tmp/x/p.dl` run from a repo cwd silently bound THAT repo's socket while
+  serving the /tmp program (observed wedging reactive doc regen for a day). An
+  absolute program that canonicalizes outside the root now exits 2 with the
+  mismatch named; set `DL_DAEMON_ROOT` to serve cross-root deliberately.
+
+### Added
+- **Dev-loop just recipes (deterministic ceremony as scripts, not agents).**
+  `just verify` = build + full suite with the FSEvents flake solo-rerun policy +
+  the magic-rel/recompute-guard rails; `just regen-docs` = every doc generator
+  with a fresh db, second-pass convergence required, checked-claims rail;
+  `just cut X.Y.Z` = verify + changelog gate + `scripts/release.sh` + commit
+  audit (never pushes). Gotchas live as header comments in
+  `scripts/verify.sh`/`scripts/regen-docs.sh`.
+- **Tracked agent + memory homes under `.agents/`.** `.agents/agents/` carries
+  the subagent definitions (magic-rel-auditor, builtin-rel-implementer,
+  extraction-op-implementer) and `.agents/memory/` the session-memory corpus;
+  `.claude/` stays gitignored. `assets/sprefa-flow-panel-layers.skill.md` gains
+  the tracked backing the other skills already had.
+
 ## [0.6.24] - 2026-07-10
 
 ### Added

@@ -139,3 +139,23 @@ ext-reload:
     @until mkdir {{repo}}/.ext-reload.lock 2>/dev/null; do sleep 1; done
     -just ext-build ext-package ext-install
     @rmdir {{repo}}/.ext-reload.lock
+
+# ── dev loops (deterministic ceremony → scripts, not agents) ─────────────────
+
+# full suite with the FSEvents flake re-run policy, then the repo rails
+# (magic-rel audit, recompute guard). Exit 0 = verified green.
+verify:
+    bash scripts/verify.sh
+
+# regenerate every self-hosted doc (gen-*.dl + README zone splicers) with a
+# fresh db each, require second-pass convergence, run the checked-claims rail.
+regen-docs:
+    bash scripts/regen-docs.sh
+
+# cut a release: verify, changelog gate, scripts/release.sh, commit audit.
+# Never pushes — release.sh prints the two manual push commands.
+cut version:
+    bash scripts/verify.sh
+    @awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f&&NF' CHANGELOG.md | grep -q . || { echo "CHANGELOG [Unreleased] is empty"; exit 1; }
+    bash scripts/release.sh {{version}}
+    git show --stat HEAD

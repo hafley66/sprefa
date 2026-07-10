@@ -36,7 +36,7 @@ use crate::{ast, db};
 
 use tree_sitter::Parser;
 
-pub fn run_lsp(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Result<()> {
+pub fn run_lsp(programs: &[String], db_path: Option<&str>, db_defaulted: bool, root: PathBuf) -> Result<()> {
     // Stand up the connection and complete the initialize handshake FIRST: the
     // client sends its workspace in `rootUri`, which overrides the process cwd
     // as the scan root. This is how the root reaches an editor-spawned server —
@@ -119,7 +119,16 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Res
     // forwards each push as a synthetic LSP Notification (`dl/diagChanged`)
     // through the connection's sender; the main loop recognizes it and re-
     // publishes from this engine's current view of the shared db.
-    if crate::daemon::enabled_for(&root) {
+    //
+    // Gated the same way `run_file`'s daemon routing is: only when this session
+    // is on the SHARED db (no explicit `--db`, or the caller took the auto-
+    // defaulted `.dl/cache.db`). An explicit `--db` is the caller opting into
+    // isolation (a test sandbox, a scratch inspection db) — attaching to (or
+    // spawning) a background daemon for that root would silently escape the
+    // isolation the caller asked for. Without this check every `--lsp` session
+    // over a `.dl`-having root tries to auto-spawn a daemon regardless of
+    // `--db`, which is how a test sandbox leaks a real `dl daemon start`.
+    if crate::daemon::enabled_for(&root) && (db_path.is_none() || db_defaulted) {
         let root_clone = root.clone();
         let push_sender = connection.sender.clone();
         std::thread::Builder::new().name("dl-lsp-subscriber".into())
