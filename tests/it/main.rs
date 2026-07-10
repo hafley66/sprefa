@@ -108,6 +108,7 @@ mod regex_sugar;
 mod recompute_guard;
 mod rel_catalog;
 mod repo_sink;
+mod resolver_import_alias;
 mod resolver_import_narrowing;
 mod resolver_repo_scope;
 mod rule_edit;
