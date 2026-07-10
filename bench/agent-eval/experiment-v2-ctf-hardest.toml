@@ -1,0 +1,40 @@
+# experiment-v2-ctf-hardest.toml — the optional sonnet add-on for the v2 CTF
+# pilot. Same fixture, manifest, and prompt as experiment-v2-ctf-pilot.toml;
+# the only differences are sonnet cells and running it capped to the single
+# HARDEST task (`ctf-full-inventory`, which ctf_tasks.py emits first, so
+# `run.sh --tasks-limit 1` selects exactly it). Two sonnet calls total.
+#
+# Kept as a separate experiment (own results file) so the haiku pilot's
+# separation number is never mixed with a 2-call sonnet spot check.
+
+version = "v2-ctf-hardest"
+class = "CTF"
+repo_root = "."
+fixture = "fixtures/ctf-permissions"
+manifest = "fixtures/ctf-permissions/MANIFEST.json"
+reps = 1
+timeout_secs = 300
+parallelism = 2
+
+note = "Sonnet spot check on the single hardest CTF task (full export-permission inventory across 4 abstractions x 2 languages), capped via --tasks-limit 1. Same fixture/manifest/prompt as v2-ctf-pilot; sonnet-grep vs sonnet-dl, 1 rep. Companion to the haiku pilot, not folded into it."
+
+[filters]
+score_window_lines = 2
+
+[[models]]
+id = "sonnet"
+claude_model = "sonnet"
+
+[[cells]]
+name = "sonnet-grep"
+model = "sonnet"
+allowed_tools = "Bash,Read,Grep,Glob"
+skill_file = "fixtures/ctf-permissions/skills/baseline.SKILL.md"
+mcp = false
+
+[[cells]]
+name = "sonnet-dl"
+model = "sonnet"
+allowed_tools = "Bash,Read,Grep,Glob,mcp__dl__dl.what,mcp__dl__dl.verb,mcp__dl__dl.rows"
+skill_file = "fixtures/ctf-permissions/skills/dl.SKILL.md"
+mcp = true

@@ -1,0 +1,5 @@
+{
+  "can_export": { "roles": ["admin", "analyst"] },
+  "can_import": { "roles": ["admin"] },
+  "can_view": { "roles": ["admin", "analyst", "viewer"] }
+}

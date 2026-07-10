@@ -1,0 +1,39 @@
+# experiment-v2-ctf-pilot.2.toml — RERUN of the v2 CTF pilot with the per-cell
+# wall-clock cap raised 240s -> 600s. In v2-ctf-pilot the only cross-cell
+# deltas were three timeouts (exit 124) on the two hardest tasks
+# (full-inventory, neg-control-import); this rerun removes the wall-clock
+# artifact so the F1 reflects capability, not clock. Everything else (fixture,
+# manifest, prompt, skills, cells, seed) is identical to v2-ctf-pilot. Kept as
+# its own result file; v2-ctf-pilot stays as run.
+
+version = "v2-ctf-pilot.2"
+class = "CTF"
+repo_root = "."
+fixture = "fixtures/ctf-permissions"
+manifest = "fixtures/ctf-permissions/MANIFEST.json"
+reps = 1
+timeout_secs = 600
+parallelism = 2
+
+note = "RERUN of v2-ctf-pilot with the per-cell cap raised to 600s (v2-ctf-pilot's only cross-cell deltas were 3 timeouts on the 2 hardest tasks). Same fixture/manifest/prompt/skills/cells. This is the timeout-clean read of the haiku grep-vs-dl separation."
+
+[filters]
+score_window_lines = 2
+
+[[models]]
+id = "haiku"
+claude_model = "haiku"
+
+[[cells]]
+name = "haiku-grep"
+model = "haiku"
+allowed_tools = "Bash,Read,Grep,Glob"
+skill_file = "fixtures/ctf-permissions/skills/baseline.SKILL.md"
+mcp = false
+
+[[cells]]
+name = "haiku-dl"
+model = "haiku"
+allowed_tools = "Bash,Read,Grep,Glob,mcp__dl__dl.what,mcp__dl__dl.verb,mcp__dl__dl.rows"
+skill_file = "fixtures/ctf-permissions/skills/dl.SKILL.md"
+mcp = true
