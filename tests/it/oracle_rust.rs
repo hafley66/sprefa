@@ -208,18 +208,16 @@ fn call_resolution_parity_vs_rust_analyzer() {
         String::from_utf8_lossy(&status.stderr));
     let index = Index::parse_from_bytes(&std::fs::read(&scip_out).unwrap()).expect("parse scip");
 
-    // --- ours, index-free: call_site (the attempts) + call_edge (the picks)
-    // from a scratch db with NO index.scip and no ambient config repos.
+    // --- ours, index-free: call_site (the attempts) + site_pick (the
+    // per-call-site resolved picks; see oracle_parity::SITE_PICK_TAIL) from a
+    // scratch db with NO index.scip and no ambient config repos.
     let tmp = std::env::temp_dir().join("sprefa_oracle_parity_db");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
-    let prog = r#"
-rel seen(path: file).
-seen(path) <- scan("WORK", "src/**/*.rs", path, rev).
-? call_site(repo, caller, callee, file, line).
-? call_edge(caller, callee, kind).
-"#;
-    std::fs::write(tmp.join("parity.dl"), prog).unwrap();
+    let prog = format!(
+        "rel seen(path: file).\nseen(path) <- scan(\"WORK\", \"src/**/*.rs\", path, rev).\n{}",
+        crate::oracle_parity::SITE_PICK_TAIL);
+    std::fs::write(tmp.join("parity.dl"), &prog).unwrap();
     let out = Command::new(DL)
         .arg(tmp.join("parity.dl"))
         .args(["--db", tmp.join("db").to_str().unwrap(), "--no-daemon"])
