@@ -30,6 +30,12 @@ tags consumed by cargo-dist.
   it into the window.
 
 ### Fixed
+- **`--lsp --stdio` killed the LSP at spawn.** `--stdio` is an alias of `--lsp`
+  (added v0.6.22), and newer vscode-languageclient appends `--stdio` to stdio
+  servers even when the extension already passed `--lsp` — clap's SetTrue
+  rejects the repeat, so the server exited code 2 five times and VS Code gave
+  up ("dl stopped"). The flag now self-overrides (`overrides_with`), so any
+  mix of the two spellings parses.
 - **madge oracle vs colorized madge.** Newer madge (chalk) colorizes even
   non-tty stdout, so ANSI escapes broke the text-parsed `--warning` skip list
   in `tests/it/oracle_madge.rs`. The test now sets `NO_COLOR=1` /

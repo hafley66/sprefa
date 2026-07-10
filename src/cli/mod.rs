@@ -87,8 +87,10 @@ struct Cli {
     /// live editor diagnostics (lint on open/save). See docs/lsp.md. Accepts
     /// `--stdio` as an alias (vscode-languageclient, coc.nvim, and neovim's
     /// lspconfig all append it when spawning an LSP server; stdio is the only
-    /// transport either way).
-    #[arg(long, alias = "stdio", help_heading = "Run modes")]
+    /// transport either way). Self-override lets `--lsp --stdio` coexist: a
+    /// client that passes the flag AND a client library that appends the alias
+    /// must not kill the server with clap's duplicate-arg error.
+    #[arg(long, alias = "stdio", overrides_with = "lsp", help_heading = "Run modes")]
     lsp: bool,
     /// Lint/ban mode: render the `diag` relation to stderr. Exit 0 clean, 2 if
     /// any `error`-severity row exists (Claude Code's blocking-hook code), 1 on
@@ -335,5 +337,28 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
         crate::run_watch(programs, db.as_deref(), root)
     } else {
         crate::run_file(programs, db.as_deref(), db_defaulted, root, cli.query_json)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    /// vscode-languageclient appends `--stdio` (the alias) even when the
+    /// spawning extension already passed `--lsp`; both spellings on one command
+    /// line must parse instead of dying with clap's duplicate-arg error.
+    #[test]
+    fn lsp_flag_tolerates_the_stdio_alias_appended_by_lsp_clients() {
+        for argv in [
+            vec!["dl", "--lsp"],
+            vec!["dl", "--stdio"],
+            vec!["dl", "--lsp", "--stdio"],
+            vec!["dl", "--stdio", "--lsp"],
+        ] {
+            let cli = Cli::try_parse_from(&argv)
+                .unwrap_or_else(|e| panic!("{argv:?} must parse: {e}"));
+            assert!(cli.lsp, "{argv:?} must set lsp");
+        }
     }
 }
