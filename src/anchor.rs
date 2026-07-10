@@ -57,6 +57,7 @@ pub struct QueryOut {
     pub notes: Vec<String>,
 }
 
+// LANG-JUNCTION(anchor-source-exts): the extension list that classifies a bare `dl what` anchor as a path (and the module's probe program's scan globs further down); a new language's extension belongs here for path anchors to classify
 /// Known source extensions that make a bare (slash-free) string a [`Anchor::Path`].
 const SOURCE_EXTS: &[&str] = &[
     "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs", "kt", "kts", "py", "go",

@@ -5104,6 +5104,7 @@ impl Engine {
         Ok(())
     }
 
+    // LANG-JUNCTION(manifest-probe): the manifest filename list probed above the scanned file set; a language whose module resolver reads a manifest (Cargo.toml, package.json, go.mod) must add its name here or the resolver gets no manifest content
     /// Read the Cargo.toml / package.json / go.mod manifests above the file set,
     /// at this rev, into a map (manifest path -> contents) for the resolver's
     /// crate / package / module registries. Probes the distinct ancestor
