@@ -928,7 +928,24 @@ foreign resolution model).
 - [ ] **Go + Python TypeLangs IN FLIGHT** (2 Sonnet worktree agents launched
       2026-07-10; plan items B and C of pseudo-scip): GoTypes + GoResolver,
       PyTypes + PyResolver (type_link chasing scoped out), each with unit + e2e
-      tests. Merge discipline on completion: rebase, verify, ff-merge.
+      tests. Mid-flight amendment to PyResolver (Chris, PYTHONPATH concern):
+      import-root DISCOVERY from the scanned file set (repo root + src-layout +
+      parents of top-level packages, the rspath::crate_roots precedent;
+      multi-root ambiguity stays unresolved loudly) + sys.path.insert/append
+      detection counted loudly per refresh, never followed. DEFERRED seam:
+      `py_root(path)` user fact consulted by the resolver (the .dl PYTHONPATH) —
+      resolver-reads-rel is the invisible-coupling shape, needs the declared
+      demand-sink treatment before building. Merge discipline on completion:
+      rebase, verify, ff-merge. FOLLOW-ON (Chris 2026-07-10, staffing decided):
+      after BOTH merge, a FRESH Opus agent (not the two large-context Sonnets)
+      adds go/python parity twins on the shared tests/it/oracle_parity.rs
+      scorer — small fixture repos (go_ws/py_ws, mirror ts_ws: cross-file call,
+      method call, aliased import, ambiguous name), scip-go / scip-python
+      ground truth, runtime-skip without the indexer. GOTCHA for the brief:
+      scip-python crashes in bare /tmp — index in-place + SPREFA_SCIP_INDEX
+      (see memory reference_scip_multilang_indexers); keep index.scip away
+      from the fixture root during the dl run so the index-free tier is what's
+      measured.
 
 ### Open (scip / language-surface — 2026-07-08 agent-session feedback, batch 2)
 Five more complaints (SCIP + dl-surface). NOT yet triaged against code; capture only.
