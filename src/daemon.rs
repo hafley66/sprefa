@@ -1535,6 +1535,22 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                 "total": out.total, "notes": out.notes,
             }))
         }
+        "q" => {
+            let verb = match req.params.get("verb").and_then(|v| v.as_str()) {
+                Some(s) => s,
+                None => return Response::err(req.id, INVALID_PARAMS, "missing verb"),
+            };
+            let arg = match req.params.get("target").and_then(|v| v.as_str()) {
+                Some(s) => s,
+                None => return Response::err(req.id, INVALID_PARAMS, "missing target"),
+            };
+            let limit = req.params.get("limit").and_then(|v| v.as_u64()).map(|n| n as usize);
+            let offset = req.params.get("offset").and_then(|v| v.as_u64()).map(|n| n as usize);
+            match run_q_eval(sr, verb, arg, limit, offset) {
+                Ok(v) => Response::ok(req.id, v),
+                Err((code, msg)) => Response::err(req.id, code, msg),
+            }
+        }
         "query_sql" => {
             let sql_raw = match req.params.get("sql").and_then(|v| v.as_str()) {
                 Some(s) => s,
@@ -1751,6 +1767,56 @@ fn run_eval(sr: &Arc<ServedRoot>, text: &str) -> Result<Value, (i64, String)> {
         })).collect::<Vec<_>>(),
         "diagnostics": all_diags,
     }))
+}
+
+/// Evaluate a `dl q <verb>` against a SCRATCH engine (never the served one):
+/// build the embedded verb program (with the `target` fact injected), merge it
+/// onto the base program so it inherits the served scan corpus, tick a fresh
+/// in-memory engine, capture the verb's `?` query, and shape it into the
+/// `{columns, rows, total, notes}` envelope with the `resolve_name` note. Mirrors
+/// `run_eval`; the daemon-side of the `dl q` runner.
+fn run_q_eval(
+    sr: &Arc<ServedRoot>,
+    verb: &str,
+    arg: &str,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Result<Value, (i64, String)> {
+    let Some(spec) = crate::verbs::find(verb) else {
+        return Err((INVALID_PARAMS,
+            format!("unknown verb {verb:?}; available verbs: {}", crate::verbs::verb_list())));
+    };
+    let snippet = crate::verbs::verb_program(spec, arg)
+        .map_err(|e| (INVALID_PARAMS, format!("verb program: {e}")))?;
+    let snippet_queries: Vec<crate::ast::Item> = snippet
+        .items
+        .iter()
+        .filter(|i| matches!(i, crate::ast::Item::Query(_)))
+        .cloned()
+        .collect();
+    let mut merged = {
+        let base = lock(&sr.prog);
+        Program { items: base.items.iter().cloned().chain(snippet.items).collect() }
+    };
+    let diags = crate::typecheck::check_and_normalize(&mut merged, "<verb>");
+    if diags.iter().any(|d| d.severity == crate::ast::Severity::Error) {
+        let msgs: Vec<String> = diags.iter()
+            .filter(|d| d.severity == crate::ast::Severity::Error)
+            .map(|d| d.msg.clone()).collect();
+        return Err((INTERNAL_ERROR, format!("verb typecheck: {}", msgs.join("; "))));
+    }
+    let conn = db::open(None).map_err(|e| (INTERNAL_ERROR, format!("db: {e}")))?;
+    let mut eng = Engine::new(conn, sr.root.clone());
+    eng.set_repos(load_repos_eager());
+    eng.tick(&merged, true).map_err(|e| (INTERNAL_ERROR, format!("tick: {e}")))?;
+    let qprog = Program { items: snippet_queries };
+    let results = eng.run_queries_capture(&qprog)
+        .map_err(|e| (INTERNAL_ERROR, format!("query: {e}")))?;
+    let (columns, rows) = crate::verbs::shape(results);
+    let total = rows.len();
+    let rows = crate::verbs::page(rows, limit, offset);
+    let notes = vec![crate::verbs::resolve_note(&eng, arg)];
+    Ok(json!({"columns": columns, "rows": rows, "total": total, "notes": notes}))
 }
 
 fn diag_to_json(d: &DiagRow) -> Value {
@@ -2039,6 +2105,20 @@ pub fn summary(root: Option<&Path>, path: &str) -> Result<QueryAnswer> {
     let mut s = connect()?;
     let params = with_root(json!({"path": path}), root);
     let req = Request::new(0, "summary", params);
+    let resp = rpc_call(&mut s, &req)?;
+    if let Some(err) = resp.error { anyhow::bail!("{}", err.message); }
+    Ok(decode_query_answer(&resp.result.unwrap_or_default()))
+}
+
+/// `dl q <verb> <target>` against the daemon.
+pub fn q(root: Option<&Path>, verb: &str, target: &str, limit: Option<usize>, offset: Option<usize>)
+    -> Result<QueryAnswer>
+{
+    let mut s = connect()?;
+    let mut params = with_root(json!({"verb": verb, "target": target}), root);
+    if let Some(l) = limit { params["limit"] = json!(l); }
+    if let Some(o) = offset { params["offset"] = json!(o); }
+    let req = Request::new(0, "q", params);
     let resp = rpc_call(&mut s, &req)?;
     if let Some(err) = resp.error { anyhow::bail!("{}", err.message); }
     Ok(decode_query_answer(&resp.result.unwrap_or_default()))

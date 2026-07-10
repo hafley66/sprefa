@@ -69,12 +69,7 @@ fn daemon_first(o: &Opts) -> bool {
 fn warm_engine(o: &Opts) -> Result<crate::engine::Engine> {
     let cwd = std::env::current_dir()?;
     let root = cwd.canonicalize().unwrap_or(cwd);
-    let conn = crate::db::open(o.db.as_deref())?;
-    let mut eng = crate::engine::Engine::new(conn, root);
-    eng.set_repos(daemon::load_repos_eager());
-    let prog = crate::anchor::probe_program()?;
-    eng.tick(&prog, true)?;
-    Ok(eng)
+    crate::anchor::warm_engine(root, o.db.as_deref())
 }
 
 /// Print a `QueryOut`-shaped answer: the rows via the shared helper, then a
@@ -108,6 +103,78 @@ pub fn run_what(args: &[String]) -> Result<i32> {
         print_answer(&out.columns, &out.rows, out.total, &out.notes, o.offset);
     }
     Ok(0)
+}
+
+/// Parse the `dl q` args: two positionals (verb, then target) plus the shared
+/// knobs. Reuses [`parse_opts`] for the flags, then splits the positional stream
+/// into (verb, target).
+fn parse_q_opts(args: &[String]) -> (Option<String>, Option<String>, Opts) {
+    let mut positionals: Vec<String> = Vec::new();
+    let mut flags: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--limit" | "--offset" | "--db" => {
+                flags.push(args[i].clone());
+                if let Some(v) = args.get(i + 1) {
+                    flags.push(v.clone());
+                }
+                i += 2;
+            }
+            "--no-daemon" => {
+                flags.push(args[i].clone());
+                i += 1;
+            }
+            other if !other.starts_with("--") => {
+                positionals.push(other.to_string());
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    let o = parse_opts(&flags);
+    let mut it = positionals.into_iter();
+    (it.next(), it.next(), o)
+}
+
+/// `dl q <verb> <target> [--limit N] [--offset M] [--no-daemon] [--db PATH]`.
+/// A bare `dl q` (no verb) lists the available verbs. Verbs are embedded `.dl`
+/// programs with a `q_target` fact injected; see [`crate::verbs`].
+pub fn run_q(args: &[String]) -> Result<i32> {
+    let (verb, target, o) = parse_q_opts(args);
+    let Some(verb) = verb else {
+        list_verbs();
+        return Ok(0);
+    };
+    if crate::verbs::find(&verb).is_none() {
+        eprintln!("dl q: unknown verb {verb:?}; available: {}", crate::verbs::verb_list());
+        return Ok(2);
+    }
+    let Some(target) = target else {
+        eprintln!("usage: dl q {verb} <name> [--limit N] [--offset M] [--no-daemon]");
+        return Ok(2);
+    };
+    let daemon_target = root::daemon_target()?;
+    let root_opt = daemon_target.root();
+    if daemon_first(&o) && daemon::status(None)?.is_some() {
+        let ans = daemon::q(root_opt, &verb, &target, o.limit, o.offset)?;
+        print_answer(&ans.columns, &ans.rows, ans.total, &ans.notes, o.offset);
+    } else {
+        let cwd = std::env::current_dir()?;
+        let root = cwd.canonicalize().unwrap_or(cwd);
+        let out = crate::verbs::run_inproc(root, o.db.as_deref(), &verb, &target, o.limit, o.offset)?;
+        print_answer(&out.columns, &out.rows, out.total, &out.notes, o.offset);
+    }
+    Ok(0)
+}
+
+/// Print the `dl q` verb table (the bare-`dl q` help).
+fn list_verbs() {
+    println!("dl q <verb> <name> — concept verbs over the code graph:");
+    for spec in crate::verbs::verb_specs() {
+        println!("  {:<16} {:<8} {}", spec.name, spec.args, spec.doc);
+    }
+    println!("(also queryable as `? verb_catalog(verb, args, doc).`)");
 }
 
 /// `dl summary <path> [--no-daemon] [--db PATH]`.

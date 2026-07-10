@@ -53,6 +53,7 @@ ROOT & DAEMON (the two things that bite):
 SUBCOMMANDS (run `dl <cmd> -h` for detail):
   what       resolve an anchor (name / glob / path / path:line) + its neighborhood
   summary    per-file report: entities, imports in/out, callable fan, doc coverage
+  q          concept verbs: `dl q who-calls <name>` / `dl q where-defined <name>`
   daemon     control the background daemon (status/start/stop/restart/rows/...)
   setup      install the skill + wire agents, hooks, and the pre-commit rail
   update     self-update to the latest published release (--check to preview)
@@ -226,6 +227,7 @@ fn dispatch_subcommand(raw: &[String]) -> Result<Option<i32>> {
         "watch" => daemon::run_watch(rest)?,
         "what" => query::run_what(rest)?,
         "summary" => query::run_summary(rest)?,
+        "q" => query::run_q(rest)?,
         _ => return Ok(None),
     };
     Ok(Some(code))
