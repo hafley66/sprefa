@@ -64,7 +64,7 @@ impl RelKind for ScipKind {
                     col("line", Type::Int), col("col", Type::Int),
                     col("end_line", Type::Int), col("end_col", Type::Int),
                     col("role", Type::Text), col("repo", Type::Text)], group: "scip",
-                doc: "every SCIP occurrence with its 0-based line/col span, role (definition or reference), and origin repo — the position handle scip_ref lacked", ..Default::default() },
+                doc: "every SCIP occurrence with its 0-based line/col span, role (definition/import/write/read/reference), and origin repo — the position handle scip_ref lacked", ..Default::default() },
             RelDecl { name: "scip_binding".into(), cols: vec![
                     col("file", Type::Path), col("symbol", Type::Text),
                     col("local_name", Type::Text),

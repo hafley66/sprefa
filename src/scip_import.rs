@@ -316,11 +316,21 @@ fn is_def(roles: i32) -> bool {
 }
 
 /// Closed-vocabulary role for a `scip_occurrence` row, off the `symbol_roles`
-/// bitmask. `Definition` set → `definition`; everything else (a plain reference,
-/// or an Import/Read/Write reference) → `reference`. The occurrence rel only
-/// needs the def-vs-ref split; finer roles stay in the raw index.
+/// bitmask: definition | import | write | read | reference, first match wins.
+/// Write outranks read so a compound read+write access (`x += 1`) reports the
+/// rarer, more queryable side; a bare occurrence (no bits) is `reference`.
 fn role_label(roles: i32) -> &'static str {
-    if is_def(roles) { "definition" } else { "reference" }
+    if is_def(roles) {
+        "definition"
+    } else if roles & (SymbolRole::Import as i32) != 0 {
+        "import"
+    } else if roles & (SymbolRole::WriteAccess as i32) != 0 {
+        "write"
+    } else if roles & (SymbolRole::ReadAccess as i32) != 0 {
+        "read"
+    } else {
+        "reference"
+    }
 }
 
 /// The local binding text at a single-line occurrence: the source slice

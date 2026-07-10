@@ -84,7 +84,7 @@ Generated from the engine's `rel_catalog` by examples/gen-reference.dl. Do not h
 | `scip_impl` | scip | `(impl, iface)` | interface/supertype dispatch edge from SCIP is_implementation (impl to iface) |
 | `scip_local` | scip | `(fn, name)` | local-variable + parameter declarations attributed to their enclosing fn |
 | `scip_name` | scip | `(symbol, name)` | descriptor name (last identifier run) of a moniker, computed in-engine |
-| `scip_occurrence` | scip | `(file, symbol, line, col, end_line, end_col, role, repo)` | every SCIP occurrence with its 0-based line/col span, role (definition or reference), and origin repo — the position handle scip_ref lacked |
+| `scip_occurrence` | scip | `(file, symbol, line, col, end_line, end_col, role, repo)` | every SCIP occurrence with its 0-based line/col span, role (definition/import/write/read/reference), and origin repo — the position handle scip_ref lacked |
 | `scip_ref` | scip | `(file, symbol, def_file, repo)` | compiler-backed references (ref file, symbol, def file, origin repo) |
 | `scip_want` | demand | `(repo)` | SCIP index demand sink: head scip_want(repo) to make the importer ensure + load that repo's index.scip (runs installed indexers when missing, merges, loads into scip_def/scip_ref/scip_edge); one-tick latency, shallow clones skip loudly |
 | `similar` | embed | `(a, b, score)` | content-addressed nearest-neighbor pairs from the embedding backend, with score |
