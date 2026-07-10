@@ -938,17 +938,27 @@ foreign resolution model).
       precedent), alias imports -> module_binding, blank/dot imports handled.
       collect_manifests gained "go.mod". 8 typegraph + 4 modgraph units, 5 e2e
       tests/it/go.rs. Suites at merge: lib 287/0/1, it 641/0/5.
-- [ ] **Python TypeLang IN FLIGHT** (Sonnet worktree agent, 2026-07-10,
-      pseudo-scip item C): PyTypes + PyResolver (type_link chasing scoped
-      out), unit + e2e tests. Mid-flight amendment to PyResolver (Chris, PYTHONPATH concern):
-      import-root DISCOVERY from the scanned file set (repo root + src-layout +
-      parents of top-level packages, the rspath::crate_roots precedent;
-      multi-root ambiguity stays unresolved loudly) + sys.path.insert/append
-      detection counted loudly per refresh, never followed. DEFERRED seam:
-      `py_root(path)` user fact consulted by the resolver (the .dl PYTHONPATH) —
-      resolver-reads-rel is the invisible-coupling shape, needs the declared
-      demand-sink treatment before building. Merge discipline on completion:
-      rebase, verify, ff-merge. FOLLOW-ON (Chris 2026-07-10, staffing decided):
+- [x] **Python TypeLang + PyResolver LANDED** (main 646fc74, Sonnet agent,
+      2026-07-10, pseudo-scip item C): PyTypes one-parse tree-sitter walk
+      (module/class/function/method entities — NEW EntityKind::Module so a
+      module docstring has a type_entity row; annotation-only edges: bases ->
+      impl, annotated attrs -> field, params/returns/uses; subscripted
+      annotations recurse to the inner ref; PEP 257 docstrings + Sphinx
+      :param:/:returns: tags; df lift w/ ctor `new` on capitalized calls,
+      kwargs -> df_field, lambda/nested-def ::closure:: scopes, comprehension
+      loop spans, self/cls skipped). PyResolver per the mid-flight amendment:
+      import-root DISCOVERY from the scanned file set (repo root + src-layout
+      + top-level package parents, rspath::crate_roots precedent; multi-root
+      ambiguity stays unresolved loudly); sys.path.insert/append counted
+      loudly per refresh, never followed; star imports loud-unresolved;
+      import-as/from-import bindings. NON-GOALS: attribute-chain resolution
+      (type_link scoped out), Google docstrings, forward-ref string
+      annotations, `py_root(path)` user-fact seam (deferred — needs the
+      declared demand-sink treatment). MERGE NOTE: rebase over the Go arc
+      needed hand-merging (both langs appended at the same typegraph/modgraph
+      anchors); resolved by re-applying the Python diff onto the Go version at
+      unique anchors, suites green post-rebase. Suites at merge: lib 301/0/1,
+      it 644/0/5. FOLLOW-ON (Chris 2026-07-10, staffing decided):
       after BOTH merge, a FRESH Opus agent (not the two large-context Sonnets)
       adds go/python parity twins on the shared tests/it/oracle_parity.rs
       scorer — small fixture repos (go_ws/py_ws, mirror ts_ws: cross-file call,
