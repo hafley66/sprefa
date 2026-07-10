@@ -1,0 +1,127 @@
+# perf-woes.dl — the dogfood rail for tick-performance regressions.
+#
+# Origin: a 15-SECOND-per-tick defect hid for weeks because nothing surfaced
+# per-rule cost anywhere an agent or a human would look — it lived only in
+# `--profile`/`--tick-audit` logs nobody was tailing. The engine-side fix for
+# THAT defect is being built separately (do not fold tick/digest changes in
+# here); this file is the rail that makes the *class* of defect impossible to
+# miss again: a slow rule gets a squiggle at its own rule head, and a slow
+# TICK fails `--check` with a nonzero exit the way a broken build does.
+#
+# Rides the engine-telemetry built-ins from the earlier perf arc
+# (src/rels/perf.rs, see examples/perf-rails.dl for the original rail this one
+# extends): `stmt_ms(rel, ms)` = wall ms of a derived rel's most recent
+# rebuild statement(s); `rel_count(rel, rows)` = its row count as of the last
+# source-phase refresh (one-tick lag for derived rels — see perf.rs doc).
+# Both are empty on a cold db; a rail converges on the SECOND run over one db
+# (one-shot CLI) or the second tick (daemon).
+#
+# This file lives in `.dl/` so `dl --check` on this repo's own root gates it
+# for free (the daemon's/CLI's auto-discovery of `.dl/*.dl`), and so every
+# other agent editing this repo inherits the rail with no extra wiring.
+#
+#   dl --check --no-daemon     # CI gate: nonzero exit on a real regression
+#   dl --lsp                   # live squiggle at the offending rule head
+#
+# ── rules shipped ────────────────────────────────────────────────────────────
+#   1. slow-rule-onsite / slow-rule (WARN): a derived rel's last rebuild
+#      exceeded `perf_budget_ms` (default 1000ms). Positioned at the rule's
+#      OWN head line when one is found scanning the `.dl` corpus for a
+#      `rel_name(...) <-` line (the same shape `dl_diag`/other rails already
+#      squiggle on); falls back to `(engine)` line 1 when no head is found
+#      (a multi-line head the location regex doesn't match, say) so the
+#      finding is never silently dropped, just less specific.
+#   2. tick-over-budget (ERROR): the SUM of every derived rel's last rebuild
+#      ms exceeds `tick_budget_ms` (default 10000ms) — the whole-tick hard
+#      tripwire. This is the one that would have caught the 15s floor the
+#      first day it appeared: `--check` exits 2 instead of staying silent.
+#   3. rel-blowup (WARN): a derived rel's row count exceeds `perf_row_budget`
+#      (default 500000) — the closure/join-explosion early warning, unchanged
+#      in spirit from examples/perf-rails.dl's `rel-blowup` (kept as a
+#      DIFFERENT code/rel-name pair so the two rails can run side by side
+#      without redeclaring the same budget fact).
+#
+# All three budgets are facts — edit the numbers in place for this repo's
+# scale (examples/perf-rails.dl's convention), or head a STRICTER fact in a
+# program that merges with this one: fact declarations union rather than
+# override (two rows for the same budget rel both gate independently), so
+# adding a tighter row narrows what passes without touching the shipped
+# default.
+#
+# ── headroom on THIS repo, measured 2026-07-10 (two consecutive warm runs,
+#    `--no-daemon`, no source edits between them) ───────────────────────────
+#   slowest single rebuild statement:  member_edge, 744-828ms (jitter)
+#     vs perf_budget_ms default 1000ms  -> ~20-26% headroom, rail quiet.
+#   sum of every rebuild statement:    ~4.4-5.2s
+#     vs tick_budget_ms default 10000ms -> ~48-56% headroom, rail quiet.
+#   largest derived relation:          df_node_repo_rev/df_node_repo, 200442 rows
+#     vs perf_row_budget default 500000 -> ~60% headroom, rail quiet.
+#   The shipped defaults are exactly the ones sketched as the convention
+#   (1000 / 10000 / 500000) — they were not loosened to make this repo pass;
+#   this repo already clears them with real margin.
+#
+# NOT built here (documented, deferred; a parallel agent owns the engine-side
+# tick/digest work this rail must not fight with):
+#   TODO(full-reason) once the concurrent tick-perf arc lands a `full_reason`
+#   field on the tick's telemetry (why a FULL rebuild happened — blank slate /
+#   program edit / @next carry / async digest — see the perf-under-reactivity
+#   and D5 ledger entries), add a rule here that flags a full rebuild whose
+#   reason is NOT one of the expected ones, e.g.:
+#     diag(path: "(engine)", line: 1, severity: "warning", code: "unexpected-full-tick",
+#          msg: "full tick rebuilt everything; reason `${reason}` is not blank-slate/program-edit/@next/async-digest") <-
+#         tick_full_reason(reason), !expected_full_reason(reason).
+#   Do NOT depend on `full_reason` today — it does not exist on this branch.
+
+# ── budgets (facts; override by re-heading in a merged program) ────────────
+rel perf_budget_ms(max: int).
+perf_budget_ms(1000).
+
+rel tick_budget_ms(max: int).
+tick_budget_ms(10000).
+
+rel perf_row_budget(max: int).
+perf_row_budget(500000).
+
+# ── rel_name -> rule-head location, scanning the .dl corpus itself ─────────
+# A rule head always starts a line at column 0 in this codebase's style (no
+# block indentation), so `^name(...` followed somewhere on the same line by
+# `<-` catches every single-line-head rule (the overwhelming majority in this
+# repo — see recompute-guard.dl / magic-rel-audit.dl for the same shape).
+# Comment-embedded example snippets never match: every comment line in this
+# codebase is prefixed `#`, so the `^` anchor excludes them.
+rel dl_rule_head(path: file, line: int, rel_name: text).
+dl_rule_head(source_file, line, rel_name) <-
+    scan("WORK", "**/*.dl", source_file, rev),
+    match(source_file, rev, /^(?<rel_name>[a-z_][a-z0-9_]*)\(.*<-/, line).
+
+# ── 1. per-rule cost, onsite when a rule head is found ─────────────────────
+rel slow_rule_located(rel_name: text, ms: int, path: file, line: int).
+slow_rule_located(rel_name, ms, source_file, line) <-
+    stmt_ms(rel_name, ms), perf_budget_ms(max), ms > max,
+    dl_rule_head(source_file, line, rel_name).
+
+rel slow_rule_has_location(rel_name: text).
+slow_rule_has_location(rel_name) <- slow_rule_located(rel_name, _, _, _).
+
+diag(path: source_file, line: line, severity: "warning", code: "slow-rule-onsite",
+     msg: "rebuilding `${rel_name}` took ${ms}ms in one statement (budget ${max}ms); factor the join through an intermediate rel — see call_target/call_edge_bare in std/flow.dl for the precedent") <-
+    slow_rule_located(rel_name, ms, source_file, line), perf_budget_ms(max).
+
+diag(path: "(engine)", line: 1, severity: "warning", code: "slow-rule",
+     msg: "rebuilding `${rel_name}` took ${ms}ms in one statement (budget ${max}ms), and no rule head for it was found in the scanned .dl corpus; factor the join through an intermediate rel — see call_target/call_edge_bare in std/flow.dl for the precedent") <-
+    stmt_ms(rel_name, ms), perf_budget_ms(max), ms > max, !slow_rule_has_location(rel_name).
+
+# ── 2. whole-tick budget: the hard tripwire ─────────────────────────────────
+rel perf_tick_total_ms(total_ms: int).
+perf_tick_total_ms(sum(ms)) <- stmt_ms(_, ms).
+
+diag(path: "(engine)", line: 1, severity: "error", code: "tick-over-budget",
+     msg: "total derived-rebuild time this tick is ${total_ms}ms (hard budget ${max}ms) — this is the tripwire for the class of defect that hid a 15s-per-tick floor for weeks; check the slow-rule/slow-rule-onsite findings for the worst offender") <-
+    perf_tick_total_ms(total_ms), tick_budget_ms(max), total_ms > max.
+
+# ── 3. row blowup: closure/join-explosion early warning ────────────────────
+diag(path: "(engine)", line: 1, severity: "warning", code: "perf-woes-rel-blowup",
+     msg: "relation `${rel_name}` holds ${rows} rows (budget ${max}); check the join shape feeding it — a positional-blind hop or a missing pin on a closure query are the usual culprits") <-
+    rel_count(rel_name, rows), perf_row_budget(max), rows > max.
+
+? diag(path, line, severity, code, msg).
