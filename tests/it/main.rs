@@ -21,6 +21,7 @@ mod extract_cache;
 mod graph_diff_rev;
 mod perf_facts;
 mod perf_rels;
+mod perf_woes;
 mod scoped_tick;
 mod settle;
 mod magic_rel_audit;
