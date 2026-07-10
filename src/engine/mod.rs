@@ -2690,9 +2690,165 @@ impl Engine {
         None
     }
 
+    /// A compiler-tier `RefHit` off a `scip_occurrence` row. SCIP positions are
+    /// already 0-based, so they map straight to a `RefHit` range (unlike the
+    /// resolved-tier `rel_hit`, which decrements a 1-based graph line).
+    fn scip_hit(repo: String, file: String, line: i64, col: i64,
+                end_line: i64, end_col: i64, role: &str, container: String) -> RefHit {
+        RefHit {
+            repo, path: file,
+            line: line.max(0) as u32, col: col.max(0) as u32,
+            end_line: end_line.max(0) as u32, end_col: end_col.max(0) as u32,
+            role: role.to_string(), container,
+        }
+    }
+
+    /// Every `role='definition'` occurrence of `sym`, as compiler-tier hits with
+    /// the given edge `role` (used to resolve a caller/callee/impl symbol back to
+    /// its declaration site). Empty when the symbol has no definition occurrence
+    /// in the loaded index (an out-of-workspace target).
+    fn scip_def_hits(&self, sym: &str, role: &str) -> Vec<RefHit> {
+        let so = tbl("scip_occurrence");
+        self.try_rows(
+            &format!("SELECT \"file\", \"line\", \"col\", \"end_line\", \"end_col\", \"repo\" \
+                      FROM {so} WHERE \"symbol\" = ?1 AND \"role\" = 'definition'"),
+            &[&sym],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?, r.get::<_, i64>(4)?, r.get::<_, String>(5)?)),
+        )
+        .into_iter()
+        .map(|(file, line, col, el, ec, repo)| Self::scip_hit(repo, file, line, col, el, ec, role, String::new()))
+        .collect()
+    }
+
+    /// tier "compiler": when a SCIP index is loaded for the request repo, resolve
+    /// the cursor to its symbol via the `scip_occurrence` covering `(path, byte)`,
+    /// then group every occurrence of that symbol: declarations from role
+    /// `definition`, uses by their ACTUAL role (import/read/write/reference).
+    /// Callers/callees are 1-hop over `scip_fn_edge`, containing types over
+    /// `scip_impl` (the interfaces this symbol implements). `scip_binding`
+    /// supplies a use's local alias name as its `container` when it differs from
+    /// the symbol's descriptor name, so an aliased import shows its local
+    /// spelling. Returns None when no index is loaded for the repo or no
+    /// occurrence covers the cursor — the caller then falls through to the
+    /// resolved/textual tiers WITHOUT degrading them.
+    fn compiler_lens(&self, path: &str, byte: u32, text: &str) -> Result<Option<RefLens>> {
+        let so = tbl("scip_occurrence");
+        let repo = self.repo_for_path(path);
+
+        // Cursor (line, col) 0-based from the file's WORK content. SCIP columns
+        // are UTF-16 units; for ASCII identifiers (the overwhelming majority)
+        // char and UTF-16 offsets coincide. Containment (not exact col equality)
+        // tolerates the rare wide-char line.
+        let roots = self.repo_roots();
+        let root = roots.get(&repo).cloned().unwrap_or_else(|| self.root.clone());
+        let content = read_content(&root, "WORK", path).unwrap_or_default();
+        let (cl, cc) = byte_to_lc0(&content, byte);
+        let (cl, cc) = (cl as i64, cc as i64);
+
+        // The innermost occurrence covering the cursor in this file/repo.
+        let mut covering: Vec<(String, i64, i64, i64, i64)> = self.try_rows(
+            &format!("SELECT \"symbol\", \"line\", \"col\", \"end_line\", \"end_col\" \
+                      FROM {so} WHERE \"file\" = ?1 AND \"repo\" = ?2"),
+            &[&path, &repo],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?, r.get::<_, i64>(4)?)),
+        );
+        covering.retain(|(_, sl, sc, el, ec)| {
+            let after_start = *sl < cl || (*sl == cl && *sc <= cc);
+            let before_end = *el > cl || (*el == cl && *ec > cc);
+            after_start && before_end
+        });
+        // Innermost = fewest lines, then narrowest columns.
+        covering.sort_by_key(|(_, sl, sc, el, ec)| (el - sl, (ec - sc).max(0)));
+        let Some((symbol, _, _, _, _)) = covering.into_iter().next() else {
+            return Ok(None);
+        };
+
+        // Local alias names for this symbol: (file, line, col) -> local_name.
+        let sb = tbl("scip_binding");
+        let mut aliases: HashMap<(String, i64, i64), String> = HashMap::new();
+        for (file, line, col, name) in self.try_rows(
+            &format!("SELECT \"file\", \"line\", \"col\", \"local_name\" FROM {sb} WHERE \"symbol\" = ?1"),
+            &[&symbol],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?)),
+        ) {
+            aliases.insert((file, line, col), name);
+        }
+        let canonical = scip_descriptor_name(&symbol).unwrap_or_else(|| text.to_string());
+
+        // Declarations (role 'definition') and uses (every other role), grouped
+        // straight off the occurrence table.
+        let mut declarations: Vec<RefHit> = Vec::new();
+        let mut uses: Vec<RefHit> = Vec::new();
+        for (file, line, col, el, ec, role, orepo) in self.try_rows(
+            &format!("SELECT \"file\", \"line\", \"col\", \"end_line\", \"end_col\", \"role\", \"repo\" \
+                      FROM {so} WHERE \"symbol\" = ?1"),
+            &[&symbol],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?, r.get::<_, i64>(4)?, r.get::<_, String>(5)?, r.get::<_, String>(6)?)),
+        ) {
+            // An aliased spelling at this site adds display value; the canonical
+            // name is redundant with `symbol` so only a divergent local shows.
+            let container = match aliases.get(&(file.clone(), line, col)) {
+                Some(local) if *local != canonical => local.clone(),
+                _ => String::new(),
+            };
+            let hit = Self::scip_hit(orepo, file, line, col, el, ec, &role, container);
+            if role == "definition" {
+                declarations.push(hit);
+            } else {
+                uses.push(hit);
+            }
+        }
+
+        // Containing types: the interfaces this symbol implements (scip_impl),
+        // resolved to their definition site.
+        let si = tbl("scip_impl");
+        let mut containing_types: Vec<RefHit> = Vec::new();
+        for iface in self.try_rows(
+            &format!("SELECT \"iface\" FROM {si} WHERE \"impl\" = ?1"),
+            &[&symbol], |r| r.get::<_, String>(0),
+        ) {
+            containing_types.extend(self.scip_def_hits(&iface, "impl"));
+        }
+
+        // Callers / callees: 1-hop over the function-level call graph.
+        let sfe = tbl("scip_fn_edge");
+        let mut callers: Vec<RefHit> = Vec::new();
+        let mut callees: Vec<RefHit> = Vec::new();
+        for caller in self.try_rows(
+            &format!("SELECT \"caller\" FROM {sfe} WHERE \"callee\" = ?1"),
+            &[&symbol], |r| r.get::<_, String>(0),
+        ) {
+            callers.extend(self.scip_def_hits(&caller, "caller"));
+        }
+        for callee in self.try_rows(
+            &format!("SELECT \"callee\" FROM {sfe} WHERE \"caller\" = ?1"),
+            &[&symbol], |r| r.get::<_, String>(0),
+        ) {
+            callees.extend(self.scip_def_hits(&callee, "callee"));
+        }
+
+        dedup_hits(&mut declarations);
+        dedup_hits(&mut uses);
+        dedup_hits(&mut containing_types);
+        dedup_hits(&mut callers);
+        dedup_hits(&mut callees);
+
+        Ok(Some(RefLens {
+            tier: "compiler".to_string(),
+            symbol,
+            display_name: text.to_string(),
+            declarations, uses, containing_types, callers, callees,
+        }))
+    }
+
     /// Grouped references for the identifier at (`path`, `byte`), for the LSP
-    /// `dl/refs` request and `textDocument/references`. Skips the compiler/SCIP
-    /// tier (Track B wave 3): tier "resolved" joins the identifier text by name
+    /// `dl/refs` request and `textDocument/references`. Tier "compiler" (SCIP
+    /// occurrence covering the cursor) is tried first; on a miss (no index for
+    /// the repo, or no occurrence covers the cursor) it falls through to tier
+    /// "resolved", which joins the identifier text by name
     /// against the type graph (`type_entity`) and call graph (`call_def` via
     /// `call_name`) for declarations, then collects uses from `type_link`,
     /// `call_site`, and `module_import`, containing types from the declaration
@@ -2704,6 +2860,11 @@ impl Engine {
         let Some((_string_id, text, _lo, _hi)) = self.span_at(path, byte as u32)? else {
             return Ok(None);
         };
+
+        // --- tier "compiler": a SCIP occurrence covering the cursor wins ---
+        if let Some(lens) = self.compiler_lens(path, byte as u32, &text)? {
+            return Ok(Some(lens));
+        }
 
         // --- tier "resolved": declarations by name ---
         let mut declarations: Vec<RefHit> = Vec::new();
