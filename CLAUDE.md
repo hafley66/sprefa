@@ -786,6 +786,52 @@ Opus/Sonnet subagents implement, orchestrator verifies+commits.
       Local fallback (Pump-shaped), never a second resident engine on a
       shared db.
 
+### Open (turnkey query surface — plan plans/2026-07-10-turnkey-query-surface.md)
+Goal: dl useful from the first command for devs + agents, no .dl authoring.
+Tiers: `dl what` meta-query / `dl q` concept verbs / `dl find` schema-driven filter.
+- [x] **Items 1-2** (main 50bc092, Opus agent): anchor resolver `src/anchor.rs`
+      (classify name|path|path:line, glob->LIKE, resolve_name unions
+      type_entity/call_name/scip_name/scip_binding/df_node.var, missing-family
+      = zero rows, split_repo_sym; all reads via lower::tbl so the magic-rel
+      audit stays green) + `dl what <anchor>` / `dl summary <path>`
+      (src/cli/query.rs; daemon-first `what`/`summary` RPCs in src/daemon.rs;
+      in-process fallback forces extraction families via a synthetic probe
+      program — `?` items flip ExtractFamily::used). scip honesty note when
+      scip_def empty. 6 e2e tests/it/what.rs; post-rebase suites 265 lib /
+      608 it green.
+- [ ] **Item 3**: `dl q <verb>` runner — param injection (synthesized
+      `target("...")` fact merged into an embedded program, the --move
+      precedent) + verb_catalog meta rel + who-calls/where-defined first.
+- [ ] **Next arc**: blast-radius/dependents verbs via run_reaches_pair (NOT
+      materialized closure); built-in MCP tools dl.what/dl.verb/dl.rows in the
+      --mcp adapter (the decided-unbuilt eval-bridge ledger item); `dl find`
+      schema-driven filter over rel_col anchor columns (Tier 3, deferred).
+- [ ] **Implementer-debrief pain points** (from the Opus agent, 2026-07-10):
+      (a) crate::daemon vs crate::cli::daemon module-name collision is trappy
+      (RPC clients in one, verbs/print_rows in the other); (b) no public
+      `eng.ensure_families(&[...])` — forcing extraction for a read requires
+      ticking a synthetic program (~40 lines of probe scaffolding), and cold
+      `dl what` re-extracts the corpus without --db; (c) TS dataflow silently
+      sparse (`return lookup()` body -> 0 df_nodes, no doc says per-lang df
+      coverage is thin); (d) scip_ref lacks line/col that scip_occurrence/
+      scip_binding have — rel choice needs that asymmetry known up front.
+      Chris's own dogfood add (env-rel arc): daemon hijacks ad-hoc gen runs
+      with no visible signal — wants a loud "daemon is serving this root,
+      writes went there / use --no-daemon" warning.
+
+### Open (pseudo-scip coverage — plan plans/2026-07-10-pseudo-scip-coverage.md)
+Best syntactic wins per language short of a compiler (Fable research 2026-07-10).
+Ranked: H (JS/JSX rides TsTypes, 0.05 KU) + D (import-scoped ambiguity narrowing
+in the extract.rs resolve closures, 0.15 KU) first; then Go TypeLang (1.2 KU),
+generic def/ref tags tier over SG_LANG_TABLE (0.4 KU), Python TypeLang (1.2+ KU,
+type_link scoped out). stack-graphs ruled OUT (frozen upstream, .tsg cost,
+foreign resolution model).
+- [ ] **H+D in flight** (Sonnet agent worktree, 2026-07-10): TsTypes matches
+      .js/.jsx/.mjs/.cjs + SourceType per ext + engine file-selection globs;
+      len>1 bucket narrowed to import-reachable defs (module_edge read like
+      scip_ref, unique survivor only, digest fold so module-graph changes
+      re-resolve). Needs the double-check pass before merge.
+
 ### Open (scip / language-surface — 2026-07-08 agent-session feedback, batch 2)
 Five more complaints (SCIP + dl-surface). NOT yet triaged against code; capture only.
 - [x] **S1 scip_ref has no line/column** — FIXED in v0.6.24: `scip_occurrence(file,
