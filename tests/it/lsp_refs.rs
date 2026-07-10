@@ -15,6 +15,8 @@ use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
+use scip::types::{Document, Index, Occurrence, SymbolRole};
+
 const DL: &str = env!("CARGO_BIN_EXE_dl");
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -32,6 +34,13 @@ struct Session {
 
 impl Session {
     fn spawn(prog: &Path, root: &Path, db: &Path, config: Option<&Path>) -> Session {
+        Session::spawn_with(prog, root, db, config, None)
+    }
+
+    fn spawn_with(
+        prog: &Path, root: &Path, db: &Path,
+        config: Option<&Path>, scip: Option<&Path>,
+    ) -> Session {
         let mut cmd = Command::new(DL);
         cmd.arg(prog)
             .args(["--lsp", "--db", db.to_str().unwrap()])
@@ -41,6 +50,9 @@ impl Session {
             .stderr(Stdio::piped());
         if let Some(config) = config {
             cmd.env("SPREFA_CONFIG", config);
+        }
+        if let Some(scip) = scip {
+            cmd.env("SPREFA_SCIP_INDEX", scip);
         }
         let mut child = cmd.spawn().expect("spawn dl --lsp");
         let stdout = child.stdout.take().unwrap();
@@ -135,6 +147,36 @@ fn reference_params(file: &Path, line: u32, character: u32) -> serde_json::Value
         "position": {"line": line, "character": character},
         "context": {"includeDeclaration": true}
     })
+}
+
+fn occ(symbol: &str, roles: i32, range: [i32; 4]) -> Occurrence {
+    let mut o = Occurrence::new();
+    o.symbol = symbol.to_string();
+    o.symbol_roles = roles;
+    o.range = range.to_vec();
+    o
+}
+
+/// A minimal index over `src/lib.rs` for the compiler tier: `answer` defined and
+/// referenced (a caller body ref, a read-access use), plus a `caller` def so the
+/// fn-level call graph derives `scip_fn_edge(caller, answer)`.
+fn write_compiler_index(path: &Path) {
+    let answer = "rust-analyzer cargo test 1.0.0 `crate`/answer().";
+    let caller = "rust-analyzer cargo test 1.0.0 `crate`/caller().";
+    let mut idx = Index::new();
+    let mut doc = Document::new();
+    doc.relative_path = "src/lib.rs".to_string();
+    doc.occurrences = vec![
+        // fn answer() {}   -> `answer` at cols 3..9
+        occ(answer, SymbolRole::Definition as i32, [0, 3, 0, 9]),
+        // fn caller() { answer() } -> `caller` at 3..9, `answer` call at 14..20
+        occ(caller, SymbolRole::Definition as i32, [1, 3, 1, 9]),
+        occ(answer, 0, [1, 14, 1, 20]),
+        // a synthetic read-access use, to prove uses group by ACTUAL role
+        occ(answer, SymbolRole::ReadAccess as i32, [3, 0, 3, 6]),
+    ];
+    idx.documents = vec![doc];
+    scip::write_message_to_file(path, idx).unwrap();
 }
 
 fn roles(hits: &serde_json::Value) -> Vec<String> {
@@ -266,6 +308,163 @@ fn references_multi_repo_maps_each_root() {
         "a hit under alpha's own root: {uris:?}");
     assert!(uris.iter().any(|u| u.contains("/beta/") && u.ends_with("src/lib.rs")),
         "a hit under beta's own root (NOT primary-root joined): {uris:?}");
+
+    s.shutdown();
+}
+
+/// The program shared by the compiler-tier and its fallback test: locate the
+/// fn-name spans (so the cursor sits on a located string), opt into the SCIP
+/// family (`scip_occurrence`) AND the type graph (`type_entity`) so the tier
+/// used is determined purely by whether an index is loaded.
+const COMPILER_PROG: &str = concat!(
+    "rel sym(name: text, f: file, l: int).\n",
+    "sym(name, f, l) <- scan(\"WORK\", \"src/**/*.rs\", f, rev), ",
+    "match(f, rev, /fn (?<name>[a-z_]+)/, l).\n",
+    "rel occ(sym: text).\n",
+    "occ(sym) <- scip_occurrence(_, sym, _, _, _, _, _, _).\n",
+    "rel te(name: text).\n",
+    "te(name) <- type_entity(_, _, name, _, _, _, _).\n",
+);
+
+/// Test (4): compiler tier. With an `index.scip` loaded, a cursor on the
+/// `answer` definition resolves via the covering `scip_occurrence` to tier
+/// "compiler": a declaration (role "definition"), uses grouped by their ACTUAL
+/// SCIP role (a "reference" and a "read", never collapsed to "call"/"text"), and
+/// a caller off `scip_fn_edge`.
+#[test]
+fn dl_refs_compiler_tier_groups_scip_roles() {
+    let root = sandbox("compiler");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/lib.rs"),
+        "fn answer() {}\nfn caller() { answer() }\n").unwrap();
+    let index = root.join("index.scip");
+    write_compiler_index(&index);
+    let prog = root.join("p.dl");
+    fs::write(&prog, COMPILER_PROG).unwrap();
+
+    let mut s = Session::spawn_with(&prog, &root, &root.join("refs.db"), None, Some(&index));
+    initialize(&mut s, &root);
+
+    // Cursor inside `answer` on its def line (line 0, char 5 — SCIP def span 3..9).
+    let result = s.request(2, "dl/refs", refs_params(&root.join("src/lib.rs"), 0, 5));
+    let lens = result.as_object().unwrap_or_else(|| panic!(
+        "expected a RefLens object, got: {result}\nstderr: {}", drain_stderr(&mut s.child)));
+    assert_eq!(lens.get("tier").and_then(|t| t.as_str()), Some("compiler"),
+        "a SCIP occurrence covers the cursor: {result}");
+
+    let decl_roles = roles(lens.get("declarations").unwrap_or(&serde_json::Value::Null));
+    assert!(decl_roles.iter().any(|role| role == "definition"),
+        "the declaration is a SCIP definition occurrence: {result}");
+
+    let use_roles = roles(lens.get("uses").unwrap_or(&serde_json::Value::Null));
+    assert!(use_roles.iter().any(|role| role == "reference"),
+        "the body reference surfaces with its actual role: {result}");
+    assert!(use_roles.iter().any(|role| role == "read"),
+        "the read-access use keeps its distinct role (not collapsed): {result}");
+    assert!(!use_roles.iter().any(|role| role == "text" || role == "call"),
+        "compiler-tier uses carry SCIP roles, not resolved/textual labels: {result}");
+
+    let callers = lens.get("callers").and_then(|c| c.as_array())
+        .unwrap_or_else(|| panic!("callers array: {result}"));
+    assert!(!callers.is_empty(),
+        "scip_fn_edge surfaces `caller` as a caller of `answer`: {result}");
+
+    s.shutdown();
+}
+
+/// Test (5): compiler-tier fallthrough. The SAME program with NO index loaded
+/// finds no covering occurrence, so `refs_lens` falls through to tier "resolved"
+/// (the type/call graph) rather than degrading it — the ladder's guarantee.
+#[test]
+fn dl_refs_falls_back_to_resolved_when_unindexed() {
+    let root = sandbox("compiler_fallback");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/lib.rs"),
+        "fn answer() {}\nfn caller() { answer() }\n").unwrap();
+    let prog = root.join("p.dl");
+    fs::write(&prog, COMPILER_PROG).unwrap();
+
+    // No SPREFA_SCIP_INDEX: scip_occurrence is empty, the compiler tier misses.
+    let mut s = Session::spawn(&prog, &root, &root.join("refs.db"), None);
+    initialize(&mut s, &root);
+
+    let result = s.request(2, "dl/refs", refs_params(&root.join("src/lib.rs"), 0, 5));
+    let lens = result.as_object().unwrap_or_else(|| panic!(
+        "expected a RefLens object, got: {result}\nstderr: {}", drain_stderr(&mut s.child)));
+    assert_eq!(lens.get("tier").and_then(|t| t.as_str()), Some("resolved"),
+        "no index -> compiler tier misses -> resolved tier answers: {result}");
+    let declarations = lens.get("declarations").and_then(|d| d.as_array())
+        .unwrap_or_else(|| panic!("declarations array: {result}"));
+    assert!(!declarations.is_empty(),
+        "the resolved tier still finds answer's declaration: {result}");
+
+    s.shutdown();
+}
+
+/// Test (6): `dl/locate`, the "follow the user" point lookup (Track B B4).
+/// Cursor on the `helper` definition (same resolved-tier fixture as test 1)
+/// returns a `LocateHit` with tier "resolved", the bare symbol, and a
+/// declaration-site file/line — no uses/callers/callees collection (the
+/// LocateHit shape has none of those fields).
+#[test]
+fn dl_locate_resolved_tier_hit() {
+    let root = sandbox("locate_resolved");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/lib.rs"),
+        "fn helper() {}\nfn caller() { helper() }\n").unwrap();
+    let prog = root.join("p.dl");
+    fs::write(&prog, concat!(
+        "rel sym(name: text, f: file, l: int).\n",
+        "sym(name, f, l) <- scan(\"WORK\", \"src/**/*.rs\", f, rev), ",
+        "match(f, rev, /fn (?<name>[a-z_]+)/, l).\n",
+        "rel te(name: text).\n",
+        "te(name) <- type_entity(_, _, name, _, _, _, _).\n",
+        "rel cs(callee: text).\n",
+        "cs(callee) <- call_site(_, _, callee, _, _).\n",
+    )).unwrap();
+
+    let mut s = Session::spawn(&prog, &root, &root.join("locate.db"), None);
+    initialize(&mut s, &root);
+
+    // Cursor inside `helper` on its def line (line 0, char 5 — bytes 3..9).
+    let result = s.request(2, "dl/locate", refs_params(&root.join("src/lib.rs"), 0, 5));
+    let hit = result.as_object().unwrap_or_else(|| panic!(
+        "expected a LocateHit object, got: {result}\nstderr: {}", drain_stderr(&mut s.child)));
+    assert_eq!(hit.get("tier").and_then(|t| t.as_str()), Some("resolved"),
+        "name resolves through the type/call graph: {result}");
+    assert_eq!(hit.get("display_name").and_then(|d| d.as_str()), Some("helper"), "{result}");
+    assert!(hit.get("symbol").and_then(|s| s.as_str()).is_some_and(|s| !s.is_empty()),
+        "a non-empty declaration symbol: {result}");
+    assert!(hit.get("file").and_then(|f| f.as_str()).is_some_and(|f| f.ends_with("lib.rs")),
+        "the declaration site file: {result}");
+
+    s.shutdown();
+}
+
+/// Test (7): `dl/locate` on whitespace (no located identifier under the
+/// cursor) returns null, same as `dl/refs`'s "not on a located string" case.
+#[test]
+fn dl_locate_null_on_whitespace() {
+    let root = sandbox("locate_whitespace");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/lib.rs"),
+        "fn helper() {}\nfn caller() { helper() }\n").unwrap();
+    let prog = root.join("p.dl");
+    fs::write(&prog, concat!(
+        "rel sym(name: text, f: file, l: int).\n",
+        "sym(name, f, l) <- scan(\"WORK\", \"src/**/*.rs\", f, rev), ",
+        "match(f, rev, /fn (?<name>[a-z_]+)/, l).\n",
+        "rel te(name: text).\n",
+        "te(name) <- type_entity(_, _, name, _, _, _, _).\n",
+    )).unwrap();
+
+    let mut s = Session::spawn(&prog, &root, &root.join("locate.db"), None);
+    initialize(&mut s, &root);
+
+    // Char 2 on line 0 ("fn helper...") sits in the whitespace between `fn`
+    // and `helper` — no located span covers it.
+    let result = s.request(2, "dl/locate", refs_params(&root.join("src/lib.rs"), 0, 2));
+    assert!(result.is_null(), "whitespace has no located identifier: {result}");
 
     s.shutdown();
 }

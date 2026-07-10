@@ -10,8 +10,32 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, State } from "vscode-languageclient/node";
 import { RefsTreeProvider, RefLens } from "./refsTree";
+import { isStaleSeq } from "./followLens";
 
 let client: LanguageClient | undefined;
+
+// The wire shape of `Engine::locate` (src/engine/mod.rs), the `dl/locate`
+// request's result: a cursor -> symbol -> declaration-site point lookup, no
+// uses/callers/callees (that's `RefLens`). `line` is 0-based.
+interface LocateHit {
+  tier: string;
+  symbol: string;
+  display_name: string;
+  role: string;
+  repo: string;
+  file: string;
+  line: number;
+}
+
+// ── goto-flow recorder: a named take of the user's navigation, landed in the
+// engine as `hook_event(kind="goto", ...)` rows via `dl/hookEvent`. One
+// recording at a time per window; `.dl/goto-flows.dl` (a later arc) unions
+// takes into a named flow. `seq` is a local per-recording event counter (the
+// wire `seq` sent with each event is `Date.now()`, monotonic across window
+// restarts so re-recording under the same name appends).
+interface FlowRecording { name: string; seq: number; last?: { file: string; line: number } }
+let recording: FlowRecording | undefined;
+let recordStatusBar: vscode.StatusBarItem | undefined;
 
 // Multi-root: the folder root that OWNS a file. Everything file-scoped (marks,
 // type-seed, cursor rel-paths, jump-to-disk) resolves through this so a file in
@@ -280,6 +304,42 @@ export function activate(ctx: vscode.ExtensionContext): void {
   ctx.subscriptions.push(vscode.commands.registerCommand("dl.findReferences",
     () => findReferences(refsProvider)));
 
+  // Goto-flow recorder: status-bar item (hidden until a recording starts),
+  // command, and an ALWAYS-ON selection subscription — independent of the
+  // panel-scoped one below (that one requires the panel to be open; this one
+  // must record jumps whether or not the panel is visible).
+  recordStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
+  ctx.subscriptions.push(recordStatusBar);
+  ctx.subscriptions.push(vscode.commands.registerCommand("dl.recordFlow", () => toggleRecordFlow()));
+  ctx.subscriptions.push(vscode.window.onDidChangeTextEditorSelection((e) => {
+    if (!recording) return; // cheap early-return: no panel required, no client required
+    const doc = e.textEditor.document;
+    // Rel-path against the file's OWN workspace folder (multi-root), same
+    // resolution as the panel's cursor-follow subscription.
+    const rel = path.relative(folderRootOf(doc.uri, root), doc.uri.fsPath).replace(/\\/g, "/");
+    if (rel.startsWith("..")) return; // outside every workspace folder
+    const pos = e.selections[0]?.active;
+    if (!pos) return;
+    const line = pos.line + 1; // dl lines are 1-based
+    const isJump = e.kind === vscode.TextEditorSelectionChangeKind.Command
+      || rel !== recording.last?.file;
+    if (isJump && client) {
+      const wr = doc.getWordRangeAtPosition(pos);
+      const word = wr ? doc.getText(wr) : "";
+      const from = recording.last ?? null;
+      recording.seq++;
+      client.sendRequest("dl/hookEvent", {
+        kind: "goto", session: recording.name, seq: Date.now(),
+        json: JSON.stringify({ from, to: { file: rel, line }, word }),
+      }).catch((err) => {
+        console.error(`dl: goto recorder hookEvent failed: ${String((err as Error).message ?? err)}`);
+      });
+    }
+    // Update `last` on EVERY selection change in a recorded file (jump or
+    // not), so the next jump's `from` is where the user actually left off.
+    recording.last = { file: rel, line };
+  }));
+
   // marked-line decorations: left stripe + overview-ruler tick, re-read from
   // .dl/marks.dl (same facts the engine joins) so external edits show up live
   markDecoration = vscode.window.createTextEditorDecorationType({
@@ -429,6 +489,35 @@ function refreshMarkDecorations(primaryRoot: string, announce: boolean): void {
   if (announce) vscode.window.setStatusBarMessage(`dl marks: ${count}`, 3000);
 }
 
+// ── goto-flow recorder: start/stop + the always-on jump tap ─────────────────
+// `dl.recordFlow` toggles: not recording -> prompt for a name and arm; already
+// recording -> disarm and confirm. The always-on selection subscription (wired
+// once at activation, in the `dl.recordFlow` command block above) is a cheap
+// early-return when `recording` is undefined — it does not require the flow
+// panel to be open, unlike the panel-scoped cursor-follow subscription.
+
+async function toggleRecordFlow(): Promise<void> {
+  if (!recording) {
+    const now = new Date();
+    const hhmm = `${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
+    const name = await vscode.window.showInputBox({
+      prompt: "dl: name this flow recording",
+      value: `flow-${hhmm}`,
+      placeHolder: "flow name",
+    });
+    if (!name) return; // cancelled: no-op
+    recording = { name, seq: 0 };
+    recordStatusBar!.text = `$(record) REC ${name}`;
+    recordStatusBar!.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground");
+    recordStatusBar!.show();
+  } else {
+    const name = recording.name;
+    recording = undefined;
+    recordStatusBar!.hide();
+    vscode.window.setStatusBarMessage(`dl: recorded ${name}`, 3000);
+  }
+}
+
 // ── diagnostic muting: a session/db-scoped affordance ───────────────────────
 // The server owns the mute set (`diag_mute` rel). This command lists the codes
 // currently in `diag` (each with its muted state) via `dl.listDiagCodes`, shows
@@ -559,9 +648,44 @@ function openFlowPanel(ctx: vscode.ExtensionContext, root: string, slice: SliceD
     }, 120);
   });
 
+  // Follow-the-user (Track B B4): the same selection stream, resolved through
+  // the engine instead of matched by file/line/word heuristic. `dl/locate` is
+  // a cheap point lookup (Engine::locate) — cursor -> symbol -> declaration
+  // site, no uses/callers collection — so firing it unconditionally on every
+  // debounced move (same posture as the `cursor` push above, gated by the
+  // PANEL's own "follow" toggle, not here) costs one small SQL round trip.
+  // ZERO `.dl` fact writes: this is a read-only LSP request, never a write
+  // that would tick the daemon at cursor cadence. 180ms debounce + a
+  // monotonic sequence number dropped via `isStaleSeq`: a response whose
+  // request has been superseded by a newer cursor move is discarded instead
+  // of posted, so the panel never snaps back to a stale symbol.
+  let locateSeq = 0;
+  let locateTimer: ReturnType<typeof setTimeout> | undefined;
+  const locateSub = vscode.window.onDidChangeTextEditorSelection((e) => {
+    if (!panel || !client) return;
+    const doc = e.textEditor.document;
+    const pos = e.selections[0]?.active;
+    if (!pos) return;
+    const uri = doc.uri.toString();
+    if (locateTimer) clearTimeout(locateTimer);
+    locateTimer = setTimeout(() => {
+      const seq = ++locateSeq;
+      client!.sendRequest<LocateHit | null>("dl/locate", { uri, line: pos.line, character: pos.character })
+        .then((hit) => {
+          if (isStaleSeq(seq, locateSeq)) return; // superseded by a newer cursor move
+          void panel?.webview.postMessage({ type: "locate", hit, seq });
+        })
+        .catch((err) => {
+          console.error(`dl: dl/locate failed: ${String((err as Error).message ?? err)}`);
+        });
+    }, 180);
+  });
+
   panel.onDidDispose(() => {
     if (cursorTimer) clearTimeout(cursorTimer);
+    if (locateTimer) clearTimeout(locateTimer);
     selSub.dispose();
+    locateSub.dispose();
     panel = undefined;
     slice.set([]);
   }, null, ctx.subscriptions);

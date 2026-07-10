@@ -15,6 +15,8 @@
 //! audit only inspects hardcoded names; every relation named here is a
 //! catalogued builtin regardless).
 
+use std::path::PathBuf;
+
 use anyhow::Result;
 
 use crate::ast::Program;
@@ -651,6 +653,7 @@ _what_scan(path) <- scan("WORK", "**/go.mod", path, rev).
 ? scip_name(_, _).
 ? scip_binding(_, _, _, _, _, _).
 ? scip_occurrence(_, _, _, _, _, _, _, _).
+? verb_catalog(_, _, _).
 "#;
     let toks = crate::lex::lex(SRC)?;
     let mut prog = crate::parse::parse(toks)?;
@@ -658,6 +661,21 @@ _what_scan(path) <- scan("WORK", "**/go.mod", path, rev).
     // reads its own derived output, only the builtin tables the tick populates.
     let _ = crate::typecheck::check_and_normalize(&mut prog, "<what-probe>");
     Ok(prog)
+}
+
+/// Build a fresh in-process engine and tick [`probe_program`] so the code-graph
+/// families (type / call / dataflow / module / comment / doc / scip + the verb
+/// catalog) populate, then hand it back for a table read. This is the
+/// from-cold, daemon-free path shared by `dl what` (src/cli/query.rs) and the
+/// MCP `Local` tool pump: both need a warm engine that never disturbs any
+/// served program. `db` reuses a cache file, else the db is in-memory.
+pub fn warm_engine(root: PathBuf, db: Option<&str>) -> Result<Engine> {
+    let conn = crate::db::open(db)?;
+    let mut eng = Engine::new(conn, root);
+    eng.set_repos(crate::daemon::load_repos_eager());
+    let prog = probe_program()?;
+    eng.tick(&prog, true)?;
+    Ok(eng)
 }
 
 #[cfg(test)]

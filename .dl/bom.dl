@@ -1,0 +1,106 @@
+# bom.dl — a bill-of-materials cut of the member-flow graph. Rides
+# flow-panel.dl's member_node/member_edge (the assembly hierarchy: repo -> dir
+# -> file -> type -> member, via the path trie + `parent` column the panel
+# already lists) and annotates every part with four quantities the panel
+# renders as a right-aligned numeric band:
+#
+#   member_count -- direct members (children nested under this sym via parent)
+#   fan_in       -- distinct incoming references (where-used: who depends on it)
+#   fan_out      -- distinct outgoing references (depends-on: what it needs)
+#   weight       -- a callable's span height (call_def end - line); 0 for
+#                   types/fields/params/ret (no call_def span)
+#
+# The distinct counts ride the engine's set semantics: an intermediate rel
+# projected to just the (source, target) pair dedups automatically, so a pair
+# linked by BOTH a type edge and a call edge still counts once. Each count is
+# then made TOTAL and single-valued over member_node's syms by a
+# negation-guarded zero default (the same split flow-panel.dl uses for
+# member_fn_has_parent / module_node), so the final bom_node join lands exactly
+# one row per part.
+#
+# bom_node/bom_edge are purely derived -- never headed by a scan/ast/match
+# source rule -- so the one-rel-one-rule-kind law holds.
+#
+# Panel SQL (dl: Flow Panel, preset "BOM table"):
+#   nodes: SELECT sym, name, kind, file, line, parent,
+#                 member_count, fan_in, fan_out, weight FROM rel_bom_node
+#   edges: SELECT src, dst, kind FROM rel_bom_edge
+
+use "flow-panel.dl".
+
+# Every directed reference between two parts, whichever layer it came from.
+# Set-deduped on (source, target), so type + call double-links count once.
+rel bom_ref(source: text, target: text).
+bom_ref(source, target) <- type_link(source, target, _).
+bom_ref(source, target) <- call_edge(source, target, _).
+
+# fan_in = distinct sources pointing AT a part (where-used).
+rel bom_fan_in_raw(sym: text, n: int).
+bom_fan_in_raw(target, count(source)) <- bom_ref(source, target).
+
+rel bom_fan_in_has(sym: text).
+bom_fan_in_has(sym) <- bom_fan_in_raw(sym, _).
+
+rel bom_fan_in(sym: text, n: int).
+bom_fan_in(sym, n) <- bom_fan_in_raw(sym, n).
+bom_fan_in(sym, 0) <- member_node(sym, _, _, _, _, _), !bom_fan_in_has(sym).
+
+# fan_out = distinct targets a part points AT (depends-on).
+rel bom_fan_out_raw(sym: text, n: int).
+bom_fan_out_raw(source, count(target)) <- bom_ref(source, target).
+
+rel bom_fan_out_has(sym: text).
+bom_fan_out_has(sym) <- bom_fan_out_raw(sym, _).
+
+rel bom_fan_out(sym: text, n: int).
+bom_fan_out(sym, n) <- bom_fan_out_raw(sym, n).
+bom_fan_out(sym, 0) <- member_node(sym, _, _, _, _, _), !bom_fan_out_has(sym).
+
+# member_count = direct children (member_node rows whose parent is this sym).
+# member_node's own sym is unique per row (its key(sym) lattice), so counting
+# the child sym per parent is a direct-member count. parent = "" is a top-level
+# part (no owner) -- excluded so it doesn't count itself as its own group.
+rel bom_member_count_raw(sym: text, n: int).
+bom_member_count_raw(parent, count(child)) <-
+  member_node(child, _, _, _, _, parent), parent != "".
+
+rel bom_member_count_has(sym: text).
+bom_member_count_has(sym) <- bom_member_count_raw(sym, _).
+
+rel bom_member_count(sym: text, n: int).
+bom_member_count(sym, n) <- bom_member_count_raw(sym, n).
+bom_member_count(sym, 0) <- member_node(sym, _, _, _, _, _), !bom_member_count_has(sym).
+
+# weight = a callable's span height. call_def(repo, sym, kind, file, line, end)
+# carries one row per callable sym in the SAME repo-qualified format
+# member_node's function/method rows use, so the sym joins directly. Only
+# callables appear in call_def, so types/fields/params/ret fall to the 0
+# default below -- the "functions only" weight the plan asks for, for free.
+rel bom_weight_raw(sym: text, w: int).
+bom_weight_raw(sym, def_end - def_line) <-
+  call_def(_, sym, _, _, def_line, def_end).
+
+rel bom_weight_has(sym: text).
+bom_weight_has(sym) <- bom_weight_raw(sym, _).
+
+rel bom_weight(sym: text, w: int).
+bom_weight(sym, w) <- bom_weight_raw(sym, w).
+bom_weight(sym, 0) <- member_node(sym, _, _, _, _, _), !bom_weight_has(sym).
+
+# The BOM table: every member_node part plus its four quantities. Each count
+# rel is total + single-valued over member_node.sym, so this inner join yields
+# exactly one row per part.
+rel bom_node(sym: text, name: text, kind: text, file: file, line: int, parent: text,
+  member_count: int, fan_in: int, fan_out: int, weight: int).
+bom_node(sym, name, kind, file, line, parent, member_count, fan_in, fan_out, weight) <-
+  member_node(sym, name, kind, file, line, parent),
+  bom_member_count(sym, member_count),
+  bom_fan_in(sym, fan_in),
+  bom_fan_out(sym, fan_out),
+  bom_weight(sym, weight).
+
+# The assembly edges: member_edge already restricts type_link/call_edge (and
+# the fill/read/param/uses edges) to member_node endpoints, which are exactly
+# the bom_node parts, so bom_edge is a straight passthrough.
+rel bom_edge(src: text, dst: text, kind: text).
+bom_edge(src, dst, kind) <- member_edge(src, dst, kind).

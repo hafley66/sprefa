@@ -347,6 +347,16 @@ const EFFECT_RELS: [&str; 1] = ["effect_log"];
 /// program's rules like any other derived rel.
 const DIAG_RELS: [&str; 1] = ["diag"];
 
+/// The hover-note sink. Same shape as `diag` (engine-declared, USER-WRITTEN): a
+/// rule heads `hover_note(path, line, col, end_line, end_col, md)` to attach
+/// markdown to a source span; the LSP hover path appends each matching row's
+/// `md` to the hover it synthesizes at that position. Positions are 0-based,
+/// the same convention as `diag`. Fixed 6-col schema. Read only, never
+/// populated by a refresh — `rebuild_derived` fills it from the program's
+/// rules like any other derived rel; a program that never heads it leaves the
+/// table empty (or undeclared, tolerated by `Engine::hover_notes_at`).
+const HOVER_RELS: [&str; 1] = ["hover_note"];
+
 /// The drawable-graph SINK relations. A user HEADS these from a rule (like
 /// `diag`) to emit a graph the flow panel draws with ZERO bespoke SQL:
 /// `graph_node(id, label, kind, file, line, parent)` is one vertex,
@@ -448,6 +458,7 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
         .chain(effect_rel_decls())
         .chain(hook_rel_decls())
         .chain(diag_rel_decls())
+        .chain(hover_note_rel_decls())
         .chain(graph_rel_decls())
         .chain(diag_mute_rel_decls())
         .chain(demand_rel_decls())
@@ -594,6 +605,7 @@ pub fn op_docs() -> &'static [(&'static str, &'static str, &'static str, &'stati
         ("gen", "sink", "gen([:mode,] path, [l0, l1,] \"{var} template\")", "codegen; file form renders body rows through a path+row template; :zone replaces content between a NAMED `BEGIN:/END:` marker pair (markers stay, immune to surrounding edits); splice form replaces between two line numbers; raw `r\"...\"` / `r#\"...\"#` keep dollar-brace verbatim; `{{x}}` in a template emits literal `{x}`; convergent (skips write when bytes match); never runs under --check/--lsp; one-shot needs --apply"),
         ("graph_node", "sink", "graph_node(id: node_id, label: label, kind: kind[, file: , line: , parent: ]) <- ...", "head the built-in drawable-graph vertex sink; fixed 6-col schema (id/label/kind/file/line/parent), name only the columns you use; the flow panel's always-available Graph preset draws graph_node/graph_edge with no bespoke SQL"),
         ("graph_edge", "sink", "graph_edge(src: src_id, dst: dst_id, kind: kind) <- ...", "head the built-in drawable-graph edge sink; connects two graph_node ids, kind is the wire label; read by the Graph preset alongside graph_node"),
+        ("hover_note", "sink", "hover_note(path: hit_path, line: hit_line, end_line: hit_line, end_col: hit_end_col, md: note_text[, col: ]) <- ...", "head the built-in hover-note sink; fixed 6-col schema (path/line/col/end_line/end_col/md), name only the columns you use; the LSP hover path appends md to the hover shown at any position inside [line,col]..[end_line,end_col], 0-based like diag"),
     ]
 }
 
@@ -610,6 +622,20 @@ fn diag_rel_decls() -> Vec<RelDecl> {
             c("msg", Type::Text), c("hint", Type::Text)],
             group: "diag",
             doc: "diagnostic sink; head it from a rule to emit an editor squiggle (--lsp), a --check finding, or a daemon-hook message. Fixed 9-col schema — write only the cols you need via named args (diag(path: p, line: l, msg: m)); the rest are NULL and default (severity warn, end_line=line, ints 0). path is TEXT so a synthetic origin isn't file-checked away",
+            ..Default::default() },
+    ]
+}
+
+/// The hover-note sink relation (see `HOVER_RELS`). Fixed 6-col schema, same
+/// span convention as `diag` (0-based line/col, end_line/end_col inclusive).
+fn hover_note_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "hover_note".into(), cols: vec![
+            c("path", Type::File), c("line", Type::Int), c("col", Type::Int),
+            c("end_line", Type::Int), c("end_col", Type::Int), c("md", Type::Text)],
+            group: "diag",
+            doc: "markdown hover note attached to a source span; head it from a rule, shown by the LSP on hover. Positions are 0-based, same convention as diag (end_line/end_col inclusive); several notes on one span all show, appended after the synthesized entity hover",
             ..Default::default() },
     ]
 }
@@ -1289,6 +1315,78 @@ pub struct RefLens {
     pub containing_types: Vec<RefHit>,
     pub callers: Vec<RefHit>,
     pub callees: Vec<RefHit>,
+}
+
+/// One point-lookup hit for the "follow the user" navigation surface
+/// (`Engine::locate`, Track B B4). Cheap by construction: this is a single
+/// cursor -> symbol -> declaration-site resolution, never a uses/callers
+/// collection or a closure walk — the panel calls it on every cursor move, so
+/// it stays a point query same as `resolve_sym_hit`. `tier` mirrors
+/// `RefLens.tier` minus "textual" (a grep-grade hit would center the graph on
+/// nothing, so follow mode never falls that far). `role` is the edge/occurrence
+/// role at the declaration site (a SCIP role for tier "compiler", the
+/// type_entity/call_def kind for tier "resolved").
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct LocateHit {
+    pub tier: String,
+    pub symbol: String,
+    pub display_name: String,
+    pub role: String,
+    pub repo: String,
+    pub file: String,
+    pub line: u32,
+}
+
+/// One declared symbol for the nearly-free LSP surfaces (`workspace/symbol` and
+/// `textDocument/documentSymbol`). Carries its OWN repo so the LSP maps the slug
+/// back to that repo's on-disk root, `line` is 1-based as stored in the rels, and
+/// `sym`/`parent` are the `file::kind::name` cross-graph keys the document-symbol
+/// handler nests by. `container` names the enclosing symbol for the flat
+/// workspace list.
+#[derive(Clone, Debug)]
+pub struct SymbolRow {
+    pub repo: String,
+    pub sym: String,
+    pub name: String,
+    pub kind: String,
+    pub parent: String,
+    pub file: String,
+    pub line: i64,
+    pub container: String,
+}
+
+/// One resolvable node for the call-hierarchy / type-hierarchy LSP surfaces
+/// (Track B B5, `textDocument/prepareCallHierarchy` +
+/// `textDocument/prepareTypeHierarchy` and their incoming/outgoing/super/sub
+/// twins). Reuses the same two-tier resolution ladder as `locate`/`refs_lens`:
+/// `sym` is the resolved-tier join key (`call_def.sym` / `type_entity.sym`),
+/// `scip_symbol` is the compiler-tier SCIP moniker — exactly one of the two is
+/// non-empty, mirroring `tier`. Each item carries its OWN repo (the multi-repo
+/// URI fix `refhit_location`/`workspace_symbols` already use). `line`/
+/// `end_line` are 0-based (unlike `SymbolRow`, which keeps the 1-based rel
+/// convention) so the LSP handler can build a `Range` with no further
+/// arithmetic — this struct exists purely to cross the engine/LSP boundary.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct HierarchyItem {
+    pub tier: String,
+    pub sym: String,
+    pub scip_symbol: String,
+    pub name: String,
+    pub kind: String,
+    pub repo: String,
+    pub file: String,
+    pub line: u32,
+    pub end_line: u32,
+}
+
+/// One 1-hop call-hierarchy neighbor: the neighboring `HierarchyItem` plus the
+/// call-site line(s) inside the CALLER (`from_ranges` in the LSP spec is
+/// always relative to the caller, for both `incomingCalls` and
+/// `outgoingCalls`). 0-based, matching `HierarchyItem.line`.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct HierarchyCallEdge {
+    pub item: HierarchyItem,
+    pub from_lines: Vec<u32>,
 }
 
 /// Carry set for `refresh_spine_rels_delta`. Accumulates the new rows produced
@@ -2536,6 +2634,25 @@ impl Engine {
         Ok(Some(md))
     }
 
+    /// User-headed markdown notes covering the point (`line`, `character`) in
+    /// `path` — the `hover_note` sink (see `HOVER_RELS`). Positions are
+    /// 0-based, `end_line`/`end_col` inclusive, the same convention as `diag`.
+    /// Sorted by `md` so the merge order is stable across ticks. Tolerates a
+    /// db where `hover_note` never derived (undeclared/empty table): returns
+    /// an empty Vec rather than erroring, via `try_rows`.
+    pub fn hover_notes_at(&self, path: &str, line: u32, character: u32) -> Result<Vec<String>> {
+        let hn = tbl("hover_note");
+        Ok(self.try_rows(
+            &format!(
+                "SELECT \"md\" FROM {hn} WHERE \"path\" = ?1 \
+                 AND (\"line\" < ?2 OR (\"line\" = ?2 AND \"col\" <= ?3)) \
+                 AND (\"end_line\" > ?2 OR (\"end_line\" = ?2 AND \"end_col\" >= ?3)) \
+                 ORDER BY \"md\""),
+            &[&path, &line, &character],
+            |r| r.get::<_, String>(0),
+        ))
+    }
+
     /// One-line type profile for `sym`: `Ca=N Ce=M fields=F variants=V impls=I`.
     /// `sym` is the type_entity sym; type_edge is name-keyed, so the trailing
     /// identifier of the sym (the bare name) is the join key. Returns None if
@@ -2627,9 +2744,165 @@ impl Engine {
         None
     }
 
+    /// A compiler-tier `RefHit` off a `scip_occurrence` row. SCIP positions are
+    /// already 0-based, so they map straight to a `RefHit` range (unlike the
+    /// resolved-tier `rel_hit`, which decrements a 1-based graph line).
+    fn scip_hit(repo: String, file: String, line: i64, col: i64,
+                end_line: i64, end_col: i64, role: &str, container: String) -> RefHit {
+        RefHit {
+            repo, path: file,
+            line: line.max(0) as u32, col: col.max(0) as u32,
+            end_line: end_line.max(0) as u32, end_col: end_col.max(0) as u32,
+            role: role.to_string(), container,
+        }
+    }
+
+    /// Every `role='definition'` occurrence of `sym`, as compiler-tier hits with
+    /// the given edge `role` (used to resolve a caller/callee/impl symbol back to
+    /// its declaration site). Empty when the symbol has no definition occurrence
+    /// in the loaded index (an out-of-workspace target).
+    fn scip_def_hits(&self, sym: &str, role: &str) -> Vec<RefHit> {
+        let so = tbl("scip_occurrence");
+        self.try_rows(
+            &format!("SELECT \"file\", \"line\", \"col\", \"end_line\", \"end_col\", \"repo\" \
+                      FROM {so} WHERE \"symbol\" = ?1 AND \"role\" = 'definition'"),
+            &[&sym],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?, r.get::<_, i64>(4)?, r.get::<_, String>(5)?)),
+        )
+        .into_iter()
+        .map(|(file, line, col, el, ec, repo)| Self::scip_hit(repo, file, line, col, el, ec, role, String::new()))
+        .collect()
+    }
+
+    /// tier "compiler": when a SCIP index is loaded for the request repo, resolve
+    /// the cursor to its symbol via the `scip_occurrence` covering `(path, byte)`,
+    /// then group every occurrence of that symbol: declarations from role
+    /// `definition`, uses by their ACTUAL role (import/read/write/reference).
+    /// Callers/callees are 1-hop over `scip_fn_edge`, containing types over
+    /// `scip_impl` (the interfaces this symbol implements). `scip_binding`
+    /// supplies a use's local alias name as its `container` when it differs from
+    /// the symbol's descriptor name, so an aliased import shows its local
+    /// spelling. Returns None when no index is loaded for the repo or no
+    /// occurrence covers the cursor — the caller then falls through to the
+    /// resolved/textual tiers WITHOUT degrading them.
+    fn compiler_lens(&self, path: &str, byte: u32, text: &str) -> Result<Option<RefLens>> {
+        let so = tbl("scip_occurrence");
+        let repo = self.repo_for_path(path);
+
+        // Cursor (line, col) 0-based from the file's WORK content. SCIP columns
+        // are UTF-16 units; for ASCII identifiers (the overwhelming majority)
+        // char and UTF-16 offsets coincide. Containment (not exact col equality)
+        // tolerates the rare wide-char line.
+        let roots = self.repo_roots();
+        let root = roots.get(&repo).cloned().unwrap_or_else(|| self.root.clone());
+        let content = read_content(&root, "WORK", path).unwrap_or_default();
+        let (cl, cc) = byte_to_lc0(&content, byte);
+        let (cl, cc) = (cl as i64, cc as i64);
+
+        // The innermost occurrence covering the cursor in this file/repo.
+        let mut covering: Vec<(String, i64, i64, i64, i64)> = self.try_rows(
+            &format!("SELECT \"symbol\", \"line\", \"col\", \"end_line\", \"end_col\" \
+                      FROM {so} WHERE \"file\" = ?1 AND \"repo\" = ?2"),
+            &[&path, &repo],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?, r.get::<_, i64>(4)?)),
+        );
+        covering.retain(|(_, sl, sc, el, ec)| {
+            let after_start = *sl < cl || (*sl == cl && *sc <= cc);
+            let before_end = *el > cl || (*el == cl && *ec > cc);
+            after_start && before_end
+        });
+        // Innermost = fewest lines, then narrowest columns.
+        covering.sort_by_key(|(_, sl, sc, el, ec)| (el - sl, (ec - sc).max(0)));
+        let Some((symbol, _, _, _, _)) = covering.into_iter().next() else {
+            return Ok(None);
+        };
+
+        // Local alias names for this symbol: (file, line, col) -> local_name.
+        let sb = tbl("scip_binding");
+        let mut aliases: HashMap<(String, i64, i64), String> = HashMap::new();
+        for (file, line, col, name) in self.try_rows(
+            &format!("SELECT \"file\", \"line\", \"col\", \"local_name\" FROM {sb} WHERE \"symbol\" = ?1"),
+            &[&symbol],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?)),
+        ) {
+            aliases.insert((file, line, col), name);
+        }
+        let canonical = scip_descriptor_name(&symbol).unwrap_or_else(|| text.to_string());
+
+        // Declarations (role 'definition') and uses (every other role), grouped
+        // straight off the occurrence table.
+        let mut declarations: Vec<RefHit> = Vec::new();
+        let mut uses: Vec<RefHit> = Vec::new();
+        for (file, line, col, el, ec, role, orepo) in self.try_rows(
+            &format!("SELECT \"file\", \"line\", \"col\", \"end_line\", \"end_col\", \"role\", \"repo\" \
+                      FROM {so} WHERE \"symbol\" = ?1"),
+            &[&symbol],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?, r.get::<_, i64>(4)?, r.get::<_, String>(5)?, r.get::<_, String>(6)?)),
+        ) {
+            // An aliased spelling at this site adds display value; the canonical
+            // name is redundant with `symbol` so only a divergent local shows.
+            let container = match aliases.get(&(file.clone(), line, col)) {
+                Some(local) if *local != canonical => local.clone(),
+                _ => String::new(),
+            };
+            let hit = Self::scip_hit(orepo, file, line, col, el, ec, &role, container);
+            if role == "definition" {
+                declarations.push(hit);
+            } else {
+                uses.push(hit);
+            }
+        }
+
+        // Containing types: the interfaces this symbol implements (scip_impl),
+        // resolved to their definition site.
+        let si = tbl("scip_impl");
+        let mut containing_types: Vec<RefHit> = Vec::new();
+        for iface in self.try_rows(
+            &format!("SELECT \"iface\" FROM {si} WHERE \"impl\" = ?1"),
+            &[&symbol], |r| r.get::<_, String>(0),
+        ) {
+            containing_types.extend(self.scip_def_hits(&iface, "impl"));
+        }
+
+        // Callers / callees: 1-hop over the function-level call graph.
+        let sfe = tbl("scip_fn_edge");
+        let mut callers: Vec<RefHit> = Vec::new();
+        let mut callees: Vec<RefHit> = Vec::new();
+        for caller in self.try_rows(
+            &format!("SELECT \"caller\" FROM {sfe} WHERE \"callee\" = ?1"),
+            &[&symbol], |r| r.get::<_, String>(0),
+        ) {
+            callers.extend(self.scip_def_hits(&caller, "caller"));
+        }
+        for callee in self.try_rows(
+            &format!("SELECT \"callee\" FROM {sfe} WHERE \"caller\" = ?1"),
+            &[&symbol], |r| r.get::<_, String>(0),
+        ) {
+            callees.extend(self.scip_def_hits(&callee, "callee"));
+        }
+
+        dedup_hits(&mut declarations);
+        dedup_hits(&mut uses);
+        dedup_hits(&mut containing_types);
+        dedup_hits(&mut callers);
+        dedup_hits(&mut callees);
+
+        Ok(Some(RefLens {
+            tier: "compiler".to_string(),
+            symbol,
+            display_name: text.to_string(),
+            declarations, uses, containing_types, callers, callees,
+        }))
+    }
+
     /// Grouped references for the identifier at (`path`, `byte`), for the LSP
-    /// `dl/refs` request and `textDocument/references`. Skips the compiler/SCIP
-    /// tier (Track B wave 3): tier "resolved" joins the identifier text by name
+    /// `dl/refs` request and `textDocument/references`. Tier "compiler" (SCIP
+    /// occurrence covering the cursor) is tried first; on a miss (no index for
+    /// the repo, or no occurrence covers the cursor) it falls through to tier
+    /// "resolved", which joins the identifier text by name
     /// against the type graph (`type_entity`) and call graph (`call_def` via
     /// `call_name`) for declarations, then collects uses from `type_link`,
     /// `call_site`, and `module_import`, containing types from the declaration
@@ -2641,6 +2914,11 @@ impl Engine {
         let Some((_string_id, text, _lo, _hi)) = self.span_at(path, byte as u32)? else {
             return Ok(None);
         };
+
+        // --- tier "compiler": a SCIP occurrence covering the cursor wins ---
+        if let Some(lens) = self.compiler_lens(path, byte as u32, &text)? {
+            return Ok(Some(lens));
+        }
 
         // --- tier "resolved": declarations by name ---
         let mut declarations: Vec<RefHit> = Vec::new();
@@ -2772,6 +3050,143 @@ impl Engine {
         }))
     }
 
+    /// First `role='definition'` occurrence of `sym` in the loaded SCIP index,
+    /// as a bare `(repo, file, line)` site. A single `LIMIT 1` query, not a
+    /// collection — the point-query twin of `scip_def_hits`, used only to
+    /// locate a symbol whose covering occurrence is itself a USE.
+    fn scip_def_site(&self, sym: &str) -> Option<(String, String, i64)> {
+        let so = tbl("scip_occurrence");
+        self.try_rows(
+            &format!("SELECT \"repo\", \"file\", \"line\" FROM {so} \
+                      WHERE \"symbol\" = ?1 AND \"role\" = 'definition' LIMIT 1"),
+            &[&sym],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)),
+        )
+        .into_iter()
+        .next()
+    }
+
+    /// tier "compiler" for `locate`: the same covering-occurrence lookup
+    /// `compiler_lens` uses (innermost SCIP occurrence over the cursor), but
+    /// stops at the symbol + role instead of grouping every use/caller/callee.
+    /// When the covering occurrence's own role is already `definition` its site
+    /// IS the declaration; otherwise one `scip_def_site` lookup finds it (falls
+    /// back to the occurrence's own site when the symbol has no definition
+    /// occurrence in this index, e.g. an out-of-workspace target). None when no
+    /// index is loaded for the repo or no occurrence covers the cursor.
+    fn compiler_locate(&self, path: &str, byte: u32, text: &str) -> Result<Option<LocateHit>> {
+        let so = tbl("scip_occurrence");
+        let repo = self.repo_for_path(path);
+        let roots = self.repo_roots();
+        let root = roots.get(&repo).cloned().unwrap_or_else(|| self.root.clone());
+        let content = read_content(&root, "WORK", path).unwrap_or_default();
+        let (cl, cc) = byte_to_lc0(&content, byte);
+        let (cl, cc) = (cl as i64, cc as i64);
+
+        let mut covering: Vec<(String, i64, i64, i64, i64, String)> = self.try_rows(
+            &format!("SELECT \"symbol\", \"line\", \"col\", \"end_line\", \"end_col\", \"role\" \
+                      FROM {so} WHERE \"file\" = ?1 AND \"repo\" = ?2"),
+            &[&path, &repo],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?, r.get::<_, i64>(4)?, r.get::<_, String>(5)?)),
+        );
+        covering.retain(|(_, sl, sc, el, ec, _)| {
+            let after_start = *sl < cl || (*sl == cl && *sc <= cc);
+            let before_end = *el > cl || (*el == cl && *ec > cc);
+            after_start && before_end
+        });
+        covering.sort_by_key(|(_, sl, sc, el, ec, _)| (el - sl, (ec - sc).max(0)));
+        let Some((symbol, occ_line, _, _, _, role)) = covering.into_iter().next() else {
+            return Ok(None);
+        };
+
+        let (def_repo, def_file, def_line) = if role == "definition" {
+            (repo, path.to_string(), occ_line)
+        } else {
+            self.scip_def_site(&symbol).unwrap_or((repo, path.to_string(), occ_line))
+        };
+
+        Ok(Some(LocateHit {
+            tier: "compiler".to_string(),
+            symbol,
+            display_name: text.to_string(),
+            role,
+            repo: def_repo,
+            file: def_file,
+            line: def_line.max(0) as u32,
+        }))
+    }
+
+    /// tier "resolved" for `locate`: the identifier text joined by name against
+    /// `type_entity` then `call_def`/`call_name` (the same two lookups
+    /// `refs_lens` uses to build its declaration list), keeping only the
+    /// preferred declaration (same-repo-then-same-file, matching `refs_lens`'s
+    /// ambiguity rule) instead of collecting every declaration and every use.
+    /// None when the identifier resolves to no symbol (locate has no textual
+    /// tier — a grep-grade hit would center the graph on nothing meaningful).
+    fn resolved_locate(&self, path: &str, text: &str) -> Result<Option<LocateHit>> {
+        let path_repo = self.repo_for_path(path);
+
+        let te = tbl("type_entity");
+        let mut candidates: Vec<(String, String, String, String, i64)> = self.try_rows(
+            &format!("SELECT \"repo\", \"sym\", \"kind\", \"file\", \"line\" FROM {te} WHERE \"name\" = ?1"),
+            &[&text],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?, r.get::<_, i64>(4)?)),
+        );
+        if candidates.is_empty() {
+            let cd = tbl("call_def");
+            let cn = tbl("call_name");
+            candidates = self.try_rows(
+                &format!("SELECT d.\"repo\", d.\"sym\", d.\"kind\", d.\"file\", d.\"line\" \
+                          FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" WHERE n.\"name\" = ?1"),
+                &[&text],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?, r.get::<_, i64>(4)?)),
+            );
+        }
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+
+        let pick = candidates.iter()
+            .find(|(repo, _, _, file, _)| *repo == path_repo && file == path)
+            .or_else(|| candidates.iter().find(|(repo, _, _, _, _)| *repo == path_repo))
+            .cloned()
+            .unwrap_or_else(|| candidates[0].clone());
+        let (repo, sym, kind, file, line) = pick;
+
+        Ok(Some(LocateHit {
+            tier: "resolved".to_string(),
+            symbol: sym,
+            display_name: text.to_string(),
+            role: kind,
+            repo, file,
+            line: (line - 1).max(0) as u32,
+        }))
+    }
+
+    /// Cheap point lookup for the "follow the user" navigation surface (Track B
+    /// B4, the `dl/locate` LSP request): the cursor at (`path`, `byte`) resolves
+    /// to the symbol it sits on and that symbol's declaration site, trying tier
+    /// "compiler" (a loaded SCIP index) then tier "resolved" (the type/call
+    /// graph by name) — the HEAD of the same ladder `refs_lens` walks, minus the
+    /// uses/callers/callees collection and minus the textual tier. None when
+    /// the cursor is not on a located string, or the identifier resolves to no
+    /// symbol in either tier.
+    pub fn locate(&self, path: &str, byte: usize) -> Result<Option<LocateHit>> {
+        let Some((_string_id, text, _lo, _hi)) = self.span_at(path, byte as u32)? else {
+            return Ok(None);
+        };
+        if let Some(hit) = self.compiler_locate(path, byte as u32, &text)? {
+            return Ok(Some(hit));
+        }
+        if let Some(hit) = self.resolved_locate(path, &text)? {
+            return Ok(Some(hit));
+        }
+        Ok(None)
+    }
+
     /// tier "textual": the ref-spine same-string fallback. Every located WORK
     /// span whose interned `_strings.content` equals `text`, converted to a
     /// 0-based range by reading each file from its own repo root. Role "text"
@@ -2817,6 +3232,490 @@ impl Engine {
             declarations: Vec::new(), uses,
             containing_types: Vec::new(), callers: Vec::new(), callees: Vec::new(),
         })
+    }
+
+    /// Same-string spans of the identifier at (`path`, `byte`) restricted to
+    /// `path` itself, for `textDocument/documentHighlight`. Reuses `span_at` (the
+    /// innermost located string under the cursor) and `string_spans` (every WORK
+    /// span of that interned string), then keeps only the cursor's own file so the
+    /// highlight stays file-scoped and fast. Returns byte ranges `(lo, hi)`; empty
+    /// when the cursor is not on a located string.
+    pub fn document_highlights(&self, path: &str, byte: u32) -> Result<Vec<(u32, u32)>> {
+        let Some((string_id, _text, _lo, _hi)) = self.span_at(path, byte)? else {
+            return Ok(Vec::new());
+        };
+        Ok(self.string_spans(&string_id)?
+            .into_iter()
+            .filter(|(span_path, _, _)| span_path == path)
+            .map(|(_, lo, hi)| (lo, hi))
+            .collect())
+    }
+
+    /// Workspace-wide symbol search for `workspace/symbol`: every `type_entity`
+    /// plus every callable (`call_def` joined `call_name`) whose name contains
+    /// `query` (case-insensitive substring). Prefix matches sort first, then by
+    /// name; the result is capped at `limit`. Each row carries its OWN repo so the
+    /// LSP maps the slug to that repo's on-disk root. Tolerates a missing type or
+    /// call family (returns whatever IS populated).
+    pub fn workspace_symbols(&self, query: &str, limit: usize) -> Result<Vec<SymbolRow>> {
+        let like = like_contains(query);
+        let te = tbl("type_entity");
+        let mut rows: Vec<SymbolRow> = self.try_rows(
+            &format!("SELECT \"repo\", \"sym\", \"name\", \"kind\", \"parent\", \"file\", \"line\" \
+                      FROM {te} WHERE \"name\" LIKE ?1 ESCAPE '\\'"),
+            &[&like],
+            |r| Ok(SymbolRow {
+                repo: r.get::<_, String>(0)?,
+                sym: r.get::<_, String>(1)?,
+                name: r.get::<_, String>(2)?,
+                kind: r.get::<_, String>(3)?,
+                parent: r.get::<_, String>(4)?,
+                file: r.get::<_, String>(5)?,
+                line: r.get::<_, i64>(6)?,
+                container: String::new(),
+            }),
+        );
+        // A type_entity's `parent` sym is its enclosing symbol, the flat list's
+        // container qualifier.
+        for row in &mut rows {
+            row.container = row.parent.clone();
+        }
+        let cd = tbl("call_def");
+        let cn = tbl("call_name");
+        let calls: Vec<SymbolRow> = self.try_rows(
+            &format!("SELECT d.\"repo\", d.\"sym\", n.\"name\", d.\"kind\", d.\"file\", d.\"line\" \
+                      FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" \
+                      WHERE n.\"name\" LIKE ?1 ESCAPE '\\'"),
+            &[&like],
+            |r| Ok(SymbolRow {
+                repo: r.get::<_, String>(0)?,
+                sym: r.get::<_, String>(1)?,
+                name: r.get::<_, String>(2)?,
+                kind: r.get::<_, String>(3)?,
+                file: r.get::<_, String>(4)?,
+                line: r.get::<_, i64>(5)?,
+                parent: String::new(),
+                container: String::new(),
+            }),
+        );
+        // Merge, dropping a callable already present as a type_entity sym (a
+        // method is declared in both families).
+        let mut seen: HashSet<String> = rows.iter().map(|s| s.sym.clone()).collect();
+        for row in calls {
+            if seen.insert(row.sym.clone()) { rows.push(row); }
+        }
+        // Prefix matches first, then by name; case-insensitive to match the LIKE.
+        let needle = query.to_lowercase();
+        rows.sort_by(|left, right| {
+            let left_prefix = left.name.to_lowercase().starts_with(&needle);
+            let right_prefix = right.name.to_lowercase().starts_with(&needle);
+            right_prefix.cmp(&left_prefix).then_with(|| left.name.cmp(&right.name))
+        });
+        rows.truncate(limit);
+        Ok(rows)
+    }
+
+    /// Every `type_entity` declared in `path`, ordered by line, for
+    /// `textDocument/documentSymbol`. Returns the flat rows; the LSP handler nests
+    /// them into a `DocumentSymbol` tree by the `parent` sym (a member whose parent
+    /// is not in the same file attaches at the top level). Tolerates a missing type
+    /// family (empty). `line` is 1-based as stored.
+    pub fn document_symbols(&self, path: &str) -> Result<Vec<SymbolRow>> {
+        let te = tbl("type_entity");
+        Ok(self.try_rows(
+            &format!("SELECT \"repo\", \"sym\", \"name\", \"kind\", \"parent\", \"line\" \
+                      FROM {te} WHERE \"file\" = ?1 ORDER BY \"line\""),
+            &[&path],
+            |r| Ok(SymbolRow {
+                repo: r.get::<_, String>(0)?,
+                sym: r.get::<_, String>(1)?,
+                name: r.get::<_, String>(2)?,
+                kind: r.get::<_, String>(3)?,
+                parent: r.get::<_, String>(4)?,
+                line: r.get::<_, i64>(5)?,
+                file: path.to_string(),
+                container: String::new(),
+            }),
+        ))
+    }
+
+    // ---------- call hierarchy (Track B B5) ----------
+
+    /// `textDocument/prepareCallHierarchy`: the cursor at (`path`, `byte`)
+    /// resolves to a callable `HierarchyItem`, trying tier "compiler" (a
+    /// loaded SCIP index, restricted to a symbol that actually participates
+    /// in `scip_fn_edge` — a struct or field moniker under the cursor would
+    /// otherwise produce an item with an empty incoming/outgoing list) then
+    /// tier "resolved" (`call_def`/`call_name` by identifier text ONLY, not
+    /// `type_entity` — a type name that collides with a function name must
+    /// not win the ambiguity pick here). None when the cursor is not on a
+    /// located string or the identifier is not a callable in either tier.
+    pub fn call_hierarchy_prepare(&self, path: &str, byte: usize) -> Result<Option<HierarchyItem>> {
+        let Some((_string_id, text, _lo, _hi)) = self.span_at(path, byte as u32)? else {
+            return Ok(None);
+        };
+        if let Some(item) = self.compiler_call_prepare(path, byte as u32, &text)? {
+            return Ok(Some(item));
+        }
+        self.resolved_call_prepare(path, &text)
+    }
+
+    /// tier "compiler" prepare: the same covering-occurrence resolution
+    /// `compiler_locate` uses, kept only when the symbol is a participant in
+    /// `scip_fn_edge` (as caller or callee). `scip_fn_edge`/`scip_occurrence`
+    /// carry no entity kind, so `kind` defaults to `"function"` — every
+    /// `scip_fn_edge` participant IS a function/method by construction (the
+    /// extractor's caller is always "the innermost enclosing fn def").
+    fn compiler_call_prepare(&self, path: &str, byte: u32, text: &str) -> Result<Option<HierarchyItem>> {
+        let Some(hit) = self.compiler_locate(path, byte, text)? else { return Ok(None); };
+        let sfe = tbl("scip_fn_edge");
+        let participates = !self.try_rows(
+            &format!("SELECT 1 FROM {sfe} WHERE \"caller\" = ?1 OR \"callee\" = ?1 LIMIT 1"),
+            &[&hit.symbol], |r| r.get::<_, i64>(0),
+        ).is_empty();
+        if !participates { return Ok(None); }
+        Ok(Some(HierarchyItem {
+            tier: "compiler".to_string(), sym: String::new(), scip_symbol: hit.symbol,
+            name: hit.display_name, kind: "function".to_string(),
+            repo: hit.repo, file: hit.file, line: hit.line, end_line: hit.line,
+        }))
+    }
+
+    /// tier "resolved" prepare: the identifier text joined against
+    /// `call_def`/`call_name`, keeping the same same-repo-then-same-file
+    /// ambiguity pick as `resolved_locate`.
+    fn resolved_call_prepare(&self, path: &str, text: &str) -> Result<Option<HierarchyItem>> {
+        let path_repo = self.repo_for_path(path);
+        let cd = tbl("call_def");
+        let cn = tbl("call_name");
+        let candidates: Vec<(String, String, String, String, i64, i64)> = self.try_rows(
+            &format!("SELECT d.\"repo\", d.\"sym\", d.\"kind\", d.\"file\", d.\"line\", d.\"end\" \
+                      FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" WHERE n.\"name\" = ?1"),
+            &[&text],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?, r.get::<_, i64>(4)?, r.get::<_, i64>(5)?)),
+        );
+        if candidates.is_empty() { return Ok(None); }
+        let pick = candidates.iter()
+            .find(|(repo, _, _, file, _, _)| *repo == path_repo && file == path)
+            .or_else(|| candidates.iter().find(|(repo, ..)| *repo == path_repo))
+            .cloned()
+            .unwrap_or_else(|| candidates[0].clone());
+        let (repo, sym, kind, file, line, end) = pick;
+        Ok(Some(HierarchyItem {
+            tier: "resolved".to_string(), sym, scip_symbol: String::new(),
+            name: text.to_string(), kind, repo, file,
+            line: (line - 1).max(0) as u32,
+            end_line: (end.max(line) - 1).max(0) as u32,
+        }))
+    }
+
+    /// `callHierarchy/incomingCalls`: every 1-hop caller of `item`. Tier-matched
+    /// to how `item` resolved — no closure (an unpinned closure read over
+    /// `call_edge`/`scip_fn_edge` is refused; the editor recurses by re-calling
+    /// this on each returned item for a deeper tree).
+    pub fn call_hierarchy_incoming(&self, item: &HierarchyItem) -> Result<Vec<HierarchyCallEdge>> {
+        if item.tier == "compiler" { return self.compiler_incoming(item); }
+        self.resolved_incoming(item)
+    }
+
+    /// `callHierarchy/outgoingCalls`: every 1-hop callee of `item`, same tier
+    /// matching and no-closure discipline as `call_hierarchy_incoming`.
+    pub fn call_hierarchy_outgoing(&self, item: &HierarchyItem) -> Result<Vec<HierarchyCallEdge>> {
+        if item.tier == "compiler" { return self.compiler_outgoing(item); }
+        self.resolved_outgoing(item)
+    }
+
+    /// `call_def`/`call_name` row for one sym -> a resolved-tier `HierarchyItem`,
+    /// the by-sym twin of `resolved_call_prepare` (which resolves by name).
+    fn resolved_call_item(&self, sym: &str) -> Option<HierarchyItem> {
+        let cd = tbl("call_def");
+        let cn = tbl("call_name");
+        self.try_rows(
+            &format!("SELECT d.\"repo\", d.\"kind\", d.\"file\", d.\"line\", d.\"end\", n.\"name\" \
+                      FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" WHERE d.\"sym\" = ?1 LIMIT 1"),
+            &[&sym],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?, r.get::<_, i64>(4)?, r.get::<_, String>(5)?)),
+        )
+        .into_iter()
+        .next()
+        .map(|(repo, kind, file, line, end, name)| HierarchyItem {
+            tier: "resolved".to_string(), sym: sym.to_string(), scip_symbol: String::new(),
+            name, kind, repo, file,
+            line: (line - 1).max(0) as u32,
+            end_line: (end.max(line) - 1).max(0) as u32,
+        })
+    }
+
+    /// Call-site line(s) of every `call_site` row matching (`caller_sym`,
+    /// `callee_name`) — the resolved-tier `from_ranges` source, shared by both
+    /// `resolved_incoming` (caller = the neighbor, callee = `item`'s name) and
+    /// `resolved_outgoing` (caller = `item`'s sym, callee = the neighbor's name).
+    fn resolved_call_site_lines(&self, caller_sym: &str, callee_name: &str) -> Vec<u32> {
+        let cs = tbl("call_site");
+        self.try_rows(
+            &format!("SELECT \"line\" FROM {cs} WHERE \"caller\" = ?1 AND \"callee\" = ?2"),
+            &[&caller_sym, &callee_name],
+            |r| r.get::<_, i64>(0),
+        )
+        .into_iter()
+        .map(|line| (line - 1).max(0) as u32)
+        .collect()
+    }
+
+    fn resolved_incoming(&self, item: &HierarchyItem) -> Result<Vec<HierarchyCallEdge>> {
+        let ce = tbl("call_edge");
+        let callers: Vec<String> = self.try_rows(
+            &format!("SELECT \"caller\" FROM {ce} WHERE \"callee\" = ?1"),
+            &[&item.sym], |r| r.get::<_, String>(0),
+        );
+        let mut out = Vec::new();
+        for caller_sym in callers {
+            let Some(caller_item) = self.resolved_call_item(&caller_sym) else { continue };
+            let from_lines = self.resolved_call_site_lines(&caller_sym, &item.name);
+            out.push(HierarchyCallEdge { item: caller_item, from_lines });
+        }
+        Ok(out)
+    }
+
+    fn resolved_outgoing(&self, item: &HierarchyItem) -> Result<Vec<HierarchyCallEdge>> {
+        let ce = tbl("call_edge");
+        let callees: Vec<String> = self.try_rows(
+            &format!("SELECT \"callee\" FROM {ce} WHERE \"caller\" = ?1"),
+            &[&item.sym], |r| r.get::<_, String>(0),
+        );
+        let mut out = Vec::new();
+        for callee_sym in callees {
+            let Some(callee_item) = self.resolved_call_item(&callee_sym) else { continue };
+            let from_lines = self.resolved_call_site_lines(&item.sym, &callee_item.name);
+            out.push(HierarchyCallEdge { item: callee_item, from_lines });
+        }
+        Ok(out)
+    }
+
+    /// Every non-definition occurrence of `sym` in `file` — the compiler-tier
+    /// `from_ranges` approximation (`scip_fn_edge` pairs a caller/callee fn by
+    /// symbol only, not the individual call occurrence's own position, so every
+    /// non-definition occurrence of the target inside the caller's file stands
+    /// in for "the call site(s)").
+    fn scip_call_site_lines(&self, sym: &str, file: &str) -> Vec<u32> {
+        let so = tbl("scip_occurrence");
+        self.try_rows(
+            &format!("SELECT \"line\" FROM {so} WHERE \"symbol\" = ?1 AND \"file\" = ?2 AND \"role\" != 'definition'"),
+            &[&sym, &file],
+            |r| r.get::<_, i64>(0),
+        )
+        .into_iter()
+        .map(|line| line.max(0) as u32)
+        .collect()
+    }
+
+    fn compiler_incoming(&self, item: &HierarchyItem) -> Result<Vec<HierarchyCallEdge>> {
+        let sfe = tbl("scip_fn_edge");
+        let callers: Vec<String> = self.try_rows(
+            &format!("SELECT \"caller\" FROM {sfe} WHERE \"callee\" = ?1"),
+            &[&item.scip_symbol], |r| r.get::<_, String>(0),
+        );
+        let mut out = Vec::new();
+        for caller_sym in callers {
+            let Some((repo, file, line)) = self.scip_def_site(&caller_sym) else { continue };
+            let from_lines = self.scip_call_site_lines(&item.scip_symbol, &file);
+            let caller_item = HierarchyItem {
+                tier: "compiler".to_string(), sym: String::new(), scip_symbol: caller_sym.clone(),
+                name: scip_descriptor_name(&caller_sym).unwrap_or_default(),
+                kind: "function".to_string(), repo, file,
+                line: line.max(0) as u32, end_line: line.max(0) as u32,
+            };
+            out.push(HierarchyCallEdge { item: caller_item, from_lines });
+        }
+        Ok(out)
+    }
+
+    fn compiler_outgoing(&self, item: &HierarchyItem) -> Result<Vec<HierarchyCallEdge>> {
+        let sfe = tbl("scip_fn_edge");
+        let callees: Vec<String> = self.try_rows(
+            &format!("SELECT \"callee\" FROM {sfe} WHERE \"caller\" = ?1"),
+            &[&item.scip_symbol], |r| r.get::<_, String>(0),
+        );
+        let mut out = Vec::new();
+        for callee_sym in callees {
+            let Some((repo, file, line)) = self.scip_def_site(&callee_sym) else { continue };
+            let from_lines = self.scip_call_site_lines(&callee_sym, &item.file);
+            let callee_item = HierarchyItem {
+                tier: "compiler".to_string(), sym: String::new(), scip_symbol: callee_sym.clone(),
+                name: scip_descriptor_name(&callee_sym).unwrap_or_default(),
+                kind: "function".to_string(), repo, file,
+                line: line.max(0) as u32, end_line: line.max(0) as u32,
+            };
+            out.push(HierarchyCallEdge { item: callee_item, from_lines });
+        }
+        Ok(out)
+    }
+
+    // ---------- type hierarchy (Track B B5) ----------
+
+    /// `textDocument/prepareTypeHierarchy`: the cursor at (`path`, `byte`)
+    /// resolves to a type-shaped `HierarchyItem`, trying tier "compiler" (a
+    /// `scip_impl` participant) then tier "resolved" (`type_entity` restricted
+    /// to struct/enum/trait/class/interface — a function/alias/const under the
+    /// cursor has no super/subtype relationship). None when neither tier
+    /// resolves.
+    pub fn type_hierarchy_prepare(&self, path: &str, byte: usize) -> Result<Option<HierarchyItem>> {
+        let Some((_string_id, text, _lo, _hi)) = self.span_at(path, byte as u32)? else {
+            return Ok(None);
+        };
+        if let Some(item) = self.compiler_type_prepare(path, byte as u32, &text)? {
+            return Ok(Some(item));
+        }
+        self.resolved_type_prepare(path, &text)
+    }
+
+    /// tier "compiler" prepare: the `compiler_locate` covering-occurrence
+    /// resolution, kept only when the symbol participates in `scip_impl`
+    /// (as the implementing type or the interface/supertype). `kind` is a
+    /// heuristic (`scip_impl` carries no entity kind): a symbol that only ever
+    /// appears as `iface` is `"interface"`, otherwise `"class"`.
+    fn compiler_type_prepare(&self, path: &str, byte: u32, text: &str) -> Result<Option<HierarchyItem>> {
+        let Some(hit) = self.compiler_locate(path, byte, text)? else { return Ok(None); };
+        let si = tbl("scip_impl");
+        let is_impl = !self.try_rows(
+            &format!("SELECT 1 FROM {si} WHERE \"impl\" = ?1 LIMIT 1"),
+            &[&hit.symbol], |r| r.get::<_, i64>(0),
+        ).is_empty();
+        let is_iface = !self.try_rows(
+            &format!("SELECT 1 FROM {si} WHERE \"iface\" = ?1 LIMIT 1"),
+            &[&hit.symbol], |r| r.get::<_, i64>(0),
+        ).is_empty();
+        if !is_impl && !is_iface { return Ok(None); }
+        let kind = if is_iface && !is_impl { "interface" } else { "class" };
+        Ok(Some(HierarchyItem {
+            tier: "compiler".to_string(), sym: String::new(), scip_symbol: hit.symbol,
+            name: hit.display_name, kind: kind.to_string(),
+            repo: hit.repo, file: hit.file, line: hit.line, end_line: hit.line,
+        }))
+    }
+
+    /// tier "resolved" prepare: the identifier text joined against
+    /// `type_entity`, restricted to the type-shaped kinds (a function/method
+    /// entity of the same name must not win the ambiguity pick — it has no
+    /// place in a type hierarchy).
+    fn resolved_type_prepare(&self, path: &str, text: &str) -> Result<Option<HierarchyItem>> {
+        let path_repo = self.repo_for_path(path);
+        let te = tbl("type_entity");
+        let candidates: Vec<(String, String, String, String, i64)> = self.try_rows(
+            &format!("SELECT \"repo\", \"sym\", \"kind\", \"file\", \"line\" FROM {te} \
+                      WHERE \"name\" = ?1 AND \"kind\" IN ('struct', 'enum', 'trait', 'class', 'interface')"),
+            &[&text],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?, r.get::<_, i64>(4)?)),
+        );
+        if candidates.is_empty() { return Ok(None); }
+        let pick = candidates.iter()
+            .find(|(repo, _, _, file, _)| *repo == path_repo && file == path)
+            .or_else(|| candidates.iter().find(|(repo, ..)| *repo == path_repo))
+            .cloned()
+            .unwrap_or_else(|| candidates[0].clone());
+        let (repo, sym, kind, file, line) = pick;
+        let line0 = (line - 1).max(0) as u32;
+        Ok(Some(HierarchyItem {
+            tier: "resolved".to_string(), sym, scip_symbol: String::new(),
+            name: text.to_string(), kind, repo, file, line: line0, end_line: line0,
+        }))
+    }
+
+    /// `typeHierarchy/supertypes`: the interfaces/superclasses `item` implements
+    /// or extends, one hop. `type_link` kind `"impl"` (class/object implements/
+    /// extends) always counts; kind `"generic"` counts ONLY when `item`'s own
+    /// entity kind is `interface`/`trait` (an interface's `extends` are also
+    /// emitted as `"generic"` — see typegraph.rs; a struct/fn's `"generic"`
+    /// bound edges are a type-parameter constraint, not a supertype, and are
+    /// excluded by this same owner-kind filter).
+    pub fn type_hierarchy_supertypes(&self, item: &HierarchyItem) -> Result<Vec<HierarchyItem>> {
+        if item.tier == "compiler" { return self.compiler_supertypes(item); }
+        self.resolved_supertypes(item)
+    }
+
+    /// `typeHierarchy/subtypes`: the types that implement/extend `item`, one
+    /// hop, same kind filter as `type_hierarchy_supertypes`.
+    pub fn type_hierarchy_subtypes(&self, item: &HierarchyItem) -> Result<Vec<HierarchyItem>> {
+        if item.tier == "compiler" { return self.compiler_subtypes(item); }
+        self.resolved_subtypes(item)
+    }
+
+    fn resolved_supertypes(&self, item: &HierarchyItem) -> Result<Vec<HierarchyItem>> {
+        let tl = tbl("type_link");
+        let te = tbl("type_entity");
+        let dsts: Vec<String> = self.try_rows(
+            &format!("SELECT tl.\"dst\" FROM {tl} tl JOIN {te} te ON te.\"sym\" = tl.\"src\" \
+                      WHERE tl.\"src\" = ?1 \
+                      AND (tl.\"kind\" = 'impl' OR (tl.\"kind\" = 'generic' AND te.\"kind\" IN ('interface', 'trait')))"),
+            &[&item.sym], |r| r.get::<_, String>(0),
+        );
+        Ok(dsts.into_iter().filter_map(|sym| self.resolved_type_item(&sym)).collect())
+    }
+
+    fn resolved_subtypes(&self, item: &HierarchyItem) -> Result<Vec<HierarchyItem>> {
+        let tl = tbl("type_link");
+        let te = tbl("type_entity");
+        let srcs: Vec<String> = self.try_rows(
+            &format!("SELECT tl.\"src\" FROM {tl} tl JOIN {te} te ON te.\"sym\" = tl.\"src\" \
+                      WHERE tl.\"dst\" = ?1 \
+                      AND (tl.\"kind\" = 'impl' OR (tl.\"kind\" = 'generic' AND te.\"kind\" IN ('interface', 'trait')))"),
+            &[&item.sym], |r| r.get::<_, String>(0),
+        );
+        Ok(srcs.into_iter().filter_map(|sym| self.resolved_type_item(&sym)).collect())
+    }
+
+    /// `type_entity` row for one sym -> a resolved-tier `HierarchyItem`, the
+    /// by-sym twin of `resolved_type_prepare` (which resolves by name).
+    fn resolved_type_item(&self, sym: &str) -> Option<HierarchyItem> {
+        let te = tbl("type_entity");
+        self.try_rows(
+            &format!("SELECT \"repo\", \"name\", \"kind\", \"file\", \"line\" FROM {te} WHERE \"sym\" = ?1 LIMIT 1"),
+            &[&sym],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?, r.get::<_, i64>(4)?)),
+        )
+        .into_iter()
+        .next()
+        .map(|(repo, name, kind, file, line)| {
+            let line0 = (line - 1).max(0) as u32;
+            HierarchyItem { tier: "resolved".to_string(), sym: sym.to_string(), scip_symbol: String::new(),
+                name, kind, repo, file, line: line0, end_line: line0 }
+        })
+    }
+
+    fn compiler_supertypes(&self, item: &HierarchyItem) -> Result<Vec<HierarchyItem>> {
+        let si = tbl("scip_impl");
+        let ifaces: Vec<String> = self.try_rows(
+            &format!("SELECT \"iface\" FROM {si} WHERE \"impl\" = ?1"),
+            &[&item.scip_symbol], |r| r.get::<_, String>(0),
+        );
+        Ok(ifaces.into_iter().filter_map(|iface| {
+            let (repo, file, line) = self.scip_def_site(&iface)?;
+            Some(HierarchyItem {
+                tier: "compiler".to_string(), sym: String::new(), scip_symbol: iface.clone(),
+                name: scip_descriptor_name(&iface).unwrap_or_default(), kind: "interface".to_string(),
+                repo, file, line: line.max(0) as u32, end_line: line.max(0) as u32,
+            })
+        }).collect())
+    }
+
+    fn compiler_subtypes(&self, item: &HierarchyItem) -> Result<Vec<HierarchyItem>> {
+        let si = tbl("scip_impl");
+        let impls: Vec<String> = self.try_rows(
+            &format!("SELECT \"impl\" FROM {si} WHERE \"iface\" = ?1"),
+            &[&item.scip_symbol], |r| r.get::<_, String>(0),
+        );
+        Ok(impls.into_iter().filter_map(|imp| {
+            let (repo, file, line) = self.scip_def_site(&imp)?;
+            Some(HierarchyItem {
+                tier: "compiler".to_string(), sym: String::new(), scip_symbol: imp.clone(),
+                name: scip_descriptor_name(&imp).unwrap_or_default(), kind: "class".to_string(),
+                repo, file, line: line.max(0) as u32, end_line: line.max(0) as u32,
+            })
+        }).collect())
     }
 
     /// Distinct WORK source paths from the `_file` cache. Feeds crate-root
@@ -4015,6 +4914,9 @@ impl Engine {
                 if DIAG_RELS.contains(&d.name.as_str()) {
                     bail!("diag is the built-in diagnostic sink (fixed schema: path, line, col, end_line, end_col, severity, code, msg, hint); drop the `rel diag(...)` decl and write it directly — name only the columns you use, e.g. `diag(path: p, line: l, msg: m) <- ...`");
                 }
+                if HOVER_RELS.contains(&d.name.as_str()) {
+                    bail!("hover_note is the built-in hover-note sink (fixed schema: path, line, col, end_line, end_col, md); drop the `rel hover_note(...)` decl and head it directly from a rule, like diag — name only the columns you use, e.g. `hover_note(path: p, line: l, end_line: l, end_col: c, md: text) <- ...`");
+                }
                 if GRAPH_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in drawable-graph sink (graph_node(id, label, kind[, file, line, parent]) / graph_edge(src, dst, kind)); drop the `rel {}(...)` decl and head it directly from a rule, like diag — name only the columns you use", d.name, d.name);
                 }
@@ -4075,6 +4977,7 @@ impl Engine {
         for d in effect_rel_decls() { self.declare(&d)?; }
         for d in hook_rel_decls() { self.declare(&d)?; }
         for d in diag_rel_decls() { self.declare(&d)?; }
+        for d in hover_note_rel_decls() { self.declare(&d)?; }
         for d in graph_rel_decls() { self.declare(&d)?; }
         for d in diag_mute_rel_decls() { self.declare(&d)?; }
         for d in demand_rel_decls() { self.declare(&d)?; }
@@ -6847,6 +7750,20 @@ fn byte_to_lc0(content: &str, byte: u32) -> (u32, u32) {
     }
     let col = content[line_start..byte].chars().count() as u32;
     (line, col)
+}
+
+/// Wrap a user substring as a case-insensitive `LIKE` pattern (`%query%`),
+/// escaping the LIKE metacharacters `%`, `_`, and `\` so an identifier that
+/// contains `_` (common in symbol names) matches literally under `ESCAPE '\'`.
+fn like_contains(query: &str) -> String {
+    let mut escaped = String::with_capacity(query.len() + 2);
+    escaped.push('%');
+    for ch in query.chars() {
+        if matches!(ch, '%' | '_' | '\\') { escaped.push('\\'); }
+        escaped.push(ch);
+    }
+    escaped.push('%');
+    escaped
 }
 
 /// Literal identifier tokens a pattern requires (metavars stripped). Used as a

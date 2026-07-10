@@ -6,6 +6,47 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+### Added
+- **`hover_note` builtin sink.** `hover_note(path, line, col, end_line,
+  end_col, md)` in the diag pattern: rules head it to attach markdown to a
+  source span (0-based, inclusive ends); the LSP appends each matching note
+  to the hover at that position, and notes alone hover where no entity
+  matches.
+- **Goto-flow recorder.** `dl.recordFlow` in the VS Code extension
+  (cmd+alt+g): named recording takes land every goto jump as a
+  `hook_event("goto", session, seq, json)` row via the new `dl/hookEvent`
+  LSP request (mirrors the daemon `hook_event` RPC). `examples/goto-flows.dl`
+  unions and anti-unifies takes into named flows: `flow_union_edge` (any
+  take), `flow_common_edge` (every take), a `flowmark` panel layer with one
+  legend chip per flow, hover membership via `hover_note`, and
+  `? flow_stat(name, takes, edges)`.
+- **Panel test harness.** vitest + playwright under `editors/vscode-dl/`
+  (`npm test` / `npm run test:e2e`): hermetic fixture bridge serving the
+  dl-bridge `/rpc` shape from canned tables, 9 unit + 6 e2e including list
+  and trace view screenshot baselines.
+- **documentHighlight / workspaceSymbol / documentSymbol (B2).** Three
+  standard LSP features off existing engine tables: highlight = the
+  identifier's same-string spans within the request file; workspace symbols
+  = LIKE-contains over `type_entity` + `call_def` names (prefix matches
+  first, cap 200, multi-repo URIs); document symbols = the file's
+  `type_entity` rows nested by parent sym (outline view).
+- **BOM table preset + where-used (C1/C2).** `.dl/bom.dl` derives
+  `bom_node`/`bom_edge`: every member-flow part annotated with
+  member_count, fan_in, fan_out (distinct, set-deduped across type + call
+  links), and weight (callable span lines). The panel renders them as a
+  right-aligned numeric band with sort chips (fan-in descending default),
+  shows subtree totals on a collapsed group, and opens a where-used
+  overlay on alt-click (callers, incoming type refs by kind, field
+  fill/read, importers — all sym-pinned queries).
+
+### Fixed
+- **Flow panel list view rendered zero rows in current Chromium.** The wave-2
+  virtualization resolved the toolbar offset via `gutterLeft.offsetTop`, but
+  `#gutterLeft` is an svg and `SVGElement` has no `offsetTop` — the window
+  bounds went NaN and no rows materialized (webview included). Found by the
+  new playwright harness on its first run; all three sites now read the
+  `#listRows` div.
+
 ## [0.7.0] - 2026-07-10
 
 ### Added

@@ -1,0 +1,204 @@
+# goto-flows.dl: named dataflows reverse-derived from editor navigation.
+#
+# Stage F3 of plans/2026-07-10-flow-marks-goto-recorder.md. F1 shipped the
+# `hover_note` sink, F2 shipped the `dl/hookEvent` request + the VS Code
+# recorder (command `dl.recordFlow`, keybinding cmd+alt+g, status bar "REC
+# <name>"). This program is the third leg: turn the recorded jumps into named,
+# unioned/anti-unified flows with a panel layer and a hover surface.
+#
+# ---- the recorder workflow --------------------------------------------------
+#
+#   1. cmd+alt+g (or `dl.recordFlow`) prompts for a session name, e.g.
+#      "checkout-take-1". Every goto-def / cross-file jump from then on is
+#      recorded as a `hook_event("goto", session, seq, json)` row (F2).
+#   2. cmd+alt+g again stops the recording.
+#   3. Record a SECOND pass over the same logical flow under a different
+#      session name, e.g. "checkout-take-2" (a slightly different path through
+#      the code is fine, that's the point).
+#   4. Name the flow by writing `flow_take` facts that group the takes:
+#        flow_take("checkout", "checkout-take-1").
+#        flow_take("checkout", "checkout-take-2").
+#      An unnamed session (no `flow_take` row) still gets its own flow, named
+#      after itself (`take_of` rule 2 below): recording one take with no
+#      naming step still produces a browsable flow.
+#   5. `dl examples/goto-flows.dl --lsp`: hover any member function in the
+#      flow for "in flow: checkout"; the flow panel's `flowmark` layer draws
+#      the union graph; `? flow_stat(...)` lists every named flow with its
+#      take count and edge count.
+#
+# ---- union / anti-unify ------------------------------------------------------
+#
+# `flow_union_edge` is every edge seen in ANY take of a flow (the reverse
+# engineered dataflow, generous). `flow_common_edge` is only the edges seen in
+# EVERY take (the spine common to every recorded path; noise from an
+# incidental detour in one take washes out). Both ride dl's relation SET
+# semantics: `take_edge`/`take_of` rows are already deduplicated, so a plain
+# `count(session)` grouped by (name, ...) IS `count(distinct session)`, no
+# explicit DISTINCT needed anywhere below.
+#
+# ---- known limits (honest, not solved here) ----------------------------------
+#
+#   - Single-repo only. `from`/`to` paths recorded by the extension are
+#     workspace-folder-relative; `call_def`'s `file` column is the same
+#     convention for the SELF repo, so the span-containment lift below only
+#     resolves jumps inside the repo being served. A multi-repo config (`scan
+#     "*"`) would need the recorded json to carry a repo slug alongside the
+#     path; not attempted here.
+#   - The recorder's `word` field (the identifier under the cursor at jump
+#     time) is captured in `hook_event.json` but unused below; the sym lift
+#     goes through span containment against `call_def`, which is more robust
+#     than a name match. `word` is there for a future disambiguation pass.
+#   - A jump into a file outside every scanned glob, or landing between two
+#     `call_def` spans (a jump into a struct, a const, a comment), produces no
+#     `jump_src_sym`/`jump_dst_sym` row: the edge is silently dropped rather
+#     than falling back to a file-level edge. Widening the lift to non-callable
+#     `type_entity` spans is a natural follow-on, not done here.
+#   - No ordering beyond "one previous jump": the recorder tracks a single
+#     `last` position (F2), so `take_edge` is exactly the from-sym -> to-sym
+#     pair of ONE event, no multi-hop chain reconstruction within a take.
+
+# Populate `_file` so `call_def` (the lazy call-graph indexer) runs over the
+# repo's Rust sources. Widen the glob (or add more scan rules) for a
+# multi-language flow: the sym lift below is call_def-generic, so a Kotlin or
+# TS scan rides the same rules with zero changes.
+rel src(path: file).
+src(path) <- scan("WORK", "src/**/*.rs", path, rev).
+
+# ---- 1. jump extraction ------------------------------------------------------
+# A term-extract rule may carry exactly one jsonp/json/sg body item (the
+# engine's "split a multi-extract rule into chained rules" law), so each json
+# field gets its OWN extract-only rel; `goto_jump` then joins the four. This
+# also gives the "no `from` on the first jump of a take" case its natural
+# handling: `jsonp(body, "from.file", ...)` over a null/missing `from` yields
+# ZERO rows for that (session, seq), so `goto_from_file`/`goto_from_line` have
+# no row, and the join below silently produces no `goto_jump` row for it, no
+# special-casing needed.
+rel goto_from_file(session: text, seq: int, from_file: text).
+goto_from_file(session, seq, from_file) <-
+    hook_event("goto", session, seq, event_json),
+    jsonp(event_json, "from.file", from_file).
+
+rel goto_from_line(session: text, seq: int, from_line: text).
+goto_from_line(session, seq, from_line) <-
+    hook_event("goto", session, seq, event_json),
+    jsonp(event_json, "from.line", from_line).
+
+rel goto_to_file(session: text, seq: int, to_file: text).
+goto_to_file(session, seq, to_file) <-
+    hook_event("goto", session, seq, event_json),
+    jsonp(event_json, "to.file", to_file).
+
+rel goto_to_line(session: text, seq: int, to_line: text).
+goto_to_line(session, seq, to_line) <-
+    hook_event("goto", session, seq, event_json),
+    jsonp(event_json, "to.line", to_line).
+
+# The join: one row per complete (from, to) jump. Line numbers land as text out
+# of jsonp (a JSON number is extracted the same way as a string), so `int(...)`
+# casts them here, the gen-doc-indexes.dl idiom for a jsonp/regex-extracted
+# line number.
+rel goto_jump(session: text, seq: int, from_file: file, from_line: int,
+              to_file: file, to_line: int).
+goto_jump(session, seq, from_file, int(from_line), to_file, int(to_line)) <-
+    goto_from_file(session, seq, from_file),
+    goto_from_line(session, seq, from_line),
+    goto_to_file(session, seq, to_file),
+    goto_to_line(session, seq, to_line).
+
+# ---- 2. sym lift: span containment against call_def --------------------------
+# call_def(repo, sym, kind, file, line, end), 1-based, end inclusive.
+rel jump_src_sym(session: text, seq: int, sym: text).
+jump_src_sym(session, seq, sym) <-
+    goto_jump(session, seq, from_file, from_line, _, _),
+    call_def(_, sym, _, from_file, def_line, def_end),
+    def_line <= from_line, from_line <= def_end.
+
+rel jump_dst_sym(session: text, seq: int, sym: text).
+jump_dst_sym(session, seq, sym) <-
+    goto_jump(session, seq, _, _, to_file, to_line),
+    call_def(_, sym, _, to_file, def_line, def_end),
+    def_line <= to_line, to_line <= def_end.
+
+# ---- 3. per-take edges --------------------------------------------------------
+# The recorder tracks a single `last` position (F2), so the same event already
+# carries both ends of one hop: no argmax "previous jump" pairing needed here
+# (unlike chat-marks's nearest-preceding-mark problem, which chat-marks solves
+# because a mark and the messages under it are NOT co-located in one event).
+rel take_edge(session: text, src_sym: text, dst_sym: text).
+take_edge(session, src_sym, dst_sym) <-
+    jump_src_sym(session, seq, src_sym), jump_dst_sym(session, seq, dst_sym),
+    src_sym != dst_sym.
+
+# ---- 4. naming: group takes into a flow ---------------------------------------
+# `flow_take(name, session)` facts are authored by the user (or a future
+# recorder command), e.g. `flow_take("checkout", "checkout-take-1").`. A
+# session with no naming fact still becomes its own one-take flow (identity),
+# via the stratified negation `!session_named`.
+rel flow_take(name: text, session: text).
+
+rel goto_session(session: text).
+goto_session(session) <- hook_event("goto", session, _, _).
+
+rel session_named(session: text).
+session_named(session) <- flow_take(_, session).
+
+rel take_of(name: text, session: text).
+take_of(name, session) <- flow_take(name, session).
+take_of(session, session) <- goto_session(session), !session_named(session).
+
+# ---- 5. union + anti-unify -----------------------------------------------------
+rel flow_union_edge(name: text, src_sym: text, dst_sym: text).
+flow_union_edge(name, src_sym, dst_sym) <-
+    take_of(name, session), take_edge(session, src_sym, dst_sym).
+
+rel flow_take_count(name: text, takes: int).
+flow_take_count(name, count(session)) <- take_of(name, session).
+
+rel flow_edge_takes(name: text, src_sym: text, dst_sym: text, takes: int).
+flow_edge_takes(name, src_sym, dst_sym, count(session)) <-
+    take_of(name, session), take_edge(session, src_sym, dst_sym).
+
+rel flow_common_edge(name: text, src_sym: text, dst_sym: text).
+flow_common_edge(name, src_sym, dst_sym) <-
+    flow_edge_takes(name, src_sym, dst_sym, edge_takes),
+    flow_take_count(name, total_takes),
+    edge_takes = total_takes.
+
+# ---- 6. membership + panel layer -----------------------------------------------
+# The `_node`/`_edge` naming convention (sprefa-flow-panel-layers): the panel
+# discovers `flowmark_node`/`flowmark_edge` with zero panel code and shows a
+# "flowmark" layer checkbox.
+rel flow_member(name: text, sym: text).
+flow_member(name, sym) <- flow_union_edge(name, sym, _).
+flow_member(name, sym) <- flow_union_edge(name, _, sym).
+
+rel flowmark_node(sym: text, name: text, kind: text, file: file, line: int).
+flowmark_node(sym, bare_name, "fn", def_file, def_line) <-
+    flow_member(_, sym), call_def(_, sym, _, def_file, def_line, _), call_name(sym, bare_name).
+
+rel flowmark_edge(src: text, dst: text, kind: text).
+flowmark_edge(src_sym, dst_sym, flow_name) <- flow_union_edge(flow_name, src_sym, dst_sym).
+# kind = the flow name, so the panel legend gets one color chip per flow free.
+
+# ---- 7. hover membership -------------------------------------------------------
+# hover_note positions are 0-based (def_line - 1); call_def.line is 1-based.
+# The span covers the whole declaration line (col 0..200) rather than just the
+# fn name: call_def carries no name-column span, and a whole-line note is
+# still useful on hover. Several flows on one fn stack as separate notes
+# (hover_note's documented multi-row behavior).
+hover_note(path: def_file, line: def_line - 1, col: 0,
+           end_line: def_line - 1, end_col: 200,
+           md: "**in flow:** ${flow_name}") <-
+    flow_member(flow_name, sym), call_def(_, sym, _, def_file, def_line, _).
+
+# ---- 8. the table ---------------------------------------------------------------
+rel flow_edge_count(name: text, edges: int).
+flow_edge_count(name, count(src_sym)) <- flow_union_edge(name, src_sym, dst_sym).
+
+rel flow_stat(name: text, takes: int, edges: int).
+flow_stat(name, takes, edges) <-
+    flow_take_count(name, takes), flow_edge_count(name, edges).
+
+? flow_stat(name, takes, edges).
+? flow_union_edge(name, src_sym, dst_sym).
+? flow_common_edge(name, src_sym, dst_sym).

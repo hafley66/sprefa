@@ -371,6 +371,48 @@
     padding: 0 2px; cursor: pointer; }
   .lline:hover { color: var(--cyan); text-decoration: underline; }
 
+  /* ── BOM numeric band: a right-aligned column band on each part row (member
+     qty · fan-in · fan-out · weight). margin-left:auto floats it right; a
+     following .lline's own auto is then a no-op (no free space left), so band
+     and :line sit together at the row's right edge. tabular-nums keeps the
+     digits column-aligned down the list. A collapsed row's band is the rolled-
+     up subtree total (see applyCollapse), rendered brighter via .rollup. */
+  .lnums { margin-left: auto; display: inline-flex; flex: 0 0 auto; gap: 0; }
+  /* when a band precedes the :line cell, the band owns the single auto margin;
+     kill the cell's own margin-left:auto so the two cluster at the right edge
+     together instead of splitting the free space between two auto margins. */
+  .lnums + .lline { margin-left: 6px; }
+  .lnum { min-width: 40px; text-align: right; padding: 0 4px; font-size: 10px;
+    color: var(--muted); font-variant-numeric: tabular-nums; }
+  .lnum.zero { opacity: .35; }
+  .lnums.rollup .lnum { color: var(--sel); font-weight: 600; }
+  .lnum.n-in { color: var(--cyan); }
+  .lnums.rollup .lnum.n-in { color: var(--sel); }
+
+  /* ── WHERE-USED overlay: alt-click a part row. Reuses the .lrow/.lline row
+     styling (block flow here, not the #listRows absolute windowing), grouped
+     into sections (callers · type refs · fields · importers), pinned on the
+     clicked sym. Sits above every view; Escape or × returns to the list. */
+  #wherePort { position: fixed; inset: 0; z-index: 40; background: var(--bg);
+    display: flex; flex-direction: column; padding-top: var(--bar-h, 150px); }
+  #wherePort[hidden] { display: none; }
+  .wherehead { flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; border-bottom: 1px solid #213650; background: #0d1828; }
+  .wherecrumb { color: var(--ink); font-size: 12px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .wherecrumb .lead { color: var(--muted); text-transform: uppercase;
+    font-size: 10px; letter-spacing: .4px; margin-right: 6px; }
+  .wherecrumb .seg { color: var(--muted); }
+  .wherecrumb .seg::after { content: ' / '; color: #33465f; }
+  .wherecrumb .seg:last-child { color: var(--ink); }
+  .wherecrumb .seg:last-child::after { content: ''; }
+  .wherebody { flex: 1 1 auto; overflow-y: auto; padding: 4px 0 40px; }
+  .wherebody .lrow { position: static; }
+  .where-section { padding: 9px 12px 2px; color: var(--muted); font-size: 10px;
+    text-transform: uppercase; letter-spacing: .4px; }
+  .where-section b { color: var(--ink); font-weight: 600; }
+  .where-none { padding: 2px 14px 6px; color: var(--muted); font-size: 11px; opacity: .6; }
+
   /* trace mode: same .lrow/.ldot/.llabel/.lkind/.lline row as list view, plus
      one new element -- a depth badge (BFS hop count from the pinned seed). */
   .tdepth { color: var(--muted); font-size: 10px; flex: 0 0 auto; min-width: 20px;
@@ -464,6 +506,7 @@
     <option value="enumMatches">Enums ↔ matches</option>
     <option value="madge">Module graph</option>
     <option value="memberFlow">Member flow</option>
+    <option value="bomTable">BOM table</option>
     <option value="diff">Diff (base vs head)</option>
     <option value="layers">Layers (discovered)</option>
     <option value="custom">Custom</option>
@@ -475,7 +518,10 @@
     <button id="saveBtn" title="save the current nodes/edges SQL under this name (persists locally; appears in the preset list, renders in graph OR list)">save</button>
     <button id="delBtn" title="delete the selected saved query">del</button>
     <label style="flex:0 0 auto;margin-left:8px" title="highlight and center the graph node under the editor cursor as you move it (VS Code only)"><input type="checkbox" id="followCursor" style="vertical-align:middle" /> follow cursor</label>
+    <label style="flex:0 0 auto;margin-left:8px" title="resolve the cursor to its symbol (dl/locate) and center that exact node -- sym equality, not the file/line heuristic (VS Code only)"><input type="checkbox" id="followSym" style="vertical-align:middle" /> follow</label>
+    <button id="pinHereBtn" title="pin the currently-followed node and stop following" disabled>pin here</button>
   </div>
+  <div class="row legend" id="followBreadcrumbs" hidden></div>
   <div class="row layers" id="layerRow"><label>layers</label><div id="layerList"></div><button class="layer-refresh" id="layerRefresh" title="re-scan schema for new _node/_edge rels">↻</button></div>
   <div class="row legend" id="legend"></div>
   <div class="row legend" id="diffLegend" hidden></div>
@@ -514,6 +560,17 @@
   </div>
 </div>
 
+<!-- ══ WHERE-USED: alt-click a part row (list view) to see who depends on it,
+     grouped (callers · type refs · fields · importers), each query PINNED on
+     the clicked sym. Reuses the .lrow row styling; Escape or × returns. ══ -->
+<div id="wherePort" hidden>
+  <div class="wherehead">
+    <button class="help-close" id="whereClose" aria-label="close">×</button>
+    <span class="wherecrumb" id="whereCrumb"></span>
+  </div>
+  <div class="wherebody" id="whereBody"></div>
+</div>
+
 <div class="banner" id="errBanner" hidden></div>
 
 <!-- Empty-state: shown by render() when a query succeeds but returns zero
@@ -537,6 +594,7 @@
       <tr><td>wheel</td><td>zoom at the cursor</td></tr>
       <tr><td>click file:line footer</td><td>open that file in the editor</td></tr>
       <tr><td>click legend chip</td><td>filter by kind (click again to clear)</td></tr>
+      <tr><td><code>follow</code> toggle (top bar)</td><td>resolve the cursor to its symbol via <code>dl/locate</code> and center that exact node as you move it; recent syms collect in a breadcrumb ring (click a chip to re-center), <code>pin here</code> snapshots the current one and stops following (VS Code only)</td></tr>
       <tr><td>Enter in a SQL box</td><td>run the queries</td></tr>
       <tr><td><code>?</code> key</td><td>toggle this panel (ignored while typing in a box)</td></tr>
       <tr><td><code>list | canvas</code> button</td><td>switch viewport mode (persisted); same queries, pins, and legend filter carry over</td></tr>
@@ -556,7 +614,11 @@
       <tr><td>left gutter</td><td>downward edges (source row above destination)</td></tr>
       <tr><td>right gutter</td><td>upward / back edges (destination above source)</td></tr>
       <tr><td>node with a <code>parent</code> column</td><td>nests under its parent's row instead of flat-under-file</td></tr>
+      <tr><td><code>alt</code>+click a node row</td><td>where-used panel: callers, incoming type refs (by kind), field fill/read, and importers of the part's file — each pinned on that sym (Esc / × returns)</td></tr>
     </table>
+
+    <h3>BOM table</h3>
+    <p>The <b>BOM table</b> preset (<code>.dl/bom.dl</code>) adds a right-aligned numeric band to each part row: <b>members</b> (direct children), <b>fan-in</b> (where-used), <b>fan-out</b> (depends-on), <b>weight</b> (a callable's span lines). Sort chips reorder siblings by any column (fan-in descending by default = most depended-on first). A collapsed group's band shows its subtree totals.</p>
 
     <h3>query contract</h3>
     <p>Columns are positional, read left to right — extra columns are ignored.</p>
@@ -577,6 +639,7 @@
       <tr><td>Enums ↔ matches</td><td>enum <code>rel_type_entity</code> rows edged to their <code>rel_enum_match_block</code> match-arm sites (.dl/enum-matches.dl)</td></tr>
       <tr><td>Module graph</td><td>module files (endpoints of <code>rel_module_edge</code>) edged by their import edges — builtin, works on a bare scan</td></tr>
       <tr><td>Member flow</td><td>struct/trait/enum/class/interface owners + their function/method/const members, edged by type links and calls, methods nested under their owner in list view (.dl/flow-panel.dl)</td></tr>
+      <tr><td>BOM table</td><td>the Member-flow hierarchy plus per-part counts — members / fan-in / fan-out / weight — as a right-aligned numeric band, with sort chips and a subtree rollup on collapse; <code>alt</code>+click a row for where-used (<code>rel_bom_node</code>/<code>rel_bom_edge</code> from .dl/bom.dl)</td></tr>
       <tr><td>Diff (base vs head)</td><td>added/removed/unchanged nodes and edges between the two revs of <code>diff_pair</code> (base rev vs head rev, default inert WORK/WORK; set <code>diff_pair</code> in <code>.dl/graph-diff.dl</code>) (<code>rel_edge_added</code>/<code>rel_edge_removed</code>/<code>rel_node_added</code>/<code>rel_node_removed</code>/<code>rel_bare_edge</code>/<code>rel_bare_node</code> from <code>.dl/graph-diff.dl</code>); canvas view only for the added/removed/unchanged styling (dashed+muted/solid+hot/dimmed) and the class chips + count pill</td></tr>
       <tr><td>Custom</td><td>whatever SQL is in the two boxes below; editing either box switches here automatically</td></tr>
       <tr><td>Layers (discovered)</td><td>checkbox list of every <code>rel_<i>&lt;name&gt;</i>_node</code> + <code>rel_<i>&lt;name&gt;</i>_edge</code> pair the daemon's schema exposes; toggle one or more to UNION ALL them into a composed graph. Column names bind to roles by name (<code>id</code>/<code>sym</code>→identity, <code>label</code>/<code>name</code>→display, <code>kind</code>→chip, <code>file</code>/<code>path</code>→fs-tree, <code>line</code>→jump, <code>parent</code>→nesting). Write a <code>.dl</code> declaring <code>foo_node(sym,name,kind,file,line)</code> + <code>foo_edge(src,dst,kind)</code>, click <code>↻</code>, and it appears — no preset edit, no SQL</td></tr>
@@ -766,6 +829,16 @@ const PRESETS = {
     edges: "SELECT src, dst, kind FROM rel_member_edge UNION ALL " +
       "SELECT src, dst, 'wire' FROM rel_port_edge",
   },
+  // BOM table (.dl/bom.dl): the member_node assembly hierarchy plus four
+  // trailing numeric columns per part -- member_count, fan_in (where-used),
+  // fan_out (depends-on), weight (a callable's span lines). renderList reads
+  // r[6..9] into the right-aligned numeric band; the sort chips (list view)
+  // reorder siblings by any of them (fan-in desc = most depended-on first).
+  bomTable: {
+    nodes: `SELECT sym, name, kind, ${REPO_FILE_COL}, line, parent, ` +
+      "member_count, fan_in, fan_out, weight FROM rel_bom_node",
+    edges: "SELECT src, dst, kind FROM rel_bom_edge",
+  },
   // Diff (base vs head), D2 of plans/2026-07-03-pr-diff-graph.md. Node/edge
   // ids are already bare syms (rel_node_added/rel_node_removed/rel_edge_added/
   // rel_edge_removed/rel_bare_node/rel_bare_edge strip the repo-basename
@@ -792,6 +865,27 @@ const PRESETS = {
 };
 const PRESET_KEY = 'dl-flow-preset';
 let currentPreset = 'typeAll';
+
+// ── sibling ordering: the fs-tree lists a file/owner's children in a stable
+// order. Default is source order (line, then label) -- the reading order of
+// the code. The BOM table parameterizes it: with numeric columns present (the
+// bomTable preset), a sort chip picks fan-in/out/weight/members DESC (biggest
+// part first) or name. `bomSort` is module state; buildRows reads it through
+// siblingCmp so every sibling list (parent-nested kids, file syms, no-file
+// leaves) sorts the same way. Declared here (before restorePreset runs) so the
+// restore path can set it without tripping the let temporal-dead-zone.
+let bomSort = 'line'; // 'line' | 'members' | 'fanIn' | 'fanOut' | 'weight' | 'name'
+const SORT_NUM_IDX = { members: 0, fanIn: 1, fanOut: 2, weight: 3 };
+function siblingCmp(a, b) {
+  if (bomSort === 'name') return a.label.localeCompare(b.label);
+  const idx = SORT_NUM_IDX[bomSort];
+  if (idx != null) {
+    const av = a.nums ? a.nums[idx] : -1, bv = b.nums ? b.nums[idx] : -1;
+    if (bv !== av) return bv - av;           // DESC: most-connected/biggest first
+    return a.label.localeCompare(b.label);   // stable tie-break
+  }
+  return (a.line ?? 1e9) - (b.line ?? 1e9) || a.label.localeCompare(b.label);
+}
 
 // ── saved queries: a named library of node/edge SQL pairs ────────────────────
 // The built-in presets are hardcoded SQL blocks; these are the user's OWN. A
@@ -1092,6 +1186,25 @@ function buildProtoRow() {
       : 'trace mode: pin a node first';
     traceChip.addEventListener('click', enterTraceMode);
     row.appendChild(traceChip);
+    // BOM sort chips: reorder siblings by a numeric column (fan-in desc is the
+    // default = most depended-on parts first). Only meaningful when the rows
+    // carry the numeric band, so shown only for the bomTable preset.
+    if (currentPreset === 'bomTable') {
+      const label = document.createElement('span');
+      label.textContent = 'sort';
+      label.style.cssText = 'color:var(--muted);font-size:10px;margin-left:8px;align-self:center';
+      row.appendChild(label);
+      const SORT_CHIPS = [['fanIn', 'fan-in'], ['fanOut', 'fan-out'],
+        ['weight', 'weight'], ['members', 'members'], ['line', 'source'], ['name', 'name']];
+      for (const [mode, text] of SORT_CHIPS) {
+        const chip = document.createElement('span');
+        chip.className = 'chip' + (bomSort === mode ? ' on' : '');
+        chip.textContent = text;
+        chip.title = 'sort siblings by ' + text + (mode === 'line' || mode === 'name' ? '' : ' (descending)');
+        chip.addEventListener('click', () => setBomSort(mode));
+        row.appendChild(chip);
+      }
+    }
   }
 }
 // side effects per toggle: chevrons need a list geometry rebuild (new marker
@@ -1126,6 +1239,7 @@ renderSavedOptions(); // build the "Saved" optgroup so the restore below can sel
     currentPreset = saved.preset;
   }
   document.getElementById('presetSel').value = currentPreset;
+  syncBomSort(); // bomSort defaults to fanIn when the restored preset is bomTable
 })();
 
 // ── graph build ─────────────────────────────────────────────────────────────
@@ -1149,7 +1263,29 @@ function clearError() {
   document.getElementById('errLine').textContent = '';
 }
 
+// ── perf marks (A10 harness) ─────────────────────────────────────────────
+// performance.now() spans around run()/renderCanvas()/renderList()/
+// refreshListView(), echoed via postMessage({type:'perf', ...}) so an
+// external harness (playwright, or any other host page) can listen without
+// any new host coupling -- same window-message channel graphChanged already
+// rides (see the `message` listener below), which already ignores anything
+// whose type isn't 'graphChanged'. A plain window.postMessage, NOT routed
+// through window.dlHost -- the portability law (flow-panel.html stays
+// host-agnostic) only permits dlHost/{query,hover,open} + window messages as
+// host coupling, and this is the latter. Additive only: no behavior changes
+// on the render path, and nothing here runs inside a hot per-row loop.
+function emitPerf(phase, t0, rows, drawnArcs) {
+  try {
+    window.postMessage({
+      type: 'perf', phase, ms: performance.now() - t0,
+      rows: rows == null ? null : rows,
+      drawnArcs: drawnArcs == null ? null : drawnArcs,
+    }, '*');
+  } catch (e) { /* perf reporting must never break the panel */ }
+}
+
 async function run() {
+  const __perfT0 = performance.now();
   clearError();
   let nodeRows, edgeRows;
   try {
@@ -1187,6 +1323,7 @@ async function run() {
   // treats as "no server total, use nodeRows.length" (its existing safety net).
   render(nodeRows, edgeRows, nodeRows.total, edgeRows.total);
   updateDiffPanel(nodeRows, edgeRows);
+  emitPerf('run', __perfT0, nodeRows.length + edgeRows.length);
   loadGateways(); // fire-and-forget: the hover card shouldn't wait on it
 }
 
@@ -1259,6 +1396,7 @@ async function loadGateways() {
 // so cy's own gestures win.
 let cy = null;
 function renderCanvas(nodeRows, edgeRows) {
+  const __perfT0 = performance.now();
   const ids = new Set(nodeRows.map(r => String(r[0])));
   const keptEdges = edgeRows.filter(r => ids.has(String(r[0])) && ids.has(String(r[1])));
   const linked = new Set();
@@ -1334,6 +1472,7 @@ function renderCanvas(nodeRows, edgeRows) {
 
   document.getElementById('countPill').textContent =
     `${keptNodes.length} nodes · ${merged.length} edges`;
+  emitPerf('renderCanvas', __perfT0, keptNodes.length, merged.length);
 }
 
 function mergeEdgeRows(rows) {
@@ -1544,6 +1683,103 @@ document.getElementById('followCursor').addEventListener('change', function () {
   lastFollowId = null;
 });
 
+// ── follow the user via dl/locate: sym-EQUALITY centering (Track B B4) ─────
+// The extension resolves each debounced cursor move through the engine
+// (`dl/locate` -> Engine::locate) and posts {type:'locate', hit, seq} as a
+// plain `window` message — the portability law's ONLY host coupling besides
+// window.dlHost, so this stays inert under the plain-browser bridge (which
+// never posts one). `hit.symbol` lives in the SAME id space the graph nodes
+// use (type_entity/call_def `sym`), so centering is direct id EQUALITY via
+// the existing `centerOnNode`/`listRowIndexById` machinery — no file/line/word
+// heuristic, unlike `findNodeAt` above. This toggle is independent of
+// "follow cursor"; both can run at once, each drives its own last-seen id.
+let followSymOn = false;
+let lastFollowSym = null;
+let followTrail = [];  // most-recent-first, distinct syms, capped at 8
+
+// Pure: push `sym` to the front of a most-recent-first ring, deduping an
+// existing occurrence (moved to front, not re-inserted) and capping at `max`
+// entries (oldest dropped first). Exported to the vitest harness by
+// extraction (tests/unit/follow-lens.test.ts), same technique as
+// scripts/test-panel-rollup.mjs uses for applyCollapse.
+function pushBreadcrumb(trail, sym, max) {
+  max = max || 8;
+  var next = [sym].concat(trail.filter(function (existing) { return existing !== sym; }));
+  return next.slice(0, max);
+}
+
+// Center the node whose id equals `sym`, in whichever view is active. Returns
+// true when a matching node was found and centered, false on a miss (the sym
+// may belong to a preset that isn't the one currently loaded) — a miss is
+// silent, matching `onEditorCursor`'s posture.
+function focusSym(sym) {
+  if (!sym) return false;
+  if (viewMode === 'list') {
+    if (!listAllNodeMeta.has(sym)) return false;
+    hoverNode(sym);
+    var row = listRowEls.get(sym);
+    if (row) row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    else if (listRowIndexById.has(sym)) scrollListToIndex(listRowIndexById.get(sym));
+    return true;
+  }
+  if (!cy || cy.getElementById(sym).empty()) return false;
+  hoverNode(sym);
+  centerOnNode(sym);
+  return true;
+}
+
+function renderFollowBreadcrumbs() {
+  var row = document.getElementById('followBreadcrumbs');
+  row.hidden = followTrail.length === 0;
+  row.innerHTML = '';
+  for (const sym of followTrail) {
+    const chip = document.createElement('span');
+    chip.className = 'chip' + (sym === lastFollowSym ? ' on' : '');
+    chip.title = sym;
+    chip.textContent = String(sym).split('::').pop() || sym;
+    chip.addEventListener('click', function () { visitBreadcrumb(sym); });
+    row.appendChild(chip);
+  }
+}
+
+// A breadcrumb chip click re-centers on that sym and moves it back to the
+// front of the ring (a re-visit), same as a fresh `locate` hit would.
+function visitBreadcrumb(sym) {
+  lastFollowSym = sym;
+  followTrail = pushBreadcrumb(followTrail, sym, 8);
+  renderFollowBreadcrumbs();
+  focusSym(sym);
+  document.getElementById('pinHereBtn').disabled = false;
+}
+
+function onLocate(m) {
+  if (!followSymOn) return;
+  const hit = m && m.hit;
+  const sym = hit && hit.symbol;
+  if (!sym || sym === lastFollowSym) return;
+  lastFollowSym = sym;
+  followTrail = pushBreadcrumb(followTrail, sym, 8);
+  renderFollowBreadcrumbs();
+  focusSym(sym);
+  document.getElementById('pinHereBtn').disabled = false;
+}
+window.addEventListener('message', ev => {
+  const m = ev.data;
+  if (m && m.type === 'locate') onLocate(m);
+});
+document.getElementById('followSym').addEventListener('change', function () {
+  followSymOn = this.checked;
+  lastFollowSym = null; // force the next hit to act even if it repeats the last one
+});
+document.getElementById('pinHereBtn').addEventListener('click', function () {
+  if (!lastFollowSym) return;
+  pinned.add(lastFollowSym);
+  refreshHighlight();
+  followSymOn = false;
+  document.getElementById('followSym').checked = false;
+  this.disabled = true;
+});
+
 // ── auto-refresh on graphChanged ────────────────────────────────────────────
 // The VS Code host posts {type:'graphChanged'} after a daemon tick (extra
 // fields may ride along; ignored). When the "auto" toggle is on and this tab
@@ -1664,7 +1900,8 @@ const LANE_W = 8;      // px between lanes
 const LANE_CAP = 12;   // overflow edges share the outermost lane at reduced opacity
 
 // ── buildRows: pure. nodeRows = positional [id, label?, kind?, file?, line?,
-// parent?]. Every row carries `key` (collapse-state identity: a node's own
+// parent?, member_count?, fan_in?, fan_out?, weight?]. Every row carries `key`
+// (collapse-state identity: a node's own
 // id, or a dir's full accumulated path) and `hasChildren` (whether a
 // disclosure triangle applies) so the renderer never has to re-derive either.
 //
@@ -1681,6 +1918,11 @@ function buildRows(nodeRows) {
     file: r[3] != null && r[3] !== '' ? String(r[3]) : null,
     line: r[4] != null && r[4] !== '' ? Number(r[4]) : null,
     parent: r[5] != null && r[5] !== '' ? String(r[5]) : null,
+    // trailing numeric band [member_count, fan_in, fan_out, weight] -- only the
+    // bomTable preset returns these; null everywhere else (no band rendered).
+    nums: r.length > 6
+      ? [Number(r[6]) || 0, Number(r[7]) || 0, Number(r[8]) || 0, Number(r[9]) || 0]
+      : null,
   }));
 
   const byId = new Map(parsed.map(n => [n.id, n]));
@@ -1711,9 +1953,7 @@ function buildRows(nodeRows) {
       childrenOf.get(n.parent).push(n);
     }
   }
-  for (const kids of childrenOf.values()) {
-    kids.sort((a, b) => (a.line ?? 1e9) - (b.line ?? 1e9) || a.label.localeCompare(b.label));
-  }
+  for (const kids of childrenOf.values()) kids.sort(siblingCmp);
   const nested = new Set();
   for (const kids of childrenOf.values()) for (const k of kids) nested.add(k.id);
 
@@ -1727,7 +1967,7 @@ function buildRows(nodeRows) {
     for (const k of kids) {
       if (path.has(k.id)) continue;
       rows.push({ type: 'node', depth, label: k.label, id: k.id, kind: k.kind,
-                   file: k.file, line: k.line, key: k.id, hasChildren: childrenOf.has(k.id) });
+                   file: k.file, line: k.line, nums: k.nums, key: k.id, hasChildren: childrenOf.has(k.id) });
       path.add(k.id);
       emitChildren(k.id, depth + 1, path);
       path.delete(k.id);
@@ -1775,12 +2015,11 @@ function buildRows(nodeRows) {
     const key = parentPath ? parentPath + '/' + label : label;
     const groupNodes = node.isFile ? byFile.get(node.fileKey) : null;
     const fileNodeRow = groupNodes ? groupNodes.find(n => n.id === node.fileKey) : null;
-    const syms = (groupNodes || []).filter(n => n !== fileNodeRow)
-      .sort((a, b) => (a.line ?? 1e9) - (b.line ?? 1e9) || a.label.localeCompare(b.label));
+    const syms = (groupNodes || []).filter(n => n !== fileNodeRow).sort(siblingCmp);
     if (node.isFile) {
       if (fileNodeRow) {
         rows.push({ type: 'node', depth, label, id: fileNodeRow.id, kind: fileNodeRow.kind,
-                     file: fileNodeRow.file, line: fileNodeRow.line, key: fileNodeRow.id,
+                     file: fileNodeRow.file, line: fileNodeRow.line, nums: fileNodeRow.nums, key: fileNodeRow.id,
                      hasChildren: syms.length > 0 || childrenOf.has(fileNodeRow.id) });
         emitChildren(fileNodeRow.id, depth + 1, new Set([fileNodeRow.id]));
       } else {
@@ -1788,7 +2027,7 @@ function buildRows(nodeRows) {
       }
       for (const s of syms) {
         rows.push({ type: 'node', depth: depth + 1, label: s.label, id: s.id, kind: s.kind,
-                     file: s.file, line: s.line, key: s.id, hasChildren: childrenOf.has(s.id) });
+                     file: s.file, line: s.line, nums: s.nums, key: s.id, hasChildren: childrenOf.has(s.id) });
         emitChildren(s.id, depth + 2, new Set([s.id]));
       }
     } else {
@@ -1804,9 +2043,9 @@ function buildRows(nodeRows) {
 
   if (noFile.length) {
     rows.push({ type: 'dir', depth: 0, label: '(no file)', key: '(no file)', hasChildren: true });
-    for (const s of noFile.slice().sort((a, b) => a.label.localeCompare(b.label))) {
+    for (const s of noFile.slice().sort(siblingCmp)) {
       rows.push({ type: 'node', depth: 1, label: s.label, id: s.id, kind: s.kind, file: s.file,
-                   line: s.line, key: s.id, hasChildren: childrenOf.has(s.id) });
+                   line: s.line, nums: s.nums, key: s.id, hasChildren: childrenOf.has(s.id) });
       emitChildren(s.id, 2, new Set([s.id]));
     }
   }
@@ -1873,6 +2112,12 @@ function applyCollapse(rows, collapsedKeys, edgeList, filteredKinds, focusKeep) 
   const stack = []; // {depth, idx} idx = nearest-visible full-row-index at/under this frame
   let skipDepth = null;
   let foldedHidden = 0, filterHidden = 0;
+  // rollup: for a COLLAPSED visible row, the summed [members, fanIn, fanOut] of
+  // the descendants folded under it -- the BOM subtree total the band renders
+  // in place of the row's own numbers. Keyed by visible-row index (= rowHtml's
+  // `i`). Only node rows carrying a numeric band (bomTable) contribute; every
+  // other preset leaves this map empty, so no band is ever rolled up there.
+  const rollup = new Map();
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     while (stack.length && stack[stack.length - 1].depth >= r.depth) stack.pop();
@@ -1881,6 +2126,14 @@ function applyCollapse(rows, collapsedKeys, edgeList, filteredKinds, focusKeep) 
       nearestVisibleAncestor[i] = anc;
       stack.push({ depth: r.depth, idx: anc });
       foldedHidden++;
+      if (r.type === 'node' && r.nums && anc >= 0) {
+        const vi = visIdxOf[anc]; // the collapse-root's visible index (set when it emitted)
+        if (vi >= 0) {
+          let acc = rollup.get(vi);
+          if (!acc) { acc = [0, 0, 0]; rollup.set(vi, acc); }
+          acc[0] += r.nums[0]; acc[1] += r.nums[1]; acc[2] += r.nums[2];
+        }
+      }
       continue;
     }
     skipDepth = null;
@@ -1921,7 +2174,7 @@ function applyCollapse(rows, collapsedKeys, edgeList, filteredKinds, focusKeep) 
     rec.rolled = rec.rolled || rolled;
     rec.n += 1;
   }
-  return { visibleRows, arcs: order, collapsedCount: foldedHidden, filteredCount: filterHidden };
+  return { visibleRows, arcs: order, collapsedCount: foldedHidden, filteredCount: filterHidden, rollup };
 }
 
 // ── assignLanes: pure greedy interval coloring, deterministic. spans =
@@ -2012,6 +2265,29 @@ let allFolded = false;             // fold-all chip state (label mirror only; co
 // cached inputs for a collapse/filter toggle to re-render from without
 // re-querying
 let lastListRows = [], lastListMergedEdges = [], lastKeptEdgeCount = 0, lastDroppedCount = 0;
+let lastKeptNodes = []; // raw kept node rows, kept so a sort-chip change can re-run
+                        // buildRows (new sibling order) WITHOUT re-querying or
+                        // clearing pins/collapse the way a fresh renderList does.
+
+// ── sort chips (bomTable): re-order siblings by a numeric column without a
+// fresh query. buildRows is pure over lastKeptNodes + bomSort, so a re-sort is
+// just rebuild-rows + refresh; collapsedKeys (keyed by row id/path) and pins
+// survive untouched.
+function setBomSort(mode) {
+  if (bomSort === mode) return;
+  bomSort = mode;
+  buildProtoRow(); // relight the active chip
+  if (viewMode === 'list' && lastKeptNodes.length) {
+    lastListRows = buildRows(lastKeptNodes);
+    refreshListView();
+  }
+}
+// fanIn is the useful default for a BOM (most-depended-on parts first); other
+// presets keep source order. Called on every preset switch + on restore.
+function syncBomSort() {
+  const want = currentPreset === 'bomTable' ? 'fanIn' : 'line';
+  if (bomSort !== want) { bomSort = want; }
+}
 
 // ── focus mode: the transitive connected slice over the CURRENT edge set,
 // seeded from the pinned NODE ids (a pinned dir key can't seed -- edges are
@@ -2134,6 +2410,7 @@ function enterTraceMode() {
 }
 
 function renderList(nodeRows, edgeRows) {
+  const __perfT0 = performance.now();
   pinned.clear(); hoveredId = null; kindFilter.clear(); collapsedKeys.clear(); hoverCardEl.hidden = true;
   focusMode = false; allFolded = false; syncListChips(); // fresh data: no pins -> no slice to focus
 
@@ -2144,6 +2421,7 @@ function renderList(nodeRows, edgeRows) {
   for (const r of keptEdges) { linked.add(String(r[0])); linked.add(String(r[1])); }
   const keptNodes = nodeRows.filter(r => !linkedOnly || linked.has(String(r[0])));
 
+  lastKeptNodes = keptNodes;
   lastListRows = buildRows(keptNodes);
   lastListMergedEdges = mergeEdgeRows(keptEdges);
   lastKeptEdgeCount = keptEdges.length;
@@ -2165,6 +2443,7 @@ function renderList(nodeRows, edgeRows) {
     keptNodes.map(r => (r[2] != null && r[2] !== '') ? String(r[2]) : ''),
     lastListMergedEdges.map(m => m.kinds));
   refreshHighlight();
+  emitPerf('renderList', __perfT0, keptNodes.length, keptEdges.length);
 }
 
 // re-derive visible rows + rolled-up arcs from the cached last query result
@@ -2174,10 +2453,13 @@ function renderList(nodeRows, edgeRows) {
 // predicate ANDed with collapse -- see applyCollapse's isFilteredOut).
 let listVisibleRows = [];          // all post-collapse/filter rows; DOM is windowed
 let listWindow = { first: 0, last: 0 }; // materialized [first, last) range
+let listRollups = new Map();       // visible-row index -> [members, fanIn, fanOut] subtree total
 function refreshListView() {
+  const __perfT0 = performance.now();
   const focusKeep = focusMode ? computeFocusSlice() : null;
-  const { visibleRows, arcs, collapsedCount, filteredCount } =
+  const { visibleRows, arcs, collapsedCount, filteredCount, rollup } =
     applyCollapse(lastListRows, collapsedKeys, lastListMergedEdges, kindFilter, focusKeep);
+  listRollups = rollup || new Map();
 
   listNodeMeta.clear();
   listRowIndexById.clear();
@@ -2199,6 +2481,7 @@ function refreshListView() {
     + (filteredCount ? ` · ${filteredCount} filtered` : '');
 
   refreshListHighlight();
+  emitPerf('refreshListView', __perfT0, listRowIndexById.size, arcs.length);
 }
 
 function toggleCollapse(key) {
@@ -2220,12 +2503,35 @@ function currentHlSlice() {
   return slice;
 }
 
+// The BOM numeric band. `nums` = [members, fanIn, fanOut, weight] or null;
+// `roll` (a collapsed row's subtree total) = [members, fanIn, fanOut] ADDED to
+// the row's own numbers so a folded subassembly shows its whole subtree.
+// Nothing renders when neither is present -- every non-bom preset.
+function bandHtml(nums, roll) {
+  if (!nums && !roll) return '';
+  const own = nums || [0, 0, 0, 0];
+  const m = own[0] + (roll ? roll[0] : 0);
+  const fi = own[1] + (roll ? roll[1] : 0);
+  const fo = own[2] + (roll ? roll[2] : 0);
+  const w = own[3]; // weight is a per-callable span, not a subtree sum
+  const sub = roll ? ' (subtree total)' : '';
+  const cell = (v, cls, title) =>
+    `<span class="lnum${cls}${v ? '' : ' zero'}" title="${title}">${v}</span>`;
+  return `<span class="lnums${roll ? ' rollup' : ''}">`
+    + cell(m, '', 'direct members' + sub)
+    + cell(fi, ' n-in', 'fan-in · where-used' + sub)
+    + cell(fo, '', 'fan-out · depends-on' + sub)
+    + cell(w, '', 'weight · span lines')
+    + `</span>`;
+}
+
 // One absolutely-positioned row div (top = index*ROW_H). Selection/hover
 // classes are baked in so a freshly-windowed row is correct on arrival.
 function rowHtml(r, i, hlSlice) {
   const pad = 8 + r.depth * 14;
   const top = i * ROW_H;
   const collapsed = r.hasChildren && collapsedKeys.has(r.key);
+  const roll = collapsed ? listRollups.get(i) : null;
   const tri = r.hasChildren
     ? `<span class="ltri" data-key="${esc(r.key)}">${collapsed ? '▸' : '▾'}</span>`
     : `<span class="ltri ltri-none"></span>`;
@@ -2234,7 +2540,8 @@ function rowHtml(r, i, hlSlice) {
   const style = `style="top:${top}px;padding-left:${pad}px"`;
   if (r.type === 'dir') {
     return `<div class="lrow lrow-dir${pinCls}${hlCls}" data-key="${esc(r.key)}" ${style}>`
-      + tri + `<span class="ldot"></span><span class="llabel" title="${esc(r.label)}">${esc(r.label)}</span></div>`;
+      + tri + `<span class="ldot"></span><span class="llabel" title="${esc(r.label)}">${esc(r.label)}</span>`
+      + bandHtml(null, roll) + `</div>`;
   }
   const kc = r.kind ? kindColor(r.kind) : '';
   const lineCell = r.line != null
@@ -2244,6 +2551,7 @@ function rowHtml(r, i, hlSlice) {
     + `<span class="ldot"${kc ? ` style="background:${kc}"` : ''}></span>`
     + `<span class="llabel" title="${esc(r.label)}">${esc(r.label)}</span>`
     + (r.kind ? `<span class="lkind">${esc(r.kind)}</span>` : '')
+    + bandHtml(r.nums, roll)
     + lineCell + `</div>`;
 }
 
@@ -2256,7 +2564,7 @@ function renderWindow() {
   const rowsEl = document.getElementById('listRows');
   rowsEl.style.height = (rows.length * ROW_H) + 'px';
   const scroll = document.getElementById('listScroll');
-  const gutterTop = document.getElementById('gutterLeft').offsetTop; // resolved --bar-h
+  const gutterTop = document.getElementById('listRows').offsetTop; // resolved --bar-h (svg gutter has no offsetTop; the rows div does)
   const viewTop = Math.max(0, scroll.scrollTop - gutterTop);
   let first = Math.max(0, Math.floor(viewTop / ROW_H) - ROW_OVERSCAN);
   let last = Math.min(rows.length,
@@ -2277,7 +2585,7 @@ function renderWindow() {
 // row that isn't currently materialized -- the scroll re-windows it in).
 function scrollListToIndex(idx) {
   const scroll = document.getElementById('listScroll');
-  const gutterTop = document.getElementById('gutterLeft').offsetTop;
+  const gutterTop = document.getElementById('listRows').offsetTop;
   scroll.scrollTo({ top: Math.max(0, gutterTop + idx * ROW_H + ROW_H / 2 - scroll.clientHeight / 2),
     behavior: 'smooth' });
 }
@@ -2367,7 +2675,7 @@ function drawGutterArcs(arcs, totalRows) {
 let lastTeleport = null; // { arc, to: 'src' | 'dst' }
 function teleportArc(a) {
   const scroll = document.getElementById('listScroll');
-  const gutterTop = document.getElementById('gutterLeft').offsetTop; // == resolved --bar-h
+  const gutterTop = document.getElementById('listRows').offsetTop; // == resolved --bar-h
   let to;
   if (lastTeleport && lastTeleport.arc === a) {
     to = lastTeleport.to === 'dst' ? 'src' : 'dst';
@@ -2669,6 +2977,11 @@ function buildOverlapBadges(highlightedArcs) {
   // (before click fires) or Safari/Chrome both flash it for one frame.
   rowsEl.addEventListener('mousedown', ev => { if (ev.shiftKey) ev.preventDefault(); });
   rowsEl.addEventListener('click', ev => {
+    // alt-click a part row -> where-used panel (never a pin/fold gesture).
+    if (ev.altKey) {
+      const nrow = ev.target.closest('.lrow-node');
+      if (nrow && nrow.dataset.id) { ev.preventDefault(); openWhereUsed(nrow.dataset.id); return; }
+    }
     // triangle keeps single-click collapse on either a dir or a childful
     // node row; ltri-none is inert (childless rows keep the placeholder)
     const tri = ev.target.closest('.ltri');
@@ -2786,6 +3099,104 @@ function buildOverlapBadges(highlightedArcs) {
   });
 })();
 
+// ── where-used panel: who depends on the clicked part. Four PINNED queries
+// (never an unpinned closure read -- the engine refuses those): callers via
+// call_edge + call_name, incoming type refs via type_link grouped by kind,
+// field fill/read via member_edge, importers of the part's file via
+// module_edge. Each runs through host.query(sql, params) with the sym bound
+// positionally and a literal LIMIT (the non-paged path, so plain `?`
+// placeholders bind in order). A missing rel = an empty section, never a red
+// banner (same tolerance loadGateways takes).
+const WHERE_LIMIT = 200;
+function whereRowHtml(label, kind, file, line) {
+  const kc = kind ? kindColor(kind) : '';
+  const hasLoc = file || line != null;
+  const lineCell = hasLoc
+    ? `<span class="lline" data-file="${esc(file || '')}" data-line="${line || 1}" `
+      + `title="open ${esc(file || '')}:${line || 1}">:${line || 1}</span>` : '';
+  return `<div class="lrow lrow-node">`
+    + `<span class="ltri ltri-none"></span>`
+    + `<span class="ldot"${kc ? ` style="background:${kc}"` : ''}></span>`
+    + `<span class="llabel" title="${esc(label)}">${esc(label)}</span>`
+    + (kind ? `<span class="lkind">${esc(kind)}</span>` : '')
+    + lineCell + `</div>`;
+}
+async function whereQuery(sql, params) {
+  try { return await host.query(sql, params); }
+  catch (e) { return null; } // missing rel / no daemon -> empty section
+}
+function bareName(sym) {
+  const parts = String(sym).split('::').filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : String(sym);
+}
+async function openWhereUsed(sym) {
+  if (!sym) return;
+  const meta = listAllNodeMeta.get(sym) || listNodeMeta.get(sym) || {};
+  const fileHint = meta.file || '';
+  const segs = String(sym).split('::').filter(Boolean);
+  document.getElementById('whereCrumb').innerHTML = '<span class="lead">where-used</span>'
+    + segs.map(s => `<span class="seg">${esc(s)}</span>`).join('');
+  const body = document.getElementById('whereBody');
+  body.innerHTML = '<div class="where-section">loading…</div>';
+  document.getElementById('wherePort').hidden = false;
+
+  const [callers, typeRefs, fields, importers] = await Promise.all([
+    whereQuery(
+      "SELECT ce.caller, COALESCE(cn.name, ce.caller), cd.file, cd.line " +
+      "FROM rel_call_edge ce " +
+      "LEFT JOIN rel_call_name cn ON cn.sym = ce.caller " +
+      "LEFT JOIN rel_call_def cd ON cd.sym = ce.caller " +
+      "WHERE ce.callee = ? ORDER BY 2 LIMIT " + WHERE_LIMIT, [sym]),
+    whereQuery(
+      "SELECT tl.src, COALESCE(te.name, tl.src), tl.kind, te.file, te.line " +
+      "FROM rel_type_link tl " +
+      "LEFT JOIN rel_type_entity te ON te.sym = tl.src " +
+      "WHERE tl.dst = ? ORDER BY tl.kind, 2 LIMIT " + WHERE_LIMIT, [sym]),
+    whereQuery(
+      "SELECT src, dst, kind FROM rel_member_edge " +
+      "WHERE (src = ? OR dst = ?) AND kind IN ('fill','read') LIMIT " + WHERE_LIMIT, [sym, sym]),
+    fileHint ? whereQuery(
+      "SELECT src FROM rel_module_edge WHERE dst = ? ORDER BY 1 LIMIT " + WHERE_LIMIT, [fileHint]) : [],
+  ]);
+
+  const sections = [
+    // callers: r = [caller_sym, name, file, line]
+    { title: 'callers', rows: (callers || []).map(r =>
+      ({ label: r[1] || r[0], kind: 'call', file: r[2], line: r[3] })) },
+    // type refs: r = [src_sym, name, kind, file, line]
+    { title: 'type refs', rows: (typeRefs || []).map(r =>
+      ({ label: r[1] || r[0], kind: r[2] || 'ref', file: r[3], line: r[4] })) },
+    // fields: r = [src, dst, kind]; show the OTHER endpoint, jump via its meta
+    { title: 'fields', rows: (fields || []).map(r => {
+      const other = String(r[0]) === String(sym) ? r[1] : r[0];
+      const om = listAllNodeMeta.get(String(other)) || {};
+      return { label: om.label || bareName(other), kind: r[2], file: om.file, line: om.line };
+    }) },
+    // importers: r = [src_path]; the file that imports this part's file
+    { title: 'importers', rows: (importers || []).map(r =>
+      ({ label: r[0], kind: 'import', file: r[0], line: 1 })) },
+  ];
+
+  let html = '';
+  for (const s of sections) {
+    html += `<div class="where-section"><b>${s.rows.length}</b> ${esc(s.title)}</div>`;
+    if (!s.rows.length) { html += `<div class="where-none">none</div>`; continue; }
+    for (const r of s.rows) html += whereRowHtml(r.label, r.kind, r.file, r.line);
+  }
+  body.innerHTML = html;
+}
+function closeWhereUsed() {
+  const p = document.getElementById('wherePort');
+  if (p.hidden) return false;
+  p.hidden = true;
+  return true;
+}
+document.getElementById('whereClose').addEventListener('click', closeWhereUsed);
+document.getElementById('whereBody').addEventListener('click', ev => {
+  const lineCell = ev.target.closest('.lline');
+  if (lineCell && lineCell.dataset.file) host.open(lineCell.dataset.file, Number(lineCell.dataset.line) || 1);
+});
+
 // ── bar height -> --bar-h: the toolbar is a fixed overlay whose height moves
 // with legend wrapping; the list offsets itself below it via the CSS var.
 (function trackBarHeight() {
@@ -2864,6 +3275,7 @@ const DERIVED_REL = {
   typeCurated: 'rel_panel_node', typeRefs: 'rel_type_refs_node',
   memberFlow: 'rel_member_node', graph: 'rel_graph_node',
   diff: 'rel_node_added', enumMatches: 'rel_enum_match_block',
+  bomTable: 'rel_bom_node',
 };
 const SCAN_PRESETS = ['typeAll', 'callGraph', 'dataFlow', 'madge', 'layers'];
 function updateEmptyState(nodeRows) {
@@ -2944,6 +3356,7 @@ document.addEventListener('keydown', ev => {
   // mode, then the pin set -- so exiting focus never silently throws the
   // selection away.
   if (ev.key === 'Escape') {
+    if (closeWhereUsed()) return; // where-used overlay peels first
     if (!helpPanel.hidden) { closeHelp(); return; }
     if (viewMode === 'trace') { viewMode = 'list'; writeLocalStorage(MODE_KEY, viewMode); applyViewMode(); return; }
     if (focusMode) { setFocusMode(false); return; }
@@ -2972,18 +3385,20 @@ function savePreset() {
 document.getElementById('presetSel').addEventListener('change', function () {
   if (this.value.startsWith('saved:')) {
     activeLayers.clear(); renderLayerList();
-    if (applySaved(this.value.slice(6))) { currentPreset = this.value; savePreset(); run(); }
+    if (applySaved(this.value.slice(6))) { currentPreset = this.value; savePreset(); syncBomSort(); buildProtoRow(); run(); }
     return;
   }
-  if (this.value === 'layers') { currentPreset = 'layers'; runLayers(); return; }
+  if (this.value === 'layers') { currentPreset = 'layers'; syncBomSort(); buildProtoRow(); runLayers(); return; }
   activeLayers.clear();
   renderLayerList();
   const p = PRESETS[this.value];
-  if (!p) { currentPreset = 'custom'; savePreset(); return; }
+  if (!p) { currentPreset = 'custom'; savePreset(); syncBomSort(); buildProtoRow(); return; }
   document.getElementById('nodesSql').value = p.nodes;
   document.getElementById('edgesSql').value = p.edges;
   currentPreset = this.value;
   savePreset();
+  syncBomSort();
+  buildProtoRow();
   run();
 });
 document.getElementById('saveBtn').addEventListener('click', () => {
@@ -3021,6 +3436,8 @@ for (const id of ['nodesSql', 'edgesSql']) {
     currentPreset = 'custom';
     document.getElementById('presetSel').value = 'custom';
     savePreset();
+    syncBomSort();
+    buildProtoRow(); // drop the BOM sort chips when editing SQL flips to custom
   });
 }
 document.getElementById('layerRefresh').addEventListener('click', () => discoverLayers());

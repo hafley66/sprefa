@@ -42,6 +42,7 @@ pub mod spine;
 pub mod tray;
 pub mod trace;
 pub mod update;
+pub mod verbs;
 pub mod typecheck;
 pub mod typegraph;
 pub mod watchgate;

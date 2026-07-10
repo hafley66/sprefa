@@ -23,15 +23,21 @@ use std::str::FromStr;
 
 use lsp_server::{Connection, Message, Notification, Request, Response};
 use lsp_types::{
-    Diagnostic, DiagnosticSeverity, GotoDefinitionParams, Location, OneOf, Position,
-    PublishDiagnosticsParams, Range, ReferenceParams, ServerCapabilities,
+    CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams, CallHierarchyItem,
+    CallHierarchyOutgoingCall, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
+    CallHierarchyServerCapability, Diagnostic, DiagnosticSeverity, DocumentHighlight,
+    DocumentHighlightKind, DocumentHighlightParams, DocumentSymbol, DocumentSymbolParams,
+    GotoDefinitionParams, Location, OneOf, Position, PublishDiagnosticsParams, Range,
+    ReferenceParams, ServerCapabilities, SymbolInformation, SymbolKind,
     TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, Uri,
+    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TypeHierarchyItem,
+    TypeHierarchyPrepareParams, TypeHierarchySubtypesParams, TypeHierarchySupertypesParams,
+    Uri, WorkspaceSymbolParams,
     DidOpenTextDocumentParams, DidSaveTextDocumentParams,
 };
 use std::collections::HashMap;
 
-use crate::engine::{DiagRow, Engine};
+use crate::engine::{DiagRow, Engine, HierarchyItem};
 use crate::{ast, db};
 
 use tree_sitter::Parser;
@@ -52,14 +58,29 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, db_defaulted: bool, r
         })),
         definition_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
+        // B2 nearly-free navigation: all three read existing rels, all
+        // file-scoped or capped, no engine tick.
+        document_highlight_provider: Some(OneOf::Left(true)),
+        workspace_symbol_provider: Some(OneOf::Left(true)),
+        document_symbol_provider: Some(OneOf::Left(true)),
         hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
+        // B5: call hierarchy has a typed capability field; type hierarchy does
+        // not exist on `ServerCapabilities` in this lsp-types version (0.97.0
+        // wires the request/param/item types in `type_hierarchy.rs` but never
+        // added the server-capability field), so it's spliced into the
+        // serialized JSON below instead of fighting the crate's typed gap.
+        call_hierarchy_provider: Some(CallHierarchyServerCapability::Simple(true)),
         execute_command_provider: Some(lsp_types::ExecuteCommandOptions {
             commands: vec!["dl.toggleDiagCode".into(), "dl.listDiagCodes".into()],
             ..Default::default()
         }),
         ..Default::default()
     };
-    let init_params = connection.initialize(serde_json::to_value(caps)?)?;
+    let mut caps_value = serde_json::to_value(caps)?;
+    if let Some(obj) = caps_value.as_object_mut() {
+        obj.insert("typeHierarchyProvider".to_string(), serde_json::Value::Bool(true));
+    }
+    let init_params = connection.initialize(caps_value)?;
     let root = client_root_uri(&init_params).unwrap_or(root);
 
     let files = crate::resolve_programs(programs, &root)?;
@@ -182,12 +203,56 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, db_defaulted: bool, r
                         let resp = handle_refs(&eng, &root, &req);
                         connection.sender.send(Message::Response(resp))?;
                     }
+                    "dl/locate" => {
+                        let resp = handle_locate(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
                     "textDocument/hover" => {
                         let resp = handle_hover(&eng, &root, &req);
                         connection.sender.send(Message::Response(resp))?;
                     }
+                    "textDocument/documentHighlight" => {
+                        let resp = handle_document_highlight(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
+                    "textDocument/documentSymbol" => {
+                        let resp = handle_document_symbol(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
+                    "workspace/symbol" => {
+                        let resp = handle_workspace_symbol(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
+                    "textDocument/prepareCallHierarchy" => {
+                        let resp = handle_call_hierarchy_prepare(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
+                    "callHierarchy/incomingCalls" => {
+                        let resp = handle_call_hierarchy_incoming(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
+                    "callHierarchy/outgoingCalls" => {
+                        let resp = handle_call_hierarchy_outgoing(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
+                    "textDocument/prepareTypeHierarchy" => {
+                        let resp = handle_type_hierarchy_prepare(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
+                    "typeHierarchy/supertypes" => {
+                        let resp = handle_type_hierarchy_supertypes(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
+                    "typeHierarchy/subtypes" => {
+                        let resp = handle_type_hierarchy_subtypes(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
                     "dl/query" => {
                         let resp = handle_query(&eng, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
+                    "dl/hookEvent" => {
+                        let resp = handle_hook_event(&mut eng, &prog, &req);
                         connection.sender.send(Message::Response(resp))?;
                     }
                     "workspace/executeCommand" => {
@@ -380,32 +445,62 @@ fn handle_definition(eng: &Engine, root: &Path, req: &Request) -> Response {
 
 /// textDocument/hover over the ref spine: cursor -> innermost located span ->
 /// its string text -> engine `hover` (auto-synthesizes markdown from
-/// type_entity + call_def). Returns a Hover with the span's range and the
-/// markdown content, or null when no entity/callable matches the bare name.
+/// type_entity + call_def), MERGED with any `hover_note` sink rows covering
+/// the cursor position (a program-authored markdown note, see
+/// `Engine::hover_notes_at`). Entity markdown and note markdown are joined by
+/// a `---` rule, in that order; notes alone (no entity match) still produce a
+/// hover; neither present is null, exactly as before this rel existed.
 fn handle_hover(eng: &Engine, root: &Path, req: &Request) -> Response {
     let params: TextDocumentPositionParams = match serde_json::from_value(req.params.clone()) {
         Ok(p) => p,
         Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
     };
     let hit = resolve_span(eng, root, &params);
-    let Some((path, _id, text, lo, hi)) = hit else {
-        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    let entity = hit.as_ref().and_then(|(path, _id, text, lo, hi)| {
+        eng.hover(path, text).unwrap_or(None).map(|md| (path.clone(), *lo, *hi, md))
+    });
+    // hover_note lookup needs the rel path even when the entity resolver found
+    // nothing (the cursor may sit on unlocated text a note still covers) — the
+    // entity hit's path when present, else resolved independently from the URI.
+    let note_path = entity.as_ref().map(|(path, ..)| path.clone())
+        .or_else(|| resolve_rel_path(root, &params.text_document.uri));
+    let notes: Vec<String> = match &note_path {
+        Some(path) => eng.hover_notes_at(path, params.position.line, params.position.character)
+            .unwrap_or_default(),
+        None => Vec::new(),
     };
-    let md = match eng.hover(&path, &text).unwrap_or(None) {
-        Some(m) => m,
-        None => return Response::new_ok(req.id.clone(), serde_json::Value::Null),
+
+    let md = match (entity.as_ref().map(|(_, _, _, md)| md.clone()), notes.is_empty()) {
+        (Some(entity_md), true) => entity_md,
+        (Some(entity_md), false) => format!("{entity_md}\n\n---\n\n{}", notes.join("\n\n---\n\n")),
+        (None, false) => notes.join("\n\n---\n\n"),
+        (None, true) => return Response::new_ok(req.id.clone(), serde_json::Value::Null),
     };
-    // Range is the located span so the editor highlights what the hover resolves.
-    let content = std::fs::read_to_string(root.join(&path)).unwrap_or_default();
-    let range = span_to_range(&content, lo, hi);
+    // Range is the located entity span when one resolved (highlights what the
+    // entity hover names); a notes-only hover carries no range.
+    let range = entity.as_ref().map(|(path, lo, hi, _)| {
+        let content = std::fs::read_to_string(root.join(path)).unwrap_or_default();
+        span_to_range(&content, *lo, *hi)
+    });
     let hover = lsp_types::Hover {
-        range: Some(range),
+        range,
         contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
             kind: lsp_types::MarkupKind::Markdown,
             value: md,
         }),
     };
     Response::new_ok(req.id.clone(), serde_json::to_value(hover).unwrap_or_default())
+}
+
+/// `Uri` -> repo-relative path, WITHOUT resolving a located span (unlike
+/// `resolve_span`, which fails when the cursor sits on unlocated text). Used
+/// by the `hover_note` merge so a note can still be found at a position the
+/// entity resolver has nothing to say about. Canonicalizes before stripping
+/// root, matching `resolve_span`/`resolve_abs_byte`.
+fn resolve_rel_path(root: &Path, uri: &Uri) -> Option<String> {
+    let abs = uri_to_path(uri)?;
+    let abs = std::fs::canonicalize(&abs).unwrap_or(abs);
+    rel_of(root, &abs)
 }
 
 /// Wrap a user SQL as a paginated subquery. The `LIMIT ?`/`OFFSET ?` placeholders
@@ -479,6 +574,36 @@ fn handle_query(eng: &Engine, req: &Request) -> Response {
     // legacy path: exactly today's behavior.
     match eng.query_sql(sql, &params) {
         Ok(rows) => Response::new_ok(req.id.clone(), serde_json::json!({ "rows": rows })),
+        Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
+    }
+}
+
+/// Custom request `dl/hookEvent`: the extension's transport for landing one
+/// harness/editor event (the goto-flow recorder, chat marks, ...) in the
+/// engine's `hook_event` builtin rel. Params: `{"kind": string, "session":
+/// string, "seq": i64, "json": string}` (all four required) -> `{"ok": true}`.
+/// Mirrors the daemon's `hook_event` RPC (`src/daemon.rs`) so both entry
+/// points behave identically; under the future `LspPump::Daemon` arm this arm
+/// forwards to that RPC verbatim instead of ticking the in-process engine.
+fn handle_hook_event(eng: &mut Engine, prog: &ast::Program, req: &Request) -> Response {
+    let p = &req.params;
+    let (Some(kind), Some(session), Some(seq), Some(json)) = (
+        p.get("kind").and_then(|v| v.as_str()),
+        p.get("session").and_then(|v| v.as_str()),
+        p.get("seq").and_then(|v| v.as_i64()),
+        p.get("json").and_then(|v| v.as_str()),
+    ) else {
+        return Response::new_err(req.id.clone(), -32602,
+            "dl/hookEvent needs kind, session, seq, json".into());
+    };
+    let run = (|| -> anyhow::Result<()> {
+        eng.insert_hook_event(kind, session, seq, json)?;
+        // The same quiet tick didSave runs, so a rule over hook_event
+        // derives before the response returns.
+        eng.tick(prog, true)
+    })();
+    match run {
+        Ok(()) => Response::new_ok(req.id.clone(), serde_json::json!({ "ok": true })),
         Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
     }
 }
@@ -583,6 +708,37 @@ fn handle_refs(eng: &Engine, root: &Path, req: &Request) -> Response {
     }
 }
 
+/// Custom request `dl/locate`: the cheap "follow the user" point lookup (Track
+/// B B4) for one cursor — cursor -> symbol -> declaration site, no
+/// uses/callers/callees. Same param shape as `dl/refs`:
+/// `{"uri": string} | {"path": string}` (path is root-relative) plus `"line"`
+/// and `"character"` (0-based). Returns the serialized `LocateHit`, or null
+/// when the cursor is not on a located identifier or the identifier resolves
+/// to no symbol in either tier. Meant to be called at cursor-move cadence (the
+/// extension debounces), so it does exactly one `Engine::locate` call and
+/// nothing else — no fact write, no tick.
+fn handle_locate(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let line = req.params.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let character = req.params.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let abs: Option<PathBuf> = if let Some(uri) = req.params.get("uri").and_then(|v| v.as_str()) {
+        Uri::from_str(uri).ok().and_then(|u| uri_to_path(&u))
+    } else {
+        req.params.get("path").and_then(|v| v.as_str()).map(|p| root.join(p))
+    };
+    let Some(abs) = abs else {
+        return Response::new_err(req.id.clone(), -32602, "dl/locate needs a uri or path".into());
+    };
+    let Some((rel, byte)) = resolve_abs_byte(root, &abs, Position::new(line, character)) else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    match eng.locate(&rel, byte as usize) {
+        Ok(Some(hit)) => Response::new_ok(req.id.clone(),
+            serde_json::to_value(hit).unwrap_or(serde_json::Value::Null)),
+        Ok(None) => Response::new_ok(req.id.clone(), serde_json::Value::Null),
+        Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
+    }
+}
+
 /// A `RefHit` -> LSP `Location`, mapping the hit's repo slug to its on-disk root
 /// (`repo_roots`). An unknown slug falls back to the primary root join, matching
 /// the pre-fix single-repo behavior rather than dropping the hit.
@@ -595,6 +751,362 @@ fn refhit_location(
         Position::new(hit.line, hit.col),
         Position::new(hit.end_line, hit.end_col));
     Some(Location { uri, range })
+}
+
+/// textDocument/documentHighlight (B2a): cursor -> same-string spans WITHIN the
+/// current file only, over the ref spine. Returns `DocumentHighlight[]` (kind
+/// Text) with 0-based ranges. Null when the cursor is not on a located string.
+fn handle_document_highlight(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let params: DocumentHighlightParams = match serde_json::from_value(req.params.clone()) {
+        Ok(p) => p,
+        Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
+    };
+    let Some((rel, byte)) = resolve_path_byte(root, &params.text_document_position_params) else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    let spans = eng.document_highlights(&rel, byte).unwrap_or_default();
+    if spans.is_empty() {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    }
+    // One file read to turn byte spans into line/col ranges (the spans are all in
+    // this file by construction).
+    let content = std::fs::read_to_string(root.join(&rel)).unwrap_or_default();
+    let highlights: Vec<DocumentHighlight> = spans.into_iter().map(|(lo, hi)| {
+        DocumentHighlight {
+            range: span_to_range(&content, lo, hi),
+            kind: Some(DocumentHighlightKind::TEXT),
+        }
+    }).collect();
+    Response::new_ok(req.id.clone(), serde_json::to_value(highlights).unwrap_or_default())
+}
+
+/// workspace/symbol (B2b): query -> `type_entity` and callable names matching the
+/// substring, mapped to `SymbolInformation[]`. Each hit's location is built from
+/// its OWN repo root (`repo_roots` with primary-root fallback, the multi-repo
+/// idiom `refhit_location` uses). Capped at 200, prefix matches first.
+fn handle_workspace_symbol(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let params: WorkspaceSymbolParams = match serde_json::from_value(req.params.clone()) {
+        Ok(p) => p,
+        Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
+    };
+    let rows = eng.workspace_symbols(&params.query, 200).unwrap_or_default();
+    let roots = eng.repo_roots();
+    #[allow(deprecated)] // SymbolInformation::deprecated is a required legacy field
+    let symbols: Vec<SymbolInformation> = rows.iter().filter_map(|row| {
+        let base = roots.get(&row.repo).map(|p| p.as_path()).unwrap_or(root);
+        let uri = path_to_uri(&base.join(&row.file))?;
+        let line0 = (row.line - 1).max(0) as u32;
+        let range = Range::new(Position::new(line0, 0), Position::new(line0, 0));
+        Some(SymbolInformation {
+            name: row.name.clone(),
+            kind: symbol_kind(&row.kind),
+            tags: None,
+            deprecated: None,
+            location: Location { uri, range },
+            container_name: (!row.container.is_empty()).then(|| row.container.clone()),
+        })
+    }).collect();
+    Response::new_ok(req.id.clone(), serde_json::to_value(symbols).unwrap_or_default())
+}
+
+/// textDocument/documentSymbol (B2c): `type_entity` rows for the file, nested via
+/// the parent sym into a hierarchical `DocumentSymbol[]` (a method under its owner
+/// type). Ranges are line-anchored zero-width at line start, matching the
+/// resolved-tier RefHits. Null when the file has no located type entities.
+fn handle_document_symbol(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let params: DocumentSymbolParams = match serde_json::from_value(req.params.clone()) {
+        Ok(p) => p,
+        Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
+    };
+    let Some(abs) = uri_to_path(&params.text_document.uri) else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    let abs = std::fs::canonicalize(&abs).unwrap_or(abs);
+    let Some(rel) = rel_of(root, &abs) else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    let rows = eng.document_symbols(&rel).unwrap_or_default();
+    if rows.is_empty() {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    }
+    let tree = build_symbol_tree(&rows);
+    Response::new_ok(req.id.clone(), serde_json::to_value(tree).unwrap_or_default())
+}
+
+/// Nest the flat `type_entity` rows into a `DocumentSymbol` tree by the `parent`
+/// sym. A row whose parent sym is present in the same file becomes that owner's
+/// child; every other row is a top-level symbol. Children sort by line.
+fn build_symbol_tree(rows: &[crate::engine::SymbolRow]) -> Vec<DocumentSymbol> {
+    use std::collections::HashSet;
+    let in_file: HashSet<&str> = rows.iter().map(|row| row.sym.as_str()).collect();
+    let mut children_of: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut roots: Vec<usize> = Vec::new();
+    for (index, row) in rows.iter().enumerate() {
+        if !row.parent.is_empty() && in_file.contains(row.parent.as_str()) {
+            children_of.entry(row.parent.clone()).or_default().push(index);
+        } else {
+            roots.push(index);
+        }
+    }
+    roots.sort_by_key(|&index| rows[index].line);
+    roots.into_iter().map(|index| symbol_node(index, rows, &children_of)).collect()
+}
+
+/// Build one `DocumentSymbol` node (with its children) for `rows[index]`.
+fn symbol_node(
+    index: usize, rows: &[crate::engine::SymbolRow],
+    children_of: &HashMap<String, Vec<usize>>,
+) -> DocumentSymbol {
+    let row = &rows[index];
+    let children: Vec<DocumentSymbol> = match children_of.get(&row.sym) {
+        Some(child_indices) => {
+            let mut ordered = child_indices.clone();
+            ordered.sort_by_key(|&child| rows[child].line);
+            ordered.into_iter().map(|child| symbol_node(child, rows, children_of)).collect()
+        }
+        None => Vec::new(),
+    };
+    let line0 = (row.line - 1).max(0) as u32;
+    let range = Range::new(Position::new(line0, 0), Position::new(line0, 0));
+    #[allow(deprecated)] // DocumentSymbol::deprecated is a required legacy field
+    DocumentSymbol {
+        name: row.name.clone(),
+        detail: None,
+        kind: symbol_kind(&row.kind),
+        tags: None,
+        deprecated: None,
+        range,
+        selection_range: range,
+        children: if children.is_empty() { None } else { Some(children) },
+    }
+}
+
+/// Map a `type_entity`/`call_def` kind string to an LSP `SymbolKind`. The kind
+/// vocabulary is struct|enum|trait|class|interface|alias|function|method|const
+/// (typegraph.rs `EntityKind`); an unknown kind renders as a plain variable.
+fn symbol_kind(kind: &str) -> SymbolKind {
+    match kind {
+        "struct" => SymbolKind::STRUCT,
+        "enum" => SymbolKind::ENUM,
+        "trait" | "interface" => SymbolKind::INTERFACE,
+        "class" => SymbolKind::CLASS,
+        "alias" => SymbolKind::TYPE_PARAMETER,
+        "function" => SymbolKind::FUNCTION,
+        "method" => SymbolKind::METHOD,
+        "const" => SymbolKind::CONSTANT,
+        _ => SymbolKind::VARIABLE,
+    }
+}
+
+// ---------- call hierarchy + type hierarchy (Track B B5) ----------
+
+/// A `HierarchyItem`'s URI (mapped through its OWN repo root, the multi-repo
+/// idiom `refhit_location`/`handle_workspace_symbol` use) plus its `range`
+/// (the whole declaration span when `end_line` differs from `line`, else one
+/// line — the `to_diag` "no column info" convention) and zero-width
+/// `selection_range` at the declaration line (no column info in either tier).
+fn hierarchy_uri_range(
+    roots: &HashMap<String, PathBuf>, primary: &Path, item: &HierarchyItem,
+) -> Option<(Uri, Range, Range)> {
+    let base = roots.get(&item.repo).map(|p| p.as_path()).unwrap_or(primary);
+    let uri = path_to_uri(&base.join(&item.file))?;
+    let selection_range = Range::new(Position::new(item.line, 0), Position::new(item.line, 0));
+    let end_line = item.end_line.max(item.line) + 1;
+    let range = Range::new(Position::new(item.line, 0), Position::new(end_line, 0));
+    Some((uri, range, selection_range))
+}
+
+/// `HierarchyItem` -> `CallHierarchyItem`, with the whole item round-tripped
+/// into `data` so `incomingCalls`/`outgoingCalls` need no re-resolution by
+/// position (the prepare/incoming/outgoing split is otherwise stateless here).
+fn call_hierarchy_item(
+    roots: &HashMap<String, PathBuf>, primary: &Path, item: &HierarchyItem,
+) -> Option<CallHierarchyItem> {
+    let (uri, range, selection_range) = hierarchy_uri_range(roots, primary, item)?;
+    Some(CallHierarchyItem {
+        name: item.name.clone(),
+        kind: symbol_kind(&item.kind),
+        tags: None,
+        detail: None,
+        uri, range, selection_range,
+        data: serde_json::to_value(item).ok(),
+    })
+}
+
+/// `HierarchyItem` -> `TypeHierarchyItem`, same `data` round-trip as
+/// `call_hierarchy_item`.
+fn type_hierarchy_item(
+    roots: &HashMap<String, PathBuf>, primary: &Path, item: &HierarchyItem,
+) -> Option<TypeHierarchyItem> {
+    let (uri, range, selection_range) = hierarchy_uri_range(roots, primary, item)?;
+    Some(TypeHierarchyItem {
+        name: item.name.clone(),
+        kind: symbol_kind(&item.kind),
+        tags: None,
+        detail: None,
+        uri, range, selection_range,
+        data: serde_json::to_value(item).ok(),
+    })
+}
+
+/// A `HierarchyItem`'s `data` field (round-tripped from a prior prepare/
+/// incoming/outgoing/supertypes/subtypes response) back to the typed struct.
+/// None when the client sent no `data` or a malformed one (a stale item from
+/// a since-restarted server, or a non-dl call/type hierarchy provider mixed
+/// in — the request is dropped rather than mis-resolved).
+fn hierarchy_item_from_data(data: &Option<serde_json::Value>) -> Option<HierarchyItem> {
+    data.clone().and_then(|d| serde_json::from_value(d).ok())
+}
+
+/// Ranges within `edge`'s neighbor's file: `from_lines` when the tier found
+/// call-site lines, else the neighbor's own declaration line as a fallback (an
+/// empty `from_ranges` array is legal per spec but several clients render no
+/// highlight at all without one).
+fn hierarchy_from_ranges(edge: &crate::engine::HierarchyCallEdge, item_range: Range) -> Vec<Range> {
+    if edge.from_lines.is_empty() {
+        return vec![item_range];
+    }
+    edge.from_lines.iter()
+        .map(|&line| Range::new(Position::new(line, 0), Position::new(line, 0)))
+        .collect()
+}
+
+/// `textDocument/prepareCallHierarchy` (B5): cursor -> a callable
+/// `HierarchyItem`, wrapped as the single-element array the LSP result shape
+/// wants. Null when the cursor is not on a located identifier or the
+/// identifier is not a callable in either tier (see
+/// `Engine::call_hierarchy_prepare`).
+fn handle_call_hierarchy_prepare(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let params: CallHierarchyPrepareParams = match serde_json::from_value(req.params.clone()) {
+        Ok(p) => p,
+        Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
+    };
+    let Some((rel, byte)) = resolve_path_byte(root, &params.text_document_position_params) else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    let item = match eng.call_hierarchy_prepare(&rel, byte as usize) {
+        Ok(Some(item)) => item,
+        Ok(None) => return Response::new_ok(req.id.clone(), serde_json::Value::Null),
+        Err(e) => return Response::new_err(req.id.clone(), -32603, e.to_string()),
+    };
+    let roots = eng.repo_roots();
+    match call_hierarchy_item(&roots, root, &item) {
+        Some(chi) => Response::new_ok(req.id.clone(), serde_json::json!([chi])),
+        None => Response::new_ok(req.id.clone(), serde_json::Value::Null),
+    }
+}
+
+/// `callHierarchy/incomingCalls` (B5): the request item's `data` round-trips to
+/// a `HierarchyItem`, then one 1-hop caller lookup (`Engine::
+/// call_hierarchy_incoming` — no closure, tier-matched to how the item
+/// resolved).
+fn handle_call_hierarchy_incoming(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let params: CallHierarchyIncomingCallsParams = match serde_json::from_value(req.params.clone()) {
+        Ok(p) => p,
+        Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
+    };
+    let Some(item) = hierarchy_item_from_data(&params.item.data) else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    let edges = match eng.call_hierarchy_incoming(&item) {
+        Ok(edges) => edges,
+        Err(e) => return Response::new_err(req.id.clone(), -32603, e.to_string()),
+    };
+    let roots = eng.repo_roots();
+    let calls: Vec<CallHierarchyIncomingCall> = edges.iter().filter_map(|edge| {
+        let from = call_hierarchy_item(&roots, root, &edge.item)?;
+        let from_ranges = hierarchy_from_ranges(edge, from.range);
+        Some(CallHierarchyIncomingCall { from, from_ranges })
+    }).collect();
+    Response::new_ok(req.id.clone(), serde_json::to_value(calls).unwrap_or_default())
+}
+
+/// `callHierarchy/outgoingCalls` (B5): same shape as
+/// `handle_call_hierarchy_incoming`, the callee direction.
+fn handle_call_hierarchy_outgoing(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let params: CallHierarchyOutgoingCallsParams = match serde_json::from_value(req.params.clone()) {
+        Ok(p) => p,
+        Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
+    };
+    let Some(item) = hierarchy_item_from_data(&params.item.data) else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    let edges = match eng.call_hierarchy_outgoing(&item) {
+        Ok(edges) => edges,
+        Err(e) => return Response::new_err(req.id.clone(), -32603, e.to_string()),
+    };
+    let roots = eng.repo_roots();
+    let calls: Vec<CallHierarchyOutgoingCall> = edges.iter().filter_map(|edge| {
+        let to = call_hierarchy_item(&roots, root, &edge.item)?;
+        let from_ranges = hierarchy_from_ranges(edge, to.range);
+        Some(CallHierarchyOutgoingCall { to, from_ranges })
+    }).collect();
+    Response::new_ok(req.id.clone(), serde_json::to_value(calls).unwrap_or_default())
+}
+
+/// `textDocument/prepareTypeHierarchy` (B5): cursor -> a type-shaped
+/// `HierarchyItem` (struct/enum/trait/class/interface only — see
+/// `Engine::type_hierarchy_prepare`), wrapped as a single-element array.
+fn handle_type_hierarchy_prepare(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let params: TypeHierarchyPrepareParams = match serde_json::from_value(req.params.clone()) {
+        Ok(p) => p,
+        Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
+    };
+    let Some((rel, byte)) = resolve_path_byte(root, &params.text_document_position_params) else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    let item = match eng.type_hierarchy_prepare(&rel, byte as usize) {
+        Ok(Some(item)) => item,
+        Ok(None) => return Response::new_ok(req.id.clone(), serde_json::Value::Null),
+        Err(e) => return Response::new_err(req.id.clone(), -32603, e.to_string()),
+    };
+    let roots = eng.repo_roots();
+    match type_hierarchy_item(&roots, root, &item) {
+        Some(thi) => Response::new_ok(req.id.clone(), serde_json::json!([thi])),
+        None => Response::new_ok(req.id.clone(), serde_json::Value::Null),
+    }
+}
+
+/// `typeHierarchy/supertypes` (B5): the request item's `data` round-trips to a
+/// `HierarchyItem`, then one 1-hop supertype lookup (`type_link` kind `impl`
+/// plus interface-owned `generic`, or `scip_impl` for a compiler-tier item —
+/// see `Engine::type_hierarchy_supertypes`).
+fn handle_type_hierarchy_supertypes(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let params: TypeHierarchySupertypesParams = match serde_json::from_value(req.params.clone()) {
+        Ok(p) => p,
+        Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
+    };
+    let Some(item) = hierarchy_item_from_data(&params.item.data) else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    let supers = match eng.type_hierarchy_supertypes(&item) {
+        Ok(supers) => supers,
+        Err(e) => return Response::new_err(req.id.clone(), -32603, e.to_string()),
+    };
+    let roots = eng.repo_roots();
+    let items: Vec<TypeHierarchyItem> = supers.iter()
+        .filter_map(|s| type_hierarchy_item(&roots, root, s)).collect();
+    Response::new_ok(req.id.clone(), serde_json::to_value(items).unwrap_or_default())
+}
+
+/// `typeHierarchy/subtypes` (B5): same shape as
+/// `handle_type_hierarchy_supertypes`, the implementer direction.
+fn handle_type_hierarchy_subtypes(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let params: TypeHierarchySubtypesParams = match serde_json::from_value(req.params.clone()) {
+        Ok(p) => p,
+        Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
+    };
+    let Some(item) = hierarchy_item_from_data(&params.item.data) else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    let subs = match eng.type_hierarchy_subtypes(&item) {
+        Ok(subs) => subs,
+        Err(e) => return Response::new_err(req.id.clone(), -32603, e.to_string()),
+    };
+    let roots = eng.repo_roots();
+    let items: Vec<TypeHierarchyItem> = subs.iter()
+        .filter_map(|s| type_hierarchy_item(&roots, root, s)).collect();
+    Response::new_ok(req.id.clone(), serde_json::to_value(items).unwrap_or_default())
 }
 
 /// Send the outbound `dl/graphChanged` pulse (A5 push-refresh v1). Params is a

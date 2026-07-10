@@ -734,6 +734,38 @@ rel; #5 `dl --rows <REL>` + `query_rel` daemon RPC.
       daemon's query_sql RPC and prints rows; document the root/daemon-selection
       rules in one place.
 
+- [x] **Flow-marks + goto-recorder epic F1-F4** (worktree ext-wave3,
+      2026-07-10, cb7aacc/2bce1d5/9f03e86, plan
+      plans/2026-07-10-flow-marks-goto-recorder.md, 3 Sonnet agents off
+      Fable skeletons): F1 = `hover_note(path,line,col,end_line,end_col,md)`
+      reserved sink (diag pattern, 0-based, hover merge with --- separators,
+      notes-only hover works, guard bails). F2 = `dl/hookEvent` LSP request
+      (-> insert_hook_event -> quiet tick; mirrors daemon RPC, thin-client
+      forwards verbatim later) + extension `dl.recordFlow` (cmd+alt+g, REC
+      status chip, always-on selection sub, jump = Command-kind || file
+      change, `last` tracked on non-jump moves). F3 =
+      examples/goto-flows.dl: jsonp extract rels (ONE extract op per rel —
+      engine law; jsonp paths are dotted, no `$.`; jsonp yields text, cast
+      via int()) -> goto_jump -> call_def span lift -> take_edge (same
+      event's from/to, no argmax needed) -> flow_take facts + unnamed
+      identity default -> flow_union_edge / flow_common_edge (anti-unify =
+      count(session) == take count over set-deduped rows) -> flowmark
+      panel layer (edge kind = flow name) + hover_note membership +
+      ? flow_stat. GOTCHA: named-arg heads need check_and_normalize —
+      in-process tests must use prepare_paths, not bare parse::parse.
+      Tests: hover_note.rs (3), lsp_hook_event.rs (2), goto_flows.rs (4).
+- [x] **Panel harness + zero-rows fix** (worktree ext-wave3, 2026-07-10,
+      819bb90+3324451, Sonnet in isolated worktree): vitest+playwright under
+      editors/vscode-dl (hermetic fixture bridge answering the dl-bridge
+      /rpc shape from canned tables; 9 unit + 6 e2e incl. list/trace
+      screenshot baselines, double-run stable; npm test / npm run
+      test:e2e). Harness's first run FOUND the wave-2 regression: list
+      windowing read offsetTop on the #gutterLeft svg (SVGElement has no
+      offsetTop -> NaN bounds -> ZERO rows in any Chromium incl. webview);
+      fixed by reading #listRows at all 3 sites, test polyfill removed so
+      the suite exercises the real path. The installed vsix carries the bug
+      until a rebuild.
+
 ### Open (vscode ext review — plan approved 2026-07-10)
 Full eval + 3-track design at **plans/2026-07-10-vscode-ext-review.md** (perf
 remediation A / references lens B / BOM structure view C, waves 1-4). Staffing:
@@ -767,13 +799,26 @@ Opus/Sonnet subagents implement, orchestrator verifies+commits.
       rebuilt. PORTABILITY LAW (Chris): flow-panel.html stays host-agnostic —
       window.dlHost {query,hover,open} + window messages are the ONLY host
       coupling (panel reuse planned in ~/projects/instant).
-- [ ] **Wave 3**: B2 documentHighlight/workspaceSymbol/documentSymbol; B3 SCIP
-      tier + role_label widening (scip_import.rs:322 discards read/write bits);
-      C2 BOM rollup + where-used; A9 daemon query routing; A10 perf harness.
+- [x] **Wave 3 B2+C1+C2** (worktree ext-wave3, 2026-07-10, 230f843+1e87546,
+      2 Opus agents): B2 = documentHighlight (same-string spans in-file) /
+      workspaceSymbol (LIKE-contains over type_entity+call_def, ESCAPE '\',
+      prefix-first, cap 200, per-repo URIs) / documentSymbol (type_entity
+      nested by parent) — SymbolRow + 3 engine methods + like_contains,
+      tests/it/lsp_symbols.rs. C1 = .dl/bom.dl bom_node/bom_edge (fan_in/
+      fan_out distinct via set-deduped bom_ref union of type_link+call_edge,
+      negation-guarded zero-default splits, verified 1:1 with member_node =
+      12111 rows live) + bomTable preset + numeric band in rowHtml
+      (windowing untouched) + sort chips re-sorting from lastKeptNodes
+      without re-query. C2 = applyCollapse rollup (subtree totals on
+      collapsed rows) + alt-click where-used overlay (callers / type refs
+      by kind / field fill-read / importers, all sym-pinned). Rollup unit
+      test scripts/test-panel-rollup.mjs. Suites lib 265/0/1, it 613/0/4,
+      tsc clean. NOT merged to main (Chris's SCIP worktree in flight).
+      Remaining wave 3: B3 (BLOCKED on Chris's SCIP work), A9 (subsumed by
+      the thin-client plan), A10 (folding into the vitest/playwright
+      harness arc, Sonnet agent running in its own worktree).
 - [ ] **Wave 4**: B4 dl/locate follow-the-user; B5 call/type hierarchy; C3
       exploded stratum view (welded-subassembly cycle cards); C4 3D iso go/no-go.
-- [ ] C1 BOM table (.dl/bom.dl bom_node counts + panel numeric columns + fan-in
-      sort) — S, was slated wave 1, deferred to next session for context budget.
 - [ ] **LSP thin client over the daemon (Gradle model)** — plan approved
       2026-07-10 at plans/2026-07-10-lsp-thin-client-daemon.md: `--lsp` becomes
       a stdio<->socket adapter (LspPump mirrors mcp::Pump), in-process engine
