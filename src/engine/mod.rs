@@ -832,7 +832,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "df_node".into(), cols: vec![
             c("id", Type::Text), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
             c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int)], group: "dataflow",
-            doc: "intra-procedural dataflow node (call_res/assign/...); id is file::line::kind", ..Default::default() },
+            doc: "intra-procedural dataflow node (call_res/let_bind/param/ret/new/member/...); id is file::line::kind — the full kind vocabulary is rel_col's variants for this column", ..Default::default() },
         // rev-aware df_node: id is salt_rev(raw id, rev) so two revs' file:line:col
         // ids stay disjoint in one table (unlike syms, a df id embeds a line so
         // the same point is different code across revs). legacy df_node keeps the
