@@ -403,33 +403,13 @@ inject_skill("testing") <-
 
 ## Self-documenting (read these, don't guess the surface)
 
+<!-- BEGIN: op-quickref -->
 | op | kind | syntax |
 |---|---|---|
-| `aggregation` | body | `count sum min max` |
+| `aggregation` | body | `count sum min max json_group_array json_group_object` |
 | `arith` | body | `+ - * / %` |
 | `ast` | source | `ast(path, rev, :lang, "(query) @cap", line[, end])` |
 | `ast_yaml` | source | `ast_yaml(path, rev, :lang, "rule yaml", line, ...)` |
-| `atom` | body | `edge(from, to) / edge(to: dst) / edge("x", 1, kind: edge_kind)` |
-| `closure` | body | `closure(edge)` |
-| `cmd` | source | `cmd(path, rev, "tool {file}", line, out)` |
-| `comment` | source | `comment(path, rev, /open/[, /close/], l0, l1, label)` |
-| `comparison` | body | `= != < <= > >=` |
-| `diag` | sink | `diag(path: hit_path, line: hit_line, msg: message[, col: , end_line: , end_col: , severity: , code: , hint: ]) <- ...` |
-| `gen` | sink | `gen([:mode,] path, [l0, l1,] "{var} template")` |
-| `glob` | body | `path ~~ "src/*"` |
-| `graph_edge` | sink | `graph_edge(src: src_id, dst: dst_id, kind: kind) <- ...` |
-| `graph_node` | sink | `graph_node(id: node_id, label: label, kind: kind[, file: , line: , parent: ]) <- ...` |
-| `json` | source | `json(path, rev, q:{ $k: $v })` |
-| `jsonp` | source | `jsonp(path, rev, "a.*.b", out)` |
-| `match` | source | `match(path, rev, /re/, line[, id][, col, end_col])` |
-| `negation` | body | `!edge(from, _)` |
-| `node2vec` | body | `head(node_a, node_b, score) <- node2vec(edge)` |
-| `query` | sink | `? rel(from, to). / ? rel(col: value).` |
-| `regex` | body | `name =~ /^[A-Za-z]+$/` |
-| `scan` | source | `scan([repo,][rev,] glob, path[, rev_out])` |
-| `scc` | body | `head(rep, member) <- scc(edge)` |
-| `sg` | source | `sg(path, rev, :lang, "$X.unwrap()", line[, col, end_line, end_col][, id])` |
-| `strfn` | body | `split(text, sep, idx) / replace(text, from, to)` |
 | `atom` | body | `edge(from, to) / edge(to: dst) / edge("x", 1, kind: edge_kind)` |
 | `closure` | body | `closure(edge)` |
 | `cmd` | source | `cmd(path, rev, "tool {file}", line, out)` |

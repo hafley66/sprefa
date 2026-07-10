@@ -6,6 +6,8 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.6.24] - 2026-07-10
+
 ### Added
 - **`scip_occurrence` — SCIP occurrence spans (S1).** The importer already
   decoded every occurrence's range but dropped it at the rel layer (only

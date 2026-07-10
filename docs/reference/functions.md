@@ -5,6 +5,9 @@ Callable in a rule head or a comparison side. Generated from the engine's `fn_ca
 | function | arity | group | what it does |
 |---|---|---|---|
 | `int` | 1 | cast | text->int coercion (leading-int prefix, else 0); fills an int column or compares numerically; SQLite CAST |
+| `json` | 1 | json | validate and minify a JSON string (passthrough); SQLite-native json() |
+| `json_array` | 1 | json | build a JSON array from the arg values; arity >= 1; SQLite-native json_array |
+| `json_object` | 2 | json | build a JSON object from (key, value, ...) pairs; even arity >= 2; values keep their type (int -> number, text -> string); SQLite-native json_object |
 | `lcfirst` | 1 | string | first char lowercased, the rest unchanged |
 | `lower` | 1 | string | lowercase (Unicode-aware) |
 | `norm` | 1 | string | normalize for comparison: keep ASCII alphanumerics, lowercase, drop the rest — the same fold as the `string(id,text,norm)` rel's norm column, so `norm(a) = norm(b)` is a punctuation/case-blind compare and text joins against `string.norm` |
