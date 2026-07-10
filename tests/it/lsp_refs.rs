@@ -400,3 +400,71 @@ fn dl_refs_falls_back_to_resolved_when_unindexed() {
 
     s.shutdown();
 }
+
+/// Test (6): `dl/locate`, the "follow the user" point lookup (Track B B4).
+/// Cursor on the `helper` definition (same resolved-tier fixture as test 1)
+/// returns a `LocateHit` with tier "resolved", the bare symbol, and a
+/// declaration-site file/line — no uses/callers/callees collection (the
+/// LocateHit shape has none of those fields).
+#[test]
+fn dl_locate_resolved_tier_hit() {
+    let root = sandbox("locate_resolved");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/lib.rs"),
+        "fn helper() {}\nfn caller() { helper() }\n").unwrap();
+    let prog = root.join("p.dl");
+    fs::write(&prog, concat!(
+        "rel sym(name: text, f: file, l: int).\n",
+        "sym(name, f, l) <- scan(\"WORK\", \"src/**/*.rs\", f, rev), ",
+        "match(f, rev, /fn (?<name>[a-z_]+)/, l).\n",
+        "rel te(name: text).\n",
+        "te(name) <- type_entity(_, _, name, _, _, _, _).\n",
+        "rel cs(callee: text).\n",
+        "cs(callee) <- call_site(_, _, callee, _, _).\n",
+    )).unwrap();
+
+    let mut s = Session::spawn(&prog, &root, &root.join("locate.db"), None);
+    initialize(&mut s, &root);
+
+    // Cursor inside `helper` on its def line (line 0, char 5 — bytes 3..9).
+    let result = s.request(2, "dl/locate", refs_params(&root.join("src/lib.rs"), 0, 5));
+    let hit = result.as_object().unwrap_or_else(|| panic!(
+        "expected a LocateHit object, got: {result}\nstderr: {}", drain_stderr(&mut s.child)));
+    assert_eq!(hit.get("tier").and_then(|t| t.as_str()), Some("resolved"),
+        "name resolves through the type/call graph: {result}");
+    assert_eq!(hit.get("display_name").and_then(|d| d.as_str()), Some("helper"), "{result}");
+    assert!(hit.get("symbol").and_then(|s| s.as_str()).is_some_and(|s| !s.is_empty()),
+        "a non-empty declaration symbol: {result}");
+    assert!(hit.get("file").and_then(|f| f.as_str()).is_some_and(|f| f.ends_with("lib.rs")),
+        "the declaration site file: {result}");
+
+    s.shutdown();
+}
+
+/// Test (7): `dl/locate` on whitespace (no located identifier under the
+/// cursor) returns null, same as `dl/refs`'s "not on a located string" case.
+#[test]
+fn dl_locate_null_on_whitespace() {
+    let root = sandbox("locate_whitespace");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/lib.rs"),
+        "fn helper() {}\nfn caller() { helper() }\n").unwrap();
+    let prog = root.join("p.dl");
+    fs::write(&prog, concat!(
+        "rel sym(name: text, f: file, l: int).\n",
+        "sym(name, f, l) <- scan(\"WORK\", \"src/**/*.rs\", f, rev), ",
+        "match(f, rev, /fn (?<name>[a-z_]+)/, l).\n",
+        "rel te(name: text).\n",
+        "te(name) <- type_entity(_, _, name, _, _, _, _).\n",
+    )).unwrap();
+
+    let mut s = Session::spawn(&prog, &root, &root.join("locate.db"), None);
+    initialize(&mut s, &root);
+
+    // Char 2 on line 0 ("fn helper...") sits in the whitespace between `fn`
+    // and `helper` — no located span covers it.
+    let result = s.request(2, "dl/locate", refs_params(&root.join("src/lib.rs"), 0, 2));
+    assert!(result.is_null(), "whitespace has no located identifier: {result}");
+
+    s.shutdown();
+}
