@@ -1,23 +1,41 @@
-//! Long-lived daemon mode + spawn-if-missing client.
+//! Singleton daemon + registered roots.
 //!
-//! Phase 1 (no tray): one daemon per workspace root holds a warm `Engine` +
-//! SQLite db + notify watcher. CLI/check/LSP clients attach over a Unix domain
-//! socket and reuse the warm tables instead of cold-ticking every invocation.
-//! The gradle shape, in one binary.
+//! ONE daemon process lives at a constant home (`$XDG_STATE_HOME/sprefa`, or
+//! `~/.local/state/sprefa`) and serves EVERY `.dl`-owning root. cwd only picks
+//! WHICH root a query addresses; it is not the daemon's identity anymore. There
+//! is one Unix socket. Each RPC carries a `root` key in its params; the daemon
+//! routes it to that root's warm `Engine` (its own SQLite db under
+//! `<home>/roots/<key>/db.sqlite`). A root with no key (`root` absent) addresses
+//! the config-view engine (the org/folders-in-view model — it scans nothing and
+//! draws its facts from the configured repos).
 //!
-//! Discovery files at `<root>/.dl/`:
-//!   - `daemon.sock`  Unix domain socket (mode 0600)
-//!   - `daemon.pid`   text file: `pid\nstart_secs\nprogram_path\n`
+//! This replaces the old "one daemon per workspace root" scheme, where every
+//! `.dl` folder minted its own daemon + socket + db under `<root>/.dl/`. That
+//! per-root spawn-if-missing is what leaked processes (one per test sandbox) and
+//! once bound a real repo's socket to a throwaway program. A singleton with a
+//! registry deletes the mechanism.
+//!
+//! Control files at `<home>/`:
+//!   - `daemon.sock`  the ONE Unix domain socket (mode 0600)
+//!   - `daemon.pid`   text file: `pid\nstart_secs\n`
+//!   - `daemon.log`   one log, lines prefixed `[<root basename>]`
+//!   - `roots.json`   registered-root persistence (replayed on boot)
+//!   - `db.sqlite`    the config-view engine db
+//!   - `roots/<key>/db.sqlite`   one db per registered root
 //!
 //! Lifecycle:
-//!   - `dl daemon start`  foreground daemon (logs to stderr, ignores idle timeout)
-//!   - `dl daemon stop`    sends `shutdown` over the socket
-//!   - default invocation auto-attaches; spawns if no socket / dead PID
+//!   - `dl daemon start`        detaches a background daemon by default
+//!   - `dl daemon start --foreground`   runs it in this process (debug path)
+//!   - `dl daemon stop`          global shutdown (every root)
+//!   - `dl daemon drop <root>`   deregister one root (`--purge` deletes its db)
+//!   - default invocation auto-attaches (spawns the singleton if none) and names
+//!     its root in the RPC; an unregistered `.dl` root auto-registers on attach
 //!   - `DL_NO_DAEMON=1` opts out (in-process, the pre-daemon path; used by tests)
 //!   - `DL_DAEMON_IDLE_SECS=N` overrides the 30 min default
 
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -36,7 +54,7 @@ const IDLE_TICK_SECS: u64 = 30;
 /// `@async`/`@stream` effects needs SOME poll to drain its queue off-tick; making
 /// this a default (rather than opt-in) is what stops effects silently sitting at
 /// `state='queued'` under a bare `dl daemon start`. The poll loop no-ops cheaply when
-/// the loaded program has no effects, so a non-effect daemon pays ~nothing.
+/// no served root has effects, so a non-effect daemon pays ~nothing.
 const DEFAULT_POLL_SECS: u64 = 2;
 
 /// Lock a daemon mutex, recovering the guard if a prior holder panicked. One
@@ -54,9 +72,11 @@ const CONNECT_TOTAL_TIMEOUT_SECS: u64 = 5;
 
 // ---------- path helpers ----------
 
-/// The rootless daemon's home: `$XDG_STATE_HOME/sprefa` (or `~/.local/state/
-/// sprefa`). One singleton serving daemon lives here, decoupled from any
-/// project root — the "folders in view" model. Created on demand.
+/// The daemon's home: `$XDG_STATE_HOME/sprefa` (or `~/.local/state/sprefa`). ONE
+/// singleton serving daemon lives here, decoupled from any project root — the
+/// "folders in view" model. Tests set `XDG_STATE_HOME` to a sandbox, which makes
+/// a stray test daemon structurally unable to bind a developer's socket. Created
+/// on demand.
 pub fn daemon_home() -> PathBuf {
     let base = std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
@@ -65,67 +85,37 @@ pub fn daemon_home() -> PathBuf {
     base.join("sprefa")
 }
 
-/// The control-file directory for a daemon. `Some(root)` is the per-root
-/// auto-attach daemon at `<root>/.dl` (spawn-if-missing for one-shots, keyed by
-/// the repo being queried). `None` is the singleton rootless serving daemon at
-/// the XDG home. Keeping the two namespaces distinct lets them coexist: a
-/// `dl <prog>` one-shot spawns its own per-root helper without colliding with
-/// the long-lived serving daemon.
-fn home_dir(root: Option<&Path>) -> PathBuf {
-    match root {
-        Some(r) => r.join(".dl"),
-        None => daemon_home(),
-    }
-}
-
-/// macOS caps `sockaddr_un.sun_path` at 104 bytes; Linux at 108. A deep project
-/// root's `<root>/.dl/daemon.sock` overruns it, so `UnixListener::bind` fails and
-/// the daemon silently dies (every invocation then falls back to in-process
-/// after the attach timeout). Below this length we keep the natural root-local
-/// path (discoverable, self-cleaning); at or above it, `socket_path` relocates
-/// only the socket to a short hashed path. Leave slack for the trailing NUL.
+/// macOS caps `sockaddr_un.sun_path` at 104 bytes; Linux at 108. A deep
+/// `$XDG_STATE_HOME` (a sandbox under a long temp path) can overrun it, so
+/// `socket_path` relocates the socket to a short hashed path when the natural
+/// one is too long. Both bind and every connect derive it from the same home, so
+/// they always agree. Leave slack for the trailing NUL.
 const SUN_MAX: usize = 100;
 
 /// `<home>/daemon.sock`, unless that path is too long for `sun_path` — then a
-/// short, deterministic path under a short base dir keyed by the root's hash.
-/// Both bind and every connect derive it from the same `root`, so they always
-/// agree. Only the socket moves; the pid/log/cache files stay root-local.
-pub fn socket_path(root: Option<&Path>) -> PathBuf {
-    let natural = home_dir(root).join("daemon.sock");
+/// short, deterministic path keyed by the home's hash. THE singleton socket.
+pub fn socket_path() -> PathBuf {
+    socket_path_for(&daemon_home())
+}
+
+/// The socket for a given home dir (env-independent; the deep-home test drives
+/// this directly). `<home>/daemon.sock`, relocated to a short hashed path when
+/// the natural one overruns `sun_path`.
+pub fn socket_path_for(home: &Path) -> PathBuf {
+    let natural = home.join("daemon.sock");
     if natural.as_os_str().len() < SUN_MAX {
         natural
     } else {
-        short_socket_path(root)
+        let hash = blake3::hash(home.as_os_str().as_encoded_bytes());
+        short_sock_dir().join(format!("{}.sock", &hash.to_hex()[..16]))
     }
 }
 
-/// A short, collision-free socket path for a root whose natural socket path is
-/// too long for `sun_path`. Keyed by the blake3 hash of the canonicalized root
-/// (lexical fallback if canonicalize fails — bind and connect both see the same
-/// pre-canonicalize string, so they still agree). `<tmp>/dl-sock/<16hex>.sock`
-/// is ~30 bytes, well under the cap.
-fn short_socket_path(root: Option<&Path>) -> PathBuf {
-    let key = match root {
-        Some(r) => {
-            let canon = r.canonicalize().unwrap_or_else(|_| r.to_path_buf());
-            let hash = blake3::hash(canon.as_os_str().as_encoded_bytes());
-            hash.to_hex()[..16].to_string()
-        }
-        // Rootless singleton: hash its (short) home so it stays deterministic.
-        None => {
-            let hash = blake3::hash(daemon_home().as_os_str().as_encoded_bytes());
-            hash.to_hex()[..16].to_string()
-        }
-    };
-    short_sock_dir().join(format!("{key}.sock"))
-}
-
-/// Short base directory for relocated sockets. `TMPDIR`-derived so it stays on a
+/// Short base directory for a relocated socket. `TMPDIR`-derived so it stays on a
 /// short path; created 0700 on first use.
 fn short_sock_dir() -> PathBuf {
     let base = std::env::temp_dir().join("dl-sock");
     if let Err(e) = std::fs::create_dir_all(&base) {
-        // Best-effort; bind will surface the real error if the dir is unusable.
         tracing::debug!("short_sock_dir create {}: {e}", base.display());
     }
     #[cfg(unix)]
@@ -137,92 +127,104 @@ fn short_sock_dir() -> PathBuf {
 }
 
 /// `<home>/daemon.pid`.
-pub fn pid_path(root: Option<&Path>) -> PathBuf {
-    home_dir(root).join("daemon.pid")
+pub fn pid_path() -> PathBuf {
+    daemon_home().join("daemon.pid")
 }
 
-fn write_pid_file(root: Option<&Path>, program: Option<&str>) -> Result<()> {
-    let dir = home_dir(root);
+/// `<home>/roots.json` — the registered-root persistence file.
+fn roots_json_path() -> PathBuf {
+    daemon_home().join("roots.json")
+}
+
+/// `<home>/roots/<key>` — one dir per registered root; holds `db.sqlite`.
+fn root_db_dir(key: &str) -> PathBuf {
+    daemon_home().join("roots").join(key)
+}
+
+/// The registry key for a root: blake3-16hex of its canonical path. Symlinked
+/// aliases collapse to one entry.
+fn key_of(canon: &Path) -> String {
+    blake3::hash(canon.as_os_str().as_encoded_bytes()).to_hex()[..16].to_string()
+}
+
+fn write_pid_file() -> Result<()> {
+    let dir = daemon_home();
     std::fs::create_dir_all(&dir)?;
     let pid = std::process::id();
     let start = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
-    let prog = program.unwrap_or("");
-    std::fs::write(pid_path(root), format!("{pid}\n{start}\n{prog}\n"))?;
+    std::fs::write(pid_path(), format!("{pid}\n{start}\n"))?;
     Ok(())
 }
 
 #[allow(dead_code)]
-fn read_pid_file(root: Option<&Path>) -> Option<(u32, u64, String)> {
-    let txt = std::fs::read_to_string(pid_path(root)).ok()?;
+fn read_pid_file() -> Option<(u32, u64)> {
+    let txt = std::fs::read_to_string(pid_path()).ok()?;
     let mut lines = txt.lines();
     let pid: u32 = lines.next()?.parse().ok()?;
     let start: u64 = lines.next()?.parse().ok()?;
-    let prog = lines.next().unwrap_or("").to_string();
-    Some((pid, start, prog))
+    Some((pid, start))
 }
 
-fn remove_pid_file(root: Option<&Path>) {
-    let _ = std::fs::remove_file(pid_path(root));
+fn remove_pid_file() {
+    let _ = std::fs::remove_file(pid_path());
 }
 
-// ---------- Daemon state ----------
+// ---------- shared process handles ----------
 
-pub struct Daemon {
-    /// Engine/content/watch base. For a rootless serving daemon this is the XDG
-    /// home (a benign "self" that scans nothing); the view comes from config.
+/// Handles cloned into every `ServedRoot` so its per-root tick methods can reach
+/// the process-wide subscriber list / shutdown flag / build identity without a
+/// back-pointer to the whole `Daemon`.
+#[derive(Clone)]
+struct Shared {
+    build_id: Arc<str>,
+    shutdown_requested: Arc<AtomicBool>,
+    subscribers: Arc<Mutex<Vec<Arc<Mutex<UnixStream>>>>>,
+}
+
+// ---------- one served root ----------
+
+/// One registered `.dl`-owning root served by the singleton, or the config-view
+/// engine (`key == None`). Holds that root's warm `Engine` + parsed `Program` +
+/// per-root watch filter. Byte-identical to the old per-root daemon's behavior;
+/// only WHERE the db lives (a constant home position) changed.
+pub struct ServedRoot {
+    /// Engine/content/watch base. For the config view this is the XDG home (a
+    /// benign "self" that scans nothing); the view comes from config repos.
     pub root: PathBuf,
-    /// The `--root` the daemon was launched with, for CONTROL files only
-    /// (socket/pid). `None` = the singleton rootless daemon at the XDG home.
-    pub home: Option<PathBuf>,
+    /// Registry key (blake3-16hex of the canonical root). `None` = config view.
+    pub key: Option<String>,
     pub program_display: String,
-    /// Identity of the binary this daemon is RUNNING, captured at startup
-    /// (`env!("CARGO_PKG_VERSION")` + the exe's mtime). A client that rebuilt
-    /// or reinstalled `dl` computes a different id from the on-disk exe and
-    /// respawns instead of attaching to a stale daemon. See `build_id`.
-    pub build_id: String,
-    /// Canonicalized absolute paths the daemon parsed. Edit-exact detection
-    /// compares against this list, not "any .dl file under .dl/" (the v1
-    /// heuristic that fired on unrelated .dl edits and on residual FSEvents
-    /// from the spawning shell's recent file setup). Wrapped in a Mutex so
-    /// discovery-mode hot-reload can add/remove files after startup.
+    shared: Shared,
+    /// Canonicalized absolute program-file paths the engine parsed.
     pub program_files: Mutex<Vec<PathBuf>>,
-    /// True when the daemon started without an explicit program file (discovery
-    /// mode: picks up every `<root>/.dl/*.dl` at startup). When true, new or
-    /// removed `.dl` files in `.dl/` trigger a re-discovery and re-merge.
+    /// True when this root loaded via `<root>/.dl/*.dl` discovery (vs an explicit
+    /// program set): new/removed `.dl` files re-merge.
     pub discovery_mode: bool,
-    /// When true, program-file edits hot-reload instead of triggering respawn.
-    /// Tray mode sets this: the user wants the menu bar item to stay alive
-    /// across edits. The watcher re-parses the program files in place, swaps
-    /// the parsed `Program`, and re-ticks. A parse failure logs and keeps the
-    /// last good program.
-    pub no_respawn: bool,
     pub prog: Mutex<Program>,
     pub eng: Mutex<Engine>,
     pub last_activity: Mutex<Instant>,
     pub tick_count: AtomicU64,
-    pub shutdown_requested: AtomicBool,
-    /// Whether the last FULL tick left the program quiescent — no non-timer rel
-    /// moved, no `@next` carry staged, no non-stream effect in-flight (the
-    /// `TickReport::is_settled` predicate). The poll loop keeps ticking + draining
-    /// toward this; `await_quiescent` blocks a client until it flips true. An
-    /// incremental (source-change) tick clears it. Starts false: not-yet-known
-    /// until the first full tick runs.
+    /// Whether the last FULL tick left the program quiescent (the poll loop drives
+    /// toward this; `await_quiescent` blocks on it).
     pub settled: AtomicBool,
-    /// The paths touched by the most recent tick (absolute). Empty after a
-    /// full tick (paths unknown) — subscribers treat empty as "re-publish
-    /// everything". Targeted publish on incremental ticks is the v1.1
-    /// refinement: only files whose `diag` rows could have moved need a
-    /// re-publish, not the whole tree.
+    /// The paths touched by the most recent tick (absolute). Empty after a full
+    /// tick.
     pub last_changed_paths: Mutex<Vec<PathBuf>>,
-    /// Subscribers for pushed notifications. Each subscriber is a kept-open
-    /// socket; the watcher writes one `diag_changed` notification per tick.
-    /// Broken subscribers are reaped on the next broadcast.
-    pub subscribers: Mutex<Vec<Arc<Mutex<UnixStream>>>>,
+    /// Set by `drop_root`; the watcher thread observes it and exits, dropping its
+    /// `Arc<ServedRoot>` so the engine closes.
+    pub stopped: Arc<AtomicBool>,
 }
 
-impl Daemon {
+impl ServedRoot {
     fn touch(&self) {
         *lock(&self.last_activity) = Instant::now();
+    }
+
+    fn root_label(&self) -> String {
+        self.root
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.root.to_string_lossy().into_owned())
     }
 
     fn tick_full(&self, quiet: bool) -> Result<()> {
@@ -234,12 +236,9 @@ impl Daemon {
         drop(eng);
         drop(prog);
         crate::activity::end_tick();
-        // A full tick knows everything that moved, so it is the authoritative
-        // settle observation (`await_quiescent` reads this).
         self.settled.store(report.is_settled(), Ordering::Relaxed);
         self.tick_count.fetch_add(1, Ordering::Relaxed);
         self.touch();
-        // Full tick: changed paths unknown, subscribers re-publish everything.
         *lock(&self.last_changed_paths) = Vec::new();
         self.broadcast_diag_changed();
         Ok(())
@@ -258,33 +257,23 @@ impl Daemon {
         drop(eng);
         drop(prog);
         crate::activity::end_tick();
-        // A source change happened; the poll loop's next full tick + effect drain
-        // decides whether we are quiescent again, so clear the flag now.
         self.settled.store(false, Ordering::Relaxed);
         self.tick_count.fetch_add(1, Ordering::Relaxed);
         self.touch();
-        // Incremental tick: only these paths' rows could have moved; subscribers
-        // can re-publish just these files.
         *lock(&self.last_changed_paths) = paths.to_vec();
         self.broadcast_diag_changed();
         Ok(())
     }
 
-    /// Re-parse the program files, swap the parsed `Program`, re-tick. Called
-    /// by the watcher when `no_respawn` is set and a program file changed.
-    /// A parse or type error keeps the last good program.
+    /// Re-parse the program files, swap the parsed `Program`, re-tick. A parse or
+    /// type error keeps the last good program.
     fn reload_program(&self) -> Result<()> {
         let all = lock(&self.program_files).clone();
-        // Parse only the files that currently exist: a deleted watched path must
-        // not wedge the tick loop (prepare_paths would fail to read it). The
-        // watched SET is left intact — an atomic save (delete+create) or a
-        // re-created file reloads on its next event. If every file is (this
-        // instant) missing, keep the last-good program rather than parsing an
-        // empty set (which has no root path).
         let files: Vec<PathBuf> = all.iter().filter(|f| f.exists()).cloned().collect();
         if files.is_empty() {
             if !all.is_empty() {
-                eprintln!("[daemon] all {} watched program file(s) missing; keeping last-good program", all.len());
+                eprintln!("[{}] all {} watched program file(s) missing; keeping last-good program",
+                    self.root_label(), all.len());
             }
             return Ok(());
         }
@@ -302,20 +291,15 @@ impl Daemon {
             *p = new_prog;
         }
         if let Err(e) = lock(&self.eng).save_program_meta(&all) {
-            eprintln!("[daemon] save_program_meta: {e}");
+            eprintln!("[{}] save_program_meta: {e}", self.root_label());
         }
         self.tick_full(false)?;
         Ok(())
     }
 
-    /// Re-discover `.dl` files under `<root>/.dl/`, re-merge the program
-    /// if the file set changed, re-tick. Called by the watcher when a new
-    /// `.dl` file appears in discovery mode (k8s-style add-a-file), and also
-    /// as the first probe on a discovered-program content edit (see the
-    /// `touches_program` branch in `watcher_loop`). Returns `Ok(true)` when
-    /// the file set changed and the program was re-merged, `Ok(false)` when
-    /// the set is unchanged (a content edit to an already-discovered file, or
-    /// not in discovery mode at all) — the caller tells those two apart.
+    /// Re-discover `.dl` files under `<root>/.dl/`, re-merge the program if the
+    /// file set changed, re-tick. `Ok(true)` = set changed and re-merged;
+    /// `Ok(false)` = set unchanged (content edit, or not in discovery mode).
     fn reload_discovery(&self) -> Result<bool> {
         if !self.discovery_mode {
             return Ok(false);
@@ -339,7 +323,7 @@ impl Daemon {
             .count();
         if n_err > 0 {
             crate::render_type_diags_eprintln(&type_diags);
-            eprintln!("[daemon] discovery reload: {n_err} type error(s); keeping old");
+            eprintln!("[{}] discovery reload: {n_err} type error(s); keeping old", self.root_label());
             return Ok(false);
         }
         crate::render_type_diags_eprintln(&type_diags);
@@ -354,35 +338,25 @@ impl Daemon {
         {
             let pf = lock(&self.program_files).clone();
             if let Err(e) = lock(&self.eng).save_program_meta(&pf) {
-                eprintln!("[daemon] save_program_meta: {e}");
+                eprintln!("[{}] save_program_meta: {e}", self.root_label());
             }
         }
         let n = lock(&self.program_files).len();
-        eprintln!("[daemon] discovery reload: {n} file(s)");
+        eprintln!("[{}] discovery reload: {n} file(s)", self.root_label());
         self.tick_full(false)?;
         Ok(true)
     }
 
-    /// One poll cycle (the clock source for `@async`): advance the tick (which
-    /// re-emits steady `@async` requests, idempotent), then drain every
-    /// outstanding `pending_effect` through a `ShellEffectExec` built from the
-    /// program's `effect_cmd(kind, template)` rows. On any drained response,
-    /// re-tick so the new facts propagate and notify subscribers. Returns the
-    /// number of effects drained. Kinds with no `effect_cmd` template stay queued.
+    /// One poll cycle (the clock source for `@async`): advance the tick, then
+    /// drain outstanding effects + external sinks. Returns the number drained.
     fn poll_tick(&self) -> Result<usize> {
-        // Advance the clock + re-stage requests. tick_full takes its own locks,
-        // so hold none here.
         self.tick_full(true)?;
-        // Drain network/mutating sinks (repo pulls + checkout sweeps) on the
-        // daemon's cadence. `tick_full` is now a pure read; this is the only
-        // place the daemon fires those rows + registers newly-pulled repos.
-        // (A bare `?` query path goes through `query` RPC and never calls this.)
         let sinks_drained = {
             let prog = lock(&self.prog);
             let mut eng = lock(&self.eng);
             crate::activity::set(crate::activity::Phase::Effects, "external sinks");
             eng.drain_external_sinks(&prog).unwrap_or_else(|e| {
-                eprintln!("[daemon] drain_external_sinks: {e}");
+                eprintln!("[{}] drain_external_sinks: {e}", self.root_label());
                 0
             })
         };
@@ -392,9 +366,6 @@ impl Daemon {
         };
         if arity.is_empty() { return Ok(sinks_drained); }
         let (templates, cwd) = {
-            // Typed `sh` decls supply the base registry; the dynamic
-            // `effect_cmd(kind, template)` relation overlays them (a data-driven
-            // fallback for templates not declared at parse time).
             let mut m = {
                 let prog = lock(&self.prog);
                 crate::engine::shell_templates(&prog)
@@ -414,8 +385,6 @@ impl Daemon {
         let n = {
             let prog = lock(&self.prog);
             let mut eng = lock(&self.eng);
-            // One-shot @async requests, then long-lived @stream subscriptions: a
-            // stream yields N head rows per drain and stays 'running'.
             crate::activity::set(crate::activity::Phase::Effects, "drain");
             let a = eng.drain_effects(&prog, &exec)?;
             let s = eng.drain_streams(&prog, &exec)?;
@@ -424,20 +393,22 @@ impl Daemon {
         let n = n + sinks_drained;
         self.touch();
         if n > 0 {
-            // Responses landed in their rel; re-tick so downstream derived rules
-            // see them, then republish.
             self.tick_full(true)?;
             self.broadcast_diag_changed();
         }
         Ok(n)
     }
 
+    fn has_effects(&self) -> bool {
+        let prog = lock(&self.prog);
+        !crate::engine::async_effect_arity(&prog).is_empty()
+    }
+
     fn broadcast_diag_changed(&self) {
-        // Snapshot paths under the lock so write_frame (which can take time on a
-        // slow consumer) doesn't hold it.
         let paths: Vec<String> = lock(&self.last_changed_paths).iter()
             .map(|p| p.to_string_lossy().into_owned()).collect();
         let note = json!({"jsonrpc": "2.0", "method": "diag_changed", "params": {
+            "root": self.root.to_string_lossy(),
             "tick": self.tick_count.load(Ordering::Relaxed),
             "paths": paths,
         }});
@@ -445,7 +416,7 @@ impl Daemon {
             Ok(s) => s,
             Err(_) => return,
         };
-        let mut subs = lock(&self.subscribers);
+        let mut subs = lock(&self.shared.subscribers);
         let mut broken: Vec<usize> = Vec::new();
         for (i, s) in subs.iter().enumerate() {
             let mut guard = match s.lock() {
@@ -456,13 +427,11 @@ impl Daemon {
                 broken.push(i);
             }
         }
-        // Reap broken subscribers (descending so indexes stay valid).
         for i in broken.into_iter().rev() { subs.swap_remove(i); }
     }
 
     /// The git refs to watch for advance: always `HEAD`, plus every non-WORK rev
-    /// literal the loaded program scans (a `scan(... rev: "v1.2")` pins a tag, so
-    /// a retag should fire). Deduped, HEAD first.
+    /// literal the loaded program scans.
     fn watched_ref_names(&self) -> Vec<String> {
         let mut names = vec!["HEAD".to_string()];
         let prog = lock(&self.prog);
@@ -480,18 +449,10 @@ impl Daemon {
         names
     }
 
-    /// React to a `.git` change: observe each watched ref's current oid against
-    /// the persisted cursor, and on advance diff old→new against the `_file`
-    /// index and broadcast a `rev_advanced` notification. Returns the number of
-    /// refs that advanced AND the union of worktree files the diff says changed
-    /// (absolute paths), so the watcher can re-analyze them. Driving the tick
-    /// from the diff is deterministic — FSEvents does not reliably co-deliver a
-    /// checkout's rewritten files with the `.git` event that accompanied them.
+    /// React to a `.git` change: diff each watched ref old→new against `_file` and
+    /// broadcast `rev_advanced`. Returns (refs advanced, worktree files changed).
     fn on_git_event(&self) -> (usize, Vec<PathBuf>) {
-        let self_slug = self.root.file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| self.root.to_string_lossy().into_owned());
-        let mut repos: Vec<(String, PathBuf)> = vec![(self_slug, self.root.clone())];
+        let mut repos: Vec<(String, PathBuf)> = vec![(self.root_label(), self.root.clone())];
         for rc in load_repos_eager() {
             if rc.root.exists() && !repos.iter().any(|(s, _)| s == &rc.slug) {
                 repos.push((rc.slug, rc.root));
@@ -509,8 +470,6 @@ impl Daemon {
                             let files = eng
                                 .files_changed_between(slug, root, old.as_deref().unwrap_or(""), &new)
                                 .unwrap_or_default();
-                            // Collect absolute worktree paths for the watcher's
-                            // follow-up tick (deduped across refs/repos).
                             for f in &files {
                                 let abs = root.join(f);
                                 if abs.exists() && !changed.contains(&abs) {
@@ -521,15 +480,13 @@ impl Daemon {
                                 old.unwrap_or_default(), new, files));
                         }
                         Ok(None) => {}
-                        Err(e) => eprintln!("[daemon] observe_ref {slug}/{name}: {e}"),
+                        Err(e) => eprintln!("[{}] observe_ref {slug}/{name}: {e}", self.root_label()),
                     }
                 }
             }
-            // Project the updated `_ref`/`_rev_log` into the query rels so a
-            // `query` RPC sees the advance without a re-tick.
             if !advances.is_empty() {
                 if let Err(e) = eng.refresh_daemon_rels() {
-                    eprintln!("[daemon] refresh_daemon_rels: {e}"); 
+                    eprintln!("[{}] refresh_daemon_rels: {e}", self.root_label());
                 }
             }
         }
@@ -540,14 +497,12 @@ impl Daemon {
         (advances.len(), changed)
     }
 
-    /// Push one `rev_advanced` notification per advanced ref to every subscriber.
-    /// Mirrors `broadcast_diag_changed`: snapshot, write outside the rel lock,
-    /// reap broken subscribers.
     fn broadcast_rev_advanced(&self, advances: &[(String, String, String, String, Vec<String>)]) {
-        let mut subs = lock(&self.subscribers);
+        let mut subs = lock(&self.shared.subscribers);
         let mut broken: Vec<usize> = Vec::new();
         for (repo, name, old, new, files) in advances {
             let note = json!({"jsonrpc": "2.0", "method": "rev_advanced", "params": {
+                "root": self.root.to_string_lossy(),
                 "repo": repo, "ref": name, "old": old, "new": new, "paths": files,
             }});
             let body = match serde_json::to_string(&note) { Ok(s) => s, Err(_) => continue };
@@ -564,105 +519,308 @@ impl Daemon {
         broken.sort_unstable();
         for i in broken.into_iter().rev() { subs.swap_remove(i); }
     }
+
+    fn program_in_paths(&self, paths: &[PathBuf]) -> bool {
+        let pf = lock(&self.program_files);
+        for p in paths {
+            let canon = p.canonicalize().unwrap_or_else(|_| p.clone());
+            if pf.iter().any(|f| f == &canon) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Open a served root: open its db, load its program (`<root>/.dl/*.dl`
+    /// discovery, or an explicit program set), cold-tick, and build the struct.
+    /// `key == None` is the config view: the engine roots at the XDG home, scans
+    /// nothing, and draws facts from the config repos.
+    fn open(
+        root: Option<PathBuf>,
+        key: Option<String>,
+        programs: &[String],
+        db_path: Option<&str>,
+        shared: Shared,
+    ) -> Result<Arc<ServedRoot>> {
+        let is_config = key.is_none();
+        let eng_root = root.clone().unwrap_or_else(daemon_home);
+        let files = if programs.is_empty() {
+            crate::resolve_programs(&[], &eng_root).unwrap_or_default()
+        } else {
+            programs.iter().map(PathBuf::from).collect()
+        };
+        let (prog, type_diags, display) = if files.is_empty() {
+            (Program { items: vec![] }, vec![], "<serving>".to_string())
+        } else {
+            crate::prepare_paths(&files)?
+        };
+        crate::render_type_diags_eprintln(&type_diags);
+        let n_err = type_diags.iter().filter(|d| d.severity == crate::ast::Severity::Error).count();
+        if n_err > 0 { bail!("{n_err} type error(s) in program; root not served"); }
+
+        // Ensure the db's parent dir exists before opening it (the per-root db
+        // lives under <home>/roots/<key>/, which won't exist on first register).
+        if let Some(k) = &key { let _ = std::fs::create_dir_all(root_db_dir(k)); }
+        let conn = db::open(db_path)?;
+        let mut eng = Engine::new(conn, eng_root.clone());
+        if is_config { eng.set_root_implicit(true); }
+        eng.set_repos(load_repos_eager());
+        crate::activity::set(crate::activity::Phase::ColdTick, display.as_str());
+        eng.tick(&prog, false)?;
+        crate::activity::end_tick();
+        let canon_files: Vec<PathBuf> = files
+            .iter()
+            .map(|f| std::fs::canonicalize(f).unwrap_or_else(|_| f.clone()))
+            .collect();
+        if let Err(e) = eng.save_repos_meta() { eprintln!("[daemon] save_repos_meta: {e}"); }
+        if let Err(e) = eng.save_program_meta(&canon_files) { eprintln!("[daemon] save_program_meta: {e}"); }
+
+        let label = eng_root.file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| eng_root.to_string_lossy().into_owned());
+        eprintln!("[{label}] served ({} type diag(s), program {display})", type_diags.len());
+
+        Ok(Arc::new(ServedRoot {
+            root: eng_root,
+            key,
+            program_display: display,
+            shared,
+            program_files: Mutex::new(canon_files),
+            discovery_mode: programs.is_empty(),
+            prog: Mutex::new(prog),
+            eng: Mutex::new(eng),
+            last_activity: Mutex::new(Instant::now()),
+            tick_count: AtomicU64::new(1),
+            settled: AtomicBool::new(false),
+            last_changed_paths: Mutex::new(Vec::new()),
+            stopped: Arc::new(AtomicBool::new(false)),
+        }))
+    }
+}
+
+// ---------- registered-root persistence ----------
+
+/// One line in `roots.json`.
+#[derive(Clone)]
+struct RootRecord {
+    root: PathBuf,
+    key: String,
+    added_at: u64,
+}
+
+fn read_roots_json() -> Vec<RootRecord> {
+    let txt = match std::fs::read_to_string(roots_json_path()) {
+        Ok(t) => t,
+        Err(_) => return Vec::new(),
+    };
+    let v: Value = match serde_json::from_str(&txt) { Ok(v) => v, Err(_) => return Vec::new() };
+    v.as_array().map(|arr| arr.iter().filter_map(|r| {
+        let root = r.get("root").and_then(|x| x.as_str())?;
+        let key = r.get("key").and_then(|x| x.as_str())?;
+        let added_at = r.get("added_at").and_then(|x| x.as_u64()).unwrap_or(0);
+        Some(RootRecord { root: PathBuf::from(root), key: key.to_string(), added_at })
+    }).collect()).unwrap_or_default()
+}
+
+fn write_roots_json(records: &[RootRecord]) {
+    let arr: Vec<Value> = records.iter().map(|r| json!({
+        "root": r.root.to_string_lossy(), "key": r.key, "added_at": r.added_at,
+    })).collect();
+    let _ = std::fs::create_dir_all(daemon_home());
+    if let Ok(s) = serde_json::to_string_pretty(&Value::Array(arr)) {
+        let _ = std::fs::write(roots_json_path(), s);
+    }
+}
+
+// ---------- the singleton daemon ----------
+
+/// The one process. Owns the socket, the config-view engine, and the registry of
+/// per-root engines.
+pub struct Daemon {
+    /// XDG state home (control files, roots.json, per-root dbs).
+    pub home: PathBuf,
+    pub build_id: Arc<str>,
+    pub shutdown_requested: Arc<AtomicBool>,
+    pub subscribers: Arc<Mutex<Vec<Arc<Mutex<UnixStream>>>>>,
+    /// The `root`-absent config view (org/folders model).
+    pub config: Arc<ServedRoot>,
+    /// key -> served root. The registry.
+    pub roots: Mutex<HashMap<String, Arc<ServedRoot>>>,
+}
+
+impl Daemon {
+    fn shared(&self) -> Shared {
+        Shared {
+            build_id: self.build_id.clone(),
+            shutdown_requested: self.shutdown_requested.clone(),
+            subscribers: self.subscribers.clone(),
+        }
+    }
+
+    /// Every served root (config view + registered), for the idle/poll loops and
+    /// status.
+    fn all_roots(&self) -> Vec<Arc<ServedRoot>> {
+        let mut v = vec![self.config.clone()];
+        v.extend(lock(&self.roots).values().cloned());
+        v
+    }
+
+    /// Route a `root` param to its served engine. `None` -> config view. A miss on
+    /// a path that owns `.dl/` auto-registers (attach IS registration, cold-ticks
+    /// inside the daemon; the caller blocks on the reply). A miss on a non-`.dl`
+    /// path is a loud error naming `add_root`.
+    fn resolve(self: &Arc<Self>, root: Option<&str>) -> Result<Arc<ServedRoot>, String> {
+        let raw = match root {
+            None | Some("") => return Ok(self.config.clone()),
+            Some(r) => r,
+        };
+        let canon = Path::new(raw).canonicalize().unwrap_or_else(|_| PathBuf::from(raw));
+        let key = key_of(&canon);
+        if let Some(sr) = lock(&self.roots).get(&key) {
+            return Ok(sr.clone());
+        }
+        if canon.join(".dl").is_dir() {
+            self.add_root(&canon).map_err(|e| e.to_string())
+        } else {
+            Err(format!(
+                "unknown root {} (owns no .dl/; nothing to serve). \
+                 Register a .dl root with `dl daemon` from inside it.",
+                canon.display()
+            ))
+        }
+    }
+
+    /// Register a root (idempotent). Canonicalizes, refuses a root nested inside —
+    /// or containing — an already-registered root (the SCIP explosion guard's
+    /// tone), opens its engine (db under `<home>/roots/<key>/`), spawns its
+    /// watcher, and persists to `roots.json`. Returns the served root.
+    fn add_root(self: &Arc<Self>, root: &Path) -> Result<Arc<ServedRoot>> {
+        let canon = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let key = key_of(&canon);
+        // Idempotent hit.
+        if let Some(sr) = lock(&self.roots).get(&key) {
+            return Ok(sr.clone());
+        }
+        // Nested-registration guard (mirror the SCIP explosion-guard tone: loud,
+        // names both paths). A root inside another registered root — or one that
+        // contains one — would double-serve overlapping trees.
+        {
+            let roots = lock(&self.roots);
+            for existing in roots.values() {
+                if canon.starts_with(&existing.root) {
+                    bail!(
+                        "refusing to register {}: it is nested inside already-registered root {}. \
+                         One daemon serves each root once; register the outer root and query the \
+                         inner path against it, or `dl daemon drop {}` first.",
+                        canon.display(), existing.root.display(), existing.root.display()
+                    );
+                }
+                if existing.root.starts_with(&canon) {
+                    bail!(
+                        "refusing to register {}: already-registered root {} lives inside it. \
+                         Registering the parent would double-serve the child tree; \
+                         `dl daemon drop {}` first if you want the parent served instead.",
+                        canon.display(), existing.root.display(), existing.root.display()
+                    );
+                }
+            }
+        }
+        let db = root_db_dir(&key).join("db.sqlite");
+        let db_str = db.to_string_lossy().into_owned();
+        let sr = ServedRoot::open(Some(canon.clone()), Some(key.clone()), &[], Some(&db_str), self.shared())?;
+        lock(&self.roots).insert(key.clone(), sr.clone());
+        // Persist.
+        let added_at = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_secs()).unwrap_or(0);
+        {
+            let mut records = read_roots_json();
+            if !records.iter().any(|r| r.key == key) {
+                records.push(RootRecord { root: canon.clone(), key: key.clone(), added_at });
+                write_roots_json(&records);
+            }
+        }
+        // Spawn its watcher.
+        let sr_watch = sr.clone();
+        let _ = std::thread::Builder::new().name(format!("dl-watch-{key}"))
+            .spawn(move || watcher_loop(sr_watch));
+        eprintln!("[daemon] registered root {} (key {key})", canon.display());
+        Ok(sr)
+    }
+
+    /// Deregister a root: stop its watcher, drop the engine, keep the db (re-add
+    /// warms from it). `purge` deletes `<home>/roots/<key>/`.
+    fn drop_root(self: &Arc<Self>, root: &Path, purge: bool) -> Result<()> {
+        let canon = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let key = key_of(&canon);
+        let sr = lock(&self.roots).remove(&key);
+        if let Some(sr) = &sr {
+            sr.stopped.store(true, Ordering::Relaxed);
+        }
+        {
+            let mut records = read_roots_json();
+            records.retain(|r| r.key != key);
+            write_roots_json(&records);
+        }
+        if purge {
+            let _ = std::fs::remove_dir_all(root_db_dir(&key));
+        }
+        if sr.is_none() {
+            eprintln!("[daemon] drop_root {}: not registered", canon.display());
+        } else {
+            eprintln!("[daemon] deregistered root {} (key {key}){}",
+                canon.display(), if purge { ", db purged" } else { "" });
+        }
+        Ok(())
+    }
 }
 
 // ---------- daemon entry ----------
 
-/// Run the daemon in the foreground. Binds the socket, parses the program,
-/// does the cold tick, then drives the notify watcher + accept loop until
-/// shutdown. Ignores idle timeout when `foreground` is true (caller wants it
-/// alive for debugging); the spawn-if-missing path passes `foreground=false`.
-/// When `tray` is true, the main thread runs the menu bar event loop and the
-/// accept loop is moved to a worker thread (mac needs the main thread for
-/// CFRunLoop / NSApplication). Tray mode also disables program-edit respawn:
-/// the daemon stays alive until explicit `--stop` or tray Quit. Hot reload of
-/// an edited program file is the v1.2 polish item.
+/// Run the singleton daemon in this process. Binds the one socket at the XDG
+/// home, builds the config-view engine, replays `roots.json` (re-registers every
+/// persisted root, warm from its db), optionally registers `initial_root`, then
+/// drives the accept + idle + poll loops until shutdown. `foreground=true`
+/// disables the idle timeout (debug path); `false` = the detached background
+/// daemon that self-reaps when every root goes idle.
 pub fn run_daemon(
     programs: &[String],
     db_path: Option<&str>,
-    root: Option<PathBuf>,
+    initial_root: Option<PathBuf>,
     foreground: bool,
     tray: bool,
 ) -> Result<()> {
-    // `home` selects the control-file location (Some(root) → per-root,
-    // None → singleton XDG). `eng_root` is the Engine/content/watch base: the
-    // given root, or the XDG home as a benign self when launched rootless (the
-    // view then comes entirely from config repos).
-    let home = root.clone();
-    let eng_root = root.clone().unwrap_or_else(daemon_home);
-    // Explicit positional files load as the program set (merged in order, with
-    // `use` includes spliced); no positionals falls back to `<root>/.dl/*.dl`
-    // discovery.
-    let files = if programs.is_empty() {
-        // Rootless serving daemon: tolerate an empty `.dl/` (no discovery
-        // files) so it starts empty and grows via the `load` RPC. A non-empty
-        // discovery or an explicit program file set still works as before.
-        crate::resolve_programs(&[], &eng_root).unwrap_or_default()
-    } else {
-        programs.iter().map(PathBuf::from).collect()
-    };
-    let (prog, type_diags, display) = if files.is_empty() {
-        (crate::ast::Program { items: vec![] }, vec![], "<serving>".to_string())
-    } else {
-        crate::prepare_paths(&files)?
-    };
-    crate::render_type_diags_eprintln(&type_diags);
-    let n_err = type_diags.iter().filter(|d| d.severity == crate::ast::Severity::Error).count();
-    if n_err > 0 { bail!("{n_err} type error(s) in program; daemon not started"); }
+    let home = daemon_home();
+    let _ = std::fs::create_dir_all(&home);
 
-    let conn = db::open(db_path)?;
-    let mut eng = Engine::new(conn, eng_root.clone());
-    // Rootless serving: self.root is the XDG state dir, a placeholder. Self-form
-    // scans / gen writes in loaded scripts then target each rule's own repo.
-    if root.is_none() { eng.set_root_implicit(true); }
+    let build_id: Arc<str> = Arc::from(build_id().as_str());
+    let shutdown_requested = Arc::new(AtomicBool::new(false));
+    let subscribers: Arc<Mutex<Vec<Arc<Mutex<UnixStream>>>>> = Arc::new(Mutex::new(Vec::new()));
+    let shared = Shared { build_id: build_id.clone(), shutdown_requested: shutdown_requested.clone(), subscribers: subscribers.clone() };
+
     let repos = load_repos_eager();
     if !repos.is_empty() { eprintln!("[config] {} repo(s) registered", repos.len()); }
-    eng.set_repos(repos.clone());
-    crate::activity::set(crate::activity::Phase::ColdTick, display.as_str());
-    // Ensure `.dl/` exists before the cold tick so the perf log (default path
-    // `<root>/.dl/perf.jsonl`) is writable from tick 1 — perflog never creates
-    // `.dl/` itself (it must not side-effect a fresh dir), so the daemon does.
-    let _ = std::fs::create_dir_all(home_dir(home.as_deref()));
-    eng.tick(&prog, false)?;
-    crate::activity::end_tick();
-    let canon_files: Vec<PathBuf> = files
-        .iter()
-        .map(|f| std::fs::canonicalize(f).unwrap_or_else(|_| f.clone()))
-        .collect();
-    // Persist the repo set + loaded program into the db so a restart can diff
-    // them, and seed the rev cursor for every watched ref (HEAD + program revs).
-    if let Err(e) = eng.save_repos_meta() { eprintln!("[daemon] save_repos_meta: {e}"); }
-    if let Err(e) = eng.save_program_meta(&canon_files) { eprintln!("[daemon] save_program_meta: {e}"); }
-    eprintln!("[daemon] cold tick done ({} type diag(s), program {})", type_diags.len(), display);
 
-    let idle_secs = idle_timeout_secs();
+    // The config-view engine (root:None). An explicit --db points it at that file;
+    // otherwise the home db.
+    let config_db = db_path.map(|s| s.to_string())
+        .unwrap_or_else(|| home.join("db.sqlite").to_string_lossy().into_owned());
+    let config = ServedRoot::open(None, None, &[], Some(&config_db), shared.clone())
+        .context("open config-view engine")?;
+
     let daemon = Arc::new(Daemon {
-        root: eng_root.clone(),
         home: home.clone(),
-        program_display: display,
-        build_id: build_id(),
-        program_files: Mutex::new(canon_files),
-        discovery_mode: programs.is_empty(),
-        // Hot-reload (not respawn) when the daemon is tray-driven OR a rootless
-        // serving daemon (no explicit program, grown via the `load` RPC). A
-        // respawn would re-resolve from empty discovery and lose every loaded
-        // script; the serving daemon has no startup program to respawn from.
-        no_respawn: tray || (programs.is_empty() && root.is_none()),
-        prog: Mutex::new(prog),
-        eng: Mutex::new(eng),
-        last_activity: Mutex::new(Instant::now()),
-        tick_count: AtomicU64::new(1),
-        shutdown_requested: AtomicBool::new(false),
-        settled: AtomicBool::new(false),
-        last_changed_paths: Mutex::new(Vec::new()),
-        subscribers: Mutex::new(Vec::new()),
+        build_id: build_id.clone(),
+        shutdown_requested: shutdown_requested.clone(),
+        subscribers: subscribers.clone(),
+        config,
+        roots: Mutex::new(HashMap::new()),
     });
 
-    // Bind socket (reap stale first).
-    let sock = socket_path(home.as_deref());
+    // Bind the socket (reap a stale one first) BEFORE registering roots, so a
+    // second daemon fails fast rather than cold-ticking every root then losing
+    // the bind race.
+    let sock = socket_path();
     if sock.exists() {
-        // Stale socket file from a killed -9 daemon. The PID file may also be
-        // stale; try connect first to confirm liveness, then unlink if dead.
         if UnixStream::connect(&sock).is_err() {
             let _ = std::fs::remove_file(&sock);
         } else {
@@ -672,32 +830,74 @@ pub fn run_daemon(
     if let Some(dir) = sock.parent() { std::fs::create_dir_all(dir)?; }
     let listener = UnixListener::bind(&sock)?;
     std::fs::set_permissions(&sock, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
-    write_pid_file(home.as_deref(), programs.first().map(|s| s.as_str()))?;
-    eprintln!("[daemon] listening on {} (pid {}, idle {}s)",
-        sock.display(), std::process::id(), idle_secs);
+    write_pid_file()?;
+    let idle_secs = idle_timeout_secs();
+    eprintln!("[daemon] listening on {} (pid {}, idle {}s){}",
+        sock.display(), std::process::id(), idle_secs,
+        if foreground { " [foreground]" } else { "" });
     if let Some(p) = crate::perflog::path() {
         eprintln!("[daemon] perf log {} (tail -f | jq .total_ms, .phase, .ms)", p.display());
     }
 
-    let d = daemon.clone();
-    std::thread::Builder::new().name("dl-watch".into())
-        .spawn(move || watcher_loop(d))?;
+    // Config-view watcher (watches the config repos).
+    {
+        let c = daemon.config.clone();
+        std::thread::Builder::new().name("dl-watch-config".into())
+            .spawn(move || watcher_loop(c))?;
+    }
+
+    // Replay roots.json: re-register every persisted root (warm from its db).
+    for rec in read_roots_json() {
+        if rec.root.join(".dl").is_dir() {
+            match daemon.add_root(&rec.root) {
+                Ok(_) => {}
+                Err(e) => eprintln!("[daemon] replay {}: {e}", rec.root.display()),
+            }
+        } else {
+            eprintln!("[daemon] replay skip {} (no .dl/)", rec.root.display());
+        }
+    }
+
+    // Register the initial root (a `dl daemon start --foreground` from inside a
+    // repo, or an explicit program set).
+    if let Some(r) = &initial_root {
+        if r.join(".dl").is_dir() {
+            let canon = r.canonicalize().unwrap_or_else(|_| r.clone());
+            let key = key_of(&canon);
+            if !lock(&daemon.roots).contains_key(&key) {
+                let db = root_db_dir(&key).join("db.sqlite");
+                let db_str = db.to_string_lossy().into_owned();
+                match ServedRoot::open(Some(canon.clone()), Some(key.clone()), programs, Some(&db_str), daemon.shared()) {
+                    Ok(sr) => {
+                        lock(&daemon.roots).insert(key.clone(), sr.clone());
+                        let added_at = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                        let mut records = read_roots_json();
+                        if !records.iter().any(|x| x.key == key) {
+                            records.push(RootRecord { root: canon.clone(), key: key.clone(), added_at });
+                            write_roots_json(&records);
+                        }
+                        let sr_watch = sr.clone();
+                        std::thread::Builder::new().name(format!("dl-watch-{key}"))
+                            .spawn(move || watcher_loop(sr_watch))?;
+                        eprintln!("[daemon] registered initial root {}", canon.display());
+                    }
+                    Err(e) => eprintln!("[daemon] initial root {}: {e}", canon.display()),
+                }
+            }
+        }
+    }
 
     if !foreground {
         let d = daemon.clone();
         std::thread::Builder::new().name("dl-idle".into())
             .spawn(move || idle_loop(d, idle_secs))?;
     }
-
-    // @async clock: poll-drive the effect drain when DL_POLL_SECS is set.
     if let Some(secs) = poll_interval_secs() {
         let d = daemon.clone();
         std::thread::Builder::new().name("dl-poll".into())
             .spawn(move || poll_loop(d, secs))?;
     }
 
-    // Accept loop off-main so the main thread can drive the tray event loop
-    // (mac requires this; on other platforms it's harmless).
     let d = daemon.clone();
     std::thread::Builder::new()
         .name("dl-accept".into())
@@ -706,10 +906,6 @@ pub fn run_daemon(
     if tray {
         crate::tray::run_tray(daemon.clone())?;
     } else {
-        // No tray: park on the shutdown flag. The RPC shutdown handler, idle
-        // timeout, and watcher's program-edit exit all call process::exit(0)
-        // directly, so this loop is mostly a placeholder; it wakes if some
-        // future path sets the flag without exiting.
         while !daemon.shutdown_requested.load(Ordering::Relaxed) {
             std::thread::sleep(Duration::from_millis(100));
         }
@@ -741,92 +937,85 @@ fn accept_loop(daemon: Arc<Daemon>, listener: UnixListener) {
     }
 }
 
-pub(crate) fn shutdown_cleanup(d: &Daemon) {
-    let sock = socket_path(d.home.as_deref());
+pub(crate) fn shutdown_cleanup(_d: &Daemon) {
+    let sock = socket_path();
     let _ = std::fs::remove_file(&sock);
-    remove_pid_file(d.home.as_deref());
+    remove_pid_file();
     eprintln!("[daemon] shut down cleanly");
 }
 
-// ---------- watcher thread ----------
+// ---------- watcher thread (one per served root) ----------
 
-fn watcher_loop(d: Arc<Daemon>) {
+fn watcher_loop(d: Arc<ServedRoot>) {
     use notify::{RecursiveMode, Watcher};
+    let is_config = d.key.is_none();
     let (tx, rx) = std::sync::mpsc::channel();
     let mut watcher = match notify::recommended_watcher(move |res| { let _ = tx.send(res); }) {
         Ok(w) => w,
-        Err(e) => { eprintln!("[daemon] watcher init failed: {e}"); return; }
+        Err(e) => { eprintln!("[{}] watcher init failed: {e}", d.root_label()); return; }
     };
-    if let Err(e) = watcher.watch(&d.root, RecursiveMode::Recursive) {
-        eprintln!("[daemon] watch root failed: {e}");
-        return;
-    }
-    // The receive-side gate: mirrors the scan corpus's include decision so the
-    // watcher only ticks for files the engine could scan. Built over the self
-    // root + every config repo; grows via `add_root` when a tick pulls a repo.
-    let mut gate = WatchGate::new(std::slice::from_ref(&d.root));
-    // Count of active watch registrations (FSEvents streams on macOS; the root
-    // watch above already succeeded, so start at 1). This is the number the
-    // watcher itself installs — on macOS one per subtree, so it IS the watch
-    // count; on Linux notify expands each Recursive registration to one inotify
-    // watch per subdirectory internally, so the real kernel count is higher (see
-    // /proc/<pid>/fdinfo). Logged whenever it changes so a pull is visible.
-    let mut watch_count: usize = 1;
-    // Watch every folder in view (config repos), so a rootless serving daemon
-    // reacts to source edits across the whole view, not just its own root.
+    // The config view roots at the XDG home (which holds the per-root dbs); do NOT
+    // watch it recursively. A registered root watches its own tree.
+    let mut gate = if is_config {
+        WatchGate::new(&[])
+    } else {
+        if let Err(e) = watcher.watch(&d.root, RecursiveMode::Recursive) {
+            eprintln!("[{}] watch root failed: {e}", d.root_label());
+            return;
+        }
+        WatchGate::new(std::slice::from_ref(&d.root))
+    };
+    let mut watch_count: usize = if is_config { 0 } else { 1 };
+    // Watch every folder in view (config repos) so config-repo edits react.
     for rc in load_repos_eager() {
         if rc.root.exists() && rc.root != d.root
             && watcher.watch(&rc.root, RecursiveMode::Recursive).is_ok() {
             watch_count += 1;
             gate.add_root(&rc.root);
-            eprintln!("[daemon] watching repo {} ({})", rc.slug, rc.root.display());
         }
     }
     let cfg_path = config::SprfConfig::config_path()
         .and_then(|p| p.canonicalize().ok().or(Some(p)));
-    if let Some(cp) = &cfg_path {
-        if let Some(dir) = cp.parent() {
-            if dir.exists() && watcher.watch(dir, RecursiveMode::NonRecursive).is_ok() {
-                watch_count += 1;
-                eprintln!("[daemon] watching config {}", cp.display());
+    if is_config {
+        if let Some(cp) = &cfg_path {
+            if let Some(dir) = cp.parent() {
+                if dir.exists() && watcher.watch(dir, RecursiveMode::NonRecursive).is_ok() {
+                    watch_count += 1;
+                }
             }
         }
+        // Watch home/.dl for load'd programs (non-recursive; not the dbs).
+        let dl = d.root.join(".dl");
+        if dl.is_dir() { let _ = watcher.watch(&dl, RecursiveMode::NonRecursive); }
     }
-    // Narrow-watch the `.git` dir of the self root and every config repo, so a
-    // HEAD move (commit, checkout, pull) is observed even when the program only
-    // scans WORK — but WITHOUT the `.git/objects` churn a `git status`/checkout
-    // produces. The gate keeps only `HEAD`/`packed-refs`/`refs/` under a git dir
-    // and routes them to `on_git_event` (rev-cursor diff + broadcast, no re-tick).
-    watch_count += watch_git_narrow(&mut watcher, &mut gate, &d.root);
+    // Narrow-watch the `.git` dir of the root + config repos.
+    if !is_config { watch_count += watch_git_narrow(&mut watcher, &mut gate, &d.root); }
     for rc in load_repos_eager() {
         if rc.root.exists() { watch_count += watch_git_narrow(&mut watcher, &mut gate, &rc.root); }
     }
 
-    eprintln!("[daemon] watcher ready ({}) — {watch_count} watch(es)", d.root.display());
+    eprintln!("[{}] watcher ready — {watch_count} watch(es)", d.root_label());
     let watcher_start = std::time::Instant::now();
     const STARTUP_GRACE: Duration = Duration::from_secs(1);
-    // Roots already watched (self + config + pulled). A successful tick may pull
-    // new repos into the engine's registered set; the loop diff below adds a
-    // notify watch for each new root so edits in a dynamically-reached repo
-    // react, not just the statically-configured ones.
     let mut watched: std::collections::HashSet<PathBuf> = std::collections::HashSet::from_iter([
         d.root.clone(),
     ].into_iter().chain(load_repos_eager().into_iter().filter(|r| r.root.exists()).map(|r| r.root)));
-    while let Ok(first) = rx.recv() {
-        // Startup grace: drain residual FSEvents from the spawning shell's
-        // recent file activity (mkdir + write land in FSEvents after the
-        // watch registers, as CREATE or MODIFY). Anything that happened
-        // before the watcher was ready should not fire a tick or an exit.
+    loop {
+        // Observe the drop flag between events so `drop_root` can retire us.
+        let first = match rx.recv_timeout(Duration::from_secs(1)) {
+            Ok(ev) => ev,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                if d.stopped.load(Ordering::Relaxed) { return; }
+                continue;
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+        };
+        if d.stopped.load(Ordering::Relaxed) { return; }
         if watcher_start.elapsed() < STARTUP_GRACE {
             while rx.try_recv().is_ok() {}
             std::thread::sleep(Duration::from_millis(50));
             continue;
         }
-        // Quiet-period debounce: coalesce a burst (an editor's multi-file save,
-        // a `git checkout`'s rewrite stream) into one tick. Drain until QUIET ms
-        // of silence, capped at MAX_WINDOW so sustained churn (a running build)
-        // still ticks within a bounded latency. A `notify::Error` or a rescan
-        // signal in the stream forces a full-corpus recovery tick (Phase 4).
         const QUIET: Duration = Duration::from_millis(120);
         const MAX_WINDOW: Duration = Duration::from_millis(600);
         let mut paths: Vec<PathBuf> = Vec::new();
@@ -836,7 +1025,7 @@ fn watcher_loop(d: Arc<Daemon>) {
                 if ev.need_rescan() { rescan = true; } else { paths.extend(ev.paths); }
             }
             Err(e) => {
-                eprintln!("[daemon] watch error, forcing full tick: {e}");
+                eprintln!("[{}] watch error, forcing full tick: {e}", d.root_label());
                 rescan = true;
             }
         }
@@ -848,85 +1037,58 @@ fn watcher_loop(d: Arc<Daemon>) {
                     if window_start.elapsed() > MAX_WINDOW { break; }
                 }
                 Ok(Err(e)) => {
-                    eprintln!("[daemon] watch error, forcing full tick: {e}");
+                    eprintln!("[{}] watch error, forcing full tick: {e}", d.root_label());
                     rescan = true;
                     if window_start.elapsed() > MAX_WINDOW { break; }
                 }
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,      // burst settled
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return, // watcher gone
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
             }
         }
-        // Dropped/overflowed events: recover with a whole-corpus tick, loudly.
         if rescan {
             let tick_num = d.tick_count.load(Ordering::Relaxed);
             match d.tick_full(true) {
-                Ok(()) => eprintln!("[daemon] tick #{tick_num} (rescan recovery) ok"),
-                Err(e) => eprintln!("[daemon] tick #{tick_num} (rescan recovery) error: {e}"),
+                Ok(()) => eprintln!("[{}] tick #{tick_num} (rescan recovery) ok", d.root_label()),
+                Err(e) => eprintln!("[{}] tick #{tick_num} (rescan recovery) error: {e}", d.root_label()),
             }
             d.touch();
             continue;
         }
-        // Gate the batch to files the engine could scan (mirrors the scan
-        // corpus: gitignore-honored, `.git` pruned to the narrow ref paths, the
-        // daemon's own `.dl/cache.db*`/`daemon.*` bookkeeping dropped). Pure
-        // noise (all-gitignored, all-`.git/objects`) yields an empty set: no
-        // tick, and (Phase 5) no `touch`, so the daemon can idle out.
         let touches_git = gate.touches_git(&paths);
         let paths: Vec<PathBuf> = gate.filter(paths);
         if paths.is_empty() && !touches_git {
-            continue;  // noise only: no activity, no tick, idle timer untouched
+            continue;
         }
-        d.touch();  // real activity: reset the idle timer
+        d.touch();
         let touches_cfg = cfg_path.as_ref().is_some_and(|c|
             paths.iter().any(|p| p.canonicalize().ok().as_deref() == Some(c) || p == c));
         let mut paths = paths;
         let touches_program = d.program_in_paths(&paths);
-        tracing::debug!(n_paths = paths.len(), program = touches_program,
-            cfg = touches_cfg, git = touches_git, "watcher event");
-        // A `.dl` program edit either respawns (cold path: re-parse from
-        // scratch via the spawn-if-missing dance) or hot-reloads (tray path
-        // and discovery-mode path: re-parse in place, swap the Mutex<Program>,
-        // re-tick). A discovery daemon has no startup positional args to
-        // respawn FROM — exiting would strand it until some other `dl`
-        // client happens to run — so it always hot-reloads a content edit to
-        // an already-discovered file (e.g. the VS Code panel appending a mark
-        // fact to `.dl/marks.dl`).
         if touches_program {
             let names: Vec<String> = paths.iter()
                 .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(|s| s.to_string()))
                 .collect();
-            if d.no_respawn {
-                eprintln!("[daemon] program edit ({}) — reloading", names.join(", "));
-                match d.reload_program() {
-                    Ok(()) => {}
-                    Err(e) => eprintln!("[daemon] reload failed, keeping old: {e}"),
-                }
-                continue;
-            }
+            // Singleton daemon: program edits ALWAYS hot-reload (never exit for
+            // respawn — one exit would kill every served root).
             if d.discovery_mode {
-                // The file set can't have changed (touches_program only fires
-                // for paths already in program_files), so this is a content
-                // edit: reload_discovery's early-return confirms the set is
-                // unchanged, then reload_program re-parses the edited text.
                 match d.reload_discovery() {
                     Ok(false) => {
-                        eprintln!("[daemon] program edit ({}) — reloading (discovery)", names.join(", "));
-                        match d.reload_program() {
-                            Ok(()) => {}
-                            Err(e) => eprintln!("[daemon] reload failed, keeping old: {e}"),
+                        eprintln!("[{}] program edit ({}) — reloading (discovery)", d.root_label(), names.join(", "));
+                        if let Err(e) = d.reload_program() {
+                            eprintln!("[{}] reload failed, keeping old: {e}", d.root_label());
                         }
                     }
-                    Ok(true) => {} // file set changed; reload_discovery already re-ticked
-                    Err(e) => eprintln!("[daemon] discovery reload: {e}"),
+                    Ok(true) => {}
+                    Err(e) => eprintln!("[{}] discovery reload: {e}", d.root_label()),
                 }
-                continue;
+            } else {
+                eprintln!("[{}] program edit ({}) — reloading", d.root_label(), names.join(", "));
+                if let Err(e) = d.reload_program() {
+                    eprintln!("[{}] reload failed, keeping old: {e}", d.root_label());
+                }
             }
-            eprintln!("[daemon] program file changed ({}); exiting for respawn", names.join(", "));
-            d.shutdown_requested.store(true, Ordering::Relaxed);
-            std::process::exit(0);
+            continue;
         }
-        // Discovery mode: a new or removed .dl file under .dl/ triggers
-        // re-discovery and re-merge (k8s-style add-a-file).
         if d.discovery_mode {
             let has_dl = paths.iter().any(|p| {
                 p.extension().and_then(|e| e.to_str()) == Some("dl")
@@ -935,27 +1097,17 @@ fn watcher_loop(d: Arc<Daemon>) {
                         .unwrap_or(false)
             });
             if has_dl {
-                eprintln!("[daemon] .dl discovery change — re-merging program");
-                match d.reload_discovery() {
-                    Ok(_) => {}
-                    Err(e) => eprintln!("[daemon] discovery reload: {e}"),
+                eprintln!("[{}] .dl discovery change — re-merging program", d.root_label());
+                if let Err(e) = d.reload_discovery() {
+                    eprintln!("[{}] discovery reload: {e}", d.root_label());
                 }
                 continue;
             }
         }
-        // A `.git` move (commit/checkout/pull/reset): broadcast the rev advance,
-        // then re-analyze the worktree files the git diff says changed. The tick
-        // is driven from the deterministic `files_changed_between` diff, not the
-        // notify batch — FSEvents does not reliably co-deliver a checkout's
-        // rewritten files with the `.git` event that accompanied them. Pure
-        // metadata churn (no ref advance → empty diff) continues without a tick.
         if touches_git {
             let (n, changed) = d.on_git_event();
-            // Pure metadata churn (`.git` write with no ref advance and no
-            // worktree diff) is a no-op — don't log it, or the git-watch stream
-            // floods daemon.log. Only announce a real advance/diff.
             if n > 0 || !changed.is_empty() {
-                eprintln!("[daemon] git change — {n} ref(s) advanced, {} worktree file(s)", changed.len());
+                eprintln!("[{}] git change — {n} ref(s) advanced, {} worktree file(s)", d.root_label(), changed.len());
             }
             if changed.is_empty() { continue; }
             paths = changed;
@@ -966,9 +1118,8 @@ fn watcher_loop(d: Arc<Daemon>) {
             let mut eng = lock(&d.eng);
             eng.set_repos(load_repos_eager());
             drop(eng);
-            // Re-persist the repo set so `_repo` tracks a config edit.
             if let Err(e) = lock(&d.eng).save_repos_meta() {
-                eprintln!("[daemon] save_repos_meta: {e}");
+                eprintln!("[{}] save_repos_meta: {e}", d.root_label());
             }
             d.tick_full(true)
         } else if paths.is_empty() {
@@ -982,12 +1133,9 @@ fn watcher_loop(d: Arc<Daemon>) {
         let tick_num = d.tick_count.load(Ordering::Relaxed);
         let tick_ok = result.is_ok();
         match result {
-            Ok(()) => eprintln!("[daemon] tick #{tick_num} ({tick_label}, {n_paths} paths) ok"),
-            Err(e) => eprintln!("[daemon] tick #{tick_num} ({tick_label}, {n_paths} paths) error: {e}"),
+            Ok(()) => eprintln!("[{}] tick #{tick_num} ({tick_label}, {n_paths} paths) ok", d.root_label()),
+            Err(e) => eprintln!("[{}] tick #{tick_num} ({tick_label}, {n_paths} paths) error: {e}", d.root_label()),
         }
-        // A tick may have pulled new repos (a `repo`-sink drained). Watch any
-        // root not yet watched — source tree, gate entry, and narrow git dir —
-        // so the next edit or commit there is reactive.
         if tick_ok {
             let before = watch_count;
             for rc in lock(&d.eng).snapshot_repos() {
@@ -996,24 +1144,18 @@ fn watcher_loop(d: Arc<Daemon>) {
                     watch_count += 1;
                     gate.add_root(&rc.root);
                     watch_count += watch_git_narrow(&mut watcher, &mut gate, &rc.root);
-                    eprintln!("[daemon] watching (pulled) {} ({})", rc.slug, rc.root.display());
+                    eprintln!("[{}] watching (pulled) {} ({})", d.root_label(), rc.slug, rc.root.display());
                 }
             }
             if watch_count != before {
-                eprintln!("[daemon] watch count now {watch_count} (+{})", watch_count - before);
+                eprintln!("[{}] watch count now {watch_count} (+{})", d.root_label(), watch_count - before);
             }
         }
     }
 }
 
-/// Narrow-watch a repo's `.git` dir: the git dir itself NonRecursive (delivers
-/// `HEAD`/`packed-refs`, not the `objects/` churn) and `refs/` Recursive, and
-/// register it with the gate so those ref paths route to `on_git_event` while
-/// everything else under `.git` is dropped. Resolves the real git dir via
-/// `rev-parse --git-dir` so worktrees/submodules (`.git` file pointer) land on
-/// the actual dir. A free fn (not a closure) so its `&mut` borrows do not
-/// persist across the watch loop's own use of `watcher`/`gate`. Returns the
-/// number of watch registrations it successfully installed (for the log count).
+/// Narrow-watch a repo's `.git` dir. Returns the number of watch registrations
+/// installed.
 fn watch_git_narrow(watcher: &mut notify::RecommendedWatcher, gate: &mut WatchGate, root: &Path) -> usize {
     use notify::{RecursiveMode, Watcher};
     let out = match std::process::Command::new("git").arg("-C").arg(root)
@@ -1034,13 +1176,8 @@ fn watch_git_narrow(watcher: &mut notify::RecommendedWatcher, gate: &mut WatchGa
     added
 }
 
-/// Identity of the currently-running `dl` binary: the compiled crate version
-/// plus the on-disk exe's mtime (seconds). The version alone can't tell two
-/// same-version rebuilds apart; the mtime does. Computed once at daemon startup
-/// and echoed by `ping`; a client recomputes it from the on-disk exe and
-/// respawns on mismatch. Falls back to the bare version if the exe path or its
-/// mtime is unreadable (best-effort; a missing mtime just disables the rebuild
-/// check, never forces a spurious respawn since both sides see the same fallback).
+/// Identity of the currently-running `dl` binary: crate version + the exe's
+/// mtime. A client that rebuilt/reinstalled computes a different id and respawns.
 fn build_id() -> String {
     let version = env!("CARGO_PKG_VERSION");
     let mtime = std::env::current_exe().ok()
@@ -1054,27 +1191,20 @@ fn build_id() -> String {
     }
 }
 
-impl Daemon {
-    fn program_in_paths(&self, paths: &[PathBuf]) -> bool {
-        let pf = lock(&self.program_files);
-        for p in paths {
-            let canon = p.canonicalize().unwrap_or_else(|_| p.clone());
-            if pf.iter().any(|f| f == &canon) {
-                return true;
-            }
-        }
-        false
-    }
-}
+// ---------- idle thread (all roots) ----------
 
-// ---------- idle thread ----------
-
+/// Exit when EVERY served root has been idle past the threshold (keep engines
+/// warm while any is active). Per-root eviction is a follow-up; this arc keeps
+/// them all warm until the whole process idles out.
 fn idle_loop(d: Arc<Daemon>, idle_secs: u64) {
     loop {
         std::thread::sleep(Duration::from_secs(IDLE_TICK_SECS));
-        let last = *lock(&d.last_activity);
-        if last.elapsed() > Duration::from_secs(idle_secs) {
-            eprintln!("[daemon] idle {}min, exiting", idle_secs / 60);
+        let roots = d.all_roots();
+        let all_idle = roots.iter().all(|sr| {
+            lock(&sr.last_activity).elapsed() > Duration::from_secs(idle_secs)
+        });
+        if all_idle {
+            eprintln!("[daemon] all roots idle {}min, exiting", idle_secs / 60);
             shutdown_cleanup(&d);
             std::process::exit(0);
         }
@@ -1087,19 +1217,12 @@ fn idle_timeout_secs() -> u64 {
         .unwrap_or(DEFAULT_IDLE_SECS)
 }
 
-// ---------- poll thread (the @async clock source) ----------
+// ---------- poll thread (the @async clock source, all roots) ----------
 
-/// The effect-drain cadence. `DL_POLL_SECS` overrides it: `N>0` = every N
-/// seconds; `0` = OFF (the explicit escape hatch, for a program that manages its
-/// own drain or wants none). UNSET = drain by default at `DEFAULT_POLL_SECS` —
-/// so `@async`/`@stream` effects fire under a bare `dl daemon start` without the
-/// caller having to know an env var exists. The poll loop gates on the program
-/// actually having effects, so this default costs a non-effect daemon nothing.
-/// A DSL `every(secs)` clock source (per-program cadence) is the follow-up.
 fn poll_interval_secs() -> Option<u64> {
     match std::env::var("DL_POLL_SECS") {
-        Ok(s) => s.parse::<u64>().ok().filter(|&n| n > 0), // "0"/junk => off
-        Err(_) => Some(DEFAULT_POLL_SECS),                 // unset => default on
+        Ok(s) => s.parse::<u64>().ok().filter(|&n| n > 0),
+        Err(_) => Some(DEFAULT_POLL_SECS),
     }
 }
 
@@ -1108,18 +1231,13 @@ fn poll_loop(d: Arc<Daemon>, secs: u64) {
     loop {
         std::thread::sleep(Duration::from_secs(secs));
         if d.shutdown_requested.load(Ordering::Relaxed) { return; }
-        // Cheap gate: only tick+drain when the loaded program has effect rules.
-        // Keeps the default-on poll from re-ticking a plain (effect-free) daemon
-        // every interval — the reason polling used to be strictly opt-in.
-        let has_effects = {
-            let prog = lock(&d.prog);
-            !crate::engine::async_effect_arity(&prog).is_empty()
-        };
-        if !has_effects { continue; }
-        match d.poll_tick() {
-            Ok(n) if n > 0 => eprintln!("[daemon] poll: drained {n} effect(s)"),
-            Ok(_) => {}
-            Err(e) => eprintln!("[daemon] poll error: {e}"),
+        for sr in d.all_roots() {
+            if !sr.has_effects() { continue; }
+            match sr.poll_tick() {
+                Ok(n) if n > 0 => eprintln!("[{}] poll: drained {n} effect(s)", sr.root_label()),
+                Ok(_) => {}
+                Err(e) => eprintln!("[{}] poll error: {e}", sr.root_label()),
+            }
         }
     }
 }
@@ -1143,26 +1261,23 @@ fn handle_connection(d: Arc<Daemon>, mut stream: UnixStream) {
         };
         let req = match parse_request(v) {
             Some(r) => r,
-            None => {
-                // Probably a notification (no id). v1 ignores those inbound.
-                continue;
-            }
+            None => continue,
         };
         let is_shutdown = req.method == "shutdown";
         let is_subscribe = req.method == "subscribe";
-        let resp = handle_request(&d, &req, if is_subscribe { Some(stream.try_clone().ok().map(|s| Arc::new(Mutex::new(s)))) } else { None }.flatten());
+        let sub = if is_subscribe {
+            stream.try_clone().ok().map(|s| Arc::new(Mutex::new(s)))
+        } else {
+            None
+        };
+        let resp = handle_request(&d, &req, sub);
         let out = serde_json::to_string(&resp.to_json()).unwrap_or_else(|_| "{}".into());
         if rpc::write_frame(&mut stream, &out).is_err() { return; }
         if is_shutdown {
             d.shutdown_requested.store(true, Ordering::Relaxed);
-            // The accept loop is blocked in `listener.incoming().next()`;
-            // setting the flag alone does not wake it. Cleanup + exit here so
-            // `dl daemon stop` returns promptly. A graceful wake (self-pipe, non-
-            // blocking accept) is the v1.1 polish item.
             shutdown_cleanup(&d);
             std::process::exit(0);
         }
-        d.touch();
     }
 }
 
@@ -1173,18 +1288,107 @@ fn parse_request(v: Value) -> Option<Request> {
     Some(Request { id, method, params })
 }
 
-fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex<UnixStream>>>) -> Response {
+/// The `root` envelope key: an absolute path in the request's params. Absent =
+/// the config view.
+fn req_root(req: &Request) -> Option<String> {
+    req.params.get("root").and_then(|v| v.as_str()).map(String::from)
+}
+
+fn handle_request(d: &Arc<Daemon>, req: &Request, subscriber_stream: Option<Arc<Mutex<UnixStream>>>) -> Response {
+    // ----- process-level methods (no root routing) -----
+    match req.method.as_str() {
+        "shutdown" => return Response::ok(req.id, json!({"ok": true})),
+        "subscribe" => {
+            let events = req.params.get("events").cloned().unwrap_or(Value::Array(vec![]));
+            return if let Some(s) = subscriber_stream {
+                lock(&d.subscribers).push(s);
+                Response::ok(req.id, json!({"events": events, "ok": true}))
+            } else {
+                Response::err(req.id, INVALID_PARAMS, "subscribe requires a kept-open socket")
+            };
+        }
+        "add_root" => {
+            let Some(path) = req_root(req) else {
+                return Response::err(req.id, INVALID_PARAMS, "add_root needs root");
+            };
+            return match d.add_root(Path::new(&path)) {
+                Ok(sr) => Response::ok(req.id, json!({
+                    "root": sr.root.to_string_lossy(),
+                    "key": sr.key,
+                    "tick_count": sr.tick_count.load(Ordering::Relaxed),
+                })),
+                Err(e) => Response::err(req.id, INVALID_PARAMS, format!("{e}")),
+            };
+        }
+        "drop_root" => {
+            let Some(path) = req_root(req) else {
+                return Response::err(req.id, INVALID_PARAMS, "drop_root needs root");
+            };
+            let purge = req.params.get("purge").and_then(|v| v.as_bool()).unwrap_or(false);
+            return match d.drop_root(Path::new(&path), purge) {
+                Ok(()) => Response::ok(req.id, json!({"ok": true})),
+                Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
+            };
+        }
+        // `ping`/`status` WITHOUT a root return the process summary + the roots list.
+        "ping" | "status" if req_root(req).is_none() => {
+            return daemon_summary(d, req);
+        }
+        _ => {}
+    }
+
+    // ----- root-scoped methods -----
+    let sr = match d.resolve(req_root(req).as_deref()) {
+        Ok(sr) => sr,
+        Err(e) => return Response::err(req.id, INVALID_PARAMS, e),
+    };
+    let resp = dispatch_root(&sr, d, req);
+    sr.touch();
+    resp
+}
+
+/// Process-level summary for a rootless `ping`/`status`: build identity + every
+/// served root with its tick count.
+fn daemon_summary(d: &Arc<Daemon>, req: &Request) -> Response {
+    let act = crate::activity::snapshot();
+    let roots: Vec<Value> = lock(&d.roots).values().map(|sr| json!({
+        "root": sr.root.to_string_lossy(),
+        "key": sr.key,
+        "tick_count": sr.tick_count.load(Ordering::Relaxed),
+        "program": sr.program_display,
+        "settled": sr.settled.load(Ordering::Relaxed),
+    })).collect();
+    Response::ok(req.id, json!({
+        "ok": true,
+        "build_id": &*d.build_id,
+        "home": d.home.to_string_lossy(),
+        "config_tick_count": d.config.tick_count.load(Ordering::Relaxed),
+        "root_count": roots.len(),
+        "roots": roots,
+        "activity": {
+            "phase": act.phase.as_str(),
+            "detail": act.detail,
+            "program": act.program,
+            "tick": act.tick,
+            "elapsed_ms": act.elapsed_ms,
+        },
+    }))
+}
+
+/// Dispatch a root-scoped method against the resolved served root.
+fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Response {
     match req.method.as_str() {
         "ping" => {
             let act = crate::activity::snapshot();
             Response::ok(req.id, json!({
                 "ok": true,
-                "build_id": d.build_id,
-                "root": d.root.to_string_lossy(),
-                "tick_count": d.tick_count.load(Ordering::Relaxed),
-                "settled": d.settled.load(Ordering::Relaxed),
-                "program": d.program_display,
-                "program_files": lock(&d.program_files).iter()
+                "build_id": &*sr.shared.build_id,
+                "root": sr.root.to_string_lossy(),
+                "key": sr.key,
+                "tick_count": sr.tick_count.load(Ordering::Relaxed),
+                "settled": sr.settled.load(Ordering::Relaxed),
+                "program": sr.program_display,
+                "program_files": lock(&sr.program_files).iter()
                     .map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
                 "activity": {
                     "phase": act.phase.as_str(),
@@ -1195,34 +1399,28 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                 },
             }))
         }
-        // Block until the program is quiescent (the poll loop keeps ticking +
-        // draining toward it) or `timeout_ms` elapses. The daemon owns the effect
-        // runtime, so this is the daemon-side twin of `dl --settle`: a client can
-        // wait for every cascade (effects, demand hops, repo pulls) to run at
-        // least once. Polls the flag from this connection's own thread; the poll
-        // loop / watcher threads set it. Default timeout 30s.
         "await_quiescent" => {
             let timeout_ms = req.params.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(30_000);
             let deadline = Instant::now() + Duration::from_millis(timeout_ms);
             loop {
-                if d.settled.load(Ordering::Relaxed) {
+                if sr.settled.load(Ordering::Relaxed) {
                     return Response::ok(req.id, json!({
                         "settled": true,
-                        "tick_count": d.tick_count.load(Ordering::Relaxed),
+                        "tick_count": sr.tick_count.load(Ordering::Relaxed),
                     }));
                 }
                 if Instant::now() >= deadline {
                     return Response::ok(req.id, json!({
                         "settled": false,
-                        "tick_count": d.tick_count.load(Ordering::Relaxed),
+                        "tick_count": sr.tick_count.load(Ordering::Relaxed),
                     }));
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
         }
         "query" => {
-            let prog = lock(&d.prog);
-            let eng = lock(&d.eng);
+            let prog = lock(&sr.prog);
+            let eng = lock(&sr.eng);
             let _ = eng.log_query("daemon", "query", "", "[]");
             let _ = crate::rels::refresh_query_log(&eng);
             match eng.run_queries_capture(&prog) {
@@ -1234,7 +1432,7 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
         }
         "diag" => {
             let only = req.params.get("path").and_then(|p| p.as_str());
-            let eng = lock(&d.eng);
+            let eng = lock(&sr.eng);
             match eng.diags(only) {
                 Ok(rows) => Response::ok(req.id, json!({"rows": rows.iter().map(diag_to_json).collect::<Vec<_>>()})),
                 Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
@@ -1249,7 +1447,7 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                 Some(s) => s,
                 None => return Response::err(req.id, INVALID_PARAMS, "missing text"),
             };
-            let eng = lock(&d.eng);
+            let eng = lock(&sr.eng);
             match eng.definition_targets(file, text) {
                 Ok(targets) => Response::ok(req.id, json!({"targets": targets.iter()
                     .map(|(f, l)| json!([f, l])).collect::<Vec<_>>()})),
@@ -1262,23 +1460,14 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                 Some(s) => s,
                 None => return Response::err(req.id, INVALID_PARAMS, "missing text"),
             };
-            let eng = lock(&d.eng);
+            let eng = lock(&sr.eng);
             match eng.hover(file, text) {
                 Ok(md) => Response::ok(req.id, json!({"markdown": md})),
                 Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
             }
         }
-        "subscribe" => {
-            let events = req.params.get("events").cloned().unwrap_or(Value::Array(vec![]));
-            if let Some(s) = subscriber_stream {
-                lock(&d.subscribers).push(s);
-                Response::ok(req.id, json!({"events": events, "ok": true}))
-            } else {
-                Response::err(req.id, INVALID_PARAMS, "subscribe requires a kept-open socket")
-            }
-        }
         "schema" => {
-            let eng = lock(&d.eng);
+            let eng = lock(&sr.eng);
             let builtin = crate::engine::builtin_rel_names();
             let mut relations: Vec<Value> = Vec::new();
             for (name, meta) in eng.rels.iter() {
@@ -1291,10 +1480,6 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                 }
                 relations.push(rel);
             }
-            // SQLite source tables that back the engine but aren't declared rels
-            // (so they're absent from `eng.rels`); still queryable, so list them.
-            // module_import/module_edge_rev/crate_edge are declared rels above —
-            // do NOT re-list them here or they'd appear twice.
             let extra: &[(&str, &[(&str, &str)])] = &[
                 ("_file", &[("repo", "text"), ("path", "text"), ("rev", "text"), ("hash", "text"), ("mtime", "int"), ("size", "int")]),
                 ("_files", &[("id", "int"), ("content_hash", "text"), ("path", "text"), ("size", "int")]),
@@ -1310,15 +1495,12 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
             }
             Response::ok(req.id, json!({"relations": relations}))
         }
-        // Dump a relation's live rows by name: column names from the engine's rel
-        // metadata + the stringified rows (the `dl daemon rows REL` shortcut). Answers
-        // "what did this demand sink resolve to?" without hand-writing a `?` query.
         "query_rel" => {
             let rel = match req.params.get("rel").and_then(|v| v.as_str()) {
                 Some(s) => s,
                 None => return Response::err(req.id, INVALID_PARAMS, "missing rel"),
             };
-            let eng = lock(&d.eng);
+            let eng = lock(&sr.eng);
             let Some(meta) = eng.rels.get(rel) else {
                 return Response::err(req.id, INVALID_PARAMS,
                     format!("unknown relation {rel:?}"));
@@ -1327,10 +1509,6 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
             let rows = eng.rel_rows(rel, cols.len());
             Response::ok(req.id, json!({"columns": cols, "rows": rows}))
         }
-        // `dl what <anchor>` / `dl summary <path>` against the daemon's warm
-        // engine: resolve the anchor and read the persisted rel tables. No
-        // family forcing here — the daemon reads whatever its served program
-        // already populated (the in-process CLI path forces cold families).
         "what" => {
             let anchor = match req.params.get("anchor").and_then(|v| v.as_str()) {
                 Some(s) => s,
@@ -1338,7 +1516,7 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
             };
             let limit = req.params.get("limit").and_then(|v| v.as_u64()).map(|n| n as usize);
             let offset = req.params.get("offset").and_then(|v| v.as_u64()).map(|n| n as usize);
-            let eng = lock(&d.eng);
+            let eng = lock(&sr.eng);
             let out = crate::anchor::what(&eng, anchor, limit, offset);
             Response::ok(req.id, json!({
                 "columns": out.columns, "rows": out.rows,
@@ -1350,7 +1528,7 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                 Some(s) => s,
                 None => return Response::err(req.id, INVALID_PARAMS, "missing path"),
             };
-            let eng = lock(&d.eng);
+            let eng = lock(&sr.eng);
             let out = crate::anchor::summary(&eng, path);
             Response::ok(req.id, json!({
                 "columns": out.columns, "rows": out.rows,
@@ -1364,7 +1542,7 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
             };
             let params: Vec<Value> = req.params.get("params")
                 .and_then(|v| v.as_array()).cloned().unwrap_or_default();
-            let eng = lock(&d.eng);
+            let eng = lock(&sr.eng);
             let params_json = serde_json::to_string(&params).unwrap_or_else(|_| "[]".into());
             let _ = eng.log_query("daemon", "query_sql", sql_raw, &params_json);
             let _ = crate::rels::refresh_query_log(&eng);
@@ -1373,10 +1551,6 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                 Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
             }
         }
-        // One rpc-port request pumped through the daemon's warm engine: inject
-        // into the @in(rpc) rel, tick, drain the @out(rpc) rel. The `dl --mcp`
-        // adapter calls this per inbound frame, so the daemon stays the single
-        // engine/lock owner (no second process fighting for the db).
         "mcp_request" => {
             let p = &req.params;
             let (Some(in_rel), Some(out_rel), Some(rid), Some(method)) = (
@@ -1389,10 +1563,7 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                     "mcp_request needs in_rel, out_rel, id, method");
             };
             let args = p.get("params").and_then(|v| v.as_str()).unwrap_or("null");
-            let prog = lock(&d.prog);
-            // Validate against the DAEMON's loaded program, not the adapter's
-            // file: the two can drift, and injecting into a rel that is not an
-            // @in(rpc) port here would corrupt an ordinary relation.
+            let prog = lock(&sr.prog);
             for (rel, dir) in [(in_rel, crate::ast::PortDir::In), (out_rel, crate::ast::PortDir::Out)] {
                 match crate::mcp::port_decl(&prog, rel) {
                     Some(port) if port.dir == dir && port.class == "rpc" => {}
@@ -1401,20 +1572,18 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                         if dir == crate::ast::PortDir::In { "in" } else { "out" })),
                 }
             }
-            let mut eng = lock(&d.eng);
+            let mut eng = lock(&sr.eng);
             let run = (|| -> anyhow::Result<Vec<(String, String)>> {
                 eng.inject_rpc(in_rel, rid, method, args)?;
                 eng.tick(&prog, true)?;
                 eng.drain_rpc(out_rel, in_rel)
             })();
-            d.tick_count.fetch_add(1, Ordering::Relaxed);
+            sr.tick_count.fetch_add(1, Ordering::Relaxed);
             match run {
                 Ok(rows) => Response::ok(req.id, json!({"rows": rows})),
                 Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
             }
         }
-        // Retire unanswered request ids from an @in(rpc) rel (the adapter's
-        // -32601 path). Answered ids were already retired by the drain.
         "mcp_retire" => {
             let Some(in_rel) = req.params.get("in_rel").and_then(|v| v.as_str()) else {
                 return Response::err(req.id, INVALID_PARAMS, "mcp_retire needs in_rel");
@@ -1423,25 +1592,19 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                 .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                 .unwrap_or_default();
             {
-                let prog = lock(&d.prog);
+                let prog = lock(&sr.prog);
                 match crate::mcp::port_decl(&prog, in_rel) {
                     Some(port) if port.dir == crate::ast::PortDir::In && port.class == "rpc" => {}
                     _ => return Response::err(req.id, INVALID_PARAMS, format!(
                         "rel {in_rel} is not an @in(rpc) port in the daemon's loaded program")),
                 }
             }
-            let mut eng = lock(&d.eng);
+            let mut eng = lock(&sr.eng);
             match eng.retire_rpc(in_rel, &ids) {
                 Ok(()) => Response::ok(req.id, json!({"ok": true})),
                 Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
             }
         }
-        // One harness-hook event fed through the daemon's warm engine: append a
-        // `hook_event` row, tick, done. `dl --hook` calls this before reading the
-        // emit rels, so the daemon stays the single engine/lock owner. Unlike
-        // `mcp_request` there is no port to drift-validate: `hook_event` is a
-        // built-in rel (always declared by the priming tick), engine-owned, so
-        // the only check is that the payload carries the fields.
         "hook_event" => {
             let p = &req.params;
             let (Some(kind), Some(session), Some(json)) = (
@@ -1455,13 +1618,13 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                 SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
                     .map(|d| d.as_millis() as i64).unwrap_or(0)
             });
-            let prog = lock(&d.prog);
-            let mut eng = lock(&d.eng);
+            let prog = lock(&sr.prog);
+            let mut eng = lock(&sr.eng);
             let run = (|| -> anyhow::Result<()> {
                 eng.insert_hook_event(kind, session, seq, json)?;
                 eng.tick(&prog, true)
             })();
-            d.tick_count.fetch_add(1, Ordering::Relaxed);
+            sr.tick_count.fetch_add(1, Ordering::Relaxed);
             match run {
                 Ok(()) => Response::ok(req.id, json!({"ok": true})),
                 Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
@@ -1472,31 +1635,12 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                 Some(s) => s,
                 None => return Response::err(req.id, INVALID_PARAMS, "missing text"),
             };
-            match run_eval(d, text) {
+            match run_eval(sr, text) {
                 Ok(v) => Response::ok(req.id, v),
                 Err((code, msg)) => Response::err(req.id, code, msg),
             }
         }
-        "status" => {
-            let eng = lock(&d.eng);
-            let q = |sql: &str| eng.query_sql(sql, &[]).unwrap_or_default();
-            Response::ok(req.id, json!({
-                "root": d.root.to_string_lossy(),
-                "program": d.program_display,
-                "tick_count": d.tick_count.load(Ordering::Relaxed),
-                "subscribers": lock(&d.subscribers).len(),
-                "programs": q("SELECT path, hash, mtime, loaded_at FROM _program ORDER BY path"),
-                "repos": q("SELECT slug, root, url, registered_at FROM _repo ORDER BY slug"),
-                "refs": q("SELECT repo, name, oid, observed_at FROM _ref ORDER BY repo, name"),
-                "advances": q("SELECT repo, name, old, new, at FROM _rev_log ORDER BY id DESC LIMIT 50"),
-            }))
-        }
-        "shutdown" => Response::ok(req.id, json!({"ok": true})),
         "load" => {
-            // Load a script into the running daemon. mode="once" evals it
-            // ephemerally (throwaway engine, run_eval); mode="watched" joins it
-            // to the loaded program (push program_files + reload_program) so its
-            // rules run on every tick and hot-reload on edit.
             let path = match req.params.get("path").and_then(|v| v.as_str()) {
                 Some(s) => s.to_string(),
                 None => return Response::err(req.id, INVALID_PARAMS, "missing path"),
@@ -1508,7 +1652,7 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                         Ok(t) => t,
                         Err(e) => return Response::err(req.id, INVALID_PARAMS, format!("read {path}: {e}")),
                     };
-                    match run_eval(d, &text) {
+                    match run_eval(sr, &text) {
                         Ok(v) => Response::ok(req.id, v),
                         Err((code, msg)) => Response::err(req.id, code, msg),
                     }
@@ -1519,22 +1663,18 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                         Err(e) => return Response::err(req.id, INVALID_PARAMS, format!("canonicalize {path}: {e}")),
                     };
                     let already = {
-                        let mut pf = lock(&d.program_files);
+                        let mut pf = lock(&sr.program_files);
                         let dup = pf.iter().any(|f| f == &canon);
                         if !dup { pf.push(canon.clone()); }
                         dup
                     };
-                    // reload_program re-parses ALL program_files, swaps the
-                    // Program, re-ticks. A parse/type error keeps the old
-                    // program (returns Err) — the push remains but is inert
-                    // until it parses clean.
-                    match d.reload_program() {
+                    match sr.reload_program() {
                         Ok(()) => {
-                            if let Err(e) = lock(&d.eng)
-                                .save_program_meta(&lock(&d.program_files).clone()) {
-                                eprintln!("[daemon] save_program_meta: {e}");
+                            if let Err(e) = lock(&sr.eng)
+                                .save_program_meta(&lock(&sr.program_files).clone()) {
+                                eprintln!("[{}] save_program_meta: {e}", sr.root_label());
                             }
-                            let files: Vec<String> = lock(&d.program_files).iter()
+                            let files: Vec<String> = lock(&sr.program_files).iter()
                                 .map(|f| f.to_string_lossy().into_owned()).collect();
                             Response::ok(req.id, json!({
                                 "loaded": canon.to_string_lossy(),
@@ -1543,14 +1683,8 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
                             }))
                         }
                         Err(e) => {
-                            // Roll back the just-added file. reload_program
-                            // re-parses ALL program_files, so leaving a bad file
-                            // in the set would fail every future reload/tick —
-                            // the daemon would wedge. Removing it (only if this
-                            // load added it) keeps the daemon on its last-good
-                            // program; the load fails cleanly.
                             if !already {
-                                lock(&d.program_files).retain(|f| f != &canon);
+                                lock(&sr.program_files).retain(|f| f != &canon);
                             }
                             Response::err(req.id, INTERNAL_ERROR, format!("reload: {e}"))
                         }
@@ -1565,17 +1699,9 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
 }
 
 /// Evaluate a scratch `.dl` snippet without touching the live engine or db.
-///
-/// The snippet is parsed, spliced onto the loaded program (so it can reference
-/// the program's relations), type-checked, then ticked on a THROWAWAY in-memory
-/// engine that shares the daemon's root + repos. Only the snippet's own `?`
-/// queries are captured. Nothing persists: scratch relations never appear in
-/// `schema`, never hit the warm db. The cost is a cold tick per eval (the
-/// merged program's source rules re-run on the fresh db).
-fn run_eval(d: &Daemon, text: &str) -> Result<Value, (i64, String)> {
+fn run_eval(sr: &Arc<ServedRoot>, text: &str) -> Result<Value, (i64, String)> {
     let toks = crate::lex::lex(text).map_err(|e| (INVALID_PARAMS, format!("lex: {e}")))?;
     let snippet = crate::parse::parse(toks).map_err(|e| (INVALID_PARAMS, format!("parse: {e}")))?;
-    // Capture only the snippet's queries, evaluated against the ticked tables.
     let snippet_queries: Vec<crate::ast::Item> = snippet
         .items
         .iter()
@@ -1583,9 +1709,8 @@ fn run_eval(d: &Daemon, text: &str) -> Result<Value, (i64, String)> {
         .cloned()
         .collect();
 
-    // Splice onto the loaded program so the snippet sees its relations.
     let mut merged = {
-        let base = lock(&d.prog);
+        let base = lock(&sr.prog);
         Program {
             items: base.items.iter().cloned().chain(snippet.items).collect(),
         }
@@ -1604,7 +1729,7 @@ fn run_eval(d: &Daemon, text: &str) -> Result<Value, (i64, String)> {
     }
 
     let conn = db::open(None).map_err(|e| (INTERNAL_ERROR, format!("db: {e}")))?;
-    let mut eng = Engine::new(conn, d.root.clone());
+    let mut eng = Engine::new(conn, sr.root.clone());
     eng.set_repos(load_repos_eager());
     eng.tick(&merged, true)
         .map_err(|e| (INTERNAL_ERROR, format!("tick: {e}")))?;
@@ -1645,27 +1770,31 @@ pub fn enabled() -> bool {
 }
 
 /// True iff the daemon should manage this root. A workspace opts INTO daemon
-/// management by having a `.dl/` directory (the same gate discovery mode
-/// uses). Without `.dl/` the daemon has no socket home and we stay in-process,
-/// so a one-off `dl p.dl` in a tempdir never spawns a side process.
+/// management by having a `.dl/` directory.
 pub fn enabled_for(root: &Path) -> bool {
     enabled() && root.join(".dl").is_dir()
 }
 
-/// True iff a daemon is listening at this home (`Some(root)` → per-root,
-/// `None` → the singleton XDG serving daemon).
-pub fn is_running(root: Option<&Path>) -> bool {
-    UnixStream::connect(socket_path(root)).is_ok()
+/// True iff the singleton daemon is listening.
+pub fn is_running() -> bool {
+    UnixStream::connect(socket_path()).is_ok()
 }
 
-/// Connect (must be already running). Returns a framed stream.
-pub fn connect(root: Option<&Path>) -> Result<UnixStream> {
-    UnixStream::connect(socket_path(root))
-        .with_context(|| format!("connect daemon socket {}", socket_path(root).display()))
+/// Connect to the singleton (must be already running). Returns a framed stream.
+pub fn connect() -> Result<UnixStream> {
+    UnixStream::connect(socket_path())
+        .with_context(|| format!("connect daemon socket {}", socket_path().display()))
 }
 
-/// Send one request, read one response. For one-shot RPCs (ping, query, diag,
-/// shutdown). Subscribe uses a long-lived connection instead.
+/// Inject the `root` envelope key into a params object (no-op for `None`).
+fn with_root(mut params: Value, root: Option<&Path>) -> Value {
+    if let Some(r) = root {
+        params["root"] = json!(r.to_string_lossy());
+    }
+    params
+}
+
+/// Send one request, read one response.
 pub fn rpc_call(stream: &mut UnixStream, req: &Request) -> Result<Response> {
     let body = serde_json::to_string(&req.to_json())?;
     rpc::write_frame(stream, &body)?;
@@ -1676,23 +1805,21 @@ pub fn rpc_call(stream: &mut UnixStream, req: &Request) -> Result<Response> {
     Ok(r)
 }
 
-/// Spawn-if-missing: ensure a daemon is running on `<root>/.dl/daemon.sock`.
-/// If already up, returns immediately. Otherwise spawns `dl daemon start` detached
-/// (rooted at X via `DL_DAEMON_ROOT`+cwd, foreground=false so idle timeout
-/// applies) and poll-connects until
-/// the daemon responds to `ping` or the connect-time budget is exhausted.
-pub fn ensure_daemon(root: &Path, program: Option<&str>) -> Result<()> {
-    if is_running(Some(root)) {
-        // Ping to confirm it's our daemon and not a stale socket.
-        let mut s = connect(Some(root))?;
+/// Ensure the singleton daemon is running (spawn detached if not). Attaches only
+/// if the running daemon runs THIS binary (build_id match); otherwise replaces
+/// the stale daemon. `root`/`program` are accepted for call-site compatibility;
+/// the root registers lazily on its first RPC (attach IS registration).
+pub fn ensure_daemon(_root: &Path, _program: Option<&str>) -> Result<()> {
+    ensure_singleton()
+}
+
+/// Spawn-if-missing for the singleton.
+pub fn ensure_singleton() -> Result<()> {
+    if is_running() {
+        let mut s = connect()?;
         let req = Request::new(0, "ping", json!({}));
         if let Ok(r) = rpc_call(&mut s, &req) {
             if r.error.is_none() {
-                // Attach only if the daemon runs THIS binary. A rebuilt or
-                // reinstalled `dl` reports a different build_id than the daemon
-                // captured at startup; replace the stale daemon so the new code
-                // actually takes effect (otherwise the old daemon owns the
-                // socket forever and the fresh binary never runs).
                 let running = r.result.as_ref()
                     .and_then(|v| v.get("build_id"))
                     .and_then(|v| v.as_str());
@@ -1700,48 +1827,38 @@ pub fn ensure_daemon(root: &Path, program: Option<&str>) -> Result<()> {
                     Some(id) if id == build_id() => return Ok(()),
                     Some(_) => {
                         eprintln!("[daemon] running binary changed — restarting daemon");
-                        let _ = stop(Some(root));
+                        let _ = stop();
                     }
-                    // Pre-handshake daemon (no build_id field): leave it be.
                     None => return Ok(()),
                 }
             }
         }
     }
-    // Stale, mismatched, or missing. Spawn detached.
-    spawn_detached(root, program)?;
-    wait_ready(root, program)
+    spawn_detached()?;
+    wait_ready()
 }
 
-/// Stop the daemon for `root` (if running) and respawn it detached with the
-/// CURRENT binary, rediscovering `<root>/.dl/*.dl`. The `dl daemon restart` backend:
-/// the one-liner after `cargo install`, since a long-running daemon keeps its
-/// old in-memory image until it is replaced. Prints what it did.
-pub fn restart(root: &Path) -> Result<()> {
-    let was_running = is_running(Some(root));
-    if was_running { let _ = stop(Some(root)); }
-    spawn_detached(root, None)?;
-    // Do NOT fail on a slow first tick: a large repo's cold extraction can exceed
-    // the connect budget. Poll briefly for a fast confirmation on small repos; a
-    // timeout just means the daemon is still warming up in the background (it was
-    // spawned detached), which is not an error — restart is fire-and-forget.
-    let ready = wait_ready(root, None).is_ok();
-    eprintln!("[daemon] {} at {} (build {}){}",
+/// Stop the singleton and respawn it detached with the CURRENT binary. The
+/// `dl daemon restart` backend.
+pub fn restart() -> Result<()> {
+    let was_running = is_running();
+    if was_running { let _ = stop(); }
+    spawn_detached()?;
+    let ready = wait_ready().is_ok();
+    eprintln!("[daemon] {} (build {}){}",
         if was_running { "restarted" } else { "started" },
-        root.display(), build_id(),
+        build_id(),
         if ready { "" } else { " — starting (first tick still in progress)" });
     Ok(())
 }
 
-fn spawn_detached(root: &Path, program: Option<&str>) -> Result<()> {
+/// Spawn the singleton daemon detached (background, idle timeout on).
+pub fn spawn_detached() -> Result<()> {
     let exe = std::env::current_exe()
         .context("locate current exe for daemon spawn")?;
-    let log = root.join(".dl").join("daemon.log");
-    if let Some(p) = log.parent() { std::fs::create_dir_all(p)?; }
-    // Backstop against unbounded growth: start a respawn's log fresh once it has
-    // grown past the cap (the reactive-tick path is quiet, so steady growth is
-    // just the one-line `[daemon] tick #N` heartbeat, but a long-lived storm or
-    // a chatty program can still accumulate). Truncate on respawn, else append.
+    let home = daemon_home();
+    std::fs::create_dir_all(&home)?;
+    let log = home.join("daemon.log");
     const LOG_CAP_BYTES: u64 = 8 * 1024 * 1024;
     let oversized = std::fs::metadata(&log).map(|m| m.len() > LOG_CAP_BYTES).unwrap_or(false);
     let log_file = std::fs::OpenOptions::new()
@@ -1752,23 +1869,17 @@ fn spawn_detached(root: &Path, program: Option<&str>) -> Result<()> {
         .open(&log)?;
     let stderr = log_file.try_clone()?;
     let mut cmd = std::process::Command::new(exe);
-    // No `--root` flag exists: the spawned per-repo daemon learns its root from
-    // the internal `DL_DAEMON_ROOT` env (the `daemon` subcommand reads it) + cwd.
-    // A terminal `dl daemon start` with neither is the rootless singleton at the
-    // XDG home.
-    cmd.args(["daemon", "start"]).env("DL_DAEMON_ROOT", root).current_dir(root);
-    if let Some(p) = program { cmd.arg(p); }
+    // The detached child runs the singleton in the background with the idle timer
+    // on (`serve` = run_daemon(foreground=false)).
+    cmd.args(["daemon", "serve"]);
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::from(log_file))
         .stderr(std::process::Stdio::from(stderr));
-    // v1 detach: stdio redirected; child keeps running after parent exits
-    // (orphaned, reparented to launchd/init). A real setsid + new session
-    // can come with the windows-subsystem / packaging phase.
     cmd.spawn().context("spawn daemon")?;
     Ok(())
 }
 
-fn wait_ready(root: &Path, _program: Option<&str>) -> Result<()> {
+fn wait_ready() -> Result<()> {
     let start = Instant::now();
     let timeout = Duration::from_secs(CONNECT_TOTAL_TIMEOUT_SECS);
     let mut backoff_idx = 0;
@@ -1776,7 +1887,7 @@ fn wait_ready(root: &Path, _program: Option<&str>) -> Result<()> {
         if start.elapsed() > timeout {
             bail!("daemon did not become ready in {}s", CONNECT_TOTAL_TIMEOUT_SECS);
         }
-        if let Ok(mut s) = UnixStream::connect(socket_path(Some(root))) {
+        if let Ok(mut s) = UnixStream::connect(socket_path()) {
             let req = Request::new(0, "ping", json!({}));
             if let Ok(resp) = rpc_call(&mut s, &req) {
                 if resp.error.is_none() { return Ok(()); }
@@ -1790,42 +1901,53 @@ fn wait_ready(root: &Path, _program: Option<&str>) -> Result<()> {
     }
 }
 
-/// Send `shutdown` to the daemon at this home (`Some(root)` → per-root,
-/// `None` → the singleton XDG serving daemon). Ok if it acknowledged or was not
-/// running. Used by `dl daemon stop` / `dl daemon stop`.
-pub fn stop(root: Option<&Path>) -> Result<()> {
-    if !is_running(root) {
-        // Stale files; clean up.
-        let _ = std::fs::remove_file(socket_path(root));
-        remove_pid_file(root);
+/// Send `shutdown` to the singleton. Ok if it acknowledged or was not running.
+pub fn stop() -> Result<()> {
+    if !is_running() {
+        let _ = std::fs::remove_file(socket_path());
+        remove_pid_file();
         return Ok(());
     }
-    let mut s = connect(root)?;
+    let mut s = connect()?;
     let req = Request::new(1, "shutdown", json!({}));
     let resp = rpc_call(&mut s, &req)?;
     if let Some(e) = resp.error {
         bail!("daemon shutdown refused: {}", e.message);
     }
-    // Give the daemon a moment to clean up.
     for _ in 0..50 {
-        if !is_running(root) { return Ok(()); }
+        if !is_running() { return Ok(()); }
         std::thread::sleep(Duration::from_millis(20));
     }
     bail!("daemon did not close socket after shutdown")
 }
 
-/// Block until the daemon at this home reports the program quiescent (every
-/// cascade — effects, demand hops, repo pulls — has run at least once) or
-/// `timeout_ms` elapses. Returns `(settled, tick_count)`. The daemon-side twin
-/// of `dl --settle`: `--settle` owns the effect runtime in-process; this waits
-/// on the already-running daemon that owns it. `root=None` targets the rootless
-/// serving daemon.
+/// Deregister one root from the running singleton (`dl daemon drop`). `purge`
+/// deletes its db dir.
+pub fn drop_root(root: &Path, purge: bool) -> Result<()> {
+    if !is_running() {
+        // Nothing serving; scrub the persisted record + optionally the db.
+        let canon = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let key = key_of(&canon);
+        let mut records = read_roots_json();
+        records.retain(|r| r.key != key);
+        write_roots_json(&records);
+        if purge { let _ = std::fs::remove_dir_all(root_db_dir(&key)); }
+        return Ok(());
+    }
+    let mut s = connect()?;
+    let params = with_root(json!({"purge": purge}), Some(root));
+    let req = Request::new(1, "drop_root", params);
+    let resp = rpc_call(&mut s, &req)?;
+    if let Some(e) = resp.error { bail!("drop_root: {}", e.message); }
+    Ok(())
+}
+
+/// Block until the given root reports quiescent, or `timeout_ms` elapses.
 pub fn await_quiescent(root: Option<&Path>, timeout_ms: u64) -> Result<(bool, u64)> {
-    let mut s = connect(root)?;
-    // The socket read timeout must outlast the daemon's blocking wait, else the
-    // client gives up before the answer arrives.
+    let mut s = connect()?;
     let _ = s.set_read_timeout(Some(Duration::from_millis(timeout_ms + 5_000)));
-    let req = Request::new(0, "await_quiescent", json!({"timeout_ms": timeout_ms}));
+    let params = with_root(json!({"timeout_ms": timeout_ms}), root);
+    let req = Request::new(0, "await_quiescent", params);
     let resp = rpc_call(&mut s, &req)?;
     if let Some(e) = resp.error {
         bail!("await_quiescent failed: {}", e.message);
@@ -1835,22 +1957,20 @@ pub fn await_quiescent(root: Option<&Path>, timeout_ms: u64) -> Result<(bool, u6
         r.get("tick_count").and_then(|v| v.as_u64()).unwrap_or(0)))
 }
 
-/// Load a script into the daemon at this home. mode="watched" joins the program
-/// (persistent, reactive, hot-reloaded on edit); mode="once" evals it
-/// ephemerally on a throwaway engine and returns the query results.
-/// `root=None` targets the global rootless serving daemon.
+/// Load a script into the given root. mode="watched" joins the program;
+/// mode="once" evals it ephemerally.
 pub fn load(root: Option<&Path>, path: &str, mode: &str) -> Result<Response> {
-    let mut s = connect(root)?;
-    let req = Request::new(0, "load", json!({"path": path, "mode": mode}));
+    let mut s = connect()?;
+    let params = with_root(json!({"path": path, "mode": mode}), root);
+    let req = Request::new(0, "load", params);
     rpc_call(&mut s, &req)
 }
 
-/// Fetch relation `rel`'s current rows from the running daemon: returns the
-/// column names and the stringified rows (the `dl daemon rows REL` backend).
-/// `root=None` targets the global rootless serving daemon.
+/// Fetch relation `rel`'s current rows from the given root.
 pub fn query_rel(root: Option<&Path>, rel: &str) -> Result<(Vec<String>, Vec<Vec<String>>)> {
-    let mut s = connect(root)?;
-    let req = Request::new(0, "query_rel", json!({"rel": rel}));
+    let mut s = connect()?;
+    let params = with_root(json!({"rel": rel}), root);
+    let req = Request::new(0, "query_rel", params);
     let resp = rpc_call(&mut s, &req)?;
     if let Some(err) = resp.error {
         anyhow::bail!("{}", err.message);
@@ -1870,8 +1990,7 @@ pub fn query_rel(root: Option<&Path>, rel: &str) -> Result<(Vec<String>, Vec<Vec
     Ok((cols, rows))
 }
 
-/// One `dl what` / `dl summary` answer from the daemon: header, rows, pre-paging
-/// total, advisory notes. Mirrors `anchor::QueryOut` across the wire.
+/// One `dl what` / `dl summary` answer from the daemon.
 pub struct QueryAnswer {
     pub columns: Vec<String>,
     pub rows: Vec<Vec<String>>,
@@ -1879,7 +1998,6 @@ pub struct QueryAnswer {
     pub notes: Vec<String>,
 }
 
-/// Decode a `{columns, rows, total, notes}` RPC result into a [`QueryAnswer`].
 fn decode_query_answer(result: &Value) -> QueryAnswer {
     let strs = |v: Option<&Value>| -> Vec<String> {
         v.and_then(|v| v.as_array())
@@ -1902,13 +2020,12 @@ fn decode_query_answer(result: &Value) -> QueryAnswer {
     }
 }
 
-/// `dl what <anchor>` against the daemon (the `what` RPC). Backs the daemon-first
-/// path in `cli::query`.
+/// `dl what <anchor>` against the daemon.
 pub fn what(root: Option<&Path>, anchor: &str, limit: Option<usize>, offset: Option<usize>)
     -> Result<QueryAnswer>
 {
-    let mut s = connect(root)?;
-    let mut params = json!({"anchor": anchor});
+    let mut s = connect()?;
+    let mut params = with_root(json!({"anchor": anchor}), root);
     if let Some(l) = limit { params["limit"] = json!(l); }
     if let Some(o) = offset { params["offset"] = json!(o); }
     let req = Request::new(0, "what", params);
@@ -1917,35 +2034,46 @@ pub fn what(root: Option<&Path>, anchor: &str, limit: Option<usize>, offset: Opt
     Ok(decode_query_answer(&resp.result.unwrap_or_default()))
 }
 
-/// `dl summary <path>` against the daemon (the `summary` RPC).
+/// `dl summary <path>` against the daemon.
 pub fn summary(root: Option<&Path>, path: &str) -> Result<QueryAnswer> {
-    let mut s = connect(root)?;
-    let req = Request::new(0, "summary", json!({"path": path}));
+    let mut s = connect()?;
+    let params = with_root(json!({"path": path}), root);
+    let req = Request::new(0, "summary", params);
     let resp = rpc_call(&mut s, &req)?;
     if let Some(err) = resp.error { anyhow::bail!("{}", err.message); }
     Ok(decode_query_answer(&resp.result.unwrap_or_default()))
 }
 
-/// Ping the running daemon and return its status JSON (build_id, root,
-/// tick_count, settled, program). `Ok(None)` when no daemon answers on this
-/// root's socket. The `dl daemon status` backend.
+/// Ping the running daemon for the given root and return its status JSON.
+/// `Ok(None)` when no daemon answers. The `dl daemon status` backend when a root
+/// is given; pass `None` for the process summary.
 pub fn status(root: Option<&Path>) -> Result<Option<Value>> {
-    let mut s = match connect(root) {
+    let mut s = match connect() {
         Ok(s) => s,
         Err(_) => return Ok(None),
     };
-    let req = Request::new(0, "ping", json!({}));
+    let params = with_root(json!({}), root);
+    let req = Request::new(0, "ping", params);
     match rpc_call(&mut s, &req) {
         Ok(r) if r.error.is_none() => Ok(r.result),
         _ => Ok(None),
     }
 }
 
+/// Register a root with the running singleton (spawning it first if needed), and
+/// wait for the cold tick. Returns the served root's tick count.
+pub fn add_root(root: &Path) -> Result<()> {
+    ensure_singleton()?;
+    let mut s = connect()?;
+    let params = with_root(json!({}), Some(root));
+    let req = Request::new(0, "add_root", params);
+    let resp = rpc_call(&mut s, &req)?;
+    if let Some(e) = resp.error { bail!("add_root: {}", e.message); }
+    Ok(())
+}
+
 // ---------- small helpers shared with lib.rs ----------
 
-// Silent: called on every git event (`on_git_event` rebuilds the repo set to
-// diff refs), so an announcement here floods daemon.log. The cold-serve path
-// logs the count once; a config error still surfaces.
 pub(crate) fn load_repos_eager() -> Vec<config::RepoConfig> {
     match config::SprfConfig::load_default() {
         Ok(cfg) if !cfg.repos.is_empty() => cfg.repos,
@@ -1965,5 +2093,13 @@ mod tests {
         assert_eq!(a, b, "build_id must be stable within one process");
         assert!(a.starts_with(env!("CARGO_PKG_VERSION")),
             "build_id should carry the crate version: {a}");
+    }
+
+    #[test]
+    fn key_of_is_stable_and_short() {
+        let p = std::path::Path::new("/tmp/some/root");
+        let a = key_of(p);
+        assert_eq!(a, key_of(p), "key must be deterministic");
+        assert_eq!(a.len(), 16, "key is 16 hex chars");
     }
 }

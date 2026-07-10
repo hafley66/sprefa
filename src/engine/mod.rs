@@ -186,13 +186,15 @@ pub fn apply_sinks_enabled() -> bool {
 /// every tick, but populated by `refresh_module_rels` only when the program
 /// references one (resolution parses every file, so it is lazy). `module_edge` is
 /// the 2-col convenience closure edge; `module_edge_rev` is the rev-aware form.
-pub(crate) const MODULE_RELS: [&str; 6] = [
+pub(crate) const MODULE_RELS: [&str; 8] = [
     "module_import",
     "module_edge",
     "module_edge_rev",
     "module_unresolved",
     "module_unresolved_rev",
     "crate_edge",
+    "module_binding_rev",
+    "module_binding",
 ];
 
 /// Syntax-only type graph. `kind` is edge metadata; closure(type_edge) walks
@@ -596,9 +598,9 @@ pub fn op_docs() -> &'static [(&'static str, &'static str, &'static str, &'stati
         ("node2vec", "body", "head(node_a, node_b, score) <- node2vec(edge)", "structural graph embedding of a 2-col relation as the entire body; binds node pairs with a similarity score (the graph-position sibling of the text `similar` rel); evaluated outside SQL"),
         ("arith", "body", "+ - * / %", "arithmetic in rule heads and comparison sides (rank(path, line+1)); `+` is overloaded — int + int adds, text + text concatenates (url = \"https://\" + host), mixed int/text is a typecheck error (interpolate or int(..)); - * / % stay int-only; usual precedence, parens OK; never in a binding atom"),
         ("strfn", "body", "split(text, sep, idx) / replace(text, from, to)", "string functions in heads and comparison sides; idx 0-based, negative counts from the end; a computed binding (ext = split(path, \".\", -1)) binds for later use in the same body — later joins, negations, and the head all see it (derived rules only; a source rule inlines into the head)"),
-        ("aggregation", "body", "count sum min max json_group_array json_group_object", "head-position-only aggregation; non-aggregate head terms are the grouping key; count/sum produce int, min/max carry the arg type; json_group_array(x) / json_group_object(k, v) build a JSON array/object per group (deterministic, ORDER BY inside the agg); count in body is a parse error"),
+        ("aggregation", "body", "count sum min max json_group_array json_group_object", "head-position aggregation, in a rule head OR a `?` query head; non-aggregate head terms are the grouping key; count/sum produce int, min/max carry the arg type; json_group_array(x) / json_group_object(k, v) build a JSON array/object per group (deterministic, ORDER BY inside the agg); in a query head json_group_object(key, value) consumes two columns: place it at the key column and put `_` at the value column; count in body is a parse error"),
         // sinks.
-        ("query", "sink", "? rel(from, to). / ? rel(col: value).", "print a TSV block (or JSON-lines with --query-json); a literal in any position filters; args may be named by column (`col: value`), unmentioned columns are don't-cares; no where clause"),
+        ("query", "sink", "? rel(from, to). / ? rel(col: value). / ? rel(key, count(n)).", "print a TSV block (or JSON-lines with --query-json); a literal in any position filters; args may be named by column (`col: value`), unmentioned columns are don't-cares; no where clause; an aggregate call (count/sum/min/max/json_group_array/json_group_object) in a query head groups over the plain-var columns (whole-rel aggregate when none), the agg arg names the output column"),
         ("diag", "sink", "diag(path: hit_path, line: hit_line, msg: message[, col: , end_line: , end_col: , severity: , code: , hint: ]) <- ...", "head the built-in diagnostic sink; fixed 9-col schema (path/line/col/end_line/end_col/severity/code/msg/hint), name only the columns you use, the rest default (severity warn, end_line=line); feeds editor diagnostics (--lsp) and check output (--check)"),
         ("gen", "sink", "gen([:mode,] path, [l0, l1,] \"{var} template\")", "codegen; file form renders body rows through a path+row template; :zone replaces content between a NAMED `BEGIN:/END:` marker pair (markers stay, immune to surrounding edits); splice form replaces between two line numbers; raw `r\"...\"` / `r#\"...\"#` keep dollar-brace verbatim; `{{x}}` in a template emits literal `{x}`; convergent (skips write when bytes match); never runs under --check/--lsp; one-shot needs --apply"),
         ("graph_node", "sink", "graph_node(id: node_id, label: label, kind: kind[, file: , line: , parent: ]) <- ...", "head the built-in drawable-graph vertex sink; fixed 6-col schema (id/label/kind/file/line/parent), name only the columns you use; the flow panel's always-available Graph preset draws graph_node/graph_edge with no bespoke SQL"),
@@ -806,6 +808,12 @@ pub(crate) fn module_rel_decls() -> Vec<RelDecl> {
             doc: "rev-aware module_unresolved", ..Default::default() },
         RelDecl { name: "crate_edge".into(), cols: vec![c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text), c("rev", Type::Text)], group: "module",
             doc: "workspace-internal Cargo dependency edges", ..Default::default() },
+        RelDecl { name: "module_binding_rev".into(), cols: vec![
+            c("file", Type::Path), c("local", Type::Text), c("source", Type::Text), c("dst", Type::Path), c("rev", Type::Text)], group: "module",
+            doc: "aliased-import local bindings from the module resolvers' own parse (Rust use..as, TS import{a as b}/default, Kotlin import..as) — the index-free equivalent of scip_binding; local is the binding name in scope at file, source is the exported name at dst (\"default\" for a default import)", ..Default::default() },
+        RelDecl { name: "module_binding".into(), cols: vec![
+            c("file", Type::Path), c("local", Type::Text), c("source", Type::Text), c("dst", Type::Path)], group: "module",
+            doc: "rev-deduped union of module_binding_rev", ..Default::default() },
     ]
 }
 
@@ -1171,6 +1179,27 @@ fn classify_call_kind(callee: &str) -> Option<&'static str> {
 }
 
 pub(crate) fn module_rels_used(prog: &Program) -> bool { rels_used(prog, &MODULE_RELS) }
+
+/// Whether the module family must run THIS tick: either the program
+/// directly references a module_* relation, or it references type_link/
+/// call_edge (or their dependent analyses type_shape/type_lgg, or the
+/// doc_comment/doc_tag pair riding the same parse). Win D's import-scoped
+/// ambiguity narrowing in `refresh_type_rels`/`refresh_call_rels` reads
+/// `module_edge_rev`, so those families need a FRESH module graph even when
+/// the program never asks for a module_* relation itself. Without this, a
+/// program that only queries `type_link`/`call_edge` would silently never
+/// populate `module_edge_rev`, and every ambiguous name would stay bare
+/// forever (the narrowing looks like a no-op, not an error). Used by both
+/// `ModuleFamily::used` (the full tick's per-family loop) and `tick_paths`'
+/// `wants_module_rels` (the incremental path, which reads this directly
+/// rather than through the trait).
+pub(crate) fn module_rels_needed(prog: &Program) -> bool {
+    module_rels_used(prog)
+        || type_rels_used(prog)
+        || rels_used(prog, &["type_shape", "type_lgg"])
+        || doc_text_rels_used(prog)
+        || call_rels_used(prog)
+}
 
 pub(crate) fn type_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_RELS) }
 
@@ -1761,6 +1790,9 @@ struct ModuleRows {
     // `ref(id,string,file,lo,hi)` ⋈ `string` covers the import graph, not just
     // regex/ast/sg captures. Collect-then-flush, never N+1.
     spans: Vec<(String, String, spine::WhereBytes)>,
+    // module_binding_rev(file, local, source, dst, rev) rows: each aliased
+    // import binding this specifier ref carries (see `ModuleRef::bindings`).
+    bindings: Vec<Vec<Value>>,
 }
 
 impl ModuleRows {
@@ -1770,6 +1802,7 @@ impl ModuleRows {
         self.unresolved_rev.extend(other.unresolved_rev);
         self.crate_edges.extend(other.crate_edges);
         self.spans.extend(other.spans);
+        self.bindings.extend(other.bindings);
     }
 }
 

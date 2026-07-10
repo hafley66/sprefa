@@ -140,9 +140,11 @@ learns its root from `DL_DAEMON_ROOT`; you set that only when scripting a daemon
 | LSP | `dl prog.dl --lsp` | live editor diagnostics from `diag` rows |
 | isolated | `dl prog.dl --no-daemon` | in-process, do NOT attach/spawn a daemon |
 
-A one-shot AUTO-ATTACHES to a per-root daemon (warm incremental ticks). This
-usually helps, but for a clean, reproducible one-off run — or when a daemon is
-misbehaving — add `--no-daemon` (or `DL_NO_DAEMON=1`) to force the in-process
+A one-shot AUTO-ATTACHES to the ONE singleton daemon (at
+`$XDG_STATE_HOME/sprefa`, else `~/.local/state/sprefa`), which serves every `.dl`
+root and warms incremental ticks; naming a root in the RPC auto-registers it.
+This usually helps, but for a clean, reproducible one-off run — or when the daemon
+is misbehaving — add `--no-daemon` (or `DL_NO_DAEMON=1`) to force the in-process
 path. A generator/rail that must NOT see stale daemon state (e.g. regenerating
 docs) should always use `--no-daemon`.
 

@@ -10,10 +10,9 @@ the world: a shell command runs, its output becomes rows. The design keeps the
 datalog pure; a rule never blocks on a command. Instead it *requests* the
 effect, and the answer arrives as ordinary rows on a later tick.
 
-This lesson's program has no fixture at all. Make a fresh directory, and keep
-its path short (the daemon binds a Unix socket at `<root>/.dl/daemon.sock`,
-and macOS caps socket paths at 104 bytes, so a deeply nested root cannot host
-a daemon):
+This lesson's program has no fixture at all. Make a fresh directory (the one
+singleton daemon at `$XDG_STATE_HOME/sprefa` serves every `.dl` root; this dir
+just needs its own `.dl/`):
 
 ```sh
 mkdir -p /tmp/dl-tour/.dl && cd /tmp/dl-tour

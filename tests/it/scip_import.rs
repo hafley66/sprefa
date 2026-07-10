@@ -158,6 +158,11 @@ fn imports_occurrence_spans_with_roles() {
     idx.documents = vec![document("src/lib.rs", vec![
         occurrence_r(sym, SymbolRole::Definition as i32, [3, 4, 3, 7]),
         occurrence_r(sym, 0, [7, 8, 7, 11]),
+        occurrence_r(sym, SymbolRole::Import as i32, [1, 4, 1, 7]),
+        occurrence_r(sym, SymbolRole::WriteAccess as i32, [9, 0, 9, 3]),
+        // read+write compound: write outranks read in role_label
+        occurrence_r(sym, (SymbolRole::ReadAccess as i32) | (SymbolRole::WriteAccess as i32), [10, 0, 10, 3]),
+        occurrence_r(sym, SymbolRole::ReadAccess as i32, [11, 0, 11, 3]),
     ])];
     scip::write_message_to_file(&index, idx).unwrap();
     let prog = r#"
@@ -172,6 +177,16 @@ fn imports_occurrence_spans_with_roles() {
         "definition occurrence with span+role: {out}");
     assert!(out.contains("src/lib.rs\tpkg/foo().\t7\t8\t7\t11\treference"),
         "reference occurrence with span+role: {out}");
+    // Widened role vocabulary: import/write/read bits survive instead of
+    // collapsing to reference; compound read+write reports write.
+    assert!(out.contains("src/lib.rs\tpkg/foo().\t1\t4\t1\t7\timport"),
+        "import occurrence role: {out}");
+    assert!(out.contains("src/lib.rs\tpkg/foo().\t9\t0\t9\t3\twrite"),
+        "write occurrence role: {out}");
+    assert!(out.contains("src/lib.rs\tpkg/foo().\t10\t0\t10\t3\twrite"),
+        "compound read+write reports write: {out}");
+    assert!(out.contains("src/lib.rs\tpkg/foo().\t11\t0\t11\t3\tread"),
+        "read occurrence role: {out}");
     // scip_def still emits — pure addition, def rel untouched.
     assert!(out.contains("pkg/foo().\tsrc/lib.rs"), "scip_def unchanged: {out}");
 }

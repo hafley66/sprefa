@@ -25,20 +25,21 @@ pub fn run_tray(d: Arc<Daemon>) -> Result<()> {
     let mut event_loop = EventLoop::new();
     event_loop.set_activation_policy(ActivationPolicy::Accessory);
 
-    let root_label = d
-        .root
+    let home_label = d
+        .home
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| d.root.to_string_lossy().into_owned());
+        .unwrap_or_else(|| d.home.to_string_lossy().into_owned());
 
-    let header = MenuItem::new(format!("sprefa — {root_label}"), false, None);
+    let n_roots = d.roots.lock().map(|r| r.len()).unwrap_or(0);
+    let header = MenuItem::new(format!("sprefa — {home_label}"), false, None);
     let status = MenuItem::new(
-        format!("Tick #{}", d.tick_count.load(Ordering::Relaxed)),
+        format!("Config tick #{}", d.config.tick_count.load(Ordering::Relaxed)),
         false,
         None,
     );
     let program = MenuItem::new(
-        format!("Program: {}", d.program_display),
+        format!("Serving {n_roots} root(s)"),
         false,
         None,
     );
@@ -61,7 +62,7 @@ pub fn run_tray(d: Arc<Daemon>) -> Result<()> {
     let _tray = TrayIconBuilder::new()
         .with_icon(icon)
         .with_menu(Box::new(menu))
-        .with_tooltip(format!("sprefa daemon — {}", d.root.display()))
+        .with_tooltip(format!("sprefa daemon — {}", d.home.display()))
         .build()
         .map_err(|e| anyhow::anyhow!("tray init: {e}"))?;
 

@@ -41,14 +41,16 @@ pub fn port_decl<'a>(prog: &'a ast::Program, name: &str) -> Option<&'a ast::Port
 /// or a failed attach — a cold in-process engine, hermetic, right for CI.
 pub enum Pump {
     Local(Box<crate::engine::Engine>),
-    Daemon { stream: UnixStream, next_id: u64 },
+    Daemon { stream: UnixStream, next_id: u64, root: PathBuf },
 }
 
 impl Pump {
-    fn rpc(&mut self, method: &str, params: serde_json::Value) -> Result<crate::rpc::Response> {
-        let Pump::Daemon { stream, next_id } = self else {
+    fn rpc(&mut self, method: &str, mut params: serde_json::Value) -> Result<crate::rpc::Response> {
+        let Pump::Daemon { stream, next_id, root } = self else {
             anyhow::bail!("rpc on a local pump");
         };
+        // Name the served root so the singleton routes to this program's engine.
+        params["root"] = serde_json::json!(root.to_string_lossy());
         let req = crate::rpc::Request::new(*next_id, method, params);
         *next_id += 1;
         let resp = crate::daemon::rpc_call(stream, &req)?;
@@ -216,8 +218,11 @@ pub fn run_mcp(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Res
     let mut pump = if crate::daemon::enabled_for(&root) && db_path.is_none() && programs.len() <= 1 {
         let attach = || -> Result<Pump> {
             crate::daemon::ensure_daemon(&root, programs.first().map(|s| s.as_str()))?;
-            let stream = crate::daemon::connect(Some(&root))?;
-            Ok(Pump::Daemon { stream, next_id: 1 })
+            // Register + cold-tick this root before the first mcp_request, so the
+            // port drift-guard reads the served program (auto-add would race it).
+            crate::daemon::add_root(&root)?;
+            let stream = crate::daemon::connect()?;
+            Ok(Pump::Daemon { stream, next_id: 1, root: root.clone() })
         };
         match attach() {
             Ok(p) => p,

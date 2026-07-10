@@ -101,6 +101,60 @@ fn cached_facts<T: Send + Sync>(
     out
 }
 
+/// Directory portion of a `/`-separated relative path (empty string for a
+/// bare filename, never a trailing slash). Used only by `narrow_ambiguous`'s
+/// same-directory criterion.
+fn path_dir(path: &str) -> &str {
+    match path.rsplit_once('/') {
+        Some((dir, _)) => dir,
+        None => "",
+    }
+}
+
+/// Win D, import-scoped ambiguity narrowing. `resolve`/`resolve_callee` in
+/// `refresh_type_rels`/`refresh_call_rels` call this only when a name's
+/// def bucket already has more than one candidate symbol (the plain
+/// unique-in-repo path stays untouched). A candidate survives the filter when
+/// its declaring file is:
+///   (a) the referencing file itself,
+///   (b) directly imported by the referencing file (a `module_edge_rev` row
+///       at this rev), or
+///   (c) in the same directory as the referencing file.
+/// Exactly one survivor resolves the ambiguity only when it survived via (a)
+/// or (b) ("strong" reasons); a survivor that only matches via (c) stays
+/// bare. Directory co-location is a weak signal (sibling files that never
+/// import each other are common), so a same-directory-ONLY tie is honest
+/// ambiguity, not a resolution: a wrong join is worse than a missing one.
+/// More than one survivor (still genuinely ambiguous after narrowing) or zero
+/// survivors also stay bare.
+fn narrow_ambiguous<'a>(
+    candidates: &[&'a str],
+    repo: &str,
+    rev: &str,
+    referencing_file: &str,
+    sym_file: &HashMap<(&str, &str, &str), &str>,
+    imports: &HashMap<(String, String), HashSet<String>>,
+) -> Option<&'a str> {
+    let referencing_dir = path_dir(referencing_file);
+    let imported = imports.get(&(rev.to_string(), referencing_file.to_string()));
+    let mut survivor: Option<(&'a str, bool)> = None;
+    let mut survivor_count = 0u32;
+    for sym in candidates {
+        let Some(def_file) = sym_file.get(&(repo, rev, *sym)) else { continue };
+        let is_self = *def_file == referencing_file;
+        let is_imported = imported.map(|set| set.contains(*def_file)).unwrap_or(false);
+        let is_same_dir = path_dir(def_file) == referencing_dir;
+        if is_self || is_imported || is_same_dir {
+            survivor_count += 1;
+            survivor = Some((sym, is_self || is_imported));
+        }
+    }
+    match (survivor_count, survivor) {
+        (1, Some((sym, true))) => Some(sym),
+        _ => None,
+    }
+}
+
 impl Engine {
     /// Project the durable `_strings` / `_where_bytes` meta tables into the
     /// query-facing `string` / `ref` relations. Wholesale wipe + repopulate,
@@ -270,6 +324,16 @@ impl Engine {
                             }));
                         }
                     }
+                    // Alias bindings only mean anything against a resolved, non-self
+                    // target file (same self-edge exclusion as `edges_rev` below);
+                    // borrow before the ownership match moves `mref.target`.
+                    if let Resolution::File(dst) = &mref.target {
+                        if dst != path {
+                            for (local, source) in &mref.bindings {
+                                rows.bindings.push(vec![t(path), t(local), t(source), t(dst), t(rev)]);
+                            }
+                        }
+                    }
                     match mref.target {
                         // A self-edge (e.g. `use crate::X` where X is defined in this
                         // crate root) is not a dependency; drop it so the graph and
@@ -305,6 +369,7 @@ impl Engine {
         if include_crate_edges {
             self.db.insert_rows(&tbl("crate_edge"), &["src", "dst", "kind", "rev"], &rows.crate_edges)?;
         }
+        self.db.insert_rows(&tbl("module_binding_rev"), &["file", "local", "source", "dst", "rev"], &rows.bindings)?;
         self.insert_module_spans(rows)?;
         Ok(())
     }
@@ -336,6 +401,13 @@ impl Engine {
         self.db.exec(&format!(
             "INSERT OR IGNORE INTO {unresolved} (\"file\", \"specifier\", \"reason\", \"line\") \
              SELECT \"file\", \"specifier\", \"reason\", \"line\" FROM {unresolved_rev}"
+        ))?;
+        let binding = tbl("module_binding");
+        let binding_rev = tbl("module_binding_rev");
+        self.db.exec(&format!("DELETE FROM {binding}"))?;
+        self.db.exec(&format!(
+            "INSERT OR IGNORE INTO {binding} (\"file\", \"local\", \"source\", \"dst\") \
+             SELECT \"file\", \"local\", \"source\", \"dst\" FROM {binding_rev}"
         ))?;
         Ok(())
     }
@@ -372,6 +444,7 @@ impl Engine {
         self.refresh_rel("module_edge_rev", &["src", "dst", "rev"], &rows.edges_rev)?;
         self.refresh_rel("module_unresolved_rev", &["file", "rev", "specifier", "reason", "line"], &rows.unresolved_rev)?;
         self.refresh_rel("crate_edge", &["src", "dst", "kind", "rev"], &rows.crate_edges)?;
+        self.refresh_rel("module_binding_rev", &["file", "local", "source", "dst", "rev"], &rows.bindings)?;
         self.insert_module_spans(&rows)?;
         self.rebuild_legacy_module_rels()?;
         for (rev, d) in &moved {
@@ -410,6 +483,7 @@ impl Engine {
         self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _module_refresh_rev)", tbl("module_edge_rev")))?;
         self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _module_refresh_rev)", tbl("module_unresolved_rev")))?;
         self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _module_refresh_rev)", tbl("crate_edge")))?;
+        self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _module_refresh_rev)", tbl("module_binding_rev")))?;
 
         let by_rev = self.module_files_by_rev()?;
         let mut rows = ModuleRows::default();
@@ -441,6 +515,10 @@ impl Engine {
             "DELETE FROM {} WHERE \"rev\" = '{rev}' AND \"file\" IN (SELECT path FROM _module_refresh_path)",
             tbl("module_unresolved_rev"),
         ))?;
+        self.db.exec(&format!(
+            "DELETE FROM {} WHERE \"rev\" = '{rev}' AND \"file\" IN (SELECT path FROM _module_refresh_path)",
+            tbl("module_binding_rev"),
+        ))?;
 
         let by_rev = self.module_files_by_rev()?;
         let rows = by_rev.get(rev)
@@ -454,12 +532,14 @@ impl Engine {
     /// The extraction corpus: every `_file` row in a TypeLang extension, with
     /// its content address. One query serves the type/call/dataflow refreshers;
     /// the hash column is what makes both the whole-pass digest skip and the
-    /// per-file fact cache content-keyed (perf gap A).
+    /// per-file fact cache content-keyed (perf gap A). The four plain-JS
+    /// extensions ride `TsTypes` alongside `.ts`/`.tsx` (Win H).
     fn extract_file_set(&self) -> Result<Vec<ExtractFile>> {
         let mut files: Vec<ExtractFile> = Vec::new();
         let mut sel = self.db.conn().prepare(
             "SELECT repo, path, rev, hash FROM _file WHERE path LIKE '%.rs' OR path LIKE '%.kt' OR path LIKE '%.kts' \
-             OR path LIKE '%.ts' OR path LIKE '%.tsx'")?;
+             OR path LIKE '%.ts' OR path LIKE '%.tsx' \
+             OR path LIKE '%.js' OR path LIKE '%.jsx' OR path LIKE '%.mjs' OR path LIKE '%.cjs'")?;
         let rows = sel.query_map([], |r| Ok((
             r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
             r.get::<_, Option<String>>(3)?.unwrap_or_default())))?;
@@ -471,7 +551,18 @@ impl Engine {
     /// per (repo, path, rev, content hash) corpus row for that rev's file subset,
     /// plus the `scip_ref` override table (WORK only — SCIP indexes are
     /// working-tree artifacts, so a committed rev's resolution can't move when
-    /// the index changes), plus the running binary's identity (see `exe_stamp`).
+    /// the index changes), plus (when `with_scip`) the `module_edge_rev` rows at
+    /// this rev, plus the running binary's identity (see `exe_stamp`).
+    /// `with_scip` really means "this family's resolver reads outside inputs
+    /// beyond the corpus itself": both the SCIP override and the Win D
+    /// import-scoped ambiguity narrowing feed the SAME `resolve`/`resolve_callee`
+    /// closures in `refresh_type_rels`/`refresh_call_rels`, so one flag gates
+    /// both folds; `dataflow`/`comment` pass `false` because neither family
+    /// resolves names. Unlike the SCIP fold, the module-edge fold is NOT
+    /// restricted to `rev == "WORK"`: `module_edge_rev` is rev-aware (a
+    /// committed rev has its own import graph), and the narrowing reads
+    /// exactly that rev's edges, so a committed rev's digest must move when
+    /// ITS import rows change too.
     /// Persisted under `extract:<family>:<rev>` in `_reldigest`; an unchanged
     /// digest means that rev's output rows are already in this db, so the parse +
     /// resolve + write pass skips for that rev. A row with an empty content hash
@@ -508,6 +599,32 @@ impl Engine {
                     r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))) {
                     for (f, sym, d, repo) in rows.flatten() {
                         fold(&mut acc, &blake3::hash(format!("scip\0{f}\0{sym}\0{d}\0{repo}").as_bytes()));
+                    }
+                }
+            }
+        }
+        // Win D: the import-scoped ambiguity narrowing reads `module_edge_rev`
+        // at this rev, so a moved import (an added/removed/retargeted `use`)
+        // must flip this digest or a stale resolution would survive a warm
+        // tick. Folded for every rev, not just WORK; see the doc comment above.
+        if with_scip {
+            if let Ok(mut s) = self.db.conn().prepare(
+                &format!("SELECT src, dst FROM {} WHERE \"rev\" = ?1", tbl("module_edge_rev"))) {
+                if let Ok(rows) = s.query_map([rev], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
+                    for (src, dst) in rows.flatten() {
+                        fold(&mut acc, &blake3::hash(format!("module\0{src}\0{dst}").as_bytes()));
+                    }
+                }
+            }
+            // The alias hop (see `module_binding_map`) reads `module_binding_rev`
+            // at this rev, same reasoning: an edited alias must flip this digest
+            // or the warm-tick skip would keep serving the stale resolution.
+            if let Ok(mut s) = self.db.conn().prepare(
+                &format!("SELECT file, local, source, dst FROM {} WHERE \"rev\" = ?1", tbl("module_binding_rev"))) {
+                if let Ok(rows) = s.query_map([rev], |r| Ok((
+                    r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))) {
+                    for (file, local, source, dst) in rows.flatten() {
+                        fold(&mut acc, &blake3::hash(format!("binding\0{file}\0{local}\0{source}\0{dst}").as_bytes()));
                     }
                 }
             }
@@ -576,7 +693,7 @@ impl Engine {
         "type_entity_rev", "type_link_rev", "type_edge_rev",
         "call_def_rev", "call_edge_rev",
         "df_node_rev", "df_node_repo_rev", "df_arg_rev", "df_field_rev",
-        "module_edge_rev", "module_unresolved_rev",
+        "module_edge_rev", "module_unresolved_rev", "module_binding_rev",
     ];
 
     /// D5.5 — the rev-retraction sweep (plan Layer 4, "Retraction"). A rev
@@ -694,6 +811,10 @@ impl Engine {
         // (D5.6); committed revs resolve syntactically.
         let mut by_name: HashMap<(&str, &str, &str), Vec<&str>> = HashMap::new();
         let mut sym_at: HashMap<(&str, &str, &str, &str), &str> = HashMap::new();
+        // (repo, rev, sym) -> declaring file, the reverse of `sym_at`'s (repo,
+        // file, rev, name) key. Feeds `narrow_ambiguous`'s same-file/same-
+        // directory checks when a bucket has more than one candidate (Win D).
+        let mut sym_file: HashMap<(&str, &str, &str), &str> = HashMap::new();
         for (repo, _, rev, f) in &facts {
             for e in &f.entities {
                 // Dedup the ambiguity bucket by def sym: the same physical file
@@ -707,9 +828,16 @@ impl Engine {
                     bucket.push(e.sym.as_str());
                 }
                 sym_at.insert((repo.as_str(), e.file.as_str(), rev.as_str(), e.name.as_str()), e.sym.as_str());
+                sym_file.insert((repo.as_str(), rev.as_str(), e.sym.as_str()), e.file.as_str());
             }
         }
         let scip = self.scip_name_defs().unwrap_or_default();
+        // Win D: the referencing file's own imports, read once for the whole
+        // family (never per lookup), see `module_import_map`.
+        let imports = self.module_import_map().unwrap_or_default();
+        // Alias hop input: this file's aliased-import local bindings, read
+        // once for the whole family, see `module_binding_map`.
+        let aliases = self.module_binding_map().unwrap_or_default();
         let resolve = |repo: &str, rev: &str, file: &str, name: &str| -> Option<String> {
             if rev == "WORK" {
                 if let Some(def_file) = scip.get(&(repo.to_string(), file.to_string(), name.to_string())) {
@@ -718,8 +846,29 @@ impl Engine {
                     }
                 }
             }
+            // Index-free alias hop: an aliased import (`use x::y as z`, TS
+            // `import { a as b }`, Kotlin `import a.b.C as D`) has no by_name
+            // bucket for the local name `z`/`b`/`D` — the def is keyed by its
+            // real name. A local def of the SAME name shadows the import (a
+            // local declaration always wins), so the hop only fires when this
+            // file declares no such name itself. A hit resolves straight to
+            // the aliased target's def, pinned by dst; a miss (barrel
+            // re-export, unresolved default) returns None WITHOUT falling
+            // through to by_name — a coincidental global match on the alias
+            // name elsewhere would be a wrong join, honest bare wins.
+            if sym_at.get(&(repo, file, rev, name)).is_none() {
+                if let Some((source, dst)) = aliases.get(&(rev.to_string(), file.to_string())).and_then(|m| m.get(name)) {
+                    return sym_at.get(&(repo, dst.as_str(), rev, source.as_str()))
+                        .map(|sym| format!("{repo}::{sym}"));
+                }
+            }
             match by_name.get(&(repo, rev, name)) {
                 Some(v) if v.len() == 1 => Some(format!("{repo}::{}", v[0])),
+                // More than one candidate: narrow to the referencing file's own
+                // import neighborhood (Win D) before giving up bare.
+                Some(v) if v.len() > 1 =>
+                    narrow_ambiguous(v, repo, rev, file, &sym_file, &imports)
+                        .map(|sym| format!("{repo}::{sym}")),
                 _ => None,
             }
         };
@@ -855,6 +1004,61 @@ impl Engine {
             if let Some(name) = scip_descriptor_name(&symbol) {
                 out.insert((repo, file, name), def_file);
             }
+        }
+        Ok(out)
+    }
+
+    /// Win D input: `module_edge_rev(src, dst, rev)` read once per family
+    /// refresh (never per lookup, same shape as `scip_name_defs`) into
+    /// (rev, importing file) -> {imported files}, for the resolver's
+    /// import-scoped ambiguity narrowing (see `narrow_ambiguous`). Empty when
+    /// the module graph hasn't populated yet, so narrowing is simply a no-op
+    /// (every candidate fails the filter, stays bare, same as today).
+    /// NOTE: `module_edge_rev` carries no `repo` column (a pre-existing gap:
+    /// the module graph itself is not yet repo-scoped), so this map is a
+    /// flat path->paths join; two repos sharing a relative path could in
+    /// theory cross-pollinate here. Same residual as the rest of the
+    /// module-graph/repo-scoping gap noted in CLAUDE.md.
+    fn module_import_map(&self) -> Result<HashMap<(String, String), HashSet<String>>> {
+        let mut out: HashMap<(String, String), HashSet<String>> = HashMap::new();
+        let conn = self.db.conn();
+        let Ok(mut s) = conn.prepare(&format!("SELECT src, dst, \"rev\" FROM {}", tbl("module_edge_rev"))) else {
+            return Ok(out);
+        };
+        let rows = s.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+        })?;
+        for row in rows.flatten() {
+            let (src, dst, rev) = row;
+            out.entry((rev, src)).or_default().insert(dst);
+        }
+        Ok(out)
+    }
+
+    /// Alias-hop input: `module_binding_rev(file, local, source, dst, rev)`
+    /// read once per family refresh (never per lookup, same shape as
+    /// `module_import_map`) into (rev, importing file) -> {local binding name
+    /// -> (source name at dst, dst file)}. Empty when the module graph hasn't
+    /// populated yet (the hop is then simply a no-op, same as an absent
+    /// import map). Index-free equivalent of `scip_binding`: resolves an
+    /// aliased import (`use x::y as z`, TS `import { a as b }`/default,
+    /// Kotlin `import a.b.C as D`) that the name-keyed `by_name` bucket has
+    /// no bucket for (the def's real name is `y`/`a`/`C`, not the local `z`/
+    /// `b`/`D`).
+    fn module_binding_map(&self) -> Result<HashMap<(String, String), HashMap<String, (String, String)>>> {
+        let mut out: HashMap<(String, String), HashMap<String, (String, String)>> = HashMap::new();
+        let conn = self.db.conn();
+        let Ok(mut s) = conn.prepare(
+            &format!("SELECT file, local, source, dst, \"rev\" FROM {}", tbl("module_binding_rev"))) else {
+            return Ok(out);
+        };
+        let rows = s.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?, r.get::<_, String>(4)?))
+        })?;
+        for row in rows.flatten() {
+            let (file, local, source, dst, rev) = row;
+            out.entry((rev, file)).or_default().insert(local, (source, dst));
         }
         Ok(out)
     }
@@ -1230,6 +1434,9 @@ impl Engine {
         let mut by_name: HashMap<(&str, &str, &str), Vec<&str>> = HashMap::new();
         let mut sym_at: HashMap<(&str, &str, &str, &str), &str> = HashMap::new();
         let mut def_by_file: HashMap<(&str, &str, &str), Vec<(u32, u32, &str)>> = HashMap::new();
+        // (repo, rev, sym) -> declaring file (Win D narrowing input, see
+        // refresh_type_rels' twin map).
+        let mut sym_file: HashMap<(&str, &str, &str), &str> = HashMap::new();
         for (repo, _, rev, f) in &facts {
             for d in &f.defs {
                 // Dedup by callable sym (see refresh_type_rels): a def scanned
@@ -1240,10 +1447,17 @@ impl Engine {
                     bucket.push(d.sym.as_str());
                 }
                 sym_at.insert((repo.as_str(), d.file.as_str(), rev.as_str(), d.name.as_str()), d.sym.as_str());
+                sym_file.insert((repo.as_str(), rev.as_str(), d.sym.as_str()), d.file.as_str());
                 def_by_file.entry((repo.as_str(), d.file.as_str(), rev.as_str())).or_default().push((d.line, d.end, d.sym.as_str()));
             }
         }
         let scip = self.scip_name_defs().unwrap_or_default();
+        // Win D: see refresh_type_rels, the same import map feeds both
+        // resolvers' ambiguity narrowing.
+        let imports = self.module_import_map().unwrap_or_default();
+        // Alias hop input: see refresh_type_rels, the same binding map feeds
+        // both resolvers' index-free alias hop.
+        let aliases = self.module_binding_map().unwrap_or_default();
         let resolve_callee = |repo: &str, rev: &str, file: &str, callee: &str| -> Option<String> {
             if rev == "WORK" {
                 if let Some(def_file) = scip.get(&(repo.to_string(), file.to_string(), callee.to_string())) {
@@ -1252,8 +1466,21 @@ impl Engine {
                     }
                 }
             }
+            // Index-free alias hop, see refresh_type_rels' `resolve` for the
+            // full rationale: only fires when this file declares no callable
+            // named `callee` itself (local def shadows an aliased import), and
+            // never falls through to by_name on a miss.
+            if sym_at.get(&(repo, file, rev, callee)).is_none() {
+                if let Some((source, dst)) = aliases.get(&(rev.to_string(), file.to_string())).and_then(|m| m.get(callee)) {
+                    return sym_at.get(&(repo, dst.as_str(), rev, source.as_str()))
+                        .map(|sym| format!("{repo}::{sym}"));
+                }
+            }
             match by_name.get(&(repo, rev, callee)) {
                 Some(v) if v.len() == 1 => Some(format!("{repo}::{}", v[0])),
+                Some(v) if v.len() > 1 =>
+                    narrow_ambiguous(v, repo, rev, file, &sym_file, &imports)
+                        .map(|sym| format!("{repo}::{sym}")),
                 _ => None,
             }
         };

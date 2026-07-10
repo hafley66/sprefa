@@ -284,10 +284,14 @@ fn client_root_uri(init_params: &serde_json::Value) -> Option<PathBuf> {
 fn spawn_daemon_subscriber(root: PathBuf, sender: crossbeam_channel::Sender<lsp_server::Message>) {
     use crate::{daemon, rpc};
     if !daemon::enabled_for(&root) { return; }
-    if !daemon::is_running(Some(&root)) {
-        let _ = daemon::ensure_daemon(&root, None);
+    if !daemon::is_running() {
+        let _ = daemon::ensure_singleton();
     }
-    let mut s = match daemon::connect(Some(&root)) { Ok(s) => s, Err(_) => return };
+    // Register this workspace root with the singleton so its engine ticks + pushes.
+    let _ = daemon::add_root(&root);
+    let mut s = match daemon::connect() { Ok(s) => s, Err(_) => return };
+    // Subscribe is process-wide; the forwarded diag_changed notifications carry a
+    // `root` field so the client can tell which engine moved.
     let req = rpc::Request::new(0, "subscribe",
         serde_json::json!({"events": ["diag_changed"]}));
     if daemon::rpc_call(&mut s, &req).is_err() { return; }

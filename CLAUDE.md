@@ -831,6 +831,33 @@ Opus/Sonnet subagents implement, orchestrator verifies+commits.
       Local fallback (Pump-shaped), never a second resident engine on a
       shared db.
 
+### Singleton daemon + registered roots — LANDED (main 06a86c8, 2026-07-10)
+Plan plans/2026-07-10-singleton-daemon-registered-roots.md, Opus implementer,
+P0-P4 in 6595ad7/2544043/f1ca893 (+06a86c8 straggler test migration). ONE
+process at $XDG_STATE_HOME/sprefa, one socket; `Daemon` (socket/subscribers/
+shutdown/registry) split from per-root `ServedRoot` (engine/program/watchgate/
+tick methods, db at home/roots/<blake3-16hex>/db.sqlite); config view = a
+ServedRoot with key=None (one code path). Every root-scoped RPC carries
+params.root; `resolve()` auto-add_roots a .dl-owning miss (attach IS
+registration, cold tick blocks the caller); add_root/drop_root RPCs +
+roots.json replay; nested-root refusal. `dl daemon start` detaches by default
+(--foreground = debug), announces the config view from a rootless cwd;
+`dl daemon drop <root> [--purge]`; stop stays global; idle exit = ALL roots
+idle. Per-root sockets/pids/dbs RETIRED (stale <root>/.dl/daemon.* reaped
+loudly); LSP/one-shot/--mcp/--hook route through the singleton. Tests
+hermetic via XDG_STATE_HOME sandboxes incl. the disc2 regression
+(sandboxed_daemon_never_binds_default_home); the old per-root leak class is
+structurally gone. docs/daemon.md rewritten; old <root>/.dl/db NOT imported
+(cold-start on first attach, changelogged). One-engine assumptions found+
+fixed: per-root state co-mingled in Daemon, watcher_loop blocking recv,
+idle/poll loops, home_dir(Some(root)) conflation, program-edit
+process::exit(0) respawn (removed — would kill every root; also revealed the
+old idle-exit was dead, part of why per-root daemons leaked). Suites at merge:
+lib 277/0/1, it 630/0/4. RESIDUALS: (a) LSP main loop doesn't filter
+diag_changed by root yet (multi-root editor over-queries, harmless); (b) a
+config-repo edit refreshes registered roots' git facts only on their own next
+tick; (c) per-root idle eviction deferred (engines stay warm).
+
 ### Open (turnkey query surface — plan plans/2026-07-10-turnkey-query-surface.md)
 Goal: dl useful from the first command for devs + agents, no .dl authoring.
 Tiers: `dl what` meta-query / `dl q` concept verbs / `dl find` schema-driven filter.
@@ -871,11 +898,56 @@ in the extract.rs resolve closures, 0.15 KU) first; then Go TypeLang (1.2 KU),
 generic def/ref tags tier over SG_LANG_TABLE (0.4 KU), Python TypeLang (1.2+ KU,
 type_link scoped out). stack-graphs ruled OUT (frozen upstream, .tsg cost,
 foreign resolution model).
-- [ ] **H+D in flight** (Sonnet agent worktree, 2026-07-10): TsTypes matches
-      .js/.jsx/.mjs/.cjs + SourceType per ext + engine file-selection globs;
-      len>1 bucket narrowed to import-reachable defs (module_edge read like
-      scip_ref, unique survivor only, digest fold so module-graph changes
-      re-resolve). Needs the double-check pass before merge.
+- [x] **H+D LANDED** (main eed54cc, Sonnet agent, 2026-07-10): TsTypes matches
+      .js/.jsx/.mjs/.cjs, `source_type_for` replaces the 3 dup path_is_tsx
+      branches, extract_file_set SQL + narrowing gate `narrow_ambiguous`
+      (survive = self/imported/same-dir; RESOLVE only a lone self/imported
+      survivor — same-dir-only tie stays bare); module_import_map read once
+      per refresh; digest folds module_edge_rev at EVERY rev (committed revs
+      have their own import graph, unlike the WORK-only scip fold). Tests
+      type_graph_js.rs + resolver_import_narrowing.rs. Post-rebase verify:
+      lib 265/0/1, it 613/0/4, oracle precision unchanged (0.78/0.55 module
+      drift is pre-existing, confirmed by stash A/B). REAL BUG FOUND+FIXED
+      en route: ModuleFamily only ran when the program named a module_* rel,
+      so type_link/call_edge-only programs never populated module_edge_rev
+      and the narrowing no-op'd silently — `module_rels_needed` now ORs in
+      type/call/doc usage (both ExtractFamily::used and tick_paths).
+- [ ] **Latent engine gap (found by the H+D test, unfixed)**:
+      `enumerate_with_hash`'s mtime+size fast path treats an equal-length
+      edit landing in the same fs timestamp tick as unchanged (test worked
+      around with a length-varying marker; any rapid two-tick same-db test
+      with an equal-length edit is a flake risk).
+- [x] **Aliased/default imports at the SYNTACTIC tier — LANDED** (main d9160ff,
+      Opus plan plans/2026-07-10-module-binding-alias.md + Sonnet impl,
+      2026-07-10): `module_binding_rev(file, local, source, dst, rev)` +
+      `module_binding` (rev-deduped union) capture aliased-import local
+      bindings from the EXISTING module-resolver parse (Rust `use x::y as z`
+      via UseLeaf.alias, TS/JS `import { a as b }`/default via string-level
+      parse_ts_import_clause, Kotlin `import a.b.C as D` regex group; carrier
+      = ModuleRef.bindings Vec<(local,source)>). Alias hop in BOTH resolve
+      closures: after SCIP override, before by_name, fires only when the
+      referencing file declares no same-named def (local shadows import),
+      dst-pinned, NEVER falls through to by_name on a miss (honest bare beats
+      a coincidental global match). Digest folds module_binding_rev beside
+      module_edge_rev (with_scip = "resolver reads outside inputs");
+      REV_TWINS + all five module write paths wired. anchor.rs unions
+      module_binding⋈type_entity so `dl what <alias>` resolves index-free.
+      Tests: 3 modgraph units + tests/it/resolver_import_alias.rs (5 e2e:
+      rust alias, dl what, shadowing negative, rev flip, TS alias). Suites
+      lib 268/0/1, it 618/0/4. NON-GOALS (honest bare): barrel re-exports,
+      namespace/wildcard imports, default-import RESOLUTION (rows emitted
+      source="default" but typegraph has no default-export entity — future
+      bridge), no repo column (same module-graph residual).
+- [ ] **Sonnet-implementer debrief pains** (2026-07-10): (a)
+      sprefa-v5-working-conventions skill still shows a `--root` flag that no
+      longer exists (cost a round of confused testing; skill source =
+      ~/projects/claude-research/skills, backprop candidate); (b) ambient
+      ~/.config/sprefa/config.toml silently joins every ad-hoc `dl` run
+      ("[config] 3 repo(s) registered") — set SPREFA_CONFIG explicitly for
+      smoke tests, nothing documents this habit outside resolver_repo_scope.rs;
+      (c) cross-family hidden dependency (resolver reads module_edge_rev) is
+      a shape the magic-rel audit doesn't cover — two ExtractFamily used()
+      gates coupling invisibly.
 
 ### Open (scip / language-surface — 2026-07-08 agent-session feedback, batch 2)
 Five more complaints (SCIP + dl-surface). NOT yet triaged against code; capture only.

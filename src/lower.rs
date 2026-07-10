@@ -507,6 +507,13 @@ pub fn lower_query(q: &Query, rels: &Rels) -> Result<(String, Vec<String>)> {
     if q.head.terms.len() != meta.cols.len() {
         bail!("query {} expects {} cols, got {}", q.head.rel, meta.cols.len(), q.head.terms.len());
     }
+    // A query head carrying one or more aggregate calls switches from
+    // SELECT DISTINCT to GROUP BY (the rule-head aggregate shape, positional).
+    let has_agg = q.head.terms.iter()
+        .any(|t| matches!(t, Term::Call { name, .. } if AggFn::parse(name).is_some()));
+    if has_agg {
+        return lower_query_agg(q, meta);
+    }
     let mut canon: HashMap<String, String> = HashMap::new();
     let mut wheres: Vec<String> = Vec::new();
     let mut sel: Vec<String> = Vec::new();
@@ -537,6 +544,117 @@ pub fn lower_query(q: &Query, rels: &Rels) -> Result<(String, Vec<String>)> {
     Ok((sql, headers))
 }
 
+/// The aggregate arm of `lower_query`. Var terms bind their column positionally,
+/// appear in SELECT, and form the GROUP BY set (also the deterministic ORDER BY).
+/// Literals stay WHERE filters. Wildcards drop out (collapsed over). A one-arg
+/// aggregate at position `i` aggregates column `i`; its arg var is a fresh output
+/// label (header), not a bound column. `json_group_object(key, value)` is the only
+/// two-arg aggregate: it consumes column `i` (key) and column `i+1` (value), and
+/// the term at `i+1` must be the wildcard `_`.
+fn lower_query_agg(q: &Query, meta: &RelMeta) -> Result<(String, Vec<String>)> {
+    use std::collections::HashSet;
+    let terms = &q.head.terms;
+    // Group-by var names bound at a plain (non-aggregate) position. An aggregate
+    // output label may not collide with one of these, nor with another label.
+    let group_vars: HashSet<&str> = terms.iter()
+        .filter_map(|t| if let Term::Var(v) = t { Some(v.as_str()) } else { None })
+        .collect();
+    let mut labels: HashSet<String> = HashSet::new();
+
+    let mut consumed = vec![false; terms.len()];
+    let mut canon: HashMap<String, String> = HashMap::new();
+    let mut wheres: Vec<String> = Vec::new();
+    let mut sel: Vec<String> = Vec::new();
+    let mut headers: Vec<String> = Vec::new();
+    let mut group_cells: Vec<String> = Vec::new();
+
+    // Register an aggregate output label, rejecting a collision with a bound
+    // group var or another aggregate label.
+    let take_label = |args: &[Term], labels: &mut HashSet<String>| -> Result<String> {
+        let Some(Term::Var(name)) = args.first() else {
+            bail!("aggregate argument must be a variable naming the output column, e.g. count(total)");
+        };
+        if group_vars.contains(name.as_str()) {
+            bail!("aggregate output label `{name}` collides with a column var bound elsewhere in the query head; rename it");
+        }
+        if !labels.insert(name.clone()) {
+            bail!("aggregate output label `{name}` is used twice in the query head; rename one");
+        }
+        Ok(name.clone())
+    };
+
+    for i in 0..terms.len() {
+        if consumed[i] { continue; }
+        let cell = format!("\"{}\"", meta.col_name(i));
+        match &terms[i] {
+            Term::Wild => {}
+            Term::Str(_) | Term::Int(_) => wheres.push(format!("{cell} = {}", lit_sql(&terms[i]).unwrap())),
+            Term::Interp(_) => bail!("interpolated string not supported in a query head"),
+            Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
+            Term::Arith { .. } => bail!("arithmetic not supported in a query head (derive a relation with the computed column and query that)"),
+            Term::Var(v) => match canon.get(v) {
+                Some(prev) => wheres.push(format!("{cell} = {prev}")),
+                None => {
+                    canon.insert(v.clone(), cell.clone());
+                    sel.push(format!("{cell} AS \"{v}\""));
+                    headers.push(v.clone());
+                    group_cells.push(cell.clone());
+                }
+            },
+            Term::Call { name, args } => {
+                let Some(f) = AggFn::parse(name) else {
+                    bail!("function call not supported in a query head (derive a relation with the computed column and query that)");
+                };
+                if f.is_two_arg() {
+                    if args.len() != 2 {
+                        bail!("json_group_object(key, value) in a query head takes two argument labels, got {}", args.len());
+                    }
+                    // The two-arg aggregate consumes the NEXT column as its value,
+                    // so the term at i+1 must be `_` (query arity == rel columns).
+                    if i + 1 >= terms.len() || !matches!(terms[i + 1], Term::Wild) {
+                        bail!("json_group_object(k, v) in a query head consumes two columns: place it at the key column and put _ at the value column (\"? line(order, json_group_object(item, price), _)\")");
+                    }
+                    consumed[i + 1] = true;
+                    let label = take_label(args, &mut labels)?;
+                    let val_cell = format!("\"{}\"", meta.col_name(i + 1));
+                    sel.push(format!("json_group_object({cell}, {val_cell} ORDER BY {cell}) AS \"{label}\""));
+                    headers.push(label);
+                } else {
+                    if args.len() != 1 {
+                        bail!("aggregate `{name}` in a query head takes one argument label, got {}", args.len());
+                    }
+                    let label = take_label(args, &mut labels)?;
+                    let expr = match f {
+                        // `ORDER BY <col>` inside the aggregate keeps element order a
+                        // pure function of the group's rows, so the JSON text is stable
+                        // tick to tick (no spurious daemon rebuild).
+                        AggFn::JsonGroupArray => format!("json_group_array({cell} ORDER BY {cell})"),
+                        // SUM over zero rows is SQL NULL; pin empty-sum to 0.
+                        AggFn::Sum => format!("COALESCE(SUM({cell}), 0)"),
+                        AggFn::Count | AggFn::Min | AggFn::Max => format!("{}({cell})", f.sql()),
+                        AggFn::JsonGroupObject => unreachable!("handled by the two-arg arm"),
+                    };
+                    sel.push(format!("{expr} AS \"{label}\""));
+                    headers.push(label);
+                }
+            }
+        }
+    }
+
+    let where_sql = if wheres.is_empty() { String::new() } else { format!(" WHERE {}", wheres.join(" AND ")) };
+    // Zero grouped columns (all wildcards + aggregates) = a whole-rel aggregate:
+    // one row, no GROUP BY, no ORDER BY.
+    let (group_sql, order_sql) = if group_cells.is_empty() {
+        (String::new(), String::new())
+    } else {
+        (format!(" GROUP BY {}", group_cells.join(", ")),
+         format!(" ORDER BY {}", group_cells.join(", ")))
+    };
+    let sql = format!("SELECT {} FROM {}{}{}{}",
+        sel.join(", "), tbl(&q.head.rel), where_sql, group_sql, order_sql);
+    Ok((sql, headers))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -554,6 +672,126 @@ mod tests {
             }
         }
         (rule.expect("one derived rule"), rels)
+    }
+
+    fn query_and_rels(src: &str) -> (Query, Rels) {
+        let prog = crate::parse::parse(crate::lex::lex(src).unwrap()).unwrap();
+        let mut rels = Rels::new();
+        let mut query = None;
+        for item in prog.items {
+            match item {
+                Item::Rel(d) => { rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone(), ..Default::default() }); }
+                Item::Query(q) => { query = Some(q); }
+                _ => {}
+            }
+        }
+        (query.expect("one query"), rels)
+    }
+
+    /// An aggregate query head switches from SELECT DISTINCT to GROUP BY: the
+    /// var terms are the group set (and the deterministic ORDER BY), the aggregate
+    /// collapses each group. json_group_array orders inside the call.
+    #[test]
+    fn query_agg_json_group_array_groups_and_orders() {
+        let (q, rels) = query_and_rels(concat!(
+            "rel member(group_col: text, name: text).\n",
+            "? member(group_col, json_group_array(names)).\n"));
+        let (sql, headers) = lower_query(&q, &rels).unwrap();
+        assert!(sql.contains("json_group_array(\"name\" ORDER BY \"name\") AS \"names\""),
+            "array agg orders inside the call, labeled by the arg var: {sql}");
+        assert!(sql.contains("GROUP BY \"group_col\""), "group key present: {sql}");
+        assert!(sql.contains("ORDER BY \"group_col\""), "deterministic order by group: {sql}");
+        assert!(!sql.contains("DISTINCT"), "no DISTINCT under GROUP BY: {sql}");
+        assert_eq!(headers, vec!["group_col".to_string(), "names".to_string()]);
+    }
+
+    /// count/sum aggregate their positional column; the arg var is the header.
+    #[test]
+    fn query_agg_count_sum_shape() {
+        let (q, rels) = query_and_rels(concat!(
+            "rel hit(bucket: text, amount: int).\n",
+            "? hit(bucket, count(total)).\n"));
+        let (sql, headers) = lower_query(&q, &rels).unwrap();
+        assert!(sql.contains("COUNT(\"amount\") AS \"total\""), "count over column i: {sql}");
+        assert!(sql.contains("GROUP BY \"bucket\""), "{sql}");
+        assert_eq!(headers, vec!["bucket".to_string(), "total".to_string()]);
+
+        let (q, rels) = query_and_rels(concat!(
+            "rel hit(bucket: text, amount: int).\n",
+            "? hit(bucket, sum(total)).\n"));
+        let (sql, _) = lower_query(&q, &rels).unwrap();
+        assert!(sql.contains("COALESCE(SUM(\"amount\"), 0) AS \"total\""), "empty-sum pinned to 0: {sql}");
+    }
+
+    /// Zero group vars (all wildcards + one aggregate) = a whole-rel aggregate:
+    /// one row, no GROUP BY, no ORDER BY.
+    #[test]
+    fn query_agg_whole_rel_no_group_by() {
+        let (q, rels) = query_and_rels(concat!(
+            "rel hit(bucket: text, amount: int).\n",
+            "? hit(_, count(total)).\n"));
+        let (sql, headers) = lower_query(&q, &rels).unwrap();
+        assert!(sql.contains("COUNT(\"amount\") AS \"total\""), "{sql}");
+        assert!(!sql.contains("GROUP BY"), "no group by for whole-rel aggregate: {sql}");
+        assert!(!sql.contains("ORDER BY"), "no order by for one-row aggregate: {sql}");
+        assert_eq!(headers, vec!["total".to_string()]);
+    }
+
+    /// A literal term stays a WHERE filter alongside the GROUP BY.
+    #[test]
+    fn query_agg_literal_filter_plus_group() {
+        let (q, rels) = query_and_rels(concat!(
+            "rel line(kind: text, item: text, price: int).\n",
+            "? line(\"food\", item, sum(total)).\n"));
+        let (sql, _) = lower_query(&q, &rels).unwrap();
+        assert!(sql.contains("WHERE \"kind\" = 'food'"), "literal filters: {sql}");
+        assert!(sql.contains("GROUP BY \"item\""), "grouped by the surviving var: {sql}");
+    }
+
+    /// json_group_object(key, value) consumes column i (key) and column i+1
+    /// (value); the term at i+1 must be `_`. Its header is the key arg label.
+    #[test]
+    fn query_agg_json_group_object_two_column() {
+        let (q, rels) = query_and_rels(concat!(
+            "rel line(order_id: text, item: text, price: int).\n",
+            "? line(order_id, json_group_object(items, prices), _).\n"));
+        let (sql, headers) = lower_query(&q, &rels).unwrap();
+        assert!(sql.contains("json_group_object(\"item\", \"price\" ORDER BY \"item\") AS \"items\""),
+            "key = col i, value = col i+1, ordered by key: {sql}");
+        assert!(sql.contains("GROUP BY \"order_id\""), "{sql}");
+        assert_eq!(headers, vec!["order_id".to_string(), "items".to_string()]);
+    }
+
+    /// json_group_object without a trailing `_` at the value column is the shaped
+    /// two-column error.
+    #[test]
+    fn query_agg_json_group_object_missing_wildcard_bails() {
+        let (q, rels) = query_and_rels(concat!(
+            "rel line(order_id: text, item: text).\n",
+            "? line(order_id, json_group_object(items, prices)).\n"));
+        let e = lower_query(&q, &rels).unwrap_err().to_string();
+        assert!(e.contains("consumes two columns") && e.contains("put _ at the value column"),
+            "shaped two-column error: {e}");
+    }
+
+    /// An aggregate output label colliding with a bound group var is refused.
+    #[test]
+    fn query_agg_label_collision_bails() {
+        let (q, rels) = query_and_rels(concat!(
+            "rel hit(bucket: text, amount: int).\n",
+            "? hit(bucket, count(bucket)).\n"));
+        let e = lower_query(&q, &rels).unwrap_err().to_string();
+        assert!(e.contains("collides") && e.contains("rename"), "collision named: {e}");
+    }
+
+    /// A non-aggregate function call in a query head keeps the existing bail.
+    #[test]
+    fn query_non_agg_call_still_bails() {
+        let (q, rels) = query_and_rels(concat!(
+            "rel raw(name: text).\n",
+            "? raw(replace(name, \"a\", \"b\")).\n"));
+        let e = lower_query(&q, &rels).unwrap_err().to_string();
+        assert!(e.contains("function call not supported in a query head"), "{e}");
     }
 
     /// A body bind inlines the computed expression into every use site: the
