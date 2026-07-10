@@ -1317,6 +1317,26 @@ pub struct RefLens {
     pub callees: Vec<RefHit>,
 }
 
+/// One point-lookup hit for the "follow the user" navigation surface
+/// (`Engine::locate`, Track B B4). Cheap by construction: this is a single
+/// cursor -> symbol -> declaration-site resolution, never a uses/callers
+/// collection or a closure walk — the panel calls it on every cursor move, so
+/// it stays a point query same as `resolve_sym_hit`. `tier` mirrors
+/// `RefLens.tier` minus "textual" (a grep-grade hit would center the graph on
+/// nothing, so follow mode never falls that far). `role` is the edge/occurrence
+/// role at the declaration site (a SCIP role for tier "compiler", the
+/// type_entity/call_def kind for tier "resolved").
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct LocateHit {
+    pub tier: String,
+    pub symbol: String,
+    pub display_name: String,
+    pub role: String,
+    pub repo: String,
+    pub file: String,
+    pub line: u32,
+}
+
 /// One declared symbol for the nearly-free LSP surfaces (`workspace/symbol` and
 /// `textDocument/documentSymbol`). Carries its OWN repo so the LSP maps the slug
 /// back to that repo's on-disk root, `line` is 1-based as stored in the rels, and
@@ -2994,6 +3014,143 @@ impl Engine {
             display_name: text,
             declarations, uses, containing_types, callers, callees,
         }))
+    }
+
+    /// First `role='definition'` occurrence of `sym` in the loaded SCIP index,
+    /// as a bare `(repo, file, line)` site. A single `LIMIT 1` query, not a
+    /// collection — the point-query twin of `scip_def_hits`, used only to
+    /// locate a symbol whose covering occurrence is itself a USE.
+    fn scip_def_site(&self, sym: &str) -> Option<(String, String, i64)> {
+        let so = tbl("scip_occurrence");
+        self.try_rows(
+            &format!("SELECT \"repo\", \"file\", \"line\" FROM {so} \
+                      WHERE \"symbol\" = ?1 AND \"role\" = 'definition' LIMIT 1"),
+            &[&sym],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)),
+        )
+        .into_iter()
+        .next()
+    }
+
+    /// tier "compiler" for `locate`: the same covering-occurrence lookup
+    /// `compiler_lens` uses (innermost SCIP occurrence over the cursor), but
+    /// stops at the symbol + role instead of grouping every use/caller/callee.
+    /// When the covering occurrence's own role is already `definition` its site
+    /// IS the declaration; otherwise one `scip_def_site` lookup finds it (falls
+    /// back to the occurrence's own site when the symbol has no definition
+    /// occurrence in this index, e.g. an out-of-workspace target). None when no
+    /// index is loaded for the repo or no occurrence covers the cursor.
+    fn compiler_locate(&self, path: &str, byte: u32, text: &str) -> Result<Option<LocateHit>> {
+        let so = tbl("scip_occurrence");
+        let repo = self.repo_for_path(path);
+        let roots = self.repo_roots();
+        let root = roots.get(&repo).cloned().unwrap_or_else(|| self.root.clone());
+        let content = read_content(&root, "WORK", path).unwrap_or_default();
+        let (cl, cc) = byte_to_lc0(&content, byte);
+        let (cl, cc) = (cl as i64, cc as i64);
+
+        let mut covering: Vec<(String, i64, i64, i64, i64, String)> = self.try_rows(
+            &format!("SELECT \"symbol\", \"line\", \"col\", \"end_line\", \"end_col\", \"role\" \
+                      FROM {so} WHERE \"file\" = ?1 AND \"repo\" = ?2"),
+            &[&path, &repo],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?, r.get::<_, i64>(4)?, r.get::<_, String>(5)?)),
+        );
+        covering.retain(|(_, sl, sc, el, ec, _)| {
+            let after_start = *sl < cl || (*sl == cl && *sc <= cc);
+            let before_end = *el > cl || (*el == cl && *ec > cc);
+            after_start && before_end
+        });
+        covering.sort_by_key(|(_, sl, sc, el, ec, _)| (el - sl, (ec - sc).max(0)));
+        let Some((symbol, occ_line, _, _, _, role)) = covering.into_iter().next() else {
+            return Ok(None);
+        };
+
+        let (def_repo, def_file, def_line) = if role == "definition" {
+            (repo, path.to_string(), occ_line)
+        } else {
+            self.scip_def_site(&symbol).unwrap_or((repo, path.to_string(), occ_line))
+        };
+
+        Ok(Some(LocateHit {
+            tier: "compiler".to_string(),
+            symbol,
+            display_name: text.to_string(),
+            role,
+            repo: def_repo,
+            file: def_file,
+            line: def_line.max(0) as u32,
+        }))
+    }
+
+    /// tier "resolved" for `locate`: the identifier text joined by name against
+    /// `type_entity` then `call_def`/`call_name` (the same two lookups
+    /// `refs_lens` uses to build its declaration list), keeping only the
+    /// preferred declaration (same-repo-then-same-file, matching `refs_lens`'s
+    /// ambiguity rule) instead of collecting every declaration and every use.
+    /// None when the identifier resolves to no symbol (locate has no textual
+    /// tier — a grep-grade hit would center the graph on nothing meaningful).
+    fn resolved_locate(&self, path: &str, text: &str) -> Result<Option<LocateHit>> {
+        let path_repo = self.repo_for_path(path);
+
+        let te = tbl("type_entity");
+        let mut candidates: Vec<(String, String, String, String, i64)> = self.try_rows(
+            &format!("SELECT \"repo\", \"sym\", \"kind\", \"file\", \"line\" FROM {te} WHERE \"name\" = ?1"),
+            &[&text],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?, r.get::<_, i64>(4)?)),
+        );
+        if candidates.is_empty() {
+            let cd = tbl("call_def");
+            let cn = tbl("call_name");
+            candidates = self.try_rows(
+                &format!("SELECT d.\"repo\", d.\"sym\", d.\"kind\", d.\"file\", d.\"line\" \
+                          FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" WHERE n.\"name\" = ?1"),
+                &[&text],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?, r.get::<_, i64>(4)?)),
+            );
+        }
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+
+        let pick = candidates.iter()
+            .find(|(repo, _, _, file, _)| *repo == path_repo && file == path)
+            .or_else(|| candidates.iter().find(|(repo, _, _, _, _)| *repo == path_repo))
+            .cloned()
+            .unwrap_or_else(|| candidates[0].clone());
+        let (repo, sym, kind, file, line) = pick;
+
+        Ok(Some(LocateHit {
+            tier: "resolved".to_string(),
+            symbol: sym,
+            display_name: text.to_string(),
+            role: kind,
+            repo, file,
+            line: (line - 1).max(0) as u32,
+        }))
+    }
+
+    /// Cheap point lookup for the "follow the user" navigation surface (Track B
+    /// B4, the `dl/locate` LSP request): the cursor at (`path`, `byte`) resolves
+    /// to the symbol it sits on and that symbol's declaration site, trying tier
+    /// "compiler" (a loaded SCIP index) then tier "resolved" (the type/call
+    /// graph by name) — the HEAD of the same ladder `refs_lens` walks, minus the
+    /// uses/callers/callees collection and minus the textual tier. None when
+    /// the cursor is not on a located string, or the identifier resolves to no
+    /// symbol in either tier.
+    pub fn locate(&self, path: &str, byte: usize) -> Result<Option<LocateHit>> {
+        let Some((_string_id, text, _lo, _hi)) = self.span_at(path, byte as u32)? else {
+            return Ok(None);
+        };
+        if let Some(hit) = self.compiler_locate(path, byte as u32, &text)? {
+            return Ok(Some(hit));
+        }
+        if let Some(hit) = self.resolved_locate(path, &text)? {
+            return Ok(Some(hit));
+        }
+        Ok(None)
     }
 
     /// tier "textual": the ref-spine same-string fallback. Every located WORK

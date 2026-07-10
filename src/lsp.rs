@@ -189,6 +189,10 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, db_defaulted: bool, r
                         let resp = handle_refs(&eng, &root, &req);
                         connection.sender.send(Message::Response(resp))?;
                     }
+                    "dl/locate" => {
+                        let resp = handle_locate(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
                     "textDocument/hover" => {
                         let resp = handle_hover(&eng, &root, &req);
                         connection.sender.send(Message::Response(resp))?;
@@ -661,6 +665,37 @@ fn handle_refs(eng: &Engine, root: &Path, req: &Request) -> Response {
     match eng.refs_lens(&rel, byte as usize) {
         Ok(Some(lens)) => Response::new_ok(req.id.clone(),
             serde_json::to_value(lens).unwrap_or(serde_json::Value::Null)),
+        Ok(None) => Response::new_ok(req.id.clone(), serde_json::Value::Null),
+        Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
+    }
+}
+
+/// Custom request `dl/locate`: the cheap "follow the user" point lookup (Track
+/// B B4) for one cursor — cursor -> symbol -> declaration site, no
+/// uses/callers/callees. Same param shape as `dl/refs`:
+/// `{"uri": string} | {"path": string}` (path is root-relative) plus `"line"`
+/// and `"character"` (0-based). Returns the serialized `LocateHit`, or null
+/// when the cursor is not on a located identifier or the identifier resolves
+/// to no symbol in either tier. Meant to be called at cursor-move cadence (the
+/// extension debounces), so it does exactly one `Engine::locate` call and
+/// nothing else — no fact write, no tick.
+fn handle_locate(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let line = req.params.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let character = req.params.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let abs: Option<PathBuf> = if let Some(uri) = req.params.get("uri").and_then(|v| v.as_str()) {
+        Uri::from_str(uri).ok().and_then(|u| uri_to_path(&u))
+    } else {
+        req.params.get("path").and_then(|v| v.as_str()).map(|p| root.join(p))
+    };
+    let Some(abs) = abs else {
+        return Response::new_err(req.id.clone(), -32602, "dl/locate needs a uri or path".into());
+    };
+    let Some((rel, byte)) = resolve_abs_byte(root, &abs, Position::new(line, character)) else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    match eng.locate(&rel, byte as usize) {
+        Ok(Some(hit)) => Response::new_ok(req.id.clone(),
+            serde_json::to_value(hit).unwrap_or(serde_json::Value::Null)),
         Ok(None) => Response::new_ok(req.id.clone(), serde_json::Value::Null),
         Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
     }
