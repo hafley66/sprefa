@@ -706,9 +706,16 @@ mod tests {
             role_label(SymbolRole::Definition as i32 | SymbolRole::Import as i32),
             "definition"
         );
-        // No Definition bit → reference (plain, Import, Read, Write all fold in).
+        // No Definition bit: the widened vocabulary keeps the finer roles.
         assert_eq!(role_label(0), "reference");
-        assert_eq!(role_label(SymbolRole::Import as i32), "reference");
+        assert_eq!(role_label(SymbolRole::Import as i32), "import");
+        assert_eq!(role_label(SymbolRole::WriteAccess as i32), "write");
+        assert_eq!(role_label(SymbolRole::ReadAccess as i32), "read");
+        // Compound read+write reports write (the rarer, more queryable side).
+        assert_eq!(
+            role_label(SymbolRole::ReadAccess as i32 | SymbolRole::WriteAccess as i32),
+            "write"
+        );
     }
 
     #[test]
