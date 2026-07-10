@@ -55,7 +55,7 @@ alone never fails. Never hand-edit inside the markers.
 - `src/engine/extract.rs:532` extract-file-set: the extension LIKE list gating which files reach TypeLang extraction; a new TypeLang's extensions must be added to this SQL too or its extractor never sees a file
 - `src/engine/mod.rs:7664` ast-grammars: one table row = `ast` op support (tree-sitter constructor keyed by label); `comment_node` and the CST node/child rels also dispatch through `ts_lang`, via `cst::lang_label_for_path`
 - `src/lib.rs:640` move-rewriter: per-language `--move` path rewriting (rspath = Rust use-paths + mod surgery, ktpath = Kotlin package math); a new language adds its rewriter module and dispatches from this driver
-- `src/modgraph.rs:136` module-resolvers: per-language import resolver registration; buys module_edge/module_unresolved/module_binding plus the name resolver's alias hop and import-scoped ambiguity narrowing
+- `src/modgraph.rs:142` module-resolvers: per-language import resolver registration; buys module_edge/module_unresolved/module_binding plus the name resolver's alias hop and import-scoped ambiguity narrowing
 - `src/scip_setup.rs:50` scip-indexers: the real-SCIP tier; one Indexer row (marker files, binary, install hint, argv) = `dl index` / `dl doctor` / `scip_want` support for the language
 - `src/sg.rs:6` sg-grammars: one table row = `sg` + `ast_yaml` op support for a grammar (canonical name, aliases, ast-grep SupportLang); the skill language matrix test asserts this table
 - `src/typegraph.rs:351` typelang-registry: impl `TypeLang { name, matches, extract }` and register it here; buys type_entity/type_edge/type_sig/call_*/df_*/doc_comment for the language (the index-free diet tier, Kotlin-sized)

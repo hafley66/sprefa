@@ -925,10 +925,22 @@ foreign resolution model).
       (slug-set desync fails, line drift alone never does);
       tests/it/lang_skill_gen.rs (4, incl. the string-literal negative).
       scip-go install hint corrected to github.com/scip-code.
-- [ ] **Go + Python TypeLangs IN FLIGHT** (2 Sonnet worktree agents launched
-      2026-07-10; plan items B and C of pseudo-scip): GoTypes + GoResolver,
-      PyTypes + PyResolver (type_link chasing scoped out), each with unit + e2e
-      tests. Mid-flight amendment to PyResolver (Chris, PYTHONPATH concern):
+- [x] **Go TypeLang + GoResolver LANDED** (main 8ef6cb9, Sonnet agent,
+      2026-07-10, pseudo-scip item B): GoTypes one-parse tree-sitter walk
+      (struct/interface/alias/function/method entities w/ receiver-typed
+      parents via go_owner_kinds; field/impl/generic edges — interface embeds
+      AND generic type-set constraints both land as impl, tree-sitter-go 0.25
+      unifies them under type_elem; go_fn_type arrows w/ multi-value ret
+      flattened; full df lift incl. func-literal ::closure:: scopes, composite
+      literals as new+df_field, per-value ret nodes; godoc block docs,
+      deprecated tag only). GoResolver = go.mod module line +
+      one-package-per-dir, import -> whole-dir .go fan-out (Kotlin wildcard
+      precedent), alias imports -> module_binding, blank/dot imports handled.
+      collect_manifests gained "go.mod". 8 typegraph + 4 modgraph units, 5 e2e
+      tests/it/go.rs. Suites at merge: lib 287/0/1, it 641/0/5.
+- [ ] **Python TypeLang IN FLIGHT** (Sonnet worktree agent, 2026-07-10,
+      pseudo-scip item C): PyTypes + PyResolver (type_link chasing scoped
+      out), unit + e2e tests. Mid-flight amendment to PyResolver (Chris, PYTHONPATH concern):
       import-root DISCOVERY from the scanned file set (repo root + src-layout +
       parents of top-level packages, the rspath::crate_roots precedent;
       multi-root ambiguity stays unresolved loudly) + sys.path.insert/append
