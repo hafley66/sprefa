@@ -290,6 +290,23 @@ diag(path: importer_path, line: line, severity: "warning", code: "long-import-ch
     import_edge(importer_path, imported_path, line), line > 5.
 ```
 
+## Type decls (v0.6.24): brands, enums, shapes, derived shapes
+
+```dl
+type severity = "error" | "warn" | "info" | "hint".   # closed set; typo'd literal = load error + did-you-mean
+type finding(path: text, line: int, sev: severity).   # named shape
+rel finding_rel: finding.                              # rel from shape (no column copy-paste)
+```
+
+Builtin kind columns (`type_edge.kind`, `type_entity.kind`, `df_node.kind`,
+`checkout_done.action`) are enum-checked ambiently — query
+`? rel_col(rel, pos, col, type, variants)` for any column's allowed values
+instead of guessing. Schemas can also be COMPUTED: head
+`type_decl_row(shape, pos, col, type)` from a derived rule and a
+`rel name: shape.` using it resolves one tick later (`shape-pending` info diag
+until then). See `dl examples --show type-from-json.dl`; design:
+docs/type-comptime-roadmap.md.
+
 ## Lattice relations: `key(...)` + `merge(...)`
 
 `key` names a conflict target narrower than the whole row (a choice-domain,
@@ -340,7 +357,7 @@ endpoint_status(endpoint, status_code, body_text) <-
 - **Call graph / blast radius**: who calls X, what transitively reaches Z —
   `closure(call_edge)`, `reaches(Term, X)`.
 - **Import graph**: `module_edge`, broken imports (`examples/lint-imports.dl`).
-- **Type graph**: `type_edge(from, to, kind)`, `type_entity`/`type_sig`/`type_link`
+- **Type graph**: `type_edge(from, to, kind, repo)`, `type_entity`/`type_sig`/`type_link`
   (SCIP-resolved sym→sym), cross-language (Rust/TS/Kotlin).
 - **Dataflow**: `df_node`/`df_edge`/`df_arg`/`df_param`/`df_field`, unioned into
   `flow_edge` by `use "std/flow.dl".` (`examples/flow-interproc.dl`, `taint.dl`).
