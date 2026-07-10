@@ -98,8 +98,9 @@ pub fn run_what(args: &[String]) -> Result<i32> {
         return Ok(2);
     };
     let target = root::daemon_target()?;
-    if daemon_first(&o) && daemon::status(Some(&target))?.is_some() {
-        let ans = daemon::what(Some(&target), &anchor, o.limit, o.offset)?;
+    let root_opt = target.root();
+    if daemon_first(&o) && daemon::status(None)?.is_some() {
+        let ans = daemon::what(root_opt, &anchor, o.limit, o.offset)?;
         print_answer(&ans.columns, &ans.rows, ans.total, &ans.notes, o.offset);
     } else {
         let eng = warm_engine(&o)?;
@@ -117,8 +118,9 @@ pub fn run_summary(args: &[String]) -> Result<i32> {
         return Ok(2);
     };
     let target = root::daemon_target()?;
-    if daemon_first(&o) && daemon::status(Some(&target))?.is_some() {
-        let ans = daemon::summary(Some(&target), &path)?;
+    let root_opt = target.root();
+    if daemon_first(&o) && daemon::status(None)?.is_some() {
+        let ans = daemon::summary(root_opt, &path)?;
         print_answer(&ans.columns, &ans.rows, ans.total, &ans.notes, None);
     } else {
         let eng = warm_engine(&o)?;

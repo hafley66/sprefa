@@ -20,16 +20,39 @@ pub fn resolve(programs: &[String]) -> Result<PathBuf> {
     Ok(raw)
 }
 
-/// Root for a daemon-control op (`dl daemon <verb>`, and the back-compat
-/// flags): the spawned daemon's `DL_DAEMON_ROOT` if set, else the nearest `.dl/`
-/// ancestor of cwd (the same root a one-shot auto-attaches to), else cwd.
-pub fn daemon_target() -> Result<PathBuf> {
+/// Which root a daemon-control op / one-shot addresses on the singleton daemon.
+/// There is one daemon and one socket; the root is an envelope KEY, not a socket
+/// selector. `None` = the config-view engine (org/folders model, scans nothing).
+#[derive(Debug, Clone)]
+pub enum DaemonTarget {
+    Singleton { root: Option<PathBuf> },
+}
+
+impl DaemonTarget {
+    /// The root key (`None` = config view).
+    pub fn root(&self) -> Option<&std::path::Path> {
+        match self {
+            DaemonTarget::Singleton { root } => root.as_deref(),
+        }
+    }
+}
+
+/// Resolve which root a daemon op addresses. `DL_DAEMON_ROOT` wins (spawned
+/// children, tests); else the nearest `.dl/`-owning ancestor of cwd (cwd itself
+/// if it owns one); else `None` — the rootless config view.
+pub fn daemon_target() -> Result<DaemonTarget> {
     if let Some(p) = std::env::var_os("DL_DAEMON_ROOT") {
-        return Ok(PathBuf::from(p).canonicalize()?);
+        let root = PathBuf::from(p).canonicalize()?;
+        return Ok(DaemonTarget::Singleton { root: Some(root) });
     }
     let cwd = std::env::current_dir()?;
     let raw = cwd.canonicalize().unwrap_or(cwd);
-    Ok(nearest_dl_ancestor(&raw).unwrap_or(raw))
+    let root = if raw.join(".dl").is_dir() {
+        Some(raw)
+    } else {
+        nearest_dl_ancestor(&raw)
+    };
+    Ok(DaemonTarget::Singleton { root })
 }
 
 /// If `dir` has no `.dl/`, the nearest ancestor that does. `None` when `dir`

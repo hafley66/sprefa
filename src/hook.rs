@@ -64,9 +64,9 @@ fn val_str(v: &serde_json::Value) -> String {
 /// One `query_sql` read of a rel's column 0 off the daemon. A rel the program
 /// never declared has no `rel_<name>` table; the daemon returns an error
 /// response, read here as empty.
-fn daemon_col(s: &mut UnixStream, table: &str) -> Vec<String> {
+fn daemon_col(s: &mut UnixStream, root: &Path, table: &str) -> Vec<String> {
     let req = crate::rpc::Request::new(1, "query_sql",
-        serde_json::json!({ "sql": format!("SELECT * FROM {table}") }));
+        serde_json::json!({ "root": root.to_string_lossy(), "sql": format!("SELECT * FROM {table}") }));
     let Ok(resp) = crate::daemon::rpc_call(s, &req) else { return Vec::new() };
     if resp.error.is_some() { return Vec::new(); }
     resp.result.and_then(|v| v.get("rows").cloned())
@@ -102,8 +102,9 @@ impl HookEvent {
 }
 
 /// Feed one event into the daemon's warm engine (`hook_event` RPC: append + tick).
-fn daemon_feed_event(s: &mut UnixStream, ev: &HookEvent) -> Result<()> {
+fn daemon_feed_event(s: &mut UnixStream, root: &Path, ev: &HookEvent) -> Result<()> {
     let req = crate::rpc::Request::new(1, "hook_event", serde_json::json!({
+        "root": root.to_string_lossy(),
         "kind": ev.kind, "session": ev.session, "seq": ev.seq, "json": ev.json,
     }));
     let resp = crate::daemon::rpc_call(s, &req)?;
@@ -118,12 +119,12 @@ fn daemon_feed_event(s: &mut UnixStream, ev: &HookEvent) -> Result<()> {
 /// off the re-derived tables. One connection: feed, then three reads.
 fn rels_via_daemon(ev: &HookEvent, program: Option<&str>, root: &Path) -> Result<EmitRels> {
     crate::daemon::ensure_daemon(root, program)?;
-    let mut s = crate::daemon::connect(Some(root))?;
-    daemon_feed_event(&mut s, ev)?;
+    let mut s = crate::daemon::connect()?;
+    daemon_feed_event(&mut s, root, ev)?;
     Ok(EmitRels {
-        inject: daemon_col(&mut s, "rel_inject"),
-        skills: daemon_col(&mut s, "rel_inject_skill"),
-        blocks: daemon_col(&mut s, "rel_block"),
+        inject: daemon_col(&mut s, root, "rel_inject"),
+        skills: daemon_col(&mut s, root, "rel_inject_skill"),
+        blocks: daemon_col(&mut s, root, "rel_block"),
         broken: false,
     })
 }

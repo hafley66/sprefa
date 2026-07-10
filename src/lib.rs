@@ -161,8 +161,10 @@ pub fn run_file(programs: &[String], db_path: Option<&str>, db_defaulted: bool, 
 /// results in the same shape as `run_file_inproc` prints.
 fn run_file_via_daemon(program: Option<&str>, root: &Path, query_json: bool) -> Result<()> {
     daemon::ensure_daemon(root, program)?;
-    let mut s = daemon::connect(Some(root))?;
-    let req = rpc::Request::new(1, "query", serde_json::json!({}));
+    let mut s = daemon::connect()?;
+    // The `root` envelope key names which engine to query; an unregistered `.dl`
+    // root auto-registers (cold-ticks) inside the daemon on this call.
+    let req = rpc::Request::new(1, "query", serde_json::json!({"root": root.to_string_lossy()}));
     let resp = daemon::rpc_call(&mut s, &req)?;
     if let Some(e) = resp.error { anyhow::bail!("daemon query: {}", e.message); }
     let results = resp.result.and_then(|v| v.get("results").cloned()).unwrap_or(serde_json::Value::Array(vec![]));
@@ -325,8 +327,8 @@ pub fn run_check(programs: &[String], db_path: Option<&str>, root: PathBuf, json
 /// `run_check_inproc`. Returns the error-severity count for the exit contract.
 fn run_check_via_daemon(program: Option<&str>, root: &Path, json: bool) -> Result<usize> {
     daemon::ensure_daemon(root, program)?;
-    let mut s = daemon::connect(Some(root))?;
-    let req = rpc::Request::new(1, "diag", serde_json::json!({}));
+    let mut s = daemon::connect()?;
+    let req = rpc::Request::new(1, "diag", serde_json::json!({"root": root.to_string_lossy()}));
     let resp = daemon::rpc_call(&mut s, &req)?;
     if let Some(e) = resp.error { anyhow::bail!("daemon diag: {}", e.message); }
     let arr = resp.result.and_then(|v| v.get("rows").cloned()).and_then(|v| v.as_array().cloned())
