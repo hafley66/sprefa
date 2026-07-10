@@ -36,3 +36,5 @@ examples/_npm/
 # (gitignore has no effect on the tracked gitlinks; it exists for dl's
 # ignore-crate walker + watchgate, which prune by these rules)
 /bench/corpus/otel-*/
+# cached compiler truth indexes built by oracle_corpus.rs
+/bench/corpus/.indexes/
