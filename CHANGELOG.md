@@ -89,6 +89,29 @@ tags consumed by cargo-dist.
   parsing.
 
 ### Changed
+- **Singleton daemon + registered roots (de-root C).** One daemon process now
+  lives at a constant home (`$XDG_STATE_HOME/sprefa`, else `~/.local/state/
+  sprefa`) and serves EVERY `.dl` root over ONE socket; cwd only picks WHICH root
+  a query addresses. Each root gets its own warm engine + db under
+  `<home>/roots/<key>/db.sqlite`; a `root` envelope key on every RPC routes to it
+  (absent = the config view). Per-root daemons + `<root>/.dl/daemon.sock`/`.pid`/
+  `db` are RETIRED — the spawn-if-missing-per-root mechanism that leaked one
+  daemon per test sandbox (and once bound a real repo's socket to a throwaway
+  program) is gone. **Attach IS registration**: the first RPC naming an
+  unregistered `.dl` root auto-registers + cold-ticks it inside the daemon;
+  `roots.json` persists the set and a restart replays it (warm from each db).
+  `dl daemon start` now DETACHES a background singleton by default (`--foreground`
+  is the debug path); `dl daemon stop` is global; new `dl daemon drop <root>
+  [--purge]` deregisters one root; `dl daemon status` lists every registered root
+  with its tick count. Program edits always hot-reload (one process exit would
+  kill every root); the idle timer exits only when ALL roots are idle. LSP,
+  one-shot, `--mcp`, and `--hook` route through the singleton with the workspace
+  root as the RPC key. Tests set `XDG_STATE_HOME` to a sandbox, making the
+  "disc2" class (a stray test daemon binding a developer's socket) structurally
+  impossible. MIGRATION: an existing `<root>/.dl/db` is NOT imported — the first
+  attach cold-starts a fresh per-root db under the home; a leftover per-root
+  `daemon.sock`/`.pid` is inert. Plan:
+  `plans/2026-07-10-singleton-daemon-registered-roots.md`.
 - **`textDocument/references` rides the refs lens.** Results flatten
   declarations + uses; each hit's URI is built from its OWN repo's root
   (`repo_roots`), fixing the multi-repo bug where every location was joined
