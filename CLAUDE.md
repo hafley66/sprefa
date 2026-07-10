@@ -968,6 +968,20 @@ foreign resolution model).
       (see memory reference_scip_multilang_indexers); keep index.scip away
       from the fixture root during the dl run so the index-free tier is what's
       measured.
+- [ ] **Go/Python implementer debriefs** (2 Sonnet agents, 2026-07-10):
+      GOOD both: field-based tree-sitter grammars (go, python expose
+      child_by_field_name) made both extractors shorter than Kotlin's
+      positional-child matching; the TypeLang registry + one extract_file_set
+      SQL clause wired call/df/doc with zero extra engine work (architecture
+      behaving as designed); the LANG-JUNCTION skill turned "grep for %.kt"
+      into a machine-generated checklist mid-arc (Python agent used the map
+      the same day it shipped). PAINS: (a) tree-sitter-go 0.25 gives interface
+      embeds and generic type-set constraints the SAME `type_elem` node kind —
+      distinguishing them needed grammar-source reading; ASK = per-grammar
+      node-kind reference (node-types.json digests) as a skill asset for
+      future TypeLangs. (b) EntityKind exhaustive-match discoverability —
+      FIXED same day: doc note "matched exhaustively only in tag()" added at
+      the decl.
 - [ ] **Orchestrator codebase pains** (Fable, 2026-07-10, from the skill+rail
       arc): (a) rel LINE BASES are lore, not docs — comment_node is 1-based,
       scip_occurrence 0-based, df 1-based; learning comment_node's base meant

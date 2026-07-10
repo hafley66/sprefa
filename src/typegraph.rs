@@ -26,6 +26,8 @@ pub struct TypeEdge {
 /// What a declared symbol is. sem's entity_type, shared across languages so the
 /// deck can style a function differently from a data type. The `tag` is the
 /// short slug used in a symbol id and in the `type_entity.kind` column.
+/// Matched exhaustively ONLY in `tag()`, so adding a variant means one new arm
+/// there and nothing else engine-side.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntityKind {
     Struct,
