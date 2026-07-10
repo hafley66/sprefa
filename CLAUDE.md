@@ -855,12 +855,27 @@ foreign resolution model).
       edit landing in the same fs timestamp tick as unchanged (test worked
       around with a length-varying marker; any rapid two-tick same-db test
       with an equal-length edit is a flake risk).
-- [ ] **Aliased/default imports at the SYNTACTIC tier**: `import { a as b }`
-      and default-import local names resolve only when a SCIP index exists
-      (scip_binding). Name-keyed buckets can't see through a rename; Win D
-      narrows ambiguity, not aliasing. Fix shape: an alias-aware import rel
-      from the modgraph resolvers (src_file, local_name, source_name,
-      dst_file) feeding the resolver the way scip_binding feeds `dl what`.
+- [x] **Aliased/default imports at the SYNTACTIC tier — LANDED** (main d9160ff,
+      Opus plan plans/2026-07-10-module-binding-alias.md + Sonnet impl,
+      2026-07-10): `module_binding_rev(file, local, source, dst, rev)` +
+      `module_binding` (rev-deduped union) capture aliased-import local
+      bindings from the EXISTING module-resolver parse (Rust `use x::y as z`
+      via UseLeaf.alias, TS/JS `import { a as b }`/default via string-level
+      parse_ts_import_clause, Kotlin `import a.b.C as D` regex group; carrier
+      = ModuleRef.bindings Vec<(local,source)>). Alias hop in BOTH resolve
+      closures: after SCIP override, before by_name, fires only when the
+      referencing file declares no same-named def (local shadows import),
+      dst-pinned, NEVER falls through to by_name on a miss (honest bare beats
+      a coincidental global match). Digest folds module_binding_rev beside
+      module_edge_rev (with_scip = "resolver reads outside inputs");
+      REV_TWINS + all five module write paths wired. anchor.rs unions
+      module_binding⋈type_entity so `dl what <alias>` resolves index-free.
+      Tests: 3 modgraph units + tests/it/resolver_import_alias.rs (5 e2e:
+      rust alias, dl what, shadowing negative, rev flip, TS alias). Suites
+      lib 268/0/1, it 618/0/4. NON-GOALS (honest bare): barrel re-exports,
+      namespace/wildcard imports, default-import RESOLUTION (rows emitted
+      source="default" but typegraph has no default-export entity — future
+      bridge), no repo column (same module-graph residual).
 - [ ] **Sonnet-implementer debrief pains** (2026-07-10): (a)
       sprefa-v5-working-conventions skill still shows a `--root` flag that no
       longer exists (cost a round of confused testing; skill source =
