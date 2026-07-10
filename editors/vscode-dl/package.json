@@ -46,6 +46,10 @@
       {
         "command": "dl.findReferences",
         "title": "dl: Find References (lens)"
+      },
+      {
+        "command": "dl.recordFlow",
+        "title": "dl: Record Flow (start/stop)"
       }
     ],
     "views": {
@@ -89,6 +93,11 @@
         "command": "dl.clearTypeSeeds",
         "key": "ctrl+alt+shift+t",
         "mac": "cmd+alt+shift+t"
+      },
+      {
+        "command": "dl.recordFlow",
+        "key": "ctrl+alt+g",
+        "mac": "cmd+alt+g"
       }
     ],
     "colors": [

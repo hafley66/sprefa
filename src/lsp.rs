@@ -209,6 +209,10 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, db_defaulted: bool, r
                         let resp = handle_query(&eng, &req);
                         connection.sender.send(Message::Response(resp))?;
                     }
+                    "dl/hookEvent" => {
+                        let resp = handle_hook_event(&mut eng, &prog, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
                     "workspace/executeCommand" => {
                         // Toggle mutates the mute set and republishes; list is
                         // read-only. Both answer through the same request id.
@@ -524,6 +528,36 @@ fn handle_query(eng: &Engine, req: &Request) -> Response {
     // legacy path: exactly today's behavior.
     match eng.query_sql(sql, &params) {
         Ok(rows) => Response::new_ok(req.id.clone(), serde_json::json!({ "rows": rows })),
+        Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
+    }
+}
+
+/// Custom request `dl/hookEvent`: the extension's transport for landing one
+/// harness/editor event (the goto-flow recorder, chat marks, ...) in the
+/// engine's `hook_event` builtin rel. Params: `{"kind": string, "session":
+/// string, "seq": i64, "json": string}` (all four required) -> `{"ok": true}`.
+/// Mirrors the daemon's `hook_event` RPC (`src/daemon.rs`) so both entry
+/// points behave identically; under the future `LspPump::Daemon` arm this arm
+/// forwards to that RPC verbatim instead of ticking the in-process engine.
+fn handle_hook_event(eng: &mut Engine, prog: &ast::Program, req: &Request) -> Response {
+    let p = &req.params;
+    let (Some(kind), Some(session), Some(seq), Some(json)) = (
+        p.get("kind").and_then(|v| v.as_str()),
+        p.get("session").and_then(|v| v.as_str()),
+        p.get("seq").and_then(|v| v.as_i64()),
+        p.get("json").and_then(|v| v.as_str()),
+    ) else {
+        return Response::new_err(req.id.clone(), -32602,
+            "dl/hookEvent needs kind, session, seq, json".into());
+    };
+    let run = (|| -> anyhow::Result<()> {
+        eng.insert_hook_event(kind, session, seq, json)?;
+        // The same quiet tick didSave runs, so a rule over hook_event
+        // derives before the response returns.
+        eng.tick(prog, true)
+    })();
+    match run {
+        Ok(()) => Response::new_ok(req.id.clone(), serde_json::json!({ "ok": true })),
         Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
     }
 }
