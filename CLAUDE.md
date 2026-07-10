@@ -767,13 +767,26 @@ Opus/Sonnet subagents implement, orchestrator verifies+commits.
       rebuilt. PORTABILITY LAW (Chris): flow-panel.html stays host-agnostic —
       window.dlHost {query,hover,open} + window messages are the ONLY host
       coupling (panel reuse planned in ~/projects/instant).
-- [ ] **Wave 3**: B2 documentHighlight/workspaceSymbol/documentSymbol; B3 SCIP
-      tier + role_label widening (scip_import.rs:322 discards read/write bits);
-      C2 BOM rollup + where-used; A9 daemon query routing; A10 perf harness.
+- [x] **Wave 3 B2+C1+C2** (worktree ext-wave3, 2026-07-10, 230f843+1e87546,
+      2 Opus agents): B2 = documentHighlight (same-string spans in-file) /
+      workspaceSymbol (LIKE-contains over type_entity+call_def, ESCAPE '\',
+      prefix-first, cap 200, per-repo URIs) / documentSymbol (type_entity
+      nested by parent) — SymbolRow + 3 engine methods + like_contains,
+      tests/it/lsp_symbols.rs. C1 = .dl/bom.dl bom_node/bom_edge (fan_in/
+      fan_out distinct via set-deduped bom_ref union of type_link+call_edge,
+      negation-guarded zero-default splits, verified 1:1 with member_node =
+      12111 rows live) + bomTable preset + numeric band in rowHtml
+      (windowing untouched) + sort chips re-sorting from lastKeptNodes
+      without re-query. C2 = applyCollapse rollup (subtree totals on
+      collapsed rows) + alt-click where-used overlay (callers / type refs
+      by kind / field fill-read / importers, all sym-pinned). Rollup unit
+      test scripts/test-panel-rollup.mjs. Suites lib 265/0/1, it 613/0/4,
+      tsc clean. NOT merged to main (Chris's SCIP worktree in flight).
+      Remaining wave 3: B3 (BLOCKED on Chris's SCIP work), A9 (subsumed by
+      the thin-client plan), A10 (folding into the vitest/playwright
+      harness arc, Sonnet agent running in its own worktree).
 - [ ] **Wave 4**: B4 dl/locate follow-the-user; B5 call/type hierarchy; C3
       exploded stratum view (welded-subassembly cycle cards); C4 3D iso go/no-go.
-- [ ] C1 BOM table (.dl/bom.dl bom_node counts + panel numeric columns + fan-in
-      sort) — S, was slated wave 1, deferred to next session for context budget.
 - [ ] **LSP thin client over the daemon (Gradle model)** — plan approved
       2026-07-10 at plans/2026-07-10-lsp-thin-client-daemon.md: `--lsp` becomes
       a stdio<->socket adapter (LspPump mirrors mcp::Pump), in-process engine

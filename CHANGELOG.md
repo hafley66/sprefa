@@ -7,6 +7,20 @@ tags consumed by cargo-dist.
 ## [Unreleased]
 
 ### Added
+- **documentHighlight / workspaceSymbol / documentSymbol (B2).** Three
+  standard LSP features off existing engine tables: highlight = the
+  identifier's same-string spans within the request file; workspace symbols
+  = LIKE-contains over `type_entity` + `call_def` names (prefix matches
+  first, cap 200, multi-repo URIs); document symbols = the file's
+  `type_entity` rows nested by parent sym (outline view).
+- **BOM table preset + where-used (C1/C2).** `.dl/bom.dl` derives
+  `bom_node`/`bom_edge`: every member-flow part annotated with
+  member_count, fan_in, fan_out (distinct, set-deduped across type + call
+  links), and weight (callable span lines). The panel renders them as a
+  right-aligned numeric band with sort chips (fan-in descending default),
+  shows subtree totals on a collapsed group, and opens a where-used
+  overlay on alt-click (callers, incoming type refs by kind, field
+  fill/read, importers — all sym-pinned queries).
 - **Dev-loop just recipes (deterministic ceremony as scripts, not agents).**
   `just verify` = build + full suite with the FSEvents flake solo-rerun policy +
   the magic-rel/recompute-guard rails; `just regen-docs` = every doc generator
