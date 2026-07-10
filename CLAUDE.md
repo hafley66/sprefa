@@ -786,15 +786,32 @@ Opus/Sonnet subagents implement, orchestrator verifies+commits.
       Local fallback (Pump-shaped), never a second resident engine on a
       shared db.
 
-### Open (true rootless daemon — NEXT SESSION, plan committed 0e7641e)
-Plan: plans/2026-07-10-singleton-daemon-registered-roots.md. One daemon at a
-constant home (~/.local/state/sprefa) serving EVERY .dl root; cwd only picks
-which root a query addresses. add_root RPC (attach = registration), per-root
-engines with dbs under roots/<key>/, per-root spawn-if-missing retired, tests
-hermetic via XDG_STATE_HOME. Today's split: per-root daemon (socket/db/pid
-under <root>/.dl/) is the real one; the XDG rootless singleton only sees
-config-folder repos (add_repo was designed in the de-root session, never
-built, zero hits in src/).
+### Singleton daemon + registered roots — LANDED (main 06a86c8, 2026-07-10)
+Plan plans/2026-07-10-singleton-daemon-registered-roots.md, Opus implementer,
+P0-P4 in 6595ad7/2544043/f1ca893 (+06a86c8 straggler test migration). ONE
+process at $XDG_STATE_HOME/sprefa, one socket; `Daemon` (socket/subscribers/
+shutdown/registry) split from per-root `ServedRoot` (engine/program/watchgate/
+tick methods, db at home/roots/<blake3-16hex>/db.sqlite); config view = a
+ServedRoot with key=None (one code path). Every root-scoped RPC carries
+params.root; `resolve()` auto-add_roots a .dl-owning miss (attach IS
+registration, cold tick blocks the caller); add_root/drop_root RPCs +
+roots.json replay; nested-root refusal. `dl daemon start` detaches by default
+(--foreground = debug), announces the config view from a rootless cwd;
+`dl daemon drop <root> [--purge]`; stop stays global; idle exit = ALL roots
+idle. Per-root sockets/pids/dbs RETIRED (stale <root>/.dl/daemon.* reaped
+loudly); LSP/one-shot/--mcp/--hook route through the singleton. Tests
+hermetic via XDG_STATE_HOME sandboxes incl. the disc2 regression
+(sandboxed_daemon_never_binds_default_home); the old per-root leak class is
+structurally gone. docs/daemon.md rewritten; old <root>/.dl/db NOT imported
+(cold-start on first attach, changelogged). One-engine assumptions found+
+fixed: per-root state co-mingled in Daemon, watcher_loop blocking recv,
+idle/poll loops, home_dir(Some(root)) conflation, program-edit
+process::exit(0) respawn (removed — would kill every root; also revealed the
+old idle-exit was dead, part of why per-root daemons leaked). Suites at merge:
+lib 277/0/1, it 630/0/4. RESIDUALS: (a) LSP main loop doesn't filter
+diag_changed by root yet (multi-root editor over-queries, harmless); (b) a
+config-repo edit refreshes registered roots' git facts only on their own next
+tick; (c) per-root idle eviction deferred (engines stay warm).
 
 ### Open (turnkey query surface — plan plans/2026-07-10-turnkey-query-surface.md)
 Goal: dl useful from the first command for devs + agents, no .dl authoring.
