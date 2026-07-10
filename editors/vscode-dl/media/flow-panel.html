@@ -518,7 +518,10 @@
     <button id="saveBtn" title="save the current nodes/edges SQL under this name (persists locally; appears in the preset list, renders in graph OR list)">save</button>
     <button id="delBtn" title="delete the selected saved query">del</button>
     <label style="flex:0 0 auto;margin-left:8px" title="highlight and center the graph node under the editor cursor as you move it (VS Code only)"><input type="checkbox" id="followCursor" style="vertical-align:middle" /> follow cursor</label>
+    <label style="flex:0 0 auto;margin-left:8px" title="resolve the cursor to its symbol (dl/locate) and center that exact node -- sym equality, not the file/line heuristic (VS Code only)"><input type="checkbox" id="followSym" style="vertical-align:middle" /> follow</label>
+    <button id="pinHereBtn" title="pin the currently-followed node and stop following" disabled>pin here</button>
   </div>
+  <div class="row legend" id="followBreadcrumbs" hidden></div>
   <div class="row layers" id="layerRow"><label>layers</label><div id="layerList"></div><button class="layer-refresh" id="layerRefresh" title="re-scan schema for new _node/_edge rels">↻</button></div>
   <div class="row legend" id="legend"></div>
   <div class="row legend" id="diffLegend" hidden></div>
@@ -591,6 +594,7 @@
       <tr><td>wheel</td><td>zoom at the cursor</td></tr>
       <tr><td>click file:line footer</td><td>open that file in the editor</td></tr>
       <tr><td>click legend chip</td><td>filter by kind (click again to clear)</td></tr>
+      <tr><td><code>follow</code> toggle (top bar)</td><td>resolve the cursor to its symbol via <code>dl/locate</code> and center that exact node as you move it; recent syms collect in a breadcrumb ring (click a chip to re-center), <code>pin here</code> snapshots the current one and stops following (VS Code only)</td></tr>
       <tr><td>Enter in a SQL box</td><td>run the queries</td></tr>
       <tr><td><code>?</code> key</td><td>toggle this panel (ignored while typing in a box)</td></tr>
       <tr><td><code>list | canvas</code> button</td><td>switch viewport mode (persisted); same queries, pins, and legend filter carry over</td></tr>
@@ -1652,6 +1656,103 @@ if (window.dlHost) { window.__dlCursor = onEditorCursor; }
 document.getElementById('followCursor').addEventListener('change', function () {
   followCursorOn = this.checked;
   lastFollowId = null;
+});
+
+// ── follow the user via dl/locate: sym-EQUALITY centering (Track B B4) ─────
+// The extension resolves each debounced cursor move through the engine
+// (`dl/locate` -> Engine::locate) and posts {type:'locate', hit, seq} as a
+// plain `window` message — the portability law's ONLY host coupling besides
+// window.dlHost, so this stays inert under the plain-browser bridge (which
+// never posts one). `hit.symbol` lives in the SAME id space the graph nodes
+// use (type_entity/call_def `sym`), so centering is direct id EQUALITY via
+// the existing `centerOnNode`/`listRowIndexById` machinery — no file/line/word
+// heuristic, unlike `findNodeAt` above. This toggle is independent of
+// "follow cursor"; both can run at once, each drives its own last-seen id.
+let followSymOn = false;
+let lastFollowSym = null;
+let followTrail = [];  // most-recent-first, distinct syms, capped at 8
+
+// Pure: push `sym` to the front of a most-recent-first ring, deduping an
+// existing occurrence (moved to front, not re-inserted) and capping at `max`
+// entries (oldest dropped first). Exported to the vitest harness by
+// extraction (tests/unit/follow-lens.test.ts), same technique as
+// scripts/test-panel-rollup.mjs uses for applyCollapse.
+function pushBreadcrumb(trail, sym, max) {
+  max = max || 8;
+  var next = [sym].concat(trail.filter(function (existing) { return existing !== sym; }));
+  return next.slice(0, max);
+}
+
+// Center the node whose id equals `sym`, in whichever view is active. Returns
+// true when a matching node was found and centered, false on a miss (the sym
+// may belong to a preset that isn't the one currently loaded) — a miss is
+// silent, matching `onEditorCursor`'s posture.
+function focusSym(sym) {
+  if (!sym) return false;
+  if (viewMode === 'list') {
+    if (!listAllNodeMeta.has(sym)) return false;
+    hoverNode(sym);
+    var row = listRowEls.get(sym);
+    if (row) row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    else if (listRowIndexById.has(sym)) scrollListToIndex(listRowIndexById.get(sym));
+    return true;
+  }
+  if (!cy || cy.getElementById(sym).empty()) return false;
+  hoverNode(sym);
+  centerOnNode(sym);
+  return true;
+}
+
+function renderFollowBreadcrumbs() {
+  var row = document.getElementById('followBreadcrumbs');
+  row.hidden = followTrail.length === 0;
+  row.innerHTML = '';
+  for (const sym of followTrail) {
+    const chip = document.createElement('span');
+    chip.className = 'chip' + (sym === lastFollowSym ? ' on' : '');
+    chip.title = sym;
+    chip.textContent = String(sym).split('::').pop() || sym;
+    chip.addEventListener('click', function () { visitBreadcrumb(sym); });
+    row.appendChild(chip);
+  }
+}
+
+// A breadcrumb chip click re-centers on that sym and moves it back to the
+// front of the ring (a re-visit), same as a fresh `locate` hit would.
+function visitBreadcrumb(sym) {
+  lastFollowSym = sym;
+  followTrail = pushBreadcrumb(followTrail, sym, 8);
+  renderFollowBreadcrumbs();
+  focusSym(sym);
+  document.getElementById('pinHereBtn').disabled = false;
+}
+
+function onLocate(m) {
+  if (!followSymOn) return;
+  const hit = m && m.hit;
+  const sym = hit && hit.symbol;
+  if (!sym || sym === lastFollowSym) return;
+  lastFollowSym = sym;
+  followTrail = pushBreadcrumb(followTrail, sym, 8);
+  renderFollowBreadcrumbs();
+  focusSym(sym);
+  document.getElementById('pinHereBtn').disabled = false;
+}
+window.addEventListener('message', ev => {
+  const m = ev.data;
+  if (m && m.type === 'locate') onLocate(m);
+});
+document.getElementById('followSym').addEventListener('change', function () {
+  followSymOn = this.checked;
+  lastFollowSym = null; // force the next hit to act even if it repeats the last one
+});
+document.getElementById('pinHereBtn').addEventListener('click', function () {
+  if (!lastFollowSym) return;
+  pinned.add(lastFollowSym);
+  refreshHighlight();
+  followSymOn = false;
+  document.getElementById('followSym').checked = false;
+  this.disabled = true;
 });
 
 // ── auto-refresh on graphChanged ────────────────────────────────────────────

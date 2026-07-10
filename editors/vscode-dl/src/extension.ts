@@ -10,8 +10,22 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, State } from "vscode-languageclient/node";
 import { RefsTreeProvider, RefLens } from "./refsTree";
+import { isStaleSeq } from "./followLens";
 
 let client: LanguageClient | undefined;
+
+// The wire shape of `Engine::locate` (src/engine/mod.rs), the `dl/locate`
+// request's result: a cursor -> symbol -> declaration-site point lookup, no
+// uses/callers/callees (that's `RefLens`). `line` is 0-based.
+interface LocateHit {
+  tier: string;
+  symbol: string;
+  display_name: string;
+  role: string;
+  repo: string;
+  file: string;
+  line: number;
+}
 
 // ── goto-flow recorder: a named take of the user's navigation, landed in the
 // engine as `hook_event(kind="goto", ...)` rows via `dl/hookEvent`. One
@@ -634,9 +648,44 @@ function openFlowPanel(ctx: vscode.ExtensionContext, root: string, slice: SliceD
     }, 120);
   });
 
+  // Follow-the-user (Track B B4): the same selection stream, resolved through
+  // the engine instead of matched by file/line/word heuristic. `dl/locate` is
+  // a cheap point lookup (Engine::locate) — cursor -> symbol -> declaration
+  // site, no uses/callers collection — so firing it unconditionally on every
+  // debounced move (same posture as the `cursor` push above, gated by the
+  // PANEL's own "follow" toggle, not here) costs one small SQL round trip.
+  // ZERO `.dl` fact writes: this is a read-only LSP request, never a write
+  // that would tick the daemon at cursor cadence. 180ms debounce + a
+  // monotonic sequence number dropped via `isStaleSeq`: a response whose
+  // request has been superseded by a newer cursor move is discarded instead
+  // of posted, so the panel never snaps back to a stale symbol.
+  let locateSeq = 0;
+  let locateTimer: ReturnType<typeof setTimeout> | undefined;
+  const locateSub = vscode.window.onDidChangeTextEditorSelection((e) => {
+    if (!panel || !client) return;
+    const doc = e.textEditor.document;
+    const pos = e.selections[0]?.active;
+    if (!pos) return;
+    const uri = doc.uri.toString();
+    if (locateTimer) clearTimeout(locateTimer);
+    locateTimer = setTimeout(() => {
+      const seq = ++locateSeq;
+      client!.sendRequest<LocateHit | null>("dl/locate", { uri, line: pos.line, character: pos.character })
+        .then((hit) => {
+          if (isStaleSeq(seq, locateSeq)) return; // superseded by a newer cursor move
+          void panel?.webview.postMessage({ type: "locate", hit, seq });
+        })
+        .catch((err) => {
+          console.error(`dl: dl/locate failed: ${String((err as Error).message ?? err)}`);
+        });
+    }, 180);
+  });
+
   panel.onDidDispose(() => {
     if (cursorTimer) clearTimeout(cursorTimer);
+    if (locateTimer) clearTimeout(locateTimer);
     selSub.dispose();
+    locateSub.dispose();
     panel = undefined;
     slice.set([]);
   }, null, ctx.subscriptions);
