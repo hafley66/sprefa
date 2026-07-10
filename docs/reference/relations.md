@@ -55,6 +55,8 @@ Generated from the engine's `rel_catalog` by examples/gen-reference.dl. Do not h
 | `head` | daemon | `(repo, name, oid)` | git HEAD per repo (repo, ref name, oid) |
 | `hook_event` | hook | `(kind, session, seq, json)` | harness-hook event log: one accumulating row per `dl --hook` invocation (kind = the event name UserPromptSubmit/PostToolUse/..., session = the event session id, seq = an ingest-time monotone millis stamp ordering events within a session, json = the raw event JSON). Written by the hook feed, never a refresh; extract fields with term-form json/jsonp |
 | `loop_over` | dataflow | `(file, start, end, var, collection, fn)` | one row per loop with its span, iter var, and collection |
+| `module_binding` | module | `(file, local, source, dst)` | rev-deduped union of module_binding_rev |
+| `module_binding_rev` | module | `(file, local, source, dst, rev)` | aliased-import local bindings from the module resolvers' own parse (Rust use..as, TS import{a as b}/default, Kotlin import..as) — the index-free equivalent of scip_binding; local is the binding name in scope at file, source is the exported name at dst ("default" for a default import) |
 | `module_edge` | module | `(src, dst)` | resolved file-to-file import graph (rev-deduped union) |
 | `module_edge_rev` | module | `(src, dst, rev)` | rev-aware module_edge |
 | `module_import` | module | `(file, rev, specifier, kind, line)` | import statements (Rust + TS + Kotlin); Kotlin adds kind=same-package rows for bare uses of another file's column-0 decl, and an expect/actual decl fans edges to all declaring files |
