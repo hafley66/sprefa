@@ -90,6 +90,28 @@ pub fn open(path: Option<&str>) -> Result<Db> {
     // busy_timeout: a hook `--check` and a resident `--lsp` share .dl/cache.db
     // across processes; a write collision should wait, not fail "locked".
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;")?;
+    // P2 (--check perf defect ledger): a loud, best-effort heads-up when
+    // another live process already holds a write lock on this same db —
+    // almost always a resident daemon. A one-shot `--check`/`dl` run that
+    // silently piggybacks on (or blocks behind) a daemon's writes is a
+    // confusing surprise otherwise. Probe with a throwaway `BEGIN IMMEDIATE`
+    // under a short busy_timeout so the probe itself stays cheap; the real
+    // 5s timeout above is restored right after. Never fatal: a probe that
+    // fails for ANY reason (lock contention or otherwise) just prints and
+    // moves on; an in-memory db has no `path` and is skipped entirely.
+    if let Some(p) = path {
+        let _ = conn.execute_batch("PRAGMA busy_timeout=50;");
+        if conn.execute_batch("BEGIN IMMEDIATE;").is_err() {
+            eprintln!(
+                "[dl] warning: another process appears to hold a write lock on {p} \
+                 (a resident daemon, or a concurrent dl run) — this process may block \
+                 on writes or serve stale reads; use --no-daemon to isolate"
+            );
+        } else {
+            let _ = conn.execute_batch("ROLLBACK;");
+        }
+        let _ = conn.execute_batch("PRAGMA busy_timeout=5000;");
+    }
     register_regexp(&conn)?;
     register_split(&conn)?;
     register_string_fns(&conn)?;
@@ -322,6 +344,18 @@ impl Db {
         }
         if multi { self.conn.execute_batch("COMMIT")?; }
         Ok(total)
+    }
+}
+
+/// P2 (--check perf defect ledger): on a clean close, shrink the WAL back
+/// into the main db file so a long-lived daemon (or a burst of one-shot
+/// runs) doesn't leave an ever-growing `-wal` file behind. Best-effort —
+/// `TRUNCATE` can fail (e.g. another connection still holds an open read
+/// transaction pinning old WAL frames); errors are ignored, never fatal, and
+/// never block the process from exiting.
+impl Drop for Db {
+    fn drop(&mut self) {
+        let _ = self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
     }
 }
 

@@ -1419,8 +1419,9 @@ fn closure_map(rules: &[&Rule]) -> HashMap<String, String> {
 /// Unique edge relations across all closure heads (one condensation per graph).
 /// Unique edge relations across closure heads AND scc heads. `refresh_cond_cache`
 /// condenses every edge either operator needs; closure-view rebuild
-/// (`any_closure_empty`/`rebuild_closures`) stays closure-only (the scc_node
-/// SQL tables exist only for closure edges — scc reads the in-memory cond).
+/// (`first_empty_closure_edge`/`rebuild_closures`) stays closure-only (the
+/// scc_node SQL tables exist only for closure edges — scc reads the in-memory
+/// cond).
 fn cond_edges_for<'a>(closure_edges: &[&'a str], scc_rules: &[&'a Rule]) -> Vec<&'a str> {
     let mut out: Vec<&'a str> = closure_edges.to_vec();
     for r in scc_rules {
@@ -3875,6 +3876,18 @@ impl Engine {
                  mtime INTEGER DEFAULT 0, size INTEGER DEFAULT 0, PRIMARY KEY (repo, path, rev));
              CREATE TABLE IF NOT EXISTS _prov (rel TEXT, repo TEXT NOT NULL DEFAULT '', path TEXT, src TEXT, PRIMARY KEY (rel, repo, path, src));
              CREATE TABLE IF NOT EXISTS _reldigest (rel TEXT PRIMARY KEY, digest TEXT);
+             -- P1 (2026-07-10 --check perf defect): one row per derived rel that
+             -- has completed a `rebuild_derived` pass, regardless of the row
+             -- count it ended with. `any_derived_empty`'s old COUNT(*)-per-rel
+             -- probe treated a legitimately-empty derived rel (an inert rail, a
+             -- diff view with nothing to report) the same as never derived,
+             -- forcing a full rebuild of every derived rel on EVERY tick (154
+             -- rels / ~2024 statements measured on a real db). This table lets
+             -- `derived_incomplete_rels` tell the two cases apart with one
+             -- query instead of N COUNT(*) round trips. Never migrated away on
+             -- a rel rename/removal — a stale row for a since-deleted rel is
+             -- simply never looked up again.
+             CREATE TABLE IF NOT EXISTS _derived_complete (rel TEXT PRIMARY KEY);
              -- Persisted derived shapes (Phase 5): one row per (shape, column) the
              -- `type_decl_row` sink produced last tick. Read at the next tick's
              -- declare to resolve a `rel name: shape.` whose shape was computed,
@@ -4402,12 +4415,35 @@ impl Engine {
         Ok(moved)
     }
 
-    fn any_derived_empty(&self, derived_rels: &[String]) -> Result<bool> {
-        for rel in derived_rels {
-            let n: i64 = self.db.conn().query_row(&format!("SELECT COUNT(*) FROM {}", tbl(rel)), [], |r| r.get(0))?;
-            if n == 0 { return Ok(true); }
+    /// P1 fix: which of `derived_rels` have NEVER completed a `rebuild_derived`
+    /// pass (no `_derived_complete` marker) — the honest "must full-rebuild"
+    /// signal. The old `any_derived_empty` asked "is this rel's table empty
+    /// right now", which is also true for a rel a rule legitimately derived to
+    /// zero rows (an inert rail, a diff view with nothing this tick), forcing
+    /// a full rebuild of every derived rel on every subsequent tick. This is
+    /// ONE query (load every completed marker into a set) instead of a
+    /// `COUNT(*)` round trip per rel.
+    fn derived_incomplete_rels(&self, derived_rels: &[String]) -> Result<Vec<String>> {
+        if derived_rels.is_empty() { return Ok(Vec::new()); }
+        let mut complete: HashSet<String> = HashSet::new();
+        let mut stmt = self.db.conn().prepare("SELECT rel FROM _derived_complete")?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            complete.insert(row.get::<_, String>(0)?);
         }
-        Ok(false)
+        Ok(derived_rels.iter().filter(|r| !complete.contains(r.as_str())).cloned().collect())
+    }
+
+    /// Mark every rel in `derived_rels` as having completed a rebuild pass —
+    /// called once at the end of `rebuild_derived` for exactly the rels it was
+    /// asked to rebuild (whatever row count they end with, including zero).
+    /// `INSERT OR IGNORE` via the plural `insert_rows` seam, so this is one
+    /// statement (chunked), never a per-rel write.
+    fn mark_derived_complete(&self, derived_rels: &[String]) -> Result<()> {
+        if derived_rels.is_empty() { return Ok(()); }
+        let rows: Vec<Vec<Value>> = derived_rels.iter().map(|r| vec![Value::Text(r.clone())]).collect();
+        self.db.insert_rows("_derived_complete", &["rel"], &rows)?;
+        Ok(())
     }
 
     #[tracing::instrument(skip_all, fields(n_rules = source_rules.len()), level = "debug")]
@@ -4784,6 +4820,19 @@ impl Engine {
             if !have.is_empty() && (have != want || key_drift) {
                 self.db.conn().execute(&format!("DROP TABLE IF EXISTS {table}"), [])?;
                 self.db.conn().execute(&format!("DELETE FROM _reldigest WHERE rel = ?1"),
+                    rusqlite::params![d.name])?;
+                // P1 interaction: before the completion-marker fix, a dropped
+                // derived table read back as 0 rows, and `any_derived_empty`
+                // treated that as "must full-rebuild" — the (accidental) thing
+                // that actually refilled `d.name` after this migration. Now
+                // that a legitimately-empty derived rel does NOT force a full
+                // rebuild, the stale completion marker must be invalidated
+                // here explicitly, or a rel that was already marked complete
+                // before the drop would read as "done" against its freshly
+                // empty, never-refilled table. `_derived_complete` may have no
+                // row for `d.name` (a source rel, or a derived rel that never
+                // completed a pass yet) — the DELETE is then simply a no-op.
+                self.db.conn().execute("DELETE FROM _derived_complete WHERE rel = ?1",
                     rusqlite::params![d.name])?;
             }
         }
@@ -5285,9 +5334,13 @@ impl Engine {
     /// Drain an `@out(rpc)` port rel: return its rows, clear the table, and
     /// retire the answered rows from the paired `@in(rpc)` rel (drain law 1:
     /// every answered request row is consumed). Rows are produced by the
-    /// fixpoint, pushed to the transport, deleted. Leaving the out rel empty
-    /// also guarantees the next tick's derived rebuild (`any_derived_empty`),
-    /// so the next request re-derives over the fresh in-port set.
+    /// fixpoint, pushed to the transport, deleted. The NEXT request's rebuild
+    /// no longer rides "the out rel is empty" (P1 retired that signal —
+    /// `derived_incomplete_rels` marks a legitimately-empty derived rel as
+    /// complete, not "never derived"); instead `inject_rpc`'s write to the
+    /// `@in(rpc)` rel is itself content-digested (a `port:` key in
+    /// `_reldigest`, tick.rs) like `async:`/`hook:`, so the fresh request row
+    /// is what re-derives the out rel's dependents.
     pub fn drain_rpc(&mut self, out_rel: &str, in_rel: &str) -> Result<Vec<(String, String)>> {
         if !self.rels.contains_key(out_rel) { return Ok(Vec::new()); }
         let rows: Vec<(String, String)> = {
@@ -6322,6 +6375,14 @@ impl Engine {
     /// Wipe derived tables and run the semi-naive fixpoint to convergence.
     #[tracing::instrument(skip_all, fields(n_rules = derived_rules.len(), n_rels = derived_rels.len()), level = "debug")]
     fn rebuild_derived(&self, derived_rules: &[&Rule], derived_rels: &[String]) -> Result<()> {
+        // P3: instrument the whole pass directly (start/stop), rather than
+        // relying on the `activity` phase-transition emitter — a quiet
+        // one-shot tick (`--check`) may never make the NEXT phase transition
+        // that would otherwise close out the "derived" phase record, so the
+        // one-shot path silently lost this timing. Emitted unconditionally
+        // (daemon and one-shot alike); the per-rel `_stmt_ms` breakdown below
+        // is unchanged.
+        let t_rebuild = std::time::Instant::now();
         for rel in derived_rels { self.db.conn().execute(&format!("DELETE FROM {}", tbl(rel)), [])?; }
         // Evaluate stratum by stratum: each higher stratum's negation reads
         // relations that lower strata have already finished. Within a stratum,
@@ -6376,6 +6437,16 @@ impl Engine {
             }
         }
         self.save_stmt_ms(&stmt_ms)?;
+        // P1: every rel this call rebuilt (deleted + re-derived) just completed
+        // a pass, whatever row count it ended with — mark it so the NEXT
+        // tick's `derived_incomplete_rels` sees it as legitimately derived,
+        // not "never derived".
+        self.mark_derived_complete(derived_rels)?;
+        if !derived_rels.is_empty() {
+            let tick = crate::activity::snapshot().tick;
+            let detail = format!("{} rel(s): {}", derived_rels.len(), derived_rels.join(", "));
+            crate::perflog::emit_phase(tick, "derived", t_rebuild.elapsed().as_millis() as u64, &detail);
+        }
         Ok(())
     }
 
@@ -6392,13 +6463,18 @@ impl Engine {
         Ok(())
     }
 
-    fn any_closure_empty(&self, edges: &[&str]) -> Result<bool> {
+    /// First closure edge (if any) whose SCC node table is empty — unlike
+    /// `derived_incomplete_rels`, this is intentionally still a plain row-count
+    /// probe (P1 scoped to derived rels only; closures are a separate, usually
+    /// small set). Returning the offending edge name (not just a bool) lets
+    /// the tick record a `full_reason` of `closure-missing:<edge>`.
+    fn first_empty_closure_edge(&self, edges: &[&str]) -> Result<Option<String>> {
         for edge in edges {
             let n: i64 = self.db.conn().query_row(
                 &format!("SELECT COUNT(*) FROM {}", scc_node_tbl(edge)), [], |r| r.get(0))?;
-            if n == 0 { return Ok(true); }
+            if n == 0 { return Ok(Some(edge.to_string())); }
         }
-        Ok(false)
+        Ok(None)
     }
 
     /// True if any named rel's table is empty or absent — the cold-populate
