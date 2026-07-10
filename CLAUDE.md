@@ -1025,6 +1025,16 @@ foreign resolution model).
       aren't documented at the scorer — one comment would save the
       verify-by-hand round-trip; (b) pre-commit hook prints info[op-example]
       noise to stdout mid-commit, benign but alarming.
+- [ ] **Scorer per-site keying IN FLIGHT** (fresh Opus worktree agent,
+      2026-07-10): fix the picks-key gap (method + aliased calls score bare
+      because picks derive from the RESOLVED sym, not the site). Design A =
+      positional keying via std/flow.dl call_target + df_node line (df 1-based,
+      scip 0-based, convert once in the scorer); precision asserts stay;
+      before/after table per language; NEW `wrong` rows investigated as
+      possible real resolver bugs, not massaged. Engine code out of scope.
+      NOTE main pushed b38a9da (merge commit unifying this session's language
+      arc with the other session's wave-3/4 + flow-marks arc; union suites
+      304 lib / 680 it green).
 - [ ] **Go/Python implementer debriefs** (2 Sonnet agents, 2026-07-10):
       GOOD both: field-based tree-sitter grammars (go, python expose
       child_by_field_name) made both extractors shorter than Kotlin's
