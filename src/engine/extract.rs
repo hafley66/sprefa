@@ -324,6 +324,16 @@ impl Engine {
                             }));
                         }
                     }
+                    // Alias bindings only mean anything against a resolved, non-self
+                    // target file (same self-edge exclusion as `edges_rev` below);
+                    // borrow before the ownership match moves `mref.target`.
+                    if let Resolution::File(dst) = &mref.target {
+                        if dst != path {
+                            for (local, source) in &mref.bindings {
+                                rows.bindings.push(vec![t(path), t(local), t(source), t(dst), t(rev)]);
+                            }
+                        }
+                    }
                     match mref.target {
                         // A self-edge (e.g. `use crate::X` where X is defined in this
                         // crate root) is not a dependency; drop it so the graph and
@@ -359,6 +369,7 @@ impl Engine {
         if include_crate_edges {
             self.db.insert_rows(&tbl("crate_edge"), &["src", "dst", "kind", "rev"], &rows.crate_edges)?;
         }
+        self.db.insert_rows(&tbl("module_binding_rev"), &["file", "local", "source", "dst", "rev"], &rows.bindings)?;
         self.insert_module_spans(rows)?;
         Ok(())
     }
@@ -390,6 +401,13 @@ impl Engine {
         self.db.exec(&format!(
             "INSERT OR IGNORE INTO {unresolved} (\"file\", \"specifier\", \"reason\", \"line\") \
              SELECT \"file\", \"specifier\", \"reason\", \"line\" FROM {unresolved_rev}"
+        ))?;
+        let binding = tbl("module_binding");
+        let binding_rev = tbl("module_binding_rev");
+        self.db.exec(&format!("DELETE FROM {binding}"))?;
+        self.db.exec(&format!(
+            "INSERT OR IGNORE INTO {binding} (\"file\", \"local\", \"source\", \"dst\") \
+             SELECT \"file\", \"local\", \"source\", \"dst\" FROM {binding_rev}"
         ))?;
         Ok(())
     }
@@ -426,6 +444,7 @@ impl Engine {
         self.refresh_rel("module_edge_rev", &["src", "dst", "rev"], &rows.edges_rev)?;
         self.refresh_rel("module_unresolved_rev", &["file", "rev", "specifier", "reason", "line"], &rows.unresolved_rev)?;
         self.refresh_rel("crate_edge", &["src", "dst", "kind", "rev"], &rows.crate_edges)?;
+        self.refresh_rel("module_binding_rev", &["file", "local", "source", "dst", "rev"], &rows.bindings)?;
         self.insert_module_spans(&rows)?;
         self.rebuild_legacy_module_rels()?;
         for (rev, d) in &moved {
@@ -464,6 +483,7 @@ impl Engine {
         self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _module_refresh_rev)", tbl("module_edge_rev")))?;
         self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _module_refresh_rev)", tbl("module_unresolved_rev")))?;
         self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _module_refresh_rev)", tbl("crate_edge")))?;
+        self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _module_refresh_rev)", tbl("module_binding_rev")))?;
 
         let by_rev = self.module_files_by_rev()?;
         let mut rows = ModuleRows::default();
@@ -494,6 +514,10 @@ impl Engine {
         self.db.exec(&format!(
             "DELETE FROM {} WHERE \"rev\" = '{rev}' AND \"file\" IN (SELECT path FROM _module_refresh_path)",
             tbl("module_unresolved_rev"),
+        ))?;
+        self.db.exec(&format!(
+            "DELETE FROM {} WHERE \"rev\" = '{rev}' AND \"file\" IN (SELECT path FROM _module_refresh_path)",
+            tbl("module_binding_rev"),
         ))?;
 
         let by_rev = self.module_files_by_rev()?;
@@ -592,6 +616,18 @@ impl Engine {
                     }
                 }
             }
+            // The alias hop (see `module_binding_map`) reads `module_binding_rev`
+            // at this rev, same reasoning: an edited alias must flip this digest
+            // or the warm-tick skip would keep serving the stale resolution.
+            if let Ok(mut s) = self.db.conn().prepare(
+                &format!("SELECT file, local, source, dst FROM {} WHERE \"rev\" = ?1", tbl("module_binding_rev"))) {
+                if let Ok(rows) = s.query_map([rev], |r| Ok((
+                    r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))) {
+                    for (file, local, source, dst) in rows.flatten() {
+                        fold(&mut acc, &blake3::hash(format!("binding\0{file}\0{local}\0{source}\0{dst}").as_bytes()));
+                    }
+                }
+            }
         }
         acc
     }
@@ -657,7 +693,7 @@ impl Engine {
         "type_entity_rev", "type_link_rev", "type_edge_rev",
         "call_def_rev", "call_edge_rev",
         "df_node_rev", "df_node_repo_rev", "df_arg_rev", "df_field_rev",
-        "module_edge_rev", "module_unresolved_rev",
+        "module_edge_rev", "module_unresolved_rev", "module_binding_rev",
     ];
 
     /// D5.5 — the rev-retraction sweep (plan Layer 4, "Retraction"). A rev
@@ -799,12 +835,31 @@ impl Engine {
         // Win D: the referencing file's own imports, read once for the whole
         // family (never per lookup), see `module_import_map`.
         let imports = self.module_import_map().unwrap_or_default();
+        // Alias hop input: this file's aliased-import local bindings, read
+        // once for the whole family, see `module_binding_map`.
+        let aliases = self.module_binding_map().unwrap_or_default();
         let resolve = |repo: &str, rev: &str, file: &str, name: &str| -> Option<String> {
             if rev == "WORK" {
                 if let Some(def_file) = scip.get(&(repo.to_string(), file.to_string(), name.to_string())) {
                     if let Some(sym) = sym_at.get(&(repo, def_file.as_str(), rev, name)) {
                         return Some(format!("{repo}::{sym}"));
                     }
+                }
+            }
+            // Index-free alias hop: an aliased import (`use x::y as z`, TS
+            // `import { a as b }`, Kotlin `import a.b.C as D`) has no by_name
+            // bucket for the local name `z`/`b`/`D` — the def is keyed by its
+            // real name. A local def of the SAME name shadows the import (a
+            // local declaration always wins), so the hop only fires when this
+            // file declares no such name itself. A hit resolves straight to
+            // the aliased target's def, pinned by dst; a miss (barrel
+            // re-export, unresolved default) returns None WITHOUT falling
+            // through to by_name — a coincidental global match on the alias
+            // name elsewhere would be a wrong join, honest bare wins.
+            if sym_at.get(&(repo, file, rev, name)).is_none() {
+                if let Some((source, dst)) = aliases.get(&(rev.to_string(), file.to_string())).and_then(|m| m.get(name)) {
+                    return sym_at.get(&(repo, dst.as_str(), rev, source.as_str()))
+                        .map(|sym| format!("{repo}::{sym}"));
                 }
             }
             match by_name.get(&(repo, rev, name)) {
@@ -976,6 +1031,34 @@ impl Engine {
         for row in rows.flatten() {
             let (src, dst, rev) = row;
             out.entry((rev, src)).or_default().insert(dst);
+        }
+        Ok(out)
+    }
+
+    /// Alias-hop input: `module_binding_rev(file, local, source, dst, rev)`
+    /// read once per family refresh (never per lookup, same shape as
+    /// `module_import_map`) into (rev, importing file) -> {local binding name
+    /// -> (source name at dst, dst file)}. Empty when the module graph hasn't
+    /// populated yet (the hop is then simply a no-op, same as an absent
+    /// import map). Index-free equivalent of `scip_binding`: resolves an
+    /// aliased import (`use x::y as z`, TS `import { a as b }`/default,
+    /// Kotlin `import a.b.C as D`) that the name-keyed `by_name` bucket has
+    /// no bucket for (the def's real name is `y`/`a`/`C`, not the local `z`/
+    /// `b`/`D`).
+    fn module_binding_map(&self) -> Result<HashMap<(String, String), HashMap<String, (String, String)>>> {
+        let mut out: HashMap<(String, String), HashMap<String, (String, String)>> = HashMap::new();
+        let conn = self.db.conn();
+        let Ok(mut s) = conn.prepare(
+            &format!("SELECT file, local, source, dst, \"rev\" FROM {}", tbl("module_binding_rev"))) else {
+            return Ok(out);
+        };
+        let rows = s.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?, r.get::<_, String>(4)?))
+        })?;
+        for row in rows.flatten() {
+            let (file, local, source, dst, rev) = row;
+            out.entry((rev, file)).or_default().insert(local, (source, dst));
         }
         Ok(out)
     }
@@ -1372,12 +1455,25 @@ impl Engine {
         // Win D: see refresh_type_rels, the same import map feeds both
         // resolvers' ambiguity narrowing.
         let imports = self.module_import_map().unwrap_or_default();
+        // Alias hop input: see refresh_type_rels, the same binding map feeds
+        // both resolvers' index-free alias hop.
+        let aliases = self.module_binding_map().unwrap_or_default();
         let resolve_callee = |repo: &str, rev: &str, file: &str, callee: &str| -> Option<String> {
             if rev == "WORK" {
                 if let Some(def_file) = scip.get(&(repo.to_string(), file.to_string(), callee.to_string())) {
                     if let Some(sym) = sym_at.get(&(repo, def_file.as_str(), rev, callee)) {
                         return Some(format!("{repo}::{sym}"));
                     }
+                }
+            }
+            // Index-free alias hop, see refresh_type_rels' `resolve` for the
+            // full rationale: only fires when this file declares no callable
+            // named `callee` itself (local def shadows an aliased import), and
+            // never falls through to by_name on a miss.
+            if sym_at.get(&(repo, file, rev, callee)).is_none() {
+                if let Some((source, dst)) = aliases.get(&(rev.to_string(), file.to_string())).and_then(|m| m.get(callee)) {
+                    return sym_at.get(&(repo, dst.as_str(), rev, source.as_str()))
+                        .map(|sym| format!("{repo}::{sym}"));
                 }
             }
             match by_name.get(&(repo, rev, callee)) {

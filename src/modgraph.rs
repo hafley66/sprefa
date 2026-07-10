@@ -35,6 +35,12 @@ pub enum Resolution {
 /// source text this ref rewrites: the leaf path of a `use` (or brace leaf), or
 /// the specifier-literal text of a TS `import`. `None` when the ref has no
 /// contiguous rewrite coordinate (`mod`/`#[path]` decls, dynamic imports).
+/// `bindings` is the aliased-import local bindings this one specifier ref
+/// carries: (local name, exported/source name) pairs — `use x::y as z` ->
+/// `[("z", "y")]`, a TS default import -> `[(ident, "default")]`, a plain
+/// named/bare import -> `[]` (local == source already resolves via the
+/// name-keyed def bucket, no alias hop needed). Empty for every ref kind that
+/// has no local-binding concept (`mod`, `#[path]`, Kotlin wildcard/same-package).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModuleRef {
     pub specifier: String,
@@ -42,6 +48,7 @@ pub struct ModuleRef {
     pub line: u32,
     pub span: Option<(u32, u32)>,
     pub target: Resolution,
+    pub bindings: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -391,6 +398,7 @@ impl ModuleResolver for RustResolver {
                 line,
                 span: None,
                 target,
+                bindings: vec![],
             });
         }
 
@@ -416,23 +424,35 @@ impl ModuleResolver for RustResolver {
                 line,
                 span: None,
                 target,
+                bindings: vec![],
             });
         }
 
-        // `use path;` — intra- and cross-crate references. `expand_use` returns
-        // each leaf's byte span relative to the captured body; add the body's
-        // start in `clean` (offset-preserving vs raw content) for a file coord.
+        // `use path;` — intra- and cross-crate references. `expand_use_leaves`
+        // (not the `expand_use` projection) so each leaf's alias survives;
+        // its head/leaf span relative to the captured body plus the body's
+        // start in `clean` (offset-preserving vs raw content) gives a file
+        // coord, same as before.
         for c in rust_use_re().captures_iter(&clean) {
             let line = line_of(&clean, c.get(0).unwrap().start());
             let body_start = c.get(1).unwrap().start() as u32;
-            for (cand, lo, hi) in expand_use(&c[1]) {
-                let target = crates.resolve_use(file, &cand);
+            for leaf in expand_use_leaves(&c[1]) {
+                let (lo, hi) = leaf.head.unwrap_or(leaf.leaf);
+                let target = crates.resolve_use(file, &leaf.full);
+                let bindings = match &leaf.alias {
+                    Some(alias) if !leaf.collapsed => {
+                        let source = leaf.full.rsplit("::").next().unwrap_or(&leaf.full);
+                        vec![(alias.clone(), source.to_string())]
+                    }
+                    _ => vec![],
+                };
                 out.push(ModuleRef {
-                    specifier: cand,
+                    specifier: leaf.full,
                     kind: "use",
                     line,
                     span: Some((body_start + lo, body_start + hi)),
                     target,
+                    bindings,
                 });
             }
         }
@@ -498,6 +518,10 @@ pub struct UseLeaf {
     pub head: Option<(u32, u32)>,
     /// `self` / `*` leaf: its own span is the keyword, not a rewritable path.
     pub collapsed: bool,
+    /// The ` as alias` binding on this leaf, when present (`r#` stripped);
+    /// `None` for a `self`/`*` leaf even if written with one (no meaningful
+    /// local binding to alias).
+    pub alias: Option<String>,
 }
 
 /// Expand a `use` body into the module-path candidates to resolve, recursing into
@@ -513,6 +537,11 @@ pub struct UseLeaf {
 /// A move whose old module is deeper than that head (e.g. `use crate::{old::A}`)
 /// won't prefix-match the head; the move sink's leaf-level second pass
 /// (`use_leaves`) covers it.
+/// Test-only: `RustResolver::edges` now calls `expand_use_leaves` directly
+/// (it needs each leaf's `alias`, which this projection drops); kept for the
+/// brace/raw-ident/span unit tests below, which exercise the projection
+/// itself.
+#[cfg(test)]
 fn expand_use(body: &str) -> Vec<(String, u32, u32)> {
     expand_use_leaves(body)
         .into_iter()
@@ -553,7 +582,9 @@ pub fn expand_use_leaves(body: &str) -> Vec<UseLeaf> {
             }
         } else {
             // The contiguous leaf is the path before any ` as ` alias.
-            let leaf = seg.split(" as ").next().unwrap_or(seg).trim_end();
+            let mut parts = seg.split(" as ");
+            let leaf = parts.next().unwrap_or(seg).trim_end();
+            let alias = parts.next().map(|a| a.trim().trim_start_matches("r#").to_string());
             let collapsed = leaf == "self" || leaf == "*" || leaf.is_empty();
             let full = if collapsed {
                 prefix.to_string()
@@ -567,6 +598,7 @@ pub fn expand_use_leaves(body: &str) -> Vec<UseLeaf> {
                     leaf: (seg_off as u32, (seg_off + leaf.len()) as u32),
                     head: head_span,
                     collapsed,
+                    alias: if collapsed { None } else { alias },
                 });
             }
         }
@@ -919,6 +951,55 @@ fn ts_spec_re() -> &'static Regex {
     })
 }
 
+/// `import <clause> from "spec"` only — NOT a bare `import "spec"` (no clause,
+/// nothing to alias), NOT `export ... from` (a re-export, not a local
+/// binding), NOT `require(...)`. Group 1 is the clause text (everything
+/// between `import` and `from`), group 2 the specifier text; group 2's span
+/// lines up byte-for-byte with `ts_spec_re`'s group 1 span for the same
+/// statement (both anchor on the `from '...'` tail), so the two regexes'
+/// captures can be joined by that span without a second parse.
+fn ts_import_clause_re() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"(?ms)\bimport\s+([^;'"`]*?)\s+from\s+['"`]([^'"`]+)['"`]"#).unwrap()
+    })
+}
+
+/// Parse a TS/JS import clause (the text between `import` and `from`) into
+/// (local, source) alias pairs: `import Default from ...` -> `[(Default,
+/// "default")]`; `import { a as b } from ...` -> `[(b, a)]`; a plain named
+/// import (`{ c }`) is skipped — its local name already equals the source, so
+/// the name-keyed def bucket resolves it with no alias hop; a namespace
+/// import (`* as ns`) is skipped (no member-level resolution). Leading
+/// `type ` (type-only import) tokens are stripped. String-level, not oxc-grade
+/// (Non-goal): an exotic clause this can't parse just yields fewer/no pairs,
+/// never a wrong one.
+pub(crate) fn parse_ts_import_clause(clause: &str) -> Vec<(String, String)> {
+    let clause = clause.trim();
+    let clause = clause.strip_prefix("type ").map(str::trim).unwrap_or(clause);
+    let mut out = Vec::new();
+    let (default_seg, named_part) = match (clause.find('{'), clause.find('}')) {
+        (Some(open), Some(close)) if close > open => (&clause[..open], &clause[open + 1..close]),
+        _ => (clause, ""),
+    };
+    let default_ident = default_seg.split(',').next().unwrap_or("").trim();
+    if !default_ident.is_empty() && !default_ident.starts_with('*') {
+        out.push((default_ident.to_string(), "default".to_string()));
+    }
+    for item in named_part.split(',') {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        let item = item.strip_prefix("type ").map(str::trim).unwrap_or(item);
+        if let Some((source, local)) = item.split_once(" as ") {
+            out.push((local.trim().to_string(), source.trim().to_string()));
+        }
+        // plain named import: local == source, no alias hop needed, skip.
+    }
+    out
+}
+
 impl TsResolver {
     fn new(root: &Path) -> Option<Self> {
         use oxc_resolver::{ResolveOptions, Resolver, TsconfigDiscovery};
@@ -987,6 +1068,22 @@ impl ModuleResolver for TsResolver {
         let clean = strip_noise(content, false);
         let abs = self.root.join(file);
         let mut out = Vec::new();
+        // (spec-text span) -> its clause's alias bindings, from a SEPARATE
+        // regex pass over `clean` matching only `import <clause> from
+        // "spec"` (the main loop below also matches bare/require/export-from
+        // forms via `ts_spec_re`, which carry no clause to alias). The two
+        // regexes' spec-text spans line up byte-for-byte for the same
+        // statement (see `ts_import_clause_re`'s doc), so this map joins by
+        // span with no second parse.
+        let mut clause_bindings: HashMap<(u32, u32), Vec<(String, String)>> = HashMap::new();
+        for c in ts_import_clause_re().captures_iter(&clean) {
+            let clause = c.get(1).map(|m| m.as_str()).unwrap_or("");
+            let spec_span = c.get(2).unwrap();
+            let bindings = parse_ts_import_clause(clause);
+            if !bindings.is_empty() {
+                clause_bindings.insert((spec_span.start() as u32, spec_span.end() as u32), bindings);
+            }
+        }
         for c in ts_spec_re().captures_iter(&clean) {
             let spec = c[1].to_string();
             let line = line_of(&clean, c.get(0).unwrap().start());
@@ -1000,6 +1097,7 @@ impl ModuleResolver for TsResolver {
                     line,
                     span: None,
                     target: Resolution::Unresolved(format!("{spec}: dynamic")),
+                    bindings: vec![],
                 });
                 continue;
             }
@@ -1026,12 +1124,17 @@ impl ModuleResolver for TsResolver {
                     None => Resolution::External(spec.clone()),
                 },
             };
+            let bindings = clause_bindings
+                .get(&(m.start() as u32, m.end() as u32))
+                .cloned()
+                .unwrap_or_default();
             out.push(ModuleRef {
                 specifier: spec,
                 kind: "import",
                 line,
                 span,
                 target,
+                bindings,
             });
         }
         out
@@ -1070,7 +1173,8 @@ pub(crate) fn kotlin_package_re() -> &'static Regex {
 
 fn kotlin_import_re() -> &'static Regex {
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"(?m)^[ \t]*import[ \t]+([\w`]+(?:\.[\w`]+)*(?:\.\*)?)").unwrap())
+    RE.get_or_init(|| Regex::new(
+        r"(?m)^[ \t]*import[ \t]+([\w`]+(?:\.[\w`]+)*(?:\.\*)?)(?:[ \t]+as[ \t]+([\w`]+))?").unwrap())
 }
 
 /// Column-0 declarations only — Kotlin convention indents members, so a line
@@ -1207,6 +1311,8 @@ impl ModuleResolver for KotlinResolver {
             let spec = m.as_str().replace('`', "");
             let line = line_of(&clean, c.get(0).unwrap().start());
             let span = Some((m.start() as u32, m.end() as u32));
+            // `import a.b.C as D` — never on a wildcard/same-package ref.
+            let alias = c.get(2).map(|a| a.as_str().replace('`', ""));
             if let Some(pkg) = spec.strip_suffix(".*") {
                 match idx.packages.get(pkg) {
                     // a wildcard import depends on every file of the package
@@ -1218,6 +1324,7 @@ impl ModuleResolver for KotlinResolver {
                                 line,
                                 span,
                                 target: Resolution::File(f.clone()),
+                                bindings: vec![],
                             });
                         }
                     }
@@ -1227,17 +1334,26 @@ impl ModuleResolver for KotlinResolver {
                         line,
                         span,
                         target: Resolution::External(spec.clone()),
+                        bindings: vec![],
                     }),
                 }
                 continue;
             }
             for target in idx.resolve(&spec) {
+                let bindings = match (&alias, &target) {
+                    (Some(alias), Resolution::File(_)) => {
+                        let source = spec.rsplit('.').next().unwrap_or(&spec);
+                        vec![(alias.clone(), source.to_string())]
+                    }
+                    _ => vec![],
+                };
                 out.push(ModuleRef {
                     specifier: spec.clone(),
                     kind: "import",
                     line,
                     span,
                     target,
+                    bindings,
                 });
             }
         }
@@ -1267,6 +1383,7 @@ impl ModuleResolver for KotlinResolver {
                     line,
                     span: None,
                     target: Resolution::File(f.clone()),
+                    bindings: vec![],
                 });
             }
         }
@@ -1398,6 +1515,56 @@ mod tests {
         assert!(e
             .iter()
             .any(|r| r.kind == "mod" && r.target == Resolution::File("src/real.rs".into())));
+    }
+
+    #[test]
+    fn rust_use_alias_captured() {
+        let files = set(&["src/lib.rs", "src/foo.rs"]);
+        let m = no_manifests();
+        let c = cx(Path::new("/repo"), &files, &m);
+
+        // bare `use ... as alias;`
+        let e = RustResolver.edges("src/lib.rs", "use crate::foo::make as helper;\n", &c);
+        let r = e.iter().find(|r| r.kind == "use").unwrap();
+        assert_eq!(r.bindings, vec![("helper".to_string(), "make".to_string())]);
+
+        // brace-group alias alongside a non-aliased sibling leaf: only the
+        // aliased leaf carries a binding.
+        let e2 = RustResolver.edges("src/lib.rs", "use crate::foo::{make as helper, other};\n", &c);
+        let aliased = e2.iter().find(|r| r.specifier == "crate::foo::make").unwrap();
+        assert_eq!(aliased.bindings, vec![("helper".to_string(), "make".to_string())]);
+        let plain = e2.iter().find(|r| r.specifier == "crate::foo::other").unwrap();
+        assert!(plain.bindings.is_empty(), "{plain:?}");
+
+        // a collapsed `self` leaf never carries a binding even when written
+        // with ` as ` (no meaningful local binding to alias).
+        let e3 = RustResolver.edges("src/lib.rs", "use crate::foo::{self as renamed};\n", &c);
+        assert!(e3.iter().all(|r| r.bindings.is_empty()), "{e3:?}");
+    }
+
+    #[test]
+    fn ts_import_clause_parse() {
+        assert_eq!(
+            parse_ts_import_clause("{ foo as bar }"),
+            vec![("bar".to_string(), "foo".to_string())]
+        );
+        assert_eq!(
+            parse_ts_import_clause("Default"),
+            vec![("Default".to_string(), "default".to_string())]
+        );
+        assert_eq!(
+            parse_ts_import_clause("Default, { a as b, c }"),
+            vec![
+                ("Default".to_string(), "default".to_string()),
+                ("b".to_string(), "a".to_string()),
+            ]
+        );
+        assert!(parse_ts_import_clause("{ c }").is_empty(), "plain named skips");
+        assert!(parse_ts_import_clause("* as ns").is_empty(), "namespace skips");
+        assert_eq!(
+            parse_ts_import_clause("type { Foo as Bar }"),
+            vec![("Bar".to_string(), "Foo".to_string())]
+        );
     }
 
     #[test]
@@ -1662,6 +1829,33 @@ mod tests {
         let c = cx(Path::new("/repo"), &files, &m).with_reader(&r);
         let e = KotlinResolver.edges("app/Main.kt", contents[1].1, &c);
         assert!(e.is_empty(), "{e:?}");
+    }
+
+    #[test]
+    fn kotlin_import_alias_captured() {
+        let contents = [
+            ("lib/A.kt", "package com.foo\nclass Bar\n"),
+            ("app/Main.kt", "package com.app\n\nimport com.foo.Bar as Baz\n"),
+        ];
+        let files = set(&["lib/A.kt", "app/Main.kt"]);
+        let m = no_manifests();
+        let r = kt_reader(&contents);
+        let c = cx(Path::new("/repo"), &files, &m).with_reader(&r);
+        let e = KotlinResolver.edges("app/Main.kt", contents[1].1, &c);
+        assert_eq!(e.len(), 1, "{e:?}");
+        assert_eq!(e[0].target, Resolution::File("lib/A.kt".into()));
+        assert_eq!(e[0].bindings, vec![("Baz".to_string(), "Bar".to_string())]);
+
+        // a wildcard import never carries an alias binding.
+        let contents_wild = [
+            ("lib/A.kt", "package com.foo\nclass Bar\n"),
+            ("app/Main.kt", "package com.app\n\nimport com.foo.*\n"),
+        ];
+        let files_w = set(&["lib/A.kt", "app/Main.kt"]);
+        let rw = kt_reader(&contents_wild);
+        let cw = cx(Path::new("/repo"), &files_w, &m).with_reader(&rw);
+        let ew = KotlinResolver.edges("app/Main.kt", contents_wild[1].1, &cw);
+        assert!(ew.iter().all(|r| r.bindings.is_empty()), "{ew:?}");
     }
 
     #[test]

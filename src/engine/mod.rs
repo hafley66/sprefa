@@ -186,13 +186,15 @@ pub fn apply_sinks_enabled() -> bool {
 /// every tick, but populated by `refresh_module_rels` only when the program
 /// references one (resolution parses every file, so it is lazy). `module_edge` is
 /// the 2-col convenience closure edge; `module_edge_rev` is the rev-aware form.
-pub(crate) const MODULE_RELS: [&str; 6] = [
+pub(crate) const MODULE_RELS: [&str; 8] = [
     "module_import",
     "module_edge",
     "module_edge_rev",
     "module_unresolved",
     "module_unresolved_rev",
     "crate_edge",
+    "module_binding_rev",
+    "module_binding",
 ];
 
 /// Syntax-only type graph. `kind` is edge metadata; closure(type_edge) walks
@@ -780,6 +782,12 @@ pub(crate) fn module_rel_decls() -> Vec<RelDecl> {
             doc: "rev-aware module_unresolved", ..Default::default() },
         RelDecl { name: "crate_edge".into(), cols: vec![c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text), c("rev", Type::Text)], group: "module",
             doc: "workspace-internal Cargo dependency edges", ..Default::default() },
+        RelDecl { name: "module_binding_rev".into(), cols: vec![
+            c("file", Type::Path), c("local", Type::Text), c("source", Type::Text), c("dst", Type::Path), c("rev", Type::Text)], group: "module",
+            doc: "aliased-import local bindings from the module resolvers' own parse (Rust use..as, TS import{a as b}/default, Kotlin import..as) — the index-free equivalent of scip_binding; local is the binding name in scope at file, source is the exported name at dst (\"default\" for a default import)", ..Default::default() },
+        RelDecl { name: "module_binding".into(), cols: vec![
+            c("file", Type::Path), c("local", Type::Text), c("source", Type::Text), c("dst", Type::Path)], group: "module",
+            doc: "rev-deduped union of module_binding_rev", ..Default::default() },
     ]
 }
 
@@ -1738,6 +1746,9 @@ struct ModuleRows {
     // `ref(id,string,file,lo,hi)` ⋈ `string` covers the import graph, not just
     // regex/ast/sg captures. Collect-then-flush, never N+1.
     spans: Vec<(String, String, spine::WhereBytes)>,
+    // module_binding_rev(file, local, source, dst, rev) rows: each aliased
+    // import binding this specifier ref carries (see `ModuleRef::bindings`).
+    bindings: Vec<Vec<Value>>,
 }
 
 impl ModuleRows {
@@ -1747,6 +1758,7 @@ impl ModuleRows {
         self.unresolved_rev.extend(other.unresolved_rev);
         self.crate_edges.extend(other.crate_edges);
         self.spans.extend(other.spans);
+        self.bindings.extend(other.bindings);
     }
 }
 
