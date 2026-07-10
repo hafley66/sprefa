@@ -558,12 +558,13 @@ impl ServedRoot {
         let n_err = type_diags.iter().filter(|d| d.severity == crate::ast::Severity::Error).count();
         if n_err > 0 { bail!("{n_err} type error(s) in program; root not served"); }
 
+        // Ensure the db's parent dir exists before opening it (the per-root db
+        // lives under <home>/roots/<key>/, which won't exist on first register).
+        if let Some(k) = &key { let _ = std::fs::create_dir_all(root_db_dir(k)); }
         let conn = db::open(db_path)?;
         let mut eng = Engine::new(conn, eng_root.clone());
         if is_config { eng.set_root_implicit(true); }
         eng.set_repos(load_repos_eager());
-        // Ensure the per-root db dir exists (the perf log path lives beside it).
-        if let Some(k) = &key { let _ = std::fs::create_dir_all(root_db_dir(k)); }
         crate::activity::set(crate::activity::Phase::ColdTick, display.as_str());
         eng.tick(&prog, false)?;
         crate::activity::end_tick();
