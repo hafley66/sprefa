@@ -1,0 +1,35 @@
+# json-out.dl - dl produces nested JSON.
+#
+# dl stays flat in storage; nesting is OUTPUT, built by SQLite's own json
+# functions. Two head-position aggregates (json_group_array, json_group_object)
+# collect a group's rows; the json_object / json_array / json scalar fns build a
+# value in a head or comparison. Composition is by STRATIFICATION across two
+# derived relations, no new value model.
+#
+# This example is corpus-free: it reads the built-in `rel_catalog` (every builtin
+# relation with its group), so it runs anywhere with no scan. Run it:
+#   dl examples/json-out.dl
+# Each group's relation names collect into a JSON array; that array embeds into a
+# per-group JSON object one stratum up.
+
+# Stratum 1: per group, the group's relation names as a deterministic JSON array.
+# json_group_array orders inside the aggregate, so the array is byte-stable tick
+# to tick (the content digest never flaps under the daemon).
+rel group_rels(rel_group: text, names_json: text).
+group_rels(rel_group, json_group_array(rel_name)) <-
+    rel_catalog(rel_name, rel_group, cols, doc).
+
+# Stratum 2: one JSON object per group embedding the array from stratum 1. The
+# json_object scalar fn nests the already-built array string under "rels" (wrapped
+# in json() so it embeds as JSON, not as a quoted string).
+rel group_json(payload: text).
+group_json(json_object("group", rel_group, "rels", json(names_json))) <-
+    group_rels(rel_group, names_json).
+
+# The whole catalog as ONE JSON array of those per-group objects (json_group_array
+# over the stratum-2 objects, each re-wrapped with json() so nesting stays JSON).
+rel catalog_json(payload: text).
+catalog_json(json_group_array(json(payload))) <- group_json(payload).
+
+? group_json(payload).
+? catalog_json(payload).

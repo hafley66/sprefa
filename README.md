@@ -155,6 +155,9 @@ A `.dl` program is a sequence of items, each terminated by `.`:
 |---|---|---|
 | relation decl | `rel name(col: type, ...).` | declare a derived relation and its column types |
 | brand decl | `type Name <: parent.` | named subtype of a base type or another brand; storage stays text, unification is checked |
+| enum brand decl | `type severity = "error" \| "warn" \| "info".` | brand whose value set is a closed list of text literals; a literal outside the set (rule head, fact, query pin) is an `enum-variant-unknown` error with a nearest-variant suggestion |
+| shape decl | `type finding(path: text, line: int, sev: severity).` | named row shape (a reusable column list); columns may reference brands or enum brands |
+| rel from shape | `rel finding_rel: finding.` | declare a relation whose columns come from a shape; expands to a plain `rel` decl at load, unknown shape is a load error |
 | anchor decl | `anchor name = fs:body.` | named filesystem anchor (v1: only the default scan-root anchor is referenced) |
 | rule | `head(..) <- body, body, ... .` | derive rows; recursion allowed |
 | aggregate rule | `fan_out(F, count(T)) <- edge(F, T).` | head-position aggregation; plain head terms are the GROUP BY |
@@ -180,11 +183,20 @@ Declared column types (`rel` and brand parents):
 | `dir` | TEXT | path known to be a directory |
 | `repo` | TEXT | repo coordinate (config slug / path / `"."` self) |
 | `rev` | TEXT | git rev coordinate |
-| any brand | base's | `type Hub <: text.` then `rel hub(h: Hub, ...)` |
+| any brand | base's | `type Hub <: text.` then `rel hub(hub_name: Hub, ...)` |
+| any enum brand | TEXT | `type severity = "error" \| "warn".` then `rel finding(path: text, sev: severity)` — literals filling `sev` must be in the set |
+
+Builtin kind columns carry engine-defined enum vocabularies (`type_edge.kind`,
+`type_entity.kind`, `df_node.kind`, `checkout_done.action`), so a typo'd pin like
+`type_edge(_, _, "fields", _)` fails loudly instead of matching zero rows. Query
+the allowed values via `? rel_col("type_edge", pos, col, ty, variants).` — the
+`variants` column is the JSON vocabulary. A user `type` decl reusing one of the
+engine brand names (`type_edge_kind`, ...) is a load error.
 
 Type errors surface as diagnostics under `--check` and in `--lsp`
-(`brand-mismatch`, `path-escapes-root`, `unknown-anchor`, `unknown-scheme`,
-`coerce-text-path`). See [src/typecheck.rs](src/typecheck.rs).
+(`brand-mismatch`, `enum-variant-unknown`, `unknown-shape`, `path-escapes-root`,
+`unknown-anchor`, `unknown-scheme`, `coerce-text-path`). See
+[src/typecheck.rs](src/typecheck.rs).
 
 ### Terms
 
@@ -227,8 +239,9 @@ needs both is two rules: extract, then join (see [Rails](#git-hook--claude-code-
 | regex constraint | `name =~ /^[A-Za-z]+$/` (SQLite REGEXP; the `/.../` is the unified regex literal — same form `match`/`comment`/`sg` use) |
 | glob constraint | `path ~~ "src/*"` (SQLite GLOB) |
 | closure | `closure(edge)` as the entire body — see below |
-| int arithmetic | `+ - * / %` in rule heads (derived AND source) and comparison sides: `rank(path, line + 1) <- fns(path, line).`, `line * 2 > 4`. Usual precedence, parens OK. Never in a body atom (binding position). `/` after a value is division; elsewhere it opens a `/regex/` |
-| string functions | `split(text, sep, idx)` and `replace(text, from, to)` in rule heads and comparison sides: `seg(path, split(path, "/", -1)) <- file(path).`, `kebab(word, replace(word, "_", "-")) <- name(word).`. `idx` is 0-based; negative counts from the end (`-1` = last segment). Out-of-range `split` drops the row (NULL filter). Unary minus parses (`-1` not `0 - 1`). A computed binding `ext = split(path, ".", -1)` binds `ext` for later use in the same body. `replace` is SQLite-native; `split` is the `sprf_split` UDF |
+| arithmetic | `+ - * / %` in rule heads (derived AND source) and comparison sides: `rank(path, line + 1) <- fns(path, line).`, `line * 2 > 4`. `+` is overloaded: int + int adds, text + text concatenates (`url = "https://" + host + "/v1"`); mixed int/text is a typecheck error (`plus-mismatch` — interpolate `"${count}${name}"` or convert with `int(..)`); `- * / %` stay int-only. Usual precedence, parens OK. Never in a body atom (binding position). `/` after a value is division; elsewhere it opens a `/regex/` |
+| string functions | `split(text, sep, idx)` and `replace(text, from, to)` in rule heads and comparison sides: `seg(path, split(path, "/", -1)) <- file(path).`, `kebab(word, replace(word, "_", "-")) <- name(word).`. `idx` is 0-based; negative counts from the end (`-1` = last segment). Out-of-range `split` drops the row (NULL filter). Unary minus parses (`-1` not `0 - 1`). `replace` is SQLite-native; `split` is the `sprf_split` UDF |
+| body bind | `callee = replace(callee_q, ".", "::")` in a DERIVED body binds the computed value: later join atoms, negations, and the head all see `callee`. The RHS may consume any body-atom var or an earlier bind (`unbound-bind` names the fix otherwise); bare `alias = other` stays an equality filter. Source rules (scan/match/ast/...) keep the head-inline form |
 
 **Aggregation** is head-position only: `count` `sum` `min` `max`.
 Non-aggregate head terms are the grouping key. `count`/`sum` produce `int`;
@@ -385,7 +398,8 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `changed` | changed | `(path)` | git status --porcelain -uall vs HEAD (modified/added/renamed/untracked); empty outside git; the rails join |
 | `changed_line` | changed | `(path, line)` | new-side lines of git diff -U0 HEAD hunks plus every line of untracked files; pure-deletion hunks emit nothing; line-scoped rails precision |
 | `checkout` | demand | `(repo, branch, pr_heads)` | git checkout demand sink (the ghcacher keep-current half): head checkout(repo, branch, pr_heads) and each row clones a missing config repo, fetches origin, then NON-DESTRUCTIVELY keeps `branch` current — `merge --ff-only origin/<branch>` when that IS the current branch + the working tree is clean (skip on dirty or diverged; never stash, never reset), else `git branch -f` the ref without touching HEAD or the working tree. branch empty = discover origin/HEAD; pr_heads "1"/"true" also mirrors +refs/pull/*/head. DL_NO_FETCH skips the network (re-points to already-fetched refs only). DL_CHECKOUT_DRY_RUN=1 previews the plan without mutating. The sink drains on the daemon poll loop / --watch / --settle / one-shot --apply (not on a bare `?` read). Repos sweep in parallel on a narrow pool; failures skip loudly |
-| `checkout_done` | demand | `(repo, branch, action, ok, detail)` | checkout-sweep outcome (written by the `checkout` sink, read-only): one row per swept repo — action is reset/branch-f/skip, ok is 1/0, detail is the git result. Confirms the sweep fired from a live daemon (stderr goes to daemon.log) and lets a program diag failures (ok=0); one-tick latency like other demand outputs |
+| `checkout_done` | demand | `(repo, branch, action, ok, detail)` | checkout-sweep outcome (written by the `checkout` sink, read-only): one row per swept repo — action is ff/branch-f/skip, ok is 1/0, detail is the git result. Confirms the sweep fired from a live daemon (stderr goes to daemon.log) and lets a program diag failures (ok=0); one-tick latency like other demand outputs |
+| `checkout_plan` | demand | `(repo, branch, action, ok, detail)` | checkout-sweep PREVIEW (written when DL_CHECKOUT_DRY_RUN=1, read-only): same shape as checkout_done, but the sink computes the action without running `merge --ff-only` or `git branch -f` — nothing in any checkout is mutated. Use to preview what `checkout` would do before opting in via --apply / DL_APPLY_SINKS=1 |
 | `child` | node | `(parent, child)` | CST parent-child edges (exactly 2 cols, so closure(child) gives ancestry) |
 | `clock` | clock | `(secs, bucket)` | the current time bucket now/secs per named period, present EVERY tick (not edge-triggered like every); clock(300,b) binds b to a monotone int advancing once per 300s — join it to vary a digest or gate on cadence, no @next counter |
 | `comment_node` | comment | `(path, line, col, end_line, end_col, text, kind)` | every comment in every parsed file: (path, line, col, end_line, end_col, text, kind is line/block/doc); grammar-backed (oxc for TS/TSX, tree-sitter for Rust, Kotlin, Python, Go, C, ...), so a comment marker inside a string is never a row; text has the comment tokens stripped; std/suppress.dl parses it into the eslint/biome disable grammar |
@@ -398,7 +412,7 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `df_edge` | dataflow | `(from, to)` | intra-procedural dataflow dependency edge |
 | `df_field` | dataflow | `(id, field, value)` | (new/call df_node id, field name, value df_node id); struct-literal fields, object-literal properties, Kotlin named args; ".." for spread/functional-update bases |
 | `df_field_rev` | dataflow | `(id, field, value, rev)` | rev-aware df_field; id and value are salt_rev(raw id, rev), matching df_node_rev.id; legacy df_field keeps raw ids |
-| `df_node` | dataflow | `(id, kind, var, fn, file, line)` | intra-procedural dataflow node (call_res/assign/...); id is file::line::kind |
+| `df_node` | dataflow | `(id, kind, var, fn, file, line)` | intra-procedural dataflow node (call_res/let_bind/param/ret/new/member/...); id is file::line::kind — the full kind vocabulary is rel_col's variants for this column |
 | `df_node_repo` | dataflow | `(id, repo)` | (df_node id, repo) — the repo (nearest .git basename) each node's file was read from; scopes df joins per-repo (df_node ids are path-keyed) |
 | `df_node_repo_rev` | dataflow | `(id, repo, rev)` | rev-aware df_node_repo; id is salt_rev(raw id, rev), matching df_node_rev.id; legacy df_node_repo keeps the raw id |
 | `df_node_rev` | dataflow | `(id, kind, var, fn, file, line, rev)` | rev-aware df_node; id is salt_rev(raw id, rev) so revs stay disjoint; legacy df_node keeps the raw id |
@@ -435,6 +449,7 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `query_log` | daemon | `(ts, source, method, body, params)` | history of server query requests: one row per daemon `query`/`query_sql` RPC and LSP `dl/query` request (ts = ISO-8601 UTC, source in {daemon,lsp}, method = RPC name, body = SQL text or empty, params = JSON array text); append-only, no retention — a polling client (the flow panel) accumulates its own rows too, by design |
 | `ref` | spine | `(id, string, file, lo, hi)` | byte span per interned string; id is the rewrite coordinate — 'where does Foo occur' is string(s, Foo, _), ref(_, s, f, lo, hi) |
 | `rel_catalog` | meta | `(name, group, cols, doc)` | this table: every built-in relation with its group, columns, and one-line doc |
+| `rel_col` | meta | `(rel, pos, col, ty, variants)` | one row per built-in relation column: (rel, 0-based pos, col name, type keyword, variants); variants is the JSON array of allowed values for an enum-vocabulary column (e.g. type_edge.kind), empty for an open column — query it instead of guessing a kind literal |
 | `rel_count` | perf | `(rel, rows)` | row count per declared relation at refresh time; derived rels report the previous tick's counts (source-phase refresh, one-tick lag) — the cardinality-blowup rail joins here |
 | `repo` | core | `(slug, root, url)` | configured + dynamically-pulled repos whose root exists; writable as a sink — a repo(...) rule clones+registers when the github org is in `org` (hard filter); see docs/dynamic-reaching.md |
 | `rev` | core | `(id, repo, oid, ts)` | git revs seen by scans |
@@ -881,10 +896,10 @@ original coordinate model in `../sprefa-archive-20260428`.
 
 ## Known gaps
 
-- **`Value` is `Text | Int`** — no float; `<` on text is lexical. Int
-  arithmetic (`+ - * / %`) works in heads and comparisons.
-- **String manipulation** — `${}` concat; `split(text, sep, idx)` and
-  `replace(text, from, to)` in heads/comparisons (see Body constructs above);
+- **`Value` is `Text | Int`** — no float; `<` on text is lexical. Arithmetic
+  (`+ - * / %`) works in heads and comparisons; `+` concatenates text.
+- **String manipulation** — `${}` interp or `+` concat; `split(text, sep, idx)`
+  and `replace(text, from, to)` in heads/comparisons (see Body constructs above);
   no substr, no regex capture over an already-bound value (use the `match`
   source op at scan time with `(?<name>...)` groups instead).
 - **Closure in a mixed rule body is literal-seeded only** — dynamic transitive

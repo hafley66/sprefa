@@ -23,6 +23,7 @@ pub enum Tok {
     LParen, RParen, Comma, Dot, Colon, Bang, Question, Arrow,
     ThinArrow, // `->` effect-output arrow (sh fn outs; distinct from `<-` neck)
     Lt2, // `<:` brand subtype operator
+    Pipe, // `|` enum-brand variant separator (`type sev = "a" | "b"`)
     Eq, Ne, Lt, Le, Gt, Ge, Match, Glob,
     Plus, Minus, Star, Slash, Percent, // int arithmetic (heads + comparisons)
 }
@@ -124,6 +125,7 @@ pub fn lex(src: &str) -> Result<Vec<Tok>> {
             b'.' => { out.push(Tok::Dot); i += 1; }
             b':' => { out.push(Tok::Colon); i += 1; }
             b'?' => { out.push(Tok::Question); i += 1; }
+            b'|' => { out.push(Tok::Pipe); i += 1; }
             b'=' => {
                 if b.get(i + 1) == Some(&b'~') { out.push(Tok::Match); i += 2; }
                 else { out.push(Tok::Eq); i += 1; }

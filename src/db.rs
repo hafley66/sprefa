@@ -362,6 +362,30 @@ mod tests {
     }
 
     #[test]
+    fn bundled_sqlite_accepts_order_by_inside_aggregate() {
+        // json_agg determinism rides `ORDER BY` inside the aggregate call (SQLite
+        // >= 3.44). If the bundled SQLite ever regresses below that, this fails and
+        // the fallback (a windowed ordered subquery) must ship instead. Also proves
+        // json_group_array / json_group_object are present (core since 3.38).
+        let db = open(None).unwrap();
+        db.exec("CREATE TABLE t (g TEXT, k TEXT, v INTEGER)").unwrap();
+        let rows = vec![
+            vec![Value::Text("a".into()), Value::Text("z".into()), Value::Int(1)],
+            vec![Value::Text("a".into()), Value::Text("x".into()), Value::Int(2)],
+            vec![Value::Text("a".into()), Value::Text("y".into()), Value::Int(3)],
+        ];
+        db.insert_rows("t", &["g", "k", "v"], &rows).unwrap();
+        // ORDER BY inside json_group_array makes the element order deterministic.
+        let arr: String = db.conn().query_row(
+            "SELECT json_group_array(k ORDER BY k) FROM t GROUP BY g", [], |r| r.get(0)).unwrap();
+        assert_eq!(arr, r#"["x","y","z"]"#);
+        // ORDER BY the key inside json_group_object.
+        let obj: String = db.conn().query_row(
+            "SELECT json_group_object(k, v ORDER BY k) FROM t GROUP BY g", [], |r| r.get(0)).unwrap();
+        assert_eq!(obj, r#"{"x":2,"y":3,"z":1}"#);
+    }
+
+    #[test]
     fn prepare_and_query_map_works() {
         let db = open(None).unwrap();
         db.exec("CREATE TABLE t (a INTEGER, b TEXT)").unwrap();

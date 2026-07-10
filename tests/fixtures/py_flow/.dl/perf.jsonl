@@ -6,3 +6,7 @@
 {"ts_ms":1783614669645,"type":"phase","tick":0,"phase":"reconcile","ms":10,"detail":""}
 {"ts_ms":1783614669648,"type":"phase","tick":0,"phase":"derived","ms":2,"detail":"derived: multi_op"}
 {"ts_ms":1783614669648,"type":"tick","tick":0,"kind":"full","files":{"parsed":1,"total":1,"extracted":2,"retracted":0},"derived":{"strategy":"full","rebuilt":["calls","reach","op_entry","op_path","multi_op"]},"changed_rels":["scip_callee_type","scip_impl","scip_local","scip_ref","true","repo","content","scip_edge","rev","scip_def","scip_name","file","spec_op","scip_fn_edge"],"effects_inflight":0,"total_ms":46}
+{"ts_ms":1783646036898,"type":"phase","tick":0,"phase":"declare","ms":23,"detail":""}
+{"ts_ms":1783646036910,"type":"phase","tick":0,"phase":"reconcile","ms":10,"detail":""}
+{"ts_ms":1783646036912,"type":"phase","tick":0,"phase":"derived","ms":1,"detail":"derived: multi_op"}
+{"ts_ms":1783646036912,"type":"tick","tick":0,"kind":"full","files":{"parsed":1,"total":1,"extracted":2,"retracted":0},"derived":{"strategy":"full","rebuilt":["calls","reach","op_entry","op_path","multi_op"]},"changed_rels":["scip_ref","scip_callee_type","scip_impl","rev","repo","spec_op","scip_def","true","scip_fn_edge","scip_name","file","scip_edge","scip_local","content"],"effects_inflight":0,"total_ms":37}

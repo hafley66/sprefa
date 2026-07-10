@@ -44,7 +44,30 @@ fn interp_sql(parts: &[InterpPart], canon: &HashMap<String, String>) -> Result<S
     Ok(if pieces.is_empty() { "''".into() } else { pieces.join(" || ") })
 }
 
-fn term_sql(t: &Term, canon: &HashMap<String, String>) -> Result<String> {
+/// Static type of a term at lower time, from the body's var->column-type map.
+/// `None` = unknown (an unbound var, a wildcard). Drives the `+` overload:
+/// int + int stays SQL addition, text + text lowers to `||`. All non-int base
+/// types (path/file/dir/repo/rev) store TEXT, so they concat like text.
+fn term_ty(t: &Term, tys: &HashMap<String, Type>) -> Option<Type> {
+    match t {
+        Term::Var(v) => tys.get(v).copied(),
+        Term::Str(_) | Term::Interp(_) => Some(Type::Text),
+        Term::Int(_) => Some(Type::Int),
+        Term::Call { name, .. } => Some(if name == "int" { Type::Int } else { Type::Text }),
+        Term::Arith { op, lhs, rhs } => match op {
+            ArithOp::Add => match (term_ty(lhs, tys), term_ty(rhs, tys)) {
+                (Some(Type::Int), Some(Type::Int)) => Some(Type::Int),
+                (Some(a), Some(b)) if a != Type::Int && b != Type::Int => Some(Type::Text),
+                (Some(a), None) | (None, Some(a)) => Some(a),
+                _ => None,
+            },
+            _ => Some(Type::Int),
+        },
+        Term::Wild | Term::PathLit { .. } => None,
+    }
+}
+
+fn term_sql(t: &Term, canon: &HashMap<String, String>, tys: &HashMap<String, Type>) -> Result<String> {
     match t {
         Term::Var(v) => canon.get(v).cloned()
             .ok_or_else(|| anyhow::anyhow!("unbound variable {v}")),
@@ -52,11 +75,26 @@ fn term_sql(t: &Term, canon: &HashMap<String, String>) -> Result<String> {
         Term::Interp(parts) => interp_sql(parts, canon),
         Term::Wild => bail!("'_' not allowed here"),
         Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
+        // `+` is overloaded: int + int = SQL addition, text + text = SQLite `||`.
+        // Mixed is a typecheck error upstream; the lower-time bail is the
+        // backstop for paths typecheck cannot see. Unknown-typed sides keep the
+        // legacy numeric `+` (a fully-unknown `+` was numeric before this fork).
+        Term::Arith { op: ArithOp::Add, lhs, rhs } => {
+            let (lt, rt) = (term_ty(lhs, tys), term_ty(rhs, tys));
+            let text = |t: Option<Type>| t.is_some_and(|x| x != Type::Int);
+            let sql_op = match (lt, rt) {
+                _ if text(lt) && text(rt) => "||",
+                (Some(Type::Int), t) | (t, Some(Type::Int)) if text(t) =>
+                    bail!("cannot `+` int and text — interpolate (\"${{count}}${{name}}\") or convert with int(..)"),
+                _ => "+",
+            };
+            Ok(format!("({} {sql_op} {})", term_sql(lhs, canon, tys)?, term_sql(rhs, canon, tys)?))
+        }
         Term::Arith { op, lhs, rhs } => Ok(format!(
-            "({} {} {})", term_sql(lhs, canon)?, op.sql(), term_sql(rhs, canon)?)),
+            "({} {} {})", term_sql(lhs, canon, tys)?, op.sql(), term_sql(rhs, canon, tys)?)),
         Term::Call { name, args } => {
             let arg_sqls: Vec<String> = args.iter()
-                .map(|a| term_sql(a, canon)).collect::<Result<_>>()?;
+                .map(|a| term_sql(a, canon, tys)).collect::<Result<_>>()?;
             match name.as_str() {
                 // SQLite native: replace(X, Y, Z) replaces all Y in X with Z.
                 "replace" if args.len() == 3 =>
@@ -69,26 +107,41 @@ fn term_sql(t: &Term, canon: &HashMap<String, String>) -> Result<String> {
                 // compared numerically instead of as text against "0".
                 "int" if args.len() == 1 =>
                     Ok(format!("CAST({} AS INTEGER)", arg_sqls[0])),
+                // SQLite native JSON constructors (core since 3.38). Variadic:
+                // json_object takes (key, value) pairs (even arity >= 2),
+                // json_array takes >= 1 element, json(x) validates/minifies.
+                "json_object" if args.len() >= 2 && args.len() % 2 == 0 =>
+                    Ok(format!("json_object({})", arg_sqls.join(", "))),
+                "json_array" if !args.is_empty() =>
+                    Ok(format!("json_array({})", arg_sqls.join(", "))),
+                "json" if args.len() == 1 =>
+                    Ok(format!("json({})", arg_sqls[0])),
                 // Registered string UDFs (db.rs::register_string_fns), all
                 // text->text. STR_FNS = (dsl name, sql fn, arity).
                 _ if STR_FNS.iter().any(|(n, _, k)| *n == name && *k == args.len()) => {
                     let (_, sql, _) = STR_FNS.iter().find(|(n, _, _)| *n == name).unwrap();
                     Ok(format!("{sql}({})", arg_sqls.join(", ")))
                 }
-                other => bail!("unknown or mis-arity function `{other}` (known: split/3, replace/3, int/1, {})",
+                other => bail!("unknown or mis-arity function `{other}` (known: split/3, replace/3, int/1, \
+                    json_object/even>=2, json_array/>=1, json/1, {})",
                     STR_FNS.iter().map(|(n, _, k)| format!("{n}/{k}")).collect::<Vec<_>>().join(", ")),
             }
         }
     }
 }
 
-/// Walk a body's Pos/Neg/Cmp items into (canon var->cell, FROM aliases, WHERE
-/// conds). Shared by `lower_rule` and `lower_gen`; other body items are the
-/// caller's concern (a derived rule never carries them, gen rejects them).
+/// Walk a body's Pos/Neg/Cmp items into (canon var->cell, var->type, FROM
+/// aliases, WHERE conds). Shared by `lower_rule` and `lower_gen`; other body
+/// items are the caller's concern (a derived rule never carries them, gen
+/// rejects them). Pass order is Pos -> Cmp -> Neg: the Cmp pass may BIND a var
+/// to a computed expression (`callee = replace(callee_q, ".", "::")`), and a
+/// negation referencing that var must see it in canon — with Neg first the var
+/// minted an unconstrained subquery local instead of a join.
 fn body_sql(body: &[BodyItem], rels: &Rels)
-    -> Result<(HashMap<String, String>, Vec<String>, Vec<String>)>
+    -> Result<(HashMap<String, String>, HashMap<String, Type>, Vec<String>, Vec<String>)>
 {
     let mut canon: HashMap<String, String> = HashMap::new();
+    let mut tys: HashMap<String, Type> = HashMap::new();
     let mut wheres: Vec<String> = Vec::new();
     let mut froms: Vec<String> = Vec::new();
     let mut k = 0usize;
@@ -106,7 +159,10 @@ fn body_sql(body: &[BodyItem], rels: &Rels)
                 match term {
                     Term::Var(v) => match canon.get(v) {
                         Some(prev) => wheres.push(format!("{cell} = {prev}")),
-                        None => { canon.insert(v.clone(), cell); }
+                        None => {
+                            canon.insert(v.clone(), cell);
+                            tys.insert(v.clone(), meta.cols[pos].ty);
+                        }
                     },
                     Term::Str(_) | Term::Int(_) => wheres.push(format!("{cell} = {}", lit_sql(term).unwrap())),
                     Term::Interp(_) => bail!("interpolated string only allowed in a rule head, not a body atom"),
@@ -117,6 +173,38 @@ fn body_sql(body: &[BodyItem], rels: &Rels)
                 }
             }
             k += 1;
+        }
+    }
+
+    for item in body {
+        if let BodyItem::Cmp(c) = item {
+            // Computed binding: `var = expr` where the var is unbound and the
+            // other side is a Call/Arith (a value-producing expression, not a
+            // literal/var). Bind the var to the expr's SQL so later body items
+            // and the head see the computed value. Same canon slot a Pos atom
+            // fills; the expr is inlined at each use (SQLite re-evals, cheap
+            // for split/replace). Literal `x = "foo"` stays a WHERE filter.
+            if c.op == CmpOp::Eq {
+                let bound = match (&c.lhs, &c.rhs) {
+                    (Term::Var(v), rhs) if v != "_" && !canon.contains_key(v) && has_computation(rhs) => {
+                        let e = term_sql(rhs, &canon, &tys)?;
+                        if let Some(t) = term_ty(rhs, &tys) { tys.insert(v.clone(), t); }
+                        canon.insert(v.clone(), e);
+                        true
+                    }
+                    (lhs, Term::Var(v)) if v != "_" && !canon.contains_key(v) && has_computation(lhs) => {
+                        let e = term_sql(lhs, &canon, &tys)?;
+                        if let Some(t) = term_ty(lhs, &tys) { tys.insert(v.clone(), t); }
+                        canon.insert(v.clone(), e);
+                        true
+                    }
+                    _ => false,
+                };
+                if bound { continue; }
+            }
+            let l = term_sql(&c.lhs, &canon, &tys)?;
+            let r = term_sql(&c.rhs, &canon, &tys)?;
+            wheres.push(format!("{l} {} {r}", c.op.sql()));
         }
     }
 
@@ -156,37 +244,7 @@ fn body_sql(body: &[BodyItem], rels: &Rels)
         }
     }
 
-    for item in body {
-        if let BodyItem::Cmp(c) = item {
-            // Computed binding: `var = expr` where the var is unbound and the
-            // other side is a Call/Arith (a value-producing expression, not a
-            // literal/var). Bind the var to the expr's SQL so later body items
-            // and the head see the computed value. Same canon slot a Pos atom
-            // fills; the expr is inlined at each use (SQLite re-evals, cheap
-            // for split/replace). Literal `x = "foo"` stays a WHERE filter.
-            if c.op == CmpOp::Eq {
-                let bound = match (&c.lhs, &c.rhs) {
-                    (Term::Var(v), rhs) if v != "_" && !canon.contains_key(v) && has_computation(rhs) => {
-                        let e = term_sql(rhs, &canon)?;
-                        canon.insert(v.clone(), e);
-                        true
-                    }
-                    (lhs, Term::Var(v)) if v != "_" && !canon.contains_key(v) && has_computation(lhs) => {
-                        let e = term_sql(lhs, &canon)?;
-                        canon.insert(v.clone(), e);
-                        true
-                    }
-                    _ => false,
-                };
-                if bound { continue; }
-            }
-            let l = term_sql(&c.lhs, &canon)?;
-            let r = term_sql(&c.rhs, &canon)?;
-            wheres.push(format!("{l} {} {r}", c.op.sql()));
-        }
-    }
-
-    Ok((canon, froms, wheres))
+    Ok((canon, tys, froms, wheres))
 }
 
 /// Lower a derived rule (Pos/Neg/Cmp only) to one `INSERT OR IGNORE ... SELECT`.
@@ -196,7 +254,7 @@ fn body_sql(body: &[BodyItem], rels: &Rels)
 /// relations. The engine reads each row into a JSON arg object. See engine
 /// `rebuild_async` and docs §8.
 pub fn lower_body_projection(body: &[BodyItem], rels: &Rels, vars: &[String]) -> Result<String> {
-    let (canon, froms, wheres) = body_sql(body, rels)?;
+    let (canon, _tys, froms, wheres) = body_sql(body, rels)?;
     if froms.is_empty() {
         bail!("@async rule body has no positive atom to bind request args");
     }
@@ -221,7 +279,7 @@ pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
 /// land in the carry buffer stamped with the next generation instead of in the
 /// head relation this tick. Existing callers go through `lower_rule` unchanged.
 pub fn lower_rule_to(rule: &Rule, rels: &Rels, target: &str, extra: &[(String, String)]) -> Result<String> {
-    let (canon, froms, mut wheres) = body_sql(&rule.body, rels)?;
+    let (canon, tys, froms, mut wheres) = body_sql(&rule.body, rels)?;
 
     // a ground fact (empty body) lowers to a FROM-less SELECT of literals;
     // a non-empty body still needs a positive atom to range over
@@ -266,7 +324,7 @@ pub fn lower_rule_to(rule: &Rule, rels: &Rels, target: &str, extra: &[(String, S
         let mut exprs = Vec::new();
         for term in &rule.head.terms {
             if matches!(term, Term::Wild) { exprs.push("NULL".into()); continue; }
-            let e = term_sql(term, &canon)?;
+            let e = term_sql(term, &canon, &tys)?;
             if has_call(term) { wheres.push(format!("{e} IS NOT NULL")); }
             exprs.push(e);
         }
@@ -302,24 +360,45 @@ pub fn lower_rule_to(rule: &Rule, rels: &Rels, target: &str, extra: &[(String, S
         for (i, term) in rule.head.terms.iter().enumerate() {
             match rule.aggs.get(i).copied().flatten() {
                 Some(f) => {
+                    use crate::ast::AggFn;
                     let arg = match term {
                         Term::Wild => "*".to_string(),
-                        _ => term_sql(term, &canon)?,
+                        _ => term_sql(term, &canon, &tys)?,
                     };
-                    // SUM over zero rows is SQL NULL; INSERT OR IGNORE never
-                    // dedups NULLs (NULL != NULL), so the fixpoint loop would
-                    // diverge re-inserting the same NULL each iteration. Pin
-                    // empty-sum to 0. COUNT/MIN/MAX don't need it (COUNT is
-                    // never NULL; MIN/MAX of nothing being NULL is the
-                    // intended "no value" semantics).
-                    if matches!(f, crate::ast::AggFn::Sum) {
-                        exprs.push(format!("COALESCE({}({arg}), 0)", f.sql()));
-                    } else {
-                        exprs.push(format!("{}({arg})", f.sql()));
+                    match f {
+                        // SUM over zero rows is SQL NULL; INSERT OR IGNORE never
+                        // dedups NULLs (NULL != NULL), so the fixpoint loop would
+                        // diverge re-inserting the same NULL each iteration. Pin
+                        // empty-sum to 0. COUNT/MIN/MAX don't need it (COUNT is
+                        // never NULL; MIN/MAX of nothing being NULL is the
+                        // intended "no value" semantics).
+                        AggFn::Sum => exprs.push(format!("COALESCE(SUM({arg}), 0)")),
+                        // `ORDER BY <arg>` inside the aggregate makes element order
+                        // a pure function of the group's rows — otherwise SQLite's
+                        // aggregate order is arbitrary and the rel's content digest
+                        // would flap every tick, forcing spurious daemon rebuilds.
+                        AggFn::JsonGroupArray => {
+                            if matches!(term, Term::Wild) {
+                                bail!("json_group_array(_) has no value to collect — pass a column, not `_`");
+                            }
+                            exprs.push(format!("json_group_array({arg} ORDER BY {arg})"));
+                        }
+                        AggFn::JsonGroupObject => {
+                            if matches!(term, Term::Wild) {
+                                bail!("json_group_object(_, ..) has no key to build — pass a column, not `_`");
+                            }
+                            let val = rule.agg_args2.get(i).and_then(|a| a.as_ref())
+                                .ok_or_else(|| anyhow::anyhow!(
+                                    "json_group_object expects (key, value) — the value arg is missing"))?;
+                            let val_sql = term_sql(val, &canon, &tys)?;
+                            exprs.push(format!("json_group_object({arg}, {val_sql} ORDER BY {arg})"));
+                        }
+                        AggFn::Count | AggFn::Min | AggFn::Max =>
+                            exprs.push(format!("{}({arg})", f.sql())),
                     }
                 }
                 None => {
-                    let g = term_sql(term, &canon)?;
+                    let g = term_sql(term, &canon, &tys)?;
                     exprs.push(g.clone());
                     group.push(g);
                 }
@@ -349,7 +428,7 @@ pub fn lower_rule_to(rule: &Rule, rels: &Rels, target: &str, extra: &[(String, S
         // (both via `Rule::head_null_pads`), so this arm never runs for a
         // recursive component.
         if matches!(term, Term::Wild) { exprs.push("NULL".into()); continue; }
-        let e = term_sql(term, &canon)?;
+        let e = term_sql(term, &canon, &tys)?;
         // A head term containing a Call (split/replace) may evaluate to NULL
         // when the function misses (split out-of-range). A NULL row inserted
         // into the derived table never dedups in the fixpoint delta (NULL !=
@@ -400,7 +479,7 @@ pub fn lower_gen(vars: &[String], body: &[BodyItem], rels: &Rels) -> Result<Stri
     {
         bail!("gen body must be derived-style (relation atoms and comparisons only), got {b:?}");
     }
-    let (canon, froms, wheres) = body_sql(body, rels)?;
+    let (canon, _tys, froms, wheres) = body_sql(body, rels)?;
     if froms.is_empty() { bail!("gen body has no positive atom"); }
     let mut sel = Vec::new();
     for v in vars {
@@ -456,4 +535,120 @@ pub fn lower_query(q: &Query, rels: &Rels) -> Result<(String, Vec<String>)> {
     let where_sql = if wheres.is_empty() { String::new() } else { format!(" WHERE {}", wheres.join(" AND ")) };
     let sql = format!("SELECT DISTINCT {} FROM {}{} ORDER BY 1", sel.join(", "), tbl(&q.head.rel), where_sql);
     Ok((sql, headers))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::{Item, RelMeta};
+
+    fn rule_and_rels(src: &str) -> (Rule, Rels) {
+        let prog = crate::parse::parse(crate::lex::lex(src).unwrap()).unwrap();
+        let mut rels = Rels::new();
+        let mut rule = None;
+        for item in prog.items {
+            match item {
+                Item::Rel(d) => { rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone(), ..Default::default() }); }
+                Item::Rule(r) if !r.body.is_empty() => { rule = Some(r); }
+                _ => {}
+            }
+        }
+        (rule.expect("one derived rule"), rels)
+    }
+
+    /// A body bind inlines the computed expression into every use site: the
+    /// canon slot holds `replace(r0."callee_q", '.', '::')`, so the head SELECT
+    /// projects the expression directly — no second evaluator, no extra FROM.
+    #[test]
+    fn bind_lowers_to_inlined_expr_sql() {
+        let (rule, rels) = rule_and_rels(concat!(
+            "rel raw_edge(caller: text, callee_q: text).\n",
+            "rel resolved(caller: text, callee: text).\n",
+            "resolved(caller, callee) <- raw_edge(caller, callee_q), callee = replace(callee_q, \".\", \"::\").\n"));
+        let sql = lower_rule(&rule, &rels).unwrap();
+        assert!(sql.contains("replace(r0.\"callee_q\", '.', '::')"), "inlined expr: {sql}");
+        assert_eq!(sql.matches("FROM").count(), 1, "single FROM (no subquery): {sql}");
+    }
+
+    /// `+` dispatch: text + text lowers to `||`, int + int stays `+`.
+    #[test]
+    fn plus_dispatches_on_operand_types() {
+        let (rule, rels) = rule_and_rels(concat!(
+            "rel base_url(host: text).\n",
+            "rel endpoint(url: text).\n",
+            "endpoint(\"https://\" + host) <- base_url(host).\n"));
+        let sql = lower_rule(&rule, &rels).unwrap();
+        assert!(sql.contains("'https://' || r0.\"host\""), "text + lowers to ||: {sql}");
+
+        let (rule, rels) = rule_and_rels(concat!(
+            "rel hit(line: int).\n",
+            "rel next_line(value: int).\n",
+            "next_line(line + 1) <- hit(line).\n"));
+        let sql = lower_rule(&rule, &rels).unwrap();
+        assert!(sql.contains("r0.\"line\" + 1"), "int + stays addition: {sql}");
+    }
+
+    /// json aggregates lower to `json_group_array/object(... ORDER BY key)` —
+    /// determinism rides the ORDER BY. The object form reads its value arg from
+    /// `Rule::agg_args2`.
+    #[test]
+    fn json_aggs_lower_with_order_by() {
+        let (rule, rels) = rule_and_rels(concat!(
+            "rel src(g: text, name: text).\n",
+            "rel arr(g: text, names: text).\n",
+            "arr(g, json_group_array(name)) <- src(g, name).\n"));
+        let sql = lower_rule(&rule, &rels).unwrap();
+        assert!(sql.contains("json_group_array(r0.\"name\" ORDER BY r0.\"name\")"),
+            "array agg orders inside the call: {sql}");
+        assert!(sql.contains("GROUP BY r0.\"g\""), "group key present: {sql}");
+
+        let (rule, rels) = rule_and_rels(concat!(
+            "rel src(g: text, k: text, v: text).\n",
+            "rel obj(g: text, payload: text).\n",
+            "obj(g, json_group_object(k, v)) <- src(g, k, v).\n"));
+        let sql = lower_rule(&rule, &rels).unwrap();
+        assert!(sql.contains("json_group_object(r0.\"k\", r0.\"v\" ORDER BY r0.\"k\")"),
+            "object agg reads key + value, orders by key: {sql}");
+    }
+
+    /// The json scalar constructors lower to their SQLite natives; odd-arity
+    /// json_object is a loud mis-arity bail at lowering.
+    #[test]
+    fn json_scalar_fns_lower_and_arity() {
+        let (rule, rels) = rule_and_rels(concat!(
+            "rel src(a: text, b: text).\n",
+            "rel out(payload: text).\n",
+            "out(json_object(\"k\", a, \"j\", b)) <- src(a, b).\n"));
+        let sql = lower_rule(&rule, &rels).unwrap();
+        assert!(sql.contains("json_object('k', r0.\"a\", 'j', r0.\"b\")"), "json_object native: {sql}");
+
+        let (rule, rels) = rule_and_rels(concat!(
+            "rel src(a: text).\n",
+            "rel out(payload: text).\n",
+            "out(json_array(a)) <- src(a).\n"));
+        let sql = lower_rule(&rule, &rels).unwrap();
+        assert!(sql.contains("json_array(r0.\"a\")"), "json_array native: {sql}");
+
+        // Odd-arity json_object: no matching arm -> the mis-arity bail.
+        let (rule, rels) = rule_and_rels(concat!(
+            "rel src(a: text, b: text, c: text).\n",
+            "rel out(payload: text).\n",
+            "out(json_object(a, b, c)) <- src(a, b, c).\n"));
+        let e = lower_rule(&rule, &rels).unwrap_err().to_string();
+        assert!(e.contains("mis-arity") || e.contains("json_object"), "odd json_object bails: {e}");
+    }
+
+    /// A bind var referenced inside a NEGATION joins the outer row (Cmp pass
+    /// runs before the Neg pass), instead of minting an unconstrained local.
+    #[test]
+    fn bind_var_joins_negation() {
+        let (rule, rels) = rule_and_rels(concat!(
+            "rel raw_edge(caller: text, callee_q: text).\n",
+            "rel blocked(name: text).\n",
+            "rel resolved(caller: text).\n",
+            "resolved(caller) <- raw_edge(caller, callee_q), callee = replace(callee_q, \".\", \"::\"), !blocked(callee).\n"));
+        let sql = lower_rule(&rule, &rels).unwrap();
+        assert!(sql.contains("ax0.\"name\" = replace(r0.\"callee_q\", '.', '::')"),
+            "negation must join the bind's expression: {sql}");
+    }
 }

@@ -46,6 +46,13 @@ pub struct Col {
 
 impl Col {
     pub fn plain(name: String, ty: Type) -> Col { Col { name, ty, brand: None } }
+    /// A text column carrying an enum brand: a builtin decl's closed kind
+    /// vocabulary (e.g. `type_edge.kind`). Storage stays text; the brand name
+    /// resolves through the ambient `engine::builtin_enum_brands` table, so a
+    /// literal pin outside the set is an `enum-variant-unknown` typecheck error.
+    pub fn branded(name: &str, brand: &str) -> Col {
+        Col { name: name.to_string(), ty: Type::Text, brand: Some(brand.to_string()) }
+    }
 }
 
 /// A lattice merge function on key conflict: among rows sharing a `key(...)`
@@ -128,6 +135,10 @@ pub struct RelDecl {
     /// `undocumented_builtins` (and its test) fail while a built-in decl leaves
     /// this empty. Avoid `|` so it renders inside a markdown table cell.
     pub doc: &'static str,
+    /// `rel <name>: <shape>.` records the referenced shape name here (with `cols`
+    /// left empty). Resolved to the shape's columns by `typecheck::expand_shapes`
+    /// at load; `None` (and expanded) before the engine sees the decl.
+    pub shape_ref: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -211,9 +222,12 @@ pub struct Atom {
 }
 
 /// An aggregation function in a rule head: `count(T)`, `sum(T)`, `min(T)`,
-/// `max(T)`. Count/Sum produce an `Int`; Min/Max produce the argument's type.
+/// `max(T)`, `json_group_array(T)`, `json_group_object(K, V)`. Count/Sum produce
+/// an `Int`; Min/Max produce the argument's type; the two json aggregates produce
+/// `Text` (a JSON array / object built by SQLite). `json_group_object` is the only
+/// TWO-ARG aggregate — its value arg rides `Rule::agg_args2`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AggFn { Count, Sum, Min, Max }
+pub enum AggFn { Count, Sum, Min, Max, JsonGroupArray, JsonGroupObject }
 
 impl AggFn {
     pub fn parse(s: &str) -> Option<AggFn> {
@@ -222,17 +236,30 @@ impl AggFn {
             "sum" => AggFn::Sum,
             "min" => AggFn::Min,
             "max" => AggFn::Max,
+            "json_group_array" => AggFn::JsonGroupArray,
+            "json_group_object" => AggFn::JsonGroupObject,
             _ => return None,
         })
     }
     pub fn sql(self) -> &'static str {
-        match self { AggFn::Count => "COUNT", AggFn::Sum => "SUM", AggFn::Min => "MIN", AggFn::Max => "MAX" }
+        match self {
+            AggFn::Count => "COUNT", AggFn::Sum => "SUM", AggFn::Min => "MIN", AggFn::Max => "MAX",
+            AggFn::JsonGroupArray => "json_group_array", AggFn::JsonGroupObject => "json_group_object",
+        }
     }
-    /// The output type of the aggregate. Count/Sum are always Int; Min/Max carry
-    /// the argument column's type (resolved by the caller from the arg var).
+    /// The output type of the aggregate. Count/Sum are always Int; the two json
+    /// aggregates always Text; Min/Max carry the argument column's type (resolved
+    /// by the caller from the arg var).
     pub fn fixed_out(self) -> Option<Type> {
-        match self { AggFn::Count | AggFn::Sum => Some(Type::Int), AggFn::Min | AggFn::Max => None }
+        match self {
+            AggFn::Count | AggFn::Sum => Some(Type::Int),
+            AggFn::JsonGroupArray | AggFn::JsonGroupObject => Some(Type::Text),
+            AggFn::Min | AggFn::Max => None,
+        }
     }
+    /// `json_group_object(key, value)` is the only two-arg aggregate. The value
+    /// arg is carried in `Rule::agg_args2` parallel to the key in `Rule::head.terms`.
+    pub fn is_two_arg(self) -> bool { matches!(self, AggFn::JsonGroupObject) }
 }
 
 #[derive(Clone, Debug)]
@@ -343,6 +370,11 @@ pub struct Rule {
     /// Kept off `Atom` so query heads, body atoms, and source rules stay untouched;
     /// only a derived rule head ever carries aggs (see plan T4, head-position only).
     pub aggs: Vec<Option<AggFn>>,
+    /// The SECOND argument of a two-arg aggregate, parallel to `head.terms`:
+    /// `agg_args2[i] == Some(v)` means head slot `i` is `json_group_object(key, v)`
+    /// (the key rides `head.terms[i]`, the value is `v`). `None` at every other slot.
+    /// Empty (the common case) whenever the head carries no aggregate, mirroring `aggs`.
+    pub agg_args2: Vec<Option<Term>>,
     /// The file this rule was parsed from (canonical). Lets a self-form scan
     /// (`scan("WORK", …)` / `.` / `self`) resolve to the rule's own `.git`
     /// ancestor instead of the engine's `self.root`, so a script loaded into a
@@ -459,10 +491,22 @@ pub struct Query { pub head: Atom }
 #[derive(Clone, Debug)]
 pub struct AnchorDecl { pub name: String, pub body: String, pub span: (u32, u32) }
 
-/// `type <ident> <: <parent>.` A brand: a named subtype of a base type or a prior
-/// brand. Stored in the relation schema metadata; runtime storage stays text.
+/// A brand: a named subtype used only at typecheck time (runtime storage stays
+/// text). Two surface forms:
+///   `type <ident> <: <parent>.`         — nominal brand over a base type/brand.
+///   `type <ident> = "a" | "b" | ... .`  — an ENUM brand: a closed set of text
+///     literals. `parent` is `"text"` (the base storage type) and `variants` is
+///     `Some([...])`. A literal filling an enum-branded column must be in the set
+///     (`enum-variant-unknown` otherwise). `variants` is `None` for the `<:` form.
 #[derive(Clone, Debug)]
-pub struct BrandDecl { pub name: String, pub parent: String }
+pub struct BrandDecl { pub name: String, pub parent: String, pub variants: Option<Vec<String>> }
+
+/// `type <name>(col: ty, ...).` A named row SHAPE: a reusable column list. A
+/// `rel <name>: <shape>.` decl expands to an ordinary `RelDecl` whose columns are
+/// the shape's, at load (frontend + typecheck seam), so downstream code only ever
+/// sees plain `RelDecl`s. A shape column may reference a brand or an enum brand.
+#[derive(Clone, Debug)]
+pub struct ShapeDecl { pub name: String, pub cols: Vec<Col> }
 
 /// Where a `gen` rule's rendered rows land.
 #[derive(Clone, Debug)]
@@ -528,7 +572,7 @@ pub struct GenRule {
 }
 
 #[derive(Clone, Debug)]
-pub enum Item { Rel(RelDecl), Rule(Rule), Query(Query), Anchor(AnchorDecl), Brand(BrandDecl), Gen(GenRule), Shell(ShellFn) }
+pub enum Item { Rel(RelDecl), Rule(Rule), Query(Query), Anchor(AnchorDecl), Brand(BrandDecl), Shape(ShapeDecl), Gen(GenRule), Shell(ShellFn) }
 
 /// The read/mutate/stream axis of a `sh` decl: `sh` = `Read` (cached, deduped,
 /// at-least-once, retryable), `sh!` = `Mutate` (idempotency-keyed, exactly-once,

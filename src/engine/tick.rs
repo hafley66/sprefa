@@ -63,6 +63,7 @@ impl Engine {
         let t_tick = std::time::Instant::now();
         self.rev_cache.clear();
         self.extraction_drops.clear();
+        self.shape_diags.clear();
         CMD_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
         self.db.tick_begin();
         let rules: Vec<&Rule> = prog.items.iter().filter_map(|i| match i {
@@ -70,8 +71,10 @@ impl Engine {
         }).collect();
         let closures = closure_map(&rules);
         crate::activity::set(crate::activity::Phase::Declare, "");
-        self.declare_all(prog, &closures)?;
+        // Meta tables (incl. `_shapes`) before declare: `resolve_derived_shapes`
+        // inside `declare_all` reads `_shapes` (Phase 5).
         self.ensure_meta()?;
+        self.declare_all(prog, &closures)?;
 
         let source_rules: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_source()).collect();
         // `repo`-sink + `checkout`-sink rules are NOT drained here: they hit the
@@ -113,12 +116,17 @@ impl Engine {
         // `eval_extract_rules` pass (after sources/responses are present, before
         // the derived fixpoint) and excluded from `all_derived` here.
         let extract_rules: Vec<&Rule> = rules.iter().copied()
-            .filter(|r| r.has_term_extract() && !r.is_source()).collect();
+            .filter(|r| r.has_term_extract() && !r.is_source()
+                && self.rels.contains_key(&r.head.rel)).collect();
         let all_derived: Vec<&Rule> = rules.iter().copied()
             .filter(|r| !r.is_source() && !r.is_repo_sink() && !r.is_next() && !r.is_async()
                 && !r.is_stream() && !r.has_term_extract()
                 && r.closure_edge().is_none() && r.scc_edge().is_none()
-                && r.node2vec_edge().is_none()).collect();
+                && r.node2vec_edge().is_none()
+                // A rule heading a still-PENDING derived-shape rel (its `rel name:
+                // shape.` has no persisted columns yet) has no table to write —
+                // skip it this tick; it runs once the shape resolves (Phase 5).
+                && self.rels.contains_key(&r.head.rel)).collect();
         // `head(..) <- scc(edge).` rules: materialize (rep, member) from the
         // closure condensation in the query phase (after refresh_cond_cache).
         // Excluded from all_derived — the Scc body item can't lower to SQL, and
@@ -503,6 +511,10 @@ impl Engine {
                 }
             }
         }
+        // Phase 5: the `type_decl_row` sink is now fully derived, so persist its
+        // rows to `_shapes` (digest-guarded). A computed `rel name: shape.` that
+        // referenced it resolves at the NEXT tick's declare — the one-tick delay.
+        self.persist_type_decl_shapes(prog)?;
         // The priming tick skips `?` evaluation: it exists only to derive the
         // coordinates a data-driven scan / repo-sink reads on the real tick.
         // A quiet tick (the daemon's reactive path) also skips PRINTING the
@@ -613,12 +625,14 @@ impl Engine {
         let _tick_started = std::time::Instant::now();
         self.rev_cache.clear();
         self.extraction_drops.clear();
+        self.shape_diags.clear();
         CMD_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
         self.db.tick_begin();
         let rules: Vec<&Rule> = prog.items.iter().filter_map(|i| match i { Item::Rule(r) => Some(r), _ => None }).collect();
         let closures = closure_map(&rules);
-        self.declare_all(prog, &closures)?;
+        // Meta tables (incl. `_shapes`) before declare (Phase 5, see tick_report).
         self.ensure_meta()?;
+        self.declare_all(prog, &closures)?;
 
         // A `repo`-sink program pulls dynamically; the drain runs only on the
         // full-tick path, so an incremental tick defers to the full tick. (The
@@ -634,7 +648,8 @@ impl Engine {
         let source_rules: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_source()).collect();
         let all_derived: Vec<&Rule> = rules.iter().copied()
             .filter(|r| !r.is_source() && r.closure_edge().is_none() && r.scc_edge().is_none()
-                && r.node2vec_edge().is_none()).collect();
+                && r.node2vec_edge().is_none()
+                && self.rels.contains_key(&r.head.rel)).collect();
         let scc_rules: Vec<&Rule> = rules.iter().copied()
             .filter(|r| r.scc_edge().is_some()).collect();
         let node2vec_rules: Vec<&Rule> = rules.iter().copied()
@@ -924,6 +939,9 @@ impl Engine {
                 }
             }
         }
+        // Phase 5: persist the derived-shape sink (digest-guarded), same as the
+        // full tick — a computed `rel name: shape.` resolves next tick.
+        self.persist_type_decl_shapes(prog)?;
         self.run_gens(prog, quiet)?;
         if self.dropped > 0 { eprintln!("[checked-type] dropped {} rows", self.dropped); self.dropped = 0; }
         self.last_n1 = self.db.tick_end();

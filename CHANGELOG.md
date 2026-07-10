@@ -24,6 +24,88 @@ tags consumed by cargo-dist.
   indexes reflect the on-disk tree); file content read once per file, never
   per-occurrence. Both rels are catalogued (group `scip`), reserved, and carried
   through the `scip_want` multi-repo merge with per-repo attribution.
+- **JSON output: aggregation heads + json scalar fns.** dl stays flat in storage;
+  nesting is OUTPUT, built by SQLite's own json functions (bundled SQLite 3.45).
+  Two new head-position aggregates beside count/sum/min/max: `json_group_array(x)`
+  (the group's values as a JSON array) and `json_group_object(k, v)` (the group's
+  key/value pairs as a JSON object — the first two-arg aggregate; its value arg
+  rides a new `Rule::agg_args2` vec parallel to the head terms). Three new scalar
+  head/comparison fns: `json_object(k1, v1, ...)` (variadic, even arity >= 2),
+  `json_array(x1, ...)` (variadic >= 1), and `json(x)` (validate/minify). Both
+  aggregates emit `ORDER BY` inside the aggregate call so element order is a pure
+  function of the group's rows — the rel's content digest is stable tick to tick
+  (no spurious daemon rebuild). Composition is by stratification, no new value
+  model: `item_json(order_id, json_group_array(item_name)) <- order_item(...)`
+  then `order_json(json_object("id", order_id, "items", json(items))) <- orders(...),
+  item_json(...)`. A json aggregate into an int column is a `brand-mismatch` diag;
+  a json fn/agg in a SOURCE-rule head is refused as `json-in-source` (derived-only).
+  `examples/json-out.dl` (corpus-free, over `rel_catalog`): one JSON object per
+  builtin rel group with the rel names as an array, embedded across two strata.
+- **Derived shapes: `type_decl_row(shape, pos, col, type)`.** A reserved builtin
+  sink a DERIVED rule may head to compute a relation schema from data. The
+  engine persists the sink's rows to a new `_shapes` meta table at the end of
+  a tick (digest-guarded full replace); a `rel name: shape.` decl whose shape
+  has no syntax `type name(...)` resolves its columns from those rows at the
+  NEXT tick's declare — a one-tick phase delay (the @next carry precedent;
+  invisible under the daemon). Until then the rel is pending: rules heading it
+  are skipped for the tick and --check carries a `shape-pending` info diag.
+  Syntax shapes win a name clash (`shape-shadowed` warn); a shape row naming
+  an unknown type stays pending (`shape-unknown-type` warn, ty = base type or a
+  declared brand). A shape's row set changing migrates the rels using it via
+  the existing column-drift migration (re-derives next tick). A user
+  `rel type_decl_row(...)` decl bails — head it directly, like diag.
+  `examples/type-from-json.dl`: a schema inferred from a JSON sample (`int`
+  when every observed value is an integer) becomes a live checked rel, plus
+  the mapped-type trick — `type_decl_row("partial_" + rel, pos, col, ty) <-
+  rel_col(rel, pos, col, ty, _)` mints a partial_* shape per built-in
+  relation from live introspection.
+- **Text `+` concatenation (S4).** `+` is overloaded by operand type: int + int
+  stays SQL addition, text + text lowers to SQLite `||` (source rules
+  concatenate in `val_of`), so `url = "https://" + host + "/v1"` builds the
+  string instead of silently returning `0` (the old numeric coercion). Mixed
+  int/text is a `plus-mismatch` typecheck error naming the fix (interpolate or
+  `int(..)`); `- * / %` stay int-only and now reject text operands at
+  typecheck. Works in head position and in body binds.
+- **Body-bind hardening (S3).** The body computed-bind
+  (`callee = replace(callee_q, ".", "::")`, already shipped) gains: a
+  typecheck-time `unbound-bind` error naming the fix ("bind `callee_q` before
+  computing `callee`") when a bind's RHS var is bound by nothing or only a
+  LATER bind (was a lower-time abort); a bind var referenced in a NEGATION now
+  joins the outer row (the Cmp pass runs before the Neg pass — previously the
+  var silently became an unconstrained subquery local); the source-rule
+  refusal note now names both escape hatches (head-inline for source rules,
+  body binds for derived rules).
+- **Builtin kind columns are enum-checked.** `type_edge.kind` /
+  `type_edge_rev.kind`, `type_entity.kind` / `type_entity_rev.kind`,
+  `df_node.kind` / `df_node_rev.kind`, and `checkout_done.action` /
+  `checkout_plan.action` carry ambient enum brands (`type_edge_kind`,
+  `type_entity_kind`, `df_node_kind`, `checkout_action`) whose variant sets
+  mirror the extractor emit sites. A literal pin outside the set — the #1 agent
+  failure mode, e.g. `type_edge(_, _, "fields", _)` — is a loud
+  `enum-variant-unknown` error with a did-you-mean suggestion instead of silent
+  zero rows. No user `type` decl needed; a user `type` reusing one of these
+  names is a load error. Variables and joins are unchanged (an enum-branded var
+  flowing into a plain text column is silent — the brand is a vocabulary gate on
+  literals, not a path-like refinement). `doc_tag.tag` stays unbranded (open
+  set: any `@word` passes through).
+- **`rel_col` introspection rel.** `rel_col(rel, pos, col, ty, variants)` — one
+  row per builtin relation column; `variants` is the JSON array of allowed
+  values for an enum-vocabulary column ("" for open columns). Query
+  `? rel_col("type_edge", pos, col, ty, variants).` instead of guessing a kind
+  literal. Registered on the catalog RelKind beside rel_catalog.
+- **Enum brands (typecheck-time).** `type severity = "error" | "warn" | "info" |
+  "hint".` declares a brand whose value set is a closed list of text literals. A
+  string literal filling an enum-branded column (rule head, fact, or query pin)
+  that is not in the set is an `enum-variant-unknown` error, with a
+  nearest-variant suggestion (Levenshtein). A sub-brand `type x <: severity`
+  inherits the variant set. Storage stays text; the check is load-time only.
+- **Named row shapes (typecheck-time).** `type finding(path: text, line: int,
+  sev: severity).` declares a reusable column list; `rel finding_rel: finding.`
+  declares a rel whose columns come from the shape. The shape reference expands
+  into a plain `RelDecl` at load (frontend + typecheck seam) so the engine only
+  ever sees ordinary rel decls. A shape column may reference a brand or enum
+  brand. An unknown shape name is an `unknown-shape` load error naming the fix.
+  No shape introspection rels, exhaustiveness, or json validation (later rungs).
 
 ## [0.6.23] - 2026-07-09
 

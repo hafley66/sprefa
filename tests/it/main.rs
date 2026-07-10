@@ -3,11 +3,13 @@
 // autotests=false), so `mod foo;` resolves to its sibling tests/it/foo.rs.
 mod agent_rels;
 mod agg;
+mod json_agg;
 mod arith;
 mod ast_grammars;
 mod ast_whole_match_id;
 mod ast_yaml;
 mod ban_gate;
+mod body_binds;
 mod builtin_file_rel;
 mod call_rels;
 mod changed;
@@ -123,6 +125,8 @@ mod temporal_async;
 mod temporal_carry;
 mod temporal_every;
 mod true_singleton;
+mod type_decl_row;
+mod type_decls;
 mod type_entity_xlang;
 mod type_graph;
 mod type_graph_ts;

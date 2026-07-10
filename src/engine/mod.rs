@@ -393,6 +393,20 @@ const MUTE_RELS: [&str; 1] = ["diag_mute"];
 /// magic-rels.md and the `.dl/magic-rel-audit.dl` rail.
 const DEMAND_RELS: [&str; 5] = ["scip_want", "rev_cmp_want", "def_target", "effect_cmd", "checkout"];
 
+/// The derived-shape SINK relation. A user HEADS `type_decl_row(shape, pos, col,
+/// ty)` from a rule (like `diag` / `graph_node`) to DERIVE a relation schema from
+/// data — column names + base types computed by rules rather than written by
+/// hand. The engine consumes it across a one-tick phase delay: at the end of a
+/// tick its rows persist to the `_shapes` meta table; on the NEXT tick's declare,
+/// a `rel name: shape.` decl whose shape has no syntax `type name(...)` decl
+/// resolves its columns from the persisted rows (a `shape-pending` info diag until
+/// then). Syntax shapes win on a name clash (`shape-shadowed` warn). Pre-declared
+/// (catalogued, group "types") and reserved against a `rel` re-declaration — head
+/// it directly, like diag. Derived-only: it must be filled by a derived rule (a
+/// term-extract rule feeding it must route through its own rel first, the repo
+/// mixed-kind law).
+const TYPE_DECL_RELS: [&str; 1] = ["type_decl_row"];
+
 fn builtin_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -436,6 +450,7 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
         .chain(diag_mute_rel_decls())
         .chain(demand_rel_decls())
         .chain(checkout_out_rel_decls())
+        .chain(type_decl_rel_decls())
         .collect()
 }
 
@@ -444,6 +459,39 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
 /// engine" label agree (a user `.dl` rule's relation is not in this set).
 pub fn builtin_rel_names() -> std::collections::HashSet<String> {
     all_builtin_decls().into_iter().map(|d| d.name).collect()
+}
+
+/// Ambient enum brands carried by BUILTIN relation columns: brand name -> the
+/// closed literal vocabulary. Injected into `typecheck::Brands` without any user
+/// `type` decl, so a literal pin against e.g. `type_edge.kind` outside the set is
+/// an `enum-variant-unknown` error (the documented #1 agent failure mode: pin
+/// `kind = "fields"`, get silent zero rows). Each set mirrors its extractor's
+/// literal emit sites — adding a kind string there means adding it HERE (the
+/// enum check turns a missed entry into loud false errors, never silent rows).
+/// A user `type` decl reusing one of these names is a load error.
+pub fn builtin_enum_brands() -> &'static [(&'static str, &'static [&'static str])] {
+    &[
+        // typegraph.rs edge emitters (push/bound_edge literal kind args, all 3 langs).
+        ("type_edge_kind", &["field", "variant", "impl", "generic", "param", "returns", "uses"]),
+        // typegraph.rs EntityKind::tag.
+        ("type_entity_kind",
+         &["struct", "enum", "trait", "class", "interface", "alias", "function", "method", "const"]),
+        // typegraph.rs push_node + ts_push literal kind args (union across the
+        // Rust/Kotlin/TS lifts; the two variable-kind call sites resolve to
+        // new/call_res).
+        ("df_node_kind",
+         &["binop", "block", "borrow", "call_res", "closure", "cond", "expr", "if", "let_bind",
+           "lit", "logic", "loop", "match", "member", "new", "param", "ret", "template", "unop",
+           "var_read", "var_write"]),
+        // CheckoutOutcome.action literals (checkout_one / the throttle skip row).
+        ("checkout_action", &["ff", "branch-f", "skip"]),
+    ]
+}
+
+/// The variant set of one ambient builtin enum brand, or `None` for a user brand
+/// (or any unknown name).
+pub fn builtin_enum_variants(brand: &str) -> Option<&'static [&'static str]> {
+    builtin_enum_brands().iter().find(|(name, _)| *name == brand).map(|(_, vs)| *vs)
 }
 
 /// Built-in relation names whose decl carries an empty `doc`. The
@@ -472,6 +520,12 @@ pub fn fn_docs() -> &'static [(&'static str, usize, &'static str, &'static str)]
         ("split", 3, "string", "split text on a separator; idx 0-based, negative counts from the end (-1 = last); out-of-range drops the row (NULL filter); the sprf_split UDF"),
         ("replace", 3, "string", "replace ALL occurrences of `from` with `to`; SQLite-native"),
         ("int", 1, "cast", "text->int coercion (leading-int prefix, else 0); fills an int column or compares numerically; SQLite CAST"),
+        // json constructors: variadic (arity shown is the minimum). Build a JSON
+        // string in a head or comparison; SQLite-native. Pair with the json_group_*
+        // head aggregates for nested output.
+        ("json_object", 2, "json", "build a JSON object from (key, value, ...) pairs; even arity >= 2; values keep their type (int -> number, text -> string); SQLite-native json_object"),
+        ("json_array", 1, "json", "build a JSON array from the arg values; arity >= 1; SQLite-native json_array"),
+        ("json", 1, "json", "validate and minify a JSON string (passthrough); SQLite-native json()"),
         // pass-through string builtins (STR_FNS in lower.rs -> sprf_* UDFs).
         ("lower", 1, "string", "lowercase (Unicode-aware)"),
         ("upper", 1, "string", "uppercase (Unicode-aware)"),
@@ -491,7 +545,8 @@ pub fn fn_docs() -> &'static [(&'static str, usize, &'static str, &'static str)]
 pub fn undocumented_fns() -> Vec<String> {
     let documented: std::collections::HashSet<(&str, usize)> =
         fn_docs().iter().map(|(n, a, _, _)| (*n, *a)).collect();
-    let native: [(&str, usize); 3] = [("split", 3), ("replace", 3), ("int", 1)];
+    let native: [(&str, usize); 6] = [("split", 3), ("replace", 3), ("int", 1),
+        ("json_object", 2), ("json_array", 1), ("json", 1)];
     let mut missing: Vec<String> = crate::lower::STR_FNS.iter()
         .map(|(n, _, a)| (*n, *a))
         .chain(native)
@@ -528,9 +583,9 @@ pub fn op_docs() -> &'static [(&'static str, &'static str, &'static str, &'stati
         ("closure", "body", "closure(edge)", "transitive closure of a 2-col relation as the entire body (SCC-condensed); pin an endpoint for a point query; mixed-body closure is literal-seeded only"),
         ("scc", "body", "head(rep, member) <- scc(edge)", "strongly-connected-component condensation of a 2-col relation as the entire body; binds (representative, member) per node; mirrors closure, evaluated outside SQL"),
         ("node2vec", "body", "head(node_a, node_b, score) <- node2vec(edge)", "structural graph embedding of a 2-col relation as the entire body; binds node pairs with a similarity score (the graph-position sibling of the text `similar` rel); evaluated outside SQL"),
-        ("arith", "body", "+ - * / %", "int arithmetic in rule heads and comparison sides (rank(path, line+1)); usual precedence, parens OK; never in a binding atom"),
-        ("strfn", "body", "split(text, sep, idx) / replace(text, from, to)", "string functions in heads and comparison sides; idx 0-based, negative counts from the end; a computed binding (ext = split(path, \".\", -1)) binds for later use in the same body"),
-        ("aggregation", "body", "count sum min max", "head-position-only aggregation; non-aggregate head terms are the grouping key; count/sum produce int, min/max carry the arg type; count in body is a parse error"),
+        ("arith", "body", "+ - * / %", "arithmetic in rule heads and comparison sides (rank(path, line+1)); `+` is overloaded — int + int adds, text + text concatenates (url = \"https://\" + host), mixed int/text is a typecheck error (interpolate or int(..)); - * / % stay int-only; usual precedence, parens OK; never in a binding atom"),
+        ("strfn", "body", "split(text, sep, idx) / replace(text, from, to)", "string functions in heads and comparison sides; idx 0-based, negative counts from the end; a computed binding (ext = split(path, \".\", -1)) binds for later use in the same body — later joins, negations, and the head all see it (derived rules only; a source rule inlines into the head)"),
+        ("aggregation", "body", "count sum min max json_group_array json_group_object", "head-position-only aggregation; non-aggregate head terms are the grouping key; count/sum produce int, min/max carry the arg type; json_group_array(x) / json_group_object(k, v) build a JSON array/object per group (deterministic, ORDER BY inside the agg); count in body is a parse error"),
         // sinks.
         ("query", "sink", "? rel(from, to). / ? rel(col: value).", "print a TSV block (or JSON-lines with --query-json); a literal in any position filters; args may be named by column (`col: value`), unmentioned columns are don't-cares; no where clause"),
         ("diag", "sink", "diag(path: hit_path, line: hit_line, msg: message[, col: , end_line: , end_col: , severity: , code: , hint: ]) <- ...", "head the built-in diagnostic sink; fixed 9-col schema (path/line/col/end_line/end_col/severity/code/msg/hint), name only the columns you use, the rest default (severity warn, end_line=line); feeds editor diagnostics (--lsp) and check output (--check)"),
@@ -639,7 +694,7 @@ const CHECKOUT_OUT_RELS: [&str; 2] = ["checkout_done", "checkout_plan"];
 fn checkout_out_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     let cols = || vec![
-        c("repo", Type::Text), c("branch", Type::Text), c("action", Type::Text),
+        c("repo", Type::Text), c("branch", Type::Text), Col::branded("action", "checkout_action"),
         c("ok", Type::Int), c("detail", Type::Text)];
     vec![
         RelDecl { name: "checkout_done".into(), cols: cols(), group: "demand",
@@ -647,6 +702,28 @@ fn checkout_out_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "checkout_plan".into(), cols: cols(), group: "demand",
             doc: "checkout-sweep PREVIEW (written when DL_CHECKOUT_DRY_RUN=1, read-only): same shape as checkout_done, but the sink computes the action without running `merge --ff-only` or `git branch -f` — nothing in any checkout is mutated. Use to preview what `checkout` would do before opting in via --apply / DL_APPLY_SINKS=1", ..Default::default() },
     ]
+}
+
+/// The derived-shape sink relation (see `TYPE_DECL_RELS`). Fixed 4-col schema.
+/// `shape` is TEXT (a shape name; any string, computed via concat is fine),
+/// `pos` is the 0-based column position, `col` the column name, `type` the base
+/// type keyword (text/int/path/...) OR a declared brand name.
+fn type_decl_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "type_decl_row".into(), cols: vec![
+            c("shape", Type::Text), c("pos", Type::Int), c("col", Type::Text), c("type", Type::Text)],
+            group: "types",
+            doc: "derived-shape sink: head type_decl_row(shape, pos, col, type) from a derived rule to compute a relation schema from data. At end of tick its rows persist; on the next tick a `rel name: shape.` decl with no syntax `type name(...)` resolves its columns from them (shape-pending info diag until then, shape-shadowed warn if a syntax shape shares the name). the type column is a base type keyword or a declared brand; an unknown type keeps that shape pending. Derived-only (route a jsonp/json extract through its own rel first)",
+            ..Default::default() },
+    ]
+}
+
+/// True when the program HEADS `type_decl_row` from any rule — gates the
+/// end-of-tick persist and tells `expand_shapes` to DEFER (not error) an
+/// unresolved `rel name: shape.` ref (the shape derives next tick).
+pub fn type_decl_row_used(prog: &Program) -> bool {
+    prog.items.iter().any(|it| matches!(it, Item::Rule(r) if r.head.rel == "type_decl_row"))
 }
 
 /// The structured result of one `checkout_one` sweep. `action` ∈
@@ -709,16 +786,16 @@ pub(crate) fn module_rel_decls() -> Vec<RelDecl> {
 pub(crate) fn type_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
-        RelDecl { name: "type_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text), c("repo", Type::Text)], group: "type",
+        RelDecl { name: "type_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), Col::branded("kind", "type_edge_kind"), c("repo", Type::Text)], group: "type",
             doc: "type-graph edges across Rust (syn), Kotlin (tree-sitter), TS (oxc); kind is field/variant/impl/generic — Kotlin interface supertypes are generic, class/object impl, val/var ctor params + body properties field, enum entries variant; trailing repo column so two trees scanned together don't collapse same-named types into one node (closure/scc still walk cols 0/1, unaffected)", ..Default::default() },
-        RelDecl { name: "type_edge_rev".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), c("kind", Type::Text), c("rev", Type::Text), c("repo", Type::Text)], group: "type",
+        RelDecl { name: "type_edge_rev".into(), cols: vec![c("from", Type::Text), c("to", Type::Text), Col::branded("kind", "type_edge_kind"), c("rev", Type::Text), c("repo", Type::Text)], group: "type",
             doc: "rev-aware type_edge (WORK-vs-HEAD type diff)", ..Default::default() },
         RelDecl { name: "type_entity".into(), cols: vec![
-            c("repo", Type::Text), c("sym", Type::Text), c("name", Type::Text), c("kind", Type::Text),
+            c("repo", Type::Text), c("sym", Type::Text), c("name", Type::Text), Col::branded("kind", "type_entity_kind"),
             c("parent", Type::Text), c("file", Type::Path), c("line", Type::Int)], group: "type",
             doc: "every declared type; sym is file::kind::name, the cross-graph join key; scip_ref overrides name resolution when a SCIP index is present", ..Default::default() },
         RelDecl { name: "type_entity_rev".into(), cols: vec![
-            c("repo", Type::Text), c("sym", Type::Text), c("name", Type::Text), c("kind", Type::Text),
+            c("repo", Type::Text), c("sym", Type::Text), c("name", Type::Text), Col::branded("kind", "type_entity_kind"),
             c("parent", Type::Text), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Text)], group: "type",
             doc: "rev-aware type_entity (rev is a column, never folded into the sym, so a diff compares the same sym across revs); legacy type_entity is the rev-deduped union", ..Default::default() },
         RelDecl { name: "type_sig".into(), cols: vec![
@@ -797,16 +874,16 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "df_node".into(), cols: vec![
-            c("id", Type::Text), c("kind", Type::Text), c("var", Type::Text),
+            c("id", Type::Text), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
             c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int)], group: "dataflow",
-            doc: "intra-procedural dataflow node (call_res/assign/...); id is file::line::kind", ..Default::default() },
+            doc: "intra-procedural dataflow node (call_res/let_bind/param/ret/new/member/...); id is file::line::kind — the full kind vocabulary is rel_col's variants for this column", ..Default::default() },
         // rev-aware df_node: id is salt_rev(raw id, rev) so two revs' file:line:col
         // ids stay disjoint in one table (unlike syms, a df id embeds a line so
         // the same point is different code across revs). legacy df_node keeps the
         // raw id; a diff reads df_node_rev where the salt makes base/head ids
         // disjoint and the member-edge diff is name-joined, never raw-id-joined.
         RelDecl { name: "df_node_rev".into(), cols: vec![
-            c("id", Type::Text), c("kind", Type::Text), c("var", Type::Text),
+            c("id", Type::Text), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
             c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Text)], group: "dataflow",
             doc: "rev-aware df_node; id is salt_rev(raw id, rev) so revs stay disjoint; legacy df_node keeps the raw id", ..Default::default() },
         // (df_node id, repo) — the repo (nearest `.git` basename) the node's file
@@ -1040,7 +1117,8 @@ pub(crate) fn rels_used(prog: &Program, rels: &[&str]) -> bool {
                     _ => {}
                 }
             },
-            Item::Rel(_) | Item::Anchor(_) | Item::Brand(_) | Item::Shell(_) => {}
+            // Shapes are expanded to plain RelDecls at load, so none reach here.
+            Item::Rel(_) | Item::Anchor(_) | Item::Brand(_) | Item::Shape(_) | Item::Shell(_) => {}
         }
     }
     false
@@ -1697,6 +1775,12 @@ pub struct Engine {
     /// type-failure, so each lands at file-level line 1 (spec T3). Collected, then
     /// read once after the tick; never a per-row publish.
     extraction_drops: Vec<DiagRow>,
+    /// Structural diagnostics from the derived-shape resolver (Phase 5):
+    /// shape-pending / shape-shadowed / shape-unknown-type. Produced at declare +
+    /// end-of-tick persist, cleared at tick start, and appended by `diags()` so
+    /// --check and --lsp both surface them (they are not rule-derived `diag`
+    /// rows). All non-error severity, so the error gate stays green.
+    shape_diags: Vec<DiagRow>,
     /// Test/bench instrumentation: cumulative count of edge condensations
     /// actually rebuilt (Tarjan invocations). A reused cond does not bump it, so
     /// a bench can assert "this edit recondensed 0 graphs".
@@ -1808,7 +1892,7 @@ impl Engine {
     pub fn new(db: crate::db::Db, root: PathBuf) -> Self {
         crate::perflog::set_root(&root);
         Engine {
-            db, rels: HashMap::new(), root, dropped: 0, extraction_drops: Vec::new(), recondensed: 0,
+            db, rels: HashMap::new(), root, dropped: 0, extraction_drops: Vec::new(), shape_diags: Vec::new(), recondensed: 0,
             node2vec_recomputed: 0,
             closure_cache: HashMap::new(),
             rev_cache: HashMap::new(),
@@ -2531,6 +2615,12 @@ impl Engine {
             None => stmt.query([])?,
         };
         while let Some(row) = rows.next()? { out.push(map_row(row)?); }
+        // Engine-structural shape diagnostics (Phase 5): not `diag`-rel rows, so
+        // append them here — the single read seam --check / --lsp / the daemon
+        // schema RPC all go through. Respect the `only` path filter.
+        for d in &self.shape_diags {
+            if only.map(|p| p == d.path).unwrap_or(true) { out.push(d.clone()); }
+        }
         Ok(out)
     }
 
@@ -2562,6 +2652,12 @@ impl Engine {
                  mtime INTEGER DEFAULT 0, size INTEGER DEFAULT 0, PRIMARY KEY (repo, path, rev));
              CREATE TABLE IF NOT EXISTS _prov (rel TEXT, repo TEXT NOT NULL DEFAULT '', path TEXT, src TEXT, PRIMARY KEY (rel, repo, path, src));
              CREATE TABLE IF NOT EXISTS _reldigest (rel TEXT PRIMARY KEY, digest TEXT);
+             -- Persisted derived shapes (Phase 5): one row per (shape, column) the
+             -- `type_decl_row` sink produced last tick. Read at the next tick's
+             -- declare to resolve a `rel name: shape.` whose shape was computed,
+             -- not written by hand. Digest-guarded full replace (see
+             -- persist_type_decl_shapes); the one-tick phase delay.
+             CREATE TABLE IF NOT EXISTS _shapes (shape TEXT, pos INTEGER, col TEXT, type TEXT, PRIMARY KEY (shape, pos));
              -- Wall ms of each derived rel's INSERT statements from its most
              -- recent rebuild (max across the rel's rules/passes). Written
              -- batched by rebuild_derived; projected by the perf built-in
@@ -2796,6 +2892,144 @@ impl Engine {
             &format!("SELECT COUNT(*) FROM pragma_table_info('{}') WHERE name = ?1", table.replace('\'', "''")),
             [col], |r| r.get(0))?;
         Ok(n > 0)
+    }
+
+    /// Load the persisted derived shapes from `_shapes` (Phase 5): shape name ->
+    /// its columns in `pos` order. A `type` value that names a base type builds a plain
+    /// column; anything else is a validated brand name (checked at persist time),
+    /// so it lands a TEXT column carrying that brand. Read at the START of a tick
+    /// (declare) to resolve a computed `rel name: shape.`.
+    fn load_persisted_shapes(&self) -> Result<HashMap<String, Vec<Col>>> {
+        let mut out: HashMap<String, Vec<Col>> = HashMap::new();
+        let mut stmt = self.db.conn()
+            .prepare("SELECT shape, col, type FROM _shapes ORDER BY shape, pos")?;
+        let rows = stmt.query_map([], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
+        for row in rows {
+            let (shape, col, ty) = row?;
+            let column = match Type::parse(&ty) {
+                Some(base) => Col::plain(col, base),
+                // A validated brand name (persist checked it): enum brands store
+                // TEXT with the brand attached. A `<: int` brand base is not
+                // reconstructed here (lands TEXT) — cosmetic, rules over the
+                // derived rel type-checked at load when its cols were empty.
+                None => Col::branded(&col, &ty),
+            };
+            out.entry(shape).or_default().push(column);
+        }
+        Ok(out)
+    }
+
+    /// Resolve every deferred `rel name: shape.` (shape_ref still set, cols empty)
+    /// against the persisted derived shapes (Phase 5). Syntax `type name(...)`
+    /// shapes already won at load (their refs are resolved before the engine sees
+    /// the decl), so a ref still unresolved here is derived-only. Fills
+    /// `self.rels[name]` via `declare` (which migrates a `rel_<name>` table on
+    /// column drift and deletes its `_reldigest` row so it re-derives), or records
+    /// a `shape-pending` info diag. A persisted shape that shares a name with a
+    /// syntax shape records `shape-shadowed` (syntax won, the derived rows are
+    /// ignored). Called at the top of a tick after the normal declare loop.
+    fn resolve_derived_shapes(&mut self, prog: &Program) -> Result<()> {
+        let deferred: Vec<(String, String)> = prog.items.iter().filter_map(|it| match it {
+            Item::Rel(d) => d.shape_ref.as_ref().map(|s| (d.name.clone(), s.clone())),
+            _ => None,
+        }).collect();
+        if deferred.is_empty() && !type_decl_row_used(prog) { return Ok(()); }
+        let persisted = self.load_persisted_shapes()?;
+        let builtins = builtin_rel_names();
+        for (rel_name, shape) in &deferred {
+            if builtins.contains(rel_name) { continue; } // exotic `rel diag: x` — leave the builtin alone
+            match persisted.get(shape) {
+                Some(cols) => {
+                    let d = RelDecl { name: rel_name.clone(), cols: cols.clone(), ..Default::default() };
+                    self.declare(&d)?;
+                }
+                None => self.shape_diags.push(DiagRow {
+                    path: "(shapes)".into(), line: 1, col: 0, end_line: 1, end_col: 0,
+                    severity: "info".into(), code: "shape-pending".into(),
+                    msg: format!("rel `{rel_name}`: shape `{shape}` has no syntax `type {shape}(...)` \
+                        decl and no derived rows yet — it derives from type_decl_row and becomes \
+                        available on the next tick"),
+                    hint: None,
+                }),
+            }
+        }
+        // A syntax `type X(...)` shadows a derived shape of the same name: syntax
+        // won for any `rel _: X`, so the derived rows are unused. Warn once.
+        let syntax_shapes: std::collections::HashSet<&str> = prog.items.iter()
+            .filter_map(|it| if let Item::Shape(s) = it { Some(s.name.as_str()) } else { None })
+            .collect();
+        for shape in persisted.keys() {
+            if syntax_shapes.contains(shape.as_str()) {
+                self.shape_diags.push(DiagRow {
+                    path: "(shapes)".into(), line: 1, col: 0, end_line: 1, end_col: 0,
+                    severity: "warn".into(), code: "shape-shadowed".into(),
+                    msg: format!("shape `{shape}` is declared both as a syntax `type {shape}(...)` \
+                        and derived via type_decl_row; the syntax decl wins and the derived rows \
+                        are ignored"),
+                    hint: None,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Persist the `type_decl_row` sink's rows to `_shapes` (Phase 5), at the END
+    /// of a tick (after the derived fixpoint filled `rel_type_decl_row`). Digest-
+    /// guarded on the sink's content (a `shape:type_decl_row` key in `_reldigest`)
+    /// so an unchanged sink does NOT re-persist or re-migrate every tick (the
+    /// repo's recompute-guard rail). Each row's `type` must name a base type, an
+    /// ambient builtin enum brand, or a program-declared brand; an unknown type
+    /// records a `shape-unknown-type` warn and that whole shape is dropped from the
+    /// persist (it stays pending). Full replace, batched (no per-row write).
+    fn persist_type_decl_shapes(&mut self, prog: &Program) -> Result<()> {
+        if !type_decl_row_used(prog) { return Ok(()); }
+
+        // Valid ty vocabulary: base types + ambient builtin enum brands + program brands.
+        let prog_brands: std::collections::HashSet<&str> = prog.items.iter()
+            .filter_map(|it| if let Item::Brand(b) = it { Some(b.name.as_str()) } else { None })
+            .collect();
+        let ty_ok = |ty: &str| Type::parse(ty).is_some()
+            || builtin_enum_variants(ty).is_some()
+            || prog_brands.contains(ty);
+
+        let mut stmt = self.db.conn()
+            .prepare(&format!("SELECT shape, pos, col, type FROM {} ORDER BY shape, pos", tbl("type_decl_row")))?;
+        let raw: Vec<(String, i64, String, String)> = stmt.query_map([], |r| Ok((
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .filter_map(|x| x.ok()).collect();
+        drop(stmt);
+
+        // Validate ty every tick (cheap, O(rows)) so the shape-unknown-type diag is
+        // steady, not just on the tick the sink changed. Drop any shape carrying
+        // an unknown type (loud diag), keep the rest.
+        let mut bad_shapes: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (shape, _, _, ty) in &raw {
+            if !ty_ok(ty) && bad_shapes.insert(shape.clone()) {
+                self.shape_diags.push(DiagRow {
+                    path: "(shapes)".into(), line: 1, col: 0, end_line: 1, end_col: 0,
+                    severity: "warn".into(), code: "shape-unknown-type".into(),
+                    msg: format!("derived shape `{shape}` names an unknown type `{ty}` — use a base \
+                        type (text/int/path/file/dir/repo/rev) or a declared brand; the shape stays pending"),
+                    hint: None,
+                });
+            }
+        }
+        // The WRITE is the recompute-guarded step: gate the DELETE + insert on the
+        // sink's content digest so an unchanged sink does not re-migrate every tick
+        // (the repo's recompute-guard rail).
+        let digest = self.rel_content_digest("type_decl_row", &self.rels["type_decl_row"].clone())?;
+        if self.load_rel_digest("shape:type_decl_row")? == Some(digest) { return Ok(()); }
+        let rows: Vec<Vec<Value>> = raw.iter()
+            .filter(|(shape, _, _, _)| !bad_shapes.contains(shape))
+            .map(|(shape, pos, col, ty)| vec![
+                Value::Text(shape.clone()), Value::Int(*pos),
+                Value::Text(col.clone()), Value::Text(ty.clone())])
+            .collect();
+        self.db.conn().execute("DELETE FROM _shapes", [])?;
+        self.db.insert_rows("_shapes", &["shape", "pos", "col", "type"], &rows)?;
+        self.save_rel_digest("shape:type_decl_row", &digest)?;
+        Ok(())
     }
 
     fn rel_digest(&self, rel: &str) -> Result<[u8; 32]> {
@@ -3396,6 +3630,12 @@ impl Engine {
         let mut seen: HashMap<String, Vec<crate::ast::Col>> = HashMap::new();
         for item in &prog.items {
             if let Item::Rel(d) = item {
+                // A deferred `rel name: shape.` (shape_ref still set, cols empty)
+                // is a computed shape: don't declare a zero-column table here.
+                // `resolve_derived_shapes` (after builtins) fills it from _shapes
+                // or records shape-pending. (Frontend already resolved syntax
+                // shapes; a ref surviving to here is derived-only.)
+                if d.shape_ref.is_some() { continue; }
                 if let Some(prev) = seen.get(&d.name) {
                     if *prev == d.cols { continue; }
                     bail!("rel {} declared twice with different columns", d.name);
@@ -3463,6 +3703,9 @@ impl Engine {
                 if CHECKOUT_OUT_RELS.contains(&d.name.as_str()) {
                     bail!("checkout_done is the built-in checkout-sweep outcome (repo, branch, action, ok, detail); it is written by the `checkout` sink, so READ it — do not `rel`-declare or head it");
                 }
+                if TYPE_DECL_RELS.contains(&d.name.as_str()) {
+                    bail!("type_decl_row is the built-in derived-shape sink (shape, pos, col, type); drop the `rel type_decl_row(...)` decl and head it directly from a derived rule, like diag/graph_node");
+                }
                 match closures.get(&d.name) {
                     Some(edge) => self.declare_closure(d, edge)?,
                     None => self.declare(d)?,
@@ -3470,6 +3713,11 @@ impl Engine {
             }
         }
         self.declare_builtins()?;
+        // Phase 5: resolve any computed `rel name: shape.` against the shapes the
+        // `type_decl_row` sink persisted on a prior tick. Runs after builtins so a
+        // shape rel can be declared alongside them; the one-tick phase delay makes
+        // the derive -> persist -> resolve loop invisible under the daemon.
+        self.resolve_derived_shapes(prog)?;
         Ok(())
     }
 
@@ -3507,6 +3755,7 @@ impl Engine {
         for d in diag_mute_rel_decls() { self.declare(&d)?; }
         for d in demand_rel_decls() { self.declare(&d)?; }
         for d in checkout_out_rel_decls() { self.declare(&d)?; }
+        for d in type_decl_rel_decls() { self.declare(&d)?; }
         Ok(())
     }
 
@@ -6960,8 +7209,9 @@ fn cast_int(s: &str) -> i64 {
 fn val_of(t: &Term, b: &Bind) -> Result<Value> {
     match t {
         Term::Var(v) => b.get(v).cloned().ok_or_else(|| anyhow::anyhow!(
-            "unbound var {v} in constraint\nnote: to compute a new value, put the expression in the \
-             rule head: head(path, line+1) <- ...")),
+            "unbound var {v} in constraint\nnote: to compute a new value in a SOURCE rule \
+             (scan/match/ast/...), put the expression in the rule head: head(path, line+1) <- ...; \
+             body binds (`ext = split(path, \".\", -1)`) work in derived-rule bodies only")),
         Term::Str(s) => Ok(Value::Text(s.clone())),
         Term::Int(n) => Ok(Value::Int(*n)),
         Term::Interp(parts) => interp_value(parts, b),
@@ -6969,7 +7219,15 @@ fn val_of(t: &Term, b: &Bind) -> Result<Value> {
         Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
         Term::Arith { op, lhs, rhs } => {
             let (l, r) = (val_of(lhs, b)?, val_of(rhs, b)?);
+            // `+` over two text values concatenates (the source-rule twin of the
+            // derived `||` lowering); every other combination stays int-only.
+            if let (ArithOp::Add, Value::Text(ls), Value::Text(rs)) = (op, &l, &r) {
+                return Ok(Value::Text(format!("{ls}{rs}")));
+            }
             let (Value::Int(a), Value::Int(c)) = (&l, &r) else {
+                if matches!(op, ArithOp::Add) {
+                    bail!("cannot `+` int and text — interpolate (\"${{count}}${{name}}\") or convert with int(..)");
+                }
                 bail!("arithmetic needs int operands, got {l:?} {} {r:?}", op.sql());
             };
             Ok(Value::Int(match op {

@@ -40,6 +40,9 @@ pub fn load_program(entry: &Path) -> Result<(Vec<Item>, Vec<ast::TypeDiag>)> {
     let origin = entry.canonicalize().unwrap_or_else(|_| entry.to_path_buf());
     let mut diags = Vec::new();
     let mut items = expand_program(surface, &mut loader, origin, &mut diags)?;
+    // Resolve `rel <name>: <shape>.` to plain RelDecls before named-arg resolution
+    // and dedup, so both see the shape's real columns.
+    crate::typecheck::expand_shapes(&mut items, &entry.display().to_string(), &mut diags);
     resolve_named_args(&mut items)?;
     desugar_effects(&mut items);
     dedup_rels(&mut items)?;
@@ -108,6 +111,8 @@ pub fn load_program_set(entry_paths: &[PathBuf]) -> Result<(Vec<Item>, Vec<ast::
             inline_template_calls(&mut r.body, &templates, &mut counter)?;
         }
     }
+    let set_path = format!("{}/*.dl", entry_paths[0].parent().unwrap_or(Path::new(".dl")).display());
+    crate::typecheck::expand_shapes(&mut items, &set_path, &mut diags);
     resolve_named_args(&mut items)?;
     desugar_effects(&mut items);
     dedup_rels(&mut items)?;

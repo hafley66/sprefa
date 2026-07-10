@@ -23,11 +23,17 @@ use crate::scc;
 #[derive(Clone, Debug, Default)]
 pub struct Brands {
     parent: HashMap<String, String>,
+    /// Enum brands: brand name -> its closed set of allowed text literals. A brand
+    /// declared `type sev = "a" | "b"` lands here (its `parent` is `"text"`); the
+    /// `<:` form does not. A sub-brand `type x <: sev` inherits the set by walking
+    /// the parent chain (see `enum_variants`).
+    variants: HashMap<String, Vec<String>>,
 }
 
 impl Brands {
     pub fn from_program(prog: &Program) -> Result<Brands, String> {
         let mut parent: HashMap<String, String> = HashMap::new();
+        let mut variants: HashMap<String, Vec<String>> = HashMap::new();
         for item in &prog.items {
             if let Item::Brand(b) = item {
                 if parent.contains_key(&b.name) {
@@ -37,9 +43,24 @@ impl Brands {
                     return Err(format!("brand `{}` shadows a base type", b.name));
                 }
                 parent.insert(b.name.clone(), b.parent.clone());
+                if let Some(vs) = &b.variants {
+                    variants.insert(b.name.clone(), vs.clone());
+                }
             }
         }
-        let brands = Brands { parent };
+        // Ambient builtin enum brands (type_edge_kind, df_node_kind, ...): the
+        // closed vocabularies carried by builtin relation columns, present
+        // without any user `type` decl. A user decl reusing one of these names
+        // is an error — the builtin set is engine-owned.
+        for (name, vs) in crate::engine::builtin_enum_brands() {
+            if parent.contains_key(*name) {
+                return Err(format!(
+                    "brand `{name}` shadows a built-in enum brand (its variants are engine-defined) — pick another name"));
+            }
+            parent.insert(name.to_string(), "text".into());
+            variants.insert(name.to_string(), vs.iter().map(|v| v.to_string()).collect());
+        }
+        let brands = Brands { parent, variants };
         // Every parent must terminate at a base type without cycling.
         for name in brands.parent.keys() {
             brands.base_type(name)
@@ -49,6 +70,18 @@ impl Brands {
     }
 
     pub fn is_brand(&self, name: &str) -> bool { self.parent.contains_key(name) }
+
+    /// The closed variant set of an enum brand, or of the nearest enum brand up
+    /// the parent chain (so `type x <: sev` inherits `sev`'s literals). `None`
+    /// when neither `name` nor any ancestor is an enum brand.
+    pub fn enum_variants(&self, name: &str) -> Option<&[String]> {
+        let mut cur = name.to_string();
+        for _ in 0..self.parent.len() + 1 {
+            if let Some(vs) = self.variants.get(&cur) { return Some(vs); }
+            cur = self.parent.get(&cur)?.clone();
+        }
+        None
+    }
 
     /// Walk the parent chain to a base `Type`. None on an unknown parent or a cycle.
     pub fn base_type(&self, name: &str) -> Option<Type> {
@@ -186,7 +219,7 @@ pub fn normalize_program(prog: &mut Program, dl_path: &str) -> Vec<TypeDiag> {
                 }
                 for b in &mut g.body { normalize_body_item(b, dl_path, &mut diags); }
             }
-            Item::Rel(_) | Item::Anchor(_) | Item::Brand(_) | Item::Shell(_) => {}
+            Item::Rel(_) | Item::Anchor(_) | Item::Brand(_) | Item::Shape(_) | Item::Shell(_) => {}
         }
     }
     diags
@@ -282,6 +315,26 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
     // per occurrence (so a mismatch points at the second, conflicting site).
     let mut seen: HashMap<String, ColTy> = HashMap::new();
 
+    // A SOURCE rule's head is filled from scan/regex/AST captures via `val_of`, which
+    // has no json machinery — the SQL agg/json lowering never runs for it. Refuse a
+    // json aggregate or json constructor in a source-rule head loudly and derived-only,
+    // the same style as the body-bind source-rule refusal (`val_of`'s head-inline note).
+    if rule.is_source() {
+        let is_json_fn = |t: &Term| matches!(t, Term::Call { name, .. }
+            if matches!(name.as_str(), "json" | "json_object" | "json_array"));
+        let json_agg = rule.aggs.iter().any(|a| matches!(a,
+            Some(AggFn::JsonGroupArray) | Some(AggFn::JsonGroupObject)));
+        if json_agg || rule.head.terms.iter().any(is_json_fn) {
+            diags.push(TypeDiag {
+                path: dl_path.to_string(), span: (0, 0),
+                severity: Severity::Error, code: "json-in-source".into(),
+                msg: format!("relation `{}` is a source rule (scan/match/ast/...); json aggregates \
+                    and json constructors are derived-only — split the extraction into its own \
+                    relation and build the json in a derived rule that reads it", rule.head.rel),
+            });
+        }
+    }
+
     let visit_atom = |a: &Atom, diags: &mut Vec<TypeDiag>, seen: &mut HashMap<String, ColTy>| {
         let Some(meta) = rels.get(&a.rel) else { return; };
         if a.terms.len() != meta.cols.len() { return; }
@@ -318,6 +371,13 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                         msg: format!("string literal cannot fill int column `{}`", meta.cols[i].name),
                     });
                 }
+                // A string literal filling an enum-branded column must be one of
+                // the closed variant set (rule head, fact head, or a body pin).
+                Term::Str(s) => {
+                    if let Some(brand) = &cty.brand {
+                        enum_lit_check(brand, s, brands, &meta.cols[i].name, dl_path, diags);
+                    }
+                }
                 Term::Int(_) if is_path_base(cty.base) || cty.brand.is_some() => {
                     let what = match &cty.brand { Some(b) => format!("brand `{b}`"), None => "a path".into() };
                     diags.push(TypeDiag {
@@ -340,27 +400,28 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                         }
                     }
                 }
-                // An arithmetic expression produces an int: the column it fills
-                // must be int, and every var operand unifies as int.
+                // An arithmetic expression fills a column matching its inferred
+                // type: an int tree needs an int column (the historical rule); a
+                // text `+` concatenation tree needs a text-base column. Operand
+                // typing (incl. the mixed int/text `+` error) lives in `arith_ty`.
                 Term::Arith { .. } => {
-                    if cty.base != Type::Int {
-                        diags.push(TypeDiag {
-                            path: dl_path.to_string(), span: (0, 0),
-                            severity: Severity::Error, code: "brand-mismatch".into(),
-                            msg: format!("arithmetic expression cannot fill non-int column `{}`", meta.cols[i].name),
-                        });
-                    }
-                    let int_ty = ColTy { base: Type::Int, brand: None };
-                    let mut stack = vec![term];
-                    while let Some(t) = stack.pop() {
-                        match t {
-                            Term::Arith { lhs, rhs, .. } => { stack.push(lhs); stack.push(rhs); }
-                            Term::Var(v) if v != "_" => match seen.get(v).cloned() {
-                                None => { seen.insert(v.clone(), int_ty.clone()); }
-                                Some(prev) => unify(v, &prev, &int_ty, brands, dl_path, diags),
-                            },
-                            _ => {}
-                        }
+                    match arith_ty(term, seen, dl_path, diags) {
+                        Some(Type::Int) => if cty.base != Type::Int {
+                            diags.push(TypeDiag {
+                                path: dl_path.to_string(), span: (0, 0),
+                                severity: Severity::Error, code: "brand-mismatch".into(),
+                                msg: format!("arithmetic expression cannot fill non-int column `{}`", meta.cols[i].name),
+                            });
+                        },
+                        Some(_) => if cty.base == Type::Int {
+                            diags.push(TypeDiag {
+                                path: dl_path.to_string(), span: (0, 0),
+                                severity: Severity::Error, code: "brand-mismatch".into(),
+                                msg: format!("text `+` concatenation cannot fill int column `{}`", meta.cols[i].name),
+                            });
+                        },
+                        // None = already diagnosed (mixed `+`) — don't cascade.
+                        None => {}
                     }
                 }
                 // A string function call (`split`/`replace`) produces text: the
@@ -370,30 +431,57 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                 Term::Call { name, args } => {
                     // `int/1` produces an int (fills an int column); split/replace
                     // and the STR_FNS pass-throughs produce text (fill a text-base
-                    // column). All take text args.
+                    // column). The json constructors produce text too (a JSON
+                    // string) but are VARIADIC. All take text args.
                     let is_int = name == "int";
                     let str_fn = crate::lower::STR_FNS.iter().find(|(n, _, _)| *n == name.as_str());
-                    let known = is_int || matches!(name.as_str(), "split" | "replace") || str_fn.is_some();
+                    let is_json = matches!(name.as_str(), "json_object" | "json_array" | "json");
+                    let known = is_int || matches!(name.as_str(), "split" | "replace")
+                        || str_fn.is_some() || is_json;
                     if !known {
                         let extra = crate::lower::STR_FNS.iter()
                             .map(|(n, _, _)| *n).collect::<Vec<_>>().join(", ");
                         diags.push(TypeDiag {
                             path: dl_path.to_string(), span: (0, 0),
                             severity: Severity::Error, code: "unknown-function".into(),
-                            msg: format!("unknown function `{name}` (known: split, replace, int, {extra})"),
+                            msg: format!("unknown function `{name}` (known: split, replace, int, \
+                                json_object, json_array, json, {extra})"),
                         });
                     }
-                    let want = match (is_int, str_fn) {
-                        (true, _) => 1,
-                        (_, Some((_, _, k))) => *k,
-                        _ => 3, // split/replace
-                    };
-                    if args.len() != want {
-                        diags.push(TypeDiag {
-                            path: dl_path.to_string(), span: (0, 0),
-                            severity: Severity::Error, code: "arity".into(),
-                            msg: format!("function `{name}` expects {want} args, got {}", args.len()),
-                        });
+                    // Fixed-arity fns check an exact count; the json constructors
+                    // enforce a variadic shape (json_object even>=2, json_array>=1,
+                    // json==1) and emit the same `arity` code on a miss.
+                    if is_json {
+                        let ok = match name.as_str() {
+                            "json_object" => args.len() >= 2 && args.len() % 2 == 0,
+                            "json_array" => !args.is_empty(),
+                            _ /* json */ => args.len() == 1,
+                        };
+                        if !ok {
+                            let want = match name.as_str() {
+                                "json_object" => "an even number of args >= 2 (key, value, ...)",
+                                "json_array" => "at least 1 arg",
+                                _ => "exactly 1 arg",
+                            };
+                            diags.push(TypeDiag {
+                                path: dl_path.to_string(), span: (0, 0),
+                                severity: Severity::Error, code: "arity".into(),
+                                msg: format!("function `{name}` expects {want}, got {}", args.len()),
+                            });
+                        }
+                    } else {
+                        let want = match (is_int, str_fn) {
+                            (true, _) => 1,
+                            (_, Some((_, _, k))) => *k,
+                            _ => 3, // split/replace
+                        };
+                        if args.len() != want {
+                            diags.push(TypeDiag {
+                                path: dl_path.to_string(), span: (0, 0),
+                                severity: Severity::Error, code: "arity".into(),
+                                msg: format!("function `{name}` expects {want} args, got {}", args.len()),
+                            });
+                        }
                     }
                     if is_int {
                         if cty.base != Type::Int {
@@ -410,13 +498,18 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                             msg: format!("string function `{name}` cannot fill non-text column `{}`", meta.cols[i].name),
                         });
                     }
-                    let text_ty = ColTy { base: Type::Text, brand: None };
-                    for a in args {
-                        if let Term::Var(v) = a {
-                            if v != "_" { match seen.get(v).cloned() {
-                                None => { seen.insert(v.clone(), text_ty.clone()); }
-                                Some(prev) => unify(v, &prev, &text_ty, brands, dl_path, diags),
-                            }}
+                    // The json constructors accept mixed-type values (an int column
+                    // becomes a JSON number, text a JSON string), so their args do
+                    // NOT unify as text — only split/replace/STR_FNS take text operands.
+                    if !is_json {
+                        let text_ty = ColTy { base: Type::Text, brand: None };
+                        for a in args {
+                            if let Term::Var(v) = a {
+                                if v != "_" { match seen.get(v).cloned() {
+                                    None => { seen.insert(v.clone(), text_ty.clone()); }
+                                    Some(prev) => unify(v, &prev, &text_ty, brands, dl_path, diags),
+                                }}
+                            }
                         }
                     }
                 }
@@ -425,14 +518,185 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
         }
     };
 
-    visit_atom(&rule.head, &mut diags, &mut seen);
+    // Body atoms first, then computed binds, then the HEAD: a head expression
+    // (`label(name + count)`) types its vars from the body's columns, and a
+    // head over a bind var sees the bind's computed type. Literal/unification
+    // checks inside visit_atom are order-independent.
     for b in &rule.body {
         match b {
             BodyItem::Pos(a) | BodyItem::Neg(a) => visit_atom(a, &mut diags, &mut seen),
             _ => {}
         }
     }
+    check_body_binds(rule, &mut seen, dl_path, &mut diags);
+    visit_atom(&rule.head, &mut diags, &mut seen);
     diags
+}
+
+/// Is this term a value-producing computation (Call or Arith)? The typecheck
+/// twin of lower's `has_computation` — the gate that separates a body BIND
+/// (`callee = replace(callee_q, ".", "::")`) from a plain Var=Var / Var=lit
+/// equality filter.
+fn is_computation(t: &Term) -> bool {
+    matches!(t, Term::Call { .. } | Term::Arith { .. })
+}
+
+/// Every variable a computed expression consumes, recursively (Call args,
+/// Arith sides). Wildcards excluded.
+fn term_vars(t: &Term, out: &mut Vec<String>) {
+    match t {
+        Term::Var(v) if v != "_" => out.push(v.clone()),
+        Term::Call { args, .. } => for a in args { term_vars(a, out); },
+        Term::Arith { lhs, rhs, .. } => { term_vars(lhs, out); term_vars(rhs, out); }
+        _ => {}
+    }
+}
+
+/// Boundness + typing for body-level computed binds, derived-shaped bodies only
+/// (a source rule's regex/AST captures are invisible here; the engine's `val_of`
+/// refuses its constraints with the head-inline note at eval). Mirrors lower's
+/// semantics exactly: a bind's RHS may consume any positive-atom var (SQL joins
+/// are order-free — lower's canon holds every atom var before the Cmp pass) or
+/// a var bound by an EARLIER bind; a later-bind or nowhere-bound var errors
+/// naming the fix. Also records each bind var's type (so a text bind can feed
+/// text `+` later) and runs `arith_ty` over filters for the mixed-`+` check.
+fn check_body_binds(rule: &Rule, seen: &mut HashMap<String, ColTy>, dl_path: &str, diags: &mut Vec<TypeDiag>) {
+    let derived_shape = !rule.body.is_empty() && rule.body.iter()
+        .all(|b| matches!(b, BodyItem::Pos(_) | BodyItem::Neg(_) | BodyItem::Cmp(_)));
+    if !derived_shape { return; }
+    let mut atom_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for item in &rule.body {
+        if let BodyItem::Pos(a) = item {
+            for t in &a.terms {
+                if let Term::Var(v) = t {
+                    if v != "_" { atom_vars.insert(v.clone()); }
+                }
+            }
+        }
+    }
+    let mut bind_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for item in &rule.body {
+        let BodyItem::Cmp(c) = item else { continue };
+        let bind = if c.op == CmpOp::Eq {
+            match (&c.lhs, &c.rhs) {
+                (Term::Var(v), rhs) if v != "_" && !atom_vars.contains(v)
+                    && !bind_vars.contains(v) && is_computation(rhs) => Some((v, rhs)),
+                (lhs, Term::Var(v)) if v != "_" && !atom_vars.contains(v)
+                    && !bind_vars.contains(v) && is_computation(lhs) => Some((v, lhs)),
+                _ => None,
+            }
+        } else { None };
+        match bind {
+            Some((target, expr)) => {
+                let mut consumed = Vec::new();
+                term_vars(expr, &mut consumed);
+                for used in consumed {
+                    if !atom_vars.contains(&used) && !bind_vars.contains(&used) {
+                        diags.push(TypeDiag {
+                            path: dl_path.to_string(), span: (0, 0),
+                            severity: Severity::Error, code: "unbound-bind".into(),
+                            msg: format!(
+                                "bind `{used}` before computing `{target}` — `{used}` is not bound by a body atom or an earlier bind"),
+                        });
+                    }
+                }
+                let ety = match expr {
+                    Term::Arith { .. } => arith_ty(expr, seen, dl_path, diags),
+                    Term::Call { name, .. } => Some(if name == "int" { Type::Int } else { Type::Text }),
+                    _ => None,
+                };
+                if let Some(base) = ety {
+                    seen.entry(target.clone()).or_insert(ColTy { base, brand: None });
+                }
+                bind_vars.insert(target.clone());
+            }
+            None => {
+                // A plain filter: type any Arith side so a mixed `+` in a
+                // comparison errors here instead of surprising at lower time.
+                for side in [&c.lhs, &c.rhs] {
+                    if matches!(side, Term::Arith { .. }) {
+                        arith_ty(side, seen, dl_path, diags);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Infer an arithmetic tree's type. `+` is polymorphic: int + int = addition
+/// (Some(Int)), text + text = concatenation (Some(Text)), mixed = the
+/// `plus-mismatch` error naming the fix (returns None so callers don't
+/// cascade). An unknown side (a var with no type yet) adopts the other side's
+/// type; both-unknown keeps the historical int default. `-`/`*`/`/`/`%` stay
+/// int-only, unifying var operands as int exactly like the pre-overload walk.
+fn arith_ty(t: &Term, seen: &mut HashMap<String, ColTy>, dl_path: &str, diags: &mut Vec<TypeDiag>) -> Option<Type> {
+    match t {
+        Term::Int(_) => Some(Type::Int),
+        Term::Str(_) | Term::Interp(_) => Some(Type::Text),
+        Term::Call { name, .. } => Some(if name == "int" { Type::Int } else { Type::Text }),
+        Term::Var(v) if v != "_" => seen.get(v).map(|c| c.base),
+        Term::Arith { op: ArithOp::Add, lhs, rhs } => {
+            let lt = arith_ty(lhs, seen, dl_path, diags);
+            let rt = arith_ty(rhs, seen, dl_path, diags);
+            let is_text = |x: Type| x != Type::Int;
+            match (lt, rt) {
+                (Some(Type::Int), Some(Type::Int)) => Some(Type::Int),
+                (Some(a), Some(b)) if is_text(a) && is_text(b) => Some(Type::Text),
+                (Some(_), Some(_)) => {
+                    diags.push(TypeDiag {
+                        path: dl_path.to_string(), span: (0, 0),
+                        severity: Severity::Error, code: "plus-mismatch".into(),
+                        msg: "cannot `+` int and text — build the string with interpolation (\"${count}${name}\") or convert with int(..)".into(),
+                    });
+                    None
+                }
+                (Some(a), None) | (None, Some(a)) => {
+                    // Adopt the known side's type for an untyped var operand.
+                    let unknown = if lt.is_none() { lhs } else { rhs };
+                    if let Term::Var(v) = unknown.as_ref() {
+                        if v != "_" {
+                            seen.entry(v.clone()).or_insert(ColTy { base: a, brand: None });
+                        }
+                    }
+                    Some(a)
+                }
+                (None, None) => {
+                    // Historical default: an arith over untyped vars is int.
+                    for side in [lhs, rhs] {
+                        if let Term::Var(v) = side.as_ref() {
+                            if v != "_" {
+                                seen.entry(v.clone()).or_insert(ColTy { base: Type::Int, brand: None });
+                            }
+                        }
+                    }
+                    Some(Type::Int)
+                }
+            }
+        }
+        Term::Arith { op, lhs, rhs } => {
+            for side in [lhs, rhs] {
+                match arith_ty(side, seen, dl_path, diags) {
+                    Some(x) if x != Type::Int => {
+                        diags.push(TypeDiag {
+                            path: dl_path.to_string(), span: (0, 0),
+                            severity: Severity::Error, code: "plus-mismatch".into(),
+                            msg: format!("`{}` needs int operands — only `+` concatenates text", op.sql()),
+                        });
+                    }
+                    Some(_) => {}
+                    None => {
+                        if let Term::Var(v) = side.as_ref() {
+                            if v != "_" {
+                                seen.entry(v.clone()).or_insert(ColTy { base: Type::Int, brand: None });
+                            }
+                        }
+                    }
+                }
+            }
+            Some(Type::Int)
+        }
+        _ => None,
+    }
 }
 
 /// Compare two column types a var unifies across. A brand vs a different,
@@ -452,8 +716,15 @@ fn unify(var: &str, a: &ColTy, b: &ColTy, brands: &Brands, dl_path: &str, diags:
             }
         }
         // A branded/path var meeting a plain text column: grandfather with a warn.
-        (Some(x), None) if b.base == Type::Text => coerce(var, x, dl_path, diags),
-        (None, Some(y)) if a.base == Type::Text => coerce(var, y, dl_path, diags),
+        // An ENUM brand is exempt: its values ARE plain text (the brand is a
+        // vocabulary gate on literals, not a path-like refinement), so joining
+        // e.g. df_node.kind into a user text column is silent by design.
+        (Some(x), None) if b.base == Type::Text => {
+            if brands.enum_variants(x).is_none() { coerce(var, x, dl_path, diags); }
+        }
+        (None, Some(y)) if a.base == Type::Text => {
+            if brands.enum_variants(y).is_none() { coerce(var, y, dl_path, diags); }
+        }
         // A path-shaped base type meeting a plain text column also warns.
         (None, None) => {
             if a.base == Type::Text && is_path_base(b.base) {
@@ -472,6 +743,104 @@ fn coerce(var: &str, brand: &str, dl_path: &str, diags: &mut Vec<TypeDiag>) {
         severity: Severity::Warn, code: "coerce-text-path".into(),
         msg: format!("variable `{var}` (brand `{brand}`) flows into a plain text column"),
     });
+}
+
+/// Check a string literal against an enum brand's closed variant set. A member is
+/// silent; a non-member emits `enum-variant-unknown` with the allowed set and a
+/// nearest-variant suggestion. A non-enum brand (the `<:` form) is a no-op.
+/// Literals carry no per-occurrence span, so the diagnostic lands at line 1.
+fn enum_lit_check(brand: &str, val: &str, brands: &Brands, col_name: &str, dl_path: &str, diags: &mut Vec<TypeDiag>) {
+    let Some(variants) = brands.enum_variants(brand) else { return; };
+    if variants.iter().any(|v| v == val) { return; }
+    let allowed = variants.iter().map(|v| format!("\"{v}\"")).collect::<Vec<_>>().join(" | ");
+    let hint = nearest_variant(val, variants)
+        .map(|s| format!(" — did you mean \"{s}\"?"))
+        .unwrap_or_default();
+    diags.push(TypeDiag {
+        path: dl_path.to_string(), span: (0, 0),
+        severity: Severity::Error, code: "enum-variant-unknown".into(),
+        msg: format!("\"{val}\" is not a variant of enum brand `{brand}` on column `{col_name}` (allowed: {allowed}){hint}"),
+    });
+}
+
+/// The variant closest to `val` by Levenshtein distance, tie-broken by declaration
+/// order. `None` when the set is empty. No distance cutoff — a suggestion always
+/// helps against a closed set this small.
+fn nearest_variant<'a>(val: &str, variants: &'a [String]) -> Option<&'a str> {
+    variants.iter()
+        .min_by_key(|v| edit_distance(val, v))
+        .map(|s| s.as_str())
+}
+
+/// Levenshtein edit distance (single-row DP). Small inputs (enum variants), so the
+/// allocation is negligible.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for (i, &ca) in a.iter().enumerate() {
+        cur[0] = i + 1;
+        for (j, &cb) in b.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
+
+/// Resolve every `rel <name>: <shape>.` decl to a plain `RelDecl` whose columns
+/// are the referenced `type <shape>(...)` shape's, then drop the `Item::Shape`
+/// declarations. Runs at load (frontend + the top of `check_and_normalize`) so all
+/// downstream code — including the engine — only ever sees plain `RelDecl`s.
+/// Idempotent: a second call finds no shapes and no `shape_ref`, so it is a no-op.
+/// An unknown shape name (or a duplicate shape declaration) emits an error diag.
+pub fn expand_shapes(items: &mut Vec<Item>, dl_path: &str, diags: &mut Vec<TypeDiag>) {
+    let mut shapes: HashMap<String, Vec<Col>> = HashMap::new();
+    for item in items.iter() {
+        if let Item::Shape(s) = item {
+            if shapes.insert(s.name.clone(), s.cols.clone()).is_some() {
+                diags.push(TypeDiag {
+                    path: dl_path.to_string(), span: (0, 0),
+                    severity: Severity::Error, code: "duplicate-shape".into(),
+                    msg: format!("duplicate shape `{}`", s.name),
+                });
+            }
+        }
+    }
+    // A program that HEADS `type_decl_row` derives shapes at runtime (Phase 5): an
+    // unresolved shape_ref is DEFERRED (the engine resolves it from the persisted
+    // `_shapes` at the next tick's declare, or reports shape-pending), not a load
+    // error. Without a type_decl_row head, an unresolved ref is the existing crisp
+    // unknown-shape error.
+    let derives_shapes = items.iter().any(|it| matches!(it, Item::Rule(r) if r.head.rel == "type_decl_row"));
+    for item in items.iter_mut() {
+        if let Item::Rel(d) = item {
+            let Some(sname) = d.shape_ref.clone() else { continue; };
+            match shapes.get(&sname) {
+                // Syntax `type` shape wins: fill columns and clear the ref.
+                Some(cols) => { d.cols = cols.clone(); d.shape_ref = None; }
+                // No syntax shape. Defer (leave shape_ref set) when the program
+                // derives shapes; else the unknown-shape error.
+                None if derives_shapes => {}
+                None => {
+                    d.shape_ref = None;
+                    diags.push(TypeDiag {
+                        path: dl_path.to_string(), span: (0, 0),
+                        severity: Severity::Error, code: "unknown-shape".into(),
+                        msg: format!(
+                            "rel `{}`: unknown shape `{sname}` — declare `type {sname}(...)` or use `rel {}(cols)`",
+                            d.name, d.name),
+                    });
+                }
+            }
+        }
+    }
+    // Item::Shape decls are RETAINED (Phase 5): the engine reads the syntax shape
+    // names to detect a shape-shadowed clash with a derived shape. They are inert
+    // downstream (a no-op in every match arm). A program with no derived shapes is
+    // unaffected — its refs all resolve here.
 }
 
 fn coerce_base(var: &str, base: Type, dl_path: &str, diags: &mut Vec<TypeDiag>) {
@@ -596,6 +965,10 @@ fn temporal_word(t: Temporal) -> &'static str {
 /// error it returns a single error diagnostic (span 0,0) rather than panicking.
 pub fn check_and_normalize(prog: &mut Program, dl_path: &str) -> Vec<TypeDiag> {
     let mut diags = Vec::new();
+    // Expand `rel <name>: <shape>.` into plain RelDecls before any brand/rel table
+    // is built. Idempotent for the frontend path (already expanded there); does the
+    // work for the daemon `run_eval` snippet path that bypasses the frontend.
+    expand_shapes(&mut prog.items, dl_path, &mut diags);
     let brands = match validate_brands(prog) {
         Ok(b) => b,
         Err(e) => {
@@ -620,6 +993,22 @@ pub fn check_and_normalize(prog: &mut Program, dl_path: &str) -> Vec<TypeDiag> {
         if let Item::Rule(r) = item {
             diags.extend(check_rule_types(r, &rels, &brands, dl_path));
             check_effect(r, &shell_fns, dl_path, &mut diags);
+        }
+        // A query pin against an enum-branded column is checked too (rule heads and
+        // facts flow through `check_rule_types`; queries do not, so cover them here).
+        if let Item::Query(q) = item {
+            if let Some(meta) = rels.get(&q.head.rel) {
+                if q.head.terms.len() == meta.cols.len() {
+                    for (i, term) in q.head.terms.iter().enumerate() {
+                        if let Term::Str(s) = term {
+                            let cty = col_ty(&meta.cols[i], &brands);
+                            if let Some(brand) = &cty.brand {
+                                enum_lit_check(brand, s, &brands, &meta.cols[i].name, dl_path, &mut diags);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     // Every rule/query head must target a declared relation. Tables are created
@@ -783,8 +1172,9 @@ pub fn stratify_diags(prog: &Program, dl_path: &str) -> Vec<TypeDiag> {
         }
     }
 
-    // Agg head decl type check: Count/Sum land an Int, so a non-int head column for
-    // a count/sum term is a brand-mismatch.
+    // Agg head decl type check: Count/Sum land an Int (non-int col = mismatch);
+    // the json aggregates land a Text json string (int col = mismatch). Min/Max
+    // carry the arg's type (fixed_out None) and stay with per-var unification.
     for item in &prog.items {
         let Item::Rule(r) = item else { continue; };
         if !r.has_agg() { continue; }
@@ -792,12 +1182,21 @@ pub fn stratify_diags(prog: &Program, dl_path: &str) -> Vec<TypeDiag> {
         if r.head.terms.len() != meta.cols.len() { continue; }
         for (i, f) in r.aggs.iter().enumerate() {
             let Some(f) = f else { continue; };
-            if f.fixed_out() == Some(Type::Int) && meta.cols[i].ty != Type::Int && meta.cols[i].brand.is_none() {
+            let mismatch = match f.fixed_out() {
+                // Count/Sum produce int: any non-int, non-branded column conflicts.
+                Some(Type::Int) => meta.cols[i].ty != Type::Int && meta.cols[i].brand.is_none(),
+                // json aggregates produce a text json string: an int column conflicts
+                // (every path/text/branded column stores TEXT and is fine).
+                Some(Type::Text) => meta.cols[i].ty == Type::Int,
+                _ => false,
+            };
+            if mismatch {
+                let out = f.fixed_out().map(|t| t.sql()).unwrap_or("value");
                 diags.push(TypeDiag {
                     path: dl_path.to_string(), span: (0, 0),
                     severity: Severity::Error, code: "brand-mismatch".into(),
-                    msg: format!("`{}(...)` produces an int but head column `{}` of `{}` is `{}`",
-                        f.sql().to_lowercase(), meta.cols[i].name, r.head.rel, meta.cols[i].ty.sql()),
+                    msg: format!("`{}(...)` produces {} but head column `{}` of `{}` is `{}`",
+                        f.sql().to_lowercase(), out, meta.cols[i].name, r.head.rel, meta.cols[i].ty.sql()),
                 });
             }
         }
@@ -811,10 +1210,208 @@ pub fn stratify_diags(prog: &Program, dl_path: &str) -> Vec<TypeDiag> {
 /// are simply skipped during checking (the lowerer reports unknown relations).
 fn prog_rels(prog: &Program) -> Rels {
     let mut rels = Rels::new();
+    // Builtin rels carrying an enum-branded column (type_edge, df_node,
+    // checkout_done, ...) join the checked map so a literal pin against e.g.
+    // `type_edge.kind` is vocabulary-checked. Builtins WITHOUT a branded column
+    // stay out — their atoms skip type checking exactly as before (narrow blast
+    // radius: only the closed-vocabulary rels opt in).
+    for d in crate::engine::all_builtin_decls() {
+        if d.cols.iter().any(|col| col.brand.is_some()) {
+            rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone(), ..Default::default() });
+        }
+    }
     for item in &prog.items {
         if let Item::Rel(d) = item {
             rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone(), ..Default::default() });
         }
     }
     rels
+}
+
+#[cfg(test)]
+mod shape_enum_tests {
+    use super::*;
+
+    fn program(src: &str) -> Program {
+        crate::parse::parse(crate::lex::lex(src).unwrap()).unwrap()
+    }
+    fn diags(src: &str) -> Vec<TypeDiag> {
+        let mut prog = program(src);
+        check_and_normalize(&mut prog, "t.dl")
+    }
+    fn err_codes(src: &str) -> Vec<String> {
+        diags(src).into_iter().filter(|d| d.severity == Severity::Error).map(|d| d.code).collect()
+    }
+
+    #[test]
+    fn enum_variants_walk_inherits() {
+        let prog = program(r#"type severity = "error" | "warn"."#);
+        let brands = Brands::from_program(&prog).unwrap();
+        assert_eq!(brands.enum_variants("severity"), Some(&["error".to_string(), "warn".to_string()][..]));
+        // A sub-brand inherits the parent enum's set.
+        let prog = program(r#"type severity = "error" | "warn". type sev2 <: severity."#);
+        let brands = Brands::from_program(&prog).unwrap();
+        assert!(brands.enum_variants("sev2").is_some());
+        // A plain nominal brand carries no variants.
+        let prog = program("type sha <: text.");
+        let brands = Brands::from_program(&prog).unwrap();
+        assert!(brands.enum_variants("sha").is_none());
+    }
+
+    #[test]
+    fn nearest_variant_picks_closest() {
+        let vs = vec!["error".to_string(), "warn".to_string(), "info".to_string()];
+        assert_eq!(nearest_variant("wrn", &vs), Some("warn"));
+        assert_eq!(nearest_variant("eror", &vs), Some("error"));
+        assert_eq!(edit_distance("warn", "warn"), 0);
+        assert_eq!(edit_distance("wrn", "warn"), 1);
+    }
+
+    #[test]
+    fn enum_literal_accept_and_reject() {
+        let ok = r#"type severity = "error" | "warn".
+rel finding(path: text, sev: severity).
+finding("a.rs", "error").
+? finding(path, "warn")."#;
+        assert!(err_codes(ok).is_empty(), "valid enum literals must pass: {:?}", diags(ok));
+
+        let bad_head = r#"type severity = "error" | "warn".
+rel finding(path: text, sev: severity).
+finding("a.rs", "wrn")."#;
+        assert_eq!(err_codes(bad_head), ["enum-variant-unknown"]);
+
+        let bad_query = r#"type severity = "error" | "warn".
+rel finding(path: text, sev: severity).
+finding("a.rs", "error").
+? finding(path, "eror")."#;
+        assert_eq!(err_codes(bad_query), ["enum-variant-unknown"]);
+    }
+
+    #[test]
+    fn shape_expands_and_unknown_shape_errors() {
+        // A shape-referencing rel expands to the shape's columns.
+        let src = r#"type finding(path: text, line: int, sev: text).
+rel finding_rel: finding.
+finding_rel("a.rs", 1, "x")."#;
+        let mut prog = program(src);
+        let ds = check_and_normalize(&mut prog, "t.dl");
+        assert!(ds.iter().all(|d| d.severity != Severity::Error), "{ds:?}");
+        // The rel now has the shape's 3 columns and its ref is cleared. (Item::Shape
+        // is retained for the engine's shadow check — Phase 5 — so it is not
+        // asserted absent anymore.)
+        let rel = prog.items.iter().find_map(|i| if let Item::Rel(d) = i { Some(d) } else { None }).unwrap();
+        assert_eq!(rel.cols.len(), 3);
+        assert!(rel.shape_ref.is_none());
+
+        // An unknown shape name is an error naming the fix.
+        let bad = "rel finding_rel: finding.\nfinding_rel().";
+        let codes = err_codes(bad);
+        assert!(codes.iter().any(|c| c == "unknown-shape"), "{codes:?}");
+    }
+
+    #[test]
+    fn shape_ref_defers_when_type_decl_row_headed() {
+        // A program HEADING type_decl_row derives shapes at runtime: an
+        // unresolved shape_ref is deferred (kept, columns empty), not an
+        // unknown-shape error — the engine resolves it from `_shapes` next tick.
+        let src = r#"rel col_spec(shape: text, pos: int, col_name: text, type: text).
+type_decl_row(shape, pos, col, type) <- col_spec(shape, pos, col, type).
+rel point_rel: point."#;
+        let mut prog = program(src);
+        let ds = check_and_normalize(&mut prog, "t.dl");
+        assert!(ds.iter().all(|d| d.severity != Severity::Error), "{ds:?}");
+        let rel = prog.items.iter().find_map(|i| match i {
+            Item::Rel(d) if d.name == "point_rel" => Some(d), _ => None }).unwrap();
+        assert_eq!(rel.shape_ref.as_deref(), Some("point"), "the ref survives for the engine");
+        assert!(rel.cols.is_empty(), "no columns invented at load");
+    }
+
+    #[test]
+    fn ambient_builtin_brands_present_and_guarded() {
+        // The builtin enum brands are present with NO user `type` decl.
+        let brands = Brands::from_program(&program("rel unrelated(name: text).")).unwrap();
+        let kinds = brands.enum_variants("type_edge_kind").expect("ambient brand");
+        assert!(kinds.iter().any(|k| k == "field") && kinds.iter().any(|k| k == "uses"));
+        assert!(brands.enum_variants("checkout_action").is_some());
+        // A user decl reusing the name is an error naming the conflict.
+        let err = Brands::from_program(&program(r#"type type_edge_kind = "mine"."#)).unwrap_err();
+        assert!(err.contains("shadows a built-in enum brand"), "{err}");
+        // A literal pin against the builtin column routes the enum check.
+        let bad = r#"hit(from_type) <- type_edge(from_type, to_type, "fields", repo).
+rel hit(from_type: text)."#;
+        assert_eq!(err_codes(bad), ["enum-variant-unknown"]);
+    }
+
+    #[test]
+    fn plain_brand_still_checks() {
+        // A `<:` brand keeps its existing mismatch behavior (int literal in a brand col).
+        let bad = "type sha <: text.\nrel commit(id: sha).\ncommit(5).";
+        assert!(err_codes(bad).iter().any(|c| c == "brand-mismatch"));
+        let ok = "type sha <: text.\nrel commit(id: sha).\ncommit(\"abc\").";
+        assert!(err_codes(ok).is_empty());
+    }
+
+    // --- body binds + `+` overload (S3/S4) ------------------------------------
+
+    #[test]
+    fn bind_unbound_rhs_var_names_the_fix() {
+        // The RHS var is bound nowhere: error names both vars and the fix.
+        let bad = r#"rel raw_edge(caller: text).
+rel out_edge(callee: text).
+out_edge(callee) <- raw_edge(caller), callee = replace(callee_q, ".", "::")."#;
+        let ds = diags(bad);
+        let hit = ds.iter().find(|d| d.code == "unbound-bind").expect("unbound-bind diag");
+        assert!(hit.msg.contains("bind `callee_q` before computing `callee`"), "{}", hit.msg);
+
+        // A LATER bind does not satisfy an earlier bind's RHS (bind chains are
+        // ordered; only atom vars are order-free).
+        let late = r#"rel raw_edge(caller: text).
+rel out_edge(callee: text).
+out_edge(callee) <- raw_edge(caller),
+  callee = replace(stripped, ".", "::"),
+  stripped = replace(caller, "()", "")."#;
+        assert!(err_codes(late).contains(&"unbound-bind".to_string()), "{:?}", diags(late));
+
+        // In-order chain is clean.
+        let ok = r#"rel raw_edge(caller: text).
+rel out_edge(callee: text).
+out_edge(callee) <- raw_edge(caller),
+  stripped = replace(caller, "()", ""),
+  callee = replace(stripped, ".", "::")."#;
+        assert!(err_codes(ok).is_empty(), "{:?}", diags(ok));
+    }
+
+    #[test]
+    fn plus_mixed_and_text_typing() {
+        // int + text = plus-mismatch naming the interp/int() fix.
+        let mixed = r#"rel item(name: text, count: int).
+rel label(text_out: text).
+label(name + count) <- item(name, count)."#;
+        let ds = diags(mixed);
+        let hit = ds.iter().find(|d| d.code == "plus-mismatch").expect("plus-mismatch diag");
+        assert!(hit.msg.contains("interpolation") || hit.msg.contains("int(.."), "{}", hit.msg);
+
+        // text + text is fine into a text column, an error into an int column.
+        let ok = r#"rel base_url(host: text).
+rel endpoint(url: text).
+endpoint("https://" + host) <- base_url(host)."#;
+        assert!(err_codes(ok).is_empty(), "{:?}", diags(ok));
+        let bad_col = r#"rel base_url(host: text).
+rel endpoint(url: int).
+endpoint("https://" + host) <- base_url(host)."#;
+        assert!(diags(bad_col).iter().any(|d| d.msg.contains("cannot fill int column")), "{:?}", diags(bad_col));
+
+        // int + int into an int column stays clean (regression).
+        let int_ok = r#"rel hit(line: int).
+rel next_line(value: int).
+next_line(line + 1) <- hit(line)."#;
+        assert!(err_codes(int_ok).is_empty(), "{:?}", diags(int_ok));
+
+        // `-` stays int-only: a text operand errors.
+        let sub_text = r#"rel base_url(host: text).
+rel weird(value: int).
+weird(host - 1) <- base_url(host)."#;
+        assert!(diags(sub_text).iter().any(|d| d.code == "plus-mismatch" && d.msg.contains("needs int operands")),
+            "{:?}", diags(sub_text));
+    }
 }
