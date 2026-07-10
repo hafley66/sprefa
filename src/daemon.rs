@@ -1327,6 +1327,36 @@ fn handle_request(d: &Daemon, req: &Request, subscriber_stream: Option<Arc<Mutex
             let rows = eng.rel_rows(rel, cols.len());
             Response::ok(req.id, json!({"columns": cols, "rows": rows}))
         }
+        // `dl what <anchor>` / `dl summary <path>` against the daemon's warm
+        // engine: resolve the anchor and read the persisted rel tables. No
+        // family forcing here — the daemon reads whatever its served program
+        // already populated (the in-process CLI path forces cold families).
+        "what" => {
+            let anchor = match req.params.get("anchor").and_then(|v| v.as_str()) {
+                Some(s) => s,
+                None => return Response::err(req.id, INVALID_PARAMS, "missing anchor"),
+            };
+            let limit = req.params.get("limit").and_then(|v| v.as_u64()).map(|n| n as usize);
+            let offset = req.params.get("offset").and_then(|v| v.as_u64()).map(|n| n as usize);
+            let eng = lock(&d.eng);
+            let out = crate::anchor::what(&eng, anchor, limit, offset);
+            Response::ok(req.id, json!({
+                "columns": out.columns, "rows": out.rows,
+                "total": out.total, "notes": out.notes,
+            }))
+        }
+        "summary" => {
+            let path = match req.params.get("path").and_then(|v| v.as_str()) {
+                Some(s) => s,
+                None => return Response::err(req.id, INVALID_PARAMS, "missing path"),
+            };
+            let eng = lock(&d.eng);
+            let out = crate::anchor::summary(&eng, path);
+            Response::ok(req.id, json!({
+                "columns": out.columns, "rows": out.rows,
+                "total": out.total, "notes": out.notes,
+            }))
+        }
         "query_sql" => {
             let sql_raw = match req.params.get("sql").and_then(|v| v.as_str()) {
                 Some(s) => s,
@@ -1838,6 +1868,62 @@ pub fn query_rel(root: Option<&Path>, rel: &str) -> Result<(Vec<String>, Vec<Vec
         })).collect())
         .unwrap_or_default();
     Ok((cols, rows))
+}
+
+/// One `dl what` / `dl summary` answer from the daemon: header, rows, pre-paging
+/// total, advisory notes. Mirrors `anchor::QueryOut` across the wire.
+pub struct QueryAnswer {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+    pub total: usize,
+    pub notes: Vec<String>,
+}
+
+/// Decode a `{columns, rows, total, notes}` RPC result into a [`QueryAnswer`].
+fn decode_query_answer(result: &Value) -> QueryAnswer {
+    let strs = |v: Option<&Value>| -> Vec<String> {
+        v.and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+            .unwrap_or_default()
+    };
+    let rows: Vec<Vec<String>> = result.get("rows").and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|r| r.as_array().map(|cells| {
+            cells.iter().map(|c| match c {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            }).collect()
+        })).collect())
+        .unwrap_or_default();
+    QueryAnswer {
+        columns: strs(result.get("columns")),
+        rows,
+        total: result.get("total").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+        notes: strs(result.get("notes")),
+    }
+}
+
+/// `dl what <anchor>` against the daemon (the `what` RPC). Backs the daemon-first
+/// path in `cli::query`.
+pub fn what(root: Option<&Path>, anchor: &str, limit: Option<usize>, offset: Option<usize>)
+    -> Result<QueryAnswer>
+{
+    let mut s = connect(root)?;
+    let mut params = json!({"anchor": anchor});
+    if let Some(l) = limit { params["limit"] = json!(l); }
+    if let Some(o) = offset { params["offset"] = json!(o); }
+    let req = Request::new(0, "what", params);
+    let resp = rpc_call(&mut s, &req)?;
+    if let Some(err) = resp.error { anyhow::bail!("{}", err.message); }
+    Ok(decode_query_answer(&resp.result.unwrap_or_default()))
+}
+
+/// `dl summary <path>` against the daemon (the `summary` RPC).
+pub fn summary(root: Option<&Path>, path: &str) -> Result<QueryAnswer> {
+    let mut s = connect(root)?;
+    let req = Request::new(0, "summary", json!({"path": path}));
+    let resp = rpc_call(&mut s, &req)?;
+    if let Some(err) = resp.error { anyhow::bail!("{}", err.message); }
+    Ok(decode_query_answer(&resp.result.unwrap_or_default()))
 }
 
 /// Ping the running daemon and return its status JSON (build_id, root,

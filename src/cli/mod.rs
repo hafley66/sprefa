@@ -7,6 +7,7 @@
 
 mod daemon;
 mod inputs;
+mod query;
 mod root;
 
 use anyhow::Result;
@@ -50,6 +51,8 @@ ROOT & DAEMON (the two things that bite):
    scan/match/ast/sg/json     source ops (extract facts); everything else derives
 
 SUBCOMMANDS (run `dl <cmd> -h` for detail):
+  what       resolve an anchor (name / glob / path / path:line) + its neighborhood
+  summary    per-file report: entities, imports in/out, callable fan, doc coverage
   daemon     control the background daemon (status/start/stop/restart/rows/...)
   setup      install the skill + wire agents, hooks, and the pre-commit rail
   update     self-update to the latest published release (--check to preview)
@@ -221,6 +224,8 @@ fn dispatch_subcommand(raw: &[String]) -> Result<Option<i32>> {
         "update" => crate::update::run(rest)?,
         "daemon" => daemon::run_cmd(rest)?,
         "watch" => daemon::run_watch(rest)?,
+        "what" => query::run_what(rest)?,
+        "summary" => query::run_summary(rest)?,
         _ => return Ok(None),
     };
     Ok(Some(code))
