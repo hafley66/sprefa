@@ -946,6 +946,21 @@ foreign resolution model).
       (see memory reference_scip_multilang_indexers); keep index.scip away
       from the fixture root during the dl run so the index-free tier is what's
       measured.
+- [ ] **Orchestrator codebase pains** (Fable, 2026-07-10, from the skill+rail
+      arc): (a) rel LINE BASES are lore, not docs — comment_node is 1-based,
+      scip_occurrence 0-based, df 1-based; learning comment_node's base meant
+      reading cst.rs source. RelDecl doc strings should state the base per
+      positional rel (one regen sweep). (b) the two grammar tables live in
+      inconsistent homes: SG_LANG_TABLE in src/sg.rs, AST_LANG_TABLE buried at
+      line ~7674 of the 7798-line src/engine/mod.rs — a lang-support table
+      inside the engine monolith is placement debt (engine refactor epic
+      context; the LANG-JUNCTION map now at least finds it). (c) +1 to the
+      ambient-config pain: every ad-hoc `dl` run at this root prints
+      "[config] 3 repo(s) registered" and ingests type/call/doc for repos the
+      program never mentions — hermetic needs SPREFA_CONFIG set by hand.
+      (d) S6 (body-level source+derived mix silently drops the rel atom) cost
+      a failing-test loop to discover; the rel-level guard set the expectation
+      the body-level case would also bail.
 
 ### Open (scip / language-surface — 2026-07-08 agent-session feedback, batch 2)
 Five more complaints (SCIP + dl-surface). NOT yet triaged against code; capture only.
