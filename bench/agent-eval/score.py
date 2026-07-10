@@ -91,6 +91,60 @@ def extract_json_lenient(text):
     return None, "parse-failure"
 
 
+def _coerce_sites(answer):
+    """Normalize a model answer into a list of {file, line} dicts. Accepts a
+    {"sites":[...]} object, a bare list of sites, or a single site object."""
+    if isinstance(answer, dict):
+        if isinstance(answer.get("sites"), list):
+            raw = answer["sites"]
+        elif "file" in answer and "line" in answer:
+            raw = [answer]
+        else:
+            raw = []
+    elif isinstance(answer, list):
+        raw = answer
+    else:
+        raw = []
+    sites = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        file = item.get("file")
+        line = item.get("line")
+        try:
+            line = int(line)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(file, str):
+            sites.append((file, line))
+    return sites
+
+
+def score_ctf(answer, expected_sites, window):
+    """Set-F1 of predicted gate sites vs the manifest's expected sites. A
+    predicted (file, line) matches an expected one iff the file is identical and
+    the line is within +/- window; each expected site is matched at most once
+    (greedy). Returns (precision, recall, f1, true_positives, n_pred)."""
+    pred = _coerce_sites(answer)
+    expected = [(s["file"], int(s["line"])) for s in expected_sites]
+    used = [False] * len(pred)
+    tp = 0
+    for exp_file, exp_line in expected:
+        for i, (pf, pl) in enumerate(pred):
+            if used[i]:
+                continue
+            if pf == exp_file and abs(pl - exp_line) <= window:
+                used[i] = True
+                tp += 1
+                break
+    n_pred = len(pred)
+    n_exp = len(expected)
+    precision = tp / n_pred if n_pred else (1.0 if n_exp == 0 else 0.0)
+    recall = tp / n_exp if n_exp else (1.0 if n_pred == 0 else 0.0)
+    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+    return precision, recall, f1, tp, n_pred
+
+
 def score_c2(answer, expected, window):
     if not isinstance(answer, dict):
         return False
@@ -150,6 +204,18 @@ def score_one(raw_path, expected, window):
     row["answer_line"] = answer.get("line") if isinstance(answer, dict) else None
     if expected.get("class") == "C2":
         row["solved"] = score_c2(answer, expected["expected_json"], window)
+    elif expected.get("class") == "CTF":
+        precision, recall, f1, tp, n_pred = score_ctf(
+            answer, expected["expected_json"], window)
+        row["precision"] = precision
+        row["recall"] = recall
+        row["f1"] = f1
+        row["true_positives"] = tp
+        row["n_pred"] = n_pred
+        row["n_expected"] = len(expected["expected_json"])
+        # "solved" is reserved for a PERFECT inventory (F1 == 1.0); the headline
+        # metric for CTF is mean F1, not this flag.
+        row["solved"] = f1 >= 0.999
     return row
 
 
@@ -157,7 +223,156 @@ def median_binary(outcomes):
     return statistics.median(outcomes) >= 0.5
 
 
+def _cell_meta(experiment):
+    """cell_name -> (model, is_dl) from the experiment's cell list."""
+    meta = {}
+    for c in experiment.get("cells", []):
+        meta[c["name"]] = (c.get("model"), bool(c.get("mcp")) or c["name"].endswith("-dl"))
+    return meta
+
+
+def _mean(xs):
+    return sum(xs) / len(xs) if xs else 0.0
+
+
+def render_ctf(rows, experiment, out_prefix):
+    """v2 CTF report: set-F1 of gate-site inventories per cell, plus the
+    dl-vs-baseline separation verdict the pilot exists to answer."""
+    version = experiment.get("version", "unversioned")
+    window = int(experiment.get("filters", {}).get("score_window_lines", 2))
+    meta = _cell_meta(experiment)
+    cells = sorted({r["cell"] for r in rows})
+    tasks = sorted({r["task_id"] for r in rows})
+
+    # (cell, task) -> aggregated over reps.
+    agg = {}
+    for cell in cells:
+        for task in tasks:
+            reps = [r for r in rows if r["cell"] == cell and r["task_id"] == task]
+            if not reps:
+                continue
+            agg[(cell, task)] = {
+                "f1": _mean([r.get("f1", 0.0) for r in reps]),
+                "precision": _mean([r.get("precision", 0.0) for r in reps]),
+                "recall": _mean([r.get("recall", 0.0) for r in reps]),
+                "prose_fail": any(r["method"] == "parse-failure" for r in reps),
+                "err": any(r["method"] == "invocation-error" for r in reps),
+                "n_pred": _mean([r.get("n_pred", 0) for r in reps]),
+                # n_expected_sites is set for every CTF row (from the expected
+                # file), unlike n_expected which only lands on a parsed row.
+                "n_expected": reps[0].get("n_expected_sites")
+                    or reps[0].get("n_expected", 0),
+            }
+
+    lines = [
+        f"# Agent eval harness — {version} (CTF: dataflow capture-the-flag)",
+        "",
+        f"Set-F1 vs a hand-built manifest, +/- {window}-line window. "
+        f"Rows: {len(rows)}. Tasks: {len(tasks)}. Cells: {', '.join(cells)}.",
+        "",
+    ]
+    note = experiment.get("note")
+    if note:
+        lines += [f"> **Protocol note.** {note}", ""]
+
+    # Headline: mean F1 / precision / recall per cell.
+    lines += [
+        "## Headline (mean set-F1 over tasks)",
+        "",
+        "Each task asks for a SET of enforcement sites; F1 is the set overlap "
+        "with the manifest (a predicted `file:line` matches an expected one "
+        "within the window). prose-fail = model answered in prose; timeout/err "
+        "= `claude` exited nonzero. Both score F1=0.",
+        "",
+        "| cell | mean F1 | mean precision | mean recall | perfect (F1=1) | prose-fail | timeout/err | tasks |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    cell_taskf1 = {}
+    for cell in cells:
+        vals = [agg[(cell, t)] for t in tasks if (cell, t) in agg]
+        f1s = [v["f1"] for v in vals]
+        cell_taskf1[cell] = {t: agg[(cell, t)]["f1"] for t in tasks if (cell, t) in agg}
+        perfect = sum(1 for v in vals if v["f1"] >= 0.999)
+        prose = sum(1 for v in vals if v["prose_fail"])
+        err = sum(1 for v in vals if v["err"])
+        n = len(vals)
+        lines.append(
+            f"| {cell} | {_mean(f1s):.3f} | {_mean([v['precision'] for v in vals]):.3f} "
+            f"| {_mean([v['recall'] for v in vals]):.3f} | {perfect}/{n} "
+            f"| {prose}/{n} | {err}/{n} | {n} |"
+        )
+
+    # Per-task F1 matrix.
+    lines += ["", "## Per-task F1", "",
+              "| task | expected | " + " | ".join(cells) + " |",
+              "|---|---|" + "|".join(["---"] * len(cells)) + "|"]
+    for task in tasks:
+        any_cell = next((c for c in cells if (c, task) in agg), None)
+        n_exp = agg[(any_cell, task)]["n_expected"] if any_cell else 0
+        cellvals = " | ".join(
+            f"{agg[(c, task)]['f1']:.2f}" if (c, task) in agg else "-" for c in cells)
+        lines.append(f"| {task} | {n_exp} | {cellvals} |")
+
+    # Cost.
+    lines += ["", "## Cost", "", "| cell | total cost (usd) | mean F1 | cost / task |", "|---|---|---|---|"]
+    for cell in cells:
+        cell_rows = [r for r in rows if r["cell"] == cell]
+        total_cost = sum(r["cost_usd"] or 0.0 for r in cell_rows)
+        f1s = [agg[(cell, t)]["f1"] for t in tasks if (cell, t) in agg]
+        per_task = total_cost / len(f1s) if f1s else float("nan")
+        lines.append(f"| {cell} | ${total_cost:.4f} | {_mean(f1s):.3f} | ${per_task:.4f} |")
+
+    # Separation verdict: per model, dl cell vs baseline cell mean F1.
+    lines += ["", "## Separation verdict (dl vs baseline, same model)", ""]
+    models = sorted({m for (m, _) in meta.values() if m})
+    any_pair = False
+    for model in models:
+        model_cells = [c for c in cells if meta.get(c, (None, None))[0] == model]
+        dl_cell = next((c for c in model_cells if meta[c][1]), None)
+        base_cell = next((c for c in model_cells if not meta[c][1]), None)
+        if not dl_cell or not base_cell:
+            continue
+        any_pair = True
+        dl_f1 = _mean([cell_taskf1[dl_cell][t] for t in tasks if t in cell_taskf1.get(dl_cell, {})])
+        base_f1 = _mean([cell_taskf1[base_cell][t] for t in tasks if t in cell_taskf1.get(base_cell, {})])
+        delta = dl_f1 - base_f1
+        verdict = ("dl SEPARATES (+)" if delta > 0.05 else
+                   "baseline ahead (-)" if delta < -0.05 else "no separation (~)")
+        lines.append(f"### {model}: {base_cell} F1={base_f1:.3f} vs {dl_cell} F1={dl_f1:.3f} "
+                     f"-> delta {delta:+.3f} ({verdict})")
+        lines.append("")
+        lines.append("| task | " + f"{base_cell}" + " | " + f"{dl_cell}" + " | delta |")
+        lines.append("|---|---|---|---|")
+        for task in tasks:
+            b = cell_taskf1.get(base_cell, {}).get(task)
+            d = cell_taskf1.get(dl_cell, {}).get(task)
+            if b is None or d is None:
+                continue
+            lines.append(f"| {task} | {b:.2f} | {d:.2f} | {d - b:+.2f} |")
+        lines.append("")
+    if not any_pair:
+        lines.append("(no dl/baseline cell pair sharing a model in this run)")
+
+    # Invocation errors detail.
+    err_rows = [r for r in rows if r["method"] == "invocation-error"]
+    lines += ["", "## Invocation errors (timeouts)", "",
+              f"{len(err_rows)} total (exit 124 = per-cell wall-clock cap; scored F1=0)."]
+    if err_rows:
+        lines.append("\n| cell | task_id | note |")
+        lines.append("|---|---|---|")
+        for r in sorted(err_rows, key=lambda x: (x["cell"], x["task_id"])):
+            note_txt = (r.get("raw_note") or "").replace("\n", " ")[:60]
+            lines.append(f"| {r['cell']} | {r['task_id']} | {note_txt} |")
+    else:
+        lines.append("\n(none)")
+
+    with open(out_prefix + ".md", "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+
 def render_report(rows, experiment, out_prefix):
+    if experiment.get("class", "C2") == "CTF":
+        return render_ctf(rows, experiment, out_prefix)
     version = experiment.get("version", "unversioned")
     filters = experiment.get("filters", {})
     window = filters.get("score_window_lines")
@@ -174,31 +389,49 @@ def render_report(rows, experiment, out_prefix):
         f"Tasks: {len(sorted({r['task_id'] for r in rows}))}. "
         f"Cells: {', '.join(cells)}.",
         "",
+    ]
+    note = experiment.get("note")
+    if note:
+        lines += [f"> **Protocol note.** {note}", ""]
+    lines += [
         "## Headline (median-of-reps C2 locate rate)",
         "",
-        "| cell | median locate rate | raw per-rep rate | parse-failure rate | tasks | reps |",
-        "|---|---|---|---|---|---|",
+        "Two distinct failure modes are reported separately (protocol #6: a "
+        "contract problem must not masquerade as knowledge). **prose-fail** = the "
+        "model returned a well-formed response with no extractable JSON object "
+        "(answered in prose). **timeout/err** = the `claude` invocation itself "
+        "exited nonzero (exit 124 = the per-cell wall-clock `timeout_secs` cap; a "
+        "slow path, e.g. the agent shelling out to `cargo`/`tsc` on a large "
+        "corpus — NOT a model-knowledge signal). Both count as not-solved.",
+        "",
+        "| cell | median locate rate | raw per-rep rate | prose-fail rate | timeout/err rate | tasks | reps |",
+        "|---|---|---|---|---|---|---|",
     ]
     cell_medians = {}
     for cell in cells:
         task_ids = sorted({t for (c, t) in by_cell_task if c == cell})
         medians = []
         raw_outcomes = []
-        parse_fail = []
+        prose_fail = []
+        invoke_err = []
         for task_id in task_ids:
             reps = by_cell_task[(cell, task_id)]
             outcomes = [1 if r["solved"] else 0 for r in reps]
             medians.append(1 if median_binary(outcomes) else 0)
             raw_outcomes.extend(outcomes)
-            parse_fail.extend([0 if r["parse_ok"] else 1 for r in reps])
+            # prose parse-failure: a real response blob whose text had no JSON.
+            prose_fail.extend([1 if (not r["parse_ok"] and r["method"] == "parse-failure") else 0 for r in reps])
+            # invocation error / timeout: the .error path (nonzero claude exit).
+            invoke_err.extend([1 if r["method"] == "invocation-error" else 0 for r in reps])
         median_rate = sum(medians) / len(medians) if medians else 0.0
         raw_rate = sum(raw_outcomes) / len(raw_outcomes) if raw_outcomes else 0.0
-        pf_rate = sum(parse_fail) / len(parse_fail) if parse_fail else 0.0
+        prose_rate = sum(prose_fail) / len(prose_fail) if prose_fail else 0.0
+        err_rate = sum(invoke_err) / len(invoke_err) if invoke_err else 0.0
         cell_medians[cell] = {task_id: m for task_id, m in zip(task_ids, medians)}
         n_reps = len(by_cell_task[(cell, task_ids[0])]) if task_ids else 0
         lines.append(
-            f"| {cell} | {median_rate:.2%} | {raw_rate:.2%} | {pf_rate:.2%} "
-            f"| {len(task_ids)} | {n_reps} |"
+            f"| {cell} | {median_rate:.2%} | {raw_rate:.2%} | {prose_rate:.2%} "
+            f"| {err_rate:.2%} | {len(task_ids)} | {n_reps} |"
         )
 
     lines += ["", "## Cost per solved task", "", "| cell | total cost (usd) | solved (median) | cost / solved |", "|---|---|---|---|"]
@@ -236,6 +469,22 @@ def render_report(rows, experiment, out_prefix):
             for t in lost:
                 lines.append(f"| {t} |")
 
+    # Invocation errors (timeouts) detail: which (cell, task) hit the wall
+    # clock, so a depressed locate rate can be read against a slow-path cause
+    # rather than mistaken for a knowledge gap.
+    err_rows = [r for r in rows if r["method"] == "invocation-error"]
+    lines += ["", "## Invocation errors (timeouts)", "",
+              "Cells whose `claude` process exited nonzero (exit 124 = the "
+              f"per-cell wall-clock cap). Scored not-solved. {len(err_rows)} total."]
+    if not err_rows:
+        lines.append("\n(none)")
+    else:
+        lines.append("\n| cell | task_id | note |")
+        lines.append("|---|---|---|")
+        for r in sorted(err_rows, key=lambda x: (x["cell"], x["task_id"])):
+            note = (r.get("raw_note") or "").replace("\n", " ")[:60]
+            lines.append(f"| {r['cell']} | {r['task_id']} | {note} |")
+
     lines += ["", "## Tool bugs found", "",
               "Not wired in S1 (diagnose.dl + query_log join is stage S3 per the plan); "
               "this section is a placeholder so the report template shape is stable "
@@ -269,11 +518,15 @@ def main():
             expected_cache[task_id] = load_expected(raw_dir, task_id)
         expected = expected_cache[task_id]
         row = score_one(raw_path, expected, window)
+        # C2 carries a single expected {file,line}; CTF carries a LIST of sites.
+        exp_json = expected.get("expected_json")
+        exp_file = exp_json["file"] if isinstance(exp_json, dict) else None
+        exp_line = exp_json["line"] if isinstance(exp_json, dict) else None
         row.update({
             "task_id": task_id, "cell": cell, "rep": rep,
             "class": expected.get("class"), "mutation_kind": expected.get("mutation_kind"),
-            "expected_file": expected["expected_json"]["file"] if expected.get("expected_json") else None,
-            "expected_line": expected["expected_json"]["line"] if expected.get("expected_json") else None,
+            "expected_file": exp_file, "expected_line": exp_line,
+            "n_expected_sites": len(exp_json) if isinstance(exp_json, list) else None,
         })
         rows.append(row)
 

@@ -66,6 +66,16 @@ REPS="$(jq -r '.reps' "$CONFIG_JSON_FILE")"
 TIMEOUT_SECS="$(jq -r '.timeout_secs' "$CONFIG_JSON_FILE")"
 PARALLELISM="$(jq -r '.parallelism' "$CONFIG_JSON_FILE")"
 
+# Task class selects the generation + worktree strategy. "C2" (default) is the
+# seeded-fault path (gen-tasks.dl -> select_tasks.py -> mutate.sh, one mutated
+# worktree per task shared across cells). "CTF" is the v2 capture-the-flag path
+# (ctf_tasks.py over a committed MANIFEST.json, no mutation; each cell gets its
+# own fixture copy plus a per-cell SKILL.md at the root). `fixture` / `manifest`
+# are relative to bench/agent-eval/ (this dir) and only read for CTF.
+TASK_CLASS="$(jq -r '.class // "C2"' "$CONFIG_JSON_FILE")"
+FIXTURE_REL="$(jq -r '.fixture // ""' "$CONFIG_JSON_FILE")"
+MANIFEST_REL="$(jq -r '.manifest // ""' "$CONFIG_JSON_FILE")"
+
 # repo_root is relative to the harness's OWN repo root (bench/agent-eval/../..),
 # not to cwd or to the experiment.toml's directory — so a committed
 # `repo_root = "."` always means "this repo" regardless of where run.sh is
@@ -113,6 +123,12 @@ echo "   reps        = $REPS$( [ -n "$REPS_OVERRIDE" ] && echo " (overridden, NO
 
 : > "$WORKDIR/task_ids.txt"
 cleanup_all() {
+    if [ "$TASK_CLASS" = "CTF" ]; then
+        # CTF worktrees are plain fixture copies (no git worktree admin), so a
+        # recursive remove is all that is needed.
+        rm -rf "$WORKTREES_DIR" 2>/dev/null || true
+        return 0
+    fi
     if [ -s "$WORKDIR/task_ids.txt" ]; then
         while IFS= read -r task_id; do
             "$HERE/mutate.sh" cleanup "$task_id" "$REPO_ROOT" "$WORKTREES_DIR" >/dev/null 2>&1 || true
@@ -123,9 +139,19 @@ trap cleanup_all EXIT
 
 # ---- 1. generate ------------------------------------------------------------
 echo "-- generate --"
-( cd "$REPO_ROOT" && "$DL_BIN" "$GEN_PROG" --no-daemon --db "$WORKDIR/gen.db" --query-json ) \
-    2>"$WORKDIR/gen.log" | tail -1 > "$WORKDIR/candidates.json"
-python3 "$HERE/select_tasks.py" "$WORKDIR/candidates.json" "$EXPERIMENT_TOML" "$WORKDIR/tasks.jsonl"
+if [ "$TASK_CLASS" = "CTF" ]; then
+    [ -n "$FIXTURE_REL" ] || { echo "run.sh: CTF class needs a `fixture` in the toml" >&2; exit 1; }
+    [ -n "$MANIFEST_REL" ] || { echo "run.sh: CTF class needs a `manifest` in the toml" >&2; exit 1; }
+    FIXTURE_DIR="$HERE/$FIXTURE_REL"
+    MANIFEST_PATH="$HERE/$MANIFEST_REL"
+    [ -d "$FIXTURE_DIR" ] || { echo "run.sh: fixture dir $FIXTURE_DIR missing" >&2; exit 1; }
+    [ -f "$MANIFEST_PATH" ] || { echo "run.sh: manifest $MANIFEST_PATH missing" >&2; exit 1; }
+    python3 "$HERE/ctf_tasks.py" "$MANIFEST_PATH" "$WORKDIR/tasks.jsonl"
+else
+    ( cd "$REPO_ROOT" && "$DL_BIN" "$GEN_PROG" --no-daemon --db "$WORKDIR/gen.db" --query-json ) \
+        2>"$WORKDIR/gen.log" | tail -1 > "$WORKDIR/candidates.json"
+    python3 "$HERE/select_tasks.py" "$WORKDIR/candidates.json" "$EXPERIMENT_TOML" "$WORKDIR/tasks.jsonl"
+fi
 
 if [ -n "$TASKS_LIMIT" ]; then
     head -n "$TASKS_LIMIT" "$WORKDIR/tasks.jsonl" > "$WORKDIR/tasks.jsonl.tmp"
@@ -146,19 +172,36 @@ with open(tasks_jsonl) as f:
             json.dump(t, g)
 PY
 
-# ---- 2. mutate each task once (shared across every cell x rep) -------------
-echo "-- mutate --"
-for task_file in "$WORKDIR"/tasks/*.json; do
-    task_id="$(basename "$task_file" .json)"
-    echo "$task_id" >> "$WORKDIR/task_ids.txt"
-    mutated_task_json="$("$HERE/mutate.sh" apply "$task_file" "$REPO_ROOT" "$WORKTREES_DIR")"
-    python3 - "$mutated_task_json" "$RAW_DIR/$task_id.expected.json" <<'PY'
+# ---- 2. per-task setup (C2: mutate one shared worktree; CTF: record the
+#         manifest-sliced expected set — the per-cell fixture copy happens in
+#         run_one_job so each cell can carry its own SKILL.md) -----------------
+if [ "$TASK_CLASS" = "CTF" ]; then
+    echo "-- expected (CTF, no mutation) --"
+    for task_file in "$WORKDIR"/tasks/*.json; do
+        task_id="$(basename "$task_file" .json)"
+        echo "$task_id" >> "$WORKDIR/task_ids.txt"
+        python3 - "$task_file" "$RAW_DIR/$task_id.expected.json" <<'PY'
+import json, sys
+task = json.load(open(sys.argv[1]))
+json.dump({"class": task["class"], "concept": task.get("concept"),
+           "abstraction": task.get("abstraction"),
+           "expected_json": task["expected_json"]}, open(sys.argv[2], "w"))
+PY
+    done
+else
+    echo "-- mutate --"
+    for task_file in "$WORKDIR"/tasks/*.json; do
+        task_id="$(basename "$task_file" .json)"
+        echo "$task_id" >> "$WORKDIR/task_ids.txt"
+        mutated_task_json="$("$HERE/mutate.sh" apply "$task_file" "$REPO_ROOT" "$WORKTREES_DIR")"
+        python3 - "$mutated_task_json" "$RAW_DIR/$task_id.expected.json" <<'PY'
 import json, sys
 task = json.load(open(sys.argv[1]))
 json.dump({"class": task["class"], "mutation_kind": task["mutation_kind"],
            "expected_json": task["expected_json"]}, open(sys.argv[2], "w"))
 PY
-done
+    done
+fi
 
 # ---- 3. cells ----------------------------------------------------------------
 mapfile -t CELL_NAMES < <(jq -r '.cells[].name' "$CONFIG_JSON_FILE")
@@ -195,7 +238,26 @@ run_one_job() {
     allowed_tools="$(jq -r --arg n "$cell_name" '.cells[] | select(.name==$n) | .allowed_tools' "$CONFIG_JSON_FILE")"
     mcp_flag="$(jq -r --arg n "$cell_name" '.cells[] | select(.name==$n) | .mcp' "$CONFIG_JSON_FILE")"
     prompt="$(jq -r '.prompt' "$task_file")"
-    worktree_root="$WORKTREES_DIR/$task_id"
+    if [ "$TASK_CLASS" = "CTF" ]; then
+        # Each (task, cell, rep) gets its own fresh fixture copy so the per-cell
+        # SKILL.md at the root differs by cell and a model write can't leak
+        # across cells/reps. No git (dl roots at cwd when no .git is found).
+        worktree_root="$WORKTREES_DIR/$task_id/$cell_name/rep${rep}"
+        rm -rf "$worktree_root"
+        mkdir -p "$worktree_root"
+        cp -R "$FIXTURE_DIR/." "$worktree_root/"
+        # NEVER ship the answer key or the skill sources into the tree the model
+        # sees — MANIFEST.json is the ground truth; skills/ holds both cells'
+        # SKILL.md sources (the cell's own is placed at the root below).
+        rm -rf "$worktree_root/skills" "$worktree_root/MANIFEST.json"
+        local skill_file
+        skill_file="$(jq -r --arg n "$cell_name" '.cells[] | select(.name==$n) | .skill_file // ""' "$CONFIG_JSON_FILE")"
+        if [ -n "$skill_file" ]; then
+            cp "$HERE/$skill_file" "$worktree_root/SKILL.md"
+        fi
+    else
+        worktree_root="$WORKTREES_DIR/$task_id"
+    fi
 
     # `--allowedTools` only pre-approves (skips the permission prompt); it does
     # NOT restrict which tools EXIST in the session — Edit/Write/Agent/etc. stay

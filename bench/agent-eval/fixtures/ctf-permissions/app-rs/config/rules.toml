@@ -1,0 +1,10 @@
+# Runtime permission rules (abstraction 4). Each table lists the roles the
+# permission grants. Loaded and evaluated by perm_config::enforce_rule.
+[can_export]
+roles = ["admin", "analyst"]
+
+[can_import]
+roles = ["admin"]
+
+[can_view]
+roles = ["admin", "analyst", "viewer"]

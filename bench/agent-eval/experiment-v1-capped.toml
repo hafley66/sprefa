@@ -1,0 +1,58 @@
+# experiment-v1-capped.toml — a CAPPED, NON-HEADLINE run of the S1 C2 matrix.
+#
+# Same preregistered filters + seed as experiment.toml (the v0-smoke freeze);
+# the ONLY differences are a distinct `version` string, reps=1, and the run is
+# capped to ~10 tasks via `run.sh --tasks-limit 10`. The cap is deterministic:
+# select_tasks.py emits tasks round-robin across the four mutation kinds in
+# sha256 order, so --tasks-limit 10 is a balanced cross-kind subset, not a
+# re-sample. This is NOT the headline number — the 3-rep full preregistered
+# matrix (experiment.toml, reps=3, all tasks) is still open.
+#
+# Primary endpoint unchanged: C2 locate rate (exact file, line within
+# +/- score_window_lines) per cell, token cost per solved task.
+
+version = "v1-capped"
+repo_root = "."
+reps = 1
+timeout_secs = 180
+parallelism = 4
+
+note = "Capped, non-headline run: 10 sym-hash-ordered tasks (round-robin across the 4 mutation kinds), 1 rep per cell. The preregistered headline is the 3-rep full matrix in experiment.toml, which remains open. Same filters/seed as the v0-smoke freeze; only the version string, reps, and --tasks-limit cap differ."
+
+[filters]
+tasks_per_kind = 10
+min_bound = 2
+max_bound = 10000
+score_window_lines = 2
+
+[[models]]
+id = "haiku"
+claude_model = "haiku"
+
+[[models]]
+id = "sonnet"
+claude_model = "sonnet"
+
+[[cells]]
+name = "haiku-bash"
+model = "haiku"
+allowed_tools = "Bash,Read,Grep,Glob"
+mcp = false
+
+[[cells]]
+name = "haiku-dl"
+model = "haiku"
+allowed_tools = "Bash,Read,Grep,Glob,mcp__dl__dl.what,mcp__dl__dl.verb,mcp__dl__dl.rows"
+mcp = true
+
+[[cells]]
+name = "sonnet-bash"
+model = "sonnet"
+allowed_tools = "Bash,Read,Grep,Glob"
+mcp = false
+
+[[cells]]
+name = "sonnet-dl"
+model = "sonnet"
+allowed_tools = "Bash,Read,Grep,Glob,mcp__dl__dl.what,mcp__dl__dl.verb,mcp__dl__dl.rows"
+mcp = true

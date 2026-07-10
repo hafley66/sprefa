@@ -1,0 +1,56 @@
+# experiment-v1-capped.2.toml — a RE-SCORE of the v1-capped run.
+#
+# NO new model calls, NO new spend: score.py was re-run over the identical raw
+# outputs of the v1-capped run. The only change vs v1-capped is that score.py
+# now splits the former single "parse-failure" column into two distinct modes
+# (protocol #6): prose-fail (a well-formed model response with no extractable
+# JSON) vs timeout/err (the `claude` process exited nonzero — exit 124 is the
+# 180s wall-clock cap). In v1-capped every "parse-failure" was in fact a
+# timeout, so the split changes the reading, not the answers. Same tasks, same
+# seed, same expected coordinates.
+
+version = "v1-capped.2"
+repo_root = "."
+reps = 1
+timeout_secs = 180
+parallelism = 4
+
+note = "RE-SCORE of v1-capped from identical raw outputs (no new model calls). score.py now separates prose-fail from timeout/err; every v1-capped parse-failure was a timeout (exit 124 = the 180s cap), driven by agents shelling out to cargo/tsc on the large self-corpus. Locate rates and answers are unchanged from v1-capped. Still non-headline; the 3-rep full matrix in experiment.toml remains open, and for it the timeout_secs cap should be raised."
+
+[filters]
+tasks_per_kind = 10
+min_bound = 2
+max_bound = 10000
+score_window_lines = 2
+
+[[models]]
+id = "haiku"
+claude_model = "haiku"
+
+[[models]]
+id = "sonnet"
+claude_model = "sonnet"
+
+[[cells]]
+name = "haiku-bash"
+model = "haiku"
+allowed_tools = "Bash,Read,Grep,Glob"
+mcp = false
+
+[[cells]]
+name = "haiku-dl"
+model = "haiku"
+allowed_tools = "Bash,Read,Grep,Glob,mcp__dl__dl.what,mcp__dl__dl.verb,mcp__dl__dl.rows"
+mcp = true
+
+[[cells]]
+name = "sonnet-bash"
+model = "sonnet"
+allowed_tools = "Bash,Read,Grep,Glob"
+mcp = false
+
+[[cells]]
+name = "sonnet-dl"
+model = "sonnet"
+allowed_tools = "Bash,Read,Grep,Glob,mcp__dl__dl.what,mcp__dl__dl.verb,mcp__dl__dl.rows"
+mcp = true

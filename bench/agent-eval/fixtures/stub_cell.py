@@ -36,6 +36,26 @@ def main():
     digest = hashlib.sha256(f"{task_id}:{cell_name}:{rep}".encode()).hexdigest()
     variant = int(digest[:8], 16) % 4
 
+    # CTF tasks expect a LIST of sites -> stub a {"sites":[...]} answer that
+    # exercises the F1 scorer (perfect set, partial recall, extra false
+    # positive, and prose parse-failure).
+    if isinstance(expected, list):
+        if variant == 0:
+            result_text = json.dumps({"sites": expected})                       # perfect
+        elif variant == 1:
+            result_text = json.dumps({"sites": expected[:-1]})                  # miss one (recall)
+        elif variant == 2:
+            result_text = json.dumps({"sites": expected + [                     # extra FP (precision)
+                {"file": "app-ts/src/routes/report.ts", "line": 19}]})
+        else:
+            result_text = "I could not enumerate the enforcement sites confidently."
+        blob = {"type": "result", "subtype": "success", "is_error": False,
+                "result": result_text,
+                "usage": {"input_tokens": 1200, "output_tokens": 60},
+                "total_cost_usd": 0.001, "duration_ms": 500, "num_turns": 1}
+        print(json.dumps(blob))
+        return
+
     if variant == 0:
         # exact hit
         result_text = json.dumps({"file": expected["file"], "line": expected["line"]})

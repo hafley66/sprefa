@@ -86,14 +86,21 @@ def main():
                 continue
         by_kind.setdefault(mutation_kind, []).append((site_path, site_line, detail))
 
-    tasks = []
+    # Build each kind's capped, sym-hash-ordered pool first, then emit the
+    # tasks ROUND-ROBIN across kinds (kind order = sorted, rank order = the
+    # sha256 sort). The full set is identical to a grouped emission; only the
+    # LINE ORDER differs, so `run.sh --tasks-limit N` yields a balanced
+    # cross-kind subset (10 -> ~2-3 per kind) instead of the first kind's 10.
+    # Determinism is unchanged: same candidates.json + experiment.toml -> the
+    # same bytes. Nothing downstream depends on line order except the cap.
+    per_kind = []
     for mutation_kind in sorted(by_kind):
         pool = by_kind[mutation_kind]
         pool.sort(key=lambda t: sym_hash_key(t[0], t[1], mutation_kind))
+        kind_tasks = []
         for rank, (site_path, site_line, detail) in enumerate(pool[:tasks_per_kind]):
-            task_id = f"c2-{mutation_kind}-{rank:02d}"
-            tasks.append({
-                "id": task_id,
+            kind_tasks.append({
+                "id": f"c2-{mutation_kind}-{rank:02d}",
                 "class": "C2",
                 "mutation_kind": mutation_kind,
                 "site_path": site_path,
@@ -102,6 +109,13 @@ def main():
                 "prompt": C2_PROMPT,
                 "expected_json": None,
             })
+        per_kind.append(kind_tasks)
+
+    tasks = []
+    for rank in range(max((len(k) for k in per_kind), default=0)):
+        for kind_tasks in per_kind:
+            if rank < len(kind_tasks):
+                tasks.append(kind_tasks[rank])
 
     with open(out_path, "w") as f:
         for task in tasks:
