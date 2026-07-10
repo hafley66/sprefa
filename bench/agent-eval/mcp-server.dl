@@ -1,0 +1,38 @@
+# mcp-server.dl — the MCP stdio server the +dl eval cells point at.
+#
+# The agent-eval harness gives a +dl cell exactly the built-in dl.what /
+# dl.verb / dl.rows tools (src/mcp.rs's `builtin_tool_descriptors` /
+# `builtin_tool_call`) and NOTHING else: no program-authored tool, no
+# dl-specific hint text in the shared prompt (anti-grift protocol #2,
+# plans/2026-07-10-agent-eval-harness.md). Those three tools are engine
+# built-ins that any `--mcp` program advertises regardless of its own rules
+# (`tools_list_merged` appends them; `tools/call` on a `dl.*` name is
+# answered before the program's own dispatch ever runs), so this file needs
+# no rules of its own — just the one @in(rpc)/@out(rpc) port pair `--mcp`
+# requires to bind the profile at all (see examples/mcp-echo.dl).
+#
+#   dl bench/agent-eval/mcp-server.dl --mcp --no-daemon --db <scratch db>
+#
+# Run with cwd = the task's mutated worktree root (root is always cwd, never
+# a flag — src/cli/root.rs), so dl.what/dl.verb/dl.rows read that worktree's
+# own graph.
+#
+# FINDING (S1, filed against S0's --mcp adapter, not fixed here — see the
+# harness report): a real MCP client (Claude Code itself, tested against
+# this exact file with zero rules) sends the protocol-mandatory `initialize`
+# handshake BEFORE ever asking for `tools/list`. src/mcp.rs's `handle_msg`
+# only special-cases `tools/list` and `tools/call`; `initialize` falls
+# through to the program's own rules, and a program with none gets a bare
+# `-32601 no rule answered method \`initialize\`` — which every MCP client
+# treats as a fatal connection failure, so the built-in dl.* tools never
+# even reach the "advertised" stage. `examples/mcp-server.dl` already carries
+# the fix as a one-line rule (below); a zero-logic "just serve the built-ins"
+# deployment has to know to copy it. Candidate real fix (not this file, not
+# in scope for S1): `--mcp` could answer a generic `initialize` itself,
+# the way it already answers `tools/list`/`tools/call`, so a program needs
+# zero lifecycle boilerplate to serve only built-ins.
+rel req(id: text, method: text, params: text) @in(rpc).
+rel resp(id: text, result: text) @out(rpc).
+
+resp(id, "{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"dl-agent-eval\",\"version\":\"0.1.0\"}}")
+    <- req(id, "initialize", _).

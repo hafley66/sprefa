@@ -1,0 +1,61 @@
+# gen-tasks.dl — C2 seeded-fault candidate sites for the agent eval harness
+# (plans/2026-07-10-agent-eval-harness.md, stage S1).
+#
+# WHAT THIS EMITS
+#   `? candidate_site(mutation_kind, site_path, site_line, detail)` — every
+#   structurally eligible mutation SITE in this repo's own `src/**/*.rs`, one
+#   row per (kind, path, line). This program never picks the final task set
+#   and never writes an answer key: it only proposes candidates. The final
+#   sample (deterministic, sym-hash ordered) and the post-mutation answer
+#   coordinates are computed OUTSIDE this program:
+#     - sampling: bench/agent-eval/run.sh's `select_tasks` step (sha256 over
+#       "<path>:<line>:<kind>", NOT dl, NOT random — see that script's header
+#       for the committed numeric filters)
+#     - answer key: bench/agent-eval/mutate.sh, plain text tools (awk/python),
+#       never dl — the anti-grift protocol requires a mutation's ground truth
+#       to be independent of the tool under test.
+#
+# MUTATION KINDS (four, structurally distinct regex shapes so each kind's
+# candidate pool is unambiguous):
+#   import-break   a bare top-level `use crate::a::b;` import line (no braces,
+#                  no glob, no `as` rename) — a single identifier path is easy
+#                  to corrupt with a one-token typo and easy to re-locate.
+#   export-orphan  a top-level `pub fn name(` declaration (column 0, so a
+#                  module-level fn, not a method inside an `impl` block).
+#   duplicate-sym  the SAME candidate pool as export-orphan (a top-level
+#                  `pub fn`), mutated differently downstream: mutate.sh
+#                  duplicates the whole function body instead of stripping
+#                  `pub`.
+#   off-by-one     a `for x in 0..N { ... }` loop with a literal numeric
+#                  upper bound — mutate.sh nudges N by one.
+#
+# Corpus is this repo's own `src/**/*.rs` (self-corpus; plan item 5's foreign
+# corpus is out of scope for S1 scaffolding — `experiment.toml`'s `repo_root`
+# is the parameter that will point this same program at another checkout).
+
+rel import_use_line(site_path: file, site_line: int, module_path: text).
+import_use_line(site_path, site_line, module_path) <-
+    scan("WORK", "src/**/*.rs", site_path, rev),
+    match(site_path, rev, /^use crate::(?<module_path>[A-Za-z0-9_:]+);$/, site_line).
+
+rel pub_fn_line(site_path: file, site_line: int, fn_name: text).
+pub_fn_line(site_path, site_line, fn_name) <-
+    scan("WORK", "src/**/*.rs", site_path, rev),
+    match(site_path, rev, /^pub fn (?<fn_name>[a-z_][a-zA-Z0-9_]*)\(/, site_line).
+
+rel zero_range_loop_line(site_path: file, site_line: int, upper_bound: text).
+zero_range_loop_line(site_path, site_line, upper_bound) <-
+    scan("WORK", "src/**/*.rs", site_path, rev),
+    match(site_path, rev, /for [A-Za-z_][A-Za-z0-9_]* in 0\.\.(?<upper_bound>[0-9]+) \{/, site_line).
+
+rel candidate_site(mutation_kind: text, site_path: file, site_line: int, detail: text).
+candidate_site("import-break", site_path, site_line, module_path) <-
+    import_use_line(site_path, site_line, module_path).
+candidate_site("export-orphan", site_path, site_line, fn_name) <-
+    pub_fn_line(site_path, site_line, fn_name).
+candidate_site("duplicate-sym", site_path, site_line, fn_name) <-
+    pub_fn_line(site_path, site_line, fn_name).
+candidate_site("off-by-one", site_path, site_line, upper_bound) <-
+    zero_range_loop_line(site_path, site_line, upper_bound).
+
+? candidate_site(mutation_kind, site_path, site_line, detail).
