@@ -80,6 +80,7 @@ mod mcp;
 mod mcp_daemon;
 mod mcp_lifecycle;
 mod lint_no_touch;
+mod lsp_hierarchy;
 mod lsp_hook_event;
 mod lsp_protocol;
 mod lsp_query_paging;

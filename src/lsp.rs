@@ -23,17 +23,21 @@ use std::str::FromStr;
 
 use lsp_server::{Connection, Message, Notification, Request, Response};
 use lsp_types::{
-    Diagnostic, DiagnosticSeverity, DocumentHighlight, DocumentHighlightKind,
-    DocumentHighlightParams, DocumentSymbol, DocumentSymbolParams, GotoDefinitionParams,
-    Location, OneOf, Position, PublishDiagnosticsParams, Range, ReferenceParams,
-    ServerCapabilities, SymbolInformation, SymbolKind, TextDocumentPositionParams,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-    TextDocumentSyncSaveOptions, Uri, WorkspaceSymbolParams,
+    CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams, CallHierarchyItem,
+    CallHierarchyOutgoingCall, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
+    CallHierarchyServerCapability, Diagnostic, DiagnosticSeverity, DocumentHighlight,
+    DocumentHighlightKind, DocumentHighlightParams, DocumentSymbol, DocumentSymbolParams,
+    GotoDefinitionParams, Location, OneOf, Position, PublishDiagnosticsParams, Range,
+    ReferenceParams, ServerCapabilities, SymbolInformation, SymbolKind,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TypeHierarchyItem,
+    TypeHierarchyPrepareParams, TypeHierarchySubtypesParams, TypeHierarchySupertypesParams,
+    Uri, WorkspaceSymbolParams,
     DidOpenTextDocumentParams, DidSaveTextDocumentParams,
 };
 use std::collections::HashMap;
 
-use crate::engine::{DiagRow, Engine};
+use crate::engine::{DiagRow, Engine, HierarchyItem};
 use crate::{ast, db};
 
 use tree_sitter::Parser;
@@ -60,13 +64,23 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, db_defaulted: bool, r
         workspace_symbol_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
         hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
+        // B5: call hierarchy has a typed capability field; type hierarchy does
+        // not exist on `ServerCapabilities` in this lsp-types version (0.97.0
+        // wires the request/param/item types in `type_hierarchy.rs` but never
+        // added the server-capability field), so it's spliced into the
+        // serialized JSON below instead of fighting the crate's typed gap.
+        call_hierarchy_provider: Some(CallHierarchyServerCapability::Simple(true)),
         execute_command_provider: Some(lsp_types::ExecuteCommandOptions {
             commands: vec!["dl.toggleDiagCode".into(), "dl.listDiagCodes".into()],
             ..Default::default()
         }),
         ..Default::default()
     };
-    let init_params = connection.initialize(serde_json::to_value(caps)?)?;
+    let mut caps_value = serde_json::to_value(caps)?;
+    if let Some(obj) = caps_value.as_object_mut() {
+        obj.insert("typeHierarchyProvider".to_string(), serde_json::Value::Bool(true));
+    }
+    let init_params = connection.initialize(caps_value)?;
     let root = client_root_uri(&init_params).unwrap_or(root);
 
     let files = crate::resolve_programs(programs, &root)?;
@@ -207,6 +221,30 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, db_defaulted: bool, r
                     }
                     "workspace/symbol" => {
                         let resp = handle_workspace_symbol(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
+                    "textDocument/prepareCallHierarchy" => {
+                        let resp = handle_call_hierarchy_prepare(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
+                    "callHierarchy/incomingCalls" => {
+                        let resp = handle_call_hierarchy_incoming(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
+                    "callHierarchy/outgoingCalls" => {
+                        let resp = handle_call_hierarchy_outgoing(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
+                    "textDocument/prepareTypeHierarchy" => {
+                        let resp = handle_type_hierarchy_prepare(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
+                    "typeHierarchy/supertypes" => {
+                        let resp = handle_type_hierarchy_supertypes(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
+                    "typeHierarchy/subtypes" => {
+                        let resp = handle_type_hierarchy_subtypes(&eng, &root, &req);
                         connection.sender.send(Message::Response(resp))?;
                     }
                     "dl/query" => {
@@ -858,6 +896,217 @@ fn symbol_kind(kind: &str) -> SymbolKind {
         "const" => SymbolKind::CONSTANT,
         _ => SymbolKind::VARIABLE,
     }
+}
+
+// ---------- call hierarchy + type hierarchy (Track B B5) ----------
+
+/// A `HierarchyItem`'s URI (mapped through its OWN repo root, the multi-repo
+/// idiom `refhit_location`/`handle_workspace_symbol` use) plus its `range`
+/// (the whole declaration span when `end_line` differs from `line`, else one
+/// line — the `to_diag` "no column info" convention) and zero-width
+/// `selection_range` at the declaration line (no column info in either tier).
+fn hierarchy_uri_range(
+    roots: &HashMap<String, PathBuf>, primary: &Path, item: &HierarchyItem,
+) -> Option<(Uri, Range, Range)> {
+    let base = roots.get(&item.repo).map(|p| p.as_path()).unwrap_or(primary);
+    let uri = path_to_uri(&base.join(&item.file))?;
+    let selection_range = Range::new(Position::new(item.line, 0), Position::new(item.line, 0));
+    let end_line = item.end_line.max(item.line) + 1;
+    let range = Range::new(Position::new(item.line, 0), Position::new(end_line, 0));
+    Some((uri, range, selection_range))
+}
+
+/// `HierarchyItem` -> `CallHierarchyItem`, with the whole item round-tripped
+/// into `data` so `incomingCalls`/`outgoingCalls` need no re-resolution by
+/// position (the prepare/incoming/outgoing split is otherwise stateless here).
+fn call_hierarchy_item(
+    roots: &HashMap<String, PathBuf>, primary: &Path, item: &HierarchyItem,
+) -> Option<CallHierarchyItem> {
+    let (uri, range, selection_range) = hierarchy_uri_range(roots, primary, item)?;
+    Some(CallHierarchyItem {
+        name: item.name.clone(),
+        kind: symbol_kind(&item.kind),
+        tags: None,
+        detail: None,
+        uri, range, selection_range,
+        data: serde_json::to_value(item).ok(),
+    })
+}
+
+/// `HierarchyItem` -> `TypeHierarchyItem`, same `data` round-trip as
+/// `call_hierarchy_item`.
+fn type_hierarchy_item(
+    roots: &HashMap<String, PathBuf>, primary: &Path, item: &HierarchyItem,
+) -> Option<TypeHierarchyItem> {
+    let (uri, range, selection_range) = hierarchy_uri_range(roots, primary, item)?;
+    Some(TypeHierarchyItem {
+        name: item.name.clone(),
+        kind: symbol_kind(&item.kind),
+        tags: None,
+        detail: None,
+        uri, range, selection_range,
+        data: serde_json::to_value(item).ok(),
+    })
+}
+
+/// A `HierarchyItem`'s `data` field (round-tripped from a prior prepare/
+/// incoming/outgoing/supertypes/subtypes response) back to the typed struct.
+/// None when the client sent no `data` or a malformed one (a stale item from
+/// a since-restarted server, or a non-dl call/type hierarchy provider mixed
+/// in — the request is dropped rather than mis-resolved).
+fn hierarchy_item_from_data(data: &Option<serde_json::Value>) -> Option<HierarchyItem> {
+    data.clone().and_then(|d| serde_json::from_value(d).ok())
+}
+
+/// Ranges within `edge`'s neighbor's file: `from_lines` when the tier found
+/// call-site lines, else the neighbor's own declaration line as a fallback (an
+/// empty `from_ranges` array is legal per spec but several clients render no
+/// highlight at all without one).
+fn hierarchy_from_ranges(edge: &crate::engine::HierarchyCallEdge, item_range: Range) -> Vec<Range> {
+    if edge.from_lines.is_empty() {
+        return vec![item_range];
+    }
+    edge.from_lines.iter()
+        .map(|&line| Range::new(Position::new(line, 0), Position::new(line, 0)))
+        .collect()
+}
+
+/// `textDocument/prepareCallHierarchy` (B5): cursor -> a callable
+/// `HierarchyItem`, wrapped as the single-element array the LSP result shape
+/// wants. Null when the cursor is not on a located identifier or the
+/// identifier is not a callable in either tier (see
+/// `Engine::call_hierarchy_prepare`).
+fn handle_call_hierarchy_prepare(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let params: CallHierarchyPrepareParams = match serde_json::from_value(req.params.clone()) {
+        Ok(p) => p,
+        Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
+    };
+    let Some((rel, byte)) = resolve_path_byte(root, &params.text_document_position_params) else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    let item = match eng.call_hierarchy_prepare(&rel, byte as usize) {
+        Ok(Some(item)) => item,
+        Ok(None) => return Response::new_ok(req.id.clone(), serde_json::Value::Null),
+        Err(e) => return Response::new_err(req.id.clone(), -32603, e.to_string()),
+    };
+    let roots = eng.repo_roots();
+    match call_hierarchy_item(&roots, root, &item) {
+        Some(chi) => Response::new_ok(req.id.clone(), serde_json::json!([chi])),
+        None => Response::new_ok(req.id.clone(), serde_json::Value::Null),
+    }
+}
+
+/// `callHierarchy/incomingCalls` (B5): the request item's `data` round-trips to
+/// a `HierarchyItem`, then one 1-hop caller lookup (`Engine::
+/// call_hierarchy_incoming` — no closure, tier-matched to how the item
+/// resolved).
+fn handle_call_hierarchy_incoming(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let params: CallHierarchyIncomingCallsParams = match serde_json::from_value(req.params.clone()) {
+        Ok(p) => p,
+        Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
+    };
+    let Some(item) = hierarchy_item_from_data(&params.item.data) else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    let edges = match eng.call_hierarchy_incoming(&item) {
+        Ok(edges) => edges,
+        Err(e) => return Response::new_err(req.id.clone(), -32603, e.to_string()),
+    };
+    let roots = eng.repo_roots();
+    let calls: Vec<CallHierarchyIncomingCall> = edges.iter().filter_map(|edge| {
+        let from = call_hierarchy_item(&roots, root, &edge.item)?;
+        let from_ranges = hierarchy_from_ranges(edge, from.range);
+        Some(CallHierarchyIncomingCall { from, from_ranges })
+    }).collect();
+    Response::new_ok(req.id.clone(), serde_json::to_value(calls).unwrap_or_default())
+}
+
+/// `callHierarchy/outgoingCalls` (B5): same shape as
+/// `handle_call_hierarchy_incoming`, the callee direction.
+fn handle_call_hierarchy_outgoing(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let params: CallHierarchyOutgoingCallsParams = match serde_json::from_value(req.params.clone()) {
+        Ok(p) => p,
+        Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
+    };
+    let Some(item) = hierarchy_item_from_data(&params.item.data) else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    let edges = match eng.call_hierarchy_outgoing(&item) {
+        Ok(edges) => edges,
+        Err(e) => return Response::new_err(req.id.clone(), -32603, e.to_string()),
+    };
+    let roots = eng.repo_roots();
+    let calls: Vec<CallHierarchyOutgoingCall> = edges.iter().filter_map(|edge| {
+        let to = call_hierarchy_item(&roots, root, &edge.item)?;
+        let from_ranges = hierarchy_from_ranges(edge, to.range);
+        Some(CallHierarchyOutgoingCall { to, from_ranges })
+    }).collect();
+    Response::new_ok(req.id.clone(), serde_json::to_value(calls).unwrap_or_default())
+}
+
+/// `textDocument/prepareTypeHierarchy` (B5): cursor -> a type-shaped
+/// `HierarchyItem` (struct/enum/trait/class/interface only — see
+/// `Engine::type_hierarchy_prepare`), wrapped as a single-element array.
+fn handle_type_hierarchy_prepare(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let params: TypeHierarchyPrepareParams = match serde_json::from_value(req.params.clone()) {
+        Ok(p) => p,
+        Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
+    };
+    let Some((rel, byte)) = resolve_path_byte(root, &params.text_document_position_params) else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    let item = match eng.type_hierarchy_prepare(&rel, byte as usize) {
+        Ok(Some(item)) => item,
+        Ok(None) => return Response::new_ok(req.id.clone(), serde_json::Value::Null),
+        Err(e) => return Response::new_err(req.id.clone(), -32603, e.to_string()),
+    };
+    let roots = eng.repo_roots();
+    match type_hierarchy_item(&roots, root, &item) {
+        Some(thi) => Response::new_ok(req.id.clone(), serde_json::json!([thi])),
+        None => Response::new_ok(req.id.clone(), serde_json::Value::Null),
+    }
+}
+
+/// `typeHierarchy/supertypes` (B5): the request item's `data` round-trips to a
+/// `HierarchyItem`, then one 1-hop supertype lookup (`type_link` kind `impl`
+/// plus interface-owned `generic`, or `scip_impl` for a compiler-tier item —
+/// see `Engine::type_hierarchy_supertypes`).
+fn handle_type_hierarchy_supertypes(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let params: TypeHierarchySupertypesParams = match serde_json::from_value(req.params.clone()) {
+        Ok(p) => p,
+        Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
+    };
+    let Some(item) = hierarchy_item_from_data(&params.item.data) else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    let supers = match eng.type_hierarchy_supertypes(&item) {
+        Ok(supers) => supers,
+        Err(e) => return Response::new_err(req.id.clone(), -32603, e.to_string()),
+    };
+    let roots = eng.repo_roots();
+    let items: Vec<TypeHierarchyItem> = supers.iter()
+        .filter_map(|s| type_hierarchy_item(&roots, root, s)).collect();
+    Response::new_ok(req.id.clone(), serde_json::to_value(items).unwrap_or_default())
+}
+
+/// `typeHierarchy/subtypes` (B5): same shape as
+/// `handle_type_hierarchy_supertypes`, the implementer direction.
+fn handle_type_hierarchy_subtypes(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let params: TypeHierarchySubtypesParams = match serde_json::from_value(req.params.clone()) {
+        Ok(p) => p,
+        Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
+    };
+    let Some(item) = hierarchy_item_from_data(&params.item.data) else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    let subs = match eng.type_hierarchy_subtypes(&item) {
+        Ok(subs) => subs,
+        Err(e) => return Response::new_err(req.id.clone(), -32603, e.to_string()),
+    };
+    let roots = eng.repo_roots();
+    let items: Vec<TypeHierarchyItem> = subs.iter()
+        .filter_map(|s| type_hierarchy_item(&roots, root, s)).collect();
+    Response::new_ok(req.id.clone(), serde_json::to_value(items).unwrap_or_default())
 }
 
 /// Send the outbound `dl/graphChanged` pulse (A5 push-refresh v1). Params is a
