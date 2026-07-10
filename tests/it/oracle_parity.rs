@@ -119,32 +119,34 @@ pub(crate) fn refs_at(index: &Index, root: &Path, source_prefix: &str)
     refs_at
 }
 
-/// `call_site`/`call_edge` syms are "repo::path::kind::name" (`mint_sym` is
-/// shared across every `TypeLang`); reduce to (path, name).
-fn sym_parts(sym: &str) -> Option<(String, String)> {
-    let mut it = sym.rsplitn(3, "::");
-    let name = it.next()?;
-    let _kind = it.next()?;
-    let repo_path = it.next()?;
-    let path = repo_path.split_once("::").map(|(_, p)| p).unwrap_or(repo_path);
-    Some((path.to_string(), name.to_string()))
-}
-
 /// Parse the `? call_site(repo, caller, callee, file, line)` and
-/// `? call_edge(caller, callee, kind)` query blocks out of `dl`'s stdout: the
-/// index-free resolver's attempts (sites) and picks. `source_prefix` scopes
-/// call sites to the corpus under test the same way it scopes the ground
-/// truth (a `--db`-backed run may also see vendored/std files no oracle
-/// covers).
+/// `? site_pick(file, callee_text, line, def_file)` query blocks out of `dl`'s
+/// stdout: the index-free resolver's attempts (sites) and its PER-CALL-SITE
+/// resolved picks. `source_prefix` scopes both to the corpus under test the
+/// same way it scopes the ground truth (a `--db`-backed run may also see
+/// vendored/std files no oracle covers).
+///
+/// `site_pick` is emitted by the twins' embedded program and re-keys the pick
+/// on the call site's OWN as-written text and line (see the twins for the two
+/// resolution rules). Keying picks by (file, as-written callee text, 1-based
+/// line) — rather than deriving the callee name from the RESOLVED sym — lets a
+/// correctly resolved METHOD call (site text `getUser`, def `UserService.getUser`)
+/// and a correctly resolved ALIASED call (site text `loadUser`, resolved to
+/// `fetchUser`) match the ground-truth site, which is keyed by the as-written
+/// text. `def_file` is the resolved callee's definition file, computed in dl
+/// (`call_def.file` / `module_binding.dst`). Both `sites` and `picks` lines are
+/// 1-based (call_site); the ONE conversion to SCIP's 0-based line happens in
+/// `score`, at the truth lookup.
 pub(crate) fn parse_call_sections(stdout: &str, source_prefix: &str)
-    -> (Vec<(String, String, u32)>, HashMap<(String, String), HashSet<String>>)
+    -> (Vec<(String, String, u32)>, HashMap<(String, String, u32), HashSet<String>>)
 {
     let mut sites: Vec<(String, String, u32)> = Vec::new(); // (file, callee, 1-based line)
-    let mut picks: HashMap<(String, String), HashSet<String>> = HashMap::new(); // (file, callee name) -> def files
+    // (file, as-written callee text, 1-based line) -> resolved callee def files.
+    let mut picks: HashMap<(String, String, u32), HashSet<String>> = HashMap::new();
     let mut section = "";
     for line in stdout.lines() {
         if line.starts_with("? call_site") { section = "site"; continue; }
-        if line.starts_with("? call_edge") { section = "edge"; continue; }
+        if line.starts_with("? site_pick") { section = "pick"; continue; }
         if line.starts_with('?') { section = ""; continue; }
         let cells: Vec<&str> = line.trim_end().split('\t').collect();
         match section {
@@ -155,10 +157,15 @@ pub(crate) fn parse_call_sections(stdout: &str, source_prefix: &str)
                     }
                 }
             }
-            "edge" if cells.len() >= 2 => {
-                if let (Some((cf, _)), Some((df, dn))) = (sym_parts(cells[0]), sym_parts(cells[1])) {
-                    picks.entry((cf, dn)).or_default().insert(df);
-                }
+            // site_pick(file, callee_text, line, def_file). dl indents data
+            // rows with two leading spaces, so cell 0 (the file, here) carries
+            // that indent; trim it (call_site's file is cell 3, unaffected).
+            "pick" if cells.len() >= 4 => {
+                let (file, callee_text, def_file) = (cells[0].trim(), cells[1], cells[3].trim());
+                if !file.starts_with(source_prefix) { continue; }
+                let Ok(line1) = cells[2].parse::<u32>() else { continue; };
+                picks.entry((file.to_string(), callee_text.to_string(), line1))
+                    .or_default().insert(def_file.to_string());
             }
             _ => {}
         }
@@ -166,30 +173,34 @@ pub(crate) fn parse_call_sections(stdout: &str, source_prefix: &str)
     (sites, picks)
 }
 
-/// Score `sites` against `picks` and the `truth` ground truth. A site enters
-/// the denominator only when the ground truth slices exactly one def file
-/// for the callee's last name segment at that (file, line); an ambiguous
-/// truth, an unresolved pick, or a multi-candidate pick is EXCLUDED (never a
-/// win, never a loss). Method-name picks are keyed both bare and
-/// `Type.name`; both are tried, matching the `call_site`/`call_edge` sym
-/// convention.
+/// Score `sites` against `picks` and the `truth` ground truth, keyed PER CALL
+/// SITE by (file, as-written callee text, 1-based line). A site enters the
+/// denominator only when the ground truth slices exactly one def file for the
+/// call's as-written text at that (file, line); an ambiguous truth, an
+/// unresolved pick, or a multi-candidate pick is EXCLUDED (never a win, never a
+/// loss). Because the pick is keyed on the SAME as-written text and line the
+/// truth is keyed on, a correctly-resolved method or aliased call now confirms
+/// instead of landing in `bare` — while staying strictly per-site (the old
+/// per-(file, callee-name) picks conflated every call of a name in a file).
 pub(crate) fn score(
     sites: &[(String, String, u32)],
-    picks: &HashMap<(String, String), HashSet<String>>,
+    picks: &HashMap<(String, String, u32), HashSet<String>>,
     truth: &HashMap<(String, u32), Vec<(String, String)>>,
 ) -> ParityStats {
     let (mut confirmed, mut wrong, mut bare, mut multi) = (0usize, 0usize, 0usize, 0usize);
     let mut wrong_examples: Vec<String> = Vec::new();
     for (file, callee, line1) in sites {
         let needle = callee.rsplit('.').next().unwrap_or(callee);
+        // ONE line-base conversion: our 1-based site line -> SCIP's 0-based truth line.
         let Some(cands) = truth.get(&(file.clone(), line1.saturating_sub(1))) else { continue; };
         let truths: HashSet<&String> = cands.iter()
             .filter(|(slice, _)| slice == needle)
             .map(|(_, def)| def).collect();
         if truths.len() != 1 { continue; } // no truth or ambiguous truth: exclude
         let truth_file = *truths.iter().next().unwrap();
-        let ours = picks.get(&(file.clone(), callee.clone()))
-            .or_else(|| picks.get(&(file.clone(), needle.to_string())));
+        // Per-site pick: keyed by the as-written call text AND the site line,
+        // so `getUser`/`loadUser` at their own lines confirm.
+        let ours = picks.get(&(file.clone(), callee.clone(), *line1));
         match ours {
             None => bare += 1,
             Some(set) if set.len() > 1 => multi += 1, // ambiguous pick: excluded, reported
@@ -209,9 +220,48 @@ pub(crate) fn score(
 }
 
 /// Convenience: ground truth + section parse + score in one call, for a `dl`
-/// run whose stdout carries `? call_site`/`? call_edge` query blocks.
+/// run whose stdout carries `? call_site`/`? site_pick` query blocks.
 pub(crate) fn score_parity(index: &Index, root: &Path, source_prefix: &str, dl_stdout: &str) -> ParityStats {
     let truth = refs_at(index, root, source_prefix);
     let (sites, picks) = parse_call_sections(dl_stdout, source_prefix);
     score(&sites, &picks, &truth)
 }
+
+/// The scorer's dl program tail: the PER-CALL-SITE resolution rules plus the
+/// two `?` query blocks the scorer parses. Each twin prepends its own
+/// language-specific `seen`/`scan` rule (globs differ). `site_pick` re-keys the
+/// resolver's own output on the call site's as-written text + line, so a
+/// correctly resolved method or aliased call confirms against the same
+/// (file, text, line) SCIP is keyed on:
+///
+/// DESIGN NOTE (why not `std/flow.dl`'s `call_target`, the plan's design A):
+/// `call_target` requires `call_name(callee_q, site_text)` to pin a call node
+/// to its edge, so an ALIASED call (site text `loadUser`, def name `fetchUser`)
+/// is structurally excluded — the pin is name-equality. `call_target` also
+/// rides `df_node` `call_res`, and the df lift is sparse for some fronts (TS
+/// class-method bodies emit no df nodes), so plain calls there would regress to
+/// `bare`. This is design B: re-key on the site's own text, resolving per site
+/// directly from the resolver's shipped rels —
+///   1. name-equality (method + plain): the site's callee text equals the
+///      resolved edge's callee def name (`call_name`), which pins the site to
+///      the `call_edge` from its caller; `call_def.file` is the def file. Same
+///      name-equality pin as `call_target`, minus the df dependency, so it is
+///      no more permissive (an ambiguous name yields >1 def file -> `multi`,
+///      excluded).
+///   2. aliased imports: the site's callee text is a `module_binding` local
+///      name; `module_binding.dst` is the def file (the resolver's own alias
+///      resolution).
+/// Both branches are per-site; a site with no row is `bare`.
+pub(crate) const SITE_PICK_TAIL: &str = r#"
+rel site_pick(file: file, callee_text: text, line: int, def_file: file).
+site_pick(file, callee_text, line, def_file) <-
+    call_site(_, caller, callee_text, file, line),
+    call_edge(caller, callee_q, _),
+    call_name(callee_q, callee_text),
+    call_def(_, callee_q, _, def_file, _, _).
+site_pick(file, callee_text, line, def_file) <-
+    call_site(_, _, callee_text, file, line),
+    module_binding(file, callee_text, _, def_file).
+? call_site(repo, caller, callee, file, line).
+? site_pick(file, callee_text, line, def_file).
+"#;

@@ -75,13 +75,10 @@ fn ts_call_resolution_parity_vs_scip() {
     }
     let index = Index::parse_from_bytes(&std::fs::read(&scip_out).unwrap()).expect("parse scip");
 
-    let prog = r#"
-rel seen(path: file).
-seen(path) <- scan("WORK", "src/**/*.ts", path, rev).
-? call_site(repo, caller, callee, file, line).
-? call_edge(caller, callee, kind).
-"#;
-    std::fs::write(tmp.join("parity.dl"), prog).unwrap();
+    let prog = format!(
+        "rel seen(path: file).\nseen(path) <- scan(\"WORK\", \"src/**/*.ts\", path, rev).\n{}",
+        oracle_parity::SITE_PICK_TAIL);
+    std::fs::write(tmp.join("parity.dl"), &prog).unwrap();
     let out = Command::new(DL)
         .arg(tmp.join("parity.dl"))
         .args(["--db", tmp.join("db").to_str().unwrap(), "--no-daemon"])

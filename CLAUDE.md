@@ -1025,16 +1025,48 @@ foreign resolution model).
       aren't documented at the scorer — one comment would save the
       verify-by-hand round-trip; (b) pre-commit hook prints info[op-example]
       noise to stdout mid-commit, benign but alarming.
-- [ ] **Scorer per-site keying IN FLIGHT** (fresh Opus worktree agent,
-      2026-07-10): fix the picks-key gap (method + aliased calls score bare
-      because picks derive from the RESOLVED sym, not the site). Design A =
-      positional keying via std/flow.dl call_target + df_node line (df 1-based,
-      scip 0-based, convert once in the scorer); precision asserts stay;
-      before/after table per language; NEW `wrong` rows investigated as
-      possible real resolver bugs, not massaged. Engine code out of scope.
-      NOTE main pushed b38a9da (merge commit unifying this session's language
-      arc with the other session's wave-3/4 + flow-marks arc; union suites
-      304 lib / 680 it green).
+- [x] **Scorer per-site keying LANDED** (main 0c3b367 cherry-pick of Opus
+      worktree commit, 2026-07-10): plan's Design A (call_target) rejected by
+      the agent with reasons — call_target's name-equality pin structurally
+      excludes ALIASED calls, and its df_node dependency would regress plain
+      calls in TS class-method bodies (zero df nodes there). Design B = new
+      `site_pick` rel per twin keying picks on (file, as-written text,
+      1-based line), resolved per-site from shipped rels: call_site ⋈
+      call_edge ⋈ call_name ⋈ call_def.file, plus module_binding.dst for
+      aliases; ambiguous -> multi -> excluded; the single 1-based->0-based
+      conversion lives in `score`, commented. BEFORE/AFTER: Rust 51.0->77.9%
+      (0.996 precision), TS 16.7->50.0%, Go 75.0->87.5%, Python 37.5->75.0%
+      (1.000 each), Kotlin still skips (no JDK). New Rust wrongs 12->17 ALL
+      enumerated: per-caller single-def homonym picks (`run`/`push`/`walk`/
+      `tick_paths`/`serve`/`dirty` defined in multiple files) — real
+      resolver disagreements surfaced FROM bare, kept in wrong, no massaging.
+      Debrief pains ledgered below (dl query row indent, call_target header
+      note, df coverage table, call_def.sym doc). GOTCHA found: dl query
+      data rows carry a 2-space indent — cell 0 of any parsed rel needs
+      .trim() (the old scorer worked by accident, file lived in cell 3).
+- [ ] **Scorer-agent debrief pains** (Opus, 2026-07-10, unactioned): (a) dl
+      query output indents data rows 2 spaces — undocumented, mis-keys any
+      parser reading cell 0 (document in the query-output contract); (b)
+      std/flow.dl call_target header should state it is name-equality-pinned
+      (aliases excluded by design) and df-dependent; (c) per-language df
+      coverage is invisible (TS class-method bodies emit ZERO df nodes —
+      third sighting of "TS dataflow silently sparse"); (d) call_def.sym doc
+      says bare "file::kind::name" but the emitted value is repo-qualified.
+- [ ] **Otel parity corpora + corpus measurement** (main 12b5a25,
+      2026-07-10): five otel repos pinned as submodules at release SHAs
+      under bench/corpus/ (otel-rust v0.31.0 / otel-js v2.9.0 / otel-go
+      v1.44.0 / otel-python v1.43.0 / otel-kotlin=android v1.5.1, opt-in
+      `git submodule update --init`). HAZARD FOUND: enumerate_with_hash
+      fs-walks WORK pruning only `.git`, so the 200MB corpus entered every
+      **-glob scan + the daemon watch set; the pre-commit `dl --check` hung
+      past 2min. FENCE = gitignore `/bench/corpus/otel-*/` (git ignores the
+      rule for tracked gitlinks; the ignore-crate walker + watchgate honor
+      it — probe query confirms 0 rows). ENGINE FOLLOW-UP (unbuilt):
+      enumerate + watchgate should prune submodule dirs natively (read
+      .gitmodules, treat like `.git`) — a submodule is a separate repo and
+      must never silently union into the host corpus; gitignore-a-tracked-
+      path is a workaround. NEXT: oracle_corpus.rs measurement (with/without
+      scip arms per README) — agent brief below.
 - [ ] **Go/Python implementer debriefs** (2 Sonnet agents, 2026-07-10):
       GOOD both: field-based tree-sitter grammars (go, python expose
       child_by_field_name) made both extractors shorter than Kotlin's

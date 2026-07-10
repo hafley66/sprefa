@@ -31,3 +31,8 @@ examples/_npm/
 
 # perf telemetry written by every dl run; runtime state, never fixture content
 **/.dl/perf.jsonl
+
+# parity corpora: separate repos, never part of this repo's scan horizon
+# (gitignore has no effect on the tracked gitlinks; it exists for dl's
+# ignore-crate walker + watchgate, which prune by these rules)
+/bench/corpus/otel-*/
