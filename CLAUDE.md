@@ -903,6 +903,32 @@ foreign resolution model).
       (c) cross-family hidden dependency (resolver reads module_edge_rev) is
       a shape the magic-rel audit doesn't cover — two ExtractFamily used()
       gates coupling invisibly.
+- [x] **SCIP-parity twins (TS + Kotlin)** (main 34cade3, Sonnet agent,
+      2026-07-10): shared scorer tests/it/oracle_parity.rs (oracle_rust rebased
+      onto it, behavior-identical; the ±1 `wrong` drift between runs is RA's own
+      indexing jitter, reproduced pre-refactor); TS twin vs scip-typescript on
+      new tests/fixtures/ts_ws = 16.7% parity / 1.000 precision (1 confirmed /
+      5 bare); Kotlin twin vs scip-java runtime-skips (no JDK in this env — skip
+      path exercised, real numbers pending a JDK box). KNOWN SCORER GAP, all 3
+      langs, left unfixed to keep Rust scoring byte-identical: the picks key
+      derives the callee name from the RESOLVED sym while call_site text is the
+      bare as-written name, so correctly-resolved METHOD and ALIASED calls score
+      `bare` (under-report, the safe direction). Follow-up: key picks on the
+      call site's own text.
+- [x] **LANG-JUNCTION skill + rail** (main 3933afa, 2026-07-10): 8 per-language
+      registration points carry `// LANG-JUNCTION(slug): what to wire` markers
+      (typelang-registry, extract-file-set, module-resolvers, sg-grammars,
+      ast-grammars, comment-cst-extensions, scip-indexers, move-rewriter);
+      examples/gen-lang-skill.dl regenerates the junction list in
+      .agents/skills/sprf-add-language/SKILL.md via comment_node
+      (string-literal-safe) with lang-junction-drift/-orphan --check rails
+      (slug-set desync fails, line drift alone never does);
+      tests/it/lang_skill_gen.rs (4, incl. the string-literal negative).
+      scip-go install hint corrected to github.com/scip-code.
+- [ ] **Go + Python TypeLangs IN FLIGHT** (2 Sonnet worktree agents launched
+      2026-07-10; plan items B and C of pseudo-scip): GoTypes + GoResolver,
+      PyTypes + PyResolver (type_link chasing scoped out), each with unit + e2e
+      tests. Merge discipline on completion: rebase, verify, ff-merge.
 
 ### Open (scip / language-surface — 2026-07-08 agent-session feedback, batch 2)
 Five more complaints (SCIP + dl-surface). NOT yet triaged against code; capture only.
@@ -923,6 +949,13 @@ Five more complaints (SCIP + dl-surface). NOT yet triaged against code; capture 
 - [ ] **S5 ast-grep patterns are exact-shape.** `{ element: <$C/> }` matched nothing
       (shape strictness / metavar-in-JSX). Repro + narrow: grammar, intended match,
       sg pattern-compilation limit vs grammar gap. S1/S2 pair is the SCIP crux.
+- [ ] **S6 source-extract rule body silently drops an extra rel atom** (found
+      2026-07-10 building gen-lang-skill.dl): a `scan`+`match` rule whose body
+      also joins a rel (`comment_node(...)`) runs the extraction and IGNORES the
+      rel atom — no bail, no warning, rows that should have been filtered land.
+      The rel-level mixed source/derived guard doesn't cover the body-level mix.
+      Fix shape: bail like the rel-level guard ("move the join to a derived
+      rel"), or actually support the join.
 
 ### Style notes for this repo
 - dl variable names are descriptive, never single-letter: `path`/`line`/`callee_name`, not `p`/`l`/`q`. Applies to every snippet in skills, examples, book, tests, and agent prompts; rename opportunistically when touching old files.
