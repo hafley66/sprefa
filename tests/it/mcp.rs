@@ -174,6 +174,124 @@ fn rpc_envelope_checked_at_declare() {
     assert!(err.contains("method"), "message names the missing column, got: {err}");
 }
 
+// ---------- adapter-served built-in tools (dl.what / dl.verb / dl.rows) ------
+
+/// A minimal rpc-port program that ALSO scans the fixture TS, so the served
+/// engine's code-graph tables populate (dl.what reads them directly).
+const SERVE_TS: &str = r#"
+rel req(id: text, method: text, params: text) @in(rpc).
+rel resp(id: text, result: text) @out(rpc).
+rel seen(path: file).
+seen(path) <- scan("WORK", "**/*.ts", path, rev).
+resp(id, "pong") <- req(id, "ping", _).
+"#;
+
+/// Drop a two-file TS project (model declares `lookup`, repo's `find` calls it)
+/// into the sandbox so type + call families are non-empty.
+fn write_ts_fixture(dir: &Path) {
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("src/model.ts"),
+        "export interface Entity { id: Id }\n\
+         export function lookup(): Entity { return build() }\n",
+    ).unwrap();
+    fs::write(
+        dir.join("src/repo.ts"),
+        "import { Entity, lookup } from './model'\n\
+         export class Repo {\n\
+         \x20   find(): Entity {\n\
+         \x20       return lookup()\n\
+         \x20   }\n\
+         }\n",
+    ).unwrap();
+}
+
+/// The parsed JSON payload of a `tools/call` result (the built-in tools return a
+/// single text content block carrying the answer envelope).
+fn tool_payload<'a>(msgs: &'a [serde_json::Value], id: i64) -> serde_json::Value {
+    let m = result_of(msgs, id).unwrap_or_else(|| panic!("no response id {id}: {msgs:?}"));
+    let text = m["result"]["content"][0]["text"].as_str()
+        .unwrap_or_else(|| panic!("no text content in {m}"));
+    serde_json::from_str(text).expect("tool payload is JSON")
+}
+
+/// tools/list on a program with no tools/list rule still advertises the three
+/// adapter-served built-ins.
+#[test]
+fn tools_list_advertises_builtins() {
+    let d = sandbox("builtins_list");
+    write_ts_fixture(&d);
+    let (code, msgs, err) = serve(&d, SERVE_TS,
+        &[r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#]);
+    assert_eq!(code, 0, "{err}");
+    let names: Vec<&str> = result_of(&msgs, 1).expect("tools/list response")
+        ["result"]["tools"].as_array().expect("tools array")
+        .iter().filter_map(|t| t["name"].as_str()).collect();
+    for builtin in ["dl.what", "dl.verb", "dl.rows"] {
+        assert!(names.contains(&builtin), "{builtin} missing: {names:?}");
+    }
+}
+
+/// dl.what round-trips: the anchor resolver output arrives as a text payload
+/// carrying columns/rows/total, and `lookup` resolves in the type family.
+#[test]
+fn tool_dl_what_round_trips() {
+    let d = sandbox("builtins_what");
+    write_ts_fixture(&d);
+    let (code, msgs, err) = serve(&d, SERVE_TS, &[
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"dl.what","arguments":{"anchor":"lookup"}}}"#,
+    ]);
+    assert_eq!(code, 0, "{err}");
+    let payload = tool_payload(&msgs, 1);
+    assert!(payload["total"].as_u64().is_some(), "count-first total missing: {payload}");
+    let flat = serde_json::to_string(&payload["rows"]).unwrap();
+    assert!(flat.contains("type_entity"), "type family hit missing: {payload}");
+}
+
+/// dl.verb who-calls returns the caller through the tool surface.
+#[test]
+fn tool_dl_verb_who_calls() {
+    let d = sandbox("builtins_verb");
+    write_ts_fixture(&d);
+    let (code, msgs, err) = serve(&d, SERVE_TS, &[
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"dl.verb","arguments":{"verb":"who-calls","target":"lookup"}}}"#,
+    ]);
+    assert_eq!(code, 0, "{err}");
+    let payload = tool_payload(&msgs, 1);
+    let flat = serde_json::to_string(&payload["rows"]).unwrap();
+    assert!(flat.contains("find"), "who-calls tool missing caller `find`: {payload}");
+}
+
+/// dl.rows carries the relation's FULL total (count-first) and caps the page.
+#[test]
+fn tool_dl_rows_carries_total() {
+    let d = sandbox("builtins_rows");
+    write_ts_fixture(&d);
+    let (code, msgs, err) = serve(&d, SERVE_TS, &[
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"dl.rows","arguments":{"rel":"verb_catalog"}}}"#,
+    ]);
+    assert_eq!(code, 0, "{err}");
+    let payload = tool_payload(&msgs, 1);
+    // verb_catalog has one row per verb (>= 2).
+    assert!(payload["total"].as_u64().unwrap_or(0) >= 2, "total wrong: {payload}");
+    let flat = serde_json::to_string(&payload["rows"]).unwrap();
+    assert!(flat.contains("who-calls"), "rows missing who-calls: {payload}");
+}
+
+/// An unknown tool name is NOT a built-in, so it falls through to the program
+/// (which has no rule for it) and gets the -32601 method surface.
+#[test]
+fn tool_unknown_name_falls_through() {
+    let d = sandbox("builtins_unknown");
+    write_ts_fixture(&d);
+    let (code, msgs, err) = serve(&d, SERVE_TS, &[
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"nope","arguments":{}}}"#,
+    ]);
+    assert_eq!(code, 0, "{err}");
+    let m = result_of(&msgs, 1).expect("response id 1");
+    assert_eq!(m["error"]["code"], serde_json::json!(-32601), "{m}");
+}
+
 /// --mcp with no rpc ports declared bails with guidance instead of serving a
 /// program that can never answer.
 #[test]

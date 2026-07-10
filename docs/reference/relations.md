@@ -105,3 +105,4 @@ Generated from the engine's `rel_catalog` by examples/gen-reference.dl. Do not h
 | `type_link_rev` | type | `(src, dst, kind, rev)` | rev-aware type_link (SCIP-resolved sym-to-sym per rev); legacy type_link is the rev-deduped union |
 | `type_shape` | type-shape | `(name, hash)` | structural type-shape fingerprint per type (shape-iso experiment) |
 | `type_sig` | type | `(sym, slot, pos, ref)` | type signature slots (params, fields) per sym |
+| `verb_catalog` | meta | `(verb, args, doc)` | every `dl q <verb>` concept verb (who-calls / where-defined / ...) with its arg sketch and one-line doc; sourced from crate::verbs |

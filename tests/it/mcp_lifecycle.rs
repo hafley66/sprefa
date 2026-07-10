@@ -84,7 +84,12 @@ fn full_lifecycle_handshake() {
     let tools = by_id(&msgs, serde_json::json!(2));
     let names: Vec<&str> = tools["result"]["tools"].as_array().expect("tools array")
         .iter().filter_map(|t| t["name"].as_str()).collect();
-    assert_eq!(names, vec!["ping"], "{tools}");
+    // The program's `ping` tool, plus the three adapter-served built-ins merged
+    // in (dl.what / dl.verb / dl.rows).
+    assert!(names.contains(&"ping"), "program tool `ping` missing: {tools}");
+    for builtin in ["dl.what", "dl.verb", "dl.rows"] {
+        assert!(names.contains(&builtin), "built-in {builtin} missing from tools/list: {tools}");
+    }
 
     let call = by_id(&msgs, serde_json::json!(3));
     assert_eq!(call["result"]["content"][0]["text"], serde_json::json!("pong"), "{call}");

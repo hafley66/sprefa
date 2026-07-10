@@ -143,5 +143,6 @@ mod type_graph_js;
 mod type_graph_ts;
 mod util;
 mod what;
+mod q_verb;
 mod where_removed;
 mod wildcard_slots;

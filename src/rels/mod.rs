@@ -53,7 +53,7 @@ mod querylog;
 mod scip;
 
 use analysis::{AgentKind, DlDiagKind, TypeLggKind, TypeShapeKind};
-use catalog::CatalogKind;
+use catalog::{CatalogKind, VerbCatalogKind};
 use embed::EmbedKind;
 use env::EnvKind;
 use git::{ChangedKind, ChangedLineKind, CreatedKind, GitRefKind, RevBehindKind};
@@ -118,7 +118,7 @@ pub trait RelKind: Sync {
 /// guard iterate THIS instead of repeating the family list.
 pub fn rel_kinds() -> &'static [&'static dyn RelKind] {
     &[&ChangedKind, &ChangedLineKind, &CreatedKind, &GitRefKind, &RevBehindKind,
-      &AgentKind, &DlDiagKind, &TypeShapeKind, &TypeLggKind, &CatalogKind,
+      &AgentKind, &DlDiagKind, &TypeShapeKind, &TypeLggKind, &CatalogKind, &VerbCatalogKind,
       &ScipKind, &ProposeExtractKind, &ProposeCloneKind, &EmbedKind, &PerfKind,
       &QueryLogKind, &EnvKind]
 }

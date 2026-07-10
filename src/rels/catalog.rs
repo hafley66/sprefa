@@ -87,3 +87,45 @@ impl RelKind for CatalogKind {
         Ok(true)
     }
 }
+
+// --- verb catalog (the `dl q` concept verbs) --------------------------------
+
+/// `verb_catalog(verb, args, doc)` — the concept verbs `dl q` exposes, projected
+/// from `crate::verbs::verb_specs()` (the same table the runner dispatches on).
+/// Catalogued builtin, so `? verb_catalog(...)` lists the surface and the
+/// magic-rel audit sees a real `RelDecl` rather than a literal-name read. Static
+/// (bounded by the verb count), so `refresh` always re-emits.
+pub struct VerbCatalogKind;
+
+impl RelKind for VerbCatalogKind {
+    fn rels(&self) -> &'static [&'static str] {
+        &["verb_catalog"]
+    }
+    fn decls(&self) -> Vec<RelDecl> {
+        vec![RelDecl {
+            name: "verb_catalog".into(),
+            cols: vec![
+                col("verb", Type::Text),
+                col("args", Type::Text),
+                col("doc", Type::Text),
+            ],
+            group: "meta",
+            doc: "every `dl q <verb>` concept verb (who-calls / where-defined / ...) with its arg sketch and one-line doc; sourced from crate::verbs",
+            ..Default::default()
+        }]
+    }
+    fn reserved_msg(&self) -> &'static str {
+        "the built-in `dl q` verb catalog"
+    }
+    fn refresh(&self, eng: &Engine) -> Result<bool> {
+        let rows: Vec<Vec<Value>> = crate::verbs::verb_specs().iter().map(|spec| {
+            vec![
+                Value::Text(spec.name.to_string()),
+                Value::Text(spec.args.to_string()),
+                Value::Text(spec.doc.to_string()),
+            ]
+        }).collect();
+        eng.refresh_rel("verb_catalog", &["verb", "args", "doc"], &rows)?;
+        Ok(true)
+    }
+}
