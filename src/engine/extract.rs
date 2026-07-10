@@ -529,6 +529,7 @@ impl Engine {
         Ok(())
     }
 
+    // LANG-JUNCTION(extract-file-set): the extension LIKE list gating which files reach TypeLang extraction; a new TypeLang's extensions must be added to this SQL too or its extractor never sees a file
     /// The extraction corpus: every `_file` row in a TypeLang extension, with
     /// its content address. One query serves the type/call/dataflow refreshers;
     /// the hash column is what makes both the whole-pass digest skip and the

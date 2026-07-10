@@ -348,6 +348,7 @@ pub trait TypeLang: Sync {
     fn extract_dataflow(&self, _file: &str, _content: &str) -> DataflowFacts { DataflowFacts::default() }
 }
 
+// LANG-JUNCTION(typelang-registry): impl `TypeLang { name, matches, extract }` and register it here; buys type_entity/type_edge/type_sig/call_*/df_*/doc_comment for the language (the index-free diet tier, Kotlin-sized)
 /// Registry order matters: `.kts` matches before `.ts` would, so KotlinTypes
 /// must precede TsTypes. The engine picks the first `matches` hit.
 pub fn type_langs() -> &'static [&'static dyn TypeLang] {

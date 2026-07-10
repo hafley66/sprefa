@@ -133,6 +133,7 @@ pub trait ModuleResolver: Send + Sync {
     fn edges(&self, file: &str, content: &str, cx: &ProjectCx) -> Vec<ModuleRef>;
 }
 
+// LANG-JUNCTION(module-resolvers): per-language import resolver registration; buys module_edge/module_unresolved/module_binding plus the name resolver's alias hop and import-scoped ambiguity narrowing
 /// Map a file's extension to its resolver. Built per refresh (root-scoped for TS).
 pub fn resolvers(root: &Path) -> Vec<Box<dyn ModuleResolver + Send + Sync>> {
     let mut v: Vec<Box<dyn ModuleResolver + Send + Sync>> = vec![Box::new(RustResolver)];

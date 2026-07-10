@@ -152,6 +152,7 @@ pub fn classify_comment(raw: &str) -> (&'static str, String) {
     ("line", t.to_string())
 }
 
+// LANG-JUNCTION(comment-cst-extensions): the extension -> grammar-label map feeding `comment_node` and CST node/child extraction; a label here must exist in the ast-grammars table (`ts_lang` resolves it)
 /// Map a file path's extension to the `ts_lang` label, or `None` for files with
 /// no compiled CST grammar (skip them). Covers the 11 languages `ts_lang`
 /// supports. The engine resolves the label via `ts_lang` so this module never

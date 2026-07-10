@@ -38,6 +38,7 @@ mod diag_mute;
 mod error_reporting;
 mod authoring_edges;
 mod lang_matrix;
+mod lang_skill_gen;
 mod sg_term;
 mod parse_only;
 mod cst_node_rel;

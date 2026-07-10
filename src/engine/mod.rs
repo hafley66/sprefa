@@ -7661,6 +7661,7 @@ extern "C" {
     fn tree_sitter_dockerfile() -> *const ();
 }
 
+// LANG-JUNCTION(ast-grammars): one table row = `ast` op support (tree-sitter constructor keyed by label); `comment_node` and the CST node/child rels also dispatch through `ts_lang`, via `cst::lang_label_for_path`
 /// The tree-sitter grammar table for the `ast` op (S-expression queries):
 /// `(canonical name, [extra aliases], constructor)`. Single source of truth so
 /// `ts_lang` (the resolver), the bail message, and `ast_langs` (the list the

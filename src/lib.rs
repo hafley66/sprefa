@@ -637,6 +637,7 @@ pub fn run_watch(programs: &[String], db_path: Option<&str>, root: PathBuf) -> R
 /// back at the same byte coordinate. Dry-run by default (prints the planned
 /// edits); `--fix` writes the files. Does NOT move the file on disk or fix the
 /// moved file's own relative imports — those are separate steps.
+// LANG-JUNCTION(move-rewriter): per-language `--move` path rewriting (rspath = Rust use-paths + mod surgery, ktpath = Kotlin package math); a new language adds its rewriter module and dispatches from this driver
 /// Auto-refactor driver. `repo` selects which repo to rewrite: `None` = the
 /// `--root` repo (self); a config slug = that repo (cloned if needed); `"*"` /
 /// `"all"` = every configured repo. Each target repo is processed in isolation
