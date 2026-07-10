@@ -158,6 +158,7 @@
     "package": "vsce package",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:perf": "node tests/perf/run-perf.mjs",
     "test:all": "npm run test && npm run test:e2e"
   },
   "dependencies": {

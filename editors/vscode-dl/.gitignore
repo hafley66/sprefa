@@ -4,6 +4,10 @@ out/
 # playwright run artifacts (traces, error contexts) -- not baselines
 test-results/
 playwright-report/
+# raw per-run perf harness output (tests/perf/run-perf.mjs) -- the point is
+# the trend, not any one run's exact numbers; tests/perf/baseline.md is the
+# single committed snapshot.
+tests/perf/results/
 # The shipped install artifact is embedded into the `dl` binary via
 # include_bytes! (setup.rs) at a FIXED filename (no version), so it must be
 # tracked despite the *.vsix ignore. scripts/build-vsix.sh rebuilds it at the

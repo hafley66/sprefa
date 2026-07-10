@@ -1259,7 +1259,29 @@ function clearError() {
   document.getElementById('errLine').textContent = '';
 }
 
+// ── perf marks (A10 harness) ─────────────────────────────────────────────
+// performance.now() spans around run()/renderCanvas()/renderList()/
+// refreshListView(), echoed via postMessage({type:'perf', ...}) so an
+// external harness (playwright, or any other host page) can listen without
+// any new host coupling -- same window-message channel graphChanged already
+// rides (see the `message` listener below), which already ignores anything
+// whose type isn't 'graphChanged'. A plain window.postMessage, NOT routed
+// through window.dlHost -- the portability law (flow-panel.html stays
+// host-agnostic) only permits dlHost/{query,hover,open} + window messages as
+// host coupling, and this is the latter. Additive only: no behavior changes
+// on the render path, and nothing here runs inside a hot per-row loop.
+function emitPerf(phase, t0, rows, drawnArcs) {
+  try {
+    window.postMessage({
+      type: 'perf', phase, ms: performance.now() - t0,
+      rows: rows == null ? null : rows,
+      drawnArcs: drawnArcs == null ? null : drawnArcs,
+    }, '*');
+  } catch (e) { /* perf reporting must never break the panel */ }
+}
+
 async function run() {
+  const __perfT0 = performance.now();
   clearError();
   let nodeRows, edgeRows;
   try {
@@ -1297,6 +1319,7 @@ async function run() {
   // treats as "no server total, use nodeRows.length" (its existing safety net).
   render(nodeRows, edgeRows, nodeRows.total, edgeRows.total);
   updateDiffPanel(nodeRows, edgeRows);
+  emitPerf('run', __perfT0, nodeRows.length + edgeRows.length);
   loadGateways(); // fire-and-forget: the hover card shouldn't wait on it
 }
 
@@ -1369,6 +1392,7 @@ async function loadGateways() {
 // so cy's own gestures win.
 let cy = null;
 function renderCanvas(nodeRows, edgeRows) {
+  const __perfT0 = performance.now();
   const ids = new Set(nodeRows.map(r => String(r[0])));
   const keptEdges = edgeRows.filter(r => ids.has(String(r[0])) && ids.has(String(r[1])));
   const linked = new Set();
@@ -1444,6 +1468,7 @@ function renderCanvas(nodeRows, edgeRows) {
 
   document.getElementById('countPill').textContent =
     `${keptNodes.length} nodes · ${merged.length} edges`;
+  emitPerf('renderCanvas', __perfT0, keptNodes.length, merged.length);
 }
 
 function mergeEdgeRows(rows) {
@@ -2284,6 +2309,7 @@ function enterTraceMode() {
 }
 
 function renderList(nodeRows, edgeRows) {
+  const __perfT0 = performance.now();
   pinned.clear(); hoveredId = null; kindFilter.clear(); collapsedKeys.clear(); hoverCardEl.hidden = true;
   focusMode = false; allFolded = false; syncListChips(); // fresh data: no pins -> no slice to focus
 
@@ -2316,6 +2342,7 @@ function renderList(nodeRows, edgeRows) {
     keptNodes.map(r => (r[2] != null && r[2] !== '') ? String(r[2]) : ''),
     lastListMergedEdges.map(m => m.kinds));
   refreshHighlight();
+  emitPerf('renderList', __perfT0, keptNodes.length, keptEdges.length);
 }
 
 // re-derive visible rows + rolled-up arcs from the cached last query result
@@ -2327,6 +2354,7 @@ let listVisibleRows = [];          // all post-collapse/filter rows; DOM is wind
 let listWindow = { first: 0, last: 0 }; // materialized [first, last) range
 let listRollups = new Map();       // visible-row index -> [members, fanIn, fanOut] subtree total
 function refreshListView() {
+  const __perfT0 = performance.now();
   const focusKeep = focusMode ? computeFocusSlice() : null;
   const { visibleRows, arcs, collapsedCount, filteredCount, rollup } =
     applyCollapse(lastListRows, collapsedKeys, lastListMergedEdges, kindFilter, focusKeep);
@@ -2352,6 +2380,7 @@ function refreshListView() {
     + (filteredCount ? ` · ${filteredCount} filtered` : '');
 
   refreshListHighlight();
+  emitPerf('refreshListView', __perfT0, listRowIndexById.size, arcs.length);
 }
 
 function toggleCollapse(key) {
