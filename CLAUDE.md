@@ -774,18 +774,27 @@ Opus/Sonnet subagents implement, orchestrator verifies+commits.
       exploded stratum view (welded-subassembly cycle cards); C4 3D iso go/no-go.
 - [ ] C1 BOM table (.dl/bom.dl bom_node counts + panel numeric columns + fan-in
       sort) — S, was slated wave 1, deferred to next session for context budget.
+- [ ] **LSP thin client over the daemon (Gradle model)** — plan approved
+      2026-07-10 at plans/2026-07-10-lsp-thin-client-daemon.md: `--lsp` becomes
+      a stdio<->socket adapter (LspPump mirrors mcp::Pump), in-process engine
+      demoted to the --no-daemon arm; new RPCs refs/saved/repo_roots/diag_mute
+      + {path,byte} widening of definition/hover/diag; reconnect =
+      ensure_daemon so the build_id fingerprint respawns a stale daemon
+      mid-session; subsumes wave-3 A9; retires the served-copy divergence
+      class. Stages T1-T5, ~M total. LAW to land with it: a mode flag binds a
+      transport client-side; engine work routes through daemon RPC with a
+      Local fallback (Pump-shaped), never a second resident engine on a
+      shared db.
 
 ### Open (scip / language-surface — 2026-07-08 agent-session feedback, batch 2)
 Five more complaints (SCIP + dl-surface). NOT yet triaged against code; capture only.
-- [ ] **S1 scip_ref has no line/column.** Positional tag->symbol mapping is
-      impossible from scip_ref alone, which is the entire reason the alias fix leaked
-      into Python. Need occurrence ranges (line/col) on scip_ref, or a distinct
-      occurrence rel. VERIFY what the importer drops from Occurrence.range
-      (src/rels/scip.rs / scip_setup.rs).
-- [ ] **S2 scip_name returns the canonical export name, not the local binding.** Any
-      aliased or default import silently fails a name-based join, and because the
-      call_def join was REQUIRED the whole resolution drops. Need the LOCAL binding
-      name (alias) alongside the canonical. Ties to [[reference_scip_name_not_dl_split]].
+- [x] **S1 scip_ref has no line/column** — FIXED in v0.6.24: `scip_occurrence(file,
+      symbol, line, col, end_line, end_col, role, repo)` carries every occurrence's
+      0-based span + role (src/rels/scip.rs:62).
+- [x] **S2 scip_name returns the canonical export name, not the local binding** —
+      FIXED in v0.6.24: `scip_binding(file, symbol, local_name, line, col, repo)`
+      joins an occurrence's local source slice (alias/default import) to the
+      canonical symbol (src/rels/scip.rs:68).
 - [ ] **S3 computed values cannot bind in the body (`x = replace(...)`).** Must inline
       into the HEAD; error message is good but surprises SQL/datalog-with-assignment
       intuition, and nesting `replace(split(...))` in the head hurts readability. ASK:
