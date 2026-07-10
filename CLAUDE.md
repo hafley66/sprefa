@@ -958,16 +958,28 @@ foreign resolution model).
       needed hand-merging (both langs appended at the same typegraph/modgraph
       anchors); resolved by re-applying the Python diff onto the Go version at
       unique anchors, suites green post-rebase. Suites at merge: lib 301/0/1,
-      it 644/0/5. FOLLOW-ON (Chris 2026-07-10, staffing decided):
-      after BOTH merge, a FRESH Opus agent (not the two large-context Sonnets)
-      adds go/python parity twins on the shared tests/it/oracle_parity.rs
-      scorer — small fixture repos (go_ws/py_ws, mirror ts_ws: cross-file call,
-      method call, aliased import, ambiguous name), scip-go / scip-python
-      ground truth, runtime-skip without the indexer. GOTCHA for the brief:
-      scip-python crashes in bare /tmp — index in-place + SPREFA_SCIP_INDEX
-      (see memory reference_scip_multilang_indexers); keep index.scip away
-      from the fixture root during the dl run so the index-free tier is what's
-      measured.
+      it 644/0/5.
+- [x] **Go + Python parity twins LANDED** (main f911f1b, fresh Opus agent,
+      2026-07-10): tests/it/oracle_go.rs + oracle_python.rs on the shared
+      scorer (oracle_parity.rs byte-untouched, TS twin re-verified identical);
+      fixtures go_ws (go.mod module, api/util/service pkgs) + py_ws
+      (pkg/__init__ layout), each w/ cross-file call, method call, aliased
+      import, ambiguous name. MEASURED (both indexers present): Go 75.0%
+      parity / 1.000 precision (6 confirmed / 0 wrong / 2 bare); Python 37.5%
+      / 1.000 (3/0/5). Bare buckets = the documented scorer gap (method +
+      aliased calls key on resolved-sym name). Twins runtime-skip without
+      scip-go/scip-python on PATH (SPREFA_SCIP_* overrides; scip-go at
+      ~/go/bin, scip-python via nvm). scip-python GOTCHAS learned: needs
+      --project-name/--project-version outside a git repo AND exits 0 on
+      fatal errors leaving a header-only index — the test skips on an
+      empty-document index too. MERGE NOTE: agent's worktree spawned from
+      ext-wave3 (not main) so its branch carried foreign merge history —
+      landed by cherry-pick of the single commit, ext-wave3 untouched.
+      Suites on main: lib 301/0/1, it 646/0/5. Opus debrief pains: (a) the
+      parity scorer's expected `?` query blocks (5-ary call_site + call_edge)
+      aren't documented at the scorer — one comment would save the
+      verify-by-hand round-trip; (b) pre-commit hook prints info[op-example]
+      noise to stdout mid-commit, benign but alarming.
 - [ ] **Go/Python implementer debriefs** (2 Sonnet agents, 2026-07-10):
       GOOD both: field-based tree-sitter grammars (go, python expose
       child_by_field_name) made both extractors shorter than Kotlin's
