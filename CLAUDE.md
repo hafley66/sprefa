@@ -734,6 +734,38 @@ rel; #5 `dl --rows <REL>` + `query_rel` daemon RPC.
       daemon's query_sql RPC and prints rows; document the root/daemon-selection
       rules in one place.
 
+- [x] **Flow-marks + goto-recorder epic F1-F4** (worktree ext-wave3,
+      2026-07-10, cb7aacc/2bce1d5/9f03e86, plan
+      plans/2026-07-10-flow-marks-goto-recorder.md, 3 Sonnet agents off
+      Fable skeletons): F1 = `hover_note(path,line,col,end_line,end_col,md)`
+      reserved sink (diag pattern, 0-based, hover merge with --- separators,
+      notes-only hover works, guard bails). F2 = `dl/hookEvent` LSP request
+      (-> insert_hook_event -> quiet tick; mirrors daemon RPC, thin-client
+      forwards verbatim later) + extension `dl.recordFlow` (cmd+alt+g, REC
+      status chip, always-on selection sub, jump = Command-kind || file
+      change, `last` tracked on non-jump moves). F3 =
+      examples/goto-flows.dl: jsonp extract rels (ONE extract op per rel —
+      engine law; jsonp paths are dotted, no `$.`; jsonp yields text, cast
+      via int()) -> goto_jump -> call_def span lift -> take_edge (same
+      event's from/to, no argmax needed) -> flow_take facts + unnamed
+      identity default -> flow_union_edge / flow_common_edge (anti-unify =
+      count(session) == take count over set-deduped rows) -> flowmark
+      panel layer (edge kind = flow name) + hover_note membership +
+      ? flow_stat. GOTCHA: named-arg heads need check_and_normalize —
+      in-process tests must use prepare_paths, not bare parse::parse.
+      Tests: hover_note.rs (3), lsp_hook_event.rs (2), goto_flows.rs (4).
+- [x] **Panel harness + zero-rows fix** (worktree ext-wave3, 2026-07-10,
+      819bb90+3324451, Sonnet in isolated worktree): vitest+playwright under
+      editors/vscode-dl (hermetic fixture bridge answering the dl-bridge
+      /rpc shape from canned tables; 9 unit + 6 e2e incl. list/trace
+      screenshot baselines, double-run stable; npm test / npm run
+      test:e2e). Harness's first run FOUND the wave-2 regression: list
+      windowing read offsetTop on the #gutterLeft svg (SVGElement has no
+      offsetTop -> NaN bounds -> ZERO rows in any Chromium incl. webview);
+      fixed by reading #listRows at all 3 sites, test polyfill removed so
+      the suite exercises the real path. The installed vsix carries the bug
+      until a rebuild.
+
 ### Open (vscode ext review — plan approved 2026-07-10)
 Full eval + 3-track design at **plans/2026-07-10-vscode-ext-review.md** (perf
 remediation A / references lens B / BOM structure view C, waves 1-4). Staffing:
