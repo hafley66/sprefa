@@ -316,11 +316,21 @@ fn is_def(roles: i32) -> bool {
 }
 
 /// Closed-vocabulary role for a `scip_occurrence` row, off the `symbol_roles`
-/// bitmask. `Definition` set → `definition`; everything else (a plain reference,
-/// or an Import/Read/Write reference) → `reference`. The occurrence rel only
-/// needs the def-vs-ref split; finer roles stay in the raw index.
+/// bitmask: definition | import | write | read | reference, first match wins.
+/// Write outranks read so a compound read+write access (`x += 1`) reports the
+/// rarer, more queryable side; a bare occurrence (no bits) is `reference`.
 fn role_label(roles: i32) -> &'static str {
-    if is_def(roles) { "definition" } else { "reference" }
+    if is_def(roles) {
+        "definition"
+    } else if roles & (SymbolRole::Import as i32) != 0 {
+        "import"
+    } else if roles & (SymbolRole::WriteAccess as i32) != 0 {
+        "write"
+    } else if roles & (SymbolRole::ReadAccess as i32) != 0 {
+        "read"
+    } else {
+        "reference"
+    }
 }
 
 /// The local binding text at a single-line occurrence: the source slice
@@ -696,9 +706,16 @@ mod tests {
             role_label(SymbolRole::Definition as i32 | SymbolRole::Import as i32),
             "definition"
         );
-        // No Definition bit → reference (plain, Import, Read, Write all fold in).
+        // No Definition bit: the widened vocabulary keeps the finer roles.
         assert_eq!(role_label(0), "reference");
-        assert_eq!(role_label(SymbolRole::Import as i32), "reference");
+        assert_eq!(role_label(SymbolRole::Import as i32), "import");
+        assert_eq!(role_label(SymbolRole::WriteAccess as i32), "write");
+        assert_eq!(role_label(SymbolRole::ReadAccess as i32), "read");
+        // Compound read+write reports write (the rarer, more queryable side).
+        assert_eq!(
+            role_label(SymbolRole::ReadAccess as i32 | SymbolRole::WriteAccess as i32),
+            "write"
+        );
     }
 
     #[test]

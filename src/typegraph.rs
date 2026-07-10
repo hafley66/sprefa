@@ -1577,12 +1577,20 @@ fn ts_flow_jsx_children(
 
 impl TypeLang for TsTypes {
     fn name(&self) -> &'static str { "ts" }
-    fn matches(&self, path: &str) -> bool { path.ends_with(".ts") || path.ends_with(".tsx") }
+    // Plain JS rides the same oxc front-end as TS: `.js`/`.jsx`/`.mjs`/`.cjs`
+    // parse fine as JSX-enabled JavaScript, so type_entity/call_*/df_*/
+    // doc_comment all populate for JS too (type_link/type_sig stay thin, a
+    // JS file carries no type annotations to resolve). Nothing else in the
+    // `type_langs()` registry claims these extensions.
+    fn matches(&self, path: &str) -> bool {
+        path.ends_with(".ts") || path.ends_with(".tsx")
+            || path.ends_with(".js") || path.ends_with(".jsx")
+            || path.ends_with(".mjs") || path.ends_with(".cjs")
+    }
     // One oxc parse feeds both walks.
     fn extract(&self, file: &str, content: &str) -> TypeFacts {
-        let tsx = path_is_tsx(file);
         let alloc = oxc_allocator::Allocator::default();
-        let st = if tsx { oxc_span::SourceType::tsx() } else { oxc_span::SourceType::ts() };
+        let st = source_type_for(file);
         let ret = oxc_parser::Parser::new(&alloc, content, st).parse();
         if ret.panicked {
             return TypeFacts::default();
@@ -1596,9 +1604,8 @@ impl TypeLang for TsTypes {
     // One oxc parse feeds defs + sites, same shape as the Rust pass. `line_at`
     // recovers 1-based lines from oxc's byte-offset spans.
     fn extract_calls(&self, file: &str, content: &str) -> CallFacts {
-        let tsx = path_is_tsx(file);
         let alloc = oxc_allocator::Allocator::default();
-        let st = if tsx { oxc_span::SourceType::tsx() } else { oxc_span::SourceType::ts() };
+        let st = source_type_for(file);
         let ret = oxc_parser::Parser::new(&alloc, content, st).parse();
         if ret.panicked {
             return CallFacts::default();
@@ -1613,9 +1620,8 @@ impl TypeLang for TsTypes {
     // shape) become node ids `file:<byte_off>`; `line_at` recovers the 1-based
     // line for the `line` column.
     fn extract_dataflow(&self, file: &str, content: &str) -> DataflowFacts {
-        let tsx = path_is_tsx(file);
         let alloc = oxc_allocator::Allocator::default();
-        let st = if tsx { oxc_span::SourceType::tsx() } else { oxc_span::SourceType::ts() };
+        let st = source_type_for(file);
         let ret = oxc_parser::Parser::new(&alloc, content, st).parse();
         if ret.panicked {
             return DataflowFacts::default();
@@ -1624,8 +1630,19 @@ impl TypeLang for TsTypes {
     }
 }
 
-fn path_is_tsx(file: &str) -> bool {
-    file.ends_with(".tsx")
+/// Extension-based oxc `SourceType` for every path `TsTypes::matches` claims.
+/// `.tsx` is TypeScript+JSX, `.ts` is plain TypeScript, and the JS extensions
+/// (`.jsx`/`.js`/`.mjs`/`.cjs`) all parse as JSX-enabled JavaScript modules.
+/// JSX shows up in bare `.js`/`.mjs` React code often enough that allowing it
+/// unconditionally costs nothing for files that never use it.
+fn source_type_for(file: &str) -> oxc_span::SourceType {
+    if file.ends_with(".tsx") {
+        oxc_span::SourceType::tsx()
+    } else if file.ends_with(".ts") {
+        oxc_span::SourceType::ts()
+    } else {
+        oxc_span::SourceType::jsx()
+    }
 }
 
 /// Map a byte offset to a 1-based line number. Built once per file by the oxc

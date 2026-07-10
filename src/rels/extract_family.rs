@@ -119,7 +119,10 @@ impl ExtractFamily for ModuleFamily {
     fn refresh(&self, eng: &mut Engine) -> Result<bool> {
         eng.refresh_module_rels()
     }
-    fn used(&self, prog: &Program) -> bool { engine::module_rels_used(prog) }
+    // Win D: the type/call resolvers' import-scoped ambiguity narrowing reads
+    // `module_edge_rev`, so this family must also run whenever type/call
+    // (or their dependents) do; see `engine::module_rels_needed`'s doc.
+    fn used(&self, prog: &Program) -> bool { engine::module_rels_needed(prog) }
 }
 
 impl ModuleFamily {

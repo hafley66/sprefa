@@ -186,13 +186,15 @@ pub fn apply_sinks_enabled() -> bool {
 /// every tick, but populated by `refresh_module_rels` only when the program
 /// references one (resolution parses every file, so it is lazy). `module_edge` is
 /// the 2-col convenience closure edge; `module_edge_rev` is the rev-aware form.
-pub(crate) const MODULE_RELS: [&str; 6] = [
+pub(crate) const MODULE_RELS: [&str; 8] = [
     "module_import",
     "module_edge",
     "module_edge_rev",
     "module_unresolved",
     "module_unresolved_rev",
     "crate_edge",
+    "module_binding_rev",
+    "module_binding",
 ];
 
 /// Syntax-only type graph. `kind` is edge metadata; closure(type_edge) walks
@@ -780,6 +782,12 @@ pub(crate) fn module_rel_decls() -> Vec<RelDecl> {
             doc: "rev-aware module_unresolved", ..Default::default() },
         RelDecl { name: "crate_edge".into(), cols: vec![c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text), c("rev", Type::Text)], group: "module",
             doc: "workspace-internal Cargo dependency edges", ..Default::default() },
+        RelDecl { name: "module_binding_rev".into(), cols: vec![
+            c("file", Type::Path), c("local", Type::Text), c("source", Type::Text), c("dst", Type::Path), c("rev", Type::Text)], group: "module",
+            doc: "aliased-import local bindings from the module resolvers' own parse (Rust use..as, TS import{a as b}/default, Kotlin import..as) — the index-free equivalent of scip_binding; local is the binding name in scope at file, source is the exported name at dst (\"default\" for a default import)", ..Default::default() },
+        RelDecl { name: "module_binding".into(), cols: vec![
+            c("file", Type::Path), c("local", Type::Text), c("source", Type::Text), c("dst", Type::Path)], group: "module",
+            doc: "rev-deduped union of module_binding_rev", ..Default::default() },
     ]
 }
 
@@ -1145,6 +1153,27 @@ fn classify_call_kind(callee: &str) -> Option<&'static str> {
 }
 
 pub(crate) fn module_rels_used(prog: &Program) -> bool { rels_used(prog, &MODULE_RELS) }
+
+/// Whether the module family must run THIS tick: either the program
+/// directly references a module_* relation, or it references type_link/
+/// call_edge (or their dependent analyses type_shape/type_lgg, or the
+/// doc_comment/doc_tag pair riding the same parse). Win D's import-scoped
+/// ambiguity narrowing in `refresh_type_rels`/`refresh_call_rels` reads
+/// `module_edge_rev`, so those families need a FRESH module graph even when
+/// the program never asks for a module_* relation itself. Without this, a
+/// program that only queries `type_link`/`call_edge` would silently never
+/// populate `module_edge_rev`, and every ambiguous name would stay bare
+/// forever (the narrowing looks like a no-op, not an error). Used by both
+/// `ModuleFamily::used` (the full tick's per-family loop) and `tick_paths`'
+/// `wants_module_rels` (the incremental path, which reads this directly
+/// rather than through the trait).
+pub(crate) fn module_rels_needed(prog: &Program) -> bool {
+    module_rels_used(prog)
+        || type_rels_used(prog)
+        || rels_used(prog, &["type_shape", "type_lgg"])
+        || doc_text_rels_used(prog)
+        || call_rels_used(prog)
+}
 
 pub(crate) fn type_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_RELS) }
 
@@ -1717,6 +1746,9 @@ struct ModuleRows {
     // `ref(id,string,file,lo,hi)` ⋈ `string` covers the import graph, not just
     // regex/ast/sg captures. Collect-then-flush, never N+1.
     spans: Vec<(String, String, spine::WhereBytes)>,
+    // module_binding_rev(file, local, source, dst, rev) rows: each aliased
+    // import binding this specifier ref carries (see `ModuleRef::bindings`).
+    bindings: Vec<Vec<Value>>,
 }
 
 impl ModuleRows {
@@ -1726,6 +1758,7 @@ impl ModuleRows {
         self.unresolved_rev.extend(other.unresolved_rev);
         self.crate_edges.extend(other.crate_edges);
         self.spans.extend(other.spans);
+        self.bindings.extend(other.bindings);
     }
 }
 

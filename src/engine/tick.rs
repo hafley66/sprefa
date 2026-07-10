@@ -714,7 +714,11 @@ impl Engine {
         // Every repo-relative path this tick saw move; `ScipKind::dirty` reads it
         // to gate the SCIP reload on `index.scip` itself changing.
         let mut seen: HashSet<String> = HashSet::new();
-        let wants_module_rels = module_rels_used(prog);
+        // Win D: `module_rels_needed` (not the narrower `module_rels_used`) so
+        // a program reading only type_link/call_edge still gets the module
+        // family's incremental refresh. Its resolver narrowing depends on
+        // `module_edge_rev` even when the program never names a module_* rel.
+        let wants_module_rels = module_rels_needed(prog);
         // The watcher only watches this engine's own `--root`, so every
         // incrementally-changed file belongs to the self repo.
         let slug = self.self_slug();
