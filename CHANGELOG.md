@@ -7,6 +7,24 @@ tags consumed by cargo-dist.
 ## [Unreleased]
 
 ### Added
+- **Derived shapes: `type_decl_row(shape, pos, col, ty)`.** A reserved builtin
+  sink a DERIVED rule may head to compute a relation schema from data. The
+  engine persists the sink's rows to a new `_shapes` meta table at the end of
+  a tick (digest-guarded full replace); a `rel name: shape.` decl whose shape
+  has no syntax `type name(...)` resolves its columns from those rows at the
+  NEXT tick's declare — a one-tick phase delay (the @next carry precedent;
+  invisible under the daemon). Until then the rel is pending: rules heading it
+  are skipped for the tick and --check carries a `shape-pending` info diag.
+  Syntax shapes win a name clash (`shape-shadowed` warn); a shape row naming
+  an unknown ty stays pending (`shape-unknown-ty` warn, ty = base type or a
+  declared brand). A shape's row set changing migrates the rels using it via
+  the existing column-drift migration (re-derives next tick). A user
+  `rel type_decl_row(...)` decl bails — head it directly, like diag.
+  `examples/type-from-json.dl`: a schema inferred from a JSON sample (`int`
+  when every observed value is an integer) becomes a live checked rel, plus
+  the mapped-type trick — `type_decl_row("partial_" + rel, pos, col, ty) <-
+  rel_col(rel, pos, col, ty, _)` mints a partial_* shape per built-in
+  relation from live introspection.
 - **Text `+` concatenation (S4).** `+` is overloaded by operand type: int + int
   stays SQL addition, text + text lowers to SQLite `||` (source rules
   concatenate in `val_of`), so `url = "https://" + host + "/v1"` builds the

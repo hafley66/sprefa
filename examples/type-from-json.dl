@@ -1,0 +1,67 @@
+# type-from-json.dl — a relation SCHEMA derived from data, not written by hand.
+#
+# The `type_decl_row(shape, pos, col, ty)` sink lets a DERIVED rule compute a
+# shape (column names + base types). The engine persists it at the end of a tick;
+# a `rel name: shape.` decl whose shape has no syntax `type name(...)` resolves
+# its columns from those rows on the NEXT tick (a one-tick phase delay, the @next
+# carry precedent). Under the daemon the delay is invisible: derive -> tick -> live.
+# For a one-shot `dl`, run it TWICE against the same --db (tick 1 pending, tick 2
+# resolved), or use `dl --settle` to drive both internal ticks in one process.
+#
+# Two shapes are derived below:
+#   1. `payload`  — inferred from a JSON sample: one column per key, `int` when
+#      every observed value is an integer, else `text`.
+#   2. `partial_<rel>` — the mapped-type trick: one derived shape per built-in
+#      relation, its columns copied from `rel_col` (concat + body-bind, Phase 4).
+
+# --- 1. schema inferred from a JSON sample --------------------------------------
+
+rel sample(body: text).
+sample("{ \"name\": \"alice\", \"age\": 30, \"city\": \"paris\" }").
+
+# key/value pairs: the declarative `json` pattern binds the key metavar $key and
+# the value metavar $value as dl vars (term form, over the bound `body` string).
+rel payload_kv(key: text, value: text).
+payload_kv(key, value) <- sample(body), json(body, q:{ $key: $value }).
+
+rel payload_key(key: text).
+payload_key(key) <- payload_kv(key, _).
+
+# a column is `int` iff EVERY observed value is an integer (no value is non-int).
+rel payload_intval(key: text, value: text).
+payload_intval(key, value) <- payload_kv(key, value), value =~ /^-?[0-9]+$/.
+rel payload_nonint(key: text).
+payload_nonint(key) <- payload_kv(key, value), !payload_intval(key, value).
+rel payload_ty(key: text, ty: text).
+payload_ty(key, "int")  <- payload_key(key), !payload_nonint(key).
+payload_ty(key, "text") <- payload_nonint(key).
+
+# column position = the key's 1-based alphabetical rank (count of keys <= it).
+rel payload_pos(key: text, pos: int).
+payload_pos(key, count(other)) <- payload_key(key), payload_key(other), other <= key.
+
+# the schema: one type_decl_row per (pos, column, type). `shape` = "payload".
+type_decl_row("payload", pos, key, ty) <- payload_pos(key, pos), payload_ty(key, ty).
+
+# NEXT tick this resolves to a checked rel with columns (age:int, city:text,
+# name:text). A rule can then write typed rows against the inferred schema. Each
+# field is extracted in its OWN rule (a term-form rule holds one extract op), then
+# joined into the shaped rel.
+rel payload_age(value: text).
+payload_age(value) <- sample(body), jsonp(body, "age", value).
+rel payload_city(value: text).
+payload_city(value) <- sample(body), jsonp(body, "city", value).
+rel payload_name(value: text).
+payload_name(value) <- sample(body), jsonp(body, "name", value).
+
+rel payload_rel: payload.
+payload_rel(age, city, name) <- payload_age(age), payload_city(city), payload_name(name).
+
+? payload_rel(age, city, name).
+
+# --- 2. the mapped-type trick: partial_<rel> per built-in relation --------------
+# `rel_col(rel, pos, col, ty, variants)` is the engine's own column catalog. One
+# derived type_decl_row per column mints a `partial_<rel>` shape mirroring each
+# built-in relation's schema — a computed family of shapes from live introspection.
+# The head builds the shape name with the text `+` concat operator (Phase 4).
+type_decl_row("partial_" + rel, pos, col, ty) <- rel_col(rel, pos, col, ty, _).

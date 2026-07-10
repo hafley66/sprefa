@@ -757,12 +757,23 @@ pub fn expand_shapes(items: &mut Vec<Item>, dl_path: &str, diags: &mut Vec<TypeD
             }
         }
     }
+    // A program that HEADS `type_decl_row` derives shapes at runtime (Phase 5): an
+    // unresolved shape_ref is DEFERRED (the engine resolves it from the persisted
+    // `_shapes` at the next tick's declare, or reports shape-pending), not a load
+    // error. Without a type_decl_row head, an unresolved ref is the existing crisp
+    // unknown-shape error.
+    let derives_shapes = items.iter().any(|it| matches!(it, Item::Rule(r) if r.head.rel == "type_decl_row"));
     for item in items.iter_mut() {
         if let Item::Rel(d) = item {
-            let Some(sname) = d.shape_ref.take() else { continue; };
+            let Some(sname) = d.shape_ref.clone() else { continue; };
             match shapes.get(&sname) {
-                Some(cols) => { d.cols = cols.clone(); }
+                // Syntax `type` shape wins: fill columns and clear the ref.
+                Some(cols) => { d.cols = cols.clone(); d.shape_ref = None; }
+                // No syntax shape. Defer (leave shape_ref set) when the program
+                // derives shapes; else the unknown-shape error.
+                None if derives_shapes => {}
                 None => {
+                    d.shape_ref = None;
                     diags.push(TypeDiag {
                         path: dl_path.to_string(), span: (0, 0),
                         severity: Severity::Error, code: "unknown-shape".into(),
@@ -774,7 +785,10 @@ pub fn expand_shapes(items: &mut Vec<Item>, dl_path: &str, diags: &mut Vec<TypeD
             }
         }
     }
-    items.retain(|item| !matches!(item, Item::Shape(_)));
+    // Item::Shape decls are RETAINED (Phase 5): the engine reads the syntax shape
+    // names to detect a shape-shadowed clash with a derived shape. They are inert
+    // downstream (a no-op in every match arm). A program with no derived shapes is
+    // unaffected — its refs all resolve here.
 }
 
 fn coerce_base(var: &str, base: Type, dl_path: &str, diags: &mut Vec<TypeDiag>) {
@@ -1220,8 +1234,9 @@ finding_rel("a.rs", 1, "x")."#;
         let mut prog = program(src);
         let ds = check_and_normalize(&mut prog, "t.dl");
         assert!(ds.iter().all(|d| d.severity != Severity::Error), "{ds:?}");
-        // No Item::Shape survives; the rel now has the shape's 3 columns.
-        assert!(!prog.items.iter().any(|i| matches!(i, Item::Shape(_))));
+        // The rel now has the shape's 3 columns and its ref is cleared. (Item::Shape
+        // is retained for the engine's shadow check — Phase 5 — so it is not
+        // asserted absent anymore.)
         let rel = prog.items.iter().find_map(|i| if let Item::Rel(d) = i { Some(d) } else { None }).unwrap();
         assert_eq!(rel.cols.len(), 3);
         assert!(rel.shape_ref.is_none());
@@ -1230,6 +1245,23 @@ finding_rel("a.rs", 1, "x")."#;
         let bad = "rel finding_rel: finding.\nfinding_rel().";
         let codes = err_codes(bad);
         assert!(codes.iter().any(|c| c == "unknown-shape"), "{codes:?}");
+    }
+
+    #[test]
+    fn shape_ref_defers_when_type_decl_row_headed() {
+        // A program HEADING type_decl_row derives shapes at runtime: an
+        // unresolved shape_ref is deferred (kept, columns empty), not an
+        // unknown-shape error — the engine resolves it from `_shapes` next tick.
+        let src = r#"rel col_spec(shape: text, pos: int, col_name: text, ty: text).
+type_decl_row(shape, pos, col, ty) <- col_spec(shape, pos, col, ty).
+rel point_rel: point."#;
+        let mut prog = program(src);
+        let ds = check_and_normalize(&mut prog, "t.dl");
+        assert!(ds.iter().all(|d| d.severity != Severity::Error), "{ds:?}");
+        let rel = prog.items.iter().find_map(|i| match i {
+            Item::Rel(d) if d.name == "point_rel" => Some(d), _ => None }).unwrap();
+        assert_eq!(rel.shape_ref.as_deref(), Some("point"), "the ref survives for the engine");
+        assert!(rel.cols.is_empty(), "no columns invented at load");
     }
 
     #[test]
