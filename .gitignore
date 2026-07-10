@@ -28,3 +28,6 @@ examples/_npm/
 
 # mkdir-lock serializer for `just ext-reload` (editors/vscode-dl)
 .ext-reload.lock
+
+# perf telemetry written by every dl run; runtime state, never fixture content
+**/.dl/perf.jsonl
