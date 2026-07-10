@@ -23,10 +23,12 @@ use std::str::FromStr;
 
 use lsp_server::{Connection, Message, Notification, Request, Response};
 use lsp_types::{
-    Diagnostic, DiagnosticSeverity, GotoDefinitionParams, Location, OneOf, Position,
-    PublishDiagnosticsParams, Range, ReferenceParams, ServerCapabilities,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, Uri,
+    Diagnostic, DiagnosticSeverity, DocumentHighlight, DocumentHighlightKind,
+    DocumentHighlightParams, DocumentSymbol, DocumentSymbolParams, GotoDefinitionParams,
+    Location, OneOf, Position, PublishDiagnosticsParams, Range, ReferenceParams,
+    ServerCapabilities, SymbolInformation, SymbolKind, TextDocumentPositionParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextDocumentSyncSaveOptions, Uri, WorkspaceSymbolParams,
     DidOpenTextDocumentParams, DidSaveTextDocumentParams,
 };
 use std::collections::HashMap;
@@ -52,6 +54,11 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, db_defaulted: bool, r
         })),
         definition_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
+        // B2 nearly-free navigation: all three read existing rels, all
+        // file-scoped or capped, no engine tick.
+        document_highlight_provider: Some(OneOf::Left(true)),
+        workspace_symbol_provider: Some(OneOf::Left(true)),
+        document_symbol_provider: Some(OneOf::Left(true)),
         hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
         execute_command_provider: Some(lsp_types::ExecuteCommandOptions {
             commands: vec!["dl.toggleDiagCode".into(), "dl.listDiagCodes".into()],
@@ -184,6 +191,18 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, db_defaulted: bool, r
                     }
                     "textDocument/hover" => {
                         let resp = handle_hover(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
+                    "textDocument/documentHighlight" => {
+                        let resp = handle_document_highlight(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
+                    "textDocument/documentSymbol" => {
+                        let resp = handle_document_symbol(&eng, &root, &req);
+                        connection.sender.send(Message::Response(resp))?;
+                    }
+                    "workspace/symbol" => {
+                        let resp = handle_workspace_symbol(&eng, &root, &req);
                         connection.sender.send(Message::Response(resp))?;
                     }
                     "dl/query" => {
@@ -591,6 +610,151 @@ fn refhit_location(
         Position::new(hit.line, hit.col),
         Position::new(hit.end_line, hit.end_col));
     Some(Location { uri, range })
+}
+
+/// textDocument/documentHighlight (B2a): cursor -> same-string spans WITHIN the
+/// current file only, over the ref spine. Returns `DocumentHighlight[]` (kind
+/// Text) with 0-based ranges. Null when the cursor is not on a located string.
+fn handle_document_highlight(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let params: DocumentHighlightParams = match serde_json::from_value(req.params.clone()) {
+        Ok(p) => p,
+        Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
+    };
+    let Some((rel, byte)) = resolve_path_byte(root, &params.text_document_position_params) else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    let spans = eng.document_highlights(&rel, byte).unwrap_or_default();
+    if spans.is_empty() {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    }
+    // One file read to turn byte spans into line/col ranges (the spans are all in
+    // this file by construction).
+    let content = std::fs::read_to_string(root.join(&rel)).unwrap_or_default();
+    let highlights: Vec<DocumentHighlight> = spans.into_iter().map(|(lo, hi)| {
+        DocumentHighlight {
+            range: span_to_range(&content, lo, hi),
+            kind: Some(DocumentHighlightKind::TEXT),
+        }
+    }).collect();
+    Response::new_ok(req.id.clone(), serde_json::to_value(highlights).unwrap_or_default())
+}
+
+/// workspace/symbol (B2b): query -> `type_entity` and callable names matching the
+/// substring, mapped to `SymbolInformation[]`. Each hit's location is built from
+/// its OWN repo root (`repo_roots` with primary-root fallback, the multi-repo
+/// idiom `refhit_location` uses). Capped at 200, prefix matches first.
+fn handle_workspace_symbol(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let params: WorkspaceSymbolParams = match serde_json::from_value(req.params.clone()) {
+        Ok(p) => p,
+        Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
+    };
+    let rows = eng.workspace_symbols(&params.query, 200).unwrap_or_default();
+    let roots = eng.repo_roots();
+    #[allow(deprecated)] // SymbolInformation::deprecated is a required legacy field
+    let symbols: Vec<SymbolInformation> = rows.iter().filter_map(|row| {
+        let base = roots.get(&row.repo).map(|p| p.as_path()).unwrap_or(root);
+        let uri = path_to_uri(&base.join(&row.file))?;
+        let line0 = (row.line - 1).max(0) as u32;
+        let range = Range::new(Position::new(line0, 0), Position::new(line0, 0));
+        Some(SymbolInformation {
+            name: row.name.clone(),
+            kind: symbol_kind(&row.kind),
+            tags: None,
+            deprecated: None,
+            location: Location { uri, range },
+            container_name: (!row.container.is_empty()).then(|| row.container.clone()),
+        })
+    }).collect();
+    Response::new_ok(req.id.clone(), serde_json::to_value(symbols).unwrap_or_default())
+}
+
+/// textDocument/documentSymbol (B2c): `type_entity` rows for the file, nested via
+/// the parent sym into a hierarchical `DocumentSymbol[]` (a method under its owner
+/// type). Ranges are line-anchored zero-width at line start, matching the
+/// resolved-tier RefHits. Null when the file has no located type entities.
+fn handle_document_symbol(eng: &Engine, root: &Path, req: &Request) -> Response {
+    let params: DocumentSymbolParams = match serde_json::from_value(req.params.clone()) {
+        Ok(p) => p,
+        Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
+    };
+    let Some(abs) = uri_to_path(&params.text_document.uri) else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    let abs = std::fs::canonicalize(&abs).unwrap_or(abs);
+    let Some(rel) = rel_of(root, &abs) else {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    };
+    let rows = eng.document_symbols(&rel).unwrap_or_default();
+    if rows.is_empty() {
+        return Response::new_ok(req.id.clone(), serde_json::Value::Null);
+    }
+    let tree = build_symbol_tree(&rows);
+    Response::new_ok(req.id.clone(), serde_json::to_value(tree).unwrap_or_default())
+}
+
+/// Nest the flat `type_entity` rows into a `DocumentSymbol` tree by the `parent`
+/// sym. A row whose parent sym is present in the same file becomes that owner's
+/// child; every other row is a top-level symbol. Children sort by line.
+fn build_symbol_tree(rows: &[crate::engine::SymbolRow]) -> Vec<DocumentSymbol> {
+    use std::collections::HashSet;
+    let in_file: HashSet<&str> = rows.iter().map(|row| row.sym.as_str()).collect();
+    let mut children_of: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut roots: Vec<usize> = Vec::new();
+    for (index, row) in rows.iter().enumerate() {
+        if !row.parent.is_empty() && in_file.contains(row.parent.as_str()) {
+            children_of.entry(row.parent.clone()).or_default().push(index);
+        } else {
+            roots.push(index);
+        }
+    }
+    roots.sort_by_key(|&index| rows[index].line);
+    roots.into_iter().map(|index| symbol_node(index, rows, &children_of)).collect()
+}
+
+/// Build one `DocumentSymbol` node (with its children) for `rows[index]`.
+fn symbol_node(
+    index: usize, rows: &[crate::engine::SymbolRow],
+    children_of: &HashMap<String, Vec<usize>>,
+) -> DocumentSymbol {
+    let row = &rows[index];
+    let children: Vec<DocumentSymbol> = match children_of.get(&row.sym) {
+        Some(child_indices) => {
+            let mut ordered = child_indices.clone();
+            ordered.sort_by_key(|&child| rows[child].line);
+            ordered.into_iter().map(|child| symbol_node(child, rows, children_of)).collect()
+        }
+        None => Vec::new(),
+    };
+    let line0 = (row.line - 1).max(0) as u32;
+    let range = Range::new(Position::new(line0, 0), Position::new(line0, 0));
+    #[allow(deprecated)] // DocumentSymbol::deprecated is a required legacy field
+    DocumentSymbol {
+        name: row.name.clone(),
+        detail: None,
+        kind: symbol_kind(&row.kind),
+        tags: None,
+        deprecated: None,
+        range,
+        selection_range: range,
+        children: if children.is_empty() { None } else { Some(children) },
+    }
+}
+
+/// Map a `type_entity`/`call_def` kind string to an LSP `SymbolKind`. The kind
+/// vocabulary is struct|enum|trait|class|interface|alias|function|method|const
+/// (typegraph.rs `EntityKind`); an unknown kind renders as a plain variable.
+fn symbol_kind(kind: &str) -> SymbolKind {
+    match kind {
+        "struct" => SymbolKind::STRUCT,
+        "enum" => SymbolKind::ENUM,
+        "trait" | "interface" => SymbolKind::INTERFACE,
+        "class" => SymbolKind::CLASS,
+        "alias" => SymbolKind::TYPE_PARAMETER,
+        "function" => SymbolKind::FUNCTION,
+        "method" => SymbolKind::METHOD,
+        "const" => SymbolKind::CONSTANT,
+        _ => SymbolKind::VARIABLE,
+    }
 }
 
 /// Send the outbound `dl/graphChanged` pulse (A5 push-refresh v1). Params is a

@@ -1262,6 +1262,24 @@ pub struct RefLens {
     pub callees: Vec<RefHit>,
 }
 
+/// One declared symbol for the nearly-free LSP surfaces (`workspace/symbol` and
+/// `textDocument/documentSymbol`). Carries its OWN repo so the LSP maps the slug
+/// back to that repo's on-disk root, `line` is 1-based as stored in the rels, and
+/// `sym`/`parent` are the `file::kind::name` cross-graph keys the document-symbol
+/// handler nests by. `container` names the enclosing symbol for the flat
+/// workspace list.
+#[derive(Clone, Debug)]
+pub struct SymbolRow {
+    pub repo: String,
+    pub sym: String,
+    pub name: String,
+    pub kind: String,
+    pub parent: String,
+    pub file: String,
+    pub line: i64,
+    pub container: String,
+}
+
 /// Carry set for `refresh_spine_rels_delta`. Accumulates the new rows produced
 /// during a single tick so the incremental Some() path can replay only those rows
 /// rather than projecting the full `_strings` / `_where_bytes` tables.
@@ -2784,6 +2802,111 @@ impl Engine {
             declarations: Vec::new(), uses,
             containing_types: Vec::new(), callers: Vec::new(), callees: Vec::new(),
         })
+    }
+
+    /// Same-string spans of the identifier at (`path`, `byte`) restricted to
+    /// `path` itself, for `textDocument/documentHighlight`. Reuses `span_at` (the
+    /// innermost located string under the cursor) and `string_spans` (every WORK
+    /// span of that interned string), then keeps only the cursor's own file so the
+    /// highlight stays file-scoped and fast. Returns byte ranges `(lo, hi)`; empty
+    /// when the cursor is not on a located string.
+    pub fn document_highlights(&self, path: &str, byte: u32) -> Result<Vec<(u32, u32)>> {
+        let Some((string_id, _text, _lo, _hi)) = self.span_at(path, byte)? else {
+            return Ok(Vec::new());
+        };
+        Ok(self.string_spans(&string_id)?
+            .into_iter()
+            .filter(|(span_path, _, _)| span_path == path)
+            .map(|(_, lo, hi)| (lo, hi))
+            .collect())
+    }
+
+    /// Workspace-wide symbol search for `workspace/symbol`: every `type_entity`
+    /// plus every callable (`call_def` joined `call_name`) whose name contains
+    /// `query` (case-insensitive substring). Prefix matches sort first, then by
+    /// name; the result is capped at `limit`. Each row carries its OWN repo so the
+    /// LSP maps the slug to that repo's on-disk root. Tolerates a missing type or
+    /// call family (returns whatever IS populated).
+    pub fn workspace_symbols(&self, query: &str, limit: usize) -> Result<Vec<SymbolRow>> {
+        let like = like_contains(query);
+        let te = tbl("type_entity");
+        let mut rows: Vec<SymbolRow> = self.try_rows(
+            &format!("SELECT \"repo\", \"sym\", \"name\", \"kind\", \"parent\", \"file\", \"line\" \
+                      FROM {te} WHERE \"name\" LIKE ?1 ESCAPE '\\'"),
+            &[&like],
+            |r| Ok(SymbolRow {
+                repo: r.get::<_, String>(0)?,
+                sym: r.get::<_, String>(1)?,
+                name: r.get::<_, String>(2)?,
+                kind: r.get::<_, String>(3)?,
+                parent: r.get::<_, String>(4)?,
+                file: r.get::<_, String>(5)?,
+                line: r.get::<_, i64>(6)?,
+                container: String::new(),
+            }),
+        );
+        // A type_entity's `parent` sym is its enclosing symbol, the flat list's
+        // container qualifier.
+        for row in &mut rows {
+            row.container = row.parent.clone();
+        }
+        let cd = tbl("call_def");
+        let cn = tbl("call_name");
+        let calls: Vec<SymbolRow> = self.try_rows(
+            &format!("SELECT d.\"repo\", d.\"sym\", n.\"name\", d.\"kind\", d.\"file\", d.\"line\" \
+                      FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" \
+                      WHERE n.\"name\" LIKE ?1 ESCAPE '\\'"),
+            &[&like],
+            |r| Ok(SymbolRow {
+                repo: r.get::<_, String>(0)?,
+                sym: r.get::<_, String>(1)?,
+                name: r.get::<_, String>(2)?,
+                kind: r.get::<_, String>(3)?,
+                file: r.get::<_, String>(4)?,
+                line: r.get::<_, i64>(5)?,
+                parent: String::new(),
+                container: String::new(),
+            }),
+        );
+        // Merge, dropping a callable already present as a type_entity sym (a
+        // method is declared in both families).
+        let mut seen: HashSet<String> = rows.iter().map(|s| s.sym.clone()).collect();
+        for row in calls {
+            if seen.insert(row.sym.clone()) { rows.push(row); }
+        }
+        // Prefix matches first, then by name; case-insensitive to match the LIKE.
+        let needle = query.to_lowercase();
+        rows.sort_by(|left, right| {
+            let left_prefix = left.name.to_lowercase().starts_with(&needle);
+            let right_prefix = right.name.to_lowercase().starts_with(&needle);
+            right_prefix.cmp(&left_prefix).then_with(|| left.name.cmp(&right.name))
+        });
+        rows.truncate(limit);
+        Ok(rows)
+    }
+
+    /// Every `type_entity` declared in `path`, ordered by line, for
+    /// `textDocument/documentSymbol`. Returns the flat rows; the LSP handler nests
+    /// them into a `DocumentSymbol` tree by the `parent` sym (a member whose parent
+    /// is not in the same file attaches at the top level). Tolerates a missing type
+    /// family (empty). `line` is 1-based as stored.
+    pub fn document_symbols(&self, path: &str) -> Result<Vec<SymbolRow>> {
+        let te = tbl("type_entity");
+        Ok(self.try_rows(
+            &format!("SELECT \"repo\", \"sym\", \"name\", \"kind\", \"parent\", \"line\" \
+                      FROM {te} WHERE \"file\" = ?1 ORDER BY \"line\""),
+            &[&path],
+            |r| Ok(SymbolRow {
+                repo: r.get::<_, String>(0)?,
+                sym: r.get::<_, String>(1)?,
+                name: r.get::<_, String>(2)?,
+                kind: r.get::<_, String>(3)?,
+                parent: r.get::<_, String>(4)?,
+                line: r.get::<_, i64>(5)?,
+                file: path.to_string(),
+                container: String::new(),
+            }),
+        ))
     }
 
     /// Distinct WORK source paths from the `_file` cache. Feeds crate-root
@@ -6813,6 +6936,20 @@ fn byte_to_lc0(content: &str, byte: u32) -> (u32, u32) {
     }
     let col = content[line_start..byte].chars().count() as u32;
     (line, col)
+}
+
+/// Wrap a user substring as a case-insensitive `LIKE` pattern (`%query%`),
+/// escaping the LIKE metacharacters `%`, `_`, and `\` so an identifier that
+/// contains `_` (common in symbol names) matches literally under `ESCAPE '\'`.
+fn like_contains(query: &str) -> String {
+    let mut escaped = String::with_capacity(query.len() + 2);
+    escaped.push('%');
+    for ch in query.chars() {
+        if matches!(ch, '%' | '_' | '\\') { escaped.push('\\'); }
+        escaped.push(ch);
+    }
+    escaped.push('%');
+    escaped
 }
 
 /// Literal identifier tokens a pattern requires (metavars stripped). Used as a
