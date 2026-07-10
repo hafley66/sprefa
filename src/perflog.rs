@@ -34,6 +34,11 @@ pub struct TickRec<'a> {
     pub derived_strategy: &'a str, // "full" | "scoped" | "unchanged"
     pub derived_rebuilt: &'a [String],
     pub changed_rels: &'a [String],
+    /// WHY `derived_strategy` was "full", e.g. `"blank-slate"` /
+    /// `"program-edit"` / `"carry-changed"` / `"derived-missing:<rel,...>"` /
+    /// `"closure-missing:<edge>"`. `None` when the strategy wasn't "full"
+    /// (P3: the --check perf defect's tick-record reason field).
+    pub full_reason: Option<&'a str>,
     pub effects_inflight: usize,
     pub total_ms: u64,
 }
@@ -132,28 +137,33 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// One record per phase transition: how long the phase that just ended ran,
-/// with its detail string. Called from the `activity` slot.
-pub fn emit_phase(tick: u64, phase: &str, ms: u64, detail: &str) {
-    let rec = serde_json::json!({
+/// Build the phase record's JSON shape (split out from `emit_phase` so a
+/// unit test can assert on it directly, without touching the process-global
+/// `ROOT`/file `OnceLock`s the write path depends on).
+fn phase_record(tick: u64, phase: &str, ms: u64, detail: &str) -> serde_json::Value {
+    serde_json::json!({
         "ts_ms": now_ms(),
         "type": "phase",
+        "pid": std::process::id(),
         "tick": tick,
         "phase": phase,
         "ms": ms,
         "detail": detail,
-    });
-    write_json(rec.to_string());
+    })
 }
 
-/// One record per tick: what moved, what re-derived, what the whole tick cost.
-/// `jq 'select(.type=="tick") | {tick,total_ms,derived:.derived.strategy}'` for
-/// the spike timeline; `select(.type=="phase") | select(.ms>100)'` for the slow
-/// step inside a tick.
-pub fn emit_tick(rec: &TickRec<'_>) {
-    let j = serde_json::json!({
+/// One record per phase transition: how long the phase that just ended ran,
+/// with its detail string. Called from the `activity` slot.
+pub fn emit_phase(tick: u64, phase: &str, ms: u64, detail: &str) {
+    write_json(phase_record(tick, phase, ms, detail).to_string());
+}
+
+/// Build the tick record's JSON shape (see `phase_record`).
+fn tick_record_json(rec: &TickRec<'_>) -> serde_json::Value {
+    serde_json::json!({
         "ts_ms": now_ms(),
         "type": "tick",
+        "pid": std::process::id(),
         "tick": rec.tick,
         "kind": rec.kind,
         "files": {
@@ -165,21 +175,77 @@ pub fn emit_tick(rec: &TickRec<'_>) {
         "derived": {
             "strategy": rec.derived_strategy,
             "rebuilt": rec.derived_rebuilt,
+            "full_reason": rec.full_reason,
         },
         "changed_rels": rec.changed_rels,
         "effects_inflight": rec.effects_inflight,
         "total_ms": rec.total_ms,
-    });
-    write_json(j.to_string());
+    })
+}
+
+/// One record per tick: what moved, what re-derived, what the whole tick cost.
+/// `jq 'select(.type=="tick") | {tick,total_ms,derived:.derived.strategy}'` for
+/// the spike timeline; `select(.type=="phase") | select(.ms>100)'` for the slow
+/// step inside a tick.
+pub fn emit_tick(rec: &TickRec<'_>) {
+    write_json(tick_record_json(rec).to_string());
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// P2 (--check perf defect ledger): every phase/tick record carries a
+    /// `pid` field matching the current process, so a shared perf.jsonl (a
+    /// daemon plus a one-shot `--check` writing the same file) can be split
+    /// by process. Exercises the pure JSON-builders directly — they don't
+    /// touch the process-global `ROOT`/file `OnceLock`s, so this stays
+    /// independent of `path_resolver`'s env mutation below.
+    #[test]
+    fn records_carry_pid() {
+        let want = std::process::id() as u64;
+
+        let phase = phase_record(3, "derived", 12, "2 rel(s): live, gate");
+        assert_eq!(phase["pid"].as_u64(), Some(want));
+        assert_eq!(phase["type"], "phase");
+        assert_eq!(phase["phase"], "derived");
+
+        let changed_rels = vec!["src_a".to_string()];
+        let rebuilt = vec!["live".to_string()];
+        let tick = tick_record_json(&TickRec {
+            tick: 3,
+            kind: "full",
+            files_parsed: 1,
+            files_total: 1,
+            extracted: 1,
+            retracted: 0,
+            derived_strategy: "full",
+            derived_rebuilt: &rebuilt,
+            changed_rels: &changed_rels,
+            full_reason: Some("blank-slate"),
+            effects_inflight: 0,
+            total_ms: 5,
+        });
+        assert_eq!(tick["pid"].as_u64(), Some(want));
+        assert_eq!(tick["type"], "tick");
+        assert_eq!(tick["derived"]["full_reason"], "blank-slate");
+
+        // `full_reason: None` serializes as JSON null, not an absent key —
+        // the shape the perf_log_end_to_end e2e test (tests/it/tick_digest.rs)
+        // asserts `.is_null()` against on a warm, non-full tick.
+        let unchanged = tick_record_json(&TickRec {
+            tick: 4, kind: "full", files_parsed: 1, files_total: 1,
+            extracted: 0, retracted: 0, derived_strategy: "unchanged",
+            derived_rebuilt: &[], changed_rels: &[], full_reason: None,
+            effects_inflight: 0, total_ms: 1,
+        });
+        assert!(unchanged["derived"]["full_reason"].is_null());
+    }
+
     /// Pin the resolver: default → `<root>/.dl/perf.jsonl`; `DL_PERF_LOG=0` →
     /// disabled (None); an explicit path wins. Env mutation is process-wide,
-    /// so this is the only perflog path test (keep it self-contained).
+    /// so this is the only perflog path test touching env/ROOT (keep it
+    /// self-contained).
     #[test]
     fn path_resolver() {
         std::env::remove_var("DL_PERF_LOG");

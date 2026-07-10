@@ -156,3 +156,4 @@ mod what;
 mod q_verb;
 mod where_removed;
 mod wildcard_slots;
+mod tick_digest;

@@ -372,13 +372,43 @@ impl Engine {
                 for r in k.rels() { changed_source_rels.insert(r.to_string()); }
             }
         }
+        // `program`/`head`/`rev_advanced` and `effect_log` are wholesale
+        // wipe+repopulate PROJECTIONS of state written out of band (the
+        // daemon's meta tables; the `pending_effect` queue the async drain
+        // mutates BETWEEN ticks) — their content can move without any other
+        // signal in this function noticing. Before P1, this went unnoticed:
+        // these two blocks never set `changed = true` themselves, so a
+        // derived rule reading `effect_log` (like the `queued`/`landed`
+        // rails) only re-derived because `any_derived_empty` forced a full
+        // rebuild whenever that rule's rel happened to still read zero rows
+        // from the PRIOR tick. Content-digest gate them the same way as
+        // `async:`/`hook:`/`port:` above, so their own change is what
+        // attributes their dependents, not an accident of table emptiness.
         if daemon_rels_used(prog) {
             self.refresh_daemon_rels()?;
-            for r in DAEMON_RELS { changed_source_rels.insert(r.to_string()); }
+            for rel in DAEMON_RELS {
+                let Some(meta) = self.rels.get(rel).cloned() else { continue };
+                let d = self.rel_content_digest(rel, &meta)?;
+                let key = format!("daemon:{rel}");
+                if self.load_rel_digest(&key)? != Some(d) {
+                    self.save_rel_digest(&key, &d)?;
+                    changed = true;
+                    changed_source_rels.insert(rel.to_string());
+                }
+            }
         }
         if effect_rels_used(prog) {
             self.refresh_effect_rels()?;
-            for r in EFFECT_RELS { changed_source_rels.insert(r.to_string()); }
+            for rel in EFFECT_RELS {
+                let Some(meta) = self.rels.get(rel).cloned() else { continue };
+                let d = self.rel_content_digest(rel, &meta)?;
+                let key = format!("effect:{rel}");
+                if self.load_rel_digest(&key)? != Some(d) {
+                    self.save_rel_digest(&key, &d)?;
+                    changed = true;
+                    changed_source_rels.insert(rel.to_string());
+                }
+            }
         }
         // @async/@stream response rels are written by the OFF-TICK drain, so
         // none of the source-phase machinery above attributes them. Digest
@@ -414,18 +444,64 @@ impl Engine {
                 }
             }
         }
+        // `@in(class)` port rels (e.g. `--mcp`'s request rel) are EDB injected
+        // directly by the serving loop (`inject_rpc`), bypassing every
+        // source-rule/family digest above — an "unattributable EDB change"
+        // (see the `need_full` comment below). Before the P1 fix, this went
+        // unnoticed because draining the paired `@out` rel to empty forced a
+        // full rebuild on the NEXT tick via `any_derived_empty`'s "any derived
+        // rel has zero rows" probe. The P1 fix (a completion marker, not a row
+        // count) removes that accidental prop, so the in-port's own change
+        // must be attributed here, the same `port:` key pattern as `async:`/
+        // `hook:` above — a freshly injected request row re-derives its
+        // `@out`-port dependents; a tick with no new injection stays scoped out.
+        let in_port_rels: Vec<String> = prog.items.iter().filter_map(|i| match i {
+            Item::Rel(d) if matches!(&d.port, Some(p) if p.dir == crate::ast::PortDir::In) =>
+                Some(d.name.clone()),
+            _ => None,
+        }).collect();
+        for rel in &in_port_rels {
+            let Some(meta) = self.rels.get(rel).cloned() else { continue };
+            let d = self.rel_content_digest(rel, &meta)?;
+            let key = format!("port:{rel}");
+            if self.load_rel_digest(&key)? != Some(d) {
+                self.save_rel_digest(&key, &d)?;
+                changed = true;
+                changed_source_rels.insert(rel.clone());
+            }
+        }
         let src_ms = t_src.elapsed().as_secs_f64() * 1000.0;
 
         let t_der = std::time::Instant::now();
         let der_digest = derived_program_digest(&derived_rules, &seed_rules, &edges);
-        let derived_moved = self.load_rel_digest("derived:program")? != Some(der_digest);
+        let prior_der_digest = self.load_rel_digest("derived:program")?;
+        let derived_moved = prior_der_digest != Some(der_digest);
         // A blank slate, a program-shape change, or an unattributable EDB change
         // (a carried @next rel has no per-rel entry above) rebuilds everything.
         // Otherwise a changed tick scopes the rebuild to the derived rels
         // dependency-reachable from what actually moved (perf gap B — the full
         // tick's twin of tick_paths' affected_derived scoping).
+        // P1: `derived_incomplete_rels`/`first_empty_closure_edge` replace the
+        // old "any derived rel has zero rows" probe (`any_derived_empty`),
+        // which forced a full rebuild of every derived rel on every tick
+        // whenever ANY of them was legitimately, durably empty (an inert rail,
+        // a diff view with nothing to report) — 34/154 derived rels on a real
+        // db, so effectively every tick.
+        let incomplete_derived = self.derived_incomplete_rels(&derived_rels)?;
+        let empty_closure_edge = self.first_empty_closure_edge(&edges)?;
         let need_full = derived_moved || carry_changed
-            || self.any_derived_empty(&derived_rels)? || self.any_closure_empty(&edges)?;
+            || !incomplete_derived.is_empty() || empty_closure_edge.is_some();
+        // P3: name WHY a full rebuild happened, in tick record priority order
+        // matching the `need_full` OR above (a blank slate/program-shape
+        // change is the more useful diagnosis when several conditions coincide,
+        // e.g. the very first tick on a fresh db has both `derived_moved` and
+        // every rel "incomplete").
+        let full_reason: Option<String> = if !need_full { None }
+            else if derived_moved && prior_der_digest.is_none() { Some("blank-slate".to_string()) }
+            else if derived_moved { Some("program-edit".to_string()) }
+            else if carry_changed { Some("carry-changed".to_string()) }
+            else if !incomplete_derived.is_empty() { Some(format!("derived-missing:{}", incomplete_derived.join(","))) }
+            else { empty_closure_edge.as_ref().map(|edge| format!("closure-missing:{edge}")) };
         let mut affected: HashSet<String> = HashSet::new();
         let mut dirty_edges: HashSet<&str> = HashSet::new();
         self.last_derived_rebuilt = Vec::new();
@@ -605,6 +681,7 @@ impl Engine {
             derived_strategy,
             derived_rebuilt: &self.last_derived_rebuilt,
             changed_rels: &changed_rels,
+            full_reason: full_reason.as_deref(),
             effects_inflight: inflight_effects,
             total_ms: t_tick.elapsed().as_millis() as u64,
         });
@@ -862,10 +939,22 @@ impl Engine {
         if daemon_rels_used(prog) { self.refresh_daemon_rels()?; }
         if changed_source_rels.is_empty() { changed_facts = false; }
 
-        // Cold start (or empty derived/closure) needs a full rebuild; otherwise
-        // rebuild only the derived rels dependency-reachable from what changed,
-        // plus the closures over affected edges. Untouched chains are left intact.
-        let need_full = self.any_derived_empty(&derived_rels)? || self.any_closure_empty(&edges)?;
+        // Cold start (or a derived rel that never completed a rebuild pass)
+        // needs a full rebuild; otherwise rebuild only the derived rels
+        // dependency-reachable from what changed, plus the closures over
+        // affected edges. Untouched chains are left intact. `tick_paths` falls
+        // back to the full `tick()` whenever the derived program digest moved
+        // (see the guard above), so unlike the full tick, only the P1
+        // completion-marker check and the closure check can force `need_full`
+        // here.
+        let incomplete_derived = self.derived_incomplete_rels(&derived_rels)?;
+        let empty_closure_edge = self.first_empty_closure_edge(&edges)?;
+        let need_full = !incomplete_derived.is_empty() || empty_closure_edge.is_some();
+        let full_reason: Option<String> = if !incomplete_derived.is_empty() {
+            Some(format!("derived-missing:{}", incomplete_derived.join(",")))
+        } else {
+            empty_closure_edge.as_ref().map(|edge| format!("closure-missing:{edge}"))
+        };
         let mut rebuilt: Vec<String> = Vec::new();
         // Edges whose source/derived relation was rebuilt this tick; only these
         // are re-considered by the cond cache (the rest are reused untouched).
@@ -965,9 +1054,14 @@ impl Engine {
             files_total: npaths,
             extracted,
             retracted,
-            derived_strategy: if rebuilt.is_empty() { "unchanged" } else { "scoped" },
+            // `need_full` (not just `rebuilt.is_empty()`) so a full rebuild
+            // triggered by a missing completion marker/closure edge is
+            // labeled "full", not mislabeled "scoped" just because `rebuilt`
+            // happened to be non-empty.
+            derived_strategy: if need_full { "full" } else if rebuilt.is_empty() { "unchanged" } else { "scoped" },
             derived_rebuilt: &rebuilt,
             changed_rels: &[],
+            full_reason: full_reason.as_deref(),
             effects_inflight: 0,
             total_ms: tick_ms as u64,
         });
