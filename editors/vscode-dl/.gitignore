@@ -1,6 +1,9 @@
 node_modules/
 out/
 *.vsix
+# playwright run artifacts (traces, error contexts) -- not baselines
+test-results/
+playwright-report/
 # The shipped install artifact is embedded into the `dl` binary via
 # include_bytes! (setup.rs) at a FIXED filename (no version), so it must be
 # tracked despite the *.vsix ignore. scripts/build-vsix.sh rebuilds it at the

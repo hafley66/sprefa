@@ -146,16 +146,21 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -p ./ --watch",
-    "package": "vsce package"
+    "package": "vsce package",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "test:all": "npm run test && npm run test:e2e"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
     "cytoscape": "^3.34.0",
+    "@playwright/test": "1.61.1",
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.82.0",
     "@vscode/vsce": "^3.9.2",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "4.1.10"
   }
 }
