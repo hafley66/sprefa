@@ -101,6 +101,7 @@ mod pin_skew;
 mod pr_diff;
 mod perf_stress_c;
 mod propose_extract;
+mod query_agg;
 mod query_json;
 mod recursive_null_pad;
 mod regex_glob_filter;

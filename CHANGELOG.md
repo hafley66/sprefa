@@ -7,6 +7,21 @@ tags consumed by cargo-dist.
 ## [Unreleased]
 
 ### Added
+- **Aggregation heads in `?` query items.** A query head carrying an aggregate
+  call switches from `SELECT DISTINCT` to `GROUP BY`, the same aggregate surface
+  rule heads have: `? sale(dept, json_group_array(items), _)` collects one JSON
+  array per `dept`, `? sale(dept, _, sum(revenue))` sums the price column per
+  group, `? sale(_, _, sum(revenue))` is a whole-rel aggregate (one row). Plain
+  var terms are the grouping key (and the deterministic ORDER BY), literals stay
+  WHERE filters, wildcards collapse; the aggregate's arg var names the output
+  column. `json_group_object(key, value)` consumes two adjacent columns (query
+  arity stays exact): place it at the key column with `_` at the value column
+  (`? line(order_id, json_group_object(items, prices), _)`). json aggregates keep
+  their internal `ORDER BY` so output is byte-stable tick to tick. Non-aggregate
+  function calls in a query head still bail (derive a relation and query it). Runs
+  through every query consumer: one-shot `?`, the daemon `query` RPC, and the LSP
+  paging wrapper. Example lift: no more derive-a-rel-then-query just to aggregate
+  a `?`.
 - **Dev-loop just recipes (deterministic ceremony as scripts, not agents).**
   `just verify` = build + full suite with the FSEvents flake solo-rerun policy +
   the magic-rel/recompute-guard rails; `just regen-docs` = every doc generator
