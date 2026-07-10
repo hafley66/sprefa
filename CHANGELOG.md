@@ -7,6 +7,41 @@ tags consumed by cargo-dist.
 ## [Unreleased]
 
 ### Added
+- **`dl what <anchor>` + `dl summary <path>` — the turnkey meta-query.** One
+  command answers "what is this name / what's in this file" across every
+  built-in graph family with zero .dl authoring: the anchor resolver classifies
+  name | path | path:line (glob `*` allowed) and unions
+  `type_entity`/`call_name`/`scip_name`/`scip_binding`/`module_binding`/
+  `df_node.var`, then fans out per family (def sites, caller/callee counts,
+  type links, sig slots, doc presence). Daemon-first (`what`/`summary` RPCs)
+  with an in-process fallback that forces extraction via a synthetic probe
+  program. Plan: `plans/2026-07-10-turnkey-query-surface.md`.
+- **`module_binding` — aliased imports resolve without an index.**
+  `module_binding(file, local, source, dst)` (+ `module_binding_rev`) captures
+  aliased-import local bindings from the existing module-resolver parse — Rust
+  `use x::y as z`, TS/JS `import { a as b }` and default imports, Kotlin
+  `import a.b.C as D` — and feeds an alias hop in the type/call resolvers: a
+  reference to the local alias resolves to the aliased def, dst-pinned, only
+  when the file declares no same-named local (shadowing wins), never guessing
+  on a miss. `dl what <alias>` finds the canonical def index-free — the
+  syntactic twin of `scip_binding`. Barrel re-exports, namespace imports, and
+  default-export resolution stay honestly unresolved (rows carry
+  `source="default"` for a future bridge).
+- **JS/JSX type + call + dataflow extraction.** `.js`/`.jsx`/`.mjs`/`.cjs` now
+  ride the TypeScript TypeLang (oxc parses them as JS), so plain-JS repos get
+  `type_entity`/`call_edge`/`df_*` rows instead of nothing.
+- **Import-scoped ambiguity narrowing in the name resolver.** When a name has
+  several same-repo defs, candidates narrow to the referencing file's own
+  imports (`module_edge_rev`), itself, or its directory — and resolve only on
+  a lone self-or-imported survivor. Cuts cross-file same-name misjoins at the
+  syntactic tier; a same-dir-only tie stays unresolved.
+- **SCIP-parity oracle (`call_resolution_parity_vs_rust_analyzer`).** One
+  ignored test scores the index-free call resolver against a rust-analyzer
+  SCIP index with confirmed-positives-only math: unconfirmable resolutions are
+  excluded, contradicted ones are a separate bounded bucket (precision >= 0.95
+  asserted), and every fuzzy comparison step fails toward exclusion — the
+  reported percent can under-count, never inflate. First snapshot on this
+  crate: 48.1% parity, 0.994 precision.
 - **Aggregation heads in `?` query items.** A query head carrying an aggregate
   call switches from `SELECT DISTINCT` to `GROUP BY`, the same aggregate surface
   rule heads have: `? sale(dept, json_group_array(items), _)` collects one JSON
@@ -63,6 +98,11 @@ tags consumed by cargo-dist.
   it into the window.
 
 ### Fixed
+- **`scip_occurrence.role` no longer collapses import/read/write to
+  `reference`.** The role column now reports
+  definition/import/write/read/reference (compound read+write reports write),
+  so import sites and mutation sites are filterable — v0.6.24 discarded those
+  SymbolRole bits.
 - **`--lsp` no longer auto-spawns a daemon when `--db` is explicit.** `run_lsp`'s
   subscriber thread spawned a DETACHED `dl daemon start` whenever the root owned
   `.dl/`, ignoring the explicit `--db` every e2e test passes for isolation — each
