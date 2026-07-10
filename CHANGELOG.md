@@ -6,6 +6,8 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-10
+
 ### Added
 - **`dl what <anchor>` + `dl summary <path>` — the turnkey meta-query.** One
   command answers "what is this name / what's in this file" across every
