@@ -7804,13 +7804,25 @@ fn module_stem(path: &str) -> &str {
 /// files. A git rev uses the blob OID from `ls-tree`, so unchanged blobs are
 /// detected without fetching content. The walk skips `.git` explicitly:
 /// `hidden(false)` un-hides it, and crawling the object store made big-repo
-/// scans pathological.
+/// scans pathological. A directory below the root that itself owns a `.git`
+/// entry (dir or file — a submodule worktree's is a file) is a foreign repo
+/// and is pruned the same way: the `git ls-tree` arm below already excludes
+/// submodules for free (gitlink entries are type `commit`, not `blob`), so
+/// this closes the WORK-arm asymmetry. Depth 0 is `repo_root` itself and is
+/// never pruned by this check (it owns the `.git` we're walking FROM).
 fn enumerate_with_hash(repo: &str, repo_root: &Path, rev: &str, union: &globset::GlobSet, prev: &FileMeta) -> Result<Vec<(String, String, i64, i64)>> {
     let max_size = max_filesize();
     if rev == "WORK" {
         let mut files: Vec<(PathBuf, String, i64, i64)> = Vec::new();
         let mut walk = ignore::WalkBuilder::new(repo_root);
-        walk.hidden(false).filter_entry(|e| e.file_name() != ".git");
+        walk.hidden(false).filter_entry(|e| {
+            if e.file_name() == ".git" { return false; }
+            // One extra stat per walked DIRECTORY; file entries skip the check.
+            if e.depth() >= 1
+                && e.file_type().is_some_and(|ft| ft.is_dir())
+                && e.path().join(".git").exists() { return false; }
+            true
+        });
         // The walker crate caps oversized files itself (skips them before we ever
         // hash), so a single minified/vendored blob can't blow RSS. Opt-in via
         // `DL_MAX_FILESIZE` (bytes); unset = no cap (legacy behavior).

@@ -134,6 +134,17 @@ impl WatchGate {
                         continue;
                     }
                 }
+                // Nested repo (submodule) pruning, mirroring the scan walker's
+                // `enumerate_with_hash`: an ancestor dir strictly between this
+                // path and the root that itself owns a `.git` entry (dir or
+                // file) is a foreign repo, and its contents are not part of
+                // this root's corpus even though nothing gitignores them.
+                // Bounded by path depth; no memoization needed (paths under a
+                // deep nested repo are rare and events already arrive
+                // debounced by the quiet-period window upstream).
+                if is_under_nested_repo(&path, prefix) {
+                    continue;
+                }
                 if seen.insert(path.clone()) {
                     kept.push(path);
                 }
@@ -155,6 +166,24 @@ impl WatchGate {
         !self.git_paths.is_empty()
             && kept.iter().any(|p| self.git_paths.iter().any(|gp| p.starts_with(gp) || p == gp))
     }
+}
+
+/// True if some ancestor of `path`, strictly between `path` and `root`
+/// (exclusive of `root` itself — the root's own `.git` is handled by the
+/// caller's git-dir arm), owns a `.git` entry. Walks parent dirs up from
+/// `path`'s immediate parent; a stat per ancestor, bounded by path depth.
+fn is_under_nested_repo(path: &Path, root: &Path) -> bool {
+    let mut dir = path.parent();
+    while let Some(d) = dir {
+        if d == root || !d.starts_with(root) {
+            break;
+        }
+        if d.join(".git").exists() {
+            return true;
+        }
+        dir = d.parent();
+    }
+    false
 }
 
 /// True for the daemon's own bookkeeping files: the sqlite store (`cache.db`,
@@ -270,5 +299,57 @@ mod tests {
         let other = tmp().join("elsewhere/config.toml");
         let kept = gate.filter(vec![other.clone()]);
         assert!(kept.contains(&other), "out-of-root path is not silently swallowed");
+    }
+
+    /// A submodule's contents are not gitignored (git ignores the fence for
+    /// tracked gitlinks, but nothing on disk marks these files as ignored),
+    /// so this is the nested-repo prune, not the gitignore matcher.
+    #[test]
+    fn nested_repo_dir_form_pruned_sibling_kept() {
+        let root = tmp().join("wg5");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("vendor/nested/.git")).unwrap();
+        fs::write(root.join("vendor/nested/.git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        fs::write(root.join("vendor/nested/lib.rs"), "fn nested() {}").unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+        let gate = WatchGate::new(&[root.clone()]);
+        let kept = gate.filter(vec![
+            root.join("vendor/nested/lib.rs"),
+            root.join("src/main.rs"),
+        ]);
+        assert!(!kept.iter().any(|p| p.ends_with("vendor/nested/lib.rs")),
+            "nested repo content dropped: {kept:?}");
+        assert!(kept.iter().any(|p| p.ends_with("src/main.rs")), "sibling source file kept");
+    }
+
+    /// A submodule worktree's `.git` is a FILE ("gitdir: <path>"), not a
+    /// directory — the prune must not assume a directory form.
+    #[test]
+    fn nested_repo_submodule_file_form_pruned() {
+        let root = tmp().join("wg6");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("vendor/sub")).unwrap();
+        fs::write(root.join("vendor/sub/.git"), "gitdir: /elsewhere/modules/sub\n").unwrap();
+        fs::write(root.join("vendor/sub/main.go"), "package sub").unwrap();
+        let gate = WatchGate::new(&[root.clone()]);
+        let kept = gate.filter(vec![root.join("vendor/sub/main.go")]);
+        assert!(kept.is_empty(), "submodule worktree content must be pruned: {kept:?}");
+    }
+
+    /// The nested-repo prune must not disturb the root's OWN `.git` ref
+    /// handling: `HEAD` still routes through the narrow git-dir arm.
+    #[test]
+    fn root_own_git_head_behavior_unchanged() {
+        let root = tmp().join("wg7");
+        let _ = fs::remove_dir_all(&root);
+        let gitdir = root.join(".git");
+        fs::create_dir_all(gitdir.join("refs/heads")).unwrap();
+        fs::write(gitdir.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        let mut gate = WatchGate::new(&[root.clone()]);
+        gate.add_git_dir(&gitdir);
+        let kept = gate.filter(vec![gitdir.join("HEAD")]);
+        assert!(kept.iter().any(|p| p.ends_with("HEAD")), "root's own HEAD still kept: {kept:?}");
+        assert!(gate.touches_git(&kept), "HEAD still routes to git");
     }
 }
