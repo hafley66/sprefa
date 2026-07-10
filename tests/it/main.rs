@@ -99,6 +99,7 @@ mod module_graph;
 mod module_use;
 mod move_refactor;
 mod named_args;
+mod oracle_corpus;
 mod oracle_go;
 mod oracle_kotlin;
 mod oracle_kotlin_parity;
