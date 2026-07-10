@@ -948,6 +948,122 @@ foreign resolution model).
       (c) cross-family hidden dependency (resolver reads module_edge_rev) is
       a shape the magic-rel audit doesn't cover — two ExtractFamily used()
       gates coupling invisibly.
+- [x] **SCIP-parity twins (TS + Kotlin)** (main 34cade3, Sonnet agent,
+      2026-07-10): shared scorer tests/it/oracle_parity.rs (oracle_rust rebased
+      onto it, behavior-identical; the ±1 `wrong` drift between runs is RA's own
+      indexing jitter, reproduced pre-refactor); TS twin vs scip-typescript on
+      new tests/fixtures/ts_ws = 16.7% parity / 1.000 precision (1 confirmed /
+      5 bare); Kotlin twin vs scip-java runtime-skips (no JDK in this env — skip
+      path exercised, real numbers pending a JDK box). KNOWN SCORER GAP, all 3
+      langs, left unfixed to keep Rust scoring byte-identical: the picks key
+      derives the callee name from the RESOLVED sym while call_site text is the
+      bare as-written name, so correctly-resolved METHOD and ALIASED calls score
+      `bare` (under-report, the safe direction). Follow-up: key picks on the
+      call site's own text.
+- [x] **LANG-JUNCTION skill + rail** (main 3933afa, 2026-07-10): 8 per-language
+      registration points carry `// LANG-JUNCTION(slug): what to wire` markers
+      (typelang-registry, extract-file-set, module-resolvers, sg-grammars,
+      ast-grammars, comment-cst-extensions, scip-indexers, move-rewriter);
+      examples/gen-lang-skill.dl regenerates the junction list in
+      .agents/skills/sprf-add-language/SKILL.md via comment_node
+      (string-literal-safe) with lang-junction-drift/-orphan --check rails
+      (slug-set desync fails, line drift alone never does);
+      tests/it/lang_skill_gen.rs (4, incl. the string-literal negative).
+      scip-go install hint corrected to github.com/scip-code.
+- [x] **Go TypeLang + GoResolver LANDED** (main 8ef6cb9, Sonnet agent,
+      2026-07-10, pseudo-scip item B): GoTypes one-parse tree-sitter walk
+      (struct/interface/alias/function/method entities w/ receiver-typed
+      parents via go_owner_kinds; field/impl/generic edges — interface embeds
+      AND generic type-set constraints both land as impl, tree-sitter-go 0.25
+      unifies them under type_elem; go_fn_type arrows w/ multi-value ret
+      flattened; full df lift incl. func-literal ::closure:: scopes, composite
+      literals as new+df_field, per-value ret nodes; godoc block docs,
+      deprecated tag only). GoResolver = go.mod module line +
+      one-package-per-dir, import -> whole-dir .go fan-out (Kotlin wildcard
+      precedent), alias imports -> module_binding, blank/dot imports handled.
+      collect_manifests gained "go.mod". 8 typegraph + 4 modgraph units, 5 e2e
+      tests/it/go.rs. Suites at merge: lib 287/0/1, it 641/0/5.
+- [x] **Python TypeLang + PyResolver LANDED** (main 646fc74, Sonnet agent,
+      2026-07-10, pseudo-scip item C): PyTypes one-parse tree-sitter walk
+      (module/class/function/method entities — NEW EntityKind::Module so a
+      module docstring has a type_entity row; annotation-only edges: bases ->
+      impl, annotated attrs -> field, params/returns/uses; subscripted
+      annotations recurse to the inner ref; PEP 257 docstrings + Sphinx
+      :param:/:returns: tags; df lift w/ ctor `new` on capitalized calls,
+      kwargs -> df_field, lambda/nested-def ::closure:: scopes, comprehension
+      loop spans, self/cls skipped). PyResolver per the mid-flight amendment:
+      import-root DISCOVERY from the scanned file set (repo root + src-layout
+      + top-level package parents, rspath::crate_roots precedent; multi-root
+      ambiguity stays unresolved loudly); sys.path.insert/append counted
+      loudly per refresh, never followed; star imports loud-unresolved;
+      import-as/from-import bindings. NON-GOALS: attribute-chain resolution
+      (type_link scoped out), Google docstrings, forward-ref string
+      annotations, `py_root(path)` user-fact seam (deferred — needs the
+      declared demand-sink treatment). MERGE NOTE: rebase over the Go arc
+      needed hand-merging (both langs appended at the same typegraph/modgraph
+      anchors); resolved by re-applying the Python diff onto the Go version at
+      unique anchors, suites green post-rebase. Suites at merge: lib 301/0/1,
+      it 644/0/5.
+- [x] **Go + Python parity twins LANDED** (main f911f1b, fresh Opus agent,
+      2026-07-10): tests/it/oracle_go.rs + oracle_python.rs on the shared
+      scorer (oracle_parity.rs byte-untouched, TS twin re-verified identical);
+      fixtures go_ws (go.mod module, api/util/service pkgs) + py_ws
+      (pkg/__init__ layout), each w/ cross-file call, method call, aliased
+      import, ambiguous name. MEASURED (both indexers present): Go 75.0%
+      parity / 1.000 precision (6 confirmed / 0 wrong / 2 bare); Python 37.5%
+      / 1.000 (3/0/5). Bare buckets = the documented scorer gap (method +
+      aliased calls key on resolved-sym name). Twins runtime-skip without
+      scip-go/scip-python on PATH (SPREFA_SCIP_* overrides; scip-go at
+      ~/go/bin, scip-python via nvm). scip-python GOTCHAS learned: needs
+      --project-name/--project-version outside a git repo AND exits 0 on
+      fatal errors leaving a header-only index — the test skips on an
+      empty-document index too. MERGE NOTE: agent's worktree spawned from
+      ext-wave3 (not main) so its branch carried foreign merge history —
+      landed by cherry-pick of the single commit, ext-wave3 untouched.
+      Suites on main: lib 301/0/1, it 646/0/5. Opus debrief pains: (a) the
+      parity scorer's expected `?` query blocks (5-ary call_site + call_edge)
+      aren't documented at the scorer — one comment would save the
+      verify-by-hand round-trip; (b) pre-commit hook prints info[op-example]
+      noise to stdout mid-commit, benign but alarming.
+- [ ] **Scorer per-site keying IN FLIGHT** (fresh Opus worktree agent,
+      2026-07-10): fix the picks-key gap (method + aliased calls score bare
+      because picks derive from the RESOLVED sym, not the site). Design A =
+      positional keying via std/flow.dl call_target + df_node line (df 1-based,
+      scip 0-based, convert once in the scorer); precision asserts stay;
+      before/after table per language; NEW `wrong` rows investigated as
+      possible real resolver bugs, not massaged. Engine code out of scope.
+      NOTE main pushed b38a9da (merge commit unifying this session's language
+      arc with the other session's wave-3/4 + flow-marks arc; union suites
+      304 lib / 680 it green).
+- [ ] **Go/Python implementer debriefs** (2 Sonnet agents, 2026-07-10):
+      GOOD both: field-based tree-sitter grammars (go, python expose
+      child_by_field_name) made both extractors shorter than Kotlin's
+      positional-child matching; the TypeLang registry + one extract_file_set
+      SQL clause wired call/df/doc with zero extra engine work (architecture
+      behaving as designed); the LANG-JUNCTION skill turned "grep for %.kt"
+      into a machine-generated checklist mid-arc (Python agent used the map
+      the same day it shipped). PAINS: (a) tree-sitter-go 0.25 gives interface
+      embeds and generic type-set constraints the SAME `type_elem` node kind —
+      distinguishing them needed grammar-source reading; ASK = per-grammar
+      node-kind reference (node-types.json digests) as a skill asset for
+      future TypeLangs. (b) EntityKind exhaustive-match discoverability —
+      FIXED same day: doc note "matched exhaustively only in tag()" added at
+      the decl.
+- [ ] **Orchestrator codebase pains** (Fable, 2026-07-10, from the skill+rail
+      arc): (a) rel LINE BASES are lore, not docs — comment_node is 1-based,
+      scip_occurrence 0-based, df 1-based; learning comment_node's base meant
+      reading cst.rs source. RelDecl doc strings should state the base per
+      positional rel (one regen sweep). (b) the two grammar tables live in
+      inconsistent homes: SG_LANG_TABLE in src/sg.rs, AST_LANG_TABLE buried at
+      line ~7674 of the 7798-line src/engine/mod.rs — a lang-support table
+      inside the engine monolith is placement debt (engine refactor epic
+      context; the LANG-JUNCTION map now at least finds it). (c) +1 to the
+      ambient-config pain: every ad-hoc `dl` run at this root prints
+      "[config] 3 repo(s) registered" and ingests type/call/doc for repos the
+      program never mentions — hermetic needs SPREFA_CONFIG set by hand.
+      (d) S6 (body-level source+derived mix silently drops the rel atom) cost
+      a failing-test loop to discover; the rel-level guard set the expectation
+      the body-level case would also bail.
 
 ### Open (scip / language-surface — 2026-07-08 agent-session feedback, batch 2)
 Five more complaints (SCIP + dl-surface). NOT yet triaged against code; capture only.
@@ -968,6 +1084,13 @@ Five more complaints (SCIP + dl-surface). NOT yet triaged against code; capture 
 - [ ] **S5 ast-grep patterns are exact-shape.** `{ element: <$C/> }` matched nothing
       (shape strictness / metavar-in-JSX). Repro + narrow: grammar, intended match,
       sg pattern-compilation limit vs grammar gap. S1/S2 pair is the SCIP crux.
+- [ ] **S6 source-extract rule body silently drops an extra rel atom** (found
+      2026-07-10 building gen-lang-skill.dl): a `scan`+`match` rule whose body
+      also joins a rel (`comment_node(...)`) runs the extraction and IGNORES the
+      rel atom — no bail, no warning, rows that should have been filtered land.
+      The rel-level mixed source/derived guard doesn't cover the body-level mix.
+      Fix shape: bail like the rel-level guard ("move the join to a derived
+      rel"), or actually support the join.
 
 ### Style notes for this repo
 - dl variable names are descriptive, never single-letter: `path`/`line`/`callee_name`, not `p`/`l`/`q`. Applies to every snippet in skills, examples, book, tests, and agent prompts; rename opportunistically when touching old files.

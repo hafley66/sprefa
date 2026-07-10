@@ -183,21 +183,11 @@ fn real_v5_crate_recall_snapshot() {
 }
 
 /// THE "how close to SCIP are we" number, at the resolution tier (call graph),
-/// scored so the percent can only UNDER-report:
-///
-/// - the denominator is every call site where rust-analyzer's index gives an
-///   unambiguous in-repo ground truth (the occurrence under the callee name
-///   slices exactly, one def file);
-/// - a site counts toward the percent ONLY when our index-free resolver picked
-///   the SAME def file (a confirmed positive);
-/// - a resolution SCIP can't confirm is EXCLUDED, never counted as a win;
-/// - a resolution SCIP contradicts is a `wrong` — tracked separately and
-///   bounded by the precision assert, so the resolver can't buy coverage with
-///   bad joins.
-///
-/// Every fuzzy step (range slicing, name matching) fails toward EXCLUSION:
-/// an encoding or attribution mismatch shrinks the denominator, it never
-/// inflates the numerator.
+/// scored so the percent can only UNDER-report. See `oracle_parity`'s module
+/// doc for the full confirmed-positives-only contract this test enforces;
+/// `oracle_parity::score_parity` is the shared implementation, also used by
+/// the TypeScript (`oracle_ts.rs`) and Kotlin (`oracle_kotlin_parity.rs`)
+/// twins.
 ///
 /// Run: cargo test --test it call_resolution_parity_vs_rust_analyzer -- --ignored --nocapture
 #[test]
@@ -209,8 +199,7 @@ fn call_resolution_parity_vs_rust_analyzer() {
     };
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
 
-    // --- ground truth: per (file, 0-based line), the occurrences with their
-    // source slice and the defining file of their symbol (in-repo defs only).
+    // --- ground truth: rust-analyzer's SCIP index over this crate.
     let scip_out = std::env::temp_dir().join("sprefa_oracle_parity.scip");
     let status = Command::new(&ra)
         .args(["scip", root.to_str().unwrap(), "--output", scip_out.to_str().unwrap()])
@@ -218,42 +207,6 @@ fn call_resolution_parity_vs_rust_analyzer() {
     assert!(scip_out.is_file(), "rust-analyzer scip produced no index: {}",
         String::from_utf8_lossy(&status.stderr));
     let index = Index::parse_from_bytes(&std::fs::read(&scip_out).unwrap()).expect("parse scip");
-
-    let mut def_file: HashMap<String, String> = HashMap::new();
-    for doc in &index.documents {
-        for occ in &doc.occurrences {
-            if occ.symbol_roles & (SymbolRole::Definition as i32) != 0 && !occ.symbol.starts_with("local ") {
-                def_file.entry(occ.symbol.clone()).or_insert_with(|| doc.relative_path.clone());
-            }
-        }
-    }
-    // (file, line) -> [(source slice, def_file)] for reference occurrences of
-    // symbols defined somewhere in the index.
-    let mut refs_at: HashMap<(String, u32), Vec<(String, String)>> = HashMap::new();
-    for doc in &index.documents {
-        if !doc.relative_path.starts_with("src/") { continue; }
-        let Ok(content) = std::fs::read_to_string(root.join(&doc.relative_path)) else { continue; };
-        let lines: Vec<&str> = content.lines().collect();
-        for occ in &doc.occurrences {
-            if occ.symbol_roles & (SymbolRole::Definition as i32) != 0 { continue; }
-            let Some(def) = def_file.get(&occ.symbol) else { continue; };
-            // SCIP packed range: [line, col, end_col] or [line, col, end_line, end_col].
-            let r = &occ.range;
-            if r.len() < 3 { continue; }
-            let (line, col, end_line, end_col) = if r.len() == 3 {
-                (r[0], r[1], r[0], r[2])
-            } else {
-                (r[0], r[1], r[2], r[3])
-            };
-            if line != end_line { continue; } // multi-line ref: exclude
-            let Some(text) = lines.get(line as usize) else { continue; };
-            let (lo, hi) = (col as usize, end_col as usize);
-            if hi > text.len() || lo >= hi { continue; } // non-ascii col drift: exclude
-            let Some(slice) = text.get(lo..hi) else { continue; };
-            refs_at.entry((doc.relative_path.clone(), line as u32))
-                .or_default().push((slice.to_string(), def.clone()));
-        }
-    }
 
     // --- ours, index-free: call_site (the attempts) + call_edge (the picks)
     // from a scratch db with NO index.scip and no ambient config repos.
@@ -276,81 +229,17 @@ seen(path) <- scan("WORK", "src/**/*.rs", path, rev).
         .output().expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
 
-    // caller/callee syms are "repo::path::kind::name"; reduce to (path, name).
-    fn sym_parts(sym: &str) -> Option<(String, String)> {
-        let mut it = sym.rsplitn(3, "::");
-        let name = it.next()?;
-        let _kind = it.next()?;
-        let repo_path = it.next()?;
-        let path = repo_path.split_once("::").map(|(_, p)| p).unwrap_or(repo_path);
-        Some((path.to_string(), name.to_string()))
-    }
-    let mut sites: Vec<(String, String, u32)> = Vec::new(); // (file, callee, 1-based line)
-    let mut picks: HashMap<(String, String), HashSet<String>> = HashMap::new(); // (file, callee name) -> def files
-    let mut section = "";
-    for line in stdout.lines() {
-        if line.starts_with("? call_site") { section = "site"; continue; }
-        if line.starts_with("? call_edge") { section = "edge"; continue; }
-        if line.starts_with('?') { section = ""; continue; }
-        let cells: Vec<&str> = line.trim_end().split('\t').collect();
-        match section {
-            "site" if cells.len() >= 5 => {
-                if let Ok(n) = cells[4].parse::<u32>() {
-                    if cells[3].starts_with("src/") {
-                        sites.push((cells[3].to_string(), cells[2].to_string(), n));
-                    }
-                }
-            }
-            "edge" if cells.len() >= 2 => {
-                if let (Some((cf, _)), Some((df, dn))) = (sym_parts(cells[0]), sym_parts(cells[1])) {
-                    picks.entry((cf, dn)).or_default().insert(df);
-                }
-            }
-            _ => {}
-        }
-    }
-    assert!(!sites.is_empty(), "no call sites extracted:\n{stdout}");
+    let stats = crate::oracle_parity::score_parity(&index, root, "src/", &stdout);
+    assert!(stats.total_sites > 0, "no call sites extracted:\n{stdout}");
+    assert!(stats.denom() > 0, "no RA-confirmable call sites; oracle can't score");
 
-    // --- score. A site enters the denominator only when RA slices exactly one
-    // def file for the callee's last name segment at that (file, line).
-    let (mut confirmed, mut wrong, mut bare, mut multi) = (0usize, 0usize, 0usize, 0usize);
-    let mut wrong_examples: Vec<String> = Vec::new();
-    for (file, callee, line1) in &sites {
-        let needle = callee.rsplit('.').next().unwrap_or(callee);
-        let Some(cands) = refs_at.get(&(file.clone(), line1.saturating_sub(1))) else { continue; };
-        let truths: HashSet<&String> = cands.iter()
-            .filter(|(slice, _)| slice == needle)
-            .map(|(_, def)| def).collect();
-        if truths.len() != 1 { continue; } // no truth or ambiguous truth: exclude
-        let truth = *truths.iter().next().unwrap();
-        // method-name picks are keyed both bare and Type.name; try both.
-        let ours = picks.get(&(file.clone(), callee.clone()))
-            .or_else(|| picks.get(&(file.clone(), needle.to_string())));
-        match ours {
-            None => bare += 1,
-            Some(set) if set.len() > 1 => multi += 1, // ambiguous pick: excluded, reported
-            Some(set) => {
-                let pick = set.iter().next().unwrap();
-                if pick == truth { confirmed += 1; }
-                else {
-                    wrong += 1;
-                    if wrong_examples.len() < 10 {
-                        wrong_examples.push(format!("{file}:{line1} {callee}: ours={pick} ra={truth}"));
-                    }
-                }
-            }
-        }
-    }
-    let denom = confirmed + wrong + bare;
-    assert!(denom > 0, "no RA-confirmable call sites; oracle can't score");
-    let parity = confirmed as f64 / denom as f64;
-    let precision = if confirmed + wrong == 0 { 1.0 }
-        else { confirmed as f64 / (confirmed + wrong) as f64 };
-    eprintln!("[oracle:parity] confirmed={confirmed} wrong={wrong} bare={bare} multi(excluded)={multi}");
+    eprintln!("[oracle:parity] confirmed={} wrong={} bare={} multi(excluded)={}",
+        stats.confirmed, stats.wrong, stats.bare, stats.multi);
     eprintln!("[oracle:parity] scip-parity={:.1}% (confirmed positives only) precision={:.3}",
-        parity * 100.0, precision);
-    for ex in &wrong_examples { eprintln!("[oracle:parity] wrong: {ex}"); }
-    assert!(confirmed > 0, "zero confirmed resolutions");
-    assert!(precision >= 0.95,
-        "resolver is buying coverage with wrong joins: precision {precision:.3} < 0.95; {wrong_examples:?}");
+        stats.parity() * 100.0, stats.precision());
+    for ex in &stats.wrong_examples { eprintln!("[oracle:parity] wrong: {ex}"); }
+    assert!(stats.confirmed > 0, "zero confirmed resolutions");
+    assert!(stats.precision() >= 0.95,
+        "resolver is buying coverage with wrong joins: precision {:.3} < 0.95; {:?}",
+        stats.precision(), stats.wrong_examples);
 }

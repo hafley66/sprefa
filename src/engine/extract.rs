@@ -297,6 +297,15 @@ impl Engine {
         let fileset: HashSet<String> = files.iter().map(|(p, _)| p.clone()).collect();
         let manifests = self.collect_manifests(rev, &fileset);
         let reader = |p: &str| read_content(&root, rev, p).ok();
+        // Loud-skip house pattern: `sys.path` mutation is runtime state a
+        // syntactic resolver can't simulate; count it and say so once per
+        // refresh rather than silently leaving affected imports unresolved.
+        let sys_path_mutators = modgraph::count_sys_path_mutators(&fileset, &reader);
+        if sys_path_mutators > 0 {
+            eprintln!(
+                "[modgraph:py] {sys_path_mutators} file(s) mutate sys.path at runtime ({rev}); imports they enable may show unresolved"
+            );
+        }
         let cx = ProjectCx::new(&root, &fileset, &manifests).with_reader(&reader);
         let selected: Vec<&(String, String)> = files.iter()
             .filter(|(path, _)| match only_paths {
@@ -529,17 +538,20 @@ impl Engine {
         Ok(())
     }
 
+    // LANG-JUNCTION(extract-file-set): the extension LIKE list gating which files reach TypeLang extraction; a new TypeLang's extensions must be added to this SQL too or its extractor never sees a file
     /// The extraction corpus: every `_file` row in a TypeLang extension, with
     /// its content address. One query serves the type/call/dataflow refreshers;
     /// the hash column is what makes both the whole-pass digest skip and the
     /// per-file fact cache content-keyed (perf gap A). The four plain-JS
-    /// extensions ride `TsTypes` alongside `.ts`/`.tsx` (Win H).
+    /// extensions ride `TsTypes` alongside `.ts`/`.tsx` (Win H); `.go` rides
+    /// `GoTypes`.
     fn extract_file_set(&self) -> Result<Vec<ExtractFile>> {
         let mut files: Vec<ExtractFile> = Vec::new();
         let mut sel = self.db.conn().prepare(
             "SELECT repo, path, rev, hash FROM _file WHERE path LIKE '%.rs' OR path LIKE '%.kt' OR path LIKE '%.kts' \
              OR path LIKE '%.ts' OR path LIKE '%.tsx' \
-             OR path LIKE '%.js' OR path LIKE '%.jsx' OR path LIKE '%.mjs' OR path LIKE '%.cjs'")?;
+             OR path LIKE '%.js' OR path LIKE '%.jsx' OR path LIKE '%.mjs' OR path LIKE '%.cjs' \
+             OR path LIKE '%.go' OR path LIKE '%.py'")?;
         let rows = sel.query_map([], |r| Ok((
             r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
             r.get::<_, Option<String>>(3)?.unwrap_or_default())))?;

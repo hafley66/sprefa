@@ -6007,11 +6007,12 @@ impl Engine {
         Ok(())
     }
 
-    /// Read the Cargo.toml / package.json manifests above the file set, at this
-    /// rev, into a map (manifest path -> contents) for the resolver's crate /
-    /// package registries. Probes the distinct ancestor directories of the files;
-    /// `read_content` errors (no such manifest) are skipped. Rev-correct (git show
-    /// for a git rev, disk for WORK).
+    // LANG-JUNCTION(manifest-probe): the manifest filename list probed above the scanned file set; a language whose module resolver reads a manifest (Cargo.toml, package.json, go.mod) must add its name here or the resolver gets no manifest content
+    /// Read the Cargo.toml / package.json / go.mod manifests above the file set,
+    /// at this rev, into a map (manifest path -> contents) for the resolver's
+    /// crate / package / module registries. Probes the distinct ancestor
+    /// directories of the files; `read_content` errors (no such manifest) are
+    /// skipped. Rev-correct (git show for a git rev, disk for WORK).
     fn collect_manifests(&self, rev: &str, files: &HashSet<String>) -> HashMap<String, String> {
         let mut dirs: HashSet<String> = HashSet::new();
         for f in files {
@@ -6023,7 +6024,7 @@ impl Engine {
         }
         let mut out = HashMap::new();
         for dir in dirs {
-            for name in ["Cargo.toml", "package.json"] {
+            for name in ["Cargo.toml", "package.json", "go.mod"] {
                 let rel = if dir.is_empty() { name.to_string() } else { format!("{dir}/{name}") };
                 if let Ok(content) = read_content(&self.root, rev, &rel) {
                     out.insert(rel, content);
@@ -8578,6 +8579,7 @@ extern "C" {
     fn tree_sitter_dockerfile() -> *const ();
 }
 
+// LANG-JUNCTION(ast-grammars): one table row = `ast` op support (tree-sitter constructor keyed by label); `comment_node` and the CST node/child rels also dispatch through `ts_lang`, via `cst::lang_label_for_path`
 /// The tree-sitter grammar table for the `ast` op (S-expression queries):
 /// `(canonical name, [extra aliases], constructor)`. Single source of truth so
 /// `ts_lang` (the resolver), the bail message, and `ast_langs` (the list the

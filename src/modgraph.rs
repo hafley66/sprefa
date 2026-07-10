@@ -60,8 +60,8 @@ pub struct CrateEdge {
 
 /// Per-(repo,rev) context shared across a language's `edges()` calls in one
 /// refresh. `files` is the project-relative path set; `manifests` maps each
-/// `Cargo.toml`/`package.json` path to its contents (used to build the crate /
-/// package registries lazily).
+/// `Cargo.toml`/`package.json`/`go.mod` path to its contents (used to build the
+/// crate / package / module registries lazily).
 pub struct ProjectCx<'a> {
     pub root: &'a Path,
     pub files: &'a HashSet<String>,
@@ -73,6 +73,8 @@ pub struct ProjectCx<'a> {
     rust_crates: OnceLock<RustCrates>,
     ts_packages: OnceLock<HashMap<String, String>>,
     kotlin: OnceLock<KotlinIndex>,
+    go: OnceLock<GoIndex>,
+    python_roots: OnceLock<Vec<String>>,
 }
 
 impl<'a> ProjectCx<'a> {
@@ -89,6 +91,8 @@ impl<'a> ProjectCx<'a> {
             rust_crates: OnceLock::new(),
             ts_packages: OnceLock::new(),
             kotlin: OnceLock::new(),
+            go: OnceLock::new(),
+            python_roots: OnceLock::new(),
         }
     }
 
@@ -105,9 +109,17 @@ impl<'a> ProjectCx<'a> {
             .get_or_init(|| KotlinIndex::build(self.files, self.reader))
     }
 
+    fn python_roots(&self) -> &Vec<String> {
+        self.python_roots.get_or_init(|| py_import_roots(self.files))
+    }
+
     fn rust_crates(&self) -> &RustCrates {
         self.rust_crates
             .get_or_init(|| RustCrates::build(self.files, self.manifests))
+    }
+
+    fn go_index(&self) -> &GoIndex {
+        self.go.get_or_init(|| GoIndex::build(self.files, self.manifests))
     }
 
     /// npm/pnpm workspace package name -> the package's directory (manifest parent).
@@ -133,6 +145,7 @@ pub trait ModuleResolver: Send + Sync {
     fn edges(&self, file: &str, content: &str, cx: &ProjectCx) -> Vec<ModuleRef>;
 }
 
+// LANG-JUNCTION(module-resolvers): per-language import resolver registration; buys module_edge/module_unresolved/module_binding plus the name resolver's alias hop and import-scoped ambiguity narrowing
 /// Map a file's extension to its resolver. Built per refresh (root-scoped for TS).
 pub fn resolvers(root: &Path) -> Vec<Box<dyn ModuleResolver + Send + Sync>> {
     let mut v: Vec<Box<dyn ModuleResolver + Send + Sync>> = vec![Box::new(RustResolver)];
@@ -140,6 +153,8 @@ pub fn resolvers(root: &Path) -> Vec<Box<dyn ModuleResolver + Send + Sync>> {
         v.push(Box::new(ts));
     }
     v.push(Box::new(KotlinResolver));
+    v.push(Box::new(GoResolver));
+    v.push(Box::new(PyResolver));
     v
 }
 
@@ -1391,6 +1406,538 @@ impl ModuleResolver for KotlinResolver {
     }
 }
 
+// ── Go ──────────────────────────────────────────────────────────────────────
+//
+// Static resolution without the go tool. `go.mod`'s `module <path>` line is the
+// import-path namespace root for the tree under it; every directory below that
+// root is one package (Go's "one package per directory" rule), so an import
+// resolves to the WHOLE set of `.go` files in its target directory — same
+// wildcard-style fan-out as a Kotlin `import a.b.*`, just unconditional (Go has
+// no per-symbol import). Aliased imports (`import f "some/path"`) carry a local
+// binding whose source name is the import path's last segment (the package's
+// conventional default name — Go does not require the alias to match the
+// package's actual `package` clause, but the last path segment IS that
+// convention in the overwhelming majority of real code, and this tier is
+// syntax-only by design). Cross-module resolution (an import naming a
+// DIFFERENT module than any `go.mod` in the file set) is a non-goal: it lands
+// `External`, honestly, same as a stdlib import.
+pub struct GoResolver;
+
+struct GoIndex {
+    /// (module import-path prefix, project-relative root directory) pairs,
+    /// longest prefix first so a nested module's `go.mod` wins over an
+    /// enclosing one for the same import path.
+    modules: Vec<(String, String)>,
+    /// project-relative directory (`""` for the repo/module root) -> its `.go`
+    /// files, sorted for deterministic output.
+    dirs: HashMap<String, Vec<String>>,
+}
+
+fn go_module_re() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?m)^[ \t]*module[ \t]+(\S+)").unwrap())
+}
+
+/// A single-line `import "path"` or `import alias "path"` (alias absent for a
+/// plain import, `_`/`.` for a blank/dot import). Anchored to `^import` so an
+/// arbitrary quoted string elsewhere in the file (a struct tag, a format
+/// string) is never mistaken for one.
+fn go_import_single_re() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(
+        r#"(?m)^[ \t]*import[ \t]+(?:(_|\.|\w+)[ \t]+)?"([^"]*)""#).unwrap())
+}
+
+/// The parenthesized body of a grouped `import (...)` block. Go import blocks
+/// never contain literal parens, so a non-nesting `[^()]*` is exact.
+fn go_import_block_re() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?s)import[ \t]*\(([^()]*)\)").unwrap())
+}
+
+/// One import line INSIDE a block's body (see `go_import_block_re`): same shape
+/// as the single-line form, applied per line of the block's inner text.
+fn go_import_line_re() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(
+        r#"(?m)^[ \t]*(?:(_|\.|\w+)[ \t]+)?"([^"]*)""#).unwrap())
+}
+
+fn go_join_dir(root_dir: &str, rest: &str) -> String {
+    match (root_dir.is_empty(), rest.is_empty()) {
+        (true, _) => rest.to_string(),
+        (false, true) => root_dir.to_string(),
+        (false, false) => format!("{root_dir}/{rest}"),
+    }
+}
+
+impl GoIndex {
+    fn build(files: &HashSet<String>, manifests: &HashMap<String, String>) -> Self {
+        let mut modules: Vec<(String, String)> = Vec::new();
+        for (path, content) in manifests {
+            if !path.ends_with("go.mod") {
+                continue;
+            }
+            let Some(m) = go_module_re().captures(content) else { continue };
+            modules.push((m[1].to_string(), parent_dir(path)));
+        }
+        modules.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+
+        let mut dirs: HashMap<String, Vec<String>> = HashMap::new();
+        for f in files {
+            if !f.ends_with(".go") {
+                continue;
+            }
+            dirs.entry(parent_dir(f)).or_default().push(f.clone());
+        }
+        for v in dirs.values_mut() {
+            v.sort();
+        }
+        GoIndex { modules, dirs }
+    }
+
+    /// Longest-module-prefix resolution: the import path either equals a
+    /// module's own root package or names a directory under it; either way the
+    /// whole target directory's files resolve (Go's one-package-per-dir rule
+    /// makes narrower, symbol-level resolution unnecessary). No module claims
+    /// the prefix (a stdlib or third-party import, or a sibling module outside
+    /// this file set) -> External.
+    fn resolve(&self, spec: &str) -> Vec<Resolution> {
+        for (module_path, root_dir) in &self.modules {
+            let dir = if spec == module_path.as_str() {
+                Some(root_dir.clone())
+            } else {
+                spec.strip_prefix(module_path.as_str())
+                    .and_then(|rest| rest.strip_prefix('/'))
+                    .map(|rest| go_join_dir(root_dir, rest))
+            };
+            let Some(dir) = dir else { continue };
+            return match self.dirs.get(&dir) {
+                Some(fs) if !fs.is_empty() => fs.iter().map(|f| Resolution::File(f.clone())).collect(),
+                _ => vec![Resolution::Unresolved(format!("{spec}: no .go files in \"{dir}\""))],
+            };
+        }
+        vec![Resolution::External(spec.to_string())]
+    }
+}
+
+/// Emit zero or more `ModuleRef` rows for one `import` occurrence: one File
+/// row per file in the target directory (Go's whole-package fan-out), or one
+/// Unresolved/External row. A blank (`spec` empty, a malformed capture) import
+/// is skipped.
+fn push_go_import(
+    out: &mut Vec<ModuleRef>,
+    idx: &GoIndex,
+    clean: &str,
+    alias: Option<&str>,
+    spec: &str,
+    start: usize,
+    end: usize,
+) {
+    if spec.is_empty() {
+        return;
+    }
+    let line = line_of(clean, start);
+    let span = Some((start as u32, end as u32));
+    for target in idx.resolve(spec) {
+        let bindings = match (alias, &target) {
+            (Some(a), Resolution::File(_)) if a != "_" && a != "." => {
+                let source = spec.rsplit('/').next().unwrap_or(spec).to_string();
+                vec![(a.to_string(), source)]
+            }
+            _ => vec![],
+        };
+        out.push(ModuleRef {
+            specifier: spec.to_string(),
+            kind: "import",
+            line,
+            span,
+            target,
+            bindings,
+        });
+    }
+}
+
+impl ModuleResolver for GoResolver {
+    fn exts(&self) -> &'static [&'static str] {
+        &["go"]
+    }
+
+    fn edges(&self, file: &str, content: &str, cx: &ProjectCx) -> Vec<ModuleRef> {
+        let _ = file;
+        // Go string literals ARE the specifiers (like TS), so keep their
+        // content; only comments are blanked.
+        let clean = strip_noise(content, false);
+        let idx = cx.go_index();
+        let mut out = Vec::new();
+        // A single-line import inside the SAME file as a block needs no dedup
+        // guard: `go_import_single_re` is anchored to a line starting
+        // literally with `import`, and no line inside a `(...)` block does —
+        // the two passes never double-count the same specifier.
+        for c in go_import_block_re().captures_iter(&clean) {
+            let inner = c.get(1).unwrap();
+            let base = inner.start();
+            for lc in go_import_line_re().captures_iter(inner.as_str()) {
+                let alias = lc.get(1).map(|m| m.as_str());
+                let spec_m = lc.get(2).unwrap();
+                push_go_import(&mut out, idx, &clean, alias, spec_m.as_str(), base + spec_m.start(), base + spec_m.end());
+            }
+        }
+        for c in go_import_single_re().captures_iter(&clean) {
+            let alias = c.get(1).map(|m| m.as_str());
+            let spec_m = c.get(2).unwrap();
+            push_go_import(&mut out, idx, &clean, alias, spec_m.as_str(), spec_m.start(), spec_m.end());
+        }
+        out
+    }
+}
+
+// ── Python ──────────────────────────────────────────────────────────────────
+//
+// Purely path-based (no compiler, no content index needed beyond the import
+// text itself). Python's real import roots are RUNTIME state (PYTHONPATH,
+// `sys.path.insert`, `.pth` files) that a syntactic pass can't and shouldn't
+// simulate, so an absolute `import a.b.c` / `from a.b.c import x` is tried
+// under every CANDIDATE root discovered from the scanned file set (the
+// `rspath::crate_roots` precedent — see `py_import_roots`): the repo root
+// itself, any `src/` directly under it (src-layout), and the parent of every
+// top-level package (a directory holding `__init__.py` whose own parent does
+// not). Resolving under exactly ONE candidate root wins; resolving under two
+// or more roots to DIFFERENT files stays Unresolved (loud, not a guess — the
+// same honesty law as the module_binding alias hop). `sys.path` mutation is
+// NEVER followed, only detected and counted (see `count_sys_path_mutators`).
+// Relative imports (`from . import x`, `from .sub import y`) are UNAFFECTED
+// by root discovery — they resolve off the IMPORTING FILE'S OWN package
+// directory (its parent dir — true for both a regular module and its
+// package's `__init__.py`), consuming one directory level per dot past the
+// first (1 dot = the current package itself). A relative import that fails
+// to resolve is always Unresolved (loud): by definition it can never be
+// "external". An absolute import that fails under every root resolves
+// External UNLESS its top-level segment is clearly part of this project's
+// own tree (a same-named top-level file/dir exists under some root), in
+// which case it's Unresolved (loud) — the same known-package-but-missing-
+// target split Kotlin's resolver makes. `from m import *` is NEVER expanded
+// (a stated non-goal): always Unresolved, even when `m` itself would
+// resolve, so a star import never silently produces a wrong or absent edge.
+// NON-GOAL: a `py_root(path)` user-fact seam (letting a program declare its
+// own import roots) was considered and deferred — it would need the
+// declared-sink treatment (like `repo`/`diag`), not a resolver-internal read.
+
+pub struct PyResolver;
+
+/// Candidate absolute-import roots for a Python file set, longest-path-first
+/// (deterministic tie-break: length, then lexicographic) — mirrors
+/// `rspath::crate_roots`'s "derive roots from the scanned tree, no manifest
+/// required" shape. Candidates: (a) the repo root itself (`""`); (b) a `src`
+/// directory directly under the repo root, when any scanned file starts with
+/// `src/` (src-layout); (c) the PARENT of every top-level package — a
+/// directory containing `__init__.py` whose own parent does NOT also contain
+/// one (so a nested sub-package doesn't ALSO offer its immediate parent as a
+/// root; only the outermost package boundary does).
+fn py_import_roots(files: &HashSet<String>) -> Vec<String> {
+    let mut roots: HashSet<String> = HashSet::new();
+    roots.insert(String::new());
+    if files.iter().any(|f| f.starts_with("src/")) {
+        roots.insert("src".to_string());
+    }
+    let init_dirs: HashSet<String> = files.iter()
+        .filter(|f| f.ends_with("/__init__.py") || f.as_str() == "__init__.py")
+        .map(|f| parent_dir(f))
+        .collect();
+    for dir in &init_dirs {
+        let parent = parent_dir(dir);
+        if !init_dirs.contains(&parent) {
+            roots.insert(parent);
+        }
+    }
+    let mut out: Vec<String> = roots.into_iter().collect();
+    out.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    out
+}
+
+/// Cheap, never-followed `sys.path` mutation detector: a file containing
+/// `sys.path.insert` or `sys.path.append` might enable imports that resolve
+/// only at runtime — simulating that would mean interpreting Python, which
+/// this diet extractor deliberately does not do. Counted instead, so the
+/// caller can print ONE loud summary line per refresh explaining why some
+/// imports in a root-discovery-defeating layout stay unresolved.
+pub fn count_sys_path_mutators(
+    files: &HashSet<String>,
+    reader: &dyn Fn(&str) -> Option<String>,
+) -> usize {
+    files.iter()
+        .filter(|f| f.ends_with(".py"))
+        .filter_map(|f| reader(f))
+        .filter(|content| content.contains("sys.path.insert") || content.contains("sys.path.append"))
+        .count()
+}
+
+/// `import a.b.c[ as alias][, d.e[ as alias2]]*` — one or more comma-separated
+/// dotted specifiers on one statement, each independently resolved (a plain
+/// `import a.b, c.d` really does depend on two distinct modules).
+fn py_import_re() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(
+        r"(?m)^[ \t]*import[ \t]+([A-Za-z_][\w.]*(?:[ \t]+as[ \t]+[A-Za-z_]\w*)?(?:[ \t]*,[ \t]*[A-Za-z_][\w.]*(?:[ \t]+as[ \t]+[A-Za-z_]\w*)?)*)"
+    ).unwrap())
+}
+
+/// `from <dots><module> import <names>` — group 1 is the leading dots (empty
+/// for an absolute import), group 2 the optional dotted module name after
+/// them, group 3 the name list: `*`, a parenthesized (possibly multi-line)
+/// list, or the rest of the physical line.
+fn py_from_import_re() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(
+        r"(?m)^[ \t]*from[ \t]+(\.*)([A-Za-z_][\w.]*)?[ \t]+import[ \t]+(\*|\([^)]*\)|[^\n]+)"
+    ).unwrap())
+}
+
+/// Split an import name list (`a, b as c, (d,\n e as f,\n)`) into (name, alias)
+/// pairs. Parens (multi-line `from` form) are stripped first; a trailing comma
+/// before the close-paren leaves one empty item, dropped.
+fn parse_py_import_list(text: &str) -> Vec<(String, Option<String>)> {
+    let inner = text.trim();
+    let inner = inner.strip_prefix('(').and_then(|r| r.strip_suffix(')')).unwrap_or(inner);
+    let mut out = Vec::new();
+    for item in inner.split(',') {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        match item.split_once(" as ") {
+            Some((name, alias)) => out.push((name.trim().to_string(), Some(alias.trim().to_string()))),
+            None => out.push((item.to_string(), None)),
+        }
+    }
+    out
+}
+
+/// `#` line comments (never `//`/`/* */` in Python) and every string literal
+/// (single/double, triple-quoted, any `r`/`b`/`f`/`u` prefix — prefixes don't
+/// change the quote scan) blanked to spaces, newlines kept, so an `import`
+/// inside a comment or a docstring never produces a phantom edge.
+fn strip_python(src: &str) -> String {
+    let b = src.as_bytes();
+    let n = b.len();
+    let mut out = Vec::with_capacity(n);
+    let mut i = 0;
+    let blank_to = |out: &mut Vec<u8>, from: usize, to: usize| {
+        for k in from..to {
+            out.push(if b[k] == b'\n' { b'\n' } else { b' ' });
+        }
+    };
+    while i < n {
+        let c = b[i];
+        if c == b'#' {
+            let s = i;
+            while i < n && b[i] != b'\n' {
+                i += 1;
+            }
+            blank_to(&mut out, s, i);
+            continue;
+        }
+        if c == b'"' || c == b'\'' {
+            let quote = c;
+            let s = i;
+            let triple = i + 2 < n && b[i + 1] == quote && b[i + 2] == quote;
+            if triple {
+                i += 3;
+                while i + 2 < n && !(b[i] == quote && b[i + 1] == quote && b[i + 2] == quote) {
+                    if b[i] == b'\\' { i += 2; continue; }
+                    i += 1;
+                }
+                i = (i + 3).min(n);
+            } else {
+                i += 1;
+                while i < n && b[i] != quote && b[i] != b'\n' {
+                    if b[i] == b'\\' { i += 2; continue; }
+                    i += 1;
+                }
+                if i < n && b[i] == quote {
+                    i += 1;
+                }
+            }
+            blank_to(&mut out, s, i);
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| src.to_string())
+}
+
+/// `a.b.c` -> `a/b/c/__init__.py` or `a/b/c.py`, tried under every candidate
+/// `root` (see `py_import_roots`). Resolving under exactly one root wins;
+/// resolving under 2+ roots to DIFFERENT files stays Unresolved (ambiguous,
+/// loud — never a silent guess at which root the runtime would have used). A
+/// clean miss resolves Unresolved when the top-level segment is clearly part
+/// of this project under SOME root (a same-named top-level file/dir exists),
+/// else External (assume stdlib/third-party).
+fn py_resolve_absolute(dotted: &str, files: &HashSet<String>, roots: &[String]) -> Resolution {
+    let rel = dotted.replace('.', "/");
+    let mut hits: Vec<String> = Vec::new();
+    for root in roots {
+        let base = if root.is_empty() { rel.clone() } else { format!("{root}/{rel}") };
+        let init = format!("{base}/__init__.py");
+        if files.contains(&init) {
+            if !hits.contains(&init) { hits.push(init); }
+            continue;
+        }
+        let modf = format!("{base}.py");
+        if files.contains(&modf) && !hits.contains(&modf) {
+            hits.push(modf);
+        }
+    }
+    match hits.len() {
+        1 => Resolution::File(hits.into_iter().next().unwrap()),
+        n if n >= 2 => {
+            Resolution::Unresolved(format!("{dotted}: ambiguous across {n} candidate import roots: {hits:?}"))
+        }
+        _ => {
+            let top = dotted.split('.').next().unwrap_or(dotted);
+            let known = roots.iter().any(|root| {
+                let (top_dir, top_file) = if root.is_empty() {
+                    (format!("{top}/"), format!("{top}.py"))
+                } else {
+                    (format!("{root}/{top}/"), format!("{root}/{top}.py"))
+                };
+                files.iter().any(|f| f == &top_file || f.starts_with(&top_dir))
+            });
+            if known {
+                Resolution::Unresolved(format!("{dotted}: no matching module/package under any candidate import root"))
+            } else {
+                Resolution::External(dotted.to_string())
+            }
+        }
+    }
+}
+
+/// A relative import resolves off the importing file's OWN package directory
+/// (its parent dir — true for both a plain module and its package's
+/// `__init__.py`): 1 dot = that directory itself, each further dot pops one
+/// more directory level. Never External — a relative import always names
+/// something inside this project, so an unresolved one is loud, not silent.
+fn py_resolve_relative(dots: usize, dotted: &str, importing_file: &str, files: &HashSet<String>) -> Resolution {
+    let spec_text = format!("{}{}", ".".repeat(dots), dotted);
+    let base_dir = parent_dir(importing_file);
+    let mut comps: Vec<&str> = if base_dir.is_empty() { vec![] } else { base_dir.split('/').collect() };
+    let pops = dots.saturating_sub(1);
+    if pops > comps.len() {
+        return Resolution::Unresolved(format!("{spec_text}: relative import escapes the scanned tree"));
+    }
+    comps.truncate(comps.len() - pops);
+    let mut path = comps.join("/");
+    if !dotted.is_empty() {
+        if !path.is_empty() {
+            path.push('/');
+        }
+        path.push_str(&dotted.replace('.', "/"));
+    }
+    let init = if path.is_empty() { "__init__.py".to_string() } else { format!("{path}/__init__.py") };
+    if files.contains(&init) {
+        return Resolution::File(init);
+    }
+    if !path.is_empty() {
+        let modf = format!("{path}.py");
+        if files.contains(&modf) {
+            return Resolution::File(modf);
+        }
+    }
+    Resolution::Unresolved(format!("{spec_text}: unresolved relative import"))
+}
+
+impl ModuleResolver for PyResolver {
+    fn exts(&self) -> &'static [&'static str] {
+        &["py"]
+    }
+
+    fn edges(&self, file: &str, content: &str, cx: &ProjectCx) -> Vec<ModuleRef> {
+        let clean = strip_python(content);
+        let roots = cx.python_roots();
+        let mut out = Vec::new();
+
+        // `import a.b.c[ as alias][, ...]*`: each dotted name is its own
+        // dependency, resolved and pushed independently.
+        for c in py_import_re().captures_iter(&clean) {
+            let list_span = c.get(1).unwrap();
+            let line = line_of(&clean, c.get(0).unwrap().start());
+            let span = Some((list_span.start() as u32, list_span.end() as u32));
+            for (dotted, alias) in parse_py_import_list(list_span.as_str()) {
+                let target = py_resolve_absolute(&dotted, cx.files, roots);
+                let bindings = match (&alias, &target) {
+                    (Some(a), Resolution::File(_)) => {
+                        let source = dotted.rsplit('.').next().unwrap_or(&dotted);
+                        vec![(a.clone(), source.to_string())]
+                    }
+                    _ => vec![],
+                };
+                out.push(ModuleRef {
+                    specifier: dotted,
+                    kind: "import",
+                    line,
+                    span,
+                    target,
+                    bindings,
+                });
+            }
+        }
+
+        // `from <dots><module> import <names>`: one specifier, one ModuleRef,
+        // every named import's (local, source) binding attached to it.
+        for c in py_from_import_re().captures_iter(&clean) {
+            let dots = c.get(1).map(|m| m.as_str().len()).unwrap_or(0);
+            let module = c.get(2).map(|m| m.as_str()).unwrap_or("");
+            if dots == 0 && module.is_empty() {
+                continue; // `from import x` is not valid Python; defensive skip
+            }
+            let names_text = c.get(3).map(|m| m.as_str()).unwrap_or("");
+            let whole = c.get(0).unwrap();
+            let line = line_of(&clean, whole.start());
+            let span = Some((whole.start() as u32, whole.end() as u32));
+            let spec = format!("{}{}", ".".repeat(dots), module);
+
+            if names_text.trim() == "*" {
+                out.push(ModuleRef {
+                    specifier: format!("{spec}.*"),
+                    kind: "import",
+                    line,
+                    span,
+                    target: Resolution::Unresolved(format!("{spec}.*: star import not expanded")),
+                    bindings: vec![],
+                });
+                continue;
+            }
+
+            let target = if dots > 0 {
+                py_resolve_relative(dots, module, file, cx.files)
+            } else {
+                py_resolve_absolute(module, cx.files, roots)
+            };
+            let names = parse_py_import_list(names_text);
+            if names.is_empty() {
+                continue;
+            }
+            let bindings: Vec<(String, String)> = if matches!(target, Resolution::File(_)) {
+                names.iter().map(|(name, alias)| {
+                    let local = alias.clone().unwrap_or_else(|| name.clone());
+                    (local, name.clone())
+                }).collect()
+            } else {
+                vec![]
+            };
+            out.push(ModuleRef {
+                specifier: spec,
+                kind: "import",
+                line,
+                span,
+                target,
+                bindings,
+            });
+        }
+        out
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1881,5 +2428,187 @@ mod tests {
             Resolution::File("crateB/src/foo.rs".into()),
             "package= rename must resolve: {e:?}"
         );
+    }
+
+    fn go_manifest(module: &str) -> HashMap<String, String> {
+        let mut m = HashMap::new();
+        m.insert("go.mod".to_string(), format!("module {module}\n\ngo 1.22\n"));
+        m
+    }
+
+    #[test]
+    fn go_single_import_resolves_to_package_dir() {
+        let files = set(&["main.go", "pkg/store/store.go", "pkg/store/repo.go"]);
+        let m = go_manifest("example.com/app");
+        let c = cx(Path::new("/repo"), &files, &m);
+        let content = "package main\n\nimport \"example.com/app/pkg/store\"\n\nfunc main() {}\n";
+        let e = GoResolver.edges("main.go", content, &c);
+        // whole-package fan-out: BOTH files in the target dir resolve.
+        let mut got: Vec<&str> = e.iter().filter_map(|r| match &r.target {
+            Resolution::File(f) => Some(f.as_str()),
+            _ => None,
+        }).collect();
+        got.sort();
+        assert_eq!(got, vec!["pkg/store/repo.go", "pkg/store/store.go"], "{e:?}");
+    }
+
+    #[test]
+    fn go_grouped_import_block_aliased_and_unresolved() {
+        let files = set(&["main.go", "pkg/store/store.go"]);
+        let m = go_manifest("example.com/app");
+        let c = cx(Path::new("/repo"), &files, &m);
+        let content = "\
+package main
+
+import (
+\t\"fmt\"
+\ts \"example.com/app/pkg/store\"
+\t\"example.com/app/pkg/missing\"
+)
+
+func main() {}
+";
+        let e = GoResolver.edges("main.go", content, &c);
+        let fmt_row = e.iter().find(|r| r.specifier == "fmt").expect("fmt row");
+        assert_eq!(fmt_row.target, Resolution::External("fmt".into()));
+        let store_row = e.iter().find(|r| r.specifier == "example.com/app/pkg/store").expect("store row");
+        assert_eq!(store_row.target, Resolution::File("pkg/store/store.go".into()));
+        assert_eq!(store_row.bindings, vec![("s".to_string(), "store".to_string())]);
+        let missing_row = e.iter().find(|r| r.specifier == "example.com/app/pkg/missing").expect("missing row");
+        assert!(matches!(missing_row.target, Resolution::Unresolved(_)), "{missing_row:?}");
+    }
+
+    #[test]
+    fn go_blank_and_dot_imports_carry_no_binding() {
+        let files = set(&["main.go", "pkg/store/store.go"]);
+        let m = go_manifest("example.com/app");
+        let c = cx(Path::new("/repo"), &files, &m);
+        let content = "\
+package main
+
+import (
+\t_ \"example.com/app/pkg/store\"
+\t. \"example.com/app/pkg/store\"
+)
+";
+        let e = GoResolver.edges("main.go", content, &c);
+        assert!(e.iter().all(|r| r.bindings.is_empty()), "{e:?}");
+        assert_eq!(e.len(), 2, "{e:?}");
+    }
+
+    #[test]
+    fn go_no_module_leaves_every_import_external() {
+        let files = set(&["main.go"]);
+        let m = no_manifests();
+        let c = cx(Path::new("/repo"), &files, &m);
+        let e = GoResolver.edges("main.go", "package main\n\nimport \"example.com/app/pkg/store\"\n", &c);
+        assert_eq!(e[0].target, Resolution::External("example.com/app/pkg/store".into()));
+    }
+    #[test]
+    fn python_absolute_import_package_and_module() {
+        let files = set(&["pkg/__init__.py", "pkg/sub.py", "app.py"]);
+        let m = no_manifests();
+        let c = cx(Path::new("/repo"), &files, &m);
+        let e = PyResolver.edges("app.py", "import pkg\nimport pkg.sub\n", &c);
+        assert!(e.iter().any(|r| r.specifier == "pkg" && r.target == Resolution::File("pkg/__init__.py".into())), "{e:?}");
+        assert!(e.iter().any(|r| r.specifier == "pkg.sub" && r.target == Resolution::File("pkg/sub.py".into())), "{e:?}");
+    }
+
+    #[test]
+    fn python_import_alias_captured() {
+        let files = set(&["pkg/sub.py", "app.py"]);
+        let m = no_manifests();
+        let c = cx(Path::new("/repo"), &files, &m);
+        let e = PyResolver.edges("app.py", "import pkg.sub as sub\n", &c);
+        let r = e.iter().find(|r| r.specifier == "pkg.sub").unwrap();
+        assert_eq!(r.bindings, vec![("sub".to_string(), "sub".to_string())]);
+    }
+
+    #[test]
+    fn python_from_import_names_and_alias() {
+        let files = set(&["pkg/sub.py", "app.py"]);
+        let m = no_manifests();
+        let c = cx(Path::new("/repo"), &files, &m);
+        let e = PyResolver.edges("app.py", "from pkg.sub import make as build, other\n", &c);
+        let r = e.iter().find(|r| r.specifier == "pkg.sub").expect("one ModuleRef for the statement");
+        assert_eq!(r.target, Resolution::File("pkg/sub.py".into()));
+        assert!(r.bindings.contains(&("build".to_string(), "make".to_string())), "{r:?}");
+        // even a non-aliased name gets an (local=source) binding row, per spec.
+        assert!(r.bindings.contains(&("other".to_string(), "other".to_string())), "{r:?}");
+    }
+
+    #[test]
+    fn python_relative_import_resolves_off_importing_package() {
+        let files = set(&["pkg/__init__.py", "pkg/a.py", "pkg/sub/__init__.py", "pkg/sub/b.py"]);
+        let m = no_manifests();
+        let c = cx(Path::new("/repo"), &files, &m);
+        // one dot = the current package (pkg/sub's own dir).
+        let e1 = PyResolver.edges("pkg/sub/b.py", "from . import missing\n", &c);
+        // "missing" isn't a submodule of pkg/sub, so this resolves to the
+        // package's own __init__.py per the "from module import name targets
+        // the module file" simplification.
+        assert!(e1.iter().any(|r| r.target == Resolution::File("pkg/sub/__init__.py".into())), "{e1:?}");
+        // two dots pop up to pkg/, reaching sibling module `a`.
+        let e2 = PyResolver.edges("pkg/sub/b.py", "from .. import a\n", &c);
+        assert!(e2.iter().any(|r| r.target == Resolution::File("pkg/__init__.py".into())), "{e2:?}");
+    }
+
+    #[test]
+    fn python_star_import_is_unresolved_not_silent() {
+        let files = set(&["pkg/__init__.py", "app.py"]);
+        let m = no_manifests();
+        let c = cx(Path::new("/repo"), &files, &m);
+        let e = PyResolver.edges("app.py", "from pkg import *\n", &c);
+        assert!(matches!(&e[0].target, Resolution::Unresolved(_)), "{e:?}");
+    }
+
+    #[test]
+    fn python_unknown_absolute_import_is_external() {
+        let files = set(&["app.py"]);
+        let m = no_manifests();
+        let c = cx(Path::new("/repo"), &files, &m);
+        let e = PyResolver.edges("app.py", "import os\nimport requests\n", &c);
+        assert!(e.iter().all(|r| matches!(r.target, Resolution::External(_))), "{e:?}");
+    }
+
+    #[test]
+    fn python_src_layout_root_discovery() {
+        // src-layout: the package lives under src/, an absolute import from
+        // a file OUTSIDE src/ must still resolve via the discovered `src` root.
+        let files = set(&["src/pkg/__init__.py", "src/pkg/mod.py", "tests/test_mod.py"]);
+        let m = no_manifests();
+        let c = cx(Path::new("/repo"), &files, &m);
+        let e = PyResolver.edges("tests/test_mod.py", "import pkg.mod\n", &c);
+        assert!(
+            e.iter().any(|r| r.target == Resolution::File("src/pkg/mod.py".into())),
+            "{e:?}"
+        );
+    }
+
+    #[test]
+    fn python_ambiguous_across_two_roots_stays_unresolved() {
+        // the same package name reachable under two distinct top-level
+        // package roots must NOT guess — stays Unresolved, loud.
+        let files = set(&[
+            "alpha/pkg/__init__.py",
+            "beta/pkg/__init__.py",
+            "app.py",
+        ]);
+        let m = no_manifests();
+        let c = cx(Path::new("/repo"), &files, &m);
+        let e = PyResolver.edges("app.py", "import pkg\n", &c);
+        let r = e.iter().find(|r| r.specifier == "pkg").unwrap();
+        assert!(matches!(&r.target, Resolution::Unresolved(_)), "{r:?}");
+    }
+
+    #[test]
+    fn python_comment_and_string_import_is_ignored() {
+        let files = set(&["real.py", "app.py"]);
+        let m = no_manifests();
+        let c = cx(Path::new("/repo"), &files, &m);
+        let src = "# import fake_from_comment\ns = \"import fake_from_string\"\nimport real\n";
+        let e = PyResolver.edges("app.py", src, &c);
+        assert!(e.iter().all(|r| !r.specifier.contains("fake")), "{e:?}");
+        assert!(e.iter().any(|r| r.specifier == "real"), "{e:?}");
     }
 }

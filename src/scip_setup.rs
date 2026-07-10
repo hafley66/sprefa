@@ -47,6 +47,7 @@ struct Indexer {
     run: &'static [&'static str],
 }
 
+// LANG-JUNCTION(scip-indexers): the real-SCIP tier; one Indexer row (marker files, binary, install hint, argv) = `dl index` / `dl doctor` / `scip_want` support for the language
 const INDEXERS: &[Indexer] = &[
     Indexer {
         lang: "rust",
@@ -73,7 +74,7 @@ const INDEXERS: &[Indexer] = &[
         lang: "go",
         markers: &["go.mod"],
         bin: "scip-go",
-        install: "go install github.com/sourcegraph/scip-go/cmd/scip-go@latest",
+        install: "go install github.com/scip-code/scip-go/cmd/scip-go@latest",
         run: &["scip-go", "--output", "{out}"],
     },
     Indexer {

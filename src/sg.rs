@@ -3,6 +3,7 @@ use ast_grep_config::{DeserializeEnv, SerializableRuleCore};
 use ast_grep_core::{AstGrep, Pattern};
 use ast_grep_language::{LanguageExt, SupportLang};
 
+// LANG-JUNCTION(sg-grammars): one table row = `sg` + `ast_yaml` op support for a grammar (canonical name, aliases, ast-grep SupportLang); the skill language matrix test asserts this table
 /// The ast-grep grammar table: `(canonical name, [extra aliases], SupportLang)`.
 /// Single source of truth so `sg_lang` (the resolver) and `sg_langs` (the
 /// canonical list the skill language matrix must match) can never drift. Adding
