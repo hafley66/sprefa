@@ -188,11 +188,18 @@ raw("hi").
 
 // ---- daemon path ------------------------------------------------------------
 
+/// Spawn a foreground singleton whose home is `<dir>/home` (hermetic:
+/// XDG_STATE_HOME sandbox + no ambient ~/.config/sprefa repos), serving `dir`.
 fn run_daemon(dir: &PathBuf) -> DaemonGuard {
+    let home = dir.join("home");
+    fs::create_dir_all(&home).unwrap();
     DaemonGuard(Command::new(DL)
-        .args(["daemon", "start"])
+        .args(["daemon", "start", "--foreground"])
         .arg(dir.join("p.dl"))
-        .current_dir(dir).env("DL_DAEMON_ROOT", dir)
+        .current_dir(dir)
+        .env("DL_DAEMON_ROOT", dir)
+        .env("XDG_STATE_HOME", &home)
+        .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
         .stdout(Stdio::null()).stderr(Stdio::null())
         .spawn().expect("spawn dl daemon"))
 }
@@ -235,16 +242,20 @@ fn query_aggregate_over_daemon() {
     fs::write(dir.join("p.dl"), format!("{SALES}? sale(dept, count(n), _).\n")).unwrap();
 
     let mut child = run_daemon(&dir);
-    let sock = dir.join(".dl").join("daemon.sock");
+    let sock = sprefa_v5::daemon::socket_path_for(&dir.join("home").join("sprefa"));
     let mut ready = false;
-    for _ in 0..100 {
+    for _ in 0..200 {
         if sock.exists() && std::os::unix::net::UnixStream::connect(&sock).is_ok() { ready = true; break; }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
     assert!(ready, "daemon socket not ready");
 
     let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
-    let body = r#"{"jsonrpc":"2.0","id":2,"method":"query","params":{}}"#;
+    let body = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "query",
+        "params": {"root": dir.to_string_lossy()},
+    }).to_string();
+    let body = body.as_str();
     write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
     let resp = read_frame(&mut s).expect("query response");
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
