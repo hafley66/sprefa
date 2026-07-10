@@ -17,22 +17,9 @@
 # a flag — src/cli/root.rs), so dl.what/dl.verb/dl.rows read that worktree's
 # own graph.
 #
-# FINDING (S1, filed against S0's --mcp adapter, not fixed here — see the
-# harness report): a real MCP client (Claude Code itself, tested against
-# this exact file with zero rules) sends the protocol-mandatory `initialize`
-# handshake BEFORE ever asking for `tools/list`. src/mcp.rs's `handle_msg`
-# only special-cases `tools/list` and `tools/call`; `initialize` falls
-# through to the program's own rules, and a program with none gets a bare
-# `-32601 no rule answered method \`initialize\`` — which every MCP client
-# treats as a fatal connection failure, so the built-in dl.* tools never
-# even reach the "advertised" stage. `examples/mcp-server.dl` already carries
-# the fix as a one-line rule (below); a zero-logic "just serve the built-ins"
-# deployment has to know to copy it. Candidate real fix (not this file, not
-# in scope for S1): `--mcp` could answer a generic `initialize` itself,
-# the way it already answers `tools/list`/`tools/call`, so a program needs
-# zero lifecycle boilerplate to serve only built-ins.
+# `initialize` needs no rule here: src/mcp.rs's `handle_msg` answers it
+# generically whenever no program rule heads it (gap-fill, mirrors how
+# tools/list merges built-ins rather than replaces), so a zero-rule
+# "just serve the built-ins" deployment completes the handshake for free.
 rel req(id: text, method: text, params: text) @in(rpc).
 rel resp(id: text, result: text) @out(rpc).
-
-resp(id, "{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"dl-agent-eval\",\"version\":\"0.1.0\"}}")
-    <- req(id, "initialize", _).

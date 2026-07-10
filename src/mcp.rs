@@ -19,6 +19,14 @@
 //! select->push->delete. Completion is channel-level (JSON-RPC is 1->1: every
 //! response closes its request), so nothing streams yet — that's the
 //! stream-class rung.
+//!
+//! `initialize` is protocol-mandatory (a real MCP client sends it before
+//! `tools/list` and drops the connection on anything but a result), so a
+//! program with zero rules — the natural shape for "just serve the built-in
+//! dl.* tools" — still needs an answer. `handle_msg` fills that gap the same
+//! way `tools/list` merges rather than replaces: if no program rule answers
+//! `initialize`, the adapter answers generically; a program rule that DOES
+//! head it keeps winning.
 
 use crate::ast::{self, Item, PortDir};
 use crate::channel::{Channel, Frame, StdioChannel};
@@ -213,6 +221,29 @@ fn query_out_json(out: &crate::anchor::QueryOut) -> serde_json::Value {
     serde_json::json!({
         "columns": out.columns, "rows": out.rows,
         "total": out.total, "notes": out.notes,
+    })
+}
+
+/// The adapter's fallback answer to `initialize` when no program rule heads
+/// it. Echoes the client's requested `protocolVersion` back (falling back to
+/// the baseline `examples/mcp-server.dl` advertises), declares tool
+/// capabilities (the only surface the adapter itself offers — dl.what/
+/// dl.verb/dl.rows via `tools/list`), and names this build in `serverInfo`.
+/// Used from both `Pump::Local` and `Pump::Daemon`: the gap-fill happens in
+/// `handle_msg` before either pump is touched, so it's pump-agnostic.
+fn generic_initialize_response(id: &str, msg: &serde_json::Value) -> serde_json::Value {
+    let protocol_version = msg
+        .get("params")
+        .and_then(|p| p.get("protocolVersion"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("2024-11-05");
+    serde_json::json!({
+        "jsonrpc": "2.0", "id": id_to_json(id),
+        "result": {
+            "protocolVersion": protocol_version,
+            "capabilities": { "tools": {} },
+            "serverInfo": { "name": "dl", "version": env!("CARGO_PKG_VERSION") },
+        }
     })
 }
 
@@ -432,10 +463,17 @@ pub fn handle_msg(
     }
     if !answered {
         pump.retire(in_rel, std::slice::from_ref(&id))?;
-        out.push(serde_json::json!({
-            "jsonrpc": "2.0", "id": id_val(&id),
-            "error": { "code": -32601, "message": format!("no rule answered method `{method}`") },
-        }));
+        if method == "initialize" {
+            // Protocol-mandatory and program-agnostic: fill the gap instead
+            // of -32601, so a program with zero rules still completes the
+            // handshake (see the module doc + generic_initialize_response).
+            out.push(generic_initialize_response(&id, msg));
+        } else {
+            out.push(serde_json::json!({
+                "jsonrpc": "2.0", "id": id_val(&id),
+                "error": { "code": -32601, "message": format!("no rule answered method `{method}`") },
+            }));
+        }
     }
     Ok(out)
 }

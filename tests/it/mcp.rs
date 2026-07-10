@@ -292,6 +292,65 @@ fn tool_unknown_name_falls_through() {
     assert_eq!(m["error"]["code"], serde_json::json!(-32601), "{m}");
 }
 
+// ---------- generic `initialize` gap-fill ------------------------------------
+
+/// A program with rpc ports but zero rules for `initialize` (the "just serve
+/// the built-in dl.* tools" shape) still gets a valid handshake answer: the
+/// adapter fills the gap generically instead of -32601.
+#[test]
+fn initialize_gap_filled_generically() {
+    let d = sandbox("init_gap");
+    let prog = concat!(
+        "rel req(id: text, method: text, params: text) @in(rpc).\n",
+        "rel resp(id: text, result: text) @out(rpc).\n");
+    let (code, msgs, err) = serve(&d, prog, &[
+        r#"{"jsonrpc":"2.0","id":"init-1","method":"initialize","params":{"protocolVersion":"2024-11-05"}}"#,
+    ]);
+    assert_eq!(code, 0, "{err}");
+    let m = msgs.iter().find(|m| m.get("id") == Some(&serde_json::json!("init-1")))
+        .unwrap_or_else(|| panic!("no response for init-1: {msgs:?}"));
+    assert!(m.get("error").is_none(), "generic initialize must not error: {m}");
+    assert_eq!(m["result"]["protocolVersion"], serde_json::json!("2024-11-05"), "{m}");
+    assert_eq!(m["result"]["serverInfo"]["name"], serde_json::json!("dl"), "{m}");
+    assert!(m["result"]["capabilities"]["tools"].is_object(), "{m}");
+
+    // Then tools/list still shows the built-ins, so the full "no logic, just
+    // serve the built-ins" deployment shape works end to end.
+    let (code2, msgs2, err2) = serve(&d, prog, &[
+        r#"{"jsonrpc":"2.0","id":"init-2","method":"initialize"}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
+    ]);
+    assert_eq!(code2, 0, "{err2}");
+    let names: Vec<&str> = msgs2.iter().find(|m| m.get("id") == Some(&serde_json::json!(2)))
+        .expect("tools/list response")["result"]["tools"].as_array().expect("tools array")
+        .iter().filter_map(|t| t["name"].as_str()).collect();
+    for builtin in ["dl.what", "dl.verb", "dl.rows"] {
+        assert!(names.contains(&builtin), "{builtin} missing: {names:?}");
+    }
+}
+
+/// A program that DOES head `initialize` itself keeps winning — the built-in
+/// only fills the gap, mirroring tools/list's merge-not-replace behavior.
+#[test]
+fn initialize_program_rule_still_wins() {
+    let d = sandbox("init_override");
+    let prog = concat!(
+        "rel req(id: text, method: text, params: text) @in(rpc).\n",
+        "rel resp(id: text, result: text) @out(rpc).\n",
+        "resp(id, \"{\\\"protocolVersion\\\":\\\"2024-11-05\\\",",
+        "\\\"capabilities\\\":{\\\"tools\\\":{}},",
+        "\\\"serverInfo\\\":{\\\"name\\\":\\\"dl-agent-eval\\\",\\\"version\\\":\\\"0.1.0\\\"}}\") ",
+        "<- req(id, \"initialize\", _).\n");
+    let (code, msgs, err) = serve(&d, prog, &[
+        r#"{"jsonrpc":"2.0","id":"init-1","method":"initialize","params":{}}"#,
+    ]);
+    assert_eq!(code, 0, "{err}");
+    let m = msgs.iter().find(|m| m.get("id") == Some(&serde_json::json!("init-1")))
+        .unwrap_or_else(|| panic!("no response for init-1: {msgs:?}"));
+    assert_eq!(m["result"]["serverInfo"]["name"], serde_json::json!("dl-agent-eval"),
+        "program's own initialize rule must win over the generic fallback: {m}");
+}
+
 /// --mcp with no rpc ports declared bails with guidance instead of serving a
 /// program that can never answer.
 #[test]
