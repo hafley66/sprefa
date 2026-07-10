@@ -141,10 +141,14 @@ export function createServer(extraTables = {}) {
   });
 }
 
-// CLI entry: `node tests/fixture-bridge.mjs [--port 7381] [--perf-count 20000]`
+// CLI entry: `node tests/fixture-bridge.mjs [--port 7381] [--perf-count 20000] [--bom]`
 // --perf-count seeds an additional rel_perf_node/rel_perf_edge layer pair
-// (tests/perf/big-graph-fixture.mjs) for the panel-perf harness; omitted for
-// every normal e2e/unit invocation, which get the plain canned schema.
+// (tests/perf/big-graph-fixture.mjs) for the panel-perf harness; --bom seeds
+// the rel_bom_node/rel_bom_edge pair (tests/e2e/bom-fixture.mjs) for the
+// "exploded" list-mode e2e coverage, served on its OWN port (see
+// playwright.config.ts) so it never lands in the shared 7381 fixture
+// panel.spec.ts's layer-discovery count assertion depends on. Both omitted
+// for every normal e2e/unit invocation, which get the plain canned schema.
 if (import.meta.url === `file://${process.argv[1]}`) {
   const args = process.argv.slice(2);
   const portIdx = args.indexOf("--port");
@@ -154,6 +158,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   if (countIdx >= 0) {
     const { perfTables } = await import("./perf/big-graph-fixture.mjs");
     extraTables = perfTables(Number(args[countIdx + 1]));
+  }
+  if (args.includes("--bom")) {
+    const { bomTables } = await import("./e2e/bom-fixture.mjs");
+    extraTables = { ...extraTables, ...bomTables() };
   }
   const server = createServer(extraTables);
   server.listen(port, "127.0.0.1", () => {

@@ -104,3 +104,98 @@ bom_node(sym, name, kind, file, line, parent, member_count, fan_in, fan_out, wei
 # the bom_node parts, so bom_edge is a straight passthrough.
 rel bom_edge(src: text, dst: text, kind: text).
 bom_edge(src, dst, kind) <- member_edge(src, dst, kind).
+
+# ── bom_tier / bom_weld -- exploded-stratum layering (Track C, C3) ─────────
+# Tier-major layering of the FILE import graph (module_edge), via 2-cycle
+# condensation + longest-path assignment -- the same shape
+# examples/dag-layers.dl uses (see that file's header for the full derivation
+# notes: tier 0 = foundations depended on but depending on nothing, tier
+# t = 1 + max(tier of dependencies)), but generalized from dag-layers'
+# single-global-cluster simplification (`cl_rep(min(f)) <- cyclic(f)` takes
+# ONE rep across every cyclic file in the whole graph -- fine for a corpus
+# proven to have exactly one cyclic cluster, wrong the moment a corpus has
+# TWO unrelated mutual pairs, which real module graphs do) to proper
+# per-cluster connected components: label propagation to a fixpoint
+# (bom_cluster_label, pure positive recursion) followed by a stratified
+# min-reduce (bom_cluster_rep) picks out one rep PER component, so unrelated
+# mutual pairs never merge into a single weld. Still only a 2-cycle detector
+# (a direct mutual edge) -- a 3+-file cycle with no mutual pair slips through
+# undetected, the same acknowledged limit dag-layers documents (the scc
+# builtin's closure can't be read unpinned in a derived rule, engine.rs:653).
+#
+# Panel SQL (exploded list mode, riding the bomTable preset -- see
+# PRESETS.bomTable in flow-panel.html):
+#   LEFT JOIN rel_bom_tier ON file  -> tier column (stratum assignment)
+#   LEFT JOIN rel_bom_weld ON file  -> rep + size columns (weld-card grouping)
+
+rel bom_file(file: file).
+bom_file(file) <- member_node(_, _, _, file, _, _).
+
+# a mutual pair: both directions present between two distinct files.
+rel bom_cluster_edge(file_a: file, file_b: file).
+bom_cluster_edge(file_a, file_b) <-
+  module_edge(file_a, file_b), module_edge(file_b, file_a), file_a != file_b.
+
+rel bom_cyclic_file(member_file: file).
+bom_cyclic_file(member_file) <- bom_cluster_edge(member_file, _).
+
+# phase 1 (pure positive recursion): every label a member can reach by
+# walking bom_cluster_edge (symmetric by construction, so this amounts to
+# full connected-component reachability restricted to cyclic files).
+rel bom_cluster_label(member_file: file, label_file: file).
+bom_cluster_label(member_file, member_file) <- bom_cyclic_file(member_file).
+bom_cluster_label(member_file, label_file) <-
+  bom_cluster_edge(member_file, neighbor_file), bom_cluster_label(neighbor_file, label_file).
+
+# phase 2 (stratified aggregation, outside the recursive cycle): min-reduce
+# each member's reachable label set to ONE representative per component.
+rel bom_cluster_rep(member_file: file, rep_file: file).
+bom_cluster_rep(member_file, min(label_file)) <- bom_cluster_label(member_file, label_file).
+
+rel bom_cluster_size(rep_file: file, member_count: int).
+bom_cluster_size(rep_file, count(member_file)) <- bom_cluster_rep(member_file, rep_file).
+
+# ── condensation + longest-path tiering (mirrors dag-layers.dl exactly) ────
+# a cyclic file's rep is its cluster rep; a non-cyclic file is its own rep,
+# so the condensation below is a DAG by construction.
+rel bom_rep_of(member_file: file, rep_file: file).
+bom_rep_of(member_file, rep_file) <- bom_cluster_rep(member_file, rep_file).
+bom_rep_of(member_file, member_file) <- !bom_cyclic_file(member_file), module_edge(member_file, _).
+bom_rep_of(member_file, member_file) <- !bom_cyclic_file(member_file), module_edge(_, member_file).
+
+rel bom_cond_edge(rep_a: file, rep_b: file).
+bom_cond_edge(rep_a, rep_b) <-
+  module_edge(source_file, target_file), bom_rep_of(source_file, rep_a),
+  bom_rep_of(target_file, rep_b), rep_a != rep_b.
+
+rel bom_path_len(rep_file: file, depth: int).
+bom_path_len(rep_file, 0) <- bom_cond_edge(_, rep_file), !bom_cond_edge(rep_file, _).
+bom_path_len(rep_file, depth + 1) <- bom_cond_edge(rep_file, dep_file), bom_path_len(dep_file, depth).
+
+rel bom_cluster_tier(rep_file: file, tier: int).
+bom_cluster_tier(rep_file, max(depth)) <- bom_path_len(rep_file, depth).
+
+# bom_tier is TOTAL over bom_file: a file with no module_edge participation at
+# all (isolated -- no imports, no importers) defaults to tier 0, which is
+# also what a corpus with no module-graph data at all collapses to (every
+# file lands in one stratum -- the panel's "no layering" degenerate note).
+rel bom_tier_has(file: file).
+bom_tier_has(file) <- bom_rep_of(file, rep_file), bom_cluster_tier(rep_file, _).
+
+rel bom_tier(file: file, tier: int).
+bom_tier(file, tier) <- bom_rep_of(file, rep_file), bom_cluster_tier(rep_file, tier).
+bom_tier(file, 0) <- bom_file(file), !bom_tier_has(file).
+
+# bom_weld: every file's cluster rep + cluster size, TOTAL over bom_file so
+# the panel's join never lands a NULL. size=1 marks "not welded" (the panel
+# only draws a collapsed weld card when size > 1).
+rel bom_weld_rep(file: file, rep: file).
+bom_weld_rep(file, rep) <- bom_cluster_rep(file, rep).
+bom_weld_rep(file, file) <- bom_file(file), !bom_cyclic_file(file).
+
+rel bom_weld_size_has(file: file).
+bom_weld_size_has(file) <- bom_weld_rep(file, rep), bom_cluster_size(rep, _).
+
+rel bom_weld(file: file, rep: file, size: int).
+bom_weld(file, rep, size) <- bom_weld_rep(file, rep), bom_cluster_size(rep, size).
+bom_weld(file, file, 1) <- bom_file(file), !bom_weld_size_has(file).
