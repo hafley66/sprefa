@@ -786,6 +786,16 @@ Opus/Sonnet subagents implement, orchestrator verifies+commits.
       Local fallback (Pump-shaped), never a second resident engine on a
       shared db.
 
+### Open (true rootless daemon — NEXT SESSION, plan committed 0e7641e)
+Plan: plans/2026-07-10-singleton-daemon-registered-roots.md. One daemon at a
+constant home (~/.local/state/sprefa) serving EVERY .dl root; cwd only picks
+which root a query addresses. add_root RPC (attach = registration), per-root
+engines with dbs under roots/<key>/, per-root spawn-if-missing retired, tests
+hermetic via XDG_STATE_HOME. Today's split: per-root daemon (socket/db/pid
+under <root>/.dl/) is the real one; the XDG rootless singleton only sees
+config-folder repos (add_repo was designed in the de-root session, never
+built, zero hits in src/).
+
 ### Open (turnkey query surface — plan plans/2026-07-10-turnkey-query-surface.md)
 Goal: dl useful from the first command for devs + agents, no .dl authoring.
 Tiers: `dl what` meta-query / `dl q` concept verbs / `dl find` schema-driven filter.
@@ -826,11 +836,41 @@ in the extract.rs resolve closures, 0.15 KU) first; then Go TypeLang (1.2 KU),
 generic def/ref tags tier over SG_LANG_TABLE (0.4 KU), Python TypeLang (1.2+ KU,
 type_link scoped out). stack-graphs ruled OUT (frozen upstream, .tsg cost,
 foreign resolution model).
-- [ ] **H+D in flight** (Sonnet agent worktree, 2026-07-10): TsTypes matches
-      .js/.jsx/.mjs/.cjs + SourceType per ext + engine file-selection globs;
-      len>1 bucket narrowed to import-reachable defs (module_edge read like
-      scip_ref, unique survivor only, digest fold so module-graph changes
-      re-resolve). Needs the double-check pass before merge.
+- [x] **H+D LANDED** (main eed54cc, Sonnet agent, 2026-07-10): TsTypes matches
+      .js/.jsx/.mjs/.cjs, `source_type_for` replaces the 3 dup path_is_tsx
+      branches, extract_file_set SQL + narrowing gate `narrow_ambiguous`
+      (survive = self/imported/same-dir; RESOLVE only a lone self/imported
+      survivor — same-dir-only tie stays bare); module_import_map read once
+      per refresh; digest folds module_edge_rev at EVERY rev (committed revs
+      have their own import graph, unlike the WORK-only scip fold). Tests
+      type_graph_js.rs + resolver_import_narrowing.rs. Post-rebase verify:
+      lib 265/0/1, it 613/0/4, oracle precision unchanged (0.78/0.55 module
+      drift is pre-existing, confirmed by stash A/B). REAL BUG FOUND+FIXED
+      en route: ModuleFamily only ran when the program named a module_* rel,
+      so type_link/call_edge-only programs never populated module_edge_rev
+      and the narrowing no-op'd silently — `module_rels_needed` now ORs in
+      type/call/doc usage (both ExtractFamily::used and tick_paths).
+- [ ] **Latent engine gap (found by the H+D test, unfixed)**:
+      `enumerate_with_hash`'s mtime+size fast path treats an equal-length
+      edit landing in the same fs timestamp tick as unchanged (test worked
+      around with a length-varying marker; any rapid two-tick same-db test
+      with an equal-length edit is a flake risk).
+- [ ] **Aliased/default imports at the SYNTACTIC tier**: `import { a as b }`
+      and default-import local names resolve only when a SCIP index exists
+      (scip_binding). Name-keyed buckets can't see through a rename; Win D
+      narrows ambiguity, not aliasing. Fix shape: an alias-aware import rel
+      from the modgraph resolvers (src_file, local_name, source_name,
+      dst_file) feeding the resolver the way scip_binding feeds `dl what`.
+- [ ] **Sonnet-implementer debrief pains** (2026-07-10): (a)
+      sprefa-v5-working-conventions skill still shows a `--root` flag that no
+      longer exists (cost a round of confused testing; skill source =
+      ~/projects/claude-research/skills, backprop candidate); (b) ambient
+      ~/.config/sprefa/config.toml silently joins every ad-hoc `dl` run
+      ("[config] 3 repo(s) registered") — set SPREFA_CONFIG explicitly for
+      smoke tests, nothing documents this habit outside resolver_repo_scope.rs;
+      (c) cross-family hidden dependency (resolver reads module_edge_rev) is
+      a shape the magic-rel audit doesn't cover — two ExtractFamily used()
+      gates coupling invisibly.
 
 ### Open (scip / language-surface — 2026-07-08 agent-session feedback, batch 2)
 Five more complaints (SCIP + dl-surface). NOT yet triaged against code; capture only.
