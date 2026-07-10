@@ -75,6 +75,41 @@ seen(path) <- scan("WORK", "**/*.txt", path, rev).
     assert!(!out.contains(".git/objects/z.txt"), ".git must be skipped: {out}");
 }
 
+/// A submodule worktree is not gitignored — its files sit inside the parent
+/// repo's tree with nothing on disk marking them ignored — so it must be
+/// pruned as a foreign repo the same way `.git` itself is pruned. Covers
+/// both `.git` forms: a plain directory (an ordinary nested checkout) and a
+/// FILE containing `gitdir: ...` (the real submodule-worktree form).
+#[test]
+fn scan_prunes_nested_repo_dir_and_file_git_forms() {
+    let d = sandbox("nested_repo");
+    fs::create_dir_all(d.join("src")).unwrap();
+    fs::write(d.join("src/main.rs"), "fn main() {}\n").unwrap();
+
+    // Directory-form `.git` (an ordinary nested checkout under vendor/).
+    fs::create_dir_all(d.join("vendor/nested_dir/.git")).unwrap();
+    fs::write(d.join("vendor/nested_dir/lib.rs"), "fn nested_dir_fn() {}\n").unwrap();
+
+    // File-form `.git` (the submodule-worktree form: a text file pointing at
+    // the real gitdir, not a directory).
+    fs::create_dir_all(d.join("vendor/nested_submodule")).unwrap();
+    fs::write(d.join("vendor/nested_submodule/.git"), "gitdir: /elsewhere/modules/nested_submodule\n").unwrap();
+    fs::write(d.join("vendor/nested_submodule/lib.rs"), "fn nested_submodule_fn() {}\n").unwrap();
+
+    let prog = r#"
+rel seen(path: file).
+seen(path) <- scan("WORK", "**/*.rs", path, rev).
+? seen(p).
+"#;
+    let (code, out, err) = run(&d, prog, &[]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("src/main.rs"), "sibling source file must be scanned: {out}");
+    assert!(!out.contains("vendor/nested_dir/lib.rs"),
+        "dir-form nested repo must be pruned: {out}");
+    assert!(!out.contains("vendor/nested_submodule/lib.rs"),
+        "file-form (submodule) nested repo must be pruned: {out}");
+}
+
 #[test]
 fn declaring_a_builtin_name_errors() {
     let d = sandbox("collision");
