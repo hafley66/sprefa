@@ -130,6 +130,7 @@ mod rule_edit;
 mod scan_kwargs;
 mod scc;
 mod seam_bench;
+mod scip_gate;
 mod scip_import;
 mod scip_name;
 mod scip_want;

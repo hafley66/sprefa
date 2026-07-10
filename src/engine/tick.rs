@@ -321,6 +321,16 @@ impl Engine {
         if any_extract {
             crate::activity::set(crate::activity::Phase::ParseExtract, "extract");
         }
+        // Pre-extract RelKinds (scip): the index load is an INPUT to the
+        // extract families below (the type/call resolvers read `scip_ref`),
+        // so it must land first — otherwise a fresh db's first tick extracts
+        // index-blind and only heals on tick 2 via the digest fold.
+        for k in crate::rels::rel_kinds() {
+            if k.pre_extract() && k.used(prog) && k.refresh(self)? {
+                changed = true;
+                for r in k.rels() { changed_source_rels.insert(r.to_string()); }
+            }
+        }
         for fam in crate::rels::extract_families_pre_node() {
             if !fam.used(prog) { continue; }
             crate::activity::detail(fam.name());
@@ -367,6 +377,7 @@ impl Engine {
         // always refreshes every used family (`dirty` is consulted only by the
         // incremental `tick_paths`), so the scip index reload runs here too.
         for k in crate::rels::rel_kinds() {
+            if k.pre_extract() { continue; } // ran before the extract families
             if k.used(prog) && k.refresh(self)? {
                 changed = true;
                 for r in k.rels() { changed_source_rels.insert(r.to_string()); }
@@ -782,6 +793,17 @@ impl Engine {
         if changed_facts {
             changed_source_rels = self.prune_unchanged_by_digest(changed_source_rels)?;
         }
+        // Pre-extract RelKinds (scip), mirroring the full tick's ordering: when
+        // index.scip moved in the same delta as source files, its reload must
+        // precede the extract families inside the guard below. An
+        // index.scip-only delta keeps the old semantics (rows load and mark
+        // changed; extraction re-reads them on its next run).
+        for k in crate::rels::rel_kinds() {
+            if k.pre_extract() && k.used(prog) && k.dirty(&seen) && k.refresh(self)? {
+                for r in k.rels() { changed_source_rels.insert(r.to_string()); }
+                changed_facts = true;
+            }
+        }
         // The file set itself (path/hash/rev) is the built-in `file`/`content`/
         // `rev` relations, so any file change makes them changed inputs: refresh
         // them and mark them changed so rules that join `file` re-derive. This is
@@ -854,6 +876,7 @@ impl Engine {
         // worktree diff, so the `changed` family re-reads whenever the program
         // joins it; the false-on-no-op result keeps the rebuild scope tight.
         for k in crate::rels::rel_kinds() {
+            if k.pre_extract() { continue; } // ran before the extract families
             if k.used(prog) && k.dirty(&seen) && k.refresh(self)? {
                 for r in k.rels() { changed_source_rels.insert(r.to_string()); }
                 changed_facts = true;

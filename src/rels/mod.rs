@@ -64,7 +64,7 @@ use scip::ScipKind;
 
 pub use extract_family::{
     extract_families, extract_families_paths_pre_node, extract_families_post_node,
-    extract_families_pre_node, ExtractFamily, ModuleFamily,
+    extract_families_pre_node, CallFamily, ExtractFamily, ModuleFamily, TypeFamily,
 };
 
 /// Refresh the `query_log` projection right now, outside the normal tick
@@ -101,6 +101,14 @@ pub trait RelKind: Sync {
     /// Whether the program references any owned name (default: lazy `rels_used`).
     fn used(&self, prog: &Program) -> bool {
         rels_used(prog, self.rels())
+    }
+    /// Runs BEFORE the extract families instead of after them: the family's
+    /// output is an INPUT to extraction. `ScipKind` overrides — the type/call
+    /// resolve closures read `scip_ref`, so the index must load first or a
+    /// fresh db's first tick extracts without it (and only heals on tick 2
+    /// via the digest fold).
+    fn pre_extract(&self) -> bool {
+        false
     }
     /// Should an *incremental* tick (`tick_paths`) call `refresh`? Default: yes,
     /// every tick — the self-diffing families re-read and early-out on a no-op.

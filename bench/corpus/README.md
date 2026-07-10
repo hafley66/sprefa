@@ -86,13 +86,19 @@ Confirmed-positives-only parity (`oracle_parity` scorer), two arms per language:
 
 ### Headline findings
 
-- **`with scip` == `without scip`, byte-for-byte, in every language.** The truth
-  index loads (verified: with `SPREFA_SCIP_INDEX` set, go's scan sees
-  `scip_def`=1487 / `scip_ref`=1955 rows, `repo="scan"`), but call-site
-  resolution (`call_edge`/`call_def`/`module_binding`, what the scorer reads) is
-  unchanged. So the SCIP importer currently feeds type/module resolution, not the
-  CALL graph — for call-site parity the "plumbing ceiling" equals the syntactic
-  tier. This is the actionable gap: wire `scip_ref` into call resolution.
+- **`with scip` == `without scip`, byte-for-byte, in every language.** ROOT
+  CAUSE FOUND (verified after this measurement, 2026-07-10): the with-scip arm
+  measured nothing because of two stacked engine bugs, NOT missing wiring.
+  (1) The scip family load gates on the program naming a scip rel — the
+  scorer's program only queries call rels, so with `SPREFA_SCIP_INDEX` set,
+  `rel_scip_ref` stayed at 0 rows (same bug shape as the fixed ModuleFamily
+  gate). (2) Even when forced (add `? scip_def`), the index loads in the
+  RelKind loop AFTER the extract families in the same tick, so extraction
+  reads prior-tick `scip_ref` — empty on a fresh one-shot db. Proof: forcing
+  the family and running a SECOND tick on the same db moves call_edge
+  3734 -> 4041 rows on otel-go/sdk (+307 scip-resolved edges). The resolution
+  wiring exists and works; the with-scip column must be re-measured after the
+  gate + ordering fix.
 - **Parity varies wildly by language** (14.1% rust / 20.4% ts / 40.1% python /
   72.7% go). The rust and ts numbers are dominated by `bare` (unresolved), not
   `wrong`: 5218/6131 rust sites and 260/328 ts sites resolve to nothing. Rust's
