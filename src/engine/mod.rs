@@ -22,6 +22,11 @@ use crate::effect::async_bound_vars;
 // module to shrink this file; they're still `impl Engine` methods called as
 // `self.refresh_*` from the tick orchestrator (engine breakdown Stage 4).
 mod extract;
+// The mixed source+derived / extract+derived rel desugar: a pure Program ->
+// Program rewrite that runs immediately before rule classification in both
+// tick entry points (see `tick.rs`). Public so `crate::rels::perf` can map a
+// twin rel name back to the one a program declared (D4 telemetry display).
+pub mod desugar;
 // The reactive tick orchestrator (`tick` / `tick_paths`) lives in a child
 // module too; both stay `pub` and reach this module's privates directly
 // (engine breakdown Stage 6).
