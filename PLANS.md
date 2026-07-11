@@ -9,6 +9,8 @@ prose outside them is hand-owned. Convention + authoring guide:
 
 <!-- BEGIN: plans-by-category -->
 - `bug` plans/2026-07-10-change-cost-friction-inventory.md:149 — item 2 — a declared reads: &[family] edge on ExtractFamily/RelKind so used() composes mechanically and the rail can assert no resolver reads an undeclared family's tables
+- `bug` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:81 — agent_edit/agent_touch return 0 rows inside a spawned subagent — session-store keying or flush; document what writes the store
+- `bug` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:83 — sg source rule fed (path, rev) from a derived rel fails two inconsistent ways (error in one shape, silent zero rows in another) — make it one loud error or support it; repeat of the S-batch finding
 - `bug` plans/2026-07-11-agent-resume-ledger.md:56 — dl --check --max-wall self-deadline so hook callers can never stack cold engines
 - `bug` plans/2026-07-11-codex-feedback-queue.md:18 — lex warn on dropped backslash escapes in plain strings
 - `bug` plans/2026-07-11-codex-feedback-queue.md:46 — body-level extract+rel-atom mix must bail, not ignore
@@ -20,11 +22,19 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `decision` plans/2026-07-11-codex-feedback-queue.md:122 — CLI flag taxonomy — query/mutate/effects axes
 - `decision` plans/2026-07-11-intern-string-keys.md:159 — which payload TEXT columns stay text (df_lit.text, doc_comment.text) — decided by the spike's decode-cost numbers
 - `docs` plans/2026-07-10-change-cost-friction-inventory.md:151 — item 6 — a generated per-language coverage table (which node kinds each TypeLang lift emits, tested counts on a fixture) in docs/reference
+- `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:84 — match() trailing positional is a match ID not captured text — rename convention to match_id in shipped examples, show named-capture form in the op quickref
+- `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:85 — comment_node.text strips comment tokens — state it in the relations table row, not only the buried authoring bullet
+- `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:87 — unbound-var-in-constraint note names the wrong fix when the real bug is two source ops in one rule body — name the trigger condition precisely
+- `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:88 — // inside a regex literal parses as comment start — note the \/\/ escape in the regex doc row
+- `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:89 — query grammar is bare ?rel(vars). only — syntax table should say so (no :- , no ==)
+- `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:90 — quick-start states that an unflagged run against an attached daemon merges the full .dl/ discovery corpus; --no-daemon isolates
 - `docs` plans/2026-07-11-book-toc.md:83 — book restructure per this TOC, Part III (flow) first
 - `docs` plans/2026-07-11-docs-and-dogfood-audit.md:20 — CHANGELOG drift rail — commit window vs entries cross-check
 - `docs` plans/2026-07-11-docs-and-dogfood-audit.md:28 — book/tutorial refresh for sym/file_lines/--max-wall/semi-naive
 - `feature` plans/2026-07-10-change-cost-friction-inventory.md:148 — item 1 — a first-class --hermetic flag that implies all three, plus the already-ledgered loud "daemon is serving this root, writes went there" warning on hijack
 - `feature` plans/2026-07-10-change-cost-friction-inventory.md:150 — item 3 — --format=json (or tsv) for ? query blocks and one paragraph documenting the human format's contract
+- `feature` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:82 — agent_edit carries line/span columns so touched-region x AST-span joins work (guarded-MATCH vs guarded-FILE)
+- `feature` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:86 — error-message for !(expr) — suggest the hoisted helper-rel negation idiom
 - `feature` plans/2026-07-11-agent-resume-ledger.md:57 — re-enable PostToolUse hook with timeout+advisory shape once derived is under budget
 - `feature` plans/2026-07-11-codex-feedback-queue.md:103 — auto-split mixed/source-join/term-extract shapes instead of bailing
 - `feature` plans/2026-07-11-codex-feedback-queue.md:109 — unpinned closure in rule bodies via generated recursive rule
@@ -67,6 +77,16 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-10-change-cost-friction-inventory.md:150 `feature` — item 3 — --format=json (or tsv) for ? query blocks and one paragraph documenting the human format's contract
 - plans/2026-07-10-change-cost-friction-inventory.md:151 `docs` — item 6 — a generated per-language coverage table (which node kinds each TypeLang lift emits, tested counts on a fixture) in docs/reference
 - plans/2026-07-10-change-cost-friction-inventory.md:152 `decision` — item 5 — a resolution_source column (values scip|syntactic|alias|narrowed) on call_edge/type_link (rev twins included), plus a public eng.ensure_families(&[...])
+- plans/2026-07-11-agent-feedback-smashy-guard-rails.md:81 `bug` — agent_edit/agent_touch return 0 rows inside a spawned subagent — session-store keying or flush; document what writes the store
+- plans/2026-07-11-agent-feedback-smashy-guard-rails.md:82 `feature` — agent_edit carries line/span columns so touched-region x AST-span joins work (guarded-MATCH vs guarded-FILE)
+- plans/2026-07-11-agent-feedback-smashy-guard-rails.md:83 `bug` — sg source rule fed (path, rev) from a derived rel fails two inconsistent ways (error in one shape, silent zero rows in another) — make it one loud error or support it; repeat of the S-batch finding
+- plans/2026-07-11-agent-feedback-smashy-guard-rails.md:84 `docs` — match() trailing positional is a match ID not captured text — rename convention to match_id in shipped examples, show named-capture form in the op quickref
+- plans/2026-07-11-agent-feedback-smashy-guard-rails.md:85 `docs` — comment_node.text strips comment tokens — state it in the relations table row, not only the buried authoring bullet
+- plans/2026-07-11-agent-feedback-smashy-guard-rails.md:86 `feature` — error-message for !(expr) — suggest the hoisted helper-rel negation idiom
+- plans/2026-07-11-agent-feedback-smashy-guard-rails.md:87 `docs` — unbound-var-in-constraint note names the wrong fix when the real bug is two source ops in one rule body — name the trigger condition precisely
+- plans/2026-07-11-agent-feedback-smashy-guard-rails.md:88 `docs` — // inside a regex literal parses as comment start — note the \/\/ escape in the regex doc row
+- plans/2026-07-11-agent-feedback-smashy-guard-rails.md:89 `docs` — query grammar is bare ?rel(vars). only — syntax table should say so (no :- , no ==)
+- plans/2026-07-11-agent-feedback-smashy-guard-rails.md:90 `docs` — quick-start states that an unflagged run against an attached daemon merges the full .dl/ discovery corpus; --no-daemon isolates
 - plans/2026-07-11-agent-resume-ledger.md:56 `bug` — dl --check --max-wall self-deadline so hook callers can never stack cold engines
 - plans/2026-07-11-agent-resume-ledger.md:57 `feature` — re-enable PostToolUse hook with timeout+advisory shape once derived is under budget
 - plans/2026-07-11-book-toc.md:83 `docs` — book restructure per this TOC, Part III (flow) first
