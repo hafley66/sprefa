@@ -28,6 +28,7 @@ mod dl_chain_discovery;
 mod cmd_op;
 mod comment_op;
 mod comment_node;
+mod template_parts;
 mod suppress;
 mod config_repos;
 mod checkout_sweep;

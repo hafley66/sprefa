@@ -272,6 +272,23 @@ pub(crate) const DOC_TEXT_RELS: [&str; 2] = ["doc_comment", "doc_tag"];
 /// eslint/biome suppression grammar (`std/suppress.dl`) is pure dl over this.
 pub(crate) const COMMENT_RELS: [&str; 1] = ["comment_node"];
 
+/// Every template literal in every TS/TSX/JS/JSX/MJS/CJS file, split into its
+/// ordered static/interpolated pieces:
+/// `template_parts(file, line, node, idx, kind, text)`. Own family (rides the
+/// oxc parse `TsTypes` already does, but is not gated behind `type`/`call`/
+/// `dataflow` — a program reading only `template_parts` shouldn't pay for
+/// those passes). `node` groups a template literal occurrence's pieces (the
+/// byte offset of its own span start, stable across ticks for unchanged
+/// content); `idx` orders them 0-based; `kind` is `static` | `expr`; `text` is
+/// the static chunk verbatim (raw, unescaped) or the interpolated expression's
+/// exact source text. `line` is 1-based (the `comment_node`/`sg`/`diag`
+/// convention). Template-built import paths / URLs / route keys become
+/// joinable: `template_parts(file, _, node, 0, "static", "GET /users/"), ...`.
+/// Kotlin string templates and Rust `format!`-style macros are OUT of scope
+/// (Rust has no native template-literal syntax); this family emits nothing
+/// for either language rather than guessing at a shape.
+pub(crate) const TEMPLATE_RELS: [&str; 1] = ["template_parts"];
+
 // The git-derived families `changed` / `changed_line` / `created`, the analysis
 // families `agent` / `dl_diag` / `type_shape` / `type_lgg` / catalog, the SCIP
 // importer `scip_*`, the clone proposers `propose_extract` / `propose_clone`,
@@ -446,6 +463,7 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
         .chain(type_rel_decls())
         .chain(doc_text_rel_decls())
         .chain(comment_rel_decls())
+        .chain(template_rel_decls())
         .chain(call_rel_decls())
         .chain(dataflow_rel_decls())
         .chain(doc_rel_decls())
@@ -866,6 +884,16 @@ pub(crate) fn comment_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
+pub(crate) fn template_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "template_parts".into(), cols: vec![
+            c("file", Type::Path), c("line", Type::Int), c("node", Type::Int),
+            c("idx", Type::Int), c("kind", Type::Text), c("text", Type::Text)], group: "template",
+            doc: "every template literal's ordered static/interpolated pieces: (file, line, node, idx, kind is static/expr, text); TS/TSX/JS/JSX/MJS/CJS only (oxc), one line per file's occurrence group via node = its byte offset; text is verbatim (raw static chunk or the interpolated expression's exact source); template-built import paths/URLs/keys become joinable", ..Default::default() },
+    ]
+}
+
 pub(crate) fn call_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
@@ -1205,6 +1233,8 @@ pub(crate) fn type_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_REL
 
 pub(crate) fn doc_text_rels_used(prog: &Program) -> bool { rels_used(prog, &DOC_TEXT_RELS) }
 pub(crate) fn comment_rels_used(prog: &Program) -> bool { rels_used(prog, &COMMENT_RELS) }
+
+pub(crate) fn template_rels_used(prog: &Program) -> bool { rels_used(prog, &TEMPLATE_RELS) }
 
 pub(crate) fn call_rels_used(prog: &Program) -> bool { rels_used(prog, &CALL_RELS) }
 
@@ -2033,6 +2063,9 @@ pub struct Engine {
     /// Per-file comment cache for `refresh_comment_rels`, same shape as the
     /// type/call/df caches: (repo, path, content hash) -> (repo id, comments).
     comment_facts_cache: extract::FactCache<Vec<crate::cst::RawComment>>,
+    /// Per-file template-parts cache for `refresh_template_rels`, same shape:
+    /// (repo, path, content hash) -> (repo id, ordered template pieces).
+    template_facts_cache: extract::FactCache<Vec<crate::typegraph::TemplatePart>>,
 }
 
 struct ScanSpec {
@@ -2078,6 +2111,7 @@ impl Engine {
             call_facts_cache: Default::default(),
             df_facts_cache: Default::default(),
             comment_facts_cache: Default::default(),
+            template_facts_cache: Default::default(),
         }
     }
 
@@ -4879,6 +4913,9 @@ impl Engine {
                 if COMMENT_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in comment relation (comment_node); pick another name", d.name);
                 }
+                if TEMPLATE_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is a built-in template-literal relation (template_parts); pick another name", d.name);
+                }
                 if CALL_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in call-graph relation (call_def / call_def_rev / call_site / call_edge / call_edge_rev / call_name / call_kind); pick another name", d.name);
                 }
@@ -4957,6 +4994,7 @@ impl Engine {
         for d in type_rel_decls() { self.declare(&d)?; }
         for d in doc_text_rel_decls() { self.declare(&d)?; }
         for d in comment_rel_decls() { self.declare(&d)?; }
+        for d in template_rel_decls() { self.declare(&d)?; }
         for d in call_rel_decls() { self.declare(&d)?; }
         for d in dataflow_rel_decls() { self.declare(&d)?; }
         for d in doc_rel_decls() { self.declare(&d)?; }
