@@ -59,8 +59,20 @@ candidate(slug, pushed_at) <-
 # ---- STAGE 2: active set (jq-filtered candidates + forced overrides) --------
 # watch_pr forces a repo in regardless of activity (a watch-only repo you don't
 # push to but care about).
+#
+# COLD-START GUARD: `candidate` is fed by viewer.repositories (GitHub's own
+# top-100-by-push list, NOT this dl instance's registered/cloned repos), and
+# the `cutoff` fact above is a fixed calendar date that goes stale — once
+# "now" drifts past it, EVERY recently-pushed repo in the account satisfies
+# `pushedAt > cutoff`, so a blank-slate/first tick turns the full 100-repo
+# GitHub list into PR-poll candidates in one shot (STAGE 3's batched fetch
+# then pays for up to 100 repos x 100 PRs of real network time). Requiring
+# git_ref(slug, ...) (local git plumbing, no network, populated before rule
+# evaluation) bounds active_repo to repos this dl instance actually tracks
+# locally (self + registered config repos) — a handful, not GitHub's whole
+# recent-push list — on every tick, cold or warm.
 rel active_repo(slug: text).
-active_repo(slug) <- candidate(slug: slug).
+active_repo(slug) <- candidate(slug: slug), git_ref(slug, _, _, _).
 active_repo(slug) <- watch_pr(slug).
 
 # ---- STAGE 3: batched PR fetch (aliased GraphQL, 100 repos per call) --------
