@@ -314,13 +314,18 @@ pub fn run_verify(programs: &[String], db_path: Option<&str>, root: PathBuf, che
     }
 }
 
-pub fn run_check(programs: &[String], db_path: Option<&str>, root: PathBuf, json: bool) -> Result<usize> {
+pub fn run_check(programs: &[String], db_path: Option<&str>, db_defaulted: bool, root: PathBuf, json: bool) -> Result<usize> {
     // Same daemon gate as run_file: explicit multi-file merges stay in-process.
-    if daemon::enabled_for(&root) && db_path.is_none() && programs.len() <= 1 {
+    // The discovery-mode default db does NOT opt out (it names the same
+    // `.dl/cache.db` the daemon owns via `db_defaulted`), matching run_file's gate.
+    let daemon_eligible = (db_path.is_none() || db_defaulted) && programs.len() <= 1;
+    if daemon_eligible && daemon::enabled_for(&root) {
         match run_check_via_daemon(programs.first().map(|s| s.as_str()), &root, json) {
             Ok(n) => return Ok(n),
             Err(e) => eprintln!("[daemon] check attach failed, falling back to in-process: {e}"),
         }
+    } else if daemon_eligible {
+        eprintln!("[check] no daemon serving this root — one-shot engine on .dl/cache.db (start one: dl daemon start)");
     }
     run_check_inproc(programs, db_path, root, json)
 }

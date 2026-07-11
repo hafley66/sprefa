@@ -17,10 +17,15 @@ fn sandbox(tag: &str) -> PathBuf {
     dir
 }
 
-/// Run `dl` with NO program positional against `dir` as root.
+/// Run `dl` with NO program positional against `dir` as root. Hermetic:
+/// `DL_NO_DAEMON=1` so these program-discovery/db-defaulting checks never
+/// reach toward a real developer daemon (fixed after a live-daemon-pollution
+/// incident: the discovery-mode --check daemon-first fix made this file's
+/// unguarded invocations daemon-eligible for the first time).
 fn run(dir: &Path, extra: &[&str]) -> (i32, String, String) {
     let out = Command::new(DL)
         .current_dir(dir)
+        .env("DL_NO_DAEMON", "1")
         .args(extra)
         .output().expect("run dl");
     (out.status.code().unwrap_or(-1),
@@ -120,6 +125,7 @@ fn explicit_program_bypasses_discovery() {
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
         .current_dir(&d)
+        .env("DL_NO_DAEMON", "1")
         .output().expect("run dl");
     assert_eq!(out.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&out.stdout);

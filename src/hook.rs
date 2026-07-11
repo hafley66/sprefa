@@ -183,6 +183,7 @@ pub fn run_hook(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Re
             }
         }
     } else {
+        eprintln!("[hook] no daemon serving this root — one-shot engine on .dl/cache.db (start one: dl daemon start)");
         rels_inproc(&ev, programs, db_path, &root)?
     };
     if rels.broken {
