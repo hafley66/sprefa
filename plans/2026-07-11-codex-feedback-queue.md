@@ -74,3 +74,19 @@ Worktree per batch; brief points at THIS file; pure test-verified commits
 (`git commit -n`); full it suite max 2 runs per batch; hermetic dl runs;
 never touch ~/.local/state/sprefa or daemons; file-size law; final summary
 with per-item commits + skips.
+
+## Post-queue additions (2026-07-11 late, factoring + instrumentation debriefs)
+
+15. **Module-graph nondeterminism** (factoring agent, EVIDENCE-BACKED, own
+    arc, sol-class): same binary + same 3-repo ambient corpus, back-to-back
+    cold runs produce different rel_module_edge content (213 rows both, text
+    sum 5999 vs 5964; mutual pairs 38 vs 108, cascading into bom clusters).
+    Suspect: parallel per-file resolver extraction feeding the repo-less
+    module_edge union. Evidence dbs were /tmp/dl_rm3 vs /tmp/dl_rm4.
+    <!-- todo(bug): module_edge nondeterministic across identical cold runs -->
+16. **Semi-naive divergence bail** (factoring wedge, terra-class): the 100k
+    iteration cap exists but a growing delta makes each iteration slower long
+    before it trips (15-min wedge at ~43k statements). Add a delta-growth /
+    total-row-budget bail naming the rel, plus consider a began-statement
+    marker so a wedged statement is visible (DL_STMT_TRACE is the stopgap).
+    <!-- todo(perf): semi-naive delta-growth bail + wedge visibility -->
