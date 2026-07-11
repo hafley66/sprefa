@@ -15,6 +15,29 @@ allow=scripts/filesize-allow.txt
 soft=300
 hard=500
 
+# Keep the shell enforcement prong and the dl advisory facts synchronized. A
+# stale copy makes a grandfathered file look intentional in one rail and
+# missing in the other, so drift is an error rather than a quiet warning.
+allow_paths=$(mktemp)
+fact_paths=$(mktemp)
+trap 'rm -f "$allow_paths" "$fact_paths"' EXIT
+awk '!/^#/ && NF {print $1}' "$allow" | sort -u >"$allow_paths"
+sed -n 's/^[[:space:]]*big_file_ok("\([^"]*\)".*/\1/p' .dl/file-size.dl | sort -u >"$fact_paths"
+drift=0
+while read -r path; do
+    [ -z "${path:-}" ] && continue
+    echo "[filesize] ERROR: $allow lists $path but .dl/file-size.dl has no big_file_ok fact" >&2
+    drift=1
+done < <(comm -23 "$allow_paths" "$fact_paths")
+while read -r path; do
+    [ -z "${path:-}" ] && continue
+    echo "[filesize] ERROR: .dl/file-size.dl lists $path but $allow has no allowlist row" >&2
+    drift=1
+done < <(comm -13 "$allow_paths" "$fact_paths")
+if [ "$drift" -ne 0 ]; then
+    echo "[filesize] WARNING: allowlist and dl big_file_ok path sets drift" >&2
+fi
+
 offenders=$(git ls-files 'src/*.rs' 'src/**/*.rs' | xargs wc -l 2>/dev/null \
     | awk -v h="$hard" '$2 != "total" && $1 > h {print $1" "$2}' | sort -k2)
 softies=$(git ls-files 'src/*.rs' 'src/**/*.rs' | xargs wc -l 2>/dev/null \
