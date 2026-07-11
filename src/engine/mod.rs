@@ -6209,6 +6209,12 @@ impl Engine {
             if trace { eprintln!("[node2vec] graph '{edge}': skip (digest unchanged)"); }
             return Ok(());
         }
+        // Global op, digest-skip already refused above — time only the actual
+        // recompute (walks + embedding + KNN fill) into `_stmt_ms` under
+        // `node2vec:<edge>`, a sibling of `closure:<edge>`/`scc:<rel>`. The
+        // empty-graph branch returns early, so it's timed too (via the `?`
+        // helper below), not just the full re-embed path.
+        let t = std::time::Instant::now();
 
         // node_sim is rebuilt for the new digest either way.
         self.db.exec(&format!("DELETE FROM {}", tbl(head)))?;
@@ -6219,6 +6225,7 @@ impl Engine {
             self.db.conn().execute("DELETE FROM _node_emb_seen WHERE graph = ?1", [edge])?;
             if trace { eprintln!("[node2vec] graph '{edge}': empty (cleared)"); }
             self.save_rel_digest(&dkey, &digest)?;
+            self.save_stmt_ms_one(&format!("node2vec:{edge}"), t.elapsed().as_millis() as i64)?;
             return Ok(());
         }
 
@@ -6281,6 +6288,7 @@ impl Engine {
         let cols: Vec<&str> = head_cols.iter().map(|s| s.as_str()).collect();
         self.db.insert_rows(&tbl(head), &cols, &rows)?;
         self.save_rel_digest(&dkey, &digest)?;
+        self.save_stmt_ms_one(&format!("node2vec:{edge}"), t.elapsed().as_millis() as i64)?;
         Ok(())
     }
 
@@ -6428,7 +6436,13 @@ impl Engine {
             if !heads.contains(&r.head.rel) { heads.push(r.head.rel.clone()); }
         }
         let mut any_changed = false;
+        // Per-head-rel wall time (parse/extract + before/after row-set diff +
+        // the DELETE/insert flush) into `_stmt_ms` under `extract:<rel>` — this
+        // hybrid join+extract pass (term-form json/jsonp/sg) ran untimed before,
+        // part of the derived-phase attribution gap.
+        let mut stmt_ms: HashMap<String, i64> = HashMap::new();
         for head_rel in &heads {
+            let t = std::time::Instant::now();
             let cols: Vec<String> = {
                 let meta = self.rels.get(head_rel)
                     .ok_or_else(|| anyhow::anyhow!("term-extract head rel `{head_rel}` is not declared"))?;
@@ -6473,7 +6487,9 @@ impl Engine {
             self.db.conn().execute(&format!("DELETE FROM {}", tbl(head_rel)), [])?;
             let col_refs: Vec<&str> = cols.iter().map(|s| s.as_str()).collect();
             self.db.insert_rows(&tbl(head_rel), &col_refs, &rows)?;
+            stmt_ms.insert(format!("extract:{head_rel}"), t.elapsed().as_millis() as i64);
         }
+        self.save_stmt_ms(&stmt_ms)?;
         Ok(any_changed)
     }
 
@@ -6851,6 +6867,19 @@ impl Engine {
         Ok(())
     }
 
+    /// Single-key convenience wrapper over `save_stmt_ms`, for the derived-phase
+    /// sub-passes that run once per tick rather than once per rel (closure
+    /// condensation, the operator evals, the term-extract pass) — see the
+    /// `closure:<edge>` / `cond_cache:<edge>` / `extract:<rel>` / `closure_seed:<rel>`
+    /// / `scc:<rel>` / `node2vec:<edge>` keys their callers use. These are
+    /// sibling buckets in the SAME `_stmt_ms` table as the per-rel rebuild costs,
+    /// not a new mechanism — `stmt_ms`/`rel_count` rails read them identically.
+    fn save_stmt_ms_one(&self, key: &str, ms: i64) -> Result<()> {
+        let mut m = HashMap::new();
+        m.insert(key.to_string(), ms);
+        self.save_stmt_ms(&m)
+    }
+
     /// First closure edge (if any) whose SCC node table is empty — unlike
     /// `derived_incomplete_rels`, this is intentionally still a plain row-count
     /// probe (P1 scoped to derived rels only; closures are a separate, usually
@@ -6904,7 +6933,16 @@ impl Engine {
     /// For each edge relation: condense, then replace its scc_node/scc_edge tables.
     /// The closure VIEW reads these; the Theta(V^2) pair table is never built.
     fn rebuild_closures(&self, edges: &[&str]) -> Result<()> {
+        // Per-edge cost lands in `_stmt_ms` under `closure:<edge>` (max across
+        // this call's edges is not needed here — one entry per edge, one call
+        // site per tick pass — so a plain overwrite is correct). This is the
+        // condensation (Tarjan) + SCC node/edge table rebuild that a `closure`
+        // rel pays every time its edge rebuilds; previously untimed, it was
+        // part of the ~32s cold-tick derived-phase gap between the tick's
+        // "derived" phase wall time and `SUM(ms) FROM _stmt_ms`.
+        let mut stmt_ms: HashMap<String, i64> = HashMap::new();
         for edge in edges {
+            let t = std::time::Instant::now();
             let meta = self.rels.get(*edge)
                 .ok_or_else(|| anyhow::anyhow!("closure edge relation {edge} not declared"))?;
             if meta.cols.len() < 2 { bail!("closure edge {edge} must have at least 2 columns"); }
@@ -6926,7 +6964,9 @@ impl Engine {
             self.db.exec(&format!("DELETE FROM {et}"))?;
             self.db.insert_rows(&nt, &["name", "comp", "cyclic"], &node_rows)?;
             self.db.insert_rows(&et, &["comp_src", "comp_dst"], &edge_rows)?;
+            stmt_ms.insert(format!("closure:{edge}"), t.elapsed().as_millis() as i64);
         }
+        self.save_stmt_ms(&stmt_ms)?;
         Ok(())
     }
 
@@ -7054,22 +7094,33 @@ impl Engine {
     /// old unconditional per-tick rebuild of every edge's condensation.
     fn refresh_cond_cache(&mut self, edges: &[&str], dirty: &HashSet<&str>) -> Result<()> {
         self.closure_cache.retain(|k, _| edges.iter().any(|e| *e == k.as_str()));
+        // Timed only for the edges that actually pay the digest read + Tarjan
+        // rebuild below — a reused/unchanged edge costs ~nothing and doesn't
+        // need its own row. Key `cond_cache:<edge>`, sibling to `closure:<edge>`
+        // (rebuild_closures' SCC-table write) in `_stmt_ms`.
+        let mut stmt_ms: HashMap<String, i64> = HashMap::new();
         for &edge in edges {
             let meta = self.rels.get(edge)
                 .ok_or_else(|| anyhow::anyhow!("closure edge relation {edge} not declared"))?;
             if meta.cols.len() < 2 { continue; }
             // Unaffected edge already cached → reuse, no scan.
             if !dirty.contains(edge) && self.closure_cache.contains_key(edge) { continue; }
+            let t = std::time::Instant::now();
             let (c0, c1) = (meta.cols[0].name.clone(), meta.cols[1].name.clone());
             let digest = self.edge_content_digest(edge, &c0, &c1)?;
             // Dirty but rows unchanged (e.g. comment edit) → reuse, skip Tarjan.
-            if self.closure_cache.get(edge).map(|c| c.digest) == Some(digest) { continue; }
+            if self.closure_cache.get(edge).map(|c| c.digest) == Some(digest) {
+                stmt_ms.insert(format!("cond_cache:{edge}"), t.elapsed().as_millis() as i64);
+                continue;
+            }
             let (adj, names) = self.load_edges(edge, &c0, &c1)?;
             let cond = scc::build_condensed(&adj);
             self.recondensed += 1;
             let id = names.iter().enumerate().map(|(i, n)| (n.clone(), i as u32)).collect();
             self.closure_cache.insert(edge.to_string(), ClosureCache { cond, names, id, digest });
+            stmt_ms.insert(format!("cond_cache:{edge}"), t.elapsed().as_millis() as i64);
         }
+        self.save_stmt_ms(&stmt_ms)?;
         Ok(())
     }
 
@@ -7142,6 +7193,16 @@ impl Engine {
     /// Runs in the query phase (after `refresh_cond_cache`), so the condensation
     /// is ready; it reads `self.closure_cache` and never recondenses.
     fn eval_closure_seed_rule(&self, rule: &Rule, cs: &ClosureSeed) -> Result<()> {
+        let t = std::time::Instant::now();
+        let r = self.eval_closure_seed_rule_inner(rule, cs);
+        self.save_stmt_ms_one(&format!("closure_seed:{}", rule.head.rel), t.elapsed().as_millis() as i64)?;
+        r
+    }
+
+    /// Body of `eval_closure_seed_rule`, split out so the wrapper can time the
+    /// whole seeded-BFS-plus-flush pass into `_stmt_ms` (`closure_seed:<rel>`)
+    /// without an early `?` return skipping the timing write.
+    fn eval_closure_seed_rule_inner(&self, rule: &Rule, cs: &ClosureSeed) -> Result<()> {
         let head = &rule.head.rel;
         let head_meta = self.rels.get(head)
             .ok_or_else(|| anyhow::anyhow!("unknown head relation {head}"))?;
@@ -7203,6 +7264,16 @@ impl Engine {
     /// after `refresh_cond_cache`, so the cond is ready; the head is otherwise
     /// excluded from `rebuild_derived` (the Scc body item can't lower to SQL).
     fn eval_scc_rule(&self, rule: &Rule) -> Result<()> {
+        let t = std::time::Instant::now();
+        let r = self.eval_scc_rule_inner(rule);
+        self.save_stmt_ms_one(&format!("scc:{}", rule.head.rel), t.elapsed().as_millis() as i64)?;
+        r
+    }
+
+    /// Body of `eval_scc_rule`, split out so the wrapper can time the whole
+    /// membership-materialization pass into `_stmt_ms` (`scc:<rel>`) past any
+    /// early `?` return.
+    fn eval_scc_rule_inner(&self, rule: &Rule) -> Result<()> {
         let edge = rule.scc_edge()
             .ok_or_else(|| anyhow::anyhow!("eval_scc_rule on a non-scc rule"))?;
         let head = &rule.head.rel;
