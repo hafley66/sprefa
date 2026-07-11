@@ -1,6 +1,7 @@
 use super::*;
 
 impl Engine {
+    /// already match, so a converged tick leaves the tree untouched.
     #[tracing::instrument(skip_all, level = "debug")]
     pub(crate) fn run_gens(&mut self, prog: &Program, quiet: bool) -> Result<()> {
         let mut written: Vec<String> = Vec::new();
@@ -400,6 +401,13 @@ impl Engine {
         }
         Ok(())
     }}
+/// Locate a NAMED zone in a file's line list. Returns `(begin_idx, end_idx)`
+/// 0-based LINE INDICES where `lines[begin_idx]` carries `BEGIN: <name>` and
+/// `lines[end_idx]` carries the matching `END:`. The caller splices the
+/// strictly-inside range `[begin_idx+1, end_idx)`. Comment-prefix-tolerant:
+/// `// BEGIN: name`, `# BEGIN: name`, `/* BEGIN: name */`, `; BEGIN: name`,
+/// `<!-- BEGIN: name -->`, or a bare `BEGIN: name` all match. The first END
+/// after the BEGIN closes the zone (END carries no name). `None` if no pair.
 
 fn find_zone(lines: &[String], name: &str) -> Option<(usize, usize)> {
     let mut begin: Option<usize> = None;

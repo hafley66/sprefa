@@ -129,6 +129,9 @@ impl Engine {
         Ok(())
     }
 }
+/// SQLite value -> JSON: text stays a string, integer/real become JSON numbers,
+/// everything else (NULL/blob) becomes JSON null. The TSV path stringifies these
+/// back via `json_cell_tsv`, so both renderers share one cell representation.
 
 fn sqlite_to_json(v: rusqlite::types::Value) -> serde_json::Value {
     use rusqlite::types::Value as V;

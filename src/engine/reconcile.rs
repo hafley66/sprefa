@@ -1,6 +1,7 @@
 use super::*;
 
 impl Engine {
+    #[tracing::instrument(skip_all, fields(n_rules = source_rules.len()), level = "debug")]
     pub(crate) fn reconcile_sources(&mut self, source_rules: &[&Rule], source_rels: &[String],
         consumed: &HashSet<String>) -> Result<Reconcile> {
         // Load prior file metadata first so enumerate can use the mtime fast-path.
@@ -224,6 +225,21 @@ impl Engine {
         }
         Ok(removed)
     }
+    /// Evaluate the TERM-form `json`/`jsonp` rules — the hybrid join+extract. A
+    /// rule like `star(repo,n) <- page(repo,200,_,body), jsonp(body,"stars",n).`
+    /// joins relations in SQL (binding the content var `body`), then runs the
+    /// tree-sitter extractor over each joined row's bound string, fanning the
+    /// extracted bindings into head rows. This is the only path that parses a
+    /// value held in a relation (a response body, a column) rather than a file.
+    /// Runs after sources/responses are present and before the derived fixpoint
+    /// (so derived rules see the output). Returns whether any head rel changed,
+    /// which the caller ORs into the rebuild gate.
+    ///
+    /// @recompute unguarded: re-runs each tick — its inputs (response/source rels)
+    /// move off the file-source-digest path, so a digest skip here would miss a
+    /// freshly-drained body. The join is bounded by the read relations (the
+    /// response/page set), not the repo; the downstream rebuild is gated on the
+    /// returned changed flag, so a steady state does not re-run the fixpoint.
 
     pub(crate) fn eval_extract_rules(&self, extract_rules: &[&Rule]) -> Result<bool> {
         if extract_rules.is_empty() { return Ok(false); }
@@ -400,7 +416,6 @@ impl Engine {
         Ok(())
     }
 
-    /// Wipe derived tables and run the semi-naive fixpoint to convergence.
     pub(crate) fn insert_source_rows(&self, rel: &str, meta: &RelMeta, repo: &str, path: &str, rows: &[Vec<Value>]) -> Result<usize> {
         if rows.is_empty() { return Ok(0); }
         let path_rows: Vec<(String, String, Vec<Value>)> = rows.iter().cloned()

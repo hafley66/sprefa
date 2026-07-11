@@ -1,6 +1,8 @@
 use super::*;
 
 impl Engine {
+    /// Resolve a declared rev to a stable commit SHA (WORK stays WORK).
+    /// Cached per tick so a moving ref is re-resolved each tick.
     pub(crate) fn resolve_rev(&mut self, repo_root: &Path, rev: &str) -> Result<String> {
         if rev == "WORK" { return Ok("WORK".to_string()); }
         // Cache by (repo, rev): the same tag resolves to different shas per repo.
@@ -277,8 +279,9 @@ impl Engine {
         Ok(out)
     }
 
-    /// This engine's root directory (`--root`). The working dir an `@async`
-    /// shell effect runs in, so `git`/`gh` commands resolve against the repo.
+    /// Persist the registered repo set into `_repo` (wipe + insert). `registered_at`
+    /// stamps the flush; the daemon calls this when it loads or reloads config so
+    /// a restart can diff the previously-registered repos against the new set.
     pub fn save_repos_meta(&self) -> Result<()> {
         let now = unix_secs();
         let rows: Vec<Vec<Value>> = self.repos.iter().map(|rc| vec![
@@ -298,7 +301,18 @@ impl Engine {
     pub fn snapshot_repos(&self) -> Vec<crate::config::RepoConfig> {
         self.repos.clone()
     }
-
+    /// Drain `repo`-sink rules: compile each sink's body as a SELECT (the gen
+    /// lowering), collect `(slug, root, url)` rows, and for each row whose
+    /// github org is in the `org` allowlist, clone (if missing) + register the
+    /// repo into `self.repos`. Registered repos appear in the `repo` builtin and
+    /// `scan("*")` on the NEXT tick; idempotent (a slug/root already registered
+    /// is skipped, so re-asserting each tick is cheap).
+    ///
+    /// The `org` allowlist is a hard filter: a row pulls only when
+    /// `parse_github_org(url)` is `Some(org)` AND `org(name)` contains it. Rows
+    /// with no parseable github org, or whose org is not listed, are skipped
+    /// with a stderr line. A missing/empty `org` relation pulls nothing.
+    #[tracing::instrument(skip_all, fields(n_sinks = sinks.len()), level = "debug")]
     pub(crate) fn run_repo_pulls(&mut self, sinks: &[&Rule]) -> Result<()> {
         if sinks.is_empty() { return Ok(()); }
         let allowlist: HashSet<String> = if self.rels.contains_key("org") {
@@ -439,19 +453,9 @@ impl Engine {
         })
     }
 
-    /// Drain the NETWORK/MUTATING sinks (`repo` pulls + `checkout` sweeps) AFTER
-    /// the read-only fixpoint + query + gens ran in `tick_report`. This is the
-    /// half of the tick that hits the network and rewrites checkouts, so it is
-    /// split out from `tick_report` to keep read paths (`?` queries, `--check`,
-    /// LSP, MCP) pure: a query must never trigger a 90s destructive sweep.
-    ///
-    /// The daemon's poll loop calls this off-tick on its cadence; one-shot CLI
-    /// runs opt in via `--apply` / `DL_APPLY_SINKS=1` (so `dl prog.dl` on a
-    /// gh-checkout program is a read by default and surfaces nothing new
-    /// unless the operator opted in). `DL_CHECKOUT_DRY_RUN=1` previews the
-    /// checkout sweep as `checkout_plan` rows without mutating anything.
-    /// Returns the number of sink rows that landed (repos pulled + checkout
-    /// outcomes), so a settle loop knows whether to re-tick to derive from them.
+    /// Count rows in whichever checkout outcome rel currently exists (done or
+    /// plan). Used by `drain_external_sinks` to surface "did this drain land
+    /// new facts the next tick must derive from" without juggling schema.
     pub(crate) fn checkout_outcome_count(&self) -> Result<usize> {
         let conn = self.db.conn();
         for rel in ["checkout_done", "checkout_plan"] {
@@ -767,15 +771,12 @@ impl Engine {
 
 
 
-    /// Materialize `head(a, b, score) <- node2vec(edge).`: read the 2-col edge
-    /// rel, learn one structural vector per node (random walks + skip-gram), store
-    /// the vectors in `_node_embeddings` keyed by the edge rel name, and fill the
-    /// 3-col head with each node's top-k cosine-nearest neighbors. Excluded from
-    /// `rebuild_derived` (the Node2vec body item can't lower to SQL); runs after
-    /// the edge rel has materialized. The embed is the cost, so it is guarded:
-    /// W1 skips an unchanged graph (digest match), W2 reuses cached vectors for
-    /// any of the last N seen edge-digests (branch thrash), only a genuinely new
-    /// graph pays `embed_graph`. Cap the graph or run on demand for huge edge sets.
+    // LANG-JUNCTION(manifest-probe): the manifest filename list probed above the scanned file set; a language whose module resolver reads a manifest (Cargo.toml, package.json, go.mod) must add its name here or the resolver gets no manifest content
+    /// Read the Cargo.toml / package.json / go.mod manifests above the file set,
+    /// at this rev, into a map (manifest path -> contents) for the resolver's
+    /// crate / package / module registries. Probes the distinct ancestor
+    /// directories of the files; `read_content` errors (no such manifest) are
+    /// skipped. Rev-correct (git show for a git rev, disk for WORK).
     pub(crate) fn collect_manifests(&self, rev: &str, files: &HashSet<String>) -> HashMap<String, String> {
         let mut dirs: HashSet<String> = HashSet::new();
         for f in files {

@@ -1,6 +1,11 @@
 use super::*;
 
 impl Engine {
+    /// Located byte spans with their interned text, for the refactor sink:
+    /// `_where_bytes ⋈ _strings`, sentinel skipped. Returns (path, lo, hi, text),
+    /// where (lo, hi) is the rewrite coordinate in `path`'s WORK bytes and `text`
+    /// is the contiguous source at that span. With a scan-only source program the
+    /// only rows are import refs (no capture spans), so this is the `--move` feed.
     pub fn located_spans(&self) -> Result<Vec<(String, u32, u32, String)>> {
         let conn = self.db.conn();
         let mut s = conn.prepare(

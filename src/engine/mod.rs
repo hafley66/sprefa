@@ -43,6 +43,10 @@ pub use decls::{
 pub(crate) use decls::*;
 pub use lang_tables::ast_langs;
 pub(crate) use lang_tables::ts_lang;
+/// The structured result of one `checkout_one` sweep. `action` ∈
+/// ff|branch-f|skip; `ok` = the git op succeeded (skip-dirty carries ok=true —
+/// the SKIP is intentional); `detail` = the human line. Fed into both the
+/// `[checkout]` log line and the `checkout_done` / `checkout_plan` rel.
 #[derive(Clone, Debug)]
 struct CheckoutOutcome { action: &'static str, ok: bool, detail: String }
 // The mixed source+derived / extract+derived rel desugar: a pure Program ->
@@ -1435,8 +1439,8 @@ impl Engine {
         self.repos = repos;
     }
 
-    /// Resolve a declared rev to a stable commit SHA (WORK stays WORK).
-    /// Cached per tick so a moving ref is re-resolved each tick.
+    /// This engine's root directory (`--root`). The working dir an `@async`
+    /// shell effect runs in, so `git`/`gh` commands resolve against the repo.
     pub fn root(&self) -> PathBuf { self.root.clone() }
 
     /// Stable slug for this engine's own repo: the `--root` directory name.
@@ -1463,11 +1467,8 @@ impl Engine {
         self.tick(prog, false)
     }
 
-    /// Located byte spans with their interned text, for the refactor sink:
-    /// `_where_bytes ⋈ _strings`, sentinel skipped. Returns (path, lo, hi, text),
-    /// where (lo, hi) is the rewrite coordinate in `path`'s WORK bytes and `text`
-    /// is the contiguous source at that span. With a scan-only source program the
-    /// only rows are import refs (no capture spans), so this is the `--move` feed.
+    /// Wholesale replace one engine-owned relation through the same plural write
+    /// seam every built-in module/indexer uses.
     pub(crate) fn refresh_rel(&self, rel: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
         let table = tbl(rel);
         self.db.exec(&format!("DELETE FROM {table}"))?;
@@ -1479,13 +1480,11 @@ impl Engine {
 
 }
 
-/// Locate a NAMED zone in a file's line list. Returns `(begin_idx, end_idx)`
-/// 0-based LINE INDICES where `lines[begin_idx]` carries `BEGIN: <name>` and
-/// `lines[end_idx]` carries the matching `END:`. The caller splices the
-/// strictly-inside range `[begin_idx+1, end_idx)`. Comment-prefix-tolerant:
-/// `// BEGIN: name`, `# BEGIN: name`, `/* BEGIN: name */`, `; BEGIN: name`,
-/// `<!-- BEGIN: name -->`, or a bare `BEGIN: name` all match. The first END
-/// after the BEGIN closes the zone (END carries no name). `None` if no pair.
+/// (repo, rev, glob, pathvar, revvar) of a source rule's `scan`. `repo` is the
+/// repo coordinate ("." = self repo); resolve it to a root via
+/// `Engine::resolve_repo_root`.
+/// The scan atom of a source rule, with its coordinate Terms intact (a `Term::Var`
+/// in `repo`/`rev` is a data-driven coordinate — see `Engine::resolve_scan_bindings`).
 fn scan_spec_of(rule: &Rule) -> Result<ScanSpec> {
     for item in &rule.body {
         if let BodyItem::Scan { repo, rev, glob, path, rev_out } = item {

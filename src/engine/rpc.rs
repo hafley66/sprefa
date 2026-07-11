@@ -1,6 +1,9 @@
 use super::*;
 
 impl Engine {
+    /// Distinct WORK source paths from the `_file` cache. Feeds crate-root
+    /// discovery (`rspath::crate_roots`) for the `--move` rewriter, so a crate
+    /// whose root is `rust/kernel/lib.rs` (no `src/`) still yields module paths.
     pub fn source_paths(&self) -> Result<Vec<String>> {
         let conn = self.db.conn();
         let mut s = conn.prepare("SELECT DISTINCT path FROM _file WHERE rev = 'WORK'")?;
@@ -147,6 +150,18 @@ impl Engine {
             hint: None,
         });
     }
+    /// Append one row to the server-request history (`_query_log`), the meta
+    /// table the built-in `query_log` relation projects (`src/rels/querylog.rs`).
+    /// Called once per request from the daemon's `query`/`query_sql` RPC
+    /// handlers and the LSP's `dl/query` handler — a single-row insert through
+    /// the plural `Db::insert_rows` seam (same shape as the `pending_effect`
+    /// job queue), never a raw per-row `conn()` write. `source` is which server
+    /// ("daemon"/"lsp"); `method` is the RPC/request method name; `body` is the
+    /// SQL text (empty for the plain `query` RPC, which carries no SQL param);
+    /// `params` is the JSON array text of bound parameters ("[]" when none).
+    /// Append-only, no retention: a polling reader (the flow panel's
+    /// auto-refresh) querying `query_log` logs its own read as a new row too —
+    /// intentional self-noise, not a bug.
 
 
     pub fn log_query(&self, source: &str, method: &str, body: &str, params: &str) -> Result<()> {
@@ -188,9 +203,11 @@ impl Engine {
         Ok(())
     }
 
-    /// Persist the registered repo set into `_repo` (wipe + insert). `registered_at`
-    /// stamps the flush; the daemon calls this when it loads or reloads config so
-    /// a restart can diff the previously-registered repos against the new set.
+    /// Inject one inbound rpc request into an `@in(rpc)` port rel (the serving
+    /// loop's pre-tick write). `id` is the raw JSON serialization of the
+    /// request id (int or string), so it round-trips exactly. The rel must
+    /// already be declared (the priming tick declares every program rel), so
+    /// injection never races the schema.
     pub fn inject_rpc(&mut self, rel: &str, id: &str, method: &str, params: &str) -> Result<()> {
         if !self.rels.contains_key(rel) {
             bail!("@in(rpc) rel {rel} is not declared; run a tick before injecting");
@@ -347,17 +364,19 @@ impl Engine {
             .unwrap_or_default()
     }
 
-    /// Drain `repo`-sink rules: compile each sink's body as a SELECT (the gen
-    /// lowering), collect `(slug, root, url)` rows, and for each row whose
-    /// github org is in the `org` allowlist, clone (if missing) + register the
-    /// repo into `self.repos`. Registered repos appear in the `repo` builtin and
-    /// `scan("*")` on the NEXT tick; idempotent (a slug/root already registered
-    /// is skipped, so re-asserting each tick is cheap).
+    /// Drain the NETWORK/MUTATING sinks (`repo` pulls + `checkout` sweeps) AFTER
+    /// the read-only fixpoint + query + gens ran in `tick_report`. This is the
+    /// half of the tick that hits the network and rewrites checkouts, so it is
+    /// split out from `tick_report` to keep read paths (`?` queries, `--check`,
+    /// LSP, MCP) pure: a query must never trigger a 90s destructive sweep.
     ///
-    /// The `org` allowlist is a hard filter: a row pulls only when
-    /// `parse_github_org(url)` is `Some(org)` AND `org(name)` contains it. Rows
-    /// with no parseable github org, or whose org is not listed, are skipped
-    /// with a stderr line. A missing/empty `org` relation pulls nothing.
+    /// The daemon's poll loop calls this off-tick on its cadence; one-shot CLI
+    /// runs opt in via `--apply` / `DL_APPLY_SINKS=1` (so `dl prog.dl` on a
+    /// gh-checkout program is a read by default and surfaces nothing new
+    /// unless the operator opted in). `DL_CHECKOUT_DRY_RUN=1` previews the
+    /// checkout sweep as `checkout_plan` rows without mutating anything.
+    /// Returns the number of sink rows that landed (repos pulled + checkout
+    /// outcomes), so a settle loop knows whether to re-tick to derive from them.
     pub fn drain_external_sinks(&mut self, prog: &Program) -> Result<usize> {
         use crate::ast::Item;
         let rules: Vec<&Rule> = prog.items.iter().filter_map(|i| match i { Item::Rule(r) => Some(r), _ => None }).collect();

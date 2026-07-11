@@ -1,6 +1,12 @@
 use super::*;
 
 impl Engine {
+    /// Same-string spans of the identifier at (`path`, `byte`) restricted to
+    /// `path` itself, for `textDocument/documentHighlight`. Reuses `span_at` (the
+    /// innermost located string under the cursor) and `string_spans` (every WORK
+    /// span of that interned string), then keeps only the cursor's own file so the
+    /// highlight stays file-scoped and fast. Returns byte ranges `(lo, hi)`; empty
+    /// when the cursor is not on a located string.
     pub fn document_highlights(&self, path: &str, byte: u32) -> Result<Vec<(u32, u32)>> {
         let Some((string_id, _text, _lo, _hi)) = self.span_at(path, byte)? else {
             return Ok(Vec::new());

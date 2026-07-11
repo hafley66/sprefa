@@ -673,6 +673,7 @@ impl Engine {
             .collect();
         self.db.insert_rows("_files", &["id", "content_hash", "path", "size"], &file_rows)
     }
+    /// The current `@next` generation (`_carry_meta.tx`). 0 on a fresh db.
 
     pub(crate) fn current_tx(&self) -> Result<i64> {
         Ok(self.db.conn().query_row(
@@ -737,21 +738,9 @@ impl Engine {
     }
 
 
-    /// Evaluate the TERM-form `json`/`jsonp` rules — the hybrid join+extract. A
-    /// rule like `star(repo,n) <- page(repo,200,_,body), jsonp(body,"stars",n).`
-    /// joins relations in SQL (binding the content var `body`), then runs the
-    /// tree-sitter extractor over each joined row's bound string, fanning the
-    /// extracted bindings into head rows. This is the only path that parses a
-    /// value held in a relation (a response body, a column) rather than a file.
-    /// Runs after sources/responses are present and before the derived fixpoint
-    /// (so derived rules see the output). Returns whether any head rel changed,
-    /// which the caller ORs into the rebuild gate.
-    ///
-    /// @recompute unguarded: re-runs each tick — its inputs (response/source rels)
-    /// move off the file-source-digest path, so a digest skip here would miss a
-    /// freshly-drained body. The join is bounded by the read relations (the
-    /// response/page set), not the repo; the downstream rebuild is gated on the
-    /// returned changed flag, so a steady state does not re-run the fixpoint.
+    /// Turnkey batched intern: every text cell across `rows` goes through one
+    /// `SymSink`, flushed by `Db::flush_syms` (collision-guarded there — two
+    /// different texts hashing to the same id within the flush is a loud bail).
     pub(crate) fn insert_spine_strings(&self, rows: &[(String, String, Vec<Value>)]) -> Result<usize> {
         let mut sink = spine::SymSink::new();
         for (_, _, row) in rows {

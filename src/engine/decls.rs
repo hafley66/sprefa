@@ -341,10 +341,6 @@ pub fn type_decl_row_used(prog: &Program) -> bool {
     prog.items.iter().any(|it| matches!(it, Item::Rule(r) if r.head.rel == "type_decl_row"))
 }
 
-/// The structured result of one `checkout_one` sweep. `action` ∈
-/// ff|branch-f|skip; `ok` = the git op succeeded (skip-dirty carries ok=true —
-/// the SKIP is intentional); `detail` = the human line. Fed into both the
-/// `[checkout]` log line and the `checkout_done` / `checkout_plan` rel.
 pub(crate) fn effect_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![

@@ -1,6 +1,15 @@
 use super::*;
 
 impl Engine {
+    /// Materialize `head(a, b, score) <- node2vec(edge).`: read the 2-col edge
+    /// rel, learn one structural vector per node (random walks + skip-gram), store
+    /// the vectors in `_node_embeddings` keyed by the edge rel name, and fill the
+    /// 3-col head with each node's top-k cosine-nearest neighbors. Excluded from
+    /// `rebuild_derived` (the Node2vec body item can't lower to SQL); runs after
+    /// the edge rel has materialized. The embed is the cost, so it is guarded:
+    /// W1 skips an unchanged graph (digest match), W2 reuses cached vectors for
+    /// any of the last N seen edge-digests (branch thrash), only a genuinely new
+    /// graph pays `embed_graph`. Cap the graph or run on demand for huge edge sets.
     pub(crate) fn eval_node2vec_rule(&mut self, rule: &Rule) -> Result<()> {
         let edge = rule.node2vec_edge()
             .ok_or_else(|| anyhow::anyhow!("eval_node2vec_rule on a non-node2vec rule"))?;
@@ -127,12 +136,8 @@ impl Engine {
         Ok(())
     }
 
-    // LANG-JUNCTION(manifest-probe): the manifest filename list probed above the scanned file set; a language whose module resolver reads a manifest (Cargo.toml, package.json, go.mod) must add its name here or the resolver gets no manifest content
-    /// Read the Cargo.toml / package.json / go.mod manifests above the file set,
-    /// at this rev, into a map (manifest path -> contents) for the resolver's
-    /// crate / package / module registries. Probes the distinct ancestor
-    /// directories of the files; `read_content` errors (no such manifest) are
-    /// skipped. Rev-correct (git show for a git rev, disk for WORK).
+    /// Wipe derived tables and run the semi-naive fixpoint to convergence.
+    #[tracing::instrument(skip_all, fields(n_rules = derived_rules.len(), n_rels = derived_rels.len()), level = "debug")]
     pub(crate) fn rebuild_derived(&self, derived_rules: &[&Rule], derived_rels: &[String]) -> Result<()> {
         // P3: instrument the whole pass directly (start/stop), rather than
         // relying on the `activity` phase-transition emitter — a quiet
@@ -464,6 +469,11 @@ impl Engine {
         }
         Ok(())
     }
+    /// Order-independent content digest of a closure edge relation's `(c0,c1)`
+    /// rows. Same edge set ⇒ same digest, regardless of row order; the edge
+    /// table is a set (PK), so XOR cannot cancel a duplicate. Lets a tick that
+    /// touched the edge's source file skip the recondense when the actual edges
+    /// did not move (e.g. a comment edit that leaves call sites unchanged).
 
     pub(crate) fn edge_content_digest(&self, edge: &str, c0: &str, c1: &str) -> Result<[u8; 32]> {
         let mut acc = [0u8; 32];

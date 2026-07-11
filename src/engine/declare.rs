@@ -438,8 +438,9 @@ impl Engine {
 
 
 
-    /// Wholesale replace one engine-owned relation through the same plural write
-    /// seam every built-in module/indexer uses.
+    /// A closure head `rel_<head>` is a recursive-CTE view over the condensation
+    /// tables of its edge relation. The view yields cross-component reach plus
+    /// same-cyclic-component pairs (so a node on a cycle reaches itself).
     pub(crate) fn declare_closure(&mut self, d: &RelDecl, edge: &str) -> Result<()> {
         if d.cols.len() != 2 { bail!("closure head {} must have 2 columns", d.name); }
         self.rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone(), ..Default::default() });
