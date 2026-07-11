@@ -6,6 +6,7 @@
 //! subcommand + shared output helpers, and this module wires the two together.
 
 mod daemon;
+mod check_deadline;
 mod inputs;
 mod query;
 mod root;
@@ -179,6 +180,10 @@ struct Cli {
     /// error, never a silent truncation. Default: unlimited.
     #[arg(long, help_heading = "Perf & debug")]
     cmd_budget: Option<u32>,
+    /// Wall-clock deadline for `--check` in seconds. On expiry prints a loud
+    /// partial report plus a check-timed-out warning and exits 0.
+    #[arg(long, help_heading = "Perf & debug")]
+    max_wall: Option<u64>,
     /// After each tick, print every relation's row count (or DL_TICK_AUDIT=1).
     #[arg(long, help_heading = "Perf & debug")]
     tick_audit: bool,
@@ -330,7 +335,20 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
     } else if cli.check || cli.diag_json {
         // Exit contract: 0 clean, 2 rail violations (Claude Code's blocking-hook
         // code; stderr feeds the agent), 1 broken program (user-facing).
-        let errors = crate::run_check(programs, db.as_deref(), db_defaulted, root, cli.diag_json)?;
+        let errors = if let Some(max_wall) = cli.max_wall {
+            let Some(errors) = check_deadline::run(max_wall, {
+                let programs = programs.to_vec();
+                let db = db.clone();
+                let root = root.clone();
+                let json = cli.diag_json;
+                move || crate::run_check(&programs, db.as_deref(), db_defaulted, root, json)
+            })? else {
+                return Ok(());
+            };
+            errors
+        } else {
+            crate::run_check(programs, db.as_deref(), db_defaulted, root, cli.diag_json)?
+        };
         if errors > 0 {
             eprintln!("{errors} error-severity diagnostic(s) found");
             std::process::exit(2);
