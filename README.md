@@ -107,6 +107,18 @@ The VSCode extension (`dl setup --vscode`, or `editors/vscode-dl/`) runs
 `dl --lsp` over stdio (workspace folder as cwd): drop a rule in `.dl/`, get live
 squiggles on the rust/ts/py/go/kt the rule scans and on the `.dl` itself.
 
+### Undo setup and emergency stop
+
+`dl setup --list` shows every recorded setup write. `dl setup --undo --dry-run`
+previews the reversible actions; `dl setup --undo` is the polite removal path,
+and `dl uninstall` also removes dl's state directory while leaving the binary.
+Use `--root <repo>` or `--global` to limit an undo. Files changed after setup
+and unrecognized wiring are skipped loudly rather than overwritten or removed.
+
+For an immediate stop before cleanup, disable the configured agent hooks and
+run `dl daemon stop`. Codex hook trust removal remains a manual UI action; the
+installed binary can be removed separately with `cargo uninstall dl`.
+
 ## The model
 
 - **Coordinates.** Every fact is keyed on `(repo, path, rev)`. File content is
