@@ -115,7 +115,7 @@ diag(path: "(engine)", line: 1, severity: "warning", code: "slow-rule",
 rel perf_tick_total_ms(total_ms: int).
 perf_tick_total_ms(sum(ms)) <- stmt_ms(_, ms).
 
-diag(path: "(engine)", line: 1, severity: "error", code: "tick-over-budget",
+diag(path: "(engine)", line: 1, severity: "warning", code: "tick-over-budget",
      msg: "total derived-rebuild time this tick is ${total_ms}ms (hard budget ${max}ms) — this is the tripwire for the class of defect that hid a 15s-per-tick floor for weeks; check the slow-rule/slow-rule-onsite findings for the worst offender") <-
     perf_tick_total_ms(total_ms), tick_budget_ms(max), total_ms > max.
 

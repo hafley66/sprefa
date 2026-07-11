@@ -90,6 +90,33 @@ pub fn open(path: Option<&str>) -> Result<Db> {
     // busy_timeout: a hook `--check` and a resident `--lsp` share .dl/cache.db
     // across processes; a write collision should wait, not fail "locked".
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
+    // Page cache: SQLite's 2MB default thrashes this workload — the 2026-07-11
+    // cold-tick profile put ~half the derived-phase wall in
+    // BtreeIndexMoveto -> pread (cache-miss page reads on 500k-row index
+    // probes) and another chunk in pagerStress dirty-page spill to the WAL.
+    // Negative cache_size = KiB. DL_CACHE_MB overrides (integer megabytes);
+    // default 512 — pages are allocated only as touched, so an idle db pays
+    // nothing. mmap_size lets read pages come off the page cache entirely.
+    let cache_mb: i64 = std::env::var("DL_CACHE_MB").ok()
+        .and_then(|mb| mb.trim().parse().ok())
+        .filter(|mb: &i64| *mb > 0)
+        .unwrap_or(512);
+    conn.execute_batch(&format!(
+        "PRAGMA cache_size=-{kib}; PRAGMA mmap_size={bytes}; PRAGMA temp_store=MEMORY;",
+        kib = cache_mb * 1024, bytes = cache_mb * 1024 * 1024))?;
+    // Page cache: the 2MB SQLite default thrashes on this workload — a cold
+    // tick's derived joins probe 500k-row indexes and the 2026-07-11 profile
+    // showed ~half the wall in BtreeIndexMoveto -> pread (cache-miss page
+    // reads) plus pagerStress dirty-page spill. Negative value = KiB.
+    // DL_CACHE_MB overrides (integer MB); default 512MB — RAM is cheaper
+    // than a 40s tick, and SQLite only allocates pages it actually touches.
+    let cache_mb: i64 = std::env::var("DL_CACHE_MB").ok()
+        .and_then(|v| v.trim().parse().ok())
+        .filter(|mb| *mb > 0)
+        .unwrap_or(512);
+    conn.execute_batch(&format!(
+        "PRAGMA cache_size=-{}; PRAGMA mmap_size={};",
+        cache_mb * 1024, cache_mb * 1024 * 1024))?;
     // P2 (--check perf defect ledger): a loud, best-effort heads-up when
     // another live process already holds a write lock on this same db —
     // almost always a resident daemon. A one-shot `--check`/`dl` run that
