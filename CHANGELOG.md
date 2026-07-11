@@ -7,6 +7,50 @@ tags consumed by cargo-dist.
 ## [Unreleased]
 
 ### Added
+- **Mixed source+derived rels auto-desugar.** A rel headed by both a source/
+  extract rule and a derived rule no longer bails: the engine rewrites the
+  heads to internal `<rel>__src`/`<rel>__drv` twins and unions them back
+  under the visible name. Twins are invisible everywhere (queries, catalog,
+  diags, and `rel_count`/`stmt_ms` telemetry, which fold twin rows under the
+  visible rel). Lattice (`key`/`merge`) rels and `@in`/`@out` ports still
+  bail, on purpose. Term-extract rules (json/jsonp/sg term-form) can now
+  co-head with derived rules too, including feeding `@next` carries.
+- **`import_binding(file, local_name, source_module, imported_name, kind)`**
+  (+ `_rev` twin): every local import binding, index-free — kind = named |
+  default | namespace | side_effect | reexport per language. Sibling of
+  `module_binding` (which deliberately excludes library imports); "which
+  library does this local name bind to" is a two-line join.
+- **`template_parts(file, line, node, idx, kind, text)`**: template literals
+  split into ordered static/expr pieces (TS/TSX/JS/JSX/MJS/CJS, tagged and
+  nested included). Own extract family — no second parse, programs reading
+  only it don't pay for type/call/dataflow.
+- **`const_string_member(file, object, member, value)`**: string-valued const
+  object members (route maps, lookup tables, key registries) discovered
+  generically.
+- **`unresolved(file, line, reason, detail)`**: first-class marker for edges
+  whose target is computed at runtime (dynamic-import, computed-member, ...),
+  limited to cases the extractors already detect.
+- **`dl --version` / `-V`.**
+- **`.dl/perf-woes.dl` rail**: onsite tick-cost diagnostics — slow-rule WARN
+  positioned at the rule head, tick-over-budget ERROR, rel row-count blowup
+  WARN, all budget-fact driven.
+- **Perf telemetry**: every perf.jsonl record carries the writing PID; tick
+  records carry `full_reason` (blank-slate | program-edit | carry-changed |
+  derived-missing:<rels> | ...); one-shot runs now emit derived-rebuild phase
+  records (previously daemon-only).
+
+### Fixed
+- **`--check` full-rebuild floor (P1).** `need_full` treated ANY empty derived
+  rel as "needs full rebuild"; 34 legitimately-empty rels forced every tick to
+  re-derive all 154 derived rels (~15s inside SQLite, warm or not). A
+  `_derived_complete` marker now distinguishes "derived to empty by a real
+  run" from "never populated"; warm `--check` drops to sub-second.
+- **Writer-flood mitigation (P2).** `Db` close checkpoints the WAL
+  (TRUNCATE), and opening a db another process is writing warns loudly;
+  one-shot runs on a daemon-served root were silently queueing behind each
+  other on busy_timeout.
+- **`dl q who-calls` reported the caller's declaration line**, not the call
+  site. Now joins `call_site` for the actual call line (1-based).
 - **`hover_note` builtin sink.** `hover_note(path, line, col, end_line,
   end_col, md)` in the diag pattern: rules head it to attach markdown to a
   source span (0-based, inclusive ends); the LSP appends each matching note
