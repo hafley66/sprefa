@@ -55,6 +55,7 @@ mod parse_only;
 mod cst_node_rel;
 mod chat_marks;
 mod hook_inject;
+mod setup_manifest;
 mod goto_flows;
 mod daemon;
 mod daemon_stateful_revs;

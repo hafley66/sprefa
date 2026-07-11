@@ -58,7 +58,9 @@ See the `sprefa-dl` skill for the full surface and authoring gotchas.
 "#;
 
 fn home() -> Result<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from).context("HOME not set")
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .context("HOME not set")
 }
 
 /// `dl setup [args]`. Returns the process exit code.
@@ -82,26 +84,50 @@ pub fn run(args: &[String]) -> Result<i32> {
             "--dry-run" => dry_run = true,
             "--vscode" => vscode = true,
             "-y" | "--yes" => assume_yes = true,
-            "--skills-dir" => { i += 1; skills_dir = args.get(i).cloned(); }
+            "--skills-dir" => {
+                i += 1;
+                skills_dir = args.get(i).cloned();
+            }
             "--project" => {
                 // optional trailing DIR (defaults to cwd if next is a flag/absent)
                 let next = args.get(i + 1);
                 match next {
-                    Some(d) if !d.starts_with("--") => { project = Some(Some(d.clone())); i += 1; }
+                    Some(d) if !d.starts_with("--") => {
+                        project = Some(Some(d.clone()));
+                        i += 1;
+                    }
                     _ => project = Some(None),
                 }
             }
-            "-h" | "--help" => { print_help(); return Ok(0); }
-            other => { eprintln!("dl setup: unknown arg {other}"); print_help(); return Ok(2); }
+            "-h" | "--help" => {
+                print_help();
+                return Ok(0);
+            }
+            other => {
+                eprintln!("dl setup: unknown arg {other}");
+                print_help();
+                return Ok(2);
+            }
         }
         i += 1;
     }
 
-    if print { print!("{SKILL_MD}"); return Ok(0); }
-    if list { return SetupJournal::load()?.list(); }
-    if undo { return SetupJournal::load()?.undo(None, dry_run); }
-    if adopt { return SetupJournal::load()?.adopt(); }
-    if vscode { return install_vscode_extension(); }
+    if print {
+        print!("{SKILL_MD}");
+        return Ok(0);
+    }
+    if list {
+        return SetupJournal::load()?.list();
+    }
+    if undo {
+        return SetupJournal::load()?.undo(None, dry_run);
+    }
+    if adopt {
+        return SetupJournal::load()?.adopt();
+    }
+    if vscode {
+        return install_vscode_extension();
+    }
     if let Some(dir) = project {
         let target = dir.unwrap_or_else(|| ".".to_string());
         return bootstrap_project(Path::new(&target), assume_yes);
@@ -116,7 +142,9 @@ fn print_help() {
     eprintln!("                     Claude Code hook / git pre-commit / VSCode ext prompt on");
     eprintln!("                     a TTY, are skipped when piped, or forced with --yes");
     eprintln!("  --vscode           install the dl LSP VSCode extension (needs `code`); builds a");
-    eprintln!("                     fresh VSIX from editors/vscode-dl in a checkout, else embedded");
+    eprintln!(
+        "                     fresh VSIX from editors/vscode-dl in a checkout, else embedded"
+    );
     eprintln!("  -y, --yes          wire every integration without prompting (scripts / CI)");
     eprintln!("  --skills-dir DIR   override the skill destination");
     eprintln!("  --print            print the embedded skill to stdout");
@@ -141,42 +169,68 @@ const VSCODE_VSIX_NAME: &str = concat!("dl-lsp-", env!("CARGO_PKG_VERSION"), ".v
 /// uninstall-first to dodge the same-version reinstall no-op. No-op with a clear
 /// message if `code` is not on PATH.
 fn install_vscode_extension() -> Result<i32> {
-    // Prefer a fresh build from the checked-out source; fall back to embedded.
-    let (vsix, from_source) = match build_vscode_vsix() {
-        Some(built) => (built, true),
-        None => {
-            let embedded = std::env::temp_dir().join(VSCODE_VSIX_NAME);
-            std::fs::write(&embedded, VSCODE_VSIX)
-                .with_context(|| format!("write {}", embedded.display()))?;
-            (embedded, false)
-        }
-    };
-    // The same-version trap: `code --install-extension --force` silently no-ops
-    // on a same-version reinstall while VSCode is running (a fresh build carries
-    // the same version). Uninstall first so the new bits always land.
-    let _ = std::process::Command::new("code")
-        .args(["--uninstall-extension", "sprefa.dl-lsp"]).status();
-    let status = std::process::Command::new("code")
-        .arg("--install-extension").arg(&vsix).arg("--force")
-        .status();
-    match status {
-        Ok(s) if s.success() => {
-            let how = if from_source { "freshly built from editors/vscode-dl" } else { "embedded" };
-            println!("[dl setup] installed the dl LSP VSCode extension ({how}).");
-            println!("[dl setup] reload VSCode; open any file your .dl rules scan for live squiggles.");
-            if !from_source { let _ = std::fs::remove_file(&vsix); }
-            Ok(0)
-        }
-        Ok(s) => {
-            eprintln!("[dl setup] `code --install-extension` exited {s}; VSIX left at {}", vsix.display());
-            Ok(1)
-        }
-        Err(_) => {
-            println!("[dl setup] VSCode `code` CLI not found on PATH. The extension VSIX is at:");
-            println!("             {}", vsix.display());
-            println!("[dl setup] install it by hand: `code --install-extension {}`", vsix.display());
-            println!("[dl setup] (in VSCode, enable the `code` command via Shell Command: Install 'code' in PATH).");
-            Ok(0)
+    #[cfg(test)]
+    {
+        // Unit tests exercise setup's project wiring; they must not mutate an
+        // installed editor or spawn its CLI.
+        return Ok(0);
+    }
+    #[cfg(not(test))]
+    {
+        // Prefer a fresh build from the checked-out source; fall back to embedded.
+        let (vsix, from_source) = match build_vscode_vsix() {
+            Some(built) => (built, true),
+            None => {
+                let embedded = std::env::temp_dir().join(VSCODE_VSIX_NAME);
+                std::fs::write(&embedded, VSCODE_VSIX)
+                    .with_context(|| format!("write {}", embedded.display()))?;
+                (embedded, false)
+            }
+        };
+        // The same-version trap: `code --install-extension --force` silently no-ops
+        // on a same-version reinstall while VSCode is running (a fresh build carries
+        // the same version). Uninstall first so the new bits always land.
+        let _ = std::process::Command::new("code")
+            .args(["--uninstall-extension", "sprefa.dl-lsp"])
+            .status();
+        let status = std::process::Command::new("code")
+            .arg("--install-extension")
+            .arg(&vsix)
+            .arg("--force")
+            .status();
+        match status {
+            Ok(s) if s.success() => {
+                let how = if from_source {
+                    "freshly built from editors/vscode-dl"
+                } else {
+                    "embedded"
+                };
+                println!("[dl setup] installed the dl LSP VSCode extension ({how}).");
+                println!("[dl setup] reload VSCode; open any file your .dl rules scan for live squiggles.");
+                if !from_source {
+                    let _ = std::fs::remove_file(&vsix);
+                }
+                Ok(0)
+            }
+            Ok(s) => {
+                eprintln!(
+                    "[dl setup] `code --install-extension` exited {s}; VSIX left at {}",
+                    vsix.display()
+                );
+                Ok(1)
+            }
+            Err(_) => {
+                println!(
+                    "[dl setup] VSCode `code` CLI not found on PATH. The extension VSIX is at:"
+                );
+                println!("             {}", vsix.display());
+                println!(
+                    "[dl setup] install it by hand: `code --install-extension {}`",
+                    vsix.display()
+                );
+                println!("[dl setup] (in VSCode, enable the `code` command via Shell Command: Install 'code' in PATH).");
+                Ok(0)
+            }
         }
     }
 }
@@ -192,10 +246,17 @@ fn build_vscode_vsix() -> Option<PathBuf> {
         return None;
     }
     let run = |args: &[&str]| -> bool {
-        std::process::Command::new(args[0]).args(&args[1..]).current_dir(src)
-            .status().map(|st| st.success()).unwrap_or(false)
+        std::process::Command::new(args[0])
+            .args(&args[1..])
+            .current_dir(src)
+            .status()
+            .map(|st| st.success())
+            .unwrap_or(false)
     };
-    eprintln!("[dl setup] building the extension from {} ...", src.display());
+    eprintln!(
+        "[dl setup] building the extension from {} ...",
+        src.display()
+    );
     if !src.join("node_modules").exists() && !run(&["npm", "ci"]) && !run(&["npm", "install"]) {
         eprintln!("[dl setup] npm install failed; using the embedded VSIX instead");
         return None;
@@ -207,8 +268,12 @@ fn build_vscode_vsix() -> Option<PathBuf> {
     let out = std::env::temp_dir().join("dl-lsp-fresh.vsix");
     let _ = std::fs::remove_file(&out);
     let packaged = std::process::Command::new("npx")
-        .args(["vsce", "package", "-o"]).arg(&out).current_dir(src)
-        .status().map(|st| st.success()).unwrap_or(false);
+        .args(["vsce", "package", "-o"])
+        .arg(&out)
+        .current_dir(src)
+        .status()
+        .map(|st| st.success())
+        .unwrap_or(false);
     if packaged && out.exists() {
         Some(out)
     } else {
@@ -223,7 +288,10 @@ pub(crate) fn wire_global(skills_dir: Option<String>) -> Result<i32> {
     let dest = resolve_skills_dir(skills_dir)?;
     let skill_dir = dest.join("sprefa-dl");
     journal.create_file(None, &skill_dir.join("SKILL.md"), SKILL_MD.as_bytes())?;
-    println!("[dl setup] skill -> {}", skill_dir.join("SKILL.md").display());
+    println!(
+        "[dl setup] skill -> {}",
+        skill_dir.join("SKILL.md").display()
+    );
 
     if let Ok(h) = home() {
         // ~/.agents/skills is the cross-harness home (codex and opencode read
@@ -232,8 +300,14 @@ pub(crate) fn wire_global(skills_dir: Option<String>) -> Result<i32> {
         let agents = h.join(".agents/skills");
         if agents.canonicalize().ok() != dest.canonicalize().ok() {
             let ad = agents.join("sprefa-dl");
-            if journal.create_file(None, &ad.join("SKILL.md"), SKILL_MD.as_bytes()).unwrap_or(false) {
-                println!("[dl setup] cross-harness -> {}", ad.join("SKILL.md").display());
+            if journal
+                .create_file(None, &ad.join("SKILL.md"), SKILL_MD.as_bytes())
+                .unwrap_or(false)
+            {
+                println!(
+                    "[dl setup] cross-harness -> {}",
+                    ad.join("SKILL.md").display()
+                );
             }
         }
     }
@@ -246,8 +320,14 @@ pub(crate) fn wire_global(skills_dir: Option<String>) -> Result<i32> {
         let cc = h.join(".claude/skills");
         if h.join(".claude").is_dir() && cc.canonicalize().ok() != dest.canonicalize().ok() {
             let ccd = cc.join("sprefa-dl");
-            if journal.create_file(None, &ccd.join("SKILL.md"), SKILL_MD.as_bytes()).unwrap_or(false) {
-                println!("[dl setup] claude code -> {}", ccd.join("SKILL.md").display());
+            if journal
+                .create_file(None, &ccd.join("SKILL.md"), SKILL_MD.as_bytes())
+                .unwrap_or(false)
+            {
+                println!(
+                    "[dl setup] claude code -> {}",
+                    ccd.join("SKILL.md").display()
+                );
             }
         }
         // opencode: ensure skills.paths contains `dest`.
@@ -293,43 +373,64 @@ pub(crate) fn refresh_after_update() {
 /// `code` is absent (not installed / not on PATH).
 fn vscode_extension_installed() -> bool {
     let out = match std::process::Command::new("code")
-        .arg("--list-extensions").output() {
+        .arg("--list-extensions")
+        .output()
+    {
         Ok(o) => o,
         Err(_) => return false, // `code` CLI not present
     };
     out.status.success()
-        && String::from_utf8_lossy(&out.stdout).lines().any(|l| l == "sprefa.dl-lsp")
+        && String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .any(|l| l == "sprefa.dl-lsp")
 }
 
 /// Pick the skill destination: explicit flag > $SPREFA_SKILLS_DIR > opencode's
 /// first configured path > ~/.claude/skills > ~/.config/sprefa/skills.
 fn resolve_skills_dir(flag: Option<String>) -> Result<PathBuf> {
-    if let Some(d) = flag { return Ok(PathBuf::from(d)); }
-    if let Some(d) = std::env::var_os("SPREFA_SKILLS_DIR") { return Ok(PathBuf::from(d)); }
+    if let Some(d) = flag {
+        return Ok(PathBuf::from(d));
+    }
+    if let Some(d) = std::env::var_os("SPREFA_SKILLS_DIR") {
+        return Ok(PathBuf::from(d));
+    }
     let h = home()?;
     if let Some(p) = opencode_first_skill_path(&h) {
-        if p.is_dir() { return Ok(p); }
+        if p.is_dir() {
+            return Ok(p);
+        }
     }
     // Claude Code: prefer its skills dir whenever Claude Code is present
     // (~/.claude exists), even if the skills/ subdir hasn't been created yet on a
     // fresh machine — wire_global creates it. (The old `cc.is_dir()` check fell
     // through to the no-agent stash below, where Claude Code never reads it.)
     let cc = h.join(".claude/skills");
-    if cc.is_dir() || h.join(".claude").is_dir() { return Ok(cc); }
+    if cc.is_dir() || h.join(".claude").is_dir() {
+        return Ok(cc);
+    }
     // No agent detected: stash under XDG. Warn, since nothing reads it until an
     // agent is pointed at it (SPREFA_SKILLS_DIR or opencode skills.paths).
-    eprintln!("[dl setup] no Claude Code (~/.claude) or opencode config found; \
+    eprintln!(
+        "[dl setup] no Claude Code (~/.claude) or opencode config found; \
                stashing the skill under ~/.config/sprefa/skills. Point an agent at \
-               it with SPREFA_SKILLS_DIR=<dir> or `dl setup --skills-dir <dir>`.");
+               it with SPREFA_SKILLS_DIR=<dir> or `dl setup --skills-dir <dir>`."
+    );
     Ok(h.join(".config/sprefa/skills"))
 }
 
-fn opencode_cfg(h: &Path) -> PathBuf { h.join(".config/opencode/opencode.json") }
+fn opencode_cfg(h: &Path) -> PathBuf {
+    h.join(".config/opencode/opencode.json")
+}
 
 fn opencode_first_skill_path(h: &Path) -> Option<PathBuf> {
     let txt = std::fs::read_to_string(opencode_cfg(h)).ok()?;
     let v: serde_json::Value = serde_json::from_str(&txt).ok()?;
-    let p = v.get("skills")?.get("paths")?.as_array()?.first()?.as_str()?;
+    let p = v
+        .get("skills")?
+        .get("paths")?
+        .as_array()?
+        .first()?
+        .as_str()?;
     Some(PathBuf::from(p))
 }
 
@@ -343,15 +444,27 @@ fn wire_opencode(h: &Path, dest: &Path, journal: &mut SetupJournal) {
         return; // opencode not installed; nothing to wire
     };
     let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&txt) else {
-        println!("[dl setup] add to {}: \"skills\": {{ \"paths\": [\"{dest_s}\"] }}", cfg.display());
+        println!(
+            "[dl setup] add to {}: \"skills\": {{ \"paths\": [\"{dest_s}\"] }}",
+            cfg.display()
+        );
         return;
     };
     let obj = v.as_object_mut();
-    let Some(obj) = obj else { return; };
-    let skills = obj.entry("skills").or_insert_with(|| serde_json::json!({ "paths": [] }));
-    let paths = skills.as_object_mut()
-        .and_then(|s| s.entry("paths").or_insert_with(|| serde_json::json!([])).as_array_mut());
-    let Some(paths) = paths else { return; };
+    let Some(obj) = obj else {
+        return;
+    };
+    let skills = obj
+        .entry("skills")
+        .or_insert_with(|| serde_json::json!({ "paths": [] }));
+    let paths = skills.as_object_mut().and_then(|s| {
+        s.entry("paths")
+            .or_insert_with(|| serde_json::json!([]))
+            .as_array_mut()
+    });
+    let Some(paths) = paths else {
+        return;
+    };
     if paths.iter().any(|p| p.as_str() == Some(dest_s.as_str())) {
         println!("[dl setup] opencode already reads {dest_s}");
         return;
@@ -359,7 +472,10 @@ fn wire_opencode(h: &Path, dest: &Path, journal: &mut SetupJournal) {
     paths.push(serde_json::Value::String(dest_s.clone()));
     match serde_json::to_string_pretty(&v) {
         Ok(out) => {
-            if journal.create_file(None, &cfg, out.as_bytes()).unwrap_or(false) {
+            if journal
+                .create_file(None, &cfg, out.as_bytes())
+                .unwrap_or(false)
+            {
                 println!("[dl setup] opencode skills.paths += {dest_s}");
             }
         }
@@ -369,13 +485,25 @@ fn wire_opencode(h: &Path, dest: &Path, journal: &mut SetupJournal) {
 
 // ── project: bootstrap a repo ─────────────────────────────────────────────────
 fn bootstrap_project(dir: &Path, assume_yes: bool) -> Result<i32> {
-    let dir = dir.canonicalize().with_context(|| format!("no such dir: {}", dir.display()))?;
+    let dir = dir
+        .canonicalize()
+        .with_context(|| format!("no such dir: {}", dir.display()))?;
     println!("[dl setup] bootstrap {}", dir.display());
     // Base scaffolding is always safe (repo-local starter rules + agent docs).
     let mut journal = SetupJournal::load()?;
     let dl_dir = dir.join(".dl");
-    write_starter_j(&mut journal, &dir, &dl_dir.join("dl-self-lint.dl"), STARTER_DL)?;
-    write_starter_j(&mut journal, &dir, &dl_dir.join("hook-skill-on-test.dl"), STARTER_HOOK)?;
+    write_starter_j(
+        &mut journal,
+        &dir,
+        &dl_dir.join("dl-self-lint.dl"),
+        STARTER_DL,
+    )?;
+    write_starter_j(
+        &mut journal,
+        &dir,
+        &dl_dir.join("hook-skill-on-test.dl"),
+        STARTER_HOOK,
+    )?;
     append_section_j(&mut journal, &dir, &dir.join("AGENTS.md"))?;
     append_section_j(&mut journal, &dir, &dir.join("CLAUDE.md"))?;
     wire_repo_skills_j(&mut journal, &dir);
@@ -385,11 +513,16 @@ fn bootstrap_project(dir: &Path, assume_yes: bool) -> Result<i32> {
     // a surprising mutation of the agent + git config).
     let interactive = hooks::is_tty();
     if !interactive && !assume_yes {
-        println!("[dl setup] non-interactive; wired base scaffolding only. Re-run in a \
+        println!(
+            "[dl setup] non-interactive; wired base scaffolding only. Re-run in a \
                   terminal (or pass --yes) to add the Claude Code / codex / opencode \
-                  hooks, git pre-commit, or the VSCode extension.");
+                  hooks, git pre-commit, or the VSCode extension."
+        );
     } else {
-        if hooks::want("the Claude Code PostToolUse hook (.claude/settings.json)", assume_yes) {
+        if hooks::want(
+            "the Claude Code PostToolUse hook (.claude/settings.json)",
+            assume_yes,
+        ) {
             hooks::wire_claude_hook(&dir);
         }
         if hooks::want("the codex hooks (.codex/hooks.json)", assume_yes) {
@@ -398,10 +531,16 @@ fn bootstrap_project(dir: &Path, assume_yes: bool) -> Result<i32> {
         if hooks::want("the opencode plugin (.opencode/plugins/dl.js)", assume_yes) {
             hooks::wire_opencode_plugin(&dir);
         }
-        if hooks::want("the git pre-commit rail (.githooks/pre-commit + core.hooksPath)", assume_yes) {
+        if hooks::want(
+            "the git pre-commit rail (.githooks/pre-commit + core.hooksPath)",
+            assume_yes,
+        ) {
             hooks::wire_git_hook(&dir);
         }
-        if hooks::want("the VSCode dl LSP extension (needs the `code` CLI)", assume_yes) {
+        if hooks::want(
+            "the VSCode dl LSP extension (needs the `code` CLI)",
+            assume_yes,
+        ) {
             install_vscode_extension()?;
         }
     }
@@ -424,9 +563,20 @@ fn wire_repo_skills_j(journal: &mut SetupJournal, dir: &Path) {
     if let Ok(entries) = std::fs::read_dir(&assets) {
         for e in entries.flatten() {
             let p = e.path();
-            let Some(name) = p.file_name().and_then(|s| s.to_str())
-                .and_then(|s| s.strip_suffix(".skill.md")) else { continue };
-            link_repo_skill(journal, dir, name, Path::new("../../../assets").join(format!("{name}.skill.md")), &p);
+            let Some(name) = p
+                .file_name()
+                .and_then(|s| s.to_str())
+                .and_then(|s| s.strip_suffix(".skill.md"))
+            else {
+                continue;
+            };
+            link_repo_skill(
+                journal,
+                dir,
+                name,
+                Path::new("../../../assets").join(format!("{name}.skill.md")),
+                &p,
+            );
         }
     }
     // `.agents/skills/<name>/SKILL.md` is the cross-harness authoring home
@@ -435,11 +585,19 @@ fn wire_repo_skills_j(journal: &mut SetupJournal, dir: &Path) {
     if let Ok(entries) = std::fs::read_dir(dir.join(".agents/skills")) {
         for e in entries.flatten() {
             let src = e.path().join("SKILL.md");
-            if !src.is_file() { continue; }
-            let Some(name) = e.file_name().to_str().map(str::to_string) else { continue };
-            link_repo_skill(journal,
-                dir, &name,
-                Path::new("../../../.agents/skills").join(&name).join("SKILL.md"),
+            if !src.is_file() {
+                continue;
+            }
+            let Some(name) = e.file_name().to_str().map(str::to_string) else {
+                continue;
+            };
+            link_repo_skill(
+                journal,
+                dir,
+                &name,
+                Path::new("../../../.agents/skills")
+                    .join(&name)
+                    .join("SKILL.md"),
                 &src,
             );
         }
@@ -449,7 +607,13 @@ fn wire_repo_skills_j(journal: &mut SetupJournal, dir: &Path) {
 /// One `.claude/skills/<name>/SKILL.md` shim: a relative symlink to `target`
 /// (copy of `src` on non-unix). Idempotent: a file or live link already at the
 /// destination is left alone; a dangling symlink is re-pointed.
-fn link_repo_skill(journal: &mut SetupJournal, dir: &Path, name: &str, target: PathBuf, src: &Path) {
+fn link_repo_skill(
+    journal: &mut SetupJournal,
+    dir: &Path,
+    name: &str,
+    target: PathBuf,
+    src: &Path,
+) {
     let skill_dir = dir.join(".claude/skills").join(name);
     let link = skill_dir.join("SKILL.md");
     let ok = journal.symlink(Some(dir), &link, &target).unwrap_or(false);
@@ -457,7 +621,6 @@ fn link_repo_skill(journal: &mut SetupJournal, dir: &Path, name: &str, target: P
         println!("[dl setup] project skill -> {}", link.display());
     }
 }
-
 
 /// Write a starter `.dl` if absent; never clobber a user's edited rail.
 fn write_starter_j(journal: &mut SetupJournal, root: &Path, path: &Path, body: &str) -> Result<()> {
@@ -472,28 +635,62 @@ fn write_starter_j(journal: &mut SetupJournal, root: &Path, path: &Path, body: &
 /// Idempotently append the dl section to an AGENTS.md / CLAUDE.md (skip if the
 /// marker is already present). Creates the file if absent.
 fn append_section_j(journal: &mut SetupJournal, root: &Path, f: &Path) -> Result<()> {
-    if !journal.append_marked(Some(root), f, AGENTS_SECTION, "<!-- BEGIN: sprefa-dl -->", "<!-- END: sprefa-dl -->")? {
+    if !journal.append_marked(
+        Some(root),
+        f,
+        AGENTS_SECTION,
+        "<!-- BEGIN: sprefa-dl -->",
+        "<!-- END: sprefa-dl -->",
+    )? {
         println!("[dl setup] section already in {}", f.display());
         return Ok(());
     }
-    println!("[dl setup] appended dl section to {}", f.file_name().unwrap().to_string_lossy());
+    println!(
+        "[dl setup] appended dl section to {}",
+        f.file_name().unwrap().to_string_lossy()
+    );
     Ok(())
 }
 
 // Legacy private helpers retained for the pre-existing unit tests; production
 // setup exclusively uses the journalled variants above.
-fn write_starter(path: &Path, body: &str) -> Result<()> { if path.exists() { Ok(()) } else { std::fs::write(path, body)?; Ok(()) } }
-fn append_section(path: &Path) -> Result<()> { if !std::fs::read_to_string(path).unwrap_or_default().contains("BEGIN: sprefa-dl") { let mut s = std::fs::read_to_string(path).unwrap_or_default(); s.push_str(AGENTS_SECTION); std::fs::write(path, s)?; } Ok(()) }
-fn wire_repo_skills(dir: &Path) { let mut journal = SetupJournal::load().unwrap(); wire_repo_skills_j(&mut journal, dir); let _ = journal.save(); }
+fn write_starter(path: &Path, body: &str) -> Result<()> {
+    if path.exists() {
+        Ok(())
+    } else {
+        std::fs::write(path, body)?;
+        Ok(())
+    }
+}
+fn append_section(path: &Path) -> Result<()> {
+    if !std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .contains("BEGIN: sprefa-dl")
+    {
+        let mut s = std::fs::read_to_string(path).unwrap_or_default();
+        s.push_str(AGENTS_SECTION);
+        std::fs::write(path, s)?;
+    }
+    Ok(())
+}
+fn wire_repo_skills(dir: &Path) {
+    let mut journal = SetupJournal::load().unwrap();
+    wire_repo_skills_j(&mut journal, dir);
+    let _ = journal.save();
+}
 
 /// Remove only journal-owned setup artifacts. The executable is intentionally left installed.
 pub fn uninstall() -> Result<i32> {
     let mut journal = SetupJournal::load()?;
     journal.undo(None, false)?;
-    let state = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from)
+    let state = std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
-        .unwrap_or_else(|| PathBuf::from(".")).join("sprefa/setup-manifest.json");
-    if state.exists() { std::fs::remove_file(&state)?; }
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("sprefa/setup-manifest.json");
+    if state.exists() {
+        std::fs::remove_file(&state)?;
+    }
     println!("[dl uninstall] wiring removed; binary left installed.");
     println!("[dl uninstall] manual: cargo uninstall dl; remove any codex trust entry in its UI.");
     Ok(0)

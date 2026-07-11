@@ -1,3 +1,4 @@
+use super::manifest::SetupJournal;
 use std::path::Path;
 
 /// The opencode bridge plugin (opencode has no native hook config; a JS plugin
@@ -37,22 +38,29 @@ pub(super) fn want(name: &str, assume_yes: bool) -> bool {
 /// git work tree.
 pub(super) fn wire_git_hook(dir: &Path) {
     if !dir.join(".git").exists() {
-        println!("[dl setup] not a git repo ({}); skipped pre-commit hook", dir.display());
+        println!(
+            "[dl setup] not a git repo ({}); skipped pre-commit hook",
+            dir.display()
+        );
         return;
     }
-    let hooks_dir = dir.join(".githooks");
-    if std::fs::create_dir_all(&hooks_dir).is_err() {
-        return;
-    }
-    let hook = hooks_dir.join("pre-commit");
+    let hook = dir.join(".githooks/pre-commit");
     if hook.exists() {
         println!("[dl setup] kept existing {}", hook.display());
     } else {
         // `dl --check` with no program = discovery over <root>/.dl/*.dl.
         let body = "#!/bin/sh\n# sprefa dl rail: blocks a commit when a .dl/ diag rule trips.\nexec dl --check\n";
-        if std::fs::write(&hook, body).is_err() {
+        let mut journal = match SetupJournal::load() {
+            Ok(j) => j,
+            Err(_) => return,
+        };
+        if !journal
+            .create_file(Some(dir), &hook, body.as_bytes())
+            .unwrap_or(false)
+        {
             return;
         }
+        let _ = journal.save();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -61,12 +69,15 @@ pub(super) fn wire_git_hook(dir: &Path) {
         println!("[dl setup] wrote {}", hook.display());
     }
     let set = std::process::Command::new("git")
-        .arg("-C").arg(dir)
+        .arg("-C")
+        .arg(dir)
         .args(["config", "core.hooksPath", ".githooks"])
         .status();
     match set {
         Ok(s) if s.success() => println!("[dl setup] git core.hooksPath -> .githooks"),
-        _ => println!("[dl setup] could not set core.hooksPath; run: git config core.hooksPath .githooks"),
+        _ => println!(
+            "[dl setup] could not set core.hooksPath; run: git config core.hooksPath .githooks"
+        ),
     }
 }
 
@@ -89,34 +100,61 @@ pub(super) fn wire_claude_hook(dir: &Path) {
         match serde_json::from_str(&txt) {
             Ok(v) => v,
             Err(_) => {
-                println!("[dl setup] {} is not valid JSON; add PostToolUse + \
-                          UserPromptSubmit hooks running `dl --hook` by hand", cfg.display());
+                println!(
+                    "[dl setup] {} is not valid JSON; add PostToolUse + \
+                          UserPromptSubmit hooks running `dl --hook` by hand",
+                    cfg.display()
+                );
                 return;
             }
         }
     };
-    let Some(obj) = v.as_object_mut() else { return; };
+    let Some(obj) = v.as_object_mut() else {
+        return;
+    };
     let hooks = obj.entry("hooks").or_insert_with(|| serde_json::json!({}));
-    let Some(hooks) = hooks.as_object_mut() else { return; };
+    let Some(hooks) = hooks.as_object_mut() else {
+        return;
+    };
     // PostToolUse fires on file-touch tools; UserPromptSubmit fires on every user
     // message (no matcher — the whole prompt is the event).
     let mut wrote = false;
-    wrote |= register_hook_event(hooks, "claude code", "dl --hook",
-        "PostToolUse", Some("Read|Edit|Write|MultiEdit"), &cfg);
-    wrote |= register_hook_event(hooks, "claude code", "dl --hook",
-        "UserPromptSubmit", None, &cfg);
+    wrote |= register_hook_event(
+        hooks,
+        "claude code",
+        "dl --hook",
+        "PostToolUse",
+        Some("Read|Edit|Write|MultiEdit"),
+        &cfg,
+    );
+    wrote |= register_hook_event(
+        hooks,
+        "claude code",
+        "dl --hook",
+        "UserPromptSubmit",
+        None,
+        &cfg,
+    );
     if !wrote {
         return; // nothing changed (both already present) — leave the file as is
     }
-    if std::fs::create_dir_all(&cdir).is_err() {
-        return;
-    }
-    if let Ok(out) = serde_json::to_string_pretty(&v) {
-        if std::fs::write(&cfg, out).is_ok() {
+    if let Ok(_) = serde_json::to_string_pretty(&v) {
+        let mut journal = match SetupJournal::load() {
+            Ok(j) => j,
+            Err(_) => return,
+        };
+        let added = [
+            ("PostToolUse".into(), "dl --hook".into()),
+            ("UserPromptSubmit".into(), "dl --hook".into()),
+        ];
+        if journal.hook_config(dir, &cfg, &v, &added).is_ok() {
+            let _ = journal.save();
             println!("[dl setup] claude code hooks -> {}", cfg.display());
-            println!("[dl setup]   the condition lives in your .dl: PostToolUse reads \
+            println!(
+                "[dl setup]   the condition lives in your .dl: PostToolUse reads \
                       agent built-ins (examples/hook-skill-on-test.dl), UserPromptSubmit \
-                      feeds hook_event (examples/chat-marks.dl).");
+                      feeds hook_event (examples/chat-marks.dl)."
+            );
         }
     }
 }
@@ -138,32 +176,62 @@ pub(super) fn wire_codex_hook(dir: &Path) {
         match serde_json::from_str(&txt) {
             Ok(v) => v,
             Err(_) => {
-                println!("[dl setup] {} is not valid JSON; add PostToolUse + \
-                          UserPromptSubmit hooks running `dl --hook --dialect codex` by hand", cfg.display());
+                println!(
+                    "[dl setup] {} is not valid JSON; add PostToolUse + \
+                          UserPromptSubmit hooks running `dl --hook --dialect codex` by hand",
+                    cfg.display()
+                );
                 return;
             }
         }
     };
-    let Some(obj) = v.as_object_mut() else { return; };
+    let Some(obj) = v.as_object_mut() else {
+        return;
+    };
     let hooks = obj.entry("hooks").or_insert_with(|| serde_json::json!({}));
-    let Some(hooks) = hooks.as_object_mut() else { return; };
+    let Some(hooks) = hooks.as_object_mut() else {
+        return;
+    };
     let mut wrote = false;
-    wrote |= register_hook_event(hooks, "codex", "dl --hook --dialect codex",
-        "PostToolUse", Some("Read|Edit|Write|MultiEdit"), &cfg);
-    wrote |= register_hook_event(hooks, "codex", "dl --hook --dialect codex",
-        "UserPromptSubmit", None, &cfg);
+    wrote |= register_hook_event(
+        hooks,
+        "codex",
+        "dl --hook --dialect codex",
+        "PostToolUse",
+        Some("Read|Edit|Write|MultiEdit"),
+        &cfg,
+    );
+    wrote |= register_hook_event(
+        hooks,
+        "codex",
+        "dl --hook --dialect codex",
+        "UserPromptSubmit",
+        None,
+        &cfg,
+    );
     if !wrote {
         return; // both already present — leave the file as is
     }
-    if std::fs::create_dir_all(&cdir).is_err() {
-        return;
-    }
-    if let Ok(out) = serde_json::to_string_pretty(&v) {
-        if std::fs::write(&cfg, out).is_ok() {
+    if let Ok(_) = serde_json::to_string_pretty(&v) {
+        let mut journal = match SetupJournal::load() {
+            Ok(j) => j,
+            Err(_) => return,
+        };
+        let added = [
+            ("PostToolUse".into(), "dl --hook --dialect codex".into()),
+            (
+                "UserPromptSubmit".into(),
+                "dl --hook --dialect codex".into(),
+            ),
+        ];
+        if journal.hook_config(dir, &cfg, &v, &added).is_ok() {
+            let _ = journal.save();
             println!("[dl setup] codex hooks -> {}", cfg.display());
-            println!("[dl setup]   IMPORTANT: codex runs a hook only after you trust it — \
+            println!(
+                "[dl setup]   IMPORTANT: codex runs a hook only after you trust it — \
                       open codex in this repo and approve the dl hooks when prompted \
-                      (dl never writes trust hashes).");
+                      (dl never writes trust hashes)."
+            );
         }
     }
 }
@@ -176,13 +244,21 @@ pub(super) fn wire_opencode_plugin(dir: &Path) {
     let pdir = dir.join(".opencode/plugins");
     let dest = pdir.join("dl.js");
     if std::fs::read_to_string(&dest).ok().as_deref() == Some(OPENCODE_PLUGIN_JS) {
-        println!("[dl setup] opencode plugin already current at {}", dest.display());
+        println!(
+            "[dl setup] opencode plugin already current at {}",
+            dest.display()
+        );
         return;
     }
-    if std::fs::create_dir_all(&pdir).is_err() {
-        return;
-    }
-    if std::fs::write(&dest, OPENCODE_PLUGIN_JS).is_ok() {
+    let mut journal = match SetupJournal::load() {
+        Ok(j) => j,
+        Err(_) => return,
+    };
+    if journal
+        .create_file(Some(dir), &dest, OPENCODE_PLUGIN_JS.as_bytes())
+        .unwrap_or(false)
+    {
+        let _ = journal.save();
         println!("[dl setup] opencode plugin -> {}", dest.display());
     }
 }
@@ -201,32 +277,46 @@ fn register_hook_event(
     cfg: &Path,
 ) -> bool {
     let arr = hooks.entry(event).or_insert_with(|| serde_json::json!([]));
-    let Some(arr) = arr.as_array_mut() else { return false; };
+    let Some(arr) = arr.as_array_mut() else {
+        return false;
+    };
     let already = arr.iter().any(|entry| {
-        entry.get("hooks").and_then(|h| h.as_array()).is_some_and(|hs| {
-            hs.iter().any(|h| {
-                h.get("command").and_then(|c| c.as_str())
-                    .is_some_and(|c| c.contains("dl --hook"))
+        entry
+            .get("hooks")
+            .and_then(|h| h.as_array())
+            .is_some_and(|hs| {
+                hs.iter().any(|h| {
+                    h.get("command")
+                        .and_then(|c| c.as_str())
+                        .is_some_and(|c| c.contains("dl --hook"))
+                })
             })
-        })
     });
     if already {
-        println!("[dl setup] {label} {event} hook already registered in {}", cfg.display());
+        println!(
+            "[dl setup] {label} {event} hook already registered in {}",
+            cfg.display()
+        );
         return false;
     }
     let mut entry = serde_json::json!({ "hooks": [ { "type": "command", "command": command } ] });
     if let Some(m) = matcher {
-        entry.as_object_mut().unwrap().insert("matcher".into(), serde_json::json!(m));
+        entry
+            .as_object_mut()
+            .unwrap()
+            .insert("matcher".into(), serde_json::json!(m));
     }
     arr.push(entry);
     true
 }
 
-
 #[cfg(test)]
 mod tests {
+    use super::super::{
+        append_section, bootstrap_project, wire_repo_skills, write_starter, STARTER_DL,
+        STARTER_HOOK,
+    };
     use super::*;
-    use super::super::{append_section, bootstrap_project, wire_repo_skills, write_starter, STARTER_DL, STARTER_HOOK};
     use serde_json::Value;
 
     fn read_settings(dir: &Path) -> Value {
@@ -235,14 +325,20 @@ mod tests {
     }
 
     fn post_cmds(v: &Value) -> Vec<String> {
-        v["hooks"]["PostToolUse"].as_array().unwrap().iter()
+        v["hooks"]["PostToolUse"]
+            .as_array()
+            .unwrap()
+            .iter()
             .flat_map(|e| e["hooks"].as_array().unwrap().iter())
             .map(|h| h["command"].as_str().unwrap().to_string())
             .collect()
     }
 
     fn ups_cmds(v: &Value) -> Vec<String> {
-        v["hooks"]["UserPromptSubmit"].as_array().unwrap().iter()
+        v["hooks"]["UserPromptSubmit"]
+            .as_array()
+            .unwrap()
+            .iter()
             .flat_map(|e| e["hooks"].as_array().unwrap().iter())
             .map(|h| h["command"].as_str().unwrap().to_string())
             .collect()
@@ -258,9 +354,14 @@ mod tests {
         assert_eq!(post_cmds(&v), vec!["dl --hook".to_string()]);
         // Both events register; UserPromptSubmit has no matcher (whole prompt).
         assert_eq!(ups_cmds(&v), vec!["dl --hook".to_string()]);
-        assert!(v["hooks"]["UserPromptSubmit"][0].get("matcher").is_none(),
-            "UserPromptSubmit hook has no tool matcher");
-        assert_eq!(v["hooks"]["PostToolUse"][0]["matcher"], "Read|Edit|Write|MultiEdit");
+        assert!(
+            v["hooks"]["UserPromptSubmit"][0].get("matcher").is_none(),
+            "UserPromptSubmit hook has no tool matcher"
+        );
+        assert_eq!(
+            v["hooks"]["PostToolUse"][0]["matcher"],
+            "Read|Edit|Write|MultiEdit"
+        );
         // Second call must not add a duplicate under either event.
         wire_claude_hook(&dir);
         let v = read_settings(&dir);
@@ -271,8 +372,14 @@ mod tests {
 
     fn git_init(dir: &Path) {
         std::fs::create_dir_all(dir).unwrap();
-        assert!(std::process::Command::new("git").arg("-C").arg(dir)
-            .arg("init").arg("-q").status().unwrap().success());
+        assert!(std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .arg("init")
+            .arg("-q")
+            .status()
+            .unwrap()
+            .success());
     }
 
     #[test]
@@ -283,9 +390,18 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         git_init(&dir);
         assert_eq!(bootstrap_project(&dir, false).unwrap(), 0);
-        assert!(dir.join(".dl/dl-self-lint.dl").exists(), "base scaffolding written");
-        assert!(!dir.join(".claude/settings.json").exists(), "CC hook skipped (non-tty)");
-        assert!(!dir.join(".githooks/pre-commit").exists(), "git hook skipped (non-tty)");
+        assert!(
+            dir.join(".dl/dl-self-lint.dl").exists(),
+            "base scaffolding written"
+        );
+        assert!(
+            !dir.join(".claude/settings.json").exists(),
+            "CC hook skipped (non-tty)"
+        );
+        assert!(
+            !dir.join(".githooks/pre-commit").exists(),
+            "git hook skipped (non-tty)"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -297,8 +413,14 @@ mod tests {
         // --yes wires without prompting even off a TTY (VSCode install no-ops
         // without `code`, but must not fail the bootstrap).
         assert_eq!(bootstrap_project(&dir, true).unwrap(), 0);
-        assert!(dir.join(".claude/settings.json").exists(), "CC hook wired (--yes)");
-        assert!(dir.join(".githooks/pre-commit").exists(), "git hook wired (--yes)");
+        assert!(
+            dir.join(".claude/settings.json").exists(),
+            "CC hook wired (--yes)"
+        );
+        assert!(
+            dir.join(".githooks/pre-commit").exists(),
+            "git hook wired (--yes)"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -307,8 +429,14 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("dlsetup_git_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        assert!(std::process::Command::new("git").arg("-C").arg(&dir)
-            .arg("init").arg("-q").status().unwrap().success());
+        assert!(std::process::Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .arg("init")
+            .arg("-q")
+            .status()
+            .unwrap()
+            .success());
         wire_git_hook(&dir);
         let hook = dir.join(".githooks/pre-commit");
         assert!(hook.exists(), "pre-commit hook written");
@@ -317,10 +445,18 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_ne!(hook.metadata().unwrap().permissions().mode() & 0o111, 0, "executable");
+            assert_ne!(
+                hook.metadata().unwrap().permissions().mode() & 0o111,
+                0,
+                "executable"
+            );
         }
-        let cfg = std::process::Command::new("git").arg("-C").arg(&dir)
-            .args(["config", "core.hooksPath"]).output().unwrap();
+        let cfg = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["config", "core.hooksPath"])
+            .output()
+            .unwrap();
         assert_eq!(String::from_utf8_lossy(&cfg.stdout).trim(), ".githooks");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -332,24 +468,40 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         wire_codex_hook(&dir);
         let read = |dir: &Path| -> Value {
-            serde_json::from_str(&std::fs::read_to_string(dir.join(".codex/hooks.json")).unwrap()).unwrap()
+            serde_json::from_str(&std::fs::read_to_string(dir.join(".codex/hooks.json")).unwrap())
+                .unwrap()
         };
         let v = read(&dir);
-        assert_eq!(v["hooks"]["PostToolUse"][0]["hooks"][0]["command"], "dl --hook --dialect codex");
-        assert_eq!(v["hooks"]["PostToolUse"][0]["matcher"], "Read|Edit|Write|MultiEdit");
-        assert_eq!(v["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"], "dl --hook --dialect codex");
+        assert_eq!(
+            v["hooks"]["PostToolUse"][0]["hooks"][0]["command"],
+            "dl --hook --dialect codex"
+        );
+        assert_eq!(
+            v["hooks"]["PostToolUse"][0]["matcher"],
+            "Read|Edit|Write|MultiEdit"
+        );
+        assert_eq!(
+            v["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
+            "dl --hook --dialect codex"
+        );
         assert!(v["hooks"]["UserPromptSubmit"][0].get("matcher").is_none());
         // Second run: no duplicates, byte-identical file.
         let before = std::fs::read_to_string(dir.join(".codex/hooks.json")).unwrap();
         wire_codex_hook(&dir);
         let after = std::fs::read_to_string(dir.join(".codex/hooks.json")).unwrap();
-        assert_eq!(before, after, "second wire must not change .codex/hooks.json");
-        assert_eq!(read(&dir)["hooks"]["PostToolUse"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            before, after,
+            "second wire must not change .codex/hooks.json"
+        );
+        assert_eq!(
+            read(&dir)["hooks"]["PostToolUse"].as_array().unwrap().len(),
+            1
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn opencode_plugin_written_then_idempotent_and_refreshes_stale() {
+    fn opencode_plugin_written_then_idempotent_and_preserves_modified() {
         let dir = std::env::temp_dir().join(format!("dlsetup_oc_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -359,10 +511,10 @@ mod tests {
         // Idempotent second run.
         wire_opencode_plugin(&dir);
         assert_eq!(std::fs::read_to_string(&dest).unwrap(), OPENCODE_PLUGIN_JS);
-        // A stale plugin (older dl) is refreshed to the embedded copy.
+        // A modified plugin is user content and is never replaced.
         std::fs::write(&dest, "// old plugin\n").unwrap();
         wire_opencode_plugin(&dir);
-        assert_eq!(std::fs::read_to_string(&dest).unwrap(), OPENCODE_PLUGIN_JS);
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "// old plugin\n");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -371,13 +523,23 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("dlsetup_agsk_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join(".agents/skills/my-repo-skill")).unwrap();
-        std::fs::write(dir.join(".agents/skills/my-repo-skill/SKILL.md"), "# My repo skill\n").unwrap();
+        std::fs::write(
+            dir.join(".agents/skills/my-repo-skill/SKILL.md"),
+            "# My repo skill\n",
+        )
+        .unwrap();
         wire_repo_skills(&dir);
         let link = dir.join(".claude/skills/my-repo-skill/SKILL.md");
-        assert_eq!(std::fs::read_to_string(&link).unwrap(), "# My repo skill\n",
-            "the .claude shim must resolve to the .agents source");
+        assert_eq!(
+            std::fs::read_to_string(&link).unwrap(),
+            "# My repo skill\n",
+            "the .claude shim must resolve to the .agents source"
+        );
         #[cfg(unix)]
-        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
         // Second run leaves it alone.
         wire_repo_skills(&dir);
         assert_eq!(std::fs::read_to_string(&link).unwrap(), "# My repo skill\n");
@@ -413,11 +575,17 @@ mod tests {
             while let Some(d) = stack.pop() {
                 for e in std::fs::read_dir(&d).unwrap().flatten() {
                     let path = e.path();
-                    if path.file_name().is_some_and(|n| n == ".git") { continue; }
+                    if path.file_name().is_some_and(|n| n == ".git") {
+                        continue;
+                    }
                     if path.is_dir() {
                         stack.push(path);
                     } else {
-                        let rel = path.strip_prefix(dir).unwrap().to_string_lossy().into_owned();
+                        let rel = path
+                            .strip_prefix(dir)
+                            .unwrap()
+                            .to_string_lossy()
+                            .into_owned();
                         entries.push((rel, std::fs::read(&path).unwrap_or_default()));
                     }
                 }
@@ -431,7 +599,10 @@ mod tests {
         assert!(first.iter().any(|(p, _)| p == ".claude/settings.json"));
         wire_all(&dir);
         let second = snapshot(&dir);
-        assert_eq!(first, second, "second setup wiring must not change the tree");
+        assert_eq!(
+            first, second,
+            "second setup wiring must not change the tree"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -447,7 +618,10 @@ mod tests {
         wire_claude_hook(&dir);
         let v = read_settings(&dir);
         assert_eq!(v["permissions"]["allow"][0], "Bash(ls:*)");
-        assert_eq!(v["hooks"]["PreToolUse"][0]["hooks"][0]["command"], "echo hi");
+        assert_eq!(
+            v["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+            "echo hi"
+        );
         assert_eq!(post_cmds(&v), vec!["dl --hook".to_string()]);
         let _ = std::fs::remove_dir_all(&dir);
     }
