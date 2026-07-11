@@ -71,7 +71,7 @@ AUTHORING RULES:
   dl docs authoring  read that same guide via the docs reader";
 
 #[derive(Parser)]
-#[command(name = "dl", about = "datalog over files in repo/rev/time space", after_help = SUBCOMMANDS_HELP)]
+#[command(name = "dl", version, about = "datalog over files in repo/rev/time space", after_help = SUBCOMMANDS_HELP)]
 struct Cli {
     /// The .dl program(s) to run. Multiple files merge into one program (in the
     /// given order, with `use` includes spliced). When omitted, discovery: every
