@@ -1187,6 +1187,75 @@ impl Engine {
         Ok(true)
     }
 
+    /// The `template_parts` corpus: every `_file` row the oxc TS front-end
+    /// parses (`.ts`/`.tsx`/`.js`/`.jsx`/`.mjs`/`.cjs` — the same extension set
+    /// `TsTypes::matches` claims). Template literals are TS/JS-only syntax
+    /// (Kotlin string templates and Rust's `format!`-style macros are a
+    /// different grammar entirely and are explicitly OUT of scope), so scoping
+    /// the set here keeps the family's input digest from moving when an
+    /// unrelated file (`.rs`, `.kt`, `.md`) is edited.
+    fn template_file_set(&self) -> Result<Vec<ExtractFile>> {
+        let mut files: Vec<ExtractFile> = Vec::new();
+        let mut sel = self.db.conn().prepare("SELECT repo, path, rev, hash FROM _file")?;
+        let rows = sel.query_map([], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+            r.get::<_, Option<String>>(3)?.unwrap_or_default())))?;
+        for row in rows.flatten() {
+            let p = row.1.as_str();
+            if p.ends_with(".ts") || p.ends_with(".tsx") || p.ends_with(".js")
+                || p.ends_with(".jsx") || p.ends_with(".mjs") || p.ends_with(".cjs") {
+                files.push(row);
+            }
+        }
+        Ok(files)
+    }
+
+    /// Rebuild `template_parts` — every template-literal occurrence's ordered
+    /// static/interpolated pieces, across every TS/JS-family file. Own family
+    /// (not riding the `type`/`call`/`dataflow` TypeLang passes): a program
+    /// reading only `template_parts` shouldn't pay for those. Same perf shape
+    /// as `refresh_comment_rels`: per-rev input-digest skip, per-file fact
+    /// cache, parallel parse, one batched `refresh_rel`.
+    ///
+    /// `template_parts` has no rev column (like `comment_node`): a file present
+    /// at two revs unions its template occurrences, deduped by (path, node,
+    /// idx) — a piece can't recur twice at the same slot of the same
+    /// occurrence in one file.
+    pub(crate) fn refresh_template_rels(&self) -> Result<bool> {
+        let files = self.template_file_set()?;
+        let moved = self.moved_extract_revs("template", &files, false)?;
+        if moved.is_empty() { return Ok(false); }
+        let root = self.root.clone();
+        let roots = self.repo_roots();
+        let facts: Vec<(String, String, String, Arc<Vec<crate::typegraph::TemplatePart>>)> =
+            cached_facts(&self.template_facts_cache, &files, &self.extract_files_parsed, |repo, path, rev| {
+                let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
+                let content = read_content(froot, rev, path).unwrap_or_default();
+                let rid = repo_id_of(froot, path, repo);
+                let parts = typegraph::ts_template_parts(path, &content);
+                Some((rid, parts))
+            });
+
+        let t = |s: &str| Value::Text(s.to_string());
+        let i = |n: u32| Value::Int(n as i64);
+        let mut seen: HashSet<(String, u32, u32)> = HashSet::new();
+        let mut rows: Vec<Vec<Value>> = Vec::new();
+        for (_repo, path, _rev, parts) in &facts {
+            for p in parts.iter() {
+                if !seen.insert((path.clone(), p.node, p.idx)) {
+                    continue;
+                }
+                rows.push(vec![
+                    t(path), i(p.line), i(p.node), i(p.idx), t(p.kind), t(&p.text),
+                ]);
+            }
+        }
+        self.refresh_rel("template_parts",
+            &["file", "line", "node", "idx", "kind", "text"], &rows)?;
+        for (rev, d) in &moved { self.save_rel_digest(&format!("extract:template:{rev}"), d)?; }
+        Ok(true)
+    }
+
     /// CST-as-relation (christmas #3): walk every NAMED tree-sitter node of every
     /// scanned file (across all 11 `ts_lang` grammars) into `node`/`child`. Same
     /// shape as `refresh_type_rels`: parallel per-file parse (CPU-bound, no DB),
