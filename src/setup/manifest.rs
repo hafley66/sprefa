@@ -8,6 +8,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+mod actions;
+mod write;
+
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum SetupKind {
     Symlink,
@@ -52,6 +55,25 @@ pub struct SetupJournal {
 }
 
 impl SetupJournal {
+    pub fn stage_file(&mut self, target: &Path, bytes: &[u8]) -> Result<()> {
+        let temp = std::env::temp_dir().canonicalize()?;
+        self.create_file(Some(&temp), target, bytes)?;
+        Ok(())
+    }
+    pub fn record_staged(&mut self, target: &Path) -> Result<()> {
+        let temp = std::env::temp_dir().canonicalize()?;
+        safe(target, Some(&temp))?;
+        let bytes = fs::read(target)?;
+        self.entry(Some(&temp), target, SetupKind::FileCreate,
+            SetupDetail::FileCreate { content_blake3: hash(&bytes) });
+        Ok(())
+    }
+    pub fn finish_staged(&mut self, target: &Path) -> Result<()> {
+        let owned = self.entries.iter().any(|entry| entry.target == target && matches!(entry.detail,
+            SetupDetail::FileCreate { ref content_blake3 } if fs::read(target).ok().is_some_and(|bytes| hash(&bytes) == *content_blake3)));
+        if owned { fs::remove_file(target)?; self.entries.retain(|entry| entry.target != target); }
+        Ok(())
+    }
     pub fn load() -> Result<Self> {
         let path = state_home().join("sprefa/setup-manifest.json");
         let entries = match fs::read_to_string(&path) {
@@ -63,7 +85,7 @@ impl SetupJournal {
     }
     fn record(&mut self, entry: SetupEntry) {
         self.entries.retain(|old| {
-            !(old.root == entry.root && old.target == entry.target && old.kind == entry.kind)
+            !(old.root == entry.root && old.target == entry.target && same_slot(old, &entry))
         });
         self.entries.push(entry);
     }
@@ -80,429 +102,46 @@ impl SetupJournal {
             dl_version: env!("CARGO_PKG_VERSION").into(),
         });
     }
-    pub fn create_file(
-        &mut self,
-        root: Option<&Path>,
-        target: &Path,
-        bytes: &[u8],
-    ) -> Result<bool> {
-        safe(target, root)?;
-        match fs::read(target) {
-            Ok(old) if old == bytes => return Ok(false),
-            Ok(_) => {
-                println!(
-                    "[dl setup] exists, not ours, left alone: {}",
-                    target.display()
-                );
-                return Ok(false);
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.into()),
-        }
-        parent(target)?;
-        atomic(target, bytes)?;
-        self.entry(
-            root,
-            target,
-            SetupKind::FileCreate,
-            SetupDetail::FileCreate {
-                content_blake3: hash(bytes),
-            },
-        );
-        Ok(true)
-    }
-    pub fn append_marked(
-        &mut self,
-        root: Option<&Path>,
-        target: &Path,
-        body: &str,
-        begin: &str,
-        end: &str,
-    ) -> Result<bool> {
-        safe(target, root)?;
-        let old = fs::read_to_string(target).unwrap_or_default();
-        if old.contains(begin) {
-            if !old.contains(end) {
-                println!(
-                    "[dl setup] marker tampered, left alone: {}",
-                    target.display()
-                );
-            }
-            return Ok(false);
-        }
-        let mut new = old;
-        new.push_str(body);
-        parent(target)?;
-        atomic(target, new.as_bytes())?;
-        self.entry(
-            root,
-            target,
-            SetupKind::MarkedAppend,
-            SetupDetail::MarkedAppend {
-                begin_marker: begin.into(),
-                end_marker: end.into(),
-            },
-        );
-        Ok(true)
-    }
-    pub fn merge_json(
-        &mut self,
-        root: Option<&Path>,
-        target: &Path,
-        pointer: &str,
-        added: Value,
-    ) -> Result<bool> {
-        safe(target, root)?;
-        let text = match fs::read_to_string(target) {
-            Ok(s) => s,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => "{}".into(),
-            Err(e) => return Err(e.into()),
-        };
-        let mut value: Value = match serde_json::from_str(&text) {
-            Ok(v) => v,
-            Err(_) => {
-                println!(
-                    "[dl setup] malformed JSON, left alone: {}",
-                    target.display()
-                );
-                return Ok(false);
-            }
-        };
-        let Some(obj) = value.as_object_mut() else {
-            println!(
-                "[dl setup] JSON is not an object, left alone: {}",
-                target.display()
-            );
-            return Ok(false);
-        };
-        let key = pointer.trim_start_matches('/');
-        let arr = obj.entry(key).or_insert_with(|| Value::Array(vec![]));
-        let Some(arr) = arr.as_array_mut() else {
-            println!(
-                "[dl setup] JSON node is not an array, left alone: {}",
-                target.display()
-            );
-            return Ok(false);
-        };
-        if arr.contains(&added) {
-            return Ok(false);
-        }
-        arr.push(added.clone());
-        parent(target)?;
-        atomic(target, &serde_json::to_vec_pretty(&value)?)?;
-        self.entry(
-            root,
-            target,
-            SetupKind::JsonMerge,
-            SetupDetail::JsonMerge {
-                pointer: pointer.into(),
-                added,
-            },
-        );
-        Ok(true)
-    }
-    pub fn symlink(
-        &mut self,
-        root: Option<&Path>,
-        target: &Path,
-        points_to: &Path,
-    ) -> Result<bool> {
-        safe(target, root)?;
-        if fs::symlink_metadata(target).is_ok() {
-            println!(
-                "[dl setup] exists, not ours, left alone: {}",
-                target.display()
-            );
-            return Ok(false);
-        }
-        parent(target)?;
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(points_to, target)?;
-        }
-        #[cfg(not(unix))]
-        {
-            fs::copy(points_to, target)?;
-        }
-        self.entry(
-            root,
-            target,
-            SetupKind::Symlink,
-            SetupDetail::Symlink {
-                points_to: points_to.into(),
-            },
-        );
-        Ok(true)
-    }
-    pub fn hook_config(
-        &mut self,
-        root: &Path,
-        target: &Path,
-        value: &Value,
-        added: &[(String, String)],
-    ) -> Result<()> {
-        safe(target, Some(root))?;
-        parent(target)?;
-        atomic(target, &serde_json::to_vec_pretty(value)?)?;
-        for (event, command) in added {
-            self.entry(
-                Some(root),
-                target,
-                SetupKind::HookRegister,
-                SetupDetail::HookRegister {
-                    event: event.clone(),
-                    command_substring: command.clone(),
-                },
-            );
-        }
-        Ok(())
-    }
     pub fn list(&self) -> Result<i32> {
         for e in &self.entries {
             println!("{:?} {} ({})", e.kind, e.target.display(), e.wrote_at);
         }
         Ok(0)
     }
-    pub fn undo(&mut self, root: Option<&Path>, dry: bool) -> Result<i32> {
-        let mut kept = Vec::new();
-        for entry in self.entries.iter().rev() {
-            if root.is_some_and(|r| entry.root.as_deref() != Some(r)) {
-                kept.push(entry.clone());
-                continue;
-            }
-            if !safe(&entry.target, entry.root.as_deref()).is_ok() {
-                println!("[dl setup] SKIP unsafe path: {}", entry.target.display());
-                kept.push(entry.clone());
-                continue;
-            }
-            let action = match &entry.detail {
-                SetupDetail::FileCreate { content_blake3 } => match fs::read(&entry.target) {
-                    Ok(b) if hash(&b) == *content_blake3 => Some("remove"),
-                    Ok(_) => {
-                        println!(
-                            "[dl setup] modified since install, left in place: {}",
-                            entry.target.display()
-                        );
-                        None
-                    }
-                    Err(_) => None,
-                },
-                SetupDetail::Symlink { points_to } => match fs::read_link(&entry.target) {
-                    Ok(p) if p == *points_to => Some("remove"),
-                    _ => {
-                        println!(
-                            "[dl setup] symlink changed, left in place: {}",
-                            entry.target.display()
-                        );
-                        None
-                    }
-                },
-                SetupDetail::MarkedAppend {
-                    begin_marker,
-                    end_marker,
-                } => match fs::read_to_string(&entry.target) {
-                    Ok(s) if s.contains(begin_marker) && s.contains(end_marker) => {
-                        Some("strip markers")
-                    }
-                    _ => {
-                        println!(
-                            "[dl setup] marker changed, left in place: {}",
-                            entry.target.display()
-                        );
-                        None
-                    }
-                },
-                SetupDetail::JsonMerge { pointer, added } => {
-                    if remove_json(&entry.target, pointer, added, dry)? {
-                        Some("remove JSON node")
-                    } else {
-                        None
-                    }
-                }
-                SetupDetail::HookRegister {
-                    event,
-                    command_substring,
-                } => {
-                    if remove_hook(&entry.target, event, command_substring, dry)? {
-                        Some("remove hook")
-                    } else {
-                        println!(
-                            "[dl setup] hook changed, left in place: {}",
-                            entry.target.display()
-                        );
-                        None
-                    }
-                }
-            };
-            if let Some(action) = action {
-                println!("[dl setup] {} {}", action, entry.target.display());
-                if !dry {
-                    match &entry.detail {
-                        SetupDetail::MarkedAppend {
-                            begin_marker,
-                            end_marker,
-                        } => {
-                            let s = fs::read_to_string(&entry.target)?;
-                            let Some(a) = s.find(begin_marker) else {
-                                println!(
-                                    "[dl setup] marker changed, left in place: {}",
-                                    entry.target.display()
-                                );
-                                kept.push(entry.clone());
-                                continue;
-                            };
-                            let Some(zrel) = s[a..].find(end_marker) else {
-                                println!(
-                                    "[dl setup] marker changed, left in place: {}",
-                                    entry.target.display()
-                                );
-                                kept.push(entry.clone());
-                                continue;
-                            };
-                            let z = zrel + a + end_marker.len();
-                            atomic(&entry.target, format!("{}{}", &s[..a], &s[z..]).as_bytes())?
-                        }
-                        SetupDetail::JsonMerge { .. } | SetupDetail::HookRegister { .. } => {}
-                        _ => {
-                            fs::remove_file(&entry.target)?;
-                        }
-                    }
-                }
-            } else {
-                kept.push(entry.clone());
-            }
+}
+
+fn json_array_mut<'a>(value: &'a mut Value, pointer: &str) -> Option<&'a mut Vec<Value>> {
+    let mut parts = pointer.trim_start_matches('/').split('/').peekable();
+    let mut current = value;
+    while let Some(key) = parts.next() {
+        if parts.peek().is_none() {
+            let object = current.as_object_mut()?;
+            return object.entry(key).or_insert_with(|| Value::Array(Vec::new())).as_array_mut();
         }
-        kept.reverse();
-        self.entries = kept;
-        if !dry {
-            self.save()?;
-        }
-        Ok(0)
+        let object = current.as_object_mut()?;
+        current = object.entry(key).or_insert_with(|| Value::Object(Default::default()));
     }
-    pub fn adopt(&mut self) -> Result<i32> {
-        let root = std::env::current_dir()?.canonicalize()?;
-        let mut adopted = 0;
-        for file in [root.join("AGENTS.md"), root.join("CLAUDE.md")] {
-            match fs::read_to_string(&file) {
-                Ok(text)
-                    if text.contains("<!-- BEGIN: sprefa-dl -->")
-                        && text.contains("<!-- END: sprefa-dl -->") =>
-                {
-                    self.entry(
-                        Some(&root),
-                        &file,
-                        SetupKind::MarkedAppend,
-                        SetupDetail::MarkedAppend {
-                            begin_marker: "<!-- BEGIN: sprefa-dl -->".into(),
-                            end_marker: "<!-- END: sprefa-dl -->".into(),
-                        },
-                    );
-                    println!("[dl setup] adopted markers: {}", file.display());
-                    adopted += 1;
-                }
-                Ok(text) if text.contains("<!-- BEGIN: sprefa-dl -->") => {
-                    println!("[dl setup] declined tampered markers: {}", file.display())
-                }
-                _ => {}
-            }
-        }
-        for (file, command) in [
-            (root.join(".claude/settings.json"), "dl --hook"),
-            (root.join(".codex/hooks.json"), "dl --hook --dialect codex"),
-        ] {
-            match fs::read_to_string(&file)
-                .ok()
-                .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-            {
-                Some(value) => {
-                    for event in ["PostToolUse", "UserPromptSubmit"] {
-                        if has_hook(&value, event, command) {
-                            self.entry(
-                                Some(&root),
-                                &file,
-                                SetupKind::HookRegister,
-                                SetupDetail::HookRegister {
-                                    event: event.into(),
-                                    command_substring: command.into(),
-                                },
-                            );
-                            println!("[dl setup] adopted hook: {} {}", file.display(), event);
-                            adopted += 1;
-                        }
-                    }
-                }
-                None if file.exists() => {
-                    println!("[dl setup] declined malformed JSON: {}", file.display())
-                }
-                _ => {}
-            }
-        }
-        let home = std::env::var_os("HOME").map(PathBuf::from);
-        for link in [
-            root.join(".claude/skills/sprefa-dl/SKILL.md"),
-            home.as_ref()
-                .map(|h| h.join(".claude/skills/sprefa-dl/SKILL.md"))
-                .unwrap_or_default(),
-        ] {
-            if let Ok(points_to) = fs::read_link(&link) {
-                let owner = if link.starts_with(&root) {
-                    Some(root.as_path())
-                } else {
-                    None
-                };
-                self.entry(
-                    owner,
-                    &link,
-                    SetupKind::Symlink,
-                    SetupDetail::Symlink { points_to },
-                );
-                println!("[dl setup] adopted symlink: {}", link.display());
-                adopted += 1;
-            }
-        }
-        self.save()?;
-        println!("[dl setup] adopted {adopted} verified entries");
-        Ok(0)
+    None
+}
+
+fn same_slot(old: &SetupEntry, new: &SetupEntry) -> bool {
+    if old.kind != new.kind { return false; }
+    match (&old.detail, &new.detail) {
+        (SetupDetail::HookRegister { event: a, .. }, SetupDetail::HookRegister { event: b, .. }) => a == b,
+        (SetupDetail::JsonMerge { pointer: a, added: av }, SetupDetail::JsonMerge { pointer: b, added: bv }) => a == b && av == bv,
+        _ => true,
     }
 }
-fn remove_json(target: &Path, pointer: &str, added: &Value, dry: bool) -> Result<bool> {
-    let s = match fs::read_to_string(target) {
-        Ok(s) => s,
-        Err(_) => return Ok(false),
-    };
-    let mut v: Value = match serde_json::from_str(&s) {
-        Ok(v) => v,
-        Err(_) => {
-            println!(
-                "[dl setup] malformed JSON, left in place: {}",
-                target.display()
-            );
-            return Ok(false);
-        }
-    };
-    let Some(a) = v
-        .get_mut(pointer.trim_start_matches('/'))
-        .and_then(Value::as_array_mut)
-    else {
-        return Ok(false);
-    };
-    if let Some(i) = a.iter().position(|x| x == added) {
-        if !dry {
-            a.remove(i);
-            atomic(target, &serde_json::to_vec_pretty(&v)?)?;
-        }
-        Ok(true)
-    } else {
-        Ok(false)
-    }
-}
+
 fn state_home() -> PathBuf {
     if let Some(path) = std::env::var_os("XDG_STATE_HOME") {
         return PathBuf::from(path);
     }
     #[cfg(test)]
     {
-        return std::env::temp_dir().join(format!("dl-test-state-{}", std::process::id()));
+        return std::env::temp_dir().join(format!(
+            "dl-test-state-{}-{:?}", std::process::id(), std::thread::current().id()
+        ));
     }
     #[cfg(not(test))]
     {
@@ -512,9 +151,14 @@ fn state_home() -> PathBuf {
     }
 }
 fn parent(path: &Path) -> Result<()> {
-    if let Some(p) = path.parent() {
-        fs::create_dir_all(p)?;
+    let Some(parent) = path.parent() else { return Ok(()) };
+    let mut missing = Vec::new();
+    let mut cursor = parent;
+    while !cursor.exists() {
+        missing.push(cursor.to_path_buf());
+        cursor = cursor.parent().context("path has no existing ancestor")?;
     }
+    for dir in missing.iter().rev() { fs::create_dir(dir)?; }
     Ok(())
 }
 fn has_hook(value: &Value, event: &str, command: &str) -> bool {
@@ -580,6 +224,9 @@ fn safe(target: &Path, root: Option<&Path>) -> Result<()> {
             .unwrap_or_else(|| PathBuf::from("."))
     });
     let expected = expected.canonicalize().unwrap_or(expected);
+    if target.components().any(|part| matches!(part, std::path::Component::ParentDir)) {
+        anyhow::bail!("target contains parent traversal: {}", target.display())
+    }
     let parent = target.parent().context("target has no parent")?;
     let existing = parent
         .ancestors()
@@ -593,10 +240,14 @@ fn safe(target: &Path, root: Option<&Path>) -> Result<()> {
 }
 fn atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     parent(path)?;
-    let tmp = path.with_extension(format!("dl-tmp-{}", std::process::id()));
+    static NEXT_TMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = NEXT_TMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = path.with_extension(format!("dl-tmp-{}-{nonce}", std::process::id()));
     fs::write(&tmp, bytes)?;
-    fs::rename(&tmp, path)?;
-    Ok(())
+    match fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(error) => { let _ = fs::remove_file(&tmp); Err(error.into()) }
+    }
 }
 fn hash(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex().to_string()
