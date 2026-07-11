@@ -67,23 +67,22 @@ fn rust_grammar_over_a_bound_snippet() {
     assert!(out.contains("a\tparse(raw)"), "receiver captured:\n{out}");
 }
 
-/// One rel = one rule kind: a rel headed by BOTH a term-extract `sg` rule and a
-/// plain derived rule must bail (the derived rebuild would drop the extracted
-/// rows). Same guard the term-form json/jsonp already trips.
+/// A rel headed by BOTH a term-extract `sg` rule and a plain derived rule now
+/// desugars into twin rels + a union (was a loud bail before the mixed-rel
+/// desugar); both rule kinds' rows must survive the tick.
 #[test]
-fn term_extract_and_derived_co_head_bails() {
+fn term_extract_and_derived_co_head_unions() {
     let d = sandbox("guard");
-    let (code, _out, err) = run(&d, concat!(
+    let (code, out, err) = run(&d, concat!(
         "rel style(name: text, body: text).\n",
         "style(\"x\", \"position: fixed;\").\n",
         "rel other(prop: text).\n",
         "other(\"margin\").\n",
-        // `decl` headed by a term-extract sg rule AND a derived rule -> bail.
         "rel decl(prop: text).\n",
         "decl(PROP) <- style(_, body), sg(:css, body, \"$PROP: $VAL;\").\n",
         "decl(prop) <- other(prop).\n",
         "? decl(prop).\n"));
-    assert_ne!(code, 0, "expected a loud bail, got success");
-    assert!(err.contains("term-extract") || err.contains("both"),
-        "bail should name the co-head hazard:\n{err}");
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("position"), "extracted row survives:\n{out}");
+    assert!(out.contains("margin"), "derived row survives:\n{out}");
 }
