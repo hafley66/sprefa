@@ -131,6 +131,33 @@ Reusable tools: `use "std/callgraph.dl".` resolves from disk if present, else
 from the embedded copy — a stdlib that works with no source tree. (Real semantic
 search: build with `--features embed-fastembed` to swap the stub for an ONNX model.)
 
+## Demand sinks (rels that DO things)
+
+These are pre-declared builtin sinks: HEAD them from rules, never `rel`-declare them. IO runs off-tick, results land on a LATER tick, and demand hops compose one tick each. Outcome rels are the queryable receipt. Grounding: `src/engine/mod.rs` (`DEMAND_RELS`), `src/rels/`, and `docs/reference/magic-rels.md`.
+
+Lazily load SCIP for a configured repo; the installed indexer runs as needed, then its index loads so `scip_*` relations and call/type joins improve:
+```dl
+scip_want(repo_slug) <- repo(repo_slug, _, _).
+? scip_def(_, _, repo_slug).
+```
+Sweep configured checkouts and read the receipt (`action` = `ff`/`branch-f`/`skip`; `ok` = `1`/`0`):
+```dl
+checkout(repo_slug, "main", "0") <- repo(repo_slug, _, _).
+? checkout_done(repo_slug, branch_name, action, ok, detail).
+```
+Demand ancestry counts; `rev_behind` fills (`behind`, then `ahead`):
+```dl
+rel revision_pin(repo: text, refname: text, upstream: text).
+revision_pin("repo-slug", "release", "origin/main").
+rev_cmp_want(repo_slug, ref_name, upstream_ref) <- revision_pin(repo_slug, ref_name, upstream_ref).
+? rev_behind(repo_slug, ref_name, upstream_ref, behind_count, ahead_count).
+```
+
+Register or clone a repo dynamically by heading the repo sink (a ground fact is an explicit sink request):
+```dl
+repo("acme/project", "repos/project", "https://github.com/acme/project.git").
+```
+
 ## Root, daemon, no-daemon (read this — it wastes the most time)
 
 **ROOT is the current directory. There is NO `--root` flag.** Point `dl` at a
@@ -144,19 +171,9 @@ learns its root from `DL_DAEMON_ROOT`; you set that only when scripting a daemon
 | LSP | `dl prog.dl --lsp` | live editor diagnostics from `diag` rows |
 | isolated | `dl prog.dl --no-daemon` | in-process, do NOT attach/spawn a daemon |
 
-A one-shot AUTO-ATTACHES to the ONE singleton daemon (at
-`$XDG_STATE_HOME/sprefa`, else `~/.local/state/sprefa`), which serves every `.dl`
-root and warms incremental ticks; naming a root in the RPC auto-registers it.
-This usually helps, but for a clean, reproducible one-off run — or when the daemon
-is misbehaving — add `--no-daemon` (or `DL_NO_DAEMON=1`) to force the in-process
-path. A generator/rail that must NOT see stale daemon state (e.g. regenerating
-docs) should always use `--no-daemon`.
+A one-shot AUTO-ATTACHES to the ONE singleton daemon (at `$XDG_STATE_HOME/sprefa`, else `~/.local/state/sprefa`), which serves every `.dl` root and warms incremental ticks; naming a root in the RPC auto-registers it. This usually helps, but for a clean one-off run — or when the daemon misbehaves — add `--no-daemon` (or `DL_NO_DAEMON=1`) to force the in-process path. Generators/rails that must NOT see stale daemon state should always use `--no-daemon`.
 
-**Daemon lifecycle (the reinstall trap):** a long-running daemon holds its OLD
-in-memory image after you `cargo install` a new `dl`. An auto-attaching one-shot
-detects the drift and restarts it, but a purely reactive daemon (nothing
-attaches, it just re-ticks on file changes) does NOT self-heal and will keep
-running stale code. After reinstalling:
+**Daemon lifecycle (the reinstall trap):** a long-running daemon holds its OLD in-memory image after `cargo install` of a new `dl`. An auto-attaching one-shot detects drift and restarts it, but a purely reactive daemon does NOT self-heal and keeps stale code. After reinstalling:
 
 ```sh
 dl daemon status    # is it up? build_id, tick_count, settled, program
@@ -164,13 +181,9 @@ dl daemon restart   # stop + respawn for this root with the CURRENT binary
 dl daemon stop      # just shut it down
 ```
 
-`dl daemon restart` is the one-liner — no `kill`/`nohup`/pid-file dance. (The old
-`--restart`/`--stop`/`--rows` flags still work, hidden, but prefer the subcommand.)
+`dl daemon restart` is the one-liner — no `kill`/`nohup`/pid-file dance. (The old `--restart`/`--stop`/`--rows` flags still work, hidden, but prefer the subcommand.)
 
-**Inspect the live daemon:** `dl daemon rows <REL>` prints a relation's current
-rows from the running daemon (e.g. `dl daemon rows checkout_done`, `dl daemon rows
-call_edge`) — the `?`-query shortcut for "what did this actually resolve to", no
-temp file. `dl daemon status` confirms which binary the daemon is running.
+**Inspect the live daemon:** `dl daemon rows <REL>` prints a relation's current rows (e.g. `dl daemon rows checkout_done` or `dl daemon rows call_edge`) — the `?`-query shortcut for "what did this actually resolve to", with no temp file. `dl daemon status` confirms which binary is running.
 
 ## Common tasks (copy-paste, stop guessing)
 

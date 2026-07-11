@@ -7,62 +7,18 @@ tags consumed by cargo-dist.
 ## [Unreleased]
 
 ### Added
-- Semi-naive (delta) evaluation for recursive fixpoints in `rebuild_derived`: each pass joins only rows born the previous pass instead of re-deriving the full relation; aggregate/`key(...)` components fall back to the naive loop; `DL_NAIVE_FIXPOINT=1` forces the old path. Exact-count regression tests pin the waste at zero. Cold `--check` on this repo: 37.2s -> 5.6s.
-- `DL_CACHE_MB` (default 512): SQLite page cache + mmap sizing; `temp_store=MEMORY`.
-- `_stmt_ms` telemetry is now `(rel, ms, n)`: SUM of wall ms across rules/passes/delta variants plus statement count; sibling buckets (`closure:`/`cond_cache:`/`extract:`/`scc:`/`node2vec:` prefixes) time engine-side derived work. 93.6% of the derived phase attributed (was ~14%).
-- Engine monolith split: `src/engine/mod.rs` 9,209 -> 2,688 lines across 12 pure-move submodules (decls/gen/query/symbols/lens/rpc/declare/reconcile/repo/meta/derive/lang_tables); `src/setup.rs` hook wiring split to `src/setup/hooks.rs`.
-- Observability verdict-line logging layer.
-- Daemon/check fixes: discovery-mode `--check` attaches to a warm daemon; cold-start PR-poll stampede in git-graph.dl gated on `git_ref`; verify.sh digest stamp skips redundant build+suite.
+- Recursive fixpoints now use semi-naive delta evaluation, with `DL_NAIVE_FIXPOINT=1` as a compatibility escape hatch; cold `--check` on this repo went 37.2s -> 5.6s. Aggregate and lattice components retain the naive path.
+- `DL_CACHE_MB` (default 512) configures SQLite’s page cache and mmap budget, with temporary tables kept in memory.
+- `_stmt_ms` now reports aggregate wall time and statement count, including engine-side derived-work buckets, making performance attribution substantially more complete.
+- The engine and setup hook wiring are split into focused modules, making the codebase easier to navigate and maintain.
+- Verdict-line logging adds a concise observability summary for runs.
+- Discovery `--check` can attach to a warm daemon; PR polling avoids a cold-start stampede, and `verify.sh` skips redundant build/suite work when its digest is unchanged.
 
 ### Changed (BREAKING)
-- **Intern hot join keys: `_strings`/`_where_bytes` string ids are now
-  INTEGER, not TEXT.** `_strings.id` is an `INTEGER PRIMARY KEY` holding
-  `StringId::sqlite()` (the content hash's i64 bit-pattern); `_where_bytes.
-  string_id` is `INTEGER` to match. Every join on these ids is now a
-  single-word int compare instead of a TEXT memcmp. The `string(id,text,
-  norm)` and `ref(id,string,file,lo,hi)` builtin rels: `string.id` and
-  `ref.string` are now `int`-typed columns (were `text`) — their VALUES also
-  changed (StringId's i64 bit-pattern, not the old decimal-`u64`-as-text).
-  `df_node.id` and every column that carries one of its ids (`df_edge.from/
-  to`, `df_arg.call/arg`, `df_field.id/value`, `df_param.id`, `df_lit.id`,
-  `df_node_repo.id`, and the rev-salted `_rev` twins) are now `sym`-typed —
-  storage INTEGER, auto-decoding back to their original text (`file::line::
-  kind`) in any text-consuming context (string fns, interpolation, `?`
-  query output) via the existing `Type::Sym` lowering. `std/flow.dl` and
-  `std/entry.dl`'s id-carrying columns (`flow_edge`, `call_node`, `call_
-  target`, `flow_kept`/`flow_cut`/`flow_modeled`, `arg_field_flow`, `entry_
-  seed`, `entry_reach_node_raw`, `op_reach_seed/raw`) flipped to `sym` to
-  match; `examples/flow-jsx.dl`, `flow-interproc.dl`, `flow-services.dl`
-  likewise (`prop_edge`, `flow_reach`, `flow_node_type`, `service_reach`). A
-  user `.dl` program joining a df id against a plain `text` column now
-  typechecks loudly with the fix ("declare the source column `sym` too, or
-  make it a text column") instead of silently mismatching.
-  No data migration: an existing db's `_strings`/`_where_bytes` (TEXT id)
-  are dropped and recreated empty on open, and every `extract:<family>`
-  digest is cleared, so the very next tick re-extracts and refills both —
-  safe because every extract digest already folds exe identity (a new
-  binary always re-extracts on an old db regardless).
-  New turnkey emit-side API (`src/spine.rs`): `Sym`/`SymSink` — `sink.sym
-  (text) -> Sym` queues (id, text); `Db::flush_syms(&mut sink)` drains it
-  into ONE batched `_strings` insert (collision-guarded: two different
-  texts hashing to the same id within one flush is a loud bail). `Sym` has
-  no `Display`/`to_string`, so it structurally cannot leak into a TEXT
-  column. Every dataflow/spine emit site (`refresh_dataflow_rels`, `insert_
-  spine_strings`, `insert_spine_where_bytes`, the CST node-walk spine
-  intern) now routes through one `SymSink` per refresh instead of open-
-  coding `StringId::of(text).sqlite()` per call. A debug build panics if a
-  `SymSink` is dropped with pending interns never flushed.
-  Also fixed en route (found by this arc, pre-existing): `lower_query`'s
-  Sym-column decode used a BARE `"id"` column reference inside the `_
-  strings` correlated subquery — since `_strings` ALSO has a column
-  literally named `id`, the bare reference bound to the wrong (inner)
-  scope, silently returning one arbitrary row's content for every outer
-  row. Fixed by table-qualifying the outer cell. `load_edges`/`edge_
-  content_digest` (the generic closure/scc edge readers) read cells via a
-  shared `cell_as_string` helper (was `row.get::<_, String>`, which errors —
-  silently dropping the whole row via `.flatten()`, or defaulting to empty
-  via `.unwrap_or_default()` — on any INTEGER-typed edge column).
-  Plan: `plans/2026-07-11-intern-string-keys.md`.
+- **Interned join keys are now integer-backed.** `_strings`, `_where_bytes`, builtin string/ref ids, and dataflow ids use `int`/`sym` storage for faster joins; incompatible user joins now fail with an actionable type error (see `plans/2026-07-11-intern-string-keys.md`).
+- Existing `_strings`/`_where_bytes` caches are recreated and extraction digests invalidated on open, so the next tick safely repopulates data without a migration.
+- The `Sym`/`SymSink` spine API batches collision-checked string interning, and its type prevents accidental writes to text columns.
+- Sym query decoding now qualifies the outer id correctly, while generic edge readers accept integer-backed ids instead of silently dropping rows.
 
 ## [0.8.0] - 2026-07-11
 
