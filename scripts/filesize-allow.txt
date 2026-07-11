@@ -30,6 +30,5 @@ src/parse.rs
 src/propose.rs
 src/scip_import.rs
 src/scip_setup.rs
-src/setup.rs
 src/typecheck.rs
 src/typegraph.rs
