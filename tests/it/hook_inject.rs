@@ -152,6 +152,97 @@ fn setup_bootstrap_then_hook_injects() {
     assert!(out.contains("Run cargo test"), "testing skill body should be injected:\n{out}");
 }
 
+/// Like `run_hook`, with extra dl args (e.g. --dialect).
+fn run_hook_args(root: &Path, store: &Path, prog_path: &Path, event: &str, extra: &[&str]) -> String {
+    let mut child = Command::new(DL)
+        .arg("--hook").arg(prog_path)
+        .args(extra)
+        .current_dir(root)
+        .args(["--db", root.join("db").to_str().unwrap(), "--no-daemon"])
+        .env("SPREFA_CLAUDE_PROJECTS", store)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
+        .spawn().unwrap();
+    child.stdin.take().unwrap().write_all(event.as_bytes()).unwrap();
+    let out = child.wait_with_output().unwrap();
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// codex dialect e2e: a canned codex PostToolUse payload (field names from the
+/// installed codex 0.144.1 binary's embedded hook schemas) through
+/// `--dialect codex` emits the same Claude-shaped hookSpecificOutput.
+#[test]
+fn codex_dialect_injects_from_codex_shaped_payload() {
+    let (root, store) = fixture("codex");
+    let prog = root.join("p.dl");
+    fs::write(&prog, INJECT_PROG).unwrap();
+    write_transcript(&store, &root, &[edit_turn(&root)]);
+
+    let event = r#"{"cwd":"/tmp/x","hook_event_name":"PostToolUse","model":"gpt-5.6","permission_mode":"default","session_id":"sess1","tool_input":{"file_path":"src/foo_test.rs"},"tool_name":"shell","tool_response":{},"tool_use_id":"tu1","transcript_path":null,"turn_id":"turn1"}"#;
+    let out = run_hook_args(&root, &store, &prog, event, &["--dialect", "codex"]);
+    assert!(out.contains("additionalContext"), "codex dialect should inject:\n{out}");
+    assert!(out.contains("\"hookEventName\":\"PostToolUse\""), "echoes the event name:\n{out}");
+    assert!(out.contains("Run cargo test"), "skill body injected:\n{out}");
+    // Codex's output schemas set additionalProperties:false — nothing beyond
+    // hookSpecificOutput may ride the reply.
+    let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(v.as_object().unwrap().len(), 1, "only hookSpecificOutput:\n{out}");
+}
+
+/// opencode dialect e2e: the neutral `{kind, session, json}` payload (what the
+/// shipped .opencode plugin sends) yields the neutral `{"inject": ...}` reply.
+#[test]
+fn opencode_dialect_injects_neutral_shapes() {
+    let (root, store) = fixture("opencode");
+    let prog = root.join("p.dl");
+    fs::write(&prog, INJECT_PROG).unwrap();
+    write_transcript(&store, &root, &[edit_turn(&root)]);
+
+    let event = r#"{"kind":"PostToolUse","session":"sess1","json":"{}"}"#;
+    // No --dialect: the neutral shape auto-detects opencode.
+    let out = run_hook_args(&root, &store, &prog, event, &[]);
+    let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert!(v["inject"].as_str().unwrap().contains("Run cargo test"),
+        "neutral inject reply expected:\n{out}");
+    assert!(v.get("hookSpecificOutput").is_none(), "no claude framing for opencode:\n{out}");
+}
+
+/// opencode block: neutral `{"block": reason}`.
+#[test]
+fn opencode_dialect_block_is_neutral() {
+    let (root, store) = fixture("ocblock");
+    let prog = root.join("b.dl");
+    fs::write(&prog, concat!(
+        "rel block(reason: text).\n",
+        "block(\"no hand edits\") <- agent_touch(_, _, touched_path), touched_path =~ /_test\\./.\n",
+    )).unwrap();
+    write_transcript(&store, &root, &[edit_turn(&root)]);
+
+    let event = r#"{"kind":"PreToolUse","session":"sess1","json":"{}"}"#;
+    let out = run_hook_args(&root, &store, &prog, event, &["--dialect", "opencode"]);
+    let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(v["block"], "no hand edits", "neutral block reply expected:\n{out}");
+}
+
+/// A skill living under `.agents/skills/` (the cross-harness home, no
+/// `.claude/skills` copy) resolves through inject_skill.
+#[test]
+fn skill_resolves_from_agents_skills_dir() {
+    let (root, store) = fixture("agentsdir");
+    // Move the skill out of .claude/skills into .agents/skills.
+    fs::create_dir_all(root.join(".agents/skills/testing")).unwrap();
+    fs::rename(
+        root.join(".claude/skills/testing/SKILL.md"),
+        root.join(".agents/skills/testing/SKILL.md"),
+    ).unwrap();
+    let prog = root.join("p.dl");
+    fs::write(&prog, INJECT_PROG).unwrap();
+    write_transcript(&store, &root, &[edit_turn(&root)]);
+
+    let out = run_hook(&root, &store, &prog, EVENT);
+    assert!(out.contains("Run cargo test"),
+        ".agents/skills SKILL.md should resolve:\n{out}");
+}
+
 #[test]
 fn block_relation_emits_decision_block() {
     let (root, store) = fixture("block");
