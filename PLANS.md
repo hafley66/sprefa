@@ -20,6 +20,8 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `decision` plans/2026-07-11-codex-feedback-queue.md:122 — CLI flag taxonomy — query/mutate/effects axes
 - `decision` plans/2026-07-11-intern-string-keys.md:159 — which payload TEXT columns stay text (df_lit.text, doc_comment.text) — decided by the spike's decode-cost numbers
 - `docs` plans/2026-07-10-change-cost-friction-inventory.md:151 — item 6 — a generated per-language coverage table (which node kinds each TypeLang lift emits, tested counts on a fixture) in docs/reference
+- `docs` plans/2026-07-11-docs-and-dogfood-audit.md:20 — CHANGELOG drift rail — commit window vs entries cross-check
+- `docs` plans/2026-07-11-docs-and-dogfood-audit.md:28 — book/tutorial refresh for sym/file_lines/--max-wall/semi-naive
 - `feature` plans/2026-07-10-change-cost-friction-inventory.md:148 — item 1 — a first-class --hermetic flag that implies all three, plus the already-ledgered loud "daemon is serving this root, writes went there" warning on hijack
 - `feature` plans/2026-07-10-change-cost-friction-inventory.md:150 — item 3 — --format=json (or tsv) for ? query blocks and one paragraph documenting the human format's contract
 - `feature` plans/2026-07-11-agent-resume-ledger.md:57 — re-enable PostToolUse hook with timeout+advisory shape once derived is under budget
@@ -38,6 +40,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-07-11-dataflow-research-program.md:24 — std/dispatch.dl CHA/VTA
 - `feature` plans/2026-07-11-dataflow-research-program.md:45 — var_write/var_read + df-hole rail from occurrence roles
 - `feature` plans/2026-07-11-dataflow-research-program.md:75 — cfg_edge lift rel, one language first
+- `feature` plans/2026-07-11-docs-and-dogfood-audit.md:39 — dogfood coverage rail — scan in-tree .dl usage vs rel_catalog/op docs, warn on zero-usage builtins
 - `feature` plans/2026-07-11-engine-mod-split.md:73 — trait-extraction epic Phase 1 (RelKind) resumes on top of the split
 - `feature` plans/2026-07-11-file-lines-builtin.md:84 — file_lines for git revs via the cat-file batch reader, if a rail ever needs history
 - `feature` plans/2026-07-11-file-lines-builtin.md:85 — re-enable PostToolUse hook (timeout-wrapped, advisory) once the perf arc lands — NOT in this task
@@ -51,6 +54,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `perf` plans/2026-07-11-codex-feedback-queue.md:92 — semi-naive delta-growth bail + wedge visibility
 - `perf` plans/2026-07-11-intern-string-keys.md:158 — P0 spike — re-key call_edge/flow feeders to StringId in a scratch db, before/after ms
 - `triage` plans/2026-07-11-cross-harness-agent-tooling.md:147 — a CodexSessions AgentHarness arm for agent_* rels — session-store format needs research
+- `triage` plans/2026-07-11-docs-and-dogfood-audit.md:40 — re-enable hooks (timeout+advisory) — relights the dark event arm; Chris flips
 - `triage` plans/2026-07-11-engine-mod-split.md:72 — SG_LANG_TABLE final home (src/sg.rs vs engine/lang_tables.rs) when the lang_tables cluster moves
 <!-- END: plans-by-category -->
 
@@ -86,6 +90,10 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-11-dataflow-research-program.md:135 `feature` — MaD-format importer -> flow_summary/flow_sanitizer facts
 - plans/2026-07-11-dataflow-research-program.md:143 `feature` — --format=sarif for check findings
 - plans/2026-07-11-dataflow-research-program.md:158 `feature` — IR fact tier — stable MIR / Go SSA dumpers behind a want
+- plans/2026-07-11-docs-and-dogfood-audit.md:20 `docs` — CHANGELOG drift rail — commit window vs entries cross-check
+- plans/2026-07-11-docs-and-dogfood-audit.md:28 `docs` — book/tutorial refresh for sym/file_lines/--max-wall/semi-naive
+- plans/2026-07-11-docs-and-dogfood-audit.md:39 `feature` — dogfood coverage rail — scan in-tree .dl usage vs rel_catalog/op docs, warn on zero-usage builtins
+- plans/2026-07-11-docs-and-dogfood-audit.md:40 `triage` — re-enable hooks (timeout+advisory) — relights the dark event arm; Chris flips
 - plans/2026-07-11-engine-mod-split.md:72 `triage` — SG_LANG_TABLE final home (src/sg.rs vs engine/lang_tables.rs) when the lang_tables cluster moves
 - plans/2026-07-11-engine-mod-split.md:73 `feature` — trait-extraction epic Phase 1 (RelKind) resumes on top of the split
 - plans/2026-07-11-file-lines-builtin.md:84 `feature` — file_lines for git revs via the cat-file batch reader, if a rail ever needs history
