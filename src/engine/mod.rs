@@ -32,6 +32,7 @@ mod reconcile;
 mod repo;
 mod meta;
 mod derive;
+mod lang_tables;
 pub(crate) use repo::git_batch_read;
 pub(crate) use query::emit_query_json;
 mod decls;
@@ -40,6 +41,8 @@ pub use decls::{
     op_docs, undocumented_builtins, undocumented_fns,
 };
 pub(crate) use decls::*;
+pub use lang_tables::ast_langs;
+pub(crate) use lang_tables::ts_lang;
 #[derive(Clone, Debug)]
 struct CheckoutOutcome { action: &'static str, ok: bool, detail: String }
 // The mixed source+derived / extract+derived rel desugar: a pure Program ->
@@ -2576,40 +2579,6 @@ extern "C" {
 /// ast-grep — the language sets differ (e.g. `ast` has bash/hcl/gotmpl but no
 /// tsx; `sg` has tsx/typescript/cpp but no bash). The non-capturing closures
 /// coerce to `fn` pointers, so this promotes to a `&'static` slice.
-type TsLangCtor = fn() -> tree_sitter::Language;
-static AST_LANG_TABLE: &[(&str, &[&str], TsLangCtor)] = &[
-    ("rust",       &["rs"],                    || tree_sitter::Language::new(tree_sitter_rust::LANGUAGE)),
-    ("c",          &[],                        || tree_sitter::Language::new(tree_sitter_c::LANGUAGE)),
-    ("kotlin",     &["kt"],                    || tree_sitter::Language::new(tree_sitter_kotlin_sg::LANGUAGE)),
-    ("python",     &["py"],                    || tree_sitter::Language::new(tree_sitter_python::LANGUAGE)),
-    ("bash",       &["sh", "shell"],           || tree_sitter::Language::new(tree_sitter_bash::LANGUAGE)),
-    ("go",         &["golang"],                || tree_sitter::Language::new(tree_sitter_go::LANGUAGE)),
-    ("hcl",        &["terraform", "tf"],       || tree_sitter::Language::new(tree_sitter_hcl::LANGUAGE)),
-    ("starlark",   &["bzl", "bazel"],          || tree_sitter::Language::new(tree_sitter_starlark::LANGUAGE)),
-    ("jsonnet",    &[],                        || tree_sitter::Language::new(tree_sitter_jsonnet::LANGUAGE)),
-    ("gotmpl",     &["gotemplate", "gohtml"],  || tree_sitter::Language::new(unsafe {
-        tree_sitter_language::LanguageFn::from_raw(tree_sitter_gotmpl)
-    })),
-    ("dockerfile", &["docker"],                || tree_sitter::Language::new(unsafe {
-        tree_sitter_language::LanguageFn::from_raw(tree_sitter_dockerfile)
-    })),
-];
-
-fn ts_lang(lang: &str) -> Result<tree_sitter::Language> {
-    for (canon, aliases, ctor) in AST_LANG_TABLE {
-        if lang == *canon || aliases.contains(&lang) { return Ok(ctor()); }
-    }
-    let compiled = AST_LANG_TABLE.iter().map(|(c, ..)| *c).collect::<Vec<_>>().join(", ");
-    bail!("no ast grammar for :{lang} (compiled in: {compiled})")
-}
-
-/// Canonical language names the `ast` op accepts (one per tree-sitter grammar).
-/// The skill's per-op language matrix is checked set-equal against this in
-/// `tests/it/lang_matrix.rs`, so a stale matrix fails CI.
-pub fn ast_langs() -> Vec<&'static str> {
-    AST_LANG_TABLE.iter().map(|(canon, ..)| *canon).collect()
-}
-
 /// Run a tree-sitter S-expression query over file content.
 /// Returns (start_line, end_line, captures) per match; start = min capture start
 /// row, end = max capture end row (the matched region's span). Each capture is
