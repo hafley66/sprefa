@@ -2361,6 +2361,223 @@ impl<'a, 's> OxcVisit<'a> for TsTemplateWalker<'s> {
     }
 }
 
+/// One string-valued member of a `const OBJ = { ... }` object literal —
+/// `const_string_member`'s TS/JS extractor. `object` is the const's own
+/// binding name; `member` is a non-computed property key (a plain identifier
+/// or string literal, matching the existing `PropertyKey::StaticIdentifier` /
+/// `PropertyKey::StringLiteral` convention used everywhere else in this file —
+/// a computed key (`[expr]: v`), a private name, or any other key shape is
+/// skipped); `value` is a string-literal property value, verbatim (cooked).
+/// FLAT members only: a property whose value is itself an object/array
+/// literal (or anything else that isn't a bare string literal) is simply not
+/// emitted for that slot — this walk never guesses a shape, nested lookup
+/// tables are out of scope in v1. `object as const` / `object satisfies T`
+/// wrappers unwrap to the same underlying object literal. `line` is the
+/// declarator's own 1-based start line, tracked on the fact for tests/future
+/// use; the persisted `const_string_member` rel is exactly the requested
+/// 4-arity `(file, object, member, value)` with no line column. Runs over
+/// every `const` declarator in the file, not only top-level ones (a lookup
+/// table declared inside a function body still counts — "generically
+/// discovered", not scope-restricted).
+#[derive(Clone, Debug)]
+pub struct ConstStringMember {
+    pub line: u32,
+    pub object: String,
+    pub member: String,
+    pub value: String,
+}
+
+/// Every flat string-valued const-object member in a TS/TSX/JS/JSX/MJS/CJS
+/// file. Own family (see `refresh_const_string_member_rel`): a program
+/// reading only `const_string_member` shouldn't pay for the `type`/`call`/
+/// `dataflow` TypeLang passes, matching the `template_parts` precedent (its
+/// own oxc parse, gated behind its own `ExtractFamily`/digest rather than
+/// riding an existing walk).
+pub fn ts_const_string_members(file: &str, content: &str) -> Vec<ConstStringMember> {
+    let alloc = oxc_allocator::Allocator::default();
+    let st = source_type_for(file);
+    let ret = oxc_parser::Parser::new(&alloc, content, st).parse();
+    if ret.panicked {
+        return Vec::new();
+    }
+    let starts = line_index(content);
+    let mut walker = TsConstMemberWalker { starts: &starts, out: Vec::new() };
+    walker.visit_program(&ret.program);
+    walker.out
+}
+
+struct TsConstMemberWalker<'s> {
+    starts: &'s [usize],
+    out: Vec<ConstStringMember>,
+}
+
+impl<'a, 's> OxcVisit<'a> for TsConstMemberWalker<'s> {
+    fn visit_variable_declarator(&mut self, it: &ts_ast::VariableDeclarator<'a>) {
+        if it.kind == ts_ast::VariableDeclarationKind::Const {
+            if let (ts_ast::BindingPattern::BindingIdentifier(name), Some(init)) = (&it.id, &it.init) {
+                // Unwrap `as const` / `satisfies T` wrappers to the underlying
+                // object literal — neither changes the runtime shape.
+                let mut expr = init;
+                loop {
+                    expr = match expr {
+                        ts_ast::Expression::TSAsExpression(e) => &e.expression,
+                        ts_ast::Expression::TSSatisfiesExpression(e) => &e.expression,
+                        _ => break,
+                    };
+                }
+                if let ts_ast::Expression::ObjectExpression(obj) = expr {
+                    let line = line_at(self.starts, it.span.start as usize);
+                    let object = name.name.to_string();
+                    for prop in &obj.properties {
+                        let ts_ast::ObjectPropertyKind::ObjectProperty(p) = prop else { continue };
+                        if p.computed {
+                            continue;
+                        }
+                        let member = match &p.key {
+                            ts_ast::PropertyKey::StaticIdentifier(id) => id.name.to_string(),
+                            ts_ast::PropertyKey::StringLiteral(s) => s.value.to_string(),
+                            _ => continue,
+                        };
+                        if let ts_ast::Expression::StringLiteral(value) = &p.value {
+                            self.out.push(ConstStringMember {
+                                line, object: object.clone(), member, value: value.value.to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        oxc_ast_visit::walk::walk_variable_declarator(self, it);
+    }
+}
+
+/// One `unresolved` marker occurrence: an edge that COULD exist but whose
+/// target is computed at runtime rather than a static literal — as opposed to
+/// `module_unresolved`, which flags a specifier that resolved to NO project
+/// file at all (a genuinely missing target, a different flavor this rel does
+/// NOT duplicate). `unresolved`'s own TS/JS-only oxc walk (own
+/// `ExtractFamily`, no cross-family reads, so its digest stays self-contained
+/// — see the `const_string_member` doc comment for why) covers three reason
+/// buckets, each re-derived from an AST shape another pass in this file
+/// already visits for a different purpose, never a wholly new detection
+/// concept:
+///
+/// - `dynamic-import`: a `import(expr)` / `require(expr)` call whose argument
+///   is not a plain string literal. The ES grammar requires a static `import
+///   ... from` specifier to be a literal, so a computed specifier can only
+///   ever show up in call form — the same "not a literal" signal
+///   `module_unresolved`'s `"{spec}: dynamic"` case already flags for the
+///   template-literal-interpolated case the modgraph regex resolver sees.
+/// - `computed-member-call`: `obj[key]()` — the call-site walk that resolves
+///   `a.b.c()` to `"c"` (`ts_callee_name`) already visits this exact callee
+///   shape and silently drops it today.
+/// - `spread-call-args`: `f(...args)` — the dataflow arg walk (`ts_flow_call`)
+///   already iterates `c.arguments` and silently drops a `SpreadElement` via
+///   `arg.as_expression()` returning `None`.
+///
+/// `detail` is the computed thing's exact source text, verbatim. `line` is
+/// 1-based (the `comment_node`/`sg`/`diag` convention).
+///
+/// OUT of v1 scope, on purpose: Python star-imports and `sys.path` mutation
+/// (both already surfaced today — `module_unresolved`'s `"star import not
+/// expanded"` row and a loud `eprintln`, respectively) are not unioned in
+/// here, to avoid a cross-family digest dependency (this family's digest
+/// would otherwise need to key off `module_unresolved`'s content, not just
+/// its own TS/JS file set — the exact "hidden cross-family dependency" shape
+/// flagged as a debt item elsewhere). A future widening can revisit this once
+/// a safe cross-family digest composition exists.
+#[derive(Clone, Debug)]
+pub struct UnresolvedRef {
+    pub line: u32,
+    pub reason: &'static str,
+    pub detail: String,
+}
+
+/// Every `unresolved` marker in a TS/TSX/JS/JSX/MJS/CJS file (see
+/// `UnresolvedRef`).
+pub fn ts_unresolved_refs(file: &str, content: &str) -> Vec<UnresolvedRef> {
+    let alloc = oxc_allocator::Allocator::default();
+    let st = source_type_for(file);
+    let ret = oxc_parser::Parser::new(&alloc, content, st).parse();
+    if ret.panicked {
+        return Vec::new();
+    }
+    let starts = line_index(content);
+    let mut walker = TsUnresolvedWalker { content, starts: &starts, out: Vec::new() };
+    walker.visit_program(&ret.program);
+    walker.out
+}
+
+struct TsUnresolvedWalker<'s> {
+    content: &'s str,
+    starts: &'s [usize],
+    out: Vec<UnresolvedRef>,
+}
+
+impl<'s> TsUnresolvedWalker<'s> {
+    fn slice(&self, span: oxc_span::Span) -> String {
+        self.content.get(span.start as usize..span.end as usize).unwrap_or_default().to_string()
+    }
+}
+
+impl<'a, 's> OxcVisit<'a> for TsUnresolvedWalker<'s> {
+    fn visit_import_expression(&mut self, it: &ts_ast::ImportExpression<'a>) {
+        if !matches!(it.source, ts_ast::Expression::StringLiteral(_)) {
+            use oxc_span::GetSpan;
+            self.out.push(UnresolvedRef {
+                line: line_at(self.starts, it.span.start as usize),
+                reason: "dynamic-import",
+                detail: self.slice(it.source.span()),
+            });
+        }
+        oxc_ast_visit::walk::walk_import_expression(self, it);
+    }
+
+    fn visit_call_expression(&mut self, it: &ts_ast::CallExpression<'a>) {
+        use oxc_span::GetSpan;
+        // `require(expr)`: only a bare `require` callee counts (matching the
+        // module resolver's own CJS convention), and only when the sole
+        // argument isn't a plain string literal — a static string keeps the
+        // dependency statically resolvable, already handled by
+        // `module_import`/`module_unresolved`.
+        if let ts_ast::Expression::Identifier(callee) = &it.callee {
+            if callee.name == "require" {
+                if let Some(arg) = it.arguments.first().and_then(|a| a.as_expression()) {
+                    if !matches!(arg, ts_ast::Expression::StringLiteral(_)) {
+                        self.out.push(UnresolvedRef {
+                            line: line_at(self.starts, it.span.start as usize),
+                            reason: "dynamic-import",
+                            detail: self.slice(arg.span()),
+                        });
+                    }
+                }
+            }
+        }
+        // `obj[key]()`: a computed-member callee, the shape `ts_callee_name`
+        // already recognizes and silently drops (returns `None`).
+        if let ts_ast::Expression::ComputedMemberExpression(m) = &it.callee {
+            self.out.push(UnresolvedRef {
+                line: line_at(self.starts, m.span.start as usize),
+                reason: "computed-member-call",
+                detail: self.slice(m.span),
+            });
+        }
+        // `f(...args)`: a spread argument, the shape `ts_flow_call`'s arg loop
+        // already visits and silently drops (`arg.as_expression()` is `None`
+        // for `Argument::SpreadElement`).
+        for arg in &it.arguments {
+            if let ts_ast::Argument::SpreadElement(sp) = arg {
+                self.out.push(UnresolvedRef {
+                    line: line_at(self.starts, sp.span.start as usize),
+                    reason: "spread-call-args",
+                    detail: self.slice(sp.span),
+                });
+            }
+        }
+        oxc_ast_visit::walk::walk_call_expression(self, it);
+    }
+}
+
 fn ts_edges_from(program: &ts_ast::Program) -> Vec<TypeEdge> {
     let mut out: BTreeSet<(String, String, &'static str)> = BTreeSet::new();
     for stmt in &program.body {
