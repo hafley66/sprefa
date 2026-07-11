@@ -5,6 +5,7 @@
 # fall out of datalog rules over syn + tree-sitter facts.
 #
 #   Run: dl examples/glean.dl
+# README(gallery): Query a real call graph: `dl examples/glean.dl --no-daemon`
 #
 # Questions answered (each is a `?` query at the bottom):
 #   1. WHERE IS IT DEFINED?   def(name, path, line)

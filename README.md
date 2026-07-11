@@ -1,16 +1,19 @@
-# sprefa v5 (`dl`)
+# dl — ask your codebase questions
 
-Datalog over code, in repo/rev/time space. Extract facts from source files with
-`scan` + located matchers, write recursive rules, and the engine lowers them to
-a SQLite fixpoint. Sinks turn result rows into query output (`?`), editor
-diagnostics (`diag` + `--lsp`/`--check`), or generated/spliced files (`gen`).
-~14k LOC, sync-tick, no compiler dependency.
+`dl` is Datalog over code: scan a repository, extract code facts, and ask questions that ordinary search cannot answer—such as “who calls this function?” or “can user input reach this sink?”  Run the included query and get a real call graph answer, not a grep list:
 
-This file is the reference for humans and agents alike: full DSL syntax, type
-system, built-in relations, CLI, hook/LSP installation, and pointers to every
-other doc in the tree.
+```sh
+dl examples/glean.dl --no-daemon
+```
 
-## Install & run
+```
+? callers => callee	caller
+  dedup_edges	Engine::tick
+  dedup_edges	Engine::run
+  (2 rows)
+```
+
+## Install + 60-second quickstart
 
 One line — prebuilt macOS binary (binary only; nothing else is touched):
 
@@ -33,18 +36,50 @@ cargo install --git https://github.com/hafley66/sprefa sprefa-dl --bin dl  # any
 cargo install --path .                                                     # from a checkout
 ```
 
-Then:
+Confirm it installed, then save this tiny program as `todos.dl` in any repo:
 
 ```sh
-dl examples/glean.dl                       # run a program, print ? queries
-cd <repo> && dl --check                    # discovery mode: runs <repo>/.dl/*.dl
-cd <repo> && dl examples/lint-unwrap.dl --lsp  # live LSP diagnostics
+dl --help | head -3
 ```
 
-There is no `--root` flag: the working root is the current directory (point `dl`
-at a folder by `cd`-ing there or spawning it with that cwd). Multi-repo analysis
-is configured in `~/.config/sprefa/config.toml` (see [Multi-repo](#multi-repo));
-the daemon serves that repo set with no privileged root.
+```dl
+rel todo(path: file, line: int, text: text).
+todo(path, line, text) <-
+  scan("src/**/*.{rs,ts}", path, rev),
+  match(path, rev, /TODO: (?<text>.+)/, line).
+? todo(path, line, text).
+```
+
+```sh
+dl todos.dl --no-daemon
+dl todos.dl --check       # the same rule can gate CI
+```
+
+`scan` selects files, `match` extracts named captures, and `?` prints rows. The
+working directory is the repository root; there is no `--root` flag.
+
+## What can it do?
+
+<!-- BEGIN: readme-gallery -->
+- Add a diff-scoped lint rail: `dl examples/rails.dl --check --no-daemon`
+- Compare a GitHub PR’s graph without a second checkout: `dl examples/pr-diff.dl --no-daemon`
+- Preview a Rust module move: `dl --move src/old.rs=src/new.rs --no-daemon`
+- Query a real call graph: `dl examples/glean.dl --no-daemon`
+- Serve an MCP tool written as rules: `dl examples/mcp-server.dl --mcp --no-daemon`
+<!-- END: readme-gallery -->
+
+## Learn more
+
+`dl docs` opens the embedded docs index; `dl docs syntax` and `dl docs relations`
+open the generated reference. Read the [book](book/README.md) for the model,
+follow the hands-on [tutorial](book/tutorial/README.md), or browse
+[docs/reference/](docs/reference/) for generated language and example indexes.
+
+<details>
+<summary>How it works</summary>
+
+The detailed language reference, implementation notes, operational guidance, and
+known limitations are retained below for maintainers and deep dives.
 
 ### Turnkey setup
 
@@ -324,10 +359,17 @@ failure mode). Rules and queries splice verbatim.
 
 **Shipped stdlib** lives in [std/](std/):
 
-| file | exposes |
+<!-- BEGIN: stdlib -->
+| file | summary |
 |---|---|
-| [std/callgraph.dl](std/callgraph.dl) | `def`, `use`, `calls`, `reaches`, `unused` — the file-scoped call graph |
-| [std/parsers/openapi.dl](std/parsers/openapi.dl) | `spec_op(op)` — operationIds from any `openapi.{json,yaml,yml}` in scope |
+| [`std/callgraph.dl`](std/callgraph.dl) | a one-shot call-graph extractor over the resolved graph + |
+| [`std/entry.dl`](std/entry.dl) | entry.dl — gateway inventory + reachability-from-entry over the shared |
+| [`std/flow-collections.dl`](std/flow-collections.dl) | higher-order propagation facts for the common collection / |
+| [`std/flow.dl`](std/flow.dl) | the shared interprocedural value-flow base. |
+| [`std/parsers/openapi.dl`](std/parsers/openapi.dl) | OpenAPI operation extraction. |
+| [`std/strings.dl`](std/strings.dl) | std/strings.dl — string_flow: the df_edge subgraph restricted to |
+| [`std/suppress.dl`](std/suppress.dl) | the eslint/biome comment-directive suppression grammar, |
+<!-- END: stdlib -->
 
 ## Templates (`def`)
 
@@ -379,6 +421,9 @@ parses as a rule because the second token is `(`, not an ident. Mirrors the
 `use`-as-rel-name guard so existing programs keep parsing.
 
 ## Built-in relations
+
+The canonical generated inventory is [docs/reference/relations.md](docs/reference/relations.md).
+The legacy quick-reference table remains below until the README generator migration.
 
 Reserved names, populated lazily — a program pays only for what it references. The lazy indexers (`type_entity`, `call_def`, `call_kind`, `df_node`, `loop_over`, `nest`) populate only over files a `scan` rule in the program pulls in; referencing one without a scan yields zero rows. See `examples/lsp-def-target.dl` for the `index_over` bridge pattern.
 
@@ -540,6 +585,9 @@ doc-comment in [src/cli/mod.rs](src/cli/mod.rs) and rerun the generator.
 | `--tick-audit` | After each tick, print every relation's row count (or DL_TICK_AUDIT=1) |
 | `--verify <VERIFY>` | Verify-rollback: run the program (applying `gen` edits), then run this shell command as a checker in the root. Keep the edits only if it exits 0; otherwise restore every touched file to its pre-run state and exit 1. Transactional codemod — apply, test, keep-if-pass. See christmas #14 |
 | `--watch` | Re-tick on file changes in the source root (in-process watcher, the pre-daemon path). For the warm long-lived watcher, use `dl daemon start` |
+| `--apply` | _undocumented_ |
+| `--dialect` | _undocumented_ |
+| `--max-wall` | _undocumented_ |
 <!-- END: cli -->
 
 ## Git hook / Claude Code hook
@@ -1072,3 +1120,5 @@ most-depended-on packages, no SCIP, no compile. Same manifest-first shape as the
 `go.mod` graph, but the manifest is the registry and the crawl is progressive.
 Scoped packages (`@scope/name`) need registry URL-encoding (`@scope%2Fname`) —
 the current template passes the slash through, so unscoped names work today.
+
+</details>

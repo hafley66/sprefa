@@ -39,11 +39,6 @@ flag(name) <- arg_attr(la), field_decl(lf, fname), lf = la + 1,
   !hidden_attr(la),
   name = replace(fname, "_", "-").
 
-# The marker pair wrapping the whole table (header + separator + rows).
-rel block(p: file, l0: int, l1: int).
-block(p, l0, l1) <- scan("WORK", "README.md", p, rev),
-  comment(p, rev, /BEGIN: cli/, /END: cli/, l0, l1).
-
 # Every README flag row, with its `--flag` name (SOURCE rule: scan+match only).
 rel readme_row_raw(p: file, line: int, flag: text, row: text).
 readme_row_raw(p, line, flag, row) <- scan("WORK", "README.md", p, rev),
@@ -52,16 +47,15 @@ readme_row_raw(p, line, flag, row) <- scan("WORK", "README.md", p, rev),
 # Scope the rows to the block. Joining on the flag name keeps only rows whose
 # flag still exists in the struct, so a removed flag drops out of the table.
 rel readme_flag_row(flag: text, row: text).
-readme_flag_row(flag, row) <- readme_row_raw(p, line, flag, row), block(p, l0, l1),
-  line > l0, line < l1.
+readme_flag_row(flag, row) <- readme_row_raw(p, line, flag, row).
 
 # Header + separator (constant; body matches the block once).
-gen(p, l0, l1, "| flag | effect |") <- block(p, l0, l1).
-gen(p, l0, l1, "|---|---|") <- block(p, l0, l1).
+gen(:zone, "README.md", "cli", "| flag | effect |") <- true().
+gen(:zone, "README.md", "cli", "|---|---|") <- true().
 
 # Pass-through: re-emit each documented flag's row verbatim (alpha by row text).
-gen(p, l0, l1, "{row}") <- block(p, l0, l1), flag(name), readme_flag_row(name, row).
+gen(:zone, "README.md", "cli", "{row}") <- flag(name), readme_flag_row(name, row).
 
 # Stub: a flag in main.rs with no README row → drift made visible in the doc.
-gen(p, l0, l1, "| `--{name}` | _undocumented_ |") <- block(p, l0, l1), flag(name),
+gen(:zone, "README.md", "cli", "| `--{name}` | _undocumented_ |") <- flag(name),
   !readme_flag_row(name, _).

@@ -92,7 +92,7 @@ tables live in `src/sg.rs` (`SG_LANG_TABLE`) and `src/engine/mod.rs`
 (`AST_LANG_TABLE`); a test keeps this block set-equal to them:
 
     sg, ast_yaml: rust typescript tsx javascript python go json c cpp kotlin css html bash csharp java scala swift ruby php lua elixir haskell yaml
-    ast: rust c kotlin python bash go hcl starlark jsonnet gotmpl dockerfile
+    ast: rust c kotlin python bash go hcl starlark jsonnet gotmpl dockerfile dl
 
 ## Install
 

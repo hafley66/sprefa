@@ -1,0 +1,69 @@
+# gen-readme.dl — regenerate the README's code-derived overview zones.
+#
+# Convention: place a grammar-backed comment beside the relevant example:
+#
+#   # README(gallery): Short reader-facing sentence with `dl command`.
+#
+# `comment_node` captures that comment (rather than scraping source text), and
+# this program writes its text into the matching README zone.  The prose before
+# and after every BEGIN:/END: marker is hand-owned and is never rewritten.
+#
+# Run:   dl examples/gen-readme.dl
+# Check: dl examples/gen-readme.dl --check  # exits 2 for drift or orphan rows
+
+# Source rules only scan. comment_node joins happen below (S6-safe).
+rel example_file(path: file).
+example_file(path) <- scan("WORK", "examples/*.dl", path, rev).
+
+rel readme_note(path: file, note_line: int, anchor: text, text: text).
+readme_note(path, note_line, anchor, text) <-
+    example_file(path),
+    comment_node(path, note_line, _, _, _, raw, _),
+    raw =~ /^README\([a-z-]+\):/,
+    anchor = replace_re(raw, r"^README\(([a-z-]+)\):.*$", "$1"),
+    text = trim(replace_re(raw, r"^README\([a-z-]+\):", "")).
+
+# ── generated gallery ───────────────────────────────────────────────────────
+gen(:zone, "README.md", "readme-gallery", "- {text}") <-
+    readme_note(_, _, "gallery", text).
+
+# ── generated standard-library list ─────────────────────────────────────────
+rel std_file(path: file).
+std_file(path) <- scan("WORK", "std/*.dl", path, rev).
+std_file(path) <- scan("WORK", "std/**/*.dl", path, rev).
+
+rel std_header(path: file, summary: text).
+std_header(path, summary) <-
+    std_file(path),
+    comment_node(path, 1, _, _, _, raw, _),
+    summary = trim(replace_re(raw, "^Standard library: ", "")).
+
+gen(:zone, "README.md", "stdlib", "| file | summary |") <- true().
+gen(:zone, "README.md", "stdlib", "|---|---|") <- true().
+gen(:zone, "README.md", "stdlib", "| [`{path}`]({path}) | {summary} |") <-
+    std_header(path, summary).
+
+# ── drift rails ──────────────────────────────────────────────────────────────
+# `gen` is suppressed by --check. Compare the comments to rendered gallery
+# rows in both directions, so additions and stale rows both fail the check.
+rel gallery_zone(path: file, l0: int, l1: int).
+gallery_zone(path, l0, l1) <- scan("WORK", "README.md", path, rev),
+    comment(path, rev, /BEGIN: readme-gallery/, /END: readme-gallery/, l0, l1).
+
+rel gallery_row(path: file, line: int, text: text).
+gallery_row(path, line, text) <- scan("WORK", "README.md", path, rev),
+    match(path, rev, /^- (?<text>.+)$/, line).
+rel gallery_has(text: text).
+gallery_has(text) <- gallery_row(path, line, text), gallery_zone(path, l0, l1),
+    line > l0, line < l1.
+
+diag(path: example_path, line: note_line, severity: "error", code: "readme-drift",
+     msg: "README(gallery) text is absent from README.md; rerun examples/gen-readme.dl") <-
+    readme_note(example_path, note_line, "gallery", text), !gallery_has(text).
+
+rel gallery_note_text(text: text).
+gallery_note_text(text) <- readme_note(_, _, "gallery", text).
+diag(path: readme_path, line: line, severity: "error", code: "readme-orphan",
+     msg: "README.md gallery row has no README(gallery) comment; rerun examples/gen-readme.dl") <-
+    gallery_row(readme_path, line, text), gallery_zone(readme_path, l0, l1),
+    line > l0, line < l1, !gallery_note_text(text).

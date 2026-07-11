@@ -1,4 +1,5 @@
 # refactor-init.dl — from the 100%-recall SCIP oracle: where to START.
+# README(gallery): Preview a Rust module move: `dl --move src/old.rs=src/new.rs --no-daemon`
 # (1) the one cyclic cluster's internal edges -> minimal break set;
 # (2) engine.rs out-neighbors -> candidate extraction groups.
 
