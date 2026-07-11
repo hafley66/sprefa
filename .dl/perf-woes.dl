@@ -10,7 +10,7 @@
 #
 # Rides the engine-telemetry built-ins from the earlier perf arc
 # (src/rels/perf.rs, see examples/perf-rails.dl for the original rail this one
-# extends): `stmt_ms(rel, ms)` = wall ms of a derived rel's most recent
+# extends): `stmt_ms(rel, ms, n)` = SUM wall ms + statement count of a derived rel's most recent
 # rebuild statement(s); `rel_count(rel, rows)` = its row count as of the last
 # source-phase refresh (one-tick lag for derived rels — see perf.rs doc).
 # Both are empty on a cold db; a rail converges on the SECOND run over one db
@@ -97,7 +97,7 @@ dl_rule_head(source_file, line, rel_name) <-
 # ── 1. per-rule cost, onsite when a rule head is found ─────────────────────
 rel slow_rule_located(rel_name: text, ms: int, path: file, line: int).
 slow_rule_located(rel_name, ms, source_file, line) <-
-    stmt_ms(rel_name, ms), perf_budget_ms(max), ms > max,
+    stmt_ms(rel_name, ms, _), perf_budget_ms(max), ms > max,
     dl_rule_head(source_file, line, rel_name).
 
 rel slow_rule_has_location(rel_name: text).
@@ -109,11 +109,11 @@ diag(path: source_file, line: line, severity: "warning", code: "slow-rule-onsite
 
 diag(path: "(engine)", line: 1, severity: "warning", code: "slow-rule",
      msg: "rebuilding `${rel_name}` took ${ms}ms in one statement (budget ${max}ms), and no rule head for it was found in the scanned .dl corpus; factor the join through an intermediate rel — see call_target/call_edge_bare in std/flow.dl for the precedent") <-
-    stmt_ms(rel_name, ms), perf_budget_ms(max), ms > max, !slow_rule_has_location(rel_name).
+    stmt_ms(rel_name, ms, _), perf_budget_ms(max), ms > max, !slow_rule_has_location(rel_name).
 
 # ── 2. whole-tick budget: the hard tripwire ─────────────────────────────────
 rel perf_tick_total_ms(total_ms: int).
-perf_tick_total_ms(sum(ms)) <- stmt_ms(_, ms).
+perf_tick_total_ms(sum(ms)) <- stmt_ms(_, ms, _).
 
 diag(path: "(engine)", line: 1, severity: "warning", code: "tick-over-budget",
      msg: "total derived-rebuild time this tick is ${total_ms}ms (hard budget ${max}ms) — this is the tripwire for the class of defect that hid a 15s-per-tick floor for weeks; check the slow-rule/slow-rule-onsite findings for the worst offender") <-

@@ -228,3 +228,90 @@ reach(a, c) <- reach(a, b), df_edge(b, c).
     assert!(reach.len() > edges.len(),
         "reach must contain at least one transitive (non-direct-edge) pair:\n{stdout}");
 }
+
+// ---------------------------------------------------------------------------
+// `_stmt_ms` SUM + statement-count telemetry: semi-naive splits a recursive
+// rel's work across many small delta statements per iteration, so the old
+// per-statement MAX made a hot rel look nearly free. The table now records
+// (SUM ms, n statement executions) per rel; these tests pin the exact,
+// deterministic n for the chain fixture under both evaluators.
+// ---------------------------------------------------------------------------
+
+fn stmt_ms_rows(dir: &PathBuf, n: usize, naive: bool) -> Vec<(String, i64, i64)> {
+    let prog = parse::parse(lex::lex(&chain_program(n)).unwrap()).unwrap();
+    let conn = db::open(Some(dir.join("db").to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, dir.clone());
+    eng.force_naive_fixpoint.set(naive);
+    eng.tick(&prog, true).unwrap();
+    eng.query_sql("SELECT rel, ms, n FROM _stmt_ms ORDER BY rel", &[]).unwrap()
+        .into_iter()
+        .map(|r| (
+            r[0].as_str().unwrap_or_default().to_string(),
+            r[1].as_i64().unwrap_or(-1),
+            r[2].as_i64().unwrap_or(-1),
+        ))
+        .collect()
+}
+
+/// Semi-naive statement count for the 4-chain is exact and deterministic.
+/// Every statement rebuild_derived issues for the rel rides `timed`:
+/// 1 table wipe + 1 seed rule + 1 delta seed insert, then per iteration
+/// (5 = 4 producing + 1 empty converging) a `_delta_new` clear + 1 delta
+/// variant + 1 anti-join subtract, plus per PROMOTING iteration (4) the
+/// promote insert + delta clear + delta refill:
+/// n = 3 + 5*3 + 4*3 = 30. The ms column is wall time (not asserted
+/// exactly), but it must be present and non-negative — the SUM the
+/// derived-phase coverage math reads.
+#[test]
+fn stmt_ms_records_exact_statement_count_seminaive() {
+    let rows = stmt_ms_rows(&sandbox("stmtms_semi"), 4, false);
+    let reach: Vec<_> = rows.iter().filter(|(rel, _, _)| rel == "reach").collect();
+    assert_eq!(reach.len(), 1, "one _stmt_ms row per rel: {rows:?}");
+    let (_, ms, count) = reach[0];
+    assert_eq!(*count, 30, "semi-naive 4-chain: 3 setup + 5 iters x 3 + 4 promotes x 3: {rows:?}");
+    assert!(*ms >= 0, "ms is a wall-time sum, never negative: {rows:?}");
+}
+
+/// Naive statement count for the same fixture: 1 table wipe + 2 statements
+/// (seed + recursive) per pass, 5 passes to observe delta 0 — n = 11 exactly.
+/// Red/green twin of `stmt_ms_records_exact_statement_count_seminaive`:
+/// under the old MAX semantics both evaluators stored one statement's ms and
+/// the count column did not exist, so neither assertion could be written.
+#[test]
+fn stmt_ms_records_exact_statement_count_naive() {
+    let rows = stmt_ms_rows(&sandbox("stmtms_naive"), 4, true);
+    let reach: Vec<_> = rows.iter().filter(|(rel, _, _)| rel == "reach").collect();
+    assert_eq!(reach.len(), 1, "one _stmt_ms row per rel: {rows:?}");
+    let (_, ms, count) = reach[0];
+    assert_eq!(*count, 11, "naive 4-chain: 1 wipe + 2 stmts x 5 passes: {rows:?}");
+    assert!(*ms >= 0, "ms is a wall-time sum, never negative: {rows:?}");
+}
+
+/// The derived-phase sibling buckets land in the SAME table: a closure edge's
+/// condensation pass writes `closure:<edge>` and `cond_cache:<edge>` rows
+/// (n = 1 each — one pass per edge per tick), so `SUM(ms) FROM _stmt_ms`
+/// covers the engine-side closure work, not just the SQL fixpoint.
+#[test]
+fn stmt_ms_carries_closure_sibling_buckets() {
+    let dir = sandbox("stmtms_closure");
+    let prog_text = r#"
+rel edge(a: text, b: text).
+edge("x","y"). edge("y","z").
+rel reaches(a: text, b: text).
+reaches(a, b) <- closure(edge).
+? reaches("x", to).
+"#;
+    let prog = parse::parse(lex::lex(prog_text).unwrap()).unwrap();
+    let conn = db::open(Some(dir.join("db").to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, dir.clone());
+    eng.tick(&prog, true).unwrap();
+    let rows: Vec<(String, i64)> = eng
+        .query_sql("SELECT rel, n FROM _stmt_ms WHERE rel LIKE '%:edge' ORDER BY rel", &[]).unwrap()
+        .into_iter()
+        .map(|r| (r[0].as_str().unwrap_or_default().to_string(), r[1].as_i64().unwrap_or(-1)))
+        .collect();
+    assert_eq!(rows, vec![
+        ("closure:edge".to_string(), 1),
+        ("cond_cache:edge".to_string(), 1),
+    ], "closure sibling buckets missing from _stmt_ms");
+}

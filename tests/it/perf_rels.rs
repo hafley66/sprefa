@@ -20,7 +20,7 @@ rel d(x: text).
 d(x) <- s(x).
 
 ? rel_count(rel, rows).
-? stmt_ms(rel, ms).
+? stmt_ms(rel, ms, n).
 "#;
 
 fn sandbox(tag: &str) -> PathBuf {
