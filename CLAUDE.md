@@ -1025,16 +1025,104 @@ foreign resolution model).
       aren't documented at the scorer — one comment would save the
       verify-by-hand round-trip; (b) pre-commit hook prints info[op-example]
       noise to stdout mid-commit, benign but alarming.
-- [ ] **Scorer per-site keying IN FLIGHT** (fresh Opus worktree agent,
-      2026-07-10): fix the picks-key gap (method + aliased calls score bare
-      because picks derive from the RESOLVED sym, not the site). Design A =
-      positional keying via std/flow.dl call_target + df_node line (df 1-based,
-      scip 0-based, convert once in the scorer); precision asserts stay;
-      before/after table per language; NEW `wrong` rows investigated as
-      possible real resolver bugs, not massaged. Engine code out of scope.
-      NOTE main pushed b38a9da (merge commit unifying this session's language
-      arc with the other session's wave-3/4 + flow-marks arc; union suites
-      304 lib / 680 it green).
+- [x] **Scorer per-site keying LANDED** (main 0c3b367 cherry-pick of Opus
+      worktree commit, 2026-07-10): plan's Design A (call_target) rejected by
+      the agent with reasons — call_target's name-equality pin structurally
+      excludes ALIASED calls, and its df_node dependency would regress plain
+      calls in TS class-method bodies (zero df nodes there). Design B = new
+      `site_pick` rel per twin keying picks on (file, as-written text,
+      1-based line), resolved per-site from shipped rels: call_site ⋈
+      call_edge ⋈ call_name ⋈ call_def.file, plus module_binding.dst for
+      aliases; ambiguous -> multi -> excluded; the single 1-based->0-based
+      conversion lives in `score`, commented. BEFORE/AFTER: Rust 51.0->77.9%
+      (0.996 precision), TS 16.7->50.0%, Go 75.0->87.5%, Python 37.5->75.0%
+      (1.000 each), Kotlin still skips (no JDK). New Rust wrongs 12->17 ALL
+      enumerated: per-caller single-def homonym picks (`run`/`push`/`walk`/
+      `tick_paths`/`serve`/`dirty` defined in multiple files) — real
+      resolver disagreements surfaced FROM bare, kept in wrong, no massaging.
+      Debrief pains ledgered below (dl query row indent, call_target header
+      note, df coverage table, call_def.sym doc). GOTCHA found: dl query
+      data rows carry a 2-space indent — cell 0 of any parsed rel needs
+      .trim() (the old scorer worked by accident, file lived in cell 3).
+- [ ] **Change-cost friction inventory** (2026-07-10): consolidated 10-agent
+      debrief ranking at plans/2026-07-10-change-cost-friction-inventory.md
+      (12 items, fix shapes + sizes + sequencing; top = ambient-config
+      hermeticity, declared cross-family reads edges, query --format=json,
+      the engine monolith epic, resolution_source column).
+- [x] **Occurrence-level scip resolution LANDED** (main 7191bc6, Opus agent,
+      2026-07-10): `ScipOccIndex` built once per call-family refresh from
+      scip_def + scip_occurrence + scip_binding (one SQL pass each, via tbl);
+      `resolve_callee` consults position FIRST — occurrences at
+      (repo, file, line-1) filtered to the as-written call text (descriptor
+      name or aliased local binding), one survivor resolves, same-line
+      same-name refuses, miss falls back to the name map. The single
+      1-based->0-based conversion lives in ScipOccIndex::resolve, commented.
+      Corpus with-scip: rust 27.5->33.0% (0.974), go 89.0->93.3%, python
+      78.0->79.3%, ts flat (defs outside scan root); without-scip arms
+      byte-unchanged. Type resolver stays name-level (TypeEdge/type_sig refs
+      carry no source position — documented deviation). scip_gate.rs
+      rewritten: same-name calls on different lines resolve to their OWN
+      defs by ranged occurrences; same-line conflict refusal + no-occurrence
+      name-map fallback tests added. SIDE ANSWER: pre_extract (84ae5d7) DID
+      cut the scip_want demand chain 3->2 ticks — asserted in
+      scip_want_call_resolution_lands_on_tick_two. Remaining ceiling =
+      def-in-scan-corpus + dl's own site detection (macros/UFCS). GOTCHA for
+      test authors: rangeless occurrences are skipped by scip_occurrence
+      (parse_range None) while still feeding scip_def/scip_ref — occurrence
+      tests must supply .range.
+- [ ] **Daemon scip index staleness** (verified 2026-07-10, unfixed — P2 of
+      the scip damage plan): index.scip is gitignored (.gitignore:18), the
+      watchgate drops gitignored events, so ScipKind::dirty ("index.scip in
+      the changed set") never fires in a running daemon — a rebuilt index
+      stays stale until an unrelated full tick. Fix shape: allowlist
+      index.scip paths through the watchgate like the .git ref allowlist
+      (S); optionally `dl index` pokes the daemon on completion.
+- [ ] **Scorer-agent debrief pains** (Opus, 2026-07-10, unactioned): (a) dl
+      query output indents data rows 2 spaces — undocumented, mis-keys any
+      parser reading cell 0 (document in the query-output contract); (b)
+      std/flow.dl call_target header should state it is name-equality-pinned
+      (aliases excluded by design) and df-dependent; (c) per-language df
+      coverage is invisible (TS class-method bodies emit ZERO df nodes —
+      third sighting of "TS dataflow silently sparse"); (d) call_def.sym doc
+      says bare "file::kind::name" but the emitted value is repo-qualified.
+- [x] **Otel parity corpora + real-corpus measurement** (main 12b5a25 pins,
+      df27369 harness, 2026-07-10): five otel repos pinned as submodules at
+      release SHAs under bench/corpus/ (rust v0.31.0 / js v2.9.0 / go
+      v1.44.0 / python v1.43.0 / kotlin=android v1.5.1, opt-in submodule
+      init). tests/it/oracle_corpus.rs = five #[ignore] two-arm tests
+      (SPREFA_CORPUS_DIR; worktrees have empty submodules -> loud skip).
+      FINAL NUMBERS (post-fixes): index-free rust 14.1%/0.945 (trait-call
+      bare-dominated, 5218/6131) / ts 20.4% (core pkg, bare = out-of-root
+      ../../api imports) / python 40.1% / go 72.7%; WITH scip rust
+      27.5%/0.976, python 78.0%/0.996 (index REMOVES 10 syntactic wrongs),
+      go 89.0%/0.995, ts unchanged (honest: defs outside scan root).
+      Sprefa's own 77.9% vs otel-rust 14.1% = corpus shape (monolith free
+      fns vs trait-heavy API), the real per-lang ranking inverts the
+      fixtures. HAZARD FOUND en route: enumerate_with_hash walked submodule
+      contents (200MB entered every **-glob scan + daemon watch; pre-commit
+      hung) — gitignore fence first, then NATIVE nested-repo pruning landed
+      (3bdcce5): walker + watchgate prune any depth>=1 dir owning a .git
+      entry, e2e both .git forms; fence kept for the old running daemon
+      image. Agent debriefs: corpus scan of a submodule root HANGS pre-tick
+      on the gitlink .git file (dl should fail loudly, unfixed); worktree
+      agents must get the base SHA in the brief (main was unpushed).
+- [x] **SCIP one-shot no-op: gate + tick order + override ambiguity**
+      (main, 2026-07-10, found BY the corpus with-scip arm measuring
+      byte-identical): (1) ScipKind::used gated on the program NAMING a
+      scip rel while the type/call resolvers read scip_ref — SPREFA_SCIP_INDEX
+      was a silent no-op for exactly the programs it should improve
+      (ModuleFamily gate bug shape); used() now ORs TypeFamily/CallFamily.
+      (2) index loaded in the RelKind loop AFTER extract families — fresh-db
+      tick 1 extracted index-blind, healed tick 2 via digest fold; new
+      RelKind::pre_extract hook runs scip before extraction in tick +
+      tick_paths. Proof: otel-go/sdk call-only program fresh db first tick
+      3734 -> 4041 call_edge rows. (3) The fixed arm instantly exposed
+      scip_name_defs last-write-wins: a file referencing two symbols both
+      named `build` clobbered -> 412 wrong picks on otel-rust, precision
+      0.819; the override now DROPS a (repo,file,name) carried by two
+      different def symbols (fails toward exclusion; ~3 parity points for
+      precision 0.976-0.996). tests/it/scip_gate.rs (3: gate+ordering
+      positive, index-free bare control, conflict refusal).
 - [ ] **Go/Python implementer debriefs** (2 Sonnet agents, 2026-07-10):
       GOOD both: field-based tree-sitter grammars (go, python expose
       child_by_field_name) made both extractors shorter than Kotlin's

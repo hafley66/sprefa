@@ -3,11 +3,11 @@
 use anyhow::Result;
 use std::collections::HashSet;
 
-use crate::ast::{RelDecl, Type, Value};
-use crate::engine::{scip_descriptor_name, Engine};
+use crate::ast::{Program, RelDecl, Type, Value};
+use crate::engine::{rels_used, scip_descriptor_name, Engine};
 use crate::scip_import;
 
-use super::{col, RelKind};
+use super::{col, ExtractFamily, RelKind};
 
 // --- scip (importer, reload-gated) -------------------------------------------
 
@@ -75,6 +75,20 @@ impl RelKind for ScipKind {
     }
     fn reserved_msg(&self) -> &'static str {
         "a built-in SCIP relation"
+    }
+    fn pre_extract(&self) -> bool {
+        true
+    }
+    fn used(&self, prog: &Program) -> bool {
+        // The type/call resolve closures prefer `scip_ref` when an index
+        // exists, so a type/call/doc program forces the load without naming
+        // a scip rel — otherwise SPREFA_SCIP_INDEX (or a root index.scip) is
+        // a silent no-op for exactly the programs it should improve (the
+        // ModuleFamily gate bug, same shape). With no index on disk the
+        // refresh is a cheap no-op, so the wider gate costs nothing.
+        rels_used(prog, self.rels())
+            || super::TypeFamily.used(prog)
+            || super::CallFamily.used(prog)
     }
     fn dirty(&self, changed: &HashSet<String>) -> bool {
         // Match the root `index.scip` and the `.dl/index.scip` that `dl index`

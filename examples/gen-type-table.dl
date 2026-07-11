@@ -10,10 +10,11 @@
 #
 # BEGIN: fanout
 # | BodyItem | 16 |
-# | Daemon | 12 |
-# | Engine | 13 |
-# | ProjectCx | 11 |
-# | Tok | 30 |
+# | Engine | 18 |
+# | EntityKind | 10 |
+# | ProjectCx | 13 |
+# | ServedRoot | 12 |
+# | Tok | 31 |
 # END:
 # (the table lands between the markers above, as `# | type | n |` rows)
 

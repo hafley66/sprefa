@@ -246,7 +246,11 @@ pub(crate) const CALL_RELS: [&str; 7] = ["call_def", "call_def_rev", "call_site"
 /// two revs' `file:line:col` ids stay disjoint in one table. The legacy rels
 /// keep raw ids (single-rev daemon sees today's behavior). `df_edge`/`loop_over`/
 /// `allocates`/`nest`/`df_param` stay WORK-only (flow/perf inputs, deferred).
-pub(crate) const DATAFLOW_RELS: [&str; 13] = ["df_node", "df_node_rev", "df_node_repo", "df_node_repo_rev", "df_edge", "loop_over", "allocates", "nest", "df_param", "df_arg", "df_arg_rev", "df_field", "df_field_rev"];
+/// `df_lit`/`df_lit_rev` (string-values arc, item 1): one row per STRING-
+/// carrying `df_node` (kind lit/template/concat) with its cooked/raw text;
+/// same rev-salted-id shape as `df_field`/`df_field_rev`. See
+/// `typegraph::DataflowFacts::lits`.
+pub(crate) const DATAFLOW_RELS: [&str; 15] = ["df_node", "df_node_rev", "df_node_repo", "df_node_repo_rev", "df_edge", "loop_over", "allocates", "nest", "df_param", "df_arg", "df_arg_rev", "df_field", "df_field_rev", "df_lit", "df_lit_rev"];
 
 /// Document structure from non-source text (markdown today; comments and other
 /// tree-sitter grammars to follow via `ingest::IngestLang`). `doc_node` is one row
@@ -265,6 +269,18 @@ pub(crate) const DOC_RELS: [&str; 2] = ["doc_node", "doc_ref"];
 /// Both are populated in `refresh_type_rels` from the one parse that already
 /// builds `type_entity`, by the per-language AST locators in `typegraph`.
 pub(crate) const DOC_TEXT_RELS: [&str; 2] = ["doc_comment", "doc_tag"];
+
+/// String values folded from `const`/`as const` bindings (string-values arc,
+/// item 3): `const_value(repo, sym, field, text, kind, file, line)` — one row
+/// per string-valued leaf, `sym` the owning `type_entity` (the const itself,
+/// or the enum for a string member), `field` a dotted key path ("" for a bare
+/// const). `const_value_rev` is the rev-carrying twin (rev is a plain trailing
+/// column, like `type_entity_rev` — sym never collides across revs the way a
+/// line-keyed df id does, so no id-salting here). Both ride `refresh_type_rels`
+/// (the same TypeFacts parse `doc_comment` rides), so a program that asks for
+/// either gates the type family the same way `doc_text_rels_used` does. `line`
+/// is 1-based (rustc/tsc convention), same as `type_entity.line`.
+pub(crate) const CONST_VALUE_RELS: [&str; 2] = ["const_value", "const_value_rev"];
 
 /// Every comment in every parsed file as a grammar-backed fact:
 /// `comment_node(path, line, col, end_line, end_col, text, kind)`. Unlike
@@ -506,6 +522,7 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
         .chain(module_rel_decls())
         .chain(type_rel_decls())
         .chain(doc_text_rel_decls())
+        .chain(const_value_rel_decls())
         .chain(comment_rel_decls())
         .chain(template_rel_decls())
         .chain(const_member_rel_decls())
@@ -557,9 +574,12 @@ pub fn builtin_enum_brands() -> &'static [(&'static str, &'static [&'static str]
         // Rust/Kotlin/TS lifts; the two variable-kind call sites resolve to
         // new/call_res).
         ("df_node_kind",
-         &["binop", "block", "borrow", "call_res", "closure", "cond", "expr", "if", "let_bind",
+         &["binop", "block", "borrow", "call_res", "closure", "concat", "cond", "expr", "if", "let_bind",
            "lit", "logic", "loop", "match", "member", "new", "param", "ret", "template", "unop",
            "var_read", "var_write"]),
+        // typegraph.rs ConstValueFact.kind literals (ts_collect_const_values /
+        // ts_enum_const_values / rust_const_values_from).
+        ("const_value_kind", &["lit", "template"]),
         // CheckoutOutcome.action literals (checkout_one / the throttle skip row).
         ("checkout_action", &["ff", "branch-f", "skip"]),
     ]
@@ -1089,6 +1109,38 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "df_field_rev".into(), cols: vec![
             c("id", Type::Text), c("field", Type::Text), c("value", Type::Text), c("rev", Type::Text)], group: "dataflow",
             doc: "rev-aware df_field; id and value are salt_rev(raw id, rev), matching df_node_rev.id; legacy df_field keeps raw ids", ..Default::default() },
+        // (df_node id, text, kind) — one row per STRING-carrying value node
+        // (string-values arc item 1). `kind` is lit/template/concat: `lit` is
+        // the cooked string literal value; `template`/`concat` carry the RAW
+        // source slice (`${}` holes intact for a template, the written
+        // operands for a `+` concat). TS/TSX/JS populate template/concat;
+        // Rust populates lit only (Kotlin/Go/Python ledgered as follow-up).
+        RelDecl { name: "df_lit".into(), cols: vec![
+            c("id", Type::Text), c("text", Type::Text), Col::branded("kind", "const_value_kind")], group: "dataflow",
+            doc: "(df_node id, text, kind); lit=cooked string literal, template/concat=raw source slice with holes intact; TS/TSX/JS + Rust lit today", ..Default::default() },
+        // rev-aware df_lit: id salted by rev, matching df_node_rev.id — same
+        // shape as df_field_rev (D5 pattern).
+        RelDecl { name: "df_lit_rev".into(), cols: vec![
+            c("id", Type::Text), c("text", Type::Text), Col::branded("kind", "const_value_kind"), c("rev", Type::Text)], group: "dataflow",
+            doc: "rev-aware df_lit; id is salt_rev(raw id, rev), matching df_node_rev.id; legacy df_lit keeps the raw id", ..Default::default() },
+    ]
+}
+
+/// String values folded from `const`/`as const` bindings (string-values arc,
+/// item 3). Rides the same `TypeFacts` parse `doc_comment` does, so it lives
+/// beside `doc_text_rel_decls` rather than inside `type_rel_decls` (same
+/// "own function, shared group" shape doc_comment already established).
+pub(crate) fn const_value_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "const_value".into(), cols: vec![
+            c("repo", Type::Text), c("sym", Type::Text), c("field", Type::Text), c("text", Type::Text),
+            Col::branded("kind", "const_value_kind"), c("file", Type::Path), c("line", Type::Int)], group: "type",
+            doc: "string value folded from a const (or as const) binding; sym is the owning type_entity (the const itself, or the enum for a string member), field is \"\" for a bare const or a dotted key path (\"home\", \"nested.a\") for an object literal; a let/var string initializer is never emitted (soundness rule); line is 1-based", ..Default::default() },
+        RelDecl { name: "const_value_rev".into(), cols: vec![
+            c("repo", Type::Text), c("sym", Type::Text), c("field", Type::Text), c("text", Type::Text),
+            Col::branded("kind", "const_value_kind"), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Text)], group: "type",
+            doc: "rev-aware const_value (rev is a plain trailing column, like type_entity_rev — sym never collides across revs); legacy const_value is the rev-deduped union", ..Default::default() },
     ]
 }
 
@@ -1296,12 +1348,15 @@ pub(crate) fn module_rels_needed(prog: &Program) -> bool {
         || type_rels_used(prog)
         || rels_used(prog, &["type_shape", "type_lgg"])
         || doc_text_rels_used(prog)
+        || const_value_rels_used(prog)
         || call_rels_used(prog)
 }
 
 pub(crate) fn type_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_RELS) }
 
 pub(crate) fn doc_text_rels_used(prog: &Program) -> bool { rels_used(prog, &DOC_TEXT_RELS) }
+
+pub(crate) fn const_value_rels_used(prog: &Program) -> bool { rels_used(prog, &CONST_VALUE_RELS) }
 pub(crate) fn comment_rels_used(prog: &Program) -> bool { rels_used(prog, &COMMENT_RELS) }
 
 pub(crate) fn template_rels_used(prog: &Program) -> bool { rels_used(prog, &TEMPLATE_RELS) }
@@ -5044,6 +5099,9 @@ impl Engine {
                 if DOC_TEXT_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in doc relation (doc_comment / doc_tag); pick another name", d.name);
                 }
+                if CONST_VALUE_RELS.contains(&d.name.as_str()) {
+                    bail!("{} is a built-in const-value relation (const_value / const_value_rev); pick another name", d.name);
+                }
                 if COMMENT_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in comment relation (comment_node); pick another name", d.name);
                 }
@@ -5060,7 +5118,7 @@ impl Engine {
                     bail!("{} is a built-in call-graph relation (call_def / call_def_rev / call_site / call_edge / call_edge_rev / call_name / call_kind); pick another name", d.name);
                 }
                 if DATAFLOW_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in dataflow relation (df_node / df_node_rev / df_node_repo / df_node_repo_rev / df_edge / loop_over / allocates / nest / df_param / df_arg / df_arg_rev / df_field / df_field_rev); pick another name", d.name);
+                    bail!("{} is a built-in dataflow relation (df_node / df_node_rev / df_node_repo / df_node_repo_rev / df_edge / loop_over / allocates / nest / df_param / df_arg / df_arg_rev / df_field / df_field_rev / df_lit / df_lit_rev); pick another name", d.name);
                 }
                 if DOC_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in document relation (doc_node / doc_ref); pick another name", d.name);
@@ -5133,6 +5191,7 @@ impl Engine {
         for d in module_rel_decls() { self.declare(&d)?; }
         for d in type_rel_decls() { self.declare(&d)?; }
         for d in doc_text_rel_decls() { self.declare(&d)?; }
+        for d in const_value_rel_decls() { self.declare(&d)?; }
         for d in comment_rel_decls() { self.declare(&d)?; }
         for d in template_rel_decls() { self.declare(&d)?; }
         for d in const_member_rel_decls() { self.declare(&d)?; }
@@ -8011,13 +8070,25 @@ fn module_stem(path: &str) -> &str {
 /// files. A git rev uses the blob OID from `ls-tree`, so unchanged blobs are
 /// detected without fetching content. The walk skips `.git` explicitly:
 /// `hidden(false)` un-hides it, and crawling the object store made big-repo
-/// scans pathological.
+/// scans pathological. A directory below the root that itself owns a `.git`
+/// entry (dir or file — a submodule worktree's is a file) is a foreign repo
+/// and is pruned the same way: the `git ls-tree` arm below already excludes
+/// submodules for free (gitlink entries are type `commit`, not `blob`), so
+/// this closes the WORK-arm asymmetry. Depth 0 is `repo_root` itself and is
+/// never pruned by this check (it owns the `.git` we're walking FROM).
 fn enumerate_with_hash(repo: &str, repo_root: &Path, rev: &str, union: &globset::GlobSet, prev: &FileMeta) -> Result<Vec<(String, String, i64, i64)>> {
     let max_size = max_filesize();
     if rev == "WORK" {
         let mut files: Vec<(PathBuf, String, i64, i64)> = Vec::new();
         let mut walk = ignore::WalkBuilder::new(repo_root);
-        walk.hidden(false).filter_entry(|e| e.file_name() != ".git");
+        walk.hidden(false).filter_entry(|e| {
+            if e.file_name() == ".git" { return false; }
+            // One extra stat per walked DIRECTORY; file entries skip the check.
+            if e.depth() >= 1
+                && e.file_type().is_some_and(|ft| ft.is_dir())
+                && e.path().join(".git").exists() { return false; }
+            true
+        });
         // The walker crate caps oversized files itself (skips them before we ever
         // hash), so a single minified/vendored blob can't blow RSS. Opt-in via
         // `DL_MAX_FILESIZE` (bytes); unset = no cap (legacy behavior).

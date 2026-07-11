@@ -1,0 +1,15 @@
+[submodule "bench/corpus/otel-rust"]
+	path = bench/corpus/otel-rust
+	url = https://github.com/open-telemetry/opentelemetry-rust
+[submodule "bench/corpus/otel-js"]
+	path = bench/corpus/otel-js
+	url = https://github.com/open-telemetry/opentelemetry-js
+[submodule "bench/corpus/otel-go"]
+	path = bench/corpus/otel-go
+	url = https://github.com/open-telemetry/opentelemetry-go
+[submodule "bench/corpus/otel-python"]
+	path = bench/corpus/otel-python
+	url = https://github.com/open-telemetry/opentelemetry-python
+[submodule "bench/corpus/otel-kotlin"]
+	path = bench/corpus/otel-kotlin
+	url = https://github.com/open-telemetry/opentelemetry-android

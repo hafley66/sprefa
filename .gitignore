@@ -31,3 +31,13 @@ examples/_npm/
 
 # perf telemetry written by every dl run; runtime state, never fixture content
 **/.dl/perf.jsonl
+
+# parity corpora: separate repos, never part of this repo's scan horizon.
+# gitignore has no effect on the tracked gitlinks themselves. This fence is
+# still required for the RUNNING daemon (an old binary predating the native
+# nested-repo prune in enumerate_with_hash/watchgate); it is redundant for a
+# freshly built binary, which now prunes any dir owning a `.git` entry
+# (submodule worktrees included) the same way it prunes `.git` itself.
+/bench/corpus/otel-*/
+# cached compiler truth indexes built by oracle_corpus.rs
+/bench/corpus/.indexes/

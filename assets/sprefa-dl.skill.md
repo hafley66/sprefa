@@ -426,12 +426,13 @@ inject_skill("testing") <-
 | `glob` | body | `path ~~ "src/*"` |
 | `graph_edge` | sink | `graph_edge(src: src_id, dst: dst_id, kind: kind) <- ...` |
 | `graph_node` | sink | `graph_node(id: node_id, label: label, kind: kind[, file: , line: , parent: ]) <- ...` |
+| `hover_note` | sink | `hover_note(path: hit_path, line: hit_line, end_line: hit_line, end_col: hit_end_col, md: note_text[, col: ]) <- ...` |
 | `json` | source | `json(path, rev, q:{ $k: $v })` |
 | `jsonp` | source | `jsonp(path, rev, "a.*.b", out)` |
 | `match` | source | `match(path, rev, /re/, line[, id][, col, end_col])` |
 | `negation` | body | `!edge(from, _)` |
 | `node2vec` | body | `head(node_a, node_b, score) <- node2vec(edge)` |
-| `query` | sink | `? rel(from, to). / ? rel(col: value).` |
+| `query` | sink | `? rel(from, to). / ? rel(col: value). / ? rel(key, count(n)).` |
 | `regex` | body | `name =~ /^[A-Za-z]+$/` |
 | `scan` | source | `scan([repo,][rev,] glob, path[, rev_out])` |
 | `scc` | body | `head(rep, member) <- scc(edge)` |

@@ -1,0 +1,33 @@
+# string-values.dl — the route-table use case end to end (string-values arc,
+# plans/2026-07-10-string-values-const-value.md): a `const routes = {...}`
+# object is unreachable-by-value today (SCIP resolves `routes.home`
+# REFERENCES, but the literal path string itself lives in no relation). This
+# program folds the table's string values, follows them through a template
+# build, and traces the flow.
+#
+#   dl examples/string-values.dl
+#
+# `const_value(repo, sym, field, text, kind, file, line)` folds a `const` (or
+# `as const`) binding's string value; `field` is a dotted key path for an
+# object literal. `df_lit(id, text, kind)` does the same at the DATAFLOW node
+# level (one row per string-carrying value, template/concat holes intact).
+# `use "std/strings.dl"` follows a literal forward through whatever it feeds.
+
+rel src(p: file).
+src(p) <- scan("WORK", "src/**/*.{ts,tsx,rs}", p, rev).
+
+use "std/strings.dl".
+
+# The route table itself: every string leaf of every const/object-literal
+# binding, keyed to its owning type_entity.
+rel route(name: text, field: text, path: text).
+route(name, field, path) <-
+    const_value(sym: sym, field: field, text: path),
+    type_entity(sym: sym, name: name).
+
+# A template built FROM a route value (e.g. `` `${routes.home}/edit` ``)
+# traced through string_flow, with the origin literal's own text attached —
+# the join `scip_ref ⋈ const_value` would resolve on the REFERENCE side; this
+# is the VALUE side, the flow a rewrite or a lint would want to see.
+? route(name, field, path).
+? string_flow_trace(text, kind, from, to).

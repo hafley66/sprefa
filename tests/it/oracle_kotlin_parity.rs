@@ -73,13 +73,10 @@ fn kotlin_call_resolution_parity_vs_scip() {
     let _ = std::fs::remove_dir_all(&dl_dir);
     oracle_parity::copy_dir(&fixture, &dl_dir);
 
-    let prog = r#"
-rel seen(path: file).
-seen(path) <- scan("WORK", "**/*.kt", path, rev).
-? call_site(repo, caller, callee, file, line).
-? call_edge(caller, callee, kind).
-"#;
-    std::fs::write(dl_dir.join("parity.dl"), prog).unwrap();
+    let prog = format!(
+        "rel seen(path: file).\nseen(path) <- scan(\"WORK\", \"**/*.kt\", path, rev).\n{}",
+        oracle_parity::SITE_PICK_TAIL);
+    std::fs::write(dl_dir.join("parity.dl"), &prog).unwrap();
     let out = Command::new(DL)
         .arg(dl_dir.join("parity.dl"))
         .args(["--db", dl_dir.join("db").to_str().unwrap(), "--no-daemon"])

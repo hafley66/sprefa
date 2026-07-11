@@ -106,12 +106,44 @@ pub struct TypeEntity {
 }
 
 /// One language's extraction of a file: declared entities + the flat edge graph
-/// + the doc comment attached to each entity (Tier 1/2 doc gen).
+/// + the doc comment attached to each entity (Tier 1/2 doc gen) + the resolved
+/// string values of its immutable const bindings (item 3 of the string-values
+/// arc, plans/2026-07-10-string-values-const-value.md).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TypeFacts {
     pub entities: Vec<TypeEntity>,
     pub edges: Vec<TypeEdge>,
     pub docs: Vec<DocFact>,
+    pub consts: Vec<ConstValueFact>,
+    /// How many object-literal spread properties were skipped (never followed
+    /// — the value is opaque without evaluating the spread source). Loud-skip
+    /// counter, summed and reported once per `refresh_type_rels` call.
+    pub const_spread_skips: usize,
+    /// How many `let`/`var` string initializers were skipped (soundness rule:
+    /// only `const` and `as const` bindings are honest to fold — a mutable
+    /// binding can change under your feet). Loud-skip counter, same reporting
+    /// shape as `const_spread_skips`.
+    pub const_mutable_skips: usize,
+}
+
+/// One string value folded from a `const` (or `as const`) binding — the
+/// `const_value` relation's per-language payload. `sym` is the OWNING entity's
+/// sym: the const's own sym for a plain/object-literal const, or the ENUM's
+/// sym for a string enum member (the member name lives in `field` instead of
+/// a second entity). `field` is `""` for a bare `const name = "..."`, else a
+/// dotted key path (`"home"`, `"nested.a"`) for an object-literal property, or
+/// the bare member name for an enum member. `text` is the cooked value for a
+/// plain string literal, or the raw source slice (`${}` holes intact) for a
+/// template. `kind` is `lit` or `template` (see `builtin_enum_brands`'s
+/// `const_value_kind`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConstValueFact {
+    pub sym: String,
+    pub field: String,
+    pub text: String,
+    pub kind: &'static str,
+    pub file: String,
+    pub line: u32,
 }
 
 /// The doc comment bound to one declared entity. `sym` is the same
@@ -286,6 +318,22 @@ pub struct DataflowFacts {
     /// composite — Rust struct-literal fields, TS object-literal properties,
     /// Kotlin named arguments.
     pub fields: Vec<(String, String, String)>,
+    /// (df_node id, text, kind∈lit|template|concat): the `df_lit` relation's
+    /// payload — one row per STRING-carrying value node. `lit` rows carry the
+    /// cooked literal value (numbers/bools/regex are never pushed here, only
+    /// `syn::Lit::Str`/oxc `StringLiteral`); `template`/`concat` rows carry the
+    /// RAW source slice (`${}` holes intact for a template, the written
+    /// operands for a `+` concat — a syntactic label, not a type judgment, so
+    /// a numeric `+` mints a concat row too). TS/TSX/JS populate `template`/
+    /// `concat`; Rust populates `lit` only (Kotlin/Go/Python ledgered).
+    pub lits: Vec<(String, String, &'static str)>,
+    /// Pending (df_node id, byte_start, byte_end, kind) rows for `template`/
+    /// `concat` nodes, whose text is a source SLICE the per-node lift doesn't
+    /// have handy (`ts_flow_expr` only carries the line-offset table, not the
+    /// raw file text). `ts_dataflow_from` drains this into `lits` once, after
+    /// the walk — the one place that already holds `content` — so no
+    /// recursive function between the two needs it threaded through.
+    pub lit_spans: Vec<(String, u32, u32, &'static str)>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -381,7 +429,7 @@ impl TypeLang for GoTypes {
         walk_go_entities(root, src, file, &owners, &mut entities);
         let mut docs = Vec::new();
         walk_go_docs(root, src, file, &mut docs);
-        TypeFacts { entities, edges: go_edges_from(root, src), docs }
+        TypeFacts { entities, edges: go_edges_from(root, src), docs, ..Default::default() }
     }
     fn extract_calls(&self, file: &str, content: &str) -> CallFacts {
         let Some(tree) = go_parse(content) else { return CallFacts::default(); };
@@ -407,10 +455,15 @@ impl TypeLang for RustTypes {
         let Ok(parsed) = syn::parse_file(content) else {
             return TypeFacts::default();
         };
+        let mut entities = rust_entities_from(&parsed, file);
+        let (const_entities, consts) = rust_const_values_from(&parsed, file);
+        entities.extend(const_entities);
         TypeFacts {
-            entities: rust_entities_from(&parsed, file),
+            entities,
             edges: edges_from(&parsed),
             docs: rust_docs_from(&parsed, file),
+            consts,
+            ..Default::default()
         }
     }
     // One syn parse feeds defs + sites; a follow-up folds this into `extract`
@@ -453,7 +506,7 @@ impl TypeLang for KotlinTypes {
         walk_kotlin_entities(root, src, file, &mut entities);
         let mut docs = Vec::new();
         walk_kotlin_docs(root, src, file, &mut docs);
-        TypeFacts { entities, edges: kotlin_edges_from(root, src), docs }
+        TypeFacts { entities, edges: kotlin_edges_from(root, src), docs, ..Default::default() }
     }
     // One tree-sitter parse feeds defs + sites, same shape as the Rust pass.
     fn extract_calls(&self, file: &str, content: &str) -> CallFacts {
@@ -933,6 +986,13 @@ fn ts_dataflow_from(program: &ts_ast::Program, file: &str, content: &str) -> Dat
         ts_flow_stmt(stmt, file, &starts, &mut out);
     }
     out.nests = compute_nests(&out.nodes, &out.loops);
+    // Resolve the pending template/concat spans into raw source-slice text —
+    // the one place that already holds `content`, so no function between here
+    // and the per-node lift needs it threaded through.
+    for (id, start, end, kind) in out.lit_spans.drain(..) {
+        let text = content.get(start as usize..end as usize).unwrap_or_default().to_string();
+        out.lits.push((id, text, kind));
+    }
     out
 }
 
@@ -1249,8 +1309,15 @@ fn ts_flow_expr(
             }
             node
         }
-        E::StringLiteral(_)
-        | E::NumericLiteral(_)
+        // A string literal carries its cooked value into `df_lit` — the only
+        // literal kind that does (numbers/bools/regex stay textless `lit`
+        // nodes, same as before; bounded rows, and strings are the use case).
+        E::StringLiteral(s) => {
+            let id = ts_push(out, file, starts, off, "lit", "", fn_sym);
+            out.lits.push((id.clone(), s.value.to_string(), "lit"));
+            id
+        }
+        E::NumericLiteral(_)
         | E::BooleanLiteral(_)
         | E::NullLiteral(_)
         | E::BigIntLiteral(_)
@@ -1326,6 +1393,22 @@ fn ts_flow_expr(
         // MemberExpression into StaticMemberExpression / ComputedMemberExpression.
         E::StaticMemberExpression(m) => ts_flow_member(&m.object, &m.property.name, off, file, starts, fn_sym, scope, out),
         E::ComputedMemberExpression(m) => ts_flow_member(&m.object, "", off, file, starts, fn_sym, scope, out),
+        // `a + b`: its own `concat` kind (not `binop`) so a query for string
+        // construction can match `kind IN (template, concat)` explicitly, the
+        // same shape a TemplateLiteral mints. `+` also qualifies for numeric
+        // addition — the kind is a syntactic label (any-operand `+` is real
+        // value flow either way), not a type judgment; `df_lit`'s row for it
+        // carries the written source (holes intact, like a template), which a
+        // downstream string-flow query is free to treat as advisory.
+        E::BinaryExpression(b) if b.operator == ts_ast::BinaryOperator::Addition => {
+            let l = ts_flow_expr(&b.left, file, starts, fn_sym, scope, out);
+            let r = ts_flow_expr(&b.right, file, starts, fn_sym, scope, out);
+            let id = ts_push(out, file, starts, off, "concat", "", fn_sym);
+            out.edges.push(DfEdge { from: l, to: id.clone() });
+            out.edges.push(DfEdge { from: r, to: id.clone() });
+            out.lit_spans.push((id.clone(), b.span.start, b.span.end, "concat"));
+            id
+        }
         E::BinaryExpression(b) => {
             let l = ts_flow_expr(&b.left, file, starts, fn_sym, scope, out);
             let r = ts_flow_expr(&b.right, file, starts, fn_sym, scope, out);
@@ -1465,6 +1548,7 @@ fn ts_flow_expr(
                 let v = ts_flow_expr(sub, file, starts, fn_sym, scope, out);
                 out.edges.push(DfEdge { from: v, to: id.clone() });
             }
+            out.lit_spans.push((id.clone(), t.span.start, t.span.end, "template"));
             id
         }
         // `` styled.div`color: ${c}` ``, `` sql`... ${id}` ``: a call in tagged
@@ -1478,6 +1562,9 @@ fn ts_flow_expr(
                 let v = ts_flow_expr(sub, file, starts, fn_sym, scope, out);
                 out.edges.push(DfEdge { from: v, to: id.clone() });
             }
+            // `t.quasi` is the TemplateLiteral portion (the tag itself is not
+            // part of the string source); its span excludes the tag prefix.
+            out.lit_spans.push((id.clone(), t.quasi.span.start, t.quasi.span.end, "template"));
             id
         }
         // template strings, control flow, remaining variants: mint a node,
@@ -1636,10 +1723,17 @@ impl TypeLang for TsTypes {
         if ret.panicked {
             return TypeFacts::default();
         }
+        let mut entities = ts_entities_from(&ret.program, file, content);
+        let (const_entities, consts, const_spread_skips, const_mutable_skips) =
+            ts_const_facts_from(&ret.program, file, content);
+        entities.extend(const_entities);
         TypeFacts {
-            entities: ts_entities_from(&ret.program, file, content),
+            entities,
             edges: ts_edges_from(&ret.program),
             docs: ts_docs_from(&ret.program, file, content),
+            consts,
+            const_spread_skips,
+            const_mutable_skips,
         }
     }
     // One oxc parse feeds defs + sites, same shape as the Rust pass. `line_at`
@@ -3009,6 +3103,199 @@ fn ts_var_fn_entity(v: &ts_ast::VariableDeclaration, file: &str, starts: &[usize
     }
 }
 
+/// Strip the type-level wrappers that are transparent to a const's runtime
+/// value — `as const`, `satisfies T`, parens — same transparency `ts_flow_expr`
+/// already gives these forms, so the initializer underneath is reached the
+/// same way whether we're lifting dataflow or folding a constant.
+fn ts_unwrap_const<'a, 'b>(e: &'b ts_ast::Expression<'a>) -> &'b ts_ast::Expression<'a> {
+    match e {
+        ts_ast::Expression::TSAsExpression(t) => ts_unwrap_const(&t.expression),
+        ts_ast::Expression::TSSatisfiesExpression(t) => ts_unwrap_const(&t.expression),
+        ts_ast::Expression::ParenthesizedExpression(p) => ts_unwrap_const(&p.expression),
+        _ => e,
+    }
+}
+
+/// Whether an expression (after unwrapping `as const`/`satisfies`/parens)
+/// carries a string value somewhere — a plain string literal, a template, or
+/// an object literal with at least one string-bearing property (recursively).
+/// Gates entity-minting: a const whose value has no string anywhere gains
+/// neither a `type_entity` row nor any `const_value` rows (the "don't mint an
+/// entity for every const in the corpus" rule).
+fn ts_expr_string_bearing(e: &ts_ast::Expression) -> bool {
+    match ts_unwrap_const(e) {
+        ts_ast::Expression::StringLiteral(_) | ts_ast::Expression::TemplateLiteral(_) => true,
+        ts_ast::Expression::ObjectExpression(o) => o.properties.iter().any(|p| match p {
+            ts_ast::ObjectPropertyKind::ObjectProperty(prop) => ts_expr_string_bearing(&prop.value),
+            // A spread's value is opaque without evaluating its source; it
+            // can't make the object string-bearing on its own (the caller
+            // counts it separately when walking for real).
+            ts_ast::ObjectPropertyKind::SpreadProperty(_) => false,
+        }),
+        _ => false,
+    }
+}
+
+/// Recursively collect `ConstValueFact` rows from a const initializer.
+/// `prefix` is the dotted field path built so far ("" at the top, "home",
+/// "nested.a", ...). A computed object key (`[expr]: v`) is skipped — there is
+/// no static name to hang the field on. A spread property is counted (never
+/// followed: its value lives in another symbol this walk hasn't resolved).
+fn ts_collect_const_values(
+    e: &ts_ast::Expression,
+    sym: &str,
+    prefix: &str,
+    file: &str,
+    starts: &[usize],
+    content: &str,
+    out: &mut Vec<ConstValueFact>,
+    spread_skips: &mut usize,
+) {
+    use oxc_span::GetSpan;
+    match ts_unwrap_const(e) {
+        ts_ast::Expression::StringLiteral(s) => {
+            out.push(ConstValueFact {
+                sym: sym.to_string(), field: prefix.to_string(), text: s.value.to_string(),
+                kind: "lit", file: file.to_string(), line: line_at(starts, s.span.start as usize),
+            });
+        }
+        ts_ast::Expression::TemplateLiteral(t) => {
+            let span = t.span();
+            let text = content.get(span.start as usize..span.end as usize).unwrap_or_default().to_string();
+            out.push(ConstValueFact {
+                sym: sym.to_string(), field: prefix.to_string(), text,
+                kind: "template", file: file.to_string(), line: line_at(starts, span.start as usize),
+            });
+        }
+        ts_ast::Expression::ObjectExpression(o) => {
+            for p in &o.properties {
+                match p {
+                    ts_ast::ObjectPropertyKind::ObjectProperty(prop) => {
+                        let key = match &prop.key {
+                            ts_ast::PropertyKey::StaticIdentifier(i) => i.name.to_string(),
+                            ts_ast::PropertyKey::StringLiteral(s) => s.value.to_string(),
+                            _ => continue, // computed key: no static field name
+                        };
+                        let field = if prefix.is_empty() { key } else { format!("{prefix}.{key}") };
+                        ts_collect_const_values(&prop.value, sym, &field, file, starts, content, out, spread_skips);
+                    }
+                    ts_ast::ObjectPropertyKind::SpreadProperty(_) => { *spread_skips += 1; }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A top-level `const`/`let`/`var` binding, entity + value pass. Scope matches
+/// `ts_var_fn_entity`/`ts_entities_from`: module-level bindings only (no
+/// descent into function bodies) — the same containment that already keeps
+/// arrow-fn consts from minting one entity per local variable in the corpus.
+/// Arrow/function-expression consts are `ts_var_fn_entity`'s job (a Function
+/// entity, untouched here); this walk only looks at bindings that carry a
+/// string value: `const name = "..."`. SOUNDNESS RULE: only `const` (or a
+/// `let`/`var` marked `as const`) is honest to fold — a plain `let`/`var`
+/// string initializer can change under your feet, so it is counted loudly
+/// (`const_mutable_skips`) and never emitted.
+fn ts_var_const_facts(
+    v: &ts_ast::VariableDeclaration,
+    file: &str,
+    starts: &[usize],
+    content: &str,
+    entities: &mut Vec<TypeEntity>,
+    consts: &mut Vec<ConstValueFact>,
+    spread_skips: &mut usize,
+    mutable_skips: &mut usize,
+) {
+    for d in &v.declarations {
+        let ts_ast::BindingPattern::BindingIdentifier(name) = &d.id else { continue };
+        let Some(init) = &d.init else { continue };
+        // Arrow/function-expression consts are ts_var_fn_entity's Function
+        // entities; leave those exactly as they are.
+        if matches!(init, ts_ast::Expression::ArrowFunctionExpression(_) | ts_ast::Expression::FunctionExpression(_)) {
+            continue;
+        }
+        if !ts_expr_string_bearing(init) { continue; }
+        let as_const = matches!(init, ts_ast::Expression::TSAsExpression(t) if t.type_annotation.is_const_type_reference());
+        if !v.kind.is_const() && !as_const {
+            *mutable_skips += 1;
+            continue;
+        }
+        let sym = mint_sym(file, EntityKind::Const, &name.name, None);
+        entities.push(TypeEntity {
+            sym: sym.clone(), name: name.name.to_string(), kind: EntityKind::Const,
+            parent: None, file: file.to_string(), line: line_at(starts, d.span.start as usize), ty: None,
+        });
+        ts_collect_const_values(init, &sym, "", file, starts, content, consts, spread_skips);
+    }
+}
+
+/// String enum members (`enum Routes { Home = '/home' }`): `sym` is the
+/// ENUM's own entity sym (already minted by `ts_entities_from`'s
+/// `TSEnumDeclaration` arm) — a member is a field of its enum, not a second
+/// entity. Only a plain string initializer qualifies; a computed/numeric
+/// member yields no row.
+fn ts_enum_const_values(e: &ts_ast::TSEnumDeclaration, file: &str, starts: &[usize], out: &mut Vec<ConstValueFact>) {
+    let owner_sym = mint_sym(file, EntityKind::Enum, &e.id.name, None);
+    for m in &e.body.members {
+        let name = match &m.id {
+            ts_ast::TSEnumMemberName::Identifier(id) => id.name.to_string(),
+            ts_ast::TSEnumMemberName::String(s) => s.value.to_string(),
+            _ => continue,
+        };
+        let Some(init) = &m.initializer else { continue };
+        if let ts_ast::Expression::StringLiteral(s) = ts_unwrap_const(init) {
+            out.push(ConstValueFact {
+                sym: owner_sym.clone(), field: name, text: s.value.to_string(),
+                kind: "lit", file: file.to_string(), line: line_at(starts, m.span.start as usize),
+            });
+        }
+    }
+}
+
+/// Top-level driver for the const-value pass (item 3 of the string-values
+/// arc): walks `program.body` once for top-level `const`/`let`/`var`
+/// declarations (bare or `export`-wrapped) and `enum` declarations, returning
+/// the const entities to fold into `ts_entities_from`'s output plus the
+/// `const_value` rows and the two loud-skip counters. A SEPARATE statement
+/// walk from `ts_entities_from`/`ts_edges_from`/`ts_docs_from` (same "one
+/// file, several cheap syntax walks" shape those already use) rather than
+/// retrofitting those recursive helpers, which are reused by call-graph/
+/// dataflow passes with a narrower `Vec<TypeEntity>`-only signature.
+fn ts_const_facts_from(program: &ts_ast::Program, file: &str, content: &str) -> (Vec<TypeEntity>, Vec<ConstValueFact>, usize, usize) {
+    let starts = line_index(content);
+    let mut entities = Vec::new();
+    let mut consts = Vec::new();
+    let mut spread_skips = 0usize;
+    let mut mutable_skips = 0usize;
+    for stmt in &program.body {
+        use ts_ast::Statement as S;
+        let var_decl: Option<&ts_ast::VariableDeclaration> = match stmt {
+            S::VariableDeclaration(v) => Some(v),
+            S::ExportNamedDeclaration(exp) => match &exp.declaration {
+                Some(ts_ast::Declaration::VariableDeclaration(v)) => Some(v),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(v) = var_decl {
+            ts_var_const_facts(v, file, &starts, content, &mut entities, &mut consts, &mut spread_skips, &mut mutable_skips);
+        }
+        let enum_decl: Option<&ts_ast::TSEnumDeclaration> = match stmt {
+            S::TSEnumDeclaration(en) => Some(en),
+            S::ExportNamedDeclaration(exp) => match &exp.declaration {
+                Some(ts_ast::Declaration::TSEnumDeclaration(en)) => Some(en),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(en) = enum_decl {
+            ts_enum_const_values(en, file, &starts, &mut consts);
+        }
+    }
+    (entities, consts, spread_skips, mutable_skips)
+}
+
 /// Doc-comment pass (oxc): oxc keeps comments out of the AST, so each `/** */`
 /// block in the source is associated with the entity it documents by byte
 /// position — the nearest anchor at or after the block's end, with only
@@ -3348,6 +3635,29 @@ fn rust_entities_from(parsed: &syn::File, file: &str) -> Vec<TypeEntity> {
         rust_item_entity(item, file, &owner_kinds, &mut out);
     }
     out
+}
+
+/// Top-level `const X: &str = "...";` string values (item 3's Rust slice,
+/// ledgered as "if cheap" — a plain `syn::Lit::Str` initializer on a
+/// module-level `const` is). Non-goals: consts inside `impl`/`mod`/fn bodies,
+/// non-string consts (no entity, no row — same "don't mint for every const"
+/// rule the TS lift follows), and no `as const` equivalent (Rust has none).
+fn rust_const_values_from(parsed: &syn::File, file: &str) -> (Vec<TypeEntity>, Vec<ConstValueFact>) {
+    let mut entities = Vec::new();
+    let mut consts = Vec::new();
+    for item in &parsed.items {
+        let Item::Const(c) = item else { continue };
+        let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) = &*c.expr else { continue };
+        let name = c.ident.to_string();
+        let sym = mint_sym(file, EntityKind::Const, &name, None);
+        let line = rust_line(c.ident.span());
+        entities.push(TypeEntity {
+            sym: sym.clone(), name, kind: EntityKind::Const,
+            parent: None, file: file.to_string(), line, ty: None,
+        });
+        consts.push(ConstValueFact { sym, field: String::new(), text: s.value(), kind: "lit", file: file.to_string(), line });
+    }
+    (entities, consts)
 }
 
 /// Map each top-level type declaration's name to its real `EntityKind`, so an
@@ -3836,7 +4146,13 @@ fn flow_expr(
             }
             id
         }
-        syn::Expr::Lit(_) => push_node(out, file, line, col, "lit", "", fn_sym),
+        syn::Expr::Lit(lit_expr) => {
+            let id = push_node(out, file, line, col, "lit", "", fn_sym);
+            if let syn::Lit::Str(s) = &lit_expr.lit {
+                out.lits.push((id.clone(), s.value(), "lit"));
+            }
+            id
+        }
         // f(args): each argument flows into the call result, and `df_arg`
         // records its 0-based slot so the interprocedural hop can join it
         // against `df_param`/`type_sig` by position. A capitalized last path
@@ -5574,6 +5890,7 @@ impl TypeLang for PyTypes {
             entities: py_entities_from(root, src, file),
             edges: py_edges_from(root, src),
             docs: py_docs_from(root, src, file),
+            ..Default::default()
         }
     }
     // A second tree-sitter parse feeds defs + sites, same shape as Kotlin.
@@ -7872,5 +8189,142 @@ def compute(count):
             parts.iter().map(|p| (p.idx, p.kind, p.text.as_str())).collect::<Vec<_>>(),
             vec![(0, "static", "color: "), (1, "expr", "c"), (2, "static", ";")],
         );
+    }
+
+    // --- string-values arc (df_lit + const_value + concat) ---
+
+    #[test]
+    fn ts_string_literal_const_mints_entity_and_value() {
+        let src = "const home = '/home';\n";
+        let facts = TsTypes.extract("f.ts", src);
+        let ent = facts.entities.iter().find(|e| e.name == "home").expect("const entity");
+        assert_eq!(ent.kind, EntityKind::Const);
+        let row = facts.consts.iter().find(|c| c.sym == ent.sym).expect("const_value row");
+        assert_eq!(row.field, "");
+        assert_eq!(row.text, "/home");
+        assert_eq!(row.kind, "lit");
+    }
+
+    #[test]
+    fn ts_object_literal_const_dotted_field_paths() {
+        let src = "const routes = { home: '/home', nested: { a: '/a' } };\n";
+        let facts = TsTypes.extract("f.ts", src);
+        let ent = facts.entities.iter().find(|e| e.name == "routes").expect("const entity");
+        let by_field = |field: &str| facts.consts.iter().find(|c| c.sym == ent.sym && c.field == field);
+        assert_eq!(by_field("home").expect("home row").text, "/home");
+        assert_eq!(by_field("nested.a").expect("nested.a row").text, "/a");
+    }
+
+    #[test]
+    fn ts_template_const_keeps_holes_and_no_entity_without_strings() {
+        let src = "const greeting = `hi ${name}`;\nconst count = 3;\n";
+        let facts = TsTypes.extract("f.ts", src);
+        let ent = facts.entities.iter().find(|e| e.name == "greeting").expect("template const entity");
+        let row = facts.consts.iter().find(|c| c.sym == ent.sym).expect("const_value row");
+        assert_eq!(row.kind, "template");
+        assert_eq!(row.text, "`hi ${name}`");
+        // a numeric const gains neither an entity nor a const_value row.
+        assert!(!facts.entities.iter().any(|e| e.name == "count"), "{:?}", facts.entities);
+    }
+
+    #[test]
+    fn ts_string_enum_members_key_off_the_enum_sym() {
+        let src = "enum Routes { Home = '/home', About = '/about' }\n";
+        let facts = TsTypes.extract("f.ts", src);
+        let enum_ent = facts.entities.iter().find(|e| e.name == "Routes").expect("enum entity");
+        assert_eq!(enum_ent.kind, EntityKind::Enum);
+        let home = facts.consts.iter().find(|c| c.field == "Home").expect("Home row");
+        assert_eq!(home.sym, enum_ent.sym);
+        assert_eq!(home.text, "/home");
+        let about = facts.consts.iter().find(|c| c.field == "About").expect("About row");
+        assert_eq!(about.sym, enum_ent.sym);
+    }
+
+    #[test]
+    fn ts_let_var_string_init_excluded_but_as_const_included() {
+        let src = "let mutablePath = '/mut';\nconst pinned = '/pin' as const;\n";
+        let facts = TsTypes.extract("f.ts", src);
+        assert!(!facts.entities.iter().any(|e| e.name == "mutablePath"), "{:?}", facts.entities);
+        assert!(!facts.consts.iter().any(|c| c.text == "/mut"), "{:?}", facts.consts);
+        assert_eq!(facts.const_mutable_skips, 1);
+        let pinned = facts.entities.iter().find(|e| e.name == "pinned").expect("as-const entity");
+        assert!(facts.consts.iter().any(|c| c.sym == pinned.sym && c.text == "/pin"));
+    }
+
+    #[test]
+    fn ts_object_spread_property_counted_not_followed() {
+        let src = "const base = { a: '/a' };\nconst merged = { ...base, b: '/b' };\n";
+        let facts = TsTypes.extract("f.ts", src);
+        let merged = facts.entities.iter().find(|e| e.name == "merged").expect("merged entity");
+        // "b" still lands; the spread contributes no field (nothing named ".." here).
+        assert!(facts.consts.iter().any(|c| c.sym == merged.sym && c.field == "b" && c.text == "/b"));
+        assert_eq!(facts.const_spread_skips, 1);
+    }
+
+    #[test]
+    fn ts_arrow_fn_const_unaffected_by_const_value_pass() {
+        // arrow-fn consts stay Function entities (ts_var_fn_entity's job); the
+        // const-value pass must not also mint a Const entity for them.
+        let src = "const handler = (x: number) => x + 1;\n";
+        let facts = TsTypes.extract("f.ts", src);
+        let ents: Vec<&TypeEntity> = facts.entities.iter().filter(|e| e.name == "handler").collect();
+        assert_eq!(ents.len(), 1, "{:?}", facts.entities);
+        assert_eq!(ents[0].kind, EntityKind::Function);
+        assert!(!facts.consts.iter().any(|c| c.sym == ents[0].sym));
+    }
+
+    #[test]
+    fn ts_df_lit_carries_cooked_string_and_template_holes() {
+        let src = "function build(name: string) {\n    \
+                       const a = 'plain';\n    \
+                       const b = `hi ${name}`;\n\
+                   }\n";
+        let df = TsTypes.extract_dataflow("f.ts", src);
+        assert!(df.lits.iter().any(|(_, text, kind)| text == "plain" && *kind == "lit"), "{:?}", df.lits);
+        assert!(
+            df.lits.iter().any(|(_, text, kind)| text == "`hi ${name}`" && *kind == "template"),
+            "{:?}", df.lits
+        );
+        // no leftover pending spans after resolution.
+        assert!(df.lit_spans.is_empty());
+    }
+
+    #[test]
+    fn ts_concat_binop_mints_own_kind_and_edges_both_operands() {
+        let src = "function url(base: string) {\n    \
+                       const full = base + '/x';\n\
+                   }\n";
+        let df = TsTypes.extract_dataflow("f.ts", src);
+        let concat = df.nodes.iter().find(|n| n.kind == "concat").expect("concat node");
+        // both operands flow into it: the base var_read and the string lit.
+        let base_read = df.nodes.iter().find(|n| n.kind == "var_read" && n.var == "base").expect("base read");
+        let lit = df.nodes.iter().find(|n| n.kind == "lit").expect("lit node");
+        assert!(df.edges.iter().any(|e| e.from == base_read.id && e.to == concat.id), "{:?}", df.edges);
+        assert!(df.edges.iter().any(|e| e.from == lit.id && e.to == concat.id), "{:?}", df.edges);
+        // the concat's df_lit row carries the written source, holes intact
+        // (here: no interpolation holes, just the plain `+` text).
+        assert!(
+            df.lits.iter().any(|(id, text, kind)| id == &concat.id && text == "base + '/x'" && *kind == "concat"),
+            "{:?}", df.lits
+        );
+        // a non-`+` binary op stays the old "binop" kind, untouched.
+        let other_src = "function cmp(a: number, b: number) { const c = a - b; }\n";
+        let other = TsTypes.extract_dataflow("f.ts", other_src);
+        assert!(other.nodes.iter().any(|n| n.kind == "binop"), "{:?}", other.nodes);
+        assert!(!other.nodes.iter().any(|n| n.kind == "concat"), "{:?}", other.nodes);
+    }
+
+    #[test]
+    fn rust_const_str_mints_entity_and_df_lit() {
+        let src = "const HOME: &str = \"/home\";\nfn go() { let _ = HOME; }\n";
+        let facts = RustTypes.extract("f.rs", src);
+        let ent = facts.entities.iter().find(|e| e.name == "HOME").expect("const entity");
+        assert_eq!(ent.kind, EntityKind::Const);
+        let row = facts.consts.iter().find(|c| c.sym == ent.sym).expect("const_value row");
+        assert_eq!(row.text, "/home");
+        assert_eq!(row.kind, "lit");
+
+        let df = RustTypes.extract_dataflow("f.rs", "fn go() { let x = \"/home\"; }\n");
+        assert!(df.lits.iter().any(|(_, text, kind)| text == "/home" && *kind == "lit"), "{:?}", df.lits);
     }
 }

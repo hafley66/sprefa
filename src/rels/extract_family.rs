@@ -160,17 +160,24 @@ impl ModuleFamily {
 impl ExtractFamily for TypeFamily {
     fn name(&self) -> &'static str { "type-rels" }
     fn rels(&self) -> &'static [&'static str] {
-        // TYPE_RELS plus DOC_TEXT_RELS (doc_comment/doc_tag): one parse in
-        // `refresh_type_rels` populates both sets, so a change marks both —
-        // the pairing the hand-written tick blocks encoded as two `for`
-        // loops under one refresh call.
+        // TYPE_RELS plus DOC_TEXT_RELS (doc_comment/doc_tag) plus
+        // CONST_VALUE_RELS (const_value/const_value_rev): one parse in
+        // `refresh_type_rels` populates all three sets, so a change marks
+        // all of them — the pairing the hand-written tick blocks encoded as
+        // several `for` loops under one refresh call.
         static RELS: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
         RELS.get_or_init(|| {
-            engine::TYPE_RELS.iter().chain(engine::DOC_TEXT_RELS.iter()).copied().collect()
+            engine::TYPE_RELS.iter()
+                .chain(engine::DOC_TEXT_RELS.iter())
+                .chain(engine::CONST_VALUE_RELS.iter())
+                .copied().collect()
         })
     }
     fn decls(&self) -> Vec<RelDecl> {
-        engine::type_rel_decls().into_iter().chain(engine::doc_text_rel_decls()).collect()
+        engine::type_rel_decls().into_iter()
+            .chain(engine::doc_text_rel_decls())
+            .chain(engine::const_value_rel_decls())
+            .collect()
     }
     fn reserved_msg(&self) -> &'static str {
         "a built-in type-graph relation (type_edge / type_edge_rev / type_entity / type_entity_rev / type_sig / type_link / type_link_rev)"
@@ -178,13 +185,15 @@ impl ExtractFamily for TypeFamily {
     fn digest_key(&self) -> Option<&'static str> { Some("extract:type") }
     fn refresh(&self, eng: &mut Engine) -> Result<bool> { eng.refresh_type_rels() }
     fn used(&self, prog: &Program) -> bool {
-        // The union the tick blocks used: doc_comment/doc_tag ride the same
-        // parse (see rels() above), and the RelKind analysis families
-        // type_shape/type_lgg consume type_entity, so they gate this refresh
-        // too even though they own their rels elsewhere.
+        // The union the tick blocks used: doc_comment/doc_tag and
+        // const_value/const_value_rev ride the same parse (see rels() above),
+        // and the RelKind analysis families type_shape/type_lgg consume
+        // type_entity, so they gate this refresh too even though they own
+        // their rels elsewhere.
         engine::type_rels_used(prog)
             || engine::rels_used(prog, &["type_shape", "type_lgg"])
             || engine::doc_text_rels_used(prog)
+            || engine::const_value_rels_used(prog)
     }
 }
 
@@ -205,7 +214,7 @@ impl ExtractFamily for DataflowFamily {
     fn rels(&self) -> &'static [&'static str] { &engine::DATAFLOW_RELS }
     fn decls(&self) -> Vec<RelDecl> { engine::dataflow_rel_decls() }
     fn reserved_msg(&self) -> &'static str {
-        "a built-in dataflow relation (df_node / df_node_rev / df_node_repo / df_node_repo_rev / df_edge / loop_over / allocates / nest / df_param / df_arg / df_arg_rev / df_field / df_field_rev)"
+        "a built-in dataflow relation (df_node / df_node_rev / df_node_repo / df_node_repo_rev / df_edge / loop_over / allocates / nest / df_param / df_arg / df_arg_rev / df_field / df_field_rev / df_lit / df_lit_rev)"
     }
     fn digest_key(&self) -> Option<&'static str> { Some("extract:dataflow") }
     fn refresh(&self, eng: &mut Engine) -> Result<bool> { eng.refresh_dataflow_rels() }
