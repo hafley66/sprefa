@@ -38,6 +38,7 @@ pub mod scip_import;
 pub mod scip_setup;
 pub mod setup;
 pub mod sg;
+pub mod verdict;
 pub mod spine;
 pub mod tray;
 pub mod trace;

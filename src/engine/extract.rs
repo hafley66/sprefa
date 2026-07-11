@@ -774,15 +774,88 @@ impl Engine {
     fn moved_extract_revs(&self, family: &str, files: &[ExtractFile], with_scip: bool)
         -> Result<Vec<(String, [u8; 32])>>
     {
+        let start = std::time::Instant::now();
         let mut by_rev: HashMap<&str, Vec<ExtractFile>> = HashMap::new();
         for f in files { by_rev.entry(f.2.as_str()).or_default().push(f.clone()); }
         let mut moved: Vec<(String, [u8; 32])> = Vec::new();
         for (rev, frev) in &by_rev {
             let d = self.extract_input_digest(family, rev, frev, with_scip);
-            if self.load_rel_digest(&format!("extract:{family}:{rev}"))? == Some(d) { continue; }
+            let prior = self.load_rel_digest(&format!("extract:{family}:{rev}"))?;
+            if prior == Some(d) {
+                crate::verdict::debug_verdict(
+                    "extract-rebuild",
+                    &format!("[extract] {family}: skipped (digest match)"),
+                    &[("family", family), ("rev", rev), ("outcome", "skip")],
+                );
+                continue;
+            }
+            let reason = self.extract_rebuild_reason(family, rev, frev, with_scip, prior.is_none());
+            let ms = start.elapsed().as_secs_f64() * 1000.0;
+            crate::verdict::verdict(
+                "extract-rebuild",
+                &format!("[extract] {family}: REBUILD ({reason}) — {} files parsed, {ms:.1}ms", frev.len()),
+                &[
+                    ("family", family), ("rev", rev), ("outcome", "rebuild"),
+                    ("reason", &reason), ("files", &frev.len().to_string()),
+                    ("ms", &format!("{ms:.1}")),
+                ],
+            );
             moved.push(((*rev).to_string(), d));
         }
         Ok(moved)
+    }
+
+    /// Cheap, honest attribution for WHY `moved_extract_revs` decided a
+    /// family/rev needs a rebuild. Each check is a coarse proxy over one
+    /// category of `extract_input_digest`'s inputs (exe identity / scip row
+    /// count / an unhashed "nonce" file signaling a rev gaining or losing a
+    /// file), checked in that priority order; the common case — some
+    /// scanned file's content hash moved — falls through to
+    /// `corpus-changed (n paths)`. No category here re-derives a full
+    /// content hash of the prior corpus (that would mean keeping a second
+    /// copy of the file list around just to explain a digest, which this
+    /// stays honest about not doing).
+    fn extract_rebuild_reason(&self, family: &str, rev: &str, files: &[ExtractFile], with_scip: bool, first_run: bool) -> String {
+        if first_run {
+            return "first-run".to_string();
+        }
+        if files.iter().any(|f| f.3.is_empty()) {
+            return "rev-set-changed".to_string();
+        }
+        if self.exe_identity_changed_since_last_run() {
+            return "exe-identity-changed".to_string();
+        }
+        if with_scip && rev == "WORK" {
+            let n: i64 = self.db.conn()
+                .query_row(&format!("SELECT COUNT(*) FROM {}", tbl("scip_ref")), [], |r| r.get(0))
+                .unwrap_or(0);
+            let key = format!("extract:scip-rows:{family}");
+            let prior = self.load_rel_digest(&key).ok().flatten();
+            let cur = blake3::hash(n.to_string().as_bytes());
+            if prior != Some(*cur.as_bytes()) {
+                let _ = self.save_rel_digest(&key, cur.as_bytes());
+                return "scip-index-changed".to_string();
+            }
+        }
+        format!("corpus-changed ({} paths)", files.len())
+    }
+
+    /// One-shot-per-process check of whether the running binary's identity
+    /// changed since the last recorded run (the exe stamp `extract_input_
+    /// digest` folds into every family's digest). A binary swap only
+    /// happens across process restarts, so this is stable for the whole
+    /// tick/process lifetime — cached so every family's reason lookup this
+    /// tick reads the same answer instead of racing the persisted key.
+    fn exe_identity_changed_since_last_run(&self) -> bool {
+        use std::sync::OnceLock;
+        static CHANGED: OnceLock<bool> = OnceLock::new();
+        *CHANGED.get_or_init(|| {
+            let cur = blake3::hash(format!("{:032x}", exe_stamp()).as_bytes());
+            let prior = self.load_rel_digest("extract:exe-stamp").ok().flatten();
+            let changed = prior.is_some() && prior != Some(*cur.as_bytes());
+            let _ = self.save_rel_digest("extract:exe-stamp", cur.as_bytes());
+            changed
+        })
     }
 
     /// Fold a rev into a df node id so two revs' `file:line:col` ids stay
@@ -2331,5 +2404,70 @@ impl Engine {
         // Persisted only after the writes land, so a failed refresh retries.
         for (rev, d) in &moved { self.save_rel_digest(&format!("extract:doc:{rev}"), d)?; }
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod verdict_reason_tests {
+    use super::*;
+    use crate::engine::Engine;
+
+    fn engine() -> Engine {
+        let conn = crate::db::open(None).unwrap();
+        Engine::new(conn, std::path::PathBuf::from("/tmp"))
+    }
+
+    fn extract_file(repo: &str, path: &str, hash: &str) -> ExtractFile {
+        (repo.to_string(), path.to_string(), "WORK".to_string(), hash.to_string())
+    }
+
+    /// First tick for a family/rev (no prior digest row) always attributes
+    /// to "first-run", regardless of what the corpus or exe identity look
+    /// like.
+    #[test]
+    fn first_run_wins_over_every_other_category() {
+        let eng = engine();
+        let files = vec![extract_file("self", "src/a.rs", "hash-a")];
+        let reason = eng.extract_rebuild_reason("type", "WORK", &files, false, true);
+        assert_eq!(reason, "first-run");
+    }
+
+    /// A file with an empty content hash (the `extract_input_digest` nonce
+    /// signal for an unresolved/newly-appeared file) attributes to
+    /// "rev-set-changed" even when it is not the first run.
+    #[test]
+    fn empty_hash_file_attributes_to_rev_set_changed() {
+        let eng = engine();
+        let files = vec![
+            extract_file("self", "src/a.rs", "hash-a"),
+            extract_file("self", "src/b.rs", ""),
+        ];
+        let reason = eng.extract_rebuild_reason("type", "WORK", &files, false, false);
+        assert_eq!(reason, "rev-set-changed");
+    }
+
+    /// A rebuild with no rev-set/exe/scip signal falls to the honest default
+    /// bucket, naming the file count so a reader can gauge WHICH corpus
+    /// moved even without a finer category.
+    #[test]
+    fn plain_content_change_falls_to_corpus_changed_with_file_count() {
+        let eng = engine();
+        let files = vec![
+            extract_file("self", "src/a.rs", "hash-a"),
+            extract_file("self", "src/b.rs", "hash-b"),
+        ];
+        let reason = eng.extract_rebuild_reason("type", "WORK", &files, false, false);
+        assert_eq!(reason, "corpus-changed (2 paths)");
+    }
+
+    /// A rebuild with `with_scip` false never attributes to
+    /// "scip-index-changed" (the category is gated on the scip fold being
+    /// active for this family/rev in the first place).
+    #[test]
+    fn scip_category_is_gated_on_with_scip() {
+        let eng = engine();
+        let files = vec![extract_file("self", "src/a.rs", "hash-a")];
+        let reason = eng.extract_rebuild_reason("call", "WORK", &files, false, false);
+        assert_ne!(reason, "scip-index-changed");
     }
 }

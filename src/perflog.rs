@@ -191,6 +191,20 @@ pub fn emit_tick(rec: &TickRec<'_>) {
     write_json(tick_record_json(rec).to_string());
 }
 
+/// Append a `src/verdict.rs` verdict row (already shaped as
+/// `{"type":"verdict","kind":...,...fields}` by the caller) through this
+/// module's existing append-only writer, so verdict rows land in the SAME
+/// `perf.jsonl` timeline as `phase`/`tick` records rather than a second file.
+/// `ts_ms`/`pid` are stamped here for parity with `phase_record`/
+/// `tick_record_json`.
+pub fn emit_verdict(mut row: serde_json::Value) {
+    if let Some(obj) = row.as_object_mut() {
+        obj.insert("ts_ms".into(), serde_json::Value::from(now_ms()));
+        obj.insert("pid".into(), serde_json::Value::from(std::process::id()));
+    }
+    write_json(row.to_string());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

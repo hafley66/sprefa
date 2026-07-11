@@ -39,7 +39,7 @@ use std::collections::HashMap;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::ast::Program;
@@ -66,6 +66,42 @@ const DEFAULT_POLL_SECS: u64 = 2;
 #[inline]
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Best-effort label for whichever RPC most recently acquired a served
+/// root's engine mutex — read by `lock_eng`'s waiter to name the "behind
+/// <current op>" half of a `[wait]` verdict. Approximate by construction: it
+/// records the last op to ACQUIRE the lock, not the op currently holding it
+/// at the moment a new waiter starts blocking (there is no cheap way to know
+/// that without wrapping every RPC body in a guard-drop callback), so a
+/// long-idle op between ticks can leave a stale label. Good enough for "which
+/// kind of request tends to hold the lock a while," the diagnostic this
+/// exists for.
+static CURRENT_OP: OnceLock<Mutex<String>> = OnceLock::new();
+
+fn current_op_cell() -> &'static Mutex<String> {
+    CURRENT_OP.get_or_init(|| Mutex::new("none".to_string()))
+}
+
+/// Lock a served root's engine mutex, timing the wait. A wait at or past
+/// `verdict::LOCK_WAIT_WARN_MS` logs `[wait] <rpc> waited <ms>ms behind
+/// <current op>` (stderr + perf.jsonl); every acquisition then relabels
+/// `CURRENT_OP` to `method` for the next waiter. Replaces the bare
+/// `lock(&sr.eng)` call at every RPC dispatch site that touches the engine.
+fn lock_eng<'a>(sr: &'a ServedRoot, method: &str) -> MutexGuard<'a, Engine> {
+    let behind = lock(current_op_cell()).clone();
+    let start = Instant::now();
+    let guard = lock(&sr.eng);
+    let waited_ms = start.elapsed().as_millis() as u64;
+    if waited_ms >= crate::verdict::LOCK_WAIT_WARN_MS {
+        crate::verdict::verdict(
+            "lock-wait",
+            &format!("[wait] {method} waited {waited_ms}ms behind {behind}"),
+            &[("rpc", method), ("waited_ms", &waited_ms.to_string()), ("behind", &behind)],
+        );
+    }
+    *lock(current_op_cell()) = method.to_string();
+    guard
 }
 const CONNECT_BACKOFF_MS: &[u64] = &[10, 20, 40, 80, 160, 320, 500];
 const CONNECT_TOTAL_TIMEOUT_SECS: u64 = 5;
@@ -838,6 +874,15 @@ pub fn run_daemon(
     if let Some(p) = crate::perflog::path() {
         eprintln!("[daemon] perf log {} (tail -f | jq .total_ms, .phase, .ms)", p.display());
     }
+    crate::verdict::emit_run_header(
+        "daemon",
+        initial_root.as_ref().map(|r| r.to_string_lossy().into_owned()).unwrap_or_else(|| home.to_string_lossy().into_owned()).as_str(),
+        &config_db,
+        "singleton daemon home db",
+        "self (this process IS the daemon)",
+        env!("CARGO_PKG_VERSION"),
+        &build_id,
+    );
 
     // Config-view watcher (watches the config repos).
     {
@@ -1420,7 +1465,7 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
         }
         "query" => {
             let prog = lock(&sr.prog);
-            let eng = lock(&sr.eng);
+            let eng = lock_eng(sr, &req.method);
             let _ = eng.log_query("daemon", "query", "", "[]");
             let _ = crate::rels::refresh_query_log(&eng);
             match eng.run_queries_capture(&prog) {
@@ -1432,7 +1477,7 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
         }
         "diag" => {
             let only = req.params.get("path").and_then(|p| p.as_str());
-            let eng = lock(&sr.eng);
+            let eng = lock_eng(sr, &req.method);
             match eng.diags(only) {
                 Ok(rows) => Response::ok(req.id, json!({"rows": rows.iter().map(diag_to_json).collect::<Vec<_>>()})),
                 Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
@@ -1447,7 +1492,7 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                 Some(s) => s,
                 None => return Response::err(req.id, INVALID_PARAMS, "missing text"),
             };
-            let eng = lock(&sr.eng);
+            let eng = lock_eng(sr, &req.method);
             match eng.definition_targets(file, text) {
                 Ok(targets) => Response::ok(req.id, json!({"targets": targets.iter()
                     .map(|(f, l)| json!([f, l])).collect::<Vec<_>>()})),
@@ -1460,14 +1505,14 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                 Some(s) => s,
                 None => return Response::err(req.id, INVALID_PARAMS, "missing text"),
             };
-            let eng = lock(&sr.eng);
+            let eng = lock_eng(sr, &req.method);
             match eng.hover(file, text) {
                 Ok(md) => Response::ok(req.id, json!({"markdown": md})),
                 Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
             }
         }
         "schema" => {
-            let eng = lock(&sr.eng);
+            let eng = lock_eng(sr, &req.method);
             let builtin = crate::engine::builtin_rel_names();
             let mut relations: Vec<Value> = Vec::new();
             for (name, meta) in eng.rels.iter() {
@@ -1500,7 +1545,7 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                 Some(s) => s,
                 None => return Response::err(req.id, INVALID_PARAMS, "missing rel"),
             };
-            let eng = lock(&sr.eng);
+            let eng = lock_eng(sr, &req.method);
             let Some(meta) = eng.rels.get(rel) else {
                 return Response::err(req.id, INVALID_PARAMS,
                     format!("unknown relation {rel:?}"));
@@ -1516,7 +1561,7 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
             };
             let limit = req.params.get("limit").and_then(|v| v.as_u64()).map(|n| n as usize);
             let offset = req.params.get("offset").and_then(|v| v.as_u64()).map(|n| n as usize);
-            let eng = lock(&sr.eng);
+            let eng = lock_eng(sr, &req.method);
             let out = crate::anchor::what(&eng, anchor, limit, offset);
             Response::ok(req.id, json!({
                 "columns": out.columns, "rows": out.rows,
@@ -1528,7 +1573,7 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                 Some(s) => s,
                 None => return Response::err(req.id, INVALID_PARAMS, "missing path"),
             };
-            let eng = lock(&sr.eng);
+            let eng = lock_eng(sr, &req.method);
             let out = crate::anchor::summary(&eng, path);
             Response::ok(req.id, json!({
                 "columns": out.columns, "rows": out.rows,
@@ -1558,7 +1603,7 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
             };
             let params: Vec<Value> = req.params.get("params")
                 .and_then(|v| v.as_array()).cloned().unwrap_or_default();
-            let eng = lock(&sr.eng);
+            let eng = lock_eng(sr, &req.method);
             let params_json = serde_json::to_string(&params).unwrap_or_else(|_| "[]".into());
             let _ = eng.log_query("daemon", "query_sql", sql_raw, &params_json);
             let _ = crate::rels::refresh_query_log(&eng);
@@ -1588,7 +1633,7 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                         if dir == crate::ast::PortDir::In { "in" } else { "out" })),
                 }
             }
-            let mut eng = lock(&sr.eng);
+            let mut eng = lock_eng(sr, &req.method);
             let run = (|| -> anyhow::Result<Vec<(String, String)>> {
                 eng.inject_rpc(in_rel, rid, method, args)?;
                 eng.tick(&prog, true)?;
@@ -1615,7 +1660,7 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                         "rel {in_rel} is not an @in(rpc) port in the daemon's loaded program")),
                 }
             }
-            let mut eng = lock(&sr.eng);
+            let mut eng = lock_eng(sr, &req.method);
             match eng.retire_rpc(in_rel, &ids) {
                 Ok(()) => Response::ok(req.id, json!({"ok": true})),
                 Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
@@ -1635,7 +1680,7 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                     .map(|d| d.as_millis() as i64).unwrap_or(0)
             });
             let prog = lock(&sr.prog);
-            let mut eng = lock(&sr.eng);
+            let mut eng = lock_eng(sr, &req.method);
             let run = (|| -> anyhow::Result<()> {
                 eng.insert_hook_event(kind, session, seq, json)?;
                 eng.tick(&prog, true)
@@ -1686,7 +1731,7 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                     };
                     match sr.reload_program() {
                         Ok(()) => {
-                            if let Err(e) = lock(&sr.eng)
+                            if let Err(e) = lock_eng(sr, &req.method)
                                 .save_program_meta(&lock(&sr.program_files).clone()) {
                                 eprintln!("[{}] save_program_meta: {e}", sr.root_label());
                             }

@@ -99,6 +99,7 @@ mod module_binding;
 mod match_col_span;
 mod node2vec;
 mod sg_rewrite;
+mod verdict;
 mod verify_rollback;
 mod mixed_source_derived;
 mod module_def;

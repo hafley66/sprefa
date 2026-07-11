@@ -8041,6 +8041,51 @@ fn module_stem(path: &str) -> &str {
 /// submodules for free (gitlink entries are type `commit`, not `blob`), so
 /// this closes the WORK-arm asymmetry. Depth 0 is `repo_root` itself and is
 /// never pruned by this check (it owns the `.git` we're walking FROM).
+/// Once-per-full-scan corpus sanity: total files/bytes, the top-3 dirs by
+/// file count, and a loud line if any single dir carries more than
+/// `DIR_SHARE_WARN_PCT`% of the corpus (e.g. a vendored/generated tree the
+/// scan glob should have excluded). Called once from the WORK arm of
+/// `enumerate_with_hash` per repo, never per-file — corpus-sanity is a
+/// scan-level verdict, not a hot-loop one.
+fn emit_corpus_scan_verdict(repo: &str, files: &[(String, String, i64, i64)]) {
+    if files.is_empty() { return; }
+    let total_files = files.len();
+    let total_bytes: i64 = files.iter().map(|(_, _, _, sz)| *sz).sum();
+    let mut per_dir: HashMap<&str, usize> = HashMap::new();
+    for (rel, _, _, _) in files {
+        let dir = rel.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+        *per_dir.entry(dir).or_insert(0) += 1;
+    }
+    let mut dirs: Vec<(&str, usize)> = per_dir.into_iter().collect();
+    dirs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+    let top3: Vec<String> = dirs.iter().take(3)
+        .map(|(dir, n)| format!("{}:{n}", if dir.is_empty() { "." } else { dir }))
+        .collect();
+    let msg = format!(
+        "[corpus] {repo}: {total_files} files, {total_bytes} bytes, top dirs: {}",
+        top3.join(", ")
+    );
+    crate::verdict::verdict(
+        "corpus-scan", &msg,
+        &[("repo", repo), ("files", &total_files.to_string()),
+          ("bytes", &total_bytes.to_string()), ("top_dirs", &top3.join(","))],
+    );
+    if let Some((dir, n)) = dirs.first() {
+        let pct = (*n as u64 * 100) / total_files as u64;
+        if pct as u32 > crate::verdict::DIR_SHARE_WARN_PCT {
+            let dir_label = if dir.is_empty() { "." } else { dir };
+            let warn_msg = format!(
+                "[corpus] {repo}: WARNING dir {dir_label} carries {pct}% of {total_files} files (over {}%)",
+                crate::verdict::DIR_SHARE_WARN_PCT
+            );
+            crate::verdict::verdict(
+                "corpus-scan", &warn_msg,
+                &[("repo", repo), ("dir", dir_label), ("pct", &pct.to_string()), ("outcome", "dir-share-warn")],
+            );
+        }
+    }
+}
+
 fn enumerate_with_hash(repo: &str, repo_root: &Path, rev: &str, union: &globset::GlobSet, prev: &FileMeta) -> Result<Vec<(String, String, i64, i64)>> {
     let max_size = max_filesize();
     if rev == "WORK" {
@@ -8078,6 +8123,7 @@ fn enumerate_with_hash(repo: &str, repo_root: &Path, rev: &str, union: &globset:
             (rel.clone(), blake3::hash(&bytes).to_hex().to_string(), *mt, *sz)
         }).collect();
         out.sort();
+        emit_corpus_scan_verdict(repo, &out);
         Ok(out)
     } else {
         // `git ls-tree -r -l <rev>` lines:

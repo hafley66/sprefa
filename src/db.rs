@@ -89,7 +89,7 @@ pub fn open(path: Option<&str>) -> Result<Db> {
     };
     // busy_timeout: a hook `--check` and a resident `--lsp` share .dl/cache.db
     // across processes; a write collision should wait, not fail "locked".
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;")?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
     // P2 (--check perf defect ledger): a loud, best-effort heads-up when
     // another live process already holds a write lock on this same db —
     // almost always a resident daemon. A one-shot `--check`/`dl` run that
@@ -110,13 +110,70 @@ pub fn open(path: Option<&str>) -> Result<Db> {
         } else {
             let _ = conn.execute_batch("ROLLBACK;");
         }
-        let _ = conn.execute_batch("PRAGMA busy_timeout=5000;");
     }
+    // Custom busy handler (replaces the plain `PRAGMA busy_timeout` above):
+    // same 5s deadline and 20ms backoff, but a stretch of retries past
+    // `SQLITE_BUSY_WARN_MS` also gets a `[sqlite]` verdict line + perf.jsonl
+    // row (once per blocked statement) — otherwise a contended shared
+    // cache.db under the daemon retries silently with no observable signal.
+    install_busy_verdict_handler(&conn)?;
     register_regexp(&conn)?;
     register_split(&conn)?;
     register_string_fns(&conn)?;
     if profiling() { conn.profile(Some(profile_hook)); }
+    if let Some(p) = path {
+        let size = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+        let journal_mode: String = conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap_or_default();
+        crate::verdict::verdict(
+            "run-header",
+            &format!("[db] opened {p} ({size} bytes, journal={journal_mode})"),
+            &[("path", p), ("bytes", &size.to_string()), ("journal_mode", &journal_mode)],
+        );
+    }
     Ok(Db { conn, counts: RefCell::new(HashMap::new()) })
+}
+
+/// Install a busy handler that mimics the prior fixed 5000ms `busy_timeout`
+/// (20ms sleep between retries, give up past 5000ms — same behavior SQLite's
+/// own `busy_timeout` pragma implements) but ALSO surfaces a verdict when one
+/// blocked statement's retry stretch passes `SQLITE_BUSY_WARN_MS`. SQLite
+/// only supports one active busy strategy per connection (a custom handler
+/// REPLACES `busy_timeout`, it does not compose with it), hence the
+/// reimplementation here rather than pairing both.
+fn install_busy_verdict_handler(conn: &Connection) -> Result<()> {
+    use std::cell::Cell;
+    use std::time::Instant;
+    thread_local! {
+        static BUSY_START: Cell<Option<Instant>> = const { Cell::new(None) };
+        static BUSY_WARNED: Cell<bool> = const { Cell::new(false) };
+    }
+    conn.busy_handler(Some(|count: i32| {
+        let start = BUSY_START.with(|cell| {
+            if count == 0 {
+                let now = Instant::now();
+                cell.set(Some(now));
+                BUSY_WARNED.with(|w| w.set(false));
+                now
+            } else {
+                cell.get().unwrap_or_else(Instant::now)
+            }
+        });
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+        if elapsed_ms >= crate::verdict::SQLITE_BUSY_WARN_MS {
+            let already_warned = BUSY_WARNED.with(|w| w.replace(true));
+            if !already_warned {
+                crate::verdict::verdict(
+                    "sqlite-busy",
+                    &format!("[sqlite] busy retry {elapsed_ms}ms (attempt {count})"),
+                    &[("elapsed_ms", &elapsed_ms.to_string()), ("attempt", &count.to_string())],
+                );
+            }
+        }
+        if elapsed_ms >= 5000 { return false; }
+        std::thread::sleep(Duration::from_millis(20));
+        true
+    }))?;
+    Ok(())
 }
 
 /// Register the `regexp(pattern, value)` SQL function so the `=~` constraint

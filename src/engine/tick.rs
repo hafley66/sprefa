@@ -48,6 +48,17 @@ pub fn is_timer_rel(rel: &str) -> bool {
 }
 
 impl Engine {
+    /// The single slowest derived rel's INSERT-statement wall time from
+    /// `_stmt_ms` (written batched by `rebuild_derived`), for the `[tick]`
+    /// verdict line. `("none", 0)` when no rebuild has landed yet (a
+    /// one-shot's first tick, before any derived rel writes `_stmt_ms`).
+    fn slowest_stmt_ms(&self) -> (String, i64) {
+        self.db.conn()
+            .query_row("SELECT rel, ms FROM _stmt_ms ORDER BY ms DESC LIMIT 1", [],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+            .unwrap_or_else(|_| ("none".to_string(), 0))
+    }
+
     /// One reactive tick, discarding the settle report (the common path). See
     /// `tick_report` for the settle/quiescence driver.
     #[tracing::instrument(skip_all, level = "info")]
@@ -563,9 +574,17 @@ impl Engine {
         let der_ms = t_der.elapsed().as_secs_f64() * 1000.0;
 
         if !quiet {
-            eprintln!("[tick] files {}/{} parsed, +{} -{} source facts, derived {} | source {:.1}ms, derived {:.1}ms",
+            let (slowest_rel, slowest_ms) = self.slowest_stmt_ms();
+            eprintln!("[tick] files {}/{} parsed, +{} -{} source facts, derived {} | source {:.1}ms, derived {:.1}ms, slowest {slowest_rel}={slowest_ms}ms, trigger=full",
                 recon.parsed, recon.total, recon.extracted, recon.retracted,
                 if changed { "rebuilt" } else { "unchanged" }, src_ms, der_ms);
+            crate::verdict::verdict(
+                "tick-summary",
+                &format!("[tick-verdict] full derived_ms={der_ms:.1} slowest_rel={slowest_rel} slowest_ms={slowest_ms} trigger=full"),
+                &[("kind", "full"), ("derived_ms", &format!("{der_ms:.1}")),
+                  ("slowest_rel", &slowest_rel), ("slowest_ms", &slowest_ms.to_string()),
+                  ("trigger", "full")],
+            );
         }
         // Only the edges actually rebuilt this tick are dirty for the cond
         // cache (scoped or full); the digest check inside still skips the
@@ -1027,7 +1046,15 @@ impl Engine {
             let what = if need_full { "ALL".to_string() }
                        else if rebuilt.is_empty() { "none".to_string() }
                        else { rebuilt.join(",") };
-            eprintln!("[tick] {npaths} path(s) changed, +{extracted} -{retracted} source facts, rebuilt derived: {what}");
+            let (slowest_rel, slowest_ms) = self.slowest_stmt_ms();
+            let trigger = format!("file-event({npaths})");
+            eprintln!("[tick] {npaths} path(s) changed, +{extracted} -{retracted} source facts, rebuilt derived: {what}, slowest {slowest_rel}={slowest_ms}ms, trigger={trigger}");
+            crate::verdict::verdict(
+                "tick-summary",
+                &format!("[tick-verdict] incremental slowest_rel={slowest_rel} slowest_ms={slowest_ms} trigger={trigger}"),
+                &[("kind", "incremental"), ("slowest_rel", &slowest_rel),
+                  ("slowest_ms", &slowest_ms.to_string()), ("trigger", &trigger)],
+            );
         }
         let cond_edges = cond_edges_for(&edges, &scc_rules);
         self.refresh_cond_cache(&cond_edges, &dirty_edges)?;
