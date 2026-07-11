@@ -67,6 +67,12 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-11-scip-atlas.md:78 `feature` — argmax aggregate sugar
 <!-- END: plans-by-plan -->
 
+## By code file
+
+<!-- BEGIN: code-by-file -->
+- untriaged debt: 3 bare TODO/FIXME comments in src
+<!-- END: code-by-file -->
+
 ## Hand-owned notes (pre-index rows, migrated from chat_log/NOTES.md)
 
 - **gotcha** content-addressed FileId collapses byte-identical files across checkouts: great for "all refs", ambiguous for "which checkout"; group worktrees via git rev-parse --git-common-dir  <sub>(chat_log/NOTES.md:14)</sub>
