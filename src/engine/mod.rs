@@ -6645,6 +6645,11 @@ impl Engine {
         // distinguishes "one big join" (n=1) from "many fixpoint passes".
         let mut stmt_ms: HashMap<String, (i64, i64)> = HashMap::new();
         let mut timed = |rel: &str, sql: &str| -> Result<usize> {
+            // Temporary wedge tracer: DL_STMT_TRACE=1 names each derived
+            // statement BEFORE it runs, so a statement that never returns is
+            // identifiable from stderr (the _stmt_ms table only records
+            // completed statements).
+            if std::env::var_os("DL_STMT_TRACE").is_some() { eprintln!("[stmt-trace] {rel}"); }
             let t = std::time::Instant::now();
             let n = self.db.conn().execute(sql, [])?;
             let ms = t.elapsed().as_millis() as i64;
