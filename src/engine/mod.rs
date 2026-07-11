@@ -2143,6 +2143,23 @@ pub struct Engine {
     /// pass); an edit bumps it by the changed-file count per family, not the
     /// corpus. The structural proof of perf gap A.
     pub extract_files_parsed: std::cell::Cell<usize>,
+    /// Test/bench instrumentation: cumulative count of FULL-input rule
+    /// re-executions inside a recursive fixpoint — every statement execution
+    /// after the first pass of a naive re-run-to-delta-0 loop (each one
+    /// re-derives every row from all previous passes and discards them on PK
+    /// conflict; the exact waste semi-naive evaluation removes). Semi-naive
+    /// components never bump it (seed rules run once; iteration statements
+    /// read `_delta_*` snapshots, not the full input). Only the naive
+    /// fallback shapes (aggregate/`key(...)` heads inside a recursive
+    /// component, or `DL_NAIVE_FIXPOINT=1`) count. The structural proof of
+    /// the semi-naive rewrite, in the `extract_files_parsed` idiom.
+    pub fixpoint_full_reruns: std::cell::Cell<usize>,
+    /// Force every recursive component onto the naive re-run-to-delta-0 loop
+    /// — the A/B lever for the `fixpoint_full_reruns` counter tests and field
+    /// bisection. Seeded from `DL_NAIVE_FIXPOINT=1` at construction; tests
+    /// set the field directly (no process-global env mutation, which would
+    /// race parallel tests).
+    pub force_naive_fixpoint: std::cell::Cell<bool>,
     /// Test/bench instrumentation: the pre-stratum derived rels the LAST tick
     /// (full or incremental) actually rebuilt. A scoped tick (perf gap B) lists
     /// only the rels dependency-reachable from what changed; a full rebuild
@@ -2216,6 +2233,9 @@ impl Engine {
             last_n1: None,
             last_node_files_walked: std::cell::Cell::new(0),
             extract_files_parsed: std::cell::Cell::new(0),
+            fixpoint_full_reruns: std::cell::Cell::new(0),
+            force_naive_fixpoint: std::cell::Cell::new(
+                std::env::var("DL_NAIVE_FIXPOINT").ok().as_deref() == Some("1")),
             last_derived_rebuilt: Vec::new(),
             gen_journal: std::cell::RefCell::new(None),
             type_facts_cache: Default::default(),
@@ -6587,14 +6607,43 @@ impl Engine {
                               derived_rules[ri].head.rel);
                     }
                 }
-                let mut iters = 0;
-                loop {
-                    let mut delta = 0usize;
-                    for (rel, sql) in &stmts { delta += timed(rel, sql)?; }
-                    iters += 1;
-                    if delta == 0 { break; }
-                    if iters > 100_000 { bail!("fixpoint did not converge"); }
+                // Semi-naive fallback shapes: an aggregate head has no single
+                // new-row identity to differentiate on (COUNT/SUM/etc. must
+                // see the WHOLE group every pass); a `key(...)` head (choice
+                // domain, with or without `merge(...)`) narrows the PK below
+                // the full row, so "new full row" and "new key" disagree —
+                // the anti-join-based delta below assumes a full-row PK.
+                // Both stay on the naive re-run-to-delta-0 loop (correct,
+                // just not accelerated); everything else gets the delta
+                // treatment. A mixed component (some rules eligible, some
+                // not) falls back as a whole — simplest correct choice, and
+                // these shapes are rare inside a recursive cycle in practice.
+                // `DL_NAIVE_FIXPOINT=1` forces every recursive component onto
+                // the naive loop — the A/B lever the `fixpoint_full_reruns`
+                // counter tests (and any field bisection) flip.
+                let naive_fallback = self.force_naive_fixpoint.get()
+                    || comp_rules.iter().any(|&ri| {
+                        let r = derived_rules[ri];
+                        r.has_agg() || self.rels.get(&r.head.rel).map(|m| m.key.is_some()).unwrap_or(false)
+                    });
+                if naive_fallback {
+                    let mut iters = 0;
+                    loop {
+                        let mut delta = 0usize;
+                        for (rel, sql) in &stmts { delta += timed(rel, sql)?; }
+                        // Every execution after pass 1 is a full-input re-run
+                        // (the waste semi-naive removes) — count it.
+                        if iters > 0 {
+                            self.fixpoint_full_reruns.set(
+                                self.fixpoint_full_reruns.get() + stmts.len());
+                        }
+                        iters += 1;
+                        if delta == 0 { break; }
+                        if iters > 100_000 { bail!("fixpoint did not converge"); }
+                    }
+                    continue;
                 }
+                self.rebuild_derived_seminaive(&comp_rules, derived_rules, &mut timed)?;
             }
         }
         self.save_stmt_ms(&stmt_ms)?;
@@ -6607,6 +6656,141 @@ impl Engine {
             let tick = crate::activity::snapshot().tick;
             let detail = format!("{} rel(s): {}", derived_rels.len(), derived_rels.join(", "));
             crate::perflog::emit_phase(tick, "derived", t_rebuild.elapsed().as_millis() as u64, &detail);
+        }
+        Ok(())
+    }
+
+    /// Semi-naive evaluation of one recursive rel-component. Standard
+    /// datalog delta evaluation: instead of every iteration re-running each
+    /// rule's FULL join (re-deriving every row ever produced, including all
+    /// prior iterations', and discarding the re-derivations on PK conflict),
+    /// maintain a `_delta_<rel>` snapshot per targeted rel holding only the
+    /// rows born in the PREVIOUS iteration. A rule with a recursive body atom
+    /// reruns once per occurrence of that atom (`lower::recursive_occurrences`
+    /// / `body_sql_ex`'s `overrides` seam): that ONE occurrence reads the
+    /// delta, every other occurrence (recursive or not) reads the full
+    /// accumulated relation. This computes exactly the rows NEW this
+    /// iteration; naive re-runs of every prior iteration's now-redundant work
+    /// are never issued.
+    ///
+    /// Preconditions enforced by the caller (`rebuild_derived`): every rule in
+    /// `comp_rules` heads a rel with a full-row PRIMARY KEY (no `key(...)`,
+    /// which would make "new full row" and "new key" disagree) and no
+    /// aggregate head (an aggregate must see the whole group, not a delta
+    /// slice). Rows/results are otherwise byte-identical to the naive loop:
+    /// same PK, same INSERT OR IGNORE dedup, just fewer re-derivations.
+    fn rebuild_derived_seminaive(
+        &self,
+        comp_rules: &[usize],
+        derived_rules: &[&Rule],
+        timed: &mut dyn FnMut(&str, &str) -> Result<usize>,
+    ) -> Result<()> {
+        let comp_rels: HashSet<String> = comp_rules.iter()
+            .map(|&ri| derived_rules[ri].head.rel.clone()).collect();
+
+        // Partition: a rule with zero recursive-atom occurrences is a base
+        // case (seed) — its output never changes across iterations, so it
+        // runs exactly once, into the real rel table. A rule with >=1
+        // recursive occurrence is differentiated per occurrence each pass.
+        let mut seed_ris: Vec<usize> = Vec::new();
+        let mut rec_ris: Vec<(usize, Vec<(usize, String)>)> = Vec::new();
+        for &ri in comp_rules {
+            let occs = crate::lower::recursive_occurrences(derived_rules[ri], &comp_rels);
+            if occs.is_empty() { seed_ris.push(ri); } else { rec_ris.push((ri, occs)); }
+        }
+
+        for &ri in &seed_ris {
+            let rule = derived_rules[ri];
+            let sql = lower_rule(rule, &self.rels)?;
+            timed(&rule.head.rel, &sql)?;
+        }
+
+        if rec_ris.is_empty() { return Ok(()); } // pure base case, no cycle to iterate
+
+        // One `_delta_<rel>`/`_delta_new_<rel>` TEMP table pair per targeted
+        // rel, shaped exactly like the rel (same cols, same full-row PK) so
+        // `INSERT OR IGNORE` dedups variant output the same way the real
+        // table would. Dropped and recreated every call (a TEMP table
+        // persists for the connection's lifetime, and a program edit can
+        // change a rel's column set between ticks).
+        for rel in &comp_rels {
+            let meta = self.rels.get(rel)
+                .ok_or_else(|| anyhow::anyhow!("unknown relation {rel}"))?;
+            let col_defs: Vec<String> = meta.cols.iter()
+                .map(|c| format!("\"{}\" {}", c.name, c.ty.sql())).collect();
+            let col_names: Vec<String> = meta.cols.iter()
+                .map(|c| format!("\"{}\"", c.name)).collect();
+            for prefix in ["_delta_", "_delta_new_"] {
+                self.db.conn().execute(&format!("DROP TABLE IF EXISTS {prefix}{rel}"), [])?;
+                self.db.conn().execute(&format!(
+                    "CREATE TEMP TABLE {prefix}{rel} ({}, PRIMARY KEY ({}))",
+                    col_defs.join(", "), col_names.join(", ")), [])?;
+            }
+        }
+        // Seed delta_0 = every row the seed rules just produced. `rel_<rel>`
+        // was emptied at the top of `rebuild_derived`, so everything in it
+        // right now IS new as of this component's first pass.
+        for rel in &comp_rels {
+            let col_names: Vec<String> = self.rels.get(rel).unwrap().cols.iter()
+                .map(|c| format!("\"{}\"", c.name)).collect();
+            let cols = col_names.join(", ");
+            self.db.conn().execute(&format!(
+                "INSERT INTO _delta_{rel} ({cols}) SELECT {cols} FROM {}", tbl(rel)), [])?;
+        }
+
+        let mut iters = 0usize;
+        loop {
+            for rel in &comp_rels {
+                self.db.conn().execute(&format!("DELETE FROM _delta_new_{rel}"), [])?;
+            }
+            // Each recursive-body-atom occurrence gets its own variant
+            // statement (the standard semi-naive differentiation): that
+            // occurrence reads `_delta_<its rel>`, every other atom (incl.
+            // other recursive atoms in the same rule) reads the full table.
+            // Variants for the same head rel land in the same `_delta_new_`
+            // table, deduped by its PK.
+            for (ri, occs) in &rec_ris {
+                let rule = derived_rules[*ri];
+                let target = format!("_delta_new_{}", rule.head.rel);
+                for (k, rel_name) in occs {
+                    let mut overrides: HashMap<usize, String> = HashMap::new();
+                    overrides.insert(*k, format!("_delta_{rel_name}"));
+                    let sql = crate::lower::lower_rule_to_ex(rule, &self.rels, &target, &[], &overrides)?;
+                    timed(&rule.head.rel, &sql)?;
+                }
+            }
+            // Subtract rows already present in the real table — a variant
+            // reading OTHER atoms at full strength can regenerate a
+            // combination whose result was already derived in an earlier
+            // iteration. What remains is truly new.
+            let mut total_new = 0usize;
+            for rel in &comp_rels {
+                let col_names: Vec<String> = self.rels.get(rel).unwrap().cols.iter()
+                    .map(|c| format!("\"{}\"", c.name)).collect();
+                let cols = col_names.join(", ");
+                timed(rel, &format!(
+                    "DELETE FROM _delta_new_{rel} WHERE ({cols}) IN (SELECT {cols} FROM {})",
+                    tbl(rel)))?;
+                let n: i64 = self.db.conn().query_row(
+                    &format!("SELECT COUNT(*) FROM _delta_new_{rel}"), [], |r| r.get(0))?;
+                total_new += n as usize;
+            }
+            iters += 1;
+            if total_new == 0 { break; }
+            if iters > 100_000 { bail!("fixpoint did not converge"); }
+            // Promote this iteration's new rows into the real relation, and
+            // hand them to the NEXT iteration as its delta.
+            for rel in &comp_rels {
+                let col_names: Vec<String> = self.rels.get(rel).unwrap().cols.iter()
+                    .map(|c| format!("\"{}\"", c.name)).collect();
+                let cols = col_names.join(", ");
+                self.db.conn().execute(&format!(
+                    "INSERT OR IGNORE INTO {} ({cols}) SELECT {cols} FROM _delta_new_{rel}",
+                    tbl(rel)), [])?;
+                self.db.conn().execute(&format!("DELETE FROM _delta_{rel}"), [])?;
+                self.db.conn().execute(&format!(
+                    "INSERT INTO _delta_{rel} ({cols}) SELECT {cols} FROM _delta_new_{rel}"), [])?;
+            }
         }
         Ok(())
     }

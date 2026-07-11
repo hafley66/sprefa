@@ -224,6 +224,21 @@ fn term_sql(t: &Term, canon: &HashMap<String, String>, tys: &HashMap<String, Typ
 fn body_sql(body: &[BodyItem], rels: &Rels)
     -> Result<(HashMap<String, String>, HashMap<String, Type>, Vec<String>, Vec<String>)>
 {
+    body_sql_ex(body, rels, &HashMap::new())
+}
+
+/// Like `body_sql`, but the k-th positive body atom (0-based, counting only
+/// `BodyItem::Pos` occurrences in body order — the same `k` that names its
+/// SQL alias `r{k}`) reads from `overrides[&k]` instead of its own relation's
+/// table when present. This is the semi-naive differentiation seam: a
+/// recursive component reruns a rule once per recursive body-atom occurrence,
+/// each variant substituting that ONE occurrence's table for a `_delta_<rel>`
+/// snapshot (rows new as of the previous iteration) while every other
+/// occurrence still reads the full accumulated relation. See engine
+/// `rebuild_derived`.
+fn body_sql_ex(body: &[BodyItem], rels: &Rels, overrides: &HashMap<usize, String>)
+    -> Result<(HashMap<String, String>, HashMap<String, Type>, Vec<String>, Vec<String>)>
+{
     let mut canon: HashMap<String, String> = HashMap::new();
     let mut tys: HashMap<String, Type> = HashMap::new();
     let mut wheres: Vec<String> = Vec::new();
@@ -237,7 +252,8 @@ fn body_sql(body: &[BodyItem], rels: &Rels)
                 bail!("relation {} expects {} cols, got {}", a.rel, meta.cols.len(), a.terms.len());
             }
             let alias = format!("r{k}");
-            froms.push(format!("{} {alias}", tbl(&a.rel)));
+            let src = overrides.get(&k).cloned().unwrap_or_else(|| tbl(&a.rel));
+            froms.push(format!("{src} {alias}"));
             for (pos, term) in a.terms.iter().enumerate() {
                 let cell = format!("{alias}.\"{}\"", meta.col_name(pos));
                 match term {
@@ -389,7 +405,29 @@ pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
 /// land in the carry buffer stamped with the next generation instead of in the
 /// head relation this tick. Existing callers go through `lower_rule` unchanged.
 pub fn lower_rule_to(rule: &Rule, rels: &Rels, target: &str, extra: &[(String, String)]) -> Result<String> {
-    let (canon, tys, froms, mut wheres) = body_sql(&rule.body, rels)?;
+    lower_rule_to_ex(rule, rels, target, extra, &HashMap::new())
+}
+
+/// Every occurrence index (the `k` in body_sql_ex's `overrides`) of a
+/// positive body atom whose relation name is in `comp_rels` — the semi-naive
+/// engine's recursive-atom occurrences for this rule, in body order.
+pub fn recursive_occurrences(rule: &Rule, comp_rels: &std::collections::HashSet<String>) -> Vec<(usize, String)> {
+    let mut k = 0usize;
+    let mut out = Vec::new();
+    for item in &rule.body {
+        if let BodyItem::Pos(a) = item {
+            if comp_rels.contains(&a.rel) { out.push((k, a.rel.clone())); }
+            k += 1;
+        }
+    }
+    out
+}
+
+/// `lower_rule_to` with the semi-naive `overrides` seam threaded through the
+/// body: `overrides[&k]` replaces the k-th positive body atom's table (see
+/// `body_sql_ex`). Empty overrides is byte-identical to `lower_rule_to`.
+pub fn lower_rule_to_ex(rule: &Rule, rels: &Rels, target: &str, extra: &[(String, String)], overrides: &HashMap<usize, String>) -> Result<String> {
+    let (canon, tys, froms, mut wheres) = body_sql_ex(&rule.body, rels, overrides)?;
 
     // a ground fact (empty body) lowers to a FROM-less SELECT of literals;
     // a non-empty body still needs a positive atom to range over

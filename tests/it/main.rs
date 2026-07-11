@@ -165,6 +165,7 @@ mod type_graph_ts;
 mod util;
 mod what;
 mod q_verb;
+mod seminaive;
 mod where_removed;
 mod wildcard_slots;
 mod tick_digest;
