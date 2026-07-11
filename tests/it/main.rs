@@ -13,6 +13,8 @@ mod body_binds;
 mod builtin_file_rel;
 mod call_rels;
 mod changed;
+mod const_value;
+mod string_flow;
 mod changed_line;
 mod clock_lock;
 mod closure_incremental_bench;

@@ -702,9 +702,9 @@ impl Engine {
     /// own pair. One shared list so `sweep_gone_revs` and any future twin
     /// addition touch a single place.
     const REV_TWINS: &[&str] = &[
-        "type_entity_rev", "type_link_rev", "type_edge_rev",
+        "type_entity_rev", "type_link_rev", "type_edge_rev", "const_value_rev",
         "call_def_rev", "call_edge_rev",
-        "df_node_rev", "df_node_repo_rev", "df_arg_rev", "df_field_rev",
+        "df_node_rev", "df_node_repo_rev", "df_arg_rev", "df_field_rev", "df_lit_rev",
         "module_edge_rev", "module_unresolved_rev", "module_binding_rev",
     ];
 
@@ -900,6 +900,12 @@ impl Engine {
         let mut doc_rows: Vec<Vec<Value>> = Vec::new();
         let mut tag_rows: Vec<Vec<Value>> = Vec::new();
         let mut seen_doc: HashSet<(&str, &str)> = HashSet::new();
+        let mut const_rev_rows: Vec<Vec<Value>> = Vec::new();
+        // (repo-qualified owning sym, field, rev): one row per string-valued
+        // leaf per rev, same shape as `seen_entity`.
+        let mut seen_const: HashSet<(String, &str, &str)> = HashSet::new();
+        let mut const_spread_skips: usize = 0;
+        let mut const_mutable_skips: usize = 0;
         for (repo, path, rev, f) in &facts {
             // historic name-keyed edges, now repo-tagged so two trees sharing a
             // type name don't collapse into one node when scanned together
@@ -976,6 +982,32 @@ impl Engine {
                     tag_rows.push(vec![t(repo), t(&qsym), t(&tag.tag), t(&tag.arg), t(&tag.text)]);
                 }
             }
+            // String values folded from const/as-const bindings (item 3). sym
+            // is repo-qualified the same way entity syms are, so const_value
+            // joins type_entity 1:1 on the const's own row (or the enum's row
+            // for a string member).
+            for c in &f.consts {
+                let qsym = format!("{repo}::{}", c.sym);
+                if seen_const.insert((qsym.clone(), c.field.as_str(), rev.as_str())) {
+                    const_rev_rows.push(vec![
+                        t(repo), t(&qsym), t(&c.field), t(&c.text), t(c.kind), t(&c.file), i(c.line), t(rev),
+                    ]);
+                }
+            }
+            const_spread_skips += f.const_spread_skips;
+            const_mutable_skips += f.const_mutable_skips;
+        }
+        if const_spread_skips > 0 {
+            eprintln!(
+                "[typegraph:const_value] {const_spread_skips} object-literal spread propert{} skipped (never followed — the value is opaque without evaluating the spread source)",
+                if const_spread_skips == 1 { "y" } else { "ies" },
+            );
+        }
+        if const_mutable_skips > 0 {
+            eprintln!(
+                "[typegraph:const_value] {const_mutable_skips} let/var string initializer{} skipped (soundness rule: only const/as const bindings are folded)",
+                if const_mutable_skips == 1 { "" } else { "s" },
+            );
         }
         // type_edge_rev is the rev-carrying twin: write it through the rev-scoped
         // helper (the real in-tree consumer). Delete scope = every corpus rev;
@@ -990,6 +1022,10 @@ impl Engine {
         self.refresh_rel_for_revs("type_link_rev", &["src", "dst", "kind", "rev"], &link_rev_rows, &all_rev_refs)?;
         self.refresh_rel("doc_comment", &["repo", "sym", "line", "text"], &doc_rows)?;
         self.refresh_rel("doc_tag", &["repo", "sym", "tag", "arg", "text"], &tag_rows)?;
+        self.refresh_rel_for_revs(
+            "const_value_rev", &["repo", "sym", "field", "text", "kind", "file", "line", "rev"],
+            &const_rev_rows, &all_rev_refs,
+        )?;
         self.rebuild_legacy_type_rels()?;
         // Persisted only after the writes land, so a failed refresh retries.
         for (rev, d) in &moved { self.save_rel_digest(&format!("extract:type:{rev}"), d)?; }
@@ -1119,6 +1155,13 @@ impl Engine {
         self.db.exec(&format!(
             "INSERT OR IGNORE INTO {link} (\"src\", \"dst\", \"kind\") \
              SELECT \"src\", \"dst\", \"kind\" FROM {link_rev}"
+        ))?;
+        let const_value = tbl("const_value");
+        let const_value_rev = tbl("const_value_rev");
+        self.db.exec(&format!("DELETE FROM {const_value}"))?;
+        self.db.exec(&format!(
+            "INSERT OR IGNORE INTO {const_value} (\"repo\", \"sym\", \"field\", \"text\", \"kind\", \"file\", \"line\") \
+             SELECT \"repo\", \"sym\", \"field\", \"text\", \"kind\", \"file\", \"line\" FROM {const_value_rev}"
         ))?;
         Ok(())
     }
@@ -1667,6 +1710,7 @@ impl Engine {
         let mut param_rows: Vec<Vec<Value>> = Vec::new();
         let mut arg_rows: Vec<Vec<Value>> = Vec::new();
         let mut field_rows: Vec<Vec<Value>> = Vec::new();
+        let mut lit_rows: Vec<Vec<Value>> = Vec::new();
         // Rev-carrying twins (D5.4). Every id-valued column is salted by rev so a
         // file byte-identical at two revs emits DISJOINT ids per rev (the raw ids
         // collide and would cross-wire base into head). Legacy rows above keep raw
@@ -1676,9 +1720,11 @@ impl Engine {
         let mut node_repo_rev_rows: Vec<Vec<Value>> = Vec::new();
         let mut arg_rev_rows: Vec<Vec<Value>> = Vec::new();
         let mut field_rev_rows: Vec<Vec<Value>> = Vec::new();
+        let mut lit_rev_rows: Vec<Vec<Value>> = Vec::new();
         let mut seen_param: HashSet<&str> = HashSet::new();
         let mut seen_arg: HashSet<(&str, i64, &str)> = HashSet::new();
         let mut seen_field: HashSet<(&str, &str, &str)> = HashSet::new();
+        let mut seen_lit: HashSet<&str> = HashSet::new();
         let mut seen_node: HashSet<&str> = HashSet::new();
         let mut seen_node_repo: HashSet<(&str, &str)> = HashSet::new();
         let mut seen_edge: HashSet<(&str, &str)> = HashSet::new();
@@ -1688,6 +1734,7 @@ impl Engine {
         let mut seen_node_repo_rev: HashSet<(&str, &str, &str)> = HashSet::new();
         let mut seen_arg_rev: HashSet<(&str, i64, &str, &str)> = HashSet::new();
         let mut seen_field_rev: HashSet<(&str, &str, &str, &str)> = HashSet::new();
+        let mut seen_lit_rev: HashSet<(&str, &str)> = HashSet::new();
         for (repo, _, rev, f) in &facts {
             for n in &f.nodes {
                 if seen_node.insert(n.id.as_str()) {
@@ -1765,6 +1812,15 @@ impl Engine {
                     ]);
                 }
             }
+            for (id, text, kind) in &f.lits {
+                if seen_lit.insert(id.as_str()) {
+                    lit_rows.push(vec![t(id), t(text), t(kind)]);
+                }
+                // id salted like df_node_rev.id (D5 pattern, same shape as df_field_rev).
+                if seen_lit_rev.insert((id.as_str(), rev.as_str())) {
+                    lit_rev_rows.push(vec![Value::Text(Self::salt_rev(id, rev)), t(text), t(kind), t(rev)]);
+                }
+            }
         }
 
         self.refresh_rel("df_node", &["id", "kind", "var", "fn", "file", "line"], &node_rows)?;
@@ -1776,6 +1832,7 @@ impl Engine {
         self.refresh_rel("df_param", &["id", "pos"], &param_rows)?;
         self.refresh_rel("df_arg", &["call", "pos", "arg"], &arg_rows)?;
         self.refresh_rel("df_field", &["id", "field", "value"], &field_rows)?;
+        self.refresh_rel("df_lit", &["id", "text", "kind"], &lit_rows)?;
         // Rev-carrying twins: same delete scope as type/call — wipe every corpus
         // rev and reinsert the whole-corpus salted rows (the emit above is
         // whole-corpus; a rev absent from the corpus is D5.5's retraction sweep,
@@ -1787,6 +1844,7 @@ impl Engine {
         self.refresh_rel_for_revs("df_node_repo_rev", &["id", "repo", "rev"], &node_repo_rev_rows, &all_rev_refs)?;
         self.refresh_rel_for_revs("df_arg_rev", &["call", "pos", "arg", "rev"], &arg_rev_rows, &all_rev_refs)?;
         self.refresh_rel_for_revs("df_field_rev", &["id", "field", "value", "rev"], &field_rev_rows, &all_rev_refs)?;
+        self.refresh_rel_for_revs("df_lit_rev", &["id", "text", "kind", "rev"], &lit_rev_rows, &all_rev_refs)?;
         // Persisted only after the writes land, so a failed refresh retries.
         for (rev, d) in &moved { self.save_rel_digest(&format!("extract:dataflow:{rev}"), d)?; }
         Ok(true)

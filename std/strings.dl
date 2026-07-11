@@ -1,0 +1,38 @@
+# std/strings.dl — string_flow: the df_edge subgraph restricted to
+# STRING-carrying value nodes (string-values arc item 4,
+# plans/2026-07-10-string-values-const-value.md).
+#
+#   use "std/strings.dl".
+#   # `string_flow`/`string_flow_trace` are in scope.
+#
+# `df_lit(id, text, kind)` marks every string-carrying df_node (a plain string
+# literal, a template with its `${}` holes intact, or a `+` concat with its
+# operands intact). This module seeds a recursive rule at those ids and walks
+# `df_edge` FORWARD through whatever the value passes through next — template/
+# concat/var/call nodes, exactly the nodes `df_edge` already connects.
+#
+# `closure(df_edge)` cannot be read unpinned in a rule body (it would
+# materialize the full graph); seeding the frontier at df_lit ids keeps the
+# fixpoint restricted to what a string-flow query actually needs — the same
+# magic-set shape examples/flow-ctor.dl's `from_new` uses, seeded from `new`
+# nodes instead of literals.
+#
+# The program owns the corpus: this file scans nothing. Scan rules in the
+# importer decide which files feed df_lit/df_edge (the builtin extractors run
+# over whatever the program scans).
+#
+# NO `?` queries live here — a `use`d module must not perturb the importer's
+# query output order.
+
+# (origin df_lit id, node reached by following df_edge forward from it).
+rel string_flow(from: text, to: text).
+string_flow(lit_id, x) <- df_lit(lit_id, _, _), df_edge(lit_id, x).
+string_flow(lit_id, y) <- string_flow(lit_id, x), df_edge(x, y).
+
+# Readable trace: every string_flow pair with the ORIGIN literal's own text
+# and kind attached, so a query reads the actual string value alongside the
+# flow instead of just node ids.
+rel string_flow_trace(text: text, kind: text, from: text, to: text).
+string_flow_trace(text, kind, from, to) <-
+    string_flow(from, to),
+    df_lit(from, text, kind).

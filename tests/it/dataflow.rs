@@ -251,10 +251,13 @@ fn taint_propagates_through_operations_per_language() {
             reaches.insert((r[0].clone(), r[1].clone()));
         }
 
-        // the source: param `q`. the sink: the read of `m`. the operation: a binop.
+        // the source: param `q`. the sink: the read of `m`. the operation: a
+        // binop — except TS, where `+` mints its own `concat` kind (string-
+        // values arc item 2: any-operand `+` qualifies, numeric included).
         let q_id = single(&nodes, "param", "q", &out, lang);
         let m_id = single(&nodes, "var_read", "m", &out, lang);
-        let binop = single(&nodes, "binop", "", &out, lang);
+        let op_kind = if lang == "ts" { "concat" } else { "binop" };
+        let binop = single(&nodes, op_kind, "", &out, lang);
 
         // q is NOT directly bound to m — the only route between them is the binop.
         assert!(
