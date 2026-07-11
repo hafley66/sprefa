@@ -6,6 +6,8 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-11
+
 ### Added
 - **Mixed source+derived rels auto-desugar.** A rel headed by both a source/
   extract rule and a derived rule no longer bails: the engine rewrites the
