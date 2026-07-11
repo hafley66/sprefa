@@ -45,14 +45,29 @@ epic is the shrink path.
 4. Free helpers move with their only caller; shared ones stay in mod.rs.
 5. Review with `git diff --color-moved=dimmed-zebra` to prove moves are pure.
 
-## Sequencing hazard
+## Sequencing hazard — RESOLVED (2026-07-11, main 81241d5)
 
-The semi-naive fixpoint agent is editing `rebuild_derived`. Do not start the
-derive/meta clusters until that branch lands on main.
+The semi-naive fixpoint branch (a1e7ebc) and the sym interning branch
+(81241d5) both LANDED before this split starts, so the old "wait for them"
+hazard is gone. What they changed for this plan:
+- mod.rs is now ~9,200 lines; the line ranges in the table above are the
+  pre-landing survey — RE-FIND each cluster by method name, do not trust the
+  numbers.
+- The derive cluster gained `rebuild_derived_seminaive` (moves with
+  `rebuild_derived`, same file) plus the `fixpoint_full_reruns` /
+  `force_naive_fixpoint` Cell fields on Engine (fields stay in mod.rs with
+  the struct).
+- src/spine.rs gained `Sym`/`SymSink`; src/db.rs gained `flush_syms` —
+  untouched by this plan, listed so a mechanical mover doesn't "helpfully"
+  relocate them.
+- Baseline gate before ANY move: `cargo test --test it` green on the base sha
+  (743/0/10 at 81241d5), and re-run per the batching rule below.
 
 ## Staffing
 
-One Sonnet worktree agent, no subagents, file-size law in the brief.
+CODEX (Chris's call, 2026-07-11): run via `codex exec` in a dedicated git
+worktree, one cluster per commit, no subagents, file-size law in force
+(each new file over 500 lines gets an allowlist row pointing here).
 
 <!-- todo(triage): SG_LANG_TABLE final home (src/sg.rs vs engine/lang_tables.rs) when the lang_tables cluster moves -->
 <!-- todo(feature): trait-extraction epic Phase 1 (RelKind) resumes on top of the split -->

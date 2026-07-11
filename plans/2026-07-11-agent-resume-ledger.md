@@ -14,9 +14,16 @@ brief").
 | Plans TODO index (a24dbf19dff474101) | worktree-agent-a24dbf19dff474101 | comment_node .md support + examples/gen-plans-index.dl -> PLANS.md + sprf-write-plan skill; generic-example amendment received | mid-wiring: markdown into comment_file_set/refresh_comment_rels |
 | Slow-rule factoring (a12cb6c43c97a748c) | worktree-agent-a12cb6c43c97a748c | factor entry_reach_node_raw / call_node / flow_edge through intermediate rels, row-equivalence proof | unknown (stopped without a last note) |
 
-Resume order when ready: instrumentation (rebase over 33f549b first) ->
-factoring -> plans-index -> cross-harness. All carry the no-subagents rule and
-the sprefa-feedback closing section.
+Resume order when ready: instrumentation (rebase over 33f549b first; NB the
+max-vs-sum _stmt_ms fix may be superseded by the semi-naive branch — check
+before resuming) -> factoring (same check: semi-naive may deflate its targets)
+-> plans-index -> cross-harness (LAST-BUT-DECIDED: resumes after perf lands so
+its hook e2e runs at sane tick speed). All carry the no-subagents rule and the
+sprefa-feedback closing section.
+
+OWNERSHIP DECISION (Chris, 2026-07-11): the engine/mod.rs split
+(plans/2026-07-11-engine-mod-split.md) goes to CODEX after the perf arc lands —
+not to a Claude agent. The plan file is the codex brief.
 
 ## Never again (the hook deadlock class)
 

@@ -105,6 +105,41 @@ fn decode_sym_cols(sql: Sql, decl: &RelDecl) -> Sql
   of `?` query outputs on a fixture db. perf-rails re-measure; re-promote
   tick-over-budget to error when derived lands under 10s.
 
+## Turnkey Rust-side API (Chris, 2026-07-11): auto-interning types
+
+Emit code must not be able to forget interning or do it per-row. New types make
+the correct path the only path:
+
+```rust
+// src/spine.rs (or src/sym.rs if spine.rs nears the size law)
+pub struct Sym(StringId);            // an interned string VALUE; Copy
+pub struct SymSink { pending: Vec<(i64, String)> }
+impl SymSink {
+    pub fn sym(&mut self, text: &str) -> Sym
+    // pseudo: id = StringId::of(text); pending.push((id.sqlite(), text)); Sym(id)
+    // dedup inside flush (sort+dedup by id), NOT per-call hashmap
+}
+impl Db {
+    pub fn flush_syms(&self, sink: &mut SymSink)
+    // pseudo: one insert_spine_strings batch; clears pending
+}
+impl Drop for SymSink { /* debug_assert!(pending.is_empty(), "unflushed syms") */ }
+```
+
+Invariants that make it turnkey:
+- The ONLY constructor of `Sym` is `SymSink::sym` — you cannot mint an id
+  without its text being queued for `_strings`. (`StringId::of` stays pub for
+  lower's compile-time literal rewrite; it returns `StringId`, not `Sym`.)
+- `Sym` implements the row-cell conversion (`Into` whatever `insert_rows`
+  params take) as its INTEGER form; there is no `Display`/`to_string`, so a
+  sym can't silently land in a TEXT column.
+- One `SymSink` per refresh pass, flushed once alongside the rel's
+  `insert_rows` — batching is structural, N+1 impossible by construction.
+- Drop guard screams in debug if a sink dies unflushed.
+
+Lifetimes: `SymSink` lives for one refresh fn body; `Sym` cells live in the
+row Vecs until `insert_rows`; `_strings` rows persist (existing posture).
+
 ## Verification
 
 - P0: before/after ms table for the top-5 `_stmt_ms` statements.
