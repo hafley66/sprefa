@@ -185,14 +185,35 @@ fn uninstall_removes_journal_and_wiring_but_leaves_unowned_content() {
     let sandbox = Sandbox::new("uninstall");
     let unowned = sandbox.repo.join("unowned.txt");
     fs::write(&unowned, "keep me\n").unwrap();
+    let nested = sandbox.repo.join(".dl/user/nested.txt");
+    fs::create_dir_all(nested.parent().unwrap()).unwrap();
+    fs::write(&nested, "never recurse here\n").unwrap();
     assert!(sandbox.dl(&["setup", "--project", "."]).status.success());
     assert!(sandbox.manifest().exists());
     let uninstall = sandbox.dl(&["uninstall"]);
     assert!(uninstall.status.success(), "{}", output_text(&uninstall));
     assert_eq!(fs::read_to_string(unowned).unwrap(), "keep me\n");
+    assert_eq!(fs::read_to_string(nested).unwrap(), "never recurse here\n");
     assert!(!sandbox.repo.join(".dl/dl-self-lint.dl").exists());
     assert!(!sandbox.manifest().exists());
     assert!(!sandbox.state.join("sprefa").exists());
+}
+
+#[test]
+fn atomic_setup_writes_leave_valid_manifest_and_no_temp_files() {
+    let sandbox = Sandbox::new("atomic");
+    assert!(sandbox.setup_yes().status.success());
+    let manifest = fs::read_to_string(sandbox.manifest()).unwrap();
+    let entries: serde_json::Value = serde_json::from_str(&manifest).unwrap();
+    assert!(entries.as_array().is_some_and(|entries| !entries.is_empty()));
+    let mut pending = vec![sandbox.repo.clone(), sandbox.state.clone()];
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() { pending.push(path); }
+            else { assert!(!path.file_name().unwrap().to_string_lossy().contains("dl-tmp"), "partial temp file: {}", path.display()); }
+        }
+    }
 }
 
 #[test]
