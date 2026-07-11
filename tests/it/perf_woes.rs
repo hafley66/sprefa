@@ -99,8 +99,12 @@ fn repro_slow_rule_and_tick_overbudget_fire_onsite() {
 
     // Second run: telemetry has landed, the rail can see it. Diagnostics
     // print to stderr (--check's finding stream), not stdout.
+    // tick-over-budget was deliberately downgraded to WARNING (33f549b: as an
+    // error it exit-2'd the PostToolUse hook and blocked every write while the
+    // perf debt it flags was being paid down). Warnings do not exit 2 — flip
+    // this back to `assert_eq!(code2, 2, ...)` when the rail re-promotes.
     let (code2, out2, err2) = run(&dir, &expensive_path);
-    assert_eq!(code2, 2, "an over-budget tick exits 2: out={out2} err={err2}");
+    assert_eq!(code2, 0, "an over-budget tick warns (not exit 2) while the rail is downgraded: out={out2} err={err2}");
     let findings = format!("{out2}{err2}");
 
     assert!(findings.contains("slow-rule-onsite"),
@@ -115,8 +119,8 @@ fn repro_slow_rule_and_tick_overbudget_fire_onsite() {
 
     assert!(findings.contains("tick-over-budget"),
         "the whole-tick hard tripwire fires:\n{findings}");
-    assert!(findings.contains("error[tick-over-budget]"),
-        "tick-over-budget is ERROR severity:\n{findings}");
+    assert!(findings.contains("warning[tick-over-budget]"),
+        "tick-over-budget is WARNING severity while downgraded (see 33f549b):\n{findings}");
 }
 
 /// QUIET: a cheap program with the shipped (generous) default budgets must
