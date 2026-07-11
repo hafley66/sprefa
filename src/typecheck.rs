@@ -433,7 +433,7 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                     // and the STR_FNS pass-throughs produce text (fill a text-base
                     // column). The json constructors produce text too (a JSON
                     // string) but are VARIADIC. All take text args.
-                    let is_int = name == "int";
+                    let is_int = matches!(name.as_str(), "int" | "len" | "lines");
                     let str_fn = crate::lower::STR_FNS.iter().find(|(n, _, _)| *n == name.as_str());
                     let is_json = matches!(name.as_str(), "json_object" | "json_array" | "json");
                     let known = is_int || matches!(name.as_str(), "split" | "replace")

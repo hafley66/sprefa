@@ -85,7 +85,7 @@ small_derived(x) <- small_seed(x).
 
 /// REPRO: an expensive rule must trip both the onsite per-rule WARN (naming
 /// the rel and pointing at its rule-head file:line) and the whole-tick
-/// ERROR, and `--check` must exit 2.
+/// warning. Perf findings are advisory: `--check` still exits 0.
 #[test]
 fn repro_slow_rule_and_tick_overbudget_fire_onsite() {
     let dir = sandbox("repro");
@@ -98,9 +98,12 @@ fn repro_slow_rule_and_tick_overbudget_fire_onsite() {
     assert!(!err1.contains("panic"), "first run didn't panic: {err1}");
 
     // Second run: telemetry has landed, the rail can see it. Diagnostics
-    // print to stderr (--check's finding stream), not stdout.
+    // print to stderr (--check's finding stream), not stdout. Perf findings
+    // are WARNING severity (2026-07-11: an error here exit-2'd the
+    // PostToolUse hook and blocked every editor/agent write in the repo),
+    // so --check exits 0 — the findings still print.
     let (code2, out2, err2) = run(&dir, &expensive_path);
-    assert_eq!(code2, 2, "an over-budget tick exits 2: out={out2} err={err2}");
+    assert_eq!(code2, 0, "perf warnings never fail the check: out={out2} err={err2}");
     let findings = format!("{out2}{err2}");
 
     assert!(findings.contains("slow-rule-onsite"),
@@ -115,8 +118,8 @@ fn repro_slow_rule_and_tick_overbudget_fire_onsite() {
 
     assert!(findings.contains("tick-over-budget"),
         "the whole-tick hard tripwire fires:\n{findings}");
-    assert!(findings.contains("error[tick-over-budget]"),
-        "tick-over-budget is ERROR severity:\n{findings}");
+    assert!(findings.contains("warning[tick-over-budget]"),
+        "tick-over-budget is WARNING severity (never write-blocking):\n{findings}");
 }
 
 /// QUIET: a cheap program with the shipped (generous) default budgets must

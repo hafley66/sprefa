@@ -315,6 +315,20 @@ fn register_string_fns(conn: &Connection) -> Result<()> {
         Ok(s.strip_suffix(&p).map(str::to_string).unwrap_or(s))
     })?;
 
+    // Content-addressed intern id of a text (StringId::of as i64) — lets a
+    // sym column compare against a runtime-computed text by hashing the TEXT
+    // side (one hash per candidate row, zero `_strings` lookups) instead of
+    // decoding the sym side.
+    conn.create_scalar_function("sprf_sym", 1, det,
+        |ctx| Ok(crate::spine::StringId::of(&ctx.get::<String>(0)?).sqlite()))?;
+
+    // Line count of a text value (newline count + 1, 0 for empty) — feeds the
+    // file-size rail (`lines(content)`).
+    conn.create_scalar_function("sprf_lines", 1, det, |ctx| {
+        let s = ctx.get::<String>(0)?;
+        Ok(if s.is_empty() { 0i64 } else { s.lines().count() as i64 })
+    })?;
+
     conn.create_scalar_function("sprf_replace_re", 3, det, |ctx| {
         let s = ctx.get::<String>(0)?;
         let pattern = ctx.get::<String>(1)?;

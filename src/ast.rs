@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Type { Text, Int, Path, File, Dir, Repo, Rev }
+pub enum Type { Text, Int, Path, File, Dir, Repo, Rev, Sym }
 
 impl Type {
     pub fn sql(self) -> &'static str {
-        match self { Type::Int => "INTEGER", _ => "TEXT" }
+        match self { Type::Int | Type::Sym => "INTEGER", _ => "TEXT" }
     }
     pub fn parse(s: &str) -> Option<Type> {
         Some(match s {
@@ -19,8 +19,17 @@ impl Type {
             // (config slug / path / "." self) and a rev coordinate (git rev).
             "repo" => Type::Repo,
             "rev" => Type::Rev,
+            // Interned text: stored as the content-addressed StringId
+            // (INTEGER = hash64 of the text, `_strings` decodes). Joins and
+            // literal filters are int compares; reading a sym into a text
+            // context decodes through `_strings` transparently.
+            "sym" => Type::Sym,
             _ => return None,
         })
+    }
+    /// Text-like on the DSL surface (concat/functions see decoded text).
+    pub fn textish(self) -> bool {
+        !matches!(self, Type::Int)
     }
 }
 

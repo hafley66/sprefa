@@ -55,6 +55,18 @@ impl StringId {
         }
         Self(hash64(text.as_bytes()))
     }
+
+    /// The id as it lives in SQLite INTEGER cells: the u64 bit pattern
+    /// reinterpreted as i64. `_strings.id` and every `sym`-typed rel column
+    /// store this value, so joins and literal filters are single-word integer
+    /// compares. Display stays the decimal u64 (debug surfaces only).
+    pub fn sqlite(self) -> i64 {
+        self.0 as i64
+    }
+
+    pub fn from_sqlite(v: i64) -> Self {
+        Self(v as u64)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]

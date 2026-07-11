@@ -22,6 +22,73 @@ pub const STR_FNS: &[(&str, &str, usize)] = &[
 
 fn esc(s: &str) -> String { s.replace('\'', "''") }
 
+/// Decode a `sym` (interned StringId INTEGER) cell to its text through
+/// `_strings`. An indexed point lookup on the INTEGER PRIMARY KEY — used only
+/// where a text value is actually consumed (string fns, interpolation,
+/// concat, projection into a text column or query output); sym = sym joins
+/// and literal filters never decode.
+fn sym_decode(e: &str) -> String {
+    format!("(SELECT content FROM _strings WHERE id = {e})")
+}
+
+/// A text literal compared against / inserted into a `sym` column lowers to
+/// its content-addressed StringId at compile time — no lookup, no decode.
+fn sym_lit(s: &str) -> String {
+    crate::spine::StringId::of(s).sqlite().to_string()
+}
+
+/// Equality between two cells that may disagree on sym-ness: sym = sym stays
+/// an int compare; sym vs text hashes the TEXT side (`sprf_sym`) so the sym
+/// side never decodes; everything else is plain equality.
+fn eq_cond(a_sql: &str, a_ty: Option<Type>, b_sql: &str, b_ty: Option<Type>) -> String {
+    match (a_ty, b_ty) {
+        (Some(Type::Sym), Some(t)) if t != Type::Sym && t.textish() =>
+            format!("{a_sql} = sprf_sym({b_sql})"),
+        (Some(t), Some(Type::Sym)) if t != Type::Sym && t.textish() =>
+            format!("sprf_sym({a_sql}) = {b_sql}"),
+        _ => format!("{a_sql} = {b_sql}"),
+    }
+}
+
+/// Lower a head term destined for column `col`. Sym columns accept a
+/// sym-typed var (int pass-through) or a text literal (compile-time hash) —
+/// a computed/text value has no `_strings` row to decode later, so it bails
+/// with the fix. Text-ish columns decode sym vars; everything else is plain.
+fn head_term_sql(term: &Term, col: &Col, canon: &HashMap<String, String>, tys: &HashMap<String, Type>) -> Result<String> {
+    if col.ty == Type::Sym {
+        return match term {
+            Term::Str(s) => Ok(sym_lit(s)),
+            Term::Var(v) if tys.get(v) == Some(&Type::Sym) => term_sql(term, canon, tys),
+            Term::Var(v) => bail!(
+                "head column `{}` is sym but `{v}` is not sym-typed — declare the source \
+                 column `sym` too, or make `{}` a text column",
+                col.name, col.name),
+            _ => bail!(
+                "head column `{}` is sym: only a sym-typed variable or a text literal can \
+                 fill it (a computed value has no interned string to decode later); \
+                 route the computation through a text column",
+                col.name),
+        };
+    }
+    if col.ty.textish() {
+        return term_sql_text(term, canon, tys);
+    }
+    term_sql(term, canon, tys)
+}
+
+/// `term_sql` for a TEXT-consuming position: a sym-typed var decodes through
+/// `_strings`; everything else lowers exactly as `term_sql`.
+fn term_sql_text(t: &Term, canon: &HashMap<String, String>, tys: &HashMap<String, Type>) -> Result<String> {
+    if let Term::Var(v) = t {
+        if tys.get(v) == Some(&Type::Sym) {
+            let cell = canon.get(v)
+                .ok_or_else(|| anyhow::anyhow!("unbound variable {v}"))?;
+            return Ok(sym_decode(cell));
+        }
+    }
+    term_sql(t, canon, tys)
+}
+
 fn lit_sql(t: &Term) -> Option<String> {
     match t {
         Term::Str(s) => Some(format!("'{}'", esc(s))),
@@ -32,13 +99,17 @@ fn lit_sql(t: &Term) -> Option<String> {
 
 /// SQL string concatenation for an interpolated term: literals quoted, vars are
 /// the canonical column reference. `"${ty}::${name}"` -> `ty_col || '::' || name_col`.
-fn interp_sql(parts: &[InterpPart], canon: &HashMap<String, String>) -> Result<String> {
+fn interp_sql(parts: &[InterpPart], canon: &HashMap<String, String>, tys: &HashMap<String, Type>) -> Result<String> {
     let mut pieces = Vec::new();
     for p in parts {
         pieces.push(match p {
             InterpPart::Lit(s) => format!("'{}'", esc(s)),
-            InterpPart::Var(v) => canon.get(v).cloned()
-                .ok_or_else(|| anyhow::anyhow!("unbound variable {v} in interpolation"))?,
+            InterpPart::Var(v) => {
+                let cell = canon.get(v).cloned()
+                    .ok_or_else(|| anyhow::anyhow!("unbound variable {v} in interpolation"))?;
+                // Interpolation consumes text: a sym var decodes here.
+                if tys.get(v) == Some(&Type::Sym) { sym_decode(&cell) } else { cell }
+            }
         });
     }
     Ok(if pieces.is_empty() { "''".into() } else { pieces.join(" || ") })
@@ -53,7 +124,7 @@ fn term_ty(t: &Term, tys: &HashMap<String, Type>) -> Option<Type> {
         Term::Var(v) => tys.get(v).copied(),
         Term::Str(_) | Term::Interp(_) => Some(Type::Text),
         Term::Int(_) => Some(Type::Int),
-        Term::Call { name, .. } => Some(if name == "int" { Type::Int } else { Type::Text }),
+        Term::Call { name, .. } => Some(if matches!(name.as_str(), "int" | "len" | "lines") { Type::Int } else { Type::Text }),
         Term::Arith { op, lhs, rhs } => match op {
             ArithOp::Add => match (term_ty(lhs, tys), term_ty(rhs, tys)) {
                 (Some(Type::Int), Some(Type::Int)) => Some(Type::Int),
@@ -72,7 +143,7 @@ fn term_sql(t: &Term, canon: &HashMap<String, String>, tys: &HashMap<String, Typ
         Term::Var(v) => canon.get(v).cloned()
             .ok_or_else(|| anyhow::anyhow!("unbound variable {v}")),
         Term::Str(_) | Term::Int(_) => Ok(lit_sql(t).unwrap()),
-        Term::Interp(parts) => interp_sql(parts, canon),
+        Term::Interp(parts) => interp_sql(parts, canon, tys),
         Term::Wild => bail!("'_' not allowed here"),
         Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
         // `+` is overloaded: int + int = SQL addition, text + text = SQLite `||`.
@@ -88,13 +159,20 @@ fn term_sql(t: &Term, canon: &HashMap<String, String>, tys: &HashMap<String, Typ
                     bail!("cannot `+` int and text — interpolate (\"${{count}}${{name}}\") or convert with int(..)"),
                 _ => "+",
             };
+            // Text concat consumes text: sym operands decode.
+            if sql_op == "||" {
+                return Ok(format!("({} || {})",
+                    term_sql_text(lhs, canon, tys)?, term_sql_text(rhs, canon, tys)?));
+            }
             Ok(format!("({} {sql_op} {})", term_sql(lhs, canon, tys)?, term_sql(rhs, canon, tys)?))
         }
         Term::Arith { op, lhs, rhs } => Ok(format!(
             "({} {} {})", term_sql(lhs, canon, tys)?, op.sql(), term_sql(rhs, canon, tys)?)),
         Term::Call { name, args } => {
+            // Every function consumes decoded text (string fns; int() decodes
+            // then casts) — sym args decode at the argument boundary.
             let arg_sqls: Vec<String> = args.iter()
-                .map(|a| term_sql(a, canon, tys)).collect::<Result<_>>()?;
+                .map(|a| term_sql_text(a, canon, tys)).collect::<Result<_>>()?;
             match name.as_str() {
                 // SQLite native: replace(X, Y, Z) replaces all Y in X with Z.
                 "replace" if args.len() == 3 =>
@@ -107,6 +185,12 @@ fn term_sql(t: &Term, canon: &HashMap<String, String>, tys: &HashMap<String, Typ
                 // compared numerically instead of as text against "0".
                 "int" if args.len() == 1 =>
                     Ok(format!("CAST({} AS INTEGER)", arg_sqls[0])),
+                // SQLite native: character length of a text value.
+                "len" if args.len() == 1 =>
+                    Ok(format!("length({})", arg_sqls[0])),
+                // Registered UDF: line count of a text value (file-size rail).
+                "lines" if args.len() == 1 =>
+                    Ok(format!("sprf_lines({})", arg_sqls[0])),
                 // SQLite native JSON constructors (core since 3.38). Variadic:
                 // json_object takes (key, value) pairs (even arity >= 2),
                 // json_array takes >= 1 element, json(x) validates/minifies.
@@ -122,7 +206,7 @@ fn term_sql(t: &Term, canon: &HashMap<String, String>, tys: &HashMap<String, Typ
                     let (_, sql, _) = STR_FNS.iter().find(|(n, _, _)| *n == name).unwrap();
                     Ok(format!("{sql}({})", arg_sqls.join(", ")))
                 }
-                other => bail!("unknown or mis-arity function `{other}` (known: split/3, replace/3, int/1, \
+                other => bail!("unknown or mis-arity function `{other}` (known: split/3, replace/3, int/1, len/1, \
                     json_object/even>=2, json_array/>=1, json/1, {})",
                     STR_FNS.iter().map(|(n, _, k)| format!("{n}/{k}")).collect::<Vec<_>>().join(", ")),
             }
@@ -158,12 +242,17 @@ fn body_sql(body: &[BodyItem], rels: &Rels)
                 let cell = format!("{alias}.\"{}\"", meta.col_name(pos));
                 match term {
                     Term::Var(v) => match canon.get(v) {
-                        Some(prev) => wheres.push(format!("{cell} = {prev}")),
+                        Some(prev) => wheres.push(eq_cond(
+                            &cell, Some(meta.cols[pos].ty), prev, tys.get(v).copied())),
                         None => {
                             canon.insert(v.clone(), cell);
                             tys.insert(v.clone(), meta.cols[pos].ty);
                         }
                     },
+                    // A text literal against a sym column filters by its
+                    // compile-time StringId — an int compare, no decode.
+                    Term::Str(s) if meta.cols[pos].ty == Type::Sym =>
+                        wheres.push(format!("{cell} = {}", sym_lit(s))),
                     Term::Str(_) | Term::Int(_) => wheres.push(format!("{cell} = {}", lit_sql(term).unwrap())),
                     Term::Interp(_) => bail!("interpolated string only allowed in a rule head, not a body atom"),
                     Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
@@ -202,8 +291,27 @@ fn body_sql(body: &[BodyItem], rels: &Rels)
                 };
                 if bound { continue; }
             }
-            let l = term_sql(&c.lhs, &canon, &tys)?;
-            let r = term_sql(&c.rhs, &canon, &tys)?;
+            let (lt, rt) = (term_ty(&c.lhs, &tys), term_ty(&c.rhs, &tys));
+            let sym_side = |t: Option<Type>| t == Some(Type::Sym);
+            if matches!(c.op, CmpOp::Eq | CmpOp::Ne) && (sym_side(lt) || sym_side(rt)) {
+                // sym literal special case: hash at compile time.
+                let side = |t: &Term, _own: Option<Type>, other: Option<Type>| -> Result<String> {
+                    match t {
+                        Term::Str(s) if sym_side(other) => Ok(sym_lit(s)),
+                        _ => term_sql(t, &canon, &tys),
+                    }
+                };
+                let l = side(&c.lhs, lt, rt)?;
+                let r = side(&c.rhs, rt, lt)?;
+                let lt = if matches!(&c.lhs, Term::Str(_)) && sym_side(rt) { Some(Type::Sym) } else { lt };
+                let rt = if matches!(&c.rhs, Term::Str(_)) && sym_side(lt) { Some(Type::Sym) } else { rt };
+                let eq = eq_cond(&l, lt, &r, rt);
+                wheres.push(if c.op == CmpOp::Eq { eq } else { format!("NOT ({eq})") });
+                continue;
+            }
+            // Ordering (or non-sym compare): sym sides decode to text.
+            let l = term_sql_text(&c.lhs, &canon, &tys)?;
+            let r = term_sql_text(&c.rhs, &canon, &tys)?;
             wheres.push(format!("{l} {} {r}", c.op.sql()));
         }
     }
@@ -223,13 +331,15 @@ fn body_sql(body: &[BodyItem], rels: &Rels)
                 match term {
                     Term::Var(v) => {
                         if let Some(outer) = canon.get(v) {
-                            sub.push(format!("{cell} = {outer}"));
+                            sub.push(eq_cond(&cell, Some(meta.cols[pos].ty), outer, tys.get(v).copied()));
                         } else if let Some(prev) = local.get(v) {
                             sub.push(format!("{cell} = {prev}"));
                         } else {
                             local.insert(v.clone(), cell);
                         }
                     }
+                    Term::Str(s) if meta.cols[pos].ty == Type::Sym =>
+                        sub.push(format!("{cell} = {}", sym_lit(s))),
                     Term::Str(_) | Term::Int(_) => sub.push(format!("{cell} = {}", lit_sql(term).unwrap())),
                     Term::Interp(_) => bail!("interpolated string only allowed in a rule head, not a body atom"),
                     Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
@@ -322,9 +432,9 @@ pub fn lower_rule_to(rule: &Rule, rels: &Rels, target: &str, extra: &[(String, S
         }
         for (n, _) in extra { non_key.push(n.clone()); }
         let mut exprs = Vec::new();
-        for term in &rule.head.terms {
+        for (term, col) in rule.head.terms.iter().zip(head_meta.cols.iter()) {
             if matches!(term, Term::Wild) { exprs.push("NULL".into()); continue; }
-            let e = term_sql(term, &canon, &tys)?;
+            let e = head_term_sql(term, col, &canon, &tys)?;
             if has_call(term) { wheres.push(format!("{e} IS NOT NULL")); }
             exprs.push(e);
         }
@@ -398,7 +508,7 @@ pub fn lower_rule_to(rule: &Rule, rels: &Rels, target: &str, extra: &[(String, S
                     }
                 }
                 None => {
-                    let g = term_sql(term, &canon, &tys)?;
+                    let g = head_term_sql(term, &head_meta.cols[i], &canon, &tys)?;
                     exprs.push(g.clone());
                     group.push(g);
                 }
@@ -418,7 +528,7 @@ pub fn lower_rule_to(rule: &Rule, rels: &Rels, target: &str, extra: &[(String, S
     }
 
     let mut exprs = Vec::new();
-    for term in &rule.head.terms {
+    for (term, col) in rule.head.terms.iter().zip(head_meta.cols.iter()) {
         // A `Term::Wild` head slot comes from head named-arg padding: a sink
         // rule that names only some columns (`diag(path: p, line: l, msg: m)`)
         // leaves the rest unset. Project SQL NULL so the reader can default it.
@@ -428,7 +538,7 @@ pub fn lower_rule_to(rule: &Rule, rels: &Rels, target: &str, extra: &[(String, S
         // (both via `Rule::head_null_pads`), so this arm never runs for a
         // recursive component.
         if matches!(term, Term::Wild) { exprs.push("NULL".into()); continue; }
-        let e = term_sql(term, &canon, &tys)?;
+        let e = head_term_sql(term, col, &canon, &tys)?;
         // A head term containing a Call (split/replace) may evaluate to NULL
         // when the function misses (split out-of-range). A NULL row inserted
         // into the derived table never dedups in the fixpoint delta (NULL !=

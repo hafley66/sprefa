@@ -7946,7 +7946,7 @@ fn check_type(ty: Type, v: &Value, repo: &str, rev: &str, root: &Path, rev_index
             Type::File | Type::Path => rev_index.contains(&(repo.to_string(), rev.to_string(), p.clone())),
             Type::Dir => rev_index.iter().any(|(rp, r, pp)| rp == repo && r == rev && pp.starts_with(&format!("{p}/"))),
             // repo/rev are coordinate values, not filesystem paths: no check here.
-            Type::Text | Type::Int | Type::Repo | Type::Rev => true,
+            Type::Text | Type::Int | Type::Repo | Type::Rev | Type::Sym => true,
         };
     }
     let full = root.join(p);
@@ -7954,7 +7954,7 @@ fn check_type(ty: Type, v: &Value, repo: &str, rev: &str, root: &Path, rev_index
         Type::File => full.is_file(),
         Type::Dir => full.is_dir(),
         Type::Path => full.exists(),
-        Type::Text | Type::Int | Type::Repo | Type::Rev => true,
+        Type::Text | Type::Int | Type::Repo | Type::Rev | Type::Sym => true,
     }
 }
 

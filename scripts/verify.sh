@@ -58,6 +58,8 @@ fi # verified-tree skip
 
 dl=target/debug/dl
 [ -x "$dl" ] || { echo "[verify] cargo build --bin dl (for rails)"; cargo build --bin dl || exit 1; }
+echo "[verify] rail: file-size law"
+./scripts/filesize-rail.sh || exit 2
 echo "[verify] rail: magic-rel audit"
 DL_NO_DAEMON=1 "$dl" .dl/magic-rel-audit.dl --db "$(mktemp -d)/rail.sqlite" --check || exit 2
 echo "[verify] rail: recompute guard"
