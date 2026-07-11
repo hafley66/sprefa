@@ -31,6 +31,12 @@ big_file_ok("src/datapath.rs", "grandfathered (scripts/filesize-allow.txt)").
 big_file_ok("src/db.rs", "grandfathered (scripts/filesize-allow.txt)").
 big_file_ok("src/effect.rs", "grandfathered (scripts/filesize-allow.txt)").
 big_file_ok("src/engine/extract.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/engine/decls.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/engine/derive.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/engine/gen.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/engine/lens.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/engine/meta.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/engine/repo.rs", "grandfathered (scripts/filesize-allow.txt)").
 big_file_ok("src/engine/mod.rs", "grandfathered (scripts/filesize-allow.txt)").
 big_file_ok("src/engine/tick.rs", "grandfathered (scripts/filesize-allow.txt)").
 big_file_ok("src/frontend.rs", "grandfathered (scripts/filesize-allow.txt)").
@@ -43,7 +49,6 @@ big_file_ok("src/parse.rs", "grandfathered (scripts/filesize-allow.txt)").
 big_file_ok("src/propose.rs", "grandfathered (scripts/filesize-allow.txt)").
 big_file_ok("src/scip_import.rs", "grandfathered (scripts/filesize-allow.txt)").
 big_file_ok("src/scip_setup.rs", "grandfathered (scripts/filesize-allow.txt)").
-big_file_ok("src/setup.rs", "grandfathered (scripts/filesize-allow.txt)").
 big_file_ok("src/typecheck.rs", "grandfathered (scripts/filesize-allow.txt)").
 big_file_ok("src/typegraph.rs", "grandfathered (scripts/filesize-allow.txt)").
 
