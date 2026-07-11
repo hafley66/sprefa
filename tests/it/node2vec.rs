@@ -110,6 +110,37 @@ fn node2vec_separates_two_clusters() {
     }
 }
 
+/// Generic edge readers must stringify SQLite INTEGER cells rather than use
+/// `row.get::<_, String>` (which drops the full edge row). The node2vec path
+/// is one such reader; this tiny integer graph must still produce similarities.
+#[test]
+fn node2vec_accepts_integer_edge_ids() {
+    let dir = sandbox("integer_ids");
+    let program = r#"
+rel edge(src: int, dst: int).
+edge(1, 2).
+edge(2, 3).
+edge(3, 1).
+rel node_sim(a: text, b: text, score: int).
+node_sim(a, b, score) <- node2vec(edge).
+? node_sim(a, b, score).
+"#;
+    fs::write(dir.join("p.dl"), program).unwrap();
+    let out = Command::new(DL)
+        .arg(dir.join("p.dl"))
+        .args(["--no-daemon", "--db", dir.join("db").to_str().unwrap()])
+        .current_dir(&dir)
+        .env("SPREFA_N2V_DIM", "8")
+        .env("SPREFA_N2V_NUMWALKS", "4")
+        .env("SPREFA_N2V_WALKLEN", "4")
+        .env("SPREFA_N2V_EPOCHS", "1")
+        .env("SPREFA_N2V_SEED", "1")
+        .output().expect("run integer node2vec");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(!sim_rows(&String::from_utf8_lossy(&out.stdout)).is_empty(),
+        "integer edges must not be silently dropped: {}", String::from_utf8_lossy(&out.stdout));
+}
+
 /// One `dl` run over the given edge content, sharing a persistent `--db`, with
 /// the W1/W2 digest trace on. Returns stderr (carries the `[node2vec] graph
 /// 'edge': ...` marker: re-embed / cache hit / skip).

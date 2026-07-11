@@ -254,7 +254,7 @@ impl Engine {
             let ncol = sel_vars.len();
             let rows = s.query_map([], |r| {
                 let mut v = Vec::with_capacity(ncol);
-                for i in 0..ncol { v.push(r.get::<_, String>(i)?); }
+                for i in 0..ncol { v.push(cell_as_string(r, i)?); }
                 Ok(v)
             });
             rows.map(|iter| iter.filter_map(|x| x.ok()).collect()).unwrap_or_default()
