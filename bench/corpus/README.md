@@ -70,35 +70,46 @@ for all (scan root = index root):
 | python | otel-python (whole repo)             | 719 .py    | 360        |
 | kotlin | otel-kotlin (whole repo)             | 336 .kt    | — (skipped) |
 
-Confirmed-positives-only parity (`oracle_parity` scorer), two arms per language:
+Confirmed-positives-only parity (`oracle_parity` scorer), two arms per language.
+Re-measured after the scip gate/ordering fix + the name-conflict override
+refusal (both 2026-07-10, see Headline findings):
 
 | lang   | arm          | confirmed | wrong | bare | denom | parity | precision | wall  |
 | ------ | ------------ | --------- | ----- | ---- | ----- | ------ | --------- | ----- |
-| rust   | without-scip | 863       | 50    | 5218 | 6131  | 14.1%  | 0.945     | 24.6s |
-| rust   | with-scip    | 863       | 50    | 5218 | 6131  | 14.1%  | 0.945     | 24.3s |
-| go     | without-scip | 1398      | 8     | 516  | 1922  | 72.7%  | 0.994     | 12.6s |
-| go     | with-scip    | 1398      | 8     | 516  | 1922  | 72.7%  | 0.994     | 11.9s |
-| ts     | without-scip | 67        | 1     | 260  | 328   | 20.4%  | 0.985     | 2.1s  |
-| ts     | with-scip    | 67        | 1     | 260  | 328   | 20.4%  | 0.985     | 1.1s  |
-| python | without-scip | 722       | 15    | 1062 | 1799  | 40.1%  | 0.980     | 42.2s |
-| python | with-scip    | 722       | 15    | 1062 | 1799  | 40.1%  | 0.980     | 39.6s |
+| rust   | without-scip | 863       | 50    | 5218 | 6131  | 14.1%  | 0.945     | 32.4s |
+| rust   | with-scip    | 1688      | 42    | 4401 | 6131  | 27.5%  | 0.976     | 27.7s |
+| go     | without-scip | 1398      | 8     | 516  | 1922  | 72.7%  | 0.994     | 18.4s |
+| go     | with-scip    | 1710      | 8     | 204  | 1922  | 89.0%  | 0.995     | 14.2s |
+| ts     | without-scip | 67        | 1     | 260  | 328   | 20.4%  | 0.985     | 6.3s  |
+| ts     | with-scip    | 67        | 1     | 260  | 328   | 20.4%  | 0.985     | 2.4s  |
+| python | without-scip | 722       | 15    | 1062 | 1799  | 40.1%  | 0.980     | 48.2s |
+| python | with-scip    | 1403      | 5     | 391  | 1799  | 78.0%  | 0.996     | 39.6s |
 | kotlin | —            | SKIP: no scip-java / JDK on this box              |
+
+ts is the one language whose with-scip arm is unchanged: its bare bucket is
+dominated by imports into `../../api`, whose defs sit OUTSIDE the scoped scan
+root, so the index has nothing in-corpus to resolve them to (honest bare).
+python's with-scip arm REMOVES ten syntactic wrongs (15 -> 5): the index
+overrides the subclass-`__init__` mispicks.
 
 ### Headline findings
 
-- **`with scip` == `without scip`, byte-for-byte, in every language.** ROOT
-  CAUSE FOUND (verified after this measurement, 2026-07-10): the with-scip arm
-  measured nothing because of two stacked engine bugs, NOT missing wiring.
-  (1) The scip family load gates on the program naming a scip rel — the
+- **The first measurement's `with scip` == `without scip` (byte-for-byte, every
+  language) was two stacked engine bugs, both FIXED same day (2026-07-10).**
+  (1) The scip family load gated on the program naming a scip rel — the
   scorer's program only queries call rels, so with `SPREFA_SCIP_INDEX` set,
   `rel_scip_ref` stayed at 0 rows (same bug shape as the fixed ModuleFamily
-  gate). (2) Even when forced (add `? scip_def`), the index loads in the
-  RelKind loop AFTER the extract families in the same tick, so extraction
-  reads prior-tick `scip_ref` — empty on a fresh one-shot db. Proof: forcing
-  the family and running a SECOND tick on the same db moves call_edge
-  3734 -> 4041 rows on otel-go/sdk (+307 scip-resolved edges). The resolution
-  wiring exists and works; the with-scip column must be re-measured after the
-  gate + ordering fix.
+  gate; `ScipKind::used` now ORs in type/call usage). (2) The index loaded in
+  the RelKind loop AFTER the extract families in the same tick, so extraction
+  read prior-tick `scip_ref` — empty on a fresh one-shot db (new
+  `RelKind::pre_extract` hook orders scip first). Regression: tests/it/scip_gate.rs.
+- **The fixed with-scip arm immediately caught a resolver bug.** The first
+  honest re-measure put rust at 30.4% parity but precision 0.819 (412 wrong):
+  `scip_name_defs` keyed (repo, file, name) -> def_file with a last-write-wins
+  insert, so a file referencing two different symbols named `build` had one
+  builder's def clobber the other's. The override now DROPS a name carried by
+  two different def symbols within one (repo, file) — fails toward exclusion.
+  Cost ~3 parity points, precision back to 0.976-0.996 across languages.
 - **Parity varies wildly by language** (14.1% rust / 20.4% ts / 40.1% python /
   72.7% go). The rust and ts numbers are dominated by `bare` (unresolved), not
   `wrong`: 5218/6131 rust sites and 260/328 ts sites resolve to nothing. Rust's

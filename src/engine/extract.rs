@@ -1002,11 +1002,19 @@ impl Engine {
     /// own index — a head-repo ref never resolves to a base-repo def when two
     /// roots of the same crate share (file, name). Empty when no index.scip is
     /// present, so the syntactic path carries.
+    ///
+    /// A name referenced from one file under TWO different def symbols (a
+    /// caller using both `Resource::build` and `LoggerProvider::build`) is
+    /// dropped from the map: the override keys on the bare name, so it cannot
+    /// tell the call sites apart and must not guess — a plain insert was
+    /// last-write-wins and mis-resolved 412 builder-pattern sites on the
+    /// otel-rust corpus (precision 0.995 -> 0.819). Dropped names fall back to
+    /// the syntactic path, which refuses ambiguity on its own terms.
     fn scip_name_defs(&self) -> Result<HashMap<(String, String, String), String>> {
-        let mut out = HashMap::new();
+        let mut seen: HashMap<(String, String, String), Option<String>> = HashMap::new();
         let conn = self.db.conn();
         let Ok(mut s) = conn.prepare(&format!("SELECT file, symbol, def_file, repo FROM {}", tbl("scip_ref"))) else {
-            return Ok(out);
+            return Ok(HashMap::new());
         };
         let rows = s.query_map([], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))
@@ -1014,10 +1022,19 @@ impl Engine {
         for row in rows.flatten() {
             let (file, symbol, def_file, repo) = row;
             if let Some(name) = scip_descriptor_name(&symbol) {
-                out.insert((repo, file, name), def_file);
+                match seen.entry((repo, file, name)) {
+                    std::collections::hash_map::Entry::Occupied(mut e) => {
+                        if e.get().as_deref() != Some(def_file.as_str()) {
+                            *e.get_mut() = None;
+                        }
+                    }
+                    std::collections::hash_map::Entry::Vacant(v) => {
+                        v.insert(Some(def_file));
+                    }
+                }
             }
         }
-        Ok(out)
+        Ok(seen.into_iter().filter_map(|(key, def)| def.map(|d| (key, d))).collect())
     }
 
     /// Win D input: `module_edge_rev(src, dst, rev)` read once per family

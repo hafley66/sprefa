@@ -1052,21 +1052,44 @@ foreign resolution model).
       coverage is invisible (TS class-method bodies emit ZERO df nodes —
       third sighting of "TS dataflow silently sparse"); (d) call_def.sym doc
       says bare "file::kind::name" but the emitted value is repo-qualified.
-- [ ] **Otel parity corpora + corpus measurement** (main 12b5a25,
-      2026-07-10): five otel repos pinned as submodules at release SHAs
-      under bench/corpus/ (otel-rust v0.31.0 / otel-js v2.9.0 / otel-go
-      v1.44.0 / otel-python v1.43.0 / otel-kotlin=android v1.5.1, opt-in
-      `git submodule update --init`). HAZARD FOUND: enumerate_with_hash
-      fs-walks WORK pruning only `.git`, so the 200MB corpus entered every
-      **-glob scan + the daemon watch set; the pre-commit `dl --check` hung
-      past 2min. FENCE = gitignore `/bench/corpus/otel-*/` (git ignores the
-      rule for tracked gitlinks; the ignore-crate walker + watchgate honor
-      it — probe query confirms 0 rows). ENGINE FOLLOW-UP (unbuilt):
-      enumerate + watchgate should prune submodule dirs natively (read
-      .gitmodules, treat like `.git`) — a submodule is a separate repo and
-      must never silently union into the host corpus; gitignore-a-tracked-
-      path is a workaround. NEXT: oracle_corpus.rs measurement (with/without
-      scip arms per README) — agent brief below.
+- [x] **Otel parity corpora + real-corpus measurement** (main 12b5a25 pins,
+      df27369 harness, 2026-07-10): five otel repos pinned as submodules at
+      release SHAs under bench/corpus/ (rust v0.31.0 / js v2.9.0 / go
+      v1.44.0 / python v1.43.0 / kotlin=android v1.5.1, opt-in submodule
+      init). tests/it/oracle_corpus.rs = five #[ignore] two-arm tests
+      (SPREFA_CORPUS_DIR; worktrees have empty submodules -> loud skip).
+      FINAL NUMBERS (post-fixes): index-free rust 14.1%/0.945 (trait-call
+      bare-dominated, 5218/6131) / ts 20.4% (core pkg, bare = out-of-root
+      ../../api imports) / python 40.1% / go 72.7%; WITH scip rust
+      27.5%/0.976, python 78.0%/0.996 (index REMOVES 10 syntactic wrongs),
+      go 89.0%/0.995, ts unchanged (honest: defs outside scan root).
+      Sprefa's own 77.9% vs otel-rust 14.1% = corpus shape (monolith free
+      fns vs trait-heavy API), the real per-lang ranking inverts the
+      fixtures. HAZARD FOUND en route: enumerate_with_hash walked submodule
+      contents (200MB entered every **-glob scan + daemon watch; pre-commit
+      hung) — gitignore fence first, then NATIVE nested-repo pruning landed
+      (3bdcce5): walker + watchgate prune any depth>=1 dir owning a .git
+      entry, e2e both .git forms; fence kept for the old running daemon
+      image. Agent debriefs: corpus scan of a submodule root HANGS pre-tick
+      on the gitlink .git file (dl should fail loudly, unfixed); worktree
+      agents must get the base SHA in the brief (main was unpushed).
+- [x] **SCIP one-shot no-op: gate + tick order + override ambiguity**
+      (main, 2026-07-10, found BY the corpus with-scip arm measuring
+      byte-identical): (1) ScipKind::used gated on the program NAMING a
+      scip rel while the type/call resolvers read scip_ref — SPREFA_SCIP_INDEX
+      was a silent no-op for exactly the programs it should improve
+      (ModuleFamily gate bug shape); used() now ORs TypeFamily/CallFamily.
+      (2) index loaded in the RelKind loop AFTER extract families — fresh-db
+      tick 1 extracted index-blind, healed tick 2 via digest fold; new
+      RelKind::pre_extract hook runs scip before extraction in tick +
+      tick_paths. Proof: otel-go/sdk call-only program fresh db first tick
+      3734 -> 4041 call_edge rows. (3) The fixed arm instantly exposed
+      scip_name_defs last-write-wins: a file referencing two symbols both
+      named `build` clobbered -> 412 wrong picks on otel-rust, precision
+      0.819; the override now DROPS a (repo,file,name) carried by two
+      different def symbols (fails toward exclusion; ~3 parity points for
+      precision 0.976-0.996). tests/it/scip_gate.rs (3: gate+ordering
+      positive, index-free bare control, conflict refusal).
 - [ ] **Go/Python implementer debriefs** (2 Sonnet agents, 2026-07-10):
       GOOD both: field-based tree-sitter grammars (go, python expose
       child_by_field_name) made both extractors shorter than Kotlin's

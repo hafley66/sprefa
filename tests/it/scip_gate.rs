@@ -45,6 +45,8 @@ fn write_index(path: &Path, docs: Vec<Document>) {
 
 /// descriptor name parses to `helper`, matching the call site's text.
 const SYM: &str = "scip-go gomod fixture 1.0.0 `main`/helper().";
+/// A DIFFERENT symbol whose trailing descriptor name is also `helper`.
+const SYM_OTHER: &str = "scip-go gomod fixture 1.0.0 `other`/helper().";
 
 /// Two same-package defs of `helper` make the syntactic tier's ambiguity
 /// bucket a tie (stays bare); only the index knows the real def file.
@@ -123,5 +125,37 @@ fn index_resolves_call_first_tick_without_naming_scip_rels() {
     assert!(
         callee.contains("b.go::"),
         "first tick must resolve via the index to b.go, got {callee}"
+    );
+}
+
+/// The override keys on the bare descriptor name, so a caller file that
+/// references TWO different symbols sharing that name gives it no way to tell
+/// the call sites apart — it must refuse, not last-write-win (the otel-rust
+/// builder-pattern collapse: 412 wrong picks, precision 0.995 -> 0.819).
+#[test]
+fn conflicting_same_name_symbols_stay_bare() {
+    let d = sandbox("conflict");
+    write_fixture(&d);
+    write_index(
+        &d.join("index.scip"),
+        vec![
+            document("b.go", vec![occurrence(SYM, SymbolRole::Definition as i32)]),
+            document("a.go", vec![occurrence(SYM_OTHER, SymbolRole::Definition as i32)]),
+            document(
+                "caller.go",
+                vec![occurrence(SYM, 0), occurrence(SYM_OTHER, 0)],
+            ),
+        ],
+    );
+    let (edges, sites) = graph_after_one_tick(&d);
+    assert!(
+        sites
+            .iter()
+            .any(|r| r[0].contains("caller.go") && r[1] == "helper"),
+        "the call site itself must exist: {sites:?}"
+    );
+    assert!(
+        !edges.iter().any(|r| r[0].contains("caller.go")),
+        "two same-name symbols in one file's refs must stay unresolved: {edges:?}"
     );
 }
