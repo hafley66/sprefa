@@ -1,4 +1,4 @@
-# gen-plans-index.dl — the todo comments inside plans/*.md drive PLANS.md.
+# gen-plans-index.dl — todo comments inside plans/*.md and src/**/*.rs drive PLANS.md.
 #
 # Plan docs are the arc trail; open items rot inside them because nothing
 # aggregates. THE CONVENTION (documented in .agents/skills/sprf-write-plan):
@@ -12,9 +12,10 @@
 # grammar-backed (tree-sitter-md html_block filter), so a fenced code sample
 # showing the convention is never a row.
 #
-# This program scans plans/*.md, parses the todo rows, and gen-splices two
-# zones of PLANS.md (repo root): a category-grouped reverse index and a
-# per-plan listing. Everything outside the BEGIN:/END: markers is hand-owned.
+# This program scans plans/*.md and src/**/*.rs, parses the todo rows, and
+# gen-splices three zones of PLANS.md (repo root): a category-grouped reverse
+# index, a per-plan listing, and a code-file debt view. Everything outside the
+# BEGIN:/END: markers is hand-owned.
 #
 #   Run:     dl examples/gen-plans-index.dl          (regenerates PLANS.md zones)
 #   Check:   dl examples/gen-plans-index.dl --check  (drift rail, exit non-zero on
@@ -46,6 +47,34 @@ rel plan_todo_ref(todo_ref: text, plan_path: file, todo_line: int, category: tex
 plan_todo_ref("${plan_path}:${todo_line}", plan_path, todo_line, category, todo_text) <-
     plan_todo(plan_path, todo_line, category, todo_text).
 
+# ── code corpus ──────────────────────────────────────────────────────────────
+# Keep the scan in its own source rule (S6): the comment_node join belongs in
+# the derived rule below, never in the source-extract rule body.
+rel code_file(code_path: file).
+code_file(code_path) <- scan("WORK", "src/**/*.rs", code_path, rev).
+
+rel code_todo(code_path: file, todo_line: int, category: text, todo_text: text).
+code_todo(code_path, todo_line, category, todo_text) <-
+    code_file(code_path),
+    comment_node(code_path, todo_line, _, _, _, comment_text, _),
+    comment_text =~ /^todo\((perf|bug|feature|docs|triage|decision)\):/,
+    category = replace_re(comment_text, r"(?s)^todo\(([a-z-]+)\):.*$", "$1"),
+    todo_text = trim(replace_re(replace_re(comment_text, r"^todo\([a-z-]+\):", ""), r"\s+", " ")).
+
+rel code_todo_ref(todo_ref: text, code_path: file, todo_line: int, category: text, todo_text: text).
+code_todo_ref("${code_path}:${todo_line}", code_path, todo_line, category, todo_text) <-
+    code_todo(code_path, todo_line, category, todo_text).
+
+# Bare uppercase TODO/FIXME comments are counted as one aggregate debt row;
+# conventional `todo(category):` comments are intentionally not debt.
+rel code_bare_debt(code_path: file, debt_line: int).
+code_bare_debt(code_path, debt_line) <-
+    code_file(code_path),
+    comment_node(code_path, debt_line, _, _, _, comment_text, _),
+    comment_text =~ /\b(TODO|FIXME)\b/.
+rel code_untriaged_debt(debt_count: int).
+code_untriaged_debt(count(debt_line)) <- code_bare_debt(code_path, debt_line).
+
 # ── PLANS.md zones ────────────────────────────────────────────────────────────
 # Zone rows render deterministically (gen ORDER BYs its vars in template hole
 # order), so leading with {category} groups the reverse index by category, and
@@ -56,15 +85,24 @@ gen(:zone, "PLANS.md", "plans-by-category", "- `{category}` {todo_ref} — {todo
 gen(:zone, "PLANS.md", "plans-by-plan", "- {plan_path}:{todo_line} `{category}` — {todo_text}") <-
     plan_todo_ref(todo_ref, plan_path, todo_line, category, todo_text).
 
+gen(:zone, "PLANS.md", "code-by-file", "- {category} {code_path}:{todo_line} — {todo_text}") <-
+    code_todo_ref(todo_ref, code_path, todo_line, category, todo_text).
+gen(:zone, "PLANS.md", "code-by-file", "- untriaged debt: {debt_count} bare TODO/FIXME comments in src") <-
+    code_untriaged_debt(debt_count).
+
 # ── drift rail ────────────────────────────────────────────────────────────────
 # gen is suppressed under --check/--lsp, so PLANS.md stays as committed; a todo
 # added (or removed) without a regen desyncs the zone rows and fires here.
 # Zone line coordinates come from the comment op over the NAMED markers (the
 # END: markers carry the zone name so the two zones pair independently).
 rel plans_index_zone(index_path: file, zone_l0: int, zone_l1: int).
+rel code_index_zone(index_path: file, zone_l0: int, zone_l1: int).
 plans_index_zone(index_path, zone_l0, zone_l1) <-
     scan("WORK", "PLANS.md", index_path, rev),
     comment(index_path, rev, /BEGIN: plans-by-category/, /END: plans-by-category/, zone_l0, zone_l1).
+code_index_zone(index_path, zone_l0, zone_l1) <-
+    scan("WORK", "PLANS.md", index_path, rev),
+    comment(index_path, rev, /BEGIN: code-by-file/, /END: code-by-file/, zone_l0, zone_l1).
 
 # The refs actually rendered on disk inside the by-category zone.
 rel plans_index_row(index_path: file, row_ref: text, row_line: int).
@@ -90,5 +128,26 @@ diag(path: index_path, line: row_line, severity: "error", code: "plans-index-orp
     plans_index_row(index_path, row_ref, row_line),
     plans_index_zone(index_path, zone_l0, zone_l1), row_line > zone_l0, row_line < zone_l1,
     !plan_todo_ref_key(row_ref).
+
+# The code-file zone has its own row parser and reference key so stale code
+# comments get the same forward/reverse drift treatment as plan comments.
+rel code_index_row(index_path: file, row_ref: text, row_line: int).
+code_index_row(index_path, row_ref, row_line) <-
+    scan("WORK", "PLANS.md", index_path, rev),
+    match(index_path, rev, /^- [a-z-]+ (?<row_ref>src\/[^:]+:\d+) — /, row_line).
+rel code_index_has(row_ref: text).
+code_index_has(row_ref) <- code_index_row(index_path, row_ref, row_line),
+    code_index_zone(index_path, zone_l0, zone_l1), row_line > zone_l0, row_line < zone_l1.
+rel code_todo_ref_key(todo_ref: text).
+code_todo_ref_key(todo_ref) <- code_todo_ref(todo_ref, _, _, _, _).
+diag(path: code_path, line: todo_line, severity: "error", code: "plans-index-drift",
+     msg: "code todo(${category}) at ${todo_ref} absent from PLANS.md; rerun examples/gen-plans-index.dl") <-
+    code_todo_ref(todo_ref, code_path, todo_line, category, todo_text),
+    !code_index_has(todo_ref).
+diag(path: index_path, line: row_line, severity: "error", code: "plans-index-orphan",
+     msg: "PLANS.md lists ${row_ref} with no matching code todo comment; rerun examples/gen-plans-index.dl") <-
+    code_index_row(index_path, row_ref, row_line),
+    code_index_zone(index_path, zone_l0, zone_l1), row_line > zone_l0, row_line < zone_l1,
+    !code_todo_ref_key(row_ref).
 
 ? plan_todo_ref(todo_ref, plan_path, todo_line, category, todo_text).

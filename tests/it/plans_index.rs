@@ -13,18 +13,23 @@ fn sandbox(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("plans_index_{tag}"));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("plans")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
     // The generator splices zones of an existing PLANS.md (markers committed).
     fs::write(dir.join("PLANS.md"),
         "# PLANS.md\n\n## By category\n\n\
          <!-- BEGIN: plans-by-category -->\n<!-- END: plans-by-category -->\n\n\
          ## By plan\n\n\
          <!-- BEGIN: plans-by-plan -->\n<!-- END: plans-by-plan -->\n\n\
+         ## By code file\n\n\
+         <!-- BEGIN: code-by-file -->\n<!-- END: code-by-file -->\n\n\
          hand-owned prose survives regen\n").unwrap();
     fs::write(dir.join("plans/2026-01-01-alpha.md"),
         "# Alpha plan\n\n## Context\nbody text.\n\n\
          <!-- todo(perf): speed up the alpha pass -->\n\
          <!-- todo(decision): multi-line body\nspanning two lines -->\n\n\
          ```markdown\n<!-- todo(docs): fenced sample, never a row -->\n```\n").unwrap();
+    fs::write(dir.join("src/fixture.rs"),
+        "// todo(feature): wire the fixture\n// TODO: untriaged fixture debt\n").unwrap();
     dir
 }
 
@@ -63,6 +68,10 @@ fn todo_comments_round_trip_into_plans_md() {
     assert!(!plans.contains("fenced sample"), "fenced sample leaked:\n{plans}");
     // Hand-owned prose outside the markers survives.
     assert!(plans.contains("hand-owned prose survives regen"), "prose lost:\n{plans}");
+    assert!(plans.contains("- feature src/fixture.rs:1 — wire the fixture"),
+        "code todo row:\n{plans}");
+    assert!(plans.contains("- untriaged debt: 1 bare TODO/FIXME comments in src"),
+        "code debt row:\n{plans}");
     // Clean check right after a regen: exit 0.
     let (out2, code2) = dl(&d, &["--check"]);
     assert_eq!(code2, 0, "clean check:\n{out2}");
@@ -86,4 +95,16 @@ fn drift_rail_fires_on_stale_index() {
     let (out3, code3) = dl(&d, &["--check"]);
     assert_eq!(code3, 2, "orphan check should exit 2:\n{out3}");
     assert!(out3.contains("plans-index-orphan"), "orphan code:\n{out3}");
+}
+
+#[test]
+fn code_todo_drift_rail_fires_on_stale_index() {
+    let d = sandbox("code_drift");
+    let (out, code) = dl(&d, &[]);
+    assert_eq!(code, 0, "gen run failed:\n{out}");
+    let source = d.join("src/fixture.rs");
+    fs::write(&source, "// todo(feature): wire the fixture\n// TODO: untriaged fixture debt\n// todo(bug): stale code item\n").unwrap();
+    let (out2, code2) = dl(&d, &["--check"]);
+    assert_eq!(code2, 2, "stale code check should exit 2:\n{out2}");
+    assert!(out2.contains("plans-index-drift"), "code drift code:\n{out2}");
 }
