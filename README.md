@@ -388,7 +388,7 @@ Reserved names, populated lazily — a program pays only for what it references.
 | `agent_edit` | agent | `(harness, session, idx, path)` | every file edit in the latest agent turn, tagged harness+session+turn idx (from the at-rest harness store) |
 | `agent_touch` | agent | `(harness, session, path)` | the latest agent turn's edited files (harness, session, path) |
 | `allocates` | dataflow | `(fn)` | one row per fn whose body builds a collection (Vec/HashMap/String ctor, .collect/.clone/.to_string) |
-| `call_def` | call | `(repo, sym, kind, file, line, end)` | every callable; sym is file::kind::name |
+| `call_def` | call | `(repo, sym, kind, file, line, end)` | every callable; sym is repo-qualified repo::file::kind::name |
 | `call_def_rev` | call | `(repo, sym, kind, file, line, end, rev)` | rev-aware call_def (rev is a column, never folded into the sym); legacy call_def is the rev-deduped union |
 | `call_edge` | call | `(caller, callee, kind)` | resolved caller-sym to callee-sym edge (single-def or SCIP override) |
 | `call_edge_rev` | call | `(caller, callee, kind, rev)` | rev-aware call_edge |
