@@ -34,6 +34,19 @@ fn run(dir: &PathBuf, prog: &str) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+fn run_failing_with_row_max(dir: &PathBuf, prog: &str, row_max: usize) -> String {
+    fs::write(dir.join("p.dl"), prog).unwrap();
+    let out = Command::new(DL)
+        .arg(dir.join("p.dl")).current_dir(dir)
+        .arg("--db").arg(dir.join("db").to_str().unwrap())
+        .env("DL_NO_DAEMON", "1")
+        .env("SPREFA_CONFIG", "/nonexistent/x.toml")
+        .env("DL_FIXPOINT_ROW_MAX", row_max.to_string())
+        .output().expect("run dl");
+    assert!(!out.status.success(), "diverging program unexpectedly succeeded");
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
 fn rows_of(stdout: &str, head: &str) -> Vec<String> {
     let mut out: Vec<String> = stdout.lines()
         .skip_while(|l| !l.starts_with(&format!("? {head} =>")))
@@ -118,6 +131,24 @@ reach(n, d) <- reach_raw(n, d), !not_min(n, d).
     assert_eq!(reach, vec![
         "a\t1", "b\t1", "s\t0", "t\t2", "u\t3", "v\t4",
     ], "min-depth reach mismatch:\n{stdout}");
+}
+
+/// An unbounded `depth + 1` rule on a cyclic edge keeps producing distinct rows.
+#[test]
+fn growing_recursive_component_hits_row_budget_loudly() {
+    let dir = sandbox("diverging_budget");
+    let stderr = run_failing_with_row_max(&dir, r#"
+rel edge(a: int, b: int).
+edge(1, 1).
+rel reach(node: int, depth: int).
+reach(a, 0) <- edge(a, b).
+reach(b, depth + 1) <- reach(a, depth), edge(a, b).
+"#, 3);
+    assert!(stderr.contains("fixpoint row budget exceeded"), "missing budget bail:\n{stderr}");
+    assert!(stderr.contains("reach"), "missing recursive relation name:\n{stderr}");
+    assert!(stderr.contains("4 rows (limit 3)"), "missing promoted-row count:\n{stderr}");
+    assert!(stderr.contains("recursion is growing without converging — add a depth bound like `depth < 64`, see std/entry.dl"),
+        "missing repair text:\n{stderr}");
 }
 
 // ---------------------------------------------------------------------------
