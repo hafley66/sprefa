@@ -15,12 +15,22 @@ own shipped skills stay embedded in assets/).
 
 ## Research facts that shape the design (2026-07-11 sweep)
 
-- **Codex CLI**: reads `.agents/skills` natively (explicitly NOT `.claude/skills`);
-  hooks in `config.toml` with Claude-style event names (`PostToolUse`,
-  `UserPromptSubmit`, ...), command hooks only; subagents are TOML
-  (`.codex/agents/*.toml`); custom prompts `~/.codex/prompts/*.md`; MCP via
-  `[mcp_servers.*]`. UNVERIFIED: exact hook stdin/stdout JSON schema — confirm against
-  a live install before the codex arm is coded.
+- **Codex CLI** (CORRECTED 2026-07-11 against the installed codex 0.144.1): reads
+  `.agents/skills` natively (explicitly NOT `.claude/skills`); hooks live in
+  **`.codex/hooks.json`** in exactly the Claude Code `settings.json` `hooks` shape
+  — NOT in `config.toml`, which only stores codex-managed `[hooks.state]` per-hook
+  `trusted_hash` entries. The hook stdin/stdout JSON is the **Claude Code wire
+  format verbatim** (verified against the binary's embedded draft-07 schemas:
+  input = hook_event_name/session_id/cwd/model/permission_mode/tool_*/
+  transcript_path/turn_id; output = BlockDecisionWire + hookSpecificOutput, both
+  additionalProperties:false). TRUST WALL: codex runs a hook only after the user
+  trusts it in codex's UI (hash formula not externally reproducible; only bypass
+  = `--dangerously-bypass-hook-trust`) — live hook fire could not be captured;
+  `dl setup` writes hooks.json and prints a loud trust instruction, never forging
+  hashes. Consequences: NO toml_edit dependency; the codex dialect is a
+  byte-compatible alias of the claude arm; auto-detect never picks codex.
+  Subagents are TOML (`.codex/agents/*.toml`); custom prompts
+  `~/.codex/prompts/*.md`; MCP via `[mcp_servers.*]`.
 - **opencode**: reads `.agents/skills`, `.claude/skills`, AND `.opencode/skills`; NO
   native hook config — lifecycle events only via JS plugins (`.opencode/plugins/*.js`,
   events like `tool.execute.before/after`, `session.*`, `message.*`); subagents
@@ -29,8 +39,9 @@ own shipped skills stay embedded in assets/).
 - **Claude Code**: the only harness needing shims — `.claude/skills/` (symlink),
   `settings.json` hooks (already implemented, setup.rs:481).
 - **Rust crates** (researched — nothing does the full render layer; that space is JS
-  `rulesync` / Go `agentsync`): embed **toml_edit** (surgical codex config.toml edits,
-  the standard), **jsonc-parser `cst` feature** (format-preserving opencode.jsonc
+  `rulesync` / Go `agentsync`): toml_edit NOT needed for arc 1 (codex hooks are
+  hooks.json JSON, see the corrected codex facts; toml_edit deferred to arc 2's
+  md→TOML `.codex/agents`), **jsonc-parser `cst` feature** (format-preserving opencode.jsonc
   edits, only real option), **gray_matter** (frontmatter READ; emit is ~100 LOC over
   serde_yaml). SKIP `skill`/`agentsync`/`claude-hooks` crates — 0.x deps duplicating
   plumbing dl already has.
@@ -70,12 +81,13 @@ enum HookDialect { ClaudeCode, Codex, OpenCode }
   payload fields; claude = `hook_event_name` present). The rel contract
   (`inject`/`inject_skill`/`block`) and the daemon-first feed are UNTOUCHED —
   dialects are pure I/O arms.
-- **Codex arm**: VERIFY the payload schema first (live codex hook dumping stdin to a
-  file; event NAMES are Claude-style so mapping should be thin), then parse + render.
-  `wire_codex_hook()` in setup.rs: toml_edit surgical insert of command hooks
-  (`dl --hook --dialect codex`) into `<repo>/.codex/config.toml` under PostToolUse +
-  UserPromptSubmit, idempotent (dedup by command substring, pattern =
-  `register_hook_event()` setup.rs:525).
+- **Codex arm** (AMENDED per the corrected facts above): the payload IS the Claude
+  wire format, so the codex parse/render arms alias the claude arms (emit nothing
+  extra — the output schemas are additionalProperties:false). `wire_codex_hook()`
+  in setup.rs writes `<repo>/.codex/hooks.json` via the same JSON-merge path as
+  wire_claude_hook (`register_hook_event`, dedup by command substring) — no
+  toml_edit. Setup prints the trust instruction (user approves the hooks in
+  codex's UI before they fire).
 - **opencode arm**: embedded JS plugin (new `assets/dl-opencode-plugin.js`, ~100
   lines) written by `dl setup --project` to `.opencode/plugins/dl.js` (consent-gated,
   like wire_claude_hook). Plugin subscribes `tool.execute.after` (PostToolUse parity)
@@ -90,7 +102,7 @@ enum HookDialect { ClaudeCode, Codex, OpenCode }
 ### C. Setup UX
 
 `dl setup --project` detects/offers all three: `.claude/settings.json` hooks
-(existing), `.codex/config.toml` hooks (new), `.opencode/plugins/dl.js` (new), each
+(existing), `.codex/hooks.json` hooks (new), `.opencode/plugins/dl.js` (new), each
 idempotent and consent-gated on TTY like today (setup.rs:355-370).
 
 ### Files touched
@@ -101,7 +113,7 @@ idempotent and consent-gated on TTY like today (setup.rs:355-370).
 | src/setup.rs | wire_repo_skills .agents/ scan, wire_codex_hook, wire_opencode_plugin, global .agents copy |
 | src/cli/mod.rs | --dialect flag + doc text de-Claude-ing |
 | assets/dl-opencode-plugin.js | new embedded plugin |
-| Cargo.toml | + toml_edit (jsonc-parser cst + gray_matter deferred until a change needs them, likely arc 2) |
+| Cargo.toml | unchanged for arc 1 (toml_edit / jsonc-parser cst / gray_matter deferred to arc 2) |
 | tests | dialect parse/render units; setup idempotency e2e (pattern setup.rs:584-696); hook e2e per dialect, canned payloads |
 
 ### Verification

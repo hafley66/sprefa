@@ -17,6 +17,10 @@ use std::path::{Path, PathBuf};
 /// `include_str!`.
 pub const SKILL_MD: &str = include_str!("../assets/sprefa-dl.skill.md");
 const STARTER_DL: &str = include_str!("../assets/starter.dl");
+/// The opencode bridge plugin (opencode has no native hook config; a JS plugin
+/// translates its events to `dl --hook --dialect opencode`). Embedded so a
+/// prebuilt `dl` can wire it with no source tree.
+const OPENCODE_PLUGIN_JS: &str = include_str!("../assets/dl-opencode-plugin.js");
 // The hook condition starter — same file as the documented example, so the
 // bootstrap's `.dl/` set heads `inject_skill` for the wired `dl --hook` to read.
 const STARTER_HOOK: &str = include_str!("../examples/hook-skill-on-test.dl");
@@ -33,9 +37,12 @@ structured facts: call graph, import/type graph, blast radius, lint rails, codem
   (the engine lints `.dl` via the built-in `dl_diag` relation, like rust-analyzer).
 - Surface reference: see the engine's generated `docs/reference/{relations,functions,syntax,examples}.md`.
 - `agent_edit`/`agent_touch` are git-free (keyed on the cwd root dir); `changed`/`created` need git.
-- `dl setup --project` wired a `dl --hook` PostToolUse hook in `.claude/settings.json`:
-  a `.dl/` rule heading `inject`/`inject_skill`/`block` fires on a matching tool use
-  (see `.dl/hook-skill-on-test.dl`). Editor-independent context injection, no bash glue.
+- `dl setup --project` wired `dl --hook` hooks for Claude Code (`.claude/settings.json`),
+  codex (`.codex/hooks.json` — trust them in codex's UI before they fire), and opencode
+  (`.opencode/plugins/dl.js`): a `.dl/` rule heading `inject`/`inject_skill`/`block`
+  fires on a matching tool use (see `.dl/hook-skill-on-test.dl`). Editor-independent
+  context injection, no bash glue. Repo skills live in `.agents/skills/` (all three
+  harnesses read them; Claude Code via generated `.claude/skills` symlinks).
 - It also wired a `.githooks/pre-commit` (`dl --check`) + `core.hooksPath`, so a
   `diag` rail in `.dl/*.dl` blocks a bad commit (`git commit -n` bypasses).
 - Live editor squiggles: `dl setup --vscode` installs the bundled LSP extension.
@@ -207,6 +214,20 @@ pub(crate) fn wire_global(skills_dir: Option<String>) -> Result<i32> {
     std::fs::write(skill_dir.join("SKILL.md"), SKILL_MD)?;
     println!("[dl setup] skill -> {}", skill_dir.join("SKILL.md").display());
 
+    if let Ok(h) = home() {
+        // ~/.agents/skills is the cross-harness home (codex and opencode read
+        // it natively; dl's own resolve_skill checks it first). Write the
+        // primary copy there whenever it is not already the dest.
+        let agents = h.join(".agents/skills");
+        if agents.canonicalize().ok() != dest.canonicalize().ok() {
+            let ad = agents.join("sprefa-dl");
+            if std::fs::create_dir_all(&ad).is_ok()
+                && std::fs::write(ad.join("SKILL.md"), SKILL_MD).is_ok() {
+                println!("[dl setup] cross-harness -> {}", ad.join("SKILL.md").display());
+            }
+        }
+    }
+
     // Claude Code reads ~/.claude/skills. If that is not already the dest, drop a
     // copy there too (a copy, not a symlink — most portable across machines).
     // Detect Claude Code by ~/.claude (its config dir, present after first run);
@@ -355,11 +376,17 @@ fn bootstrap_project(dir: &Path, assume_yes: bool) -> Result<i32> {
     let interactive = is_tty();
     if !interactive && !assume_yes {
         println!("[dl setup] non-interactive; wired base scaffolding only. Re-run in a \
-                  terminal (or pass --yes) to add the Claude Code hook / git pre-commit / \
-                  VSCode extension.");
+                  terminal (or pass --yes) to add the Claude Code / codex / opencode \
+                  hooks, git pre-commit, or the VSCode extension.");
     } else {
         if want("the Claude Code PostToolUse hook (.claude/settings.json)", assume_yes) {
             wire_claude_hook(&dir);
+        }
+        if want("the codex hooks (.codex/hooks.json)", assume_yes) {
+            wire_codex_hook(&dir);
+        }
+        if want("the opencode plugin (.opencode/plugins/dl.js)", assume_yes) {
+            wire_opencode_plugin(&dir);
         }
         if want("the git pre-commit rail (.githooks/pre-commit + core.hooksPath)", assume_yes) {
             wire_git_hook(&dir);
@@ -383,24 +410,48 @@ fn bootstrap_project(dir: &Path, assume_yes: bool) -> Result<i32> {
 /// falls back to a copy.
 fn wire_repo_skills(dir: &Path) {
     let assets = dir.join("assets");
-    let Ok(entries) = std::fs::read_dir(&assets) else { return };
-    for e in entries.flatten() {
-        let p = e.path();
-        let Some(name) = p.file_name().and_then(|s| s.to_str())
-            .and_then(|s| s.strip_suffix(".skill.md")) else { continue };
-        let skill_dir = dir.join(".claude/skills").join(name);
-        let link = skill_dir.join("SKILL.md");
-        if link.exists() { continue; } // present and resolvable (file or live link)
-        let _ = std::fs::remove_file(&link); // a dangling symlink: exists()=false, remove_file works
-        if std::fs::create_dir_all(&skill_dir).is_err() { continue; }
-        #[cfg(unix)]
-        let ok = std::os::unix::fs::symlink(
-            Path::new("../../../assets").join(format!("{name}.skill.md")), &link).is_ok();
-        #[cfg(not(unix))]
-        let ok = std::fs::copy(&p, &link).is_ok();
-        if ok {
-            println!("[dl setup] project skill -> {}", link.display());
+    if let Ok(entries) = std::fs::read_dir(&assets) {
+        for e in entries.flatten() {
+            let p = e.path();
+            let Some(name) = p.file_name().and_then(|s| s.to_str())
+                .and_then(|s| s.strip_suffix(".skill.md")) else { continue };
+            link_repo_skill(dir, name, Path::new("../../../assets").join(format!("{name}.skill.md")), &p);
         }
+    }
+    // `.agents/skills/<name>/SKILL.md` is the cross-harness authoring home
+    // (codex and opencode read it natively; only Claude Code needs the
+    // `.claude/skills` shim, so symlink each into it).
+    if let Ok(entries) = std::fs::read_dir(dir.join(".agents/skills")) {
+        for e in entries.flatten() {
+            let src = e.path().join("SKILL.md");
+            if !src.is_file() { continue; }
+            let Some(name) = e.file_name().to_str().map(str::to_string) else { continue };
+            link_repo_skill(
+                dir, &name,
+                Path::new("../../../.agents/skills").join(&name).join("SKILL.md"),
+                &src,
+            );
+        }
+    }
+}
+
+/// One `.claude/skills/<name>/SKILL.md` shim: a relative symlink to `target`
+/// (copy of `src` on non-unix). Idempotent: a file or live link already at the
+/// destination is left alone; a dangling symlink is re-pointed.
+fn link_repo_skill(dir: &Path, name: &str, target: PathBuf, src: &Path) {
+    let skill_dir = dir.join(".claude/skills").join(name);
+    let link = skill_dir.join("SKILL.md");
+    if link.exists() { return; } // present and resolvable (file or live link)
+    let _ = std::fs::remove_file(&link); // a dangling symlink: exists()=false, remove_file works
+    if std::fs::create_dir_all(&skill_dir).is_err() { return; }
+    #[cfg(unix)]
+    let ok = std::os::unix::fs::symlink(target, &link).is_ok();
+    #[cfg(not(unix))]
+    let ok = { let _ = target; std::fs::copy(src, &link).is_ok() };
+    #[cfg(unix)]
+    let _ = src;
+    if ok {
+        println!("[dl setup] project skill -> {}", link.display());
     }
 }
 
@@ -500,8 +551,10 @@ fn wire_claude_hook(dir: &Path) {
     // PostToolUse fires on file-touch tools; UserPromptSubmit fires on every user
     // message (no matcher — the whole prompt is the event).
     let mut wrote = false;
-    wrote |= register_hook_event(hooks, "PostToolUse", Some("Read|Edit|Write|MultiEdit"), &cfg);
-    wrote |= register_hook_event(hooks, "UserPromptSubmit", None, &cfg);
+    wrote |= register_hook_event(hooks, "claude code", "dl --hook",
+        "PostToolUse", Some("Read|Edit|Write|MultiEdit"), &cfg);
+    wrote |= register_hook_event(hooks, "claude code", "dl --hook",
+        "UserPromptSubmit", None, &cfg);
     if !wrote {
         return; // nothing changed (both already present) — leave the file as is
     }
@@ -518,12 +571,81 @@ fn wire_claude_hook(dir: &Path) {
     }
 }
 
-/// Register one `dl --hook` command under `hooks[event]`, idempotently. Returns
-/// true if a new entry was added. `matcher` is the tool filter (PostToolUse) or
-/// None (UserPromptSubmit, no matcher). One shared shape so a new event kind is a
-/// one-line call, not a copy of the block above.
+/// Register the `dl --hook --dialect codex` hooks in `<repo>/.codex/hooks.json`.
+/// Codex CLI reads hooks from this JSON file in the same shape as Claude Code's
+/// `settings.json` `hooks` key (verified against the installed binary's embedded
+/// schemas, codex 0.144.1) — NOT from `config.toml`, which only stores
+/// codex-managed `[hooks.state]` trust hashes. Same merge/idempotency path as
+/// wire_claude_hook. Codex runs a hook only after the user trusts it in codex's
+/// own UI; dl never writes trust hashes.
+fn wire_codex_hook(dir: &Path) {
+    let cdir = dir.join(".codex");
+    let cfg = cdir.join("hooks.json");
+    let txt = std::fs::read_to_string(&cfg).unwrap_or_default();
+    let mut v: serde_json::Value = if txt.trim().is_empty() {
+        serde_json::json!({})
+    } else {
+        match serde_json::from_str(&txt) {
+            Ok(v) => v,
+            Err(_) => {
+                println!("[dl setup] {} is not valid JSON; add PostToolUse + \
+                          UserPromptSubmit hooks running `dl --hook --dialect codex` by hand", cfg.display());
+                return;
+            }
+        }
+    };
+    let Some(obj) = v.as_object_mut() else { return; };
+    let hooks = obj.entry("hooks").or_insert_with(|| serde_json::json!({}));
+    let Some(hooks) = hooks.as_object_mut() else { return; };
+    let mut wrote = false;
+    wrote |= register_hook_event(hooks, "codex", "dl --hook --dialect codex",
+        "PostToolUse", Some("Read|Edit|Write|MultiEdit"), &cfg);
+    wrote |= register_hook_event(hooks, "codex", "dl --hook --dialect codex",
+        "UserPromptSubmit", None, &cfg);
+    if !wrote {
+        return; // both already present — leave the file as is
+    }
+    if std::fs::create_dir_all(&cdir).is_err() {
+        return;
+    }
+    if let Ok(out) = serde_json::to_string_pretty(&v) {
+        if std::fs::write(&cfg, out).is_ok() {
+            println!("[dl setup] codex hooks -> {}", cfg.display());
+            println!("[dl setup]   IMPORTANT: codex runs a hook only after you trust it — \
+                      open codex in this repo and approve the dl hooks when prompted \
+                      (dl never writes trust hashes).");
+        }
+    }
+}
+
+/// Write the opencode bridge plugin to `<repo>/.opencode/plugins/dl.js` from the
+/// embedded asset. opencode has no native hook config; the plugin translates its
+/// lifecycle events into `dl --hook --dialect opencode`. Idempotent: identical
+/// content is left untouched; stale content (an older dl) is refreshed.
+fn wire_opencode_plugin(dir: &Path) {
+    let pdir = dir.join(".opencode/plugins");
+    let dest = pdir.join("dl.js");
+    if std::fs::read_to_string(&dest).ok().as_deref() == Some(OPENCODE_PLUGIN_JS) {
+        println!("[dl setup] opencode plugin already current at {}", dest.display());
+        return;
+    }
+    if std::fs::create_dir_all(&pdir).is_err() {
+        return;
+    }
+    if std::fs::write(&dest, OPENCODE_PLUGIN_JS).is_ok() {
+        println!("[dl setup] opencode plugin -> {}", dest.display());
+    }
+}
+
+/// Register one dl hook command under `hooks[event]`, idempotently. Returns
+/// true if a new entry was added. `label` names the harness in messages;
+/// `command` is the exact hook command; `matcher` is the tool filter
+/// (PostToolUse) or None (UserPromptSubmit, no matcher). One shared shape so a
+/// new event kind or harness is a one-line call, not a copy of the block above.
 fn register_hook_event(
     hooks: &mut serde_json::Map<String, serde_json::Value>,
+    label: &str,
+    command: &str,
     event: &str,
     matcher: Option<&str>,
     cfg: &Path,
@@ -539,10 +661,10 @@ fn register_hook_event(
         })
     });
     if already {
-        println!("[dl setup] claude code {event} hook already registered in {}", cfg.display());
+        println!("[dl setup] {label} {event} hook already registered in {}", cfg.display());
         return false;
     }
-    let mut entry = serde_json::json!({ "hooks": [ { "type": "command", "command": "dl --hook" } ] });
+    let mut entry = serde_json::json!({ "hooks": [ { "type": "command", "command": command } ] });
     if let Some(m) = matcher {
         entry.as_object_mut().unwrap().insert("matcher".into(), serde_json::json!(m));
     }
@@ -674,6 +796,116 @@ mod tests {
         let cfg = std::process::Command::new("git").arg("-C").arg(&dir)
             .args(["config", "core.hooksPath"]).output().unwrap();
         assert_eq!(String::from_utf8_lossy(&cfg.stdout).trim(), ".githooks");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn codex_hooks_json_fresh_then_idempotent() {
+        let dir = std::env::temp_dir().join(format!("dlsetup_codex_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        wire_codex_hook(&dir);
+        let read = |dir: &Path| -> Value {
+            serde_json::from_str(&std::fs::read_to_string(dir.join(".codex/hooks.json")).unwrap()).unwrap()
+        };
+        let v = read(&dir);
+        assert_eq!(v["hooks"]["PostToolUse"][0]["hooks"][0]["command"], "dl --hook --dialect codex");
+        assert_eq!(v["hooks"]["PostToolUse"][0]["matcher"], "Read|Edit|Write|MultiEdit");
+        assert_eq!(v["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"], "dl --hook --dialect codex");
+        assert!(v["hooks"]["UserPromptSubmit"][0].get("matcher").is_none());
+        // Second run: no duplicates, byte-identical file.
+        let before = std::fs::read_to_string(dir.join(".codex/hooks.json")).unwrap();
+        wire_codex_hook(&dir);
+        let after = std::fs::read_to_string(dir.join(".codex/hooks.json")).unwrap();
+        assert_eq!(before, after, "second wire must not change .codex/hooks.json");
+        assert_eq!(read(&dir)["hooks"]["PostToolUse"].as_array().unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn opencode_plugin_written_then_idempotent_and_refreshes_stale() {
+        let dir = std::env::temp_dir().join(format!("dlsetup_oc_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        wire_opencode_plugin(&dir);
+        let dest = dir.join(".opencode/plugins/dl.js");
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), OPENCODE_PLUGIN_JS);
+        // Idempotent second run.
+        wire_opencode_plugin(&dir);
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), OPENCODE_PLUGIN_JS);
+        // A stale plugin (older dl) is refreshed to the embedded copy.
+        std::fs::write(&dest, "// old plugin\n").unwrap();
+        wire_opencode_plugin(&dir);
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), OPENCODE_PLUGIN_JS);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn repo_skills_links_agents_skills_dir_idempotently() {
+        let dir = std::env::temp_dir().join(format!("dlsetup_agsk_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".agents/skills/my-repo-skill")).unwrap();
+        std::fs::write(dir.join(".agents/skills/my-repo-skill/SKILL.md"), "# My repo skill\n").unwrap();
+        wire_repo_skills(&dir);
+        let link = dir.join(".claude/skills/my-repo-skill/SKILL.md");
+        assert_eq!(std::fs::read_to_string(&link).unwrap(), "# My repo skill\n",
+            "the .claude shim must resolve to the .agents source");
+        #[cfg(unix)]
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        // Second run leaves it alone.
+        wire_repo_skills(&dir);
+        assert_eq!(std::fs::read_to_string(&link).unwrap(), "# My repo skill\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The full setup wiring run twice -> identical tree (paths + bytes). Runs
+    /// the same sequence bootstrap_project wires, minus the VSCode extension
+    /// arm (install_vscode_extension mutates the machine's `code` extension
+    /// state, not the project tree — the tree identity claim is unaffected).
+    #[test]
+    fn setup_wiring_twice_produces_identical_tree() {
+        let dir = std::env::temp_dir().join(format!("dlsetup_idem_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        git_init(&dir);
+        let wire_all = |dir: &Path| {
+            let dl_dir = dir.join(".dl");
+            std::fs::create_dir_all(&dl_dir).unwrap();
+            write_starter(&dl_dir.join("dl-self-lint.dl"), STARTER_DL).unwrap();
+            write_starter(&dl_dir.join("hook-skill-on-test.dl"), STARTER_HOOK).unwrap();
+            append_section(&dir.join("AGENTS.md")).unwrap();
+            append_section(&dir.join("CLAUDE.md")).unwrap();
+            wire_repo_skills(dir);
+            wire_claude_hook(dir);
+            wire_codex_hook(dir);
+            wire_opencode_plugin(dir);
+            wire_git_hook(dir);
+        };
+        wire_all(&dir);
+        let snapshot = |dir: &Path| {
+            let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+            let mut stack = vec![dir.to_path_buf()];
+            while let Some(d) = stack.pop() {
+                for e in std::fs::read_dir(&d).unwrap().flatten() {
+                    let path = e.path();
+                    if path.file_name().is_some_and(|n| n == ".git") { continue; }
+                    if path.is_dir() {
+                        stack.push(path);
+                    } else {
+                        let rel = path.strip_prefix(dir).unwrap().to_string_lossy().into_owned();
+                        entries.push((rel, std::fs::read(&path).unwrap_or_default()));
+                    }
+                }
+            }
+            entries.sort();
+            entries
+        };
+        let first = snapshot(&dir);
+        assert!(first.iter().any(|(p, _)| p == ".codex/hooks.json"));
+        assert!(first.iter().any(|(p, _)| p == ".opencode/plugins/dl.js"));
+        assert!(first.iter().any(|(p, _)| p == ".claude/settings.json"));
+        wire_all(&dir);
+        let second = snapshot(&dir);
+        assert_eq!(first, second, "second setup wiring must not change the tree");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
