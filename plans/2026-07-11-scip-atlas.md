@@ -134,3 +134,14 @@ native home of pointer analysis, Doop precedent; semi-naive makes it affordable)
    <!-- todo(feature): cfg_edge lift rel for flow-sensitive dl analyses -->
 4. assignable(a,b) subtyping closure from scip_impl + type_link — type-
    filterable flow edges.
+
+## Coordinate policy (2026-07-11)
+
+Bytes for identity/edit/join coordinates (the ref-spine already is), line/col
+as display projections computed at the edge. Line-keyed JOIN offenders:
+call_site (same-line same-name refuses), df_node<->call line equality (line-
+base lore class), type refs (positionless — spec the fix as byte spans),
+agent_edit spans (spec new columns as byte ranges joining _where_bytes),
+embedded sg region spans (absolute-byte composition). Lines stay correct for:
+size budgets, LSP surfaces, disable-line directives, scip wire format.
+<!-- todo(decision): coordinate policy — no new line-keyed joins; byte spans + edge projection; migrate call_site/df joins when touched -->

@@ -21,6 +21,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `decision` plans/2026-07-10-change-cost-friction-inventory.md:152 — item 5 — a resolution_source column (values scip|syntactic|alias|narrowed) on call_edge/type_link (rev twins included), plus a public eng.ensure_families(&[...])
 - `decision` plans/2026-07-11-codex-feedback-queue.md:122 — CLI flag taxonomy — query/mutate/effects axes
 - `decision` plans/2026-07-11-intern-string-keys.md:159 — which payload TEXT columns stay text (df_lit.text, doc_comment.text) — decided by the spike's decode-cost numbers
+- `decision` plans/2026-07-11-scip-atlas.md:147 — coordinate policy — no new line-keyed joins; byte spans + edge projection; migrate call_site/df joins when touched
 - `docs` plans/2026-07-10-change-cost-friction-inventory.md:151 — item 6 — a generated per-language coverage table (which node kinds each TypeLang lift emits, tested counts on a fixture) in docs/reference
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:84 — match() trailing positional is a match ID not captured text — rename convention to match_id in shipped examples, show named-capture form in the op quickref
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:85 — comment_node.text strips comment tokens — state it in the relations table row, not only the buried authoring bullet
@@ -131,6 +132,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-11-scip-atlas.md:128 `feature` — std/points-to.dl Andersen-style over df facts
 - plans/2026-07-11-scip-atlas.md:131 `feature` — std/dispatch.dl CHA via scip_impl, VTA refinement
 - plans/2026-07-11-scip-atlas.md:134 `feature` — cfg_edge lift rel for flow-sensitive dl analyses
+- plans/2026-07-11-scip-atlas.md:147 `decision` — coordinate policy — no new line-keyed joins; byte spans + edge projection; migrate call_site/df joins when touched
 <!-- END: plans-by-plan -->
 
 ## By code file
