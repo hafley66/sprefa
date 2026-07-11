@@ -76,6 +76,27 @@ Span joins, sg, jsonp, and the diag sink are solid; the two rails shipped and ga
 capped by agent_edit's file granularity and subagent invisibility — both fixable on the
 sprefa side, and the highest-value items in this batch.
 
+## Addendum: gen-rail session, same day (TODOS.md aggregation rail)
+
+Second Sonnet session, `.dl/gen-todos.dl` (smashy commit 9531a9d). New items only:
+
+- **Named captures `(?<name>...)` bind only via the `match` source op.** In a plain `=~`
+  body constraint on an already-bound var they silently don't bind: `--parse-only` accepts,
+  full run errors `unbound variable <name>`. Workaround: `replace_re(text, ..., "$1")` in
+  the rule head. Candidate: either bind captures from `=~` too, or reject them at parse.
+- **`gen` row order is the rendered output text**, not any sort-key column bound in the
+  body (tested: bound or `_`, zero effect). Ordering requires baking the sort prefix into
+  the rendered string. Candidate: document, or accept an order-by column.
+- **`gen` interpolation is `{var}`, not `${var}`** — the diag/string-head sigil in a gen
+  template fails at RUNTIME (`gen expects a template string here, got Interp(...)`), not
+  at parse. Candidate: parse-time check.
+- **Version drift broke two shipped rails on this repo**: `file_lines` became a reserved
+  builtin name (rail's own rel had to rename), and a source rule mixing `scan(...)` with a
+  negated relation atom now fails "source rules cannot join relations" (split into
+  bare-scan rel + derived filter). Both fixed repo-side; flagging because reserved-name
+  additions and source-rule tightening are silent breaking changes for existing rails —
+  a `dl --check` upgrade note or migration lint would catch these.
+
 ## Triage todos (added 2026-07-11, from the capture above)
 
 <!-- todo(bug): agent_edit/agent_touch return 0 rows inside a spawned subagent — session-store keying or flush; document what writes the store -->
