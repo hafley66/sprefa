@@ -130,3 +130,7 @@ gray_matter + the frontmatter emitter earn their keep here.
 Arc 1 = one Sonnet worktree agent (hook.rs + setup.rs are cohesive; suite budget 2
 full runs), base SHA named in the brief. The codex hook schema verification is done
 first on a live codex install and the captured payload pasted into the brief.
+
+<!-- todo(feature): arc 2 — commands + subagents render from .agents/ (.agents/commands/*.md -> .claude/commands / ~/.codex/prompts / .opencode/commands; .agents/agents/*.md -> symlink .claude/agents, near-copy .opencode/agents, md->TOML .codex/agents via toml_edit) -->
+<!-- todo(triage): a CodexSessions AgentHarness arm for agent_* rels — session-store format needs research -->
+<!-- todo(feature): MCP config wiring (.mcp.json / [mcp_servers.dl] / opencode.json mcp) + opencode lsp entry for dl --lsp -->

@@ -1434,7 +1434,8 @@ impl Engine {
         for row in rows.flatten() {
             let p = row.1.as_str();
             let ts = p.ends_with(".ts") || p.ends_with(".tsx");
-            if ts || crate::cst::lang_label_for_path(p).is_some() { files.push(row); }
+            let md = p.ends_with(".md") || p.ends_with(".markdown");
+            if ts || md || crate::cst::lang_label_for_path(p).is_some() { files.push(row); }
         }
         Ok(files)
     }
@@ -1467,6 +1468,8 @@ impl Engine {
                 let rid = repo_id_of(froot, path, repo);
                 let comments = if path.ends_with(".ts") || path.ends_with(".tsx") {
                     typegraph::ts_comments(&content, path.ends_with(".tsx"))
+                } else if path.ends_with(".md") || path.ends_with(".markdown") {
+                    crate::cst::walk_md_comments(&content).unwrap_or_default()
                 } else {
                     let label = crate::cst::lang_label_for_path(path)?;
                     let lang = ts_lang(label).ok()?;

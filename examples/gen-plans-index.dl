@@ -1,0 +1,94 @@
+# gen-plans-index.dl — the todo comments inside plans/*.md drive PLANS.md.
+#
+# Plan docs are the arc trail; open items rot inside them because nothing
+# aggregates. THE CONVENTION (documented in .agents/skills/sprf-write-plan):
+# one markdown comment per open item, anywhere in a plan doc:
+#
+#   <!-- todo(category): text -->
+#
+# category is an open set; starter vocabulary: perf | bug | feature | docs |
+# triage | decision. Multi-line comment bodies are allowed (the text is
+# whitespace-flattened for the index row). `comment_node` extracts these
+# grammar-backed (tree-sitter-md html_block filter), so a fenced code sample
+# showing the convention is never a row.
+#
+# This program scans plans/*.md, parses the todo rows, and gen-splices two
+# zones of PLANS.md (repo root): a category-grouped reverse index and a
+# per-plan listing. Everything outside the BEGIN:/END: markers is hand-owned.
+#
+#   Run:     dl examples/gen-plans-index.dl          (regenerates PLANS.md zones)
+#   Check:   dl examples/gen-plans-index.dl --check  (drift rail, exit non-zero on
+#            a todo added/removed without a regen)
+#
+# gen-doc-indexes.dl is the precedent (same zone + drift-rail shape).
+
+# ── plan corpus ───────────────────────────────────────────────────────────────
+# scan is a source op; the comment_node join lives in a DERIVED rule (a rel
+# atom in a source-extract rule body is silently dropped — sharp edge S6).
+rel plan_file(plan_path: file).
+plan_file(plan_path) <- scan("WORK", "plans/*.md", plan_path, rev).
+
+# ── todo rows ─────────────────────────────────────────────────────────────────
+# comment_node text arrives with the <!-- --> delimiters already stripped.
+# category = the parenthesized word; todo_text = the rest, whitespace-flattened
+# so a multi-line comment renders as one index row.
+rel plan_todo(plan_path: file, todo_line: int, category: text, todo_text: text).
+plan_todo(plan_path, todo_line, category, todo_text) <-
+    plan_file(plan_path),
+    comment_node(plan_path, todo_line, _, _, _, comment_text, "block"),
+    comment_text =~ /^todo\([a-z-]+\):/,
+    category = replace_re(comment_text, r"(?s)^todo\(([a-z-]+)\):.*$", "$1"),
+    todo_text = trim(replace_re(replace_re(comment_text, r"^todo\([a-z-]+\):", ""), r"\s+", " ")).
+
+# The composite "plans/<file>:<line>" reference used by both the rendered rows
+# and the drift rail (computed in a derived head; a body can't bind an interp).
+rel plan_todo_ref(todo_ref: text, plan_path: file, todo_line: int, category: text, todo_text: text).
+plan_todo_ref("${plan_path}:${todo_line}", plan_path, todo_line, category, todo_text) <-
+    plan_todo(plan_path, todo_line, category, todo_text).
+
+# ── PLANS.md zones ────────────────────────────────────────────────────────────
+# Zone rows render deterministically (gen ORDER BYs its vars in template hole
+# order), so leading with {category} groups the reverse index by category, and
+# leading with {plan_path} groups the per-plan section by plan.
+gen(:zone, "PLANS.md", "plans-by-category", "- `{category}` {todo_ref} — {todo_text}") <-
+    plan_todo_ref(todo_ref, plan_path, todo_line, category, todo_text).
+
+gen(:zone, "PLANS.md", "plans-by-plan", "- {plan_path}:{todo_line} `{category}` — {todo_text}") <-
+    plan_todo_ref(todo_ref, plan_path, todo_line, category, todo_text).
+
+# ── drift rail ────────────────────────────────────────────────────────────────
+# gen is suppressed under --check/--lsp, so PLANS.md stays as committed; a todo
+# added (or removed) without a regen desyncs the zone rows and fires here.
+# Zone line coordinates come from the comment op over the NAMED markers (the
+# END: markers carry the zone name so the two zones pair independently).
+rel plans_index_zone(index_path: file, zone_l0: int, zone_l1: int).
+plans_index_zone(index_path, zone_l0, zone_l1) <-
+    scan("WORK", "PLANS.md", index_path, rev),
+    comment(index_path, rev, /BEGIN: plans-by-category/, /END: plans-by-category/, zone_l0, zone_l1).
+
+# The refs actually rendered on disk inside the by-category zone.
+rel plans_index_row(index_path: file, row_ref: text, row_line: int).
+plans_index_row(index_path, row_ref, row_line) <-
+    scan("WORK", "PLANS.md", index_path, rev),
+    match(index_path, rev, /^- `[a-z-]+` (?<row_ref>plans\/[^:]+:\d+) — /, row_line).
+rel plans_index_has(row_ref: text).
+plans_index_has(row_ref) <- plans_index_row(index_path, row_ref, row_line),
+    plans_index_zone(index_path, zone_l0, zone_l1), row_line > zone_l0, row_line < zone_l1.
+
+# Forward drift: a todo comment on disk absent from PLANS.md.
+diag(path: plan_path, line: todo_line, severity: "error", code: "plans-index-drift",
+     msg: "todo(${category}) at ${todo_ref} absent from PLANS.md; rerun examples/gen-plans-index.dl") <-
+    plan_todo_ref(todo_ref, plan_path, todo_line, category, todo_text),
+    !plans_index_has(todo_ref).
+
+# Reverse drift: PLANS.md lists a ref with no matching todo comment (a delete
+# or an edit that moved the comment's line, not regenerated).
+rel plan_todo_ref_key(todo_ref: text).
+plan_todo_ref_key(todo_ref) <- plan_todo_ref(todo_ref, _, _, _, _).
+diag(path: index_path, line: row_line, severity: "error", code: "plans-index-orphan",
+     msg: "PLANS.md lists ${row_ref} with no matching todo comment; rerun examples/gen-plans-index.dl") <-
+    plans_index_row(index_path, row_ref, row_line),
+    plans_index_zone(index_path, zone_l0, zone_l1), row_line > zone_l0, row_line < zone_l1,
+    !plan_todo_ref_key(row_ref).
+
+? plan_todo_ref(todo_ref, plan_path, todo_line, category, todo_text).

@@ -952,7 +952,7 @@ pub(crate) fn comment_rel_decls() -> Vec<RelDecl> {
             c("path", Type::Path), c("line", Type::Int), c("col", Type::Int),
             c("end_line", Type::Int), c("end_col", Type::Int),
             c("text", Type::Text), c("kind", Type::Text)], group: "comment",
-            doc: "every comment in every parsed file: (path, line, col, end_line, end_col, text, kind is line/block/doc); grammar-backed (oxc for TS/TSX, tree-sitter for Rust, Kotlin, Python, Go, C, ...), so a comment marker inside a string is never a row; text has the comment tokens stripped; std/suppress.dl parses it into the eslint/biome disable grammar", ..Default::default() },
+            doc: "every comment in every parsed file: (path, line, col, end_line, end_col, text, kind is line/block/doc); grammar-backed (oxc for TS/TSX, tree-sitter for Rust, Kotlin, Python, Go, C, ..., tree-sitter-md for markdown <!-- --> comments as kind=block), so a comment marker inside a string is never a row; text has the comment tokens stripped; std/suppress.dl parses it into the eslint/biome disable grammar; examples/gen-plans-index.dl parses todo(category) plan comments", ..Default::default() },
     ]
 }
 
