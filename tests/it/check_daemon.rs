@@ -196,8 +196,14 @@ fn explicit_program_and_db_stays_inprocess() {
         .expect("run dl --check --db");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "clean program should exit 0: {stderr}");
-    assert!(!stderr.contains("daemon"),
-        "an explicit --db run must never mention the daemon: {stderr}");
+    // Positive evidence of the in-process path: the [db] verdict names the
+    // explicit db as the one actually opened. (A bare `contains("daemon")`
+    // assert false-positived on this test's own sandbox dir name appearing
+    // in that verdict's path.)
+    assert!(stderr.contains("explicit.sqlite"),
+        "the [db] open verdict must name the explicit --db path: {stderr}");
+    assert!(!stderr.contains("no daemon serving"),
+        "an explicit --db run must not even consult daemon routing: {stderr}");
     assert!(scratch_db.exists(), "the explicit --db path is what gets used");
     assert!(!sb.cache_db_path().exists(), "no cache.db side effect from an explicit --db run");
 

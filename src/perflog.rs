@@ -263,10 +263,15 @@ mod tests {
     #[test]
     fn path_resolver() {
         std::env::remove_var("DL_PERF_LOG");
+        // ROOT is a process-global OnceLock shared with every other lib test
+        // running in this process — another test may have set it first, so
+        // derive the expected default from whatever value actually stuck
+        // (asserting the literal here was a parallel-run flake).
         let _ = ROOT.set(PathBuf::from("/tmp/dl_perf_test_root"));
+        let root = ROOT.get().expect("ROOT set by this or another test");
         assert_eq!(
             path(),
-            Some(PathBuf::from("/tmp/dl_perf_test_root/.dl/perf.jsonl")),
+            Some(root.join(".dl").join("perf.jsonl")),
             "default path is <root>/.dl/perf.jsonl"
         );
         std::env::set_var("DL_PERF_LOG", "/tmp/alt-perf.jsonl");
