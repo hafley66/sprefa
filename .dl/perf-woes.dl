@@ -82,6 +82,15 @@ tick_budget_ms(10000).
 rel perf_row_budget(max: int).
 perf_row_budget(500000).
 
+# The severity contract is data, not a second Rust-side list. `perf_woes.rs`
+# reads these facts directly; update this fixture alongside any diagnostic
+# severity/code change.
+rel perf_woes_contract(code: text, severity: text).
+perf_woes_contract("slow-rule-onsite", "warning").
+perf_woes_contract("slow-rule", "warning").
+perf_woes_contract("tick-over-budget", "warning").
+perf_woes_contract("perf-woes-rel-blowup", "warning").
+
 # ── rel_name -> rule-head location, scanning the .dl corpus itself ─────────
 # A rule head always starts a line at column 0 in this codebase's style (no
 # block indentation), so `^name(...` followed somewhere on the same line by

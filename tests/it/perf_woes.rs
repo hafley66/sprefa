@@ -24,6 +24,22 @@ fn rail() -> String {
     format!("{}/.dl/perf-woes.dl", env!("CARGO_MANIFEST_DIR"))
 }
 
+/// The rail is the single fixture for its diagnostic contract. Keeping this
+/// parser deliberately narrow makes an accidental severity edit fail the Rust
+/// integration test instead of leaving a stale hand-written assertion behind.
+fn contract() -> Vec<(String, String)> {
+    let text = fs::read_to_string(rail()).expect("read perf-woes rail");
+    let mut rows: Vec<(String, String)> = text.lines().filter_map(|line| {
+        let line = line.trim();
+        let rest = line.strip_prefix("perf_woes_contract(\"")?;
+        let (code, rest) = rest.split_once("\", \"")?;
+        let severity = rest.strip_suffix("\").")?;
+        Some((code.to_string(), severity.to_string()))
+    }).collect();
+    rows.sort();
+    rows
+}
+
 fn sandbox(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("dl_perfwoes_{tag}_{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
@@ -106,7 +122,9 @@ fn repro_slow_rule_and_tick_overbudget_fire_onsite() {
     assert_eq!(code2, 0, "perf warnings never fail the check: out={out2} err={err2}");
     let findings = format!("{out2}{err2}");
 
-    assert!(findings.contains("slow-rule-onsite"),
+    assert!(contract().contains(&("slow-rule-onsite".into(), "warning".into())),
+        "the rail fixture records slow-rule-onsite as warning");
+    assert!(findings.contains("warning[slow-rule-onsite]"),
         "onsite per-rule WARN fires:\n{findings}");
     assert!(findings.contains("triple"),
         "the finding names the offending rel `triple`:\n{findings}");
@@ -116,10 +134,10 @@ fn repro_slow_rule_and_tick_overbudget_fire_onsite() {
     assert!(!findings.contains("slow-rule]"),
         "no un-located fallback finding when a rule head IS found:\n{findings}");
 
-    assert!(findings.contains("tick-over-budget"),
-        "the whole-tick hard tripwire fires:\n{findings}");
+    assert!(contract().contains(&("tick-over-budget".into(), "warning".into())),
+        "the rail fixture records tick-over-budget as warning");
     assert!(findings.contains("warning[tick-over-budget]"),
-        "tick-over-budget is WARNING severity (never write-blocking):\n{findings}");
+        "the whole-tick tripwire fires as WARNING:\n{findings}");
 }
 
 /// QUIET: a cheap program with the shipped (generous) default budgets must
@@ -136,10 +154,20 @@ fn quiet_on_a_healthy_program() {
     assert_eq!(code2, 0, "second run clean (exit 0, no ERROR finding): {err2}");
     let findings = format!("{out2}{err2}");
 
-    for code in ["slow-rule", "slow-rule-onsite", "tick-over-budget", "perf-woes-rel-blowup"] {
-        assert!(!findings.contains(code),
+    for (code, _severity) in contract() {
+        assert!(!findings.contains(&code),
             "no `{code}` finding on a healthy program:\n{findings}");
     }
+}
+
+#[test]
+fn rail_contract_fixture_has_the_expected_warning_pairs() {
+    assert_eq!(contract(), vec![
+        ("perf-woes-rel-blowup".into(), "warning".into()),
+        ("slow-rule".into(), "warning".into()),
+        ("slow-rule-onsite".into(), "warning".into()),
+        ("tick-over-budget".into(), "warning".into()),
+    ]);
 }
 
 /// RAIL-HONESTY: the rail program itself parses clean, and its own
