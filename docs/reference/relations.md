@@ -22,6 +22,8 @@ Generated from the engine's `rel_catalog` by examples/gen-reference.dl. Do not h
 | `child` | node | `(parent, child)` | CST parent-child edges (exactly 2 cols, so closure(child) gives ancestry) |
 | `clock` | clock | `(secs, bucket)` | the current time bucket now/secs per named period, present EVERY tick (not edge-triggered like every); clock(300,b) binds b to a monotone int advancing once per 300s — join it to vary a digest or gate on cadence, no @next counter |
 | `comment_node` | comment | `(path, line, col, end_line, end_col, text, kind)` | every comment in every parsed file: (path, line, col, end_line, end_col, text, kind is line/block/doc); grammar-backed (oxc for TS/TSX, tree-sitter for Rust, Kotlin, Python, Go, C, ...), so a comment marker inside a string is never a row; text has the comment tokens stripped; std/suppress.dl parses it into the eslint/biome disable grammar |
+| `const_value` | type | `(repo, sym, field, text, kind, file, line)` | string value folded from a const (or as const) binding; sym is the owning type_entity (the const itself, or the enum for a string member), field is "" for a bare const or a dotted key path ("home", "nested.a") for an object literal; a let/var string initializer is never emitted (soundness rule); line is 1-based |
+| `const_value_rev` | type | `(repo, sym, field, text, kind, file, line, rev)` | rev-aware const_value (rev is a plain trailing column, like type_entity_rev — sym never collides across revs); legacy const_value is the rev-deduped union |
 | `content` | core | `(id, hash)` | content addresses |
 | `crate_edge` | module | `(src, dst, kind, rev)` | workspace-internal Cargo dependency edges |
 | `created` | created | `(path, name, email, ts)` | files added since their first appearance, with author name/email/timestamp |
@@ -31,6 +33,8 @@ Generated from the engine's `rel_catalog` by examples/gen-reference.dl. Do not h
 | `df_edge` | dataflow | `(from, to)` | intra-procedural dataflow dependency edge |
 | `df_field` | dataflow | `(id, field, value)` | (new/call df_node id, field name, value df_node id); struct-literal fields, object-literal properties, Kotlin named args; ".." for spread/functional-update bases |
 | `df_field_rev` | dataflow | `(id, field, value, rev)` | rev-aware df_field; id and value are salt_rev(raw id, rev), matching df_node_rev.id; legacy df_field keeps raw ids |
+| `df_lit` | dataflow | `(id, text, kind)` | (df_node id, text, kind); lit=cooked string literal, template/concat=raw source slice with holes intact; TS/TSX/JS + Rust lit today |
+| `df_lit_rev` | dataflow | `(id, text, kind, rev)` | rev-aware df_lit; id is salt_rev(raw id, rev), matching df_node_rev.id; legacy df_lit keeps the raw id |
 | `df_node` | dataflow | `(id, kind, var, fn, file, line)` | intra-procedural dataflow node (call_res/let_bind/param/ret/new/member/...); id is file::line::kind — the full kind vocabulary is rel_col's variants for this column |
 | `df_node_repo` | dataflow | `(id, repo)` | (df_node id, repo) — the repo (nearest .git basename) each node's file was read from; scopes df joins per-repo (df_node ids are path-keyed) |
 | `df_node_repo_rev` | dataflow | `(id, repo, rev)` | rev-aware df_node_repo; id is salt_rev(raw id, rev), matching df_node_rev.id; legacy df_node_repo keeps the raw id |
