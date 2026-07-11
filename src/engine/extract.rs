@@ -343,6 +343,16 @@ impl Engine {
                             }
                         }
                     }
+                    // import_binding: EVERY local binding, for EVERY resolution
+                    // kind (File/External/Unresolved) — unlike `bindings` above,
+                    // this is the rel a "which library" query joins, so it must
+                    // not skip External (the common library-import case).
+                    for (local_name, imported_name, kind) in &mref.import_bindings {
+                        rows.import_bindings.push(vec![
+                            t(path), t(local_name), t(&mref.specifier), t(imported_name),
+                            Value::Text((*kind).to_string()), t(rev),
+                        ]);
+                    }
                     match mref.target {
                         // A self-edge (e.g. `use crate::X` where X is defined in this
                         // crate root) is not a dependency; drop it so the graph and
@@ -379,6 +389,8 @@ impl Engine {
             self.db.insert_rows(&tbl("crate_edge"), &["src", "dst", "kind", "rev"], &rows.crate_edges)?;
         }
         self.db.insert_rows(&tbl("module_binding_rev"), &["file", "local", "source", "dst", "rev"], &rows.bindings)?;
+        self.db.insert_rows(&tbl("import_binding_rev"),
+            &["file", "local_name", "source_module", "imported_name", "kind", "rev"], &rows.import_bindings)?;
         self.insert_module_spans(rows)?;
         Ok(())
     }
@@ -418,6 +430,13 @@ impl Engine {
             "INSERT OR IGNORE INTO {binding} (\"file\", \"local\", \"source\", \"dst\") \
              SELECT \"file\", \"local\", \"source\", \"dst\" FROM {binding_rev}"
         ))?;
+        let import_binding = tbl("import_binding");
+        let import_binding_rev = tbl("import_binding_rev");
+        self.db.exec(&format!("DELETE FROM {import_binding}"))?;
+        self.db.exec(&format!(
+            "INSERT OR IGNORE INTO {import_binding} (\"file\", \"local_name\", \"source_module\", \"imported_name\", \"kind\") \
+             SELECT \"file\", \"local_name\", \"source_module\", \"imported_name\", \"kind\" FROM {import_binding_rev}"
+        ))?;
         Ok(())
     }
 
@@ -454,6 +473,8 @@ impl Engine {
         self.refresh_rel("module_unresolved_rev", &["file", "rev", "specifier", "reason", "line"], &rows.unresolved_rev)?;
         self.refresh_rel("crate_edge", &["src", "dst", "kind", "rev"], &rows.crate_edges)?;
         self.refresh_rel("module_binding_rev", &["file", "local", "source", "dst", "rev"], &rows.bindings)?;
+        self.refresh_rel("import_binding_rev",
+            &["file", "local_name", "source_module", "imported_name", "kind", "rev"], &rows.import_bindings)?;
         self.insert_module_spans(&rows)?;
         self.rebuild_legacy_module_rels()?;
         for (rev, d) in &moved {
@@ -493,6 +514,7 @@ impl Engine {
         self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _module_refresh_rev)", tbl("module_unresolved_rev")))?;
         self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _module_refresh_rev)", tbl("crate_edge")))?;
         self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _module_refresh_rev)", tbl("module_binding_rev")))?;
+        self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _module_refresh_rev)", tbl("import_binding_rev")))?;
 
         let by_rev = self.module_files_by_rev()?;
         let mut rows = ModuleRows::default();
@@ -527,6 +549,10 @@ impl Engine {
         self.db.exec(&format!(
             "DELETE FROM {} WHERE \"rev\" = '{rev}' AND \"file\" IN (SELECT path FROM _module_refresh_path)",
             tbl("module_binding_rev"),
+        ))?;
+        self.db.exec(&format!(
+            "DELETE FROM {} WHERE \"rev\" = '{rev}' AND \"file\" IN (SELECT path FROM _module_refresh_path)",
+            tbl("import_binding_rev"),
         ))?;
 
         let by_rev = self.module_files_by_rev()?;
@@ -705,7 +731,7 @@ impl Engine {
         "type_entity_rev", "type_link_rev", "type_edge_rev",
         "call_def_rev", "call_edge_rev",
         "df_node_rev", "df_node_repo_rev", "df_arg_rev", "df_field_rev",
-        "module_edge_rev", "module_unresolved_rev", "module_binding_rev",
+        "module_edge_rev", "module_unresolved_rev", "module_binding_rev", "import_binding_rev",
     ];
 
     /// D5.5 — the rev-retraction sweep (plan Layer 4, "Retraction"). A rev

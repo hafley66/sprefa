@@ -41,6 +41,18 @@ pub enum Resolution {
 /// named/bare import -> `[]` (local == source already resolves via the
 /// name-keyed def bucket, no alias hop needed). Empty for every ref kind that
 /// has no local-binding concept (`mod`, `#[path]`, Kotlin wildcard/same-package).
+///
+/// `import_bindings` is the SUPERSET the `import_binding` relation reads:
+/// every local name this ref binds into scope, kind-tagged, for EVERY
+/// resolution (`bindings` above only fires for a resolved, non-self `File`
+/// target — the alias hop that resolution needs a file to hop to; a library
+/// import (the common case a mapping query cares about) resolves `External`
+/// and would never appear there). Each entry is `(local_name, imported_name,
+/// kind)` with `kind` ∈ `named` | `default` | `namespace` | `side_effect` |
+/// `reexport` (Rust `pub use`). A glob/wildcard import (Rust `use a::*`,
+/// Kotlin `import a.*`, Go dot-import) binds no single local name and is
+/// skipped, same as `bindings`. Populated by Rust/TS/Kotlin/Go/Python
+/// resolvers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModuleRef {
     pub specifier: String,
@@ -49,6 +61,7 @@ pub struct ModuleRef {
     pub span: Option<(u32, u32)>,
     pub target: Resolution,
     pub bindings: Vec<(String, String)>,
+    pub import_bindings: Vec<(String, String, &'static str)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -376,6 +389,18 @@ fn rust_use_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"(?s)\buse[ \t\r\n]+([^;]+);").unwrap())
 }
 
+/// Whether the `use` statement starting at `use_start` in `clean` is a
+/// re-export (`pub use ...` / `pub(crate) use ...` / ...): the `import_binding`
+/// `kind` distinguishes a Rust `pub use` from a plain `use` (both are `use`
+/// statements to `module_edge`, but only the `pub` one re-exports the name).
+/// String-level check on the same line, not a full visibility parse.
+fn rust_use_is_reexport(clean: &str, use_start: usize) -> bool {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"pub(\([^)]*\))?[ \t]*$").unwrap());
+    let line_start = clean[..use_start].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    re.is_match(&clean[line_start..use_start])
+}
+
 /// `#[path = "FILE"] mod NAME;` (attribute + decl, possibly across whitespace).
 fn rust_path_mod_re() -> &'static Regex {
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
@@ -414,6 +439,7 @@ impl ModuleResolver for RustResolver {
                 span: None,
                 target,
                 bindings: vec![],
+                import_bindings: vec![],
             });
         }
 
@@ -440,6 +466,7 @@ impl ModuleResolver for RustResolver {
                 span: None,
                 target,
                 bindings: vec![],
+                import_bindings: vec![],
             });
         }
 
@@ -449,8 +476,10 @@ impl ModuleResolver for RustResolver {
         // start in `clean` (offset-preserving vs raw content) gives a file
         // coord, same as before.
         for c in rust_use_re().captures_iter(&clean) {
-            let line = line_of(&clean, c.get(0).unwrap().start());
+            let use_start = c.get(0).unwrap().start();
+            let line = line_of(&clean, use_start);
             let body_start = c.get(1).unwrap().start() as u32;
+            let reexport = rust_use_is_reexport(&clean, use_start);
             for leaf in expand_use_leaves(&c[1]) {
                 let (lo, hi) = leaf.head.unwrap_or(leaf.leaf);
                 let target = crates.resolve_use(file, &leaf.full);
@@ -461,6 +490,17 @@ impl ModuleResolver for RustResolver {
                     }
                     _ => vec![],
                 };
+                // `self`/`*` leaves bind no single local name (see the
+                // `ModuleRef::import_bindings` doc); a plain leaf's local name
+                // is its own last segment unless aliased.
+                let import_bindings = if leaf.collapsed {
+                    vec![]
+                } else {
+                    let source = leaf.full.rsplit("::").next().unwrap_or(&leaf.full).to_string();
+                    let local = leaf.alias.clone().unwrap_or_else(|| source.clone());
+                    let kind = if reexport { "reexport" } else { "named" };
+                    vec![(local, source, kind)]
+                };
                 out.push(ModuleRef {
                     specifier: leaf.full,
                     kind: "use",
@@ -468,6 +508,7 @@ impl ModuleResolver for RustResolver {
                     span: Some((body_start + lo, body_start + hi)),
                     target,
                     bindings,
+                    import_bindings,
                 });
             }
         }
@@ -1015,6 +1056,49 @@ pub(crate) fn parse_ts_import_clause(clause: &str) -> Vec<(String, String)> {
     out
 }
 
+/// The `import_binding` superset of `parse_ts_import_clause`: EVERY local
+/// name a clause introduces, kind-tagged, including the plain named import
+/// and the namespace import that the alias-hop-only parser above skips (a
+/// plain named local already equals its source name; a namespace import has
+/// no member-level target) — both are real local bindings `import_binding`
+/// needs to answer "which library does this local name come from". Same
+/// string-level, non-goal-documented parse as `parse_ts_import_clause`.
+pub(crate) fn parse_ts_import_bindings(clause: &str) -> Vec<(String, String, &'static str)> {
+    let clause = clause.trim();
+    let clause = clause.strip_prefix("type ").map(str::trim).unwrap_or(clause);
+    let mut out = Vec::new();
+    let (head, named_part) = match (clause.find('{'), clause.find('}')) {
+        (Some(open), Some(close)) if close > open => (&clause[..open], &clause[open + 1..close]),
+        _ => (clause, ""),
+    };
+    for seg in head.split(',') {
+        let seg = seg.trim();
+        if seg.is_empty() {
+            continue;
+        }
+        if let Some(rest) = seg.strip_prefix('*') {
+            if let Some(local) = rest.trim().strip_prefix("as ") {
+                out.push((local.trim().to_string(), "*".to_string(), "namespace"));
+            }
+        } else {
+            out.push((seg.to_string(), "default".to_string(), "default"));
+        }
+    }
+    for item in named_part.split(',') {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        let item = item.strip_prefix("type ").map(str::trim).unwrap_or(item);
+        if let Some((source, local)) = item.split_once(" as ") {
+            out.push((local.trim().to_string(), source.trim().to_string(), "named"));
+        } else {
+            out.push((item.to_string(), item.to_string(), "named"));
+        }
+    }
+    out
+}
+
 impl TsResolver {
     fn new(root: &Path) -> Option<Self> {
         use oxc_resolver::{ResolveOptions, Resolver, TsconfigDiscovery};
@@ -1091,6 +1175,9 @@ impl ModuleResolver for TsResolver {
         // statement (see `ts_import_clause_re`'s doc), so this map joins by
         // span with no second parse.
         let mut clause_bindings: HashMap<(u32, u32), Vec<(String, String)>> = HashMap::new();
+        // Same span-join, the `import_binding` superset (plain named +
+        // namespace included; see `parse_ts_import_bindings`).
+        let mut clause_import_bindings: HashMap<(u32, u32), Vec<(String, String, &'static str)>> = HashMap::new();
         for c in ts_import_clause_re().captures_iter(&clean) {
             let clause = c.get(1).map(|m| m.as_str()).unwrap_or("");
             let spec_span = c.get(2).unwrap();
@@ -1098,12 +1185,21 @@ impl ModuleResolver for TsResolver {
             if !bindings.is_empty() {
                 clause_bindings.insert((spec_span.start() as u32, spec_span.end() as u32), bindings);
             }
+            let import_bindings = parse_ts_import_bindings(clause);
+            if !import_bindings.is_empty() {
+                clause_import_bindings.insert((spec_span.start() as u32, spec_span.end() as u32), import_bindings);
+            }
         }
         for c in ts_spec_re().captures_iter(&clean) {
             let spec = c[1].to_string();
             let line = line_of(&clean, c.get(0).unwrap().start());
             let m = c.get(1).unwrap();
             let span = Some((m.start() as u32, m.end() as u32));
+            // Which alternative of `ts_spec_re` matched (`from` | `import` |
+            // `require`), so a bare `import "spec";` (no `from`, no clause)
+            // can be told apart from a `require(...)` or `export ... from`
+            // statement (neither of which binds a local name statically here).
+            let matched_import_kw = c.get(0).unwrap().as_str().trim_start().starts_with("import");
             // a template literal with interpolation cannot be resolved statically
             if spec.contains("${") {
                 out.push(ModuleRef {
@@ -1113,6 +1209,7 @@ impl ModuleResolver for TsResolver {
                     span: None,
                     target: Resolution::Unresolved(format!("{spec}: dynamic")),
                     bindings: vec![],
+                    import_bindings: vec![],
                 });
                 continue;
             }
@@ -1143,6 +1240,16 @@ impl ModuleResolver for TsResolver {
                 .get(&(m.start() as u32, m.end() as u32))
                 .cloned()
                 .unwrap_or_default();
+            let import_bindings = match clause_import_bindings.get(&(m.start() as u32, m.end() as u32)) {
+                Some(rows) => rows.clone(),
+                // No clause matched this spec span: a genuine bare/side-effect
+                // import (`import "spec";`) binds no name but the import still
+                // happened, so record it with an empty local/imported name;
+                // `require(...)`/`export ... from` (matched_import_kw false)
+                // bind no name this parser can see, so no row at all.
+                None if matched_import_kw => vec![("".to_string(), "".to_string(), "side_effect")],
+                None => vec![],
+            };
             out.push(ModuleRef {
                 specifier: spec,
                 kind: "import",
@@ -1150,6 +1257,7 @@ impl ModuleResolver for TsResolver {
                 span,
                 target,
                 bindings,
+                import_bindings,
             });
         }
         out
@@ -1340,6 +1448,9 @@ impl ModuleResolver for KotlinResolver {
                                 span,
                                 target: Resolution::File(f.clone()),
                                 bindings: vec![],
+                                // wildcard: no single local name (see the
+                                // `ModuleRef::import_bindings` doc).
+                                import_bindings: vec![],
                             });
                         }
                     }
@@ -1350,6 +1461,7 @@ impl ModuleResolver for KotlinResolver {
                         span,
                         target: Resolution::External(spec.clone()),
                         bindings: vec![],
+                        import_bindings: vec![],
                     }),
                 }
                 continue;
@@ -1362,6 +1474,12 @@ impl ModuleResolver for KotlinResolver {
                     }
                     _ => vec![],
                 };
+                // Unlike `bindings` above (File-target only), `import_binding`
+                // needs every resolution kind — a library import resolves
+                // External and is exactly the case a mapping query cares about.
+                let source = spec.rsplit('.').next().unwrap_or(&spec).to_string();
+                let local = alias.clone().unwrap_or_else(|| source.clone());
+                let import_bindings = vec![(local, source, "named")];
                 out.push(ModuleRef {
                     specifier: spec.clone(),
                     kind: "import",
@@ -1369,6 +1487,7 @@ impl ModuleResolver for KotlinResolver {
                     span,
                     target,
                     bindings,
+                    import_bindings,
                 });
             }
         }
@@ -1399,6 +1518,7 @@ impl ModuleResolver for KotlinResolver {
                     span: None,
                     target: Resolution::File(f.clone()),
                     bindings: vec![],
+                    import_bindings: vec![],
                 });
             }
         }
@@ -1539,11 +1659,21 @@ fn push_go_import(
     }
     let line = line_of(clean, start);
     let span = Some((start as u32, end as u32));
+    let source = spec.rsplit('/').next().unwrap_or(spec).to_string();
+    // `import_binding` superset (every resolution, not just File): `_` is
+    // Go's blank/side-effect-only import, `.` merges the package's exports
+    // unqualified (no single local name — same skip as a glob), an explicit
+    // alias or the bare package name otherwise binds one local name.
+    let import_bindings: Vec<(String, String, &'static str)> = match alias {
+        Some("_") => vec![("".to_string(), "".to_string(), "side_effect")],
+        Some(".") => vec![],
+        Some(a) => vec![(a.to_string(), source.clone(), "named")],
+        None => vec![(source.clone(), source.clone(), "named")],
+    };
     for target in idx.resolve(spec) {
         let bindings = match (alias, &target) {
             (Some(a), Resolution::File(_)) if a != "_" && a != "." => {
-                let source = spec.rsplit('/').next().unwrap_or(spec).to_string();
-                vec![(a.to_string(), source)]
+                vec![(a.to_string(), source.clone())]
             }
             _ => vec![],
         };
@@ -1554,6 +1684,7 @@ fn push_go_import(
             span,
             target,
             bindings,
+            import_bindings: import_bindings.clone(),
         });
     }
 }
@@ -1872,6 +2003,19 @@ impl ModuleResolver for PyResolver {
                     }
                     _ => vec![],
                 };
+                // `import a.b.c` with no alias binds the TOP name (`a`) into
+                // scope, not the leaf (`c`); an alias binds instead to the
+                // full dotted target (its leaf name, matching `bindings`
+                // above). Every resolution kind (not just File) so a library
+                // import (`import numpy as np`) counts.
+                let top = dotted.split('.').next().unwrap_or(&dotted).to_string();
+                let import_bindings = match &alias {
+                    Some(local) => {
+                        let source = dotted.rsplit('.').next().unwrap_or(&dotted).to_string();
+                        vec![(local.clone(), source, "named")]
+                    }
+                    None => vec![(top.clone(), top, "named")],
+                };
                 out.push(ModuleRef {
                     specifier: dotted,
                     kind: "import",
@@ -1879,6 +2023,7 @@ impl ModuleResolver for PyResolver {
                     span,
                     target,
                     bindings,
+                    import_bindings,
                 });
             }
         }
@@ -1905,6 +2050,7 @@ impl ModuleResolver for PyResolver {
                     span,
                     target: Resolution::Unresolved(format!("{spec}.*: star import not expanded")),
                     bindings: vec![],
+                    import_bindings: vec![],
                 });
                 continue;
             }
@@ -1926,6 +2072,14 @@ impl ModuleResolver for PyResolver {
             } else {
                 vec![]
             };
+            // Every resolution kind (not just File): `from django.db import
+            // models` is exactly the "which library" case import_binding
+            // targets.
+            let import_bindings: Vec<(String, String, &'static str)> = names.iter()
+                .map(|(name, alias)| {
+                    let local = alias.clone().unwrap_or_else(|| name.clone());
+                    (local, name.clone(), "named")
+                }).collect();
             out.push(ModuleRef {
                 specifier: spec,
                 kind: "import",
@@ -1933,6 +2087,7 @@ impl ModuleResolver for PyResolver {
                 span,
                 target,
                 bindings,
+                import_bindings,
             });
         }
         out

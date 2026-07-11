@@ -91,6 +91,7 @@ mod lsp_query_paging;
 mod lsp_refs;
 mod lsp_symbols;
 mod hover_note;
+mod import_binding;
 mod match_col_span;
 mod node2vec;
 mod sg_rewrite;
