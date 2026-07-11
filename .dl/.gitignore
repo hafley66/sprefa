@@ -4,3 +4,4 @@ daemon-fg.log
 daemon.pid
 index.scip*
 perf.jsonl
+verified-sha
