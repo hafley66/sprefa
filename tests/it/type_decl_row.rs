@@ -144,8 +144,8 @@ fn rel_decl_of_the_sink_bails() {
     let prog = "rel type_decl_row(shape: text, pos: int, col: text, type: text).\n";
     let (code, _out, err) = run(&dir, prog);
     assert_ne!(code, 0, "reserved-name decl must fail");
-    assert!(err.contains("derived-shape sink") && err.contains("head it directly"),
-        "{err}");
+    assert!(err.contains("reserved-name") && err.contains("relation `type_decl_row`")
+        && err.contains("write to the built-in directly"), "{err}");
 }
 
 /// A shape's row set changing = column drift on the rel using it: the stale

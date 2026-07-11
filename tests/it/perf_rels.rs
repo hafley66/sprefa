@@ -75,5 +75,6 @@ fn perf_rel_names_are_reserved() {
         .output().expect("run dl");
     let err = String::from_utf8_lossy(&out.stderr);
     assert_ne!(out.status.code().unwrap_or(-1), 0, "declaration refused");
-    assert!(err.contains("engine-telemetry"), "reserved message names the family:\n{err}");
+    assert!(err.contains("reserved-name") && err.contains("relation `rel_count`")
+        && err.contains("write to the built-in directly"), "parse-tier reservation/fix:\n{err}");
 }

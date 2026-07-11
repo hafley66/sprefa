@@ -50,8 +50,9 @@ fn call_rels_are_reserved() {
         let (code, _out, err) = run(&d, &prog, &[]);
         assert_ne!(code, 0, "{rel} must be reserved (expected error):\n{err}");
         assert!(
-            err.contains("built-in call-graph relation"),
-            "{rel} reservation message missing:\n{err}"
+            err.contains("reserved-name") && err.contains(&format!("relation `{rel}`"))
+                && err.contains("pick another name"),
+            "{rel} parse-tier reservation/fix missing:\n{err}"
         );
     }
 }

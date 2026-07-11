@@ -247,6 +247,6 @@ fn rel_decl_of_the_sink_bails() {
     let prog = "rel hover_note(path: text, line: int, col: int, end_line: int, end_col: int, md: text).\n";
     let (code, _out, err) = run(&dir, prog);
     assert_ne!(code, 0, "reserved-name decl must fail");
-    assert!(err.contains("built-in hover-note sink") && err.contains("head it directly"),
-        "{err}");
+    assert!(err.contains("reserved-name") && err.contains("relation `hover_note`")
+        && err.contains("write to the built-in directly"), "{err}");
 }

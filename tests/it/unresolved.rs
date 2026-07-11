@@ -163,6 +163,6 @@ fn rel_decl_of_unresolved_bails() {
     let prog = "rel unresolved(file: text, line: int, reason: text, detail: text).\n";
     let (code, _out, err) = run(&dir, prog);
     assert_ne!(code, 0, "reserved-name decl must fail");
-    assert!(err.contains("built-in unresolved-marker relation") && err.contains("unresolved"),
-        "{err}");
+    assert!(err.contains("reserved-name") && err.contains("relation `unresolved`")
+        && err.contains("pick another name"), "{err}");
 }

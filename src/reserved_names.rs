@@ -17,7 +17,7 @@ pub fn diags(prog: &crate::ast::Program, path: &str) -> Vec<TypeDiag> {
             severity: Severity::Error,
             code: "reserved-name".into(),
             msg: format!(
-                "relation `{}` is reserved by the engine; remove `rel {}(...)` and write to the built-in directly, or pick another name",
+                "relation `{}` is a reserved built-in engine relation; remove `rel {}(...)` and write to the built-in directly, or pick another name",
                 decl.name, decl.name),
         })
     }).collect()

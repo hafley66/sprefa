@@ -188,8 +188,9 @@ fn declaring_type_edge_errors() {
         let (code, _, err) = run(&d, &prog, &[]);
         assert_ne!(code, 0, "redeclaring `{name}` must fail");
         assert!(
-            err.contains("built-in type-graph relation"),
-            "expected type-edge error for {name}, got: {err}"
+            err.contains("reserved-name") && err.contains(&format!("relation `{name}`"))
+                && err.contains("pick another name"),
+            "expected parse-tier type-edge reservation/fix for {name}, got: {err}"
         );
     }
 }

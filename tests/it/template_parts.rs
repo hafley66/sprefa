@@ -168,8 +168,8 @@ fn rel_decl_of_template_parts_bails() {
     let prog = "rel template_parts(file: text, line: int, node: text, idx: int, kind: text, text: text).\n";
     let (code, _out, err) = run(&dir, prog);
     assert_ne!(code, 0, "reserved-name decl must fail");
-    assert!(err.contains("built-in template-literal relation") && err.contains("template_parts"),
-        "{err}");
+    assert!(err.contains("reserved-name") && err.contains("relation `template_parts`")
+        && err.contains("pick another name"), "{err}");
 }
 
 /// REJECT: querying `template_parts` at the wrong arity surfaces the named

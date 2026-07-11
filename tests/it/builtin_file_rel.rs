@@ -118,7 +118,8 @@ fn declaring_a_builtin_name_errors() {
     let prog = "rel file(x: text).\nfile(a) <- scan(\"WORK\", \"src/**/*.rs\", a, r).\n";
     let (code, _, err) = run(&d, prog, &[]);
     assert_ne!(code, 0, "redeclaring `file` must fail");
-    assert!(err.contains("built-in relation"), "expected built-in error, got: {err}");
+    assert!(err.contains("reserved-name") && err.contains("relation `file`")
+        && err.contains("write to the built-in directly"), "earlier reserved-name fix, got: {err}");
 }
 
 #[test]

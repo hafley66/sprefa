@@ -69,7 +69,7 @@ fn reserved_builtin_name_exits_two_with_named_fix() {
     let (code, _out, err) = run(&d, "rel node(id: text).\n", &db);
     assert_eq!(code, 2, "reserved relation uses the check-style exit: {err}");
     assert!(err.contains("reserved-name"), "diagnostic code: {err}");
-    assert!(err.contains("relation `node` is reserved"), "names collision: {err}");
+    assert!(err.contains("relation `node` is a reserved built-in"), "names collision: {err}");
     assert!(err.contains("write to the built-in directly"), "names fix: {err}");
     assert!(!db.exists(), "no db file created at parse tier");
     let _ = fs::remove_dir_all(&d);
