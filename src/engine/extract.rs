@@ -1282,6 +1282,131 @@ impl Engine {
         Ok(true)
     }
 
+    /// The `const_string_member` corpus: same TS/JS-family extension set as
+    /// `template_file_set` (a flat const-object lookup table is TS/JS-only
+    /// syntax in v1 — Rust `const` bindings have no object/member shape, and
+    /// Kotlin/Go/Python coverage is deferred rather than guessed at).
+    fn const_member_file_set(&self) -> Result<Vec<ExtractFile>> {
+        let mut files: Vec<ExtractFile> = Vec::new();
+        let mut sel = self.db.conn().prepare("SELECT repo, path, rev, hash FROM _file")?;
+        let rows = sel.query_map([], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+            r.get::<_, Option<String>>(3)?.unwrap_or_default())))?;
+        for row in rows.flatten() {
+            let p = row.1.as_str();
+            if p.ends_with(".ts") || p.ends_with(".tsx") || p.ends_with(".js")
+                || p.ends_with(".jsx") || p.ends_with(".mjs") || p.ends_with(".cjs") {
+                files.push(row);
+            }
+        }
+        Ok(files)
+    }
+
+    /// Rebuild `const_string_member` — every flat string-valued const-object
+    /// member, across every TS/JS-family file. Own family (not riding the
+    /// `type`/`call`/`dataflow` TypeLang passes, matching `template_parts`):
+    /// a program reading only `const_string_member` shouldn't pay for those.
+    /// Same perf shape as `refresh_template_rels`: per-rev input-digest skip,
+    /// per-file fact cache, parallel parse, one batched `refresh_rel`.
+    ///
+    /// No rev column (like `template_parts`/`comment_node`): a file present at
+    /// two revs unions its members, deduped by (file, object, member) — the
+    /// same object/member pair can't recur with two different values in one
+    /// file (an object literal has no duplicate-key semantics ambiguity here
+    /// because we only ever look at the LAST-parsed occurrence's value,
+    /// consistent with a `HashSet`-style first-wins dedup being an accepted
+    /// lossy simplification, same as `template_parts`' node/idx dedup).
+    pub(crate) fn refresh_const_string_member_rel(&self) -> Result<bool> {
+        let files = self.const_member_file_set()?;
+        let moved = self.moved_extract_revs("const_member", &files, false)?;
+        if moved.is_empty() { return Ok(false); }
+        let root = self.root.clone();
+        let roots = self.repo_roots();
+        let facts: Vec<(String, String, String, Arc<Vec<crate::typegraph::ConstStringMember>>)> =
+            cached_facts(&self.const_member_facts_cache, &files, &self.extract_files_parsed, |repo, path, rev| {
+                let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
+                let content = read_content(froot, rev, path).unwrap_or_default();
+                let rid = repo_id_of(froot, path, repo);
+                let members = typegraph::ts_const_string_members(path, &content);
+                Some((rid, members))
+            });
+
+        let t = |s: &str| Value::Text(s.to_string());
+        let mut seen: HashSet<(String, String, String)> = HashSet::new();
+        let mut rows: Vec<Vec<Value>> = Vec::new();
+        for (_repo, path, _rev, members) in &facts {
+            for m in members.iter() {
+                if !seen.insert((path.clone(), m.object.clone(), m.member.clone())) {
+                    continue;
+                }
+                rows.push(vec![t(path), t(&m.object), t(&m.member), t(&m.value)]);
+            }
+        }
+        self.refresh_rel("const_string_member",
+            &["file", "object", "member", "value"], &rows)?;
+        for (rev, d) in &moved { self.save_rel_digest(&format!("extract:const_member:{rev}"), d)?; }
+        Ok(true)
+    }
+
+    /// The `unresolved` corpus: same TS/JS-family extension set as
+    /// `template_file_set` (v1 scope, see `typegraph::UnresolvedRef`).
+    fn unresolved_file_set(&self) -> Result<Vec<ExtractFile>> {
+        let mut files: Vec<ExtractFile> = Vec::new();
+        let mut sel = self.db.conn().prepare("SELECT repo, path, rev, hash FROM _file")?;
+        let rows = sel.query_map([], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+            r.get::<_, Option<String>>(3)?.unwrap_or_default())))?;
+        for row in rows.flatten() {
+            let p = row.1.as_str();
+            if p.ends_with(".ts") || p.ends_with(".tsx") || p.ends_with(".js")
+                || p.ends_with(".jsx") || p.ends_with(".mjs") || p.ends_with(".cjs") {
+                files.push(row);
+            }
+        }
+        Ok(files)
+    }
+
+    /// Rebuild `unresolved` — every runtime-computed edge marker, across every
+    /// TS/JS-family file (see `typegraph::UnresolvedRef` for the reason
+    /// vocabulary and why Python/`sys.path` stay out of v1). Own family, same
+    /// perf shape as `refresh_template_rels`: per-rev input-digest skip,
+    /// per-file fact cache, parallel parse, one batched `refresh_rel`.
+    ///
+    /// No rev column: a file present at two revs unions its markers, deduped
+    /// by (file, line, reason, detail).
+    pub(crate) fn refresh_unresolved_rel(&self) -> Result<bool> {
+        let files = self.unresolved_file_set()?;
+        let moved = self.moved_extract_revs("unresolved", &files, false)?;
+        if moved.is_empty() { return Ok(false); }
+        let root = self.root.clone();
+        let roots = self.repo_roots();
+        let facts: Vec<(String, String, String, Arc<Vec<crate::typegraph::UnresolvedRef>>)> =
+            cached_facts(&self.unresolved_facts_cache, &files, &self.extract_files_parsed, |repo, path, rev| {
+                let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
+                let content = read_content(froot, rev, path).unwrap_or_default();
+                let rid = repo_id_of(froot, path, repo);
+                let refs = typegraph::ts_unresolved_refs(path, &content);
+                Some((rid, refs))
+            });
+
+        let t = |s: &str| Value::Text(s.to_string());
+        let i = |n: u32| Value::Int(n as i64);
+        let mut seen: HashSet<(String, u32, String, String)> = HashSet::new();
+        let mut rows: Vec<Vec<Value>> = Vec::new();
+        for (_repo, path, _rev, refs) in &facts {
+            for r in refs.iter() {
+                if !seen.insert((path.clone(), r.line, r.reason.to_string(), r.detail.clone())) {
+                    continue;
+                }
+                rows.push(vec![t(path), i(r.line), t(r.reason), t(&r.detail)]);
+            }
+        }
+        self.refresh_rel("unresolved",
+            &["file", "line", "reason", "detail"], &rows)?;
+        for (rev, d) in &moved { self.save_rel_digest(&format!("extract:unresolved:{rev}"), d)?; }
+        Ok(true)
+    }
+
     /// CST-as-relation (christmas #3): walk every NAMED tree-sitter node of every
     /// scanned file (across all 11 `ts_lang` grammars) into `node`/`child`. Same
     /// shape as `refresh_type_rels`: parallel per-file parse (CPU-bound, no DB),
