@@ -78,13 +78,13 @@ op_endpoint(op, fnb, sym) <-
 # pkg-main entry's sym is a package.json PATH, not a fn sym, so it can't
 # bridge into df_node.fn; excluded rather than left to silently not-match
 # (the same "skip cleanly" contract flow-panel.dl's field mint uses).
-rel entry_seed(node: text).
+rel entry_seed(node: sym).
 entry_seed(node) <-
   entry(_, sym, kind), kind != "pkg-main",
   bare = replace_re(sym, "^[^:]*::", ""),
   df_node(node, _, _, bare, _, _).
 
-rel entry_reach_node_raw(node: text, d: int).
+rel entry_reach_node_raw(node: sym, d: int).
 entry_reach_node_raw(node, 0) <- entry_seed(node).
 entry_reach_node_raw(to, d0 + 1) <-
   entry_reach_node_raw(from, d0), flow_edge(from, to), d0 < 64.
@@ -112,16 +112,16 @@ entry_reach(sym, d) <-
 # the same way. op_reach stays at NODE granularity (existence, no depth — a
 # labeled reach SET, not a distance); op_reach_fn projects it up to the
 # enclosing fn's bare name, the query-useful form.
-rel op_reach_seed(op: text, node: text).
+rel op_reach_seed(op: text, node: sym).
 op_reach_seed(op, node) <-
   op_endpoint(op, fnb, _), df_node(node, _, _, fnb, _, _).
 
-rel op_reach_raw(op: text, n: text, d: int).
+rel op_reach_raw(op: text, n: sym, d: int).
 op_reach_raw(op, n, 0) <- op_reach_seed(op, n).
 op_reach_raw(op, to, d0 + 1) <-
   op_reach_raw(op, from, d0), flow_edge(from, to), d0 < 64.
 
-rel op_reach(op: text, n: text).
+rel op_reach(op: text, n: sym).
 op_reach(op, n) <- op_reach_raw(op, n, _).
 
 rel op_reach_fn(op: text, fnb: text).

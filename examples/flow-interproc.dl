@@ -38,7 +38,7 @@ rel src(p: file).
 src(p) <- scan("WORK", "src/**/*.{rs,ts,kt}", p, rev).
 
 # Transitive value reachability across function boundaries.
-rel flow_reach(from: text, to: text).
+rel flow_reach(from: sym, to: sym).
 flow_reach(a, b) <- closure(flow_edge).
 
 # Typed view (function-level): every callee that is an interprocedural sink, with
@@ -60,7 +60,7 @@ flow_param_type(callee_sym, pos, ty) <-
 # with type_sig's pos; the bridge rel ties the bare df_node.fn to the qualified
 # callee sym. This is the per-node "type-carrying" form the function-level view
 # above approximates.
-rel flow_node_type(node: text, callee_sym: text, ty: text).
+rel flow_node_type(node: sym, callee_sym: text, ty: text).
 flow_node_type(param, callee_q, ty) <-
     sink_callee(callee_q),
     call_edge_bare(_, callee_bare, _, callee_q),

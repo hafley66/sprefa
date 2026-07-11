@@ -269,10 +269,10 @@ impl Engine {
         // below for the Some branch.
         let _ = delta; // future Some() will drive a targeted merge instead
         let conn = self.db.conn();
-        let mut s = conn.prepare("SELECT id, content, norm FROM _strings WHERE id != '0'")?;
+        let mut s = conn.prepare("SELECT id, content, norm FROM _strings WHERE id != 0")?;
         let strings: Vec<Vec<Value>> = s
             .query_map([], |r| Ok(vec![
-                Value::Text(r.get::<_, String>(0)?),
+                Value::Int(r.get::<_, i64>(0)?),
                 Value::Text(r.get::<_, String>(1)?),
                 Value::Text(r.get::<_, String>(2)?),
             ]))?
@@ -282,7 +282,7 @@ impl Engine {
         let refs: Vec<Vec<Value>> = w
             .query_map([], |r| Ok(vec![
                 Value::Text(r.get::<_, String>(0)?),
-                Value::Text(r.get::<_, String>(1)?),
+                Value::Int(r.get::<_, i64>(1)?),
                 Value::Text(r.get::<_, String>(2)?),
                 Value::Int(r.get::<_, i64>(3)?),
                 Value::Int(r.get::<_, i64>(4)?),
@@ -1648,7 +1648,7 @@ impl Engine {
         let files = self.node_file_set(None)?;
         let parsed = self.node_walk(&files);
         self.last_node_files_walked.set(parsed.len());
-        let (node_rows, child_rows, path_by_id, str_by_id, wb_by_id) = self.node_rows_from_walk(&parsed);
+        let (node_rows, child_rows, path_by_id, mut str_by_id, wb_by_id) = self.node_rows_from_walk(&parsed);
 
         // Node ids are content-addressed and kind-salted, so each node row is
         // already unique within a tick (a node can't appear twice in one walk;
@@ -1663,7 +1663,14 @@ impl Engine {
                 s.query_map([], |r| r.get::<_, String>(0))?.filter_map(|x| x.ok()).collect();
             set
         };
-        if stored == computed { return Ok(false); }
+        if stored == computed {
+            // Same node id set means the same content, already interned by a
+            // prior run — drop the sink's queued interns unflushed (harmless
+            // redundant text) rather than pay a no-op write; drain marks it
+            // flushed so the debug Drop guard doesn't fire.
+            let _ = str_by_id.drain();
+            return Ok(false);
+        }
 
         // Full replace: spine first (so node ids resolve), then a whole-table
         // wipe + reinsert of node/child via refresh_rel. `_node_path` (id->path
@@ -1769,13 +1776,13 @@ impl Engine {
     /// Build the node/child rel rows + the spine (`_strings`/`_where_bytes`)
     /// interns from a parsed walk. Collect-then-flush; no DB touch.
     fn node_rows_from_walk(&self, parsed: &[FileNodes])
-        -> (Vec<Vec<Value>>, Vec<Vec<Value>>, Vec<Vec<Value>>, BTreeMap<String, (String, String)>, BTreeMap<String, Vec<Value>>)
+        -> (Vec<Vec<Value>>, Vec<Vec<Value>>, Vec<Vec<Value>>, spine::SymSink, BTreeMap<String, Vec<Value>>)
     {
         let mut node_rows: Vec<Vec<Value>> = Vec::new();
         let mut child_rows: Vec<Vec<Value>> = Vec::new();
         // (node id, path) attribution rows for the `_node_path` side table.
         let mut path_by_id: Vec<Vec<Value>> = Vec::new();
-        let mut str_by_id: BTreeMap<String, (String, String)> = BTreeMap::new();
+        let mut sink = spine::SymSink::new();
         let mut wb_by_id: BTreeMap<String, Vec<Value>> = BTreeMap::new();
         for fln in parsed {
             let FileNodes { repo, path, file, content, nodes } = fln;
@@ -1792,11 +1799,10 @@ impl Engine {
                 // Spine rows: the `_where_bytes` row uses the SALTED id but the
                 // RAW StringId, so ref(node_id) -> string(raw_sid) = raw slice.
                 if !slice.is_empty() {
-                    str_by_id.entry(raw_sid.to_string())
-                        .or_insert_with(|| (slice.to_string(), spine::normalize(slice)));
+                    let raw = sink.sym(slice);
                     wb_by_id.entry(node_id.clone()).or_insert_with(|| vec![
                         Value::Text(node_id.clone()),
-                        Value::Text(raw_sid.to_string()),
+                        Value::Int(raw.cell()),
                         Value::Text(file.to_string()),
                         Value::Int(n.lo as i64),
                         Value::Int(n.hi as i64),
@@ -1822,23 +1828,18 @@ impl Engine {
                 }
             }
         }
-        (node_rows, child_rows, path_by_id, str_by_id, wb_by_id)
+        (node_rows, child_rows, path_by_id, sink, wb_by_id)
     }
 
-    /// Flush the node walk's spine interns: `_strings` then `_where_bytes`
-    /// (both INSERT OR IGNORE, content-addressed), so a node id resolves through
-    /// `ref`/`string`. One plural write each.
+    /// Flush the node walk's spine interns: `_strings` (via `Db::flush_syms`)
+    /// then `_where_bytes` (INSERT OR IGNORE, content-addressed), so a node id
+    /// resolves through `ref`/`string`. One plural write each.
     fn flush_node_spine(
         &self,
-        str_by_id: BTreeMap<String, (String, String)>,
+        mut sink: spine::SymSink,
         wb_by_id: BTreeMap<String, Vec<Value>>,
     ) -> Result<()> {
-        if !str_by_id.is_empty() {
-            let string_rows: Vec<Vec<Value>> = str_by_id.into_iter()
-                .map(|(id, (content, norm))| vec![Value::Text(id), Value::Text(content), Value::Text(norm)])
-                .collect();
-            self.db.insert_rows("_strings", &["id", "content", "norm"], &string_rows)?;
-        }
+        self.db.flush_syms(&mut sink)?;
         if !wb_by_id.is_empty() {
             let wb_rows: Vec<Vec<Value>> = wb_by_id.into_values().collect();
             self.db.insert_rows("_where_bytes", &["id", "string_id", "file_id", "lo", "hi", "repo", "rev", "path"], &wb_rows)?;
@@ -2109,6 +2110,15 @@ impl Engine {
 
         let t = |s: &str| Value::Text(s.to_string());
         let i = |n: u32| Value::Int(n as i64);
+        // Opaque id-handle columns (df_node.id and every column that carries one:
+        // df_edge.from/to, df_arg.call/arg, df_field.id/value, df_param.id,
+        // df_lit.id, df_node_repo.id, and the rev-salted twins) intern through
+        // one `SymSink` so joins on them are int compares. The text these ids
+        // are BUILT from (fn_sym, var, kind, file, ...) stays plain text — only
+        // the opaque handle itself interns. `Db::flush_syms` drains the sink
+        // into ONE batched `_strings` insert below, so `sym(id)` decodes.
+        let mut sink = spine::SymSink::new();
+        let mut sym = |s: &str| Value::Int(sink.sym(s).cell());
         let mut node_rows: Vec<Vec<Value>> = Vec::new();
         let mut node_repo_rows: Vec<Vec<Value>> = Vec::new();
         let mut edge_rows: Vec<Vec<Value>> = Vec::new();
@@ -2146,11 +2156,12 @@ impl Engine {
         for (repo, _, rev, f) in &facts {
             for n in &f.nodes {
                 if seen_node.insert(n.id.as_str()) {
-                    node_rows.push(vec![t(&n.id), t(&n.kind), t(&n.var), t(&n.fn_sym), t(&n.file), i(n.line)]);
+                    node_rows.push(vec![sym(&n.id), t(&n.kind), t(&n.var), t(&n.fn_sym), t(&n.file), i(n.line)]);
                 }
                 if seen_node_rev.insert((n.id.as_str(), rev.as_str())) {
+                    let salted = Self::salt_rev(&n.id, rev);
                     node_rev_rows.push(vec![
-                        Value::Text(Self::salt_rev(&n.id, rev)), t(&n.kind), t(&n.var),
+                        sym(&salted), t(&n.kind), t(&n.var),
                         t(&n.fn_sym), t(&n.file), i(n.line), t(rev),
                     ]);
                 }
@@ -2166,15 +2177,16 @@ impl Engine {
                 // so it stays a per-repo fact — the property the worktree-pair diff
                 // needs.
                 if seen_node_repo.insert((n.id.as_str(), repo.as_str())) {
-                    node_repo_rows.push(vec![t(&n.id), t(repo)]);
+                    node_repo_rows.push(vec![sym(&n.id), t(repo)]);
                 }
                 if seen_node_repo_rev.insert((n.id.as_str(), repo.as_str(), rev.as_str())) {
-                    node_repo_rev_rows.push(vec![Value::Text(Self::salt_rev(&n.id, rev)), t(repo), t(rev)]);
+                    let salted = Self::salt_rev(&n.id, rev);
+                    node_repo_rev_rows.push(vec![sym(&salted), t(repo), t(rev)]);
                 }
             }
             for e in &f.edges {
                 if seen_edge.insert((e.from.as_str(), e.to.as_str())) {
-                    edge_rows.push(vec![t(&e.from), t(&e.to)]);
+                    edge_rows.push(vec![sym(&e.from), sym(&e.to)]);
                 }
             }
             for l in &f.loops {
@@ -2192,44 +2204,55 @@ impl Engine {
             }
             for (id, pos) in &f.param_pos {
                 if seen_param.insert(id.as_str()) {
-                    param_rows.push(vec![t(id), i(*pos)]);
+                    param_rows.push(vec![sym(id), i(*pos)]);
                 }
             }
             for (call, pos, arg) in &f.args {
                 if seen_arg.insert((call.as_str(), *pos, arg.as_str())) {
-                    arg_rows.push(vec![t(call), Value::Int(*pos), t(arg)]);
+                    arg_rows.push(vec![sym(call), Value::Int(*pos), sym(arg)]);
                 }
                 // both id columns salted so the arg->node join stays intra-rev
                 if seen_arg_rev.insert((call.as_str(), *pos, arg.as_str(), rev.as_str())) {
+                    let scall = Self::salt_rev(call, rev);
+                    let sarg = Self::salt_rev(arg, rev);
                     arg_rev_rows.push(vec![
-                        Value::Text(Self::salt_rev(call, rev)), Value::Int(*pos),
-                        Value::Text(Self::salt_rev(arg, rev)), t(rev),
+                        sym(&scall), Value::Int(*pos),
+                        sym(&sarg), t(rev),
                     ]);
                 }
             }
             for (id, field, value) in &f.fields {
                 if seen_field.insert((id.as_str(), field.as_str(), value.as_str())) {
-                    field_rows.push(vec![t(id), t(field), t(value)]);
+                    field_rows.push(vec![sym(id), t(field), sym(value)]);
                 }
                 // value is always a value df_node id (never a literal), so it
                 // salts like id; the field name is a plain string, unsalted
                 if seen_field_rev.insert((id.as_str(), field.as_str(), value.as_str(), rev.as_str())) {
+                    let sid = Self::salt_rev(id, rev);
+                    let svalue = Self::salt_rev(value, rev);
                     field_rev_rows.push(vec![
-                        Value::Text(Self::salt_rev(id, rev)), t(field),
-                        Value::Text(Self::salt_rev(value, rev)), t(rev),
+                        sym(&sid), t(field),
+                        sym(&svalue), t(rev),
                     ]);
                 }
             }
             for (id, text, kind) in &f.lits {
                 if seen_lit.insert(id.as_str()) {
-                    lit_rows.push(vec![t(id), t(text), t(kind)]);
+                    lit_rows.push(vec![sym(id), t(text), t(kind)]);
                 }
                 // id salted like df_node_rev.id (D5 pattern, same shape as df_field_rev).
                 if seen_lit_rev.insert((id.as_str(), rev.as_str())) {
-                    lit_rev_rows.push(vec![Value::Text(Self::salt_rev(id, rev)), t(text), t(kind), t(rev)]);
+                    let sid = Self::salt_rev(id, rev);
+                    lit_rev_rows.push(vec![sym(&sid), t(text), t(kind), t(rev)]);
                 }
             }
         }
+
+        // One batched `_strings` flush for every df id-handle hashed above (raw
+        // AND rev-salted), so `sym(df_node.id)` decodes back to the id text in
+        // any text context (hover, panel, hand queries). Collect-then-flush —
+        // the N+1 law applies to this intern just like any other.
+        self.db.flush_syms(&mut sink)?;
 
         self.refresh_rel("df_node", &["id", "kind", "var", "fn", "file", "line"], &node_rows)?;
         self.refresh_rel("df_node_repo", &["id", "repo"], &node_repo_rows)?;

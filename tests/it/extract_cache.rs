@@ -157,9 +157,16 @@ fn per_rev_digest_isolates_a_work_edit_from_the_committed_rev() {
 }
 
 /// A single-column query result as a set (dedups + order-free compare).
+/// Stringifies whatever JSON type the cell came back as — a `sym`-typed id
+/// column (df_node_rev.id and kin, INTEGER as of the intern-key arc) reads
+/// back as a JSON Number, not a String.
 fn col_set(eng: &Engine, sql: &str) -> BTreeSet<String> {
     eng.query_sql(sql, &[]).unwrap().into_iter()
-        .map(|r| r[0].as_str().unwrap().to_string()).collect()
+        .map(|r| match &r[0] {
+            serde_json::Value::String(s) => s.clone(),
+            v => v.to_string(),
+        })
+        .collect()
 }
 
 fn count(eng: &Engine, sql: &str) -> i64 {
@@ -290,11 +297,25 @@ fn df_twins_salt_ids_by_rev_and_join_within_a_rev() {
     assert!(work_ids.is_disjoint(&head_ids),
         "the rev salt makes base/head df_node ids disjoint even for identical content");
 
-    // stripping the `{rev}\u{1}` prefix recovers the same raw ids at both revs
-    // (byte-identical content) — the salt is readable, not a hash.
-    let raw_work = col_set(&eng, "SELECT substr(id, length(rev) + 2) FROM rel_df_node_rev WHERE rev = 'WORK'");
-    let raw_head = col_set(&eng, "SELECT substr(id, length(rev) + 2) FROM rel_df_node_rev WHERE rev <> 'WORK'");
-    assert_eq!(raw_work, raw_head, "stripping the rev salt recovers identical raw ids across revs");
+    // Byte-identical content at both revs must salt to the SAME raw id set,
+    // recovered by joining each twin id back through legacy `df_node` (whose
+    // id IS the raw, unsalted id) via `(kind, var, fn, file, line)` — the
+    // fields the salt is a pure function of. Pre-intern-key, this was a
+    // literal `substr(id, length(rev)+2)` string-strip (the salt was a
+    // readable text prefix); post-intern-key `id` is an opaque StringId hash
+    // of the salted text, so recovery must go through the unsalted twin
+    // instead of decoding the hash.
+    let raw_work = col_set(&eng,
+        "SELECT n.id FROM rel_df_node n \
+         JOIN rel_df_node_rev r ON r.kind = n.kind AND r.var = n.var \
+             AND r.fn = n.fn AND r.file = n.file AND r.line = n.line \
+         WHERE r.rev = 'WORK'");
+    let raw_head = col_set(&eng,
+        "SELECT n.id FROM rel_df_node n \
+         JOIN rel_df_node_rev r ON r.kind = n.kind AND r.var = n.var \
+             AND r.fn = n.fn AND r.file = n.file AND r.line = n.line \
+         WHERE r.rev <> 'WORK'");
+    assert_eq!(raw_work, raw_head, "both revs' twin rows resolve back to the identical raw id set");
 
     // legacy df_node keeps the RAW ids, rev-deduped (one row per raw id despite
     // two identical revs) — the single-rev daemon sees today's behavior.

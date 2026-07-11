@@ -191,3 +191,40 @@ fn seminaive_eliminates_full_reruns_at_scale() {
     assert_eq!(naive_rows, semi_rows, "row sets are identical across evaluators");
     assert_eq!(naive_rows.len(), n + 1);
 }
+
+/// Intern-key arc coordination check: a `sym`-typed recursive rel must round-
+/// trip through the semi-naive delta path — `rebuild_derived_seminaive` builds
+/// its `_delta_*` scratch tables from `Col.ty.sql()`, which already maps
+/// `Type::Sym` to INTEGER (same as `Type::Int`), so this is a regression
+/// guard, not new plumbing. `reach` recurses over `df_edge` (both cols sym as
+/// of the intern-key arc); the printed `?` output decodes back to the
+/// original id TEXT (df_node.id is `file::line::kind` before hashing), so a
+/// byte-level row-set match here also proves the query print-seam decode
+/// composes with semi-naive evaluation, not just the naive loop.
+#[test]
+fn sym_typed_recursive_rel_round_trips_through_the_delta_table() {
+    let dir = sandbox("sym_delta");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(dir.join("src/lib.rs"), "fn go(a: i32) -> i32 {\n    let b = a;\n    let c = b;\n    let d = c;\n    d\n}\n").unwrap();
+    let prog = r#"
+rel seen(path: file).
+seen(p) <- scan("WORK", "src/**/*.rs", p, rev).
+rel reach(from: sym, to: sym).
+reach(a, b) <- df_edge(a, b).
+reach(a, c) <- reach(a, b), df_edge(b, c).
+? df_edge(from, to).
+? reach(from, to).
+"#;
+    let stdout = run(&dir, prog);
+    let edges = rows_of(&stdout, "df_edge");
+    let reach = rows_of(&stdout, "reach");
+    assert!(!edges.is_empty(), "df_edge must be non-empty for a 4-let-binding chain:\n{stdout}");
+    // Every direct edge is itself a reach pair (base case), and the reach set
+    // must be strictly bigger (the transitive var_read/let_bind chain a->b->c->d
+    // gives at least one 2-hop pair the base df_edge set does not).
+    for e in &edges {
+        assert!(reach.contains(e), "direct edge {e:?} must appear in reach:\n{stdout}");
+    }
+    assert!(reach.len() > edges.len(),
+        "reach must contain at least one transitive (non-direct-edge) pair:\n{stdout}");
+}

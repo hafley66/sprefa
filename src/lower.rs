@@ -667,17 +667,34 @@ pub fn lower_query(q: &Query, rels: &Rels) -> Result<(String, Vec<String>)> {
     let mut sel: Vec<String> = Vec::new();
     let mut headers: Vec<String> = Vec::new();
 
+    let from_tbl = tbl(&q.head.rel);
     for (pos, term) in q.head.terms.iter().enumerate() {
-        let cell = format!("\"{}\"", meta.col_name(pos));
+        // Table-qualified: `_strings` also has a column literally named `id`,
+        // so a bare `"id"` inside sym_decode's correlated subquery would bind
+        // to `_strings.id` (the innermost scope wins), not this outer cell —
+        // silently returning ONE arbitrary row's content for every outer row.
+        // Qualifying with the source table name disambiguates.
+        let cell = format!("{from_tbl}.\"{}\"", meta.col_name(pos));
+        let is_sym = meta.cols[pos].ty == Type::Sym;
         match term {
             Term::Var(v) => match canon.get(v) {
+                // Equality between two head positions binding the same var stays
+                // a RAW compare (int=int when both are sym) — only the final
+                // user-visible projection decodes.
                 Some(prev) => wheres.push(format!("{cell} = {prev}")),
                 None => {
                     canon.insert(v.clone(), cell.clone());
-                    sel.push(format!("{cell} AS \"{v}\""));
+                    // A sym column decodes through `_strings` for display so `?`
+                    // output stays human text — the id itself is an opaque join
+                    // key, never a query-visible value.
+                    let display = if is_sym { sym_decode(&cell) } else { cell.clone() };
+                    sel.push(format!("{display} AS \"{v}\""));
                     headers.push(v.clone());
                 }
             },
+            // A text literal against a sym column filters by its compile-time
+            // StringId — an int compare, no decode (mirrors the body-atom arm).
+            Term::Str(s) if is_sym => wheres.push(format!("{cell} = {}", sym_lit(s))),
             Term::Str(_) | Term::Int(_) => wheres.push(format!("{cell} = {}", lit_sql(term).unwrap())),
             Term::Interp(_) => bail!("interpolated string not supported in a query head"),
             Term::PathLit { .. } => bail!("path literal not normalized before lowering"),

@@ -443,6 +443,42 @@ impl Db {
         if multi { self.conn.execute_batch("COMMIT")?; }
         Ok(total)
     }
+
+    /// Drain a `SymSink`'s queued interns into ONE batched `_strings` insert —
+    /// the turnkey emit-side API every dataflow/spine refresh routes through,
+    /// so no call site open-codes `StringId::of(text).sqlite()` + a bespoke
+    /// insert. Collision guard: two different texts hashing to the same id
+    /// within this ONE drain is a loud bail (a silent 64-bit collision would
+    /// corrupt every join keyed on the id); a collision across separate
+    /// flushes is accepted as negligible at 64-bit and resolved by
+    /// `INSERT OR IGNORE` (first writer wins).
+    pub fn flush_syms(&self, sink: &mut crate::spine::SymSink) -> Result<usize> {
+        use std::collections::BTreeMap;
+        let pending = sink.drain();
+        if pending.is_empty() { return Ok(0); }
+        let mut by_id: BTreeMap<i64, String> = BTreeMap::new();
+        for (id, text) in pending {
+            let cell = id.sqlite();
+            match by_id.entry(cell) {
+                std::collections::btree_map::Entry::Vacant(e) => { e.insert(text); }
+                std::collections::btree_map::Entry::Occupied(e) => {
+                    if *e.get() != text {
+                        anyhow::bail!(
+                            "StringId collision at intern time: {:?} and {:?} both hash to {cell}",
+                            e.get(), text
+                        );
+                    }
+                }
+            }
+        }
+        let rows: Vec<Vec<Value>> = by_id.into_iter()
+            .map(|(id, text)| {
+                let norm = crate::spine::normalize(&text);
+                vec![Value::Int(id), Value::Text(text), Value::Text(norm)]
+            })
+            .collect();
+        self.insert_rows("_strings", &["id", "content", "norm"], &rows)
+    }
 }
 
 /// P2 (--check perf defect ledger): on a clean close, shrink the WAL back

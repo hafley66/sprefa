@@ -46,11 +46,16 @@ impl RelKind for EmbedKind {
         // un-embedded strings are encoded per tick (the rest catch up next tick).
         let to_embed: Vec<(String, String)> = {
             let conn = eng.db.conn();
+            // `s.id` is INTEGER (StringId::sqlite()) as of the intern-key arc;
+            // `_embeddings.sid` stays TEXT (content-addressed key, not a `sym`
+            // column any rule joins), so the join needs the cast — the id's
+            // decimal string is the SAME representation `span_at`/`string_spans`
+            // use for their opaque sid handles.
             let mut s = conn.prepare(
-                "SELECT s.id, s.content FROM _strings s
-                 WHERE s.id != '0'
+                "SELECT CAST(s.id AS TEXT), s.content FROM _strings s
+                 WHERE s.id != 0
                    AND NOT EXISTS (SELECT 1 FROM _embeddings e
-                                   WHERE e.sid = s.id AND e.backend = ?1)
+                                   WHERE e.sid = CAST(s.id AS TEXT) AND e.backend = ?1)
                  LIMIT ?2")?;
             let v: Vec<(String, String)> = s.query_map(rusqlite::params![backend, max as i64], |r|
                 Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?

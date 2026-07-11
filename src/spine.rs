@@ -69,6 +69,72 @@ impl StringId {
     }
 }
 
+/// A validated, ready-to-store StringId for a `sym`-typed rel column. The ONLY
+/// way to get one is `SymSink::sym`, which queues the (id, text) pair for the
+/// batched `_strings` flush — so a Sym can never land in a row without its
+/// text being interned alongside it (the turnkey emit-side API: no more
+/// open-coded `StringId::of(text).sqlite()` at each call site). Deliberately
+/// carries no `Display`/`to_string`: a Sym must never leak into a TEXT column
+/// (that would store the decimal id as if it were the text itself).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Sym(StringId);
+
+impl Sym {
+    /// The i64 cell value for a `sym` column's `Value::Int`.
+    pub fn cell(self) -> i64 {
+        self.0.sqlite()
+    }
+}
+
+/// Collects (id, text) pairs queued by `SymSink::sym` across one refresh
+/// pass. `Db::flush_syms` drains it into ONE batched `_strings` insert — the
+/// collect-then-flush shape every other spine write already follows. A debug
+/// build panics if the sink is dropped with pending interns never flushed
+/// (the N+1 law's silent-loss twin: better to panic loud than let interned
+/// text for an already-written id vanish).
+#[derive(Default)]
+pub struct SymSink {
+    pending: Vec<(StringId, String)>,
+    flushed: bool,
+}
+
+impl SymSink {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Intern `text`, queueing it for the next flush, and return its Sym.
+    /// Empty text hashes to `StringId::EMPTY` (the sentinel) and is not
+    /// queued — nothing to intern, the sentinel `_strings` row already covers it.
+    pub fn sym(&mut self, text: &str) -> Sym {
+        let id = StringId::of(text);
+        if !text.is_empty() {
+            self.pending.push((id, text.to_string()));
+        }
+        Sym(id)
+    }
+
+    /// Drain every queued (id, text) pair. Called once by `Db::flush_syms`;
+    /// not meant to be called directly by refresh code.
+    pub fn drain(&mut self) -> Vec<(StringId, String)> {
+        self.flushed = true;
+        std::mem::take(&mut self.pending)
+    }
+}
+
+#[cfg(debug_assertions)]
+impl Drop for SymSink {
+    fn drop(&mut self) {
+        if !self.flushed && !self.pending.is_empty() {
+            panic!(
+                "SymSink dropped with {} pending intern(s) never flushed — \
+                 call Db::flush_syms(&mut sink) before the sink goes out of scope",
+                self.pending.len()
+            );
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RefId(pub u64);
 

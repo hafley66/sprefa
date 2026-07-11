@@ -107,7 +107,7 @@ fn dataflow_lazy_gate_smoke() {
     let prog = concat!(
         "rel seen(path: file).\n",
         "seen(path) <- scan(\"WORK\", \"src/**/*.txt\", path, rev), match(path, rev, /./, line).\n",
-        "rel df_reaches(from: text, to: text).\n",
+        "rel df_reaches(from: sym, to: sym).\n",
         "df_reaches(a, b) <- closure(df_edge).\n",
         "? df_node(id, kind, var, fn, file, line).\n",
         "? df_reaches(a, b).\n",
@@ -144,7 +144,7 @@ fn rust_lift_closes_transitively() {
     let prog = concat!(
         "rel seen(path: file).\n",
         "seen(path) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /./, line).\n",
-        "rel df_reaches(from: text, to: text).\n",
+        "rel df_reaches(from: sym, to: sym).\n",
         "df_reaches(a, b) <- closure(df_edge).\n",
         "? df_node(id, kind, var, fn, file, line).\n",
         "? df_edge(from, to).\n",
@@ -227,7 +227,7 @@ fn taint_propagates_through_operations_per_language() {
         let prog = format!(
             "rel seen(path: file).\n\
              seen(path) <- scan(\"WORK\", \"src/**/*.{ext}\", path, rev), match(path, rev, /./, line).\n\
-             rel df_reaches(from: text, to: text).\n\
+             rel df_reaches(from: sym, to: sym).\n\
              df_reaches(a, b) <- closure(df_edge).\n\
              ? df_node(id, kind, var, fn, file, line).\n\
              ? df_edge(from, to).\n\

@@ -140,6 +140,23 @@ fn closure_query_max_edges() -> usize {
         .and_then(|v| v.parse().ok()).unwrap_or(20_000))
 }
 
+/// Stringify whatever a cell holds, regardless of its SQLite storage type.
+/// A generic row reader (rel_rows, load_edges, edge_content_digest) can't
+/// assume TEXT any more now that `sym`-typed columns (df_node.id and its
+/// kin) store INTEGER — `row.get::<_, String>(i)` on those is a rusqlite
+/// type error, which a `.filter_map(Result::ok)`/`.flatten()` reader would
+/// silently drop the whole row for (the intern-key arc's first regression:
+/// closure(df_edge) read zero rows because every edge row errored here).
+fn cell_as_string(r: &rusqlite::Row, i: usize) -> rusqlite::Result<String> {
+    Ok(match r.get_ref(i)? {
+        rusqlite::types::ValueRef::Null => String::new(),
+        rusqlite::types::ValueRef::Integer(n) => n.to_string(),
+        rusqlite::types::ValueRef::Real(f) => f.to_string(),
+        rusqlite::types::ValueRef::Text(t) => String::from_utf8_lossy(t).into_owned(),
+        rusqlite::types::ValueRef::Blob(b) => String::from_utf8_lossy(b).into_owned(),
+    })
+}
+
 /// The built-in relations of the data-model contract (docs/data-model.md). A
 /// `.dl` program may not declare these names; they are registered with fixed
 /// schemas and refreshed each tick from the `_file` change-detection cache, so
@@ -1000,16 +1017,16 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "df_node".into(), cols: vec![
-            c("id", Type::Text), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
+            c("id", Type::Sym), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
             c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int)], group: "dataflow",
-            doc: "intra-procedural dataflow node (call_res/let_bind/param/ret/new/member/...); id is file::line::kind — the full kind vocabulary is rel_col's variants for this column", ..Default::default() },
+            doc: "intra-procedural dataflow node (call_res/let_bind/param/ret/new/member/...); id is an interned StringId over file::line::kind (sym — BREAKING as of the intern-key arc) — the full kind vocabulary is rel_col's variants for this column", ..Default::default() },
         // rev-aware df_node: id is salt_rev(raw id, rev) so two revs' file:line:col
         // ids stay disjoint in one table (unlike syms, a df id embeds a line so
         // the same point is different code across revs). legacy df_node keeps the
         // raw id; a diff reads df_node_rev where the salt makes base/head ids
         // disjoint and the member-edge diff is name-joined, never raw-id-joined.
         RelDecl { name: "df_node_rev".into(), cols: vec![
-            c("id", Type::Text), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
+            c("id", Type::Sym), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
             c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Text)], group: "dataflow",
             doc: "rev-aware df_node; id is salt_rev(raw id, rev) so revs stay disjoint; legacy df_node keeps the raw id", ..Default::default() },
         // (df_node id, repo) — the repo (nearest `.git` basename) the node's file
@@ -1018,14 +1035,14 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // fill/param to its own folder instead of fanning across every repo that
         // shares the constructed type's NAME. First-seen wins (same dedup as
         // df_node). 1:1 with df_node.
-        RelDecl { name: "df_node_repo".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text)], group: "dataflow",
+        RelDecl { name: "df_node_repo".into(), cols: vec![c("id", Type::Sym), c("repo", Type::Text)], group: "dataflow",
             doc: "(df_node id, repo) — the repo (nearest .git basename) each node's file was read from; scopes df joins per-repo (df_node ids are path-keyed)", ..Default::default() },
         // rev-aware df_node_repo: id salted by rev (matches df_node_rev.id), rev
         // as a column. Repo attribution stays orthogonal to rev — a multi-repo PR
         // diff wants both axes.
-        RelDecl { name: "df_node_repo_rev".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text), c("rev", Type::Text)], group: "dataflow",
+        RelDecl { name: "df_node_repo_rev".into(), cols: vec![c("id", Type::Sym), c("repo", Type::Text), c("rev", Type::Text)], group: "dataflow",
             doc: "rev-aware df_node_repo; id is salt_rev(raw id, rev), matching df_node_rev.id; legacy df_node_repo keeps the raw id", ..Default::default() },
-        RelDecl { name: "df_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text)], group: "dataflow",
+        RelDecl { name: "df_edge".into(), cols: vec![c("from", Type::Sym), c("to", Type::Sym)], group: "dataflow",
             doc: "intra-procedural dataflow dependency edge", ..Default::default() },
         // one row per loop, with its source span + loop variable. The flag rule
         // joins this against df_node/df_edge to find loop-invariant calls: a
@@ -1053,20 +1070,20 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // params (the Rust receiver `self` is skipped), so it aligns with
         // type_sig's `pos`. Lets a query bind a specific param node to its
         // declared type at node granularity, not just per-fn.
-        RelDecl { name: "df_param".into(), cols: vec![c("id", Type::Text), c("pos", Type::Int)], group: "dataflow",
+        RelDecl { name: "df_param".into(), cols: vec![c("id", Type::Sym), c("pos", Type::Int)], group: "dataflow",
             doc: "(param df_node id, positional index); index counts typed params only (self skipped) so it aligns with type_sig.pos for node-level type joins", ..Default::default() },
         // (call/new node id, position, arg node id) — which argument slot a
         // value feeds. 0-based, method receivers at -1 (mirroring the skipped
         // `self` in df_param), so joining df_arg.pos = df_param.pos makes the
         // interprocedural arg -> param hop positional instead of blanket.
         RelDecl { name: "df_arg".into(), cols: vec![
-            c("call", Type::Text), c("pos", Type::Int), c("arg", Type::Text)], group: "dataflow",
+            c("call", Type::Sym), c("pos", Type::Int), c("arg", Type::Sym)], group: "dataflow",
             doc: "(call/new df_node id, slot, arg df_node id); 0-based, receiver at -1; aligns with df_param.pos for the positional arg->param hop", ..Default::default() },
         // rev-aware df_arg: both id columns (call, arg) salted by rev to match
         // df_node_rev.id, so the arg->node join stays within one rev. legacy
         // df_arg keeps raw ids.
         RelDecl { name: "df_arg_rev".into(), cols: vec![
-            c("call", Type::Text), c("pos", Type::Int), c("arg", Type::Text), c("rev", Type::Text)], group: "dataflow",
+            c("call", Type::Sym), c("pos", Type::Int), c("arg", Type::Sym), c("rev", Type::Text)], group: "dataflow",
             doc: "rev-aware df_arg; call and arg are salt_rev(raw id, rev), matching df_node_rev.id; legacy df_arg keeps raw ids", ..Default::default() },
         // (new/call node id, field name, value node id) — named value flow
         // into a composite: Rust struct-literal fields (`..base` under the
@@ -1075,13 +1092,13 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // read of the same name (df_node kind=member, var=name) gives
         // field-sensitive flow.
         RelDecl { name: "df_field".into(), cols: vec![
-            c("id", Type::Text), c("field", Type::Text), c("value", Type::Text)], group: "dataflow",
+            c("id", Type::Sym), c("field", Type::Text), c("value", Type::Sym)], group: "dataflow",
             doc: "(new/call df_node id, field name, value df_node id); struct-literal fields, object-literal properties, Kotlin named args; \"..\" for spread/functional-update bases", ..Default::default() },
         // rev-aware df_field: both id columns (id, value) salted by rev — value is
         // always a value df_node id (never a literal), so it salts like id. legacy
         // df_field keeps raw ids.
         RelDecl { name: "df_field_rev".into(), cols: vec![
-            c("id", Type::Text), c("field", Type::Text), c("value", Type::Text), c("rev", Type::Text)], group: "dataflow",
+            c("id", Type::Sym), c("field", Type::Text), c("value", Type::Sym), c("rev", Type::Text)], group: "dataflow",
             doc: "rev-aware df_field; id and value are salt_rev(raw id, rev), matching df_node_rev.id; legacy df_field keeps raw ids", ..Default::default() },
         // (df_node id, text, kind) — one row per STRING-carrying value node
         // (string-values arc item 1). `kind` is lit/template/concat: `lit` is
@@ -1090,12 +1107,12 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // operands for a `+` concat). TS/TSX/JS populate template/concat;
         // Rust populates lit only (Kotlin/Go/Python ledgered as follow-up).
         RelDecl { name: "df_lit".into(), cols: vec![
-            c("id", Type::Text), c("text", Type::Text), Col::branded("kind", "const_value_kind")], group: "dataflow",
+            c("id", Type::Sym), c("text", Type::Text), Col::branded("kind", "const_value_kind")], group: "dataflow",
             doc: "(df_node id, text, kind); lit=cooked string literal, template/concat=raw source slice with holes intact; TS/TSX/JS + Rust lit today", ..Default::default() },
         // rev-aware df_lit: id salted by rev, matching df_node_rev.id — same
         // shape as df_field_rev (D5 pattern).
         RelDecl { name: "df_lit_rev".into(), cols: vec![
-            c("id", Type::Text), c("text", Type::Text), Col::branded("kind", "const_value_kind"), c("rev", Type::Text)], group: "dataflow",
+            c("id", Type::Sym), c("text", Type::Text), Col::branded("kind", "const_value_kind"), c("rev", Type::Text)], group: "dataflow",
             doc: "rev-aware df_lit; id is salt_rev(raw id, rev), matching df_node_rev.id; legacy df_lit keeps the raw id", ..Default::default() },
     ]
 }
@@ -1146,10 +1163,10 @@ pub(crate) fn doc_rel_decls() -> Vec<RelDecl> {
 pub(crate) fn spine_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
-        RelDecl { name: "string".into(), cols: vec![c("id", Type::Text), c("text", Type::Text), c("norm", Type::Text)], group: "spine",
-            doc: "interned strings (ref spine): id, text, normalized text", ..Default::default() },
+        RelDecl { name: "string".into(), cols: vec![c("id", Type::Int), c("text", Type::Text), c("norm", Type::Text)], group: "spine",
+            doc: "interned strings (ref spine): id (StringId::sqlite(), an INTEGER — BREAKING as of the intern-key arc, was decimal TEXT), text, normalized text", ..Default::default() },
         RelDecl { name: "ref".into(), cols: vec![
-            c("id", Type::Text), c("string", Type::Text), c("file", Type::Text), c("lo", Type::Int), c("hi", Type::Int)], group: "spine",
+            c("id", Type::Text), c("string", Type::Int), c("file", Type::Text), c("lo", Type::Int), c("hi", Type::Int)], group: "spine",
             doc: "byte span per interned string; id is the rewrite coordinate — 'where does Foo occur' is string(s, Foo, _), ref(_, s, f, lo, hi)", ..Default::default() },
     ]
 }
@@ -2624,7 +2641,7 @@ impl Engine {
                AND w.lo <= ?3 AND ?3 < w.hi \
              ORDER BY (w.hi - w.lo) ASC LIMIT 1")?;
         let row = s.query_row(rusqlite::params![path, fid.to_string(), byte as i64], |r| Ok((
-            r.get::<_, String>(0)?,
+            r.get::<_, i64>(0)?.to_string(),
             r.get::<_, String>(1)?,
             r.get::<_, i64>(2)? as u32,
             r.get::<_, i64>(3)? as u32,
@@ -2639,14 +2656,17 @@ impl Engine {
     /// Every located WORK span of `string_id`, as (path, lo, hi). The
     /// file-id-matches-WORK-content filter runs in Rust per result path because
     /// the FileId derivation (blake3 prefix) is not expressible in SQL.
+    /// `string_id` is the decimal-string form of `StringId::sqlite()` (as
+    /// returned by `span_at`); parsed back to i64 to bind the INTEGER column.
     pub fn string_spans(&self, string_id: &str) -> Result<Vec<(String, u32, u32)>> {
+        let sid: i64 = string_id.parse().unwrap_or(0);
         let candidates: Vec<(String, String, u32, u32)> = {
             let conn = self.db.conn();
             let mut s = conn.prepare(
                 "SELECT path, file_id, lo, hi FROM _where_bytes \
                  WHERE string_id = ?1 AND id != '0' AND path != '' \
                  ORDER BY path, lo")?;
-            let rows = s.query_map(rusqlite::params![string_id], |r| Ok((
+            let rows = s.query_map(rusqlite::params![sid], |r| Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
                 r.get::<_, i64>(2)? as u32,
@@ -4036,6 +4056,28 @@ impl Engine {
 
 
     fn ensure_meta(&self) -> Result<()> {
+        // Intern-key migration (2026-07-11): `_strings.id` / `_where_bytes.string_id`
+        // move from TEXT (decimal StringId::Display) to INTEGER (StringId::sqlite,
+        // the i64 bit-pattern lower.rs already compiles literals to). No row-level
+        // data migration: an existing TEXT-typed table is DROPPED and recreated
+        // empty, then the extraction digests are cleared so the very next tick
+        // refills both tables from scratch (every extract:<family> digest folds
+        // exe identity already, so a new binary re-extracts regardless).
+        {
+            let conn = self.db.conn();
+            let strings_is_text = conn
+                .prepare("SELECT type FROM pragma_table_info('_strings') WHERE name = 'id'")
+                .and_then(|mut s| s.query_row([], |r| r.get::<_, String>(0)))
+                .map(|t| t.eq_ignore_ascii_case("text"))
+                .unwrap_or(false);
+            if strings_is_text {
+                conn.execute_batch(
+                    "DROP TABLE IF EXISTS _strings;
+                     DROP TABLE IF EXISTS _where_bytes;
+                     DELETE FROM _reldigest WHERE key LIKE 'extract:%';",
+                )?;
+            }
+        }
         self.db.conn().execute_batch(
             "CREATE TABLE IF NOT EXISTS _file (repo TEXT NOT NULL DEFAULT '', path TEXT, rev TEXT, hash TEXT,
                  mtime INTEGER DEFAULT 0, size INTEGER DEFAULT 0, lines INTEGER DEFAULT -1, PRIMARY KEY (repo, path, rev));
@@ -4070,8 +4112,11 @@ impl Engine {
              -- shared by byte-identical files, so it cannot key the prune.
              CREATE TABLE IF NOT EXISTS _node_path (id TEXT PRIMARY KEY, path TEXT NOT NULL);
              CREATE INDEX IF NOT EXISTS _node_path_path_idx ON _node_path(path);
+             -- id = StringId::sqlite() (the i64 bit-pattern of the content-derived
+             -- u64 hash) as an INTEGER PRIMARY KEY / rowid alias — single-word int
+             -- compares + smaller keys instead of TEXT memcmp on every join probe.
              CREATE TABLE IF NOT EXISTS _strings (
-                 id TEXT PRIMARY KEY,
+                 id INTEGER PRIMARY KEY,
                  content TEXT NOT NULL,
                  norm TEXT NOT NULL
              );
@@ -4083,7 +4128,7 @@ impl Engine {
              );
              CREATE TABLE IF NOT EXISTS _where_bytes (
                  id TEXT PRIMARY KEY,
-                 string_id TEXT NOT NULL,
+                 string_id INTEGER NOT NULL,
                  file_id TEXT NOT NULL,
                  lo INTEGER NOT NULL,
                  hi INTEGER NOT NULL,
@@ -4159,11 +4204,11 @@ impl Engine {
              CREATE INDEX IF NOT EXISTS _where_bytes_string_idx ON _where_bytes(string_id);
              CREATE INDEX IF NOT EXISTS _where_bytes_file_span_idx ON _where_bytes(file_id, lo, hi);
              CREATE INDEX IF NOT EXISTS _where_bytes_path_idx ON _where_bytes(path);
-             INSERT OR IGNORE INTO _strings (id, content, norm) VALUES ('0', '', '');
+             INSERT OR IGNORE INTO _strings (id, content, norm) VALUES (0, '', '');
              INSERT OR IGNORE INTO _files (id, content_hash, path, size)
                  VALUES ('0', '0000000000000000000000000000000000000000000000000000000000000000', '', 0);
              INSERT OR IGNORE INTO _where_bytes (id, string_id, file_id, lo, hi, repo, rev, path)
-                 VALUES ('0', '0', '0', 0, 0, '0', '0', '');
+                 VALUES ('0', 0, '0', 0, 0, '0', '0', '');
              -- The @next carry clock: one row, k='tx', the current generation.
              -- A @next rule reads carry_<rel> WHERE tx=current and stages rows at
              -- tx=current+1; the counter advances once per tick. See
@@ -5548,6 +5593,10 @@ impl Engine {
         Ok(())
     }
 
+    // (cell_as_string lives at module scope, just above this impl block, so
+    // every generic row reader — rel_rows, load_edges, edge_content_digest —
+    // shares one stringify path across TEXT and INTEGER (sym) columns.)
+
     /// Read a relation's table as positional String rows (test/diagnostic).
     /// Returns empty if the relation isn't declared.
     pub fn rel_rows(&self, rel: &str, ncols: usize) -> Vec<Vec<String>> {
@@ -5563,13 +5612,7 @@ impl Engine {
                 // Stringify whatever the column holds: an int column read as
                 // String is a rusqlite type error, which would silently drop
                 // the whole row from a diagnostic read.
-                v.push(match r.get_ref(i)? {
-                    rusqlite::types::ValueRef::Null => String::new(),
-                    rusqlite::types::ValueRef::Integer(n) => n.to_string(),
-                    rusqlite::types::ValueRef::Real(f) => f.to_string(),
-                    rusqlite::types::ValueRef::Text(t) => String::from_utf8_lossy(t).into_owned(),
-                    rusqlite::types::ValueRef::Blob(b) => String::from_utf8_lossy(b).into_owned(),
-                });
+                v.push(cell_as_string(r, i)?);
             }
             Ok(v)
         });
@@ -6844,7 +6887,7 @@ impl Engine {
         let mut intern: HashMap<String, u32> = HashMap::new();
         let mut names: Vec<String> = Vec::new();
         let mut pairs: Vec<(u32, u32)> = Vec::new();
-        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let rows = stmt.query_map([], |r| Ok((cell_as_string(r, 0)?, cell_as_string(r, 1)?)))?;
         for row in rows.flatten() {
             let mut id = |s: String| -> u32 {
                 if let Some(&i) = intern.get(&s) { return i; }
@@ -6923,20 +6966,19 @@ impl Engine {
         Ok(inserted)
     }
 
+    /// Turnkey batched intern: every text cell across `rows` goes through one
+    /// `SymSink`, flushed by `Db::flush_syms` (collision-guarded there — two
+    /// different texts hashing to the same id within the flush is a loud bail).
     fn insert_spine_strings(&self, rows: &[(String, String, Vec<Value>)]) -> Result<usize> {
-        let mut by_id: BTreeMap<String, (String, String)> = BTreeMap::new();
+        let mut sink = spine::SymSink::new();
         for (_, _, row) in rows {
             for v in row {
                 let Value::Text(s) = v else { continue };
                 if s.is_empty() { continue; }
-                let id = spine::StringId::of(s).to_string();
-                by_id.entry(id).or_insert_with(|| (s.clone(), spine::normalize(s)));
+                sink.sym(s);
             }
         }
-        let string_rows: Vec<Vec<Value>> = by_id.into_iter()
-            .map(|(id, (content, norm))| vec![Value::Text(id), Value::Text(content), Value::Text(norm)])
-            .collect();
-        self.db.insert_rows("_strings", &["id", "content", "norm"], &string_rows)
+        self.db.flush_syms(&mut sink)
     }
 
     /// Batch located string occurrences into `_where_bytes`. Each row says
@@ -6959,12 +7001,12 @@ impl Engine {
     fn insert_spine_where_bytes(&self, wheres: &[(String, String, spine::WhereBytes, Option<String>)]) -> Result<usize> {
         if wheres.is_empty() { return Ok(0); }
         let mut by_id: BTreeMap<String, Vec<Value>> = BTreeMap::new();
-        let mut str_by_id: BTreeMap<String, (String, String)> = BTreeMap::new();
+        let mut sink = spine::SymSink::new();
         for (repo, path, w, text) in wheres {
             let id = spine::WhereBytesId::of_located(*w, repo, path).to_string();
             by_id.entry(id.clone()).or_insert_with(|| vec![
                 Value::Text(id),
-                Value::Text(w.string.to_string()),
+                Value::Int(w.string.sqlite()),
                 Value::Text(w.file.to_string()),
                 Value::Int(w.lo as i64),
                 Value::Int(w.hi as i64),
@@ -6973,18 +7015,10 @@ impl Engine {
                 Value::Text(path.clone()),
             ]);
             if let Some(t) = text {
-                if !t.is_empty() {
-                    str_by_id.entry(w.string.to_string())
-                        .or_insert_with(|| (t.clone(), spine::normalize(t)));
-                }
+                if !t.is_empty() { sink.sym(t); }
             }
         }
-        if !str_by_id.is_empty() {
-            let string_rows: Vec<Vec<Value>> = str_by_id.into_iter()
-                .map(|(id, (content, norm))| vec![Value::Text(id), Value::Text(content), Value::Text(norm)])
-                .collect();
-            self.db.insert_rows("_strings", &["id", "content", "norm"], &string_rows)?;
-        }
+        self.db.flush_syms(&mut sink)?;
         let rows: Vec<Vec<Value>> = by_id.into_values().collect();
         self.db.insert_rows("_where_bytes", &["id", "string_id", "file_id", "lo", "hi", "repo", "rev", "path"], &rows)
     }
@@ -7001,8 +7035,8 @@ impl Engine {
         let mut stmt = self.db.conn().prepare(&sql)?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
-            let a: String = row.get(0).unwrap_or_default();
-            let b: String = row.get(1).unwrap_or_default();
+            let a = cell_as_string(row, 0)?;
+            let b = cell_as_string(row, 1)?;
             let mut h = blake3::Hasher::new();
             h.update(a.as_bytes());
             h.update(&[0]);

@@ -79,16 +79,16 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
     run(&d, prog);
 
     let conn = Connection::open(d.join("db")).unwrap();
-    let string_row: (String, String, String) = conn
+    let string_row: (i64, String, String) = conn
         .query_row(
-            "SELECT id, content, norm FROM _strings WHERE id = '0'",
+            "SELECT id, content, norm FROM _strings WHERE id = 0",
             [],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .unwrap();
     assert_eq!(
         string_row,
-        (StringId::EMPTY.to_string(), String::new(), String::new())
+        (StringId::EMPTY.sqlite(), String::new(), String::new())
     );
 
     let file_row: (String, String, String, i64) = conn
@@ -125,7 +125,7 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
         )
     );
 
-    let where_row: (String, String, String, i64, i64, String, String) = conn
+    let where_row: (String, i64, String, i64, i64, String, String) = conn
         .query_row(
             "SELECT id, string_id, file_id, lo, hi, repo, rev FROM _where_bytes WHERE id = '0'",
             [],
@@ -146,7 +146,7 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
         where_row,
         (
             WhereBytesId::SYNTHETIC.to_string(),
-            StringId::EMPTY.to_string(),
+            StringId::EMPTY.sqlite(),
             FileId::SYNTHETIC.to_string(),
             0,
             0,
@@ -155,17 +155,17 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
         )
     );
 
-    let symbol_row: (String, String, String) = conn
+    let symbol_row: (i64, String, String) = conn
         .query_row(
             "SELECT id, content, norm FROM _strings WHERE id = ?1",
-            [StringId::of("AuthService").to_string()],
+            [StringId::of("AuthService").sqlite()],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .unwrap();
     assert_eq!(
         symbol_row,
         (
-            StringId::of("AuthService").to_string(),
+            StringId::of("AuthService").sqlite(),
             "AuthService".to_string(),
             "authservice".to_string()
         )
@@ -197,7 +197,7 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
         ..Default::default()
     }, "spine_meta_where_bytes", "src/a.rs");
 
-    let row: (String, String, String, i64, i64, String, String) = conn
+    let row: (String, i64, String, i64, i64, String, String) = conn
         .query_row(
             "SELECT id, string_id, file_id, lo, hi, repo, rev FROM _where_bytes WHERE id = ?1",
             [expect_id.to_string()],
@@ -218,7 +218,7 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
         row,
         (
             expect_id.to_string(),
-            string_id.to_string(),
+            string_id.sqlite(),
             file_id.to_string(),
             lo,
             hi,

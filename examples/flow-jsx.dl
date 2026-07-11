@@ -33,7 +33,7 @@ jsx_use(comp, prop, p, l) <-
 # by NAME. call_name(callee_q, comp) pins the resolved callee to the element's
 # component name (an equality join — no suffix test). Two target shapes:
 # the destructured param piece, and the `props.title` member read.
-rel prop_edge(value: text, comp: text, prop: text, target: text).
+rel prop_edge(value: sym, comp: text, prop: text, target: sym).
 prop_edge(v, comp, prop, target) <-
     df_node(elem, "new", comp, caller_bare, _, _),
     df_field(elem, prop, v),
