@@ -52,6 +52,7 @@ Generated from the engine's `rel_catalog` by examples/gen-reference.dl. Do not h
 | `env` | sys | `(name, value)` | allowlisted process environment variables (name, value) captured at process start; constant for the process lifetime; scoped to SPREFA_/DL_/SG_ prefixes plus CI markers so secrets stay off disk |
 | `every` | clock | `(secs)` | holds interval N only on ticks that cross an N-second boundary (and the first tick); an every(30) body atom self-throttles its rule |
 | `file` | core | `(repo, rev, path, content)` | scanned files, keyed by (repo, rev, path, content) |
+| `file_lines` | file | `(repo, path, rev, line_count)` | line count per scanned file, from the corpus walk's byte count (no lossy read); line_count = -1 when unknown (git revs — counting blob contents would spawn a read per blob, so only WORK files are counted) and those rows are excluded here |
 | `fn_catalog` | meta | `(name, arity, group, doc)` | every scalar function callable in a head or comparison with its arity, group, and one-line doc; sourced from fn_docs |
 | `git_ref` | git-ref | `(repo, refname, kind, sha)` | every branch/tag/remote ref plus HEAD across self + config repos (repo, refname, kind, sha); annotated tags peeled to the commit |
 | `graph_edge` | graph | `(src, dst, kind)` | drawable-graph edge sink: head graph_edge(src, dst, kind) from a rule to connect two graph_node ids; kind is the wire label/style. Read by the Graph preset alongside graph_node |

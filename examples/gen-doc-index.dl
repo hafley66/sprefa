@@ -77,7 +77,9 @@
 # - md  Agent eval harness — v2-ctf-pilot.2 (CTF: dataflow capture-the-flag)  (bench/agent-eval/results/20260710-185659-c56d744-v2-ctf-pilot.2.md)
 # - md  Agent eval harness: a falsifiable, scriptable measurement of dl's effect  (plans/2026-07-10-agent-eval-harness.md)
 # - md  Agent rails: dl as a guardrail loop for coding agents  (docs/rails.md)
+# - md  Agent resume ledger — 2026-07-11 hook-deadlock stoppage  (plans/2026-07-11-agent-resume-ledger.md)
 # - md  Agent sharp edges (field report, 2026-07-04)  (docs/agent-sharp-edges.md)
+# - md  Agent-session feedback: smashy condom-metrics dogfood (2026-07-11)  (plans/2026-07-11-agent-feedback-smashy-condom.md)
 # - md  Anim in the repo: dl relations → animated graphs → node-editor ports  (plans/2026-06-11-anim-and-ports.md)
 # - md  Appendix A: Schema diff  (chat_log/20260515.2.runtime-graph-audit-and-canonical-shape.md)
 # - md  Appendix B: Operator expressibility check  (chat_log/20260515.2.runtime-graph-audit-and-canonical-shape.md)
@@ -104,6 +106,7 @@
 # - md  Conversation concept graph (live)  (chat_log/concept-graph.md)
 # - md  CozoDB storage-backend abstraction (for sprefa `RelStore`)  (docs/ext-cozo-storage-trait.md)
 # - md  Cross-codebase validation — rust-analyzer fixture  (research/refactor-reward/cross_codebase_validation.md)
+# - md  Cross-harness agent tooling: .agents/ once, every CLI (Claude Code / Codex / opencode)  (plans/2026-07-11-cross-harness-agent-tooling.md)
 # - md  Cross-language goto / refs / impls driven by dl codegen-rhythm pages  (plans/2026-06-28-cross-lang-goto-via-dl.md)
 # - md  Cross-language module-graph extraction plan — 2026-05-20  (plans/2026-05-20-cross-language-module-graph-plan.md)
 # - md  Cycles  (anim/src/deck/02-cycles.md)
@@ -148,6 +151,7 @@
 # - md  How the runs partitioned new types  (refactor-suggestions-archive/RESEARCH-type-partitioning.md)
 # - md  Incremental / Reactive Datalog + SQL: prior-art landscape  (research/2026-05-21-incremental-reactive-datalog-landscape.md)
 # - md  Instance leak and memory-control plan — 2026-05-20  (plans/2026-05-20-instance-leak-and-memory-control.md)
+# - md  Intern hot join keys: TEXT columns -> StringId ints via `_strings`  (plans/2026-07-11-intern-string-keys.md)
 # - md  Invariants via DD antijoin  (.agents/skills/sprf-invariants-via-antijoin/SKILL.md)
 # - md  JSON `$$$` Nested-Path Audit  (chat_log/20260515.8.json-triple-dollar-nested-path-audit.md)
 # - md  Kill `where`; make nesting the one way to filter (incl. seeded closures)  (plans/2026-06-02-kill-where-seed-closures-by-nesting.md)
@@ -407,6 +411,7 @@
 # - md  Singleton daemon + registered roots (de-root C)  (plans/2026-07-10-singleton-daemon-registered-roots.md)
 # - md  Small-model surfaces: the build plan for "dl as a steroid for Haiku"  (plans/2026-07-10-small-model-surfaces.md)
 # - md  Source-rule body-join auto-desugar  (plans/2026-07-02-source-rule-body-join-desugar.md)
+# - md  Split src/engine/mod.rs (9,005 lines) into engine/ submodules  (plans/2026-07-11-engine-mod-split.md)
 # - md  Staged writes + LSP rendering tiers  (.agents/skills/sprf-lsp-staged-writes/SKILL.md)
 # - md  Starter lint pack — ast-grep → LSP  (examples/lints/README.md)
 # - md  String values: df_lit + const_value + occurrence-level scip (2026-07-10)  (plans/2026-07-10-string-values-const-value.md)
@@ -512,6 +517,7 @@
 # - rs  src/rels/embed.rs:1  Embedding-similarity relation: `similar`.
 # - rs  src/rels/env.rs:1  Process-environment relation: `env(name, value)` over an allowlisted
 # - rs  src/rels/extract_family.rs:1  `trait ExtractFamily`: the registry for the extraction-tied builtin rel
+# - rs  src/rels/filelines.rs:1  Per-file line-count relation: `file_lines(repo, path, rev, line_count)`.
 # - rs  src/rels/git.rs:1  Git-derived worktree relations: `changed`, `changed_line`, `created`,
 # - rs  src/rels/mod.rs:1  Built-in source-relation families behind one trait.
 # - rs  src/rels/perf.rs:1  Engine-telemetry relations: `rel_count`, `stmt_ms`. The tick already knows
@@ -530,6 +536,7 @@
 # - rs  src/typegraph.rs:1  Diet type graph extractors. Intentionally syntax-only: parse a file (`syn`
 # - rs  src/update.rs:1  `dl update` — self-update to the latest published release, turnkey.
 # - rs  src/verbs.rs:1  `dl q <verb>` — concept verbs over the code graph.
+# - rs  src/verdict.rs:1  Observability "verdict line" logging: one terse stderr line + one
 # - rs  src/watchgate.rs:1  Receive-side filter shared by the daemon watcher and the pre-daemon
 # END:
 

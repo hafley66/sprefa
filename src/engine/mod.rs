@@ -1957,9 +1957,11 @@ fn rel_components(group: &[usize], rules: &[&Rule]) -> Vec<(Vec<usize>, bool)> {
 }
 
 type Bind = HashMap<String, Value>;
-/// (repo slug, path, rev) -> (content hash, mtime secs, size bytes). The repo
-/// slug is the third coordinate so two repos sharing a path do not collide.
-type FileMeta = HashMap<(String, String, String), (String, i64, i64)>;
+/// (repo slug, path, rev) -> (content hash, mtime secs, size bytes, line count).
+/// The repo slug is the third coordinate so two repos sharing a path do not
+/// collide. `line count` is -1 when unknown (a git rev, or an old row from
+/// before this column existed) — `file_lines` filters those out.
+type FileMeta = HashMap<(String, String, String), (String, i64, i64, i64)>;
 
 struct Reconcile { changed: bool, extracted: usize, retracted: usize, parsed: usize, total: usize }
 
@@ -4016,7 +4018,7 @@ impl Engine {
     fn ensure_meta(&self) -> Result<()> {
         self.db.conn().execute_batch(
             "CREATE TABLE IF NOT EXISTS _file (repo TEXT NOT NULL DEFAULT '', path TEXT, rev TEXT, hash TEXT,
-                 mtime INTEGER DEFAULT 0, size INTEGER DEFAULT 0, PRIMARY KEY (repo, path, rev));
+                 mtime INTEGER DEFAULT 0, size INTEGER DEFAULT 0, lines INTEGER DEFAULT -1, PRIMARY KEY (repo, path, rev));
              CREATE TABLE IF NOT EXISTS _prov (rel TEXT, repo TEXT NOT NULL DEFAULT '', path TEXT, src TEXT, PRIMARY KEY (rel, repo, path, src));
              CREATE TABLE IF NOT EXISTS _reldigest (rel TEXT PRIMARY KEY, digest TEXT);
              -- P1 (2026-07-10 --check perf defect): one row per derived rel that
@@ -4210,6 +4212,9 @@ impl Engine {
         // tolerate dbs created before mtime/size existed
         let _ = self.db.conn().execute("ALTER TABLE _file ADD COLUMN mtime INTEGER DEFAULT 0", []);
         let _ = self.db.conn().execute("ALTER TABLE _file ADD COLUMN size INTEGER DEFAULT 0", []);
+        // tolerate dbs created before the line-count column existed; -1 = unknown,
+        // reconcile_sources' fast path forces one read+count on the next tick.
+        let _ = self.db.conn().execute("ALTER TABLE _file ADD COLUMN lines INTEGER DEFAULT -1", []);
         // tolerate _where_bytes created before the path attribution column existed
         let _ = self.db.conn().execute("ALTER TABLE _where_bytes ADD COLUMN path TEXT NOT NULL DEFAULT ''", []);
         // Re-key `_file` and `_prov` on (repo, ...) for dbs that predate the repo
@@ -4222,7 +4227,7 @@ impl Engine {
             self.db.conn().execute_batch(&format!(
                 "ALTER TABLE _file RENAME TO _file_old;
                  CREATE TABLE _file (repo TEXT NOT NULL DEFAULT '', path TEXT, rev TEXT, hash TEXT,
-                     mtime INTEGER DEFAULT 0, size INTEGER DEFAULT 0, PRIMARY KEY (repo, path, rev));
+                     mtime INTEGER DEFAULT 0, size INTEGER DEFAULT 0, lines INTEGER DEFAULT -1, PRIMARY KEY (repo, path, rev));
                  INSERT INTO _file (repo, path, rev, hash, mtime, size)
                      SELECT '{s}', path, rev, hash, mtime, size FROM _file_old;
                  DROP TABLE _file_old;",
@@ -4620,7 +4625,7 @@ impl Engine {
             }
         }
         let group_list: Vec<(&(String, String), &(PathBuf, Vec<(usize, String, Vec<(String, String)>)>))> = groups.iter().collect();
-        let enumerated: Vec<Result<Vec<(String, String, i64, i64)>>> = group_list.par_iter()
+        let enumerated: Vec<Result<Vec<(String, String, i64, i64, i64)>>> = group_list.par_iter()
             .map(|((slug, rev), (repo_root, rules))| {
                 let t = std::time::Instant::now();
                 let mut union = globset::GlobSetBuilder::new();
@@ -4637,8 +4642,8 @@ impl Engine {
             let matchers: Vec<(usize, globset::GlobMatcher, Vec<(String, String)>)> = rules.iter()
                 .map(|(idx, g, hb)| Ok((*idx, globset::Glob::new(g)?.compile_matcher(), hb.clone())))
                 .collect::<Result<_>>()?;
-            for (path, h, mt, sz) in files? {
-                current.insert((slug.clone(), path.clone(), rev.clone()), (h.clone(), mt, sz));
+            for (path, h, mt, sz, lines) in files? {
+                current.insert((slug.clone(), path.clone(), rev.clone()), (h.clone(), mt, sz, lines));
                 for (idx, m, hb) in &matchers {
                     if m.is_match(&path) {
                         rule_files.push((*idx, slug.clone(), path.clone(), rev.clone(), h.clone(), hb.clone()));
@@ -4703,7 +4708,7 @@ impl Engine {
         // Retraction key is (repo, path): `_prov` prunes by that pair, so two
         // repos at the same path do not retract each other's source rows.
         let mut to_retract: HashSet<(String, String)> = HashSet::new();
-        for ((repo, path, rev), (h, _, _)) in &current {
+        for ((repo, path, rev), (h, _, _, _)) in &current {
             if hash_of(&prev, repo, path, rev).as_ref() != Some(h) {
                 to_retract.insert((repo.clone(), path.clone()));
             }
@@ -4815,10 +4820,10 @@ impl Engine {
     }
 
     fn load_file_meta(&self) -> Result<FileMeta> {
-        let mut stmt = self.db.conn().prepare("SELECT repo, path, rev, hash, mtime, size FROM _file")?;
+        let mut stmt = self.db.conn().prepare("SELECT repo, path, rev, hash, mtime, size, lines FROM _file")?;
         let rows = stmt.query_map([], |r| Ok((
             (r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?),
-            (r.get::<_, String>(3)?, r.get::<_, i64>(4)?, r.get::<_, i64>(5)?),
+            (r.get::<_, String>(3)?, r.get::<_, i64>(4)?, r.get::<_, i64>(5)?, r.get::<_, i64>(6)?),
         )))?;
         Ok(rows.filter_map(|x| x.ok()).collect())
     }
@@ -4851,22 +4856,23 @@ impl Engine {
             self.db.insert_rows("_stale_file", &["repo", "path", "rev"], &stale)?;
             self.db.exec("DELETE FROM _file WHERE (repo, path, rev) IN (SELECT repo, path, rev FROM _stale_file)")?;
         }
-        let rows: Vec<Vec<Value>> = delta.iter().map(|((repo, path, rev), (h, mt, sz))| vec![
+        let rows: Vec<Vec<Value>> = delta.iter().map(|((repo, path, rev), (h, mt, sz, lines))| vec![
             Value::Text(repo.clone()),
             Value::Text(path.clone()),
             Value::Text(rev.clone()),
             Value::Text(h.clone()),
             Value::Int(*mt),
             Value::Int(*sz),
+            Value::Int(*lines),
         ]).collect();
-        self.db.insert_rows("_file", &["repo", "path", "rev", "hash", "mtime", "size"], &rows)?;
+        self.db.insert_rows("_file", &["repo", "path", "rev", "hash", "mtime", "size", "lines"], &rows)?;
         self.insert_spine_files(&delta)?;
         Ok(())
     }
 
     fn insert_spine_files(&self, current: &FileMeta) -> Result<usize> {
         let mut by_id: BTreeMap<String, (String, String, i64)> = BTreeMap::new();
-        for ((_repo, path, _rev), (hash, _mt, size)) in current {
+        for ((_repo, path, _rev), (hash, _mt, size, _lines)) in current {
             let Some(id) = spine::FileId::from_content_address(hash, *size) else { continue };
             if id == spine::FileId::SYNTHETIC { continue; }
             let entry = by_id.entry(id.to_string()).or_insert_with(|| (hash.clone(), path.clone(), *size));
@@ -8047,12 +8053,12 @@ fn module_stem(path: &str) -> &str {
 /// scan glob should have excluded). Called once from the WORK arm of
 /// `enumerate_with_hash` per repo, never per-file — corpus-sanity is a
 /// scan-level verdict, not a hot-loop one.
-fn emit_corpus_scan_verdict(repo: &str, files: &[(String, String, i64, i64)]) {
+fn emit_corpus_scan_verdict(repo: &str, files: &[(String, String, i64, i64, i64)]) {
     if files.is_empty() { return; }
     let total_files = files.len();
-    let total_bytes: i64 = files.iter().map(|(_, _, _, sz)| *sz).sum();
+    let total_bytes: i64 = files.iter().map(|(_, _, _, sz, _)| *sz).sum();
     let mut per_dir: HashMap<&str, usize> = HashMap::new();
-    for (rel, _, _, _) in files {
+    for (rel, _, _, _, _) in files {
         let dir = rel.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
         *per_dir.entry(dir).or_insert(0) += 1;
     }
@@ -8086,7 +8092,18 @@ fn emit_corpus_scan_verdict(repo: &str, files: &[(String, String, i64, i64)]) {
     }
 }
 
-fn enumerate_with_hash(repo: &str, repo_root: &Path, rev: &str, union: &globset::GlobSet, prev: &FileMeta) -> Result<Vec<(String, String, i64, i64)>> {
+/// Count lines the way `wc -l` semantics-adjacent editors expect: an empty
+/// file is 0 lines; a file with content but no trailing newline still counts
+/// its last (unterminated) line. Counts `\n` bytes and adds one more unless
+/// the file already ends on a newline — no lossy String allocation, works on
+/// raw bytes so binary-ish files don't panic on invalid UTF-8.
+fn count_lines(bytes: &[u8]) -> i64 {
+    if bytes.is_empty() { return 0; }
+    let newlines = bytes.iter().filter(|&&b| b == b'\n').count() as i64;
+    if bytes.last() == Some(&b'\n') { newlines } else { newlines + 1 }
+}
+
+fn enumerate_with_hash(repo: &str, repo_root: &Path, rev: &str, union: &globset::GlobSet, prev: &FileMeta) -> Result<Vec<(String, String, i64, i64, i64)>> {
     let max_size = max_filesize();
     if rev == "WORK" {
         let mut files: Vec<(PathBuf, String, i64, i64)> = Vec::new();
@@ -8112,15 +8129,23 @@ fn enumerate_with_hash(repo: &str, repo_root: &Path, rev: &str, union: &globset:
             let (mt, sz) = entry.metadata().ok().map(|m| (mtime_secs(&m), m.len() as i64)).unwrap_or((0, 0));
             files.push((entry.path().to_path_buf(), rel, mt, sz));
         }
-        // reuse stored hash when mtime+size match; otherwise read+hash (parallel)
-        let mut out: Vec<(String, String, i64, i64)> = files.par_iter().map(|(abs, rel, mt, sz)| {
-            if let Some((h, pmt, psz)) = prev.get(&(repo.to_string(), rel.clone(), "WORK".to_string())) {
+        // reuse stored hash + line count when mtime+size match; otherwise
+        // read+hash+count (parallel). A stored line count of -1 (unknown: an
+        // old row from before this column existed) still forces one read on
+        // an otherwise-unchanged file, purely to count lines — the hash is
+        // NOT recomputed, so this is a one-time cost per file, not a repeat.
+        let mut out: Vec<(String, String, i64, i64, i64)> = files.par_iter().map(|(abs, rel, mt, sz)| {
+            if let Some((h, pmt, psz, plines)) = prev.get(&(repo.to_string(), rel.clone(), "WORK".to_string())) {
                 if pmt == mt && psz == sz {
-                    return (rel.clone(), h.clone(), *mt, *sz);
+                    if *plines >= 0 {
+                        return (rel.clone(), h.clone(), *mt, *sz, *plines);
+                    }
+                    let bytes = std::fs::read(abs).unwrap_or_default();
+                    return (rel.clone(), h.clone(), *mt, *sz, count_lines(&bytes));
                 }
             }
             let bytes = std::fs::read(abs).unwrap_or_default();
-            (rel.clone(), blake3::hash(&bytes).to_hex().to_string(), *mt, *sz)
+            (rel.clone(), blake3::hash(&bytes).to_hex().to_string(), *mt, *sz, count_lines(&bytes))
         }).collect();
         out.sort();
         emit_corpus_scan_verdict(repo, &out);
@@ -8143,7 +8168,10 @@ fn enumerate_with_hash(repo: &str, repo_root: &Path, rev: &str, union: &globset:
             let size = parts.get(3).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
             // Same size cap as the WORK walker, applied to blob sizes from ls-tree.
             if let Some(cap) = max_size { if size as u64 > cap { continue; } }
-            if union.is_match(path) { out.push((path.to_string(), oid.to_string(), 0, size)); }
+            // Line count is left unknown (-1) for git-rev blobs: counting them
+            // would spawn a read per blob, and the file-size rail only needs
+            // WORK. See `file_lines`'s doc string.
+            if union.is_match(path) { out.push((path.to_string(), oid.to_string(), 0, size, -1)); }
         }
         Ok(out)
     }
@@ -9001,5 +9029,22 @@ mod tests {
         assert!(by_head("p").1, "mutually recursive p/q iterate");
         assert_eq!(by_head("p").0.len(), 3, "p+q rules share one component");
         assert!(!by_head("lone").1, "independent rel is single-pass");
+    }
+
+    #[test]
+    fn count_lines_empty_file_is_zero() {
+        assert_eq!(count_lines(b""), 0);
+    }
+
+    #[test]
+    fn count_lines_no_trailing_newline_still_counts_last_line() {
+        assert_eq!(count_lines(b"a\nb"), 2);
+        assert_eq!(count_lines(b"only one line, no newline"), 1);
+    }
+
+    #[test]
+    fn count_lines_trailing_newline_does_not_add_a_phantom_line() {
+        assert_eq!(count_lines(b"a\nb\n"), 2);
+        assert_eq!(count_lines(b"\n"), 1);
     }
 }

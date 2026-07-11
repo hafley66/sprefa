@@ -1,0 +1,81 @@
+# The dl-native file-size law (Chris, 2026-07-11): no source file over 500
+# lines, target 300. This is the ADVISORY twin of `scripts/filesize-rail.sh`
+# (the exit-2 enforcement prong run by verify.sh / the pre-commit hook / CI).
+# Every diag here is WARNING severity, never error — a --check run of this
+# program alone always exits 0. That is deliberate: an error-severity rail
+# exiting non-zero from a PostToolUse hook blocked every write repo-wide on
+# 2026-07-11 (an outage). Live checks stay advisory; the bash rail is the
+# only place that fails a build.
+#
+# Own bare scan so this program never rides another program's corpus — it
+# works loaded alone (`dl .dl/file-size.dl`) or merged with anything else.
+rel src_file(path: file).
+src_file(path) <- scan("WORK", "src/**/*.rs", path, source_rev).
+
+rel soft_budget(max_lines: int).
+soft_budget(300).
+rel hard_budget(max_lines: int).
+hard_budget(500).
+
+# Mirrors `scripts/filesize-allow.txt` — THAT file is canonical (CI diffs it;
+# the allowlist may only shrink). This table exists so the advisory rail can
+# name the same grandfathered files without shelling out; keep it in sync by
+# hand when the script's list changes (a drift check is future work, same
+# shape as the lang-junction skill rail).
+rel big_file_ok(path: text, reason: text).
+big_file_ok("src/anchor.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/ast.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/config.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/daemon.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/datapath.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/db.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/effect.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/engine/extract.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/engine/mod.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/engine/tick.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/frontend.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/lib.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/lower.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/lsp.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/mcp.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/modgraph.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/parse.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/propose.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/scip_import.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/scip_setup.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/setup.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/typecheck.rs", "grandfathered (scripts/filesize-allow.txt)").
+big_file_ok("src/typegraph.rs", "grandfathered (scripts/filesize-allow.txt)").
+
+# 300-500: needs a written reason to stay this size, or a split.
+diag(path, line: 1, severity: "warning", code: "file-over-soft-budget",
+     msg: "`${path}` is ${line_count} lines (soft budget ${soft}) — needs a written reason to stay this size, or a split") <-
+    src_file(path), file_lines(_, path, "WORK", line_count),
+    soft_budget(soft), hard_budget(hard),
+    line_count > soft, line_count <= hard.
+
+# >500, already grandfathered in scripts/filesize-allow.txt: named, not silent.
+diag(path, line: 1, severity: "warning", code: "file-over-budget-grandfathered",
+     msg: "`${path}` is ${line_count} lines (hard budget ${hard}), ${reason}") <-
+    src_file(path), file_lines(_, path, "WORK", line_count),
+    hard_budget(hard), line_count > hard,
+    big_file_ok(path, reason).
+
+# >500, NOT grandfathered: the STOP protocol.
+diag(path, line: 1, severity: "warning", code: "file-over-budget",
+     msg: "STOP: `${path}` is ${line_count} lines (hard budget ${hard}) — propose 3 ways to split this file, or 1 justification, then add it to scripts/filesize-allow.txt with a plan pointer") <-
+    src_file(path), file_lines(_, path, "WORK", line_count),
+    hard_budget(hard), line_count > hard,
+    !big_file_ok(path, _).
+
+# The running debt count Chris specced, as one aggregate diag pinned to this
+# program's own path/line 1.
+rel offender_count(n: int).
+offender_count(count(path)) <-
+    src_file(path), file_lines(_, path, "WORK", line_count),
+    hard_budget(hard), line_count > hard.
+
+diag(path: ".dl/file-size.dl", line: 1, severity: "warning", code: "file-size-debt",
+     msg: "you still have ${n} unacceptable files (>500 lines)") <- offender_count(n).
+
+? diag(path, line, severity: sev, code, msg).
