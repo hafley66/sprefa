@@ -32,6 +32,7 @@ pub mod rpc;
 pub mod refactor;
 pub mod rels;
 pub mod repo;
+pub mod reserved_names;
 pub mod rspath;
 pub mod scc;
 pub mod scip_import;
@@ -119,6 +120,7 @@ pub fn prepare_paths(paths: &[PathBuf]) -> Result<(ast::Program, Vec<ast::TypeDi
     // unknown-rel diags may also fire — intended, and more informative.
     let mut diags = import_diags;
     diags.extend(typecheck::check_and_normalize(&mut prog, &display));
+    diags.extend(reserved_names::diags(&prog, &display));
     Ok((prog, diags, display))
 }
 
@@ -424,7 +426,11 @@ pub fn run_parse_only(programs: &[String], root: PathBuf) -> Result<i32> {
     render_type_diags(&regex_diags, false);
     let n_errors = type_diags.iter().chain(&regex_diags)
         .filter(|d| d.severity == ast::Severity::Error).count();
-    Ok(if n_errors > 0 { 1 } else { 0 })
+    // A reserved engine relation is a command-contract collision, matching the
+    // `--check` gate's exit-2 convention while other parse/type errors retain
+    // parse-only's historical exit 1.
+    Ok(if type_diags.iter().any(|d| d.code == "reserved-name") { 2 }
+       else if n_errors > 0 { 1 } else { 0 })
 }
 
 /// Drive one incremental tick over an existing db for a set of changed paths

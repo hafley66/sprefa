@@ -59,6 +59,22 @@ fn parse_error_exits_one() {
     let _ = fs::remove_dir_all(&d);
 }
 
+/// Engine-owned relation names are rejected before any scan/tick. This keeps a
+/// typo such as `rel node(...)` out of the slow execution path and names the
+/// direct-write/rename fix.
+#[test]
+fn reserved_builtin_name_exits_two_with_named_fix() {
+    let d = sandbox("reserved");
+    let db = d.join("should_not_exist.db");
+    let (code, _out, err) = run(&d, "rel node(id: text).\n", &db);
+    assert_eq!(code, 2, "reserved relation uses the check-style exit: {err}");
+    assert!(err.contains("reserved-name"), "diagnostic code: {err}");
+    assert!(err.contains("relation `node` is reserved"), "names collision: {err}");
+    assert!(err.contains("write to the built-in directly"), "names fix: {err}");
+    assert!(!db.exists(), "no db file created at parse tier");
+    let _ = fs::remove_dir_all(&d);
+}
+
 /// A lowercase `$name` in an sg pattern warns (not errors) under `--parse-only`;
 /// warn-only keeps the exit at 0, and the diagnostic names the fix.
 #[test]
