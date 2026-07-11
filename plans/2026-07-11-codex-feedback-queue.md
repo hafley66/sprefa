@@ -28,7 +28,7 @@ semantics or the sym lowering without an exact-count / byte-compare gate.
    filesize-allow.txt vs .dl/file-size.dl `big_file_ok` facts can drift
    silently. Add the check to scripts/filesize-rail.sh (diff the path sets,
    warn loud). Test: red/green in a scratch copy.
-6. **verify.sh lock echo** (semi-naive debrief): when cargo blocks on the
+6. WONTFIX (audit 2026-07-11: codex verified cargo already surfaces "Blocking waiting for file lock" through verify.sh's tee; the skip note lived only in the codex transcript — recorded here now). **verify.sh lock echo** (semi-naive debrief): when cargo blocks on the
    target-dir flock, echo "waiting on target-dir lock". (cargo prints
    "Blocking waiting for file lock" already when attached to a tty — ensure
    verify.sh doesn't swallow it; one-line fix or wontfix with note.)
@@ -90,3 +90,33 @@ with per-item commits + skips.
     total-row-budget bail naming the rel, plus consider a began-statement
     marker so a wedged statement is visible (DL_STMT_TRACE is the stopgap).
     <!-- todo(perf): semi-naive delta-growth bail + wedge visibility -->
+
+## Chris-approved wart fixes (2026-07-11 final hamon)
+
+18. **Auto-split the rule-splitting family** (sol-class, engine): when a rel
+    mixes source+derived heads, or a source rule body joins a non-slot rel,
+    or a term-extract feeds @next, the engine should SYNTHESIZE the
+    intermediate rel + union it currently tells the user to write (keep the
+    bail as a lint tier for those who want explicitness). Design first: the
+    synthesized rel needs a stable name (diagnostics reference it) and must
+    not collide with user names.
+    <!-- todo(feature): auto-split mixed/source-join/term-extract shapes instead of bailing -->
+19. **closure() readable unpinned in rule bodies** (terra): today a closure
+    rel in a rule body must be pinned or it refuses (materialization guard).
+    Fix shape: when a rule body reads a closure unpinned, lower that RULE
+    through the semi-naive delta machinery over the closure's edge rel
+    instead of materializing the view (the flow-ctor hand-pattern, generated).
+    <!-- todo(feature): unpinned closure in rule bodies via generated recursive rule -->
+20. **argmax/argmin aggregates** (terra): first-class `argmax(col, by)` head
+    aggregate replacing the negation-count idiom hand-built in chat-marks,
+    suppress, goto-flows, gh-cache. Must define tie-break (stable: lowest
+    rowid of the max group) and compose with key()/merge lattice decls.
+    <!-- todo(feature): argmax/argmin head aggregates -->
+21. **CLI flag taxonomy redesign** (sol PROPOSAL first, no code): the flag
+    surface (--load/--load-once/--check/--fix/--await-settle/--rows/--query
+    /--parse-only/--no-daemon/--hermetic-pending...) grew by accretion.
+    Chris's sketch: gate by effect class — read-only query mode / mutate mode
+    / effects mode — so one axis says what the run may DO and the rest is
+    input selection. Deliverable: plans/ design doc mapping every current
+    flag onto the new axes, back-compat aliases, sign-off checklist.
+    <!-- todo(decision): CLI flag taxonomy — query/mutate/effects axes -->

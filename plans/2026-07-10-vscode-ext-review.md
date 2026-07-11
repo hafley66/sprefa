@@ -187,7 +187,7 @@ Wave 2 (M): A5 push-refresh v1, A6 virtualization, A7+A8 dead-code delete + canv
   B1 refs resolver + TreeView + multi-repo fix.
 Wave 3 (M): B2 free LSP features, B3 SCIP tier, C2 rollup + where-used, A9 daemon routing,
   A10 perf harness (can land any time; ideally before wave 2 to measure it).
-Wave 4 (L/later): B4 follow-the-user (needs A7/A8), B5 hierarchies, C3 exploded view,
+Wave 4 — LANDED except C4 (audit 2026-07-11: B4 dl/locate a2b7051/5b640ee, B5 hierarchy 23ada98, C3 exploded stratum 1901bf1; C4 sketch only adaf637): B4 follow-the-user (needs A7/A8), B5 hierarchies, C3 exploded view,
   A11+ cytoscape incremental, push v2, C4 3D go/no-go.
 
 Staffing per Chris: implementation by Opus/Sonnet subagents with exact paths/lines in the
