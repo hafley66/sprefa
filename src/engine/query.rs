@@ -43,6 +43,8 @@ impl Engine {
     }
 
     fn print_query_result(&self, res: &QueryResult) {
+        // Human query output is a block: the header starts with `?`, each data
+        // row has exactly two spaces of indentation, and cells are tab-separated.
         if self.query_json {
             emit_query_json(&res.rel, &res.columns, &res.rows);
         } else {

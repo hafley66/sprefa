@@ -77,6 +77,10 @@ dl todos.dl --no-daemon
   (3 rows)
 ```
 
+Human query output is a TSV block: each data row starts with two spaces, and
+cells in the header and rows are separated by tabs. Use `--query-json` when a
+machine-readable JSON-lines result is preferable.
+
 (Output shown from a 3-file demo repo. A `[tick]` status line with timings
 also prints; it varies per machine and is elided here, as it is throughout the
 tutorial.)
