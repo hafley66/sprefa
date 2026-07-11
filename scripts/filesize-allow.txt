@@ -14,6 +14,8 @@ src/engine/lens.rs
 # src/engine/lens.rs: plans/2026-07-11-engine-mod-split.md (trait-extraction shrink path)
 src/engine/repo.rs
 # src/engine/repo.rs: plans/2026-07-11-engine-mod-split.md (trait-extraction shrink path)
+src/engine/meta.rs
+# src/engine/meta.rs: plans/2026-07-11-engine-mod-split.md (trait-extraction shrink path)
 src/engine/mod.rs
 src/engine/tick.rs
 src/frontend.rs
