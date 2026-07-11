@@ -87,9 +87,14 @@ fn print_answer(columns: &[String], rows: &[Vec<String>], total: usize, notes: &
 
 /// `dl what <anchor> [--limit N] [--offset M] [--no-daemon] [--db PATH]`.
 pub fn run_what(args: &[String]) -> Result<i32> {
+    if args.iter().any(|arg| arg == "-h" || arg == "--help") {
+        eprintln!("usage: dl what <anchor> [--limit N] [--offset N] [--no-daemon] [--db PATH]");
+        eprintln!("  resolve a name, glob, path, or path:line and show its graph neighborhood");
+        return Ok(0);
+    }
     let o = parse_opts(args);
     let Some(anchor) = o.positional.clone() else {
-        eprintln!("usage: dl what <anchor> [--limit N] [--offset M] [--no-daemon]");
+        eprintln!("usage: dl what <anchor> [--limit N] [--offset N] [--no-daemon] [--db PATH]");
         return Ok(2);
     };
     let target = root::daemon_target()?;
@@ -141,6 +146,11 @@ fn parse_q_opts(args: &[String]) -> (Option<String>, Option<String>, Opts) {
 /// A bare `dl q` (no verb) lists the available verbs. Verbs are embedded `.dl`
 /// programs with a `q_target` fact injected; see [`crate::verbs`].
 pub fn run_q(args: &[String]) -> Result<i32> {
+    if args.iter().any(|arg| arg == "-h" || arg == "--help") {
+        eprintln!("usage: dl q <verb> <name> [--limit N] [--offset N] [--no-daemon] [--db PATH]");
+        eprintln!("  verbs: who-calls, where-defined");
+        return Ok(0);
+    }
     let (verb, target, o) = parse_q_opts(args);
     let Some(verb) = verb else {
         list_verbs();
@@ -179,9 +189,14 @@ fn list_verbs() {
 
 /// `dl summary <path> [--no-daemon] [--db PATH]`.
 pub fn run_summary(args: &[String]) -> Result<i32> {
+    if args.iter().any(|arg| arg == "-h" || arg == "--help") {
+        eprintln!("usage: dl summary <path> [--no-daemon] [--db PATH]");
+        eprintln!("  report entities, imports, callable fan, and documentation for a file");
+        return Ok(0);
+    }
     let o = parse_opts(args);
     let Some(path) = o.positional.clone() else {
-        eprintln!("usage: dl summary <path> [--no-daemon]");
+        eprintln!("usage: dl summary <path> [--no-daemon] [--db PATH]");
         return Ok(2);
     };
     let target = root::daemon_target()?;

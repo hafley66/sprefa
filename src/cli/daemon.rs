@@ -13,6 +13,10 @@ const VERBS: &str = "verbs: status start [--foreground] stop restart drop <root>
 
 /// Dispatch `dl daemon <verb> [args]`. Returns the process exit code.
 pub fn run_cmd(args: &[String]) -> Result<i32> {
+    if matches!(args.first().map(String::as_str), Some("-h" | "--help")) {
+        print_help();
+        return Ok(0);
+    }
     let target = root::daemon_target()?;
     let root_opt = target.root();
     match args.first().map(String::as_str).unwrap_or("status") {
@@ -120,6 +124,20 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
             Ok(2)
         }
     }
+}
+
+fn print_help() {
+    eprintln!("usage: dl daemon <verb> [options]");
+    eprintln!("  status                         show daemon and root status");
+    eprintln!("  start [PROGRAMS] [--foreground] start the singleton (or run it in this process)");
+    eprintln!("  stop                           stop the singleton");
+    eprintln!("  restart                        restart the singleton");
+    eprintln!("  drop <ROOT> [--purge]          unregister a root, optionally purge its db");
+    eprintln!("  load <FILE.dl>                 load a watched program");
+    eprintln!("  load-once <FILE.dl>            load a program for one run");
+    eprintln!("  rows <REL>                     print live relation rows");
+    eprintln!("  await-settle [--ms N]          wait for the root to become quiescent");
+    eprintln!("options: --db PATH, --tray (start); --ms N (await-settle)");
 }
 
 /// `dl watch <target>`: serve a program reactively (the daemon watches +
