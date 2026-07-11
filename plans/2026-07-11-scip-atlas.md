@@ -102,3 +102,35 @@ cluster-level dogfood metrics, it cascades into bom/cohesion numbers.
 3. Watchgate index.scip allowlist (gap 1) — daily-driver papercut, S.
 4. Hermeticity design sign-off -> build (design done).
 5. `at()` rel + sym_pkg as dogfood sweeteners.
+
+## Dataflow frontier (2026-07-11 final-hamon addendum)
+
+SCIP is a name index, not a dataflow format: a perfect index = perfect
+RESOLUTION (callee/field/implementor), flow itself stays our AST lift.
+
+Intraproc blindspots (honest): TS class-method bodies emit ZERO df nodes
+(3rd sighting, biggest hole); no kill/flow-sensitivity (reassignment doesn't
+kill, branches merge — taint over-approximates); no aliasing (mutation
+through a reference rides the blanket receiver edge only); field writes
+after construction aren't df_field; Rust macro interiors invisible to syn;
+pattern destructuring partial beyond TS object params.
+<!-- todo(bug): TS class-method bodies emit zero df nodes -->
+
+Unexploited SCIP asset: scip_occurrence ROLES (Write vs Read) = index-level
+def-use chains, no lift needed; var_write/var_read rels + a cross-check rail
+(a read with no lifted edge = a df hole made visible).
+<!-- todo(feature): var_write/var_read from scip_occurrence roles + df-hole cross-check rail -->
+
+Graph ideas ranked (1/2/4 are PURE .dl over existing rels — datalog is the
+native home of pointer analysis, Doop precedent; semi-naive makes it affordable):
+1. Andersen points-to in dl: new = alloc site, df_edge = assign, df_field =
+   store, member = load; ~6 recursive rules. Gives aliasing + escape analysis.
+   <!-- todo(feature): std/points-to.dl Andersen-style over df facts -->
+2. CHA dispatch via existing scip_impl (iface call -> all implementors),
+   points-to-refined to VTA. Attacks the trait-call bare ceiling directly.
+   <!-- todo(feature): std/dispatch.dl CHA via scip_impl, VTA refinement -->
+3. cfg_edge per fn (the one LIFT extension): reaching-defs/liveness/kill as
+   dl rules — fixes flow-insensitivity at the language level.
+   <!-- todo(feature): cfg_edge lift rel for flow-sensitive dl analyses -->
+4. assignable(a,b) subtyping closure from scip_impl + type_link — type-
+   filterable flow edges.

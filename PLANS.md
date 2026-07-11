@@ -13,6 +13,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `bug` plans/2026-07-11-codex-feedback-queue.md:18 — lex warn on dropped backslash escapes in plain strings
 - `bug` plans/2026-07-11-codex-feedback-queue.md:46 — body-level extract+rel-atom mix must bail, not ignore
 - `bug` plans/2026-07-11-codex-feedback-queue.md:86 — module_edge nondeterministic across identical cold runs
+- `bug` plans/2026-07-11-scip-atlas.md:117 — TS class-method bodies emit zero df nodes
 - `bug` plans/2026-07-11-scip-atlas.md:38 — watchgate allowlist for index.scip; dl index pokes daemon
 - `decision` plans/2026-07-10-change-cost-friction-inventory.md:152 — item 5 — a resolution_source column (values scip|syntactic|alias|narrowed) on call_edge/type_link (rev twins included), plus a public eng.ensure_families(&[...])
 - `decision` plans/2026-07-11-codex-feedback-queue.md:122 — CLI flag taxonomy — query/mutate/effects axes
@@ -31,6 +32,10 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-07-11-engine-mod-split.md:73 — trait-extraction epic Phase 1 (RelKind) resumes on top of the split
 - `feature` plans/2026-07-11-file-lines-builtin.md:84 — file_lines for git revs via the cat-file batch reader, if a rail ever needs history
 - `feature` plans/2026-07-11-file-lines-builtin.md:85 — re-enable PostToolUse hook (timeout-wrapped, advisory) once the perf arc lands — NOT in this task
+- `feature` plans/2026-07-11-scip-atlas.md:122 — var_write/var_read from scip_occurrence roles + df-hole cross-check rail
+- `feature` plans/2026-07-11-scip-atlas.md:128 — std/points-to.dl Andersen-style over df facts
+- `feature` plans/2026-07-11-scip-atlas.md:131 — std/dispatch.dl CHA via scip_impl, VTA refinement
+- `feature` plans/2026-07-11-scip-atlas.md:134 — cfg_edge lift rel for flow-sensitive dl analyses
 - `feature` plans/2026-07-11-scip-atlas.md:42 — positions on type refs so ScipOccIndex covers type_link
 - `feature` plans/2026-07-11-scip-atlas.md:52 — repo column on scip_impl + scip_typedef from is_type_definition
 - `feature` plans/2026-07-11-scip-atlas.md:80 — argmax aggregate sugar
@@ -73,6 +78,11 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-11-scip-atlas.md:42 `feature` — positions on type refs so ScipOccIndex covers type_link
 - plans/2026-07-11-scip-atlas.md:52 `feature` — repo column on scip_impl + scip_typedef from is_type_definition
 - plans/2026-07-11-scip-atlas.md:80 `feature` — argmax aggregate sugar
+- plans/2026-07-11-scip-atlas.md:117 `bug` — TS class-method bodies emit zero df nodes
+- plans/2026-07-11-scip-atlas.md:122 `feature` — var_write/var_read from scip_occurrence roles + df-hole cross-check rail
+- plans/2026-07-11-scip-atlas.md:128 `feature` — std/points-to.dl Andersen-style over df facts
+- plans/2026-07-11-scip-atlas.md:131 `feature` — std/dispatch.dl CHA via scip_impl, VTA refinement
+- plans/2026-07-11-scip-atlas.md:134 `feature` — cfg_edge lift rel for flow-sensitive dl analyses
 <!-- END: plans-by-plan -->
 
 ## By code file
