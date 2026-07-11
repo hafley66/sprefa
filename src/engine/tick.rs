@@ -66,6 +66,15 @@ impl Engine {
         self.shape_diags.clear();
         CMD_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
         self.db.tick_begin();
+        // Rewrite any rel headed by both a source/extract rule and a derived
+        // rule into hidden twins + a synthesized union, BEFORE rule
+        // classification below ever sees the program — so every downstream
+        // pass (reconcile, rebuild_derived, closures, `?` queries) treats the
+        // twins as ordinary rels and the visible rel as ordinary-derived.
+        // `None` (the common case: nothing mixed) keeps borrowing the
+        // original `prog`, no clone paid.
+        let desugared = desugar::desugar_mixed_rels(prog)?;
+        let prog: &Program = desugared.as_ref().map(|(p, _)| p).unwrap_or(prog);
         let rules: Vec<&Rule> = prog.items.iter().filter_map(|i| match i {
             Item::Rule(r) => Some(r), _ => None,
         }).collect();
@@ -705,6 +714,15 @@ impl Engine {
         self.shape_diags.clear();
         CMD_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
         self.db.tick_begin();
+        // Every `self.tick(...)` fallback below MUST pass the ORIGINAL,
+        // pre-desugar program: `tick_report` runs its own
+        // `desugar_mixed_rels` pass, and re-desugaring an already-rewritten
+        // program would see its synthesized `__src`/`__drv` decls and trip
+        // the reserved-twin-suffix guard. Keep the untouched reference under
+        // its own name before shadowing `prog` below.
+        let original_prog = prog;
+        let desugared = desugar::desugar_mixed_rels(prog)?;
+        let prog: &Program = desugared.as_ref().map(|(p, _)| p).unwrap_or(prog);
         let rules: Vec<&Rule> = prog.items.iter().filter_map(|i| match i { Item::Rule(r) => Some(r), _ => None }).collect();
         let closures = closure_map(&rules);
         // Meta tables (incl. `_shapes`) before declare (Phase 5, see tick_report).
@@ -719,7 +737,7 @@ impl Engine {
         // so it also defers.
         if rules.iter().any(|r| r.is_repo_sink() || r.is_checkout_sink() || scan_has_var_coords(r)) {
             tracing::debug!("full-tick fallback: program has a repo-sink, checkout-sink, or data-driven scan");
-            return self.tick(prog, quiet);
+            return self.tick(original_prog, quiet);
         }
 
         let source_rules: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_source()).collect();
@@ -747,14 +765,14 @@ impl Engine {
         // rule digests.
         if !self.source_rule_digests(&source_rules)?.0.is_empty() {
             tracing::debug!("full-tick fallback: source rule edited");
-            return self.tick(prog, quiet);
+            return self.tick(original_prog, quiet);
         }
         // Same for the derived layer: an edited derived rule or ground fact
         // rebuilds everything, which is the full tick's job.
         let der_digest = derived_program_digest(&derived_rules, &seed_rules, &edges);
         if self.load_rel_digest("derived:program")? != Some(der_digest) {
             tracing::debug!("full-tick fallback: derived rule/ground-fact edited");
-            return self.tick(prog, quiet);
+            return self.tick(original_prog, quiet);
         }
         // A changed path outside self.root (a config or dynamically-registered
         // repo's source edit) can't be reconciled by the path-scoped loop below,
@@ -762,7 +780,7 @@ impl Engine {
         // every folder in view stays reactive, not just the self worktree.
         if changed.iter().any(|p| !p.starts_with(&self.root)) {
             tracing::debug!("full-tick fallback: changed path outside self.root (#6a)");
-            return self.tick(prog, quiet);
+            return self.tick(original_prog, quiet);
         }
 
         // WORK source rules with compiled glob matchers
