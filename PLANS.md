@@ -32,8 +32,8 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-07-11-file-lines-builtin.md:84 — file_lines for git revs via the cat-file batch reader, if a rail ever needs history
 - `feature` plans/2026-07-11-file-lines-builtin.md:85 — re-enable PostToolUse hook (timeout-wrapped, advisory) once the perf arc lands — NOT in this task
 - `feature` plans/2026-07-11-scip-atlas.md:42 — positions on type refs so ScipOccIndex covers type_link
-- `feature` plans/2026-07-11-scip-atlas.md:50 — ingest scip relationships -> scip_impl/scip_typedef rels
-- `feature` plans/2026-07-11-scip-atlas.md:78 — argmax aggregate sugar
+- `feature` plans/2026-07-11-scip-atlas.md:52 — repo column on scip_impl + scip_typedef from is_type_definition
+- `feature` plans/2026-07-11-scip-atlas.md:80 — argmax aggregate sugar
 - `perf` plans/2026-07-11-codex-feedback-queue.md:92 — semi-naive delta-growth bail + wedge visibility
 - `perf` plans/2026-07-11-intern-string-keys.md:158 — P0 spike — re-key call_edge/flow feeders to StringId in a scratch db, before/after ms
 - `triage` plans/2026-07-11-cross-harness-agent-tooling.md:147 — a CodexSessions AgentHarness arm for agent_* rels — session-store format needs research
@@ -71,8 +71,8 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-11-intern-string-keys.md:159 `decision` — which payload TEXT columns stay text (df_lit.text, doc_comment.text) — decided by the spike's decode-cost numbers
 - plans/2026-07-11-scip-atlas.md:38 `bug` — watchgate allowlist for index.scip; dl index pokes daemon
 - plans/2026-07-11-scip-atlas.md:42 `feature` — positions on type refs so ScipOccIndex covers type_link
-- plans/2026-07-11-scip-atlas.md:50 `feature` — ingest scip relationships -> scip_impl/scip_typedef rels
-- plans/2026-07-11-scip-atlas.md:78 `feature` — argmax aggregate sugar
+- plans/2026-07-11-scip-atlas.md:52 `feature` — repo column on scip_impl + scip_typedef from is_type_definition
+- plans/2026-07-11-scip-atlas.md:80 `feature` — argmax aggregate sugar
 <!-- END: plans-by-plan -->
 
 ## By code file

@@ -43,11 +43,13 @@ syntactic pseudo-scip tier (TypeLang extractors + name/import resolution);
 3. **SCIP at WORK only**: rev twins (type_link_rev etc.) resolve syntactically
    at committed revs. Fix shape: `scip_want(repo, rev)` + index-at-rev via
    worktree checkout (L — decide if any consumer needs it first).
-4. **SCIP relationships NOT ingested**: the index carries
-   implementation/type_definition relationships (exactly the dynamic-dispatch
-   edges diet mode can't see — the otel-rust 14% hole). We currently drop
-   them. This is the single highest-value unfixed gap.
-   <!-- todo(feature): ingest scip relationships -> scip_impl/scip_typedef rels -->
+4. CORRECTED (2026-07-11 audit-by-collision): `scip_impl(impl, iface)` IS
+   already ingested (src/rels/scip.rs, used by the flow_*_dispatch examples) —
+   the original claim here was stale and cost a redundant codex item that
+   collided with the shipped decl. REAL residual: the existing scip_impl
+   lacks the repo column (cross-repo threading like scip_def) and
+   is_type_definition is still dropped (no scip_typedef rel).
+   <!-- todo(feature): repo column on scip_impl + scip_typedef from is_type_definition -->
 5. Kotlin parity unmeasured (needs a JDK box, harness runtime-skips).
 
 ## Operator/rel ideas (ranked)
