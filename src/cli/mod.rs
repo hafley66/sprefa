@@ -278,10 +278,14 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
         std::process::exit(crate::run_parse_only(&programs, root)?);
     }
     // Discovery mode (no positional) defaults the db to <root>/.dl/cache.db so
-    // repeated hook/check invocations get warm incremental ticks instead of a
-    // cold in-memory rescan. With the daemon enabled, every mode (incl. --lsp)
-    // defaults to the same cache so the daemon's writes are visible to the LSP
-    // process via SQLite WAL. A generated .gitignore keeps the cache out of git.
+    // a one-shot run without a daemon still gets warm incremental ticks instead
+    // of a cold in-memory rescan. Since the singleton-daemon arc, the daemon
+    // itself never writes here — its engines live at
+    // $XDG_STATE_HOME/sprefa/roots/<hash>/db.sqlite. `cache.db` is purely the
+    // one-shot/hook fallback cache for when no daemon serves this root
+    // (`db_defaulted` below still marks these modes daemon-eligible so a
+    // reachable daemon is preferred over this file). A generated .gitignore
+    // keeps the cache out of git.
     let mut db = cli.db;
     let mut db_defaulted = false;
     if db.is_none() {
@@ -314,7 +318,7 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
     } else if cli.check || cli.diag_json {
         // Exit contract: 0 clean, 2 rail violations (Claude Code's blocking-hook
         // code; stderr feeds the agent), 1 broken program (user-facing).
-        let errors = crate::run_check(programs, db.as_deref(), root, cli.diag_json)?;
+        let errors = crate::run_check(programs, db.as_deref(), db_defaulted, root, cli.diag_json)?;
         if errors > 0 {
             eprintln!("{errors} error-severity diagnostic(s) found");
             std::process::exit(2);
