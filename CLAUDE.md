@@ -1049,17 +1049,34 @@ foreign resolution model).
       (12 items, fix shapes + sizes + sequencing; top = ambient-config
       hermeticity, declared cross-family reads edges, query --format=json,
       the engine monolith epic, resolution_source column).
-- [ ] **Occurrence-level scip resolution** (the real with-scip headroom,
-      unbuilt): the override is NAME-level ((repo,file,name)->def_file), so
-      shared names either mis-resolve (pre-fix) or drop (post-fix) and
-      with-scip caps at rust 27.5% / go 89.0% despite holding the truth
-      index. scip_occurrence (v0.6.24) has exact per-occurrence spans:
-      joining call_site position -> occurrence -> symbol -> def makes
-      position disambiguate what names cannot (conflict refusal becomes
-      moot for indexed files). Remaining ceiling after that = def-in-scan-
-      corpus + dl's own site detection (macros/UFCS). M-sized, one
-      line-base conversion (df 1-based, scip 0-based, convert once —
-      scorer precedent).
+- [x] **Occurrence-level scip resolution LANDED** (main 7191bc6, Opus agent,
+      2026-07-10): `ScipOccIndex` built once per call-family refresh from
+      scip_def + scip_occurrence + scip_binding (one SQL pass each, via tbl);
+      `resolve_callee` consults position FIRST — occurrences at
+      (repo, file, line-1) filtered to the as-written call text (descriptor
+      name or aliased local binding), one survivor resolves, same-line
+      same-name refuses, miss falls back to the name map. The single
+      1-based->0-based conversion lives in ScipOccIndex::resolve, commented.
+      Corpus with-scip: rust 27.5->33.0% (0.974), go 89.0->93.3%, python
+      78.0->79.3%, ts flat (defs outside scan root); without-scip arms
+      byte-unchanged. Type resolver stays name-level (TypeEdge/type_sig refs
+      carry no source position — documented deviation). scip_gate.rs
+      rewritten: same-name calls on different lines resolve to their OWN
+      defs by ranged occurrences; same-line conflict refusal + no-occurrence
+      name-map fallback tests added. SIDE ANSWER: pre_extract (84ae5d7) DID
+      cut the scip_want demand chain 3->2 ticks — asserted in
+      scip_want_call_resolution_lands_on_tick_two. Remaining ceiling =
+      def-in-scan-corpus + dl's own site detection (macros/UFCS). GOTCHA for
+      test authors: rangeless occurrences are skipped by scip_occurrence
+      (parse_range None) while still feeding scip_def/scip_ref — occurrence
+      tests must supply .range.
+- [ ] **Daemon scip index staleness** (verified 2026-07-10, unfixed — P2 of
+      the scip damage plan): index.scip is gitignored (.gitignore:18), the
+      watchgate drops gitignored events, so ScipKind::dirty ("index.scip in
+      the changed set") never fires in a running daemon — a rebuilt index
+      stays stale until an unrelated full tick. Fix shape: allowlist
+      index.scip paths through the watchgate like the .git ref allowlist
+      (S); optionally `dl index` pokes the daemon on completion.
 - [ ] **Scorer-agent debrief pains** (Opus, 2026-07-10, unactioned): (a) dl
       query output indents data rows 2 spaces — undocumented, mis-keys any
       parser reading cell 0 (document in the query-output contract); (b)
