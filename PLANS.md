@@ -13,6 +13,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `bug` plans/2026-07-11-codex-feedback-queue.md:18 — lex warn on dropped backslash escapes in plain strings
 - `bug` plans/2026-07-11-codex-feedback-queue.md:46 — body-level extract+rel-atom mix must bail, not ignore
 - `bug` plans/2026-07-11-codex-feedback-queue.md:86 — module_edge nondeterministic across identical cold runs
+- `bug` plans/2026-07-11-dataflow-research-program.md:95 — TS class-method df lift hole
 - `bug` plans/2026-07-11-scip-atlas.md:117 — TS class-method bodies emit zero df nodes
 - `bug` plans/2026-07-11-scip-atlas.md:38 — watchgate allowlist for index.scip; dl index pokes daemon
 - `decision` plans/2026-07-10-change-cost-friction-inventory.md:152 — item 5 — a resolution_source column (values scip|syntactic|alias|narrowed) on call_edge/type_link (rev twins included), plus a public eng.ensure_families(&[...])
@@ -29,6 +30,14 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-07-11-codex-feedback-queue.md:56 — --max-wall self-deadline before hook re-enable
 - `feature` plans/2026-07-11-cross-harness-agent-tooling.md:146 — arc 2 — commands + subagents render from .agents/ (.agents/commands/*.md -> .claude/commands / ~/.codex/prompts / .opencode/commands; .agents/agents/*.md -> symlink .claude/agents, near-copy .opencode/agents, md->TOML .codex/agents via toml_edit)
 - `feature` plans/2026-07-11-cross-harness-agent-tooling.md:148 — MCP config wiring (.mcp.json / [mcp_servers.dl] / opencode.json mcp) + opencode lsp entry for dl --lsp
+- `feature` plans/2026-07-11-dataflow-research-program.md:104 — taint parity oracle on labeled benchmark corpora
+- `feature` plans/2026-07-11-dataflow-research-program.md:135 — MaD-format importer -> flow_summary/flow_sanitizer facts
+- `feature` plans/2026-07-11-dataflow-research-program.md:143 — --format=sarif for check findings
+- `feature` plans/2026-07-11-dataflow-research-program.md:158 — IR fact tier — stable MIR / Go SSA dumpers behind a want
+- `feature` plans/2026-07-11-dataflow-research-program.md:17 — std/points-to.dl Andersen spike
+- `feature` plans/2026-07-11-dataflow-research-program.md:24 — std/dispatch.dl CHA/VTA
+- `feature` plans/2026-07-11-dataflow-research-program.md:45 — var_write/var_read + df-hole rail from occurrence roles
+- `feature` plans/2026-07-11-dataflow-research-program.md:75 — cfg_edge lift rel, one language first
 - `feature` plans/2026-07-11-engine-mod-split.md:73 — trait-extraction epic Phase 1 (RelKind) resumes on top of the split
 - `feature` plans/2026-07-11-file-lines-builtin.md:84 — file_lines for git revs via the cat-file batch reader, if a rail ever needs history
 - `feature` plans/2026-07-11-file-lines-builtin.md:85 — re-enable PostToolUse hook (timeout-wrapped, advisory) once the perf arc lands — NOT in this task
@@ -68,6 +77,15 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-11-cross-harness-agent-tooling.md:146 `feature` — arc 2 — commands + subagents render from .agents/ (.agents/commands/*.md -> .claude/commands / ~/.codex/prompts / .opencode/commands; .agents/agents/*.md -> symlink .claude/agents, near-copy .opencode/agents, md->TOML .codex/agents via toml_edit)
 - plans/2026-07-11-cross-harness-agent-tooling.md:147 `triage` — a CodexSessions AgentHarness arm for agent_* rels — session-store format needs research
 - plans/2026-07-11-cross-harness-agent-tooling.md:148 `feature` — MCP config wiring (.mcp.json / [mcp_servers.dl] / opencode.json mcp) + opencode lsp entry for dl --lsp
+- plans/2026-07-11-dataflow-research-program.md:17 `feature` — std/points-to.dl Andersen spike
+- plans/2026-07-11-dataflow-research-program.md:24 `feature` — std/dispatch.dl CHA/VTA
+- plans/2026-07-11-dataflow-research-program.md:45 `feature` — var_write/var_read + df-hole rail from occurrence roles
+- plans/2026-07-11-dataflow-research-program.md:75 `feature` — cfg_edge lift rel, one language first
+- plans/2026-07-11-dataflow-research-program.md:95 `bug` — TS class-method df lift hole
+- plans/2026-07-11-dataflow-research-program.md:104 `feature` — taint parity oracle on labeled benchmark corpora
+- plans/2026-07-11-dataflow-research-program.md:135 `feature` — MaD-format importer -> flow_summary/flow_sanitizer facts
+- plans/2026-07-11-dataflow-research-program.md:143 `feature` — --format=sarif for check findings
+- plans/2026-07-11-dataflow-research-program.md:158 `feature` — IR fact tier — stable MIR / Go SSA dumpers behind a want
 - plans/2026-07-11-engine-mod-split.md:72 `triage` — SG_LANG_TABLE final home (src/sg.rs vs engine/lang_tables.rs) when the lang_tables cluster moves
 - plans/2026-07-11-engine-mod-split.md:73 `feature` — trait-extraction epic Phase 1 (RelKind) resumes on top of the split
 - plans/2026-07-11-file-lines-builtin.md:84 `feature` — file_lines for git revs via the cat-file batch reader, if a rail ever needs history
