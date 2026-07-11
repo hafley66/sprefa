@@ -12,6 +12,8 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
 mod hooks;
+mod manifest;
+use manifest::SetupJournal;
 
 /// The embedded skill body (the rules survival guide + language matrix + op
 /// quickref). `pub` so `docs_cmd` re-exports it as the `authoring` topic and the
@@ -66,10 +68,18 @@ pub fn run(args: &[String]) -> Result<i32> {
     let mut print = false;
     let mut vscode = false;
     let mut assume_yes = false;
+    let mut list = false;
+    let mut undo = false;
+    let mut adopt = false;
+    let mut dry_run = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--print" => print = true,
+            "--list" => list = true,
+            "--undo" => undo = true,
+            "--adopt" => adopt = true,
+            "--dry-run" => dry_run = true,
             "--vscode" => vscode = true,
             "-y" | "--yes" => assume_yes = true,
             "--skills-dir" => { i += 1; skills_dir = args.get(i).cloned(); }
@@ -88,6 +98,9 @@ pub fn run(args: &[String]) -> Result<i32> {
     }
 
     if print { print!("{SKILL_MD}"); return Ok(0); }
+    if list { return SetupJournal::load()?.list(); }
+    if undo { return SetupJournal::load()?.undo(None, dry_run); }
+    if adopt { return SetupJournal::load()?.adopt(); }
     if vscode { return install_vscode_extension(); }
     if let Some(dir) = project {
         let target = dir.unwrap_or_else(|| ".".to_string());
@@ -97,7 +110,7 @@ pub fn run(args: &[String]) -> Result<i32> {
 }
 
 fn print_help() {
-    eprintln!("usage: dl setup [--project [DIR]] [--vscode] [-y|--yes] [--skills-dir DIR] [--print]");
+    eprintln!("usage: dl setup [--project [DIR]] [--undo|--list|--adopt] [--dry-run] [--vscode] [-y|--yes] [--skills-dir DIR] [--print]");
     eprintln!("  (no args)         install the global skill + wire detected agents");
     eprintln!("  --project [DIR]    bootstrap a repo: .dl/ rails + AGENTS/CLAUDE always;");
     eprintln!("                     Claude Code hook / git pre-commit / VSCode ext prompt on");
@@ -206,10 +219,10 @@ fn build_vscode_vsix() -> Option<PathBuf> {
 
 // ── global: install the skill where the agents read it ────────────────────────
 pub(crate) fn wire_global(skills_dir: Option<String>) -> Result<i32> {
+    let mut journal = SetupJournal::load()?;
     let dest = resolve_skills_dir(skills_dir)?;
     let skill_dir = dest.join("sprefa-dl");
-    std::fs::create_dir_all(&skill_dir)?;
-    std::fs::write(skill_dir.join("SKILL.md"), SKILL_MD)?;
+    journal.create_file(None, &skill_dir.join("SKILL.md"), SKILL_MD.as_bytes())?;
     println!("[dl setup] skill -> {}", skill_dir.join("SKILL.md").display());
 
     if let Ok(h) = home() {
@@ -219,8 +232,7 @@ pub(crate) fn wire_global(skills_dir: Option<String>) -> Result<i32> {
         let agents = h.join(".agents/skills");
         if agents.canonicalize().ok() != dest.canonicalize().ok() {
             let ad = agents.join("sprefa-dl");
-            if std::fs::create_dir_all(&ad).is_ok()
-                && std::fs::write(ad.join("SKILL.md"), SKILL_MD).is_ok() {
+            if journal.create_file(None, &ad.join("SKILL.md"), SKILL_MD.as_bytes()).unwrap_or(false) {
                 println!("[dl setup] cross-harness -> {}", ad.join("SKILL.md").display());
             }
         }
@@ -234,14 +246,14 @@ pub(crate) fn wire_global(skills_dir: Option<String>) -> Result<i32> {
         let cc = h.join(".claude/skills");
         if h.join(".claude").is_dir() && cc.canonicalize().ok() != dest.canonicalize().ok() {
             let ccd = cc.join("sprefa-dl");
-            if std::fs::create_dir_all(&ccd).is_ok()
-                && std::fs::write(ccd.join("SKILL.md"), SKILL_MD).is_ok() {
+            if journal.create_file(None, &ccd.join("SKILL.md"), SKILL_MD.as_bytes()).unwrap_or(false) {
                 println!("[dl setup] claude code -> {}", ccd.join("SKILL.md").display());
             }
         }
         // opencode: ensure skills.paths contains `dest`.
-        wire_opencode(&h, &dest);
+        wire_opencode(&h, &dest, &mut journal);
     }
+    journal.save()?;
     println!("[dl setup] done. agents will pick up the skill on next launch.");
     Ok(0)
 }
@@ -324,7 +336,7 @@ fn opencode_first_skill_path(h: &Path) -> Option<PathBuf> {
 /// Add `dest` to opencode.json `skills.paths` if missing, preserving every other
 /// key. Pretty-prints back. If the file is absent or unparseable, prints the
 /// snippet for the user to add by hand.
-fn wire_opencode(h: &Path, dest: &Path) {
+fn wire_opencode(h: &Path, dest: &Path, journal: &mut SetupJournal) {
     let cfg = opencode_cfg(h);
     let dest_s = dest.to_string_lossy().into_owned();
     let Ok(txt) = std::fs::read_to_string(&cfg) else {
@@ -347,7 +359,7 @@ fn wire_opencode(h: &Path, dest: &Path) {
     paths.push(serde_json::Value::String(dest_s.clone()));
     match serde_json::to_string_pretty(&v) {
         Ok(out) => {
-            if std::fs::write(&cfg, out).is_ok() {
+            if journal.create_file(None, &cfg, out.as_bytes()).unwrap_or(false) {
                 println!("[dl setup] opencode skills.paths += {dest_s}");
             }
         }
@@ -360,13 +372,13 @@ fn bootstrap_project(dir: &Path, assume_yes: bool) -> Result<i32> {
     let dir = dir.canonicalize().with_context(|| format!("no such dir: {}", dir.display()))?;
     println!("[dl setup] bootstrap {}", dir.display());
     // Base scaffolding is always safe (repo-local starter rules + agent docs).
+    let mut journal = SetupJournal::load()?;
     let dl_dir = dir.join(".dl");
-    std::fs::create_dir_all(&dl_dir)?;
-    write_starter(&dl_dir.join("dl-self-lint.dl"), STARTER_DL)?;
-    write_starter(&dl_dir.join("hook-skill-on-test.dl"), STARTER_HOOK)?;
-    append_section(&dir.join("AGENTS.md"))?;
-    append_section(&dir.join("CLAUDE.md"))?;
-    wire_repo_skills(&dir);
+    write_starter_j(&mut journal, &dir, &dl_dir.join("dl-self-lint.dl"), STARTER_DL)?;
+    write_starter_j(&mut journal, &dir, &dl_dir.join("hook-skill-on-test.dl"), STARTER_HOOK)?;
+    append_section_j(&mut journal, &dir, &dir.join("AGENTS.md"))?;
+    append_section_j(&mut journal, &dir, &dir.join("CLAUDE.md"))?;
+    wire_repo_skills_j(&mut journal, &dir);
     // The integrations change how OTHER tools behave (Claude Code / git config /
     // the editor), so only wire them when the user is present to consent: a TTY
     // prompt, or an explicit `--yes`. A piped / CI run adds nothing (it would be
@@ -393,6 +405,7 @@ fn bootstrap_project(dir: &Path, assume_yes: bool) -> Result<i32> {
             install_vscode_extension()?;
         }
     }
+    journal.save()?;
     println!("[dl setup] run it:  (cd {} && dl --check)", dir.display());
     Ok(0)
 }
@@ -406,14 +419,14 @@ fn bootstrap_project(dir: &Path, assume_yes: bool) -> Result<i32> {
 /// convention gets the same. Idempotent: a link (or file) already at the
 /// destination is left alone; a dangling symlink is re-pointed. Non-unix
 /// falls back to a copy.
-fn wire_repo_skills(dir: &Path) {
+fn wire_repo_skills_j(journal: &mut SetupJournal, dir: &Path) {
     let assets = dir.join("assets");
     if let Ok(entries) = std::fs::read_dir(&assets) {
         for e in entries.flatten() {
             let p = e.path();
             let Some(name) = p.file_name().and_then(|s| s.to_str())
                 .and_then(|s| s.strip_suffix(".skill.md")) else { continue };
-            link_repo_skill(dir, name, Path::new("../../../assets").join(format!("{name}.skill.md")), &p);
+            link_repo_skill(journal, dir, name, Path::new("../../../assets").join(format!("{name}.skill.md")), &p);
         }
     }
     // `.agents/skills/<name>/SKILL.md` is the cross-harness authoring home
@@ -424,7 +437,7 @@ fn wire_repo_skills(dir: &Path) {
             let src = e.path().join("SKILL.md");
             if !src.is_file() { continue; }
             let Some(name) = e.file_name().to_str().map(str::to_string) else { continue };
-            link_repo_skill(
+            link_repo_skill(journal,
                 dir, &name,
                 Path::new("../../../.agents/skills").join(&name).join("SKILL.md"),
                 &src,
@@ -436,18 +449,10 @@ fn wire_repo_skills(dir: &Path) {
 /// One `.claude/skills/<name>/SKILL.md` shim: a relative symlink to `target`
 /// (copy of `src` on non-unix). Idempotent: a file or live link already at the
 /// destination is left alone; a dangling symlink is re-pointed.
-fn link_repo_skill(dir: &Path, name: &str, target: PathBuf, src: &Path) {
+fn link_repo_skill(journal: &mut SetupJournal, dir: &Path, name: &str, target: PathBuf, src: &Path) {
     let skill_dir = dir.join(".claude/skills").join(name);
     let link = skill_dir.join("SKILL.md");
-    if link.exists() { return; } // present and resolvable (file or live link)
-    let _ = std::fs::remove_file(&link); // a dangling symlink: exists()=false, remove_file works
-    if std::fs::create_dir_all(&skill_dir).is_err() { return; }
-    #[cfg(unix)]
-    let ok = std::os::unix::fs::symlink(target, &link).is_ok();
-    #[cfg(not(unix))]
-    let ok = { let _ = target; std::fs::copy(src, &link).is_ok() };
-    #[cfg(unix)]
-    let _ = src;
+    let ok = journal.symlink(Some(dir), &link, &target).unwrap_or(false);
     if ok {
         println!("[dl setup] project skill -> {}", link.display());
     }
@@ -455,11 +460,10 @@ fn link_repo_skill(dir: &Path, name: &str, target: PathBuf, src: &Path) {
 
 
 /// Write a starter `.dl` if absent; never clobber a user's edited rail.
-fn write_starter(path: &Path, body: &str) -> Result<()> {
-    if path.exists() {
+fn write_starter_j(journal: &mut SetupJournal, root: &Path, path: &Path, body: &str) -> Result<()> {
+    if !journal.create_file(Some(root), path, body.as_bytes())? {
         println!("[dl setup] kept existing {}", path.display());
     } else {
-        std::fs::write(path, body)?;
         println!("[dl setup] wrote {}", path.display());
     }
     Ok(())
@@ -467,15 +471,30 @@ fn write_starter(path: &Path, body: &str) -> Result<()> {
 
 /// Idempotently append the dl section to an AGENTS.md / CLAUDE.md (skip if the
 /// marker is already present). Creates the file if absent.
-fn append_section(f: &Path) -> Result<()> {
-    let existing = std::fs::read_to_string(f).unwrap_or_default();
-    if existing.contains("BEGIN: sprefa-dl") {
+fn append_section_j(journal: &mut SetupJournal, root: &Path, f: &Path) -> Result<()> {
+    if !journal.append_marked(Some(root), f, AGENTS_SECTION, "<!-- BEGIN: sprefa-dl -->", "<!-- END: sprefa-dl -->")? {
         println!("[dl setup] section already in {}", f.display());
         return Ok(());
     }
-    let mut out = existing;
-    out.push_str(AGENTS_SECTION);
-    std::fs::write(f, out)?;
     println!("[dl setup] appended dl section to {}", f.file_name().unwrap().to_string_lossy());
     Ok(())
+}
+
+// Legacy private helpers retained for the pre-existing unit tests; production
+// setup exclusively uses the journalled variants above.
+fn write_starter(path: &Path, body: &str) -> Result<()> { if path.exists() { Ok(()) } else { std::fs::write(path, body)?; Ok(()) } }
+fn append_section(path: &Path) -> Result<()> { if !std::fs::read_to_string(path).unwrap_or_default().contains("BEGIN: sprefa-dl") { let mut s = std::fs::read_to_string(path).unwrap_or_default(); s.push_str(AGENTS_SECTION); std::fs::write(path, s)?; } Ok(()) }
+fn wire_repo_skills(dir: &Path) { let mut journal = SetupJournal::load().unwrap(); wire_repo_skills_j(&mut journal, dir); let _ = journal.save(); }
+
+/// Remove only journal-owned setup artifacts. The executable is intentionally left installed.
+pub fn uninstall() -> Result<i32> {
+    let mut journal = SetupJournal::load()?;
+    journal.undo(None, false)?;
+    let state = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
+        .unwrap_or_else(|| PathBuf::from(".")).join("sprefa/setup-manifest.json");
+    if state.exists() { std::fs::remove_file(&state)?; }
+    println!("[dl uninstall] wiring removed; binary left installed.");
+    println!("[dl uninstall] manual: cargo uninstall dl; remove any codex trust entry in its UI.");
+    Ok(0)
 }

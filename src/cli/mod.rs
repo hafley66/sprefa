@@ -56,7 +56,8 @@ SUBCOMMANDS (run `dl <cmd> -h` for detail):
   summary    per-file report: entities, imports in/out, callable fan, doc coverage
   q          concept verbs: `dl q who-calls <name>` / `dl q where-defined <name>`
   daemon     control the background daemon (status/start/stop/restart/rows/...)
-  setup      install the skill + wire agents, hooks, and the pre-commit rail
+  setup      install, inspect, adopt, or undo agent wiring
+  uninstall  undo setup wiring and remove dl state (binary remains)
   update     self-update to the latest published release (--check to preview)
   examples   browse the embedded programs (list / search / --show / --std)
   index      turnkey SCIP: detect the language(s), run the right indexer
@@ -230,6 +231,7 @@ fn dispatch_subcommand(raw: &[String]) -> Result<Option<i32>> {
     let rest = &raw[1..];
     let code = match verb {
         "setup" => crate::setup::run(rest)?,
+        "uninstall" => crate::setup::uninstall()?,
         "examples" => crate::corpus::run(rest)?,
         "index" => crate::scip_setup::run_index(rest)?,
         "doctor" => crate::scip_setup::run_doctor(rest)?,
