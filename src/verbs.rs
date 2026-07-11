@@ -49,17 +49,20 @@ _q_scan(path) <- scan("WORK", "**/*.go", path, rev).
 _q_scan(path) <- scan("WORK", "**/*.java", path, rev).
 "#;
 
-/// `who-calls <name>`: callers of the function named `<name>`. `call_name`
-/// resolves the bare target name to its def sym, `call_edge` walks callers, and
-/// a second `call_name`/`call_def` join names + locates each caller.
+/// `who-calls <name>`: callers of the function named `<name>`. `call_site`
+/// carries every raw call site (repo, caller sym, callee bare name, file,
+/// line) — the line is the CALL's own line, not the caller's declaration
+/// line, so a caller whose def spans many lines still reports where it
+/// actually dials `<name>`. `call_name`/`call_def` resolve the caller sym to
+/// a human name + kind. Line numbering: 1-based, matching call_def / call_site
+/// / the rest of the call-graph family (scip rels are 0-based; this is not one).
 const WHO_CALLS_BODY: &str = r#"
 rel q_who_calls(caller: text, kind: text, file: file, line: int, callee: text).
-q_who_calls(caller_name, caller_kind, caller_file, caller_line, target_name) <-
+q_who_calls(caller_name, caller_kind, site_file, site_line, target_name) <-
     q_target(target_name),
-    call_name(callee_sym, target_name),
-    call_edge(caller_sym, callee_sym, _),
-    call_def(_, caller_sym, caller_kind, caller_file, caller_line, _),
-    call_name(caller_sym, caller_name).
+    call_site(_, caller_sym, target_name, site_file, site_line),
+    call_name(caller_sym, caller_name),
+    call_def(_, caller_sym, caller_kind, _, _, _).
 ? q_who_calls(caller, kind, file, line, callee).
 "#;
 

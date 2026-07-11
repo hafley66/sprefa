@@ -68,6 +68,53 @@ fn who_calls_finds_the_caller() {
     assert!(out.contains("resolved:"), "resolution note missing: {out}");
 }
 
+/// `Repo.find` declares at line 3 but only calls `lookup()` at line 7 (padded
+/// with blank body lines in between). who-calls must report the CALL's own
+/// line (7), not `find`'s declaration line (3).
+fn write_padded_fixture(dir: &Path) {
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("src/model.ts"),
+        "export interface Entity { id: Id }\n\
+         export function lookup(): Entity { return build() }\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/repo.ts"),
+        "import { Entity, lookup } from './model'\n\
+         export class Repo {\n\
+         \x20   find(): Entity {\n\
+         \x20       // padding\n\
+         \x20       // padding\n\
+         \x20       // padding\n\
+         \x20       return lookup()\n\
+         \x20   }\n\
+         }\n",
+    )
+    .unwrap();
+}
+
+fn padded_sandbox(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("q_verb_{tag}"));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    write_padded_fixture(&dir);
+    dir
+}
+
+#[test]
+fn who_calls_reports_the_call_site_line_not_the_decl_line() {
+    let d = padded_sandbox("who_calls_site_line");
+    let (code, out, err) = run_verb(&d, &["q", "who-calls", "lookup"]);
+    assert_eq!(code, 0, "who-calls failed:\nstdout={out}\nstderr={err}");
+    // The call to lookup() is on line 7 (1-based); find()'s own decl is line 3.
+    assert!(out.contains('7'), "expected the call-site line (7) in output: {out}");
+    assert!(
+        !out.contains("\t3\t") && !out.trim().lines().any(|l| l.split('\t').any(|c| c == "3")),
+        "reported the decl line (3) instead of the call-site line: {out}"
+    );
+}
+
 #[test]
 fn where_defined_locates_the_def() {
     let d = sandbox("where_defined");
