@@ -32,6 +32,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `docs` plans/2026-07-11-book-toc.md:83 — book restructure per this TOC, Part III (flow) first
 - `docs` plans/2026-07-11-docs-and-dogfood-audit.md:20 — CHANGELOG drift rail — commit window vs entries cross-check
 - `docs` plans/2026-07-11-docs-and-dogfood-audit.md:28 — book/tutorial refresh for sym/file_lines/--max-wall/semi-naive
+- `docs` plans/2026-07-11-setup-manifest-uninstall.md:76 — README emergency-stop section links setup --undo as the polite twin
 - `feature` plans/2026-07-10-change-cost-friction-inventory.md:148 — item 1 — a first-class --hermetic flag that implies all three, plus the already-ledgered loud "daemon is serving this root, writes went there" warning on hijack
 - `feature` plans/2026-07-10-change-cost-friction-inventory.md:150 — item 3 — --format=json (or tsv) for ? query blocks and one paragraph documenting the human format's contract
 - `feature` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:82 — agent_edit carries line/span columns so touched-region x AST-span joins work (guarded-MATCH vs guarded-FILE)
@@ -63,6 +64,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-07-11-scip-atlas.md:42 — positions on type refs so ScipOccIndex covers type_link
 - `feature` plans/2026-07-11-scip-atlas.md:52 — repo column on scip_impl + scip_typedef from is_type_definition
 - `feature` plans/2026-07-11-scip-atlas.md:80 — argmax aggregate sugar
+- `feature` plans/2026-07-11-setup-manifest-uninstall.md:75 — setup manifest + dl setup --undo/--list/--adopt + dl uninstall
 - `perf` plans/2026-07-11-codex-feedback-queue.md:92 — semi-naive delta-growth bail + wedge visibility
 - `perf` plans/2026-07-11-intern-string-keys.md:158 — P0 spike — re-key call_edge/flow feeders to StringId in a scratch db, before/after ms
 - `triage` plans/2026-07-11-cross-harness-agent-tooling.md:147 — a CodexSessions AgentHarness arm for agent_* rels — session-store format needs research
@@ -133,6 +135,8 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-11-scip-atlas.md:131 `feature` — std/dispatch.dl CHA via scip_impl, VTA refinement
 - plans/2026-07-11-scip-atlas.md:134 `feature` — cfg_edge lift rel for flow-sensitive dl analyses
 - plans/2026-07-11-scip-atlas.md:147 `decision` — coordinate policy — no new line-keyed joins; byte spans + edge projection; migrate call_site/df joins when touched
+- plans/2026-07-11-setup-manifest-uninstall.md:75 `feature` — setup manifest + dl setup --undo/--list/--adopt + dl uninstall
+- plans/2026-07-11-setup-manifest-uninstall.md:76 `docs` — README emergency-stop section links setup --undo as the polite twin
 <!-- END: plans-by-plan -->
 
 ## By code file
