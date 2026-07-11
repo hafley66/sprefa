@@ -148,14 +148,14 @@ checkout(repo_slug, "main", "0") <- repo(repo_slug, _, _).
 Demand ancestry counts; `rev_behind` fills (`behind`, then `ahead`):
 ```dl
 rel revision_pin(repo: text, refname: text, upstream: text).
-revision_pin("repo-slug", "release", "origin/main") <- true().
+revision_pin("repo-slug", "release", "origin/main").
 rev_cmp_want(repo_slug, ref_name, upstream_ref) <- revision_pin(repo_slug, ref_name, upstream_ref).
 ? rev_behind(repo_slug, ref_name, upstream_ref, behind_count, ahead_count).
 ```
 
 Register or clone a repo dynamically by heading the repo sink (a ground fact is an explicit sink request):
 ```dl
-repo("acme/project", "repos/project", "https://github.com/acme/project.git") <- true().
+repo("acme/project", "repos/project", "https://github.com/acme/project.git").
 ```
 
 ## Root, daemon, no-daemon (read this — it wastes the most time)
