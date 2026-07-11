@@ -216,7 +216,7 @@ fn rel_count_and_stmt_ms_never_leak_twin_names() {
          mixed_telemetry(p) <- scan(\"WORK\", \"src/**/*.txt\", p, rev), match(p, rev, /./, line).\n\
          mixed_telemetry(x) <- other(x).\n\
          ? rel_count(rel, rows).\n\
-         ? stmt_ms(rel, ms).\n";
+         ? stmt_ms(rel, ms, n).\n";
     let (code, _out, err) = run(&d, program);
     assert_eq!(code, 0, "stderr: {err}");
     // Second invocation against the same db: stmt_ms only populates once a
