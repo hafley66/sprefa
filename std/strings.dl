@@ -36,3 +36,20 @@ rel string_flow_trace(text: text, kind: text, from: text, to: text).
 string_flow_trace(text, kind, from, to) <-
     string_flow(from, to),
     df_lit(from, text, kind).
+
+# const_string_member(file, object, member, value) — the retired builtin's
+# exact 4-arity shape, now a DERIVED view over const_value ⋈ type_entity
+# (plans/2026-07-10-string-values-const-value.md follow-up, reconcile pass):
+# `object` = the const's own binding name, read off its `type_entity` row
+# (const_value.sym joins type_entity.sym); `member` = a FLAT field only
+# (no dot in the path) — a nested object member (`field` = "api.users") is
+# NOT flattened here, matching the retired builtin's "flat members only, one
+# level deep is out of scope" contract; `value` = const_value.text. Only
+# `kind = "lit"` rows qualify (a template-literal const value is a different
+# shape, `df_lit(id, text, "template")`, not a flat string member).
+rel const_string_member(file: text, object: text, member: text, value: text).
+const_string_member(file, name, field, text) <-
+    const_value(_, sym, field, text, "lit", file, _),
+    type_entity(_, sym, name, "const", _, _, _),
+    flatField = replace(field, ".", ""),
+    flatField = field.

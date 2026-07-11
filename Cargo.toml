@@ -122,6 +122,7 @@ oxc_parser = "0.135.0"
 oxc_ast = "0.135.0"
 oxc_span = "0.135.0"
 oxc_ast_visit = "0.135.0"
+oxc_syntax = "0.135.0"
 tray-icon = "0.24"
 tao = "0.35"
 # Structured tracing off by default; `RUST_LOG` or `DL_TRACE=<level>` enables.

@@ -23,10 +23,23 @@ tags consumed by cargo-dist.
 - **`template_parts(file, line, node, idx, kind, text)`**: template literals
   split into ordered static/expr pieces (TS/TSX/JS/JSX/MJS/CJS, tagged and
   nested included). Own extract family — no second parse, programs reading
-  only it don't pay for type/call/dataflow.
-- **`const_string_member(file, object, member, value)`**: string-valued const
-  object members (route maps, lookup tables, key registries) discovered
-  generically.
+  only it don't pay for type/call/dataflow. `node` is the `df_node`/`df_lit`
+  id for the SAME template occurrence (`{file}:{byte}:template`, matching
+  `ts_push`'s scheme), not a bare byte offset — a piece joins `df_lit.id`/
+  `df_edge.to` directly, with no separate id math. A tagged template's
+  `node` anchors at the `TaggedTemplateExpression`'s own span start (the
+  tag's position), matching where the dataflow lift mints its id, not the
+  quasi's start the two walks previously disagreed on.
+- **`std/strings.dl`: `const_string_member(file, object, member, value)`
+  derived view** — string-valued const object members (route maps, lookup
+  tables, key registries), joined from `const_value ⋈ type_entity` (flat
+  fields only, `kind = "lit"`). Was shipped as a builtin relation in
+  unreleased code; retired to a `use`-able view during a reconcile pass
+  against the overlapping `const_value` builtin (same corpus, no
+  duplication). The evidence diff against a real corpus found exactly one
+  gap — a const declared inside a function body — closed in
+  `const_value`'s TS lift (`TsNestedConstWalker`) before the retirement, so
+  the view's coverage is byte-identical to the old builtin's.
 - **`unresolved(file, line, reason, detail)`**: first-class marker for edges
   whose target is computed at runtime (dynamic-import, computed-member, ...),
   limited to cases the extractors already detect.

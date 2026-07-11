@@ -109,7 +109,6 @@ pub struct DataflowFamily;
 pub struct DocFamily;
 pub struct CommentFamily;
 pub struct TemplateFamily;
-pub struct ConstMemberFamily;
 pub struct UnresolvedFamily;
 pub struct SpineFamily;
 
@@ -253,16 +252,6 @@ impl ExtractFamily for TemplateFamily {
     fn used(&self, prog: &Program) -> bool { engine::template_rels_used(prog) }
 }
 
-impl ExtractFamily for ConstMemberFamily {
-    fn name(&self) -> &'static str { "const-member-rels" }
-    fn rels(&self) -> &'static [&'static str] { &engine::CONST_MEMBER_RELS }
-    fn decls(&self) -> Vec<RelDecl> { engine::const_member_rel_decls() }
-    fn reserved_msg(&self) -> &'static str { "a built-in const-string-member relation (const_string_member)" }
-    fn digest_key(&self) -> Option<&'static str> { Some("extract:const_member") }
-    fn refresh(&self, eng: &mut Engine) -> Result<bool> { eng.refresh_const_string_member_rel() }
-    fn used(&self, prog: &Program) -> bool { engine::const_member_rels_used(prog) }
-}
-
 impl ExtractFamily for UnresolvedFamily {
     fn name(&self) -> &'static str { "unresolved-rels" }
     fn rels(&self) -> &'static [&'static str] { &engine::UNRESOLVED_RELS }
@@ -291,16 +280,16 @@ impl ExtractFamily for SpineFamily {
 }
 
 /// Every extraction-tied builtin rel family, in the order the full tick runs
-/// them: module, type, call, dataflow, doc, comment, template, const-member,
-/// unresolved, then spine LAST (after the hand-dispatched `node` refresh —
-/// see the module doc). The slice helpers below split at the node seam so the
-/// tick paths never hand-index this. `comment`/`template`/`const-member`/
-/// `unresolved` sit anywhere between `module` (first) and `spine` (last):
-/// none writes spine tables nor depends on another family, so both slices'
-/// module-first / spine-last invariants hold.
+/// them: module, type, call, dataflow, doc, comment, template, unresolved,
+/// then spine LAST (after the hand-dispatched `node` refresh — see the module
+/// doc). The slice helpers below split at the node seam so the tick paths
+/// never hand-index this. `comment`/`template`/`unresolved` sit anywhere
+/// between `module` (first) and `spine` (last): none writes spine tables nor
+/// depends on another family, so both slices' module-first / spine-last
+/// invariants hold.
 pub fn extract_families() -> &'static [&'static dyn ExtractFamily] {
     &[&ModuleFamily, &TypeFamily, &CallFamily, &DataflowFamily, &DocFamily, &CommentFamily,
-      &TemplateFamily, &ConstMemberFamily, &UnresolvedFamily, &SpineFamily]
+      &TemplateFamily, &UnresolvedFamily, &SpineFamily]
 }
 
 /// Full tick, before `node`: every family but the spine tail.
@@ -335,9 +324,9 @@ mod tests {
         let names: Vec<&str> = extract_families().iter().map(|f| f.name()).collect();
         assert_eq!(names, ["module-rels", "type-rels", "call-rels",
                            "dataflow-rels", "doc-rels", "comment-rels", "template-rels",
-                           "const-member-rels", "unresolved-rels", "spine-rels"]);
-        assert_eq!(extract_families_pre_node().len(), 9);
-        assert_eq!(extract_families_paths_pre_node().len(), 8);
+                           "unresolved-rels", "spine-rels"]);
+        assert_eq!(extract_families_pre_node().len(), 8);
+        assert_eq!(extract_families_paths_pre_node().len(), 7);
         assert_eq!(extract_families_paths_pre_node()[0].name(), "type-rels");
         assert_eq!(extract_families_post_node().len(), 1);
         assert_eq!(extract_families_post_node()[0].name(), "spine-rels");

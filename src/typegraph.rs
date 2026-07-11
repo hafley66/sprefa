@@ -2372,14 +2372,27 @@ pub fn ts_comments(content: &str, tsx: bool) -> Vec<crate::cst::RawComment> {
 }
 
 /// One piece of a template literal, in source order: `` `GET /users/${id}` ``
-/// splits into `[(static, "GET /users/"), (expr, "id")]`. `node` is the byte
-/// offset of the template literal's own span start (the opening backtick —
-/// for a tagged template, the `quasi`'s start, not the tag's), shared by every
-/// piece of the SAME occurrence so a consumer groups pieces by `node` and
-/// orders them by `idx`; stable across ticks for unchanged content since it
-/// is derived from the byte content itself, not a counter. `line` is the
-/// template literal's own 1-based start line (the `comment_node`/`sg`/`diag`
-/// convention: 1-based line, byte offsets for everything finer-grained).
+/// splits into `[(static, "GET /users/"), (expr, "id")]`. `node` is the
+/// `df_node`/`df_lit` id the DATAFLOW lift mints for the SAME occurrence —
+/// `{file}:{anchor}:template` (`ts_push`'s exact `{file}:{byte_off}:{kind}`
+/// scheme, `typegraph.rs`'s `fn ts_push`) — so a consumer joins a piece
+/// straight to `df_lit`/`df_node`/`df_edge` with no extra id math: a
+/// template's static chunk row (`kind = "static"`) joins `df_lit.id` (the
+/// same template's raw-source `df_lit` row), and `node` joins `df_edge`'s
+/// `to` column for whatever flows INTO the template (an interpolated var's
+/// `var_read` node has its own edge `to = node`). `anchor` is the plain
+/// template literal's own span start (the opening backtick); for a TAGGED
+/// template it is the `TaggedTemplateExpression`'s own span start (the tag's
+/// position, NOT the quasi's) — `ts_flow_expr`'s `off = span_off(e)` mints
+/// the df id off the OUTER expression node for a tagged template, so
+/// `template_parts` anchors there too rather than at the quasi (the two
+/// walks would otherwise disagree on `node` for every tagged template in the
+/// corpus). Shared by every piece of the SAME occurrence so a consumer
+/// groups pieces by `node` and orders them by `idx`; stable across ticks for
+/// unchanged content since it is derived from the byte content itself, not a
+/// counter. `line` is the template literal's own 1-based start line (the
+/// `comment_node`/`sg`/`diag` convention: 1-based line, byte offsets for
+/// everything finer-grained).
 ///
 /// A nested template literal (an interpolation whose value is itself a
 /// template, e.g. `` `outer ${`inner ${x}`}` ``) mints its OWN independent
@@ -2388,7 +2401,7 @@ pub fn ts_comments(content: &str, tsx: bool) -> Vec<crate::cst::RawComment> {
 /// included), the same treatment any other expression gets.
 #[derive(Clone, Debug)]
 pub struct TemplatePart {
-    pub node: u32,
+    pub node: String,
     pub line: u32,
     pub idx: u32,
     pub kind: &'static str,
@@ -2409,21 +2422,42 @@ pub fn ts_template_parts(file: &str, content: &str) -> Vec<TemplatePart> {
         return Vec::new();
     }
     let starts = line_index(content);
-    let mut walker = TsTemplateWalker { content, starts: &starts, out: Vec::new() };
+    let mut walker = TsTemplateWalker { file, content, starts: &starts, out: Vec::new(), tag_anchor: None };
     walker.visit_program(&ret.program);
     walker.out
 }
 
 struct TsTemplateWalker<'s> {
+    file: &'s str,
     content: &'s str,
     starts: &'s [usize],
     out: Vec<TemplatePart>,
+    /// Set by `visit_tagged_template_expression` right before the walk
+    /// descends into `it.quasi` (oxc dispatches a tagged template's quasi
+    /// through `visit_template_literal`, same as a plain template — see the
+    /// doc comment on `TemplatePart`); consumed (taken) by the very next
+    /// `visit_template_literal` call, which is exactly that quasi. Any
+    /// FURTHER nested template reached during that same walk (an
+    /// interpolation whose value is itself a template) sees `None` again by
+    /// then and anchors at its own span start, unaffected.
+    tag_anchor: Option<u32>,
 }
 
 impl<'a, 's> OxcVisit<'a> for TsTemplateWalker<'s> {
+    fn visit_tagged_template_expression(&mut self, it: &ts_ast::TaggedTemplateExpression<'a>) {
+        // Matches `ts_flow_expr`'s `off = span_off(e)` for the WHOLE
+        // `TaggedTemplateExpression` — the tag's own span start, not the
+        // quasi's — so `df_lit`'s id for this occurrence and this walk's
+        // `node` agree exactly.
+        let prev = self.tag_anchor.replace(it.span.start);
+        oxc_ast_visit::walk::walk_tagged_template_expression(self, it);
+        self.tag_anchor = prev;
+    }
+
     fn visit_template_literal(&mut self, it: &ts_ast::TemplateLiteral<'a>) {
-        let node = it.span.start;
-        let line = line_at(self.starts, node as usize);
+        let anchor = self.tag_anchor.take().unwrap_or(it.span.start);
+        let node = format!("{}:{anchor}:template", self.file);
+        let line = line_at(self.starts, anchor as usize);
         let mut idx = 0u32;
         // `quasis`/`expressions` strictly alternate (quasis.len() ==
         // expressions.len() + 1): static, expr, static, expr, ..., static. An
@@ -2433,7 +2467,7 @@ impl<'a, 's> OxcVisit<'a> for TsTemplateWalker<'s> {
         // `` ` ` ``) still yields one static row.
         for (slot, quasi) in it.quasis.iter().enumerate() {
             self.out.push(TemplatePart {
-                node, line, idx, kind: "static", text: quasi.value.raw.to_string(),
+                node: node.clone(), line, idx, kind: "static", text: quasi.value.raw.to_string(),
             });
             idx += 1;
             if let Some(expr) = it.expressions.get(slot) {
@@ -2441,7 +2475,7 @@ impl<'a, 's> OxcVisit<'a> for TsTemplateWalker<'s> {
                 let span = expr.span();
                 let text = self.content.get(span.start as usize..span.end as usize)
                     .unwrap_or_default().to_string();
-                self.out.push(TemplatePart { node, line, idx, kind: "expr", text });
+                self.out.push(TemplatePart { node: node.clone(), line, idx, kind: "expr", text });
                 idx += 1;
             }
         }
@@ -2455,103 +2489,13 @@ impl<'a, 's> OxcVisit<'a> for TsTemplateWalker<'s> {
     }
 }
 
-/// One string-valued member of a `const OBJ = { ... }` object literal —
-/// `const_string_member`'s TS/JS extractor. `object` is the const's own
-/// binding name; `member` is a non-computed property key (a plain identifier
-/// or string literal, matching the existing `PropertyKey::StaticIdentifier` /
-/// `PropertyKey::StringLiteral` convention used everywhere else in this file —
-/// a computed key (`[expr]: v`), a private name, or any other key shape is
-/// skipped); `value` is a string-literal property value, verbatim (cooked).
-/// FLAT members only: a property whose value is itself an object/array
-/// literal (or anything else that isn't a bare string literal) is simply not
-/// emitted for that slot — this walk never guesses a shape, nested lookup
-/// tables are out of scope in v1. `object as const` / `object satisfies T`
-/// wrappers unwrap to the same underlying object literal. `line` is the
-/// declarator's own 1-based start line, tracked on the fact for tests/future
-/// use; the persisted `const_string_member` rel is exactly the requested
-/// 4-arity `(file, object, member, value)` with no line column. Runs over
-/// every `const` declarator in the file, not only top-level ones (a lookup
-/// table declared inside a function body still counts — "generically
-/// discovered", not scope-restricted).
-#[derive(Clone, Debug)]
-pub struct ConstStringMember {
-    pub line: u32,
-    pub object: String,
-    pub member: String,
-    pub value: String,
-}
-
-/// Every flat string-valued const-object member in a TS/TSX/JS/JSX/MJS/CJS
-/// file. Own family (see `refresh_const_string_member_rel`): a program
-/// reading only `const_string_member` shouldn't pay for the `type`/`call`/
-/// `dataflow` TypeLang passes, matching the `template_parts` precedent (its
-/// own oxc parse, gated behind its own `ExtractFamily`/digest rather than
-/// riding an existing walk).
-pub fn ts_const_string_members(file: &str, content: &str) -> Vec<ConstStringMember> {
-    let alloc = oxc_allocator::Allocator::default();
-    let st = source_type_for(file);
-    let ret = oxc_parser::Parser::new(&alloc, content, st).parse();
-    if ret.panicked {
-        return Vec::new();
-    }
-    let starts = line_index(content);
-    let mut walker = TsConstMemberWalker { starts: &starts, out: Vec::new() };
-    walker.visit_program(&ret.program);
-    walker.out
-}
-
-struct TsConstMemberWalker<'s> {
-    starts: &'s [usize],
-    out: Vec<ConstStringMember>,
-}
-
-impl<'a, 's> OxcVisit<'a> for TsConstMemberWalker<'s> {
-    fn visit_variable_declarator(&mut self, it: &ts_ast::VariableDeclarator<'a>) {
-        if it.kind == ts_ast::VariableDeclarationKind::Const {
-            if let (ts_ast::BindingPattern::BindingIdentifier(name), Some(init)) = (&it.id, &it.init) {
-                // Unwrap `as const` / `satisfies T` wrappers to the underlying
-                // object literal — neither changes the runtime shape.
-                let mut expr = init;
-                loop {
-                    expr = match expr {
-                        ts_ast::Expression::TSAsExpression(e) => &e.expression,
-                        ts_ast::Expression::TSSatisfiesExpression(e) => &e.expression,
-                        _ => break,
-                    };
-                }
-                if let ts_ast::Expression::ObjectExpression(obj) = expr {
-                    let line = line_at(self.starts, it.span.start as usize);
-                    let object = name.name.to_string();
-                    for prop in &obj.properties {
-                        let ts_ast::ObjectPropertyKind::ObjectProperty(p) = prop else { continue };
-                        if p.computed {
-                            continue;
-                        }
-                        let member = match &p.key {
-                            ts_ast::PropertyKey::StaticIdentifier(id) => id.name.to_string(),
-                            ts_ast::PropertyKey::StringLiteral(s) => s.value.to_string(),
-                            _ => continue,
-                        };
-                        if let ts_ast::Expression::StringLiteral(value) = &p.value {
-                            self.out.push(ConstStringMember {
-                                line, object: object.clone(), member, value: value.value.to_string(),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-        oxc_ast_visit::walk::walk_variable_declarator(self, it);
-    }
-}
-
 /// One `unresolved` marker occurrence: an edge that COULD exist but whose
 /// target is computed at runtime rather than a static literal — as opposed to
 /// `module_unresolved`, which flags a specifier that resolved to NO project
 /// file at all (a genuinely missing target, a different flavor this rel does
 /// NOT duplicate). `unresolved`'s own TS/JS-only oxc walk (own
-/// `ExtractFamily`, no cross-family reads, so its digest stays self-contained
-/// — see the `const_string_member` doc comment for why) covers three reason
+/// `ExtractFamily`, no cross-family reads, so its digest stays self-contained,
+/// matching the `template_parts`/`comment_node` precedent) covers three reason
 /// buckets, each re-derived from an AST shape another pass in this file
 /// already visits for a different purpose, never a wholly new detection
 /// concept:
@@ -3187,21 +3131,29 @@ fn ts_collect_const_values(
     }
 }
 
-/// A top-level `const`/`let`/`var` binding, entity + value pass. Scope matches
-/// `ts_var_fn_entity`/`ts_entities_from`: module-level bindings only (no
-/// descent into function bodies) — the same containment that already keeps
-/// arrow-fn consts from minting one entity per local variable in the corpus.
-/// Arrow/function-expression consts are `ts_var_fn_entity`'s job (a Function
-/// entity, untouched here); this walk only looks at bindings that carry a
-/// string value: `const name = "..."`. SOUNDNESS RULE: only `const` (or a
-/// `let`/`var` marked `as const`) is honest to fold — a plain `let`/`var`
+/// A `const`/`let`/`var` binding, entity + value pass. `scope` is the name of
+/// the nearest enclosing function/closure for a binding found INSIDE a
+/// function body (`None` at true module level) — folded into `mint_sym`'s
+/// `parent` slot so a lookup table declared inside two different functions in
+/// the same file mints two distinct syms rather than colliding. Module-level
+/// callers (`ts_const_facts_from`'s own top-level loop) pass `None`;
+/// `TsNestedConstWalker` (below) passes the enclosing scope name for anything
+/// found inside a function/arrow body — this is what gives `const_value`
+/// parity with the retired `const_string_member`'s "generically discovered,
+/// not scope-restricted" coverage (a lookup table inside a function body
+/// counts too). Arrow/function-expression consts are `ts_var_fn_entity`'s job
+/// (a Function entity, untouched here); this walk only looks at bindings that
+/// carry a string value: `const name = "..."`. SOUNDNESS RULE: only `const`
+/// (or a `let`/`var` marked `as const`) is honest to fold — a plain `let`/`var`
 /// string initializer can change under your feet, so it is counted loudly
 /// (`const_mutable_skips`) and never emitted.
+#[allow(clippy::too_many_arguments)]
 fn ts_var_const_facts(
     v: &ts_ast::VariableDeclaration,
     file: &str,
     starts: &[usize],
     content: &str,
+    scope: Option<&str>,
     entities: &mut Vec<TypeEntity>,
     consts: &mut Vec<ConstValueFact>,
     spread_skips: &mut usize,
@@ -3221,7 +3173,7 @@ fn ts_var_const_facts(
             *mutable_skips += 1;
             continue;
         }
-        let sym = mint_sym(file, EntityKind::Const, &name.name, None);
+        let sym = mint_sym(file, EntityKind::Const, &name.name, scope);
         entities.push(TypeEntity {
             sym: sym.clone(), name: name.name.to_string(), kind: EntityKind::Const,
             parent: None, file: file.to_string(), line: line_at(starts, d.span.start as usize), ty: None,
@@ -3262,6 +3214,18 @@ fn ts_enum_const_values(e: &ts_ast::TSEnumDeclaration, file: &str, starts: &[usi
 /// file, several cheap syntax walks" shape those already use) rather than
 /// retrofitting those recursive helpers, which are reused by call-graph/
 /// dataflow passes with a narrower `Vec<TypeEntity>`-only signature.
+///
+/// After the top-level loop, `TsNestedConstWalker` descends into every
+/// function/arrow body in the file for the SAME string-bearing-const shape,
+/// scoped by the nearest enclosing function/closure name — this is the
+/// evidence-diff fix from the `const_string_member` retirement (plans/
+/// 2026-07-10-string-values-const-value.md follow-up): `const_string_member`
+/// was "generically discovered" (every `const` declarator in the file, no
+/// scope restriction), so a lookup table declared inside a function body
+/// counted there but was invisible to `const_value`'s module-level-only walk.
+/// Enum declarations stay top-level-only (no known corpus case of a
+/// function-local enum feeding a route table; `const_string_member` never
+/// covered enums either).
 fn ts_const_facts_from(program: &ts_ast::Program, file: &str, content: &str) -> (Vec<TypeEntity>, Vec<ConstValueFact>, usize, usize) {
     let starts = line_index(content);
     let mut entities = Vec::new();
@@ -3279,7 +3243,7 @@ fn ts_const_facts_from(program: &ts_ast::Program, file: &str, content: &str) -> 
             _ => None,
         };
         if let Some(v) = var_decl {
-            ts_var_const_facts(v, file, &starts, content, &mut entities, &mut consts, &mut spread_skips, &mut mutable_skips);
+            ts_var_const_facts(v, file, &starts, content, None, &mut entities, &mut consts, &mut spread_skips, &mut mutable_skips);
         }
         let enum_decl: Option<&ts_ast::TSEnumDeclaration> = match stmt {
             S::TSEnumDeclaration(en) => Some(en),
@@ -3293,7 +3257,61 @@ fn ts_const_facts_from(program: &ts_ast::Program, file: &str, content: &str) -> 
             ts_enum_const_values(en, file, &starts, &mut consts);
         }
     }
+    let mut nested = TsNestedConstWalker {
+        file, content, starts: &starts, scope: Vec::new(),
+        entities: &mut entities, consts: &mut consts,
+        spread_skips: &mut spread_skips, mutable_skips: &mut mutable_skips,
+    };
+    nested.visit_program(program);
     (entities, consts, spread_skips, mutable_skips)
+}
+
+/// Descends into every function/arrow body for string-bearing `const`
+/// declarations found there — see `ts_const_facts_from`'s doc comment. Only
+/// fires INSIDE a function scope (`scope` non-empty); top-level statements
+/// are the existing loop's job, so `visit_variable_declaration` is a no-op at
+/// depth 0 (avoids double-emitting a module-level const). `visit_function`/
+/// `visit_arrow_function_expression` push a scope name — the function's own
+/// name when named, else a byte-offset-derived `closure_<span-start>` tag
+/// (stable across ticks for unchanged content, matching the `df_lit`/
+/// `template_parts` `node` id convention) — so two same-named local consts in
+/// two different functions in the same file mint distinct syms.
+struct TsNestedConstWalker<'s> {
+    file: &'s str,
+    content: &'s str,
+    starts: &'s [usize],
+    scope: Vec<String>,
+    entities: &'s mut Vec<TypeEntity>,
+    consts: &'s mut Vec<ConstValueFact>,
+    spread_skips: &'s mut usize,
+    mutable_skips: &'s mut usize,
+}
+
+impl<'a, 's> OxcVisit<'a> for TsNestedConstWalker<'s> {
+    fn visit_function(&mut self, it: &ts_ast::Function<'a>, flags: oxc_syntax::scope::ScopeFlags) {
+        let name = it.id.as_ref().map(|id| id.name.to_string())
+            .unwrap_or_else(|| format!("closure_{}", it.span.start));
+        self.scope.push(name);
+        oxc_ast_visit::walk::walk_function(self, it, flags);
+        self.scope.pop();
+    }
+
+    fn visit_arrow_function_expression(&mut self, it: &ts_ast::ArrowFunctionExpression<'a>) {
+        self.scope.push(format!("closure_{}", it.span.start));
+        oxc_ast_visit::walk::walk_arrow_function_expression(self, it);
+        self.scope.pop();
+    }
+
+    fn visit_variable_declaration(&mut self, it: &ts_ast::VariableDeclaration<'a>) {
+        if let Some(scope) = self.scope.last() {
+            let scope = scope.clone();
+            ts_var_const_facts(
+                it, self.file, self.starts, self.content, Some(&scope),
+                self.entities, self.consts, self.spread_skips, self.mutable_skips,
+            );
+        }
+        oxc_ast_visit::walk::walk_variable_declaration(self, it);
+    }
 }
 
 /// Doc-comment pass (oxc): oxc keeps comments out of the AST, so each `/** */`
@@ -8114,7 +8132,7 @@ def compute(count):
         // between them — idx never skips a slot.
         let src = "const both = `${a}${b}`;\nconst justExpr = `${onlyExpr}`;\n";
         let both = ts_template_parts("both.ts", src);
-        let first_node = both[0].node;
+        let first_node = both[0].node.clone();
         let first_occurrence: Vec<_> = both.iter().filter(|p| p.node == first_node).collect();
         assert_eq!(first_occurrence.len(), 5, "{:?}", both);
         assert_eq!(
@@ -8123,7 +8141,7 @@ def compute(count):
         );
         // second template: expr-only occurrence still opens and closes with
         // (empty) static chunks around the single interpolation.
-        let second_node = both.iter().map(|p| p.node).find(|n| *n != first_node).expect("second node");
+        let second_node = both.iter().map(|p| p.node.clone()).find(|n| *n != first_node).expect("second node");
         let second_occurrence: Vec<_> = both.iter().filter(|p| p.node == second_node).collect();
         assert_eq!(
             second_occurrence.iter().map(|p| (p.idx, p.kind, p.text.as_str())).collect::<Vec<_>>(),
@@ -8158,10 +8176,10 @@ def compute(count):
         // piece for that slot carries the nested template's full source text.
         let src = "const s = `outer ${`inner ${value}`}`;\n";
         let parts = ts_template_parts("nested.ts", src);
-        let nodes: std::collections::HashSet<u32> = parts.iter().map(|p| p.node).collect();
+        let nodes: std::collections::HashSet<String> = parts.iter().map(|p| p.node.clone()).collect();
         assert_eq!(nodes.len(), 2, "{:?}", parts);
 
-        let outer_node = parts.iter().find(|p| p.text == "outer ").expect("outer static").node;
+        let outer_node = parts.iter().find(|p| p.text == "outer ").expect("outer static").node.clone();
         let outer: Vec<_> = parts.iter().filter(|p| p.node == outer_node).collect();
         // one interpolation slot -> 2 quasis (leading "outer ", trailing "")
         // plus the 1 expr piece in between.
@@ -8170,7 +8188,7 @@ def compute(count):
             vec![(0, "static", "outer "), (1, "expr", "`inner ${value}`"), (2, "static", "")],
         );
 
-        let inner_node = parts.iter().find(|p| p.text == "value").expect("inner expr").node;
+        let inner_node = parts.iter().find(|p| p.text == "value").expect("inner expr").node.clone();
         assert_ne!(inner_node, outer_node);
         let inner: Vec<_> = parts.iter().filter(|p| p.node == inner_node).collect();
         assert_eq!(
@@ -8271,6 +8289,49 @@ def compute(count):
         assert_eq!(ents.len(), 1, "{:?}", facts.entities);
         assert_eq!(ents[0].kind, EntityKind::Function);
         assert!(!facts.consts.iter().any(|c| c.sym == ents[0].sym));
+    }
+
+    // --- const_string_member retirement: evidence-diff gap fix ---
+    // (plans/2026-07-10-string-values-const-value.md follow-up) —
+    // const_string_member walked EVERY const declarator with no scope
+    // restriction; const_value's original module-level-only loop missed a
+    // lookup table declared inside a function body. TsNestedConstWalker
+    // closes that gap; these two tests are the evidence.
+
+    #[test]
+    fn ts_const_inside_function_body_is_found_and_scoped() {
+        let src = "\
+function makeTable() {\n    \
+    const INNER_TABLE = { x: '/inner/x' };\n    \
+    return INNER_TABLE;\n\
+}\n";
+        let facts = TsTypes.extract("f.ts", src);
+        let ent = facts.entities.iter().find(|e| e.name == "INNER_TABLE").expect("nested const entity");
+        assert_eq!(ent.kind, EntityKind::Const);
+        assert!(ent.sym.contains("makeTable"), "sym should carry the enclosing scope: {}", ent.sym);
+        let row = facts.consts.iter().find(|c| c.sym == ent.sym).expect("const_value row");
+        assert_eq!(row.field, "x");
+        assert_eq!(row.text, "/inner/x");
+    }
+
+    #[test]
+    fn ts_same_named_const_in_two_functions_does_not_collide() {
+        let src = "\
+function a() {\n    \
+    const TABLE = { k: '/a' };\n    \
+    return TABLE;\n\
+}\n\
+function b() {\n    \
+    const TABLE = { k: '/b' };\n    \
+    return TABLE;\n\
+}\n";
+        let facts = TsTypes.extract("f.ts", src);
+        let ents: Vec<&TypeEntity> = facts.entities.iter().filter(|e| e.name == "TABLE").collect();
+        assert_eq!(ents.len(), 2, "{:?}", facts.entities);
+        assert_ne!(ents[0].sym, ents[1].sym);
+        let text_for = |sym: &str| facts.consts.iter().find(|c| c.sym == sym && c.field == "k").map(|c| c.text.as_str());
+        let texts: Vec<&str> = ents.iter().map(|e| text_for(&e.sym).unwrap()).collect();
+        assert!(texts.contains(&"/a") && texts.contains(&"/b"), "{:?}", texts);
     }
 
     #[test]

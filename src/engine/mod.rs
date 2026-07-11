@@ -312,22 +312,6 @@ pub(crate) const COMMENT_RELS: [&str; 1] = ["comment_node"];
 /// for either language rather than guessing at a shape.
 pub(crate) const TEMPLATE_RELS: [&str; 1] = ["template_parts"];
 
-/// Every flat string-valued const-object member in every TS/TSX/JS/JSX/MJS/CJS
-/// file: `const_string_member(file, object, member, value)`. Own family (rides
-/// the oxc parse, not gated behind `type`/`call`/`dataflow`, matching
-/// `template_parts`). `object` is the declared const's own binding name;
-/// `member` is a non-computed property key (identifier or string literal);
-/// `value` is a string-literal property value, verbatim. Computed keys and
-/// non-string values (including a nested object/array literal — flat members
-/// only, one level deep is out of scope) are skipped rather than guessed at;
-/// `object as const` / `object satisfies T` wrappers unwrap transparently.
-/// Rust `const` bindings have no object/member shape and emit nothing here
-/// (a Rust module-level string const is a different, ungrouped shape); Kotlin/
-/// Go/Python coverage is deferred to v2 rather than guessed at. Any lookup
-/// table, route map, or key registry becomes joinable in two lines:
-/// `route_for(key, path) <- const_string_member("routes.ts", "ROUTES", key, path).`
-pub(crate) const CONST_MEMBER_RELS: [&str; 1] = ["const_string_member"];
-
 /// Every runtime-computed edge marker in every TS/TSX/JS/JSX/MJS/CJS file:
 /// `unresolved(file, line, reason, detail)`. Own family (rides the oxc parse,
 /// not gated behind `type`/`call`/`dataflow`/`module`, matching
@@ -525,7 +509,6 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
         .chain(const_value_rel_decls())
         .chain(comment_rel_decls())
         .chain(template_rel_decls())
-        .chain(const_member_rel_decls())
         .chain(unresolved_rel_decls())
         .chain(call_rel_decls())
         .chain(dataflow_rel_decls())
@@ -960,18 +943,9 @@ pub(crate) fn template_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "template_parts".into(), cols: vec![
-            c("file", Type::Path), c("line", Type::Int), c("node", Type::Int),
+            c("file", Type::Path), c("line", Type::Int), c("node", Type::Text),
             c("idx", Type::Int), c("kind", Type::Text), c("text", Type::Text)], group: "template",
-            doc: "every template literal's ordered static/interpolated pieces: (file, line, node, idx, kind is static/expr, text); TS/TSX/JS/JSX/MJS/CJS only (oxc), one line per file's occurrence group via node = its byte offset; text is verbatim (raw static chunk or the interpolated expression's exact source); template-built import paths/URLs/keys become joinable", ..Default::default() },
-    ]
-}
-
-pub(crate) fn const_member_rel_decls() -> Vec<RelDecl> {
-    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
-    vec![
-        RelDecl { name: "const_string_member".into(), cols: vec![
-            c("file", Type::Path), c("object", Type::Text), c("member", Type::Text), c("value", Type::Text)], group: "const_member",
-            doc: "every flat string-valued const-object member: (file, object, member, value); TS/TSX/JS/JSX/MJS/CJS only (oxc) in v1 — Rust const bindings have no object/member shape and Kotlin/Go/Python are deferred; a computed key or a non-string (incl. nested object/array) value is skipped, never guessed at; object as const / satisfies wrappers unwrap transparently; any lookup table/route map/key registry becomes a two-line join", ..Default::default() },
+            doc: "every template literal's ordered static/interpolated pieces: (file, line, node, idx, kind is static/expr, text); TS/TSX/JS/JSX/MJS/CJS only (oxc), one line per file's occurrence group via node = the df_node/df_lit id for the SAME template occurrence (join key: node = df_lit.id, node = df_edge.to for whatever flows in); text is verbatim (raw static chunk or the interpolated expression's exact source); template-built import paths/URLs/keys become joinable", ..Default::default() },
     ]
 }
 
@@ -1360,7 +1334,6 @@ pub(crate) fn const_value_rels_used(prog: &Program) -> bool { rels_used(prog, &C
 pub(crate) fn comment_rels_used(prog: &Program) -> bool { rels_used(prog, &COMMENT_RELS) }
 
 pub(crate) fn template_rels_used(prog: &Program) -> bool { rels_used(prog, &TEMPLATE_RELS) }
-pub(crate) fn const_member_rels_used(prog: &Program) -> bool { rels_used(prog, &CONST_MEMBER_RELS) }
 pub(crate) fn unresolved_rels_used(prog: &Program) -> bool { rels_used(prog, &UNRESOLVED_RELS) }
 
 pub(crate) fn call_rels_used(prog: &Program) -> bool { rels_used(prog, &CALL_RELS) }
@@ -2199,9 +2172,6 @@ pub struct Engine {
     /// Per-file template-parts cache for `refresh_template_rels`, same shape:
     /// (repo, path, content hash) -> (repo id, ordered template pieces).
     template_facts_cache: extract::FactCache<Vec<crate::typegraph::TemplatePart>>,
-    /// Per-file const-string-member cache for `refresh_const_string_member_rel`,
-    /// same shape: (repo, path, content hash) -> (repo id, flat members).
-    const_member_facts_cache: extract::FactCache<Vec<crate::typegraph::ConstStringMember>>,
     /// Per-file unresolved-marker cache for `refresh_unresolved_rel`, same
     /// shape: (repo, path, content hash) -> (repo id, markers).
     unresolved_facts_cache: extract::FactCache<Vec<crate::typegraph::UnresolvedRef>>,
@@ -2251,7 +2221,6 @@ impl Engine {
             df_facts_cache: Default::default(),
             comment_facts_cache: Default::default(),
             template_facts_cache: Default::default(),
-            const_member_facts_cache: Default::default(),
             unresolved_facts_cache: Default::default(),
         }
     }
@@ -5108,9 +5077,6 @@ impl Engine {
                 if TEMPLATE_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in template-literal relation (template_parts); pick another name", d.name);
                 }
-                if CONST_MEMBER_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in const-string-member relation (const_string_member); pick another name", d.name);
-                }
                 if UNRESOLVED_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in unresolved-marker relation (unresolved); pick another name", d.name);
                 }
@@ -5194,7 +5160,6 @@ impl Engine {
         for d in const_value_rel_decls() { self.declare(&d)?; }
         for d in comment_rel_decls() { self.declare(&d)?; }
         for d in template_rel_decls() { self.declare(&d)?; }
-        for d in const_member_rel_decls() { self.declare(&d)?; }
         for d in unresolved_rel_decls() { self.declare(&d)?; }
         for d in call_rel_decls() { self.declare(&d)?; }
         for d in dataflow_rel_decls() { self.declare(&d)?; }
