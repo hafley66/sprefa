@@ -139,13 +139,17 @@ impl<'a> ProjectCx<'a> {
     fn ts_packages(&self) -> &HashMap<String, String> {
         self.ts_packages.get_or_init(|| {
             let mut m = HashMap::new();
-            for (path, content) in self.manifests {
+            // Duplicate names can occur when repos are projected into the
+            // repo-less module graph. Preserve first-wins deterministically.
+            let mut manifests: Vec<_> = self.manifests.iter().collect();
+            manifests.sort_by(|(ap, _), (bp, _)| ap.cmp(bp));
+            for (path, content) in manifests {
                 if !path.ends_with("package.json") {
                     continue;
                 }
                 if let Some(name) = json_name(content) {
                     let dir = parent_dir(path);
-                    m.insert(name, dir);
+                    m.entry(name).or_insert(dir);
                 }
             }
             m
@@ -746,7 +750,9 @@ impl RustCrates {
         let mut name_to_src = HashMap::new();
         let mut roots: Vec<(String, String)> = Vec::new();
         let mut renames: HashMap<(String, String), String> = HashMap::new();
-        for (path, content) in manifests {
+        let mut sorted_manifests: Vec<_> = manifests.iter().collect();
+        sorted_manifests.sort_by(|(ap, _), (bp, _)| ap.cmp(bp));
+        for (path, content) in sorted_manifests {
             if !path.ends_with("Cargo.toml") {
                 continue;
             }
@@ -758,14 +764,14 @@ impl RustCrates {
             } else {
                 format!("{dir}/src")
             };
-            name_to_src.insert(name.clone(), src.clone());
+            name_to_src.entry(name.clone()).or_insert_with(|| src.clone());
             roots.push((src, name.clone()));
             // `renamed = { package = "real" }`: code uses `renamed`, crate is `real`.
             for (code, real) in rns {
-                renames.insert((name.clone(), code), real);
+                renames.entry((name.clone(), code)).or_insert(real);
             }
         }
-        roots.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        roots.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.cmp(b)));
 
         let owner = |file: &str| -> String {
             for (src, name) in &roots {
@@ -776,10 +782,13 @@ impl RustCrates {
             String::new() // no manifest: single anonymous crate
         };
         let mut index = HashMap::new();
-        for f in files {
-            if !f.ends_with(".rs") {
-                continue;
-            }
+        // `src/lib.rs` and `src/main.rs` both map to `(crate, "crate")`.
+        // Flattened repos can collide here too. Since insertion is first-wins,
+        // the HashSet input must be ordered or cold processes choose different
+        // roots and emit different module edges.
+        let mut rust_files: Vec<_> = files.iter().filter(|f| f.ends_with(".rs")).collect();
+        rust_files.sort();
+        for f in rust_files {
             if let Some(mp) = file_to_mod_path(f) {
                 index.entry((owner(f), mp)).or_insert_with(|| f.clone());
             }
@@ -1594,14 +1603,17 @@ fn go_join_dir(root_dir: &str, rest: &str) -> String {
 impl GoIndex {
     fn build(files: &HashSet<String>, manifests: &HashMap<String, String>) -> Self {
         let mut modules: Vec<(String, String)> = Vec::new();
-        for (path, content) in manifests {
+        let mut sorted_manifests: Vec<_> = manifests.iter().collect();
+        sorted_manifests.sort_by(|(ap, _), (bp, _)| ap.cmp(bp));
+        for (path, content) in sorted_manifests {
             if !path.ends_with("go.mod") {
                 continue;
             }
             let Some(m) = go_module_re().captures(content) else { continue };
             modules.push((m[1].to_string(), parent_dir(path)));
         }
-        modules.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        modules.sort_by(|a, b| b.0.len().cmp(&a.0.len())
+            .then_with(|| a.0.cmp(&b.0)).then_with(|| a.1.cmp(&b.1)));
 
         let mut dirs: HashMap<String, Vec<String>> = HashMap::new();
         for f in files {

@@ -138,3 +138,90 @@ fn resolver_scopes_candidates_to_the_ref_site_repo() {
         "no alpha owner -> beta target cross edge:\n{stdout}"
     );
 }
+
+/// Sorted, relation-tagged query data. Table insertion/scan order is excluded;
+/// the resulting string compares relation content byte-for-byte.
+fn sorted_module_dump(stdout: &str) -> String {
+    let mut rel = "";
+    let mut rows = Vec::new();
+    for line in stdout.lines() {
+        if line.starts_with("? module_edge_rev") {
+            rel = "module_edge_rev";
+        } else if line.starts_with("? module_edge") {
+            rel = "module_edge";
+        } else if !rel.is_empty() && line.starts_with("  ") {
+            rows.push(format!("{rel}\t{}", line.trim()));
+        } else if !line.starts_with("  ") {
+            rel = "";
+        }
+    }
+    rows.sort();
+    rows.join("\n")
+}
+
+#[test]
+fn module_edges_are_deterministic_with_colliding_roots_across_repos() {
+    let d = std::env::temp_dir().join("module_edge_repo_determinism_test");
+    let _ = fs::remove_dir_all(&d);
+    fs::create_dir_all(&d).unwrap();
+
+    let alpha = d.join("alpha");
+    let beta = d.join("beta");
+    for root in [&alpha, &beta] {
+        // Each package has both lib.rs and main.rs, which map to the same Rust
+        // `(package, crate)` key. The same colliding layout exists in both repos.
+        for n in 0..12 {
+            let pkg = root.join(format!("pkg{n:02}"));
+            fs::create_dir_all(pkg.join("src")).unwrap();
+            fs::write(pkg.join("Cargo.toml"),
+                format!("[package]\nname = \"pkg{n:02}\"\nversion = \"0.1.0\"\n")).unwrap();
+            fs::write(pkg.join("src/lib.rs"), "mod shared;\npub struct RootItem;\n").unwrap();
+            fs::write(pkg.join("src/main.rs"),
+                "mod shared;\nuse crate::RootItem;\nfn main() {}\n").unwrap();
+            fs::write(pkg.join("src/shared.rs"), "use crate::RootItem;\n").unwrap();
+        }
+        git(root, &["init", "-q"]);
+        git(root, &["config", "user.email", "t@t"]);
+        git(root, &["config", "user.name", "t"]);
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-qm", "x"]);
+    }
+
+    let cfg = d.join("cfg.toml");
+    fs::write(&cfg, format!(
+        "[[repos]]\nslug = \"alpha\"\nroot = \"{}\"\n\
+         [[repos]]\nslug = \"beta\"\nroot = \"{}\"\n",
+        alpha.display(), beta.display())).unwrap();
+    let prog = d.join("p.dl");
+    fs::write(&prog,
+        "rel seen(path: file).\n\
+         seen(path) <- scan(\"*\", \"WORK\", \"**/*.rs\", path, rev).\n\
+         ? module_edge(src, dst).\n\
+         ? module_edge_rev(src, dst, rev).\n").unwrap();
+
+    let run = |db: &str| {
+        let db_path = d.join(db);
+        let out = Command::new(DL)
+            .arg(&prog)
+            .args(["--no-daemon", "--db", db_path.to_str().unwrap()])
+            .current_dir(&alpha)
+            .env("SPREFA_CONFIG", &cfg)
+            .env("DL_NO_DAEMON", "1")
+            .output().expect("run dl");
+        assert!(out.status.success(), "run failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        sorted_module_dump(&String::from_utf8_lossy(&out.stdout))
+    };
+
+    let first = run("db-first");
+    let second = run("db-second");
+    assert!(!first.is_empty(), "fixture must emit module edges");
+    assert_eq!(first, second, "fresh-db module relation dumps differ");
+
+    // Lexical first-wins makes lib.rs the stable root. This also prevents the
+    // old code passing merely because two processes happened to choose alike.
+    for n in 0..12 {
+        let expected = format!("module_edge\tpkg{n:02}/src/main.rs\tpkg{n:02}/src/lib.rs");
+        assert!(first.lines().any(|line| line == expected), "missing {expected}:\n{first}");
+    }
+}
