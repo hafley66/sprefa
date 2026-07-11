@@ -168,9 +168,19 @@ bom_cond_edge(rep_a, rep_b) <-
   module_edge(source_file, target_file), bom_rep_of(source_file, rep_a),
   bom_rep_of(target_file, rep_b), rep_a != rep_b.
 
+# Depth-capped (std/entry.dl's `d0 < 64` precedent): the 2-cycle detector
+# above is documented to miss 3+-file cycles, and any missed cycle in
+# bom_cond_edge makes an UNCAPPED depth+1 recursion diverge — the fixpoint
+# never converges and the whole tick wedges (observed live 2026-07-11: a
+# multi-repo module_edge slipped mutual pairs into bom_cond_edge and --check
+# sat 15+ minutes inside this one rule). On a true DAG the cap is inert
+# (module condensations are nowhere near 64 deep); on a slipped cycle it
+# bounds the damage to 64 iterations and the cycle members' tiers saturate
+# at the cap instead of hanging the tick.
 rel bom_path_len(rep_file: file, depth: int).
 bom_path_len(rep_file, 0) <- bom_cond_edge(_, rep_file), !bom_cond_edge(rep_file, _).
-bom_path_len(rep_file, depth + 1) <- bom_cond_edge(rep_file, dep_file), bom_path_len(dep_file, depth).
+bom_path_len(rep_file, depth + 1) <-
+  bom_cond_edge(rep_file, dep_file), bom_path_len(dep_file, depth), depth < 64.
 
 rel bom_cluster_tier(rep_file: file, tier: int).
 bom_cluster_tier(rep_file, max(depth)) <- bom_path_len(rep_file, depth).
