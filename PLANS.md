@@ -20,6 +20,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `decision` plans/2026-07-11-codex-feedback-queue.md:122 — CLI flag taxonomy — query/mutate/effects axes
 - `decision` plans/2026-07-11-intern-string-keys.md:159 — which payload TEXT columns stay text (df_lit.text, doc_comment.text) — decided by the spike's decode-cost numbers
 - `docs` plans/2026-07-10-change-cost-friction-inventory.md:151 — item 6 — a generated per-language coverage table (which node kinds each TypeLang lift emits, tested counts on a fixture) in docs/reference
+- `docs` plans/2026-07-11-book-toc.md:83 — book restructure per this TOC, Part III (flow) first
 - `docs` plans/2026-07-11-docs-and-dogfood-audit.md:20 — CHANGELOG drift rail — commit window vs entries cross-check
 - `docs` plans/2026-07-11-docs-and-dogfood-audit.md:28 — book/tutorial refresh for sym/file_lines/--max-wall/semi-naive
 - `feature` plans/2026-07-10-change-cost-friction-inventory.md:148 — item 1 — a first-class --hermetic flag that implies all three, plus the already-ledgered loud "daemon is serving this root, writes went there" warning on hijack
@@ -68,6 +69,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-10-change-cost-friction-inventory.md:152 `decision` — item 5 — a resolution_source column (values scip|syntactic|alias|narrowed) on call_edge/type_link (rev twins included), plus a public eng.ensure_families(&[...])
 - plans/2026-07-11-agent-resume-ledger.md:56 `bug` — dl --check --max-wall self-deadline so hook callers can never stack cold engines
 - plans/2026-07-11-agent-resume-ledger.md:57 `feature` — re-enable PostToolUse hook with timeout+advisory shape once derived is under budget
+- plans/2026-07-11-book-toc.md:83 `docs` — book restructure per this TOC, Part III (flow) first
 - plans/2026-07-11-codex-feedback-queue.md:18 `bug` — lex warn on dropped backslash escapes in plain strings
 - plans/2026-07-11-codex-feedback-queue.md:42 `feature` — reserved-name collision at --parse-only tier
 - plans/2026-07-11-codex-feedback-queue.md:46 `bug` — body-level extract+rel-atom mix must bail, not ignore
