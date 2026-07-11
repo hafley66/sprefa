@@ -15,11 +15,15 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `bug` plans/2026-07-11-codex-feedback-queue.md:86 — module_edge nondeterministic across identical cold runs
 - `bug` plans/2026-07-11-scip-atlas.md:38 — watchgate allowlist for index.scip; dl index pokes daemon
 - `decision` plans/2026-07-10-change-cost-friction-inventory.md:152 — item 5 — a resolution_source column (values scip|syntactic|alias|narrowed) on call_edge/type_link (rev twins included), plus a public eng.ensure_families(&[...])
+- `decision` plans/2026-07-11-codex-feedback-queue.md:122 — CLI flag taxonomy — query/mutate/effects axes
 - `decision` plans/2026-07-11-intern-string-keys.md:159 — which payload TEXT columns stay text (df_lit.text, doc_comment.text) — decided by the spike's decode-cost numbers
 - `docs` plans/2026-07-10-change-cost-friction-inventory.md:151 — item 6 — a generated per-language coverage table (which node kinds each TypeLang lift emits, tested counts on a fixture) in docs/reference
 - `feature` plans/2026-07-10-change-cost-friction-inventory.md:148 — item 1 — a first-class --hermetic flag that implies all three, plus the already-ledgered loud "daemon is serving this root, writes went there" warning on hijack
 - `feature` plans/2026-07-10-change-cost-friction-inventory.md:150 — item 3 — --format=json (or tsv) for ? query blocks and one paragraph documenting the human format's contract
 - `feature` plans/2026-07-11-agent-resume-ledger.md:57 — re-enable PostToolUse hook with timeout+advisory shape once derived is under budget
+- `feature` plans/2026-07-11-codex-feedback-queue.md:103 — auto-split mixed/source-join/term-extract shapes instead of bailing
+- `feature` plans/2026-07-11-codex-feedback-queue.md:109 — unpinned closure in rule bodies via generated recursive rule
+- `feature` plans/2026-07-11-codex-feedback-queue.md:114 — argmax/argmin head aggregates
 - `feature` plans/2026-07-11-codex-feedback-queue.md:42 — reserved-name collision at --parse-only tier
 - `feature` plans/2026-07-11-codex-feedback-queue.md:56 — --max-wall self-deadline before hook re-enable
 - `feature` plans/2026-07-11-cross-harness-agent-tooling.md:146 — arc 2 — commands + subagents render from .agents/ (.agents/commands/*.md -> .claude/commands / ~/.codex/prompts / .opencode/commands; .agents/agents/*.md -> symlink .claude/agents, near-copy .opencode/agents, md->TOML .codex/agents via toml_edit)
@@ -52,6 +56,10 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-11-codex-feedback-queue.md:56 `feature` — --max-wall self-deadline before hook re-enable
 - plans/2026-07-11-codex-feedback-queue.md:86 `bug` — module_edge nondeterministic across identical cold runs
 - plans/2026-07-11-codex-feedback-queue.md:92 `perf` — semi-naive delta-growth bail + wedge visibility
+- plans/2026-07-11-codex-feedback-queue.md:103 `feature` — auto-split mixed/source-join/term-extract shapes instead of bailing
+- plans/2026-07-11-codex-feedback-queue.md:109 `feature` — unpinned closure in rule bodies via generated recursive rule
+- plans/2026-07-11-codex-feedback-queue.md:114 `feature` — argmax/argmin head aggregates
+- plans/2026-07-11-codex-feedback-queue.md:122 `decision` — CLI flag taxonomy — query/mutate/effects axes
 - plans/2026-07-11-cross-harness-agent-tooling.md:146 `feature` — arc 2 — commands + subagents render from .agents/ (.agents/commands/*.md -> .claude/commands / ~/.codex/prompts / .opencode/commands; .agents/agents/*.md -> symlink .claude/agents, near-copy .opencode/agents, md->TOML .codex/agents via toml_edit)
 - plans/2026-07-11-cross-harness-agent-tooling.md:147 `triage` — a CodexSessions AgentHarness arm for agent_* rels — session-store format needs research
 - plans/2026-07-11-cross-harness-agent-tooling.md:148 `feature` — MCP config wiring (.mcp.json / [mcp_servers.dl] / opencode.json mcp) + opencode lsp entry for dl --lsp
@@ -66,6 +74,12 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-11-scip-atlas.md:50 `feature` — ingest scip relationships -> scip_impl/scip_typedef rels
 - plans/2026-07-11-scip-atlas.md:78 `feature` — argmax aggregate sugar
 <!-- END: plans-by-plan -->
+
+## By code file
+
+<!-- BEGIN: code-by-file -->
+- untriaged debt: 3 bare TODO/FIXME comments in src
+<!-- END: code-by-file -->
 
 ## Hand-owned notes (pre-index rows, migrated from chat_log/NOTES.md)
 

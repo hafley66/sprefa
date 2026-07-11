@@ -49,6 +49,17 @@ One markdown comment per open item, anywhere in the doc:
 These are extracted by sprefa itself (`comment_node` over the markdown
 grammar), so a fenced code sample showing the convention never becomes a row.
 
+Rust source comments use the same convention for code debt:
+
+```rust
+// todo(category): text
+```
+
+The category is one of `perf | bug | feature | docs | triage | decision`.
+`examples/gen-plans-index.dl` scans `src/**/*.rs` and renders these into the
+PLANS.md “By code file” zone as `category src/path.rs:LINE — text`. Bare
+uppercase `TODO`/`FIXME` comments are counted in one untriaged-debt row.
+
 ## Regenerating PLANS.md
 
 ```sh

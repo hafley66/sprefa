@@ -1,3 +1,13 @@
+## Unreleased
+
+### Added
+- Semi-naive (delta) evaluation for recursive fixpoints in `rebuild_derived`: each pass joins only rows born the previous pass instead of re-deriving the full relation; aggregate/`key(...)` components fall back to the naive loop; `DL_NAIVE_FIXPOINT=1` forces the old path. Exact-count regression tests pin the waste at zero. Cold `--check` on this repo: 37.2s -> 5.6s.
+- `DL_CACHE_MB` (default 512): SQLite page cache + mmap sizing; `temp_store=MEMORY`.
+- `_stmt_ms` telemetry is now `(rel, ms, n)`: SUM of wall ms across rules/passes/delta variants plus statement count; sibling buckets (`closure:`/`cond_cache:`/`extract:`/`scc:`/`node2vec:` prefixes) time engine-side derived work. 93.6% of the derived phase attributed (was ~14%).
+- Engine monolith split: `src/engine/mod.rs` 9,209 -> 2,688 lines across 12 pure-move submodules (decls/gen/query/symbols/lens/rpc/declare/reconcile/repo/meta/derive/lang_tables); `src/setup.rs` hook wiring split to `src/setup/hooks.rs`.
+- Observability verdict-line logging layer.
+- Daemon/check fixes: discovery-mode `--check` attaches to a warm daemon; cold-start PR-poll stampede in git-graph.dl gated on `git_ref`; verify.sh digest stamp skips redundant build+suite.
+
 # Changelog
 
 All notable changes to `dl` (sprefa v5) are recorded here. Format follows

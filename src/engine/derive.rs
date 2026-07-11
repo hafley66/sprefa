@@ -1,4 +1,60 @@
 use super::*;
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+use std::thread::JoinHandle;
+use std::time::Duration;
+
+const FIXPOINT_ROW_MAX_DEFAULT: usize = 5_000_000;
+const SLOW_STMT_AFTER: Duration = Duration::from_secs(10);
+
+/// One watchdog serves a rebuild, avoiding a sleeper thread for every SQL statement.
+struct StmtWatch { tx: Sender<StmtWatchEvent>, thread: Option<JoinHandle<()>> }
+enum StmtWatchEvent { Begin(String), Complete, Shutdown }
+
+impl StmtWatch {
+    fn start() -> Self {
+        let (tx, rx) = mpsc::channel();
+        let thread = std::thread::spawn(move || while let Ok(event) = rx.recv() {
+            let rel = match event {
+                StmtWatchEvent::Begin(rel) => rel,
+                StmtWatchEvent::Shutdown => break,
+                StmtWatchEvent::Complete => continue,
+            };
+            match rx.recv_timeout(SLOW_STMT_AFTER) {
+                Ok(StmtWatchEvent::Complete) => {}
+                Ok(StmtWatchEvent::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
+                Ok(StmtWatchEvent::Begin(_)) => unreachable!("derived statements do not overlap"),
+                Err(RecvTimeoutError::Timeout) => {
+                    eprintln!("[stmt-slow] began statement for `{rel}`; still running after 10s");
+                    match rx.recv() {
+                        Ok(StmtWatchEvent::Complete) => {}
+                        Ok(StmtWatchEvent::Shutdown) | Err(_) => break,
+                        Ok(StmtWatchEvent::Begin(_)) => unreachable!("derived statements do not overlap"),
+                    }
+                }
+            }
+        });
+        Self { tx, thread: Some(thread) }
+    }
+    fn begin(&self, rel: &str) { let _ = self.tx.send(StmtWatchEvent::Begin(rel.to_string())); }
+    fn complete(&self) { let _ = self.tx.send(StmtWatchEvent::Complete); }
+}
+impl Drop for StmtWatch {
+    fn drop(&mut self) {
+        let _ = self.tx.send(StmtWatchEvent::Shutdown);
+        if let Some(thread) = self.thread.take() { let _ = thread.join(); }
+    }
+}
+
+fn fixpoint_row_max() -> usize {
+    std::env::var("DL_FIXPOINT_ROW_MAX").ok().and_then(|value| value.parse().ok())
+        .unwrap_or(FIXPOINT_ROW_MAX_DEFAULT)
+}
+fn check_fixpoint_row_budget(rels: &[String], total: usize, max: usize) -> Result<()> {
+    if total <= max { return Ok(()); }
+    bail!("fixpoint row budget exceeded for recursive relation(s) `{}` after {} rows (limit {}): \
+           recursion is growing without converging — add a depth bound like `depth < 64`, see std/entry.dl",
+          rels.join(", "), total, max);
+}
 
 impl Engine {
     /// Materialize `head(a, b, score) <- node2vec(edge).`: read the 2-col edge
@@ -170,14 +226,18 @@ impl Engine {
         // max the hot rel reported only its single largest slice. The count
         // distinguishes "one big join" (n=1) from "many fixpoint passes".
         let mut stmt_ms: HashMap<String, (i64, i64)> = HashMap::new();
+        let stmt_watch = StmtWatch::start();
         let mut timed = |rel: &str, sql: &str| -> Result<usize> {
             // Temporary wedge tracer: DL_STMT_TRACE=1 names each derived
             // statement BEFORE it runs, so a statement that never returns is
             // identifiable from stderr (the _stmt_ms table only records
             // completed statements).
             if std::env::var_os("DL_STMT_TRACE").is_some() { eprintln!("[stmt-trace] {rel}"); }
+            stmt_watch.begin(rel);
             let t = std::time::Instant::now();
-            let n = self.db.conn().execute(sql, [])?;
+            let result = self.db.conn().execute(sql, []);
+            stmt_watch.complete();
+            let n = result?;
             let ms = t.elapsed().as_millis() as i64;
             let e = stmt_ms.entry(rel.to_string()).or_insert((0, 0));
             e.0 += ms;
@@ -232,9 +292,17 @@ impl Engine {
                     });
                 if naive_fallback {
                     let mut iters = 0;
+                    let mut total_promoted = 0usize;
+                    let mut comp_rels: Vec<String> = comp_rules.iter()
+                        .map(|&ri| derived_rules[ri].head.rel.clone()).collect();
+                    comp_rels.sort();
+                    comp_rels.dedup();
+                    let row_max = fixpoint_row_max();
                     loop {
                         let mut delta = 0usize;
                         for (rel, sql) in &stmts { delta += timed(rel, sql)?; }
+                        total_promoted = total_promoted.saturating_add(delta);
+                        check_fixpoint_row_budget(&comp_rels, total_promoted, row_max)?;
                         // Every execution after pass 1 is a full-input re-run
                         // (the waste semi-naive removes) — count it.
                         if iters > 0 {
@@ -291,6 +359,10 @@ impl Engine {
     ) -> Result<()> {
         let comp_rels: HashSet<String> = comp_rules.iter()
             .map(|&ri| derived_rules[ri].head.rel.clone()).collect();
+        let mut comp_rel_names: Vec<String> = comp_rels.iter().cloned().collect();
+        comp_rel_names.sort();
+        let row_max = fixpoint_row_max();
+        let mut total_promoted = 0usize;
 
         // Partition: a rule with zero recursive-atom occurrences is a base
         // case (seed) — its output never changes across iterations, so it
@@ -306,8 +378,9 @@ impl Engine {
         for &ri in &seed_ris {
             let rule = derived_rules[ri];
             let sql = lower_rule(rule, &self.rels)?;
-            timed(&rule.head.rel, &sql)?;
+            total_promoted = total_promoted.saturating_add(timed(&rule.head.rel, &sql)?);
         }
+        check_fixpoint_row_budget(&comp_rel_names, total_promoted, row_max)?;
 
         if rec_ris.is_empty() { return Ok(()); } // pure base case, no cycle to iterate
 
@@ -381,6 +454,8 @@ impl Engine {
             }
             iters += 1;
             if total_new == 0 { break; }
+            total_promoted = total_promoted.saturating_add(total_new);
+            check_fixpoint_row_budget(&comp_rel_names, total_promoted, row_max)?;
             if iters > 100_000 { bail!("fixpoint did not converge"); }
             // Promote this iteration's new rows into the real relation, and
             // hand them to the NEXT iteration as its delta.
