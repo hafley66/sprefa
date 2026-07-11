@@ -244,7 +244,7 @@ pub fn resolve_name(eng: &Engine, pattern: &str) -> Result<Vec<AnchorHit>> {
         });
     }
 
-    // module_binding(file, local, source, dst) joined to type_entity — the
+    // module_binding_resolved(file, local, source, dst) joined to type_entity — the
     // index-free equivalent of the scip_binding block above, for a repo with
     // no index.scip: `mb.local` is the alias in scope at `mb.file`, resolved
     // to the def it aliases at `mb.dst` (`te.name = mb.source`).
@@ -252,13 +252,13 @@ pub fn resolve_name(eng: &Engine, pattern: &str) -> Result<Vec<AnchorHit>> {
         "SELECT te.\"repo\", te.\"sym\", mb.\"local\", te.\"kind\", te.\"file\", te.\"line\" \
          FROM {} mb JOIN {} te ON te.\"name\" = mb.\"source\" AND te.\"file\" = mb.\"dst\" \
          WHERE mb.\"local\" LIKE ?1 ESCAPE '\\'",
-        tbl("module_binding"),
+        tbl("module_binding_resolved"),
         tbl("type_entity")
     );
     for r in rows_of(eng, &sql, p) {
         hits.push(AnchorHit {
             family: "module",
-            rel: "module_binding",
+            rel: "module_binding_resolved",
             repo: r[0].clone(),
             sym: r[1].clone(),
             name: r[2].clone(),
@@ -646,7 +646,7 @@ _what_scan(path) <- scan("WORK", "**/go.mod", path, rev).
 ? df_node_repo(_, _).
 ? module_edge(_, _).
 ? module_unresolved(_, _, _, _).
-? module_binding(_, _, _, _).
+? module_binding_resolved(_, _, _, _).
 ? doc_comment(_, _, _, _).
 ? comment_node(_, _, _, _, _, _, _).
 ? scip_def(_, _, _).

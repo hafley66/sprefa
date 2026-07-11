@@ -198,10 +198,10 @@ pub(crate) const MODULE_RELS: [&str; 10] = [
     "module_unresolved",
     "module_unresolved_rev",
     "crate_edge",
+    "module_binding_resolved_rev",
+    "module_binding_resolved",
     "module_binding_rev",
     "module_binding",
-    "import_binding_rev",
-    "import_binding",
 ];
 
 /// Syntax-only type graph. `kind` is edge metadata; closure(type_edge) walks
@@ -892,18 +892,18 @@ pub(crate) fn module_rel_decls() -> Vec<RelDecl> {
             doc: "rev-aware module_unresolved", ..Default::default() },
         RelDecl { name: "crate_edge".into(), cols: vec![c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text), c("rev", Type::Text)], group: "module",
             doc: "workspace-internal Cargo dependency edges", ..Default::default() },
-        RelDecl { name: "module_binding_rev".into(), cols: vec![
+        RelDecl { name: "module_binding_resolved_rev".into(), cols: vec![
             c("file", Type::Path), c("local", Type::Text), c("source", Type::Text), c("dst", Type::Path), c("rev", Type::Text)], group: "module",
-            doc: "aliased-import local bindings from the module resolvers' own parse (Rust use..as, TS import{a as b}/default, Kotlin import..as) — the index-free equivalent of scip_binding; local is the binding name in scope at file, source is the exported name at dst (\"default\" for a default import)", ..Default::default() },
-        RelDecl { name: "module_binding".into(), cols: vec![
+            doc: "the resolved subset (dst = resolved file, alias-only today) of module_binding: aliased-import local bindings from the module resolvers' own parse (Rust use..as, TS import{a as b}/default, Kotlin import..as) — the index-free equivalent of scip_binding; local is the binding name in scope at file, source is the exported name at dst (\"default\" for a default import)", ..Default::default() },
+        RelDecl { name: "module_binding_resolved".into(), cols: vec![
             c("file", Type::Path), c("local", Type::Text), c("source", Type::Text), c("dst", Type::Path)], group: "module",
-            doc: "rev-deduped union of module_binding_rev", ..Default::default() },
-        RelDecl { name: "import_binding_rev".into(), cols: vec![
+            doc: "rev-deduped union of module_binding_resolved_rev", ..Default::default() },
+        RelDecl { name: "module_binding_rev".into(), cols: vec![
             c("file", Type::Path), c("local_name", Type::Text), c("source_module", Type::Text), c("imported_name", Type::Text), c("kind", Type::Text), c("rev", Type::Text)], group: "module",
-            doc: "every local binding an import introduces, parsed off the import AST so aliased/library symbols resolve without scip — unlike module_binding_rev (alias-hop only, resolved-file-only), this fires for EVERY resolution incl. External (library) and Unresolved, and covers plain named/namespace/default/side-effect bindings too, not just aliased ones; source_module is the specifier as written (module_import's specifier text), imported_name the canonical exported name at the import site (\"default\"/\"*\"/\"\" for default/namespace/side-effect), kind = named/default/namespace/side_effect/reexport (Rust pub use). Two-line join for \"which library does this local name come from\": binds_lib(local_name, source_module) <- import_binding(file, local_name, source_module, _, _). then query ? binds_lib(\"myAlias\", lib)", ..Default::default() },
-        RelDecl { name: "import_binding".into(), cols: vec![
+            doc: "every local binding an import introduces, parsed off the import AST so aliased/library symbols resolve without scip — unlike module_binding_resolved_rev (alias-hop only, resolved-file-only), this fires for EVERY resolution incl. External (library) and Unresolved, and covers plain named/namespace/default/side-effect bindings too, not just aliased ones; source_module is the specifier as written (module_import's specifier text), imported_name the canonical exported name at the import site (\"default\"/\"*\"/\"\" for default/namespace/side-effect), kind = named/default/namespace/side_effect/reexport (Rust pub use). Two-line join for \"which library does this local name come from\": binds_lib(local_name, source_module) <- module_binding(file, local_name, source_module, _, _). then query ? binds_lib(\"myAlias\", lib)", ..Default::default() },
+        RelDecl { name: "module_binding".into(), cols: vec![
             c("file", Type::Path), c("local_name", Type::Text), c("source_module", Type::Text), c("imported_name", Type::Text), c("kind", Type::Text)], group: "module",
-            doc: "rev-deduped union of import_binding_rev", ..Default::default() },
+            doc: "rev-deduped union of module_binding_rev", ..Default::default() },
     ]
 }
 
@@ -2002,13 +2002,13 @@ struct ModuleRows {
     // `ref(id,string,file,lo,hi)` ⋈ `string` covers the import graph, not just
     // regex/ast/sg captures. Collect-then-flush, never N+1.
     spans: Vec<(String, String, spine::WhereBytes)>,
-    // module_binding_rev(file, local, source, dst, rev) rows: each aliased
+    // module_binding_resolved_rev(file, local, source, dst, rev) rows: each aliased
     // import binding this specifier ref carries (see `ModuleRef::bindings`).
     bindings: Vec<Vec<Value>>,
-    // import_binding_rev(file, local_name, source_module, imported_name, kind,
+    // module_binding_rev(file, local_name, source_module, imported_name, kind,
     // rev) rows: EVERY local binding this specifier ref carries, for every
-    // resolution kind (see `ModuleRef::import_bindings`).
-    import_bindings: Vec<Vec<Value>>,
+    // resolution kind (see `ModuleRef::module_bindings`).
+    module_bindings: Vec<Vec<Value>>,
 }
 
 impl ModuleRows {
@@ -2019,7 +2019,7 @@ impl ModuleRows {
         self.crate_edges.extend(other.crate_edges);
         self.spans.extend(other.spans);
         self.bindings.extend(other.bindings);
-        self.import_bindings.extend(other.import_bindings);
+        self.module_bindings.extend(other.module_bindings);
     }
 }
 

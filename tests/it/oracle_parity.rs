@@ -134,7 +134,7 @@ pub(crate) fn refs_at(index: &Index, root: &Path, source_prefix: &str)
 /// and a correctly resolved ALIASED call (site text `loadUser`, resolved to
 /// `fetchUser`) match the ground-truth site, which is keyed by the as-written
 /// text. `def_file` is the resolved callee's definition file, computed in dl
-/// (`call_def.file` / `module_binding.dst`). Both `sites` and `picks` lines are
+/// (`call_def.file` / `module_binding_resolved.dst`). Both `sites` and `picks` lines are
 /// 1-based (call_site); the ONE conversion to SCIP's 0-based line happens in
 /// `score`, at the truth lookup.
 pub(crate) fn parse_call_sections(stdout: &str, source_prefix: &str)
@@ -248,8 +248,8 @@ pub(crate) fn score_parity(index: &Index, root: &Path, source_prefix: &str, dl_s
 ///      name-equality pin as `call_target`, minus the df dependency, so it is
 ///      no more permissive (an ambiguous name yields >1 def file -> `multi`,
 ///      excluded).
-///   2. aliased imports: the site's callee text is a `module_binding` local
-///      name; `module_binding.dst` is the def file (the resolver's own alias
+///   2. aliased imports: the site's callee text is a `module_binding_resolved` local
+///      name; `module_binding_resolved.dst` is the def file (the resolver's own alias
 ///      resolution).
 /// Both branches are per-site; a site with no row is `bare`.
 pub(crate) const SITE_PICK_TAIL: &str = r#"
@@ -261,7 +261,7 @@ site_pick(file, callee_text, line, def_file) <-
     call_def(_, callee_q, _, def_file, _, _).
 site_pick(file, callee_text, line, def_file) <-
     call_site(_, _, callee_text, file, line),
-    module_binding(file, callee_text, _, def_file).
+    module_binding_resolved(file, callee_text, _, def_file).
 ? call_site(repo, caller, callee, file, line).
 ? site_pick(file, callee_text, line, def_file).
 "#;

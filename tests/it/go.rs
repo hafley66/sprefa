@@ -188,7 +188,7 @@ func main() {
     let prog = r#"
 rel seen(path: file).
 seen(path) <- scan("WORK", "**/*.go", path, rev), match(path, rev, /./, line).
-? module_binding(file, local, source, dst).
+? module_binding_resolved(file, local, source, dst).
 "#;
     let recs = run_json(&d, prog);
     let rows = recs[0]["rows"].as_array().expect("rows");

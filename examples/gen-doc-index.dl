@@ -70,6 +70,11 @@
 # - md  Agent Instructions  (AGENTS.md)
 # - md  Agent eval harness — v0-smoke  (bench/agent-eval/results/20260710-160451-b7ea90d-v0-smoke-dryrun-full.md)
 # - md  Agent eval harness — v0-smoke  (bench/agent-eval/results/20260710-161116-b7ea90d-v0-smoke-smoke.md)
+# - md  Agent eval harness — v1-capped  (bench/agent-eval/results/20260710-181856-f48f6a0-v1-capped.md)
+# - md  Agent eval harness — v1-capped.2  (bench/agent-eval/results/20260710-183658-f48f6a0-v1-capped.2.md)
+# - md  Agent eval harness — v2-ctf-hardest (CTF: dataflow capture-the-flag)  (bench/agent-eval/results/20260710-185712-c56d744-v2-ctf-hardest.md)
+# - md  Agent eval harness — v2-ctf-pilot (CTF: dataflow capture-the-flag)  (bench/agent-eval/results/20260710-184552-8cfba38-v2-ctf-pilot.md)
+# - md  Agent eval harness — v2-ctf-pilot.2 (CTF: dataflow capture-the-flag)  (bench/agent-eval/results/20260710-185659-c56d744-v2-ctf-pilot.2.md)
 # - md  Agent eval harness: a falsifiable, scriptable measurement of dl's effect  (plans/2026-07-10-agent-eval-harness.md)
 # - md  Agent rails: dl as a guardrail loop for coding agents  (docs/rails.md)
 # - md  Agent sharp edges (field report, 2026-07-04)  (docs/agent-sharp-edges.md)
@@ -84,6 +89,7 @@
 # - md  Budgeted Runtime UX Map  (chat_log/20260514.2.armored-runtime-ux-map.md)
 # - md  Built-in agent-turn relation + per-harness plug (ACP-primary)  (plans/2026-06-28-agent-turn-builtin-and-harness-plug.md)
 # - md  Built-in relations  (docs/reference/relations.md)
+# - md  C4 go/no-go: 3D isometric BOM structure view  (docs/design/2026-07-10-c4-3d-iso-sketch.md)
 # - md  CST stack: rowan + tree-sitter + injections  (.agents/skills/sprf-lsp-cst-stack/SKILL.md)
 # - md  CST-as-relation: `node`/`child` + whole-match located id + scope intervals  (plans/2026-06-26-cst-as-relation.md)
 # - md  Callable as a Value — application IS a Pipe  (plans/2026-05-18-callable-value.md)
@@ -156,6 +162,7 @@
 # - md  Lowering traits across many DSLs  (.agents/skills/sprf-lsp-lower-traits/SKILL.md)
 # - md  Magic-rel audit + de-magic plan  (plans/2026-07-06-magic-rel-audit.md)
 # - md  Making an LSP server easy, not a labyrinth — three Rust approaches  (docs/ext-lsp-made-easy.md)
+# - md  Mapping-session feedback: import bindings, template parts, shallow def-use (2026-07-10)  (plans/2026-07-10-mapping-feedback-import-binding.md)
 # - md  Memory Index  (.agents/memory/MEMORY.md)
 # - md  Mixed source+derived rels: desugar the split instead of bailing  (plans/2026-07-10-mixed-rel-desugar.md)
 # - md  Module-resolver trait: cross-language file dependency graph  (plans/2026-05-30-module-resolver-trait-plan.md)
@@ -425,6 +432,8 @@
 # - md  Variable-name signal extraction  (research/2026-06-26-variable-name-signal-extraction.md)
 # - md  What if  (book/what-if/README.md)
 # - md  What is dl  (deck/sprefa.md)
+# - md  Working in this repository — tooling guide  (bench/agent-eval/fixtures/ctf-permissions/skills/baseline.SKILL.md)
+# - md  Working in this repository — tooling guide  (bench/agent-eval/fixtures/ctf-permissions/skills/dl.SKILL.md)
 # - md  datafrog as a `MemStore` backend behind a `RelStore` seam  (docs/ext-datafrog-memstore.md)
 # - md  dl --lsp as a daemon thin client (the Gradle model)  (plans/2026-07-10-lsp-thin-client-daemon.md)
 # - md  dl LSP  (editors/vscode-dl/README.md)
@@ -484,6 +493,7 @@
 # - rs  src/embed/mod.rs:1  Embedding backends behind a compile-time feature switch.
 # - rs  src/embed/node2vec.rs:1  Structural node embeddings (DeepWalk / node2vec) — the graph sibling of the
 # - rs  src/embed/stub.rs:1  Deterministic hashed pseudo-embedding. The shipped default: zero deps, no
+# - rs  src/engine/desugar.rs:1  Mixed source+derived / extract+derived rel desugar: rewrite a `Program` so
 # - rs  src/engine/extract.rs:1  Built-in graph/CST/spine/daemon extractor methods on `Engine`, lifted out of
 # - rs  src/engine/tick.rs:1  The reactive tick orchestrator: `tick` (full) and `tick_paths` (incremental),
 # - rs  src/frontend.rs:1  Module surface: `use` inclusion + canonical-path dedup. The smallest viable

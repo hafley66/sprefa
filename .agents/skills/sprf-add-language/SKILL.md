@@ -32,7 +32,7 @@ This skill is the map, and the map is machine-checked (see below).
 | grammar rows | sg-grammars, ast-grammars, comment-cst-extensions | `sg`/`ast_yaml`/`ast` queries, `comment_node`, CST `node`/`child` | S (one row per table, grammar crate must exist) |
 | real SCIP | scip-indexers | scip_def/ref/edge/occurrence/binding, `dl index`/`dl doctor`/`scip_want` | S (one Indexer row) |
 | diet tier | typelang-registry, extract-file-set | type_entity/type_edge/type_sig, call_def/call_site/call_edge, df_* dataflow, doc_comment/doc_tag, all index-free | M-L (~1 Kotlin unit; exemplar = KotlinTypes in src/typegraph.rs) |
-| module graph | module-resolvers | module_edge/module_unresolved/module_binding, resolver alias hop, import-scoped ambiguity narrowing | S-M |
+| module graph | module-resolvers | module_edge/module_unresolved/module_binding_resolved, resolver alias hop, import-scoped ambiguity narrowing | S-M |
 | refactor | move-rewriter | `--move OLD=NEW` import rewriting for the language | M |
 
 A language is useful at ANY prefix of this list. Go/Python shipped grammar rows
@@ -57,7 +57,7 @@ alone never fails. Never hand-edit inside the markers.
 - `src/engine/mod.rs:6010` manifest-probe: the manifest filename list probed above the scanned file set; a language whose module resolver reads a manifest (Cargo.toml, package.json, go.mod) must add its name here or the resolver gets no manifest content
 - `src/engine/mod.rs:8582` ast-grammars: one table row = `ast` op support (tree-sitter constructor keyed by label); `comment_node` and the CST node/child rels also dispatch through `ts_lang`, via `cst::lang_label_for_path`
 - `src/lib.rs:641` move-rewriter: per-language `--move` path rewriting (rspath = Rust use-paths + mod surgery, ktpath = Kotlin package math); a new language adds its rewriter module and dispatches from this driver
-- `src/modgraph.rs:148` module-resolvers: per-language import resolver registration; buys module_edge/module_unresolved/module_binding plus the name resolver's alias hop and import-scoped ambiguity narrowing
+- `src/modgraph.rs:148` module-resolvers: per-language import resolver registration; buys module_edge/module_unresolved/module_binding_resolved plus the name resolver's alias hop and import-scoped ambiguity narrowing
 - `src/scip_setup.rs:50` scip-indexers: the real-SCIP tier; one Indexer row (marker files, binary, install hint, argv) = `dl index` / `dl doctor` / `scip_want` support for the language
 - `src/sg.rs:6` sg-grammars: one table row = `sg` + `ast_yaml` op support for a grammar (canonical name, aliases, ast-grep SupportLang); the skill language matrix test asserts this table
 - `src/typegraph.rs:357` typelang-registry: impl `TypeLang { name, matches, extract }` and register it here; buys type_entity/type_edge/type_sig/call_*/df_*/doc_comment for the language (the index-free diet tier, Kotlin-sized)
@@ -74,7 +74,7 @@ alone never fails. Never hand-edit inside the markers.
    type_sig.pos; df_arg slots are 0-based; lambdas lift as their own fn scopes
    with the `::closure::` sym prefix; loops record spans so `nest` works.
 4. Resolution is free: emitting entities and bare callee names feeds the
-   existing by_name buckets, SCIP override, module_binding alias hop, and
+   existing by_name buckets, SCIP override, module_binding_resolved alias hop, and
    import narrowing. Ambiguous stays bare. Never invent a resolver inside the
    TypeLang.
 5. Tests to mirror: typegraph unit tests plus tests/it/kotlin.rs (e2e fixture)

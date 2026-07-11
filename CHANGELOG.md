@@ -15,11 +15,11 @@ tags consumed by cargo-dist.
   visible rel). Lattice (`key`/`merge`) rels and `@in`/`@out` ports still
   bail, on purpose. Term-extract rules (json/jsonp/sg term-form) can now
   co-head with derived rules too, including feeding `@next` carries.
-- **`import_binding(file, local_name, source_module, imported_name, kind)`**
+- **`module_binding(file, local_name, source_module, imported_name, kind)`**
   (+ `_rev` twin): every local import binding, index-free — kind = named |
   default | namespace | side_effect | reexport per language. Sibling of
-  `module_binding` (which deliberately excludes library imports); "which
-  library does this local name bind to" is a two-line join.
+  `module_binding_resolved` (which deliberately excludes library imports);
+  "which library does this local name bind to" is a two-line join.
 - **`template_parts(file, line, node, idx, kind, text)`**: template literals
   split into ordered static/expr pieces (TS/TSX/JS/JSX/MJS/CJS, tagged and
   nested included). Own extract family — no second parse, programs reading
@@ -38,6 +38,18 @@ tags consumed by cargo-dist.
   records carry `full_reason` (blank-slate | program-edit | carry-changed |
   derived-missing:<rels> | ...); one-shot runs now emit derived-rebuild phase
   records (previously daemon-only).
+
+### Changed
+- **BREAKING: import-binding rel family renamed.** The v0.7.0
+  `module_binding(file, local, source, dst)` (+ `_rev`) — the alias-only,
+  dst-resolved subset consumed by the resolver alias hop and `dl what` — is
+  renamed to **`module_binding_resolved`** (+ `module_binding_resolved_rev`).
+  The wider syntactic tier introduced above (every local import binding incl.
+  external/unresolved modules, kind column) now takes the base name
+  **`module_binding`** (+ `module_binding_rev`) instead of `import_binding`.
+  Any query reading the 4-ary `module_binding(file, local, source, dst)` shape
+  must switch to `module_binding_resolved`; any `import_binding` query renames
+  to `module_binding`. Semantics unchanged, names only.
 
 ### Fixed
 - **`--check` full-rebuild floor (P1).** `need_full` treated ANY empty derived

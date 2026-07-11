@@ -1,5 +1,5 @@
 //! Python diet-tier extraction end to end: `PyTypes` (type_entity/type_edge/
-//! call_*/df_*/doc_comment, index-free) + `PyResolver` (module_binding) over a
+//! call_*/df_*/doc_comment, index-free) + `PyResolver` (module_binding_resolved) over a
 //! small fixture — a class with methods + docstrings, a `from`-import alias,
 //! a capitalized constructor call, and a list comprehension. Mirrors
 //! tests/it/kotlin.rs's shape.
@@ -96,14 +96,14 @@ seen(path) <- scan("WORK", "src/**/*.py", path, rev), match(path, rev, /./, line
 }
 
 #[test]
-fn module_binding_captures_from_import_alias() {
+fn module_binding_resolved_captures_from_import_alias() {
     let d = sandbox("binding");
     fs::write(d.join("src/main.py"), MAIN_PY).unwrap();
     fs::write(d.join("src/helper.py"), HELPER_PY).unwrap();
     let prog = r#"
 rel seen(path: file).
 seen(path) <- scan("WORK", "src/**/*.py", path, rev), match(path, rev, /./, line).
-? module_binding(file, local, source, dst).
+? module_binding_resolved(file, local, source, dst).
 ? module_edge(src, dst).
 "#;
     let recs = run_json(&d, prog);

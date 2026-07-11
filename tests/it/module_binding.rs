@@ -1,7 +1,7 @@
-//! `import_binding`/`import_binding_rev`: EVERY local binding an import
+//! `module_binding`/`module_binding_rev`: EVERY local binding an import
 //! introduces, parsed off the import AST (Rust `use`, TS/JS `import`, Kotlin
 //! `import`), for EVERY resolution kind — including `External` (a library
-//! import), which `module_binding` deliberately skips (it only fires on a
+//! import), which `module_binding_resolved` deliberately skips (it only fires on a
 //! resolved, non-self `File` target; see `ModuleRef::bindings` in
 //! src/modgraph.rs). That gap is exactly what a mapping query needs: "which
 //! library does this local name come from" almost always resolves External.
@@ -18,7 +18,7 @@ use std::process::Command;
 const DL: &str = env!("CARGO_BIN_EXE_dl");
 
 fn sandbox(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("import_binding_{tag}"));
+    let dir = std::env::temp_dir().join(format!("module_binding_{tag}"));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("src")).unwrap();
     dir
@@ -71,8 +71,8 @@ fn rust_use_as_and_pub_use_bindings() {
     let prog = r#"
 rel seen(path: file).
 seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
-? import_binding(file, local_name, source_module, imported_name, kind).
-? module_binding(file, local, source, dst).
+? module_binding(file, local_name, source_module, imported_name, kind).
+? module_binding_resolved(file, local, source, dst).
 "#;
     let recs = run_json(&d, prog);
     let rows = recs[0]["rows"].as_array().expect("rows");
@@ -99,7 +99,7 @@ seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line
     assert_eq!(plain[4].as_str().unwrap(), "named");
 
     // `use external_crate::Thing as ExternalAlias;` — resolves External (no
-    // such crate in this fileset): the case module_binding CANNOT see.
+    // such crate in this fileset): the case module_binding_resolved CANNOT see.
     let external = find_row(rows, &[(0, "src/lib.rs"), (1, "ExternalAlias")])
         .unwrap_or_else(|| panic!("no ExternalAlias row: {rows:?}"));
     assert_eq!(external[2].as_str().unwrap(), "external_crate::Thing");
@@ -109,7 +109,7 @@ seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line
     let legacy_bindings = recs[1]["rows"].as_array().expect("rows");
     assert!(
         !legacy_bindings.iter().any(|r| r[1].as_str() == Some("ExternalAlias")),
-        "module_binding must NOT carry the external alias (File-target only): {legacy_bindings:?}"
+        "module_binding_resolved must NOT carry the external alias (File-target only): {legacy_bindings:?}"
     );
 }
 
@@ -142,7 +142,7 @@ fn ts_named_default_namespace_side_effect_bindings() {
 rel seen(path: file).
 seen(path) <- scan("WORK", "src/**/*.ts", path, rev), match(path, rev, /./, line).
 seen(path) <- scan("WORK", "src/**/*.js", path, rev), match(path, rev, /./, line).
-? import_binding(file, local_name, source_module, imported_name, kind).
+? module_binding(file, local_name, source_module, imported_name, kind).
 "#;
     let recs = run_json(&d, prog);
     let rows = recs[0]["rows"].as_array().expect("rows");
@@ -212,8 +212,8 @@ fn kotlin_import_as_bindings() {
     let prog = r#"
 rel seen(path: file).
 seen(path) <- scan("WORK", "src/**/*.kt", path, rev), match(path, rev, /./, line).
-? import_binding(file, local_name, source_module, imported_name, kind).
-? module_binding(file, local, source, dst).
+? module_binding(file, local_name, source_module, imported_name, kind).
+? module_binding_resolved(file, local, source, dst).
 "#;
     let recs = run_json(&d, prog);
     let rows = recs[0]["rows"].as_array().expect("rows");
@@ -231,8 +231,8 @@ seen(path) <- scan("WORK", "src/**/*.kt", path, rev), match(path, rev, /./, line
     assert_eq!(plain[3].as_str().unwrap(), "Widget");
     assert_eq!(plain[4].as_str().unwrap(), "named");
 
-    // External resolution (no such package in this fileset): module_binding
-    // cannot see this one, import_binding does.
+    // External resolution (no such package in this fileset): module_binding_resolved
+    // cannot see this one, module_binding does.
     let external = find_row(rows, &[(0, file), (1, "ExtAlias")])
         .unwrap_or_else(|| panic!("no ExtAlias row: {rows:?}"));
     assert_eq!(external[2].as_str().unwrap(), "com.external.Thing");
@@ -242,7 +242,7 @@ seen(path) <- scan("WORK", "src/**/*.kt", path, rev), match(path, rev, /./, line
     let legacy_bindings = recs[1]["rows"].as_array().expect("rows");
     assert!(
         !legacy_bindings.iter().any(|r| r[1].as_str() == Some("ExtAlias")),
-        "module_binding must NOT carry the external alias: {legacy_bindings:?}"
+        "module_binding_resolved must NOT carry the external alias: {legacy_bindings:?}"
     );
 }
 
@@ -262,7 +262,7 @@ rel seen(path: file).
 seen(path) <- scan("WORK", "src/**/*.ts", path, rev), match(path, rev, /./, line).
 
 rel binds_lib(local_name: text, source_module: text).
-binds_lib(local_name, source_module) <- import_binding(file, local_name, source_module, _, _).
+binds_lib(local_name, source_module) <- module_binding(file, local_name, source_module, _, _).
 
 ? binds_lib("myAlias", lib).
 "#;

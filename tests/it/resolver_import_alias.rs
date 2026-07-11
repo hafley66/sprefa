@@ -1,4 +1,4 @@
-//! `module_binding`/`module_binding_rev`: the index-free alias hop wired into
+//! `module_binding_resolved`/`module_binding_resolved_rev`: the index-free alias hop wired into
 //! `refresh_type_rels`'s `resolve` and `refresh_call_rels`'s `resolve_callee`
 //! (src/engine/extract.rs), fed by the module resolvers' own parse
 //! (src/modgraph.rs's `ModuleRef::bindings`) — no `index.scip` involved.
@@ -141,9 +141,9 @@ fn local_def_shadows_an_aliased_import_of_the_same_local_name() {
 }
 
 #[test]
-fn what_verb_surfaces_the_canonical_def_via_module_binding() {
+fn what_verb_surfaces_the_canonical_def_via_module_binding_resolved() {
     // `dl what mk`: no index.scip anywhere, so any hit can only come from the
-    // module_binding-joined anchor path (src/anchor.rs).
+    // module_binding_resolved-joined anchor path (src/anchor.rs).
     let d = sandbox("what");
     let cfg = empty_config(&d);
     write_rust_fixture(&d, "rev-1");
@@ -157,7 +157,7 @@ fn what_verb_surfaces_the_canonical_def_via_module_binding() {
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     assert!(out.status.success(), "what failed:\nstdout={stdout}\nstderr={stderr}");
-    assert!(stdout.contains("module_binding"), "module_binding hit missing:\n{stdout}");
+    assert!(stdout.contains("module_binding_resolved"), "module_binding_resolved hit missing:\n{stdout}");
     assert!(stdout.contains("pkg.rs"), "should surface pkg.rs, the aliased def's file:\n{stdout}");
 }
 
@@ -166,7 +166,7 @@ fn editing_the_alias_target_flips_resolution_on_a_retick() {
     // Same shape as resolver_import_narrowing's flip test: pkg.rs declares TWO
     // fns; app.rs's `mk` alias initially targets `make`, then is edited to
     // target `other`. The `extract:type/call:<rev>` digest fold over
-    // `module_binding_rev` (not just `module_edge_rev`) must catch the edit so
+    // `module_binding_resolved_rev` (not just `module_edge_rev`) must catch the edit so
     // a warm retick against the SAME db doesn't serve the stale resolution.
     let d = sandbox("flip");
     let cfg = empty_config(&d);
