@@ -69,12 +69,16 @@ fail) before a full run.
   the rule instead of a file — a styled-components css body captured by an outer
   `sg(:tsx)`, a markdown code fence, a response column. Spans are RELATIVE to the
   bound string (byte 0 = its start; carry the region's own line to reach file
-  coordinates). Runs in the join+extract pass like term-form `json`/`jsonp`, so it
-  heads its own rel (never co-headed with a derived rule). See
+  coordinates). Runs in the join+extract pass like term-form `json`/`jsonp`. See
   `examples/styled-components.dl` and `examples/md-fences.dl`.
-- **One rel = one rule kind.** Never head a rel with BOTH a source rule
-  (`scan`/`match`/`ast`/`sg`/`ast_yaml`/`json`/`cmd`/`comment`) and a derived
-  rule — the engine bails. Split into two rels, union in a third.
+- **Mixed source/derived heads auto-desugar.** Heading a rel with BOTH a
+  source rule (`scan`/`match`/`ast`/`sg`/`ast_yaml`/`json`/`cmd`/`comment`) and
+  a derived rule used to bail; the engine now splits it into hidden
+  `<rel>__src`/`<rel>__drv` twins plus a synthesized union automatically —
+  every other rule/`?`/the panel keeps reading the original name. Two
+  combinations still refuse: a `key(...)`/`merge(...)` lattice rel mixed this
+  way (the upsert winner is undecidable), and an `@in`/`@out` port rel headed
+  by anything but its own serving loop.
 - **A `closure`/`scc`/`node2vec` rel can't be read unpinned in a rule body.** The
   recursive view materializes; seed a recursive rule instead, or pin both ends of
   a `?` query (`? reaches("a", x).`).
@@ -461,9 +465,12 @@ directory (the cwd) — no git, the file need not be tracked or committed. Only
 ## Authoring gotchas
 
 - **N+1**: never a per-row write. Collect the set, one `insert_rows`/`refresh_rel`.
-- **One rel = one rule kind**: never head a rel with both a source rule
-  (`scan`/`match`/`ast`/`sg`/`json`/`cmd`/`comment`) and a derived rule — the
-  engine bails. Split and union in a third rel.
+- **Mixed source/derived heads auto-desugar**: a rel headed by both a source
+  rule (`scan`/`match`/`ast`/`sg`/`json`/`cmd`/`comment`) and a derived rule
+  splits automatically into hidden `__src`/`__drv` twins plus a synthesized
+  union; the visible name still reads as one relation. Still refused: a
+  `key(...)`/`merge(...)` lattice rel mixed this way, and an `@in`/`@out` port
+  rel headed by anything but its own serving loop.
 - **Reserved names**: `repo`, `rev`, `content`, `file`, `string`, `ref`, the
   `type_*`/`call_*`/`df_*`/`doc_*`/module-graph families, `dl_diag`, plus every
   relation any built-in family owns; pick another name (anim uses `node_ref`).

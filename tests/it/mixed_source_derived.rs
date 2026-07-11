@@ -195,3 +195,36 @@ fn split_source_and_derived_into_two_rels_is_fine() {
          ? both(p).\n");
     assert_eq!(code, 0, "split program should succeed; stderr: {err}");
 }
+
+// ---- D4: telemetry twin-name mapping ---------------------------------------
+
+/// `rel_count`/`stmt_ms` must report a mixed rel under its own visible name
+/// only -- the hidden `__src`/`__drv` twins (`engine::desugar::display_rel_name`)
+/// are folded in, never surfaced as their own rows (src/rels/perf.rs
+/// `fold_twins`). Runs the mixed program TWICE (`stmt_ms` is empty until a
+/// derived rebuild has landed once; the daemon-equivalent second tick is a
+/// second one-shot invocation against the same `--db`).
+#[test]
+fn rel_count_and_stmt_ms_never_leak_twin_names() {
+    let d = sandbox("telemetry");
+    fs::create_dir_all(d.join("src")).unwrap();
+    fs::write(d.join("src/a.txt"), "hello\n").unwrap();
+    let program =
+        "rel other(tag: text).\n\
+         other(\"derived-only\").\n\
+         rel mixed_telemetry(x: text).\n\
+         mixed_telemetry(p) <- scan(\"WORK\", \"src/**/*.txt\", p, rev), match(p, rev, /./, line).\n\
+         mixed_telemetry(x) <- other(x).\n\
+         ? rel_count(rel, rows).\n\
+         ? stmt_ms(rel, ms).\n";
+    let (code, _out, err) = run(&d, program);
+    assert_eq!(code, 0, "stderr: {err}");
+    // Second invocation against the same db: stmt_ms only populates once a
+    // derived rebuild has landed (see perf.rs's doc comment).
+    let (code, out, err) = run(&d, program);
+    assert_eq!(code, 0, "stderr: {err}");
+    assert!(!out.contains("__src"), "rel_count/stmt_ms leaked a __src twin name:\n{out}");
+    assert!(!out.contains("__drv"), "rel_count/stmt_ms leaked a __drv twin name:\n{out}");
+    assert!(out.contains("mixed_telemetry"),
+        "expected the visible rel name to appear in rel_count/stmt_ms output:\n{out}");
+}

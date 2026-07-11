@@ -19,9 +19,11 @@ rel route_norm(side: text, origin: text, route: text, norm: text).
 route_norm(side, o, t, lower(replace_re(t, "[^A-Za-z0-9]", ""))) <-
     route_raw(side, o, t).
 
-# One rel = one rule kind: the scanned rows and the demo facts live in their
-# own rels, and route_raw is the derived union (a rel headed by both a source
-# rule and a derived rule bails — the engine says so loudly).
+# The scanned rows and the demo facts live in their own rels (route_scan,
+# route_fact), and route_raw is the derived union — a rel headed by both a
+# source rule and a derived rule would now auto-desugar into hidden twins
+# (src/engine/desugar.rs) rather than being required to split, but keeping
+# the split explicit here reads clearer than relying on the desugar.
 rel route_raw(side: text, origin: text, route: text).
 route_raw(s, o, t) <- route_fact(s, o, t).
 route_raw(s, o, t) <- route_scan(s, o, t).

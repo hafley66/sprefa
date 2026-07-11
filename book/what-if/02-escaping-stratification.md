@@ -74,7 +74,9 @@ one pass), and `scc(edge)` as a queryable relation. A "stratify by the data,
 not the rules" mode is: condense the *value* graph, check the offending
 operation only ever crosses condensation layers, evaluate in topological
 order. Refuse loudly when a cycle appears in the data at tick time — the same
-honesty contract as the mixed source/derived bail.
+honesty contract as the lattice-mixed-relation bail (a `key(...)`/`merge(...)`
+relation also headed by a source or derived rule refuses rather than guess
+which side wins a key collision).
 
 The recipe: **the rule graph is a conservative approximation**. When the
 checker refuses, the actual data often carries a proof of layering the rules

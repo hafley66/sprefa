@@ -15,23 +15,23 @@
 #     -> scan(base_sha, ...) / scan(head_sha, ...) -- data-driven rev scans
 #     -> pr_node_added / pr_edge_added ...  -- the per-rev anti-joins
 #
-# WHY THE jsonp EXTRACT HEADS ITS OWN REL (pr_base / pr_head), NEVER co-heading
-# with the pr_pair join: a term-extract rule (a `jsonp`/`json` body predicate
-# over a bound string) filled by `eval_extract_rules` cannot share a head with a
-# derived rule -- `rebuild_derived` runs AFTER the extract pass and would
-# `DELETE FROM rel` the freshly-extracted rows. The engine bails (one rel = one
-# rule kind). So each sha extraction lands in its own rel, and `pr_pair` joins
-# those two ordinary rels. This is the sanctioned split -- the same shape as the
-# pr_number -> change_log route in examples/gh-cache.dl.
+# WHY THE jsonp EXTRACT HEADS ITS OWN REL (pr_base / pr_head) INSTEAD OF
+# co-heading with the pr_pair join: a term-extract rule (a `jsonp`/`json` body
+# predicate over a bound string) headed together with a derived rule now
+# auto-desugars (hidden __src/__drv twins + a synthesized union, see
+# src/engine/desugar.rs) rather than being required -- but the split into its
+# own rel is still clearer here and matches the sanctioned pr_number ->
+# change_log route in examples/gh-cache.dl, so it stays that way by choice.
 #
 # WHY THIS FILE DUPLICATES THE ANTI-JOIN CORE instead of `use`-ing
 # .dl/graph-diff.dl: that file heads `diff_pair` as a FACT
 # (diff_pair("WORK", "WORK")). A second, DERIVED `diff_pair` here -- the PR's
 # base/head shas are derived, not a literal -- merged with the fact (via a `use`
 # splice or shared .dl/ discovery) would head ONE rel with both a source-fact
-# rule and a derived rule = a mixed source/derived rel, and the engine bails
-# (again: one rel = one rule kind). So pr-diff.dl is self-contained under its
-# own `pr_*` rel names; the short node/edge anti-join core is copied, not shared.
+# rule and a derived rule; the engine now auto-desugars that combination too,
+# but pr-diff.dl still stays self-contained under its own `pr_*` rel names
+# (independent of .dl/graph-diff.dl's own evolution) -- the short node/edge
+# anti-join core is copied, not shared, by choice rather than necessity.
 #
 # SCIP asymmetry (documented, NOT worked around): a SCIP index.scip is a
 # working-tree artifact, so committed revs (both PR shas) resolve syntactically
