@@ -157,6 +157,9 @@ pub fn lex(src: &str) -> Result<Vec<Tok>> {
                 let mut interp = false;
                 while i < b.len() && b[i] != b'"' {
                     if b[i] == b'\\' && i + 1 < b.len() {
+                        if matches!(b[i + 1], b's' | b'd' | b'w' | b'b' | b'n') {
+                            eprintln!("warning[plain-string-escape]: `\\\\{}` in a plain string drops the backslash; use r\"...\" for regex text", b[i + 1] as char);
+                        }
                         cur.push(b[i + 1] as char); i += 2;
                     } else if b[i] == b'$' && b.get(i + 1) == Some(&b'{') {
                         interp = true;

@@ -130,3 +130,20 @@ fn valid_regex_literals_exit_zero() {
     assert!(!db.exists(), "no db file created (no scan/tick ran)");
     let _ = fs::remove_dir_all(&d);
 }
+
+/// Regex-style escapes in a plain string warn during lexing so the silently
+/// dropped backslash is visible; raw strings are the documented fix.
+#[test]
+fn plain_string_regex_escape_warns_with_raw_string_fix() {
+    let d = sandbox("plainstrwarn");
+    let db = d.join("should_not_exist.db");
+    let (code, _out, err) = run(&d, concat!(
+        "rel note(value: text).\n",
+        "note(\"\\bword\\n\").\n",
+    ), &db);
+    assert_eq!(code, 0, "a warn-only plain string is exit 0:\n{err}");
+    assert!(err.contains("plain-string-escape"), "warning code surfaces:\n{err}");
+    assert!(err.contains("use r\"...\" for regex text"), "warning names the fix:\n{err}");
+    assert!(!db.exists(), "no db file created");
+    let _ = fs::remove_dir_all(&d);
+}
