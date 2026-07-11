@@ -96,7 +96,7 @@ const LESSONS: &[(u32, &str, &str)] = &[
     (0, "install `dl`, build the fixture repo, meet `dl docs` and `dl examples`.", LESSON_00),
     (1, "a bare `scan`, the `file` relation, the `(repo, path, rev)` coordinate.", LESSON_01),
     (2, "`match` with a regex capture, then the same thing with `ast`/`sg`; when to use which; metavars and `$$$`.", LESSON_02),
-    (3, "two source relations joined into a third derived one, and the one-relation-one-rule-kind law shown by triggering the engine's bail.", LESSON_03),
+    (3, "two source relations joined into a third derived one, and what happens when one relation is headed by both a source rule and a derived rule.", LESSON_03),
     (4, "`type_entity` and `call_edge` off the same scan; blast radius with a recursive rule; why you seed a recursive rule instead of reading `closure()` unpinned.", LESSON_04),
     (5, "newest-per-group with the candidate / beaten / winner shape.", LESSON_05),
     (6, "`diag` rows, `--check` exit codes, the `--lsp` one-liner.", LESSON_06),

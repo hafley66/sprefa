@@ -30,8 +30,9 @@ styled_component(path, TAG_NAME, CSS_BODY, component_line) <-
 # `sg(:css)` parses it with the css grammar. `$CSS_PROP: $CSS_VALUE;` picks out
 # each declaration (the trailing `;` is required for css to parse a declaration
 # node). `decl_line` is the declaration's line WITHIN the css body (relative).
-# One rel = one rule kind: this term-extract rel is never co-headed by a derived
-# rule (the engine bails); downstream rules read it.
+# This term-extract rel is headed only here (co-heading it with a derived
+# rule would auto-desugar into hidden __src/__drv twins, which is not needed
+# here); downstream rules read it.
 rel css_declaration(path: file, tag: text, css_prop: text, css_value: text, decl_line: int).
 css_declaration(path, tag, CSS_PROP, CSS_VALUE, decl_line) <-
   styled_component(path, tag, css_body, _),

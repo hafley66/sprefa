@@ -6,13 +6,29 @@
 //! rel and a 40s join statement were both visible in the logs and invisible to
 //! every rail (see examples/perf-rails.dl).
 
+use std::collections::BTreeMap;
+
 use anyhow::Result;
 
 use crate::ast::{RelDecl, Type, Value};
+use crate::engine::desugar::display_rel_name;
 use crate::engine::Engine;
 use crate::lower::tbl;
 
 use super::{col, RelKind};
+
+/// Fold a mixed rel's hidden `__src`/`__drv` twins (see `engine::desugar`)
+/// under the visible name the program declared, summing the numeric column,
+/// so neither telemetry rel ever surfaces a twin name (D4). Non-mixed rels
+/// pass through unchanged (`display_rel_name` is a no-op for them). Output is
+/// sorted by name so callers see deterministic order.
+fn fold_twins(rows: Vec<(String, i64)>) -> Vec<(String, i64)> {
+    let mut merged: BTreeMap<String, i64> = BTreeMap::new();
+    for (rel, value) in rows {
+        *merged.entry(display_rel_name(&rel).to_string()).or_insert(0) += value;
+    }
+    merged.into_iter().collect()
+}
 
 /// Row count per declared relation, as of this refresh. Honest limits: the
 /// refresh runs in the tick's SOURCE phase, so derived rels report the
@@ -65,7 +81,7 @@ impl RelKind for PerfKind {
                 &format!("SELECT COUNT(*) FROM {}", tbl(rel)), [], |r| r.get(0))?;
             counts.push((rel.clone(), n));
         }
-        counts.sort();
+        let counts = fold_twins(counts);
         // stmt_ms: project `_stmt_ms` (written batched by rebuild_derived) for
         // rels still declared — a rel dropped from the program drops its row.
         // Empty until the FIRST derived rebuild lands in this db, so a one-shot
@@ -80,6 +96,7 @@ impl RelKind for PerfKind {
                 if eng.rels.contains_key(&row.0) { timings.push(row); }
             }
         }
+        let timings = fold_twins(timings);
         let read_pairs = |rel: &str, c0: &str, c1: &str| -> Result<Vec<(String, i64)>> {
             let conn = eng.db.conn();
             let mut s = conn.prepare(&format!(

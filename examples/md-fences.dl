@@ -47,8 +47,9 @@ rust_fence_line(path, owner_delim, line_no, line_text) <-
 
 # --- extract: run the rust grammar over each rust-fence code line (TERM sg) ---
 # `$RECEIVER.unwrap()` matches a method call whose receiver is any expression.
-# One rel = one rule kind: this term-extract rel is headed ONLY here; the query
-# rules below read it (co-heading it with a derived rule makes the engine bail).
+# This term-extract rel is headed only here; the query rules below read it
+# (co-heading it with a derived rule would auto-desugar into hidden
+# __src/__drv twins, which is not needed here).
 rel unwrap_call(path: file, fence_line: int, doc_line_no: int, receiver: text).
 unwrap_call(path, fence_line, doc_line_no, RECEIVER) <-
   rust_fence_line(path, fence_line, doc_line_no, line_text),
