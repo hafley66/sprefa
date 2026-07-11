@@ -74,3 +74,41 @@ three harness shapes -> --undo -> tree byte-identical to pre-setup; modified
 -file skip; --adopt backfill; dry-run exactness.
 <!-- todo(feature): setup manifest + dl setup --undo/--list/--adopt + dl uninstall -->
 <!-- todo(docs): README emergency-stop section links setup --undo as the polite twin -->
+
+## Paranoia invariants (Chris directive: never hurt a user's existing setup)
+
+WRITE-SIDE (setup), enforced in the journal-owned helpers so no wire_* can
+bypass them:
+1. NEVER overwrite. A path that already exists and is not byte/target-
+   identical to what we would write = loud skip ("exists, not ours, left
+   alone"), NOT a backup-and-replace. This covers a user's own skill named
+   like ours, their own hooks.json entries, their own plugin file.
+2. Symlinks: create only when the path is ABSENT. If a real file/dir sits at
+   .claude/skills/<name>, we never replace it with a link. If a symlink
+   exists pointing elsewhere (their own link), skip loudly.
+3. JSON merge: parse-preserve everything (existing entries never reordered,
+   rewritten, or deduped beyond our own command-substring key); if the file
+   fails to parse, SKIP — never "fix" a user's malformed settings.
+4. Marked appends: if our begin marker exists without the end marker (user
+   edited inside), skip and say so; never re-append a second copy.
+5. Path hygiene: canonicalize and verify every target stays under the
+   expected root (~/.claude, <repo>/.claude, ~/.agents, <repo>/.codex,
+   <repo>/.opencode); refuse to write through a symlinked PARENT directory
+   that escapes those roots (symlinked-dotdir exfil/clobber class).
+6. Atomic writes only (tmp + rename, same filesystem); no partial states.
+7. No recursive operations, ever: no rm -rf, no directory copies; every
+   action names ONE path.
+
+UNDO-SIDE additions (beyond the reversal rules above):
+8. Undo re-verifies the paranoia checks at removal time (a path that
+   canonicalizes outside the expected roots is skipped even if the manifest
+   claims it — a moved/replaced dotdir must not redirect our delete).
+9. --dry-run output is the exact action list; tests assert dry-run and real
+   run touch identical path sets.
+
+TESTS (red side is the point): pre-existing user skill with our name
+survives setup byte-identical; user hooks entries survive our merge and our
+undo; malformed settings.json = skip not crash; symlinked .claude dir
+pointing at $HOME refuses; marker-tampered CLAUDE.md skips; dry-run/real
+parity.
+<!-- todo(feature): paranoia invariants in journal-owned setup helpers + red-side tests -->

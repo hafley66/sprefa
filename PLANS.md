@@ -64,6 +64,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-07-11-scip-atlas.md:42 — positions on type refs so ScipOccIndex covers type_link
 - `feature` plans/2026-07-11-scip-atlas.md:52 — repo column on scip_impl + scip_typedef from is_type_definition
 - `feature` plans/2026-07-11-scip-atlas.md:80 — argmax aggregate sugar
+- `feature` plans/2026-07-11-setup-manifest-uninstall.md:114 — paranoia invariants in journal-owned setup helpers + red-side tests
 - `feature` plans/2026-07-11-setup-manifest-uninstall.md:75 — setup manifest + dl setup --undo/--list/--adopt + dl uninstall
 - `perf` plans/2026-07-11-codex-feedback-queue.md:92 — semi-naive delta-growth bail + wedge visibility
 - `perf` plans/2026-07-11-intern-string-keys.md:158 — P0 spike — re-key call_edge/flow feeders to StringId in a scratch db, before/after ms
@@ -137,6 +138,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-11-scip-atlas.md:147 `decision` — coordinate policy — no new line-keyed joins; byte spans + edge projection; migrate call_site/df joins when touched
 - plans/2026-07-11-setup-manifest-uninstall.md:75 `feature` — setup manifest + dl setup --undo/--list/--adopt + dl uninstall
 - plans/2026-07-11-setup-manifest-uninstall.md:76 `docs` — README emergency-stop section links setup --undo as the polite twin
+- plans/2026-07-11-setup-manifest-uninstall.md:114 `feature` — paranoia invariants in journal-owned setup helpers + red-side tests
 <!-- END: plans-by-plan -->
 
 ## By code file
