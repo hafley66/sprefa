@@ -94,6 +94,7 @@ fn classify(rule: &Rule) -> HeadClass {
 /// rewritten by construction (see `visible_decls` below) — they fall through
 /// to their own existing bails unchanged, exactly as before this arc.
 pub fn desugar_mixed_rels(prog: &Program) -> Result<Option<(Program, Vec<MixedRel>)>> {
+    reject_source_relation_joins(prog)?;
     reject_reserved_twin_names(prog)?;
 
     // One decl per user-declared rel name (first occurrence; declare_all
@@ -233,6 +234,27 @@ pub fn desugar_mixed_rels(prog: &Program) -> Result<Option<(Program, Vec<MixedRe
         out.items.push(Item::Rule(union_rule(&m.drv_twin)));
     }
     Ok(Some((out, mixed)))
+}
+
+/// File-source rules are evaluated by the extraction pass, not SQL. A positive
+/// or negative relation atom in one of their bodies was therefore silently
+/// ignored. Refuse the unsupported mixed body at the same early chokepoint as
+/// the source/derived relation guards, with a concrete manual split.
+fn reject_source_relation_joins(prog: &Program) -> Result<()> {
+    for item in &prog.items {
+        let Item::Rule(rule) = item else { continue; };
+        if !rule.is_source() { continue; }
+        for body in &rule.body {
+            let rel = match body {
+                BodyItem::Pos(atom) | BodyItem::Neg(atom) => &atom.rel,
+                _ => continue,
+            };
+            bail!(
+                "source rule for relation '{}' mixes source extraction with relation atom '{}' in its body; source rules cannot join relations — write the scan/match rule into a separate relation, then join '{}' in a derived rule",
+                rule.head.rel, rel, rel);
+        }
+    }
+    Ok(())
 }
 
 /// A user-declared rel name may never end in the twin suffixes — reserved for

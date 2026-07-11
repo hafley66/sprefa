@@ -87,6 +87,24 @@ fn source_plus_derived_unions_and_retracts_scanned_side_only() {
         "the scanned row must retract while the derived-only row survives");
 }
 
+/// A relation atom in a source rule's body used to be silently ignored by the
+/// extraction pass. It must now bail with the same split-then-join guidance as
+/// the relation-level mixed-source guard.
+#[test]
+fn source_rule_body_relation_join_bails_loudly() {
+    let d = sandbox("body_join_bail");
+    fs::create_dir_all(d.join("src")).unwrap();
+    fs::write(d.join("src/a.txt"), "hello\n").unwrap();
+    let (code, _out, err) = run(&d,
+        "rel keep(x: text).\n\
+         keep(\"hello\").\n\
+         rel hit(x: text).\n\
+         hit(x) <- scan(\"WORK\", \"src/**/*.txt\", p, rev), match(p, rev, /(?<x>.+)/, line), keep(x).\n");
+    assert_ne!(code, 0, "mixed source/body relation must bail");
+    assert!(err.contains("mixes source extraction with relation atom 'keep'"), "names ignored atom: {err}");
+    assert!(err.contains("separate relation, then join 'keep' in a derived rule"), "names fix: {err}");
+}
+
 /// A derived rule on the mixed rel that reads the mixed rel itself
 /// (self-recursive through the synthesized union) reaches a fixpoint seeded by
 /// the scanned row -- `rel_components`/`stratify` treat the visible rel <->
