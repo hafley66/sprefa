@@ -155,6 +155,101 @@ fn narrow_ambiguous<'a>(
     }
 }
 
+/// Occurrence-level SCIP resolution index (position-before-name). The name-level
+/// override (`scip_name_defs`) keys a def only by (repo, file, bare descriptor
+/// name), so a name carried by two DIFFERENT def symbols in one file is dropped
+/// (the conflict refusal, commit 9fd029b) and every shared name (`build`/`new`/
+/// `shutdown` — most of real trait-heavy code) resolves bare even though the
+/// index holds the exact symbol at every span. `scip_occurrence` carries a
+/// 0-based per-occurrence line for each symbol; joined to the def location, a
+/// call site's (file, line) picks the ONE symbol occurring there, disambiguating
+/// what the bare name cannot — the conflict refusal becomes moot wherever a
+/// position exists.
+///
+/// Built once per call-family refresh (collect-then-index, no per-site SQL —
+/// same posture as `scip_name_defs`). Empty when no index is loaded, so the
+/// name path carries unchanged. Repo-scoped throughout (cross-repo SCIP
+/// resolution was deliberately removed, the D3 fix); occurrences are consulted
+/// only at rev == "WORK" by the caller, since a SCIP index is a working-tree
+/// artifact.
+#[derive(Default)]
+struct ScipOccIndex {
+    /// (repo, file, 0-based line) -> the symbols occurring on that line.
+    occ_at: HashMap<(String, String, i64), Vec<String>>,
+    /// (repo, symbol) -> its definition file (from `scip_def`, the authoritative
+    /// def location the resolver joins into `sym_at`, exactly like the name
+    /// map's `def_file`).
+    def_file_of: HashMap<(String, String), String>,
+    /// symbol -> trailing descriptor name (the as-written call text a plain or
+    /// method call carries). Cached so a lookup never recomputes the moniker
+    /// parse.
+    desc_name: HashMap<String, String>,
+    /// (repo, file, symbol) -> the LOCAL binding names an aliased import gives
+    /// the symbol in that file (`import { a as b }` -> {"b"}), from
+    /// `scip_binding`. A call written with the alias matches here even though the
+    /// descriptor name is the canonical `a`.
+    binding_names: HashMap<(String, String, String), HashSet<String>>,
+}
+
+/// The outcome of an occurrence-level lookup at one call site.
+enum OccPick {
+    /// Exactly one symbol occurs at this (file, line) under the call's
+    /// as-written name: resolved to its def file.
+    Resolved(String),
+    /// More than one DISTINCT symbol shares the call's name on this line: the
+    /// position can't tell them apart, so refuse (honest bare). Never falls
+    /// through to the name map — that would let a coincidental single-def name
+    /// resolve a site the position just refuted.
+    Refuse,
+    /// No occurrence on this line carries the call's name (an unindexed file, or
+    /// a site the compiler never recorded): defer to the name-level map.
+    Fallthrough,
+}
+
+impl ScipOccIndex {
+    /// True when `callee` (the as-written call text) addresses `symbol` in
+    /// `file`: it equals the symbol's descriptor name, or a local alias the file
+    /// binds it to.
+    fn names_match(&self, repo: &str, file: &str, symbol: &str, callee: &str) -> bool {
+        if self.desc_name.get(symbol).map(String::as_str) == Some(callee) {
+            return true;
+        }
+        self.binding_names
+            .get(&(repo.to_string(), file.to_string(), symbol.to_string()))
+            .is_some_and(|set| set.contains(callee))
+    }
+
+    /// Resolve a call site by position. `line1` is the call site's 1-based line
+    /// (`call_site` lines are 1-based across all fronts); the SINGLE conversion
+    /// to SCIP's 0-based occurrence line happens right here.
+    fn resolve(&self, repo: &str, file: &str, callee: &str, line1: u32) -> OccPick {
+        let line0 = line1 as i64 - 1; // 1-based call site -> 0-based scip occurrence.
+        let Some(syms) = self.occ_at.get(&(repo.to_string(), file.to_string(), line0)) else {
+            return OccPick::Fallthrough;
+        };
+        let mut matched: HashSet<&str> = HashSet::new();
+        for sym in syms {
+            if self.names_match(repo, file, sym, callee) {
+                matched.insert(sym.as_str());
+            }
+        }
+        match matched.len() {
+            0 => OccPick::Fallthrough,
+            1 => {
+                let sym = *matched.iter().next().unwrap();
+                match self.def_file_of.get(&(repo.to_string(), sym.to_string())) {
+                    Some(def) => OccPick::Resolved(def.clone()),
+                    // The one matching symbol has no in-index def (its definition
+                    // is outside the indexed set): the name map can't do better,
+                    // so defer rather than refuse.
+                    None => OccPick::Fallthrough,
+                }
+            }
+            _ => OccPick::Refuse,
+        }
+    }
+}
+
 impl Engine {
     /// Project the durable `_strings` / `_where_bytes` meta tables into the
     /// query-facing `string` / `ref` relations. Wholesale wipe + repopulate,
@@ -844,6 +939,12 @@ impl Engine {
             }
         }
         let scip = self.scip_name_defs().unwrap_or_default();
+        // NOTE: occurrence-level (position-before-name) resolution is NOT wired
+        // here, only in `refresh_call_rels`. A type reference — a `TypeEdge`, a
+        // `type_sig` slot, an `impl` owner name — carries no source position
+        // (`TypeEdge` has only from/to/kind), so there is no (file, line) to look
+        // an occurrence up by. The name-level `scip` map is the only override the
+        // type graph can consult until the extractor threads per-reference spans.
         // Win D: the referencing file's own imports, read once for the whole
         // family (never per lookup), see `module_import_map`.
         let imports = self.module_import_map().unwrap_or_default();
@@ -1035,6 +1136,59 @@ impl Engine {
             }
         }
         Ok(seen.into_iter().filter_map(|(key, def)| def.map(|d| (key, d))).collect())
+    }
+
+    /// Occurrence-level SCIP resolution input, built once per call-family
+    /// refresh (see `ScipOccIndex`). `scip_def` gives each symbol's def file,
+    /// `scip_occurrence` the per-line symbol positions, `scip_binding` the local
+    /// aliases. One pass per table (collect-then-index, no per-site SQL). All
+    /// reads via `tbl(...)` so the magic-rel audit stays green; a missing table
+    /// yields an empty index, which makes every lookup a `Fallthrough` and the
+    /// name path carry unchanged.
+    fn scip_occ_index(&self) -> Result<ScipOccIndex> {
+        let mut idx = ScipOccIndex::default();
+        let conn = self.db.conn();
+        // Definition file per symbol (the def sites the resolver joins into
+        // sym_at). Absent scip tables => empty index, name path carries.
+        {
+            let Ok(mut s) = conn.prepare(&format!("SELECT symbol, file, repo FROM {}", tbl("scip_def"))) else {
+                return Ok(idx);
+            };
+            let rows = s.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+            })?;
+            for row in rows.flatten() {
+                let (symbol, file, repo) = row;
+                idx.def_file_of.entry((repo, symbol)).or_insert(file);
+            }
+        }
+        // Occurrences: (repo, file, 0-based line) -> symbols; cache descriptor
+        // names as we go (the moniker parse is repo-independent).
+        if let Ok(mut s) = conn.prepare(&format!("SELECT file, symbol, line, repo FROM {}", tbl("scip_occurrence"))) {
+            let rows = s.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?))
+            })?;
+            for row in rows.flatten() {
+                let (file, symbol, line, repo) = row;
+                if !idx.desc_name.contains_key(&symbol) {
+                    if let Some(name) = scip_descriptor_name(&symbol) {
+                        idx.desc_name.insert(symbol.clone(), name);
+                    }
+                }
+                idx.occ_at.entry((repo, file, line)).or_default().push(symbol);
+            }
+        }
+        // Aliased-import local bindings: (repo, file, symbol) -> {local name}.
+        if let Ok(mut s) = conn.prepare(&format!("SELECT file, symbol, local_name, repo FROM {}", tbl("scip_binding"))) {
+            let rows = s.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))
+            })?;
+            for row in rows.flatten() {
+                let (file, symbol, local, repo) = row;
+                idx.binding_names.entry((repo, file, symbol)).or_default().insert(local);
+            }
+        }
+        Ok(idx)
     }
 
     /// Win D input: `module_edge_rev(src, dst, rev)` read once per family
@@ -1481,17 +1635,44 @@ impl Engine {
             }
         }
         let scip = self.scip_name_defs().unwrap_or_default();
+        // Occurrence-level override input: the exact symbol at each call's span,
+        // built once for the whole family (see `ScipOccIndex`). Empty when no
+        // index is loaded, so `resolve` returns `Fallthrough` everywhere and the
+        // name-level `scip` map carries unchanged.
+        let occ = self.scip_occ_index().unwrap_or_default();
         // Win D: see refresh_type_rels, the same import map feeds both
         // resolvers' ambiguity narrowing.
         let imports = self.module_import_map().unwrap_or_default();
         // Alias hop input: see refresh_type_rels, the same binding map feeds
         // both resolvers' index-free alias hop.
         let aliases = self.module_binding_map().unwrap_or_default();
-        let resolve_callee = |repo: &str, rev: &str, file: &str, callee: &str| -> Option<String> {
+        let resolve_callee = |repo: &str, rev: &str, file: &str, callee: &str, line: u32| -> Option<String> {
             if rev == "WORK" {
-                if let Some(def_file) = scip.get(&(repo.to_string(), file.to_string(), callee.to_string())) {
-                    if let Some(sym) = sym_at.get(&(repo, def_file.as_str(), rev, callee)) {
-                        return Some(format!("{repo}::{sym}"));
+                // Occurrence-level override (position before name): the exact
+                // symbol occurring at this call's (file, line) disambiguates a
+                // shared name the name-level `scip` map must drop. Preferred over
+                // the name map because it tells two same-name defs apart; only a
+                // site the index never recorded (`Fallthrough`) defers to it.
+                match occ.resolve(repo, file, callee, line) {
+                    OccPick::Resolved(def_file) => {
+                        if let Some(sym) = sym_at.get(&(repo, def_file.as_str(), rev, callee)) {
+                            return Some(format!("{repo}::{sym}"));
+                        }
+                        // def outside the scan corpus: fall through to the alias
+                        // hop / by_name, same as the name map on a sym_at miss.
+                    }
+                    // Same-line same-name conflict: honest bare. Returning here
+                    // (not falling through) is the point — by_name could resolve
+                    // a coincidental single-def name the position just refuted.
+                    OccPick::Refuse => return None,
+                    OccPick::Fallthrough => {
+                        // No occurrence names this site: the name-level map still
+                        // applies (identical to the pre-occurrence behavior).
+                        if let Some(def_file) = scip.get(&(repo.to_string(), file.to_string(), callee.to_string())) {
+                            if let Some(sym) = sym_at.get(&(repo, def_file.as_str(), rev, callee)) {
+                                return Some(format!("{repo}::{sym}"));
+                            }
+                        }
                     }
                 }
             }
@@ -1569,7 +1750,7 @@ impl Engine {
                 // resolve to def syms, so closure(call_edge) walks one identity
                 // space (same contract as type_link). Unresolved calls stay in
                 // call_site with their bare callee.
-                if let Some(callee_sym) = resolve_callee(repo, rev, &s.file, &s.callee) {
+                if let Some(callee_sym) = resolve_callee(repo, rev, &s.file, &s.callee, s.line) {
                     if !caller.is_empty() && seen_edge.insert((caller.clone(), callee_sym.clone(), rev)) {
                         edge_rev_rows.push(vec![t(&caller), t(&callee_sym), t("call"), t(rev)]);
                     }
