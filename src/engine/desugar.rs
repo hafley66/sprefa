@@ -26,7 +26,7 @@
 //! the one classification pass, no clone.
 
 use anyhow::{bail, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::{Atom, BodyItem, Item, Program, RelDecl, Rule, Term};
 
@@ -236,25 +236,73 @@ pub fn desugar_mixed_rels(prog: &Program) -> Result<Option<(Program, Vec<MixedRe
     Ok(Some((out, mixed)))
 }
 
-/// File-source rules are evaluated by the extraction pass, not SQL. A positive
-/// or negative relation atom in one of their bodies was therefore silently
-/// ignored. Refuse the unsupported mixed body at the same early chokepoint as
-/// the source/derived relation guards, with a concrete manual split.
+/// File-source rules are evaluated by the extraction pass, not SQL. A relation
+/// atom is legitimate when it binds an INPUT to a source op (the data-driven
+/// scan/rev pattern); `resolve_scan_bindings` compiles precisely that body slice
+/// before extracting. An atom with no such binding, however, is ignored by file
+/// extraction and must be refused rather than silently treated as a filter.
 fn reject_source_relation_joins(prog: &Program) -> Result<()> {
     for item in &prog.items {
         let Item::Rule(rule) = item else { continue; };
         if !rule.is_source() { continue; }
+        let inputs = source_input_vars(rule);
         for body in &rule.body {
             let rel = match body {
-                BodyItem::Pos(atom) | BodyItem::Neg(atom) => &atom.rel,
+                BodyItem::Pos(atom) | BodyItem::Neg(atom) => atom,
                 _ => continue,
             };
+            if rel.terms.iter().any(|term| term_vars(term, &inputs)) { continue; }
             bail!(
                 "source rule for relation '{}' mixes source extraction with relation atom '{}' in its body; source rules cannot join relations — write the scan/match rule into a separate relation, then join '{}' in a derived rule",
-                rule.head.rel, rel, rel);
+                rule.head.rel, rel.rel, rel.rel);
         }
     }
     Ok(())
+}
+
+/// Variables used as INPUTS to file extraction ops. Output slots such as scan
+/// `path`/`rev_out` and match captures are deliberately excluded: a relation
+/// atom sharing only one of those is still an ignored post-extract filter.
+fn source_input_vars(rule: &Rule) -> HashSet<String> {
+    let mut vars = HashSet::new();
+    let mut add = |term: &Term| collect_term_vars(term, &mut vars);
+    for body in &rule.body {
+        match body {
+            BodyItem::Scan { repo, rev, glob, .. } => { add(repo); add(rev); add(glob); }
+            BodyItem::Match { path, rev, .. }
+            | BodyItem::Ast { path, rev, .. }
+            | BodyItem::AstYaml { path, rev, .. }
+            | BodyItem::Cmd { path, rev, .. }
+            | BodyItem::Comment { path, rev, .. } => { add(path); add(rev); }
+            BodyItem::Sg { src, rev: Some(rev), .. }
+            | BodyItem::JsonP { src, rev: Some(rev), .. }
+            | BodyItem::Json { src, rev: Some(rev), .. } => { add(src); add(rev); }
+            _ => {}
+        }
+    }
+    vars
+}
+
+fn term_vars(term: &Term, wanted: &HashSet<String>) -> bool {
+    match term {
+        Term::Var(name) => wanted.contains(name),
+        Term::Interp(parts) => parts.iter().any(|p| matches!(p, crate::ast::InterpPart::Var(name) if wanted.contains(name))),
+        Term::Arith { lhs, rhs, .. } => term_vars(lhs, wanted) || term_vars(rhs, wanted),
+        Term::Call { args, .. } => args.iter().any(|arg| term_vars(arg, wanted)),
+        _ => false,
+    }
+}
+
+fn collect_term_vars(term: &Term, out: &mut HashSet<String>) {
+    match term {
+        Term::Var(name) => { out.insert(name.clone()); }
+        Term::Interp(parts) => for part in parts {
+            if let crate::ast::InterpPart::Var(name) = part { out.insert(name.clone()); }
+        },
+        Term::Arith { lhs, rhs, .. } => { collect_term_vars(lhs, out); collect_term_vars(rhs, out); }
+        Term::Call { args, .. } => for arg in args { collect_term_vars(arg, out); },
+        _ => {}
+    }
 }
 
 /// A user-declared rel name may never end in the twin suffixes — reserved for

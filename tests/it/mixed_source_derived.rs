@@ -105,6 +105,28 @@ fn source_rule_body_relation_join_bails_loudly() {
     assert!(err.contains("separate relation, then join 'keep' in a derived rule"), "names fix: {err}");
 }
 
+/// The relation atom in a data-driven scan supplies the scan's rev INPUT, so
+/// `resolve_scan_bindings` consumes it before extraction. It is not the ignored
+/// filter shape guarded above and must remain legal.
+#[test]
+fn data_driven_source_relation_binding_remains_legal() {
+    let d = sandbox("data_driven_source");
+    fs::create_dir_all(d.join("src")).unwrap();
+    fs::write(d.join("src/a.txt"), "hello\n").unwrap();
+    fs::write(d.join("p.dl"),
+        "rel pin(rev: text).\n\
+         pin(\"WORK\").\n\
+         rel hit(rev: text, path: file).\n\
+         hit(rev, path) <- pin(rev), scan(rev, \"src/**/*.txt\", path, scanned_rev).\n").unwrap();
+    let (prog, diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    assert!(diags.iter().all(|diag| diag.severity != sprefa_v5::ast::Severity::Error), "unexpected diagnostics: {diags:?}");
+    let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    eng.tick(&prog, true).unwrap();
+    eng.tick(&prog, true).unwrap();
+    assert_eq!(strs(&d.join("db"), "hit", "path"), vec!["src/a.txt".to_string()]);
+}
+
 /// A derived rule on the mixed rel that reads the mixed rel itself
 /// (self-recursive through the synthesized union) reaches a fixpoint seeded by
 /// the scanned row -- `rel_components`/`stratify` treat the visible rel <->
