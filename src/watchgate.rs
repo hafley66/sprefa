@@ -41,13 +41,21 @@ pub struct WatchGate {
     /// Canonical narrow git paths (`HEAD`, `packed-refs`, `refs/`) whose change
     /// means a ref moved. Kept and routed to `on_git_event`.
     git_paths: Vec<PathBuf>,
+    /// Exact importer artifacts whose change must reach `ScipKind`, even when
+    /// generated output is gitignored. These mirror `scip_import::index_path`.
+    scip_paths: Vec<PathBuf>,
 }
 
 impl WatchGate {
     /// Build a gate over the eager repo set. Each root contributes a matcher
     /// from its `.gitignore`, `.git/info/exclude`, and the global gitignore.
     pub fn new(roots: &[PathBuf]) -> Self {
-        let mut gate = WatchGate { roots: Vec::new(), git_dirs: Vec::new(), git_paths: Vec::new() };
+        let mut gate = WatchGate {
+            roots: Vec::new(),
+            git_dirs: Vec::new(),
+            git_paths: Vec::new(),
+            scip_paths: Vec::new(),
+        };
         for root in roots {
             gate.add_root(root);
         }
@@ -73,6 +81,13 @@ impl WatchGate {
             let _ = builder.add(Path::new(&global).join(".config/git/ignore"));
         }
         let ignore = builder.build().unwrap_or_else(|_| Gitignore::empty());
+        for prefix in &prefixes {
+            for index in [prefix.join("index.scip"), prefix.join(".dl/index.scip")] {
+                if !self.scip_paths.contains(&index) {
+                    self.scip_paths.push(index);
+                }
+            }
+        }
         self.roots.push(GateRoot { prefixes, ignore });
     }
 
@@ -118,6 +133,16 @@ impl WatchGate {
             if self.git_dirs.iter().any(|g| path.starts_with(g)) {
                 if self.git_paths.iter().any(|gp| path.starts_with(gp) || &path == gp)
                     && seen.insert(path.clone()) {
+                    kept.push(path);
+                }
+                continue;
+            }
+            // A generated SCIP index is normally gitignored, but it is an
+            // input relation rather than scan corpus: ScipKind reloads when
+            // this exact path changes. Keep only its two documented locations,
+            // just as the git arm keeps only its narrow ref allowlist.
+            if self.scip_paths.iter().any(|sp| &path == sp) {
+                if seen.insert(path.clone()) {
                     kept.push(path);
                 }
                 continue;
@@ -232,6 +257,22 @@ mod tests {
         ]);
         assert!(kept.iter().any(|p| p.ends_with("src/main.rs")), "source kept");
         assert!(!kept.iter().any(|p| p.ends_with("target/out")), "gitignored dropped");
+    }
+
+    #[test]
+    fn gitignored_scip_index_kept_other_generated_file_dropped() {
+        let root = tmp().join("wg_scip_index");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join(".dl")).unwrap();
+        fs::write(root.join(".gitignore"), ".dl/\n").unwrap();
+        fs::write(root.join(".dl/index.scip"), "index").unwrap();
+        fs::write(root.join(".dl/other.generated"), "noise").unwrap();
+        let gate = WatchGate::new(&[root.clone()]);
+        let kept = gate.filter(vec![root.join(".dl/index.scip"), root.join(".dl/other.generated")]);
+        assert!(kept.iter().any(|p| p.ends_with(".dl/index.scip")),
+            "gitignored SCIP index must still dirty ScipKind: {kept:?}");
+        assert!(!kept.iter().any(|p| p.ends_with(".dl/other.generated")),
+            "other gitignored generated files remain dropped: {kept:?}");
     }
 
     #[test]
