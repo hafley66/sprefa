@@ -248,7 +248,13 @@ impl Engine {
             if !heads.contains(&r.head.rel) { heads.push(r.head.rel.clone()); }
         }
         let mut any_changed = false;
+        // Per-head-rel wall time (parse/extract + before/after row-set diff +
+        // the DELETE/insert flush) into `_stmt_ms` under `extract:<rel>` — this
+        // hybrid join+extract pass (term-form json/jsonp/sg) ran untimed before,
+        // part of the derived-phase attribution gap.
+        let mut stmt_ms: HashMap<String, (i64, i64)> = HashMap::new();
         for head_rel in &heads {
+            let t = std::time::Instant::now();
             let cols: Vec<String> = {
                 let meta = self.rels.get(head_rel)
                     .ok_or_else(|| anyhow::anyhow!("term-extract head rel `{head_rel}` is not declared"))?;
@@ -293,7 +299,9 @@ impl Engine {
             self.db.conn().execute(&format!("DELETE FROM {}", tbl(head_rel)), [])?;
             let col_refs: Vec<&str> = cols.iter().map(|s| s.as_str()).collect();
             self.db.insert_rows(&tbl(head_rel), &col_refs, &rows)?;
+            stmt_ms.insert(format!("extract:{head_rel}"), (t.elapsed().as_millis() as i64, 1));
         }
+        self.save_stmt_ms(&stmt_ms)?;
         Ok(any_changed)
     }
 

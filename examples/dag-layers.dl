@@ -55,9 +55,13 @@ rel cond_edge(a: file, b: file).
 cond_edge(a, b) <- ra_edge(x, y), rep_of(x, a), rep_of(y, b), a != b.
 
 # ── longest-path layering of the condensation (a DAG by construction) ─────
+# Depth-capped (std/entry.dl precedent): the 2-cycle detector above misses
+# 3+-file cycles by acknowledged design, and a missed cycle makes an uncapped
+# t + 1 recursion diverge (the tick wedges — observed live in .dl/bom.dl's
+# copy of this shape, 2026-07-11). On a true DAG the cap is inert.
 rel path_len(rep: file, t: int).
 path_len(rep, 0)      <- cond_edge(_, rep), !cond_edge(rep, _).
-path_len(rep, t + 1)  <- cond_edge(rep, d), path_len(d, t).
+path_len(rep, t + 1)  <- cond_edge(rep, d), path_len(d, t), t < 64.
 
 rel cl_layer(rep: file, t: int).
 cl_layer(rep, max(t)) <- path_len(rep, t).

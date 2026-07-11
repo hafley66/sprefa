@@ -48,10 +48,14 @@ impl Engine {
              -- persist_type_decl_shapes); the one-tick phase delay.
              CREATE TABLE IF NOT EXISTS _shapes (shape TEXT, pos INTEGER, col TEXT, type TEXT, PRIMARY KEY (shape, pos));
              -- Wall ms of each derived rel's INSERT statements from its most
-             -- recent rebuild (max across the rel's rules/passes). Written
-             -- batched by rebuild_derived; projected by the perf built-in
-             -- stmt_ms so a .dl rail can watch its own rule cost.
-             CREATE TABLE IF NOT EXISTS _stmt_ms (rel TEXT PRIMARY KEY, ms INTEGER NOT NULL);
+             -- recent rebuild: ms = SUM across the rel's rules/passes/delta
+             -- variants, n = how many statement executions that sum covers.
+             -- SUM (not max): semi-naive splits a hot rel's work across many
+             -- small delta statements per iteration, so a per-statement max
+             -- made a hot rel look nearly free; n shows the shape (1 = one
+             -- big join, large n = many fixpoint passes). Written batched by
+             -- rebuild_derived; projected by the perf built-in stmt_ms.
+             CREATE TABLE IF NOT EXISTS _stmt_ms (rel TEXT PRIMARY KEY, ms INTEGER NOT NULL, n INTEGER NOT NULL DEFAULT 1);
              -- CST node path attribution (not a public rel column): maps a
              -- node id to its source path so the delta refresh can prune one
              -- file's `node` rows. The `node.file` column is a content FileId
@@ -228,6 +232,8 @@ impl Engine {
         let _ = self.db.conn().execute("ALTER TABLE _file ADD COLUMN lines INTEGER DEFAULT -1", []);
         // tolerate _where_bytes created before the path attribution column existed
         let _ = self.db.conn().execute("ALTER TABLE _where_bytes ADD COLUMN path TEXT NOT NULL DEFAULT ''", []);
+        // _stmt_ms gained a statement-count column (SUM+shape telemetry).
+        let _ = self.db.conn().execute("ALTER TABLE _stmt_ms ADD COLUMN n INTEGER NOT NULL DEFAULT 1", []);
         // Re-key `_file` and `_prov` on (repo, ...) for dbs that predate the repo
         // coordinate. SQLite can't ALTER a PK, so rebuild: every old row is this
         // engine's own repo (the only one ever ingested before Phase 2), so stamp

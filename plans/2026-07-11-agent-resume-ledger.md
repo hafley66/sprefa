@@ -25,6 +25,13 @@ OWNERSHIP DECISION (Chris, 2026-07-11): the engine/mod.rs split
 (plans/2026-07-11-engine-mod-split.md) goes to CODEX after the perf arc lands —
 not to a Claude agent. The plan file is the codex brief.
 
+CODEX ROUTING RULE (Chris, 2026-07-11): launch via `codex exec --sandbox
+workspace-write` (never --full-auto; sandbox on, worktree-confined). Model by
+task class: weak problems = `gpt-5.6-luna` medium; Opus-class =
+`gpt-5.6-terra` medium; Fable-class = `gpt-5.6-sol` high (set effort via
+`-c model_reasoning_effort=...`). The engine split runs on terra(medium) in
+~/projects/sprefa-codex-split, branch codex/engine-mod-split.
+
 ## Never again (the hook deadlock class)
 
 What happened: hook = bare `dl --check`; a perf diag at ERROR severity made it

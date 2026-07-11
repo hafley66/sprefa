@@ -4,8 +4,9 @@
 #   rel_count(rel, rows) — row count per declared relation. Derived rels report
 #       the PREVIOUS tick's counts (the refresh runs in the tick's source
 #       phase); under the daemon a rail converges one tick later.
-#   stmt_ms(rel, ms)     — wall ms of each derived rel's INSERT statements from
-#       its most recent rebuild (max across its rules/passes). Empty until a
+#   stmt_ms(rel, ms, n)  — statement cost of each derived rel's most recent
+#       rebuild: ms = SUM of wall ms across its rules/passes/delta variants,
+#       n = how many statement executions that sum covers. Empty until a
 #       rebuild has landed in this db: a one-shot CLI run reports on the second
 #       invocation, the daemon on every tick after its first.
 #
@@ -34,6 +35,6 @@ ms_budget(5000).
 diag(path: "(engine)", line: 1, severity: "warning", code: "rel-blowup", msg: "relation `${r}` holds ${n} rows (budget ${max}); check the join shape feeding it") <-
     rel_count(r, n), row_budget(max), n > max.
 diag(path: "(engine)", line: 1, severity: "warning", code: "slow-rule", msg: "rebuilding `${r}` took ${ms}ms in one statement (budget ${max}); look for an unindexable computed join predicate or a missing bridge rel") <-
-    stmt_ms(r, ms), ms_budget(max), ms > max.
+    stmt_ms(r, ms, _), ms_budget(max), ms > max.
 
 ? diag(path, line, severity: sev, code, msg).

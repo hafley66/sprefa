@@ -388,7 +388,7 @@ schemas: `docs/reference/relations.md` (generated, grouped by `group`).
 | doc | `doc_comment`, `doc_tag` | either atom |
 | module | `module_edge`, `module_node` | any `module_*` atom |
 
-Telemetry as facts: `rel_count(rel, rows)` and `stmt_ms(rel, ms)` report the
+Telemetry as facts: `rel_count(rel, rows)` and `stmt_ms(rel, ms, n)` report the
 last tick's own row counts and per-statement wall time; `examples/perf-rails.dl`
 turns them into a row-budget / slow-rule `diag` rail.
 

@@ -121,6 +121,49 @@ pub fn walk_comments(content: &str, lang: &tree_sitter::Language) -> anyhow::Res
     Ok(out)
 }
 
+/// Enumerate HTML-comment (`<!-- ... -->`) spans in a markdown file via
+/// tree-sitter-md's BLOCK grammar (the same grammar `ingest::MarkdownDoc` uses
+/// for headings/code blocks). Markdown has no dedicated comment node kind —
+/// an HTML comment lexes as `html_block` alongside every other raw-HTML
+/// island — so this walk filters `html_block` nodes to ones whose trimmed
+/// text starts `<!--` and ends `-->`, instead of the generic `kind().
+/// contains("comment")` test `walk_comments` uses for a real grammar comment
+/// production. `todo(category): text` (the plan-doc convention) lives inside
+/// this raw span; `classify_comment` strips the `<!--`/`-->` delimiters.
+pub fn walk_md_comments(content: &str) -> anyhow::Result<Vec<RawComment>> {
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&tree_sitter_md::LANGUAGE.into())?;
+    let tree = parser
+        .parse(content, None)
+        .ok_or_else(|| anyhow::anyhow!("markdown parse failed"))?;
+
+    let mut out: Vec<RawComment> = Vec::new();
+    let mut stack: Vec<tree_sitter::Node> = vec![tree.root_node()];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "html_block" {
+            let raw = content.get(node.start_byte()..node.end_byte()).unwrap_or("");
+            let trimmed = raw.trim();
+            if trimmed.starts_with("<!--") && trimmed.ends_with("-->") {
+                let sp = node.start_position();
+                let ep = node.end_position();
+                out.push(RawComment {
+                    start_row: sp.row as u32 + 1,
+                    start_col: sp.column as u32,
+                    end_row: ep.row as u32 + 1,
+                    end_col: ep.column as u32,
+                    raw: raw.to_string(),
+                });
+            }
+            continue;
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            stack.push(child);
+        }
+    }
+    Ok(out)
+}
+
 /// Classify a comment's RAW text into `(kind, stripped_text)`. `kind` is
 /// `"doc"` for `///` / `//!` / `/**` / `/*!` markers, else `"line"` for `//` /
 /// `#` line comments and `"block"` for `/* */`. `stripped_text` drops the
@@ -142,6 +185,11 @@ pub fn classify_comment(raw: &str) -> (&'static str, String) {
     }
     if t.starts_with("/*") {
         return ("block", crate::typegraph::clean_block_comment(t).trim_end().to_string());
+    }
+    // Markdown HTML comment (`walk_md_comments`'s only shape): no doc/line
+    // variant, always a block.
+    if let Some(body) = t.strip_prefix("<!--").and_then(|s| s.strip_suffix("-->")) {
+        return ("block", body.trim().to_string());
     }
     if let Some(body) = t.strip_prefix("//") {
         return ("line", body.trim().to_string());
@@ -224,6 +272,21 @@ mod tests {
         // 1-based line, 0-based col.
         let first = cs.iter().find(|c| c.raw.contains("// real")).unwrap();
         assert_eq!((first.start_row, first.start_col), (1, 0));
+    }
+
+    #[test]
+    fn walk_md_comments_finds_html_comments_only() {
+        // An HTML comment (incl. multi-line) is a row; other html_blocks and
+        // markdown structure are not.
+        let src = "# Title\n\n<!-- todo(perf): fix the thing\nspans lines -->\n\n<div>raw html island</div>\n\nBody `<!-- not a comment, inline code -->` text.\n";
+        let cs = walk_md_comments(src).unwrap();
+        assert_eq!(cs.len(), 1, "exactly the block comment: {cs:?}");
+        assert_eq!((cs[0].start_row, cs[0].end_row), (3, 5), "1-based span incl. trailing newline row");
+        assert!(cs[0].raw.contains("todo(perf)"));
+        // classify strips the delimiters and lands kind=block.
+        let (kind, text) = classify_comment(&cs[0].raw);
+        assert_eq!(kind, "block");
+        assert!(text.starts_with("todo(perf): fix the thing"), "{text}");
     }
 
     #[test]

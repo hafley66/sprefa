@@ -101,13 +101,20 @@ struct Cli {
     /// a broken program. For pre-commit / CI / Claude Code hooks. See docs/rails.md.
     #[arg(long, help_heading = "Run modes")]
     check: bool,
-    /// Harness-hook mode: read a Claude Code hook event (PostToolUse JSON) on
-    /// stdin, tick the rules, emit the hook output (additionalContext / block)
-    /// on stdout. The program heads `inject`/`inject_skill`/`block` over the
-    /// agent built-ins. The condition is a dl rule; no editor, no bash. See
-    /// docs/skill-injection.md.
+    /// Harness-hook mode: read a coding-agent hook event (PostToolUse /
+    /// UserPromptSubmit JSON) on stdin, tick the rules, emit the hook output
+    /// (additionalContext / block) on stdout. The program heads
+    /// `inject`/`inject_skill`/`block` over the agent built-ins. The condition
+    /// is a dl rule; no editor, no bash. See docs/skill-injection.md.
     #[arg(long, help_heading = "Run modes")]
     hook: bool,
+    /// With --hook: which harness's hook JSON to read on stdin and write on
+    /// stdout — claude, codex, or opencode. Omitted = auto-detect (claude when
+    /// the payload carries hook_event_name; opencode on the neutral {kind,...}
+    /// shape sent by the shipped opencode plugin). codex is byte-compatible
+    /// with claude and is only selected explicitly, never auto-detected.
+    #[arg(long, help_heading = "Run modes")]
+    dialect: Option<String>,
     /// Serve the program as an MCP (JSON-RPC stdio, newline-delimited) server:
     /// binds the program's rpc-class ports to stdio. Each inbound request
     /// injects into the `@in(rpc)` rel (envelope id, method, params), runs a
@@ -311,7 +318,12 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
     } else if cli.hook {
         // Harness-hook: stdin event -> tick -> stdout hook JSON. Exit 0 normally
         // (block rides the JSON), 1 if the program is broken (user-facing only).
-        let code = crate::hook::run_hook(programs, db.as_deref(), root)?;
+        let dialect = cli
+            .dialect
+            .as_deref()
+            .map(crate::hook::HookDialect::from_flag)
+            .transpose()?;
+        let code = crate::hook::run_hook(programs, db.as_deref(), root, dialect)?;
         std::process::exit(code);
     } else if cli.mcp {
         crate::mcp::run_mcp(programs, db.as_deref(), root)

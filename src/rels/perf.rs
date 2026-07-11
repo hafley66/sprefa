@@ -30,6 +30,19 @@ fn fold_twins(rows: Vec<(String, i64)>) -> Vec<(String, i64)> {
     merged.into_iter().collect()
 }
 
+/// `fold_twins` for the (ms, n) pair shape of `stmt_ms`: both numeric columns
+/// sum under the visible rel name. A prefixed engine bucket (`closure:x`)
+/// contains a colon, which `display_rel_name` leaves untouched.
+fn fold_twin_triples(rows: Vec<(String, i64, i64)>) -> Vec<(String, i64, i64)> {
+    let mut merged: BTreeMap<String, (i64, i64)> = BTreeMap::new();
+    for (rel, ms, n) in rows {
+        let e = merged.entry(display_rel_name(&rel).to_string()).or_insert((0, 0));
+        e.0 += ms;
+        e.1 += n;
+    }
+    merged.into_iter().map(|(rel, (ms, n))| (rel, ms, n)).collect()
+}
+
 /// Row count per declared relation, as of this refresh. Honest limits: the
 /// refresh runs in the tick's SOURCE phase, so derived rels report the
 /// PREVIOUS tick's counts (one-tick lag, same as any demand rel — under the
@@ -52,9 +65,9 @@ impl RelKind for PerfKind {
             },
             RelDecl {
                 name: "stmt_ms".into(),
-                cols: vec![col("rel", Type::Text), col("ms", Type::Int)],
+                cols: vec![col("rel", Type::Text), col("ms", Type::Int), col("n", Type::Int)],
                 group: "perf",
-                doc: "wall ms of each derived rel's INSERT statements from its most recent rebuild (max across rules/passes); empty until a rebuild has landed in this db, so a one-shot CLI run reports on the second invocation — the slow-rule rail joins here",
+                doc: "statement cost of each derived rel's most recent rebuild: ms = SUM of wall ms across its rules/passes/delta variants, n = how many statement executions that sum covers (n=1 is one big join, large n is many fixpoint passes); prefixed sibling buckets (closure:<edge> / cond_cache:<edge> / extract:<rel> / closure_seed:<rel> / scc:<rel> / node2vec:<edge>) time the engine-side derived work; empty until a rebuild has landed in this db, so a one-shot CLI run reports on the second invocation — the slow-rule rail joins here",
                 ..Default::default()
             },
         ]
@@ -87,16 +100,21 @@ impl RelKind for PerfKind {
         // Empty until the FIRST derived rebuild lands in this db, so a one-shot
         // CLI run reports on the second invocation; the daemon on every tick
         // after its first.
-        let mut timings: Vec<(String, i64)> = Vec::new();
+        // A prefixed key (`closure:<edge>`, `scc:<rel>`, ...) is an engine-side
+        // bucket for a declared rel's derived-phase work; it survives the
+        // declared-rel filter as long as its suffix rel is still declared.
+        let mut timings: Vec<(String, i64, i64)> = Vec::new();
         {
             let conn = eng.db.conn();
-            let mut s = conn.prepare("SELECT rel, ms FROM _stmt_ms ORDER BY rel")?;
-            let rows = s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+            let mut s = conn.prepare("SELECT rel, ms, n FROM _stmt_ms ORDER BY rel")?;
+            let rows = s.query_map([], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)))?;
             for row in rows.flatten() {
-                if eng.rels.contains_key(&row.0) { timings.push(row); }
+                let name = row.0.split_once(':').map(|(_, suffix)| suffix).unwrap_or(&row.0);
+                if eng.rels.contains_key(name) { timings.push(row); }
             }
         }
-        let timings = fold_twins(timings);
+        let timings = fold_twin_triples(timings);
         let read_pairs = |rel: &str, c0: &str, c1: &str| -> Result<Vec<(String, i64)>> {
             let conn = eng.db.conn();
             let mut s = conn.prepare(&format!(
@@ -111,10 +129,18 @@ impl RelKind for PerfKind {
             eng.refresh_rel("rel_count", &["rel", "rows"], &rows)?;
             changed = true;
         }
-        if read_pairs("stmt_ms", "rel", "ms")? != timings {
+        let read_triples = || -> Result<Vec<(String, i64, i64)>> {
+            let conn = eng.db.conn();
+            let mut s = conn.prepare(&format!(
+                "SELECT \"rel\", \"ms\", \"n\" FROM {} ORDER BY \"rel\"", tbl("stmt_ms")))?;
+            let rows = s.query_map([], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)))?;
+            Ok(rows.filter_map(|x| x.ok()).collect())
+        };
+        if read_triples()? != timings {
             let rows: Vec<Vec<Value>> = timings.into_iter()
-                .map(|(r, ms)| vec![Value::Text(r), Value::Int(ms)]).collect();
-            eng.refresh_rel("stmt_ms", &["rel", "ms"], &rows)?;
+                .map(|(r, ms, n)| vec![Value::Text(r), Value::Int(ms), Value::Int(n)]).collect();
+            eng.refresh_rel("stmt_ms", &["rel", "ms", "n"], &rows)?;
             changed = true;
         }
         Ok(changed)
