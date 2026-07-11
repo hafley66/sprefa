@@ -98,6 +98,8 @@ flow_edge(a, b) <- df_edge(a, b), !flow_cut(a, b).
 # (the inlined 7-atom forward hop measured ~7s on this repo; this shape holds
 # the whole flow graph at ~0.5s).
 rel call_target(call: sym, caller: text, callee: text, callee_q: text).
+# Pin each call site by exact callable-name equality: aliases are deliberately
+# excluded, and df_node supplies the caller dependency used by this join.
 call_target(c, cb, eb, eq) <-
     call_node(c, name, _, _),
     df_node(c, "call_res", _, cb, _, _),
