@@ -1044,6 +1044,22 @@ foreign resolution model).
       note, df coverage table, call_def.sym doc). GOTCHA found: dl query
       data rows carry a 2-space indent — cell 0 of any parsed rel needs
       .trim() (the old scorer worked by accident, file lived in cell 3).
+- [ ] **Change-cost friction inventory** (2026-07-10): consolidated 10-agent
+      debrief ranking at plans/2026-07-10-change-cost-friction-inventory.md
+      (12 items, fix shapes + sizes + sequencing; top = ambient-config
+      hermeticity, declared cross-family reads edges, query --format=json,
+      the engine monolith epic, resolution_source column).
+- [ ] **Occurrence-level scip resolution** (the real with-scip headroom,
+      unbuilt): the override is NAME-level ((repo,file,name)->def_file), so
+      shared names either mis-resolve (pre-fix) or drop (post-fix) and
+      with-scip caps at rust 27.5% / go 89.0% despite holding the truth
+      index. scip_occurrence (v0.6.24) has exact per-occurrence spans:
+      joining call_site position -> occurrence -> symbol -> def makes
+      position disambiguate what names cannot (conflict refusal becomes
+      moot for indexed files). Remaining ceiling after that = def-in-scan-
+      corpus + dl's own site detection (macros/UFCS). M-sized, one
+      line-base conversion (df 1-based, scip 0-based, convert once —
+      scorer precedent).
 - [ ] **Scorer-agent debrief pains** (Opus, 2026-07-10, unactioned): (a) dl
       query output indents data rows 2 spaces — undocumented, mis-keys any
       parser reading cell 0 (document in the query-output contract); (b)
