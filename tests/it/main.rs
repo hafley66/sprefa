@@ -28,6 +28,7 @@ mod perf_facts;
 mod perf_rels;
 mod perf_woes;
 mod plans_index;
+mod readme_gen;
 mod scoped_tick;
 mod settle;
 mod magic_rel_audit;

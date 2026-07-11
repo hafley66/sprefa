@@ -61,10 +61,10 @@ working directory is the repository root; there is no `--root` flag.
 ## What can it do?
 
 <!-- BEGIN: readme-gallery -->
-- Query a real call graph: `dl examples/glean.dl --no-daemon`
 - Add a diff-scoped lint rail: `dl examples/rails.dl --check --no-daemon`
-- Preview a Rust module move: `dl --move src/old.rs=src/new.rs --no-daemon`
 - Compare a GitHub PR’s graph without a second checkout: `dl examples/pr-diff.dl --no-daemon`
+- Preview a Rust module move: `dl --move src/old.rs=src/new.rs --no-daemon`
+- Query a real call graph: `dl examples/glean.dl --no-daemon`
 - Serve an MCP tool written as rules: `dl examples/mcp-server.dl --mcp --no-daemon`
 <!-- END: readme-gallery -->
 
@@ -359,10 +359,17 @@ failure mode). Rules and queries splice verbatim.
 
 **Shipped stdlib** lives in [std/](std/):
 
-| file | exposes |
+<!-- BEGIN: stdlib -->
+| file | summary |
 |---|---|
-| [std/callgraph.dl](std/callgraph.dl) | `def`, `use`, `calls`, `reaches`, `unused` — the file-scoped call graph |
-| [std/parsers/openapi.dl](std/parsers/openapi.dl) | `spec_op(op)` — operationIds from any `openapi.{json,yaml,yml}` in scope |
+| [`std/callgraph.dl`](std/callgraph.dl) | a one-shot call-graph extractor over the resolved graph + |
+| [`std/entry.dl`](std/entry.dl) | entry.dl — gateway inventory + reachability-from-entry over the shared |
+| [`std/flow-collections.dl`](std/flow-collections.dl) | higher-order propagation facts for the common collection / |
+| [`std/flow.dl`](std/flow.dl) | the shared interprocedural value-flow base. |
+| [`std/parsers/openapi.dl`](std/parsers/openapi.dl) | OpenAPI operation extraction. |
+| [`std/strings.dl`](std/strings.dl) | std/strings.dl — string_flow: the df_edge subgraph restricted to |
+| [`std/suppress.dl`](std/suppress.dl) | the eslint/biome comment-directive suppression grammar, |
+<!-- END: stdlib -->
 
 ## Templates (`def`)
 
@@ -578,6 +585,9 @@ doc-comment in [src/cli/mod.rs](src/cli/mod.rs) and rerun the generator.
 | `--tick-audit` | After each tick, print every relation's row count (or DL_TICK_AUDIT=1) |
 | `--verify <VERIFY>` | Verify-rollback: run the program (applying `gen` edits), then run this shell command as a checker in the root. Keep the edits only if it exits 0; otherwise restore every touched file to its pre-run state and exit 1. Transactional codemod — apply, test, keep-if-pass. See christmas #14 |
 | `--watch` | Re-tick on file changes in the source root (in-process watcher, the pre-daemon path). For the warm long-lived watcher, use `dl daemon start` |
+| `--apply` | _undocumented_ |
+| `--dialect` | _undocumented_ |
+| `--max-wall` | _undocumented_ |
 <!-- END: cli -->
 
 ## Git hook / Claude Code hook

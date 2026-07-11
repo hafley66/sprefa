@@ -1,4 +1,5 @@
 # Agent rails: checks scoped to the worktree diff, not the whole repo.
+# README(gallery): Add a diff-scoped lint rail: `dl examples/rails.dl --check --no-daemon`
 #
 # The built-in `changed(path)` holds every path `git status` reports as
 # differing from HEAD (modified, added, renamed, untracked). Joining a rail

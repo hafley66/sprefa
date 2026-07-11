@@ -1,5 +1,6 @@
 # pr-diff.dl -- diff a GitHub PR's graph WITHOUT a second checkout (D5.8,
 # PR-as-rows). A `pr_want(number)` fact drives a `gh` read-effect that resolves
+# README(gallery): Compare a GitHub PR’s graph without a second checkout: `dl examples/pr-diff.dl --no-daemon`
 # the PR's base + head commit SHAs; those two SHAs become `scan` rev coordinates
 # on the SELF repo, and the rev-aware extraction twins (type_entity_rev /
 # type_link_rev / call_edge_rev) carry a `rev` column, so the diff is a per-rev

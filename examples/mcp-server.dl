@@ -1,6 +1,7 @@
 # mcp-server.dl — a REAL, registerable MCP server authored as datalog.
 #
 # Implements the MCP lifecycle (initialize / ping / tools/list / tools/call)
+# README(gallery): Serve an MCP tool written as rules: `dl examples/mcp-server.dl --mcp --no-daemon`
 # as plain rules: every lifecycle message is just a JSON-RPC method, so the
 # handshake is a handler table like any other. Register it in Claude Code:
 #

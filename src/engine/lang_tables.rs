@@ -11,6 +11,7 @@ static AST_LANG_TABLE: &[(&str, &[&str], TsLangCtor)] = &[
     ("hcl",        &["terraform", "tf"],       || tree_sitter::Language::new(tree_sitter_hcl::LANGUAGE)),
     ("starlark",   &["bzl", "bazel"],          || tree_sitter::Language::new(tree_sitter_starlark::LANGUAGE)),
     ("jsonnet",    &[],                        || tree_sitter::Language::new(tree_sitter_jsonnet::LANGUAGE)),
+    ("dl",         &["dl"],                  || tree_sitter_dl::language().into()),
     ("gotmpl",     &["gotemplate", "gohtml"],  || tree_sitter::Language::new(unsafe {
         tree_sitter_language::LanguageFn::from_raw(tree_sitter_gotmpl)
     })),
