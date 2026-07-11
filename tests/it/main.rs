@@ -26,6 +26,7 @@ mod graph_diff_rev;
 mod perf_facts;
 mod perf_rels;
 mod perf_woes;
+mod plans_index;
 mod scoped_tick;
 mod settle;
 mod magic_rel_audit;

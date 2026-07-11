@@ -144,3 +144,9 @@ Cheapest-first: 10 + 11 + 9 in one docs/regen sweep (one sitting); 8 and 1 as on
 CLI-ergonomics arc; 3 as its own S-M arc (removes a whole parser class); 5 rides the
 next resolver-touching arc; 2 and 12 are engine-guard arcs; 4 is the standing epic
 and the only L. Items 7 is orchestrator process, effective immediately.
+
+<!-- todo(feature): item 1 — a first-class --hermetic flag that implies all three, plus the already-ledgered loud "daemon is serving this root, writes went there" warning on hijack -->
+<!-- todo(bug): item 2 — a declared reads: &[family] edge on ExtractFamily/RelKind so used() composes mechanically and the rail can assert no resolver reads an undeclared family's tables -->
+<!-- todo(feature): item 3 — --format=json (or tsv) for ? query blocks and one paragraph documenting the human format's contract -->
+<!-- todo(docs): item 6 — a generated per-language coverage table (which node kinds each TypeLang lift emits, tested counts on a fixture) in docs/reference -->
+<!-- todo(decision): item 5 — a resolution_source column (values scip|syntactic|alias|narrowed) on call_edge/type_link (rev twins included), plus a public eng.ensure_families(&[...]) -->
