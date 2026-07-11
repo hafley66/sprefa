@@ -1,4 +1,10 @@
-## Unreleased
+# Changelog
+
+All notable changes to `dl` (sprefa v5) are recorded here. Format follows
+[Keep a Changelog](https://keepachangelog.com/); versions track the `v*` release
+tags consumed by cargo-dist.
+
+## [Unreleased]
 
 ### Added
 - Semi-naive (delta) evaluation for recursive fixpoints in `rebuild_derived`: each pass joins only rows born the previous pass instead of re-deriving the full relation; aggregate/`key(...)` components fall back to the naive loop; `DL_NAIVE_FIXPOINT=1` forces the old path. Exact-count regression tests pin the waste at zero. Cold `--check` on this repo: 37.2s -> 5.6s.
@@ -7,14 +13,6 @@
 - Engine monolith split: `src/engine/mod.rs` 9,209 -> 2,688 lines across 12 pure-move submodules (decls/gen/query/symbols/lens/rpc/declare/reconcile/repo/meta/derive/lang_tables); `src/setup.rs` hook wiring split to `src/setup/hooks.rs`.
 - Observability verdict-line logging layer.
 - Daemon/check fixes: discovery-mode `--check` attaches to a warm daemon; cold-start PR-poll stampede in git-graph.dl gated on `git_ref`; verify.sh digest stamp skips redundant build+suite.
-
-# Changelog
-
-All notable changes to `dl` (sprefa v5) are recorded here. Format follows
-[Keep a Changelog](https://keepachangelog.com/); versions track the `v*` release
-tags consumed by cargo-dist.
-
-## [Unreleased]
 
 ### Changed (BREAKING)
 - **Intern hot join keys: `_strings`/`_where_bytes` string ids are now
