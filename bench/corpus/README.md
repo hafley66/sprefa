@@ -77,14 +77,23 @@ refusal (both 2026-07-10, see Headline findings):
 | lang   | arm          | confirmed | wrong | bare | denom | parity | precision | wall  |
 | ------ | ------------ | --------- | ----- | ---- | ----- | ------ | --------- | ----- |
 | rust   | without-scip | 863       | 50    | 5218 | 6131  | 14.1%  | 0.945     | 32.4s |
-| rust   | with-scip    | 1688      | 42    | 4401 | 6131  | 27.5%  | 0.976     | 27.7s |
+| rust   | with-scip    | —         | 52    | —    | 6131  | 33.0%  | 0.974     | —     |
 | go     | without-scip | 1398      | 8     | 516  | 1922  | 72.7%  | 0.994     | 18.4s |
-| go     | with-scip    | 1710      | 8     | 204  | 1922  | 89.0%  | 0.995     | 14.2s |
+| go     | with-scip    | —         | —     | —    | 1922  | 93.3%  | 0.994     | —     |
 | ts     | without-scip | 67        | 1     | 260  | 328   | 20.4%  | 0.985     | 6.3s  |
 | ts     | with-scip    | 67        | 1     | 260  | 328   | 20.4%  | 0.985     | 2.4s  |
 | python | without-scip | 722       | 15    | 1062 | 1799  | 40.1%  | 0.980     | 48.2s |
-| python | with-scip    | 1403      | 5     | 391  | 1799  | 78.0%  | 0.996     | 39.6s |
+| python | with-scip    | —         | —     | —    | 1799  | 79.3%  | 0.996     | —     |
 | kotlin | —            | SKIP: no scip-java / JDK on this box              |
+
+With-scip rows re-measured 2026-07-10 after occurrence-level resolution landed
+(main 7191bc6): `resolve_callee` consults `scip_occurrence` position before the
+name map, so same-name symbols resolve per call site instead of dropping to the
+conflict refusal. Rust moved most (27.5% -> 33.0% — trait-method call sites
+carry exact occurrences); ts stays flat honestly (its bare bucket is defs
+outside the scan root). Without-scip arms byte-unchanged. The remaining bare
+bucket is structural: defs outside the scan corpus, macro-generated call sites
+dl never emits, and dynamic/trait dispatch with no occurrence at the site text.
 
 ts is the one language whose with-scip arm is unchanged: its bare bucket is
 dominated by imports into `../../api`, whose defs sit OUTSIDE the scoped scan

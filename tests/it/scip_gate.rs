@@ -1,11 +1,16 @@
 //! The scip family must load for call/type programs that never NAME a scip
-//! rel, and the load must precede extraction within the tick. Regression for
-//! the two stacked bugs the otel corpus measurement surfaced (2026-07-10):
+//! rel, the load must precede extraction within the tick, AND the resolver must
+//! consult occurrence POSITION before the bare descriptor name. Regressions for
+//! the bugs the otel corpus measurement surfaced (2026-07-10):
 //! (1) `ScipKind::used` defaulted to "program names a scip rel", so
 //! `SPREFA_SCIP_INDEX` was a silent no-op for exactly the call/type programs
 //! it should improve; (2) the index loaded in the RelKind loop AFTER the
 //! extract families, so even a forced load only reached the resolvers on
-//! tick 2 via the digest fold.
+//! tick 2 via the digest fold; (3) the override was NAME-level, so a name
+//! carried by two def symbols in one file was dropped entirely (the conflict
+//! refusal) — occurrence-level resolution uses `scip_occurrence`'s exact per-
+//! call line to tell same-name symbols apart, and the conflict refusal becomes
+//! moot wherever a position exists.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -23,10 +28,24 @@ fn sandbox(tag: &str) -> PathBuf {
     p
 }
 
+/// An occurrence with no packed range: feeds `scip_def`/`scip_ref` (the
+/// name-level path), but NOT `scip_occurrence` (which requires a range). Used to
+/// exercise the name-map fallback where no position exists.
 fn occurrence(symbol: &str, roles: i32) -> Occurrence {
     let mut occ = Occurrence::new();
     occ.symbol = symbol.to_string();
     occ.symbol_roles = roles;
+    occ
+}
+
+/// An occurrence WITH a packed 0-based range `[start_line, start_col, end_line,
+/// end_col]`: this is what lands a `scip_occurrence` row, so the resolver can
+/// pick the symbol by the call site's line.
+fn occurrence_r(symbol: &str, roles: i32, range: [i32; 4]) -> Occurrence {
+    let mut occ = Occurrence::new();
+    occ.symbol = symbol.to_string();
+    occ.symbol_roles = roles;
+    occ.range = range.to_vec();
     occ
 }
 
@@ -56,6 +75,29 @@ fn write_fixture(root: &Path) {
     fs::write(
         root.join("caller.go"),
         "package main\n\nfunc caller() {\n\thelper()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("p.dl"),
+        "rel seen(path: file).\n\
+         seen(path) <- scan(\"WORK\", \"**/*.go\", path, rev).\n\
+         rel edge(caller_sym: text, callee_sym: text).\n\
+         edge(caller_sym, callee_sym) <- call_edge(caller_sym, callee_sym, kind).\n\
+         rel site(caller_sym: text, callee_name: text).\n\
+         site(caller_sym, callee_name) <- call_site(repo, caller_sym, callee_name, path, line).\n",
+    )
+    .unwrap();
+}
+
+/// A caller with TWO `helper()` calls on different lines (0-based rows 3 and 4),
+/// so the index can attribute each to a different `helper` def by position.
+fn write_two_call_fixture(root: &Path) {
+    fs::write(root.join("a.go"), "package main\n\nfunc helper() {}\n").unwrap();
+    fs::write(root.join("b.go"), "package main\n\nfunc helper() {}\n").unwrap();
+    fs::write(
+        root.join("caller.go"),
+        // rows: 0 package, 1 blank, 2 func, 3 helper(), 4 helper(), 5 close
+        "package main\n\nfunc caller() {\n\thelper()\n\thelper()\n}\n",
     )
     .unwrap();
     fs::write(
@@ -105,7 +147,9 @@ fn ambiguous_call_stays_bare_without_index() {
 }
 
 /// The real assertion: a root index.scip resolves the call on the FIRST tick
-/// of a program that names no scip rel.
+/// of a program that names no scip rel. The occurrences carry NO range, so this
+/// also exercises the name-level fallback (no `scip_occurrence` rows to pick
+/// from — the resolver falls back to the (repo, file, name) map).
 #[test]
 fn index_resolves_call_first_tick_without_naming_scip_rels() {
     let d = sandbox("first");
@@ -128,14 +172,16 @@ fn index_resolves_call_first_tick_without_naming_scip_rels() {
     );
 }
 
-/// The override keys on the bare descriptor name, so a caller file that
-/// references TWO different symbols sharing that name gives it no way to tell
-/// the call sites apart — it must refuse, not last-write-win (the otel-rust
-/// builder-pattern collapse: 412 wrong picks, precision 0.995 -> 0.819).
+/// Occurrence-level resolution: caller.go calls `helper` on two different lines,
+/// and the index records that line 3 (0-based) is `SYM` (def b.go) while line 4
+/// is `SYM_OTHER` (def a.go). The NAME-level map drops `helper` outright — one
+/// file referencing two symbols of that name is the conflict refusal (9fd029b) —
+/// so WITHOUT position both sites are bare (the ambiguous_call control proves
+/// the syntactic tie). WITH position each call resolves to its OWN def file.
 #[test]
-fn conflicting_same_name_symbols_stay_bare() {
-    let d = sandbox("conflict");
-    write_fixture(&d);
+fn same_name_calls_resolve_by_position() {
+    let d = sandbox("bypos");
+    write_two_call_fixture(&d);
     write_index(
         &d.join("index.scip"),
         vec![
@@ -143,7 +189,52 @@ fn conflicting_same_name_symbols_stay_bare() {
             document("a.go", vec![occurrence(SYM_OTHER, SymbolRole::Definition as i32)]),
             document(
                 "caller.go",
-                vec![occurrence(SYM, 0), occurrence(SYM_OTHER, 0)],
+                vec![
+                    // first `helper()` at 0-based row 3 -> SYM (def b.go)
+                    occurrence_r(SYM, 0, [3, 1, 3, 7]),
+                    // second `helper()` at 0-based row 4 -> SYM_OTHER (def a.go)
+                    occurrence_r(SYM_OTHER, 0, [4, 1, 4, 7]),
+                ],
+            ),
+        ],
+    );
+    let (edges, _) = graph_after_one_tick(&d);
+    let callees: Vec<&String> = edges
+        .iter()
+        .filter(|r| r[0].contains("caller.go"))
+        .map(|r| &r[1])
+        .collect();
+    assert!(
+        callees.iter().any(|c| c.contains("b.go::")),
+        "the row-3 call must resolve to b.go by position: {edges:?}"
+    );
+    assert!(
+        callees.iter().any(|c| c.contains("a.go::")),
+        "the row-4 call must resolve to a.go by position: {edges:?}"
+    );
+}
+
+/// The refusal that survives position: two DIFFERENT symbols that share the
+/// descriptor name occur on the SAME line as one call. Line granularity cannot
+/// tell them apart, so the resolver refuses (fails toward exclusion) rather than
+/// guess — and does NOT fall through to a coincidental single-def name pick. The
+/// name-level map likewise drops the conflicted name, so the site stays bare.
+#[test]
+fn same_line_same_name_symbols_stay_bare() {
+    let d = sandbox("conflict");
+    write_fixture(&d); // single `helper()` at 0-based row 3
+    write_index(
+        &d.join("index.scip"),
+        vec![
+            document("b.go", vec![occurrence(SYM, SymbolRole::Definition as i32)]),
+            document("a.go", vec![occurrence(SYM_OTHER, SymbolRole::Definition as i32)]),
+            document(
+                "caller.go",
+                vec![
+                    // BOTH symbols occur on the one call's line (row 3): ambiguous
+                    occurrence_r(SYM, 0, [3, 1, 3, 7]),
+                    occurrence_r(SYM_OTHER, 0, [3, 1, 3, 7]),
+                ],
             ),
         ],
     );
@@ -156,6 +247,51 @@ fn conflicting_same_name_symbols_stay_bare() {
     );
     assert!(
         !edges.iter().any(|r| r[0].contains("caller.go")),
-        "two same-name symbols in one file's refs must stay unresolved: {edges:?}"
+        "two same-name symbols on the call's line must stay unresolved: {edges:?}"
+    );
+}
+
+/// Fallback: a caller whose file has NO `scip_occurrence` rows (its reference
+/// occurrence carries no range) still resolves through the name-level map exactly
+/// as before the occurrence tier existed. Here only b.go defines `helper`, so
+/// the name map is unambiguous and the call resolves to b.go.
+#[test]
+fn name_map_resolves_when_file_has_no_occurrences() {
+    let d = sandbox("fallback");
+    // Only b.go defines helper; caller.go calls it. No a.go decoy this time, so
+    // even the syntactic tier could resolve — the point is that the RANGE-less
+    // occurrences produce zero scip_occurrence rows, so the occurrence tier is a
+    // Fallthrough and the name map carries.
+    fs::write(d.join("b.go"), "package main\n\nfunc helper() {}\n").unwrap();
+    fs::write(
+        d.join("caller.go"),
+        "package main\n\nfunc caller() {\n\thelper()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        d.join("p.dl"),
+        "rel seen(path: file).\n\
+         seen(path) <- scan(\"WORK\", \"**/*.go\", path, rev).\n\
+         rel edge(caller_sym: text, callee_sym: text).\n\
+         edge(caller_sym, callee_sym) <- call_edge(caller_sym, callee_sym, kind).\n\
+         rel site(caller_sym: text, callee_name: text).\n\
+         site(caller_sym, callee_name) <- call_site(repo, caller_sym, callee_name, path, line).\n",
+    )
+    .unwrap();
+    write_index(
+        &d.join("index.scip"),
+        vec![
+            document("b.go", vec![occurrence(SYM, SymbolRole::Definition as i32)]),
+            document("caller.go", vec![occurrence(SYM, 0)]),
+        ],
+    );
+    let (edges, _) = graph_after_one_tick(&d);
+    let callee = &edges
+        .iter()
+        .find(|r| r[0].contains("caller.go"))
+        .unwrap_or_else(|| panic!("no edge from caller.go (name-map fallback): {edges:?}"))[1];
+    assert!(
+        callee.contains("b.go::"),
+        "name-map fallback must resolve to b.go, got {callee}"
     );
 }

@@ -101,6 +101,79 @@ fn scip_want_loads_wanted_repo_indexes_per_repo() {
         "self ref row still present, distinct repo tag: {rows:?}");
 }
 
+/// Tick accounting for the scip_want demand chain when the consumer is the CALL
+/// EXTRACT family (not a plain derived rule). The `pre_extract` ordering fix
+/// (commit 84ae5d7) runs the scip index load BEFORE the type/call extract
+/// families within a tick, so the resolver reads the freshly-loaded index the
+/// SAME tick it lands. Composed with the one-tick demand latency (`scip_want`
+/// derives on tick 1, so the wanted index is only demanded on tick 2), a wanted
+/// repo's call resolves on TICK 2 — cut from the pre-fix TICK 3 (extract ran
+/// index-blind, healing only on the next tick's digest fold).
+///
+/// Fixture: the wanted repo `dep` has TWO same-package defs of `Answer`
+/// (syntactically a tie, stays bare) plus a `caller` that calls it; the dep
+/// index names the ONE real def. Tick 1: `scip_want` empty at load time -> no dep
+/// index -> the call is bare. Tick 2: the want row demands dep, its index loads
+/// pre-extract, and the call resolves to the indexed def in the SAME tick.
+#[test]
+fn scip_want_call_resolution_lands_on_tick_two() {
+    const ANSWER: &str = "scip-go gomod lib 1.0.0 `lib`/Answer().";
+    let d = sandbox("callchain");
+    let dep = d.join("dep-repo");
+    fs::create_dir_all(&dep).unwrap();
+    // self root: one trivial file so the program has something to scan.
+    fs::write(d.join("main.go"), "package main\n\nfunc main() {}\n").unwrap();
+    // dep repo: two same-package Answer defs (a syntactic tie) + a caller.
+    fs::write(dep.join("a.go"), "package lib\n\nfunc Answer() int { return 1 }\n").unwrap();
+    fs::write(dep.join("b.go"), "package lib\n\nfunc Answer() int { return 2 }\n").unwrap();
+    fs::write(dep.join("caller.go"), "package lib\n\nfunc caller() {\n\tAnswer()\n}\n").unwrap();
+    // dep index: a.go DEFINES Answer, caller.go REFERENCES it -> the name-level
+    // map resolves (dep, caller.go, "Answer") -> a.go, disambiguating the tie.
+    write_index(&dep.join("index.scip"), vec![
+        document("a.go", vec![occurrence(ANSWER, SymbolRole::Definition as i32)]),
+        document("caller.go", vec![occurrence(ANSWER, 0)]),
+    ]);
+
+    fs::write(d.join("p.dl"),
+        "scip_want(\"dep\").\n\
+         rel seen(path: file).\n\
+         seen(path) <- scan(\"WORK\", \"**/*.go\", path, rev).\n\
+         seen(path) <- scan(\"*\", \"WORK\", \"**/*.go\", path, rev).\n\
+         rel edge(caller: text, callee: text).\n\
+         edge(caller, callee) <- call_edge(caller, callee, kind).\n\
+         rel site(callee_name: text, path: file).\n\
+         site(callee_name, path) <- call_site(repo, caller, callee_name, path, line).\n").unwrap();
+    let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    eng.set_repos(vec![RepoConfig {
+        slug: "dep".into(), root: dep.clone(), url: None, allow_missing: false,
+    }]);
+    let (prog, diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let errs = diags.iter().filter(|x| x.severity == sprefa_v5::ast::Severity::Error).count();
+    assert_eq!(errs, 0, "program should typecheck: {diags:?}");
+
+    // Tick 1: scip_want is empty at pre-extract time -> the dep index does not
+    // load -> the two-def `Answer` call stays a syntactic tie (bare, no edge).
+    // The call SITE must exist though, so the bareness is genuine ambiguity (dep
+    // IS scanned), not the dep files simply being absent from the corpus.
+    eng.tick(&prog, true).unwrap();
+    let sites1 = eng.rel_rows("site", 2);
+    assert!(sites1.iter().any(|r| r[0] == "Answer" && r[1].contains("caller.go")),
+        "tick 1: dep must be scanned (the Answer call site exists): {sites1:?}");
+    let edges1 = eng.rel_rows("edge", 2);
+    assert!(!edges1.iter().any(|r| r[1].contains("Answer")),
+        "tick 1: no dep index yet, the two-def Answer call must be bare: {edges1:?}");
+
+    // Tick 2: the want row (derived on tick 1) demands dep; its index loads
+    // pre-extract and the CALL family consumes it the SAME tick, resolving the
+    // call to the indexed def a.go. Landing here (not tick 3) is the pre_extract
+    // ordering payoff.
+    eng.tick(&prog, true).unwrap();
+    let edges2 = eng.rel_rows("edge", 2);
+    assert!(edges2.iter().any(|r| r[1].contains("a.go::") && r[1].contains("Answer")),
+        "tick 2: dep index loads pre-extract and the call resolves to a.go the same tick: {edges2:?}");
+}
+
 /// A wanted repo with no index and no installed indexer for its (absent)
 /// markers skips loudly; the self index still loads alone.
 #[test]
