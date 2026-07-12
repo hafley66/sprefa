@@ -3,10 +3,18 @@ use super::*;
 impl SetupJournal {
     pub fn undo(&mut self, root: Option<&Path>, global_only: bool, dry: bool) -> Result<i32> {
         let mut kept = Vec::new();
+        let mut dirs = Vec::new();
+        let mut removed = Vec::new();
+        let mut removed_dirs = Vec::new();
         for entry in self.entries.iter().rev() {
             if (global_only && entry.root.is_some())
-                || root.is_some_and(|r| entry.root.as_deref() != Some(r)) {
+                || root.is_some_and(|r| entry.root.as_deref() != Some(r))
+            {
                 kept.push(entry.clone());
+                continue;
+            }
+            if matches!(entry.detail, SetupDetail::DirCreate) {
+                dirs.push(entry.clone());
                 continue;
             }
             if !safe(&entry.target, entry.root.as_deref()).is_ok() {
@@ -14,7 +22,8 @@ impl SetupJournal {
                 kept.push(entry.clone());
                 continue;
             }
-            if matches!(fs::symlink_metadata(&entry.target), Err(error) if error.kind() == std::io::ErrorKind::NotFound) {
+            if matches!(fs::symlink_metadata(&entry.target), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+            {
                 println!("[dl setup] already absent {}", entry.target.display());
                 continue;
             }
@@ -43,6 +52,7 @@ impl SetupJournal {
                 SetupDetail::MarkedAppend {
                     begin_marker,
                     end_marker,
+                    ..
                 } => match fs::read_to_string(&entry.target) {
                     Ok(s) if marker_range(&s, begin_marker, end_marker).is_some() => {
                         Some("strip markers")
@@ -56,7 +66,8 @@ impl SetupJournal {
                     }
                 },
                 SetupDetail::JsonMerge { pointer, added } => {
-                    let removed = if let Some(created) = pointer.strip_prefix("__created_array__:") {
+                    let removed = if let Some(created) = pointer.strip_prefix("__created_array__:")
+                    {
                         remove_created_json_path(&entry.target, created, "[]", dry)?
                     } else if let Some(created) = pointer.strip_prefix("__created_object__:") {
                         remove_created_json_path(&entry.target, created, "{}", dry)?
@@ -66,7 +77,10 @@ impl SetupJournal {
                     if removed {
                         Some("remove JSON node")
                     } else {
-                        println!("[dl setup] JSON node changed, left in place: {}", entry.target.display());
+                        println!(
+                            "[dl setup] JSON node changed, left in place: {}",
+                            entry.target.display()
+                        );
                         None
                     }
                 }
@@ -75,7 +89,7 @@ impl SetupJournal {
                     command_substring,
                 } => {
                     let removed = if event == "__created_file__" {
-                        remove_empty_hook_file(&entry.target, dry)?
+                        dry || remove_empty_hook_file(&entry.target, dry)?
                     } else if let Some(created_event) = event.strip_prefix("__created_event__:") {
                         remove_empty_json_member(&entry.target, "/hooks", created_event, "[]", dry)?
                     } else if event == "__created_object__:hooks" {
@@ -95,14 +109,26 @@ impl SetupJournal {
                         None
                     }
                 }
+                SetupDetail::DirCreate => unreachable!("directory entries are deferred"),
             };
             if let Some(action) = action {
                 println!("[dl setup] {} {}", action, entry.target.display());
+                let removes_target = matches!(
+                    &entry.detail,
+                    SetupDetail::FileCreate { .. } | SetupDetail::Symlink { .. }
+                ) || matches!(&entry.detail, SetupDetail::HookRegister { event, .. } if event == "__created_file__")
+                    || matches!(&entry.detail, SetupDetail::MarkedAppend { created: true, begin_marker, end_marker }
+                        if fs::read_to_string(&entry.target).ok().and_then(|text| marker_range(&text, begin_marker, end_marker)
+                            .map(|(a, z)| format!("{}{}", &text[..a], &text[z..]).trim().is_empty())).unwrap_or(false));
+                if removes_target {
+                    removed.push(entry.target.clone());
+                }
                 if !dry {
                     match &entry.detail {
                         SetupDetail::MarkedAppend {
                             begin_marker,
                             end_marker,
+                            created,
                         } => {
                             let s = fs::read_to_string(&entry.target)?;
                             let Some((a, z)) = marker_range(&s, begin_marker, end_marker) else {
@@ -113,12 +139,32 @@ impl SetupJournal {
                                 kept.push(entry.clone());
                                 continue;
                             };
-                            atomic(&entry.target, format!("{}{}", &s[..a], &s[z..]).as_bytes())?
+                            let output = format!("{}{}", &s[..a], &s[z..]);
+                            let output_hash = hash(output.as_bytes());
+                            atomic(&entry.target, output.as_bytes())?;
+                            if *created && output.trim().is_empty() {
+                                let verified = fs::read(&entry.target).ok().is_some_and(|bytes| {
+                                    hash(&bytes) == output_hash
+                                        && std::str::from_utf8(&bytes)
+                                            .is_ok_and(|text| text.trim().is_empty())
+                                });
+                                if verified {
+                                    fs::remove_file(&entry.target)?;
+                                } else {
+                                    println!(
+                                        "[dl setup] marker changed, left in place: {}",
+                                        entry.target.display()
+                                    );
+                                    kept.push(entry.clone());
+                                }
+                            }
                         }
                         SetupDetail::JsonMerge { .. } => {}
                         SetupDetail::HookRegister { event, .. } if event != "__created_file__" => {}
                         SetupDetail::HookRegister { .. } => {
-                            if entry.target.exists() { fs::remove_file(&entry.target)?; }
+                            if entry.target.exists() {
+                                fs::remove_file(&entry.target)?;
+                            }
                         }
                         _ => {
                             fs::remove_file(&entry.target)?;
@@ -127,6 +173,40 @@ impl SetupJournal {
                 }
             } else {
                 kept.push(entry.clone());
+            }
+        }
+        for entry in dirs {
+            if !safe_dir(&entry.target, entry.root.as_deref()) {
+                println!("[dl setup] SKIP unsafe path: {}", entry.target.display());
+                kept.push(entry);
+                continue;
+            }
+            if dry && dir_empty_after_removals(&entry.target, &removed, &removed_dirs)? {
+                println!("[dl setup] remove dir {}", entry.target.display());
+                removed_dirs.push(entry.target);
+                continue;
+            }
+            if dry {
+                println!(
+                    "[dl setup] directory not empty, left in place: {}",
+                    entry.target.display()
+                );
+                kept.push(entry);
+                continue;
+            }
+            match fs::remove_dir(&entry.target) {
+                Ok(()) => println!("[dl setup] remove dir {}", entry.target.display()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    println!("[dl setup] already absent {}", entry.target.display());
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty => {
+                    println!(
+                        "[dl setup] directory not empty, left in place: {}",
+                        entry.target.display()
+                    );
+                    kept.push(entry);
+                }
+                Err(error) => return Err(error.into()),
             }
         }
         kept.reverse();
@@ -142,7 +222,12 @@ impl SetupJournal {
         for file in [root.join("AGENTS.md"), root.join("CLAUDE.md")] {
             match fs::read_to_string(&file) {
                 Ok(text)
-                    if marker_range(&text, "<!-- BEGIN: sprefa-dl -->", "<!-- END: sprefa-dl -->").is_some() =>
+                    if marker_range(
+                        &text,
+                        "<!-- BEGIN: sprefa-dl -->",
+                        "<!-- END: sprefa-dl -->",
+                    )
+                    .is_some() =>
                 {
                     self.entry(
                         Some(&root),
@@ -151,6 +236,7 @@ impl SetupJournal {
                         SetupDetail::MarkedAppend {
                             begin_marker: "<!-- BEGIN: sprefa-dl -->".into(),
                             end_marker: "<!-- END: sprefa-dl -->".into(),
+                            created: false,
                         },
                     );
                     println!("[dl setup] adopted markers: {}", file.display());
@@ -204,7 +290,10 @@ impl SetupJournal {
         for link in links {
             if let Ok(points_to) = fs::read_link(&link) {
                 if !verified_skill_link(&root, home.as_deref(), &link, &points_to) {
-                    println!("[dl setup] declined unrecognized symlink: {}", link.display());
+                    println!(
+                        "[dl setup] declined unrecognized symlink: {}",
+                        link.display()
+                    );
                     continue;
                 }
                 let owner = if link.starts_with(&root) {
@@ -227,49 +316,119 @@ impl SetupJournal {
         Ok(0)
     }
 }
+fn dir_empty_after_removals(
+    target: &Path,
+    removed: &[PathBuf],
+    removed_dirs: &[PathBuf],
+) -> Result<bool> {
+    for child in fs::read_dir(target)? {
+        let child = child?.path();
+        if !removed.contains(&child) && !removed_dirs.contains(&child) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+fn safe_dir(target: &Path, root: Option<&Path>) -> bool {
+    if safe(target, root).is_err() {
+        return false;
+    }
+    let expected = root.map(Path::to_path_buf).unwrap_or_else(|| {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+    });
+    let expected = expected.canonicalize().unwrap_or(expected);
+    target
+        .canonicalize()
+        .is_ok_and(|canonical| canonical.starts_with(expected))
+}
 fn marker_range(text: &str, begin: &str, end: &str) -> Option<(usize, usize)> {
-    if text.matches(begin).count() != 1 || text.matches(end).count() != 1 { return None; }
+    if text.matches(begin).count() != 1 || text.matches(end).count() != 1 {
+        return None;
+    }
     let start = text.find(begin)?;
     let end_start = text.find(end)?;
     (start < end_start).then_some((start, end_start + end.len()))
 }
 fn remove_empty_hook_file(target: &Path, _dry: bool) -> Result<bool> {
-    let value: Value = match fs::read_to_string(target).ok().and_then(|text| serde_json::from_str(&text).ok()) {
+    let value: Value = match fs::read_to_string(target)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+    {
         Some(value) => value,
         None => return Ok(false),
     };
-    let Some(object) = value.as_object() else { return Ok(false) };
-    if object.len() != 1 { return Ok(false); }
-    let Some(hooks) = object.get("hooks").and_then(Value::as_object) else { return Ok(false) };
-    Ok(hooks.values().all(|events| events.as_array().is_some_and(Vec::is_empty)))
+    let Some(object) = value.as_object() else {
+        return Ok(false);
+    };
+    if object.len() != 1 {
+        return Ok(false);
+    }
+    let Some(hooks) = object.get("hooks").and_then(Value::as_object) else {
+        return Ok(false);
+    };
+    Ok(hooks
+        .values()
+        .all(|events| events.as_array().is_some_and(Vec::is_empty)))
 }
-fn remove_empty_json_member(target: &Path, parent: &str, key: &str, empty: &str, dry: bool) -> Result<bool> {
-    let text = match fs::read_to_string(target) { Ok(text) => text, Err(_) => return Ok(false) };
-    let Some(output) = json_edit::remove_empty_member(&text, parent, key, empty) else { return Ok(false) };
-    if !dry { atomic(target, output.as_bytes())?; }
+fn remove_empty_json_member(
+    target: &Path,
+    parent: &str,
+    key: &str,
+    empty: &str,
+    dry: bool,
+) -> Result<bool> {
+    let text = match fs::read_to_string(target) {
+        Ok(text) => text,
+        Err(_) => return Ok(false),
+    };
+    let Some(output) = json_edit::remove_empty_member(&text, parent, key, empty) else {
+        return Ok(false);
+    };
+    if !dry {
+        atomic(target, output.as_bytes())?;
+    }
     Ok(true)
 }
 fn remove_created_json_path(target: &Path, pointer: &str, empty: &str, dry: bool) -> Result<bool> {
-    let (parent, key) = pointer.rsplit_once('/').unwrap_or(("", pointer.trim_start_matches('/')));
+    let (parent, key) = pointer
+        .rsplit_once('/')
+        .unwrap_or(("", pointer.trim_start_matches('/')));
     remove_empty_json_member(target, parent, key, empty, dry)
 }
 fn verified_skill_link(root: &Path, home: Option<&Path>, link: &Path, points_to: &Path) -> bool {
-    let resolved = if points_to.is_absolute() { points_to.to_path_buf() }
-        else { link.parent().unwrap_or(root).join(points_to) };
-    let Ok(resolved) = resolved.canonicalize() else { return false };
+    let resolved = if points_to.is_absolute() {
+        points_to.to_path_buf()
+    } else {
+        link.parent().unwrap_or(root).join(points_to)
+    };
+    let Ok(resolved) = resolved.canonicalize() else {
+        return false;
+    };
     resolved.starts_with(root.join("assets"))
         || resolved.starts_with(root.join(".agents/skills"))
         || home.is_some_and(|home| resolved.starts_with(home.join(".agents/skills")))
 }
 fn remove_git_hook_path(root: Option<&Path>, expected: &str, dry: bool) -> Result<bool> {
     let Some(root) = root else { return Ok(false) };
-    let out = std::process::Command::new("git").arg("-C").arg(root)
-        .args(["config", "--get", "core.hooksPath"]).output()?;
-    if String::from_utf8_lossy(&out.stdout).trim() != expected { return Ok(false); }
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["config", "--get", "core.hooksPath"])
+        .output()?;
+    if String::from_utf8_lossy(&out.stdout).trim() != expected {
+        return Ok(false);
+    }
     if !dry {
-        let status = std::process::Command::new("git").arg("-C").arg(root)
-            .args(["config", "--unset", "core.hooksPath"]).status()?;
-        if !status.success() { return Ok(false); }
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["config", "--unset", "core.hooksPath"])
+            .status()?;
+        if !status.success() {
+            return Ok(false);
+        }
     }
     Ok(true)
 }
@@ -288,9 +447,16 @@ fn remove_json(target: &Path, pointer: &str, added: &Value, dry: bool) -> Result
             return Ok(false);
         }
     };
-    if !v.pointer(pointer).and_then(Value::as_array).is_some_and(|array| array.contains(added)) { return Ok(false); }
+    if !v
+        .pointer(pointer)
+        .and_then(Value::as_array)
+        .is_some_and(|array| array.contains(added))
+    {
+        return Ok(false);
+    }
     if !dry {
-        let output = json_edit::remove_array_value(&s, pointer, added).context("remove exact JSON node")?;
+        let output =
+            json_edit::remove_array_value(&s, pointer, added).context("remove exact JSON node")?;
         atomic(target, output.as_bytes())?;
     }
     Ok(true)
