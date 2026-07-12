@@ -17,7 +17,6 @@ use std::process::Command;
 
 use crate::ast::*;
 use crate::engine::Engine;
-use crate::lower::tbl;
 
 /// One head slot of an `@async` rule, classifying how its value is filled when
 /// the effect response lands: a literal constant, a body-bound request arg
@@ -660,7 +659,7 @@ impl Engine {
                 meta.cols.iter().map(|c| c.name.clone()).collect()
             };
             let col_refs: Vec<&str> = cols.iter().map(|s| s.as_str()).collect();
-            self.db.insert_rows(&tbl(head_rel), &col_refs, rows)?;
+            self.insert_rel_rows(head_rel, &col_refs, rows)?;
         }
         {
             let conn = self.db.conn();
@@ -824,7 +823,7 @@ impl Engine {
                 meta.cols.iter().map(|c| c.name.clone()).collect()
             };
             let col_refs: Vec<&str> = cols.iter().map(|s| s.as_str()).collect();
-            self.db.insert_rows(&tbl(head_rel), &col_refs, rows)?;
+            self.insert_rel_rows(head_rel, &col_refs, rows)?;
         }
         Ok(assembled.len())
     }
