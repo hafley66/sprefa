@@ -52,6 +52,11 @@ pub(super) type FactCache<T> =
 fn exe_stamp() -> u128 {
     static STAMP: std::sync::OnceLock<u128> = std::sync::OnceLock::new();
     *STAMP.get_or_init(|| {
+        // Test/override hook: a distinct value stands in for a distinct binary
+        // so the digest-namespace behavior is checkable without a real reinstall.
+        if let Ok(s) = std::env::var("DL_EXE_STAMP") {
+            return u128::from_le_bytes(blake3::hash(s.as_bytes()).as_bytes()[..16].try_into().unwrap());
+        }
         std::env::current_exe().ok()
             .and_then(|p| std::fs::metadata(&p).ok())
             .map(|m| {
@@ -62,6 +67,19 @@ fn exe_stamp() -> u128 {
             })
             .unwrap_or(0)
     })
+}
+
+/// The stored key for a family/rev extract digest. The running binary's stamp
+/// is a KEY NAMESPACE segment, not folded into the digest value: two different
+/// `dl` binaries sharing one `cache.db` (the classic case: a running daemon on
+/// the old image while a freshly `cargo install`ed CLI runs the same repo) then
+/// keep SEPARATE skip-state instead of clobbering each other's digest at a
+/// shared key and forcing a full re-extract on every tick (the ping-pong that
+/// pinned the machine). Rev stays the trailing segment so the gone-rev sweep's
+/// `substr` still recovers it. A new binary sees `None` (its namespace is
+/// empty) and does exactly one cold rebuild, then skips.
+fn extract_digest_key(family: &str, rev: &str) -> String {
+    format!("extract:{:032x}:{family}:{rev}", exe_stamp())
 }
 
 /// Split `files` into cache hits and misses (keyed by (repo, path, content
@@ -594,7 +612,7 @@ impl Engine {
         let mut moved: Vec<(String, [u8; 32])> = Vec::new();
         for (rev, files) in &by_rev {
             let d = self.module_input_digest(rev, files);
-            if self.load_rel_digest(&format!("extract:module:{rev}"))? == Some(d) { continue; }
+            if self.load_rel_digest(&extract_digest_key("module", rev))? == Some(d) { continue; }
             moved.push((rev.clone(), d));
         }
         if moved.is_empty() { return Ok(false); }
@@ -612,7 +630,7 @@ impl Engine {
         self.insert_module_spans(&rows)?;
         self.rebuild_legacy_module_rels()?;
         for (rev, d) in &moved {
-            self.save_rel_digest(&format!("extract:module:{rev}"), d)?;
+            self.save_rel_digest(&extract_digest_key("module", rev), d)?;
         }
         Ok(true)
     }
@@ -626,7 +644,7 @@ impl Engine {
         let fold = |acc: &mut [u8; 32], h: &blake3::Hash| {
             for (a, b) in acc.iter_mut().zip(h.as_bytes()) { *a ^= b; }
         };
-        fold(&mut acc, &blake3::hash(format!("module\0{rev}\0{:032x}", exe_stamp()).as_bytes()));
+        fold(&mut acc, &blake3::hash(format!("module\0{rev}").as_bytes()));
         for (path, hash) in files {
             fold(&mut acc, &blake3::hash(format!("{path}\0{hash}").as_bytes()));
         }
@@ -745,7 +763,7 @@ impl Engine {
         let fold = |acc: &mut [u8; 32], h: &blake3::Hash| {
             for (a, b) in acc.iter_mut().zip(h.as_bytes()) { *a ^= *b; }
         };
-        fold(&mut acc, &blake3::hash(format!("{family}\0{rev}\0{:032x}", exe_stamp()).as_bytes()));
+        fold(&mut acc, &blake3::hash(format!("{family}\0{rev}").as_bytes()));
         for (repo, path, frev, hash) in files {
             if hash.is_empty() {
                 // An empty content hash means the file is unresolved (vanished,
@@ -826,7 +844,7 @@ impl Engine {
         let mut moved: Vec<(String, [u8; 32])> = Vec::new();
         for (rev, frev) in &by_rev {
             let d = self.extract_input_digest(family, rev, frev, with_scip);
-            let prior = self.load_rel_digest(&format!("extract:{family}:{rev}"))?;
+            let prior = self.load_rel_digest(&extract_digest_key(family, rev))?;
             if prior == Some(d) {
                 crate::verdict::debug_verdict(
                     "extract-rebuild",
@@ -996,8 +1014,12 @@ impl Engine {
         // rev's outputs," and the twin DELETE above just wiped those outputs, so
         // a surviving digest would make the next tick's gate skip repopulating
         // them (the lint-imports/diag_mute regression).
+        // The exe stamp is a key-namespace segment (see `extract_digest_key`),
+        // so the prefix carries it and rev stays the trailing segment `substr`
+        // recovers. Only this binary's namespace is swept; a prior binary's
+        // stale digests are harmless (its skip-state, never read by this exe).
         for family in ["module", "type", "call", "dataflow", "doc", "comment"] {
-            let prefix = format!("extract:{family}:");
+            let prefix = format!("extract:{:032x}:{family}:", exe_stamp());
             self.db.exec(&format!(
                 "DELETE FROM _reldigest WHERE rel LIKE '{prefix}%' \
                  AND substr(rel, {}) NOT IN (SELECT rev FROM _live_rev_scope)",

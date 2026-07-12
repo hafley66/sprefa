@@ -81,7 +81,7 @@ impl Engine {
         }
         self.refresh_rel("comment_node",
             &["path", "line", "col", "end_line", "end_col", "text", "kind"], &rows)?;
-        for (rev, d) in &moved { self.save_rel_digest(&format!("extract:comment:{rev}"), d)?; }
+        for (rev, d) in &moved { self.save_rel_digest(&extract_digest_key("comment", rev), d)?; }
         Ok(true)
     }
 
@@ -150,7 +150,7 @@ impl Engine {
         }
         self.refresh_rel("template_parts",
             &["file", "line", "node", "idx", "kind", "text"], &rows)?;
-        for (rev, d) in &moved { self.save_rel_digest(&format!("extract:template:{rev}"), d)?; }
+        for (rev, d) in &moved { self.save_rel_digest(&extract_digest_key("template", rev), d)?; }
         Ok(true)
     }
 
@@ -209,7 +209,7 @@ impl Engine {
         }
         self.refresh_rel("unresolved",
             &["file", "line", "reason", "detail"], &rows)?;
-        for (rev, d) in &moved { self.save_rel_digest(&format!("extract:unresolved:{rev}"), d)?; }
+        for (rev, d) in &moved { self.save_rel_digest(&extract_digest_key("unresolved", rev), d)?; }
         Ok(true)
     }
 }

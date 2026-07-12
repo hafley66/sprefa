@@ -86,12 +86,26 @@ fn git(dir: &Path, args: &[&str]) {
         String::from_utf8_lossy(&out.stderr));
 }
 
-/// The `extract:type:<rev>` digest keys present in `_reldigest`.
-fn type_digest_keys(eng: &Engine) -> Vec<String> {
+/// The revs that carry a stored `type` extract digest. The key form is
+/// `extract:<exe>:type:<rev>` (the running binary's stamp is a namespace
+/// segment so two binaries sharing a cache keep separate skip-state); rev is
+/// the trailing segment, so this stays exe-agnostic.
+fn type_digest_revs(eng: &Engine) -> Vec<String> {
     eng.query_sql(
-        "SELECT rel FROM _reldigest WHERE rel LIKE 'extract:type:%' ORDER BY rel", &[])
+        "SELECT rel FROM _reldigest WHERE rel LIKE 'extract:%:type:%' ORDER BY rel", &[])
         .unwrap().into_iter()
-        .map(|r| r[0].as_str().unwrap().to_string()).collect()
+        .map(|r| r[0].as_str().unwrap().rsplit(':').next().unwrap().to_string()).collect()
+}
+
+/// The full stored digest key for one family+rev in the current exe namespace.
+fn digest_key_for(eng: &Engine, family: &str, rev: &str) -> String {
+    let like = format!("extract:%:{family}:{rev}");
+    let rows = eng.query_sql(
+        "SELECT rel FROM _reldigest WHERE rel LIKE ?1 LIMIT 1",
+        &[serde_json::Value::String(like)]).unwrap();
+    rows.into_iter().next()
+        .unwrap_or_else(|| panic!("no digest key for {family}:{rev}"))[0]
+        .as_str().unwrap().to_string()
 }
 
 fn digest_of(eng: &Engine, key: &str) -> String {
@@ -129,22 +143,24 @@ fn per_rev_digest_isolates_a_work_edit_from_the_committed_rev() {
 
     // (a) the two-rev corpus ticks and lands one type digest per rev.
     eng.tick(&prog, true).unwrap();
-    let keys = type_digest_keys(&eng);
-    assert_eq!(keys.len(), 2, "one type digest per rev (WORK + HEAD sha): {keys:?}");
-    assert!(keys.contains(&"extract:type:WORK".to_string()));
-    let head_key = keys.iter().find(|k| *k != "extract:type:WORK").unwrap().clone();
+    let revs = type_digest_revs(&eng);
+    assert_eq!(revs.len(), 2, "one type digest per rev (WORK + HEAD sha): {revs:?}");
+    assert!(revs.contains(&"WORK".to_string()));
+    let work_key = digest_key_for(&eng, "type", "WORK");
+    let head_rev = revs.iter().find(|r| *r != "WORK").unwrap().clone();
+    let head_key = digest_key_for(&eng, "type", &head_rev);
     let n: usize = eng.query_sql("SELECT COUNT(*) FROM rel_type_entity", &[]).unwrap()
         .into_iter().next().unwrap()[0].as_i64().unwrap() as usize;
     assert!(n > 0, "type_entity rows land across both revs");
 
-    let work0 = digest_of(&eng, "extract:type:WORK");
+    let work0 = digest_of(&eng, &work_key);
     let head0 = digest_of(&eng, &head_key);
 
     // (c) warm no-change tick: no family re-parses, no digest moves.
     let parsed = eng.extract_files_parsed.get();
     eng.tick(&prog, true).unwrap();
     assert_eq!(eng.extract_files_parsed.get(), parsed, "a no-change tick re-parses nothing");
-    assert_eq!(digest_of(&eng, "extract:type:WORK"), work0);
+    assert_eq!(digest_of(&eng, &work_key), work0);
     assert_eq!(digest_of(&eng, &head_key), head0);
 
     // (b) edit the WORK file: only the WORK rev's digest moves; the committed
@@ -152,7 +168,7 @@ fn per_rev_digest_isolates_a_work_edit_from_the_committed_rev() {
     fs::write(d.join("src/a.rs"),
         "pub struct Alpha { pub n: u64, pub extra: bool }\npub fn alpha() -> Alpha { Alpha { n: 2, extra: true } }\n").unwrap();
     eng.tick(&prog, true).unwrap();
-    assert_ne!(digest_of(&eng, "extract:type:WORK"), work0, "WORK digest moves on a WORK edit");
+    assert_ne!(digest_of(&eng, &work_key), work0, "WORK digest moves on a WORK edit");
     assert_eq!(digest_of(&eng, &head_key), head0, "committed rev digest stays frozen");
 }
 
@@ -403,12 +419,13 @@ fn sweep_retracts_gone_rev_from_twins_and_legacy() {
         "SELECT COUNT(*) FROM rel_df_node_rev WHERE rev = '{head_rev}'")) > 0,
         "df_node_rev has HEAD rows before retraction");
 
-    let type_key = format!("extract:type:{head_rev}");
-    let call_key = format!("extract:call:{head_rev}");
-    let df_key = format!("extract:dataflow:{head_rev}");
-    for key in [&type_key, &call_key, &df_key] {
-        assert!(count(&eng, &format!("SELECT COUNT(*) FROM _reldigest WHERE rel = '{key}'")) > 0,
-            "{key} exists before retraction");
+    // Digest keys are `extract:<exe>:<family>:<rev>` (see `digest_key_for`), so
+    // match the family+rev across any exe namespace.
+    let digest_like = |fam: &str| format!("extract:%:{fam}:{head_rev}");
+    for fam in ["type", "call", "dataflow"] {
+        assert!(count(&eng, &format!(
+            "SELECT COUNT(*) FROM _reldigest WHERE rel LIKE '{}'", digest_like(fam))) > 0,
+            "{fam}:{head_rev} digest exists before retraction");
     }
 
     // (b) drop the HEAD scan rule entirely (the program changes, WORK's file
@@ -434,9 +451,10 @@ fn sweep_retracts_gone_rev_from_twins_and_legacy() {
         "legacy call_def drops the retired rev's def this tick");
 
     // ...and the stale per-rev digest keys are swept too.
-    for key in [&type_key, &call_key, &df_key] {
-        assert_eq!(count(&eng, &format!("SELECT COUNT(*) FROM _reldigest WHERE rel = '{key}'")), 0,
-            "{key} is swept once its rev is gone");
+    for fam in ["type", "call", "dataflow"] {
+        assert_eq!(count(&eng, &format!(
+            "SELECT COUNT(*) FROM _reldigest WHERE rel LIKE '{}'", digest_like(fam))), 0,
+            "{fam}:{head_rev} digest is swept once its rev is gone");
     }
 
     // WORK's own rows/legacy/digest survive the sweep untouched.
@@ -446,6 +464,6 @@ fn sweep_retracts_gone_rev_from_twins_and_legacy() {
         "legacy type_entity still populated for WORK after the sweep");
     assert!(count(&eng, "SELECT COUNT(*) FROM rel_call_def WHERE sym LIKE '%new_only_fn%'") > 0,
         "legacy call_def still populated for WORK after the sweep");
-    assert!(count(&eng, "SELECT COUNT(*) FROM _reldigest WHERE rel = 'extract:type:WORK'") > 0,
+    assert!(count(&eng, "SELECT COUNT(*) FROM _reldigest WHERE rel LIKE 'extract:%:type:WORK'") > 0,
         "WORK's own digest key survives the sweep");
 }

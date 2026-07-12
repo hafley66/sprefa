@@ -264,7 +264,7 @@ impl Engine {
         )?;
         self.rebuild_legacy_type_rels()?;
         // Persisted only after the writes land, so a failed refresh retries.
-        for (rev, d) in &moved { self.save_rel_digest(&format!("extract:type:{rev}"), d)?; }
+        for (rev, d) in &moved { self.save_rel_digest(&extract_digest_key("type", rev), d)?; }
         Ok(true)
     }
 }

@@ -203,7 +203,7 @@ impl Engine {
         self.refresh_rel("call_kind", &["fn", "kind"], &kind_rows)?;
         self.rebuild_legacy_call_rels()?;
         // Persisted only after the writes land, so a failed refresh retries.
-        for (rev, d) in &moved { self.save_rel_digest(&format!("extract:call:{rev}"), d)?; }
+        for (rev, d) in &moved { self.save_rel_digest(&extract_digest_key("call", rev), d)?; }
         Ok(true)
     }
 

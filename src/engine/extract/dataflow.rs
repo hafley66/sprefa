@@ -203,7 +203,7 @@ impl Engine {
         self.refresh_rel_for_revs("df_field_rev", &["id", "field", "value", "rev"], &field_rev_rows, &all_rev_refs)?;
         self.refresh_rel_for_revs("df_lit_rev", &["id", "text", "kind", "rev"], &lit_rev_rows, &all_rev_refs)?;
         // Persisted only after the writes land, so a failed refresh retries.
-        for (rev, d) in &moved { self.save_rel_digest(&format!("extract:dataflow:{rev}"), d)?; }
+        for (rev, d) in &moved { self.save_rel_digest(&extract_digest_key("dataflow", rev), d)?; }
         Ok(true)
     }
 }

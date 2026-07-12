@@ -31,12 +31,12 @@ impl Engine {
             for f in &files { by_rev.entry(f.2.as_str()).or_default().push(f.clone()); }
             for (rev, frev) in &by_rev {
                 let mut digest = self.extract_input_digest("doc", rev, frev, false);
-                let ty = self.load_rel_digest(&format!("extract:type:{rev}"))?
+                let ty = self.load_rel_digest(&extract_digest_key("type", rev))?
                     .map(|d| d.iter().map(|b| format!("{b:02x}")).collect::<String>())
                     .unwrap_or_default();
                 for (a, b) in digest.iter_mut()
                     .zip(blake3::hash(format!("type\0{ty}").as_bytes()).as_bytes()) { *a ^= *b; }
-                if self.load_rel_digest(&format!("extract:doc:{rev}"))? == Some(digest) { continue; }
+                if self.load_rel_digest(&extract_digest_key("doc", rev))? == Some(digest) { continue; }
                 moved.push(((*rev).to_string(), digest));
             }
         }
@@ -145,7 +145,7 @@ impl Engine {
         self.refresh_rel("doc_ref",
             &["repo", "file", "line", "sym", "kind", "matched_name"], &ref_rows)?;
         // Persisted only after the writes land, so a failed refresh retries.
-        for (rev, d) in &moved { self.save_rel_digest(&format!("extract:doc:{rev}"), d)?; }
+        for (rev, d) in &moved { self.save_rel_digest(&extract_digest_key("doc", rev), d)?; }
         Ok(true)
     }
 }

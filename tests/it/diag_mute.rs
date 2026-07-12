@@ -107,11 +107,19 @@ fn check_output_is_unchanged_with_a_mute_row_present() {
     let baseline = check_broken_import(&d, &dbp, prog_path);
     assert!(baseline.contains("broken-import"), "baseline reports broken-import:\n{baseline}");
 
-    // Seed the mute through the engine API on the SAME db. A trivial program
-    // tick declares the built-ins so the diag_mute seam is live; the tick does
-    // not touch the mute set.
+    // Seed the mute through the engine API on the SAME db. Tick the SAME
+    // lint-imports program (not a trivial `? true()`), so the in-process
+    // Engine's corpus matches the spawned check's: it rebuilds the identical
+    // module rows rather than wiping them to an empty corpus. (Extract digests
+    // are namespaced by the running binary's identity, so the in-process Engine
+    // and the spawned `dl` keep separate skip-state; a trivial empty-corpus tick
+    // here would retract the module rows and the next check, skipping on its own
+    // still-valid digest, would find nothing to report.)
     {
-        let prog = parse::parse(lex::lex("? true().").unwrap()).unwrap();
+        let seed = "rel seen(path: file).\n\
+                    seen(p) <- scan(\"WORK\", \"src/**/*.rs\", p, rev).\n\
+                    ? module_edge(src, dst, kind).\n";
+        let prog = parse::parse(lex::lex(seed).unwrap()).unwrap();
         let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
         let mut eng = Engine::new(conn, d.clone());
         eng.tick(&prog, true).unwrap();
