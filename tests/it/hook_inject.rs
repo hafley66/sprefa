@@ -133,6 +133,7 @@ fn setup_bootstrap_then_hook_injects() {
     // TTY-gated; --yes wires them without a prompt.
     let setup_ok = Command::new(DL)
         .args(["setup", "--project", root.to_str().unwrap(), "--yes"])
+        .env("SPREFA_SETUP_NO_VSCODE", "1")
         .output().unwrap().status.success();
     assert!(setup_ok, "dl setup --project should succeed");
     assert!(root.join(".dl/hook-skill-on-test.dl").exists(), "starter hook .dl written");
