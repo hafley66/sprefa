@@ -109,3 +109,28 @@ Second Sonnet session, `.dl/gen-todos.dl` (smashy commit 9531a9d). New items onl
 <!-- todo(docs): // inside a regex literal parses as comment start — note the \/\/ escape in the regex doc row -->
 <!-- todo(docs): query grammar is bare ?rel(vars). only — syntax table should say so (no :- , no ==) -->
 <!-- todo(docs): quick-start states that an unflagged run against an attached daemon merges the full .dl/ discovery corpus; --no-daemon isolates -->
+
+## Addendum 2: ban-word rail session (2026-07-11 evening, struct-field sweep)
+
+Rail found 9 struct-field hits, zero comment/doc/string false positives. New
+gotchas surfaced (none in the skill yet):
+
+- `ast_yaml` `inside:` defaults to the IMMEDIATE parent, not any ancestor —
+  verified empirically; this is exactly what makes
+  `kind: type_identifier, inside: {kind: struct_item}` precise.
+- `ast_yaml` RuleCore atomics: pattern, kind, regex, nthChild, range, inside,
+  has, precedes, follows, all, any, not, matches — NO `field:` selector. "The
+  name field of a function_item" must be reached as `kind: identifier,
+  inside: {kind: function_item}`.
+- Under `(?i)` a character class folds case too (`[A-Z0-9]` becomes
+  `[A-Za-z0-9]`), silently defeating an uppercase-boundary check — produced a
+  REAL false positive (`jumpstart_unrelated`). Fix shape: three case-exact
+  branches unioned instead of one `(?i)` regex.
+- The ban-word skill's "\b works for snake_case" claim did not hold under
+  test (documented in the rail header) — backprop to that skill's
+  word-boundary bullet.
+
+<!-- todo(docs): skill/authoring — ast_yaml inside: is immediate-parent only; state it in the ast_yaml doc row -->
+<!-- todo(docs): skill/authoring — ast_yaml RuleCore has no field: selector; document the kind+inside idiom -->
+<!-- todo(docs): skill/authoring — (?i) folds character classes too; uppercase-boundary checks need case-exact branches -->
+<!-- todo(backprop): ban-word skill word-boundary bullet overclaims \b for snake_case; correct with the case-exact-branch pattern -->
