@@ -19,13 +19,74 @@
 //! the SQL form capped at 64 only because a fixpoint over a cyclic graph would
 //! otherwise not converge without the lattice — the visited set converges here).
 
-// TODO(native-walk): generalize to `multi_source_walk` carrying a depth per
-// node + optional depth cap, so the depth-lattice rules (entry_reach_node,
-// op_reach_node — `key(node) merge(MinBy(d))`) ride this instead of the SQL
-// fixpoint. BFS layer IS min depth, so MinBy needs no extra machinery. Keep
-// this fn as a thin wrapper (halt, no depth). Plan:
-// plans/2026-07-12-native-graph-walk-executor.md
 use std::collections::VecDeque;
+
+/// The general walk behind every reachability rule the recognizer handles:
+/// multi-source forward BFS carrying a per-node DEPTH, with an optional stop
+/// rule (`halt`) and an optional expansion cap (`depth_cap`). Returns the
+/// deduped `(tag, node, min_depth)` set — each node recorded once per tag at the
+/// shortest depth it's reached (BFS layer = min depth, which is exactly what a
+/// `merge(MinBy(depth))` lattice computes, for free).
+///
+/// - `starts`: `(tag, node, depth)` frontier — the base rules' output. Sorted so
+///   that within a tag the first-seen occurrence of a node carries its minimum
+///   start depth. (All current rules seed at depth 0; a future mixed-depth seed
+///   would want a bucket queue instead of FIFO — see the plan.)
+/// - `halt`: `Some(mask)` stops expansion at any true node (still recorded);
+///   `None` = no stop rule.
+/// - `depth_cap`: `Some(cap)` = a node at depth >= cap is recorded but not
+///   expanded (the `d0 < cap` guard); `None` = expand until the visited set
+///   closes (cycles terminate via the per-tag visited stamp).
+pub fn multi_source_walk(
+    adj: &[Vec<u32>],
+    starts: &[(u32, u32, i64)],
+    halt: Option<&[bool]>,
+    depth_cap: Option<i64>,
+) -> Vec<(u32, u32, i64)> {
+    let n = adj.len();
+    if let Some(h) = halt { debug_assert_eq!(h.len(), n, "halt mask must cover every node"); }
+    let mut out: Vec<(u32, u32, i64)> = Vec::new();
+    if starts.is_empty() { return out; }
+
+    // Sort so each tag's block is contiguous and, within a tag, a node's first
+    // occurrence carries its minimum start depth.
+    let mut by_tag = starts.to_vec();
+    by_tag.sort_unstable();
+    by_tag.dedup();
+
+    let mut seen = vec![0u32; n];
+    let mut gen: u32 = 0;
+    let mut queue: VecDeque<(u32, i64)> = VecDeque::new();
+
+    let mut i = 0;
+    while i < by_tag.len() {
+        let tag = by_tag[i].0;
+        gen += 1;
+        queue.clear();
+        while i < by_tag.len() && by_tag[i].0 == tag {
+            let (_, node, depth) = by_tag[i];
+            if (node as usize) < n && seen[node as usize] != gen {
+                seen[node as usize] = gen;
+                out.push((tag, node, depth));
+                queue.push_back((node, depth));
+            }
+            i += 1;
+        }
+        while let Some((mid, d)) = queue.pop_front() {
+            if let Some(h) = halt { if h[mid as usize] { continue; } }
+            if let Some(cap) = depth_cap { if d >= cap { continue; } }
+            for &node in &adj[mid as usize] {
+                if seen[node as usize] != gen {
+                    seen[node as usize] = gen;
+                    out.push((tag, node, d + 1));
+                    queue.push_back((node, d + 1));
+                }
+            }
+        }
+    }
+    out.sort_unstable();
+    out
+}
 
 /// For each tag, forward-BFS over `adj` from that tag's start frontier, halting
 /// expansion at any node marked in `halt`. Returns the deduped, sorted set of
@@ -45,60 +106,11 @@ pub fn multi_source_halt_bfs(
     starts: &[(u32, u32)],
     halt: &[bool],
 ) -> Vec<(u32, u32)> {
-    let n = adj.len();
-    debug_assert_eq!(halt.len(), n, "halt mask must cover every node");
-    let mut out: Vec<(u32, u32)> = Vec::new();
-    if starts.is_empty() {
-        return out;
-    }
-
-    // Group start frontier nodes by tag. starts is small relative to the graph;
-    // sort a copy so each tag's block is contiguous (stable per-tag BFS order).
-    let mut by_tag = starts.to_vec();
-    by_tag.sort_unstable();
-    by_tag.dedup();
-
-    // Generation-stamped visited: seen[node] == gen means "reached in this tag's
-    // walk". gen starts at 1 so the zero-init array reads as unvisited.
-    let mut seen = vec![0u32; n];
-    let mut gen: u32 = 0;
-    let mut queue: VecDeque<u32> = VecDeque::new();
-
-    let mut i = 0;
-    while i < by_tag.len() {
-        let tag = by_tag[i].0;
-        gen += 1;
-        queue.clear();
-
-        // Enqueue this tag's whole start frontier before draining, so a start
-        // node reached from another start in the same tag isn't double-walked.
-        while i < by_tag.len() && by_tag[i].0 == tag {
-            let node = by_tag[i].1;
-            if (node as usize) < n && seen[node as usize] != gen {
-                seen[node as usize] = gen;
-                out.push((tag, node));
-                queue.push_back(node);
-            }
-            i += 1;
-        }
-
-        while let Some(mid) = queue.pop_front() {
-            // A halt node is recorded (it was enqueued) but never expanded.
-            if halt[mid as usize] {
-                continue;
-            }
-            for &node in &adj[mid as usize] {
-                if seen[node as usize] != gen {
-                    seen[node as usize] = gen;
-                    out.push((tag, node));
-                    queue.push_back(node);
-                }
-            }
-        }
-    }
-
-    out.sort_unstable();
-    out
+    // Halt-only, depth-agnostic view of `multi_source_walk`: seed every start at
+    // depth 0, no cap, drop the returned depth.
+    let starts3: Vec<(u32, u32, i64)> = starts.iter().map(|&(tag, node)| (tag, node, 0)).collect();
+    multi_source_walk(adj, &starts3, Some(halt), None)
+        .into_iter().map(|(tag, node, _)| (tag, node)).collect()
 }
 
 #[cfg(test)]
@@ -186,5 +198,54 @@ mod tests {
         let adj = adj_of(2, &[(0, 1)]);
         let halt = vec![false; 2];
         assert!(multi_source_halt_bfs(&adj, &[], &halt).is_empty());
+    }
+
+    // --- depth-carrying walk (multi_source_walk) ------------------------------
+
+    // Chain 0->1->2->3 seeded at 0 depth 0: BFS layer == depth.
+    #[test]
+    fn walk_depth_is_bfs_layer() {
+        let adj = adj_of(4, &[(0, 1), (1, 2), (2, 3)]);
+        let got = multi_source_walk(&adj, &[(0, 0, 0)], None, None);
+        assert_eq!(got, vec![(0, 0, 0), (0, 1, 1), (0, 2, 2), (0, 3, 3)]);
+    }
+
+    // Depth cap: `d0 < cap` means a node AT depth cap is recorded but not
+    // expanded. cap=2 on the chain records depths 0,1,2 and stops (3 unreached).
+    #[test]
+    fn walk_depth_cap_records_at_cap_but_stops() {
+        let adj = adj_of(4, &[(0, 1), (1, 2), (2, 3)]);
+        let got = multi_source_walk(&adj, &[(0, 0, 0)], None, Some(2));
+        assert_eq!(got, vec![(0, 0, 0), (0, 1, 1), (0, 2, 2)], "node 3 is past the cap");
+    }
+
+    // Two paths to the same node — a short (2 hops) and a long (3 hops): the
+    // visited set keeps the MIN depth (what merge(MinBy(d)) computes).
+    #[test]
+    fn walk_keeps_min_depth_when_two_paths() {
+        // 0->1->4 (depth 2) and 0->2->3->4 (depth 3)
+        let adj = adj_of(5, &[(0, 1), (1, 4), (0, 2), (2, 3), (3, 4)]);
+        let got = multi_source_walk(&adj, &[(0, 0, 0)], None, None);
+        // node 4 reached at min depth 2, not 3.
+        assert!(got.contains(&(0, 4, 2)), "min-depth 2 expected, got {got:?}");
+        assert!(!got.contains(&(0, 4, 3)), "the longer depth-3 path must not win");
+    }
+
+    // Cycle with a cap: terminates via the visited set, records min depth.
+    #[test]
+    fn walk_cycle_with_cap_terminates() {
+        let adj = adj_of(3, &[(0, 1), (1, 2), (2, 0)]);
+        let got = multi_source_walk(&adj, &[(0, 0, 0)], None, Some(64));
+        assert_eq!(got, vec![(0, 0, 0), (0, 1, 1), (0, 2, 2)]);
+    }
+
+    // Halt + depth together (the general case): halt at node 2, chain 0..3.
+    #[test]
+    fn walk_halt_and_depth() {
+        let adj = adj_of(4, &[(0, 1), (1, 2), (2, 3)]);
+        let mut halt = vec![false; 4];
+        halt[2] = true;
+        let got = multi_source_walk(&adj, &[(0, 0, 0)], Some(&halt), None);
+        assert_eq!(got, vec![(0, 0, 0), (0, 1, 1), (0, 2, 2)], "3 is behind the halt at 2");
     }
 }
