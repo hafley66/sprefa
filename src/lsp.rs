@@ -1379,23 +1379,22 @@ fn collect_parse_errors(node: tree_sitter::Node, source_text: &str) -> Vec<(usiz
 
 #[cfg(test)]
 mod tests {
+    use crate::lower::txt_tbl;
     use super::{count_sql, paged_sql};
 
     #[test]
     fn paged_sql_wraps_as_subquery_with_placeholders() {
         assert_eq!(
-            paged_sql("SELECT method FROM rel_query_log ORDER BY ts"),
-            "SELECT * FROM (SELECT method FROM rel_query_log ORDER BY ts) LIMIT ? OFFSET ?",
+            paged_sql(&format!("SELECT method FROM {} ORDER BY ts", txt_tbl("query_log"))),
+            format!("SELECT * FROM (SELECT method FROM {} ORDER BY ts) LIMIT ? OFFSET ?", txt_tbl("query_log")),
         );
     }
 
     #[test]
     fn count_sql_wraps_as_count_subquery() {
         assert_eq!(
-            count_sql("SELECT method FROM rel_query_log WHERE method = ?"),
-            "SELECT COUNT(*) FROM (SELECT method FROM rel_query_log WHERE method = ?)",
+            count_sql(&format!("SELECT method FROM {} WHERE method = ?", txt_tbl("query_log"))),
+            format!("SELECT COUNT(*) FROM (SELECT method FROM {} WHERE method = ?)", txt_tbl("query_log")),
         );
     }
 }
-
-
