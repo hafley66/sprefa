@@ -950,7 +950,11 @@ impl Engine {
         self.db.exec("DELETE FROM _rel_refresh_rev")?;
         let rev_rows: Vec<Vec<Value>> = revs.iter().map(|rev| vec![Value::Text((*rev).to_string())]).collect();
         self.db.insert_rows("_rel_refresh_rev", &["rev"], &rev_rows)?;
-        self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _rel_refresh_rev)", tbl(rel)))?;
+        // The twin's `rev` column is interned (i64 StringId); `_rel_refresh_rev`
+        // holds the raw text revs. Hash the text side into id-space so the
+        // set-match happens in the same representation (else i64 IN (text…)
+        // never matches and the stale rows are never cleared before re-insert).
+        self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT sprf_sym(rev) FROM _rel_refresh_rev)", tbl(rel)))?;
         let encoded = self.encode_rel_rows(rel, cols, rows)?;
         self.db.insert_rows(&tbl(rel), cols, &encoded)
             .map_err(|error| anyhow::anyhow!("refresh relation {rel}: {error}"))?;
@@ -1001,9 +1005,15 @@ impl Engine {
         self.db.exec("DELETE FROM _live_rev_scope")?;
         self.db.exec("INSERT OR IGNORE INTO _live_rev_scope SELECT DISTINCT rev FROM _file")?;
 
+        // `_live_rev_scope` holds raw text revs (from `_file.rev`, which is a
+        // hand-rolled table that never interns); each twin's `rev` column is
+        // interned (i64). Hash the live text revs into id-space (`sprf_sym`,
+        // hash-only, no `_strings` insert) so `i64 NOT IN (id…)` matches the
+        // live set — otherwise every twin row reads as gone and the sweep wipes
+        // the rows the extraction just wrote.
         for twin in Self::REV_TWINS {
             self.db.exec(&format!(
-                "DELETE FROM {} WHERE \"rev\" NOT IN (SELECT rev FROM _live_rev_scope)",
+                "DELETE FROM {} WHERE \"rev\" NOT IN (SELECT sprf_sym(rev) FROM _live_rev_scope)",
                 tbl(twin),
             ))?;
         }
