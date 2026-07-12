@@ -32,6 +32,8 @@
 //!     its root in the RPC; an unregistered `.dl` root auto-registers on attach
 //!   - `DL_NO_DAEMON=1` opts out (in-process, the pre-daemon path; used by tests)
 //!   - `DL_DAEMON_IDLE_SECS=N` overrides the 30 min default
+//!   - `DL_DAEMON_MEM_MB=N` RSS ceiling (default 4096); the serve loop exits
+//!     with code 137 if the process grows past it. `0` disables the guard.
 
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
@@ -1051,6 +1053,7 @@ fn watcher_loop(d: Arc<ServedRoot>) {
             Ok(ev) => ev,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 if d.stopped.load(Ordering::Relaxed) { return; }
+                enforce_mem_limit(&d.root_label());
                 continue;
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
@@ -1181,6 +1184,9 @@ fn watcher_loop(d: Arc<ServedRoot>) {
             Ok(()) => eprintln!("[{}] tick #{tick_num} ({tick_label}, {n_paths} paths) ok", d.root_label()),
             Err(e) => eprintln!("[{}] tick #{tick_num} ({tick_label}, {n_paths} paths) error: {e}", d.root_label()),
         }
+        // A tick is where the image grows (extract, closure, spine writes), so
+        // check the ceiling here too, not only on the idle heartbeat.
+        enforce_mem_limit(&d.root_label());
         if tick_ok {
             let before = watch_count;
             for rc in lock(&d.eng).snapshot_repos() {
@@ -1260,6 +1266,49 @@ fn idle_timeout_secs() -> u64 {
     std::env::var("DL_DAEMON_IDLE_SECS").ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_IDLE_SECS)
+}
+
+/// Hard RSS ceiling for the daemon process, in MB. Over it, the serve loop
+/// exits (a runaway extract loop once grew the served image past a gigabyte and
+/// pinned the machine). `DL_DAEMON_MEM_MB=0` disables the guard. The default is
+/// generous: a multi-repo daemon legitimately holds a few hundred MB, so the
+/// ceiling catches a genuine leak/storm, not steady-state serving.
+const DEFAULT_MEM_LIMIT_MB: u64 = 4096;
+/// Exit code the memory guard uses, distinct from a clean shutdown so a
+/// supervisor can tell a self-kill from an orderly stop.
+const MEM_GUARD_EXIT_CODE: i32 = 137;
+
+fn mem_limit_mb() -> Option<u64> {
+    match std::env::var("DL_DAEMON_MEM_MB") {
+        Ok(s) => s.parse::<u64>().ok().filter(|&n| n > 0),
+        Err(_) => Some(DEFAULT_MEM_LIMIT_MB),
+    }
+}
+
+/// Current resident set size of this process in MB, via `ps` (portable across
+/// macOS and Linux, no extra dependency; `ps` reports RSS in KB). `None` when
+/// the read fails, so the guard simply skips that check rather than guessing.
+fn self_rss_mb() -> Option<u64> {
+    let out = std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p"])
+        .arg(std::process::id().to_string())
+        .output()
+        .ok()?;
+    if !out.status.success() { return None; }
+    String::from_utf8_lossy(&out.stdout).trim().parse::<u64>().ok().map(|kb| kb / 1024)
+}
+
+/// Exit the process if RSS has crossed the ceiling. Called on the serve loop's
+/// 1s heartbeat and after each tick, so both an idle leak and a busy-tick storm
+/// trip it. Logs the numbers before exiting so the cause is in the daemon log.
+fn enforce_mem_limit(label: &str) {
+    let Some(limit) = mem_limit_mb() else { return };
+    let Some(rss) = self_rss_mb() else { return };
+    if rss > limit {
+        eprintln!("[{label}] RSS {rss}MB exceeded limit {limit}MB — exiting (memory guard; \
+                   set DL_DAEMON_MEM_MB to adjust, 0 to disable)");
+        std::process::exit(MEM_GUARD_EXIT_CODE);
+    }
 }
 
 // ---------- poll thread (the @async clock source, all roots) ----------
@@ -2210,6 +2259,27 @@ pub(crate) fn load_repos_eager() -> Vec<config::RepoConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The memory guard reads a real RSS for the running test process (a few MB
+    /// at least) and the default ceiling is well above it, so a steady-state
+    /// daemon never trips. Guards the `ps`-parse and the unit conversion.
+    #[test]
+    fn self_rss_is_readable_and_under_default_ceiling() {
+        let rss = self_rss_mb().expect("ps must report this process's RSS");
+        assert!(rss > 0, "RSS should be a positive MB figure, got {rss}");
+        assert!(rss < DEFAULT_MEM_LIMIT_MB,
+            "test process RSS {rss}MB should sit under the {DEFAULT_MEM_LIMIT_MB}MB ceiling");
+    }
+
+    /// `DL_DAEMON_MEM_MB=0` disables the guard; unset yields the default.
+    #[test]
+    fn mem_limit_env_zero_disables_else_default() {
+        // Unset -> default (the env is process-global; assert the parse shape,
+        // not a specific set, to stay hermetic against the ambient environment).
+        assert_eq!("0".parse::<u64>().ok().filter(|&n| n > 0), None);
+        assert_eq!("2048".parse::<u64>().ok().filter(|&n| n > 0), Some(2048));
+        assert_eq!(DEFAULT_MEM_LIMIT_MB, 4096);
+    }
 
     #[test]
     fn build_id_is_stable_and_version_prefixed() {
