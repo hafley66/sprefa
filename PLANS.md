@@ -12,6 +12,10 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `bug` plans/2026-07-10-change-cost-friction-inventory.md:149 — item 2 — a declared reads: &[family] edge on ExtractFamily/RelKind so used() composes mechanically and the rail can assert no resolver reads an undeclared family's tables
 - `bug` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:102 — agent_edit/agent_touch return 0 rows inside a spawned subagent — session-store keying or flush; document what writes the store
 - `bug` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:104 — sg source rule fed (path, rev) from a derived rel fails two inconsistent ways (error in one shape, silent zero rows in another) — make it one loud error or support it; repeat of the S-batch finding
+- `bug` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:159 — dl-disable-line trailing reason words become bogus suppression codes; allow a separator such as -- reason, or emit one warning for the whole tail
+- `bug` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:166 — op_catalog rows cached in the db do not fold exe identity — a new binary regenerating docs/reference/syntax.md against an old cache.db emits the OLD op docs; fold exe identity like extract digests
+- `bug` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:167 — something during `cargo test --test it` regenerates docs/reference/syntax.md IN-TREE with the installed dl (dirties the repo mid-suite); find the writer, make it hermetic
+- `bug` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:168 — setup --undo marker strip leaves its separator newlines behind when the marked file pre-existed with content (AGENTS.md/CLAUDE.md gain trailing blank lines per setup/undo cycle)
 - `bug` plans/2026-07-11-agent-resume-ledger.md:56 — dl --check --max-wall self-deadline so hook callers can never stack cold engines
 - `bug` plans/2026-07-11-codex-feedback-queue.md:18 — lex warn on dropped backslash escapes in plain strings
 - `bug` plans/2026-07-11-codex-feedback-queue.md:46 — body-level extract+rel-atom mix must bail, not ignore
@@ -33,6 +37,10 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:133 — skill/authoring — ast_yaml inside: is immediate-parent only; state it in the ast_yaml doc row
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:134 — skill/authoring — ast_yaml RuleCore has no field: selector; document the kind+inside idiom
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:135 — skill/authoring — (?i) folds character classes too; uppercase-boundary checks need case-exact branches
+- `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:158 — skill/README imply std/suppress.dl auto-intercepts diag rows; tutorial 11 requires both suppressed(path, line, code) and suppressed(path, line, "*") joins, and distinguishes rail_finding from lint_candidate
+- `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:160 — ast_yaml inside: matches the immediate parent only, not any ancestor
+- `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:161 — ast_yaml RuleCore has no field: selector; document the kind+inside idiom and the complete atomic set
+- `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:162 — ast_yaml (?i) folds character classes too; uppercase-boundary checks need case-exact alternation branches
 - `docs` plans/2026-07-11-book-toc.md:83 — book restructure per this TOC, Part III (flow) first
 - `docs` plans/2026-07-11-docs-and-dogfood-audit.md:20 — CHANGELOG drift rail — commit window vs entries cross-check
 - `docs` plans/2026-07-11-docs-and-dogfood-audit.md:28 — book/tutorial refresh for sym/file_lines/--max-wall/semi-naive
@@ -99,6 +107,14 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-11-agent-feedback-smashy-guard-rails.md:134 `docs` — skill/authoring — ast_yaml RuleCore has no field: selector; document the kind+inside idiom
 - plans/2026-07-11-agent-feedback-smashy-guard-rails.md:135 `docs` — skill/authoring — (?i) folds character classes too; uppercase-boundary checks need case-exact branches
 - plans/2026-07-11-agent-feedback-smashy-guard-rails.md:136 `backprop` — ban-word skill word-boundary bullet overclaims \b for snake_case; correct with the case-exact-branch pattern
+- plans/2026-07-11-agent-feedback-smashy-guard-rails.md:158 `docs` — skill/README imply std/suppress.dl auto-intercepts diag rows; tutorial 11 requires both suppressed(path, line, code) and suppressed(path, line, "*") joins, and distinguishes rail_finding from lint_candidate
+- plans/2026-07-11-agent-feedback-smashy-guard-rails.md:159 `bug` — dl-disable-line trailing reason words become bogus suppression codes; allow a separator such as -- reason, or emit one warning for the whole tail
+- plans/2026-07-11-agent-feedback-smashy-guard-rails.md:160 `docs` — ast_yaml inside: matches the immediate parent only, not any ancestor
+- plans/2026-07-11-agent-feedback-smashy-guard-rails.md:161 `docs` — ast_yaml RuleCore has no field: selector; document the kind+inside idiom and the complete atomic set
+- plans/2026-07-11-agent-feedback-smashy-guard-rails.md:162 `docs` — ast_yaml (?i) folds character classes too; uppercase-boundary checks need case-exact alternation branches
+- plans/2026-07-11-agent-feedback-smashy-guard-rails.md:166 `bug` — op_catalog rows cached in the db do not fold exe identity — a new binary regenerating docs/reference/syntax.md against an old cache.db emits the OLD op docs; fold exe identity like extract digests
+- plans/2026-07-11-agent-feedback-smashy-guard-rails.md:167 `bug` — something during `cargo test --test it` regenerates docs/reference/syntax.md IN-TREE with the installed dl (dirties the repo mid-suite); find the writer, make it hermetic
+- plans/2026-07-11-agent-feedback-smashy-guard-rails.md:168 `bug` — setup --undo marker strip leaves its separator newlines behind when the marked file pre-existed with content (AGENTS.md/CLAUDE.md gain trailing blank lines per setup/undo cycle)
 - plans/2026-07-11-agent-resume-ledger.md:56 `bug` — dl --check --max-wall self-deadline so hook callers can never stack cold engines
 - plans/2026-07-11-agent-resume-ledger.md:57 `feature` — re-enable PostToolUse hook with timeout+advisory shape once derived is under budget
 - plans/2026-07-11-book-toc.md:83 `docs` — book restructure per this TOC, Part III (flow) first

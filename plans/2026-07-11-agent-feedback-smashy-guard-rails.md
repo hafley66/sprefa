@@ -134,3 +134,35 @@ gotchas surfaced (none in the skill yet):
 <!-- todo(docs): skill/authoring — ast_yaml RuleCore has no field: selector; document the kind+inside idiom -->
 <!-- todo(docs): skill/authoring — (?i) folds character classes too; uppercase-boundary checks need case-exact branches -->
 <!-- todo(backprop): ban-word skill word-boundary bullet overclaims \b for snake_case; correct with the case-exact-branch pattern -->
+
+## Addendum 3: dl 0.8.0 suppression + ast_yaml session (2026-07-11)
+
+Tutorial 11 verified the suppression contract: `use "std/suppress.dl".` does not
+auto-intercept diag rows. The rail's diag rule must join both
+`!suppressed(path, line, code)` and `!suppressed(path, line, "*")`.
+`rail_finding(path, line, code)` only opts into stale-directive warnings;
+`lint_candidate(path, line)` enables block directives. The skill/README implied
+automatic interception; make the shorter docs agree with tutorial 11.
+
+`dl-disable-line` accepts only a code list after the directive. Trailing reason
+words become bogus suppression codes, each producing its own
+`dl-suppress-unused` warning. Candidate behavior: allow a reason after a
+separator such as `-- reason`, or at least emit one warning for the whole tail.
+
+Verified ast_yaml facts: `inside:` matches the immediate parent, not any ancestor;
+RuleCore atomics are pattern/kind/regex/nthChild/range/inside/has/precedes/follows/
+all/any/not/matches, with no `field:` selector (use kind+inside to reach name
+fields); and `(?i)` folds character classes too, so `[A-Z0-9]` also matches
+lowercase. Uppercase-boundary checks need case-exact alternation branches.
+
+<!-- todo(docs): skill/README imply std/suppress.dl auto-intercepts diag rows; tutorial 11 requires both suppressed(path, line, code) and suppressed(path, line, "*") joins, and distinguishes rail_finding from lint_candidate -->
+<!-- todo(bug): dl-disable-line trailing reason words become bogus suppression codes; allow a separator such as -- reason, or emit one warning for the whole tail -->
+<!-- todo(docs): ast_yaml inside: matches the immediate parent only, not any ancestor -->
+<!-- todo(docs): ast_yaml RuleCore has no field: selector; document the kind+inside idiom and the complete atomic set -->
+<!-- todo(docs): ast_yaml (?i) folds character classes too; uppercase-boundary checks need case-exact alternation branches -->
+
+## Addendum 3: release-eve engine bugs (2026-07-11, found while gating docs-feedback)
+
+<!-- todo(bug): op_catalog rows cached in the db do not fold exe identity — a new binary regenerating docs/reference/syntax.md against an old cache.db emits the OLD op docs; fold exe identity like extract digests -->
+<!-- todo(bug): something during `cargo test --test it` regenerates docs/reference/syntax.md IN-TREE with the installed dl (dirties the repo mid-suite); find the writer, make it hermetic -->
+<!-- todo(bug): setup --undo marker strip leaves its separator newlines behind when the marked file pre-existed with content (AGENTS.md/CLAUDE.md gain trailing blank lines per setup/undo cycle) -->
