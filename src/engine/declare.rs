@@ -6,7 +6,7 @@ impl Engine {
         self.db.conn().execute(&format!("DROP VIEW IF EXISTS {view}"), [])?;
         let columns: Vec<String> = meta.cols.iter().map(|col| {
             if col.interned() {
-                format!("(SELECT content FROM _strings WHERE id = \"{}\") AS \"{}\"", col.name, col.name)
+                format!("(SELECT content FROM _strings WHERE _strings.id = rel_{rel}.\"{}\") AS \"{}\"", col.name, col.name)
             } else {
                 format!("\"{}\"", col.name)
             }
@@ -475,6 +475,24 @@ impl Engine {
         self.db.conn().execute(&format!("DROP VIEW IF EXISTS {v}"), [])?;
         self.db.conn().execute(&format!("DROP TABLE IF EXISTS {v}"), [])?;
         let (c0, c1) = (&d.cols[0].name, &d.cols[1].name);
+        let output_name = |column: &str| {
+            if d.cols.iter().find(|c| c.name == column).is_some_and(|c| c.interned()) {
+                format!("(SELECT id FROM _strings WHERE _strings.content = na.name)")
+            } else {
+                "na.name".to_string()
+            }
+        };
+        let output_name_b = |column: &str| {
+            if d.cols.iter().find(|c| c.name == column).is_some_and(|c| c.interned()) {
+                format!("(SELECT id FROM _strings WHERE _strings.content = nb.name)")
+            } else {
+                "nb.name".to_string()
+            }
+        };
+        let first_a = output_name(c0);
+        let first_b = output_name_b(c1);
+        let second_a = output_name(c0);
+        let second_b = output_name_b(c1);
         self.db.conn().execute_batch(&format!(
             "CREATE VIEW {v} AS
              WITH RECURSIVE cr(a, b) AS (
@@ -482,12 +500,25 @@ impl Engine {
                UNION
                SELECT cr.a, e.comp_dst FROM cr JOIN {et} e ON e.comp_src = cr.b
              )
-             SELECT na.name AS \"{c0}\", nb.name AS \"{c1}\"
+             SELECT {first_a} AS \"{c0}\", {first_b} AS \"{c1}\"
                FROM cr JOIN {nt} na ON na.comp = cr.a JOIN {nt} nb ON nb.comp = cr.b
              UNION
-             SELECT na.name AS \"{c0}\", nb.name AS \"{c1}\"
+             SELECT {second_a} AS \"{c0}\", {second_b} AS \"{c1}\"
                FROM {nt} na JOIN {nt} nb ON na.comp = nb.comp AND na.cyclic = 1;"
         ))?;
+        if d.cols[0].interned() && d.cols[1].interned() {
+            self.db.conn().execute(&format!(
+                "DROP VIEW IF EXISTS {}", crate::lower::txt_tbl(&d.name)), [])?;
+            self.db.conn().execute(&format!(
+                "CREATE VIEW {} AS SELECT {} AS \"{}\", {} AS \"{}\" FROM {}",
+                crate::lower::txt_tbl(&d.name),
+                format!("(SELECT content FROM _strings WHERE _strings.id = rel_{}.\"{}\")", d.name, c0),
+                c0,
+                format!("(SELECT content FROM _strings WHERE _strings.id = rel_{}.\"{}\")", d.name, c1),
+                c1,
+                tbl(&d.name),
+            ), [])?;
+        }
         Ok(())
     }
 

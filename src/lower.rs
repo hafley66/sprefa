@@ -783,11 +783,12 @@ fn lower_query_agg(q: &Query, meta: &RelMeta) -> Result<(String, Vec<String>)> {
     let mut labels: HashSet<String> = HashSet::new();
 
     let mut consumed = vec![false; terms.len()];
-    let mut canon: HashMap<String, String> = HashMap::new();
+    let mut canon: HashMap<String, (String, bool, Type)> = HashMap::new();
     let mut wheres: Vec<String> = Vec::new();
     let mut sel: Vec<String> = Vec::new();
     let mut headers: Vec<String> = Vec::new();
     let mut group_cells: Vec<String> = Vec::new();
+    let mut order_cells: Vec<String> = Vec::new();
 
     // Register an aggregate output label, rejecting a collision with a bound
     // group var or another aggregate label.
@@ -806,20 +807,26 @@ fn lower_query_agg(q: &Query, meta: &RelMeta) -> Result<(String, Vec<String>)> {
 
     for i in 0..terms.len() {
         if consumed[i] { continue; }
-        let cell = format!("\"{}\"", meta.col_name(i));
+        let raw_cell = format!("\"{}\"", meta.col_name(i));
+        let cell = format!("{}.\"{}\"", tbl(&q.head.rel), meta.col_name(i));
+        let display_cell = if meta.cols[i].interned() { sym_decode(&cell) } else { cell.clone() };
         match &terms[i] {
             Term::Wild => {}
-            Term::Str(_) | Term::Int(_) => wheres.push(format!("{cell} = {}", lit_sql(&terms[i]).unwrap())),
+            Term::Str(s) if meta.cols[i].interned() => wheres.push(format!("{raw_cell} = {}", sym_lit(s))),
+            Term::Str(_) | Term::Int(_) => wheres.push(format!("{raw_cell} = {}", lit_sql(&terms[i]).unwrap())),
             Term::Interp(_) => bail!("interpolated string not supported in a query head"),
             Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
             Term::Arith { .. } => bail!("arithmetic not supported in a query head (derive a relation with the computed column and query that)"),
             Term::Var(v) => match canon.get(v) {
-                Some(prev) => wheres.push(format!("{cell} = {prev}")),
+                Some((prev, prev_interned, prev_ty)) => wheres.push(eq_cond(
+                    &cell, Some(meta.cols[i].ty), meta.cols[i].interned(),
+                    prev, Some(*prev_ty), *prev_interned)),
                 None => {
-                    canon.insert(v.clone(), cell.clone());
-                    sel.push(format!("{cell} AS \"{v}\""));
+                    canon.insert(v.clone(), (cell.clone(), meta.cols[i].interned(), meta.cols[i].ty));
+                    sel.push(format!("{display_cell} AS \"{v}\""));
                     headers.push(v.clone());
-                    group_cells.push(cell.clone());
+                    group_cells.push(raw_cell.clone());
+                    order_cells.push(display_cell.clone());
                 }
             },
             Term::Call { name, args } => {
@@ -837,8 +844,13 @@ fn lower_query_agg(q: &Query, meta: &RelMeta) -> Result<(String, Vec<String>)> {
                     }
                     consumed[i + 1] = true;
                     let label = take_label(args, &mut labels)?;
-                    let val_cell = format!("\"{}\"", meta.col_name(i + 1));
-                    sel.push(format!("json_group_object({cell}, {val_cell} ORDER BY {cell}) AS \"{label}\""));
+                    let val_raw_cell = format!("\"{}\"", meta.col_name(i + 1));
+                    let val_cell = format!("{}.\"{}\"", tbl(&q.head.rel), meta.col_name(i + 1));
+                    let key_text = if meta.cols[i].interned() { sym_decode(&cell) } else { cell.clone() };
+                    let val_text = if meta.cols[i + 1].interned() { sym_decode(&val_cell) } else { val_cell.clone() };
+                    let key_agg = if meta.cols[i].interned() { key_text } else { raw_cell.clone() };
+                    let val_agg = if meta.cols[i + 1].interned() { val_text } else { val_raw_cell };
+                    sel.push(format!("json_group_object({key_agg}, {val_agg} ORDER BY {key_agg}) AS \"{label}\""));
                     headers.push(label);
                 } else {
                     if args.len() != 1 {
@@ -849,10 +861,11 @@ fn lower_query_agg(q: &Query, meta: &RelMeta) -> Result<(String, Vec<String>)> {
                         // `ORDER BY <col>` inside the aggregate keeps element order a
                         // pure function of the group's rows, so the JSON text is stable
                         // tick to tick (no spurious daemon rebuild).
-                        AggFn::JsonGroupArray => format!("json_group_array({cell} ORDER BY {cell})"),
+                        AggFn::JsonGroupArray => format!("json_group_array({display_cell} ORDER BY {display_cell})"),
                         // SUM over zero rows is SQL NULL; pin empty-sum to 0.
                         AggFn::Sum => format!("COALESCE(SUM({cell}), 0)"),
-                        AggFn::Count | AggFn::Min | AggFn::Max => format!("{}({cell})", f.sql()),
+                        AggFn::Count => format!("{}({raw_cell})", f.sql()),
+                        AggFn::Min | AggFn::Max => format!("{}({display_cell})", f.sql()),
                         AggFn::JsonGroupObject => unreachable!("handled by the two-arg arm"),
                     };
                     sel.push(format!("{expr} AS \"{label}\""));
@@ -869,7 +882,7 @@ fn lower_query_agg(q: &Query, meta: &RelMeta) -> Result<(String, Vec<String>)> {
         (String::new(), String::new())
     } else {
         (format!(" GROUP BY {}", group_cells.join(", ")),
-         format!(" ORDER BY {}", group_cells.join(", ")))
+         format!(" ORDER BY {}", order_cells.join(", ")))
     };
     let sql = format!("SELECT {} FROM {}{}{}{}",
         sel.join(", "), tbl(&q.head.rel), where_sql, group_sql, order_sql);
@@ -918,10 +931,12 @@ mod tests {
             "rel member(group_col: text, name: text).\n",
             "? member(group_col, json_group_array(names)).\n"));
         let (sql, headers) = lower_query(&q, &rels).unwrap();
-        assert!(sql.contains("json_group_array(\"name\" ORDER BY \"name\") AS \"names\""),
-            "array agg orders inside the call, labeled by the arg var: {sql}");
+        assert!(sql.contains("json_group_array((SELECT content FROM _strings")
+            && sql.contains("ORDER BY (SELECT content FROM _strings")
+            && sql.contains("AS \"names\""),
+            "array agg decodes and orders inside the call, labeled by the arg var: {sql}");
         assert!(sql.contains("GROUP BY \"group_col\""), "group key present: {sql}");
-        assert!(sql.contains("ORDER BY \"group_col\""), "deterministic order by group: {sql}");
+        assert!(sql.contains("ORDER BY (SELECT content FROM _strings"), "deterministic decoded order by group: {sql}");
         assert!(!sql.contains("DISTINCT"), "no DISTINCT under GROUP BY: {sql}");
         assert_eq!(headers, vec!["group_col".to_string(), "names".to_string()]);
     }
@@ -941,7 +956,7 @@ mod tests {
             "rel hit(bucket: text, amount: int).\n",
             "? hit(bucket, sum(total)).\n"));
         let (sql, _) = lower_query(&q, &rels).unwrap();
-        assert!(sql.contains("COALESCE(SUM(\"amount\"), 0) AS \"total\""), "empty-sum pinned to 0: {sql}");
+        assert!(sql.contains("COALESCE(SUM(rel_hit.\"amount\"), 0) AS \"total\""), "empty-sum pinned to 0: {sql}");
     }
 
     /// Zero group vars (all wildcards + one aggregate) = a whole-rel aggregate:
@@ -965,7 +980,7 @@ mod tests {
             "rel line(kind: text, item: text, price: int).\n",
             "? line(\"food\", item, sum(total)).\n"));
         let (sql, _) = lower_query(&q, &rels).unwrap();
-        assert!(sql.contains("WHERE \"kind\" = 'food'"), "literal filters: {sql}");
+        assert!(sql.contains(&format!("WHERE \"kind\" = {}", sym_lit("food"))), "literal filters: {sql}");
         assert!(sql.contains("GROUP BY \"item\""), "grouped by the surviving var: {sql}");
     }
 
@@ -977,8 +992,10 @@ mod tests {
             "rel line(order_id: text, item: text, price: int).\n",
             "? line(order_id, json_group_object(items, prices), _).\n"));
         let (sql, headers) = lower_query(&q, &rels).unwrap();
-        assert!(sql.contains("json_group_object(\"item\", \"price\" ORDER BY \"item\") AS \"items\""),
-            "key = col i, value = col i+1, ordered by key: {sql}");
+        assert!(sql.contains("json_group_object((SELECT content FROM _strings")
+            && sql.contains("\"price\" ORDER BY (SELECT content FROM _strings")
+            && sql.contains("AS \"items\""),
+            "key = col i, value = col i+1, ordered by decoded key: {sql}");
         assert!(sql.contains("GROUP BY \"order_id\""), "{sql}");
         assert_eq!(headers, vec!["order_id".to_string(), "items".to_string()]);
     }

@@ -13,6 +13,7 @@ pub(crate) struct AdjacencyCacheKey {
     pub first_column: String,
     pub second_column: String,
     pub sym_columns: bool,
+    pub row_count: i64,
 }
 
 pub(crate) struct AdjacencyCache {
@@ -270,10 +271,6 @@ impl Engine {
                 let stmts: Vec<(&str, String)> = comp_rules.iter()
                     .map(|&ri| {
                         let sql = lower_rule(derived_rules[ri], &self.rels)?;
-                        if std::env::var_os("DL_PRINT_LOWER").is_some()
-                            && derived_rules[ri].head.rel == "flow_edge" {
-                            eprintln!("[lower-flow-edge] {sql}");
-                        }
                         Ok((derived_rules[ri].head.rel.as_str(), sql))
                     })
                     .collect::<Result<_>>()?;
@@ -1160,12 +1157,26 @@ impl Engine {
     pub(crate) fn load_edges_keyed_cached(
         &self, edge: &str, c0: &str, c1: &str, sym: bool,
     ) -> Result<std::cell::RefMut<'_, AdjacencyCache>> {
+        let row_count: i64 = self.db.conn().query_row(
+            &format!("SELECT COUNT(*) FROM {}", tbl(edge)), [], |row| row.get(0))?;
         let cache_key = AdjacencyCacheKey {
             edge_relation: edge.to_string(),
             first_column: c0.to_string(),
             second_column: c1.to_string(),
             sym_columns: sym,
+            row_count,
         };
+        {
+            let cache_slot = self.adjacency_cache.borrow();
+            if cache_slot.as_ref().is_some_and(|cache| cache.key == cache_key) {
+                if std::env::var_os("DL_BFS_TRACE").is_some() {
+                    eprintln!("[bfs-cache] reuse edge={edge} columns={c0},{c1} sym={sym}");
+                }
+                drop(cache_slot);
+                return Ok(std::cell::RefMut::map(self.adjacency_cache.borrow_mut(),
+                    |cache| cache.as_mut().unwrap()));
+            }
+        }
         let (adjacency, key_to_node, node_keys, text_by_node) =
             self.load_edges_keyed(edge, c0, c1, sym)?;
         if std::env::var_os("DL_BFS_TRACE").is_some() {
