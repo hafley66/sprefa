@@ -6,6 +6,22 @@ use std::time::Duration;
 const FIXPOINT_ROW_MAX_DEFAULT: usize = 5_000_000;
 const SLOW_STMT_AFTER: Duration = Duration::from_secs(10);
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AdjacencyCacheKey {
+    pub edge_relation: String,
+    pub first_column: String,
+    pub second_column: String,
+    pub sym_columns: bool,
+}
+
+pub(crate) struct AdjacencyCache {
+    pub key: AdjacencyCacheKey,
+    pub adjacency: Vec<Vec<u32>>,
+    pub key_to_node: HashMap<i64, u32>,
+    pub node_keys: Vec<i64>,
+    pub text_by_node: Option<Vec<String>>,
+}
+
 /// One watchdog serves a rebuild, avoiding a sleeper thread for every SQL statement.
 struct StmtWatch { tx: Sender<StmtWatchEvent>, thread: Option<JoinHandle<()>> }
 enum StmtWatchEvent { Begin(String), Complete, Shutdown }
@@ -408,13 +424,13 @@ impl Engine {
 
         let is_recursive = |rule: &Rule| rule.body.iter()
             .any(|body_item| matches!(body_item, BodyItem::Pos(atom) if atom.rel == head_rel));
-        let dedup_by_debug = |rule_indices: &[usize]| -> Vec<usize> {
-            let mut seen_debug = std::collections::HashSet::new();
+        let dedup_structurally = |rule_indices: &[usize]| -> Vec<usize> {
+            let mut seen_keys = std::collections::HashSet::new();
             rule_indices.iter().copied()
-                .filter(|&rule_index| seen_debug.insert(derived_rules[rule_index].structural_key()))
+                .filter(|&rule_index| seen_keys.insert(derived_rules[rule_index].structural_key()))
                 .collect()
         };
-        let recursive_indices = dedup_by_debug(&comp_rules.iter().copied()
+        let recursive_indices = dedup_structurally(&comp_rules.iter().copied()
             .filter(|&rule_index| is_recursive(derived_rules[rule_index])).collect::<Vec<_>>());
         if recursive_indices.len() != 1 { miss!(format!("rec rules = {}", recursive_indices.len())); }
         let recursive_rule = derived_rules[recursive_indices[0]];
@@ -490,7 +506,7 @@ impl Engine {
             || edge_meta.cols.iter().any(|column| column.ty != crate::ast::Type::Sym) {
             miss!("edge is not a 2-column sym relation");
         }
-        let base_indices = dedup_by_debug(&comp_rules.iter().copied()
+        let base_indices = dedup_structurally(&comp_rules.iter().copied()
             .filter(|&rule_index| !is_recursive(derived_rules[rule_index])).collect::<Vec<_>>());
         if base_indices.is_empty() { miss!("no base rules"); }
         for &rule_index in &base_indices {
@@ -507,10 +523,13 @@ impl Engine {
         }
 
         let walk_started = std::time::Instant::now();
+        let load_started = std::time::Instant::now();
         let (edge_column_zero, edge_column_one) =
             (edge_meta.cols[0].name.clone(), edge_meta.cols[1].name.clone());
-        let (mut adjacency, mut key_to_node, mut node_keys, _) =
-            self.load_edges_keyed(&edge_rel, &edge_column_zero, &edge_column_one, true)?;
+        let mut adjacency_cache = self.load_edges_keyed_cached(
+            &edge_rel, &edge_column_zero, &edge_column_one, true)?;
+        let load_elapsed = load_started.elapsed();
+        let AdjacencyCache { adjacency, key_to_node, node_keys, .. } = &mut *adjacency_cache;
         let mut tag_ids: HashMap<String, u32> = HashMap::new();
         let mut tag_names: Vec<String> = Vec::new();
         let mut starts: Vec<(u32, u32, i64)> = Vec::new();
@@ -550,7 +569,10 @@ impl Engine {
             starts.push((tag_id, node_id, depth));
         }
 
-        let reached = crate::walk::multi_source_walk(&adjacency, &starts, None, Some(depth_cap));
+        let bfs_started = std::time::Instant::now();
+        let reached = crate::walk::multi_source_walk(&*adjacency, &starts, None, Some(depth_cap));
+        let bfs_elapsed = bfs_started.elapsed();
+        let output_started = std::time::Instant::now();
         self.db.exec(&format!("DELETE FROM {}", tbl(&head_rel)))?;
         let secondary_indexes: Vec<(String, String)> = {
             let mut index_statement = self.db.conn().prepare(
@@ -587,6 +609,11 @@ impl Engine {
         }
         for (_, index_sql) in &secondary_indexes { self.db.exec(index_sql)?; }
         insert_result?;
+        if std::env::var_os("DL_BFS_TRACE").is_some() {
+            eprintln!("[bfs] {head_rel}: load={}ms bfs={}ms out+insert={}ms rows={} nodes={}",
+                load_elapsed.as_millis(), bfs_elapsed.as_millis(), output_started.elapsed().as_millis(),
+                reached.len(), adjacency.len());
+        }
         self.save_stmt_ms_one(&format!("walk:{head_rel}"), walk_started.elapsed().as_millis() as i64)?;
         Ok(true)
     }
@@ -631,13 +658,13 @@ impl Engine {
         // rule reads as two and misses. Set semantics make duplicates a no-op.
         let is_rec = |r: &Rule| r.body.iter()
             .any(|b| matches!(b, BodyItem::Pos(a) if a.rel == head_rel));
-        let dedup_by_debug = |ris: &[usize]| -> Vec<usize> {
+        let dedup_structurally = |ris: &[usize]| -> Vec<usize> {
             let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
             ris.iter().copied()
                 .filter(|&ri| seen.insert(derived_rules[ri].structural_key()))
                 .collect()
         };
-        let rec_ris = dedup_by_debug(&comp_rules.iter().copied()
+        let rec_ris = dedup_structurally(&comp_rules.iter().copied()
             .filter(|&ri| is_rec(derived_rules[ri])).collect::<Vec<_>>());
         if rec_ris.len() != 1 { miss!(format!("rec rules = {}", rec_ris.len())); }
         let rec = derived_rules[rec_ris[0]];
@@ -711,7 +738,7 @@ impl Engine {
 
         // Need at least one base rule to seed the frontier; a pure recursion with
         // no base case produces nothing and is better left to the SQL path.
-        let base_ris = dedup_by_debug(&comp_rules.iter().copied()
+        let base_ris = dedup_structurally(&comp_rules.iter().copied()
             .filter(|&ri| !is_rec(derived_rules[ri])).collect::<Vec<_>>());
         if base_ris.is_empty() { miss!("no base rules"); }
 
@@ -728,12 +755,13 @@ impl Engine {
         //    per-node String. Base nodes with no incident edge are interned on the
         //    fly (recorded, never expanded — no out-edges).
         let (ec0, ec1) = (edge_meta.cols[0].name.clone(), edge_meta.cols[1].name.clone());
-        let (mut adj, mut interner, mut id2key, mut text_by_id) =
-            self.load_edges_keyed(&edge_rel, &ec0, &ec1, sym_edge)?;
+        let mut adjacency_cache = self.load_edges_keyed_cached(&edge_rel, &ec0, &ec1, sym_edge)?;
+        let AdjacencyCache { adjacency: adj, key_to_node: interner,
+            node_keys: id2key, text_by_node: text_by_id, .. } = &mut *adjacency_cache;
         // For a sym graph, keep the base nodes' text (known from the head read) and
         // fetch the rest from `_strings` at output time; text edges carry it all.
         let mut sym_text: HashMap<u32, String> = HashMap::new();
-        let mut intern_key = |key: i64, text: &str,
+        let intern_key = |key: i64, text: &str,
                               adj: &mut Vec<Vec<u32>>,
                               id2key: &mut Vec<i64>,
                               interner: &mut HashMap<i64, u32>,
@@ -769,7 +797,7 @@ impl Engine {
                     }
                 };
                 let key = StringId::of(&node_s).sqlite();
-                let nid = intern_key(key, &node_s, &mut adj, &mut id2key, &mut interner, &mut text_by_id);
+                let nid = intern_key(key, &node_s, adj, id2key, interner, text_by_id);
                 if text_by_id.is_none() { sym_text.entry(nid).or_insert_with(|| node_s.clone()); }
                 starts.push((tid, nid));
             }
@@ -1111,6 +1139,36 @@ impl Engine {
         let mut adj = vec![Vec::new(); id2key.len()];
         for (a, b) in pairs { adj[a as usize].push(b); }
         Ok((adj, interner, id2key, text_by_id))
+    }
+
+    pub(crate) fn load_edges_keyed_cached(
+        &self, edge: &str, c0: &str, c1: &str, sym: bool,
+    ) -> Result<std::cell::RefMut<'_, AdjacencyCache>> {
+        let cache_key = AdjacencyCacheKey {
+            edge_relation: edge.to_string(),
+            first_column: c0.to_string(),
+            second_column: c1.to_string(),
+            sym_columns: sym,
+        };
+        let mut cache_slot = self.adjacency_cache.borrow_mut();
+        let needs_load = cache_slot.as_ref().map_or(true, |cache| cache.key != cache_key);
+        if needs_load {
+            let (adjacency, key_to_node, node_keys, text_by_node) =
+                self.load_edges_keyed(edge, c0, c1, sym)?;
+            if std::env::var_os("DL_BFS_TRACE").is_some() {
+                eprintln!("[bfs-cache] load edge={edge} columns={c0},{c1} sym={sym}");
+            }
+            *cache_slot = Some(AdjacencyCache {
+                key: cache_key,
+                adjacency,
+                key_to_node,
+                node_keys,
+                text_by_node,
+            });
+        } else if std::env::var_os("DL_BFS_TRACE").is_some() {
+            eprintln!("[bfs-cache] reuse edge={edge} columns={c0},{c1} sym={sym}");
+        }
+        Ok(std::cell::RefMut::map(cache_slot, |cache| cache.as_mut().unwrap()))
     }
 
     pub(crate) fn load_edges(&self, edge: &str, c0: &str, c1: &str) -> Result<(Vec<Vec<u32>>, Vec<String>)> {

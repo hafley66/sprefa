@@ -1293,6 +1293,9 @@ pub struct Engine {
     /// edge is reused with zero work; a comment-only edit (rows unchanged) skips
     /// the Tarjan rebuild on the digest check.
     closure_cache: HashMap<String, ClosureCache>,
+    /// One graph adjacency load shared by native reach walks during this tick.
+    /// Cleared at tick entry so a large graph is never retained across ticks.
+    adjacency_cache: std::cell::RefCell<Option<derive::AdjacencyCache>>,
     /// Emit `?` query results as JSON-lines (one object per query) instead of the
     /// human TSV block. For tools/editors consuming answers (`--query-json`).
     query_json: bool,
@@ -1399,6 +1402,7 @@ impl Engine {
             db, rels: HashMap::new(), root, dropped: 0, extraction_drops: Vec::new(), shape_diags: Vec::new(), recondensed: 0,
             node2vec_recomputed: 0,
             closure_cache: HashMap::new(),
+            adjacency_cache: std::cell::RefCell::new(None),
             rev_cache: HashMap::new(),
             rev_sha_cache: HashMap::new(),
             rev_index: std::collections::HashSet::new(),

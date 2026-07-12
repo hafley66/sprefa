@@ -22,16 +22,21 @@ fn sandbox(tag: &str) -> PathBuf {
 
 /// Run `prog`, optionally forcing the SQL fixpoint (bypass the native path).
 fn run(dir: &PathBuf, prog: &str, force_sql: bool) -> String {
+    run_with_trace(dir, prog, force_sql, false).0
+}
+
+fn run_with_trace(dir: &PathBuf, prog: &str, force_sql: bool, trace: bool) -> (String, String) {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let mut cmd = Command::new(DL);
     cmd.arg(dir.join("p.dl")).current_dir(dir)
         .arg("--db").arg(dir.join(if force_sql { "sql.db" } else { "nat.db" }).to_str().unwrap())
         .env("DL_NO_DAEMON", "1")
         .env("SPREFA_CONFIG", "/nonexistent/x.toml");
+    if trace { cmd.env("DL_BFS_TRACE", "1"); }
     if force_sql { cmd.env("DL_NO_HALT_BFS", "1"); }
     let out = cmd.output().expect("run dl");
     assert!(out.status.success(), "dl failed; stderr={}", String::from_utf8_lossy(&out.stderr));
-    String::from_utf8_lossy(&out.stdout).into_owned()
+    (String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
 }
 
 fn run_discovered(dir: &PathBuf, force_sql: bool) -> (String, String) {
@@ -141,7 +146,7 @@ fn native_halt_bfs_row_identical_to_sql_fixpoint() {
 fn native_depth_walk_rows_match_sql_including_depth() {
     let native_dir = sandbox("depth_native");
     let sql_dir = sandbox("depth_sql");
-    let native_entry_stdout = run(&native_dir, DEPTH_PROG, false);
+    let (native_entry_stdout, native_trace) = run_with_trace(&native_dir, DEPTH_PROG, false, true);
     let sql_entry_stdout = run(&sql_dir, DEPTH_PROG, true);
     let native_entry = rows_of(&native_entry_stdout, "entry_reach_node");
     let sql_entry = rows_of(&sql_entry_stdout, "entry_reach_node");
@@ -158,6 +163,8 @@ fn native_depth_walk_rows_match_sql_including_depth() {
     assert_eq!(native_op_raw, sql_op_raw, "op raw rows diverged, including depth");
     assert!(native_entry_raw.iter().any(|row| row.ends_with("\t0")), "entry rows must include depth 0: {native_entry_raw:?}");
     assert!(native_op_raw.iter().any(|row| row.ends_with("\t0")), "op rows must include depth 0: {native_op_raw:?}");
+    assert_eq!(native_trace.matches("[bfs-cache] load edge=flow_edge").count(), 1, "flow_edge should load once per tick:\n{native_trace}");
+    assert!(native_trace.contains("[bfs-cache] reuse edge=flow_edge"), "second reach walk should reuse flow_edge:\n{native_trace}");
 }
 
 #[test]
