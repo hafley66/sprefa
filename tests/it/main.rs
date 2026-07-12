@@ -162,6 +162,7 @@ mod temporal_every;
 mod true_singleton;
 mod type_decl_row;
 mod type_decls;
+mod type_entity_extractor_gaps;
 mod type_entity_xlang;
 mod type_graph;
 mod type_graph_js;

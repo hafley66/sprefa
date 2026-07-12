@@ -3730,7 +3730,26 @@ fn rust_item_entity(
         Item::Struct(s) => e(s.ident.to_string(), rust_line(s.ident.span()), EntityKind::Struct, None, None),
         Item::Enum(en) => e(en.ident.to_string(), rust_line(en.ident.span()), EntityKind::Enum, None, None),
         Item::Union(u) => e(u.ident.to_string(), rust_line(u.ident.span()), EntityKind::Struct, None, None),
-        Item::Trait(t) => e(t.ident.to_string(), rust_line(t.ident.span()), EntityKind::Trait, None, None),
+        Item::Trait(t) => {
+            e(t.ident.to_string(), rust_line(t.ident.span()), EntityKind::Trait, None, None);
+            let owner = Some(t.ident.to_string());
+            for ti in &t.items {
+                // Only default methods (a body inside the trait block) get an
+                // entity row here; a bare signature (no body) has no code to
+                // hang a `type_entity` on and is left to the impl side.
+                if let syn::TraitItem::Fn(m) = ti {
+                    if m.default.is_some() {
+                        e(
+                            m.sig.ident.to_string(),
+                            rust_line(m.sig.ident.span()),
+                            EntityKind::Method,
+                            owner.clone(),
+                            Some(rust_fn_type(&m.sig)),
+                        );
+                    }
+                }
+            }
+        }
         Item::Fn(f) => e(
             f.sig.ident.to_string(),
             rust_line(f.sig.ident.span()),
@@ -4495,7 +4514,10 @@ fn assign_flow(
 fn walk_kotlin_entities(node: tree_sitter::Node, src: &[u8], file: &str, out: &mut Vec<TypeEntity>) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if matches!(child.kind(), "class_declaration" | "object_declaration") {
+        // `companion_object` is a distinct grammar node from `object_declaration`
+        // (a top-level/nested `object Name { ... }`); both mint a `type_entity`
+        // the same way a plain class does.
+        if matches!(child.kind(), "class_declaration" | "object_declaration" | "companion_object") {
             let mut c = child.walk();
             let kids: Vec<tree_sitter::Node> = child.children(&mut c).collect();
             if let Some(id) = kids.iter().find(|n| n.kind() == "type_identifier") {
