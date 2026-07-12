@@ -24,7 +24,6 @@ pub mod lex;
 pub mod lower;
 pub mod lsp;
 pub mod mcp;
-pub mod modgraph;
 pub mod parse;
 pub mod perflog;
 pub mod propose;
@@ -34,8 +33,6 @@ pub mod rels;
 pub mod repo;
 pub mod reserved_names;
 pub mod rspath;
-pub mod scc;
-pub mod walk;
 pub mod scip_import;
 pub mod scip_setup;
 pub mod setup;
@@ -47,8 +44,12 @@ pub mod trace;
 pub mod update;
 pub mod verbs;
 pub mod typecheck;
-pub mod typegraph;
 pub mod watchgate;
+
+/// Pure graph algorithms (`walk`, `scc`, `modgraph`, `typegraph`), grouped under
+/// one module. Re-exported at the crate root so `crate::walk::` etc. still work.
+pub mod graph;
+pub use graph::{modgraph, scc, typegraph, walk};
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
