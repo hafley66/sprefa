@@ -259,6 +259,12 @@ impl Engine {
                     for (rel, sql) in &stmts { timed(rel, sql)?; }
                     continue;
                 }
+                // Native fast path: a tagged, halt-gated forward BFS
+                // (`port_reach`'s contraction shape) runs in one in-memory pass
+                // over src/walk.rs instead of a SQLite semi-naive fixpoint. The
+                // recognizer is strict; a miss falls through to the SQL path
+                // below with identical semantics.
+                if self.try_native_halt_bfs(&comp_rules, derived_rules, &mut timed)? { continue; }
                 // Defense twin of typecheck's `recursive-null-pad`: a NULL-padded
                 // head in this component would re-insert the same row every
                 // iteration (NULL != NULL never dedups), so the delta never
@@ -330,6 +336,237 @@ impl Engine {
             crate::perflog::emit_phase(tick, "derived", t_rebuild.elapsed().as_millis() as u64, &detail);
         }
         Ok(())
+    }
+
+    /// Recognize and natively execute the tagged, halt-gated forward-BFS shape —
+    /// `port_reach`'s graph-contraction walk — bypassing the SQLite semi-naive
+    /// fixpoint. Returns `Ok(true)` iff the component matched AND was executed
+    /// (caller then skips the SQL path); `Ok(false)` is a clean recognizer miss.
+    ///
+    /// The shape (2-col head `head(tag, node)`), any number of base/seed rules
+    /// plus EXACTLY ONE recursive rule of the form
+    ///   `head(tag, node) <- head(tag, mid), !halt(mid, _), edge(mid, node).`
+    /// where `edge` is a 2-col relation. The base rules run first as ordinary
+    /// SQL (they already DELETE-cleared with the rest of the component); their
+    /// output is the BFS start frontier, and the walk (src/walk.rs) replaces the
+    /// head with the full contraction closure — the same rows the fixpoint would
+    /// reach, computed once in memory. Halt nodes are recorded when reached but
+    /// never expanded, exactly as `!halt(mid, _)` gates the recursive hop.
+    fn try_native_halt_bfs(
+        &self,
+        comp_rules: &[usize],
+        derived_rules: &[&Rule],
+        timed: &mut impl FnMut(&str, &str) -> Result<usize>,
+    ) -> Result<bool> {
+        // A/B lever: force every component onto the SQL fixpoint (parity check).
+        if std::env::var_os("DL_NO_HALT_BFS").is_some() { return Ok(false); }
+        macro_rules! miss { ($why:expr) => {{
+            if std::env::var_os("DL_BFS_TRACE").is_some() {
+                eprintln!("[bfs-miss] {}: {}", derived_rules[comp_rules[0]].head.rel, $why);
+            }
+            return Ok(false);
+        }}; }
+        // All component rules must head the same single 2-col, non-key rel.
+        let head_rel = derived_rules[comp_rules[0]].head.rel.clone();
+        if comp_rules.iter().any(|&ri| derived_rules[ri].head.rel != head_rel) { miss!("multi-rel component"); }
+        let head_meta = self.rels.get(&head_rel).unwrap();
+        if head_meta.cols.len() != 2 || head_meta.key.is_some() { miss!("head not 2-col non-key"); }
+
+        // Partition into recursive (body references the head rel) vs base. The
+        // `.dl` discovery merge can load a file's rules in duplicate, so dedup
+        // structurally identical rules first — otherwise the doubled recursive
+        // rule reads as two and misses. Set semantics make duplicates a no-op.
+        let is_rec = |r: &Rule| r.body.iter()
+            .any(|b| matches!(b, BodyItem::Pos(a) if a.rel == head_rel));
+        let dedup_by_debug = |ris: &[usize]| -> Vec<usize> {
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+            ris.iter().copied()
+                .filter(|&ri| seen.insert(format!("{:?}", derived_rules[ri])))
+                .collect()
+        };
+        let rec_ris = dedup_by_debug(&comp_rules.iter().copied()
+            .filter(|&ri| is_rec(derived_rules[ri])).collect::<Vec<_>>());
+        if rec_ris.len() != 1 { miss!(format!("rec rules = {}", rec_ris.len())); }
+        let rec = derived_rules[rec_ris[0]];
+        if rec.has_agg() || rec.temporal.is_some() { miss!("agg/temporal rec rule"); }
+
+        // Recursive head must be exactly (tag, node), both plain vars.
+        let (tag_v, node_v) = match rec.head.terms.as_slice() {
+            [Term::Var(tag), Term::Var(node)] => (tag.as_str(), node.as_str()),
+            _ => miss!("rec head not (Var,Var)"),
+        };
+        // Body must be exactly {self head(tag,mid), !halt(mid,_), edge(mid,node)}.
+        let mut self_atom = None;
+        let mut halt_atom = None;
+        let mut edge_atom = None;
+        for b in &rec.body {
+            match b {
+                BodyItem::Pos(a) if a.rel == head_rel => {
+                    if self_atom.replace(a).is_some() { return Ok(false); }
+                }
+                BodyItem::Neg(a) => {
+                    if halt_atom.replace(a).is_some() { return Ok(false); }
+                }
+                BodyItem::Pos(a) => {
+                    if edge_atom.replace(a).is_some() { return Ok(false); }
+                }
+                other => miss!(format!("body item {:?}", std::mem::discriminant(other))),
+            }
+        }
+        let (Some(self_atom), Some(halt_atom), Some(edge_atom)) = (self_atom, halt_atom, edge_atom)
+            else { miss!("body != {self,halt,edge}"); };
+
+        // self head(tag, mid): tag matches the head's tag var, mid is the walk cursor.
+        let mid_v = match self_atom.terms.as_slice() {
+            [Term::Var(tag), Term::Var(mid)] if tag == tag_v => mid.as_str(),
+            _ => miss!("self atom not (tag,mid)"),
+        };
+        // edge(mid, node): 2-col, first == mid, second == node.
+        match edge_atom.terms.as_slice() {
+            [Term::Var(from), Term::Var(to)] if from == mid_v && to == node_v => {}
+            _ => miss!("edge atom not (mid,node)"),
+        }
+        let edge_rel = edge_atom.rel.clone();
+        // halt(mid, _...): first term == mid, every other term a wildcard.
+        match halt_atom.terms.first() {
+            Some(Term::Var(from)) if from == mid_v => {}
+            _ => miss!("halt atom first != mid"),
+        }
+        if halt_atom.terms[1..].iter().any(|t| !matches!(t, Term::Wild)) { miss!("halt extra cols bound"); }
+        let halt_rel = halt_atom.rel.clone();
+
+        let edge_meta = self.rels.get(&edge_rel)
+            .ok_or_else(|| anyhow::anyhow!("halt-bfs edge relation {edge_rel} not declared"))?;
+        if edge_meta.cols.len() != 2 { miss!("edge not 2-col"); }
+        let halt_meta = self.rels.get(&halt_rel)
+            .ok_or_else(|| anyhow::anyhow!("halt-bfs halt relation {halt_rel} not declared"))?;
+
+        // Node identity must live in ONE space. The head (tag, node) and halt
+        // node column are readable `text`; the edge columns are commonly `sym`
+        // (i64 hashes with the text in `_strings`). Render sym edges back to text
+        // on load so the frontier, halt set, and adjacency all key on the same
+        // readable string. A head/halt column that is itself `sym` would need its
+        // own decode — out of this recognizer's scope, so bail to the SQL path.
+        use crate::ast::Type;
+        if head_meta.cols[0].ty == Type::Sym || head_meta.cols[1].ty == Type::Sym {
+            miss!("head column is sym (unhandled decode)");
+        }
+        if halt_meta.cols[0].ty == Type::Sym { miss!("halt column is sym (unhandled decode)"); }
+        let edge_sym = [edge_meta.cols[0].ty == Type::Sym, edge_meta.cols[1].ty == Type::Sym];
+
+        // Need at least one base rule to seed the frontier; a pure recursion with
+        // no base case produces nothing and is better left to the SQL path.
+        let base_ris = dedup_by_debug(&comp_rules.iter().copied()
+            .filter(|&ri| !is_rec(derived_rules[ri])).collect::<Vec<_>>());
+        if base_ris.is_empty() { miss!("no base rules"); }
+
+        // === recognized: execute ===
+        // 1. Base rules populate the head (already DELETE-cleared) = start frontier.
+        for &ri in &base_ris {
+            let sql = lower_rule(derived_rules[ri], &self.rels)?;
+            timed(&head_rel, &sql)?;
+        }
+
+        let t = std::time::Instant::now();
+        // 2. Edge adjacency, with an owned node interner we can extend for base
+        //    nodes that carry no incident edge (they record themselves, no hops).
+        let (ec0, ec1) = (edge_meta.cols[0].name.clone(), edge_meta.cols[1].name.clone());
+        let (mut adj, mut node_names) = self.load_edges_rendered(&edge_rel, &ec0, &ec1, edge_sym)?;
+        let mut node_id: HashMap<String, u32> =
+            node_names.iter().enumerate().map(|(i, n)| (n.clone(), i as u32)).collect();
+        let mut intern_node = |s: String,
+                               adj: &mut Vec<Vec<u32>>,
+                               node_names: &mut Vec<String>,
+                               node_id: &mut HashMap<String, u32>| -> u32 {
+            if let Some(&i) = node_id.get(&s) { return i; }
+            let i = adj.len() as u32;
+            adj.push(Vec::new());
+            node_names.push(s.clone());
+            node_id.insert(s, i);
+            i
+        };
+
+        // 3. Start frontier: the base head rows (tag, node). Tag has its own id space.
+        let mut tag_id: HashMap<String, u32> = HashMap::new();
+        let mut tag_names: Vec<String> = Vec::new();
+        let mut starts: Vec<(u32, u32)> = Vec::new();
+        {
+            let base_sql = format!("SELECT \"{}\", \"{}\" FROM {}",
+                head_meta.cols[0].name, head_meta.cols[1].name, tbl(&head_rel));
+            let mut stmt = self.db.conn().prepare(&base_sql)?;
+            let rows = stmt.query_map([], |r| Ok((cell_as_string(r, 0)?, cell_as_string(r, 1)?)))?;
+            for row in rows.flatten() {
+                let (tag_s, node_s) = row;
+                let tid = match tag_id.get(&tag_s) {
+                    Some(&i) => i,
+                    None => {
+                        let i = tag_names.len() as u32;
+                        tag_names.push(tag_s.clone());
+                        tag_id.insert(tag_s, i);
+                        i
+                    }
+                };
+                let nid = intern_node(node_s, &mut adj, &mut node_names, &mut node_id);
+                starts.push((tid, nid));
+            }
+        }
+
+        // 4. Halt mask over the (possibly extended) node id space.
+        let mut halt_mask = vec![false; adj.len()];
+        {
+            let hc0 = halt_meta.cols[0].name.clone();
+            let sql = format!("SELECT DISTINCT \"{hc0}\" FROM {}", tbl(&halt_rel));
+            let mut stmt = self.db.conn().prepare(&sql)?;
+            let rows = stmt.query_map([], |r| cell_as_string(r, 0))?;
+            for name in rows.flatten() {
+                if let Some(&id) = node_id.get(&name) { halt_mask[id as usize] = true; }
+            }
+        }
+
+        // 5. Native BFS, then replace the head with the full closure (the result
+        //    is a superset of the base rows, so a clean DELETE + one insert holds).
+        let t_load = t.elapsed();
+        let t_bfs0 = std::time::Instant::now();
+        let pairs = crate::walk::multi_source_halt_bfs(&adj, &starts, &halt_mask);
+        let t_bfs = t_bfs0.elapsed();
+        let t_build0 = std::time::Instant::now();
+        let mut rows: Vec<Vec<Value>> = Vec::with_capacity(pairs.len());
+        for (tid, nid) in pairs {
+            rows.push(vec![
+                Value::Text(tag_names[tid as usize].clone()),
+                Value::Text(node_names[nid as usize].clone()),
+            ]);
+        }
+        let t_build = t_build0.elapsed();
+        let t_ins0 = std::time::Instant::now();
+        self.db.exec(&format!("DELETE FROM {}", tbl(&head_rel)))?;
+        // Bulk-load: with 100k+ rows the per-row maintenance of the head's
+        // SECONDARY indexes dominates the insert. Drop them, insert once, then
+        // rebuild each in a single pass (cheaper than incremental upkeep). The
+        // unique autoindex (NULL `sql` in sqlite_master) stays — set semantics
+        // need it, and the BFS output is already deduped so it never conflicts.
+        // Rebuilt before return, so later strata still read through them.
+        let sidx: Vec<(String, String)> = {
+            let mut stmt = self.db.conn().prepare(
+                "SELECT name, sql FROM sqlite_master \
+                 WHERE tbl_name = ?1 AND type = 'index' AND sql IS NOT NULL")?;
+            let rows = stmt.query_map([tbl(&head_rel)], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+            rows.flatten().collect()
+        };
+        for (name, _) in &sidx { self.db.exec(&format!("DROP INDEX \"{name}\""))?; }
+        let cols: Vec<&str> = head_meta.cols.iter().map(|c| c.name.as_str()).collect();
+        let insert_res = self.db.insert_rows(&tbl(&head_rel), &cols, &rows); // one flush, never N+1
+        // Rebuild the dropped indexes BEFORE propagating any insert error, so a
+        // failure never leaves the head table missing its secondary indexes.
+        for (_, sql) in &sidx { self.db.exec(sql)?; }
+        insert_res?;
+        if std::env::var_os("DL_BFS_TRACE").is_some() {
+            eprintln!("[bfs] {head_rel}: load={}ms bfs={}ms build={}ms insert={}ms rows={}",
+                t_load.as_millis(), t_bfs.as_millis(), t_build.as_millis(),
+                t_ins0.elapsed().as_millis(), rows.len());
+        }
+        self.save_stmt_ms_one(&format!("halt_bfs:{head_rel}"), t.elapsed().as_millis() as i64)?;
+        Ok(true)
     }
 
     /// Semi-naive evaluation of one recursive rel-component. Standard
@@ -531,6 +768,44 @@ impl Engine {
 
     /// Load a 2-col edge relation, intern node names to dense u32 (transient),
     /// return adjacency + id->name. No persistent interning (see plan).
+    /// Like `load_edges`, but decodes `sym`-typed endpoint columns back to their
+    /// readable text via `_strings` so the adjacency keys on the same string
+    /// space as a text-typed frontier/halt set. `sym[i]` selects rendering for
+    /// column i; a false entry reads the column raw (already text). Rows whose
+    /// sym endpoint has no `_strings` row (the empty sentinel) are dropped — a
+    /// flow node is never the empty string, so this can't cut a real edge.
+    pub(crate) fn load_edges_rendered(
+        &self, edge: &str, c0: &str, c1: &str, sym: [bool; 2],
+    ) -> Result<(Vec<Vec<u32>>, Vec<String>)> {
+        if !sym[0] && !sym[1] {
+            return self.load_edges(edge, c0, c1);
+        }
+        let expr = |col: &str, is_sym: bool, alias: &str| {
+            if is_sym { format!("{alias}.content") } else { format!("e.\"{col}\"") }
+        };
+        let mut joins = String::new();
+        if sym[0] { joins.push_str(&format!(" JOIN _strings s0 ON s0.id = e.\"{c0}\"")); }
+        if sym[1] { joins.push_str(&format!(" JOIN _strings s1 ON s1.id = e.\"{c1}\"")); }
+        let sql = format!("SELECT {}, {} FROM {} e{}",
+            expr(c0, sym[0], "s0"), expr(c1, sym[1], "s1"), tbl(edge), joins);
+        let mut stmt = self.db.conn().prepare(&sql)?;
+        let mut intern: HashMap<String, u32> = HashMap::new();
+        let mut names: Vec<String> = Vec::new();
+        let mut pairs: Vec<(u32, u32)> = Vec::new();
+        let rows = stmt.query_map([], |r| Ok((cell_as_string(r, 0)?, cell_as_string(r, 1)?)))?;
+        for row in rows.flatten() {
+            let mut id = |s: String| -> u32 {
+                if let Some(&i) = intern.get(&s) { return i; }
+                let i = names.len() as u32; intern.insert(s.clone(), i); names.push(s); i
+            };
+            let a = id(row.0); let b = id(row.1);
+            pairs.push((a, b));
+        }
+        let mut adj = vec![Vec::new(); names.len()];
+        for (a, b) in pairs { adj[a as usize].push(b); }
+        Ok((adj, names))
+    }
+
     pub(crate) fn load_edges(&self, edge: &str, c0: &str, c1: &str) -> Result<(Vec<Vec<u32>>, Vec<String>)> {
         let sql = format!("SELECT \"{c0}\", \"{c1}\" FROM {}", tbl(edge));
         let mut stmt = self.db.conn().prepare(&sql)?;
