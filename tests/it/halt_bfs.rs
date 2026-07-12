@@ -46,6 +46,27 @@ fn rows_of(stdout: &str, head: &str) -> Vec<String> {
     out
 }
 
+fn raw_depth_rows(db: &PathBuf, table: &str, columns: &str) -> Vec<String> {
+    let connection = rusqlite::Connection::open(db).unwrap();
+    let mut statement = connection.prepare(&format!("SELECT {columns} FROM rel_{table}")).unwrap();
+    let mut rows = statement.query([]).unwrap();
+    let mut output = Vec::new();
+    while let Some(row) = rows.next().unwrap() {
+        let mut cells = Vec::new();
+        for column_index in 0..row.as_ref().column_count() {
+            cells.push(match row.get_ref(column_index).unwrap() {
+                rusqlite::types::ValueRef::Integer(value) => value.to_string(),
+                rusqlite::types::ValueRef::Text(value) => String::from_utf8_lossy(value).into_owned(),
+                rusqlite::types::ValueRef::Null => String::new(),
+                other => format!("{other:?}"),
+            });
+        }
+        output.push(cells.join("\t"));
+    }
+    output.sort();
+    output
+}
+
 // A contraction walk with a halt node and a cycle, all in plain `text` node
 // space (no `sym` decode needed). Graph:
 //   s -> a -> b -> t ,  b -> a (cycle) ,  a is a HALT node (a port pin).
@@ -68,6 +89,23 @@ reach(port, node) <- reach(port, mid), !halt(mid, _), edge(mid, node).
 ? reach(port, node).
 "#;
 
+const DEPTH_PROG: &str = r#"
+rel flow_edge(from: sym, to: sym).
+flow_edge("a", "b"). flow_edge("b", "c"). flow_edge("a", "c"). flow_edge("c", "a").
+rel entry_seed(node: sym).
+entry_seed("a").
+rel entry_reach_node(node: sym, d: int) key(node) merge(MinBy(d)).
+entry_reach_node(node, 0) <- entry_seed(node).
+entry_reach_node(to, d0 + 1) <- entry_reach_node(from, d0), flow_edge(from, to), d0 < 2.
+rel op_reach_seed(op: text, node: sym).
+op_reach_seed("load", "a").
+rel op_reach_node(op: text, n: sym, d: int) key(op, n) merge(MinBy(d)).
+op_reach_node(op, n, 0) <- op_reach_seed(op, n).
+op_reach_node(op, to, d0 + 1) <- op_reach_node(op, from, d0), flow_edge(from, to), d0 < 2.
+? entry_reach_node(node, d).
+? op_reach_node(op, n, d).
+"#;
+
 #[test]
 fn native_halt_bfs_matches_hand_computed_contraction() {
     let dir = sandbox("hand");
@@ -83,4 +121,27 @@ fn native_halt_bfs_row_identical_to_sql_fixpoint() {
     let native = rows_of(&run(&dir_n, PROG, false), "reach");
     let sql = rows_of(&run(&dir_s, PROG, true), "reach");
     assert_eq!(native, sql, "native BFS diverged from SQL fixpoint\nnative={native:?}\nsql={sql:?}");
+}
+
+#[test]
+fn native_depth_walk_rows_match_sql_including_depth() {
+    let native_dir = sandbox("depth_native");
+    let sql_dir = sandbox("depth_sql");
+    let native_entry_stdout = run(&native_dir, DEPTH_PROG, false);
+    let sql_entry_stdout = run(&sql_dir, DEPTH_PROG, true);
+    let native_entry = rows_of(&native_entry_stdout, "entry_reach_node");
+    let sql_entry = rows_of(&sql_entry_stdout, "entry_reach_node");
+    assert_eq!(native_entry, sql_entry, "entry depth rows diverged\nnative={native_entry:?}\nsql={sql_entry:?}\nstdout={native_entry_stdout}");
+
+    let native_op = rows_of(&run(&native_dir, DEPTH_PROG, false), "op_reach_node");
+    let sql_op = rows_of(&run(&sql_dir, DEPTH_PROG, true), "op_reach_node");
+    assert_eq!(native_op, sql_op, "op depth rows diverged\nnative={native_op:?}\nsql={sql_op:?}");
+    let native_entry_raw = raw_depth_rows(&native_dir.join("nat.db"), "entry_reach_node", "node, d");
+    let sql_entry_raw = raw_depth_rows(&sql_dir.join("sql.db"), "entry_reach_node", "node, d");
+    let native_op_raw = raw_depth_rows(&native_dir.join("nat.db"), "op_reach_node", "op, n, d");
+    let sql_op_raw = raw_depth_rows(&sql_dir.join("sql.db"), "op_reach_node", "op, n, d");
+    assert_eq!(native_entry_raw, sql_entry_raw, "entry raw rows diverged, including depth");
+    assert_eq!(native_op_raw, sql_op_raw, "op raw rows diverged, including depth");
+    assert!(native_entry_raw.iter().any(|row| row.ends_with("\t0")), "entry rows must include depth 0: {native_entry_raw:?}");
+    assert!(native_op_raw.iter().any(|row| row.ends_with("\t0")), "op rows must include depth 0: {native_op_raw:?}");
 }
