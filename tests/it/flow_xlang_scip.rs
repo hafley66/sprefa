@@ -106,7 +106,7 @@ fn scip_resolves_generated_symbol_and_its_consumers() {
 
     // gen_def: the generated lib symbol for getPet, keyed by symbol + banner.
     let gens: Vec<(String, String, String)> = eng
-        .query_sql("SELECT \"op\",\"sym\",\"file\" FROM rel_gen_def", &[]).unwrap()
+        .query_sql("SELECT \"op\",\"sym\",\"file\" FROM rel_gen_def_txt", &[]).unwrap()
         .into_iter().map(|r| (s(&r[0]), s(&r[1]), s(&r[2]))).collect();
     let getpet_gen: Vec<_> = gens.iter().filter(|(op, _, _)| op == "getPet").collect();
     assert_eq!(getpet_gen.len(), 1, "getPet has exactly one generated symbol: {gens:?}");
@@ -114,7 +114,7 @@ fn scip_resolves_generated_symbol_and_its_consumers() {
 
     // impl_sym: the handwritten Rust backend handler (distinct symbol, .rs role).
     let impls: Vec<(String, String, String)> = eng
-        .query_sql("SELECT \"op\",\"sym\",\"file\" FROM rel_impl_sym", &[]).unwrap()
+        .query_sql("SELECT \"op\",\"sym\",\"file\" FROM rel_impl_sym_txt", &[]).unwrap()
         .into_iter().map(|r| (s(&r[0]), s(&r[1]), s(&r[2]))).collect();
     let getpet_impls: Vec<_> = impls.iter().filter(|(op, _, _)| op == "getPet").collect();
     assert_eq!(getpet_impls.len(), 1, "getPet has exactly one impl (the Rust handler): {impls:?}");
@@ -127,7 +127,7 @@ fn scip_resolves_generated_symbol_and_its_consumers() {
     // The app's import + two callsites all reference the LIB's getPet symbol, so
     // the consuming file lights up (deduped to one file-level row by the loader).
     let consumers: Vec<(String, String)> = eng
-        .query_sql("SELECT \"op\",\"file\" FROM rel_consumer", &[]).unwrap()
+        .query_sql("SELECT \"op\",\"file\" FROM rel_consumer_txt", &[]).unwrap()
         .into_iter().map(|r| (s(&r[0]), s(&r[1]))).collect();
     assert!(consumers.iter().any(|(op, f)| op == "getPet" && f == "ts/app/pages.ts"),
         "getPet blast radius includes the consuming app: {consumers:?}");

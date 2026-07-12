@@ -108,7 +108,7 @@ fn real_merged_index_disambiguates_handler_from_stub() {
 
     // gen_def: the generated lib symbol for getPet lives in the generated TS lib.
     let gens: Vec<(String, String, String)> = eng
-        .query_sql("SELECT \"op\",\"sym\",\"file\" FROM rel_gen_def", &[]).unwrap()
+        .query_sql("SELECT \"op\",\"sym\",\"file\" FROM rel_gen_def_txt", &[]).unwrap()
         .into_iter().map(|r| (s(&r[0]), s(&r[1]), s(&r[2]))).collect();
     let getpet_gen: Vec<_> = gens.iter().filter(|(op, _, _)| op == "getPet").collect();
     assert_eq!(getpet_gen.len(), 1, "getPet has exactly one generated symbol: {gens:?}");
@@ -116,7 +116,7 @@ fn real_merged_index_disambiguates_handler_from_stub() {
 
     // impl_sym: the handwritten Rust backend handler (the .rs role filter).
     let impls: Vec<(String, String, String)> = eng
-        .query_sql("SELECT \"op\",\"sym\",\"file\" FROM rel_impl_sym", &[]).unwrap()
+        .query_sql("SELECT \"op\",\"sym\",\"file\" FROM rel_impl_sym_txt", &[]).unwrap()
         .into_iter().map(|r| (s(&r[0]), s(&r[1]), s(&r[2]))).collect();
     let getpet_impls: Vec<_> = impls.iter().filter(|(op, _, _)| op == "getPet").collect();
     assert_eq!(getpet_impls.len(), 1, "getPet has exactly one impl (the Rust handler): {impls:?}");
@@ -126,7 +126,7 @@ fn real_merged_index_disambiguates_handler_from_stub() {
     // The consuming app file must light up (its callsites + import resolve across
     // the package boundary to the lib def).
     let consumers: Vec<(String, String)> = eng
-        .query_sql("SELECT \"op\",\"file\" FROM rel_consumer", &[]).unwrap()
+        .query_sql("SELECT \"op\",\"file\" FROM rel_consumer_txt", &[]).unwrap()
         .into_iter().map(|r| (s(&r[0]), s(&r[1]))).collect();
     assert!(consumers.iter().any(|(op, f)| op == "getPet" && f == "ts/app/pages.ts"),
         "getPet blast radius must include the consuming app: {consumers:?}");

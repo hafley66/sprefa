@@ -110,7 +110,7 @@ fn union_carries_every_edge_common_carries_only_the_shared_spine() {
     eng.tick(&prog, true).unwrap();
 
     let union_rows = eng.query_sql(
-        "SELECT src_sym, dst_sym FROM rel_flow_union_edge WHERE name = 'checkout'", &[]).unwrap();
+        "SELECT src_sym, dst_sym FROM rel_flow_union_edge_txt WHERE name = 'checkout'", &[]).unwrap();
     let union_pairs: Vec<(String, String)> = union_rows.iter()
         .map(|r| (s(&r[0]), s(&r[1]))).collect();
     assert_eq!(union_pairs.len(), 2, "union carries both edges: {union_pairs:?}");
@@ -120,7 +120,7 @@ fn union_carries_every_edge_common_carries_only_the_shared_spine() {
         "union has the take-1-only detour validate_cart->apply_discount: {union_pairs:?}");
 
     let common_rows = eng.query_sql(
-        "SELECT src_sym, dst_sym FROM rel_flow_common_edge WHERE name = 'checkout'", &[]).unwrap();
+        "SELECT src_sym, dst_sym FROM rel_flow_common_edge_txt WHERE name = 'checkout'", &[]).unwrap();
     let common_pairs: Vec<(String, String)> = common_rows.iter()
         .map(|r| (s(&r[0]), s(&r[1]))).collect();
     assert_eq!(common_pairs.len(), 1, "common carries only the shared edge: {common_pairs:?}");
@@ -146,12 +146,12 @@ fn unnamed_session_defaults_to_its_own_flow() {
     eng.tick(&prog, true).unwrap();
 
     let take_of_rows = eng.query_sql(
-        "SELECT name, session FROM rel_take_of WHERE session = 'solo'", &[]).unwrap();
+        "SELECT name, session FROM rel_take_of_txt WHERE session = 'solo'", &[]).unwrap();
     assert_eq!(take_of_rows.len(), 1, "solo gets exactly one take_of row: {take_of_rows:?}");
     assert_eq!(s(&take_of_rows[0][0]), "solo", "the identity name is the session itself");
 
     let stat_rows = eng.query_sql(
-        "SELECT takes, edges FROM rel_flow_stat WHERE name = 'solo'", &[]).unwrap();
+        "SELECT takes, edges FROM rel_flow_stat_txt WHERE name = 'solo'", &[]).unwrap();
     assert_eq!(stat_rows.len(), 1, "solo has one flow_stat row: {stat_rows:?}");
     assert_eq!(i(&stat_rows[0][0]), 1, "one take");
     assert_eq!(i(&stat_rows[0][1]), 1, "one edge");
@@ -175,7 +175,7 @@ fn hover_note_lands_at_zero_based_member_lines() {
     eng.tick(&prog, true).unwrap();
 
     let rows = eng.query_sql(
-        "SELECT path, line, col, end_line, end_col, md FROM rel_hover_note ORDER BY line", &[]).unwrap();
+        "SELECT path, line, col, end_line, end_col, md FROM rel_hover_note_txt ORDER BY line", &[]).unwrap();
     assert_eq!(rows.len(), 2, "one hover_note per flow member: {rows:?}");
 
     // checkout_start: decl line 1 (1-based) -> hover_note line 0.
@@ -209,15 +209,15 @@ fn jump_outside_every_span_is_a_silent_lift_miss() {
 
     // The jump itself extracted fine (both from and to were present).
     let jump_rows = eng.query_sql(
-        "SELECT seq FROM rel_goto_jump WHERE session = 'misstake'", &[]).unwrap();
+        "SELECT seq FROM rel_goto_jump_txt WHERE session = 'misstake'", &[]).unwrap();
     assert_eq!(jump_rows.len(), 1, "the from/to jump extracted despite the miss: {jump_rows:?}");
 
     // But the destination never lifted to a sym, so no edge.
     let dst_rows = eng.query_sql(
-        "SELECT sym FROM rel_jump_dst_sym WHERE session = 'misstake'", &[]).unwrap();
+        "SELECT sym FROM rel_jump_dst_sym_txt WHERE session = 'misstake'", &[]).unwrap();
     assert!(dst_rows.is_empty(), "the comment line lifts to no sym: {dst_rows:?}");
 
     let edge_rows = eng.query_sql(
-        "SELECT src_sym, dst_sym FROM rel_take_edge WHERE session = 'misstake'", &[]).unwrap();
+        "SELECT src_sym, dst_sym FROM rel_take_edge_txt WHERE session = 'misstake'", &[]).unwrap();
     assert!(edge_rows.is_empty(), "no take_edge from a lift miss: {edge_rows:?}");
 }

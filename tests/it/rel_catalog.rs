@@ -39,7 +39,7 @@ fn fn_catalog_is_self_describing_and_complete() {
     eng.tick(&prog, true).unwrap();
 
     let rows = eng.query_sql(
-        "SELECT \"name\",\"arity\",\"group\",\"doc\" FROM rel_fn_catalog", &[]).unwrap();
+        "SELECT \"name\",\"arity\",\"group\",\"doc\" FROM rel_fn_catalog_txt", &[]).unwrap();
     assert!(rows.iter().any(|r| s(&r[0]) == "split"), "fn_catalog lists split");
     assert!(rows.iter().any(|r| s(&r[0]) == "replace_re"), "fn_catalog lists the new replace_re");
     for r in &rows {
@@ -62,7 +62,7 @@ fn rel_catalog_is_self_describing_and_complete() {
     eng.tick(&prog, true).unwrap();
 
     let rows = eng.query_sql(
-        "SELECT \"name\",\"group\",\"cols\",\"doc\" FROM rel_rel_catalog", &[]).unwrap();
+        "SELECT \"name\",\"group\",\"cols\",\"doc\" FROM rel_rel_catalog_txt", &[]).unwrap();
 
     // one row per declared built-in, none blank.
     assert_eq!(rows.len(), engine::builtin_rel_names().len(),

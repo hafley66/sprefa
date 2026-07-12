@@ -25,7 +25,7 @@ fn run() -> Engine {
 
 /// (op, role, file) rows of the `flow` relation.
 fn flow(eng: &Engine) -> Vec<(String, String, String)> {
-    eng.query_sql("SELECT \"op\",\"role\",\"file\" FROM rel_flow", &[])
+    eng.query_sql("SELECT \"op\",\"role\",\"file\" FROM rel_flow_txt", &[])
         .unwrap().into_iter()
         .map(|r| (s(&r[0]), s(&r[1]), s(&r[2])))
         .collect()
@@ -37,7 +37,7 @@ fn spec_op_resolves_across_languages() {
     let eng = run();
 
     // the spec (source of truth) yields its operationIds.
-    let ops: Vec<String> = eng.query_sql("SELECT \"op\" FROM rel_spec_op", &[])
+    let ops: Vec<String> = eng.query_sql("SELECT \"op\" FROM rel_spec_op_txt", &[])
         .unwrap().into_iter().map(|r| s(&r[0])).collect();
     assert!(ops.contains(&"getPet".to_string()), "spec_op missing getPet: {ops:?}");
 

@@ -126,7 +126,7 @@ fn initialize(s: &mut Session, root: &Path) {
 }
 
 /// A fixture with five scanned files (a..e) so paging has something to window.
-/// `seen(p)` sorts by path, so `SELECT p FROM rel_seen ORDER BY p` is stable.
+/// `seen(p)` sorts by path, so `SELECT p FROM rel_seen_txt ORDER BY p` is stable.
 fn spawn_five_file_session(tag: &str) -> (Session, PathBuf) {
     let root = sandbox(tag);
     fs::create_dir_all(root.join("src")).unwrap();
@@ -153,7 +153,7 @@ fn paged_query_returns_window_and_total() {
     let (mut s, _root) = spawn_five_file_session("page");
 
     let result = s.request(2, "dl/query", serde_json::json!({
-        "sql": "SELECT p FROM rel_seen ORDER BY p", "limit": 2, "offset": 1}));
+        "sql": "SELECT p FROM rel_seen_txt ORDER BY p", "limit": 2, "offset": 1}));
     let rows = result.get("rows").and_then(|r| r.as_array()).unwrap_or_else(|| panic!(
         "expected rows, got: {result}\nstderr: {}", drain_stderr(&mut s.child)));
     let paths: Vec<&str> = rows.iter()
@@ -164,7 +164,7 @@ fn paged_query_returns_window_and_total() {
 
     // offset past the end: empty page, total still the full count.
     let result = s.request(3, "dl/query", serde_json::json!({
-        "sql": "SELECT p FROM rel_seen ORDER BY p", "limit": 10, "offset": 99}));
+        "sql": "SELECT p FROM rel_seen_txt ORDER BY p", "limit": 10, "offset": 99}));
     assert_eq!(result.get("rows").and_then(|r| r.as_array()).map(|a| a.len()), Some(0),
         "offset past the end yields no rows: {result}");
     assert_eq!(result.get("total").and_then(|t| t.as_i64()), Some(5),
@@ -172,7 +172,7 @@ fn paged_query_returns_window_and_total() {
 
     // limit present, offset omitted -> defaults to 0 (the first page).
     let result = s.request(4, "dl/query", serde_json::json!({
-        "sql": "SELECT p FROM rel_seen ORDER BY p", "limit": 2}));
+        "sql": "SELECT p FROM rel_seen_txt ORDER BY p", "limit": 2}));
     let paths: Vec<&str> = result.get("rows").and_then(|r| r.as_array()).unwrap()
         .iter().filter_map(|r| r.get(0).and_then(|v| v.as_str())).collect();
     assert_eq!(paths, vec!["src/a.rs", "src/b.rs"], "omitted offset defaults to 0: {result}");
@@ -180,7 +180,7 @@ fn paged_query_returns_window_and_total() {
     // Paging composes with the caller's own positional params: the LIMIT/OFFSET
     // placeholders bind AFTER the user param.
     let result = s.request(5, "dl/query", serde_json::json!({
-        "sql": "SELECT p FROM rel_seen WHERE p > ? ORDER BY p",
+        "sql": "SELECT p FROM rel_seen_txt WHERE p > ? ORDER BY p",
         "params": ["src/a.rs"], "limit": 2, "offset": 0}));
     let paths: Vec<&str> = result.get("rows").and_then(|r| r.as_array()).unwrap()
         .iter().filter_map(|r| r.get(0).and_then(|v| v.as_str())).collect();
@@ -197,14 +197,14 @@ fn count_query_returns_total_only() {
     let (mut s, _root) = spawn_five_file_session("count");
 
     let result = s.request(2, "dl/query", serde_json::json!({
-        "sql": "SELECT p FROM rel_seen", "count": true}));
+        "sql": "SELECT p FROM rel_seen_txt", "count": true}));
     assert_eq!(result.get("total").and_then(|t| t.as_i64()), Some(5),
         "count mode returns the total: {result}");
     assert!(result.get("rows").is_none(), "count mode carries no rows key: {result}");
 
     // count respects the caller's params.
     let result = s.request(3, "dl/query", serde_json::json!({
-        "sql": "SELECT p FROM rel_seen WHERE p = ?", "params": ["src/c.rs"], "count": true}));
+        "sql": "SELECT p FROM rel_seen_txt WHERE p = ?", "params": ["src/c.rs"], "count": true}));
     assert_eq!(result.get("total").and_then(|t| t.as_i64()), Some(1),
         "count with a bound param: {result}");
 
@@ -217,7 +217,7 @@ fn legacy_query_shape_unchanged() {
     let (mut s, _root) = spawn_five_file_session("legacy");
 
     let result = s.request(2, "dl/query", serde_json::json!({
-        "sql": "SELECT p FROM rel_seen ORDER BY p"}));
+        "sql": "SELECT p FROM rel_seen_txt ORDER BY p"}));
     let rows = result.get("rows").and_then(|r| r.as_array()).unwrap_or_else(|| panic!(
         "expected rows, got: {result}\nstderr: {}", drain_stderr(&mut s.child)));
     let paths: Vec<&str> = rows.iter()

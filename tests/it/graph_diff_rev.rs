@@ -127,12 +127,12 @@ fn rev_pair_diff_reports_exact_added_and_removed() {
     for _ in 0..4 { eng.tick(&prog, true).unwrap(); }
 
     // The twins spanned both revs (sanity: the data-driven base scan resolved).
-    assert_eq!(col_set(&eng, "SELECT DISTINCT rev FROM rel_type_entity_rev").len(), 2,
+    assert_eq!(col_set(&eng, "SELECT DISTINCT rev FROM rel_type_entity_rev_txt").len(), 2,
         "type_entity_rev spans HEAD + WORK");
 
     // Nodes: exactly Gamma added, Beta removed (Alpha unchanged, present both).
-    let added = col_set(&eng, "SELECT sym FROM rel_node_added");
-    let removed = col_set(&eng, "SELECT sym FROM rel_node_removed");
+    let added = col_set(&eng, "SELECT sym FROM rel_node_added_txt");
+    let removed = col_set(&eng, "SELECT sym FROM rel_node_removed_txt");
     assert_eq!(added.len(), 1, "one node added: {added:?}");
     assert_eq!(removed.len(), 1, "one node removed: {removed:?}");
     assert!(added.iter().next().unwrap().ends_with("::struct::Gamma"),
@@ -140,20 +140,20 @@ fn rev_pair_diff_reports_exact_added_and_removed() {
     assert!(removed.iter().next().unwrap().ends_with("::struct::Beta"),
         "Beta is the removed node: {removed:?}");
     // Alpha never shows up in either set.
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_added WHERE sym LIKE '%Alpha'"), 0);
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_removed WHERE sym LIKE '%Alpha'"), 0);
+    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_added_txt WHERE sym LIKE '%Alpha'"), 0);
+    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_removed_txt WHERE sym LIKE '%Alpha'"), 0);
 
     // Edges: exactly one field link added (Gamma->Alpha) and one removed
     // (Beta->Alpha).
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_added"), 1,
+    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_added_txt"), 1,
         "one edge added (Gamma -> Alpha)");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_removed"), 1,
+    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_removed_txt"), 1,
         "one edge removed (Beta -> Alpha)");
     assert_eq!(count(&eng,
-        "SELECT COUNT(*) FROM rel_edge_added WHERE a LIKE '%::struct::Gamma' AND b LIKE '%::struct::Alpha'"), 1,
+        "SELECT COUNT(*) FROM rel_edge_added_txt WHERE a LIKE '%::struct::Gamma' AND b LIKE '%::struct::Alpha'"), 1,
         "the added edge is Gamma -> Alpha");
     assert_eq!(count(&eng,
-        "SELECT COUNT(*) FROM rel_edge_removed WHERE a LIKE '%::struct::Beta' AND b LIKE '%::struct::Alpha'"), 1,
+        "SELECT COUNT(*) FROM rel_edge_removed_txt WHERE a LIKE '%::struct::Beta' AND b LIKE '%::struct::Alpha'"), 1,
         "the removed edge is Beta -> Alpha");
 }
 
@@ -183,18 +183,18 @@ fn rev_pair_diff_is_empty_when_work_equals_base() {
     for _ in 0..4 { eng.tick(&prog, true).unwrap(); }
 
     // Both revs populated, with identical sym sets (the diff's premise).
-    assert_eq!(col_set(&eng, "SELECT DISTINCT rev FROM rel_type_entity_rev").len(), 2,
+    assert_eq!(col_set(&eng, "SELECT DISTINCT rev FROM rel_type_entity_rev_txt").len(), 2,
         "type_entity_rev spans HEAD + WORK");
-    let work = col_set(&eng, "SELECT sym FROM rel_bare_node WHERE repo = 'WORK'");
+    let work = col_set(&eng, "SELECT sym FROM rel_bare_node_txt WHERE repo = 'WORK'");
     assert!(!work.is_empty(), "WORK nodes exist");
-    assert_eq!(work, col_set(&eng, "SELECT sym FROM rel_bare_node WHERE repo <> 'WORK'"),
+    assert_eq!(work, col_set(&eng, "SELECT sym FROM rel_bare_node_txt WHERE repo <> 'WORK'"),
         "the two revs carry identical sym sets");
 
     // The diff is empty across the board.
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_added"), 0, "no nodes added");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_removed"), 0, "no nodes removed");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_added"), 0, "no edges added");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_removed"), 0, "no edges removed");
+    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_added_txt"), 0, "no nodes added");
+    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_removed_txt"), 0, "no nodes removed");
+    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_added_txt"), 0, "no edges added");
+    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_removed_txt"), 0, "no edges removed");
 }
 
 // ============================================================================
@@ -332,15 +332,15 @@ fn scenario_s1_call_site_move() {
          pub fn other() { helper(); }\n").unwrap();
 
     let eng = run_full(&d);
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_added"), 0, "S1: no nodes added");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_removed"), 0, "S1: no nodes removed");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_added"), 1, "S1: one edge added");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_removed"), 1, "S1: one edge removed");
+    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_added_txt"), 0, "S1: no nodes added");
+    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_removed_txt"), 0, "S1: no nodes removed");
+    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_added_txt"), 1, "S1: one edge added");
+    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_removed_txt"), 1, "S1: one edge removed");
     assert_eq!(count(&eng,
-        "SELECT COUNT(*) FROM rel_edge_added WHERE a LIKE '%::function::other' AND b LIKE '%::function::helper' AND kind = 'call'"),
+        "SELECT COUNT(*) FROM rel_edge_added_txt WHERE a LIKE '%::function::other' AND b LIKE '%::function::helper' AND kind = 'call'"),
         1, "S1: added call edge is other -> helper");
     assert_eq!(count(&eng,
-        "SELECT COUNT(*) FROM rel_edge_removed WHERE a LIKE '%::function::run' AND b LIKE '%::function::helper' AND kind = 'call'"),
+        "SELECT COUNT(*) FROM rel_edge_removed_txt WHERE a LIKE '%::function::run' AND b LIKE '%::function::helper' AND kind = 'call'"),
         1, "S1: removed call edge is run -> helper");
 }
 
@@ -363,15 +363,15 @@ fn scenario_s2_field_fill_df() {
          pub fn make() -> Config { Config { name: 0, level: 0 } }\n").unwrap();
 
     let eng = run_full(&d);
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_removed"), 0, "S2: no nodes removed");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_removed"), 0, "S2: no edges removed");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_added"), 1, "S2: one node added");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_added"), 1, "S2: one edge added");
+    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_removed_txt"), 0, "S2: no nodes removed");
+    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_removed_txt"), 0, "S2: no edges removed");
+    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_added_txt"), 1, "S2: one node added");
+    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_added_txt"), 1, "S2: one edge added");
     assert_eq!(count(&eng,
-        "SELECT COUNT(*) FROM rel_node_added WHERE sym LIKE '%::struct::Config::field::level' AND kind = 'field'"),
+        "SELECT COUNT(*) FROM rel_node_added_txt WHERE sym LIKE '%::struct::Config::field::level' AND kind = 'field'"),
         1, "S2: added node is the Config.level field");
     assert_eq!(count(&eng,
-        "SELECT COUNT(*) FROM rel_edge_added WHERE a LIKE '%::function::make' AND b LIKE '%::struct::Config::field::level' AND kind = 'fill'"),
+        "SELECT COUNT(*) FROM rel_edge_added_txt WHERE a LIKE '%::function::make' AND b LIKE '%::struct::Config::field::level' AND kind = 'fill'"),
         1, "S2: added edge is make -> Config.level fill");
 }
 
@@ -393,14 +393,14 @@ fn scenario_s3_delete_fn() {
         "pub fn run() { helper(); }\n").unwrap();
 
     let eng = run_full(&d);
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_added"), 0, "S3: no nodes added");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_added"), 0, "S3: no edges added");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_removed"), 1, "S3: one node removed");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_removed"), 1, "S3: one edge removed");
+    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_added_txt"), 0, "S3: no nodes added");
+    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_added_txt"), 0, "S3: no edges added");
+    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_removed_txt"), 1, "S3: one node removed");
+    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_removed_txt"), 1, "S3: one edge removed");
     assert_eq!(count(&eng,
-        "SELECT COUNT(*) FROM rel_node_removed WHERE sym LIKE '%::function::helper' AND kind = 'function'"),
+        "SELECT COUNT(*) FROM rel_node_removed_txt WHERE sym LIKE '%::function::helper' AND kind = 'function'"),
         1, "S3: removed node is the helper fn");
     assert_eq!(count(&eng,
-        "SELECT COUNT(*) FROM rel_edge_removed WHERE a LIKE '%::function::run' AND b LIKE '%::function::helper' AND kind = 'call'"),
+        "SELECT COUNT(*) FROM rel_edge_removed_txt WHERE a LIKE '%::function::run' AND b LIKE '%::function::helper' AND kind = 'call'"),
         1, "S3: removed edge is run -> helper");
 }

@@ -98,7 +98,7 @@ fn async_request_drains_and_lands_response() {
     let pend = rows(&dbp, "SELECT kind, args_json, done FROM pending_effect ORDER BY args_json");
     assert_eq!(pend.len(), 2, "one pending_effect per want row");
     assert!(pend.iter().all(|r| r[0] == "resp" && r[2] == "0"), "queued, not done: {pend:?}");
-    assert_eq!(rows(&dbp, "SELECT * FROM rel_resp").len(), 0, "no response before drain");
+    assert_eq!(rows(&dbp, "SELECT * FROM rel_resp_txt").len(), 0, "no response before drain");
 
     // Off-tick: the daemon drains. status comes back as a string; the int column
     // takes it by affinity.
@@ -115,7 +115,7 @@ fn async_request_drains_and_lands_response() {
 
     // Tick 2: resp now populated; ok derives from the 200 row only.
     eng.tick(&prog, true).unwrap();
-    let mut got = rows(&dbp, "SELECT key, status, body FROM rel_resp ORDER BY key");
+    let mut got = rows(&dbp, "SELECT key, status, body FROM rel_resp_txt ORDER BY key");
     got.sort();
     assert_eq!(
         got,
@@ -124,7 +124,7 @@ fn async_request_drains_and_lands_response() {
             vec!["home".to_string(), "200".to_string(), "HOME".to_string()],
         ]
     );
-    assert_eq!(rows(&dbp, "SELECT key FROM rel_ok"), vec![vec!["home".to_string()]]);
+    assert_eq!(rows(&dbp, "SELECT key FROM rel_ok_txt"), vec![vec!["home".to_string()]]);
 
     // All pending rows are now done; a second drain is a no-op (no double-fire).
     let n2 = eng.drain_effects(&prog, &exec).unwrap();
@@ -195,7 +195,7 @@ fn shell_effect_exec_runs_real_subprocess() {
 
     eng.tick(&prog, true).unwrap();
     assert_eq!(
-        rows(&dbp, "SELECT key, status, body FROM rel_resp"),
+        rows(&dbp, "SELECT key, status, body FROM rel_resp_txt"),
         vec![vec!["home".to_string(), "200".to_string(), "api/home-body".to_string()]]
     );
 }
@@ -251,7 +251,7 @@ fn drain_runs_executors_in_parallel() {
     );
 
     eng.tick(&prog, true).unwrap();
-    assert_eq!(rows(&dbp, "SELECT COUNT(*) FROM rel_resp"), vec![vec!["8".to_string()]]);
+    assert_eq!(rows(&dbp, "SELECT COUNT(*) FROM rel_resp_txt"), vec![vec!["8".to_string()]]);
     assert_eq!(rows(&dbp, "SELECT done FROM pending_effect WHERE done = 0").len(), 0);
 }
 
@@ -285,7 +285,7 @@ fn sh_decl_supplies_effect_template() {
 
     eng.tick(&prog, true).unwrap();
     assert_eq!(
-        rows(&dbp, "SELECT key, status, body FROM rel_resp"),
+        rows(&dbp, "SELECT key, status, body FROM rel_resp_txt"),
         vec![vec!["home".to_string(), "200".to_string(), "api/home-body".to_string()]]
     );
 }
@@ -338,7 +338,7 @@ fn body_effect_call_site_drains_with_full_env() {
     // `tag` (a body var, not an effect arg) reconstructs from full_json; status +
     // body come from the executor; the template filled r=repo, p=path.
     assert_eq!(
-        rows(&dbp, "SELECT repo, path, tag, status, body FROM rel_resp"),
+        rows(&dbp, "SELECT repo, path, tag, status, body FROM rel_resp_txt"),
         vec![vec!["octo".to_string(), "README".to_string(), "v1".to_string(),
                   "200".to_string(), "octo/README".to_string()]]
     );
@@ -393,7 +393,7 @@ fn stream_subscription_fans_lines_and_stays_running() {
     let n = eng.drain_streams(&prog, &exec).unwrap();
     assert_eq!(n, 2, "two event lines fanned into two head rows");
     eng.tick(&prog, true).unwrap();
-    let mut got = rows(&dbp, "SELECT repo, kind, at FROM rel_event ORDER BY kind");
+    let mut got = rows(&dbp, "SELECT repo, kind, at FROM rel_event_txt ORDER BY kind");
     got.sort();
     assert_eq!(got, vec![
         vec!["octo".to_string(), "pr".to_string(), "2026-02".to_string()],
@@ -405,7 +405,7 @@ fn stream_subscription_fans_lines_and_stays_running() {
     // the head rel does not grow, and the job stays running.
     assert_eq!(eng.drain_streams(&prog, &exec).unwrap(), 2);
     eng.tick(&prog, true).unwrap();
-    assert_eq!(rows(&dbp, "SELECT COUNT(*) FROM rel_event"), vec![vec!["2".to_string()]]);
+    assert_eq!(rows(&dbp, "SELECT COUNT(*) FROM rel_event_txt"), vec![vec!["2".to_string()]]);
     assert_eq!(rows(&dbp, "SELECT state FROM pending_effect"), vec![vec!["running".to_string()]]);
 }
 
@@ -436,7 +436,7 @@ fn shell_stream_splits_tsv_lines() {
     };
     assert_eq!(eng.drain_streams(&prog, &exec).unwrap(), 2);
     eng.tick(&prog, true).unwrap();
-    let mut got = rows(&dbp, "SELECT repo, kind, at FROM rel_event ORDER BY kind");
+    let mut got = rows(&dbp, "SELECT repo, kind, at FROM rel_event_txt ORDER BY kind");
     got.sort();
     assert_eq!(got, vec![
         vec!["octo".to_string(), "pr".to_string(), "2026-02".to_string()],
@@ -675,7 +675,7 @@ fn collect_batches_one_request_and_fans_response() {
     };
     assert_eq!(eng.drain_effects(&prog, &exec).unwrap(), 1, "one batch request drained");
     eng.tick(&prog, true).unwrap();
-    let mut got = rows(&dbp, "SELECT key, val FROM rel_star ORDER BY key");
+    let mut got = rows(&dbp, "SELECT key, val FROM rel_star_txt ORDER BY key");
     got.sort();
     assert_eq!(got, vec![
         vec!["a".to_string(), "A".to_string()],
@@ -768,7 +768,7 @@ fn effect_log_mirrors_the_drain_queue() {
     // tick-1 end is visible at tick-2 start) and the `queued` rail fires.
     eng.tick(&prog, true).unwrap();
     eng.tick(&prog, true).unwrap();
-    let log = rows(&dbp, "SELECT kind, head, state FROM rel_effect_log");
+    let log = rows(&dbp, "SELECT kind, head, state FROM rel_effect_log_txt");
     assert_eq!(log.len(), 1, "one effect_log row for the one request: {log:?}");
     assert_eq!(log[0], vec!["resp".to_string(), "resp".to_string(), "queued".to_string()]);
     assert_eq!(rows(&dbp, "SELECT id FROM rel_queued").len(), 1, "queued rail fired");
@@ -784,7 +784,7 @@ fn effect_log_mirrors_the_drain_queue() {
     };
     eng.drain_effects(&prog, &exec).unwrap();
     eng.tick(&prog, true).unwrap();
-    let state: Vec<Vec<String>> = rows(&dbp, "SELECT state FROM rel_effect_log");
+    let state: Vec<Vec<String>> = rows(&dbp, "SELECT state FROM rel_effect_log_txt");
     assert_eq!(state, vec![vec!["done".to_string()]], "drain flipped the state");
     assert_eq!(rows(&dbp, "SELECT id FROM rel_queued").len(), 0, "no longer queued");
     assert_eq!(rows(&dbp, "SELECT id FROM rel_landed").len(), 1, "landed rail fires on done");

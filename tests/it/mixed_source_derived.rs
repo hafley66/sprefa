@@ -44,7 +44,7 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
 
 fn strs(db_path: &Path, rel: &str, col: &str) -> Vec<String> {
     let conn = db::open(Some(db_path.to_str().unwrap())).unwrap();
-    let mut s = conn.prepare(&format!("SELECT \"{col}\" FROM rel_{rel} ORDER BY \"{col}\"")).unwrap();
+    let mut s = conn.prepare(&format!("SELECT \"{col}\" FROM rel_{rel}_txt ORDER BY \"{col}\"")).unwrap();
     let mut v: Vec<String> = s.query_map([], |r| r.get(0)).unwrap().filter_map(|x| x.ok()).collect();
     v.sort();
     v
