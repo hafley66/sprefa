@@ -677,6 +677,7 @@ fn write_roots_json(records: &[RootRecord]) {
 pub struct Daemon {
     /// XDG state home (control files, roots.json, per-root dbs).
     pub home: PathBuf,
+    launch_exe_stamp: Option<ExeStamp>,
     pub build_id: Arc<str>,
     pub shutdown_requested: Arc<AtomicBool>,
     pub subscribers: Arc<Mutex<Vec<Arc<Mutex<UnixStream>>>>>,
@@ -779,8 +780,9 @@ impl Daemon {
         }
         // Spawn its watcher.
         let sr_watch = sr.clone();
+        let launch_exe_stamp = self.launch_exe_stamp;
         let _ = std::thread::Builder::new().name(format!("dl-watch-{key}"))
-            .spawn(move || watcher_loop(sr_watch));
+            .spawn(move || watcher_loop(sr_watch, launch_exe_stamp));
         eprintln!("[daemon] registered root {} (key {key})", canon.display());
         Ok(sr)
     }
@@ -829,6 +831,7 @@ pub fn run_daemon(
 ) -> Result<()> {
     let home = daemon_home();
     let _ = std::fs::create_dir_all(&home);
+    let launch_exe_stamp = current_exe_stamp();
 
     let build_id: Arc<str> = Arc::from(build_id().as_str());
     let shutdown_requested = Arc::new(AtomicBool::new(false));
@@ -847,6 +850,7 @@ pub fn run_daemon(
 
     let daemon = Arc::new(Daemon {
         home: home.clone(),
+        launch_exe_stamp,
         build_id: build_id.clone(),
         shutdown_requested: shutdown_requested.clone(),
         subscribers: subscribers.clone(),
@@ -889,8 +893,9 @@ pub fn run_daemon(
     // Config-view watcher (watches the config repos).
     {
         let c = daemon.config.clone();
+        let stamp = launch_exe_stamp;
         std::thread::Builder::new().name("dl-watch-config".into())
-            .spawn(move || watcher_loop(c))?;
+            .spawn(move || watcher_loop(c, stamp))?;
     }
 
     // Replay roots.json: re-register every persisted root (warm from its db).
@@ -924,8 +929,9 @@ pub fn run_daemon(
                             write_roots_json(&records);
                         }
                         let sr_watch = sr.clone();
+                        let stamp = launch_exe_stamp;
                         std::thread::Builder::new().name(format!("dl-watch-{key}"))
-                            .spawn(move || watcher_loop(sr_watch))?;
+                            .spawn(move || watcher_loop(sr_watch, stamp))?;
                         eprintln!("[daemon] registered initial root {}", canon.display());
                     }
                     Err(e) => eprintln!("[daemon] initial root {}: {e}", canon.display()),
@@ -993,7 +999,7 @@ pub(crate) fn shutdown_cleanup(_d: &Daemon) {
 
 // ---------- watcher thread (one per served root) ----------
 
-fn watcher_loop(d: Arc<ServedRoot>) {
+fn watcher_loop(d: Arc<ServedRoot>, launch_exe_stamp: Option<ExeStamp>) {
     use notify::{RecursiveMode, Watcher};
     let is_config = d.key.is_none();
     let (tx, rx) = std::sync::mpsc::channel();
@@ -1054,6 +1060,7 @@ fn watcher_loop(d: Arc<ServedRoot>) {
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 if d.stopped.load(Ordering::Relaxed) { return; }
                 enforce_mem_limit(&d.root_label());
+                enforce_fresh_binary(launch_exe_stamp);
                 continue;
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
@@ -1100,6 +1107,8 @@ fn watcher_loop(d: Arc<ServedRoot>) {
                 Err(e) => eprintln!("[{}] tick #{tick_num} (rescan recovery) error: {e}", d.root_label()),
             }
             d.touch();
+            enforce_mem_limit(&d.root_label());
+            enforce_fresh_binary(launch_exe_stamp);
             continue;
         }
         let touches_git = gate.touches_git(&paths);
@@ -1187,6 +1196,7 @@ fn watcher_loop(d: Arc<ServedRoot>) {
         // A tick is where the image grows (extract, closure, spine writes), so
         // check the ceiling here too, not only on the idle heartbeat.
         enforce_mem_limit(&d.root_label());
+        enforce_fresh_binary(launch_exe_stamp);
         if tick_ok {
             let before = watch_count;
             for rc in lock(&d.eng).snapshot_repos() {
@@ -1277,6 +1287,33 @@ const DEFAULT_MEM_LIMIT_MB: u64 = 4096;
 /// Exit code the memory guard uses, distinct from a clean shutdown so a
 /// supervisor can tell a self-kill from an orderly stop.
 const MEM_GUARD_EXIT_CODE: i32 = 137;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ExeStamp {
+    len: u64,
+    mtime: SystemTime,
+}
+
+/// Return the current executable's stat identity. A missing stat is unknown,
+/// not evidence that the daemon's binary was replaced.
+fn current_exe_stamp() -> Option<ExeStamp> {
+    if std::env::var_os("DL_EXE_STAMP").is_some() { return None; }
+    let path = std::env::current_exe().ok()?;
+    let metadata = std::fs::metadata(path).ok()?;
+    Some(ExeStamp { len: metadata.len(), mtime: metadata.modified().ok()? })
+}
+
+fn should_exit_for_binary_change(launch: Option<ExeStamp>, current: Option<ExeStamp>) -> bool {
+    matches!((launch, current), (Some(before), Some(after)) if before != after)
+}
+
+fn enforce_fresh_binary(launch_exe_stamp: Option<ExeStamp>) {
+    if launch_exe_stamp.is_none() { return; }
+    if should_exit_for_binary_change(launch_exe_stamp, current_exe_stamp()) {
+        eprintln!("[daemon] binary replaced on disk, exiting so the next call runs the new version");
+        std::process::exit(0);
+    }
+}
 
 fn mem_limit_mb() -> Option<u64> {
     match std::env::var("DL_DAEMON_MEM_MB") {
@@ -2279,6 +2316,16 @@ mod tests {
         assert_eq!("0".parse::<u64>().ok().filter(|&n| n > 0), None);
         assert_eq!("2048".parse::<u64>().ok().filter(|&n| n > 0), Some(2048));
         assert_eq!(DEFAULT_MEM_LIMIT_MB, 4096);
+    }
+
+    #[test]
+    fn fresh_binary_compare_exits_only_for_two_confirmed_stamps() {
+        let before = ExeStamp { len: 10, mtime: SystemTime::UNIX_EPOCH };
+        let after = ExeStamp { len: 11, mtime: SystemTime::UNIX_EPOCH };
+        assert!(should_exit_for_binary_change(Some(before), Some(after)));
+        assert!(!should_exit_for_binary_change(Some(before), Some(before)));
+        assert!(!should_exit_for_binary_change(Some(before), None));
+        assert!(!should_exit_for_binary_change(None, Some(after)));
     }
 
     #[test]
