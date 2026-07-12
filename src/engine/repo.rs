@@ -483,7 +483,7 @@ impl Engine {
             let conn = self.db.conn();
             let mut s = conn.prepare(&format!(
                 "SELECT DISTINCT \"{}\",\"{}\",\"{}\" FROM {} ORDER BY 1,2",
-                meta.col_name(0), meta.col_name(1), meta.col_name(2), tbl("checkout")))?;
+                meta.col_name(0), meta.col_name(1), meta.col_name(2), crate::lower::txt_tbl("checkout")))?;
             let rs = s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?,
                                     r.get::<_, String>(2)?)))?;
             rs.filter_map(|x| x.ok()).collect()
