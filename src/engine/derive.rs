@@ -453,6 +453,8 @@ impl Engine {
         }
         if halt_meta.cols[0].ty == Type::Sym { miss!("halt column is sym (unhandled decode)"); }
         let edge_sym = [edge_meta.cols[0].ty == Type::Sym, edge_meta.cols[1].ty == Type::Sym];
+        if edge_sym[0] != edge_sym[1] { miss!("mixed edge column types"); }
+        let sym_edge = edge_sym[0];
 
         // Need at least one base rule to seed the frontier; a pure recursion with
         // no base case produces nothing and is better left to the SQL path.
@@ -468,25 +470,32 @@ impl Engine {
         }
 
         let t = std::time::Instant::now();
-        // 2. Edge adjacency, with an owned node interner we can extend for base
-        //    nodes that carry no incident edge (they record themselves, no hops).
+        use crate::spine::StringId;
+        // 2. Edge adjacency in integer (string-id) space — a sym graph keeps NO
+        //    per-node String. Base nodes with no incident edge are interned on the
+        //    fly (recorded, never expanded — no out-edges).
         let (ec0, ec1) = (edge_meta.cols[0].name.clone(), edge_meta.cols[1].name.clone());
-        let (mut adj, mut node_names) = self.load_edges_rendered(&edge_rel, &ec0, &ec1, edge_sym)?;
-        let mut node_id: HashMap<String, u32> =
-            node_names.iter().enumerate().map(|(i, n)| (n.clone(), i as u32)).collect();
-        let mut intern_node = |s: String,
-                               adj: &mut Vec<Vec<u32>>,
-                               node_names: &mut Vec<String>,
-                               node_id: &mut HashMap<String, u32>| -> u32 {
-            if let Some(&i) = node_id.get(&s) { return i; }
+        let (mut adj, mut interner, mut id2key, mut text_by_id) =
+            self.load_edges_keyed(&edge_rel, &ec0, &ec1, sym_edge)?;
+        // For a sym graph, keep the base nodes' text (known from the head read) and
+        // fetch the rest from `_strings` at output time; text edges carry it all.
+        let mut sym_text: HashMap<u32, String> = HashMap::new();
+        let mut intern_key = |key: i64, text: &str,
+                              adj: &mut Vec<Vec<u32>>,
+                              id2key: &mut Vec<i64>,
+                              interner: &mut HashMap<i64, u32>,
+                              text_by_id: &mut Option<Vec<String>>| -> u32 {
+            if let Some(&i) = interner.get(&key) { return i; }
             let i = adj.len() as u32;
             adj.push(Vec::new());
-            node_names.push(s.clone());
-            node_id.insert(s, i);
+            id2key.push(key);
+            if let Some(tb) = text_by_id.as_mut() { tb.push(text.to_string()); }
+            interner.insert(key, i);
             i
         };
 
-        // 3. Start frontier: the base head rows (tag, node). Tag has its own id space.
+        // 3. Start frontier from the base head rows (tag, node). Tags get their own
+        //    small id space (one string per distinct port).
         let mut tag_id: HashMap<String, u32> = HashMap::new();
         let mut tag_names: Vec<String> = Vec::new();
         let mut starts: Vec<(u32, u32)> = Vec::new();
@@ -506,7 +515,9 @@ impl Engine {
                         i
                     }
                 };
-                let nid = intern_node(node_s, &mut adj, &mut node_names, &mut node_id);
+                let key = StringId::of(&node_s).sqlite();
+                let nid = intern_key(key, &node_s, &mut adj, &mut id2key, &mut interner, &mut text_by_id);
+                if text_by_id.is_none() { sym_text.entry(nid).or_insert_with(|| node_s.clone()); }
                 starts.push((tid, nid));
             }
         }
@@ -519,33 +530,56 @@ impl Engine {
             let mut stmt = self.db.conn().prepare(&sql)?;
             let rows = stmt.query_map([], |r| cell_as_string(r, 0))?;
             for name in rows.flatten() {
-                if let Some(&id) = node_id.get(&name) { halt_mask[id as usize] = true; }
+                if let Some(&id) = interner.get(&StringId::of(&name).sqlite()) { halt_mask[id as usize] = true; }
             }
         }
 
-        // 5. Native BFS, then replace the head with the full closure (the result
-        //    is a superset of the base rows, so a clean DELETE + one insert holds).
+        // 5. Native BFS — pure u32 pairs, no strings touched.
         let t_load = t.elapsed();
         let t_bfs0 = std::time::Instant::now();
         let pairs = crate::walk::multi_source_halt_bfs(&adj, &starts, &halt_mask);
         let t_bfs = t_bfs0.elapsed();
-        let t_build0 = std::time::Instant::now();
-        let mut rows: Vec<Vec<Value>> = Vec::with_capacity(pairs.len());
-        for (tid, nid) in pairs {
-            rows.push(vec![
-                Value::Text(tag_names[tid as usize].clone()),
-                Value::Text(node_names[nid as usize].clone()),
-            ]);
+
+        // 6. Resolve output text per reached node. Text edges already carry it; a
+        //    sym graph fetches the DISTINCT reached nodes' text from `_strings`
+        //    (base nodes already seeded), so the render set is the output, never
+        //    the whole graph.
+        let t_out0 = std::time::Instant::now();
+        if text_by_id.is_none() {
+            let mut need: Vec<u32> = pairs.iter().map(|&(_, nid)| nid)
+                .filter(|nid| !sym_text.contains_key(nid)).collect();
+            need.sort_unstable();
+            need.dedup();
+            // Render in a FEW bulk `IN (...)` reads, not one query per node — the
+            // statement count stays O(need / 30k), never O(need). Batched under
+            // SQLite's variable ceiling; a key->text map keeps only the output
+            // strings (which are being written out regardless).
+            let keys: Vec<i64> = need.iter().map(|&nid| id2key[nid as usize]).collect();
+            let mut keymap: HashMap<i64, String> = HashMap::with_capacity(keys.len());
+            for chunk in keys.chunks(30000) {
+                let placeholders = std::iter::repeat("?").take(chunk.len()).collect::<Vec<_>>().join(",");
+                let sql = format!("SELECT id, content FROM _strings WHERE id IN ({placeholders})");
+                let mut stmt = self.db.conn().prepare(&sql)?;
+                let rows = stmt.query_map(rusqlite::params_from_iter(chunk.iter()),
+                    |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+                for row in rows.flatten() { keymap.insert(row.0, row.1); }
+            }
+            for &nid in &need {
+                sym_text.insert(nid, keymap.get(&id2key[nid as usize]).cloned().unwrap_or_default());
+            }
         }
-        let t_build = t_build0.elapsed();
-        let t_ins0 = std::time::Instant::now();
+        let node_text = |nid: u32| -> String {
+            match text_by_id.as_ref() {
+                Some(tb) => tb[nid as usize].clone(),
+                None => sym_text.get(&nid).cloned().unwrap_or_default(),
+            }
+        };
+
+        // 7. Replace the head, STREAMING the insert in bounded chunks so peak RSS
+        //    is one chunk — never the whole result materialized. Secondary indexes
+        //    are deferred and rebuilt after (per-row upkeep dominates a bulk load);
+        //    the unique autoindex stays and the BFS output is already deduped.
         self.db.exec(&format!("DELETE FROM {}", tbl(&head_rel)))?;
-        // Bulk-load: with 100k+ rows the per-row maintenance of the head's
-        // SECONDARY indexes dominates the insert. Drop them, insert once, then
-        // rebuild each in a single pass (cheaper than incremental upkeep). The
-        // unique autoindex (NULL `sql` in sqlite_master) stays — set semantics
-        // need it, and the BFS output is already deduped so it never conflicts.
-        // Rebuilt before return, so later strata still read through them.
         let sidx: Vec<(String, String)> = {
             let mut stmt = self.db.conn().prepare(
                 "SELECT name, sql FROM sqlite_master \
@@ -555,15 +589,27 @@ impl Engine {
         };
         for (name, _) in &sidx { self.db.exec(&format!("DROP INDEX \"{name}\""))?; }
         let cols: Vec<&str> = head_meta.cols.iter().map(|c| c.name.as_str()).collect();
-        let insert_res = self.db.insert_rows(&tbl(&head_rel), &cols, &rows); // one flush, never N+1
-        // Rebuild the dropped indexes BEFORE propagating any insert error, so a
-        // failure never leaves the head table missing its secondary indexes.
+        const CHUNK: usize = 16000;
+        let mut buf: Vec<Vec<Value>> = Vec::with_capacity(CHUNK.min(pairs.len().max(1)));
+        let mut insert_res: Result<()> = Ok(());
+        for &(tid, nid) in &pairs {
+            buf.push(vec![Value::Text(tag_names[tid as usize].clone()), Value::Text(node_text(nid))]);
+            if buf.len() >= CHUNK {
+                if let Err(e) = self.db.insert_rows(&tbl(&head_rel), &cols, &buf) { insert_res = Err(e); break; }
+                buf.clear();
+            }
+        }
+        if insert_res.is_ok() && !buf.is_empty() {
+            insert_res = self.db.insert_rows(&tbl(&head_rel), &cols, &buf).map(|_| ());
+        }
+        // Rebuild dropped indexes BEFORE propagating any insert error, so a failure
+        // never leaves the head table missing its secondary indexes.
         for (_, sql) in &sidx { self.db.exec(sql)?; }
         insert_res?;
         if std::env::var_os("DL_BFS_TRACE").is_some() {
-            eprintln!("[bfs] {head_rel}: load={}ms bfs={}ms build={}ms insert={}ms rows={}",
-                t_load.as_millis(), t_bfs.as_millis(), t_build.as_millis(),
-                t_ins0.elapsed().as_millis(), rows.len());
+            eprintln!("[bfs] {head_rel}: load={}ms bfs={}ms out+insert={}ms rows={} nodes={}",
+                t_load.as_millis(), t_bfs.as_millis(), t_out0.elapsed().as_millis(),
+                pairs.len(), adj.len());
         }
         self.save_stmt_ms_one(&format!("halt_bfs:{head_rel}"), t.elapsed().as_millis() as i64)?;
         Ok(true)
@@ -766,44 +812,52 @@ impl Engine {
         Ok(false)
     }
 
-    /// Load a 2-col edge relation, intern node names to dense u32 (transient),
-    /// return adjacency + id->name. No persistent interning (see plan).
-    /// Like `load_edges`, but decodes `sym`-typed endpoint columns back to their
-    /// readable text via `_strings` so the adjacency keys on the same string
-    /// space as a text-typed frontier/halt set. `sym[i]` selects rendering for
-    /// column i; a false entry reads the column raw (already text). Rows whose
-    /// sym endpoint has no `_strings` row (the empty sentinel) are dropped — a
-    /// flow node is never the empty string, so this can't cut a real edge.
-    pub(crate) fn load_edges_rendered(
-        &self, edge: &str, c0: &str, c1: &str, sym: [bool; 2],
-    ) -> Result<(Vec<Vec<u32>>, Vec<String>)> {
-        if !sym[0] && !sym[1] {
-            return self.load_edges(edge, c0, c1);
-        }
-        let expr = |col: &str, is_sym: bool, alias: &str| {
-            if is_sym { format!("{alias}.content") } else { format!("e.\"{col}\"") }
-        };
-        let mut joins = String::new();
-        if sym[0] { joins.push_str(&format!(" JOIN _strings s0 ON s0.id = e.\"{c0}\"")); }
-        if sym[1] { joins.push_str(&format!(" JOIN _strings s1 ON s1.id = e.\"{c1}\"")); }
-        let sql = format!("SELECT {}, {} FROM {} e{}",
-            expr(c0, sym[0], "s0"), expr(c1, sym[1], "s1"), tbl(edge), joins);
+    /// Load a 2-col edge rel into u32-interned adjacency keyed by each endpoint's
+    /// string-id (i64), so a large `sym` graph stays in integer space with NO
+    /// per-node `String` retained. Returns `(adj, key->id, id->key, text_by_id)`.
+    /// `sym`: a `sym` column's cell IS the string-id — read the i64 directly, the
+    /// text stays in `_strings` and is fetched lazily only for output nodes; a
+    /// `text` column's cell is the string — hash it for the key AND keep it in
+    /// `text_by_id` for rendering (text edges are the small, non-blowup case).
+    /// Both endpoint columns share a type (the caller guarantees it).
+    pub(crate) fn load_edges_keyed(
+        &self, edge: &str, c0: &str, c1: &str, sym: bool,
+    ) -> Result<(Vec<Vec<u32>>, HashMap<i64, u32>, Vec<i64>, Option<Vec<String>>)> {
+        use crate::spine::StringId;
+        let sql = format!("SELECT \"{c0}\", \"{c1}\" FROM {}", tbl(edge));
         let mut stmt = self.db.conn().prepare(&sql)?;
-        let mut intern: HashMap<String, u32> = HashMap::new();
-        let mut names: Vec<String> = Vec::new();
+        let mut interner: HashMap<i64, u32> = HashMap::new();
+        let mut id2key: Vec<i64> = Vec::new();
+        let mut text_by_id: Option<Vec<String>> = if sym { None } else { Some(Vec::new()) };
         let mut pairs: Vec<(u32, u32)> = Vec::new();
-        let rows = stmt.query_map([], |r| Ok((cell_as_string(r, 0)?, cell_as_string(r, 1)?)))?;
+        // Read each endpoint as its (key, optional text): sym -> (i64 cell, None);
+        // text -> (hash(cell), Some(cell)).
+        let read = |r: &rusqlite::Row, idx: usize| -> rusqlite::Result<(i64, Option<String>)> {
+            if sym {
+                Ok((r.get::<_, i64>(idx)?, None))
+            } else {
+                let s = cell_as_string(r, idx)?;
+                Ok((StringId::of(&s).sqlite(), Some(s)))
+            }
+        };
+        let rows = stmt.query_map([], |r| Ok((read(r, 0)?, read(r, 1)?)))?;
         for row in rows.flatten() {
-            let mut id = |s: String| -> u32 {
-                if let Some(&i) = intern.get(&s) { return i; }
-                let i = names.len() as u32; intern.insert(s.clone(), i); names.push(s); i
+            let ((ka, ta), (kb, tb)) = row;
+            let mut intern = |key: i64, text: Option<String>| -> u32 {
+                if let Some(&i) = interner.get(&key) { return i; }
+                let i = id2key.len() as u32;
+                id2key.push(key);
+                if let Some(tb) = text_by_id.as_mut() { tb.push(text.unwrap_or_default()); }
+                interner.insert(key, i);
+                i
             };
-            let a = id(row.0); let b = id(row.1);
+            let a = intern(ka, ta);
+            let b = intern(kb, tb);
             pairs.push((a, b));
         }
-        let mut adj = vec![Vec::new(); names.len()];
+        let mut adj = vec![Vec::new(); id2key.len()];
         for (a, b) in pairs { adj[a as usize].push(b); }
-        Ok((adj, names))
+        Ok((adj, interner, id2key, text_by_id))
     }
 
     pub(crate) fn load_edges(&self, edge: &str, c0: &str, c1: &str) -> Result<(Vec<Vec<u32>>, Vec<String>)> {
