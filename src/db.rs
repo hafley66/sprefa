@@ -412,6 +412,39 @@ impl Db {
     /// op (a few executes for very large N), never one-per-row. `INSERT OR IGNORE`.
     /// The counter keys on `INSERT <table>`, so a caller that loops this with
     /// singletons trips the N+1 scream.
+    /// Whole-table reload: `DELETE`, then bulk-insert `rows`. For a large load,
+    /// the secondary indexes are DROPPED first and rebuilt in one pass after —
+    /// maintaining a table's index B-trees on every one of N inserts dominates a
+    /// bulk load (df_node: 154k rows across 5 secondary indexes + a wide
+    /// composite PK was ~925ms of per-row upkeep). A bulk index build over the
+    /// finished table is far cheaper. The PRIMARY KEY autoindex (its
+    /// `sqlite_master.sql IS NULL`) is KEPT, so `INSERT OR IGNORE` still dedups
+    /// during the load. Rebuild runs BEFORE any insert error propagates, so a
+    /// failure never strands the table without its indexes.
+    ///
+    /// `INDEX_DROP_MIN` gates the drop/rebuild: below it the two `sqlite_master`
+    /// reads + drop/create round-trips cost more than they save, so a small rel
+    /// takes the plain `DELETE`+insert path.
+    pub fn reload_rel(&self, table: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
+        const INDEX_DROP_MIN: usize = 4096;
+        self.exec(&format!("DELETE FROM {table}"))?;
+        if rows.len() < INDEX_DROP_MIN {
+            return self.insert_rows(table, cols, rows);
+        }
+        // Secondary indexes only: the PK autoindex has a NULL `sql` and is skipped.
+        let sidx: Vec<(String, String)> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT name, sql FROM sqlite_master \
+                 WHERE tbl_name = ?1 AND type = 'index' AND sql IS NOT NULL")?;
+            let found = stmt.query_map([table], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+            found.flatten().collect()
+        };
+        for (name, _) in &sidx { self.exec(&format!("DROP INDEX \"{name}\""))?; }
+        let res = self.insert_rows(table, cols, rows);
+        for (_, sql) in &sidx { self.exec(sql)?; }
+        res
+    }
+
     pub fn insert_rows(&self, table: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
         if rows.is_empty() { return Ok(0); }
         let ncol = cols.len();
