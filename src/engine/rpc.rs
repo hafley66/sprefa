@@ -60,7 +60,7 @@ impl Engine {
         let conn = self.db.conn();
         let mut s = conn.prepare(&format!(
             "SELECT \"file\", \"specifier\" FROM {} WHERE \"kind\" IN ('use', 'import')",
-            tbl("module_import")))?;
+            txt_tbl("module_import")))?;
         let rows = s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
         Ok(rows.filter_map(|x| x.ok()).collect())
     }
@@ -71,7 +71,7 @@ impl Engine {
         let conn = self.db.conn();
         let mut s = conn.prepare(&format!(
             "SELECT \"file\", \"specifier\" FROM {} WHERE \"kind\" = 'same-package'",
-            tbl("module_import")))?;
+            txt_tbl("module_import")))?;
         let rows = s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
         Ok(rows.filter_map(|x| x.ok()).collect())
     }

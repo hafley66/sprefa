@@ -428,7 +428,7 @@ impl Engine {
             || prog_brands.contains(ty);
 
         let mut stmt = self.db.conn()
-            .prepare(&format!("SELECT shape, pos, col, type FROM {} ORDER BY shape, pos", tbl("type_decl_row")))?;
+            .prepare(&format!("SELECT shape, pos, col, type FROM {} ORDER BY shape, pos", crate::lower::txt_tbl("type_decl_row")))?;
         let raw: Vec<(String, i64, String, String)> = stmt.query_map([], |r| Ok((
             r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
             .filter_map(|x| x.ok()).collect();

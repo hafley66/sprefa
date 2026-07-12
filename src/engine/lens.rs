@@ -132,7 +132,7 @@ impl Engine {
                 let cols: Vec<String> = meta.cols.iter().map(|c| format!("\"{}\"", c.name)).collect();
                 let sql = format!(
                     "SELECT DISTINCT \"{}\", \"{}\" FROM {} WHERE \"{}\" = ?1",
-                    meta.cols[*fi].name, meta.cols[*li].name, tbl("def_target"), meta.cols[*ni].name);
+                    meta.cols[*fi].name, meta.cols[*li].name, txt_tbl("def_target"), meta.cols[*ni].name);
                 let conn = self.db.conn();
                 let mut s = conn.prepare(&sql)?;
                 let rows = s.query_map(rusqlite::params![text], |r|
@@ -179,7 +179,7 @@ impl Engine {
 
         // type_entity(_, name=text, kind, parent, file, line) -> one row per
         // entity whose bare name matches.
-        let te = tbl("type_entity");
+        let te = txt_tbl("type_entity");
         let te_rows: Vec<(String, String, String, i64)> = {
             let conn = self.db.conn();
             let mut s = conn.prepare(&format!(
@@ -198,8 +198,8 @@ impl Engine {
         // call_name(sym, text) -> call_def(sym, kind, file, line, _). The
         // intermediate join resolves the bare callee text to def syms; a bare
         // name may map to several defs (overloads, distinct modules).
-        let cd = tbl("call_def");
-        let cn = tbl("call_name");
+        let cd = txt_tbl("call_def");
+        let cn = txt_tbl("call_name");
         let cd_rows: Vec<(String, String, String, i64)> = {
             let conn = self.db.conn();
             let mut s = conn.prepare(&format!(
@@ -243,7 +243,7 @@ impl Engine {
     /// db where `hover_note` never derived (undeclared/empty table): returns
     /// an empty Vec rather than erroring, via `try_rows`.
     pub fn hover_notes_at(&self, path: &str, line: u32, character: u32) -> Result<Vec<String>> {
-        let hn = tbl("hover_note");
+        let hn = txt_tbl("hover_note");
         Ok(self.try_rows(
             &format!(
                 "SELECT \"md\" FROM {hn} WHERE \"path\" = ?1 \
@@ -262,7 +262,7 @@ impl Engine {
     /// are zero (the type has no structural edges).
     pub(crate) fn type_profile_overlay(&self, sym: &str) -> Option<String> {
         let name = sym.rsplit("::").next()?;
-        let edge = tbl("type_edge");
+        let edge = txt_tbl("type_edge");
         let conn = self.db.conn();
         let q = |sql: String| -> Option<i64> {
             conn.query_row(&sql, rusqlite::params![name], |r| r.get::<_, i64>(0)).ok()
@@ -326,7 +326,7 @@ impl Engine {
     /// family knows the sym (so an edge to an un-indexed target is dropped rather
     /// than pointing nowhere).
     pub(crate) fn resolve_sym_hit(&self, sym: &str, role: &str) -> Option<RefHit> {
-        let te = tbl("type_entity");
+        let te = txt_tbl("type_entity");
         if let Some((repo, file, line, parent)) = self.try_rows(
             &format!("SELECT \"repo\", \"file\", \"line\", \"parent\" FROM {te} WHERE \"sym\" = ?1 LIMIT 1"),
             &[&sym],
@@ -335,7 +335,7 @@ impl Engine {
             let container = if parent.is_empty() { sym.to_string() } else { parent };
             return Some(Self::rel_hit(repo, file, line, role, container));
         }
-        let cd = tbl("call_def");
+        let cd = txt_tbl("call_def");
         if let Some((repo, file, line)) = self.try_rows(
             &format!("SELECT \"repo\", \"file\", \"line\" FROM {cd} WHERE \"sym\" = ?1 LIMIT 1"),
             &[&sym],
@@ -364,7 +364,7 @@ impl Engine {
     /// its declaration site). Empty when the symbol has no definition occurrence
     /// in the loaded index (an out-of-workspace target).
     pub(crate) fn scip_def_hits(&self, sym: &str, role: &str) -> Vec<RefHit> {
-        let so = tbl("scip_occurrence");
+        let so = txt_tbl("scip_occurrence");
         self.try_rows(
             &format!("SELECT \"file\", \"line\", \"col\", \"end_line\", \"end_col\", \"repo\" \
                       FROM {so} WHERE \"symbol\" = ?1 AND \"role\" = 'definition'"),
@@ -389,7 +389,7 @@ impl Engine {
     /// occurrence covers the cursor — the caller then falls through to the
     /// resolved/textual tiers WITHOUT degrading them.
     pub(crate) fn compiler_lens(&self, path: &str, byte: u32, text: &str) -> Result<Option<RefLens>> {
-        let so = tbl("scip_occurrence");
+        let so = txt_tbl("scip_occurrence");
         let repo = self.repo_for_path(path);
 
         // Cursor (line, col) 0-based from the file's WORK content. SCIP columns
@@ -422,7 +422,7 @@ impl Engine {
         };
 
         // Local alias names for this symbol: (file, line, col) -> local_name.
-        let sb = tbl("scip_binding");
+        let sb = txt_tbl("scip_binding");
         let mut aliases: HashMap<(String, i64, i64), String> = HashMap::new();
         for (file, line, col, name) in self.try_rows(
             &format!("SELECT \"file\", \"line\", \"col\", \"local_name\" FROM {sb} WHERE \"symbol\" = ?1"),
@@ -460,7 +460,7 @@ impl Engine {
 
         // Containing types: the interfaces this symbol implements (scip_impl),
         // resolved to their definition site.
-        let si = tbl("scip_impl");
+        let si = txt_tbl("scip_impl");
         let mut containing_types: Vec<RefHit> = Vec::new();
         for iface in self.try_rows(
             &format!("SELECT \"iface\" FROM {si} WHERE \"impl\" = ?1"),
@@ -470,7 +470,7 @@ impl Engine {
         }
 
         // Callers / callees: 1-hop over the function-level call graph.
-        let sfe = tbl("scip_fn_edge");
+        let sfe = txt_tbl("scip_fn_edge");
         let mut callers: Vec<RefHit> = Vec::new();
         let mut callees: Vec<RefHit> = Vec::new();
         for caller in self.try_rows(
@@ -529,7 +529,7 @@ impl Engine {
         let mut syms: Vec<String> = Vec::new();
         let mut parents: Vec<String> = Vec::new();
 
-        let te = tbl("type_entity");
+        let te = txt_tbl("type_entity");
         for (repo, sym, kind, parent, file, line) in self.try_rows(
             &format!("SELECT \"repo\", \"sym\", \"kind\", \"parent\", \"file\", \"line\" \
                       FROM {te} WHERE \"name\" = ?1"),
@@ -543,8 +543,8 @@ impl Engine {
             if !parent.is_empty() && !parents.contains(&parent) { parents.push(parent); }
         }
 
-        let cd = tbl("call_def");
-        let cn = tbl("call_name");
+        let cd = txt_tbl("call_def");
+        let cn = txt_tbl("call_name");
         for (repo, sym, kind, file, line) in self.try_rows(
             &format!("SELECT d.\"repo\", d.\"sym\", d.\"kind\", d.\"file\", d.\"line\" \
                       FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" WHERE n.\"name\" = ?1"),
@@ -576,7 +576,7 @@ impl Engine {
         let mut uses: Vec<RefHit> = Vec::new();
         // type_link(src, dst, kind): a use of this symbol as a type. Resolve the
         // using `src` sym back to its declaration site.
-        let tl = tbl("type_link");
+        let tl = txt_tbl("type_link");
         for sym in &syms {
             for (src, kind) in self.try_rows(
                 &format!("SELECT \"src\", \"kind\" FROM {tl} WHERE \"dst\" = ?1"),
@@ -587,7 +587,7 @@ impl Engine {
             }
         }
         // call_site(repo, caller, callee, file, line): callee is the bare name.
-        let cs = tbl("call_site");
+        let cs = txt_tbl("call_site");
         for (repo, caller, file, line) in self.try_rows(
             &format!("SELECT \"repo\", \"caller\", \"file\", \"line\" FROM {cs} WHERE \"callee\" = ?1"),
             &[&text],
@@ -597,7 +597,7 @@ impl Engine {
         }
         // module_import(file, rev, specifier, kind, line): an import whose
         // specifier names this identifier as one of its path segments.
-        let mi = tbl("module_import");
+        let mi = txt_tbl("module_import");
         for (file, specifier, line) in self.try_rows(
             &format!("SELECT \"file\", \"specifier\", \"line\" FROM {mi} \
                       WHERE \"kind\" IN ('use', 'import') AND \"specifier\" LIKE ?1"),
@@ -622,7 +622,7 @@ impl Engine {
         // --- callers / callees: 1-hop over call_edge(caller, callee, kind) ---
         let mut callers: Vec<RefHit> = Vec::new();
         let mut callees: Vec<RefHit> = Vec::new();
-        let ce = tbl("call_edge");
+        let ce = txt_tbl("call_edge");
         for sym in &syms {
             for caller in self.try_rows(
                 &format!("SELECT \"caller\" FROM {ce} WHERE \"callee\" = ?1"),
@@ -657,7 +657,7 @@ impl Engine {
     /// collection — the point-query twin of `scip_def_hits`, used only to
     /// locate a symbol whose covering occurrence is itself a USE.
     pub(crate) fn scip_def_site(&self, sym: &str) -> Option<(String, String, i64)> {
-        let so = tbl("scip_occurrence");
+        let so = txt_tbl("scip_occurrence");
         self.try_rows(
             &format!("SELECT \"repo\", \"file\", \"line\" FROM {so} \
                       WHERE \"symbol\" = ?1 AND \"role\" = 'definition' LIMIT 1"),
@@ -677,7 +677,7 @@ impl Engine {
     /// occurrence in this index, e.g. an out-of-workspace target). None when no
     /// index is loaded for the repo or no occurrence covers the cursor.
     pub(crate) fn compiler_locate(&self, path: &str, byte: u32, text: &str) -> Result<Option<LocateHit>> {
-        let so = tbl("scip_occurrence");
+        let so = txt_tbl("scip_occurrence");
         let repo = self.repo_for_path(path);
         let roots = self.repo_roots();
         let root = roots.get(&repo).cloned().unwrap_or_else(|| self.root.clone());
@@ -729,7 +729,7 @@ impl Engine {
     pub(crate) fn resolved_locate(&self, path: &str, text: &str) -> Result<Option<LocateHit>> {
         let path_repo = self.repo_for_path(path);
 
-        let te = tbl("type_entity");
+        let te = txt_tbl("type_entity");
         let mut candidates: Vec<(String, String, String, String, i64)> = self.try_rows(
             &format!("SELECT \"repo\", \"sym\", \"kind\", \"file\", \"line\" FROM {te} WHERE \"name\" = ?1"),
             &[&text],
@@ -737,8 +737,8 @@ impl Engine {
                     r.get::<_, String>(3)?, r.get::<_, i64>(4)?)),
         );
         if candidates.is_empty() {
-            let cd = tbl("call_def");
-            let cn = tbl("call_name");
+            let cd = txt_tbl("call_def");
+            let cn = txt_tbl("call_name");
             candidates = self.try_rows(
                 &format!("SELECT d.\"repo\", d.\"sym\", d.\"kind\", d.\"file\", d.\"line\" \
                           FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" WHERE n.\"name\" = ?1"),

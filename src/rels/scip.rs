@@ -211,7 +211,7 @@ impl ScipKind {
                 let conn = eng.db.conn();
                 let mut s = conn.prepare(&format!(
                     "SELECT DISTINCT \"{}\" FROM {} ORDER BY 1",
-                    meta.col_name(0), crate::lower::tbl("scip_want")))?;
+                    meta.col_name(0), crate::lower::txt_tbl("scip_want")))?;
                 let rs = s.query_map([], |r| r.get::<_, String>(0))?;
                 rs.filter_map(|x| x.ok()).collect()
             }
