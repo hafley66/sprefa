@@ -4,9 +4,14 @@ All notable changes to `dl` (sprefa v5) are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versions track the `v*` release
 tags consumed by cargo-dist.
 
-## [Unreleased]
+## [0.9.0] - 2026-07-11
 
 ### Added
+- `dl setup` now journals every file it writes to `$XDG_STATE_HOME/sprefa/setup-manifest.json`. `dl setup --list` shows the record, `--undo [--dry-run]` reverses it (hash-verified; user-modified files are left in place with a note), `--adopt` records verifiable pre-manifest wiring, and `dl uninstall` removes wiring plus dl's state directory while leaving the binary. Undo removes empty directories it created and file husks it created, non-recursively, and refuses paths escaping the expected roots; a hermetic e2e asserts setup -> undo -> uninstall returns the tree to its pre-setup state byte-for-byte.
+- README restructured for new users: pitch with real output, a `comment_node` quickstart, a generated capability gallery and stdlib table (`examples/gen-readme.dl`, guarded by `readme-drift`/`readme-orphan` `--check` rails), docs-search commands, dogfooding notes, uninstall, and a feedback policy for humans and AI agents (agents must never post to GitHub without explicit human approval).
+- The embedded skill documents demand sinks (`scip_want`, `checkout`/`checkout_done`, `rev_cmp_want`, `repo`) and eight authoring gotchas landed at the surfaces agents read first (`match` id vs captured text, `=~` capture non-binding, `gen` ordering and `{var}` sigil, `ast_yaml` immediate-parent `inside:`, `(?i)` class folding, and more).
+- `dl daemon --help`, `dl what/q/summary --help` exist and the CLI help text was audited against actual behavior.
+- The `dl` language itself joined the tree-sitter grammar table, so `comment_node` works on `.dl` files.
 - Recursive fixpoints now use semi-naive delta evaluation, with `DL_NAIVE_FIXPOINT=1` as a compatibility escape hatch; cold `--check` on this repo went 37.2s -> 5.6s. Aggregate and lattice components retain the naive path.
 - `DL_CACHE_MB` (default 512) configures SQLite’s page cache and mmap budget, with temporary tables kept in memory.
 - `_stmt_ms` now reports aggregate wall time and statement count, including engine-side derived-work buckets, making performance attribution substantially more complete.
