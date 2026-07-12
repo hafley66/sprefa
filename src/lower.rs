@@ -455,7 +455,8 @@ pub fn lower_rule_to_ex(rule: &Rule, rels: &Rels, target: &str, extra: &[(String
     // fixpoint loop converges: once the max-prio row is in, any re-insert of a
     // lower-or-equal row fails the WHERE and affects 0 rows (delta 0). Agg +
     // merge is rejected (an aggregating head has no single row to rank).
-    if let Some(crate::ast::MergeFn::MaxBy(mc)) = &head_meta.merge {
+    if let Some(merge) = &head_meta.merge {
+        let (mc, cmp) = merge.col_and_cmp();
         if rule.has_agg() {
             bail!("rel {} has both an aggregate head and merge(...); pick one", rule.head.rel);
         }
@@ -487,7 +488,7 @@ pub fn lower_rule_to_ex(rule: &Rule, rels: &Rels, target: &str, extra: &[(String
         let set_clause: Vec<String> = non_key.iter()
             .map(|c| format!("\"{c}\" = excluded.\"{c}\"")).collect();
         return Ok(format!(
-            "INSERT INTO {} ({}) SELECT {}{}{} ON CONFLICT({}) DO UPDATE SET {} WHERE excluded.\"{}\" > \"{}\"",
+            "INSERT INTO {} ({}) SELECT {}{}{} ON CONFLICT({}) DO UPDATE SET {} WHERE excluded.\"{}\" {} \"{}\"",
             target,
             cols.join(", "),
             exprs.join(", "),
@@ -495,7 +496,7 @@ pub fn lower_rule_to_ex(rule: &Rule, rels: &Rels, target: &str, extra: &[(String
             where_sql,
             key_cols.join(", "),
             set_clause.join(", "),
-            mc, mc,
+            mc, cmp, mc,
         ));
     }
 

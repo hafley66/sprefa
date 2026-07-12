@@ -78,14 +78,29 @@ pub enum MergeFn {
     /// incoming row's `col` is strictly greater. The whole winning row stays
     /// intact (no Galois cross-row mixing).
     MaxBy(String),
+    /// The dual of `MaxBy`: keep the row whose `col` is strictly LOWEST. The
+    /// shortest-path lattice — a depth-carrying reachability recursion keyed on
+    /// the node collapses to one row per node at its minimum depth, instead of
+    /// the (node × path-length) product a bare counter recursion produces.
+    MinBy(String),
 }
 
 impl MergeFn {
     pub fn parse(name: &str, arg: &str) -> Option<MergeFn> {
         Some(match name {
             "MaxBy" => MergeFn::MaxBy(arg.to_string()),
+            "MinBy" => MergeFn::MinBy(arg.to_string()),
             _ => return None,
         })
+    }
+
+    /// The ranked column and the strict comparison that makes the incoming row
+    /// win over the stored one (`>` for MaxBy, `<` for MinBy).
+    pub fn col_and_cmp(&self) -> (&str, &str) {
+        match self {
+            MergeFn::MaxBy(col) => (col, ">"),
+            MergeFn::MinBy(col) => (col, "<"),
+        }
     }
 }
 

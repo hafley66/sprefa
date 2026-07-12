@@ -84,27 +84,24 @@ entry_seed(node) <-
   bare = replace_re(sym, "^[^:]*::", ""),
   df_node(node, _, _, bare, _, _).
 
-rel entry_reach_node_raw(node: sym, d: int).
-entry_reach_node_raw(node, 0) <- entry_seed(node).
-entry_reach_node_raw(to, d0 + 1) <-
-  entry_reach_node_raw(from, d0), flow_edge(from, to), d0 < 64.
+# Shortest hops from any entry point to each df_node, as a MinBy lattice keyed
+# on the node: exactly one row per node, holding its minimum depth. A bare
+# depth-counter recursion instead produces a (node × path-length) PRODUCT —
+# every node reachable at depths 3,4,...,64 becomes its own row and a cycle
+# bumps the count to the cap (531886 rows / 13.5s on this repo before the
+# lattice). The `d0 < 64` guard still bounds the longest shortest-path.
+rel entry_reach_node(node: sym, d: int) key(node) merge(MinBy(d)).
+entry_reach_node(node, 0) <- entry_seed(node).
+entry_reach_node(to, d0 + 1) <-
+  entry_reach_node(from, d0), flow_edge(from, to), d0 < 64.
 
 # Project node hits back up to the enclosing fn's bare name so the answer is
-# per-SYMBOL, not per-node — a fn with many df_nodes would otherwise fan out
-# into many rows at possibly different depths; not-min dedup by negation
-# (MinBy doesn't exist — see .dl/flow-panel.dl's member_param_not_min) keeps
-# the shortest.
-rel entry_reach_raw(sym: text, d: int).
-entry_reach_raw(fnb, d) <-
-  entry_reach_node_raw(node, d), df_node(node, _, _, fnb, _, _).
-
-rel entry_reach_not_min(sym: text, d: int).
-entry_reach_not_min(sym, d) <-
-  entry_reach_raw(sym, d), entry_reach_raw(sym, d2), d2 < d.
-
-rel entry_reach(sym: text, d: int).
-entry_reach(sym, d) <-
-  entry_reach_raw(sym, d), !entry_reach_not_min(sym, d).
+# per-SYMBOL, not per-node — a fn owns many df_nodes at possibly different
+# depths, so the same MinBy lattice (now non-recursive) keeps the shortest,
+# replacing the old entry_reach_raw/not_min negation dedup.
+rel entry_reach(sym: text, d: int) key(sym) merge(MinBy(d)).
+entry_reach(fnb, d) <-
+  entry_reach_node(node, d), df_node(node, _, _, fnb, _, _).
 
 # ---- labeled wire reachability -----------------------------------------------
 # Same bridge, per-operation instead of per-any-entry: seed every df_node
@@ -116,13 +113,16 @@ rel op_reach_seed(op: text, node: sym).
 op_reach_seed(op, node) <-
   op_endpoint(op, fnb, _), df_node(node, _, _, fnb, _, _).
 
-rel op_reach_raw(op: text, n: sym, d: int).
-op_reach_raw(op, n, 0) <- op_reach_seed(op, n).
-op_reach_raw(op, to, d0 + 1) <-
-  op_reach_raw(op, from, d0), flow_edge(from, to), d0 < 64.
+# Same depth-capped MinBy lattice, keyed per (op, node) so the recursion holds
+# one row per operation-node pair instead of the per-depth product. op_reach
+# discards depth (a labeled reach SET, existence not distance).
+rel op_reach_node(op: text, n: sym, d: int) key(op, n) merge(MinBy(d)).
+op_reach_node(op, n, 0) <- op_reach_seed(op, n).
+op_reach_node(op, to, d0 + 1) <-
+  op_reach_node(op, from, d0), flow_edge(from, to), d0 < 64.
 
 rel op_reach(op: text, n: sym).
-op_reach(op, n) <- op_reach_raw(op, n, _).
+op_reach(op, n) <- op_reach_node(op, n, _).
 
 rel op_reach_fn(op: text, fnb: text).
 op_reach_fn(op, fnb) <- op_reach(op, n), df_node(n, _, _, fnb, _, _).

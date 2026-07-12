@@ -123,13 +123,14 @@ impl Engine {
             } else {
                 d.cols.iter().map(|c| format!("\"{}\"", c.name)).collect()
             };
-            if let Some(crate::ast::MergeFn::MaxBy(mc)) = &d.merge {
+            if let Some(merge) = &d.merge {
+                let (mc, _) = merge.col_and_cmp();
                 let key = d.key.as_ref()
                     .ok_or_else(|| anyhow::anyhow!("rel {} has merge(...) without key(...)", d.name))?;
-                if !d.cols.iter().any(|c| &c.name == mc) {
+                if !d.cols.iter().any(|c| c.name == mc) {
                     bail!("merge column {mc} not in rel {}", d.name);
                 }
-                if key.contains(mc) {
+                if key.iter().any(|k| k == mc) {
                     bail!("rel {}: merge column {mc} is also a key column; the merge ranks rows WITHIN a key", d.name);
                 }
             }

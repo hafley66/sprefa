@@ -98,6 +98,36 @@ q(n) <- p(m), edge(m, n).
     assert_eq!(q, vec!["a", "c", "s2", "y"], "q mismatch:\n{stdout}");
 }
 
+/// Regression for the `merge(MinBy(d))` lattice added to std/entry.dl's
+/// reachability rules: a bare depth-counter recursion over a cyclic graph
+/// produces a (node x path-length) PRODUCT (one row per node per depth it's
+/// reachable at, growing until the `d0 < 64` cap). The MinBy lattice keyed on
+/// the node collapses that to exactly one row per node, holding the minimum
+/// depth. Graph: s->a->b->c->t plus a back-edge c->a forming a cycle, so the
+/// unguarded recursion would keep re-deriving a/b/c/t at ever-increasing
+/// depths through the cycle.
+#[test]
+fn minby_lattice_collapses_cyclic_reach_to_one_row_per_node_at_min_depth() {
+    let dir = sandbox("minby");
+    let stdout = run(&dir, r#"
+rel edge(from: text, to: text).
+edge("s","a"). edge("a","b"). edge("b","c"). edge("c","t"). edge("c","a").
+rel seed(node: text).
+seed("s").
+rel reach(node: text, d: int) key(node) merge(MinBy(d)).
+reach(node, 0) <- seed(node).
+reach(to, d0 + 1) <- reach(from, d0), edge(from, to), d0 < 64.
+? reach(node, d).
+"#);
+    let mut rows = rows_of(&stdout, "reach");
+    rows.sort();
+    assert_eq!(
+        rows,
+        vec!["a\t1", "b\t2", "c\t3", "s\t0", "t\t4"],
+        "reach mismatch (expect exactly one row per node at min depth):\n{stdout}"
+    );
+}
+
 /// The `entry_reach_node_raw` shape from std/entry.dl: a depth-bounded
 /// self-recursive rule (`d0 < N` guard, base rule seeds depth 0) feeding a
 /// LATER-stratum min-depth dedup via negation. Proves depth-bounded
