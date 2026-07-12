@@ -737,10 +737,17 @@ impl Engine {
         fold(&mut acc, &blake3::hash(format!("{family}\0{rev}\0{:032x}", exe_stamp()).as_bytes()));
         for (repo, path, frev, hash) in files {
             if hash.is_empty() {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos()).unwrap_or(0);
-                fold(&mut acc, &blake3::hash(format!("nonce\0{now}").as_bytes()));
+                // An empty content hash means the file is unresolved (vanished,
+                // unreadable, or a not-yet-scanned path still listed in a root).
+                // Fold a STABLE token keyed on identity — NOT a wall-clock nonce.
+                // A per-tick nonce made the digest non-deterministic, so an
+                // unchanged corpus with even one persistently-empty file never
+                // matched its prior digest and re-extracted every file every
+                // tick (the 5-repo daemon CPU/battery storm, 2026-07-12). A
+                // stable token still flips the digest the tick a file BECOMES or
+                // STOPS being empty (its hash column changes), which is the only
+                // transition that must re-tick.
+                fold(&mut acc, &blake3::hash(format!("unresolved\0{repo}\0{path}\0{frev}").as_bytes()));
                 continue;
             }
             fold(&mut acc, &blake3::hash(format!("{repo}\0{path}\0{frev}\0{hash}").as_bytes()));
@@ -2523,5 +2530,49 @@ mod verdict_reason_tests {
         let files = vec![extract_file("self", "src/a.rs", "hash-a")];
         let reason = eng.extract_rebuild_reason("call", "WORK", &files, false, false);
         assert_ne!(reason, "scip-index-changed");
+    }
+
+    /// Control: an all-resolved corpus (every file carries a real content
+    /// hash) yields the SAME digest on two consecutive ticks, so the warm-tick
+    /// skip (`prior == Some(d)` in `moved_extract_revs`) fires and the family
+    /// does no work. This is the behavior the empty-hash case below breaks.
+    #[test]
+    fn resolved_corpus_digest_is_stable_across_ticks() {
+        let eng = engine();
+        let files = vec![
+            extract_file("self", "src/a.rs", "hash-a"),
+            extract_file("self", "src/b.rs", "hash-b"),
+        ];
+        let first = eng.extract_input_digest("type", "WORK", &files, false);
+        let second = eng.extract_input_digest("type", "WORK", &files, false);
+        assert_eq!(first, second, "a fully-resolved corpus must digest identically each tick");
+    }
+
+    /// REGRESSION (daemon CPU storm, 2026-07-12): a file with a persistently
+    /// empty content hash folds a wall-clock nanosecond NONCE into the digest
+    /// (`extract_input_digest`, the `hash.is_empty()` branch), so two ticks
+    /// over an UNCHANGED corpus produce DIFFERENT digests. That defeats the
+    /// warm-tick skip and forces a full re-extract of every file on every tick,
+    /// forever: the 5-repo daemon pinned ~22% CPU and grew cache.db to 2GB this
+    /// way. The nonce is meant to flag a NEWLY-appeared file, but nothing
+    /// distinguishes "new this tick" from "still unresolved N ticks later", so
+    /// a path that keeps hashing empty re-nonces every tick. The digest must be
+    /// a pure function of its inputs; a persistently-empty hash must fold a
+    /// STABLE token, not the clock.
+    #[test]
+    fn empty_hash_file_makes_digest_nondeterministic_the_cpu_storm() {
+        let eng = engine();
+        let files = vec![
+            extract_file("self", "src/a.rs", "hash-a"),
+            extract_file("self", "src/b.rs", ""), // persistently unresolved path
+        ];
+        let first = eng.extract_input_digest("type", "WORK", &files, false);
+        let second = eng.extract_input_digest("type", "WORK", &files, false);
+        assert_eq!(
+            first, second,
+            "extract_input_digest folds a wall-clock nonce for an empty-hash file, so an \
+             unchanged corpus digests differently each tick and never skips -> full rebuild \
+             every tick (the daemon CPU/battery storm)"
+        );
     }
 }

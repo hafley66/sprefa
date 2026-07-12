@@ -5,3 +5,4 @@ daemon.pid
 index.scip*
 perf.jsonl
 verified-sha
+.state/
