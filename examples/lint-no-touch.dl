@@ -36,6 +36,12 @@ rel no_touch_zone(path: file, kind: text, l0: int, l1: int).
 no_touch_zone(p, "autogen", l0, l1) <- is_auto_zone(p, _, l0, l1).
 no_touch_zone(p, "manual", l0, l1) <- manual_zone(p, l0, l1).
 
+# A file is dirty only while Git reports a worktree difference from HEAD.
+# This explicit gate makes a byte-identical revert clear the guard even when
+# the harness still retains the old agent_touch row.
+rel file_dirty(path: file).
+file_dirty(p) <- changed(p).
+
 # Violation: an AGENT touched the file this turn (agent_touch, file-level, from the
 # harness store) AND a working-tree change lands on a line inside a no-touch range.
 # agent_touch ⨝ changed_line = the agent's moved lines; `l0 <= l <= l1` is the
@@ -43,7 +49,8 @@ no_touch_zone(p, "manual", l0, l1) <- manual_zone(p, l0, l1).
 # pre-commit hook; `dl --lsp` squiggles it the instant the byte moves.
 diag(path: p, line: l, severity: "error", code: "no-touch-edit",
      msg: "agent edited a ${kind} no-touch range — do not hand-edit; regenerate via its dl generator (autogen) or leave it (manual)") <-
-  no_touch_zone(p, kind, l0, l1), agent_touch(_, _, p), changed_line(p, l), l >= l0, l <= l1.
+  no_touch_zone(p, kind, l0, l1), file_dirty(p), agent_touch(_, _, p),
+  changed_line(p, l), l >= l0, l <= l1.
 
 ? no_touch_zone(path, kind, l0, l1).
 ? diag(path, line, severity: sev, code, msg).

@@ -129,3 +129,14 @@ fn no_agent_store_means_no_diag() {
     let out = run(&d, Some(&empty));
     assert!(diag_block(&out).is_empty(), "no agent => no no-touch diag:\n{out}");
 }
+
+#[test]
+fn reverting_guarded_file_to_head_clears_diag() {
+    let (d, store) = fixture("revert");
+    let base = "# Title\nintro\n<!-- BEGIN: demo -->\n| a | b |\n|---|---|\n| 1 | 2 |\n<!-- END: demo -->\nfree prose line\n<!-- NO-TOUCH: hand tuned -->\nprotected one\nprotected two\n<!-- END-NO-TOUCH -->\n";
+    let first = run(&d, Some(&store));
+    assert!(!diag_block(&first).is_empty(), "initial guarded edit must diag:\n{first}");
+    fs::write(d.join("doc.md"), base).unwrap();
+    let reverted = run(&d, Some(&store));
+    assert!(diag_block(&reverted).is_empty(), "byte-identical HEAD revert must clear diag:\n{reverted}");
+}
