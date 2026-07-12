@@ -16,6 +16,7 @@ mod write;
 pub enum SetupKind {
     Symlink,
     FileCreate,
+    DirCreate,
     JsonMerge,
     MarkedAppend,
     HookRegister,
@@ -28,6 +29,7 @@ pub enum SetupDetail {
     FileCreate {
         content_blake3: String,
     },
+    DirCreate,
     JsonMerge {
         pointer: String,
         added: Value,
@@ -35,6 +37,8 @@ pub enum SetupDetail {
     MarkedAppend {
         begin_marker: String,
         end_marker: String,
+        #[serde(default)]
+        created: bool,
     },
     HookRegister {
         event: String,
@@ -65,14 +69,23 @@ impl SetupJournal {
         let temp = std::env::temp_dir().canonicalize()?;
         safe(target, Some(&temp))?;
         let bytes = fs::read(target)?;
-        self.entry(Some(&temp), target, SetupKind::FileCreate,
-            SetupDetail::FileCreate { content_blake3: hash(&bytes) });
+        self.entry(
+            Some(&temp),
+            target,
+            SetupKind::FileCreate,
+            SetupDetail::FileCreate {
+                content_blake3: hash(&bytes),
+            },
+        );
         Ok(())
     }
     pub fn finish_staged(&mut self, target: &Path) -> Result<()> {
         let owned = self.entries.iter().any(|entry| entry.target == target && matches!(entry.detail,
             SetupDetail::FileCreate { ref content_blake3 } if fs::read(target).ok().is_some_and(|bytes| hash(&bytes) == *content_blake3)));
-        if owned { fs::remove_file(target)?; self.entries.retain(|entry| entry.target != target); }
+        if owned {
+            fs::remove_file(target)?;
+            self.entries.retain(|entry| entry.target != target);
+        }
         Ok(())
     }
     pub fn load() -> Result<Self> {
@@ -117,19 +130,38 @@ fn json_array_mut<'a>(value: &'a mut Value, pointer: &str) -> Option<&'a mut Vec
     while let Some(key) = parts.next() {
         if parts.peek().is_none() {
             let object = current.as_object_mut()?;
-            return object.entry(key).or_insert_with(|| Value::Array(Vec::new())).as_array_mut();
+            return object
+                .entry(key)
+                .or_insert_with(|| Value::Array(Vec::new()))
+                .as_array_mut();
         }
         let object = current.as_object_mut()?;
-        current = object.entry(key).or_insert_with(|| Value::Object(Default::default()));
+        current = object
+            .entry(key)
+            .or_insert_with(|| Value::Object(Default::default()));
     }
     None
 }
 
 fn same_slot(old: &SetupEntry, new: &SetupEntry) -> bool {
-    if old.kind != new.kind { return false; }
+    if old.kind != new.kind {
+        return false;
+    }
     match (&old.detail, &new.detail) {
-        (SetupDetail::HookRegister { event: a, .. }, SetupDetail::HookRegister { event: b, .. }) => a == b,
-        (SetupDetail::JsonMerge { pointer: a, added: av }, SetupDetail::JsonMerge { pointer: b, added: bv }) => a == b && av == bv,
+        (
+            SetupDetail::HookRegister { event: a, .. },
+            SetupDetail::HookRegister { event: b, .. },
+        ) => a == b,
+        (
+            SetupDetail::JsonMerge {
+                pointer: a,
+                added: av,
+            },
+            SetupDetail::JsonMerge {
+                pointer: b,
+                added: bv,
+            },
+        ) => a == b && av == bv,
         _ => true,
     }
 }
@@ -141,7 +173,9 @@ fn state_home() -> PathBuf {
     #[cfg(test)]
     {
         return std::env::temp_dir().join(format!(
-            "dl-test-state-{}-{:?}", std::process::id(), std::thread::current().id()
+            "dl-test-state-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
         ));
     }
     #[cfg(not(test))]
@@ -152,14 +186,18 @@ fn state_home() -> PathBuf {
     }
 }
 fn parent(path: &Path) -> Result<()> {
-    let Some(parent) = path.parent() else { return Ok(()) };
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
     let mut missing = Vec::new();
     let mut cursor = parent;
     while !cursor.exists() {
         missing.push(cursor.to_path_buf());
         cursor = cursor.parent().context("path has no existing ancestor")?;
     }
-    for dir in missing.iter().rev() { fs::create_dir(dir)?; }
+    for dir in missing.iter().rev() {
+        fs::create_dir(dir)?;
+    }
     Ok(())
 }
 fn has_hook(value: &Value, event: &str, command: &str) -> bool {
@@ -191,7 +229,9 @@ fn remove_hook(target: &Path, event: &str, command: &str, dry: bool) -> Result<b
         Ok(v) => v,
         Err(_) => return Ok(false),
     };
-    if !has_hook(&value, event, command) { return Ok(false); }
+    if !has_hook(&value, event, command) {
+        return Ok(false);
+    }
     if !dry {
         let output = json_edit::remove_hook_command(&text, event, command)
             .context("remove exact hook JSON node")?;
@@ -206,7 +246,10 @@ fn safe(target: &Path, root: Option<&Path>) -> Result<()> {
             .unwrap_or_else(|| PathBuf::from("."))
     });
     let expected = expected.canonicalize().unwrap_or(expected);
-    if target.components().any(|part| matches!(part, std::path::Component::ParentDir)) {
+    if target
+        .components()
+        .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
         anyhow::bail!("target contains parent traversal: {}", target.display())
     }
     let parent = target.parent().context("target has no parent")?;
@@ -228,7 +271,10 @@ fn atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     fs::write(&tmp, bytes)?;
     match fs::rename(&tmp, path) {
         Ok(()) => Ok(()),
-        Err(error) => { let _ = fs::remove_file(&tmp); Err(error.into()) }
+        Err(error) => {
+            let _ = fs::remove_file(&tmp);
+            Err(error.into())
+        }
     }
 }
 fn hash(bytes: &[u8]) -> String {
