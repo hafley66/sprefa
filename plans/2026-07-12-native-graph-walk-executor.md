@@ -97,6 +97,32 @@ Key facts that make this a clean extension:
   dispatch — MOVE the native attempt ahead of that guard, or the depth rules
   never get here.
 
+### KEY SIMPLIFICATION (found while generalizing walk.rs)
+
+The depth rules are EASIER than port_reach, not harder, because their node
+columns are `sym`, not `text`:
+- `entry_reach_node(node: sym, d: int)` — node is `sym`; `entry_seed.node` is
+  `sym`; `flow_edge` is `sym`. Everything stays in i64 the WHOLE time. The head
+  write is the raw i64 sym cell (`Value::Int`), NO `_strings` decode, NO text
+  render loop at all. port_reach was the hard case (text head cols forced the
+  decode); these skip it entirely.
+- `op_reach_node(op: text, n: sym, d: int)` — only the TAG (`op`) is text; node
+  `n` is sym (write i64 direct), depth is int.
+- So per head column, write by type: sym node -> `Value::Int(key)`; int depth ->
+  `Value::Int(depth)`; text/sym tag -> its cell as-is. The current recognizer
+  BAILS on a sym head col ("head column is sym") — that guard must become
+  "sym node col is fine, write the i64 directly; only a sym TAG needs its cell".
+- `load_edges_keyed(sym=true)` already returns the i64 key space; for a sym-node
+  head the BFS node ids map back to `id2key[nid]` = the sym cell to write. Done.
+- Net: entry_reach_node should be even faster than port_reach (no render phase).
+
+Also: the base/seed rules here take NO edge hop (`entry_reach_node(node, 0) <-
+entry_seed(node).`) — the start frontier is the seed nodes themselves at depth 0,
+not their one-hop image. The executor already just reads the base head rows as
+the frontier, so this needs no special handling — but the depth in the base row
+is the literal `0` from the head term, so the base-rule read must capture the
+depth column too (port_reach had no depth col).
+
 ### TODO checklist
 - [ ] generalize walk.rs -> multi_source_walk (depth + optional halt + cap);
       keep multi_source_halt_bfs as a thin wrapper or fold its 7 tests over.
