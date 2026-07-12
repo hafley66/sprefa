@@ -1,0 +1,13 @@
+# Bounds every test in wall-clock so the suite can never hang indefinitely.
+# A test still running after `period` is logged as slow; after
+# `terminate-after` × `period` it is KILLED and reported as a timeout failure
+# (surfaces the wedged test instead of stalling the whole run).
+[profile.default]
+slow-timeout = { period = "20s", terminate-after = 3 }
+# Time-injecting tests serialize on CLOCK_LOCK; low concurrency keeps CPU calm.
+test-threads = 2
+
+[profile.gate]
+slow-timeout = { period = "20s", terminate-after = 3 }
+test-threads = 2
+failure-output = "immediate-final"
