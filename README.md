@@ -52,15 +52,15 @@ todo(path, line, comment_text) <-
   comment_node(path, line, _, _, _, comment_text, _),
   comment_text =~ /TODO/.
 
-diag(path: p, line: l, severity: "error", code: "todo", msg: comment_text) <-
-  todo(p, l, comment_text).
+diag(path: path, line: line, severity: "error", code: "todo", msg: comment_text) <-
+  todo(path, line, comment_text).
 
 ? todo(path, line, comment_text).
 ```
 
 ```sh
 dl todos.dl --no-daemon
-dl todos.dl --check       # the same rule can gate CI
+dl todos.dl --check       # exits 2 while TODOs remain — the same rule gates CI
 ```
 
 `scan` selects files; `comment_node` is a built-in grammar-backed relation (a
