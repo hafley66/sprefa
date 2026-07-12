@@ -35,6 +35,7 @@ pub mod repo;
 pub mod reserved_names;
 pub mod rspath;
 pub mod scc;
+pub mod walk;
 pub mod scip_import;
 pub mod scip_setup;
 pub mod setup;
