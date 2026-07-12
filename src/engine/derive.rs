@@ -264,6 +264,13 @@ impl Engine {
                 // over src/walk.rs instead of a SQLite semi-naive fixpoint. The
                 // recognizer is strict; a miss falls through to the SQL path
                 // below with identical semantics.
+                // TODO(native-walk): extend this to the depth-lattice shape
+                // (entry_reach_node/op_reach_node: `key(...) merge(MinBy(d))`,
+                // `d0 < CAP`, no halt). Those currently never reach here — the
+                // `m.key.is_some()` naive_fallback guard ~40 lines below fires
+                // first — so when the depth recognizer lands, move this dispatch
+                // ahead of that guard. Plan:
+                // plans/2026-07-12-native-graph-walk-executor.md
                 if self.try_native_halt_bfs(&comp_rules, derived_rules, &mut timed)? { continue; }
                 // Defense twin of typecheck's `recursive-null-pad`: a NULL-padded
                 // head in this component would re-insert the same row every

@@ -19,6 +19,12 @@
 //! the SQL form capped at 64 only because a fixpoint over a cyclic graph would
 //! otherwise not converge without the lattice — the visited set converges here).
 
+// TODO(native-walk): generalize to `multi_source_walk` carrying a depth per
+// node + optional depth cap, so the depth-lattice rules (entry_reach_node,
+// op_reach_node — `key(node) merge(MinBy(d))`) ride this instead of the SQL
+// fixpoint. BFS layer IS min depth, so MinBy needs no extra machinery. Keep
+// this fn as a thin wrapper (halt, no depth). Plan:
+// plans/2026-07-12-native-graph-walk-executor.md
 use std::collections::VecDeque;
 
 /// For each tag, forward-BFS over `adj` from that tag's start frontier, halting
