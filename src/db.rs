@@ -381,6 +381,71 @@ impl Db {
         Ok(self.conn.execute(sql, [])?)
     }
 
+    /// Structural + on-disk stats for a rel's backing table, straight from
+    /// SQLite's own introspection — the "where did the bytes and the write time
+    /// go" surface behind a slow whole-table refresh:
+    ///   - `rows`, `ncol`, `pk` (PRIMARY KEY columns), `indexes` (secondary),
+    ///   - `bytes`: per-object on-disk size (the table, its PK autoindex, and
+    ///     each secondary index) from the `dbstat` vtab, in bytes.
+    /// A full-row PK shows here as an autoindex LARGER than the table (it
+    /// duplicates every column); a fat un-interned text column shows as an
+    /// oversized per-column index. Snapshot this (see the perf tests) and a
+    /// regression in table size / index count / PK shape is a snapshot diff, not
+    /// a hand-run `sqlite3` session. `dbstat` sizes are best-effort: the map is
+    /// empty if the vtab is unavailable in this build.
+    pub fn rel_stats(&self, rel: &str) -> Result<serde_json::Value> {
+        let table = crate::lower::tbl(rel);
+        let rows: i64 = self.conn
+            .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap_or(0);
+        let mut ncol = 0i64;
+        let mut pk: Vec<(i64, String)> = Vec::new();
+        {
+            let mut s = self.conn.prepare(&format!("PRAGMA table_info({table})"))?;
+            for row in s.query_map([], |r| Ok((r.get::<_, String>(1)?, r.get::<_, i64>(5)?)))?.flatten() {
+                if row.0 == "__src" { continue; }
+                ncol += 1;
+                if row.1 > 0 { pk.push((row.1, row.0)); }
+            }
+        }
+        pk.sort_by_key(|(pos, _)| *pos);
+        let pk: Vec<String> = pk.into_iter().map(|(_, c)| c).collect();
+        let mut indexes: Vec<String> = Vec::new();
+        {
+            let mut s = self.conn.prepare(
+                "SELECT name FROM sqlite_master WHERE tbl_name = ?1 AND type = 'index' \
+                 AND sql IS NOT NULL ORDER BY name")?;
+            for n in s.query_map([table.as_str()], |r| r.get::<_, String>(0))?.flatten() {
+                indexes.push(n);
+            }
+        }
+        // Per-object bytes from dbstat, keyed by object name (table + every index,
+        // including the PK autoindex). Best-effort: skip silently if dbstat is
+        // absent. One grouped scan over the objects belonging to this table.
+        let mut bytes = serde_json::Map::new();
+        let obj_bytes = |name: &str| -> Option<i64> {
+            self.conn.query_row(
+                "SELECT sum(pgsize) FROM dbstat WHERE name = ?1",
+                [name], |r| r.get::<_, Option<i64>>(0)).ok().flatten()
+        };
+        if let Some(b) = obj_bytes(&table) { bytes.insert(table.clone(), b.into()); }
+        // The PK autoindex has no sqlite_master.sql; its name is the conventional
+        // sqlite_autoindex_<table>_1 (present only when the table has a PK).
+        let pk_autoindex = format!("sqlite_autoindex_{table}_1");
+        if let Some(b) = obj_bytes(&pk_autoindex) { bytes.insert(pk_autoindex, b.into()); }
+        for ix in &indexes {
+            if let Some(b) = obj_bytes(ix) { bytes.insert(ix.clone(), b.into()); }
+        }
+        Ok(serde_json::json!({
+            "rel": rel,
+            "rows": rows,
+            "ncol": ncol,
+            "pk": pk,
+            "indexes": indexes,
+            "bytes": bytes,
+        }))
+    }
+
     /// Counted prepare — wraps `Connection::prepare`. Call sites that need a
     /// `Statement` (e.g. multi-row `query_map`) migrate off `conn().prepare(...)`.
     pub fn prepare(&self, sql: &str) -> Result<rusqlite::Statement<'_>> {
@@ -545,6 +610,74 @@ mod tests {
         assert!(db.tick_end().is_none(), "chunked insert must not trip the n+1 counter");
         let count: i64 = db.conn().query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
         assert_eq!(count, 33_000);
+    }
+
+    // Build a table shaped like a df rel: a wide full-row PRIMARY KEY over an
+    // int id + text columns, plus a per-column secondary index. `n` rows of the
+    // given text width, so dbstat sizes are non-trivial (multi-page).
+    fn wide_rel(db: &Db, rel: &str, n: i64, text_width: usize) {
+        let table = crate::lower::tbl(rel);
+        db.exec(&format!(
+            "CREATE TABLE {table} (\"id\" INTEGER, \"fn\" TEXT, \"file\" TEXT, \"line\" INTEGER, \
+             __src TEXT DEFAULT '', PRIMARY KEY (\"id\", \"fn\", \"file\", \"line\"))")).unwrap();
+        db.exec(&format!("CREATE INDEX \"idx_{rel}_fn\" ON {table}(\"fn\")")).unwrap();
+        let pad = "x".repeat(text_width);
+        let rows: Vec<Vec<Value>> = (0..n).map(|i| vec![
+            Value::Int(i), Value::Text(format!("fn_{i}_{pad}")),
+            Value::Text(format!("src/mod_{}.rs", i % 40)), Value::Int(i % 500),
+        ]).collect();
+        db.insert_rows(&table, &["id", "fn", "file", "line"], &rows).unwrap();
+    }
+
+    // rel_stats reports the schema (rows, ncol, PK columns, secondary indexes).
+    // The dbstat byte map is redacted in the snapshot (page sizes drift across
+    // SQLite builds); the STRUCTURE is the regression guard.
+    #[test]
+    fn rel_stats_snapshot_of_schema() {
+        let db = open(None).unwrap();
+        wide_rel(&db, "widenode", 2000, 32);
+        let stats = db.rel_stats("widenode").unwrap();
+        insta::assert_json_snapshot!(stats, { ".bytes" => "[dbstat-bytes]" });
+    }
+
+    // The full-row PK "smell": an autoindex that duplicates every column ends up
+    // LARGER than the table heap itself. This is the exact regression that made
+    // df_node's write slow; assert dbstat catches it so a future fat-PK rel trips
+    // a test instead of a production spike. (Needs enough rows to exceed one
+    // page; 4000 wide rows do.)
+    #[test]
+    fn full_row_pk_autoindex_exceeds_table_the_fat_pk_smell() {
+        let db = open(None).unwrap();
+        wide_rel(&db, "fatpk", 4000, 48);
+        let stats = db.rel_stats("fatpk").unwrap();
+        let bytes = stats["bytes"].as_object().unwrap();
+        let table = bytes["rel_fatpk"].as_i64().unwrap();
+        let pk = bytes["sqlite_autoindex_rel_fatpk_1"].as_i64().unwrap();
+        assert!(pk >= table,
+            "a full-row PK autoindex duplicates every column, so it should be >= the table heap; \
+             pk={pk} table={table} (dbstat)");
+    }
+
+    // Correctness guard for reload_rel's drop/rebuild path: after a large reload,
+    // every secondary index the table started with is still present (and usable),
+    // never left dropped.
+    #[test]
+    fn reload_rel_keeps_secondary_indexes() {
+        let db = open(None).unwrap();
+        wide_rel(&db, "reloadme", 1, 4); // create shape + its idx
+        let table = crate::lower::tbl("reloadme");
+        let before = db.rel_stats("reloadme").unwrap()["indexes"].clone();
+        // Reload above the INDEX_DROP_MIN threshold so the drop/rebuild path runs.
+        let pad = "y".repeat(16);
+        let rows: Vec<Vec<Value>> = (0..5000).map(|i| vec![
+            Value::Int(i), Value::Text(format!("fn_{i}_{pad}")),
+            Value::Text("src/x.rs".into()), Value::Int(i),
+        ]).collect();
+        db.reload_rel(&table, &["id", "fn", "file", "line"], &rows).unwrap();
+        let after = db.rel_stats("reloadme").unwrap()["indexes"].clone();
+        assert_eq!(before, after, "secondary indexes must survive a reload_rel drop/rebuild");
+        let count: i64 = db.conn().query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 5000);
     }
 
     #[test]

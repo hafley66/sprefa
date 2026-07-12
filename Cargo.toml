@@ -140,6 +140,11 @@ cc = "1"
 [profile.dev]
 debug = 0
 
+[dev-dependencies]
+# Snapshot testing for the rel schema/size stats (Db::rel_stats JSON): a
+# regression in table bytes, index count, or PK shape is a snapshot diff.
+insta = { version = "1", features = ["json", "redactions"] }
+
 [profile.test]
 debug = 0
 

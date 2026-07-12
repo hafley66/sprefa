@@ -1479,9 +1479,14 @@ impl Engine {
         // Whole-table reload with index drop/rebuild for large rels (see
         // Db::reload_rel); DELETE + plain insert for small ones.
         let n = self.db.reload_rel(&table, cols, rows)?;
-        // Per-rel write cost, gated inside emit_profile. `n` in the record is the
-        // row count written — the size that produced the time.
-        crate::perflog::emit_profile("write", rel, start.elapsed().as_millis() as u64, rows.len() as u64, "");
+        // Per-rel write cost + the table's schema/size stats (indexes, PK, and
+        // per-object dbstat bytes), so perf.jsonl carries WHY a write is slow —
+        // gated inside emit_profile/rel_stats so a normal run pays nothing.
+        if crate::perflog::profile_enabled() {
+            let stats = self.db.rel_stats(rel).unwrap_or(serde_json::Value::Null);
+            crate::perflog::emit_profile_detail(
+                "write", rel, start.elapsed().as_millis() as u64, rows.len() as u64, stats);
+        }
         Ok(n)
     }
 

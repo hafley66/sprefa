@@ -1,0 +1,19 @@
+---
+source: src/db.rs
+expression: stats
+---
+{
+  "rel": "widenode",
+  "rows": 2000,
+  "ncol": 4,
+  "pk": [
+    "id",
+    "fn",
+    "file",
+    "line"
+  ],
+  "indexes": [
+    "idx_widenode_fn"
+  ],
+  "bytes": "[dbstat-bytes]"
+}

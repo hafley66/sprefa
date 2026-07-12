@@ -179,6 +179,13 @@ pub fn profile_enabled() -> bool {
 /// write); `detail` carries the owning family/phase. No-op unless
 /// `profile_enabled()`, so callers can time unconditionally and gate here.
 pub fn emit_profile(kind: &str, name: &str, ms: u64, n: u64, detail: &str) {
+    emit_profile_detail(kind, name, ms, n, serde_json::Value::String(detail.to_string()));
+}
+
+/// `emit_profile` with a structured `detail` (an object/array, not just a
+/// string) — e.g. the rel's dbstat schema+size stats attached to a write
+/// sample. No-op unless `profile_enabled()`.
+pub fn emit_profile_detail(kind: &str, name: &str, ms: u64, n: u64, detail: serde_json::Value) {
     if !profile_enabled() {
         return;
     }
