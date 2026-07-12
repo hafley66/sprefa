@@ -1475,8 +1475,13 @@ impl Engine {
     /// seam every built-in module/indexer uses.
     pub(crate) fn refresh_rel(&self, rel: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
         let table = tbl(rel);
+        let start = std::time::Instant::now();
         self.db.exec(&format!("DELETE FROM {table}"))?;
-        self.db.insert_rows(&table, cols, rows)
+        let n = self.db.insert_rows(&table, cols, rows)?;
+        // Per-rel write cost (DELETE + batched insert), gated inside emit_profile.
+        // `n` is the row count written — the size that produced the time.
+        crate::perflog::emit_profile("write", rel, start.elapsed().as_millis() as u64, rows.len() as u64, "");
+        Ok(n)
     }
 
 

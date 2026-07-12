@@ -158,6 +158,43 @@ pub fn emit_phase(tick: u64, phase: &str, ms: u64, detail: &str) {
     write_json(phase_record(tick, phase, ms, detail).to_string());
 }
 
+/// Fine-grained profiling is OFF by default (unlike the always-on phase log):
+/// it emits one record per parsed FILE and per written REL, which is noisy. Set
+/// `DL_PROFILE_EXTRACT` (to any non-falsy value) to turn the per-file / per-rel
+/// timeline on when a phase total needs to be broken down to the exact file,
+/// line count, and relation that cost the time.
+pub fn profile_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| {
+        matches!(
+            std::env::var("DL_PROFILE_EXTRACT").as_deref(),
+            Ok(v) if !matches!(v, "0" | "false" | "off" | "no" | "")
+        )
+    })
+}
+
+/// One fine-grained profile sample. `kind` groups the sample ("parse" per file,
+/// "write" per rel); `name` is the file path or rel name; `ms` is its cost;
+/// `n` is the size that produced it (byte count for a parse, row count for a
+/// write); `detail` carries the owning family/phase. No-op unless
+/// `profile_enabled()`, so callers can time unconditionally and gate here.
+pub fn emit_profile(kind: &str, name: &str, ms: u64, n: u64, detail: &str) {
+    if !profile_enabled() {
+        return;
+    }
+    let rec = serde_json::json!({
+        "ts_ms": now_ms(),
+        "type": "profile",
+        "pid": std::process::id(),
+        "kind": kind,
+        "name": name,
+        "ms": ms,
+        "n": n,
+        "detail": detail,
+    });
+    write_json(rec.to_string());
+}
+
 /// Build the tick record's JSON shape (see `phase_record`).
 fn tick_record_json(rec: &TickRec<'_>) -> serde_json::Value {
     serde_json::json!({

@@ -66,6 +66,23 @@ fn cached_facts<T: Send + Sync>(
     parsed_counter: &std::cell::Cell<usize>,
     parse: impl Fn(&str, &str, &str) -> Option<(String, T)> + Sync,
 ) -> Vec<(String, String, String, Arc<T>)> {
+    cached_facts_profiled(cache, files, parsed_counter, "", parse)
+}
+
+/// `cached_facts` plus per-file parse timing. `family` names the extraction
+/// family for the profile records (`type`/`call`/`dataflow`/...); pass `""` to
+/// skip the family tag. Every MISS (a file actually re-parsed this tick) emits a
+/// `profile` record with the parse ms and the byte count, but ONLY when
+/// `perflog::profile_enabled()` — the timing is always taken (cheap `Instant`),
+/// the emit is gated. This is the "which file / how big" breakdown behind an
+/// `extract:<family>` phase total.
+fn cached_facts_profiled<T: Send + Sync>(
+    cache: &FactCache<T>,
+    files: &[ExtractFile],
+    parsed_counter: &std::cell::Cell<usize>,
+    family: &str,
+    parse: impl Fn(&str, &str, &str) -> Option<(String, T)> + Sync,
+) -> Vec<(String, String, String, Arc<T>)> {
     let mut out: Vec<(String, String, String, Arc<T>)> = Vec::with_capacity(files.len());
     let mut next: HashMap<(String, String, String), (String, Arc<T>)> =
         HashMap::with_capacity(files.len());
@@ -86,11 +103,22 @@ fn cached_facts<T: Send + Sync>(
             }
         }
     }
-    let parsed: Vec<(&ExtractFile, String, Arc<T>)> = misses.par_iter().filter_map(|f| {
+    // Time every miss (a file actually re-parsed this tick). The `Instant` is
+    // cheap and taken unconditionally; the per-file emit below is gated on
+    // `profile_enabled()`. `ms` is the parse+extract cost for that one file.
+    let parsed: Vec<(&ExtractFile, String, Arc<T>, u64)> = misses.par_iter().filter_map(|f| {
+        let start = std::time::Instant::now();
         let (rid, facts) = parse(&f.0, &f.1, &f.2)?;
-        Some((*f, rid, Arc::new(facts)))
+        Some((*f, rid, Arc::new(facts), start.elapsed().as_millis() as u64))
     }).collect();
     parsed_counter.set(parsed_counter.get() + parsed.len());
+    if crate::perflog::profile_enabled() {
+        for (f, _, _, ms) in &parsed {
+            crate::perflog::emit_profile("parse", &f.1, *ms, 0, family);
+        }
+    }
+    let parsed: Vec<(&ExtractFile, String, Arc<T>)> =
+        parsed.into_iter().map(|(f, rid, facts, _)| (f, rid, facts)).collect();
     for (f, rid, facts) in parsed {
         out.push((rid.clone(), f.1.clone(), f.2.clone(), facts.clone()));
         if !f.3.is_empty() {
@@ -2103,7 +2131,7 @@ impl Engine {
         // can attribute every node to the folder it lives in.
         let roots = self.repo_roots();
         let facts: Vec<(String, String, String, Arc<typegraph::DataflowFacts>)> =
-            cached_facts(&self.df_facts_cache, &files, &self.extract_files_parsed, |repo, path, rev| {
+            cached_facts_profiled(&self.df_facts_cache, &files, &self.extract_files_parsed, "dataflow", |repo, path, rev| {
                 let lang = typegraph::type_langs().iter().find(|l| l.matches(path))?;
                 let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
                 let content = read_content(froot, rev, path).unwrap_or_default();
