@@ -7,7 +7,7 @@ description: Repo conventions for the v5 dl engine (~/projects/sprefa): e2e test
 
 ## E2E test sandbox pattern
 
-All e2e tests use the compiled binary, located via `env!("CARGO_BIN_EXE_dl")`. Each test builds a temp dir, writes `.dl` program text and fixture files into it, runs `dl` with `--root` and `--db` flags, and asserts on stdout.
+All e2e tests use the compiled binary, located via `env!("CARGO_BIN_EXE_dl")`. Each test builds a temp dir, writes `.dl` program text and fixture files into it, runs `dl` from that dir (there is no `--root` flag — root is the cwd; use `.current_dir(dir)`) with a `--db` flag, and asserts on stdout.
 
 ```rust
 const DL: &str = env!("CARGO_BIN_EXE_dl");
@@ -23,8 +23,8 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--root", dir.to_str().unwrap(),
-               "--db",   dir.join("db").to_str().unwrap()])
+        .args(["--db", dir.join("db").to_str().unwrap()])
+        .current_dir(dir)
         .output().expect("run dl");
     (out.status.code().unwrap_or(-1),
      String::from_utf8_lossy(&out.stdout).into_owned(),
