@@ -290,7 +290,7 @@ pub(crate) fn demand_rel_decls() -> Vec<RelDecl> {
             doc: "effect-template overlay sink: head effect_cmd(kind, template) to override the shell command for an effect kind at drain time (dynamic per-kind template), read as the effect executor is built",
             ..Default::default() },
         RelDecl { name: "checkout".into(), cols: vec![
-            c("repo", Type::Text), c("branch", Type::Text), c("pr_heads", Type::Text)],
+            Col::raw("repo", Type::Text), Col::raw("branch", Type::Text), Col::raw("pr_heads", Type::Text)],
             group: "demand",
             doc: "git checkout demand sink (the ghcacher keep-current half): head checkout(repo, branch, pr_heads) and each row clones a missing config repo, fetches origin, then NON-DESTRUCTIVELY keeps `branch` current — `merge --ff-only origin/<branch>` when that IS the current branch + the working tree is clean (skip on dirty or diverged; never stash, never reset), else `git branch -f` the ref without touching HEAD or the working tree. branch empty = discover origin/HEAD; pr_heads \"1\"/\"true\" also mirrors +refs/pull/*/head. DL_NO_FETCH skips the network (re-points to already-fetched refs only). DL_CHECKOUT_DRY_RUN=1 previews the plan without mutating. The sink drains on the daemon poll loop / --watch / --settle / one-shot --apply (not on a bare `?` read). Repos sweep in parallel on a narrow pool; failures skip loudly",
             ..Default::default() },
@@ -308,10 +308,10 @@ pub(crate) fn demand_rel_decls() -> Vec<RelDecl> {
 pub(crate) const CHECKOUT_OUT_RELS: [&str; 2] = ["checkout_done", "checkout_plan"];
 
 pub(crate) fn checkout_out_rel_decls() -> Vec<RelDecl> {
-    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     let cols = || vec![
-        c("repo", Type::Text), c("branch", Type::Text), Col::branded("action", "checkout_action"),
-        c("ok", Type::Int), c("detail", Type::Text)];
+        Col::raw("repo", Type::Text), Col::raw("branch", Type::Text),
+        Col { name: "action".into(), ty: Type::Text, brand: Some("checkout_action".into()), raw: true },
+        Col::plain("ok".into(), Type::Int), Col::raw("detail", Type::Text)];
     vec![
         RelDecl { name: "checkout_done".into(), cols: cols(), group: "demand",
             doc: "checkout-sweep outcome (written by the `checkout` sink, read-only): one row per swept repo — action is ff/branch-f/skip, ok is 1/0, detail is the git result. Confirms the sweep fired from a live daemon (stderr goes to daemon.log) and lets a program diag failures (ok=0); one-tick latency like other demand outputs", ..Default::default() },
