@@ -171,7 +171,7 @@ learns its root from `DL_DAEMON_ROOT`; you set that only when scripting a daemon
 | LSP | `dl prog.dl --lsp` | live editor diagnostics from `diag` rows |
 | isolated | `dl prog.dl --no-daemon` | in-process, do NOT attach/spawn a daemon |
 
-A one-shot AUTO-ATTACHES to the ONE singleton daemon (at `$XDG_STATE_HOME/sprefa`, else `~/.local/state/sprefa`), which serves every `.dl` root and warms incremental ticks; naming a root in the RPC auto-registers it. This usually helps, but for a clean one-off run — or when the daemon misbehaves — add `--no-daemon` (or `DL_NO_DAEMON=1`) to force the in-process path. Generators/rails that must NOT see stale daemon state should always use `--no-daemon`.
+A one-shot AUTO-ATTACHES to the ONE singleton daemon (at `$XDG_STATE_HOME/sprefa`, else `~/.local/state/sprefa`), which serves every `.dl` root and warms incremental ticks; naming a root in the RPC auto-registers it. An unflagged `dl prog.dl` against an attached daemon merges the full `<cwd>/.dl/*.dl` discovery corpus, not just `prog.dl`; use `--no-daemon` (or `DL_NO_DAEMON=1`) to isolate the program. This usually helps, but for a clean one-off run — or when the daemon misbehaves — add `--no-daemon` to force the in-process path. Generators/rails that must NOT see stale daemon state should always use `--no-daemon`.
 
 **Daemon lifecycle (the reinstall trap):** a long-running daemon holds its OLD in-memory image after `cargo install` of a new `dl`. An auto-attaching one-shot detects drift and restarts it, but a purely reactive daemon does NOT self-heal and keeps stale code. After reinstalling:
 
@@ -478,6 +478,10 @@ directory (the cwd) — no git, the file need not be tracked or committed. Only
 
 ## Authoring gotchas
 
+- **`ast_yaml` RuleCore relationships are narrow.** `inside:` matches the immediate
+  parent only; there is no `field:` selector — use a `kind` node with an `inside:`
+  relation. In any dl regex, `(?i)` folds character classes too (`[A-Z0-9]` also
+  matches lowercase), so uppercase-boundary checks need case-exact branches.
 - **N+1**: never a per-row write. Collect the set, one `insert_rows`/`refresh_rel`.
 - **Mixed source/derived heads auto-desugar**: a rel headed by both a source
   rule (`scan`/`match`/`ast`/`sg`/`json`/`cmd`/`comment`) and a derived rule
