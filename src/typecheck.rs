@@ -112,12 +112,13 @@ impl Brands {
 struct ColTy {
     base: Type,
     brand: Option<String>,
+    interned: bool,
 }
 
 fn col_ty(col: &Col, brands: &Brands) -> ColTy {
     match &col.brand {
-        Some(b) => ColTy { base: brands.base_type(b).unwrap_or(Type::Text), brand: Some(b.clone()) },
-        None => ColTy { base: col.ty, brand: None },
+        Some(b) => ColTy { base: brands.base_type(b).unwrap_or(Type::Text), brand: Some(b.clone()), interned: col.interned() },
+        None => ColTy { base: col.ty, brand: None, interned: col.interned() },
     }
 }
 
@@ -436,15 +437,16 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                     let is_int = matches!(name.as_str(), "int" | "len" | "lines");
                     let str_fn = crate::lower::STR_FNS.iter().find(|(n, _, _)| *n == name.as_str());
                     let is_json = matches!(name.as_str(), "json_object" | "json_array" | "json");
+                    let is_sym_identity = name == "sym";
                     let known = is_int || matches!(name.as_str(), "split" | "replace")
-                        || str_fn.is_some() || is_json;
+                        || str_fn.is_some() || is_json || is_sym_identity;
                     if !known {
                         let extra = crate::lower::STR_FNS.iter()
                             .map(|(n, _, _)| *n).collect::<Vec<_>>().join(", ");
                         diags.push(TypeDiag {
                             path: dl_path.to_string(), span: (0, 0),
                             severity: Severity::Error, code: "unknown-function".into(),
-                            msg: format!("unknown function `{name}` (known: split, replace, int, \
+                            msg: format!("unknown function `{name}` (known: split, replace, sym, int, \
                                 json_object, json_array, json, {extra})"),
                         });
                     }
@@ -470,9 +472,10 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                             });
                         }
                     } else {
-                        let want = match (is_int, str_fn) {
-                            (true, _) => 1,
-                            (_, Some((_, _, k))) => *k,
+                        let want = match (is_int, is_sym_identity, str_fn) {
+                            (true, _, _) => 1,
+                            (_, true, _) => 1,
+                            (_, _, Some((_, _, k))) => *k,
                             _ => 3, // split/replace
                         };
                         if args.len() != want {
@@ -502,7 +505,7 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                     // becomes a JSON number, text a JSON string), so their args do
                     // NOT unify as text — only split/replace/STR_FNS take text operands.
                     if !is_json {
-                        let text_ty = ColTy { base: Type::Text, brand: None };
+                        let text_ty = ColTy { base: Type::Text, brand: None, interned: false };
                         for a in args {
                             if let Term::Var(v) = a {
                                 if v != "_" { match seen.get(v).cloned() {
@@ -606,7 +609,7 @@ fn check_body_binds(rule: &Rule, seen: &mut HashMap<String, ColTy>, dl_path: &st
                     _ => None,
                 };
                 if let Some(base) = ety {
-                    seen.entry(target.clone()).or_insert(ColTy { base, brand: None });
+                    seen.entry(target.clone()).or_insert(ColTy { base, brand: None, interned: false });
                 }
                 bind_vars.insert(target.clone());
             }
@@ -655,7 +658,7 @@ fn arith_ty(t: &Term, seen: &mut HashMap<String, ColTy>, dl_path: &str, diags: &
                     let unknown = if lt.is_none() { lhs } else { rhs };
                     if let Term::Var(v) = unknown.as_ref() {
                         if v != "_" {
-                            seen.entry(v.clone()).or_insert(ColTy { base: a, brand: None });
+                            seen.entry(v.clone()).or_insert(ColTy { base: a, brand: None, interned: false });
                         }
                     }
                     Some(a)
@@ -665,7 +668,7 @@ fn arith_ty(t: &Term, seen: &mut HashMap<String, ColTy>, dl_path: &str, diags: &
                     for side in [lhs, rhs] {
                         if let Term::Var(v) = side.as_ref() {
                             if v != "_" {
-                                seen.entry(v.clone()).or_insert(ColTy { base: Type::Int, brand: None });
+                                seen.entry(v.clone()).or_insert(ColTy { base: Type::Int, brand: None, interned: false });
                             }
                         }
                     }
@@ -687,7 +690,7 @@ fn arith_ty(t: &Term, seen: &mut HashMap<String, ColTy>, dl_path: &str, diags: &
                     None => {
                         if let Term::Var(v) = side.as_ref() {
                             if v != "_" {
-                                seen.entry(v.clone()).or_insert(ColTy { base: Type::Int, brand: None });
+                                seen.entry(v.clone()).or_insert(ColTy { base: Type::Int, brand: None, interned: false });
                             }
                         }
                     }
@@ -1191,12 +1194,12 @@ pub fn stratify_diags(prog: &Program, dl_path: &str) -> Vec<TypeDiag> {
                 _ => false,
             };
             if mismatch {
-                let out = f.fixed_out().map(|t| t.sql()).unwrap_or("value");
+                let out = f.fixed_out().map(|t| t.name()).unwrap_or("value");
                 diags.push(TypeDiag {
                     path: dl_path.to_string(), span: (0, 0),
                     severity: Severity::Error, code: "brand-mismatch".into(),
                     msg: format!("`{}(...)` produces {} but head column `{}` of `{}` is `{}`",
-                        f.sql().to_lowercase(), out, meta.cols[i].name, r.head.rel, meta.cols[i].ty.sql()),
+                        f.sql().to_lowercase(), out, meta.cols[i].name, r.head.rel, meta.cols[i].ty.name()),
                 });
             }
         }

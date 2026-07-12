@@ -119,6 +119,7 @@ pub fn fn_docs() -> &'static [(&'static str, usize, &'static str, &'static str)]
         // native: lowered to SQLite or a hand-coded arm in lower.rs.
         ("split", 3, "string", "split text on a separator; idx 0-based, negative counts from the end (-1 = last); out-of-range drops the row (NULL filter); the sprf_split UDF"),
         ("replace", 3, "string", "replace ALL occurrences of `from` with `to`; SQLite-native"),
+        ("sym", 1, "string", "identity compatibility builtin; text columns are interned automatically"),
         ("int", 1, "cast", "text->int coercion (leading-int prefix, else 0); fills an int column or compares numerically; SQLite CAST"),
         // json constructors: variadic (arity shown is the minimum). Build a JSON
         // string in a head or comparison; SQLite-native. Pair with the json_group_*
@@ -239,7 +240,7 @@ pub(crate) fn graph_rel_decls() -> Vec<RelDecl> {
             c("id", Type::Text), c("label", Type::Text), c("kind", Type::Text),
             c("file", Type::Text), c("line", Type::Int), c("parent", Type::Text)],
             group: "graph",
-            doc: "drawable-graph vertex sink: head graph_node(id, label, kind[, file, line, parent]) from a rule and the flow panel's always-available Graph preset draws it — no bespoke node SQL. Fixed 6-col schema; write only the cols you need via named args (graph_node(id: sym, label: name, kind: k)); file/line place the node in the fs-tree + jump target, parent nests it in list view, all NULL by default",
+            doc: "drawable-graph vertex sink: head graph_node(id, label, kind[, file, line, parent]) from a rule and the flow panel's always-available Graph preset draws it — no bespoke node SQL. Fixed 6-col schema; write only the cols you need via named args (graph_node(id: text, label: name, kind: k)); file/line place the node in the fs-tree + jump target, parent nests it in list view, all NULL by default",
             ..Default::default() },
         RelDecl { name: "graph_edge".into(), cols: vec![
             c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text)],
@@ -346,7 +347,7 @@ pub(crate) fn effect_rel_decls() -> Vec<RelDecl> {
     vec![
         RelDecl { name: "effect_log".into(), cols: vec![
             c("id", Type::Text), c("kind", Type::Text), c("head", Type::Text),
-            c("state", Type::Text), c("args", Type::Text), c("req_tx", Type::Int)], group: "effect",
+            c("state", Type::Text), Col::raw("args", Type::Text), c("req_tx", Type::Int)], group: "effect",
             doc: "the @async/@stream drain queue: one row per request (id, kind, head rel, state queued/running/done/failed, args JSON, req_tx); the dl-native call log, queryable live and parity-comparable to an external cache's call log", ..Default::default() },
     ]
 }
@@ -362,7 +363,7 @@ pub(crate) fn hook_rel_decls() -> Vec<RelDecl> {
     vec![
         RelDecl { name: "hook_event".into(), cols: vec![
             c("kind", Type::Text), c("session", Type::Text),
-            c("seq", Type::Int), c("json", Type::Text)],
+            c("seq", Type::Int), Col::raw("json", Type::Text)],
             group: "hook",
             doc: "harness-hook event log: one accumulating row per `dl --hook` invocation (kind = the event name UserPromptSubmit/PostToolUse/..., session = the event session id, seq = an ingest-time monotone millis stamp ordering events within a session, json = the raw event JSON). Written by the hook feed, never a refresh; extract fields with term-form json/jsonp",
             ..Default::default() },
@@ -433,11 +434,11 @@ pub(crate) fn doc_text_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "doc_comment".into(), cols: vec![
-            c("repo", Type::Text), c("sym", Type::Text), c("line", Type::Int), c("text", Type::Text)], group: "type",
+            c("repo", Type::Text), c("sym", Type::Text), c("line", Type::Int), Col::raw("text", Type::Text)], group: "type",
             doc: "doc comment per type_entity sym: (repo, sym, line, text); AST-located per language (Rust #[doc] attrs, Kotlin KDoc sibling, TS leading /** */)", ..Default::default() },
         RelDecl { name: "doc_tag".into(), cols: vec![
             c("repo", Type::Text), c("sym", Type::Text), c("tag", Type::Text),
-            c("arg", Type::Text), c("text", Type::Text)], group: "type",
+            c("arg", Type::Text), Col::raw("text", Type::Text)], group: "type",
             doc: "structured doc tags per sym: (repo, sym, tag, arg, text); @param/@returns/@deprecated for JSDoc/KDoc, # Section headings for rustdoc", ..Default::default() },
     ]
 }
@@ -448,7 +449,7 @@ pub(crate) fn comment_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "comment_node".into(), cols: vec![
             c("path", Type::Path), c("line", Type::Int), c("col", Type::Int),
             c("end_line", Type::Int), c("end_col", Type::Int),
-            c("text", Type::Text), c("kind", Type::Text)], group: "comment",
+            Col::raw("text", Type::Text), c("kind", Type::Text)], group: "comment",
             doc: "every comment in every parsed file: (path, line, col, end_line, end_col, text, kind is line/block/doc); grammar-backed (oxc for TS/TSX, tree-sitter for Rust, Kotlin, Python, Go, C, ...), so a comment marker inside a string is never a row; text has the comment tokens stripped; std/suppress.dl parses it into the eslint/biome disable grammar", ..Default::default() },
     ]
 }
@@ -458,7 +459,7 @@ pub(crate) fn template_rel_decls() -> Vec<RelDecl> {
     vec![
         RelDecl { name: "template_parts".into(), cols: vec![
             c("file", Type::Path), c("line", Type::Int), c("node", Type::Text),
-            c("idx", Type::Int), c("kind", Type::Text), c("text", Type::Text)], group: "template",
+            c("idx", Type::Int), c("kind", Type::Text), Col::raw("text", Type::Text)], group: "template",
             doc: "every template literal's ordered static/interpolated pieces: (file, line, node, idx, kind is static/expr, text); TS/TSX/JS/JSX/MJS/CJS only (oxc), one line per file's occurrence group via node = the df_node/df_lit id for the SAME template occurrence (join key: node = df_lit.id, node = df_edge.to for whatever flows in); text is verbatim (raw static chunk or the interpolated expression's exact source); template-built import paths/URLs/keys become joinable", ..Default::default() },
     ]
 }
@@ -467,7 +468,7 @@ pub(crate) fn unresolved_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "unresolved".into(), cols: vec![
-            c("file", Type::Path), c("line", Type::Int), c("reason", Type::Text), c("detail", Type::Text)], group: "unresolved",
+            c("file", Type::Path), c("line", Type::Int), c("reason", Type::Text), Col::raw("detail", Type::Text)], group: "unresolved",
             doc: "an edge that could exist but whose target is computed at runtime (as opposed to module_unresolved's no-edge-at-all case); (file, line 1-based, reason, detail is the computed thing's exact source text); TS/TSX/JS/JSX/MJS/CJS only (oxc) in v1; reason is a closed vocabulary: dynamic-import (import(expr)/require(expr) with a non-literal argument), computed-member-call (obj[key]() callee), spread-call-args (f(...args)); Python star-imports/sys.path mutation stay out of v1 (already surfaced via module_unresolved / an eprintln)", ..Default::default() },
     ]
 }
@@ -514,7 +515,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "df_node".into(), cols: vec![
-            c("id", Type::Sym), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
+            c("id", Type::Text), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
             c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int)], group: "dataflow",
             doc: "intra-procedural dataflow node (call_res/let_bind/param/ret/new/member/...); id is an interned StringId over file::line::kind (sym — BREAKING as of the intern-key arc) — the full kind vocabulary is rel_col's variants for this column", ..Default::default() },
         // rev-aware df_node: id is salt_rev(raw id, rev) so two revs' file:line:col
@@ -523,7 +524,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // raw id; a diff reads df_node_rev where the salt makes base/head ids
         // disjoint and the member-edge diff is name-joined, never raw-id-joined.
         RelDecl { name: "df_node_rev".into(), cols: vec![
-            c("id", Type::Sym), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
+            c("id", Type::Text), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
             c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Text)], group: "dataflow",
             doc: "rev-aware df_node; id is salt_rev(raw id, rev) so revs stay disjoint; legacy df_node keeps the raw id", ..Default::default() },
         // (df_node id, repo) — the repo (nearest `.git` basename) the node's file
@@ -532,14 +533,14 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // fill/param to its own folder instead of fanning across every repo that
         // shares the constructed type's NAME. First-seen wins (same dedup as
         // df_node). 1:1 with df_node.
-        RelDecl { name: "df_node_repo".into(), cols: vec![c("id", Type::Sym), c("repo", Type::Text)], group: "dataflow",
+        RelDecl { name: "df_node_repo".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text)], group: "dataflow",
             doc: "(df_node id, repo) — the repo (nearest .git basename) each node's file was read from; scopes df joins per-repo (df_node ids are path-keyed)", ..Default::default() },
         // rev-aware df_node_repo: id salted by rev (matches df_node_rev.id), rev
         // as a column. Repo attribution stays orthogonal to rev — a multi-repo PR
         // diff wants both axes.
-        RelDecl { name: "df_node_repo_rev".into(), cols: vec![c("id", Type::Sym), c("repo", Type::Text), c("rev", Type::Text)], group: "dataflow",
+        RelDecl { name: "df_node_repo_rev".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text), c("rev", Type::Text)], group: "dataflow",
             doc: "rev-aware df_node_repo; id is salt_rev(raw id, rev), matching df_node_rev.id; legacy df_node_repo keeps the raw id", ..Default::default() },
-        RelDecl { name: "df_edge".into(), cols: vec![c("from", Type::Sym), c("to", Type::Sym)], group: "dataflow",
+        RelDecl { name: "df_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text)], group: "dataflow",
             doc: "intra-procedural dataflow dependency edge", ..Default::default() },
         // one row per loop, with its source span + loop variable. The flag rule
         // joins this against df_node/df_edge to find loop-invariant calls: a
@@ -567,20 +568,20 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // params (the Rust receiver `self` is skipped), so it aligns with
         // type_sig's `pos`. Lets a query bind a specific param node to its
         // declared type at node granularity, not just per-fn.
-        RelDecl { name: "df_param".into(), cols: vec![c("id", Type::Sym), c("pos", Type::Int)], group: "dataflow",
+        RelDecl { name: "df_param".into(), cols: vec![c("id", Type::Text), c("pos", Type::Int)], group: "dataflow",
             doc: "(param df_node id, positional index); index counts typed params only (self skipped) so it aligns with type_sig.pos for node-level type joins", ..Default::default() },
         // (call/new node id, position, arg node id) — which argument slot a
         // value feeds. 0-based, method receivers at -1 (mirroring the skipped
         // `self` in df_param), so joining df_arg.pos = df_param.pos makes the
         // interprocedural arg -> param hop positional instead of blanket.
         RelDecl { name: "df_arg".into(), cols: vec![
-            c("call", Type::Sym), c("pos", Type::Int), c("arg", Type::Sym)], group: "dataflow",
+            c("call", Type::Text), c("pos", Type::Int), c("arg", Type::Text)], group: "dataflow",
             doc: "(call/new df_node id, slot, arg df_node id); 0-based, receiver at -1; aligns with df_param.pos for the positional arg->param hop", ..Default::default() },
         // rev-aware df_arg: both id columns (call, arg) salted by rev to match
         // df_node_rev.id, so the arg->node join stays within one rev. legacy
         // df_arg keeps raw ids.
         RelDecl { name: "df_arg_rev".into(), cols: vec![
-            c("call", Type::Sym), c("pos", Type::Int), c("arg", Type::Sym), c("rev", Type::Text)], group: "dataflow",
+            c("call", Type::Text), c("pos", Type::Int), c("arg", Type::Text), c("rev", Type::Text)], group: "dataflow",
             doc: "rev-aware df_arg; call and arg are salt_rev(raw id, rev), matching df_node_rev.id; legacy df_arg keeps raw ids", ..Default::default() },
         // (new/call node id, field name, value node id) — named value flow
         // into a composite: Rust struct-literal fields (`..base` under the
@@ -589,13 +590,13 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // read of the same name (df_node kind=member, var=name) gives
         // field-sensitive flow.
         RelDecl { name: "df_field".into(), cols: vec![
-            c("id", Type::Sym), c("field", Type::Text), c("value", Type::Sym)], group: "dataflow",
+            c("id", Type::Text), c("field", Type::Text), c("value", Type::Text)], group: "dataflow",
             doc: "(new/call df_node id, field name, value df_node id); struct-literal fields, object-literal properties, Kotlin named args; \"..\" for spread/functional-update bases", ..Default::default() },
         // rev-aware df_field: both id columns (id, value) salted by rev — value is
         // always a value df_node id (never a literal), so it salts like id. legacy
         // df_field keeps raw ids.
         RelDecl { name: "df_field_rev".into(), cols: vec![
-            c("id", Type::Sym), c("field", Type::Text), c("value", Type::Sym), c("rev", Type::Text)], group: "dataflow",
+            c("id", Type::Text), c("field", Type::Text), c("value", Type::Text), c("rev", Type::Text)], group: "dataflow",
             doc: "rev-aware df_field; id and value are salt_rev(raw id, rev), matching df_node_rev.id; legacy df_field keeps raw ids", ..Default::default() },
         // (df_node id, text, kind) — one row per STRING-carrying value node
         // (string-values arc item 1). `kind` is lit/template/concat: `lit` is
@@ -604,12 +605,12 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // operands for a `+` concat). TS/TSX/JS populate template/concat;
         // Rust populates lit only (Kotlin/Go/Python ledgered as follow-up).
         RelDecl { name: "df_lit".into(), cols: vec![
-            c("id", Type::Sym), c("text", Type::Text), Col::branded("kind", "const_value_kind")], group: "dataflow",
+            c("id", Type::Text), Col::raw("text", Type::Text), Col::branded("kind", "const_value_kind")], group: "dataflow",
             doc: "(df_node id, text, kind); lit=cooked string literal, template/concat=raw source slice with holes intact; TS/TSX/JS + Rust lit today", ..Default::default() },
         // rev-aware df_lit: id salted by rev, matching df_node_rev.id — same
         // shape as df_field_rev (D5 pattern).
         RelDecl { name: "df_lit_rev".into(), cols: vec![
-            c("id", Type::Sym), c("text", Type::Text), Col::branded("kind", "const_value_kind"), c("rev", Type::Text)], group: "dataflow",
+            c("id", Type::Text), Col::raw("text", Type::Text), Col::branded("kind", "const_value_kind"), c("rev", Type::Text)], group: "dataflow",
             doc: "rev-aware df_lit; id is salt_rev(raw id, rev), matching df_node_rev.id; legacy df_lit keeps the raw id", ..Default::default() },
     ]
 }
@@ -622,11 +623,11 @@ pub(crate) fn const_value_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
         RelDecl { name: "const_value".into(), cols: vec![
-            c("repo", Type::Text), c("sym", Type::Text), c("field", Type::Text), c("text", Type::Text),
+            c("repo", Type::Text), c("sym", Type::Text), c("field", Type::Text), Col::raw("text", Type::Text),
             Col::branded("kind", "const_value_kind"), c("file", Type::Path), c("line", Type::Int)], group: "type",
             doc: "string value folded from a const (or as const) binding; sym is the owning type_entity (the const itself, or the enum for a string member), field is \"\" for a bare const or a dotted key path (\"home\", \"nested.a\") for an object literal; a let/var string initializer is never emitted (soundness rule); line is 1-based", ..Default::default() },
         RelDecl { name: "const_value_rev".into(), cols: vec![
-            c("repo", Type::Text), c("sym", Type::Text), c("field", Type::Text), c("text", Type::Text),
+            c("repo", Type::Text), c("sym", Type::Text), c("field", Type::Text), Col::raw("text", Type::Text),
             Col::branded("kind", "const_value_kind"), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Text)], group: "type",
             doc: "rev-aware const_value (rev is a plain trailing column, like type_entity_rev — sym never collides across revs); legacy const_value is the rev-deduped union", ..Default::default() },
     ]
@@ -640,7 +641,7 @@ pub(crate) fn doc_rel_decls() -> Vec<RelDecl> {
         // walk the section tree. See `ingest::IngestLang`.
         RelDecl { name: "doc_node".into(), cols: vec![
             c("repo", Type::Text), c("file", Type::Path), c("line", Type::Int),
-            c("kind", Type::Text), c("name", Type::Text), c("parent", Type::Text)], group: "doc",
+            c("kind", Type::Text), Col::raw("name", Type::Text), Col::raw("parent", Type::Text)], group: "doc",
             doc: "structural nodes from non-source text (markdown headings + code blocks via tree-sitter-md: ATX/setext headings, fenced/indented blocks); parent is the enclosing heading", ..Default::default() },
         // doc→code bridge: (file, line, sym, kind, matched_name). For each row,
         // `kind` is the doc_node kind that produced it ("heading" or
@@ -652,7 +653,7 @@ pub(crate) fn doc_rel_decls() -> Vec<RelDecl> {
         // type relations.
         RelDecl { name: "doc_ref".into(), cols: vec![
             c("repo", Type::Text), c("file", Type::Path), c("line", Type::Int), c("sym", Type::Text),
-            c("kind", Type::Text), c("matched_name", Type::Text)], group: "doc",
+            c("kind", Type::Text), Col::raw("matched_name", Type::Text)], group: "doc",
             doc: "doc-to-code bridge: name-matches doc_node headings to type_entity symbols (exact + normalized) and scans code blocks for identifier mentions; empty unless the program also uses type relations", ..Default::default() },
     ]
 }

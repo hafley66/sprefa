@@ -10,7 +10,7 @@
 //!
 //! Every table read is tolerant: a family a program never extracted has no
 //! backing table, so a missing table degrades to zero rows rather than erroring
-//! (same posture as `Engine::try_rows`). Reads go through `lower::tbl(name)`, so
+//! (same posture as `Engine::try_rows`). Reads go through decoded relation views, so
 //! no literal `FROM rel_<name>` string appears in this file (the magic-rel
 //! audit only inspects hardcoded names; every relation named here is a
 //! catalogued builtin regardless).
@@ -21,7 +21,7 @@ use anyhow::Result;
 
 use crate::ast::Program;
 use crate::engine::Engine;
-use crate::lower::tbl;
+use crate::lower::txt_tbl;
 
 /// A classified anchor string.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -168,7 +168,7 @@ pub fn resolve_name(eng: &Engine, pattern: &str) -> Result<Vec<AnchorHit>> {
     let sql = format!(
         "SELECT \"repo\", \"sym\", \"name\", \"kind\", \"file\", \"line\" FROM {} \
          WHERE \"name\" LIKE ?1 ESCAPE '\\'",
-        tbl("type_entity")
+        txt_tbl("type_entity")
     );
     for r in rows_of(eng, &sql, p) {
         hits.push(AnchorHit {
@@ -188,8 +188,8 @@ pub fn resolve_name(eng: &Engine, pattern: &str) -> Result<Vec<AnchorHit>> {
         "SELECT d.\"repo\", d.\"sym\", n.\"name\", d.\"kind\", d.\"file\", d.\"line\" \
          FROM {} d JOIN {} n ON n.\"sym\" = d.\"sym\" \
          WHERE n.\"name\" LIKE ?1 ESCAPE '\\'",
-        tbl("call_def"),
-        tbl("call_name")
+        txt_tbl("call_def"),
+        txt_tbl("call_name")
     );
     for r in rows_of(eng, &sql, p) {
         hits.push(AnchorHit {
@@ -209,8 +209,8 @@ pub fn resolve_name(eng: &Engine, pattern: &str) -> Result<Vec<AnchorHit>> {
         "SELECT DISTINCT n.\"symbol\", n.\"name\", COALESCE(d.\"file\", ''), COALESCE(d.\"repo\", '') \
          FROM {} n LEFT JOIN {} d ON d.\"symbol\" = n.\"symbol\" \
          WHERE n.\"name\" LIKE ?1 ESCAPE '\\'",
-        tbl("scip_name"),
-        tbl("scip_def")
+        txt_tbl("scip_name"),
+        txt_tbl("scip_def")
     );
     for r in rows_of(eng, &sql, p) {
         hits.push(AnchorHit {
@@ -229,7 +229,7 @@ pub fn resolve_name(eng: &Engine, pattern: &str) -> Result<Vec<AnchorHit>> {
     let sql = format!(
         "SELECT \"symbol\", \"local_name\", \"file\", \"line\", \"repo\" FROM {} \
          WHERE \"local_name\" LIKE ?1 ESCAPE '\\'",
-        tbl("scip_binding")
+        txt_tbl("scip_binding")
     );
     for r in rows_of(eng, &sql, p) {
         hits.push(AnchorHit {
@@ -252,8 +252,8 @@ pub fn resolve_name(eng: &Engine, pattern: &str) -> Result<Vec<AnchorHit>> {
         "SELECT te.\"repo\", te.\"sym\", mb.\"local\", te.\"kind\", te.\"file\", te.\"line\" \
          FROM {} mb JOIN {} te ON te.\"name\" = mb.\"source\" AND te.\"file\" = mb.\"dst\" \
          WHERE mb.\"local\" LIKE ?1 ESCAPE '\\'",
-        tbl("module_binding_resolved"),
-        tbl("type_entity")
+        txt_tbl("module_binding_resolved"),
+        txt_tbl("type_entity")
     );
     for r in rows_of(eng, &sql, p) {
         hits.push(AnchorHit {
@@ -274,8 +274,8 @@ pub fn resolve_name(eng: &Engine, pattern: &str) -> Result<Vec<AnchorHit>> {
         "SELECT dn.\"id\", dn.\"var\", dn.\"kind\", dn.\"file\", dn.\"line\", COALESCE(dr.\"repo\", '') \
          FROM {} dn LEFT JOIN {} dr ON dr.\"id\" = dn.\"id\" \
          WHERE dn.\"var\" LIKE ?1 ESCAPE '\\' AND dn.\"var\" <> ''",
-        tbl("df_node"),
-        tbl("df_node_repo")
+        txt_tbl("df_node"),
+        txt_tbl("df_node_repo")
     );
     for r in rows_of(eng, &sql, p) {
         hits.push(AnchorHit {
@@ -301,32 +301,32 @@ fn neighborhood(eng: &Engine, sym: &str) -> String {
     let s: &[&dyn rusqlite::types::ToSql] = &[&sym];
     let callers = count_of(
         eng,
-        &format!("SELECT COUNT(DISTINCT \"caller\") FROM {} WHERE \"callee\" = ?1", tbl("call_edge")),
+        &format!("SELECT COUNT(DISTINCT \"caller\") FROM {} WHERE \"callee\" = ?1", txt_tbl("call_edge")),
         s,
     );
     let callees = count_of(
         eng,
-        &format!("SELECT COUNT(DISTINCT \"callee\") FROM {} WHERE \"caller\" = ?1", tbl("call_edge")),
+        &format!("SELECT COUNT(DISTINCT \"callee\") FROM {} WHERE \"caller\" = ?1", txt_tbl("call_edge")),
         s,
     );
     let type_in = count_of(
         eng,
-        &format!("SELECT COUNT(DISTINCT \"src\") FROM {} WHERE \"dst\" = ?1", tbl("type_link")),
+        &format!("SELECT COUNT(DISTINCT \"src\") FROM {} WHERE \"dst\" = ?1", txt_tbl("type_link")),
         s,
     );
     let type_out = count_of(
         eng,
-        &format!("SELECT COUNT(DISTINCT \"dst\") FROM {} WHERE \"src\" = ?1", tbl("type_link")),
+        &format!("SELECT COUNT(DISTINCT \"dst\") FROM {} WHERE \"src\" = ?1", txt_tbl("type_link")),
         s,
     );
     let doc = count_of(
         eng,
-        &format!("SELECT COUNT(*) FROM {} WHERE \"sym\" = ?1", tbl("doc_comment")),
+        &format!("SELECT COUNT(*) FROM {} WHERE \"sym\" = ?1", txt_tbl("doc_comment")),
         s,
     ) > 0;
     let scip_occ = count_of(
         eng,
-        &format!("SELECT COUNT(*) FROM {} WHERE \"symbol\" = ?1", tbl("scip_occurrence")),
+        &format!("SELECT COUNT(*) FROM {} WHERE \"symbol\" = ?1", txt_tbl("scip_occurrence")),
         s,
     );
     format!(
@@ -373,7 +373,7 @@ pub fn what(eng: &Engine, anchor: &str, limit: Option<usize>, offset: Option<usi
             let sql = format!(
                 "SELECT \"repo\", \"caller\", \"callee\", \"file\", \"line\" FROM {} \
                  WHERE {pred} AND \"line\" = ?3",
-                tbl("call_site")
+                txt_tbl("call_site")
             );
             for r in rows_of(eng, &sql, params) {
                 rows.push(vec![
@@ -391,7 +391,7 @@ pub fn what(eng: &Engine, anchor: &str, limit: Option<usize>, offset: Option<usi
             let sql = format!(
                 "SELECT \"kind\", \"var\", \"fn\", \"file\", \"line\" FROM {} \
                  WHERE {pred} AND \"line\" = ?3",
-                tbl("df_node")
+                txt_tbl("df_node")
             );
             for r in rows_of(eng, &sql, params) {
                 rows.push(vec![
@@ -409,7 +409,7 @@ pub fn what(eng: &Engine, anchor: &str, limit: Option<usize>, offset: Option<usi
             let sql = format!(
                 "SELECT \"path\", \"line\", \"kind\", \"text\" FROM {} \
                  WHERE {cpred} AND \"line\" = ?3",
-                tbl("comment_node")
+                txt_tbl("comment_node")
             );
             for r in rows_of(eng, &sql, params) {
                 rows.push(vec![
@@ -428,7 +428,7 @@ pub fn what(eng: &Engine, anchor: &str, limit: Option<usize>, offset: Option<usi
                 "SELECT \"repo\", \"sym\", \"kind\", \"file\", \"line\" FROM {} \
                  WHERE {pred} AND \"line\" <= ?3 AND \"end\" >= ?3 \
                  ORDER BY (\"end\" - \"line\") ASC LIMIT 1",
-                tbl("call_def")
+                txt_tbl("call_def")
             );
             for r in rows_of(eng, &sql, params) {
                 rows.push(vec![
@@ -450,7 +450,7 @@ pub fn what(eng: &Engine, anchor: &str, limit: Option<usize>, offset: Option<usi
             let sql = format!(
                 "SELECT \"repo\", \"sym\", \"name\", \"kind\", \"file\", \"line\" FROM {} \
                  WHERE {pred} ORDER BY \"line\"",
-                tbl("type_entity")
+                txt_tbl("type_entity")
             );
             for r in rows_of(eng, &sql, params) {
                 let detail = neighborhood(eng, &r[1]);
@@ -484,7 +484,7 @@ pub fn what(eng: &Engine, anchor: &str, limit: Option<usize>, offset: Option<usi
     }
 
     // SCIP tier honesty.
-    if count_of(eng, &format!("SELECT COUNT(*) FROM {}", tbl("scip_def")), &[]) == 0 {
+    if count_of(eng, &format!("SELECT COUNT(*) FROM {}", txt_tbl("scip_def")), &[]) == 0 {
         notes.push("scip: no index (run dl index to upgrade)".into());
     }
 
@@ -506,7 +506,7 @@ pub fn summary(eng: &Engine, path: &str) -> QueryOut {
     let fparams: &[&dyn rusqlite::types::ToSql] = &[&fp[0], &fp[1]];
     let sql = format!(
         "SELECT \"name\", \"kind\", \"line\" FROM {} WHERE {fpred} ORDER BY \"line\"",
-        tbl("type_entity")
+        txt_tbl("type_entity")
     );
     for r in rows_of(eng, &sql, fparams) {
         rows.push(vec!["entity".into(), r[0].clone(), format!("{} L{}", r[1], r[2])]);
@@ -518,8 +518,8 @@ pub fn summary(eng: &Engine, path: &str) -> QueryOut {
            (SELECT COUNT(DISTINCT \"caller\") FROM {ce} WHERE \"callee\" = d.\"sym\"), \
            (SELECT COUNT(DISTINCT \"callee\") FROM {ce} WHERE \"caller\" = d.\"sym\") \
          FROM {cd} d WHERE {fpred} ORDER BY d.\"line\"",
-        ce = tbl("call_edge"),
-        cd = tbl("call_def"),
+        ce = txt_tbl("call_edge"),
+        cd = txt_tbl("call_def"),
     );
     for r in rows_of(eng, &sql, fparams) {
         rows.push(vec![
@@ -534,7 +534,7 @@ pub fn summary(eng: &Engine, path: &str) -> QueryOut {
     let sparams: &[&dyn rusqlite::types::ToSql] = &[&sp[0], &sp[1]];
     let sql = format!(
         "SELECT DISTINCT \"dst\" FROM {} WHERE {spred} ORDER BY \"dst\"",
-        tbl("module_edge")
+        txt_tbl("module_edge")
     );
     for r in rows_of(eng, &sql, sparams) {
         rows.push(vec!["import_out".into(), r[0].clone(), String::new()]);
@@ -543,7 +543,7 @@ pub fn summary(eng: &Engine, path: &str) -> QueryOut {
     let dparams: &[&dyn rusqlite::types::ToSql] = &[&dp[0], &dp[1]];
     let sql = format!(
         "SELECT DISTINCT \"src\" FROM {} WHERE {dpred} ORDER BY \"src\"",
-        tbl("module_edge")
+        txt_tbl("module_edge")
     );
     for r in rows_of(eng, &sql, dparams) {
         rows.push(vec!["import_in".into(), r[0].clone(), String::new()]);
@@ -552,7 +552,7 @@ pub fn summary(eng: &Engine, path: &str) -> QueryOut {
     // Unresolved imports out of the file.
     let sql = format!(
         "SELECT \"specifier\", \"reason\", \"line\" FROM {} WHERE {fpred} ORDER BY \"line\"",
-        tbl("module_unresolved")
+        txt_tbl("module_unresolved")
     );
     for r in rows_of(eng, &sql, fparams) {
         rows.push(vec![
@@ -567,8 +567,8 @@ pub fn summary(eng: &Engine, path: &str) -> QueryOut {
         "SELECT COUNT(*), COUNT(dc.\"sym\") FROM {te} te \
          LEFT JOIN (SELECT DISTINCT \"sym\" FROM {doc}) dc ON dc.\"sym\" = te.\"sym\" \
          WHERE {fpred}",
-        te = tbl("type_entity"),
-        doc = tbl("doc_comment"),
+        te = txt_tbl("type_entity"),
+        doc = txt_tbl("doc_comment"),
     );
     if let Some(r) = rows_of(eng, &sql, fparams).into_iter().next() {
         let total: i64 = r[0].parse().unwrap_or(0);
@@ -586,18 +586,18 @@ pub fn summary(eng: &Engine, path: &str) -> QueryOut {
     let cparams: &[&dyn rusqlite::types::ToSql] = &[&cp[0], &cp[1]];
     let comments = count_of(
         eng,
-        &format!("SELECT COUNT(*) FROM {} WHERE {cpred}", tbl("comment_node")),
+        &format!("SELECT COUNT(*) FROM {} WHERE {cpred}", txt_tbl("comment_node")),
         cparams,
     );
     rows.push(vec!["metric".into(), "comment_nodes".into(), comments.to_string()]);
     let df_nodes = count_of(
         eng,
-        &format!("SELECT COUNT(*) FROM {} WHERE {fpred}", tbl("df_node")),
+        &format!("SELECT COUNT(*) FROM {} WHERE {fpred}", txt_tbl("df_node")),
         fparams,
     );
     rows.push(vec!["metric".into(), "df_nodes".into(), df_nodes.to_string()]);
 
-    if count_of(eng, &format!("SELECT COUNT(*) FROM {}", tbl("scip_def")), &[]) == 0 {
+    if count_of(eng, &format!("SELECT COUNT(*) FROM {}", txt_tbl("scip_def")), &[]) == 0 {
         notes.push("scip: no index (run dl index to upgrade)".into());
     }
 

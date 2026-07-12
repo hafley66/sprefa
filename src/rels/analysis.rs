@@ -5,7 +5,7 @@ use anyhow::Result;
 
 use crate::ast::{RelDecl, Type, Value};
 use crate::engine::Engine;
-use crate::lower::tbl;
+use crate::lower::txt_tbl;
 use crate::typegraph;
 
 use super::{col, RelKind};
@@ -68,14 +68,14 @@ impl RelKind for AgentKind {
         let existing_edits: Vec<(String, String, i64, String)> = {
             let mut s = conn.prepare(&format!(
                 "SELECT \"harness\", \"session\", \"idx\", \"path\" FROM {} ORDER BY 1,2,3,4",
-                tbl("agent_edit")))?;
+                txt_tbl("agent_edit")))?;
             let rows = s.query_map([], |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?)))?;
             rows.filter_map(|x| x.ok()).collect()
         };
         let existing_skills: Vec<(String, String, String)> = {
             let mut s = conn.prepare(&format!(
-                "SELECT \"harness\", \"session\", \"name\" FROM {} ORDER BY 1,2,3", tbl("skill_loaded")))?;
+                "SELECT \"harness\", \"session\", \"name\" FROM {} ORDER BY 1,2,3", txt_tbl("skill_loaded")))?;
             let rows = s.query_map([], |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
             rows.filter_map(|x| x.ok()).collect()
@@ -193,7 +193,7 @@ impl RelKind for DlDiagKind {
             let conn = eng.db.conn();
             let mut s = conn.prepare(&format!(
                 "SELECT DISTINCT \"path\" FROM {} WHERE \"path\" LIKE '%.dl' ORDER BY \"path\"",
-                tbl("file")))?;
+                txt_tbl("file")))?;
             let rows = s.query_map([], |r| r.get::<_, String>(0))?;
             rows.filter_map(|x| x.ok()).collect()
         };
@@ -208,7 +208,7 @@ impl RelKind for DlDiagKind {
             let conn = eng.db.conn();
             let mut s = conn.prepare(&format!(
                 "SELECT \"path\",\"line\",\"col\",\"end_line\",\"end_col\",\"severity\",\"code\",\"msg\" \
-                 FROM {} ORDER BY 1,2,3,4,5,6,7,8", tbl("dl_diag")))?;
+                 FROM {} ORDER BY 1,2,3,4,5,6,7,8", txt_tbl("dl_diag")))?;
             let rows = s.query_map([], |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)?,
                 r.get::<_, i64>(4)?, r.get::<_, String>(5)?, r.get::<_, String>(6)?, r.get::<_, String>(7)?)))?;
@@ -248,7 +248,7 @@ impl RelKind for TypeShapeKind {
         let edges: Vec<(String, String, String)> = {
             let conn = eng.db.conn();
             let mut s = conn.prepare(&format!(
-                "SELECT \"from\",\"to\",\"kind\" FROM {}", tbl("type_edge")))?;
+                "SELECT \"from\",\"to\",\"kind\" FROM {}", txt_tbl("type_edge")))?;
             let rows = s.query_map([], |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
             rows.filter_map(|x| x.ok()).collect()
@@ -257,7 +257,7 @@ impl RelKind for TypeShapeKind {
         let stored: Vec<(String, String)> = {
             let conn = eng.db.conn();
             let mut s = conn.prepare(&format!(
-                "SELECT \"name\",\"hash\" FROM {} ORDER BY \"name\",\"hash\"", tbl("type_shape")))?;
+                "SELECT \"name\",\"hash\" FROM {} ORDER BY \"name\",\"hash\"", txt_tbl("type_shape")))?;
             let rows = s.query_map([], |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
             rows.filter_map(|x| x.ok()).collect()
@@ -294,7 +294,7 @@ impl RelKind for TypeLggKind {
         let edges: Vec<(String, String, String)> = {
             let conn = eng.db.conn();
             let mut s = conn.prepare(&format!(
-                "SELECT \"src\",\"dst\",\"kind\" FROM {}", tbl("type_link")))?;
+                "SELECT \"src\",\"dst\",\"kind\" FROM {}", txt_tbl("type_link")))?;
             let rows = s.query_map([], |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
             rows.filter_map(|x| x.ok()).collect()
@@ -303,7 +303,7 @@ impl RelKind for TypeLggKind {
         let stored: Vec<(String, String, i64)> = {
             let conn = eng.db.conn();
             let mut s = conn.prepare(&format!(
-                "SELECT \"a\",\"b\",\"vars\" FROM {} ORDER BY \"a\",\"b\",\"vars\"", tbl("type_lgg")))?;
+                "SELECT \"a\",\"b\",\"vars\" FROM {} ORDER BY \"a\",\"b\",\"vars\"", txt_tbl("type_lgg")))?;
             let rows = s.query_map([], |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)))?;
             rows.filter_map(|x| x.ok()).collect()

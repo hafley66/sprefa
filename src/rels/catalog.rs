@@ -58,7 +58,6 @@ impl RelKind for CatalogKind {
         let ty_tag = |t: Type| match t {
             Type::Text => "text", Type::Int => "int", Type::Path => "path",
             Type::File => "file", Type::Dir => "dir", Type::Repo => "repo", Type::Rev => "rev",
-            Type::Sym => "sym",
         };
         let col_rows: Vec<Vec<Value>> = all_builtin_decls().iter().flat_map(|d| {
             let rel = d.name.clone();

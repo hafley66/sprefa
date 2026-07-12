@@ -1,7 +1,40 @@
 use super::*;
 
+const SCHEMA_EPOCH: i64 = 10;
+
 impl Engine {
     pub(crate) fn ensure_meta(&self) -> Result<()> {
+        let epoch: i64 = self.db.conn().query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if epoch != SCHEMA_EPOCH {
+            let mut objects = Vec::new();
+            {
+                let mut stmt = self.db.conn().prepare(
+                    "SELECT name, type FROM sqlite_master WHERE (type = 'table' OR type = 'view')
+                     AND (name LIKE 'rel_%' OR name LIKE 'scc_node_%' OR name LIKE 'scc_edge_%'
+                          OR name LIKE '_delta_%' OR name LIKE '_carry_%')")?;
+                let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+                for row in rows { objects.push(row?); }
+            }
+            for (name, _) in objects.iter().filter(|(_, kind)| kind == "view") {
+                self.db.conn().execute(&format!("DROP VIEW IF EXISTS \"{name}\""), [])?;
+            }
+            for (name, _) in objects.iter().filter(|(_, kind)| kind == "table") {
+                self.db.conn().execute(&format!("DROP TABLE IF EXISTS \"{name}\""), [])?;
+            }
+            if self.column_exists("_reldigest", "rel")? {
+                self.db.conn().execute("DELETE FROM _reldigest", [])?;
+            }
+            if self.column_exists("_derived_complete", "rel")? {
+                self.db.conn().execute("DELETE FROM _derived_complete", [])?;
+            }
+            if self.column_exists("_shapes", "shape")? {
+                self.db.conn().execute("DELETE FROM _shapes", [])?;
+            }
+            if self.column_exists("_stmt_ms", "rel")? {
+                self.db.conn().execute("DELETE FROM _stmt_ms", [])?;
+            }
+            self.db.conn().execute(&format!("PRAGMA user_version = {SCHEMA_EPOCH}"), [])?;
+        }
         // Intern-key migration (2026-07-11): `_strings.id` / `_where_bytes.string_id`
         // move from TEXT (decimal StringId::Display) to INTEGER (StringId::sqlite,
         // the i64 bit-pattern lower.rs already compiles literals to). No row-level
@@ -696,7 +729,7 @@ impl Engine {
     /// PK is (all rel cols, tx) so a re-tick at the same generation is idempotent.
     pub(crate) fn ensure_carry_table(&self, rel: &str, meta: &RelMeta) -> Result<()> {
         let cols: Vec<String> = meta.cols.iter()
-            .map(|c| format!("\"{}\" {}", c.name, c.ty.sql())).collect();
+            .map(|c| format!("\"{}\" {}", c.name, c.sql())).collect();
         let pk: Vec<String> = meta.cols.iter().map(|c| format!("\"{}\"", c.name)).collect();
         let sql = format!(
             "CREATE TABLE IF NOT EXISTS {} ({}, tx INTEGER NOT NULL, PRIMARY KEY ({}, tx))",

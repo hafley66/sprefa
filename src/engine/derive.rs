@@ -1,4 +1,5 @@
 use super::*;
+use crate::lower::txt_tbl;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -12,6 +13,7 @@ pub(crate) struct AdjacencyCacheKey {
     pub first_column: String,
     pub second_column: String,
     pub sym_columns: bool,
+    pub row_count: i64,
 }
 
 pub(crate) struct AdjacencyCache {
@@ -106,7 +108,7 @@ impl Engine {
         let (c0, c1) = (edge_meta.cols[0].name.clone(), edge_meta.cols[1].name.clone());
         let edges: Vec<(String, String)> = {
             let conn = self.db.conn();
-            let mut s = conn.prepare(&format!("SELECT {c0}, {c1} FROM {}", tbl(edge)))?;
+            let mut s = conn.prepare(&format!("SELECT {c0}, {c1} FROM {}", txt_tbl(edge)))?;
             let v: Vec<(String, String)> = s.query_map([], |r|
                 Ok((cell_as_string(r, 0)?, cell_as_string(r, 1)?)))?
                 .filter_map(|x| x.ok()).collect();
@@ -210,7 +212,7 @@ impl Engine {
             .and_then(|s| s.parse().ok()).unwrap_or(8);
         let rows = knn_rows(&pool, k);
         let cols: Vec<&str> = head_cols.iter().map(|s| s.as_str()).collect();
-        self.db.insert_rows(&tbl(head), &cols, &rows)?;
+        self.insert_rel_rows(head, &cols, &rows)?;
         self.save_rel_digest(&dkey, &digest)?;
         self.save_stmt_ms_one(&format!("node2vec:{edge}"), t.elapsed().as_millis() as i64)?;
         Ok(())
@@ -254,6 +256,7 @@ impl Engine {
             let result = self.db.conn().execute(sql, []);
             stmt_watch.complete();
             let n = result?;
+            self.db.flush_pending_syms()?;
             let ms = t.elapsed().as_millis() as i64;
             let e = stmt_ms.entry(rel.to_string()).or_insert((0, 0));
             e.0 += ms;
@@ -266,8 +269,10 @@ impl Engine {
         for group in stratify(derived_rules)? {
             for (comp_rules, recursive) in rel_components(&group, derived_rules) {
                 let stmts: Vec<(&str, String)> = comp_rules.iter()
-                    .map(|&ri| Ok((derived_rules[ri].head.rel.as_str(),
-                                   lower_rule(derived_rules[ri], &self.rels)?)))
+                    .map(|&ri| {
+                        let sql = lower_rule(derived_rules[ri], &self.rels)?;
+                        Ok((derived_rules[ri].head.rel.as_str(), sql))
+                    })
                     .collect::<Result<_>>()?;
                 crate::activity::detail(format!(
                     "derived: {}", stmts.iter().map(|(r, _)| *r).collect::<Vec<_>>().join(", ")));
@@ -360,9 +365,6 @@ impl Engine {
         derived_rules: &[&Rule],
         timed: &mut impl FnMut(&str, &str) -> Result<usize>,
     ) -> Result<bool> {
-        if self.try_native_depth_walk(comp_rules, derived_rules, timed)? {
-            return Ok(true);
-        }
         self.try_native_halt_bfs(comp_rules, derived_rules, timed)
     }
 
@@ -402,15 +404,15 @@ impl Engine {
         let non_depth_indices: Vec<usize> = (0..head_meta.cols.len())
             .filter(|&column_index| column_index != depth_index).collect();
         let (tag_index, node_index): (Option<usize>, usize) = match non_depth_indices.as_slice() {
-            [node_column] if head_meta.cols[*node_column].ty == crate::ast::Type::Sym
+            [node_column] if head_meta.cols[*node_column].interned()
                 && head_key.len() == 1 && head_key[0] == head_meta.cols[*node_column].name =>
                 (None, *node_column),
             [first_column, second_column] => {
-                let (tag_column, node_column) = if head_meta.cols[*first_column].ty == crate::ast::Type::Text
-                    && head_meta.cols[*second_column].ty == crate::ast::Type::Sym {
+                let (tag_column, node_column) = if head_meta.cols[*first_column].ty.textish()
+                    && head_meta.cols[*second_column].interned() {
                     (*first_column, *second_column)
-                } else if head_meta.cols[*second_column].ty == crate::ast::Type::Text
-                    && head_meta.cols[*first_column].ty == crate::ast::Type::Sym {
+                } else if head_meta.cols[*second_column].ty.textish()
+                    && head_meta.cols[*first_column].interned() {
                     (*second_column, *first_column)
                 } else { miss!("head tag/node types are not text/sym"); };
                 if head_key.len() != 2 || !head_key.contains(&head_meta.cols[tag_column].name)
@@ -503,7 +505,7 @@ impl Engine {
         let edge_meta = self.rels.get(&edge_rel)
             .ok_or_else(|| anyhow::anyhow!("depth-walk edge relation {edge_rel} not declared"))?;
         if edge_meta.cols.len() != 2
-            || edge_meta.cols.iter().any(|column| column.ty != crate::ast::Type::Sym) {
+            || edge_meta.cols.iter().any(|column| !column.interned()) {
             miss!("edge is not a 2-column sym relation");
         }
         let base_indices = dedup_structurally(&comp_rules.iter().copied()
@@ -534,7 +536,13 @@ impl Engine {
         let mut tag_names: Vec<String> = Vec::new();
         let mut starts: Vec<(u32, u32, i64)> = Vec::new();
         let head_columns = head_meta.cols.iter().map(|column| column.name.as_str()).collect::<Vec<_>>();
-        let head_select = head_columns.iter().map(|column| format!("\"{column}\"")).collect::<Vec<_>>().join(", ");
+        let head_select = head_columns.iter().enumerate().map(|(index, column)| {
+            if Some(index) == tag_index && head_meta.cols[index].interned() {
+                format!("(SELECT content FROM _strings WHERE id = \"{column}\")")
+            } else {
+                format!("\"{column}\"")
+            }
+        }).collect::<Vec<_>>().join(", ");
         let mut head_statement = self.db.conn().prepare(&format!("SELECT {head_select} FROM {}", tbl(&head_rel)))?;
         let head_rows = head_statement.query_map([], |row| {
             let node_key = row.get::<_, i64>(node_index)?;
@@ -597,7 +605,7 @@ impl Engine {
             }
             output_rows.push(row_values);
             if output_rows.len() >= OUTPUT_CHUNK {
-                if let Err(error) = self.db.insert_rows(&tbl(&head_rel), &output_columns, &output_rows) {
+                if let Err(error) = self.insert_rel_rows(&head_rel, &output_columns, &output_rows) {
                     insert_result = Err(error);
                     break;
                 }
@@ -605,7 +613,7 @@ impl Engine {
             }
         }
         if insert_result.is_ok() && !output_rows.is_empty() {
-            insert_result = self.db.insert_rows(&tbl(&head_rel), &output_columns, &output_rows).map(|_| ());
+            insert_result = self.insert_rel_rows(&head_rel, &output_columns, &output_rows).map(|_| ());
         }
         for (_, index_sql) in &secondary_indexes { self.db.exec(index_sql)?; }
         insert_result?;
@@ -640,6 +648,11 @@ impl Engine {
     ) -> Result<bool> {
         // A/B lever: force every component onto the SQL fixpoint (parity check).
         if std::env::var_os("DL_NO_HALT_BFS").is_some() { return Ok(false); }
+        // port_reach has two independent seed rules. Its edge relation can
+        // still be growing when the native component is visited, while the
+        // SQL scheduler will revisit the component through the dependency.
+        // Keep this relation on the complete fixpoint path.
+        if derived_rules[comp_rules[0]].head.rel == "port_reach" { return Ok(false); }
         macro_rules! miss { ($why:expr) => {{
             if std::env::var_os("DL_BFS_TRACE").is_some() {
                 eprintln!("[bfs-miss] {}: {}", derived_rules[comp_rules[0]].head.rel, $why);
@@ -728,11 +741,11 @@ impl Engine {
         // readable string. A head/halt column that is itself `sym` would need its
         // own decode — out of this recognizer's scope, so bail to the SQL path.
         use crate::ast::Type;
-        if head_meta.cols[0].ty == Type::Sym || head_meta.cols[1].ty == Type::Sym {
-            miss!("head column is sym (unhandled decode)");
+        if head_meta.cols[0].ty == Type::Int || head_meta.cols[1].ty == Type::Int {
+            miss!("head column is int");
         }
-        if halt_meta.cols[0].ty == Type::Sym { miss!("halt column is sym (unhandled decode)"); }
-        let edge_sym = [edge_meta.cols[0].ty == Type::Sym, edge_meta.cols[1].ty == Type::Sym];
+        if halt_meta.cols[0].ty == Type::Int { miss!("halt column is int"); }
+        let edge_sym = [edge_meta.cols[0].interned(), edge_meta.cols[1].interned()];
         if edge_sym[0] != edge_sym[1] { miss!("mixed edge column types"); }
         let sym_edge = edge_sym[0];
 
@@ -782,9 +795,9 @@ impl Engine {
         let mut starts: Vec<(u32, u32)> = Vec::new();
         {
             let base_sql = format!("SELECT \"{}\", \"{}\" FROM {}",
-                head_meta.cols[0].name, head_meta.cols[1].name, tbl(&head_rel));
+                head_meta.cols[0].name, head_meta.cols[1].name, txt_tbl(&head_rel));
             let mut stmt = self.db.conn().prepare(&base_sql)?;
-            let rows = stmt.query_map([], |r| Ok((cell_as_string(r, 0)?, cell_as_string(r, 1)?)))?;
+            let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
             for row in rows.flatten() {
                 let (tag_s, node_s) = row;
                 let tid = match tag_id.get(&tag_s) {
@@ -807,9 +820,9 @@ impl Engine {
         let mut halt_mask = vec![false; adj.len()];
         {
             let hc0 = halt_meta.cols[0].name.clone();
-            let sql = format!("SELECT DISTINCT \"{hc0}\" FROM {}", tbl(&halt_rel));
+            let sql = format!("SELECT DISTINCT \"{hc0}\" FROM {}", txt_tbl(&halt_rel));
             let mut stmt = self.db.conn().prepare(&sql)?;
-            let rows = stmt.query_map([], |r| cell_as_string(r, 0))?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
             for name in rows.flatten() {
                 if let Some(&id) = interner.get(&StringId::of(&name).sqlite()) { halt_mask[id as usize] = true; }
             }
@@ -876,12 +889,12 @@ impl Engine {
         for &(tid, nid) in &pairs {
             buf.push(vec![Value::Text(tag_names[tid as usize].clone()), Value::Text(node_text(nid))]);
             if buf.len() >= CHUNK {
-                if let Err(e) = self.db.insert_rows(&tbl(&head_rel), &cols, &buf) { insert_res = Err(e); break; }
+                if let Err(e) = self.insert_rel_rows(&head_rel, &cols, &buf) { insert_res = Err(e); break; }
                 buf.clear();
             }
         }
         if insert_res.is_ok() && !buf.is_empty() {
-            insert_res = self.db.insert_rows(&tbl(&head_rel), &cols, &buf).map(|_| ());
+            insert_res = self.insert_rel_rows(&head_rel, &cols, &buf).map(|_| ());
         }
         // Rebuild dropped indexes BEFORE propagating any insert error, so a failure
         // never leaves the head table missing its secondary indexes.
@@ -958,7 +971,7 @@ impl Engine {
             let meta = self.rels.get(rel)
                 .ok_or_else(|| anyhow::anyhow!("unknown relation {rel}"))?;
             let col_defs: Vec<String> = meta.cols.iter()
-                .map(|c| format!("\"{}\" {}", c.name, c.ty.sql())).collect();
+                .map(|c| format!("\"{}\" {}", c.name, c.sql())).collect();
             let col_names: Vec<String> = meta.cols.iter()
                 .map(|c| format!("\"{}\"", c.name)).collect();
             for prefix in ["_delta_", "_delta_new_"] {
@@ -1105,13 +1118,13 @@ impl Engine {
         &self, edge: &str, c0: &str, c1: &str, sym: bool,
     ) -> Result<(Vec<Vec<u32>>, HashMap<i64, u32>, Vec<i64>, Option<Vec<String>>)> {
         use crate::spine::StringId;
-        let sql = format!("SELECT \"{c0}\", \"{c1}\" FROM {}", tbl(edge));
+        let sql = format!("SELECT \"{c0}\", \"{c1}\" FROM {}", txt_tbl(edge));
         let mut stmt = self.db.conn().prepare(&sql)?;
         let mut interner: HashMap<i64, u32> = HashMap::new();
         let mut id2key: Vec<i64> = Vec::new();
         let mut text_by_id: Option<Vec<String>> = if sym { None } else { Some(Vec::new()) };
         let mut pairs: Vec<(u32, u32)> = Vec::new();
-        // Read each endpoint as its (key, optional text): sym -> (i64 cell, None);
+        // Read each endpoint as its (key, optional text): text -> (i64 cell, None);
         // text -> (hash(cell), Some(cell)).
         let read = |r: &rusqlite::Row, idx: usize| -> rusqlite::Result<(i64, Option<String>)> {
             if sym {
@@ -1144,35 +1157,44 @@ impl Engine {
     pub(crate) fn load_edges_keyed_cached(
         &self, edge: &str, c0: &str, c1: &str, sym: bool,
     ) -> Result<std::cell::RefMut<'_, AdjacencyCache>> {
+        let row_count: i64 = self.db.conn().query_row(
+            &format!("SELECT COUNT(*) FROM {}", tbl(edge)), [], |row| row.get(0))?;
         let cache_key = AdjacencyCacheKey {
             edge_relation: edge.to_string(),
             first_column: c0.to_string(),
             second_column: c1.to_string(),
             sym_columns: sym,
+            row_count,
         };
-        let mut cache_slot = self.adjacency_cache.borrow_mut();
-        let needs_load = cache_slot.as_ref().map_or(true, |cache| cache.key != cache_key);
-        if needs_load {
-            let (adjacency, key_to_node, node_keys, text_by_node) =
-                self.load_edges_keyed(edge, c0, c1, sym)?;
-            if std::env::var_os("DL_BFS_TRACE").is_some() {
-                eprintln!("[bfs-cache] load edge={edge} columns={c0},{c1} sym={sym}");
+        {
+            let cache_slot = self.adjacency_cache.borrow();
+            if cache_slot.as_ref().is_some_and(|cache| cache.key == cache_key) {
+                if std::env::var_os("DL_BFS_TRACE").is_some() {
+                    eprintln!("[bfs-cache] reuse edge={edge} columns={c0},{c1} sym={sym}");
+                }
+                drop(cache_slot);
+                return Ok(std::cell::RefMut::map(self.adjacency_cache.borrow_mut(),
+                    |cache| cache.as_mut().unwrap()));
             }
-            *cache_slot = Some(AdjacencyCache {
-                key: cache_key,
-                adjacency,
-                key_to_node,
-                node_keys,
-                text_by_node,
-            });
-        } else if std::env::var_os("DL_BFS_TRACE").is_some() {
-            eprintln!("[bfs-cache] reuse edge={edge} columns={c0},{c1} sym={sym}");
         }
+        let (adjacency, key_to_node, node_keys, text_by_node) =
+            self.load_edges_keyed(edge, c0, c1, sym)?;
+        if std::env::var_os("DL_BFS_TRACE").is_some() {
+            eprintln!("[bfs-cache] load edge={edge} columns={c0},{c1} sym={sym}");
+        }
+        let mut cache_slot = self.adjacency_cache.borrow_mut();
+        *cache_slot = Some(AdjacencyCache {
+            key: cache_key,
+            adjacency,
+            key_to_node,
+            node_keys,
+            text_by_node,
+        });
         Ok(std::cell::RefMut::map(cache_slot, |cache| cache.as_mut().unwrap()))
     }
 
     pub(crate) fn load_edges(&self, edge: &str, c0: &str, c1: &str) -> Result<(Vec<Vec<u32>>, Vec<String>)> {
-        let sql = format!("SELECT \"{c0}\", \"{c1}\" FROM {}", tbl(edge));
+        let sql = format!("SELECT \"{c0}\", \"{c1}\" FROM {}", txt_tbl(edge));
         let mut stmt = self.db.conn().prepare(&sql)?;
         let mut intern: HashMap<String, u32> = HashMap::new();
         let mut names: Vec<String> = Vec::new();
@@ -1238,7 +1260,7 @@ impl Engine {
 
     pub(crate) fn edge_content_digest(&self, edge: &str, c0: &str, c1: &str) -> Result<[u8; 32]> {
         let mut acc = [0u8; 32];
-        let sql = format!("SELECT \"{c0}\", \"{c1}\" FROM {}", tbl(edge));
+        let sql = format!("SELECT \"{c0}\", \"{c1}\" FROM {}", txt_tbl(edge));
         let mut stmt = self.db.conn().prepare(&sql)?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
@@ -1418,7 +1440,7 @@ impl Engine {
             }
         }
         let cols: Vec<&str> = head_meta.cols.iter().map(|c| c.name.as_str()).collect();
-        self.db.insert_rows(&tbl(head), &cols, &rows)?; // one flush, never N+1
+        self.insert_rel_rows(head, &cols, &rows)?; // one flush, never N+1
         Ok(())
     }
 
@@ -1470,7 +1492,7 @@ impl Engine {
             }
         }
         let cols: Vec<&str> = head_meta.cols.iter().map(|c| c.name.as_str()).collect();
-        self.db.insert_rows(&tbl(head), &cols, &rows)?; // one flush, never N+1
+        self.insert_rel_rows(head, &cols, &rows)?; // one flush, never N+1
         Ok(())
     }
 

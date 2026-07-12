@@ -73,7 +73,7 @@ flow_edge(r, c) <-
     df_node(r, "ret", _, fnb, _, _).
 
 # Transitive reach over local flow + local interproc hops + the wire.
-rel service_reach(from: sym, to: sym).
+rel service_reach(from: text, to: text).
 service_reach(a, b) <- closure(flow_edge).
 
 ? service_op(op).

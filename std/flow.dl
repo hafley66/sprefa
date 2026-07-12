@@ -37,7 +37,7 @@ call_edge_bare(cb, eb, cq, eq) <-
 # extractor records it), so this is ONE equality join — the old dual-offset
 # form (`cl = dl + 1` for the 0-based languages) also false-matched a call site
 # on the next line.
-rel call_node(id: sym, callee: text, file: file, line: int).
+rel call_node(id: text, callee: text, file: file, line: int).
 call_node(id, callee, f, l) <-
     df_node(id, "call_res", _, _, f, l), call_site(_, _, callee, f, l).
 
@@ -64,22 +64,22 @@ rel flow_summary(callee: text, pos: int).
 rel flow_sanitizer(callee: text).
 
 # A call site whose callee is modeled (by either rel).
-rel flow_modeled(call: sym).
+rel flow_modeled(call: text).
 flow_modeled(c) <- call_node(c, name, _, _), flow_summary(name, _).
 flow_modeled(c) <- call_node(c, name, _, _), flow_sanitizer(name).
 
 # The blanket arg->result edges a model keeps / cuts. Stratified: neither rel
 # is recursive, so the negations below are legal.
-rel flow_kept(call: sym, arg: sym).
+rel flow_kept(call: text, arg: text).
 flow_kept(c, a) <- call_node(c, name, _, _), flow_summary(name, pos), df_arg(c, pos, a).
 
-rel flow_cut(from: sym, to: sym).
+rel flow_cut(from: text, to: text).
 flow_cut(a, c) <- flow_modeled(c), df_arg(c, _, a), !flow_kept(c, a).
 
 # The unified value-flow edge relation: intra ∪ inter procedural. All-derived
 # (no source rule heads it), so closure() may walk it and importers may union
 # more hop rules onto it.
-rel flow_edge(from: sym, to: sym).
+rel flow_edge(from: text, to: text).
 
 # Intra-procedural: the local lift, minus the blanket edges a summary model
 # cuts (flow_cut is empty when no summaries are asserted — the default is the
@@ -97,7 +97,7 @@ flow_edge(a, b) <- df_edge(a, b), !flow_cut(a, b).
 # one 4-atom join materialized once, instead of re-planned inside every hop
 # (the inlined 7-atom forward hop measured ~7s on this repo; this shape holds
 # the whole flow graph at ~0.5s).
-rel call_target(call: sym, caller: text, callee: text, callee_q: text).
+rel call_target(call: text, caller: text, callee: text, callee_q: text).
 # Pin each call site by exact callable-name equality: aliases are deliberately
 # excluded, and df_node supplies the caller dependency used by this join.
 call_target(c, cb, eb, eq) <-
@@ -177,7 +177,7 @@ flow_edge(r, c) <-
 # already over-approximate through the composite; matching field names refines
 # which downstream read a stored value actually feeds. Query it directly or
 # union it into flow_edge when field-conflating paths should be dropped.
-rel arg_field_flow(value: sym, field: text, call: sym, target: sym).
+rel arg_field_flow(value: text, field: text, call: text, target: text).
 arg_field_flow(v, fld, call_id, target) <-
     call_target(call_id, _, callee_bare, _),
     df_arg(call_id, _, comp),

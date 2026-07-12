@@ -31,7 +31,7 @@ impl Engine {
             .filter_map(|row| if let Value::Text(s) = &row[0] { Some(s.clone()) } else { None }).collect();
         let stored: std::collections::HashSet<String> = {
             let conn = self.db.conn();
-            let mut s = conn.prepare(&format!("SELECT id FROM {}", tbl("node")))?;
+            let mut s = conn.prepare(&format!("SELECT id FROM {}", crate::lower::txt_tbl("node")))?;
             let set: std::collections::HashSet<String> =
                 s.query_map([], |r| r.get::<_, String>(0))?.filter_map(|x| x.ok()).collect();
             set
@@ -98,14 +98,14 @@ impl Engine {
         self.flush_node_spine(str_by_id, wb_by_id)?;
         let nodes_changed = !node_rows.is_empty();
         if nodes_changed {
-            self.db.insert_rows(&node_tbl, &["id", "kind", "file", "lo", "hi", "parent"], &node_rows)?;
+            self.insert_rel_rows("node", &["id", "kind", "file", "lo", "hi", "parent"], &node_rows)?;
             self.db.insert_rows("_node_path", &["id", "path"], &path_by_id)?;
         }
         // Re-insert the fresh walk's child edges (the stale ones were deleted
         // above by the changed-path id set). One plural write; other files'
         // edges untouched (no whole-corpus child rebuild).
         if !child_rows.is_empty() {
-            self.db.insert_rows(&child_tbl, &["parent", "child"], &child_rows)?;
+            self.insert_rel_rows("child", &["parent", "child"], &child_rows)?;
         }
         Ok(nodes_changed)
     }

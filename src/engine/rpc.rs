@@ -1,4 +1,5 @@
 use super::*;
+use crate::lower::txt_tbl;
 
 impl Engine {
     /// Distinct WORK source paths from the `_file` cache. Feeds crate-root
@@ -15,7 +16,7 @@ impl Engine {
     /// instrumentation; returns 0 when the table is empty, errors if absent.
     pub fn count_rows(&self, rel: &str) -> Result<i64> {
         let conn = self.db.conn();
-        Ok(conn.query_row(&format!("SELECT COUNT(*) FROM {}", tbl(rel)), [], |r| r.get(0))?)
+        Ok(conn.query_row(&format!("SELECT COUNT(*) FROM {}", txt_tbl(rel)), [], |r| r.get(0))?)
     }
 
     pub fn query_sql(&self, sql: &str, params: &[serde_json::Value]) -> Result<Vec<Vec<serde_json::Value>>> {
@@ -89,7 +90,7 @@ impl Engine {
         let Some(_meta) = self.rels.get("diag") else { return Ok(Vec::new()); };
         let mut sql = format!(
             "SELECT \"path\", \"line\", \"col\", \"end_line\", \"end_col\", \
-             \"severity\", \"code\", \"msg\", \"hint\" FROM {}", tbl("diag"));
+             \"severity\", \"code\", \"msg\", \"hint\" FROM {}", txt_tbl("diag"));
         if only.is_some() { sql.push_str(" WHERE \"path\" = ?1"); }
         let mut stmt = self.db.conn().prepare(&sql)?;
         let map_row = |row: &rusqlite::Row| -> rusqlite::Result<DiagRow> {
@@ -212,7 +213,7 @@ impl Engine {
         if !self.rels.contains_key(rel) {
             bail!("@in(rpc) rel {rel} is not declared; run a tick before injecting");
         }
-        self.db.insert_rows(&tbl(rel), &["id", "method", "params"],
+        self.insert_rel_rows(rel, &["id", "method", "params"],
             &[vec![Value::Text(id.into()), Value::Text(method.into()), Value::Text(params.into())]])?;
         Ok(())
     }
@@ -226,7 +227,7 @@ impl Engine {
         if !self.rels.contains_key("hook_event") {
             bail!("hook_event rel is not declared; run a tick before feeding an event");
         }
-        self.db.insert_rows(&tbl("hook_event"), &["kind", "session", "seq", "json"],
+        self.insert_rel_rows("hook_event", &["kind", "session", "seq", "json"],
             &[vec![Value::Text(kind.into()), Value::Text(session.into()),
                    Value::Int(seq), Value::Text(json.into())]])?;
         Ok(())
@@ -242,16 +243,15 @@ impl Engine {
             bail!("diag_mute rel is not declared; run a tick before toggling a mute");
         }
         let already: i64 = self.db.conn().query_row(
-            &format!("SELECT COUNT(*) FROM {} WHERE \"code\" = ?1", tbl("diag_mute")),
+            &format!("SELECT COUNT(*) FROM {} WHERE \"code\" = ?1", txt_tbl("diag_mute")),
             rusqlite::params![code], |r| r.get(0))?;
         if already > 0 {
             self.db.conn().execute(
-                &format!("DELETE FROM {} WHERE \"code\" = ?1", tbl("diag_mute")),
+                &format!("DELETE FROM {} WHERE \"code\" = sprf_sym(?1)", tbl("diag_mute")),
                 rusqlite::params![code])?;
             Ok(false)
         } else {
-            self.db.insert_rows(&tbl("diag_mute"), &["code"],
-                &[vec![Value::Text(code.into())]])?;
+            self.insert_rel_rows("diag_mute", &["code"], &[vec![Value::Text(code.into())]])?;
             Ok(true)
         }
     }
@@ -263,7 +263,7 @@ impl Engine {
             return Ok(std::collections::HashSet::new());
         }
         let conn = self.db.conn();
-        let mut stmt = conn.prepare(&format!("SELECT \"code\" FROM {}", tbl("diag_mute")))?;
+        let mut stmt = conn.prepare(&format!("SELECT \"code\" FROM {}", txt_tbl("diag_mute")))?;
         let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
         Ok(rows.filter_map(|x| x.ok()).collect())
     }
@@ -279,7 +279,7 @@ impl Engine {
         if self.rels.contains_key("diag") {
             let conn = self.db.conn();
             let mut stmt = conn.prepare(
-                &format!("SELECT DISTINCT \"code\" FROM {} WHERE \"code\" IS NOT NULL AND \"code\" != ''", tbl("diag")))?;
+                &format!("SELECT DISTINCT \"code\" FROM {} WHERE \"code\" IS NOT NULL AND \"code\" != ''", txt_tbl("diag")))?;
             let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
             for c in rows.filter_map(|x| x.ok()) { codes.insert(c); }
         }
@@ -300,7 +300,7 @@ impl Engine {
         if !self.rels.contains_key(out_rel) { return Ok(Vec::new()); }
         let rows: Vec<(String, String)> = {
             let conn = self.db.conn();
-            let mut s = conn.prepare(&format!("SELECT id, result FROM {}", tbl(out_rel)))?;
+            let mut s = conn.prepare(&format!("SELECT id, result FROM {}", txt_tbl(out_rel)))?;
             let rows = s.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .filter_map(|x| x.ok()).collect();
             conn.execute(&format!("DELETE FROM {}", tbl(out_rel)), [])?;
@@ -315,7 +315,12 @@ impl Engine {
     /// up on). One batched DELETE, not per-row.
     pub fn retire_rpc(&mut self, in_rel: &str, ids: &[String]) -> Result<()> {
         if ids.is_empty() || !self.rels.contains_key(in_rel) { return Ok(()); }
-        let ph = (1..=ids.len()).map(|i| format!("?{i}")).collect::<Vec<_>>().join(",");
+        let interned_id = self.rels.get(in_rel)
+            .and_then(|meta| meta.cols.first())
+            .is_some_and(|col| col.interned());
+        let ph = (1..=ids.len()).map(|i| {
+            if interned_id { format!("sprf_sym(?{i})") } else { format!("?{i}") }
+        }).collect::<Vec<_>>().join(",");
         self.db.conn().execute(
             &format!("DELETE FROM {} WHERE id IN ({ph})", tbl(in_rel)),
             rusqlite::params_from_iter(ids))?;
@@ -331,7 +336,7 @@ impl Engine {
     pub fn rel_rows(&self, rel: &str, ncols: usize) -> Vec<Vec<String>> {
         if !self.rels.contains_key(rel) { return Vec::new(); }
         let conn = self.db.conn();
-        let mut s = match conn.prepare(&format!("SELECT * FROM {}", tbl(rel))) {
+        let mut s = match conn.prepare(&format!("SELECT * FROM {}", txt_tbl(rel))) {
             Ok(s) => s,
             Err(_) => return Vec::new(),
         };
@@ -353,7 +358,7 @@ impl Engine {
     /// pulled repos whose root exists. Diagnostics/tests.
     pub fn repo_relation(&self) -> Vec<(String, String, String)> {
         let conn = self.db.conn();
-        let mut s = match conn.prepare("SELECT slug, root, url FROM rel_repo ORDER BY slug") {
+        let mut s = match conn.prepare(&format!("SELECT slug, root, url FROM {} ORDER BY slug", txt_tbl("repo"))) {
             Ok(s) => s,
             Err(_) => return Vec::new(),
         };

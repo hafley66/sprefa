@@ -20,7 +20,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::*;
-use crate::lower::tbl;
+use crate::lower::{tbl, txt_tbl};
 use crate::modgraph::{self, ProjectCx, Resolution};
 use crate::spine;
 use crate::typegraph;
@@ -534,14 +534,14 @@ impl Engine {
     }
 
     fn insert_module_rows(&self, rows: &ModuleRows, include_crate_edges: bool) -> Result<()> {
-        self.db.insert_rows(&tbl("module_import"), &["file", "rev", "specifier", "kind", "line"], &rows.imports)?;
-        self.db.insert_rows(&tbl("module_edge_rev"), &["src", "dst", "rev"], &rows.edges_rev)?;
-        self.db.insert_rows(&tbl("module_unresolved_rev"), &["file", "rev", "specifier", "reason", "line"], &rows.unresolved_rev)?;
+        self.insert_rel_rows("module_import", &["file", "rev", "specifier", "kind", "line"], &rows.imports)?;
+        self.insert_rel_rows("module_edge_rev", &["src", "dst", "rev"], &rows.edges_rev)?;
+        self.insert_rel_rows("module_unresolved_rev", &["file", "rev", "specifier", "reason", "line"], &rows.unresolved_rev)?;
         if include_crate_edges {
-            self.db.insert_rows(&tbl("crate_edge"), &["src", "dst", "kind", "rev"], &rows.crate_edges)?;
+            self.insert_rel_rows("crate_edge", &["src", "dst", "kind", "rev"], &rows.crate_edges)?;
         }
-        self.db.insert_rows(&tbl("module_binding_resolved_rev"), &["file", "local", "source", "dst", "rev"], &rows.bindings)?;
-        self.db.insert_rows(&tbl("module_binding_rev"),
+        self.insert_rel_rows("module_binding_resolved_rev", &["file", "local", "source", "dst", "rev"], &rows.bindings)?;
+        self.insert_rel_rows("module_binding_rev",
             &["file", "local_name", "source_module", "imported_name", "kind", "rev"], &rows.module_bindings)?;
         self.insert_module_spans(rows)?;
         Ok(())
@@ -791,7 +791,7 @@ impl Engine {
             // unchanged when a wanted repo's index is added — a false skip that
             // strands the second repo's entities on syntactic-only resolution.
             if let Ok(mut s) = self.db.conn().prepare(
-                &format!("SELECT file, symbol, def_file, repo FROM {}", tbl("scip_ref"))) {
+                &format!("SELECT file, symbol, def_file, repo FROM {}", txt_tbl("scip_ref"))) {
                 if let Ok(rows) = s.query_map([], |r| Ok((
                     r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))) {
                     for (f, sym, d, repo) in rows.flatten() {
@@ -806,7 +806,7 @@ impl Engine {
         // tick. Folded for every rev, not just WORK; see the doc comment above.
         if with_scip {
             if let Ok(mut s) = self.db.conn().prepare(
-                &format!("SELECT src, dst FROM {} WHERE \"rev\" = ?1", tbl("module_edge_rev"))) {
+                &format!("SELECT src, dst FROM {} WHERE \"rev\" = ?1", txt_tbl("module_edge_rev"))) {
                 if let Ok(rows) = s.query_map([rev], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
                     for (src, dst) in rows.flatten() {
                         fold(&mut acc, &blake3::hash(format!("module\0{src}\0{dst}").as_bytes()));
@@ -817,7 +817,7 @@ impl Engine {
             // at this rev, same reasoning: an edited alias must flip this digest
             // or the warm-tick skip would keep serving the stale resolution.
             if let Ok(mut s) = self.db.conn().prepare(
-                &format!("SELECT file, local, source, dst FROM {} WHERE \"rev\" = ?1", tbl("module_binding_resolved_rev"))) {
+                &format!("SELECT file, local, source, dst FROM {} WHERE \"rev\" = ?1", txt_tbl("module_binding_resolved_rev"))) {
                 if let Ok(rows) = s.query_map([rev], |r| Ok((
                     r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))) {
                     for (file, local, source, dst) in rows.flatten() {
@@ -891,7 +891,7 @@ impl Engine {
         }
         if with_scip && rev == "WORK" {
             let n: i64 = self.db.conn()
-                .query_row(&format!("SELECT COUNT(*) FROM {}", tbl("scip_ref")), [], |r| r.get(0))
+                .query_row(&format!("SELECT COUNT(*) FROM {}", txt_tbl("scip_ref")), [], |r| r.get(0))
                 .unwrap_or(0);
             let key = format!("extract:scip-rows:{family}");
             let prior = self.load_rel_digest(&key).ok().flatten();
@@ -951,7 +951,9 @@ impl Engine {
         let rev_rows: Vec<Vec<Value>> = revs.iter().map(|rev| vec![Value::Text((*rev).to_string())]).collect();
         self.db.insert_rows("_rel_refresh_rev", &["rev"], &rev_rows)?;
         self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _rel_refresh_rev)", tbl(rel)))?;
-        self.db.insert_rows(&tbl(rel), cols, rows)?;
+        let encoded = self.encode_rel_rows(rel, cols, rows)?;
+        self.db.insert_rows(&tbl(rel), cols, &encoded)
+            .map_err(|error| anyhow::anyhow!("refresh relation {rel}: {error}"))?;
         Ok(())
     }
 
@@ -1051,7 +1053,7 @@ impl Engine {
     fn scip_name_defs(&self) -> Result<HashMap<(String, String, String), String>> {
         let mut seen: HashMap<(String, String, String), Option<String>> = HashMap::new();
         let conn = self.db.conn();
-        let Ok(mut s) = conn.prepare(&format!("SELECT file, symbol, def_file, repo FROM {}", tbl("scip_ref"))) else {
+        let Ok(mut s) = conn.prepare(&format!("SELECT file, symbol, def_file, repo FROM {}", txt_tbl("scip_ref"))) else {
             return Ok(HashMap::new());
         };
         let rows = s.query_map([], |r| {
@@ -1088,7 +1090,7 @@ impl Engine {
         // Definition file per symbol (the def sites the resolver joins into
         // sym_at). Absent scip tables => empty index, name path carries.
         {
-            let Ok(mut s) = conn.prepare(&format!("SELECT symbol, file, repo FROM {}", tbl("scip_def"))) else {
+            let Ok(mut s) = conn.prepare(&format!("SELECT symbol, file, repo FROM {}", txt_tbl("scip_def"))) else {
                 return Ok(idx);
             };
             let rows = s.query_map([], |r| {
@@ -1101,7 +1103,7 @@ impl Engine {
         }
         // Occurrences: (repo, file, 0-based line) -> symbols; cache descriptor
         // names as we go (the moniker parse is repo-independent).
-        if let Ok(mut s) = conn.prepare(&format!("SELECT file, symbol, line, repo FROM {}", tbl("scip_occurrence"))) {
+        if let Ok(mut s) = conn.prepare(&format!("SELECT file, symbol, line, repo FROM {}", txt_tbl("scip_occurrence"))) {
             let rows = s.query_map([], |r| {
                 Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?))
             })?;
@@ -1116,7 +1118,7 @@ impl Engine {
             }
         }
         // Aliased-import local bindings: (repo, file, symbol) -> {local name}.
-        if let Ok(mut s) = conn.prepare(&format!("SELECT file, symbol, local_name, repo FROM {}", tbl("scip_binding"))) {
+        if let Ok(mut s) = conn.prepare(&format!("SELECT file, symbol, local_name, repo FROM {}", txt_tbl("scip_binding"))) {
             let rows = s.query_map([], |r| {
                 Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))
             })?;
@@ -1142,7 +1144,7 @@ impl Engine {
     fn module_import_map(&self) -> Result<HashMap<(String, String), HashSet<String>>> {
         let mut out: HashMap<(String, String), HashSet<String>> = HashMap::new();
         let conn = self.db.conn();
-        let Ok(mut s) = conn.prepare(&format!("SELECT src, dst, \"rev\" FROM {}", tbl("module_edge_rev"))) else {
+        let Ok(mut s) = conn.prepare(&format!("SELECT src, dst, \"rev\" FROM {}", txt_tbl("module_edge_rev"))) else {
             return Ok(out);
         };
         let rows = s.query_map([], |r| {
@@ -1169,7 +1171,7 @@ impl Engine {
         let mut out: HashMap<(String, String), HashMap<String, (String, String)>> = HashMap::new();
         let conn = self.db.conn();
         let Ok(mut s) = conn.prepare(
-            &format!("SELECT file, local, source, dst, \"rev\" FROM {}", tbl("module_binding_resolved_rev"))) else {
+            &format!("SELECT file, local, source, dst, \"rev\" FROM {}", txt_tbl("module_binding_resolved_rev"))) else {
             return Ok(out);
         };
         let rows = s.query_map([], |r| {

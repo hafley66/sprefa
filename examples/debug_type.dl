@@ -7,7 +7,7 @@ rel n_edge(n: int).
 n_edge(count(from)) <- type_edge(from: from).
 
 rel n_entity(n: int).
-n_entity(count(sym)) <- type_entity(sym: sym).
+n_entity(count(sym)) <- type_entity(sym: text).
 
 rel n_shape(n: int).
 n_shape(count(name)) <- type_shape(name, _).

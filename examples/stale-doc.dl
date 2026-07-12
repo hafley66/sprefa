@@ -25,8 +25,8 @@ src(p) <- scan("WORK", "src/**/*.{rs,ts,kt,kts,tsx}", p, rev).
 # Documented entities whose declaration line is in the working diff.
 rel review_doc(sym: text, name: text, file: file, line: int).
 review_doc(sym, name, f, l) <-
-    type_entity(sym: sym, name: name, file: f, line: l),
-    doc_comment(sym: sym),
+    type_entity(sym: text, name: name, file: f, line: l),
+    doc_comment(sym: text),
     changed_line(f, l).
 
 diag(path: f, line: l, severity: "warning", code: "review-doc", msg: "`${name}` changed — confirm its doc comment is still accurate") <-

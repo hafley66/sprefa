@@ -7,7 +7,7 @@ use std::process::Command;
 
 use crate::ast::{RelDecl, Type, Value};
 use crate::engine::Engine;
-use crate::lower::tbl;
+use crate::lower::txt_tbl;
 
 use super::{col, git_anchors, rekey, RelKind};
 
@@ -53,7 +53,7 @@ impl RelKind for ChangedKind {
         let existing: Vec<String> = {
             let conn = eng.db.conn();
             let mut s = conn.prepare(&format!(
-                "SELECT \"path\" FROM {} ORDER BY \"path\"", tbl("changed")))?;
+                "SELECT \"path\" FROM {} ORDER BY \"path\"", txt_tbl("changed")))?;
             let rows = s.query_map([], |r| r.get::<_, String>(0))?;
             rows.filter_map(|x| x.ok()).collect()
         };
@@ -135,7 +135,7 @@ impl RelKind for ChangedLineKind {
             let conn = eng.db.conn();
             let mut s = conn.prepare(&format!(
                 "SELECT \"path\", \"line\" FROM {} ORDER BY \"path\", \"line\"",
-                tbl("changed_line")))?;
+                txt_tbl("changed_line")))?;
             let rs = s.query_map([], |r| {
                 Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
             })?;
@@ -214,7 +214,7 @@ impl RelKind for GitRefKind {
             let conn = eng.db.conn();
             let mut s = conn.prepare(&format!(
                 "SELECT \"repo\",\"refname\",\"kind\",\"sha\" FROM {} ORDER BY 1,2,3,4",
-                tbl("git_ref")))?;
+                txt_tbl("git_ref")))?;
             let rs = s.query_map([], |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?, r.get::<_, String>(3)?)))?;
@@ -273,7 +273,7 @@ impl RelKind for RevBehindKind {
                 let mut s = conn.prepare(&format!(
                     "SELECT DISTINCT \"{}\",\"{}\",\"{}\" FROM {} ORDER BY 1,2,3",
                     meta.col_name(0), meta.col_name(1), meta.col_name(2),
-                    tbl("rev_cmp_want")))?;
+                    txt_tbl("rev_cmp_want")))?;
                 let rs = s.query_map([], |r| Ok((
                     r.get::<_, String>(0)?, r.get::<_, String>(1)?,
                     r.get::<_, String>(2)?)))?;
@@ -335,7 +335,7 @@ impl RelKind for RevBehindKind {
             let conn = eng.db.conn();
             let mut s = conn.prepare(&format!(
                 "SELECT \"repo\",\"refname\",\"upstream\",\"behind\",\"ahead\" \
-                 FROM {} ORDER BY 1,2,3,4,5", tbl("rev_behind")))?;
+                 FROM {} ORDER BY 1,2,3,4,5", txt_tbl("rev_behind")))?;
             let rs = s.query_map([], |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
                 r.get::<_, i64>(3)?, r.get::<_, i64>(4)?)))?;
@@ -421,7 +421,7 @@ impl RelKind for CreatedKind {
             let conn = eng.db.conn();
             let mut s = conn.prepare(&format!(
                 "SELECT \"path\",\"name\",\"email\",\"ts\" FROM {} ORDER BY 1,2,3,4",
-                tbl("created")))?;
+                txt_tbl("created")))?;
             let rows = s.query_map([], |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?, r.get::<_, i64>(3)?)))?;

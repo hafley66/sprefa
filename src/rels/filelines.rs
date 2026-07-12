@@ -11,7 +11,7 @@ use anyhow::Result;
 
 use crate::ast::{RelDecl, Type, Value};
 use crate::engine::Engine;
-use crate::lower::tbl;
+use crate::lower::txt_tbl;
 
 use super::{col, RelKind};
 
@@ -57,7 +57,7 @@ impl RelKind for FileLinesKind {
             let conn = eng.db.conn();
             let mut s = conn.prepare(&format!(
                 "SELECT \"repo\", \"path\", \"rev\", \"line_count\" FROM {} ORDER BY \"repo\", \"path\", \"rev\"",
-                tbl("file_lines")))?;
+                txt_tbl("file_lines")))?;
             let rs = s.query_map([], |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?, r.get::<_, i64>(3)?,

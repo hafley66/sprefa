@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use rayon::prelude::*;
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -1062,12 +1062,42 @@ impl Engine {
 
     /// Wholesale replace one engine-owned relation through the same plural write
     /// seam every built-in module/indexer uses.
+    pub(crate) fn encode_rel_rows(&self, rel: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<Vec<Vec<Value>>> {
+        let meta = self.rels.get(rel)
+            .ok_or_else(|| anyhow::anyhow!("unknown relation {rel}"))?;
+        let positions: Vec<Option<usize>> = cols.iter()
+            .map(|name| meta.cols.iter().position(|col| col.name == *name))
+            .collect();
+        let mut sink = spine::SymSink::new();
+        let mut encoded = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut out = row.clone();
+            for (pos, value) in out.iter_mut().enumerate() {
+                let Some(meta_pos) = positions.get(pos).and_then(|p| *p) else { continue };
+                if !meta.cols[meta_pos].interned() { continue; }
+                if let Value::Text(text) = value {
+                    *value = Value::Int(sink.sym(text).cell());
+                }
+            }
+            encoded.push(out);
+        }
+        self.db.flush_syms(&mut sink)?;
+        Ok(encoded)
+    }
+
+    pub(crate) fn insert_rel_rows(&self, rel: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
+        let encoded = self.encode_rel_rows(rel, cols, rows)?;
+        self.db.insert_rows(&tbl(rel), cols, &encoded)
+    }
+
     pub(crate) fn refresh_rel(&self, rel: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
         let table = tbl(rel);
         let start = std::time::Instant::now();
+        let encoded = self.encode_rel_rows(rel, cols, rows)?;
         // Whole-table reload with index drop/rebuild for large rels (see
         // Db::reload_rel); DELETE + plain insert for small ones.
-        let n = self.db.reload_rel(&table, cols, rows)?;
+        let n = self.db.reload_rel(&table, cols, &encoded)
+            .with_context(|| format!("refresh relation {rel}"))?;
         // Per-rel write cost + the table's schema/size stats (indexes, PK, and
         // per-object dbstat bytes), so perf.jsonl carries WHY a write is slow —
         // gated inside emit_profile/rel_stats so a normal run pays nothing.
@@ -1228,7 +1258,7 @@ fn check_type(ty: Type, v: &Value, repo: &str, rev: &str, root: &Path, rev_index
             Type::File | Type::Path => rev_index.contains(&(repo.to_string(), rev.to_string(), p.clone())),
             Type::Dir => rev_index.iter().any(|(rp, r, pp)| rp == repo && r == rev && pp.starts_with(&format!("{p}/"))),
             // repo/rev are coordinate values, not filesystem paths: no check here.
-            Type::Text | Type::Int | Type::Repo | Type::Rev | Type::Sym => true,
+            Type::Text | Type::Int | Type::Repo | Type::Rev => true,
         };
     }
     let full = root.join(p);
@@ -1236,7 +1266,7 @@ fn check_type(ty: Type, v: &Value, repo: &str, rev: &str, root: &Path, rev_index
         Type::File => full.is_file(),
         Type::Dir => full.is_dir(),
         Type::Path => full.exists(),
-        Type::Text | Type::Int | Type::Repo | Type::Rev | Type::Sym => true,
+        Type::Text | Type::Int | Type::Repo | Type::Rev => true,
     }
 }
 

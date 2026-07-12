@@ -2,11 +2,14 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Type { Text, Int, Path, File, Dir, Repo, Rev, Sym }
+pub enum Type { Text, Int, Path, File, Dir, Repo, Rev }
 
 impl Type {
-    pub fn sql(self) -> &'static str {
-        match self { Type::Int | Type::Sym => "INTEGER", _ => "TEXT" }
+    pub fn name(self) -> &'static str {
+        match self {
+            Type::Text => "text", Type::Int => "int", Type::Path => "path",
+            Type::File => "file", Type::Dir => "dir", Type::Repo => "repo", Type::Rev => "rev",
+        }
     }
     pub fn parse(s: &str) -> Option<Type> {
         Some(match s {
@@ -19,11 +22,9 @@ impl Type {
             // (config slug / path / "." self) and a rev coordinate (git rev).
             "repo" => Type::Repo,
             "rev" => Type::Rev,
-            // Interned text: stored as the content-addressed StringId
-            // (INTEGER = hash64 of the text, `_strings` decodes). Joins and
-            // literal filters are int compares; reading a sym into a text
-            // context decodes through `_strings` transparently.
-            "sym" => Type::Sym,
+            // Compatibility spelling for the unified text storage model.
+            // It is not a distinct type.
+            "sym" => Type::Text,
             _ => return None,
         })
     }
@@ -51,16 +52,25 @@ pub struct Col {
     /// name drives `check_rule_types` unification. Resolved from the raw type
     /// keyword at load time (a brand keyword that is not a base `Type`).
     pub brand: Option<String>,
+    /// Freeform text columns stay as SQLite TEXT and do not enter `_strings`.
+    pub raw: bool,
 }
 
 impl Col {
-    pub fn plain(name: String, ty: Type) -> Col { Col { name, ty, brand: None } }
+    pub fn plain(name: String, ty: Type) -> Col { Col { name, ty, brand: None, raw: false } }
+    pub fn raw(name: &str, ty: Type) -> Col {
+        Col { name: name.to_string(), ty, brand: None, raw: true }
+    }
+    pub fn interned(&self) -> bool { self.ty.textish() && !self.raw }
+    pub fn sql(&self) -> &'static str {
+        if self.ty == Type::Int || self.interned() { "INTEGER" } else { "TEXT" }
+    }
     /// A text column carrying an enum brand: a builtin decl's closed kind
     /// vocabulary (e.g. `type_edge.kind`). Storage stays text; the brand name
     /// resolves through the ambient `engine::builtin_enum_brands` table, so a
     /// literal pin outside the set is an `enum-variant-unknown` typecheck error.
     pub fn branded(name: &str, brand: &str) -> Col {
-        Col { name: name.to_string(), ty: Type::Text, brand: Some(brand.to_string()) }
+        Col { name: name.to_string(), ty: Type::Text, brand: Some(brand.to_string()), raw: false }
     }
 }
 

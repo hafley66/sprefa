@@ -264,6 +264,8 @@ impl Engine {
             for r in extract_rules.iter().filter(|r| &r.head.rel == head_rel) {
                 self.extract_rule_rows(r, &mut rows)?;
             }
+            let col_refs: Vec<&str> = cols.iter().map(|s| s.as_str()).collect();
+            let encoded_rows = self.encode_rel_rows(head_rel, &col_refs, &rows)?;
             // Changed iff the head row SET differs from what is stored (sorted
             // compare): only then does the downstream fixpoint need to re-run.
             // `Value` is not Ord/Eq; compare the row SETS via a string projection.
@@ -292,13 +294,12 @@ impl Engine {
                 })?.filter_map(|x| x.ok()).collect();
                 v
             };
-            let mut after: Vec<Vec<String>> = rows.iter().map(|r| key(r)).collect();
+            let mut after: Vec<Vec<String>> = encoded_rows.iter().map(|r| key(r)).collect();
             before.sort();
             after.sort();
             if before != after { any_changed = true; }
             self.db.conn().execute(&format!("DELETE FROM {}", tbl(head_rel)), [])?;
-            let col_refs: Vec<&str> = cols.iter().map(|s| s.as_str()).collect();
-            self.db.insert_rows(&tbl(head_rel), &col_refs, &rows)?;
+            self.db.insert_rows(&tbl(head_rel), &col_refs, &encoded_rows)?;
             stmt_ms.insert(format!("extract:{head_rel}"), (t.elapsed().as_millis() as i64, 1));
         }
         self.save_stmt_ms(&stmt_ms)?;
@@ -437,13 +438,15 @@ impl Engine {
     pub(crate) fn insert_source_rows_for_paths(&self, rel: &str, meta: &RelMeta, rows: &[(String, String, Vec<Value>)]) -> Result<usize> {
         if rows.is_empty() { return Ok(0); }
         self.insert_spine_strings(rows)?;
+        let col_names: Vec<&str> = meta.cols.iter().map(|col| col.name.as_str()).collect();
+        let plain_rows: Vec<Vec<Value>> = rows.iter().map(|(_, _, row)| row.clone()).collect();
+        let encoded_rows = self.encode_rel_rows(rel, &col_names, &plain_rows)?;
         let mut fact_rows: Vec<Vec<Value>> = Vec::with_capacity(rows.len());
         let mut prov_rows: Vec<Vec<Value>> = Vec::with_capacity(rows.len());
-        for (repo, path, row) in rows {
+        for ((repo, path, row), mut encoded) in rows.iter().zip(encoded_rows) {
             let src = row_hash(row);
-            let mut fact = row.clone();
-            fact.push(Value::Text(src.clone()));
-            fact_rows.push(fact);
+            encoded.push(Value::Text(src.clone()));
+            fact_rows.push(encoded);
             prov_rows.push(vec![
                 Value::Text(rel.to_string()),
                 Value::Text(repo.to_string()),
