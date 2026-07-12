@@ -57,7 +57,8 @@ fn user_hook_entries_survive_merge_and_undo() {
     let sandbox = Sandbox::new("user_hooks");
     let settings = sandbox.repo.join(".claude/settings.json");
     fs::create_dir_all(settings.parent().unwrap()).unwrap();
-    fs::write(&settings, r#"{"theme":"user","hooks":{"PostToolUse":[{"hooks":[{"type":"command","command":"user-hook"}]}]}}"#).unwrap();
+    let original = r#"{"theme":"user","hooks":{"PostToolUse":[{"hooks":[{"type":"command","command":"user-hook"}]}]}}"#;
+    fs::write(&settings, original).unwrap();
     assert!(sandbox.setup_yes().status.success());
     assert_eq!(hook_commands(&settings, "PostToolUse"), vec!["user-hook", "dl --hook"]);
     let undo = sandbox.dl(&["setup", "--undo"]);
@@ -65,6 +66,22 @@ fn user_hook_entries_survive_merge_and_undo() {
     assert_eq!(hook_commands(&settings, "PostToolUse"), vec!["user-hook"]);
     let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(settings).unwrap()).unwrap();
     assert_eq!(value["theme"], "user");
+    assert_eq!(fs::read_to_string(sandbox.repo.join(".claude/settings.json")).unwrap(), original);
+}
+
+#[test]
+fn opencode_json_merge_and_undo_preserve_user_bytes() {
+    let sandbox = Sandbox::new("opencode_bytes");
+    let config = sandbox.home.join(".config/opencode/opencode.json");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    let original = "{\n  \"user\": 1,\n  \"skills\": {}\n}\n";
+    fs::write(&config, original).unwrap();
+    let destination = sandbox.home.join("new-skills").to_string_lossy().into_owned();
+    let setup = sandbox.dl(&["setup", "--skills-dir", &destination]);
+    assert!(setup.status.success(), "{}", output_text(&setup));
+    let undo = sandbox.dl(&["setup", "--undo", "--global"]);
+    assert!(undo.status.success(), "{}", output_text(&undo));
+    assert_eq!(fs::read_to_string(config).unwrap(), original);
 }
 
 #[test]

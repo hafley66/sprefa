@@ -107,11 +107,23 @@ impl SetupJournal {
             return Ok(false);
         };
         if arr.contains(&added) {
+            self.entry(root, target, SetupKind::JsonMerge,
+                SetupDetail::JsonMerge { pointer: pointer.into(), added });
             return Ok(false);
         }
-        arr.push(added.clone());
+        let keys: Vec<&str> = pointer.trim_start_matches('/').split('/').collect();
+        for depth in 0..keys.len() {
+            let prefix = format!("/{}", keys[..=depth].join("/"));
+            if !json_edit::has_pointer(&text, &prefix) {
+                let kind = if depth + 1 == keys.len() { "__created_array__:" } else { "__created_object__:" };
+                self.entry(root, target, SetupKind::JsonMerge,
+                    SetupDetail::JsonMerge { pointer: format!("{kind}{prefix}"), added: Value::Null });
+            }
+        }
+        let output = json_edit::append_array_value(&text, pointer, &added)
+            .context("preserve JSON array bytes")?;
         parent(target)?;
-        atomic(target, &serde_json::to_vec_pretty(&value)?)?;
+        atomic(target, output.as_bytes())?;
         self.entry(
             root,
             target,
@@ -170,8 +182,36 @@ impl SetupJournal {
     ) -> Result<()> {
         safe(target, Some(root))?;
         let created = !target.exists();
+        let original = if created { None } else { Some(fs::read_to_string(target)?) };
+        let hooks_existed = original.as_deref().is_some_and(|text| json_edit::has_pointer(text, "/hooks"));
+        let created_events: Vec<String> = original.as_deref().map(|text| added.iter()
+            .filter(|(event, _)| !json_edit::has_pointer(text, &format!("/hooks/{event}")))
+            .map(|(event, _)| event.clone()).collect()).unwrap_or_default();
         parent(target)?;
-        atomic(target, &serde_json::to_vec_pretty(value)?)?;
+        if created {
+            atomic(target, &serde_json::to_vec_pretty(value)?)?;
+        } else {
+            let mut output = fs::read_to_string(target)?;
+            for (event, command) in added {
+                let entry = value.get("hooks").and_then(|hooks| hooks.get(event))
+                    .and_then(Value::as_array).and_then(|entries| entries.iter().find(|entry| {
+                        entry.get("hooks").and_then(Value::as_array).is_some_and(|hooks| hooks.iter().any(|hook| {
+                            hook.get("command").and_then(Value::as_str).is_some_and(|value| value.contains(command))
+                        }))
+                    })).context("added hook entry missing")?;
+                output = json_edit::append_array_value(&output, &format!("/hooks/{event}"), entry)
+                    .context("preserve hook JSON bytes")?;
+            }
+            atomic(target, output.as_bytes())?;
+        }
+        if !created && !hooks_existed {
+            self.entry(Some(root), target, SetupKind::HookRegister,
+                SetupDetail::HookRegister { event: "__created_object__:hooks".into(), command_substring: "dl setup".into() });
+        }
+        for event in created_events {
+            self.entry(Some(root), target, SetupKind::HookRegister,
+                SetupDetail::HookRegister { event: format!("__created_event__:{event}"), command_substring: "dl setup".into() });
+        }
         if created {
             self.entry(Some(root), target, SetupKind::HookRegister,
                 SetupDetail::HookRegister { event: "__created_file__".into(), command_substring: "dl setup".into() });

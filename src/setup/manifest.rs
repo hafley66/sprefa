@@ -9,6 +9,7 @@ use std::{
 };
 
 mod actions;
+mod json_edit;
 mod write;
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -186,34 +187,15 @@ fn remove_hook(target: &Path, event: &str, command: &str, dry: bool) -> Result<b
         Ok(s) => s,
         Err(_) => return Ok(false),
     };
-    let mut value: Value = match serde_json::from_str(&text) {
+    let value: Value = match serde_json::from_str(&text) {
         Ok(v) => v,
         Err(_) => return Ok(false),
     };
-    let Some(entries) = value
-        .get_mut("hooks")
-        .and_then(|v| v.get_mut(event))
-        .and_then(Value::as_array_mut)
-    else {
-        return Ok(false);
-    };
-    let Some(index) = entries.iter().position(|entry| {
-        entry
-            .get("hooks")
-            .and_then(Value::as_array)
-            .is_some_and(|hooks| {
-                hooks.iter().any(|hook| {
-                    hook.get("command")
-                        .and_then(Value::as_str)
-                        .is_some_and(|c| c.contains(command))
-                })
-            })
-    }) else {
-        return Ok(false);
-    };
+    if !has_hook(&value, event, command) { return Ok(false); }
     if !dry {
-        entries.remove(index);
-        atomic(target, &serde_json::to_vec_pretty(&value)?)?;
+        let output = json_edit::remove_hook_command(&text, event, command)
+            .context("remove exact hook JSON node")?;
+        atomic(target, output.as_bytes())?;
     }
     Ok(true)
 }

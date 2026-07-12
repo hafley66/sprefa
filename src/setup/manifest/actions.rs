@@ -56,7 +56,14 @@ impl SetupJournal {
                     }
                 },
                 SetupDetail::JsonMerge { pointer, added } => {
-                    if remove_json(&entry.target, pointer, added, dry)? {
+                    let removed = if let Some(created) = pointer.strip_prefix("__created_array__:") {
+                        remove_created_json_path(&entry.target, created, "[]", dry)?
+                    } else if let Some(created) = pointer.strip_prefix("__created_object__:") {
+                        remove_created_json_path(&entry.target, created, "{}", dry)?
+                    } else {
+                        remove_json(&entry.target, pointer, added, dry)?
+                    };
+                    if removed {
                         Some("remove JSON node")
                     } else {
                         println!("[dl setup] JSON node changed, left in place: {}", entry.target.display());
@@ -69,6 +76,10 @@ impl SetupJournal {
                 } => {
                     let removed = if event == "__created_file__" {
                         remove_empty_hook_file(&entry.target, dry)?
+                    } else if let Some(created_event) = event.strip_prefix("__created_event__:") {
+                        remove_empty_json_member(&entry.target, "/hooks", created_event, "[]", dry)?
+                    } else if event == "__created_object__:hooks" {
+                        remove_empty_json_member(&entry.target, "", "hooks", "{}", dry)?
                     } else if event == "core.hooksPath" {
                         remove_git_hook_path(entry.root.as_deref(), command_substring, dry)?
                     } else {
@@ -232,6 +243,16 @@ fn remove_empty_hook_file(target: &Path, _dry: bool) -> Result<bool> {
     let Some(hooks) = object.get("hooks").and_then(Value::as_object) else { return Ok(false) };
     Ok(hooks.values().all(|events| events.as_array().is_some_and(Vec::is_empty)))
 }
+fn remove_empty_json_member(target: &Path, parent: &str, key: &str, empty: &str, dry: bool) -> Result<bool> {
+    let text = match fs::read_to_string(target) { Ok(text) => text, Err(_) => return Ok(false) };
+    let Some(output) = json_edit::remove_empty_member(&text, parent, key, empty) else { return Ok(false) };
+    if !dry { atomic(target, output.as_bytes())?; }
+    Ok(true)
+}
+fn remove_created_json_path(target: &Path, pointer: &str, empty: &str, dry: bool) -> Result<bool> {
+    let (parent, key) = pointer.rsplit_once('/').unwrap_or(("", pointer.trim_start_matches('/')));
+    remove_empty_json_member(target, parent, key, empty, dry)
+}
 fn verified_skill_link(root: &Path, home: Option<&Path>, link: &Path, points_to: &Path) -> bool {
     let resolved = if points_to.is_absolute() { points_to.to_path_buf() }
         else { link.parent().unwrap_or(root).join(points_to) };
@@ -257,7 +278,7 @@ fn remove_json(target: &Path, pointer: &str, added: &Value, dry: bool) -> Result
         Ok(s) => s,
         Err(_) => return Ok(false),
     };
-    let mut v: Value = match serde_json::from_str(&s) {
+    let v: Value = match serde_json::from_str(&s) {
         Ok(v) => v,
         Err(_) => {
             println!(
@@ -267,17 +288,10 @@ fn remove_json(target: &Path, pointer: &str, added: &Value, dry: bool) -> Result
             return Ok(false);
         }
     };
-    let Some(a) = v.pointer_mut(pointer).and_then(Value::as_array_mut)
-    else {
-        return Ok(false);
-    };
-    if let Some(i) = a.iter().position(|x| x == added) {
-        if !dry {
-            a.remove(i);
-            atomic(target, &serde_json::to_vec_pretty(&v)?)?;
-        }
-        Ok(true)
-    } else {
-        Ok(false)
+    if !v.pointer(pointer).and_then(Value::as_array).is_some_and(|array| array.contains(added)) { return Ok(false); }
+    if !dry {
+        let output = json_edit::remove_array_value(&s, pointer, added).context("remove exact JSON node")?;
+        atomic(target, output.as_bytes())?;
     }
+    Ok(true)
 }
