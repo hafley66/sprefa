@@ -410,6 +410,15 @@ pub struct Rule {
 }
 
 impl Rule {
+    /// Stable deduplication key for a rule's executable structure. The parsed
+    /// file location is intentionally excluded because discovery may load the
+    /// same rule text from more than one root.
+    pub(crate) fn structural_key(&self) -> String {
+        let mut structural_rule = self.clone();
+        structural_rule.origin = None;
+        format!("{structural_rule:?}")
+    }
+
     /// Does any head term carry an aggregate?
     pub fn has_agg(&self) -> bool { self.aggs.iter().any(|a| a.is_some()) }
 
@@ -499,6 +508,29 @@ impl Rule {
     /// classification so neither reconcile nor rebuild touches the `repo` table.
     pub fn is_repo_sink(&self) -> bool { self.head.rel == "repo" }
     pub fn is_checkout_sink(&self) -> bool { self.head.rel == "checkout" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rule_structural_key_ignores_file_location() {
+        let make_rule = |path: &str| Rule {
+            head: Atom { rel: "reach".to_string(), terms: vec![Term::Var("node".to_string())], named: Vec::new() },
+            body: vec![BodyItem::Pos(Atom { rel: "seed".to_string(), terms: vec![Term::Var("node".to_string())], named: Vec::new() })],
+            aggs: Vec::new(),
+            agg_args2: Vec::new(),
+            origin: Some(PathBuf::from(path)),
+            temporal: None,
+        };
+        let first_rule = make_rule("/root-a/.dl/reach.dl");
+        let second_rule = make_rule("/root-b/.dl/reach.dl");
+        let mut keys = std::collections::HashSet::new();
+        keys.insert(first_rule.structural_key());
+        keys.insert(second_rule.structural_key());
+        assert_eq!(keys.len(), 1);
+    }
 }
 
 /// A `? atom.` query. Filtering is done by nesting (a literal head term pins a

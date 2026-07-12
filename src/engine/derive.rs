@@ -6,6 +6,22 @@ use std::time::Duration;
 const FIXPOINT_ROW_MAX_DEFAULT: usize = 5_000_000;
 const SLOW_STMT_AFTER: Duration = Duration::from_secs(10);
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AdjacencyCacheKey {
+    pub edge_relation: String,
+    pub first_column: String,
+    pub second_column: String,
+    pub sym_columns: bool,
+}
+
+pub(crate) struct AdjacencyCache {
+    pub key: AdjacencyCacheKey,
+    pub adjacency: Vec<Vec<u32>>,
+    pub key_to_node: HashMap<i64, u32>,
+    pub node_keys: Vec<i64>,
+    pub text_by_node: Option<Vec<String>>,
+}
+
 /// One watchdog serves a rebuild, avoiding a sleeper thread for every SQL statement.
 struct StmtWatch { tx: Sender<StmtWatchEvent>, thread: Option<JoinHandle<()>> }
 enum StmtWatchEvent { Begin(String), Complete, Shutdown }
@@ -259,19 +275,10 @@ impl Engine {
                     for (rel, sql) in &stmts { timed(rel, sql)?; }
                     continue;
                 }
-                // Native fast path: a tagged, halt-gated forward BFS
-                // (`port_reach`'s contraction shape) runs in one in-memory pass
-                // over src/walk.rs instead of a SQLite semi-naive fixpoint. The
-                // recognizer is strict; a miss falls through to the SQL path
-                // below with identical semantics.
-                // TODO(native-walk): extend this to the depth-lattice shape
-                // (entry_reach_node/op_reach_node: `key(...) merge(MinBy(d))`,
-                // `d0 < CAP`, no halt). Those currently never reach here — the
-                // `m.key.is_some()` naive_fallback guard ~40 lines below fires
-                // first — so when the depth recognizer lands, move this dispatch
-                // ahead of that guard. Plan:
-                // plans/2026-07-12-native-graph-walk-executor.md
-                if self.try_native_halt_bfs(&comp_rules, derived_rules, &mut timed)? { continue; }
+                // Native graph walks are strict recognizers. A miss falls through
+                // to SQL with the original rows; the depth-lattice path must run
+                // before the key/merge naive-fallback guard below.
+                if self.try_native_walk(&comp_rules, derived_rules, &mut timed)? { continue; }
                 // Defense twin of typecheck's `recursive-null-pad`: a NULL-padded
                 // head in this component would re-insert the same row every
                 // iteration (NULL != NULL never dedups), so the delta never
@@ -345,6 +352,272 @@ impl Engine {
         Ok(())
     }
 
+    /// Try each native graph-walk shape in order. Every recognizer miss returns
+    /// false, preserving the SQL fallback and the DL_NO_HALT_BFS parity lever.
+    fn try_native_walk(
+        &self,
+        comp_rules: &[usize],
+        derived_rules: &[&Rule],
+        timed: &mut impl FnMut(&str, &str) -> Result<usize>,
+    ) -> Result<bool> {
+        if self.try_native_depth_walk(comp_rules, derived_rules, timed)? {
+            return Ok(true);
+        }
+        self.try_native_halt_bfs(comp_rules, derived_rules, timed)
+    }
+
+    /// Recognize and execute the depth-lattice forward walk:
+    /// `head(node, depth)` or `head(tag, node, depth)` with a `MinBy(depth)`
+    /// merge and a recursive `depth < cap` guard. The base rules run first and
+    /// provide the depth-carrying frontier; BFS's first visit is the minimum
+    /// depth required by the lattice.
+    fn try_native_depth_walk(
+        &self,
+        comp_rules: &[usize],
+        derived_rules: &[&Rule],
+        timed: &mut impl FnMut(&str, &str) -> Result<usize>,
+    ) -> Result<bool> {
+        if std::env::var_os("DL_NO_HALT_BFS").is_some() { return Ok(false); }
+        macro_rules! miss { ($why:expr) => {{
+            if std::env::var_os("DL_BFS_TRACE").is_some() {
+                eprintln!("[bfs-miss] {}: {}", derived_rules[comp_rules[0]].head.rel, $why);
+            }
+            return Ok(false);
+        }}; }
+        if comp_rules.is_empty() { return Ok(false); }
+        let head_rel = derived_rules[comp_rules[0]].head.rel.clone();
+        if comp_rules.iter().any(|&rule_index| derived_rules[rule_index].head.rel != head_rel) {
+            miss!("multi-rel component");
+        }
+        let head_meta = self.rels.get(&head_rel).unwrap();
+        let Some(head_key) = head_meta.key.as_ref() else { miss!("head has no key"); };
+        let Some(crate::ast::MergeFn::MinBy(depth_column)) = head_meta.merge.as_ref() else {
+            miss!("head is not MinBy");
+        };
+        let Some(depth_index) = head_meta.cols.iter().position(|column| {
+            column.name == *depth_column && column.ty == crate::ast::Type::Int
+        }) else { miss!("MinBy column is not an int head column"); };
+        if !matches!(head_meta.cols.len(), 2 | 3) { miss!("head is not 2 or 3 columns"); }
+
+        let non_depth_indices: Vec<usize> = (0..head_meta.cols.len())
+            .filter(|&column_index| column_index != depth_index).collect();
+        let (tag_index, node_index): (Option<usize>, usize) = match non_depth_indices.as_slice() {
+            [node_column] if head_meta.cols[*node_column].ty == crate::ast::Type::Sym
+                && head_key.len() == 1 && head_key[0] == head_meta.cols[*node_column].name =>
+                (None, *node_column),
+            [first_column, second_column] => {
+                let (tag_column, node_column) = if head_meta.cols[*first_column].ty == crate::ast::Type::Text
+                    && head_meta.cols[*second_column].ty == crate::ast::Type::Sym {
+                    (*first_column, *second_column)
+                } else if head_meta.cols[*second_column].ty == crate::ast::Type::Text
+                    && head_meta.cols[*first_column].ty == crate::ast::Type::Sym {
+                    (*second_column, *first_column)
+                } else { miss!("head tag/node types are not text/sym"); };
+                if head_key.len() != 2 || !head_key.contains(&head_meta.cols[tag_column].name)
+                    || !head_key.contains(&head_meta.cols[node_column].name) {
+                    miss!("head key is not tag,node");
+                }
+                (Some(tag_column), node_column)
+            }
+            _ => miss!("head node shape is not sym or text,sym"),
+        };
+
+        let is_recursive = |rule: &Rule| rule.body.iter()
+            .any(|body_item| matches!(body_item, BodyItem::Pos(atom) if atom.rel == head_rel));
+        let dedup_structurally = |rule_indices: &[usize]| -> Vec<usize> {
+            let mut seen_keys = std::collections::HashSet::new();
+            rule_indices.iter().copied()
+                .filter(|&rule_index| seen_keys.insert(derived_rules[rule_index].structural_key()))
+                .collect()
+        };
+        let recursive_indices = dedup_structurally(&comp_rules.iter().copied()
+            .filter(|&rule_index| is_recursive(derived_rules[rule_index])).collect::<Vec<_>>());
+        if recursive_indices.len() != 1 { miss!(format!("rec rules = {}", recursive_indices.len())); }
+        let recursive_rule = derived_rules[recursive_indices[0]];
+        if recursive_rule.has_agg() || recursive_rule.temporal.is_some() {
+            miss!("agg/temporal rec rule");
+        }
+
+        let depth_variable = match &recursive_rule.head.terms[depth_index] {
+            Term::Arith { op: crate::ast::ArithOp::Add, lhs, rhs }
+                if matches!(rhs.as_ref(), Term::Int(1)) => match lhs.as_ref() {
+                    Term::Var(variable) => variable.as_str(),
+                    _ => miss!("head depth lhs is not a variable"),
+                },
+            _ => miss!("head depth is not d0 + 1"),
+        };
+        let node_variable = match &recursive_rule.head.terms[node_index] {
+            Term::Var(variable) => variable.as_str(),
+            _ => miss!("head node is not a variable"),
+        };
+        let tag_variable = match tag_index {
+            Some(column_index) => match &recursive_rule.head.terms[column_index] {
+                Term::Var(variable) => Some(variable.as_str()),
+                _ => miss!("head tag is not a variable"),
+            },
+            None => None,
+        };
+
+        let mut self_atom: Option<&Atom> = None;
+        let mut edge_atom: Option<&Atom> = None;
+        let mut depth_cmp: Option<&Constraint> = None;
+        for body_item in &recursive_rule.body {
+            match body_item {
+                BodyItem::Pos(atom) if atom.rel == head_rel => {
+                    if self_atom.replace(atom).is_some() { miss!("duplicate recursive atom"); }
+                }
+                BodyItem::Pos(atom) => {
+                    if edge_atom.replace(atom).is_some() { miss!("duplicate edge atom"); }
+                }
+                BodyItem::Cmp(constraint) => {
+                    if depth_cmp.replace(constraint).is_some() { miss!("duplicate depth guard"); }
+                }
+                _ => miss!("recursive body contains an unsupported item"),
+            }
+        }
+        let (Some(self_atom), Some(edge_atom), Some(depth_cmp)) = (self_atom, edge_atom, depth_cmp)
+            else { miss!("recursive body is not self,edge,depth-guard"); };
+        let self_terms_match = match (tag_index, self_atom.terms.as_slice()) {
+            (None, [Term::Var(from), Term::Var(depth)]) => from != depth_variable && depth == depth_variable,
+            (Some(_), [Term::Var(tag), Term::Var(from), Term::Var(depth)]) =>
+                Some(tag.as_str()) == tag_variable && from != depth_variable && depth == depth_variable,
+            _ => false,
+        };
+        if !self_terms_match { miss!("recursive self atom has the wrong variables"); }
+        let from_variable = match &self_atom.terms[node_index] {
+            Term::Var(variable) => variable.as_str(),
+            _ => miss!("recursive self node is not a variable"),
+        };
+        if from_variable == depth_variable || from_variable == node_variable {
+            miss!("recursive node variables are not distinct");
+        }
+        match edge_atom.terms.as_slice() {
+            [Term::Var(from), Term::Var(to)] if from == from_variable && to == node_variable => {}
+            _ => miss!("edge is not from,to"),
+        }
+        let depth_cap = match (&depth_cmp.lhs, depth_cmp.op, &depth_cmp.rhs) {
+            (Term::Var(variable), CmpOp::Lt, Term::Int(cap)) if variable == depth_variable && *cap >= 0 => *cap,
+            _ => miss!("depth guard is not d0 < CAP"),
+        };
+        let edge_rel = edge_atom.rel.clone();
+        let edge_meta = self.rels.get(&edge_rel)
+            .ok_or_else(|| anyhow::anyhow!("depth-walk edge relation {edge_rel} not declared"))?;
+        if edge_meta.cols.len() != 2
+            || edge_meta.cols.iter().any(|column| column.ty != crate::ast::Type::Sym) {
+            miss!("edge is not a 2-column sym relation");
+        }
+        let base_indices = dedup_structurally(&comp_rules.iter().copied()
+            .filter(|&rule_index| !is_recursive(derived_rules[rule_index])).collect::<Vec<_>>());
+        if base_indices.is_empty() { miss!("no base rules"); }
+        for &rule_index in &base_indices {
+            let base_rule = derived_rules[rule_index];
+            if base_rule.has_agg() || base_rule.temporal.is_some()
+                || !matches!(base_rule.head.terms[depth_index], Term::Int(0)) {
+                miss!("base rule does not seed depth zero");
+            }
+        }
+
+        for &rule_index in &base_indices {
+            let sql = lower_rule(derived_rules[rule_index], &self.rels)?;
+            timed(&head_rel, &sql)?;
+        }
+
+        let walk_started = std::time::Instant::now();
+        let load_started = std::time::Instant::now();
+        let (edge_column_zero, edge_column_one) =
+            (edge_meta.cols[0].name.clone(), edge_meta.cols[1].name.clone());
+        let mut adjacency_cache = self.load_edges_keyed_cached(
+            &edge_rel, &edge_column_zero, &edge_column_one, true)?;
+        let load_elapsed = load_started.elapsed();
+        let AdjacencyCache { adjacency, key_to_node, node_keys, .. } = &mut *adjacency_cache;
+        let mut tag_ids: HashMap<String, u32> = HashMap::new();
+        let mut tag_names: Vec<String> = Vec::new();
+        let mut starts: Vec<(u32, u32, i64)> = Vec::new();
+        let head_columns = head_meta.cols.iter().map(|column| column.name.as_str()).collect::<Vec<_>>();
+        let head_select = head_columns.iter().map(|column| format!("\"{column}\"")).collect::<Vec<_>>().join(", ");
+        let mut head_statement = self.db.conn().prepare(&format!("SELECT {head_select} FROM {}", tbl(&head_rel)))?;
+        let head_rows = head_statement.query_map([], |row| {
+            let node_key = row.get::<_, i64>(node_index)?;
+            let depth = row.get::<_, i64>(depth_index)?;
+            let tag_value = tag_index.map(|column_index| cell_as_string(row, column_index)).transpose()?;
+            Ok((tag_value, node_key, depth))
+        })?;
+        for head_row in head_rows {
+            let (tag_value, node_key, depth) = head_row?;
+            let tag_id = match tag_value {
+                Some(tag_text) => match tag_ids.get(&tag_text) {
+                    Some(&existing_id) => existing_id,
+                    None => {
+                        let new_id = tag_names.len() as u32;
+                        tag_names.push(tag_text.clone());
+                        tag_ids.insert(tag_text, new_id);
+                        new_id
+                    }
+                },
+                None => 0,
+            };
+            let node_id = match key_to_node.get(&node_key) {
+                Some(&existing_id) => existing_id,
+                None => {
+                    let new_id = adjacency.len() as u32;
+                    adjacency.push(Vec::new());
+                    node_keys.push(node_key);
+                    key_to_node.insert(node_key, new_id);
+                    new_id
+                }
+            };
+            starts.push((tag_id, node_id, depth));
+        }
+
+        let bfs_started = std::time::Instant::now();
+        let reached = crate::walk::multi_source_walk(&*adjacency, &starts, None, Some(depth_cap));
+        let bfs_elapsed = bfs_started.elapsed();
+        let output_started = std::time::Instant::now();
+        self.db.exec(&format!("DELETE FROM {}", tbl(&head_rel)))?;
+        let secondary_indexes: Vec<(String, String)> = {
+            let mut index_statement = self.db.conn().prepare(
+                "SELECT name, sql FROM sqlite_master WHERE tbl_name = ?1 AND type = 'index' AND sql IS NOT NULL")?;
+            let index_rows = index_statement.query_map([tbl(&head_rel)], |row|
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+            index_rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for (index_name, _) in &secondary_indexes {
+            self.db.exec(&format!("DROP INDEX \"{index_name}\""))?;
+        }
+        let output_columns: Vec<&str> = head_meta.cols.iter().map(|column| column.name.as_str()).collect();
+        const OUTPUT_CHUNK: usize = 16000;
+        let mut output_rows: Vec<Vec<Value>> = Vec::with_capacity(OUTPUT_CHUNK.min(reached.len().max(1)));
+        let mut insert_result: Result<()> = Ok(());
+        for &(tag_id, node_id, depth) in &reached {
+            let mut row_values = vec![Value::Null; head_meta.cols.len()];
+            row_values[node_index] = Value::Int(node_keys[node_id as usize]);
+            row_values[depth_index] = Value::Int(depth);
+            if let Some(tag_column) = tag_index {
+                row_values[tag_column] = Value::Text(tag_names[tag_id as usize].clone());
+            }
+            output_rows.push(row_values);
+            if output_rows.len() >= OUTPUT_CHUNK {
+                if let Err(error) = self.db.insert_rows(&tbl(&head_rel), &output_columns, &output_rows) {
+                    insert_result = Err(error);
+                    break;
+                }
+                output_rows.clear();
+            }
+        }
+        if insert_result.is_ok() && !output_rows.is_empty() {
+            insert_result = self.db.insert_rows(&tbl(&head_rel), &output_columns, &output_rows).map(|_| ());
+        }
+        for (_, index_sql) in &secondary_indexes { self.db.exec(index_sql)?; }
+        insert_result?;
+        if std::env::var_os("DL_BFS_TRACE").is_some() {
+            eprintln!("[bfs] {head_rel}: load={}ms bfs={}ms out+insert={}ms rows={} nodes={}",
+                load_elapsed.as_millis(), bfs_elapsed.as_millis(), output_started.elapsed().as_millis(),
+                reached.len(), adjacency.len());
+        }
+        self.save_stmt_ms_one(&format!("walk:{head_rel}"), walk_started.elapsed().as_millis() as i64)?;
+        Ok(true)
+    }
+
     /// Recognize and natively execute the tagged, halt-gated forward-BFS shape —
     /// `port_reach`'s graph-contraction walk — bypassing the SQLite semi-naive
     /// fixpoint. Returns `Ok(true)` iff the component matched AND was executed
@@ -385,13 +658,13 @@ impl Engine {
         // rule reads as two and misses. Set semantics make duplicates a no-op.
         let is_rec = |r: &Rule| r.body.iter()
             .any(|b| matches!(b, BodyItem::Pos(a) if a.rel == head_rel));
-        let dedup_by_debug = |ris: &[usize]| -> Vec<usize> {
+        let dedup_structurally = |ris: &[usize]| -> Vec<usize> {
             let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
             ris.iter().copied()
-                .filter(|&ri| seen.insert(format!("{:?}", derived_rules[ri])))
+                .filter(|&ri| seen.insert(derived_rules[ri].structural_key()))
                 .collect()
         };
-        let rec_ris = dedup_by_debug(&comp_rules.iter().copied()
+        let rec_ris = dedup_structurally(&comp_rules.iter().copied()
             .filter(|&ri| is_rec(derived_rules[ri])).collect::<Vec<_>>());
         if rec_ris.len() != 1 { miss!(format!("rec rules = {}", rec_ris.len())); }
         let rec = derived_rules[rec_ris[0]];
@@ -465,7 +738,7 @@ impl Engine {
 
         // Need at least one base rule to seed the frontier; a pure recursion with
         // no base case produces nothing and is better left to the SQL path.
-        let base_ris = dedup_by_debug(&comp_rules.iter().copied()
+        let base_ris = dedup_structurally(&comp_rules.iter().copied()
             .filter(|&ri| !is_rec(derived_rules[ri])).collect::<Vec<_>>());
         if base_ris.is_empty() { miss!("no base rules"); }
 
@@ -482,12 +755,13 @@ impl Engine {
         //    per-node String. Base nodes with no incident edge are interned on the
         //    fly (recorded, never expanded — no out-edges).
         let (ec0, ec1) = (edge_meta.cols[0].name.clone(), edge_meta.cols[1].name.clone());
-        let (mut adj, mut interner, mut id2key, mut text_by_id) =
-            self.load_edges_keyed(&edge_rel, &ec0, &ec1, sym_edge)?;
+        let mut adjacency_cache = self.load_edges_keyed_cached(&edge_rel, &ec0, &ec1, sym_edge)?;
+        let AdjacencyCache { adjacency: adj, key_to_node: interner,
+            node_keys: id2key, text_by_node: text_by_id, .. } = &mut *adjacency_cache;
         // For a sym graph, keep the base nodes' text (known from the head read) and
         // fetch the rest from `_strings` at output time; text edges carry it all.
         let mut sym_text: HashMap<u32, String> = HashMap::new();
-        let mut intern_key = |key: i64, text: &str,
+        let intern_key = |key: i64, text: &str,
                               adj: &mut Vec<Vec<u32>>,
                               id2key: &mut Vec<i64>,
                               interner: &mut HashMap<i64, u32>,
@@ -523,7 +797,7 @@ impl Engine {
                     }
                 };
                 let key = StringId::of(&node_s).sqlite();
-                let nid = intern_key(key, &node_s, &mut adj, &mut id2key, &mut interner, &mut text_by_id);
+                let nid = intern_key(key, &node_s, adj, id2key, interner, text_by_id);
                 if text_by_id.is_none() { sym_text.entry(nid).or_insert_with(|| node_s.clone()); }
                 starts.push((tid, nid));
             }
@@ -865,6 +1139,36 @@ impl Engine {
         let mut adj = vec![Vec::new(); id2key.len()];
         for (a, b) in pairs { adj[a as usize].push(b); }
         Ok((adj, interner, id2key, text_by_id))
+    }
+
+    pub(crate) fn load_edges_keyed_cached(
+        &self, edge: &str, c0: &str, c1: &str, sym: bool,
+    ) -> Result<std::cell::RefMut<'_, AdjacencyCache>> {
+        let cache_key = AdjacencyCacheKey {
+            edge_relation: edge.to_string(),
+            first_column: c0.to_string(),
+            second_column: c1.to_string(),
+            sym_columns: sym,
+        };
+        let mut cache_slot = self.adjacency_cache.borrow_mut();
+        let needs_load = cache_slot.as_ref().map_or(true, |cache| cache.key != cache_key);
+        if needs_load {
+            let (adjacency, key_to_node, node_keys, text_by_node) =
+                self.load_edges_keyed(edge, c0, c1, sym)?;
+            if std::env::var_os("DL_BFS_TRACE").is_some() {
+                eprintln!("[bfs-cache] load edge={edge} columns={c0},{c1} sym={sym}");
+            }
+            *cache_slot = Some(AdjacencyCache {
+                key: cache_key,
+                adjacency,
+                key_to_node,
+                node_keys,
+                text_by_node,
+            });
+        } else if std::env::var_os("DL_BFS_TRACE").is_some() {
+            eprintln!("[bfs-cache] reuse edge={edge} columns={c0},{c1} sym={sym}");
+        }
+        Ok(std::cell::RefMut::map(cache_slot, |cache| cache.as_mut().unwrap()))
     }
 
     pub(crate) fn load_edges(&self, edge: &str, c0: &str, c1: &str) -> Result<(Vec<Vec<u32>>, Vec<String>)> {

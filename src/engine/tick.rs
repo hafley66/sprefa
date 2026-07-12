@@ -77,6 +77,7 @@ impl Engine {
         self.shape_diags.clear();
         CMD_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
         self.db.tick_begin();
+        self.adjacency_cache.borrow_mut().take();
         // Rewrite any rel headed by both a source/extract rule and a derived
         // rule into hidden twins + a synthesized union, BEFORE rule
         // classification below ever sees the program — so every downstream
@@ -744,6 +745,7 @@ impl Engine {
         self.shape_diags.clear();
         CMD_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
         self.db.tick_begin();
+        self.adjacency_cache.borrow_mut().take();
         // Every `self.tick(...)` fallback below MUST pass the ORIGINAL,
         // pre-desugar program: `tick_report` runs its own
         // `desugar_mixed_rels` pass, and re-desugaring an already-rewritten
