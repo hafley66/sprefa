@@ -128,6 +128,68 @@ reach(to, d0 + 1) <- reach(from, d0), edge(from, to), d0 < 64.
     );
 }
 
+/// RED/GREEN companion to the test above: same 5-node cyclic graph, same
+/// `d0 < 8` depth guard, run as TWO shapes of the SAME recursive rule so the
+/// row-count delta the lattice fixes is explicit and hand-verifiable.
+///
+/// RED (`reach_count`, no `merge`): a plain depth counter re-derives every
+/// node on every lap of the cycle up to the guard, producing a (node x
+/// path-length) product. Exact rows measured directly off this program:
+///   s 0, a 1, b 2, c 3, t 4, a 4, b 5, c 6, t 7, a 7, t 4
+/// (11 rows total; t is reached at both depth 4 and depth 7, each its own
+/// row since there is no merge). Pinned here as the RED regression baseline.
+/// GREEN (`reach`, `merge(MinBy(d))`): collapses to exactly 5 rows, one per
+/// node at its minimum depth -- proving the lattice is what shrinks 11 -> 5,
+/// not an artifact of the guard or graph shape.
+#[test]
+fn counter_shape_produces_row_product_that_minby_lattice_collapses() {
+    let dir = sandbox("redgreen");
+    let red_stdout = run(&dir, r#"
+rel edge(from: text, to: text).
+edge("s","a"). edge("a","b"). edge("b","c"). edge("c","t"). edge("c","a").
+rel seed(node: text).
+seed("s").
+rel reach_count(node: text, d: int).
+reach_count(node, 0) <- seed(node).
+reach_count(to, d0 + 1) <- reach_count(from, d0), edge(from, to), d0 < 8.
+? reach_count(node, d).
+"#);
+    let red_rows = rows_of(&red_stdout, "reach_count");
+    assert_eq!(
+        red_rows.len(),
+        11,
+        "RED baseline: plain counter (no merge) on the cyclic graph with \
+         d0 < 8 must produce exactly 11 (node x depth) rows, not 5:\n{red_stdout}"
+    );
+
+    let dir2 = sandbox("redgreen_green");
+    let green_stdout = run(&dir2, r#"
+rel edge(from: text, to: text).
+edge("s","a"). edge("a","b"). edge("b","c"). edge("c","t"). edge("c","a").
+rel seed(node: text).
+seed("s").
+rel reach(node: text, d: int) key(node) merge(MinBy(d)).
+reach(node, 0) <- seed(node).
+reach(to, d0 + 1) <- reach(from, d0), edge(from, to), d0 < 8.
+? reach(node, d).
+"#);
+    let mut green_rows = rows_of(&green_stdout, "reach");
+    green_rows.sort();
+    assert_eq!(
+        green_rows,
+        vec!["a\t1", "b\t2", "c\t3", "s\t0", "t\t4"],
+        "GREEN: same graph, same d0 < 8 guard, merge(MinBy(d)) must collapse \
+         the 11-row product down to 5:\n{green_stdout}"
+    );
+
+    assert_eq!(
+        red_rows.len() - green_rows.len(),
+        6,
+        "row-count delta between the unguarded counter and the MinBy lattice \
+         must be exactly 11 - 5 = 6 on this graph"
+    );
+}
+
 /// The `entry_reach_node_raw` shape from std/entry.dl: a depth-bounded
 /// self-recursive rule (`d0 < N` guard, base rule seeds depth 0) feeding a
 /// LATER-stratum min-depth dedup via negation. Proves depth-bounded
