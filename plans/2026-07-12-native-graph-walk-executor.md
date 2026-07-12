@@ -124,17 +124,21 @@ is the literal `0` from the head term, so the base-rule read must capture the
 depth column too (port_reach had no depth col).
 
 ### TODO checklist
-- [ ] generalize walk.rs -> multi_source_walk (depth + optional halt + cap);
-      keep multi_source_halt_bfs as a thin wrapper or fold its 7 tests over.
-- [ ] add depth/cycle/cap unit tests (min-depth correctness, cap boundary at
-      exactly CAP, a shorter path found after a longer one dedups to min).
-- [ ] generalize the recognizer: optional tag, optional depth(+cap), optional
-      halt; move it ahead of the key/agg naive_fallback guard.
-- [ ] e2e parity: entry_reach_node & op_reach_node native vs DL_NO_HALT_BFS,
-      row-identical INCLUDING the depth column.
+- [x] generalize walk.rs -> multi_source_walk (depth + optional halt + cap);
+      multi_source_halt_bfs kept as a thin wrapper. 18 unit tests.
+- [x] add depth/cycle/cap unit tests (min-depth, cap boundary, longer-then-shorter
+      path dedups to min).
+- [x] generalize the recognizer: try_native_depth_walk + structural_key dedup;
+      moved ahead of the key/agg naive_fallback guard. (merge 2026-07-12)
+- [x] e2e parity: entry_reach_node & op_reach_node native vs DL_NO_HALT_BFS,
+      row-identical INCLUDING the depth column (raw-SQLite assertion).
+- [x] Fix A (origin-independent dedup) + Fix B (per-tick shared adjacency cache,
+      cleared at tick entry, no cross-tick retention). See
+      `plans/2026-07-12-depth-walk-AB-fixes.md`.
 - [ ] measure on the daemon; expect entry_reach_node ~2.3s -> a few hundred ms.
-- [ ] once depth rules ride it, delete their `key/MinBy` waiver from the perf
-      ledger — the lattice was only ever emulating BFS min-depth.
+      (hermetic synthetic fixture rounds to 0ms; needs a live-daemon read.)
+- [ ] once confirmed on the daemon, delete the depth rules' `key/MinBy` waiver
+      from the perf ledger — the lattice was only ever emulating BFS min-depth.
 
 ## Non-goals / watch-outs
 - Do NOT collapse cycles with scc.rs here — a depth lattice and a halt rule both
