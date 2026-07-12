@@ -560,6 +560,12 @@ pub fn lower_rule_to_ex(rule: &Rule, rels: &Rels, target: &str, extra: &[(String
                     use crate::ast::AggFn;
                     let arg = match term {
                         Term::Wild => "*".to_string(),
+                        // JSON is a text consumer.  Interned source columns
+                        // carry StringIds in the base table, but SQLite's JSON
+                        // aggregate must see the decoded value (otherwise it
+                        // serializes the integer id, and json() cannot nest it).
+                        _ if matches!(f, AggFn::JsonGroupArray | AggFn::JsonGroupObject) =>
+                            term_sql_text(term, &canon, &tys)?,
                         _ => term_sql(term, &canon, &tys)?,
                     };
                     match f {
@@ -578,7 +584,10 @@ pub fn lower_rule_to_ex(rule: &Rule, rels: &Rels, target: &str, extra: &[(String
                             if matches!(term, Term::Wild) {
                                 bail!("json_group_array(_) has no value to collect — pass a column, not `_`");
                             }
-                            exprs.push(format!("json_group_array({arg} ORDER BY {arg})"));
+                            let json = format!("json_group_array({arg} ORDER BY {arg})");
+                            exprs.push(if head_meta.cols[i].interned() {
+                                format!("sprf_sym_intern({json})")
+                            } else { json });
                         }
                         AggFn::JsonGroupObject => {
                             if matches!(term, Term::Wild) {
@@ -587,8 +596,11 @@ pub fn lower_rule_to_ex(rule: &Rule, rels: &Rels, target: &str, extra: &[(String
                             let val = rule.agg_args2.get(i).and_then(|a| a.as_ref())
                                 .ok_or_else(|| anyhow::anyhow!(
                                     "json_group_object expects (key, value) — the value arg is missing"))?;
-                            let val_sql = term_sql(val, &canon, &tys)?;
-                            exprs.push(format!("json_group_object({arg}, {val_sql} ORDER BY {arg})"));
+                            let val_sql = term_sql_text(val, &canon, &tys)?;
+                            let json = format!("json_group_object({arg}, {val_sql} ORDER BY {arg})");
+                            exprs.push(if head_meta.cols[i].interned() {
+                                format!("sprf_sym_intern({json})")
+                            } else { json });
                         }
                         AggFn::Count | AggFn::Min | AggFn::Max =>
                             exprs.push(format!("{}({arg})", f.sql())),
@@ -1074,8 +1086,11 @@ mod tests {
             "rel arr(g: text, names: text).\n",
             "arr(g, json_group_array(name)) <- src(g, name).\n"));
         let sql = lower_rule(&rule, &rels).unwrap();
-        assert!(sql.contains("json_group_array(r0.\"name\" ORDER BY r0.\"name\")"),
-            "array agg orders inside the call: {sql}");
+        // text columns are interned: json (a text consumer) must see the decoded
+        // value, and the interned head column re-interns the assembled json.
+        let name_txt = "(SELECT content FROM _strings WHERE id = r0.\"name\")";
+        assert!(sql.contains(&format!("sprf_sym_intern(json_group_array({name_txt} ORDER BY {name_txt}))")),
+            "array agg decodes input, orders inside the call, re-interns: {sql}");
         assert!(sql.contains("GROUP BY r0.\"g\""), "group key present: {sql}");
 
         let (rule, rels) = rule_and_rels(concat!(
@@ -1083,8 +1098,10 @@ mod tests {
             "rel obj(g: text, payload: text).\n",
             "obj(g, json_group_object(k, v)) <- src(g, k, v).\n"));
         let sql = lower_rule(&rule, &rels).unwrap();
-        assert!(sql.contains("json_group_object(r0.\"k\", r0.\"v\" ORDER BY r0.\"k\")"),
-            "object agg reads key + value, orders by key: {sql}");
+        let k_txt = "(SELECT content FROM _strings WHERE id = r0.\"k\")";
+        let v_txt = "(SELECT content FROM _strings WHERE id = r0.\"v\")";
+        assert!(sql.contains(&format!("sprf_sym_intern(json_group_object({k_txt}, {v_txt} ORDER BY {k_txt}))")),
+            "object agg decodes key + value, orders by key, re-interns: {sql}");
     }
 
     /// The json scalar constructors lower to their SQLite natives; odd-arity
