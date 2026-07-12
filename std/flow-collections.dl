@@ -1,4 +1,4 @@
-# Standard library: higher-order propagation facts for the common collection /
+# Standard library: propagation facts for common collection combinators.
 # combinator names, riding std/flow.dl's flow_lambda / flow_lambda_ret hops.
 #
 #   use "std/flow-collections.dl".   # pulls std/flow.dl transitively

@@ -111,8 +111,10 @@ gen(:append, "docs/reference/syntax.md", "| `{op}` | {kind} | `{syntax}` | {doc}
 # example_doc keys each program on its filename and its first `#` comment line
 # (the convention every example opens with). A pure scan+comment — no new catalog.
 rel example_doc(name: text, desc: text).
-example_doc(split(p, "/", -1), desc) <-
+example_doc(replace(p, "examples/", ""), desc) <-
     scan("examples/*.dl", p, rev), comment(p, rev, /^\s?(?<s>.*)$/, l, label: desc), l = 1.
+example_doc(replace(p, "examples/", ""), desc) <-
+    scan("examples/**/*.dl", p, rev), comment(p, rev, /^\s?(?<s>.*)$/, l, label: desc), l = 1.
 gen(:append, "docs/reference/examples.md", "# Examples") <- true().
 gen(:append, "docs/reference/examples.md", "") <- true().
 gen(:append, "docs/reference/examples.md",

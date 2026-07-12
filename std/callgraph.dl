@@ -1,4 +1,4 @@
-# Standard library: a one-shot call-graph extractor over the resolved graph +
+# Standard library: one-shot call-graph extraction over the resolved graph.
 # closure.
 #
 # Same shape as examples/callgraph.dl but importable. Compose from a program:

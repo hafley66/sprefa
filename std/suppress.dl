@@ -1,4 +1,4 @@
-# Standard library: the eslint/biome comment-directive suppression grammar,
+# Standard library: suppression relations for eslint and Biome directives.
 # as pure dl over the built-in `comment_node` rel. Policy lives HERE, never in
 # Rust — the engine only produces grammar-accurate comment facts; which
 # directives mean what, and how a block pairs, is all datalog.
