@@ -1201,7 +1201,7 @@ mod tests {
     #[test]
     fn oracle_extracted_fn_signatures() {
         let src = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/engine/mod.rs"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/engine/eval.rs"),
         )
         .unwrap();
         let mut parser = Parser::new();
