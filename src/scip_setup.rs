@@ -9,7 +9,7 @@
 //! a visible line.
 //!
 //!   dl index [DIR]            detect language(s), run the right indexer(s),
-//!                             place the merged index at <root>/.dl/index.scip
+//!                             place the merged index at <root>/.dl/.state/index.scip
 //!   dl index --install        print/run the install command for a missing indexer
 //!   dl index --rev <REV>      worktree that rev, index it (SCIP can't read a blob)
 //!   dl doctor [DIR]           one screen: langs, indexers, index freshness,
@@ -179,22 +179,24 @@ struct Args {
 
 /// The absolute output path `dl index` writes and the auto-loader reads.
 fn index_out(root: &Path) -> PathBuf {
-    root.join(".dl").join("index.scip")
+    crate::state_dir(root).join("index.scip")
 }
 
-/// Ensure `<root>/.dl/.gitignore` ignores the generated index, so a turnkey
-/// generate never leaves a committable blob in the worktree.
+/// Ensure `<root>/.dl/.gitignore` ignores the `.state/` runtime dir the
+/// generated index lives in, so a turnkey generate never leaves a committable
+/// blob in the worktree. A single `.state/` line covers the index and the
+/// cache db both, replacing the old per-file `index.scip*` entry.
 fn gitignore_index(root: &Path) {
     let gi = root.join(".dl").join(".gitignore");
     let existing = std::fs::read_to_string(&gi).unwrap_or_default();
-    if existing.lines().any(|l| l.trim() == "index.scip" || l.trim() == "index.scip*") {
+    if existing.lines().any(|l| l.trim() == ".state/") {
         return;
     }
     let mut out = existing;
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
     }
-    out.push_str("index.scip*\n");
+    out.push_str(".state/\n");
     let _ = std::fs::create_dir_all(root.join(".dl"));
     let _ = std::fs::write(&gi, out);
 }
@@ -221,7 +223,7 @@ pub fn run_index(args: &[String]) -> Result<i32> {
         println!("[dl index] to index rev {rev}, worktree it and index there:");
         println!("             git worktree add /tmp/dl-{rev} {rev}");
         println!("             dl index /tmp/dl-{rev}");
-        println!("             cp /tmp/dl-{rev}/.dl/index.scip {}", index_out(&root).display());
+        println!("             cp /tmp/dl-{rev}/.dl/.state/index.scip {}", index_out(&root).display());
         println!("             git worktree remove /tmp/dl-{rev}");
         return Ok(0);
     }
@@ -274,7 +276,7 @@ pub fn run_index(args: &[String]) -> Result<i32> {
     }
 
     // Run each present indexer to a per-language temp file, then merge.
-    let dl_dir = root.join(".dl");
+    let dl_dir = crate::state_dir(&root);
     std::fs::create_dir_all(&dl_dir)?;
     let out = index_out(&root);
     let mut parts: Vec<PathBuf> = Vec::new();
@@ -332,9 +334,9 @@ pub fn run_index(args: &[String]) -> Result<i32> {
 }
 
 /// Ensure `root` has a loadable SCIP index, for the lazy `scip_want` gate: an
-/// existing index (root `index.scip`, `.dl/index.scip`, or $SPREFA_SCIP_INDEX)
+/// existing index (root `index.scip`, `.dl/.state/index.scip`, or $SPREFA_SCIP_INDEX)
 /// wins untouched; otherwise every detected+installed indexer runs once and the
-/// parts merge to `.dl/index.scip`. Returns `None` (loudly) when no indexer can
+/// parts merge to `.dl/.state/index.scip`. Returns `None` (loudly) when no indexer can
 /// produce one — a missing toolchain skips the repo, it never fails the tick.
 /// No freshness check: like the CLI contract, a stale index is the user's to
 /// rebuild (`dl index` / delete it); `dl doctor` reports staleness.
@@ -349,7 +351,7 @@ pub fn ensure_index(root: &Path) -> Result<Option<PathBuf>> {
             root.display());
         return Ok(None);
     }
-    let dl_dir = root.join(".dl");
+    let dl_dir = crate::state_dir(root);
     std::fs::create_dir_all(&dl_dir)?;
     let out = index_out(root);
     let mut parts: Vec<PathBuf> = Vec::new();
@@ -414,7 +416,7 @@ fn print_index_help() {
     eprintln!("  --install            run the install command for any missing indexer");
     eprintln!("  --rev REV            print the worktree-and-index recipe for a git rev");
     eprintln!("  detects rust / typescript / python / go / kotlin-java / cpp by marker files,");
-    eprintln!("  runs each indexer with cwd=root, merges to <root>/.dl/index.scip (gitignored).");
+    eprintln!("  runs each indexer with cwd=root, merges to <root>/.dl/.state/index.scip (gitignored).");
     eprintln!("  see `dl doctor` for the health screen.");
 }
 
@@ -558,11 +560,11 @@ mod tests {
         gitignore_index(&d);
         let gi = d.join(".dl/.gitignore");
         let body = std::fs::read_to_string(&gi).unwrap();
-        assert!(body.contains("index.scip*"), "index ignored: {body:?}");
+        assert!(body.contains(".state/"), "state dir ignored: {body:?}");
         // Second call must not duplicate.
         gitignore_index(&d);
         let count = std::fs::read_to_string(&gi).unwrap()
-            .lines().filter(|l| l.contains("index.scip")).count();
+            .lines().filter(|l| l.trim() == ".state/").count();
         assert_eq!(count, 1, "idempotent");
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -575,7 +577,18 @@ mod tests {
         gitignore_index(&d);
         let body = std::fs::read_to_string(d.join(".dl/.gitignore")).unwrap();
         assert!(body.contains("cache.db*"), "kept cache entry: {body:?}");
-        assert!(body.contains("index.scip*"), "added index entry: {body:?}");
+        assert!(body.contains(".state/"), "added state dir entry: {body:?}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn index_out_and_index_path_agree_on_state_dir() {
+        let d = tmp("state-out");
+        std::fs::create_dir_all(d.join(".dl")).unwrap();
+        assert_eq!(index_out(&d), d.join(".dl/.state/index.scip"));
+        std::fs::create_dir_all(d.join(".dl/.state")).unwrap();
+        std::fs::write(index_out(&d), b"index").unwrap();
+        assert_eq!(crate::scip_import::index_path(&d), Some(index_out(&d)));
         let _ = std::fs::remove_dir_all(&d);
     }
 

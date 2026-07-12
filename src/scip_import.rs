@@ -61,15 +61,21 @@ pub struct ScipRows {
 /// Where the importer looks for a SCIP index, in priority order:
 ///   1. `$SPREFA_SCIP_INDEX` (explicit override)
 ///   2. `<root>/index.scip` (the `just oracle-index` / rust-analyzer default)
-///   3. `<root>/.dl/index.scip` (where `dl index` places it — out of the tree,
-///      gitignored, so a turnkey generate never leaves a committable blob at the
-///      repo root)
+///   3. `<root>/.dl/.state/index.scip` (current `dl index` output location —
+///      out of the tree, gitignored, nested under the engine runtime dir so
+///      `.dl/` shows only authored files)
+///   4. `<root>/.dl/index.scip` (pre-move location, kept last so an index
+///      written before the `.state/` move still resolves)
 pub fn index_path(root: &Path) -> Option<PathBuf> {
     if let Ok(path) = std::env::var("SPREFA_SCIP_INDEX") {
         let path = PathBuf::from(path);
         if path.is_file() { return Some(path); }
     }
-    for cand in [root.join("index.scip"), root.join(".dl").join("index.scip")] {
+    for cand in [
+        root.join("index.scip"),
+        crate::state_dir(root).join("index.scip"),
+        root.join(".dl").join("index.scip"),
+    ] {
         if cand.is_file() { return Some(cand); }
     }
     None

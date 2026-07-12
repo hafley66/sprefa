@@ -304,15 +304,39 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
     let mut db_defaulted = false;
     if db.is_none() {
         let dir = root.join(".dl");
+        let state = crate::state_dir(&root);
         let daemon_on = crate::daemon::enabled();
         let want_default =
             programs.is_empty() || (daemon_on && (cli.lsp || cli.check || cli.diag_json));
         if want_default && dir.is_dir() {
             let gi = dir.join(".gitignore");
-            if !gi.exists() {
-                let _ = std::fs::write(&gi, "cache.db*\n");
+            let existing = std::fs::read_to_string(&gi).unwrap_or_default();
+            if !existing.lines().any(|line| line.trim() == ".state/") {
+                let mut out = existing;
+                if !out.is_empty() && !out.ends_with('\n') {
+                    out.push('\n');
+                }
+                out.push_str(".state/\n");
+                let _ = std::fs::write(&gi, out);
             }
-            db = Some(dir.join("cache.db").to_string_lossy().into_owned());
+            let _ = std::fs::create_dir_all(&state);
+            // Best-effort migration: an old-layout `.dl/cache.db` (plus its
+            // -shm/-wal siblings) moves into `.dl/.state/` once. Missing
+            // siblings are fine; a failed rename leaves the old file in place
+            // rather than losing data.
+            let old_cache = dir.join("cache.db");
+            let new_cache = state.join("cache.db");
+            if old_cache.is_file() && !new_cache.is_file() {
+                let _ = std::fs::rename(&old_cache, &new_cache);
+                for suffix in ["-shm", "-wal"] {
+                    let old = dir.join(format!("cache.db{suffix}"));
+                    let new = state.join(format!("cache.db{suffix}"));
+                    if old.is_file() {
+                        let _ = std::fs::rename(&old, &new);
+                    }
+                }
+            }
+            db = Some(state.join("cache.db").to_string_lossy().into_owned());
             db_defaulted = true;
         }
     }

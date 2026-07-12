@@ -1,6 +1,6 @@
 //! Repo-local program discovery: `dl` with no positional resolves
 //! `<root>/.dl/*.dl` (lexicographic), merges the files into one program, and
-//! defaults the db to `<root>/.dl/cache.db`. A missing or empty `.dl` dir is a
+//! defaults the db to `<root>/.dl/.state/cache.db`. A missing or empty `.dl` dir is a
 //! loud error so a typo'd directory never makes `--check` pass green by
 //! checking nothing.
 
@@ -99,16 +99,42 @@ fn conflicting_decl_across_files_errors() {
     assert!(err.contains("declared twice"), "conflict must be named:\n{err}");
 }
 
-/// (5) Discovery defaults the db to .dl/cache.db and drops a .gitignore for it,
-/// so hook invocations get warm ticks without committing the cache.
+/// (5) Discovery defaults the db to .dl/.state/cache.db (NOT .dl/cache.db) and
+/// drops a .gitignore covering `.state/`, so hook invocations get warm ticks
+/// without committing the cache and `.dl/` shows only authored files.
 #[test]
-fn discovery_defaults_db_into_dl_dir() {
+fn discovery_defaults_db_into_dl_state_dir() {
     let d = fixture("db");
     let (code, _out, _err) = run(&d, &["--check"]);
     assert_ne!(code, 0); // rail-a error severity; db side effects still happen
-    assert!(d.join(".dl/cache.db").exists(), "default cache db missing");
+    assert!(d.join(".dl/.state/cache.db").exists(), "default cache db missing under .state/");
+    assert!(!d.join(".dl/cache.db").exists(), "cache db must NOT land directly in .dl/");
     let gi = fs::read_to_string(d.join(".dl/.gitignore")).expect("generated .gitignore");
-    assert!(gi.contains("cache.db"), "gitignore must cover the cache: {gi}");
+    assert!(gi.contains(".state/"), "gitignore must cover the state dir: {gi}");
+}
+
+/// (5b) Migration: a pre-existing `.dl/cache.db` (old layout, a real sqlite
+/// file produced by a first run) moves into `.dl/.state/cache.db` on the next
+/// run instead of being ignored or duplicated. (A synthetic `-wal` sibling is
+/// deliberately NOT exercised here: a `-wal` that does not match its `cache.db`
+/// header is stale-journal input SQLite itself discards on open in WAL mode —
+/// that recovery behavior is SQLite's, not this migration's, so asserting on
+/// the sibling's post-open survival would test SQLite, not the rename.)
+#[test]
+fn discovery_migrates_old_cache_db_into_state_dir() {
+    let d = fixture("migrate");
+    // First run: produces a valid sqlite db at the CURRENT (state-dir) layout.
+    let (_code, _out, _err) = run(&d, &["--check"]);
+    assert!(d.join(".dl/.state/cache.db").is_file(), "setup: first run must create the db");
+    // Simulate an old-layout install: move the valid db back up to
+    // `.dl/cache.db`, remove the now-stale .state dir.
+    fs::rename(d.join(".dl/.state/cache.db"), d.join(".dl/cache.db")).unwrap();
+    fs::remove_dir_all(d.join(".dl/.state")).unwrap();
+
+    let (code, _out, _err) = run(&d, &["--check"]);
+    assert_ne!(code, 0);
+    assert!(d.join(".dl/.state/cache.db").exists(), "migrated cache db missing");
+    assert!(!d.join(".dl/cache.db").exists(), "old-layout cache db must be gone after migration");
 }
 
 /// (6) An explicit positional still works unchanged and does NOT touch .dl/.

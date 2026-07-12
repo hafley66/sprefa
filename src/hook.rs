@@ -302,7 +302,7 @@ pub fn run_hook(
             }
         }
     } else {
-        eprintln!("[hook] no daemon serving this root — one-shot engine on .dl/cache.db (start one: dl daemon start)");
+        eprintln!("[hook] no daemon serving this root — one-shot engine on .dl/.state/cache.db (start one: dl daemon start)");
         rels_inproc(&ev, programs, db_path, &root)?
     };
     if rels.broken {

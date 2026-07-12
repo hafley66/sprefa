@@ -1,7 +1,7 @@
 //! Discovery-mode `dl --check` daemon-first regression tests.
 //!
 //! Before this fix, `--check` in discovery mode (no positional program) always
-//! defaulted the db to `<root>/.dl/cache.db` and passed `Some(path)` into
+//! defaulted the db to `<root>/.dl/.state/cache.db` and passed `Some(path)` into
 //! `run_check`, whose daemon gate only checked `db_path.is_none()` — so it
 //! could never attach to a warm singleton daemon serving the same root, and
 //! paid a full cold extraction on every hook/check invocation instead.
@@ -89,7 +89,7 @@ impl Sandbox {
     }
 
     fn cache_db_path(&self) -> PathBuf {
-        self.root.join(".dl").join("cache.db")
+        self.root.join(".dl").join(".state").join("cache.db")
     }
 }
 
@@ -129,7 +129,7 @@ fn read_frame(s: &mut std::os::unix::net::UnixStream) -> Option<String> {
 /// (a) A sandboxed daemon serving the fixture root answers `--check` in
 /// discovery mode, and no fresh in-process extraction happens: `cache.db`
 /// is never created (the daemon's engine lives at
-/// $XDG_STATE_HOME/sprefa/roots/<hash>/db.sqlite, not `<root>/.dl/cache.db`).
+/// $XDG_STATE_HOME/sprefa/roots/<hash>/db.sqlite, not `<root>/.dl/.state/cache.db`).
 #[test]
 fn discovery_check_prefers_warm_daemon_no_cache_db() {
     let sb = Sandbox::new("warm");
@@ -145,7 +145,7 @@ fn discovery_check_prefers_warm_daemon_no_cache_db() {
     assert!(!stderr.contains("check attach failed"),
         "daemon attach should succeed cleanly: {stderr}");
     assert!(!sb.cache_db_path().exists(),
-        "discovery-mode --check against a warm daemon must NOT extract into .dl/cache.db");
+        "discovery-mode --check against a warm daemon must NOT extract into .dl/.state/cache.db");
 
     sb.shutdown();
 }
@@ -171,7 +171,7 @@ fn discovery_check_cold_fallback_is_loud() {
     assert!(stderr.contains("no daemon serving this root"),
         "a cold one-shot check must name itself loudly: {stderr}");
     assert!(sb.cache_db_path().exists(),
-        "the cold fallback DOES use .dl/cache.db as its one-shot cache");
+        "the cold fallback DOES use .dl/.state/cache.db as its one-shot cache");
 }
 
 /// (c) An explicit program + `--db` keeps the old in-process path exactly:

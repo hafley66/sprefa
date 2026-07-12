@@ -82,7 +82,11 @@ impl WatchGate {
         }
         let ignore = builder.build().unwrap_or_else(|_| Gitignore::empty());
         for prefix in &prefixes {
-            for index in [prefix.join("index.scip"), prefix.join(".dl/index.scip")] {
+            for index in [
+                prefix.join("index.scip"),
+                prefix.join(".dl/.state/index.scip"),
+                prefix.join(".dl/index.scip"),
+            ] {
                 if !self.scip_paths.contains(&index) {
                     self.scip_paths.push(index);
                 }
@@ -313,6 +317,31 @@ mod tests {
         assert_eq!(kept.iter().filter(|p| p.ends_with("a.rs")).count(), 1, "dedup");
         assert!(!kept.iter().any(|p| p.ends_with("cache.db")), "cache.db internal");
         assert!(!kept.iter().any(|p| p.ends_with("daemon.sock")), "sock internal");
+    }
+
+    #[test]
+    fn state_subdir_cache_db_is_internal() {
+        let state_cache_db = Path::new("/repo/.dl/.state/cache.db");
+        assert!(is_daemon_internal(state_cache_db), ".dl/.state/cache.db should be internal");
+    }
+
+    #[test]
+    fn gitignored_state_scip_index_kept_other_generated_file_dropped() {
+        let root = tmp().join("wg_state_scip_index");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join(".dl/.state")).unwrap();
+        fs::write(root.join(".gitignore"), ".dl/\n").unwrap();
+        fs::write(root.join(".dl/.state/index.scip"), "index").unwrap();
+        fs::write(root.join(".dl/.state/other.generated"), "noise").unwrap();
+        let gate = WatchGate::new(&[root.clone()]);
+        let kept = gate.filter(vec![
+            root.join(".dl/.state/index.scip"),
+            root.join(".dl/.state/other.generated"),
+        ]);
+        assert!(kept.iter().any(|p| p.ends_with(".dl/.state/index.scip")),
+            "gitignored SCIP index under .state/ must still dirty ScipKind: {kept:?}");
+        assert!(!kept.iter().any(|p| p.ends_with(".dl/.state/other.generated")),
+            "other gitignored generated files remain dropped: {kept:?}");
     }
 
     #[test]

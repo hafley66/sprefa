@@ -53,6 +53,15 @@ pub mod watchgate;
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
+/// `<root>/.dl/.state` — engine runtime blobs (`cache.db*`, `index.scip*`),
+/// gitignored, kept out of the authored-`.dl` view. Not created here; callers
+/// `create_dir_all` on demand. Does NOT apply to `daemon_home()` — the
+/// rootless `$XDG_STATE_HOME/sprefa` home and its `roots/<hash>/db.sqlite`,
+/// `daemon.sock/pid/log` are a separate model and out of scope.
+pub fn state_dir(root: &Path) -> PathBuf {
+    root.join(".dl").join(".state")
+}
+
 /// Resolve the program file set: the explicit positionals (ALL of them — they
 /// merge into one program in the given order, e.g. a rail file beside the
 /// program it watches), or with no positional the repo-local discovery
@@ -328,7 +337,7 @@ pub fn run_check(programs: &[String], db_path: Option<&str>, db_defaulted: bool,
             Err(e) => eprintln!("[daemon] check attach failed, falling back to in-process: {e}"),
         }
     } else if daemon_eligible {
-        eprintln!("[check] no daemon serving this root — one-shot engine on .dl/cache.db (start one: dl daemon start)");
+        eprintln!("[check] no daemon serving this root — one-shot engine on .dl/.state/cache.db (start one: dl daemon start)");
     }
     run_check_inproc(programs, db_path, root, json)
 }
