@@ -1,4 +1,4 @@
-# std/strings.dl — string_flow: the df_edge subgraph restricted to
+# Standard library: string-only value-flow relations.
 # STRING-carrying value nodes (string-values arc item 4,
 # plans/2026-07-10-string-values-const-value.md).
 #

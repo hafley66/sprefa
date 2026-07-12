@@ -1,4 +1,4 @@
-# entry.dl — gateway inventory + reachability-from-entry over the shared
+# Standard library: gateway inventory and reachability from entry points.
 # value-flow graph (std/flow.dl's flow_edge). "Entry" means main(), a
 # package.json's declared executable, or an OpenAPI-named service handler —
 # the places execution or a request BEGINS, as opposed to flow_edge's plain
