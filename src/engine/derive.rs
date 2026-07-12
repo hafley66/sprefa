@@ -411,7 +411,7 @@ impl Engine {
         let dedup_by_debug = |rule_indices: &[usize]| -> Vec<usize> {
             let mut seen_debug = std::collections::HashSet::new();
             rule_indices.iter().copied()
-                .filter(|&rule_index| seen_debug.insert(format!("{:?}", derived_rules[rule_index])))
+                .filter(|&rule_index| seen_debug.insert(derived_rules[rule_index].structural_key()))
                 .collect()
         };
         let recursive_indices = dedup_by_debug(&comp_rules.iter().copied()
@@ -634,7 +634,7 @@ impl Engine {
         let dedup_by_debug = |ris: &[usize]| -> Vec<usize> {
             let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
             ris.iter().copied()
-                .filter(|&ri| seen.insert(format!("{:?}", derived_rules[ri])))
+                .filter(|&ri| seen.insert(derived_rules[ri].structural_key()))
                 .collect()
         };
         let rec_ris = dedup_by_debug(&comp_rules.iter().copied()
