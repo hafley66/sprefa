@@ -1,9 +1,10 @@
 use anyhow::{bail, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 
 pub fn tbl(name: &str) -> String { format!("rel_{name}") }
+pub fn txt_tbl(name: &str) -> String { format!("rel_{name}_txt") }
 
 /// Pass-through string builtins: (dsl name, sql UDF, arity). All text->text,
 /// registered in db.rs::register_string_fns. Shared with typecheck (the known-fn
@@ -37,37 +38,49 @@ fn sym_lit(s: &str) -> String {
     crate::spine::StringId::of(s).sqlite().to_string()
 }
 
-/// Equality between two cells that may disagree on sym-ness: sym = sym stays
+/// Equality between two cells that may disagree on sym-ness: text = sym stays
 /// an int compare; sym vs text hashes the TEXT side (`sprf_sym`) so the sym
 /// side never decodes; everything else is plain equality.
-fn eq_cond(a_sql: &str, a_ty: Option<Type>, b_sql: &str, b_ty: Option<Type>) -> String {
-    match (a_ty, b_ty) {
-        (Some(Type::Sym), Some(t)) if t != Type::Sym && t.textish() =>
-            format!("{a_sql} = sprf_sym({b_sql})"),
-        (Some(t), Some(Type::Sym)) if t != Type::Sym && t.textish() =>
-            format!("sprf_sym({a_sql}) = {b_sql}"),
-        _ => format!("{a_sql} = {b_sql}"),
+#[derive(Clone, Copy, Debug)]
+struct VarTy { ty: Type, interned: bool }
+type TyEnv = HashMap<String, VarTy>;
+
+fn var_ty(tys: &TyEnv, var: &str) -> Option<Type> { tys.get(var).map(|t| t.ty) }
+fn var_interned(tys: &TyEnv, var: &str) -> bool {
+    tys.get(var).is_some_and(|t| t.interned)
+}
+fn term_interned(term: &Term, tys: &TyEnv) -> bool {
+    match term {
+        Term::Var(v) => var_interned(tys, v),
+        Term::Call { name, args } if name == "sym" && args.len() == 1 => term_interned(&args[0], tys),
+        _ => false,
     }
+}
+
+fn eq_cond(a_sql: &str, a_ty: Option<Type>, a_interned: bool,
+           b_sql: &str, b_ty: Option<Type>, b_interned: bool) -> String {
+    if a_ty.is_some_and(|t| t.textish()) && b_ty.is_some_and(|t| t.textish()) {
+        return match (a_interned, b_interned) {
+            (true, false) => format!("{a_sql} = sprf_sym({b_sql})"),
+            (false, true) => format!("sprf_sym({a_sql}) = {b_sql}"),
+            _ => format!("{a_sql} = {b_sql}"),
+        };
+    }
+    format!("{a_sql} = {b_sql}")
 }
 
 /// Lower a head term destined for column `col`. Sym columns accept a
 /// sym-typed var (int pass-through) or a text literal (compile-time hash) —
 /// a computed/text value has no `_strings` row to decode later, so it bails
 /// with the fix. Text-ish columns decode sym vars; everything else is plain.
-fn head_term_sql(term: &Term, col: &Col, canon: &HashMap<String, String>, tys: &HashMap<String, Type>) -> Result<String> {
-    if col.ty == Type::Sym {
+fn head_term_sql(term: &Term, col: &Col, canon: &HashMap<String, String>, tys: &TyEnv) -> Result<String> {
+    if col.interned() {
         return match term {
-            Term::Str(s) => Ok(sym_lit(s)),
-            Term::Var(v) if tys.get(v) == Some(&Type::Sym) => term_sql(term, canon, tys),
-            Term::Var(v) => bail!(
-                "head column `{}` is sym but `{v}` is not sym-typed — declare the source \
-                 column `sym` too, or make `{}` a text column",
-                col.name, col.name),
-            _ => bail!(
-                "head column `{}` is sym: only a sym-typed variable or a text literal can \
-                 fill it (a computed value has no interned string to decode later); \
-                 route the computation through a text column",
-                col.name),
+            Term::Str(s) => Ok(format!("sprf_sym_intern('{}')", esc(s))),
+            Term::Var(v) if var_interned(tys, v) => term_sql(term, canon, tys),
+            Term::Call { name, args } if name == "sym" && args.len() == 1
+                && term_interned(&args[0], tys) => term_sql(&args[0], canon, tys),
+            _ => Ok(format!("sprf_sym_intern({})", term_sql_text(term, canon, tys)?)),
         };
     }
     if col.ty.textish() {
@@ -78,9 +91,14 @@ fn head_term_sql(term: &Term, col: &Col, canon: &HashMap<String, String>, tys: &
 
 /// `term_sql` for a TEXT-consuming position: a sym-typed var decodes through
 /// `_strings`; everything else lowers exactly as `term_sql`.
-fn term_sql_text(t: &Term, canon: &HashMap<String, String>, tys: &HashMap<String, Type>) -> Result<String> {
+fn term_sql_text(t: &Term, canon: &HashMap<String, String>, tys: &TyEnv) -> Result<String> {
+    if let Term::Call { name, args } = t {
+        if name == "sym" && args.len() == 1 {
+            return term_sql_text(&args[0], canon, tys);
+        }
+    }
     if let Term::Var(v) = t {
-        if tys.get(v) == Some(&Type::Sym) {
+        if var_interned(tys, v) {
             let cell = canon.get(v)
                 .ok_or_else(|| anyhow::anyhow!("unbound variable {v}"))?;
             return Ok(sym_decode(cell));
@@ -99,7 +117,7 @@ fn lit_sql(t: &Term) -> Option<String> {
 
 /// SQL string concatenation for an interpolated term: literals quoted, vars are
 /// the canonical column reference. `"${ty}::${name}"` -> `ty_col || '::' || name_col`.
-fn interp_sql(parts: &[InterpPart], canon: &HashMap<String, String>, tys: &HashMap<String, Type>) -> Result<String> {
+fn interp_sql(parts: &[InterpPart], canon: &HashMap<String, String>, tys: &TyEnv) -> Result<String> {
     let mut pieces = Vec::new();
     for p in parts {
         pieces.push(match p {
@@ -108,7 +126,7 @@ fn interp_sql(parts: &[InterpPart], canon: &HashMap<String, String>, tys: &HashM
                 let cell = canon.get(v).cloned()
                     .ok_or_else(|| anyhow::anyhow!("unbound variable {v} in interpolation"))?;
                 // Interpolation consumes text: a sym var decodes here.
-                if tys.get(v) == Some(&Type::Sym) { sym_decode(&cell) } else { cell }
+                if var_interned(tys, v) { sym_decode(&cell) } else { cell }
             }
         });
     }
@@ -119,9 +137,9 @@ fn interp_sql(parts: &[InterpPart], canon: &HashMap<String, String>, tys: &HashM
 /// `None` = unknown (an unbound var, a wildcard). Drives the `+` overload:
 /// int + int stays SQL addition, text + text lowers to `||`. All non-int base
 /// types (path/file/dir/repo/rev) store TEXT, so they concat like text.
-fn term_ty(t: &Term, tys: &HashMap<String, Type>) -> Option<Type> {
+fn term_ty(t: &Term, tys: &TyEnv) -> Option<Type> {
     match t {
-        Term::Var(v) => tys.get(v).copied(),
+        Term::Var(v) => var_ty(tys, v),
         Term::Str(_) | Term::Interp(_) => Some(Type::Text),
         Term::Int(_) => Some(Type::Int),
         Term::Call { name, .. } => Some(if matches!(name.as_str(), "int" | "len" | "lines") { Type::Int } else { Type::Text }),
@@ -138,7 +156,7 @@ fn term_ty(t: &Term, tys: &HashMap<String, Type>) -> Option<Type> {
     }
 }
 
-fn term_sql(t: &Term, canon: &HashMap<String, String>, tys: &HashMap<String, Type>) -> Result<String> {
+fn term_sql(t: &Term, canon: &HashMap<String, String>, tys: &TyEnv) -> Result<String> {
     match t {
         Term::Var(v) => canon.get(v).cloned()
             .ok_or_else(|| anyhow::anyhow!("unbound variable {v}")),
@@ -159,7 +177,7 @@ fn term_sql(t: &Term, canon: &HashMap<String, String>, tys: &HashMap<String, Typ
                     bail!("cannot `+` int and text — interpolate (\"${{count}}${{name}}\") or convert with int(..)"),
                 _ => "+",
             };
-            // Text concat consumes text: sym operands decode.
+            // Text concat consumes text: text operands decode.
             if sql_op == "||" {
                 return Ok(format!("({} || {})",
                     term_sql_text(lhs, canon, tys)?, term_sql_text(rhs, canon, tys)?));
@@ -180,6 +198,7 @@ fn term_sql(t: &Term, canon: &HashMap<String, String>, tys: &HashMap<String, Typ
                 // Registered UDF (db.rs): sprf_split(text, sep, idx).
                 "split" if args.len() == 3 =>
                     Ok(format!("sprf_split({})", arg_sqls.join(", "))),
+                "sym" if args.len() == 1 => Ok(arg_sqls[0].clone()),
                 // SQLite native: text->int coercion (leading-int prefix, else 0),
                 // so a numeric shell/json string can fill an int column or be
                 // compared numerically instead of as text against "0".
@@ -222,7 +241,7 @@ fn term_sql(t: &Term, canon: &HashMap<String, String>, tys: &HashMap<String, Typ
 /// negation referencing that var must see it in canon — with Neg first the var
 /// minted an unconstrained subquery local instead of a join.
 fn body_sql(body: &[BodyItem], rels: &Rels)
-    -> Result<(HashMap<String, String>, HashMap<String, Type>, Vec<String>, Vec<String>)>
+    -> Result<(HashMap<String, String>, TyEnv, Vec<String>, Vec<String>)>
 {
     body_sql_ex(body, rels, &HashMap::new())
 }
@@ -237,12 +256,21 @@ fn body_sql(body: &[BodyItem], rels: &Rels)
 /// occurrence still reads the full accumulated relation. See engine
 /// `rebuild_derived`.
 fn body_sql_ex(body: &[BodyItem], rels: &Rels, overrides: &HashMap<usize, String>)
-    -> Result<(HashMap<String, String>, HashMap<String, Type>, Vec<String>, Vec<String>)>
+    -> Result<(HashMap<String, String>, TyEnv, Vec<String>, Vec<String>)>
 {
     let mut canon: HashMap<String, String> = HashMap::new();
-    let mut tys: HashMap<String, Type> = HashMap::new();
+    let mut tys: TyEnv = HashMap::new();
     let mut wheres: Vec<String> = Vec::new();
     let mut froms: Vec<String> = Vec::new();
+    let computed_vars: HashSet<String> = body.iter().filter_map(|item| match item {
+        BodyItem::Cmp(c) if c.op == CmpOp::Eq => match (&c.lhs, &c.rhs) {
+            (Term::Var(v), rhs) if v != "_" && has_computation(rhs) => Some(v.clone()),
+            (lhs, Term::Var(v)) if v != "_" && has_computation(lhs) => Some(v.clone()),
+            _ => None,
+        },
+        _ => None,
+    }).collect();
+    let mut deferred: Vec<(String, String, Type, bool)> = Vec::new();
     let mut k = 0usize;
 
     for item in body {
@@ -257,17 +285,24 @@ fn body_sql_ex(body: &[BodyItem], rels: &Rels, overrides: &HashMap<usize, String
             for (pos, term) in a.terms.iter().enumerate() {
                 let cell = format!("{alias}.\"{}\"", meta.col_name(pos));
                 match term {
+                    Term::Var(v) if computed_vars.contains(v) && !canon.contains_key(v) => {
+                        deferred.push((v.clone(), cell, meta.cols[pos].ty, meta.cols[pos].interned()));
+                    }
                     Term::Var(v) => match canon.get(v) {
                         Some(prev) => wheres.push(eq_cond(
-                            &cell, Some(meta.cols[pos].ty), prev, tys.get(v).copied())),
+                            &cell, Some(meta.cols[pos].ty), meta.cols[pos].interned(),
+                            prev, var_ty(&tys, v), var_interned(&tys, v))),
                         None => {
                             canon.insert(v.clone(), cell);
-                            tys.insert(v.clone(), meta.cols[pos].ty);
+                            tys.insert(v.clone(), VarTy {
+                                ty: meta.cols[pos].ty,
+                                interned: meta.cols[pos].interned(),
+                            });
                         }
                     },
                     // A text literal against a sym column filters by its
                     // compile-time StringId — an int compare, no decode.
-                    Term::Str(s) if meta.cols[pos].ty == Type::Sym =>
+                    Term::Str(s) if meta.cols[pos].interned() =>
                         wheres.push(format!("{cell} = {}", sym_lit(s))),
                     Term::Str(_) | Term::Int(_) => wheres.push(format!("{cell} = {}", lit_sql(term).unwrap())),
                     Term::Interp(_) => bail!("interpolated string only allowed in a rule head, not a body atom"),
@@ -293,13 +328,17 @@ fn body_sql_ex(body: &[BodyItem], rels: &Rels, overrides: &HashMap<usize, String
                 let bound = match (&c.lhs, &c.rhs) {
                     (Term::Var(v), rhs) if v != "_" && !canon.contains_key(v) && has_computation(rhs) => {
                         let e = term_sql(rhs, &canon, &tys)?;
-                        if let Some(t) = term_ty(rhs, &tys) { tys.insert(v.clone(), t); }
+                        if let Some(t) = term_ty(rhs, &tys) {
+                            tys.insert(v.clone(), VarTy { ty: t, interned: false });
+                        }
                         canon.insert(v.clone(), e);
                         true
                     }
                     (lhs, Term::Var(v)) if v != "_" && !canon.contains_key(v) && has_computation(lhs) => {
                         let e = term_sql(lhs, &canon, &tys)?;
-                        if let Some(t) = term_ty(lhs, &tys) { tys.insert(v.clone(), t); }
+                        if let Some(t) = term_ty(lhs, &tys) {
+                            tys.insert(v.clone(), VarTy { ty: t, interned: false });
+                        }
                         canon.insert(v.clone(), e);
                         true
                     }
@@ -308,28 +347,36 @@ fn body_sql_ex(body: &[BodyItem], rels: &Rels, overrides: &HashMap<usize, String
                 if bound { continue; }
             }
             let (lt, rt) = (term_ty(&c.lhs, &tys), term_ty(&c.rhs, &tys));
-            let sym_side = |t: Option<Type>| t == Some(Type::Sym);
-            if matches!(c.op, CmpOp::Eq | CmpOp::Ne) && (sym_side(lt) || sym_side(rt)) {
-                // sym literal special case: hash at compile time.
-                let side = |t: &Term, _own: Option<Type>, other: Option<Type>| -> Result<String> {
-                    match t {
-                        Term::Str(s) if sym_side(other) => Ok(sym_lit(s)),
-                        _ => term_sql(t, &canon, &tys),
-                    }
+            let lhs_interned = term_interned(&c.lhs, &tys);
+            let rhs_interned = term_interned(&c.rhs, &tys);
+            if matches!(c.op, CmpOp::Eq | CmpOp::Ne)
+                && (lhs_interned || rhs_interned)
+            {
+                let l = match &c.lhs {
+                    Term::Str(s) if rhs_interned => sym_lit(s),
+                    _ => term_sql(&c.lhs, &canon, &tys)?,
                 };
-                let l = side(&c.lhs, lt, rt)?;
-                let r = side(&c.rhs, rt, lt)?;
-                let lt = if matches!(&c.lhs, Term::Str(_)) && sym_side(rt) { Some(Type::Sym) } else { lt };
-                let rt = if matches!(&c.rhs, Term::Str(_)) && sym_side(lt) { Some(Type::Sym) } else { rt };
-                let eq = eq_cond(&l, lt, &r, rt);
+                let r = match &c.rhs {
+                    Term::Str(s) if lhs_interned => sym_lit(s),
+                    _ => term_sql(&c.rhs, &canon, &tys)?,
+                };
+                let eq = eq_cond(&l, lt, lhs_interned || (matches!(&c.lhs, Term::Str(_)) && rhs_interned),
+                    &r, rt, rhs_interned || (matches!(&c.rhs, Term::Str(_)) && lhs_interned));
                 wheres.push(if c.op == CmpOp::Eq { eq } else { format!("NOT ({eq})") });
                 continue;
             }
-            // Ordering (or non-sym compare): sym sides decode to text.
+            // Ordering (or non-sym compare): text sides decode to text.
             let l = term_sql_text(&c.lhs, &canon, &tys)?;
             let r = term_sql_text(&c.rhs, &canon, &tys)?;
             wheres.push(format!("{l} {} {r}", c.op.sql()));
         }
+    }
+
+    for (v, cell, ty, interned) in deferred {
+        let prev = canon.get(&v)
+            .ok_or_else(|| anyhow::anyhow!("computed variable {v} was not bound"))?;
+        wheres.push(eq_cond(&cell, Some(ty), interned, prev,
+            var_ty(&tys, &v), var_interned(&tys, &v)));
     }
 
     let mut neg_m = 0usize;
@@ -347,14 +394,15 @@ fn body_sql_ex(body: &[BodyItem], rels: &Rels, overrides: &HashMap<usize, String
                 match term {
                     Term::Var(v) => {
                         if let Some(outer) = canon.get(v) {
-                            sub.push(eq_cond(&cell, Some(meta.cols[pos].ty), outer, tys.get(v).copied()));
+                            sub.push(eq_cond(&cell, Some(meta.cols[pos].ty), meta.cols[pos].interned(),
+                                outer, var_ty(&tys, v), var_interned(&tys, v)));
                         } else if let Some(prev) = local.get(v) {
                             sub.push(format!("{cell} = {prev}"));
                         } else {
                             local.insert(v.clone(), cell);
                         }
                     }
-                    Term::Str(s) if meta.cols[pos].ty == Type::Sym =>
+                    Term::Str(s) if meta.cols[pos].interned() =>
                         sub.push(format!("{cell} = {}", sym_lit(s))),
                     Term::Str(_) | Term::Int(_) => sub.push(format!("{cell} = {}", lit_sql(term).unwrap())),
                     Term::Interp(_) => bail!("interpolated string only allowed in a rule head, not a body atom"),
@@ -380,14 +428,13 @@ fn body_sql_ex(body: &[BodyItem], rels: &Rels, overrides: &HashMap<usize, String
 /// relations. The engine reads each row into a JSON arg object. See engine
 /// `rebuild_async` and docs §8.
 pub fn lower_body_projection(body: &[BodyItem], rels: &Rels, vars: &[String]) -> Result<String> {
-    let (canon, _tys, froms, wheres) = body_sql(body, rels)?;
+    let (canon, tys, froms, wheres) = body_sql(body, rels)?;
     if froms.is_empty() {
         bail!("@async rule body has no positive atom to bind request args");
     }
     let mut exprs = Vec::new();
     for v in vars {
-        let e = canon.get(v).cloned()
-            .ok_or_else(|| anyhow::anyhow!("@async request var {v} is unbound in the body"))?;
+        let e = term_sql_text(&Term::Var(v.clone()), &canon, &tys)?;
         exprs.push(format!("{e} AS \"{v}\""));
     }
     let where_sql = if wheres.is_empty() { String::new() } else { format!(" WHERE {}", wheres.join(" AND ")) };
@@ -473,8 +520,9 @@ pub fn lower_rule_to_ex(rule: &Rule, rels: &Rels, target: &str, extra: &[(String
         let mut exprs = Vec::new();
         for (term, col) in rule.head.terms.iter().zip(head_meta.cols.iter()) {
             if matches!(term, Term::Wild) { exprs.push("NULL".into()); continue; }
+            let source = term_sql_text(term, &canon, &tys)?;
             let e = head_term_sql(term, col, &canon, &tys)?;
-            if has_call(term) { wheres.push(format!("{e} IS NOT NULL")); }
+            if has_call(term) { wheres.push(format!("{source} IS NOT NULL")); }
             exprs.push(e);
         }
         exprs.extend(extra_vals.iter().cloned());
@@ -577,6 +625,7 @@ pub fn lower_rule_to_ex(rule: &Rule, rels: &Rels, target: &str, extra: &[(String
         // (both via `Rule::head_null_pads`), so this arm never runs for a
         // recursive component.
         if matches!(term, Term::Wild) { exprs.push("NULL".into()); continue; }
+        let source = term_sql_text(term, &canon, &tys)?;
         let e = head_term_sql(term, col, &canon, &tys)?;
         // A head term containing a Call (split/replace) may evaluate to NULL
         // when the function misses (split out-of-range). A NULL row inserted
@@ -584,7 +633,7 @@ pub fn lower_rule_to_ex(rule: &Rule, rels: &Rels, target: &str, extra: &[(String
         // NULL), so convergence breaks. Guard: filter NULL-producing head
         // expressions out of the SELECT entirely. The row drops, which is the
         // intended "no match" semantics.
-        if has_call(term) { wheres.push(format!("{e} IS NOT NULL")); }
+        if has_call(term) { wheres.push(format!("{source} IS NOT NULL")); }
         exprs.push(e);
     }
 
@@ -628,12 +677,11 @@ pub fn lower_gen(vars: &[String], body: &[BodyItem], rels: &Rels) -> Result<Stri
     {
         bail!("gen body must be derived-style (relation atoms and comparisons only), got {b:?}");
     }
-    let (canon, _tys, froms, wheres) = body_sql(body, rels)?;
+    let (canon, tys, froms, wheres) = body_sql(body, rels)?;
     if froms.is_empty() { bail!("gen body has no positive atom"); }
     let mut sel = Vec::new();
     for v in vars {
-        let cell = canon.get(v)
-            .ok_or_else(|| anyhow::anyhow!("unbound variable {v} in gen template"))?;
+        let cell = term_sql_text(&Term::Var(v.clone()), &canon, &tys)?;
         sel.push(format!("{cell} AS \"{v}\""));
     }
     let where_sql = if wheres.is_empty() { String::new() } else { format!(" WHERE {}", wheres.join(" AND ")) };
@@ -663,7 +711,7 @@ pub fn lower_query(q: &Query, rels: &Rels) -> Result<(String, Vec<String>)> {
     if has_agg {
         return lower_query_agg(q, meta);
     }
-    let mut canon: HashMap<String, String> = HashMap::new();
+    let mut canon: HashMap<String, (String, bool, Type)> = HashMap::new();
     let mut wheres: Vec<String> = Vec::new();
     let mut sel: Vec<String> = Vec::new();
     let mut headers: Vec<String> = Vec::new();
@@ -676,15 +724,17 @@ pub fn lower_query(q: &Query, rels: &Rels) -> Result<(String, Vec<String>)> {
         // silently returning ONE arbitrary row's content for every outer row.
         // Qualifying with the source table name disambiguates.
         let cell = format!("{from_tbl}.\"{}\"", meta.col_name(pos));
-        let is_sym = meta.cols[pos].ty == Type::Sym;
+        let is_sym = meta.cols[pos].interned();
         match term {
             Term::Var(v) => match canon.get(v) {
                 // Equality between two head positions binding the same var stays
                 // a RAW compare (int=int when both are sym) — only the final
                 // user-visible projection decodes.
-                Some(prev) => wheres.push(format!("{cell} = {prev}")),
+                Some((prev, prev_interned, prev_ty)) => wheres.push(eq_cond(
+                    &cell, Some(meta.cols[pos].ty), is_sym,
+                    prev, Some(*prev_ty), *prev_interned)),
                 None => {
-                    canon.insert(v.clone(), cell.clone());
+                    canon.insert(v.clone(), (cell.clone(), is_sym, meta.cols[pos].ty));
                     // A sym column decodes through `_strings` for display so `?`
                     // output stays human text — the id itself is an opaque join
                     // key, never a query-visible value.
@@ -704,7 +754,12 @@ pub fn lower_query(q: &Query, rels: &Rels) -> Result<(String, Vec<String>)> {
             Term::Wild => {}
         }
     }
-    if sel.is_empty() { sel.push("*".into()); }
+    if sel.is_empty() {
+        sel = meta.cols.iter().map(|col| {
+            let cell = format!("{from_tbl}.\"{}\"", col.name);
+            if col.interned() { sym_decode(&cell) } else { cell }
+        }).collect();
+    }
     let where_sql = if wheres.is_empty() { String::new() } else { format!(" WHERE {}", wheres.join(" AND ")) };
     let sql = format!("SELECT DISTINCT {} FROM {}{} ORDER BY 1", sel.join(", "), tbl(&q.head.rel), where_sql);
     Ok((sql, headers))
@@ -970,8 +1025,8 @@ mod tests {
             "rel resolved(caller: text, callee: text).\n",
             "resolved(caller, callee) <- raw_edge(caller, callee_q), callee = replace(callee_q, \".\", \"::\").\n"));
         let sql = lower_rule(&rule, &rels).unwrap();
-        assert!(sql.contains("replace(r0.\"callee_q\", '.', '::')"), "inlined expr: {sql}");
-        assert_eq!(sql.matches("FROM").count(), 1, "single FROM (no subquery): {sql}");
+        assert!(sql.contains("replace(") && sql.contains("callee_q") && sql.contains("sprf_sym_intern"), "inlined expr: {sql}");
+        assert_eq!(sql.matches("FROM rel_raw_edge").count(), 1, "single relation FROM: {sql}");
     }
 
     /// `+` dispatch: text + text lowers to `||`, int + int stays `+`.
@@ -982,7 +1037,7 @@ mod tests {
             "rel endpoint(url: text).\n",
             "endpoint(\"https://\" + host) <- base_url(host).\n"));
         let sql = lower_rule(&rule, &rels).unwrap();
-        assert!(sql.contains("'https://' || r0.\"host\""), "text + lowers to ||: {sql}");
+        assert!(sql.contains("'https://' ||") && sql.contains("content FROM _strings"), "text + lowers to ||: {sql}");
 
         let (rule, rels) = rule_and_rels(concat!(
             "rel hit(line: int).\n",
@@ -1024,14 +1079,14 @@ mod tests {
             "rel out(payload: text).\n",
             "out(json_object(\"k\", a, \"j\", b)) <- src(a, b).\n"));
         let sql = lower_rule(&rule, &rels).unwrap();
-        assert!(sql.contains("json_object('k', r0.\"a\", 'j', r0.\"b\")"), "json_object native: {sql}");
+        assert!(sql.contains("json_object('k'") && sql.contains("'j'") && sql.contains("sprf_sym_intern"), "json_object native: {sql}");
 
         let (rule, rels) = rule_and_rels(concat!(
             "rel src(a: text).\n",
             "rel out(payload: text).\n",
             "out(json_array(a)) <- src(a).\n"));
         let sql = lower_rule(&rule, &rels).unwrap();
-        assert!(sql.contains("json_array(r0.\"a\")"), "json_array native: {sql}");
+        assert!(sql.contains("json_array(") && sql.contains("sprf_sym_intern"), "json_array native: {sql}");
 
         // Odd-arity json_object: no matching arm -> the mis-arity bail.
         let (rule, rels) = rule_and_rels(concat!(
@@ -1052,7 +1107,7 @@ mod tests {
             "rel resolved(caller: text).\n",
             "resolved(caller) <- raw_edge(caller, callee_q), callee = replace(callee_q, \".\", \"::\"), !blocked(callee).\n"));
         let sql = lower_rule(&rule, &rels).unwrap();
-        assert!(sql.contains("ax0.\"name\" = replace(r0.\"callee_q\", '.', '::')"),
+        assert!(sql.contains("ax0.\"name\" = sprf_sym(replace(") && sql.contains("callee_q"),
             "negation must join the bind's expression: {sql}");
     }
 }

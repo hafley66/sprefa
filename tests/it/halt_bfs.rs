@@ -109,16 +109,16 @@ reach(port, node) <- reach(port, mid), !halt(mid, _), edge(mid, node).
 "#;
 
 const DEPTH_PROG: &str = r#"
-rel flow_edge(from: sym, to: sym).
+rel flow_edge(from: text, to: text).
 flow_edge("a", "b"). flow_edge("b", "c"). flow_edge("a", "c"). flow_edge("c", "a").
-rel entry_seed(node: sym).
+rel entry_seed(node: text).
 entry_seed("a").
-rel entry_reach_node(node: sym, d: int) key(node) merge(MinBy(d)).
+rel entry_reach_node(node: text, d: int) key(node) merge(MinBy(d)).
 entry_reach_node(node, 0) <- entry_seed(node).
 entry_reach_node(to, d0 + 1) <- entry_reach_node(from, d0), flow_edge(from, to), d0 < 2.
-rel op_reach_seed(op: text, node: sym).
+rel op_reach_seed(op: text, node: text).
 op_reach_seed("load", "a").
-rel op_reach_node(op: text, n: sym, d: int) key(op, n) merge(MinBy(d)).
+rel op_reach_node(op: text, n: text, d: int) key(op, n) merge(MinBy(d)).
 op_reach_node(op, n, 0) <- op_reach_seed(op, n).
 op_reach_node(op, to, d0 + 1) <- op_reach_node(op, from, d0), flow_edge(from, to), d0 < 2.
 ? entry_reach_node(node, d).

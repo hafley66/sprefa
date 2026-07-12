@@ -17,9 +17,9 @@
 
 use anyhow::Result;
 
-use crate::ast::{RelDecl, Type, Value};
+use crate::ast::{Col, RelDecl, Type, Value};
 use crate::engine::Engine;
-use crate::lower::tbl;
+use crate::lower::txt_tbl;
 
 use super::{col, RelKind};
 
@@ -38,8 +38,8 @@ impl RelKind for QueryLogKind {
                 col("ts", Type::Text),
                 col("source", Type::Text),
                 col("method", Type::Text),
-                col("body", Type::Text),
-                col("params", Type::Text),
+                Col::raw("body", Type::Text),
+                Col::raw("params", Type::Text),
             ],
             group: "daemon",
             doc: "history of server query requests: one row per daemon `query`/`query_sql` RPC (ts = ISO-8601 UTC, source = daemon, method = RPC name, body = SQL text or empty, params = JSON array text); the LSP `dl/query` path no longer logs (panel-read hot path); append-only, no retention — a polling client accumulates its own rows too, by design",
@@ -64,7 +64,7 @@ impl RelKind for QueryLogKind {
             let conn = eng.db.conn();
             let mut s = conn.prepare(&format!(
                 "SELECT \"ts\", \"source\", \"method\", \"body\", \"params\" FROM {} ORDER BY rowid",
-                tbl("query_log")))?;
+                txt_tbl("query_log")))?;
             let rows = s.query_map([], |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
                 r.get::<_, String>(3)?, r.get::<_, String>(4)?,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::lower::txt_tbl;
 
 impl Engine {
     /// Same-string spans of the identifier at (`path`, `byte`) restricted to
@@ -26,7 +27,7 @@ impl Engine {
     /// call family (returns whatever IS populated).
     pub fn workspace_symbols(&self, query: &str, limit: usize) -> Result<Vec<SymbolRow>> {
         let like = like_contains(query);
-        let te = tbl("type_entity");
+        let te = txt_tbl("type_entity");
         let mut rows: Vec<SymbolRow> = self.try_rows(
             &format!("SELECT \"repo\", \"sym\", \"name\", \"kind\", \"parent\", \"file\", \"line\" \
                       FROM {te} WHERE \"name\" LIKE ?1 ESCAPE '\\'"),
@@ -47,8 +48,8 @@ impl Engine {
         for row in &mut rows {
             row.container = row.parent.clone();
         }
-        let cd = tbl("call_def");
-        let cn = tbl("call_name");
+        let cd = txt_tbl("call_def");
+        let cn = txt_tbl("call_name");
         let calls: Vec<SymbolRow> = self.try_rows(
             &format!("SELECT d.\"repo\", d.\"sym\", n.\"name\", d.\"kind\", d.\"file\", d.\"line\" \
                       FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" \
@@ -88,7 +89,7 @@ impl Engine {
     /// is not in the same file attaches at the top level). Tolerates a missing type
     /// family (empty). `line` is 1-based as stored.
     pub fn document_symbols(&self, path: &str) -> Result<Vec<SymbolRow>> {
-        let te = tbl("type_entity");
+        let te = txt_tbl("type_entity");
         Ok(self.try_rows(
             &format!("SELECT \"repo\", \"sym\", \"name\", \"kind\", \"parent\", \"line\" \
                       FROM {te} WHERE \"file\" = ?1 ORDER BY \"line\""),
@@ -135,7 +136,7 @@ impl Engine {
     /// extractor's caller is always "the innermost enclosing fn def").
     fn compiler_call_prepare(&self, path: &str, byte: u32, text: &str) -> Result<Option<HierarchyItem>> {
         let Some(hit) = self.compiler_locate(path, byte, text)? else { return Ok(None); };
-        let sfe = tbl("scip_fn_edge");
+        let sfe = txt_tbl("scip_fn_edge");
         let participates = !self.try_rows(
             &format!("SELECT 1 FROM {sfe} WHERE \"caller\" = ?1 OR \"callee\" = ?1 LIMIT 1"),
             &[&hit.symbol], |r| r.get::<_, i64>(0),
@@ -153,8 +154,8 @@ impl Engine {
     /// ambiguity pick as `resolved_locate`.
     fn resolved_call_prepare(&self, path: &str, text: &str) -> Result<Option<HierarchyItem>> {
         let path_repo = self.repo_for_path(path);
-        let cd = tbl("call_def");
-        let cn = tbl("call_name");
+        let cd = txt_tbl("call_def");
+        let cn = txt_tbl("call_name");
         let candidates: Vec<(String, String, String, String, i64, i64)> = self.try_rows(
             &format!("SELECT d.\"repo\", d.\"sym\", d.\"kind\", d.\"file\", d.\"line\", d.\"end\" \
                       FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" WHERE n.\"name\" = ?1"),
@@ -196,8 +197,8 @@ impl Engine {
     /// `call_def`/`call_name` row for one sym -> a resolved-tier `HierarchyItem`,
     /// the by-sym twin of `resolved_call_prepare` (which resolves by name).
     fn resolved_call_item(&self, sym: &str) -> Option<HierarchyItem> {
-        let cd = tbl("call_def");
-        let cn = tbl("call_name");
+        let cd = txt_tbl("call_def");
+        let cn = txt_tbl("call_name");
         self.try_rows(
             &format!("SELECT d.\"repo\", d.\"kind\", d.\"file\", d.\"line\", d.\"end\", n.\"name\" \
                       FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" WHERE d.\"sym\" = ?1 LIMIT 1"),
@@ -220,7 +221,7 @@ impl Engine {
     /// `resolved_incoming` (caller = the neighbor, callee = `item`'s name) and
     /// `resolved_outgoing` (caller = `item`'s sym, callee = the neighbor's name).
     fn resolved_call_site_lines(&self, caller_sym: &str, callee_name: &str) -> Vec<u32> {
-        let cs = tbl("call_site");
+        let cs = txt_tbl("call_site");
         self.try_rows(
             &format!("SELECT \"line\" FROM {cs} WHERE \"caller\" = ?1 AND \"callee\" = ?2"),
             &[&caller_sym, &callee_name],
@@ -232,7 +233,7 @@ impl Engine {
     }
 
     fn resolved_incoming(&self, item: &HierarchyItem) -> Result<Vec<HierarchyCallEdge>> {
-        let ce = tbl("call_edge");
+        let ce = txt_tbl("call_edge");
         let callers: Vec<String> = self.try_rows(
             &format!("SELECT \"caller\" FROM {ce} WHERE \"callee\" = ?1"),
             &[&item.sym], |r| r.get::<_, String>(0),
@@ -247,7 +248,7 @@ impl Engine {
     }
 
     fn resolved_outgoing(&self, item: &HierarchyItem) -> Result<Vec<HierarchyCallEdge>> {
-        let ce = tbl("call_edge");
+        let ce = txt_tbl("call_edge");
         let callees: Vec<String> = self.try_rows(
             &format!("SELECT \"callee\" FROM {ce} WHERE \"caller\" = ?1"),
             &[&item.sym], |r| r.get::<_, String>(0),
@@ -267,7 +268,7 @@ impl Engine {
     /// non-definition occurrence of the target inside the caller's file stands
     /// in for "the call site(s)").
     fn scip_call_site_lines(&self, sym: &str, file: &str) -> Vec<u32> {
-        let so = tbl("scip_occurrence");
+        let so = txt_tbl("scip_occurrence");
         self.try_rows(
             &format!("SELECT \"line\" FROM {so} WHERE \"symbol\" = ?1 AND \"file\" = ?2 AND \"role\" != 'definition'"),
             &[&sym, &file],
@@ -279,7 +280,7 @@ impl Engine {
     }
 
     fn compiler_incoming(&self, item: &HierarchyItem) -> Result<Vec<HierarchyCallEdge>> {
-        let sfe = tbl("scip_fn_edge");
+        let sfe = txt_tbl("scip_fn_edge");
         let callers: Vec<String> = self.try_rows(
             &format!("SELECT \"caller\" FROM {sfe} WHERE \"callee\" = ?1"),
             &[&item.scip_symbol], |r| r.get::<_, String>(0),
@@ -300,7 +301,7 @@ impl Engine {
     }
 
     fn compiler_outgoing(&self, item: &HierarchyItem) -> Result<Vec<HierarchyCallEdge>> {
-        let sfe = tbl("scip_fn_edge");
+        let sfe = txt_tbl("scip_fn_edge");
         let callees: Vec<String> = self.try_rows(
             &format!("SELECT \"callee\" FROM {sfe} WHERE \"caller\" = ?1"),
             &[&item.scip_symbol], |r| r.get::<_, String>(0),
@@ -345,7 +346,7 @@ impl Engine {
     /// appears as `iface` is `"interface"`, otherwise `"class"`.
     fn compiler_type_prepare(&self, path: &str, byte: u32, text: &str) -> Result<Option<HierarchyItem>> {
         let Some(hit) = self.compiler_locate(path, byte, text)? else { return Ok(None); };
-        let si = tbl("scip_impl");
+        let si = txt_tbl("scip_impl");
         let is_impl = !self.try_rows(
             &format!("SELECT 1 FROM {si} WHERE \"impl\" = ?1 LIMIT 1"),
             &[&hit.symbol], |r| r.get::<_, i64>(0),
@@ -369,7 +370,7 @@ impl Engine {
     /// place in a type hierarchy).
     fn resolved_type_prepare(&self, path: &str, text: &str) -> Result<Option<HierarchyItem>> {
         let path_repo = self.repo_for_path(path);
-        let te = tbl("type_entity");
+        let te = txt_tbl("type_entity");
         let candidates: Vec<(String, String, String, String, i64)> = self.try_rows(
             &format!("SELECT \"repo\", \"sym\", \"kind\", \"file\", \"line\" FROM {te} \
                       WHERE \"name\" = ?1 AND \"kind\" IN ('struct', 'enum', 'trait', 'class', 'interface')"),
@@ -411,8 +412,8 @@ impl Engine {
     }
 
     fn resolved_supertypes(&self, item: &HierarchyItem) -> Result<Vec<HierarchyItem>> {
-        let tl = tbl("type_link");
-        let te = tbl("type_entity");
+        let tl = txt_tbl("type_link");
+        let te = txt_tbl("type_entity");
         let dsts: Vec<String> = self.try_rows(
             &format!("SELECT tl.\"dst\" FROM {tl} tl JOIN {te} te ON te.\"sym\" = tl.\"src\" \
                       WHERE tl.\"src\" = ?1 \
@@ -423,8 +424,8 @@ impl Engine {
     }
 
     fn resolved_subtypes(&self, item: &HierarchyItem) -> Result<Vec<HierarchyItem>> {
-        let tl = tbl("type_link");
-        let te = tbl("type_entity");
+        let tl = txt_tbl("type_link");
+        let te = txt_tbl("type_entity");
         let srcs: Vec<String> = self.try_rows(
             &format!("SELECT tl.\"src\" FROM {tl} tl JOIN {te} te ON te.\"sym\" = tl.\"src\" \
                       WHERE tl.\"dst\" = ?1 \
@@ -437,7 +438,7 @@ impl Engine {
     /// `type_entity` row for one sym -> a resolved-tier `HierarchyItem`, the
     /// by-sym twin of `resolved_type_prepare` (which resolves by name).
     fn resolved_type_item(&self, sym: &str) -> Option<HierarchyItem> {
-        let te = tbl("type_entity");
+        let te = txt_tbl("type_entity");
         self.try_rows(
             &format!("SELECT \"repo\", \"name\", \"kind\", \"file\", \"line\" FROM {te} WHERE \"sym\" = ?1 LIMIT 1"),
             &[&sym],
@@ -454,7 +455,7 @@ impl Engine {
     }
 
     fn compiler_supertypes(&self, item: &HierarchyItem) -> Result<Vec<HierarchyItem>> {
-        let si = tbl("scip_impl");
+        let si = txt_tbl("scip_impl");
         let ifaces: Vec<String> = self.try_rows(
             &format!("SELECT \"iface\" FROM {si} WHERE \"impl\" = ?1"),
             &[&item.scip_symbol], |r| r.get::<_, String>(0),
@@ -470,7 +471,7 @@ impl Engine {
     }
 
     fn compiler_subtypes(&self, item: &HierarchyItem) -> Result<Vec<HierarchyItem>> {
-        let si = tbl("scip_impl");
+        let si = txt_tbl("scip_impl");
         let impls: Vec<String> = self.try_rows(
             &format!("SELECT \"impl\" FROM {si} WHERE \"iface\" = ?1"),
             &[&item.scip_symbol], |r| r.get::<_, String>(0),

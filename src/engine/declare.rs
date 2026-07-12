@@ -1,6 +1,24 @@
 use super::*;
 
 impl Engine {
+    pub(crate) fn create_rel_view(&self, rel: &str, meta: &RelMeta) -> Result<()> {
+        let view = crate::lower::txt_tbl(rel);
+        self.db.conn().execute(&format!("DROP VIEW IF EXISTS {view}"), [])?;
+        let columns: Vec<String> = meta.cols.iter().map(|col| {
+            if col.interned() {
+                format!("(SELECT content FROM _strings WHERE id = \"{}\") AS \"{}\"", col.name, col.name)
+            } else {
+                format!("\"{}\"", col.name)
+            }
+        }).collect();
+        let select = if columns.is_empty() { "*".to_string() } else { columns.join(", ") };
+        self.db.conn().execute(
+            &format!("CREATE VIEW {view} AS SELECT {select} FROM {}", tbl(rel)), [])?;
+        Ok(())
+    }
+}
+
+impl Engine {
     pub(crate) fn declare(&mut self, d: &RelDecl) -> Result<()> {
         // Port envelope check: a `@in(class)`/`@out(class)` rel must carry the
         // class's contract columns BY NAME (order-free, extra columns rejected
@@ -16,9 +34,9 @@ impl Engine {
                 match d.cols.iter().find(|c| c.name == *cname) {
                     Some(c) if c.ty == *cty => {}
                     Some(c) => bail!("rel {}: {dir}({}) needs column {cname}: {}, found {cname}: {}",
-                        d.name, p.class, cty.sql().to_lowercase(), c.ty.sql().to_lowercase()),
+                        d.name, p.class, cty.name(), c.ty.name()),
                     None => bail!("rel {}: {dir}({}) needs column {cname}: {}",
-                        d.name, p.class, cty.sql().to_lowercase()),
+                        d.name, p.class, cty.name()),
                 }
             }
             if d.cols.len() != env.len() {
@@ -80,6 +98,7 @@ impl Engine {
             let pk_set = |mut v: Vec<String>| { v.sort(); v };
             let key_drift = pk_set(have_pk.clone()) != pk_set(want_pk.clone());
             if !have.is_empty() && (have != want || key_drift) {
+                self.db.conn().execute(&format!("DROP VIEW IF EXISTS {}", crate::lower::txt_tbl(&d.name)), [])?;
                 self.db.conn().execute(&format!("DROP TABLE IF EXISTS {table}"), [])?;
                 self.db.conn().execute(&format!("DELETE FROM _reldigest WHERE rel = ?1"),
                     rusqlite::params![d.name])?;
@@ -105,7 +124,7 @@ impl Engine {
             format!("CREATE TABLE IF NOT EXISTS {} (__src TEXT DEFAULT '')", tbl(&d.name))
         } else {
             let cols: Vec<String> = d.cols.iter()
-                .map(|c| format!("\"{}\" {}", c.name, c.ty.sql())).collect();
+                .map(|c| format!("\"{}\" {}", c.name, c.sql())).collect();
             // The PRIMARY KEY drives dedup. The default (no `key(...)`) is the
             // full row, so identical rows collapse (set semantics). A `key(...)`
             // qualifier narrows the PK to that column subset = a functional
@@ -141,6 +160,8 @@ impl Engine {
         };
         self.db.conn().execute(&sql, [])?;
         self.rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone(), key: d.key.clone(), merge: d.merge.clone(), port: d.port.clone() });
+        let meta = self.rels.get(&d.name).cloned().unwrap_or_default();
+        self.create_rel_view(&d.name, &meta)?;
         Ok(())
     }
 

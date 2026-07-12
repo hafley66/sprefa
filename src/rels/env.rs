@@ -5,7 +5,7 @@ use anyhow::Result;
 
 use crate::ast::{RelDecl, Type, Value};
 use crate::engine::Engine;
-use crate::lower::tbl;
+use crate::lower::txt_tbl;
 
 use super::{col, RelKind};
 
@@ -47,7 +47,7 @@ impl RelKind for EnvKind {
             let conn = eng.db.conn();
             let mut s = conn.prepare(&format!(
                 "SELECT \"name\", \"value\" FROM {} ORDER BY \"name\", \"value\"",
-                tbl("env")))?;
+                txt_tbl("env")))?;
             let rs = s.query_map([], |r| {
                 Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
             })?;

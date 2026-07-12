@@ -77,7 +77,7 @@ impl Engine {
         // exists but is unpopulated -> empty map -> no rows).
         let type_rows: Vec<(String, String)> = {
             let mut sel = self.db.prepare(
-                &format!("SELECT sym, name FROM {}", tbl("type_entity")))?;
+                &format!("SELECT sym, name FROM {}", crate::lower::txt_tbl("type_entity")))?;
             let rows: Vec<(String, String)> = sel
                 .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
                 .filter_map(|x| x.ok()).collect();

@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::ast::{RelDecl, Type, Value};
 use crate::engine::{knn_rows, Engine};
-use crate::lower::tbl;
+use crate::lower::txt_tbl;
 
 use super::{col, RelKind};
 
@@ -79,7 +79,7 @@ impl RelKind for EmbedKind {
 
         // Steady state: no new content AND `similar` already built -> no recompute.
         let similar_rows: i64 = eng.db.conn().query_row(
-            &format!("SELECT count(*) FROM {}", tbl("similar")), [], |r| r.get(0))?;
+            &format!("SELECT count(*) FROM {}", txt_tbl("similar")), [], |r| r.get(0))?;
         if to_embed.is_empty() && similar_rows > 0 { return Ok(false); }
 
         refresh_similar_rel(eng, &backend, max)?;

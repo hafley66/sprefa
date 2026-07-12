@@ -22,8 +22,8 @@ use "std/strings.dl".
 # binding, keyed to its owning type_entity.
 rel route(name: text, field: text, path: text).
 route(name, field, path) <-
-    const_value(sym: sym, field: field, text: path),
-    type_entity(sym: sym, name: name).
+    const_value(sym: text, field: field, text: path),
+    type_entity(sym: text, name: name).
 
 # A template built FROM a route value (e.g. `` `${routes.home}/edit` ``)
 # traced through string_flow, with the origin literal's own text attached —

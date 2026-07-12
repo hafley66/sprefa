@@ -1,4 +1,5 @@
 use super::*;
+use crate::lower::txt_tbl;
 
 impl Engine {
     /// Located byte spans with their interned text, for the refactor sink:
@@ -146,7 +147,7 @@ impl Engine {
         let dsts: Vec<String> = {
             let conn = self.db.conn();
             let mut s = conn.prepare(&format!(
-                "SELECT DISTINCT \"dst\" FROM {} WHERE \"src\" = ?1", tbl("module_edge")))?;
+                    "SELECT DISTINCT \"dst\" FROM {} WHERE \"src\" = ?1", txt_tbl("module_edge")))?;
             let rows = s.query_map(rusqlite::params![file], |r| r.get::<_, String>(0))?;
             rows.filter_map(|x| x.ok()).collect()
         };

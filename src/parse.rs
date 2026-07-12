@@ -192,8 +192,8 @@ impl Parser {
                     self.expect(Tok::Colon)?;
                     let tname = self.ident()?;
                     let col = match Type::parse(&tname) {
-                        Some(ty) => Col { name: cname, ty, brand: None },
-                        None => Col { name: cname, ty: Type::Text, brand: Some(tname) },
+                        Some(ty) => Col { name: cname, ty, brand: None, raw: false },
+                        None => Col { name: cname, ty: Type::Text, brand: Some(tname), raw: false },
                     };
                     cols.push(col);
                     match self.next()? {
@@ -240,8 +240,8 @@ impl Parser {
             // base storage type is resolved from the `type X <: Y` chain at load
             // (brands store as text until then). check_rule_types uses the name.
             let col = match Type::parse(&tname) {
-                Some(ty) => Col { name: cname, ty, brand: None },
-                None => Col { name: cname, ty: Type::Text, brand: Some(tname) },
+                Some(ty) => Col { name: cname, ty, brand: None, raw: false },
+                None => Col { name: cname, ty: Type::Text, brand: Some(tname), raw: false },
             };
             cols.push(col);
             match self.next()? {
@@ -344,8 +344,8 @@ impl Parser {
             self.expect(Tok::Colon)?;
             let tname = self.ident()?;
             let col = match Type::parse(&tname) {
-                Some(ty) => Col { name: cname, ty, brand: None },
-                None => Col { name: cname, ty: Type::Text, brand: Some(tname) },
+                Some(ty) => Col { name: cname, ty, brand: None, raw: false },
+                None => Col { name: cname, ty: Type::Text, brand: Some(tname), raw: false },
             };
             outs.push(col);
             match self.next()? {

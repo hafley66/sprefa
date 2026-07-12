@@ -318,7 +318,7 @@ fn seminaive_eliminates_full_reruns_at_scale() {
 /// Intern-key arc coordination check: a `sym`-typed recursive rel must round-
 /// trip through the semi-naive delta path — `rebuild_derived_seminaive` builds
 /// its `_delta_*` scratch tables from `Col.ty.sql()`, which already maps
-/// `Type::Sym` to INTEGER (same as `Type::Int`), so this is a regression
+/// `Type::Text` to INTEGER (same as `Type::Int`), so this is a regression
 /// guard, not new plumbing. `reach` recurses over `df_edge` (both cols sym as
 /// of the intern-key arc); the printed `?` output decodes back to the
 /// original id TEXT (df_node.id is `file::line::kind` before hashing), so a
@@ -332,7 +332,7 @@ fn sym_typed_recursive_rel_round_trips_through_the_delta_table() {
     let prog = r#"
 rel seen(path: file).
 seen(p) <- scan("WORK", "src/**/*.rs", p, rev).
-rel reach(from: sym, to: sym).
+rel reach(from: text, to: text).
 reach(a, b) <- df_edge(a, b).
 reach(a, c) <- reach(a, b), df_edge(b, c).
 ? df_edge(from, to).

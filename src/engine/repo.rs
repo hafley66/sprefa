@@ -317,7 +317,7 @@ impl Engine {
         if sinks.is_empty() { return Ok(()); }
         let allowlist: HashSet<String> = if self.rels.contains_key("org") {
             self.db.conn()
-                .prepare(&format!("SELECT DISTINCT \"name\" FROM {}", tbl("org")))?
+                .prepare(&format!("SELECT DISTINCT \"name\" FROM {}", crate::lower::txt_tbl("org")))?
                 .query_map([], |r| r.get::<_, String>(0))?
                 .filter_map(|x| x.ok()).collect()
         } else {
@@ -461,7 +461,7 @@ impl Engine {
         for rel in ["checkout_done", "checkout_plan"] {
             if self.rels.contains_key(rel) {
                 let n: i64 = conn.query_row(
-                    &format!("SELECT COUNT(*) FROM {}", tbl(rel)), [], |r| r.get(0))?;
+                    &format!("SELECT COUNT(*) FROM {}", crate::lower::txt_tbl(rel)), [], |r| r.get(0))?;
                 return Ok(n as usize);
             }
         }

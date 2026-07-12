@@ -13,7 +13,7 @@ use anyhow::Result;
 use crate::ast::{RelDecl, Type, Value};
 use crate::engine::desugar::display_rel_name;
 use crate::engine::Engine;
-use crate::lower::tbl;
+use crate::lower::{tbl, txt_tbl};
 
 use super::{col, RelKind};
 
@@ -91,7 +91,7 @@ impl RelKind for PerfKind {
         for rel in eng.rels.keys() {
             if self.rels().contains(&rel.as_str()) || views.contains(&tbl(rel)) { continue; }
             let n: i64 = eng.db.conn().query_row(
-                &format!("SELECT COUNT(*) FROM {}", tbl(rel)), [], |r| r.get(0))?;
+                &format!("SELECT COUNT(*) FROM {}", txt_tbl(rel)), [], |r| r.get(0))?;
             counts.push((rel.clone(), n));
         }
         let counts = fold_twins(counts);
@@ -118,7 +118,7 @@ impl RelKind for PerfKind {
         let read_pairs = |rel: &str, c0: &str, c1: &str| -> Result<Vec<(String, i64)>> {
             let conn = eng.db.conn();
             let mut s = conn.prepare(&format!(
-                "SELECT \"{c0}\", \"{c1}\" FROM {} ORDER BY \"{c0}\"", tbl(rel)))?;
+                "SELECT \"{c0}\", \"{c1}\" FROM {} ORDER BY \"{c0}\"", txt_tbl(rel)))?;
             let rows = s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
             Ok(rows.filter_map(|x| x.ok()).collect())
         };
@@ -132,7 +132,7 @@ impl RelKind for PerfKind {
         let read_triples = || -> Result<Vec<(String, i64, i64)>> {
             let conn = eng.db.conn();
             let mut s = conn.prepare(&format!(
-                "SELECT \"rel\", \"ms\", \"n\" FROM {} ORDER BY \"rel\"", tbl("stmt_ms")))?;
+                "SELECT \"rel\", \"ms\", \"n\" FROM {} ORDER BY \"rel\"", txt_tbl("stmt_ms")))?;
             let rows = s.query_map([], |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)))?;
             Ok(rows.filter_map(|x| x.ok()).collect())

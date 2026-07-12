@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use crate::ast::{RelDecl, Type, Value};
 use crate::engine::{read_content, Engine};
-use crate::lower::tbl;
+use crate::lower::txt_tbl;
 use crate::scip_import;
 
 use super::{col, RelKind};
@@ -53,7 +53,7 @@ impl RelKind for ProposeExtractKind {
             let conn = eng.db.conn();
             let mut s = conn.prepare(&format!(
                 "SELECT \"path\",\"lo\",\"hi\",\"param\" FROM {} ORDER BY \"path\",\"lo\",\"hi\",\"param\"",
-                tbl("propose_extract")))?;
+                txt_tbl("propose_extract")))?;
             let rows = s.query_map([], |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, i64>(1)?,
                 r.get::<_, i64>(2)?, r.get::<_, String>(3)?)))?;
@@ -153,7 +153,7 @@ impl RelKind for ProposeCloneKind {
             let conn = eng.db.conn();
             let mut s = conn.prepare(&format!(
                 "SELECT \"kernel\",\"path\",\"lo\",\"hi\",\"param\" FROM {} ORDER BY \"kernel\",\"path\",\"lo\",\"hi\",\"param\"",
-                tbl("propose_clone")
+                txt_tbl("propose_clone")
             ))?;
             let rows = s.query_map([], |r| {
                 Ok((

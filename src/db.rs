@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use crate::ast::Value;
@@ -70,6 +70,7 @@ fn profile_hook(sql: &str, dur: Duration) {
 pub struct Db {
     conn: Connection,
     counts: RefCell<HashMap<String, u32>>,
+    pending_syms: Arc<Mutex<Vec<String>>>,
 }
 
 /// One statement running more than this many times in a tick is almost certainly
@@ -147,6 +148,19 @@ pub fn open(path: Option<&str>) -> Result<Db> {
     register_regexp(&conn)?;
     register_split(&conn)?;
     register_string_fns(&conn)?;
+    let pending_syms = Arc::new(Mutex::new(Vec::new()));
+    {
+        let pending = pending_syms.clone();
+        conn.create_scalar_function("sprf_sym_intern", 1,
+            rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+            move |ctx| {
+                let text = ctx.get::<String>(0)?;
+                if !text.is_empty() {
+                    pending.lock().expect("pending symbol queue poisoned").push(text.clone());
+                }
+                Ok(crate::spine::StringId::of(&text).sqlite())
+            })?;
+    }
     if profiling() { conn.profile(Some(profile_hook)); }
     if let Some(p) = path {
         let size = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
@@ -157,7 +171,7 @@ pub fn open(path: Option<&str>) -> Result<Db> {
             &[("path", p), ("bytes", &size.to_string()), ("journal_mode", &journal_mode)],
         );
     }
-    Ok(Db { conn, counts: RefCell::new(HashMap::new()) })
+    Ok(Db { conn, counts: RefCell::new(HashMap::new()), pending_syms })
 }
 
 /// Install a busy handler that mimics the prior fixed 5000ms `busy_timeout`
@@ -343,6 +357,14 @@ fn register_string_fns(conn: &Connection) -> Result<()> {
 impl Db {
     /// Escape hatch for not-yet-migrated call sites. Uncounted — burn these down.
     pub fn conn(&self) -> &Connection { &self.conn }
+
+    pub fn flush_pending_syms(&self) -> Result<usize> {
+        let texts = std::mem::take(&mut *self.pending_syms.lock().expect("pending symbol queue poisoned"));
+        if texts.is_empty() { return Ok(0); }
+        let mut sink = crate::spine::SymSink::new();
+        for text in texts { sink.sym(&text); }
+        self.flush_syms(&mut sink)
+    }
 
     fn bump(&self, key: &str) {
         *self.counts.borrow_mut().entry(key.to_string()).or_insert(0) += 1;

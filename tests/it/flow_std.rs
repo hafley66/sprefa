@@ -82,7 +82,7 @@ const SUMMARY_PROG_BASE: &str = r#"
 use "std/flow.dl".
 rel src(p: file).
 src(p) <- scan("WORK", "src/**/*.rs", p, rev).
-rel flow_reach(from: sym, to: sym).
+rel flow_reach(from: text, to: text).
 flow_reach(a, b) <- closure(flow_edge).
 ? flow_reach(from, to).
 ? df_node(id, kind, var, fn, file, line).
@@ -217,7 +217,7 @@ fn collection_lambda_hops_are_fact_driven_per_language() {
             "use \"std/flow-collections.dl\".\n\
              rel src(p: file).\n\
              src(p) <- scan(\"WORK\", \"src/**/*.{ext}\", p, rev).\n\
-             rel flow_reach(from: sym, to: sym).\n\
+             rel flow_reach(from: text, to: text).\n\
              flow_reach(a, b) <- closure(flow_edge).\n\
              ? flow_reach(from, to).\n\
              ? df_node(id, kind, var, fn, file, line).\n"
