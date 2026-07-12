@@ -65,3 +65,9 @@ Read `rel_port_reach` from the scratch `--db` SQLite, or `? port_reach(port, nod
 The rewrite (rels added + rule diff), before/after ms on the measurement command,
 result-unchanged evidence (row counts + sample), new total tick time, and any
 skipped approach with the reason.
+
+## RESOLVED (2026-07-12)
+Landed as the native halt-BFS executor, not a SQL refactor (proven un-factorable
+in SQL). port_reach 1850ms -> 451ms, row-identical, bounded RSS. See
+`plans/2026-07-12-native-graph-walk-executor.md` (the depth-lattice follow-on is
+the only open remainder). This investigation doc is closed.
