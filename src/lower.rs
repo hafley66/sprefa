@@ -83,10 +83,11 @@ fn head_term_sql(term: &Term, col: &Col, canon: &HashMap<String, String>, tys: &
             _ => Ok(format!("sprf_sym_intern({})", term_sql_text(term, canon, tys)?)),
         };
     }
-    if col.ty.textish() {
-        return term_sql_text(term, canon, tys);
-    }
-    term_sql(term, canon, tys)
+    // Non-interned target column: decode any interned source var to its text so
+    // a StringId never lands raw in a real-valued column. `term_sql_text` is
+    // identical to `term_sql` for non-interned terms, and for an interned source
+    // flowing into an `int` column the decoded text ("30") coerces correctly.
+    term_sql_text(term, canon, tys)
 }
 
 /// `term_sql` for a TEXT-consuming position: a sym-typed var decodes through
