@@ -157,7 +157,7 @@ fn point_containment_query_uses_span_index() {
     eng.tick(&prog, true).unwrap();
 
     let plan = eng.query_sql(
-        "EXPLAIN QUERY PLAN SELECT id, kind FROM rel_node \
+        "EXPLAIN QUERY PLAN SELECT id, kind FROM rel_node_txt \
          WHERE \"file\" = '0' AND \"lo\" <= 5 AND 5 < \"hi\"", &[]).unwrap();
     let detail = plan.iter()
         .filter_map(|row| row.last().and_then(|v| v.as_str()))

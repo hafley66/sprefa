@@ -56,8 +56,8 @@ fn full_tick_rebuilds_only_the_affected_chain() {
         "an edit reaching only src_b rebuilds only its chain");
 
     // ... and the rebuilt chain is correct while the untouched one survived.
-    let db_rows = eng.query_sql("SELECT w FROM rel_db_out ORDER BY w", &[]).unwrap();
+    let db_rows = eng.query_sql("SELECT w FROM rel_db_out_txt ORDER BY w", &[]).unwrap();
     assert_eq!(db_rows.len(), 2, "db_out re-derived both beta words");
-    let da_rows = eng.query_sql("SELECT w FROM rel_da", &[]).unwrap();
+    let da_rows = eng.query_sql("SELECT w FROM rel_da_txt", &[]).unwrap();
     assert_eq!(da_rows.len(), 1, "da still holds its row untouched");
 }

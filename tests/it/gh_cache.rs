@@ -154,17 +154,17 @@ fn resp_current_is_the_latest_wins_view_over_accumulated_resp() {
     // version can repeat across buckets during the one-tick etag-carry lag; that
     // is harmless, `max(bucket)` still picks the newest, so assert on DISTINCT
     // versions seen.)
-    let resp200 = rows(&dbp, "SELECT DISTINCT tag FROM rel_resp WHERE status = 200 ORDER BY tag");
+    let resp200 = rows(&dbp, "SELECT DISTINCT tag FROM rel_resp_txt WHERE status = 200 ORDER BY tag");
     assert_eq!(resp200, vec![vec!["etagA".to_string()], vec!["etagB".to_string()]],
         "resp keeps every 200 version (history)");
     // The carry stayed single-valued (the bug would leave two etags).
-    let etags = rows(&dbp, "SELECT tag FROM rel_etag");
+    let etags = rows(&dbp, "SELECT tag FROM rel_etag_txt");
     assert_eq!(etags, vec![vec!["etagB".to_string()]], "etag carry is single-valued (latest)");
     // resp_current is JUST the current version's body -> stars reflects the LATEST.
-    let stars = rows(&dbp, "SELECT n FROM rel_stars");
+    let stars = rows(&dbp, "SELECT n FROM rel_stars_txt");
     assert_eq!(stars, vec![vec!["2".to_string()]], "latest-wins: stars is the newest value only");
     // change_log still has the full history (both star values were once current).
-    let mut log: Vec<String> = rows(&dbp, "SELECT val FROM rel_change_log").into_iter().flatten().collect();
+    let mut log: Vec<String> = rows(&dbp, "SELECT val FROM rel_change_log_txt").into_iter().flatten().collect();
     log.sort();
     assert_eq!(log, vec!["1".to_string(), "2".to_string()],
         "change_log keeps every value that was ever current (the feed)");
@@ -222,7 +222,7 @@ fn gh_cache_lands_entities_then_304_is_a_free_cache_hit() {
     eng.tick(&prog, true).unwrap();
 
     // The 200 body's two fields are in the change feed, exactly once each.
-    let mut log = rows(&dbp, "SELECT kind, val FROM rel_change_log ORDER BY kind, val");
+    let mut log = rows(&dbp, "SELECT kind, val FROM rel_change_log_txt ORDER BY kind, val");
     log.sort();
     assert_eq!(
         log,
@@ -240,7 +240,7 @@ fn gh_cache_lands_entities_then_304_is_a_free_cache_hit() {
     assert!(served.contains(&"304".to_string()), "a carried-etag re-poll got a 304: {served:?}");
 
     // The carried etag settled on the 200's value (the 304 kept it).
-    let etag = rows(&dbp, "SELECT tag FROM rel_etag");
+    let etag = rows(&dbp, "SELECT tag FROM rel_etag_txt");
     assert_eq!(etag, vec![vec!["etagA".to_string()]], "etag carried from the 200");
 }
 
@@ -345,7 +345,7 @@ fn repolls_once_per_cadence_bucket_and_is_silent_between() {
     );
 
     // The carried etag never regressed across buckets.
-    let etag = rows(&dbp, "SELECT tag FROM rel_etag");
+    let etag = rows(&dbp, "SELECT tag FROM rel_etag_txt");
     assert_eq!(etag, vec![vec!["etagA".to_string()]], "etag stable across buckets");
     clear_now();
 }
@@ -379,7 +379,7 @@ fn list_endpoint_body_normalizes_into_entity_rows() {
     let mut eng = Engine::new(conn, d.clone());
     eng.tick(&prog, true).unwrap();
 
-    let mut got = rows(&dbp, "SELECT num, title, state, author FROM rel_pull_request ORDER BY num");
+    let mut got = rows(&dbp, "SELECT num, title, state, author FROM rel_pull_request_txt ORDER BY num");
     got.sort();
     assert_eq!(
         got,
@@ -446,23 +446,23 @@ fn gh_cache_live_against_github() {
         eng.tick(&prog, true).unwrap();
         let exec = {
             let mut templates = HashMap::new();
-            for row in eng.query_sql("SELECT kind, template FROM rel_effect_cmd", &[]).unwrap() {
+            for row in eng.query_sql("SELECT kind, template FROM rel_effect_cmd_txt", &[]).unwrap() {
                 templates.insert(row[0].as_str().unwrap().to_string(), row[1].as_str().unwrap().to_string());
             }
             ShellEffectExec { templates, n_out: async_effect_arity(&prog), cwd: eng.root() }
         };
         let n = eng.drain_effects(&prog, &exec).unwrap();
         eprintln!("cycle {i}: drained {n} | resp={:?} | etag={:?}",
-            rows(&dbp, "SELECT status, substr(tag,1,12) FROM rel_resp"),
-            rows(&dbp, "SELECT substr(tag,1,12) FROM rel_etag"));
+            rows(&dbp, "SELECT status, substr(tag,1,12) FROM rel_resp_txt"),
+            rows(&dbp, "SELECT substr(tag,1,12) FROM rel_etag_txt"));
     }
     eng.tick(&prog, true).unwrap();
     eprintln!("stars={:?} full_name={:?}",
-        rows(&dbp, "SELECT n FROM rel_stars"),
-        rows(&dbp, "SELECT name FROM rel_full_name"));
+        rows(&dbp, "SELECT n FROM rel_stars_txt"),
+        rows(&dbp, "SELECT name FROM rel_full_name_txt"));
 
     assert!(!rows(&dbp, "SELECT n FROM rel_stars").is_empty(), "live body normalized into stars");
-    let statuses: Vec<String> = rows(&dbp, "SELECT status FROM rel_resp").into_iter().flatten().collect();
+    let statuses: Vec<String> = rows(&dbp, "SELECT status FROM rel_resp_txt").into_iter().flatten().collect();
     assert!(statuses.contains(&"200".to_string()), "first poll was a live 200: {statuses:?}");
     assert!(statuses.contains(&"304".to_string()), "carried-etag re-poll got a live 304: {statuses:?}");
     clear_now();

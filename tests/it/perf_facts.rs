@@ -104,7 +104,7 @@ fn incremental_one_file_rebuilds_only_its_chain() {
         "a b-chain-only edit rebuilds only db_out, got {:?}", eng.last_derived_rebuilt);
 
     // And the untouched chain's data survived.
-    let da = eng.query_sql("SELECT w FROM rel_da", &[]).unwrap();
+    let da = eng.query_sql("SELECT w FROM rel_da_txt", &[]).unwrap();
     assert_eq!(da.len(), 1, "da untouched");
 }
 
@@ -144,7 +144,7 @@ fn source_rule_edit_falls_back_to_full_reconcile() {
     fs::write(d.join("src/b.txt"), "beta_one\n").unwrap();
     let (mut eng, prog) = fresh_engine(&d);
     eng.tick(&prog, true).unwrap();
-    let da_before = eng.query_sql("SELECT w FROM rel_da", &[]).unwrap();
+    let da_before = eng.query_sql("SELECT w FROM rel_da_txt", &[]).unwrap();
     assert_eq!(da_before.len(), 1, "baseline: da has only the alpha token");
 
     // Edited program: src_a's glob widened to also match .txt. Put an alpha
@@ -162,7 +162,7 @@ fn source_rule_edit_falls_back_to_full_reconcile() {
         "a source-rule edit falls back to full reconcile; the widened glob moved \
          src_a so da must rebuild, got {:?}", eng.last_derived_rebuilt);
     // The named capture `w` is the token AFTER `alpha_`, so "one" / "two".
-    let da_after = eng.query_sql("SELECT w FROM rel_da ORDER BY w", &[]).unwrap();
+    let da_after = eng.query_sql("SELECT w FROM rel_da_txt ORDER BY w", &[]).unwrap();
     let words: Vec<String> = da_after.iter()
         .filter_map(|r| r.first().and_then(|v| v.as_str()).map(String::from)).collect();
     assert_eq!(words, vec!["one".to_string(), "two".to_string()],
@@ -241,7 +241,7 @@ imp(f, spec) <- module_import(f, rev, spec, kind, line).
 
     eng.tick(&prog, true).unwrap();
     // Cold tick fired module (no stored digest) and populated imp.
-    let imp_after_cold = eng.query_sql("SELECT spec FROM rel_imp", &[]).unwrap();
+    let imp_after_cold = eng.query_sql("SELECT spec FROM rel_imp_txt", &[]).unwrap();
     assert!(imp_after_cold.iter().any(|r| r.first().and_then(|v| v.as_str()) == Some("std::io")),
         "cold tick populated imp via the module family; got {imp_after_cold:?}");
 

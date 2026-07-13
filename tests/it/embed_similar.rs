@@ -45,7 +45,7 @@ fn engine_at(root: &Path) -> Engine {
 /// `near` rows (a, b, score) ordered by descending score, via the public query
 /// path. `near` is a user rel, so its table is `rel_near` (the `tbl()` prefix).
 fn rows(eng: &Engine) -> Vec<(String, String, i64)> {
-    eng.query_sql("SELECT \"a\",\"b\",\"score\" FROM rel_near ORDER BY 3 DESC", &[])
+    eng.query_sql("SELECT \"a\",\"b\",\"score\" FROM rel_near_txt ORDER BY 3 DESC", &[])
         .unwrap().into_iter()
         .map(|r| (str_of(&r[0]), str_of(&r[1]), int_of(&r[2])))
         .collect()

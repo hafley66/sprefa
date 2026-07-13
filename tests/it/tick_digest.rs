@@ -63,9 +63,9 @@ fn a_blank_slate_still_full_derives() {
     assert_eq!(rebuilt, vec!["gate".to_string(), "live".to_string()],
         "cold tick must derive every rel, empty-destined or not");
 
-    let gate_rows = eng.query_sql("SELECT w FROM rel_gate", &[]).unwrap();
+    let gate_rows = eng.query_sql("SELECT w FROM rel_gate_txt", &[]).unwrap();
     assert!(gate_rows.is_empty(), "gate legitimately matches nothing");
-    let live_rows = eng.query_sql("SELECT w FROM rel_live", &[]).unwrap();
+    let live_rows = eng.query_sql("SELECT w FROM rel_live_txt", &[]).unwrap();
     assert_eq!(live_rows.len(), 1, "live has the one matched row");
 }
 
@@ -119,7 +119,7 @@ brand_new(w) <- src_a(_, w).
     eng.tick(&prog2, true).unwrap();
     assert!(eng.last_derived_rebuilt.contains(&"brand_new".to_string()),
         "a program edit adding a derived rel must derive it, got {:?}", eng.last_derived_rebuilt);
-    let rows = eng.query_sql("SELECT w FROM rel_brand_new", &[]).unwrap();
+    let rows = eng.query_sql("SELECT w FROM rel_brand_new_txt", &[]).unwrap();
     assert_eq!(rows.len(), 1);
 
     // The edit's full rebuild should also settle: a further unchanged tick
@@ -140,12 +140,12 @@ fn e_rel_deriving_to_empty_stays_empty_not_stale() {
     let (mut eng, prog) = fresh_engine(&d);
 
     eng.tick(&prog, true).unwrap();
-    let rows = eng.query_sql("SELECT w FROM rel_live", &[]).unwrap();
+    let rows = eng.query_sql("SELECT w FROM rel_live_txt", &[]).unwrap();
     assert_eq!(rows.len(), 1, "live starts with one row");
 
     fs::remove_file(d.join("src/a.rs")).unwrap();
     eng.tick(&prog, true).unwrap();
-    let rows = eng.query_sql("SELECT w FROM rel_live", &[]).unwrap();
+    let rows = eng.query_sql("SELECT w FROM rel_live_txt", &[]).unwrap();
     assert!(rows.is_empty(), "live must reflect the deletion, not serve a stale row");
     assert!(eng.last_derived_rebuilt.contains(&"live".to_string()),
         "the deletion must have actually re-derived `live`");

@@ -183,7 +183,7 @@ fn clock_holds_current_bucket_persistently() {
 
     let bucket = |dbp: &Path| -> Vec<i64> {
         let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
-        let mut s = conn.prepare("SELECT b FROM rel_cbucket ORDER BY b").unwrap();
+        let mut s = conn.prepare("SELECT b FROM rel_cbucket_txt ORDER BY b").unwrap();
         s.query_map([], |r| r.get::<_, i64>(0)).unwrap().filter_map(|x| x.ok()).collect()
     };
 
