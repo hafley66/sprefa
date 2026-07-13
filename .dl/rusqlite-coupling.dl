@@ -1,0 +1,105 @@
+# rusqlite-coupling.dl — turbo dogfood: trace the rusqlite dependency through
+# dl's OWN module graph + call shapes, STRUCTURALLY (tree-sitter / ast-grep, no
+# `match`/regex). Answers, from dl's own facts:
+#   (1) which files bind a rusqlite symbol (import graph, not a text search),
+#   (2) where they hand-roll SQL (prepare/execute/query_* — ast-grep byte spans),
+#   (3) whether that access routes through the TYPED rel helpers or is bespoke,
+#   (4) the call-graph blast radius of the bespoke sites.
+# The bespoke count IS the interning-off-ramp surface the 0.10.0 text-is-sym arc
+# kept re-hitting: every hand-rolled SQL site is a place the sym/text handshake
+# can silently break.
+#
+#   Run:   dl .dl/rusqlite-coupling.dl
+#   Gate:  dl .dl/rusqlite-coupling.dl --check     (warns on bespoke hotspots)
+
+# ── Layer 1: the crate dependency, from the Cargo edge (not a grep) ──────────
+rel uses_rusqlite(crate: text).
+uses_rusqlite(src) <- crate_edge(src, "rusqlite", _, _).
+
+# ── Layer 2: files that BIND a rusqlite symbol, via the resolved import graph ─
+# module_binding(file, local_name, source_module, imported_name, kind). The bind
+# is extracted STRUCTURALLY by the module resolver (not a text search); the
+# source_module carries the full resolved path (`rusqlite::Connection`,
+# `rusqlite::types::Value`), so a crate-root predicate selects every rusqlite
+# entry. Catches `use rusqlite::{Connection, params, types::Value, ..}`.
+rel rusqlite_file(file: file).
+rusqlite_file(file) <- module_binding(file, _, source, _, _), source =~ /^rusqlite(::|$)/.
+
+# The distinct symbols each file pulls in (Connection, Value, OptionalExtension …).
+rel rusqlite_binding(file: file, local: text, imported: text).
+rusqlite_binding(file, local, imported) <-
+    module_binding(file, local, source, imported, _), source =~ /^rusqlite(::|$)/.
+
+# ── Layer 3: SQL access call sites, ast-grep with precise byte spans ─────────
+# One rule per rusqlite method that takes a SQL string. `$R` is any receiver
+# expression, `$$$A` the argument list; sg yields the whole-match span
+# (line,col,end_line,end_col) so overlapping matches dedupe by identical span.
+rel raw_sql_site(file: file, line: int, col: int, end_line: int, end_col: int, verb: text).
+raw_sql_site(file, line, col, end_line, end_col, "prepare") <- scan("src/**/*.rs", file, rev),
+    sg(file, rev, :rust, "$R.prepare($$$A)", line, col, end_line, end_col).
+raw_sql_site(file, line, col, end_line, end_col, "prepare_cached") <- scan("src/**/*.rs", file, rev),
+    sg(file, rev, :rust, "$R.prepare_cached($$$A)", line, col, end_line, end_col).
+raw_sql_site(file, line, col, end_line, end_col, "execute") <- scan("src/**/*.rs", file, rev),
+    sg(file, rev, :rust, "$R.execute($$$A)", line, col, end_line, end_col).
+raw_sql_site(file, line, col, end_line, end_col, "execute_batch") <- scan("src/**/*.rs", file, rev),
+    sg(file, rev, :rust, "$R.execute_batch($$$A)", line, col, end_line, end_col).
+raw_sql_site(file, line, col, end_line, end_col, "query_row") <- scan("src/**/*.rs", file, rev),
+    sg(file, rev, :rust, "$R.query_row($$$A)", line, col, end_line, end_col).
+raw_sql_site(file, line, col, end_line, end_col, "query_map") <- scan("src/**/*.rs", file, rev),
+    sg(file, rev, :rust, "$R.query_map($$$A)", line, col, end_line, end_col).
+
+# The TYPED rel-access helpers: the layer bespoke SQL should route through.
+rel typed_sql_site(file: file, line: int, col: int, end_line: int, end_col: int, verb: text).
+typed_sql_site(file, line, col, end_line, end_col, "insert_rows") <- scan("src/**/*.rs", file, rev),
+    sg(file, rev, :rust, "$R.insert_rows($$$A)", line, col, end_line, end_col).
+typed_sql_site(file, line, col, end_line, end_col, "encode_rel_rows") <- scan("src/**/*.rs", file, rev),
+    sg(file, rev, :rust, "$R.encode_rel_rows($$$A)", line, col, end_line, end_col).
+typed_sql_site(file, line, col, end_line, end_col, "refresh_rel") <- scan("src/**/*.rs", file, rev),
+    sg(file, rev, :rust, "$R.refresh_rel($$$A)", line, col, end_line, end_col).
+typed_sql_site(file, line, col, end_line, end_col, "reload_rel") <- scan("src/**/*.rs", file, rev),
+    sg(file, rev, :rust, "$R.reload_rel($$$A)", line, col, end_line, end_col).
+
+# ── Layer 4: combine — bespoke SQL concentrated in rusqlite-binding files ────
+rel raw_in_bound_file(file: file, line: int, verb: text).
+raw_in_bound_file(file, line, verb) <-
+    raw_sql_site(file, line, _, _, _, verb), rusqlite_file(file).
+
+rel raw_count(file: file, n: int).
+raw_count(file, count(line)) <- raw_sql_site(file, line, _, _, _, _).
+rel typed_count(file: file, n: int).
+typed_count(file, count(line)) <- typed_sql_site(file, line, _, _, _, _).
+
+# A bespoke hotspot: a file that hand-rolls SQL but never calls a typed helper
+# (the pure off-ramp — a storage-representation change must touch it by hand).
+rel bespoke_hotspot(file: file, raw: int).
+bespoke_hotspot(file, raw) <- raw_count(file, raw), !typed_count(file, _), raw >= 4.
+
+diag(path, line: 1, severity: "warning", code: "bespoke-sql",
+     msg: "${raw} hand-rolled SQL sites, 0 typed rel-helper calls — route rel access through insert_rows/encode_rel_rows/decoded views (interning off-ramp surface)") <-
+    bespoke_hotspot(path, raw).
+
+# ── Layer 5: blast radius — functions holding a raw SQL site, followed through
+# the call graph. df_node(id, kind, var, fn, file, line) gives the enclosing fn
+# of a source line; call_edge(caller, callee, kind) is the resolved call graph.
+rel raw_sql_fn(fn: text).
+raw_sql_fn(fn) <- raw_sql_site(file, line, _, _, _, _), df_node(_, _, _, fn, file, line).
+
+# Transitive callers of a raw-SQL fn: who is (indirectly) exposed to bespoke SQL.
+rel raw_sql_reaches(caller: text, sql_fn: text).
+raw_sql_reaches(caller, sql_fn) <- call_edge(caller, sql_fn, _), raw_sql_fn(sql_fn).
+raw_sql_reaches(caller, sql_fn) <- call_edge(caller, mid, _), raw_sql_reaches(mid, sql_fn).
+
+# ── Snapshot: one metric row per number (diff the artifact across refactors) ─
+rel metric(name: text, n: int).
+metric("rusqlite_files",      count(f)) <- rusqlite_file(f).
+metric("raw_sql_sites",       count(l)) <- raw_sql_site(_, l, _, _, _, _).
+metric("typed_sql_sites",     count(l)) <- typed_sql_site(_, l, _, _, _, _).
+metric("bespoke_hotspots",    count(f)) <- bespoke_hotspot(f, _).
+metric("raw_sql_fns",         count(f)) <- raw_sql_fn(f).
+metric("callers_reaching_sql", count(c)) <- raw_sql_reaches(c, _).
+
+? metric(name, n).
+? bespoke_hotspot(file, raw).
+
+# Versioned before/after artifact: re-run after each de-coupling phase, diff the md.
+gen("examples/_auto-doc/rusqlite-coupling.md", "- {name}: {n}") <- metric(name, n).
