@@ -114,7 +114,7 @@ fn parity_poll_state_roundtrip_and_304_preserves_fields() {
     let exec = CondGet { out200: vec!["200".into(), "\"abc\"".into(), "60".into()] };
     drive(&mut eng, &prog, &exec, 5);
 
-    let ps = rows(&dbp, "SELECT tag, interval FROM rel_ps");
+    let ps = rows(&dbp, "SELECT tag, interval FROM rel_ps_txt");
     assert_eq!(ps, vec![vec!["\"abc\"".to_string(), "60".to_string()]],
         "etag and interval roundtrip, and the 304 preserved both");
 }
@@ -157,7 +157,7 @@ fn parity_change_log_append_is_idempotent() {
     };
     drive(&mut eng, &prog, &exec, 12);
 
-    let mut log = rows(&dbp, "SELECT kind, val FROM rel_change_log");
+    let mut log = rows(&dbp, "SELECT kind, val FROM rel_change_log_txt");
     log.sort();
     assert_eq!(log, vec![
         vec!["full_name".to_string(), "o/n".to_string()],
@@ -187,7 +187,7 @@ fn parity_change_log_with_payload() {
     let (prog, _d, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
     for _ in 0..4 { eng.tick(&prog, true).unwrap(); }
 
-    let log = rows(&dbp, "SELECT kind, val FROM rel_change_log");
+    let log = rows(&dbp, "SELECT kind, val FROM rel_change_log_txt");
     assert_eq!(log, vec![vec!["pull_request".to_string(), "42".to_string()]],
         "the change row carries the payload's number field");
 }
@@ -210,7 +210,7 @@ fn parity_event_triggers_resync() {
     let (prog, _d, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
     eng.tick(&prog, true).unwrap();
 
-    let got = rows(&dbp, "SELECT repo FROM rel_resync");
+    let got = rows(&dbp, "SELECT repo FROM rel_resync_txt");
     assert_eq!(got, vec![vec!["o/n".to_string()]],
         "an event row triggers a single resync of its repo (deduped)");
 }
@@ -265,7 +265,7 @@ fn parity_upsert_pr_update_latest_wins() {
     let (prog, _d, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
     eng.tick(&prog, true).unwrap();
 
-    let mut pr = rows(&dbp, "SELECT num, title FROM rel_pull_request");
+    let mut pr = rows(&dbp, "SELECT num, title FROM rel_pull_request_txt");
     pr.sort();
     assert_eq!(pr, vec![
         vec!["1".to_string(), "Updated".to_string()],
@@ -318,20 +318,20 @@ fn parity_full_port_end_to_end() {
     let (prog, _d, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
     drive(&mut eng, &prog, &FullMock, 4);
 
-    let stars = rows(&dbp, "SELECT n FROM rel_stars");
+    let stars = rows(&dbp, "SELECT n FROM rel_stars_txt");
     assert_eq!(stars, vec![vec!["42".to_string()]], "stars normalized from the 200 body");
 
-    let reading = rows(&dbp, "SELECT remaining FROM rel_reading");
+    let reading = rows(&dbp, "SELECT remaining FROM rel_reading_txt");
     assert!(!reading.is_empty(), "the rate reading was captured + carried: {reading:?}");
 
-    let mut prs = rows(&dbp, "SELECT num, title, state, author FROM rel_pull_request");
+    let mut prs = rows(&dbp, "SELECT num, title, state, author FROM rel_pull_request_txt");
     prs.sort();
     assert_eq!(prs, vec![
         vec!["1".to_string(), "fix".to_string(), "open".to_string(), "alice".to_string()],
         vec!["2".to_string(), "feat".to_string(), "closed".to_string(), "bob".to_string()],
     ], "both PRs normalized from the paginated array (latest-wins): {prs:?}");
 
-    let log = rows(&dbp, "SELECT DISTINCT kind FROM rel_change_log ORDER BY kind");
+    let log = rows(&dbp, "SELECT DISTINCT kind FROM rel_change_log_txt ORDER BY kind");
     assert_eq!(log, vec![vec!["pull_request".to_string()], vec!["stars".to_string()]],
         "the change feed accumulated both entity kinds: {log:?}");
 }

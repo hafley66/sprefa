@@ -17,7 +17,7 @@ use sprefa_v5::prepare_paths;
 /// the program's `effect_cmd(kind, template)` rows, arity from the @async heads.
 fn shell_exec(eng: &Engine, prog: &sprefa_v5::ast::Program) -> ShellEffectExec {
     let mut templates = HashMap::new();
-    for row in eng.query_sql("SELECT kind, template FROM rel_effect_cmd", &[]).unwrap() {
+    for row in eng.query_sql("SELECT kind, template FROM rel_effect_cmd_txt", &[]).unwrap() {
         let kind = row[0].as_str().unwrap().to_string();
         let tmpl = row[1].as_str().unwrap().to_string();
         templates.insert(kind, tmpl);
@@ -77,7 +77,7 @@ fn poll_head_caches_live_git_head() {
 
     // Tick 2: the cached oid is readable, and it matches the real HEAD.
     eng.tick(&prog, true).unwrap();
-    let got = eng.query_sql("SELECT name, oid FROM rel_head_at", &[]).unwrap();
+    let got = eng.query_sql("SELECT name, oid FROM rel_head_at_txt", &[]).unwrap();
     assert_eq!(got.len(), 1);
     assert_eq!(got[0][0].as_str().unwrap(), "self");
     assert_eq!(got[0][1].as_str().unwrap(), want, "cached the live HEAD oid");
@@ -152,7 +152,7 @@ fn per_row_cwd_routes_each_effect_to_its_repo() {
     assert_eq!(eng.drain_effects(&prog, &exec).unwrap(), 2, "both repos polled");
     eng.tick(&prog, true).unwrap();
 
-    let mut got = eng.query_sql("SELECT name, oid FROM rel_head_at ORDER BY name", &[]).unwrap();
+    let mut got = eng.query_sql("SELECT name, oid FROM rel_head_at_txt ORDER BY name", &[]).unwrap();
     got.sort_by(|x, y| x[0].as_str().cmp(&y[0].as_str()));
     assert_eq!(got[0][0].as_str().unwrap(), "a");
     assert_eq!(got[0][1].as_str().unwrap(), oid_a, "repo a's head, from dir a");

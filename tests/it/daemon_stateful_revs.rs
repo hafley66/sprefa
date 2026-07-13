@@ -79,15 +79,15 @@ fn observe_ref_tracks_advances_and_projects_query_rels() {
 
     // Project into query rels and read them back through SQL.
     eng.refresh_daemon_rels().unwrap();
-    let progs = eng.query_sql("SELECT path FROM rel_program", &[]).unwrap();
+    let progs = eng.query_sql("SELECT path FROM rel_program_txt", &[]).unwrap();
     assert_eq!(progs.len(), 1, "one program row: {progs:?}");
     assert!(progs[0][0].as_str().unwrap().ends_with("p.dl"));
 
-    let heads = eng.query_sql("SELECT repo, name, oid FROM rel_head", &[]).unwrap();
+    let heads = eng.query_sql("SELECT repo, name, oid FROM rel_head_txt", &[]).unwrap();
     assert_eq!(heads.len(), 1, "one watched ref: {heads:?}");
     assert_eq!(heads[0][2].as_str().unwrap(), c2, "head rel holds the latest oid");
 
-    let log = eng.query_sql("SELECT old, new FROM rel_rev_advanced ORDER BY new", &[]).unwrap();
+    let log = eng.query_sql("SELECT old, new FROM rel_rev_advanced_txt ORDER BY new", &[]).unwrap();
     assert_eq!(log.len(), 2, "two advances logged (first-sight + c1->c2): {log:?}");
     // The c1->c2 advance row carries both endpoints.
     assert!(log.iter().any(|r| r[0].as_str() == Some(c1.as_str())

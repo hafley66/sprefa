@@ -274,7 +274,7 @@ fn tick_chain(dir: &PathBuf, n: usize, naive: bool) -> (usize, Vec<String>) {
     eng.force_naive_fixpoint.set(naive);
     eng.tick(&prog, true).unwrap();
     let rows: Vec<String> = eng
-        .query_sql("SELECT x FROM rel_reach ORDER BY x", &[]).unwrap()
+        .query_sql("SELECT x FROM rel_reach_txt ORDER BY x", &[]).unwrap()
         .into_iter()
         .map(|r| r[0].as_str().unwrap_or_default().to_string())
         .collect();

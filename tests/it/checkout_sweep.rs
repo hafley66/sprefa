@@ -99,7 +99,7 @@ fn checkout_sink_fast_forwards_current_branch_via_ff_only() {
     // the outcome is queryable via the checkout_done rel (repo, branch, action, ok, detail)
     let conn = rusqlite::Connection::open(d.join("db")).unwrap();
     let (repo, action, ok): (String, String, i64) = conn.query_row(
-        "SELECT repo, action, ok FROM rel_checkout_done", [],
+        "SELECT repo, action, ok FROM rel_checkout_done_txt", [],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).expect("checkout_done row");
     assert_eq!((repo.as_str(), action.as_str(), ok), ("work", "ff", 1),
         "checkout_done records the successful fast-forward");
@@ -303,7 +303,7 @@ fn checkout_sink_dirty_working_tree_left_untouched() {
     // checkout_done carries the skip row
     let conn = rusqlite::Connection::open(d.join("db")).unwrap();
     let (action, ok): (String, i64) = conn.query_row(
-        "SELECT action, ok FROM rel_checkout_done", [], |r| Ok((r.get(0)?, r.get(1)?)))
+        "SELECT action, ok FROM rel_checkout_done_txt", [], |r| Ok((r.get(0)?, r.get(1)?)))
         .expect("checkout_done row");
     assert_eq!((action.as_str(), ok), ("skip", 1),
         "checkout_done records the dirty-skip with ok=1 (intentional)");
