@@ -365,6 +365,9 @@ impl Engine {
         derived_rules: &[&Rule],
         timed: &mut impl FnMut(&str, &str) -> Result<usize>,
     ) -> Result<bool> {
+        if self.try_native_depth_walk(comp_rules, derived_rules, timed)? {
+            return Ok(true);
+        }
         self.try_native_halt_bfs(comp_rules, derived_rules, timed)
     }
 
@@ -1118,7 +1121,13 @@ impl Engine {
         &self, edge: &str, c0: &str, c1: &str, sym: bool,
     ) -> Result<(Vec<Vec<u32>>, HashMap<i64, u32>, Vec<i64>, Option<Vec<String>>)> {
         use crate::spine::StringId;
-        let sql = format!("SELECT \"{c0}\", \"{c1}\" FROM {}", txt_tbl(edge));
+        // sym mode keys on the raw interned StringId (i64), so read the RAW table;
+        // the head-node side is read raw too (`tbl(head_rel)`), so both agree in
+        // id-space. Text mode hashes the decoded value, so it reads the `_txt`
+        // view. Reading the decoded view under sym would feed text to `get::<i64>`
+        // and yield an empty adjacency (the walk then never leaves its seeds).
+        let source = if sym { tbl(edge) } else { txt_tbl(edge) };
+        let sql = format!("SELECT \"{c0}\", \"{c1}\" FROM {source}");
         let mut stmt = self.db.conn().prepare(&sql)?;
         let mut interner: HashMap<i64, u32> = HashMap::new();
         let mut id2key: Vec<i64> = Vec::new();
