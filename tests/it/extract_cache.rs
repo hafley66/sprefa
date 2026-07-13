@@ -323,12 +323,12 @@ fn df_twins_salt_ids_by_rev_and_join_within_a_rev() {
     // instead of decoding the hash.
     let raw_work = col_set(&eng,
         "SELECT n.id FROM rel_df_node_txt n \
-         JOIN rel_df_node_rev r ON r.kind = n.kind AND r.var = n.var \
+         JOIN rel_df_node_rev_txt r ON r.kind = n.kind AND r.var = n.var \
              AND r.fn = n.fn AND r.file = n.file AND r.line = n.line \
          WHERE r.rev = 'WORK'");
     let raw_head = col_set(&eng,
         "SELECT n.id FROM rel_df_node_txt n \
-         JOIN rel_df_node_rev r ON r.kind = n.kind AND r.var = n.var \
+         JOIN rel_df_node_rev_txt r ON r.kind = n.kind AND r.var = n.var \
              AND r.fn = n.fn AND r.file = n.file AND r.line = n.line \
          WHERE r.rev <> 'WORK'");
     assert_eq!(raw_work, raw_head, "both revs' twin rows resolve back to the identical raw id set");
@@ -342,15 +342,15 @@ fn df_twins_salt_ids_by_rev_and_join_within_a_rev() {
     // is applied identically to every column that joins on node identity).
     assert!(count(&eng,
         "SELECT COUNT(*) FROM rel_df_node_repo_rev_txt r \
-         JOIN rel_df_node_rev n ON r.id = n.id AND r.rev = n.rev") > 0,
+         JOIN rel_df_node_rev_txt n ON r.id = n.id AND r.rev = n.rev") > 0,
         "df_node_repo_rev.id joins df_node_rev.id within a rev");
     assert!(count(&eng,
         "SELECT COUNT(*) FROM rel_df_arg_rev_txt a \
-         JOIN rel_df_node_rev n ON a.call = n.id AND a.rev = n.rev") > 0,
+         JOIN rel_df_node_rev_txt n ON a.call = n.id AND a.rev = n.rev") > 0,
         "df_arg_rev.call joins df_node_rev.id within a rev (helper(1) call site)");
     assert!(count(&eng,
         "SELECT COUNT(*) FROM rel_df_field_rev_txt f \
-         JOIN rel_df_node_rev n ON f.id = n.id AND f.rev = n.rev") > 0,
+         JOIN rel_df_node_rev_txt n ON f.id = n.id AND f.rev = n.rev") > 0,
         "df_field_rev.id joins df_node_rev.id within a rev (struct-literal field)");
 }
 
