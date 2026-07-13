@@ -186,7 +186,7 @@ fn pr_diff_resolves_shas_via_gh_and_reports_exact_delta() {
     // The gh effect resolved and pr_pair carried both committed shas.
     assert_eq!(
         count(&eng, &format!(
-            "SELECT COUNT(*) FROM rel_pr_pair WHERE base_sha = '{base_sha}' AND head_sha = '{head_sha}'"
+            "SELECT COUNT(*) FROM rel_pr_pair_txt WHERE base_sha = '{base_sha}' AND head_sha = '{head_sha}'"
         )),
         1,
         "pr_pair holds the gh-resolved base/head shas",
@@ -201,21 +201,21 @@ fn pr_diff_resolves_shas_via_gh_and_reports_exact_delta() {
     assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_pr_node_added"), 1, "one node added");
     assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_pr_node_removed"), 1, "one node removed");
     assert_eq!(count(&eng,
-        "SELECT COUNT(*) FROM rel_pr_node_added WHERE sym LIKE '%::struct::Gamma'"), 1,
+        "SELECT COUNT(*) FROM rel_pr_node_added_txt WHERE sym LIKE '%::struct::Gamma'"), 1,
         "Gamma is the added node");
     assert_eq!(count(&eng,
-        "SELECT COUNT(*) FROM rel_pr_node_removed WHERE sym LIKE '%::struct::Beta'"), 1,
+        "SELECT COUNT(*) FROM rel_pr_node_removed_txt WHERE sym LIKE '%::struct::Beta'"), 1,
         "Beta is the removed node");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_pr_node_added WHERE sym LIKE '%Alpha'"), 0);
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_pr_node_removed WHERE sym LIKE '%Alpha'"), 0);
+    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_pr_node_added_txt WHERE sym LIKE '%Alpha'"), 0);
+    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_pr_node_removed_txt WHERE sym LIKE '%Alpha'"), 0);
 
     // Edges: exactly one field link added (Gamma->Alpha), one removed (Beta->Alpha).
     assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_pr_edge_added"), 1, "one edge added");
     assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_pr_edge_removed"), 1, "one edge removed");
     assert_eq!(count(&eng,
-        "SELECT COUNT(*) FROM rel_pr_edge_added WHERE a LIKE '%::struct::Gamma' AND b LIKE '%::struct::Alpha'"),
+        "SELECT COUNT(*) FROM rel_pr_edge_added_txt WHERE a LIKE '%::struct::Gamma' AND b LIKE '%::struct::Alpha'"),
         1, "the added edge is Gamma -> Alpha");
     assert_eq!(count(&eng,
-        "SELECT COUNT(*) FROM rel_pr_edge_removed WHERE a LIKE '%::struct::Beta' AND b LIKE '%::struct::Alpha'"),
+        "SELECT COUNT(*) FROM rel_pr_edge_removed_txt WHERE a LIKE '%::struct::Beta' AND b LIKE '%::struct::Alpha'"),
         1, "the removed edge is Beta -> Alpha");
 }
