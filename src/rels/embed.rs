@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 
-use crate::ast::{RelDecl, Type, Value};
+use crate::ast::{Col, RelDecl, Type, Value};
 use crate::engine::{knn_rows, Engine};
 use crate::lower::txt_tbl;
 
@@ -26,7 +26,10 @@ impl RelKind for EmbedKind {
     }
     fn decls(&self) -> Vec<RelDecl> {
         vec![RelDecl { name: "similar".into(),
-            cols: vec![col("a", Type::Text), col("b", Type::Text), col("score", Type::Int)], group: "embed",
+            // a/b carry opaque StringId handles (the decimal sid the `string`/
+            // `span_at` builtins consume), NOT sym text — `raw` so text-is-sym
+            // does not double-intern the handle into a fresh _strings row.
+            cols: vec![Col::raw("a", Type::Text), Col::raw("b", Type::Text), col("score", Type::Int)], group: "embed",
             doc: "content-addressed nearest-neighbor pairs from the embedding backend, with score", ..Default::default() }]
     }
     fn reserved_msg(&self) -> &'static str {
