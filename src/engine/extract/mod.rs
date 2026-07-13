@@ -661,12 +661,17 @@ impl Engine {
         self.db.exec("DELETE FROM _module_refresh_rev")?;
         let rev_rows: Vec<Vec<Value>> = revs.iter().map(|rev| vec![Value::Text((*rev).to_string())]).collect();
         self.db.insert_rows("_module_refresh_rev", &["rev"], &rev_rows)?;
-        self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _module_refresh_rev)", tbl("module_import")))?;
-        self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _module_refresh_rev)", tbl("module_edge_rev")))?;
-        self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _module_refresh_rev)", tbl("module_unresolved_rev")))?;
-        self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _module_refresh_rev)", tbl("crate_edge")))?;
-        self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _module_refresh_rev)", tbl("module_binding_resolved_rev")))?;
-        self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT rev FROM _module_refresh_rev)", tbl("module_binding_rev")))?;
+        // The twins' `rev` column is interned (i64 StringId); `_module_refresh_rev`
+        // holds raw text revs. Hash the text side into id-space (`sprf_sym`) so the
+        // set-match runs in the same representation — else the stale rows are never
+        // cleared before re-insert (same fix as `refresh_rel_for_revs`).
+        let del_by_rev = "\"rev\" IN (SELECT sprf_sym(rev) FROM _module_refresh_rev)";
+        self.db.exec(&format!("DELETE FROM {} WHERE {del_by_rev}", tbl("module_import")))?;
+        self.db.exec(&format!("DELETE FROM {} WHERE {del_by_rev}", tbl("module_edge_rev")))?;
+        self.db.exec(&format!("DELETE FROM {} WHERE {del_by_rev}", tbl("module_unresolved_rev")))?;
+        self.db.exec(&format!("DELETE FROM {} WHERE {del_by_rev}", tbl("crate_edge")))?;
+        self.db.exec(&format!("DELETE FROM {} WHERE {del_by_rev}", tbl("module_binding_resolved_rev")))?;
+        self.db.exec(&format!("DELETE FROM {} WHERE {del_by_rev}", tbl("module_binding_rev")))?;
 
         let by_rev = self.module_files_by_rev()?;
         let mut rows = ModuleRows::default();
@@ -686,24 +691,28 @@ impl Engine {
         self.db.exec("DELETE FROM _module_refresh_path")?;
         let path_rows: Vec<Vec<Value>> = paths.iter().map(|p| vec![Value::Text(p.clone())]).collect();
         self.db.insert_rows("_module_refresh_path", &["path"], &path_rows)?;
+        // Interned `rev`/`file`/`src` columns: hash the raw literal rev and the
+        // raw temp-table paths into id-space so the per-path DELETE matches.
+        let rev_id = format!("sprf_sym('{rev}')");
+        let paths_id = "(SELECT sprf_sym(path) FROM _module_refresh_path)";
         self.db.exec(&format!(
-            "DELETE FROM {} WHERE \"rev\" = '{rev}' AND \"file\" IN (SELECT path FROM _module_refresh_path)",
+            "DELETE FROM {} WHERE \"rev\" = {rev_id} AND \"file\" IN {paths_id}",
             tbl("module_import"),
         ))?;
         self.db.exec(&format!(
-            "DELETE FROM {} WHERE \"rev\" = '{rev}' AND \"src\" IN (SELECT path FROM _module_refresh_path)",
+            "DELETE FROM {} WHERE \"rev\" = {rev_id} AND \"src\" IN {paths_id}",
             tbl("module_edge_rev"),
         ))?;
         self.db.exec(&format!(
-            "DELETE FROM {} WHERE \"rev\" = '{rev}' AND \"file\" IN (SELECT path FROM _module_refresh_path)",
+            "DELETE FROM {} WHERE \"rev\" = {rev_id} AND \"file\" IN {paths_id}",
             tbl("module_unresolved_rev"),
         ))?;
         self.db.exec(&format!(
-            "DELETE FROM {} WHERE \"rev\" = '{rev}' AND \"file\" IN (SELECT path FROM _module_refresh_path)",
+            "DELETE FROM {} WHERE \"rev\" = {rev_id} AND \"file\" IN {paths_id}",
             tbl("module_binding_resolved_rev"),
         ))?;
         self.db.exec(&format!(
-            "DELETE FROM {} WHERE \"rev\" = '{rev}' AND \"file\" IN (SELECT path FROM _module_refresh_path)",
+            "DELETE FROM {} WHERE \"rev\" = {rev_id} AND \"file\" IN {paths_id}",
             tbl("module_binding_rev"),
         ))?;
 
