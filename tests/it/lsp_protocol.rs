@@ -523,7 +523,7 @@ fn dl_query_returns_rows_over_lsp() {
     initialize(&mut s, &root);
 
     let result = s.request(2, "dl/query",
-        serde_json::json!({"sql": "SELECT p FROM rel_seen ORDER BY p"}));
+        serde_json::json!({"sql": "SELECT p FROM rel_seen_txt ORDER BY p"}));
     let rows = result.get("rows").and_then(|r| r.as_array()).unwrap_or_else(|| panic!(
         "expected rows, got: {result}\nstderr: {}", drain_stderr(&mut s.child)));
     let paths: Vec<&str> = rows.iter()
@@ -533,7 +533,7 @@ fn dl_query_returns_rows_over_lsp() {
 
     // Bound params round-trip.
     let result = s.request(3, "dl/query", serde_json::json!({
-        "sql": "SELECT p FROM rel_seen WHERE p = ?", "params": ["src/b.rs"]}));
+        "sql": "SELECT p FROM rel_seen_txt WHERE p = ?", "params": ["src/b.rs"]}));
     let rows = result.get("rows").and_then(|r| r.as_array()).cloned().unwrap_or_default();
     assert_eq!(rows.len(), 1, "one bound match: {result}");
 
@@ -547,7 +547,7 @@ fn dl_query_returns_rows_over_lsp() {
     // lock was hot-path waste). Reading the `query_log` projection back returns
     // zero rows here — no daemon runs, and the LSP handler no longer appends.
     let result = s.request(5, "dl/query",
-        serde_json::json!({"sql": "SELECT method, body FROM rel_query_log ORDER BY ts"}));
+        serde_json::json!({"sql": "SELECT method, body FROM rel_query_log_txt ORDER BY ts"}));
     let rows = result.get("rows").and_then(|r| r.as_array()).unwrap_or_else(|| panic!(
         "expected a rows array, got: {result}\nstderr: {}", drain_stderr(&mut s.child)));
     assert!(rows.is_empty(),

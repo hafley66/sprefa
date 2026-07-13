@@ -157,7 +157,7 @@ fn dl_hook_event_lands_row_and_ticks() {
     // The derived rule over hook_event should have run by the time the
     // response came back (same quiet tick as didSave).
     let rows = s.request(3, "dl/query", serde_json::json!({
-        "sql": "SELECT session, seq, word FROM rel_goto_word ORDER BY seq"}));
+        "sql": "SELECT session, seq, word FROM rel_goto_word_txt ORDER BY seq"}));
     let rows = rows.get("rows").and_then(|r| r.as_array()).cloned().unwrap_or_else(|| panic!(
         "expected rows, got: {rows}\nstderr: {}", drain_stderr(&mut s.child)));
     assert_eq!(rows.len(), 1, "one goto_word row derived: {rows:?}");
@@ -172,7 +172,7 @@ fn dl_hook_event_lands_row_and_ticks() {
     }));
     assert_eq!(result.get("ok").and_then(|v| v.as_bool()), Some(true));
     let rows = s.request(5, "dl/query", serde_json::json!({
-        "sql": "SELECT word FROM rel_goto_word ORDER BY seq"}));
+        "sql": "SELECT word FROM rel_goto_word_txt ORDER BY seq"}));
     let words: Vec<&str> = rows.get("rows").and_then(|r| r.as_array()).into_iter().flatten()
         .filter_map(|r| r.get(0).and_then(|v| v.as_str())).collect();
     assert_eq!(words, vec!["helper", "caller"], "events accumulate: {words:?}");
@@ -213,7 +213,7 @@ fn dl_hook_event_bad_params_is_error() {
 
     // No row should have landed from any of the rejected requests.
     let rows = s.request(5, "dl/query", serde_json::json!({
-        "sql": "SELECT word FROM rel_goto_word"}));
+        "sql": "SELECT word FROM rel_goto_word_txt"}));
     let rows = rows.get("rows").and_then(|r| r.as_array()).cloned().unwrap_or_else(|| panic!(
         "expected rows, got: {rows}\nstderr: {}", drain_stderr(&mut s.child)));
     assert!(rows.is_empty(), "rejected hookEvent requests write nothing: {rows:?}");
