@@ -352,6 +352,11 @@ impl Engine {
                 for r in k.rels() { changed_source_rels.insert(r.to_string()); }
             }
         }
+        // Type/call/dataflow share a parsed representation in language front
+        // ends that implement `extract_bundle` (currently Rust). Prime their
+        // existing fact caches once before the independent family refreshers;
+        // those refreshers retain ownership of digests, resolution, and rows.
+        super::extract::prime_analysis_bundles(self, prog)?;
         for fam in crate::rels::extract_families_pre_node() {
             if !fam.used(prog) { continue; }
             crate::activity::detail(fam.name());
@@ -942,6 +947,10 @@ impl Engine {
             // rels changed, so their derived dependents stay put. `spine`
             // (post-node) reports true unconditionally — conservative mark,
             // as before.
+            // Prime the same generation-local bundle used by the full tick so
+            // daemon/LSP edits also parse a changed Rust file once for every
+            // requested analysis family.
+            super::extract::prime_analysis_bundles(self, prog)?;
             for fam in crate::rels::extract_families_paths_pre_node() {
                 if fam.used(prog) && fam.refresh(self)? {
                     for r in fam.rels() { changed_source_rels.insert(r.to_string()); }

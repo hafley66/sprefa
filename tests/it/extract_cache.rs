@@ -27,6 +27,32 @@ seen(p) <- scan("WORK", "src/**/*.rs", p, rev), match(p, rev, /fn/, line).
 "#;
 
 #[test]
+fn production_bundle_ab_matches_rows_and_reduces_physical_parses() {
+    let run = |tag: &str, separate: bool| {
+        let d = sandbox(tag);
+        fs::write(d.join("src/a.rs"),
+            "pub struct Alpha { pub n: u32 }\npub fn alpha() -> Alpha { Alpha { n: helper() } }\nfn helper() -> u32 { 1 }\n").unwrap();
+        let prog = parse::parse(lex::lex(PROG).unwrap()).unwrap();
+        let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
+        let mut eng = Engine::new(conn, d);
+        eng.force_separate_analysis_extractors.set(separate);
+        eng.tick(&prog, true).unwrap();
+        let rows = [
+            count(&eng, "SELECT COUNT(*) FROM rel_type_entity_txt"),
+            count(&eng, "SELECT COUNT(*) FROM rel_call_def_txt"),
+            count(&eng, "SELECT COUNT(*) FROM rel_df_node_txt"),
+        ];
+        (eng.extract_files_parsed.get(), rows)
+    };
+
+    let (separate_parses, separate_rows) = run("ab_separate", true);
+    let (bundle_parses, bundle_rows) = run("ab_bundle", false);
+    assert_eq!(separate_rows, bundle_rows, "production A/B rows must match");
+    assert_eq!(separate_parses, 3, "legacy arm parses once per family");
+    assert_eq!(bundle_parses, 1, "bundle arm parses once per file");
+}
+
+#[test]
 fn warm_tick_skips_extraction_and_edit_reparses_only_the_moved_file() {
     let d = sandbox("warm");
     fs::write(d.join("src/a.rs"), "pub struct Alpha { pub n: u32 }\npub fn alpha() -> Alpha { Alpha { n: helper() } }\nfn helper() -> u32 { 1 }\n").unwrap();
@@ -36,10 +62,11 @@ fn warm_tick_skips_extraction_and_edit_reparses_only_the_moved_file() {
     let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, d.clone());
 
-    // Cold tick: each family (type/call/dataflow) parses both files.
+    // Cold tick: the Rust bundle parses each file once and primes all three
+    // family caches without retaining source or ASTs.
     eng.tick(&prog, true).unwrap();
     let cold = eng.extract_files_parsed.get();
-    assert_eq!(cold, 6, "cold tick parses 2 files x 3 families");
+    assert_eq!(cold, 2, "cold tick parses each Rust file once for all three families");
 
     // Warm no-change tick: the extract:* digests match, no family parses.
     eng.tick(&prog, true).unwrap();
@@ -54,9 +81,12 @@ fn warm_tick_skips_extraction_and_edit_reparses_only_the_moved_file() {
     // length — reconcile's (mtime secs, size) fast path can't see a same-
     // second same-size rewrite.
     fs::write(d.join("src/a.rs"), "pub struct Alpha { pub n: u64, pub extra: bool }\npub fn alpha() -> Alpha { Alpha { n: helper(), extra: true } }\nfn helper() -> u64 { 2 }\n").unwrap();
-    eng.tick(&prog, true).unwrap();
-    assert_eq!(eng.extract_files_parsed.get(), cold + 3,
-        "an edit re-parses the moved file once per family, not the corpus");
+    eng.tick_paths(&prog, &[d.join("src/a.rs")], true).unwrap();
+    assert_eq!(eng.extract_files_parsed.get(), cold + 1,
+        "an edit re-parses the moved Rust file once for all three families");
+    assert!(count(&eng, "SELECT COUNT(*) FROM rel_type_entity_txt") > 0);
+    assert!(count(&eng, "SELECT COUNT(*) FROM rel_call_def_txt") > 0);
+    assert!(count(&eng, "SELECT COUNT(*) FROM rel_df_node_txt") > 0);
 }
 
 #[test]

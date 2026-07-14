@@ -16,16 +16,15 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `bug` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:166 — op_catalog rows cached in the db do not fold exe identity — a new binary regenerating docs/reference/syntax.md against an old cache.db emits the OLD op docs; fold exe identity like extract digests
 - `bug` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:167 — something during `cargo test --test it` regenerates docs/reference/syntax.md IN-TREE with the installed dl (dirties the repo mid-suite); find the writer, make it hermetic
 - `bug` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:168 — setup --undo marker strip leaves its separator newlines behind when the marked file pre-existed with content (AGENTS.md/CLAUDE.md gain trailing blank lines per setup/undo cycle)
-- `bug` plans/2026-07-11-agent-resume-ledger.md:56 — dl --check --max-wall self-deadline so hook callers can never stack cold engines
 - `bug` plans/2026-07-11-codex-feedback-queue.md:18 — lex warn on dropped backslash escapes in plain strings
 - `bug` plans/2026-07-11-codex-feedback-queue.md:46 — body-level extract+rel-atom mix must bail, not ignore
 - `bug` plans/2026-07-11-codex-feedback-queue.md:86 — module_edge nondeterministic across identical cold runs
 - `bug` plans/2026-07-11-dataflow-research-program.md:95 — TS class-method df lift hole
 - `bug` plans/2026-07-11-scip-atlas.md:117 — TS class-method bodies emit zero df nodes
 - `bug` plans/2026-07-11-scip-atlas.md:38 — watchgate allowlist for index.scip; dl index pokes daemon
+- `bug` plans/2026-07-14-bounded-single-sweep-runtime.md:247 — decouple daemon socket readiness from cold replay so a healthy daemon does not trigger concurrent in-process fallback
 - `decision` plans/2026-07-10-change-cost-friction-inventory.md:152 — item 5 — a resolution_source column (values scip|syntactic|alias|narrowed) on call_edge/type_link (rev twins included), plus a public eng.ensure_families(&[...])
 - `decision` plans/2026-07-11-codex-feedback-queue.md:122 — CLI flag taxonomy — query/mutate/effects axes
-- `decision` plans/2026-07-11-intern-string-keys.md:159 — which payload TEXT columns stay text (df_lit.text, doc_comment.text) — decided by the spike's decode-cost numbers
 - `decision` plans/2026-07-11-scip-atlas.md:147 — coordinate policy — no new line-keyed joins; byte spans + edge projection; migrate call_site/df joins when touched
 - `docs` plans/2026-07-10-change-cost-friction-inventory.md:151 — item 6 — a generated per-language coverage table (which node kinds each TypeLang lift emits, tested counts on a fixture) in docs/reference
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:105 — match() trailing positional is a match ID not captured text — rename convention to match_id in shipped examples, show named-capture form in the op quickref
@@ -44,12 +43,10 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `docs` plans/2026-07-11-book-toc.md:83 — book restructure per this TOC, Part III (flow) first
 - `docs` plans/2026-07-11-docs-and-dogfood-audit.md:20 — CHANGELOG drift rail — commit window vs entries cross-check
 - `docs` plans/2026-07-11-docs-and-dogfood-audit.md:28 — book/tutorial refresh for sym/file_lines/--max-wall/semi-naive
-- `docs` plans/2026-07-11-setup-manifest-uninstall.md:76 — README emergency-stop section links setup --undo as the polite twin
 - `feature` plans/2026-07-10-change-cost-friction-inventory.md:148 — item 1 — a first-class --hermetic flag that implies all three, plus the already-ledgered loud "daemon is serving this root, writes went there" warning on hijack
 - `feature` plans/2026-07-10-change-cost-friction-inventory.md:150 — item 3 — --format=json (or tsv) for ? query blocks and one paragraph documenting the human format's contract
 - `feature` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:103 — agent_edit carries line/span columns so touched-region x AST-span joins work (guarded-MATCH vs guarded-FILE)
 - `feature` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:107 — error-message for !(expr) — suggest the hoisted helper-rel negation idiom
-- `feature` plans/2026-07-11-agent-resume-ledger.md:57 — re-enable PostToolUse hook with timeout+advisory shape once derived is under budget
 - `feature` plans/2026-07-11-codex-feedback-queue.md:103 — auto-split mixed/source-join/term-extract shapes instead of bailing
 - `feature` plans/2026-07-11-codex-feedback-queue.md:109 — unpinned closure in rule bodies via generated recursive rule
 - `feature` plans/2026-07-11-codex-feedback-queue.md:114 — argmax/argmin head aggregates
@@ -67,8 +64,6 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-07-11-dataflow-research-program.md:75 — cfg_edge lift rel, one language first
 - `feature` plans/2026-07-11-docs-and-dogfood-audit.md:39 — dogfood coverage rail — scan in-tree .dl usage vs rel_catalog/op docs, warn on zero-usage builtins
 - `feature` plans/2026-07-11-engine-mod-split.md:73 — trait-extraction epic Phase 1 (RelKind) resumes on top of the split
-- `feature` plans/2026-07-11-file-lines-builtin.md:84 — file_lines for git revs via the cat-file batch reader, if a rail ever needs history
-- `feature` plans/2026-07-11-file-lines-builtin.md:85 — re-enable PostToolUse hook (timeout-wrapped, advisory) once the perf arc lands — NOT in this task
 - `feature` plans/2026-07-11-scip-atlas.md:122 — var_write/var_read from scip_occurrence roles + df-hole cross-check rail
 - `feature` plans/2026-07-11-scip-atlas.md:128 — std/points-to.dl Andersen-style over df facts
 - `feature` plans/2026-07-11-scip-atlas.md:131 — std/dispatch.dl CHA via scip_impl, VTA refinement
@@ -76,10 +71,13 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-07-11-scip-atlas.md:42 — positions on type refs so ScipOccIndex covers type_link
 - `feature` plans/2026-07-11-scip-atlas.md:52 — repo column on scip_impl + scip_typedef from is_type_definition
 - `feature` plans/2026-07-11-scip-atlas.md:80 — argmax aggregate sugar
-- `feature` plans/2026-07-11-setup-manifest-uninstall.md:114 — paranoia invariants in journal-owned setup helpers + red-side tests
-- `feature` plans/2026-07-11-setup-manifest-uninstall.md:75 — setup manifest + dl setup --undo/--list/--adopt + dl uninstall
+- `feature` plans/2026-07-14-bounded-single-sweep-runtime.md:188 — implement the durable coalescing intent store, generation watermark protocol, and capacity-one Tokio wakeup
+- `feature` plans/2026-07-14-bounded-single-sweep-runtime.md:248 — add committed-generation reads during staging and the crash-injection integration matrix
 - `perf` plans/2026-07-11-codex-feedback-queue.md:92 — semi-naive delta-growth bail + wedge visibility
-- `perf` plans/2026-07-11-intern-string-keys.md:158 — P0 spike — re-key call_edge/flow feeders to StringId in a scratch db, before/after ms
+- `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:189 — replace corpus-wide extraction payload caches with bounded byte-weighted reuse and stream WORK and Git inventories into staging
+- `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:190 — replace per-connection 512 MiB SQLite cache and mmap settings with one measured process-wide budget and permit disk-backed large temporary work
+- `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:249 — add the 1-to-1000-strata RSS amplification rail and 500-repository steady-state soak
+- `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:250 — profile tick_paths phase time and relation invalidation volume because a one-file edit still costs approximately the full cold tick after bundled extraction
 - `triage` plans/2026-07-11-cross-harness-agent-tooling.md:147 — a CodexSessions AgentHarness arm for agent_* rels — session-store format needs research
 - `triage` plans/2026-07-11-docs-and-dogfood-audit.md:40 — re-enable hooks (timeout+advisory) — relights the dark event arm; Chris flips
 - `triage` plans/2026-07-11-engine-mod-split.md:72 — SG_LANG_TABLE final home (src/sg.rs vs engine/lang_tables.rs) when the lang_tables cluster moves
@@ -115,8 +113,6 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-11-agent-feedback-smashy-guard-rails.md:166 `bug` — op_catalog rows cached in the db do not fold exe identity — a new binary regenerating docs/reference/syntax.md against an old cache.db emits the OLD op docs; fold exe identity like extract digests
 - plans/2026-07-11-agent-feedback-smashy-guard-rails.md:167 `bug` — something during `cargo test --test it` regenerates docs/reference/syntax.md IN-TREE with the installed dl (dirties the repo mid-suite); find the writer, make it hermetic
 - plans/2026-07-11-agent-feedback-smashy-guard-rails.md:168 `bug` — setup --undo marker strip leaves its separator newlines behind when the marked file pre-existed with content (AGENTS.md/CLAUDE.md gain trailing blank lines per setup/undo cycle)
-- plans/2026-07-11-agent-resume-ledger.md:56 `bug` — dl --check --max-wall self-deadline so hook callers can never stack cold engines
-- plans/2026-07-11-agent-resume-ledger.md:57 `feature` — re-enable PostToolUse hook with timeout+advisory shape once derived is under budget
 - plans/2026-07-11-book-toc.md:83 `docs` — book restructure per this TOC, Part III (flow) first
 - plans/2026-07-11-codex-feedback-queue.md:18 `bug` — lex warn on dropped backslash escapes in plain strings
 - plans/2026-07-11-codex-feedback-queue.md:42 `feature` — reserved-name collision at --parse-only tier
@@ -146,10 +142,6 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-11-docs-and-dogfood-audit.md:40 `triage` — re-enable hooks (timeout+advisory) — relights the dark event arm; Chris flips
 - plans/2026-07-11-engine-mod-split.md:72 `triage` — SG_LANG_TABLE final home (src/sg.rs vs engine/lang_tables.rs) when the lang_tables cluster moves
 - plans/2026-07-11-engine-mod-split.md:73 `feature` — trait-extraction epic Phase 1 (RelKind) resumes on top of the split
-- plans/2026-07-11-file-lines-builtin.md:84 `feature` — file_lines for git revs via the cat-file batch reader, if a rail ever needs history
-- plans/2026-07-11-file-lines-builtin.md:85 `feature` — re-enable PostToolUse hook (timeout-wrapped, advisory) once the perf arc lands — NOT in this task
-- plans/2026-07-11-intern-string-keys.md:158 `perf` — P0 spike — re-key call_edge/flow feeders to StringId in a scratch db, before/after ms
-- plans/2026-07-11-intern-string-keys.md:159 `decision` — which payload TEXT columns stay text (df_lit.text, doc_comment.text) — decided by the spike's decode-cost numbers
 - plans/2026-07-11-scip-atlas.md:38 `bug` — watchgate allowlist for index.scip; dl index pokes daemon
 - plans/2026-07-11-scip-atlas.md:42 `feature` — positions on type refs so ScipOccIndex covers type_link
 - plans/2026-07-11-scip-atlas.md:52 `feature` — repo column on scip_impl + scip_typedef from is_type_definition
@@ -160,9 +152,13 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-11-scip-atlas.md:131 `feature` — std/dispatch.dl CHA via scip_impl, VTA refinement
 - plans/2026-07-11-scip-atlas.md:134 `feature` — cfg_edge lift rel for flow-sensitive dl analyses
 - plans/2026-07-11-scip-atlas.md:147 `decision` — coordinate policy — no new line-keyed joins; byte spans + edge projection; migrate call_site/df joins when touched
-- plans/2026-07-11-setup-manifest-uninstall.md:75 `feature` — setup manifest + dl setup --undo/--list/--adopt + dl uninstall
-- plans/2026-07-11-setup-manifest-uninstall.md:76 `docs` — README emergency-stop section links setup --undo as the polite twin
-- plans/2026-07-11-setup-manifest-uninstall.md:114 `feature` — paranoia invariants in journal-owned setup helpers + red-side tests
+- plans/2026-07-14-bounded-single-sweep-runtime.md:188 `feature` — implement the durable coalescing intent store, generation watermark protocol, and capacity-one Tokio wakeup
+- plans/2026-07-14-bounded-single-sweep-runtime.md:189 `perf` — replace corpus-wide extraction payload caches with bounded byte-weighted reuse and stream WORK and Git inventories into staging
+- plans/2026-07-14-bounded-single-sweep-runtime.md:190 `perf` — replace per-connection 512 MiB SQLite cache and mmap settings with one measured process-wide budget and permit disk-backed large temporary work
+- plans/2026-07-14-bounded-single-sweep-runtime.md:247 `bug` — decouple daemon socket readiness from cold replay so a healthy daemon does not trigger concurrent in-process fallback
+- plans/2026-07-14-bounded-single-sweep-runtime.md:248 `feature` — add committed-generation reads during staging and the crash-injection integration matrix
+- plans/2026-07-14-bounded-single-sweep-runtime.md:249 `perf` — add the 1-to-1000-strata RSS amplification rail and 500-repository steady-state soak
+- plans/2026-07-14-bounded-single-sweep-runtime.md:250 `perf` — profile tick_paths phase time and relation invalidation volume because a one-file edit still costs approximately the full cold tick after bundled extraction
 <!-- END: plans-by-plan -->
 
 ## By code file

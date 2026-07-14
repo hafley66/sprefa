@@ -4,6 +4,17 @@ All notable changes to `dl` (sprefa v5) are recorded here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versions track the `v*` release
 tags consumed by cargo-dist.
 
+## [Unreleased]
+
+### Changed
+- `DL_RAYON_THREADS` now defaults to 2, bounding extraction and hashing CPU by
+  default while preserving an explicit override for larger worker pools.
+- Rust type, call, and dataflow extraction now share one `syn` parse per changed
+  file on both full and daemon/LSP path ticks; only projected facts enter the
+  existing bounded caches, while source text and ASTs are dropped immediately.
+  `DL_DISABLE_ANALYSIS_BUNDLE=1` restores separate family extraction for
+  production A/B measurements.
+
 ## [0.9.0] - 2026-07-11
 
 ### Added

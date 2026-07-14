@@ -158,6 +158,106 @@ fn cached_facts_profiled<T: Send + Sync>(
     out
 }
 
+/// Warm the type/call/dataflow fact caches with one language-front-end bundle
+/// per changed file when at least two of those families will refresh. The
+/// bundle itself is generation-local: only the already-existing, bounded
+/// per-family fact caches retain its projections; source text and parsed ASTs
+/// are dropped in the Rayon job.
+///
+/// Family digests remain owned by each refresher. This only primes cache misses,
+/// so the normal refresh methods still perform their existing digest checks,
+/// resolution passes, row writes, and digest commits unchanged.
+pub(crate) fn prime_analysis_bundles(eng: &Engine, prog: &Program) -> Result<()> {
+    if eng.force_separate_analysis_extractors.get() {
+        return Ok(());
+    }
+    let want_types = type_rels_used(prog)
+        || rels_used(prog, &["type_shape", "type_lgg"])
+        || doc_text_rels_used(prog)
+        || const_value_rels_used(prog);
+    let want_calls = call_rels_used(prog);
+    let want_dataflow = dataflow_rels_used(prog);
+    if usize::from(want_types) + usize::from(want_calls) + usize::from(want_dataflow) < 2 {
+        return Ok(());
+    }
+
+    let files = eng.extract_file_set()?;
+    let family_moved = |family: &str, with_scip: bool| -> Result<bool> {
+        let mut by_rev: HashMap<&str, Vec<ExtractFile>> = HashMap::new();
+        for f in &files {
+            by_rev.entry(f.2.as_str()).or_default().push(f.clone());
+        }
+        for (rev, frev) in by_rev {
+            let digest = eng.extract_input_digest(family, rev, &frev, with_scip);
+            if eng.load_rel_digest(&extract_digest_key(family, rev))? != Some(digest) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    };
+
+    let do_types = want_types && family_moved("type", true)?;
+    let do_calls = want_calls && family_moved("call", true)?;
+    let do_dataflow = want_dataflow && family_moved("dataflow", false)?;
+    if usize::from(do_types) + usize::from(do_calls) + usize::from(do_dataflow) < 2 {
+        return Ok(());
+    }
+
+    let roots = eng.repo_roots();
+    let root = eng.root.clone();
+    let misses: Vec<(&ExtractFile, typegraph::AnalysisMask)> = files.iter().filter_map(|f| {
+        // Without a content identity the family caches intentionally refuse a
+        // hit. Let the ordinary refreshers handle that rare row; priming it
+        // would only cause a second parse when the projection cannot be kept.
+        if f.3.is_empty() { return None }
+        let key = (f.0.clone(), f.1.clone(), f.3.clone());
+        let types = do_types && !eng.type_facts_cache.borrow().contains_key(&key);
+        let calls = do_calls && !eng.call_facts_cache.borrow().contains_key(&key);
+        let dataflow = do_dataflow && !eng.df_facts_cache.borrow().contains_key(&key);
+        (usize::from(types) + usize::from(calls) + usize::from(dataflow) >= 2).then_some((
+            f,
+            typegraph::AnalysisMask { types, calls, dataflow },
+        ))
+    }).collect();
+
+    struct Primed<'a> {
+        file: &'a ExtractFile,
+        rid: String,
+        mask: typegraph::AnalysisMask,
+        bundle: typegraph::AnalysisBundle,
+    }
+    let primed: Vec<Primed<'_>> = misses.par_iter().filter_map(|(f, mask)| {
+        let lang = typegraph::type_langs().iter().find(|l| l.matches(&f.1))?;
+        if !lang.supports_analysis_bundle() { return None }
+        let froot = roots.get(&f.0).map(|p| p.as_path()).unwrap_or(&root);
+        let content = read_content(froot, &f.2, &f.1).unwrap_or_default();
+        let rid = repo_id_of(froot, &f.1, &f.0);
+        let bundle = lang.extract_bundle(&f.1, &content, *mask);
+        Some(Primed { file: f, rid, mask: *mask, bundle })
+    }).collect();
+    eng.extract_files_parsed.set(eng.extract_files_parsed.get() + primed.len());
+
+    for mut item in primed {
+        let key = (item.file.0.clone(), item.file.1.clone(), item.file.3.clone());
+        if item.mask.types {
+            let facts = item.bundle.types.take().unwrap_or_default();
+            eng.type_facts_cache.borrow_mut()
+                .insert(key.clone(), (item.rid.clone(), Arc::new(facts)));
+        }
+        if item.mask.calls {
+            let facts = item.bundle.calls.take().unwrap_or_default();
+            eng.call_facts_cache.borrow_mut()
+                .insert(key.clone(), (item.rid.clone(), Arc::new(facts)));
+        }
+        if item.mask.dataflow {
+            let facts = item.bundle.dataflow.take().unwrap_or_default();
+            eng.df_facts_cache.borrow_mut()
+                .insert(key, (item.rid, Arc::new(facts)));
+        }
+    }
+    Ok(())
+}
+
 /// Directory portion of a `/`-separated relative path (empty string for a
 /// bare filename, never a trailing slash). Used only by `narrow_ambiguous`'s
 /// same-directory criterion.

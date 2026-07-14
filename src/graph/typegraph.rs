@@ -400,6 +400,39 @@ pub trait TypeLang: Sync {
     /// lazy `DATAFLOW_RELS` wiring is live end to end with zero rows; each
     /// front-end overrides as its extractor lands.
     fn extract_dataflow(&self, _file: &str, _content: &str) -> DataflowFacts { DataflowFacts::default() }
+
+    /// Whether `extract_bundle` actually shares one parse across projections.
+    /// The engine uses this to avoid routing languages through the bundle seam
+    /// when their default implementation would still parse once per family.
+    fn supports_analysis_bundle(&self) -> bool { false }
+
+    /// Experimental one-parse/many-projection seam. Languages can override
+    /// this when their three extractors share a parse representation.
+    fn extract_bundle(&self, file: &str, content: &str, mask: AnalysisMask) -> AnalysisBundle {
+        AnalysisBundle {
+            types: mask.types.then(|| self.extract(file, content)),
+            calls: mask.calls.then(|| self.extract_calls(file, content)),
+            dataflow: mask.dataflow.then(|| self.extract_dataflow(file, content)),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AnalysisMask {
+    pub types: bool,
+    pub calls: bool,
+    pub dataflow: bool,
+}
+
+impl AnalysisMask {
+    pub const ALL: Self = Self { types: true, calls: true, dataflow: true };
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AnalysisBundle {
+    pub types: Option<TypeFacts>,
+    pub calls: Option<CallFacts>,
+    pub dataflow: Option<DataflowFacts>,
 }
 
 // LANG-JUNCTION(typelang-registry): impl `TypeLang { name, matches, extract }` and register it here; buys type_entity/type_edge/type_sig/call_*/df_*/doc_comment for the language (the index-free diet tier, Kotlin-sized)
@@ -450,6 +483,7 @@ impl TypeLang for GoTypes {
 impl TypeLang for RustTypes {
     fn name(&self) -> &'static str { "rust" }
     fn matches(&self, path: &str) -> bool { path.ends_with(".rs") }
+    fn supports_analysis_bundle(&self) -> bool { true }
     // One syn parse feeds both the entity pass and the edge pass.
     fn extract(&self, file: &str, content: &str) -> TypeFacts {
         let Ok(parsed) = syn::parse_file(content) else {
@@ -484,6 +518,30 @@ impl TypeLang for RustTypes {
             return DataflowFacts::default();
         };
         rust_dataflow_from(&parsed, file)
+    }
+
+    fn extract_bundle(&self, file: &str, content: &str, mask: AnalysisMask) -> AnalysisBundle {
+        let Ok(parsed) = syn::parse_file(content) else {
+            return AnalysisBundle::default();
+        };
+        let types = mask.types.then(|| {
+            let mut entities = rust_entities_from(&parsed, file);
+            let (const_entities, consts) = rust_const_values_from(&parsed, file);
+            entities.extend(const_entities);
+            TypeFacts {
+                entities,
+                edges: edges_from(&parsed),
+                docs: rust_docs_from(&parsed, file),
+                consts,
+                ..Default::default()
+            }
+        });
+        let calls = mask.calls.then(|| CallFacts {
+            defs: rust_call_defs_from(&parsed, file),
+            sites: rust_call_sites_from(&parsed, file),
+        });
+        let dataflow = mask.dataflow.then(|| rust_dataflow_from(&parsed, file));
+        AnalysisBundle { types, calls, dataflow }
     }
 }
 
@@ -8409,5 +8467,29 @@ function b() {\n    \
 
         let df = RustTypes.extract_dataflow("f.rs", "fn go() { let x = \"/home\"; }\n");
         assert!(df.lits.iter().any(|(_, text, kind)| text == "/home" && *kind == "lit"), "{:?}", df.lits);
+    }
+
+    #[test]
+    fn rust_bundle_matches_independent_extractors_and_honors_mask() {
+        let src = r#"
+            /// Increment a value.
+            pub fn inc(input: i64) -> i64 {
+                let next = input + 1;
+                next
+            }
+        "#;
+        let all = RustTypes.extract_bundle("f.rs", src, AnalysisMask::ALL);
+        assert_eq!(all.types, Some(RustTypes.extract("f.rs", src)));
+        assert_eq!(all.calls, Some(RustTypes.extract_calls("f.rs", src)));
+        assert_eq!(all.dataflow, Some(RustTypes.extract_dataflow("f.rs", src)));
+
+        let types_only = RustTypes.extract_bundle(
+            "f.rs",
+            src,
+            AnalysisMask { types: true, calls: false, dataflow: false },
+        );
+        assert!(types_only.types.is_some());
+        assert!(types_only.calls.is_none());
+        assert!(types_only.dataflow.is_none());
     }
 }

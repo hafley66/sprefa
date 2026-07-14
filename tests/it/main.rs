@@ -3,6 +3,7 @@
 // autotests=false), so `mod foo;` resolves to its sibling tests/it/foo.rs.
 mod agent_rels;
 mod agg;
+mod analysis_bundle_ab;
 mod extract_digest_namespace;
 mod json_agg;
 mod arith;

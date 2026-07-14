@@ -203,21 +203,38 @@ const BUILTIN_RELS: [&str; 5] = ["repo", "rev", "content", "file", "true"];
 static TICK_AUDIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 pub fn set_tick_audit(on: bool) { TICK_AUDIT.store(on, std::sync::atomic::Ordering::Relaxed); }
 
-/// Configure the GLOBAL rayon pool from `DL_RAYON_THREADS` (unset = rayon's
-/// default, one thread per core). Capping it (e.g. `DL_RAYON_THREADS=4`)
-/// bounds the CPU the daemon's extract/hash paths can burn — the lever when the
-/// fans spin on a many-core box. Must run before any rayon parallelism (called
-/// first thing from `cli::run`). The checkout sink has its OWN narrower pool
-/// (`DL_CHECKOUT_WIDTH`), so this caps the extract/hash hot paths.
+/// Configure the GLOBAL rayon pool from `DL_RAYON_THREADS` (default 2).
+/// A finite default bounds the CPU the daemon's extract/hash paths can burn;
+/// operators who explicitly want more parallelism can raise the override.
+/// Must run before any rayon parallelism (called first thing from `cli::run`).
+/// The checkout sink has its OWN narrower pool (`DL_CHECKOUT_WIDTH`), so this
+/// caps the extract/hash hot paths.
 pub fn init_thread_pool() {
-    if let Some(n) = std::env::var("DL_RAYON_THREADS").ok()
+    let n = rayon_thread_count(std::env::var("DL_RAYON_THREADS").ok().as_deref());
+    let _ = rayon::ThreadPoolBuilder::new()
+        .num_threads(n)
+        .thread_name(|i| format!("dl-{i}"))
+        .build_global();
+}
+
+fn rayon_thread_count(value: Option<&str>) -> usize {
+    value
         .and_then(|s| s.parse::<usize>().ok())
         .filter(|&n| n > 0)
-    {
-        let _ = rayon::ThreadPoolBuilder::new()
-            .num_threads(n)
-            .thread_name(|i| format!("dl-{i}"))
-            .build_global();
+        .unwrap_or(2)
+}
+
+#[cfg(test)]
+mod rayon_thread_tests {
+    use super::rayon_thread_count;
+
+    #[test]
+    fn defaults_to_two_and_honors_positive_override() {
+        assert_eq!(rayon_thread_count(None), 2);
+        assert_eq!(rayon_thread_count(Some("")), 2);
+        assert_eq!(rayon_thread_count(Some("0")), 2);
+        assert_eq!(rayon_thread_count(Some("bogus")), 2);
+        assert_eq!(rayon_thread_count(Some("6")), 6);
     }
 }
 pub fn tick_audit() -> bool {
@@ -911,6 +928,12 @@ pub struct Engine {
     /// pass); an edit bumps it by the changed-file count per family, not the
     /// corpus. The structural proof of perf gap A.
     pub extract_files_parsed: std::cell::Cell<usize>,
+    /// Production A/B lever for bundled type/call/dataflow extraction. False
+    /// uses one language parse to prime all requested family caches; true
+    /// restores the legacy independent family calls. Seeded from
+    /// `DL_DISABLE_ANALYSIS_BUNDLE=1`; tests set the cell directly to avoid
+    /// racing on process-global environment variables.
+    pub force_separate_analysis_extractors: std::cell::Cell<bool>,
     /// Test/bench instrumentation: cumulative count of FULL-input rule
     /// re-executions inside a recursive fixpoint — every statement execution
     /// after the first pass of a naive re-run-to-delta-0 loop (each one
@@ -1002,6 +1025,8 @@ impl Engine {
             last_n1: None,
             last_node_files_walked: std::cell::Cell::new(0),
             extract_files_parsed: std::cell::Cell::new(0),
+            force_separate_analysis_extractors: std::cell::Cell::new(
+                std::env::var("DL_DISABLE_ANALYSIS_BUNDLE").ok().as_deref() == Some("1")),
             fixpoint_full_reruns: std::cell::Cell::new(0),
             force_naive_fixpoint: std::cell::Cell::new(
                 std::env::var("DL_NAIVE_FIXPOINT").ok().as_deref() == Some("1")),

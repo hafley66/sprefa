@@ -23,3 +23,10 @@ cp -rf source dest          # NOT: cp -r directory
 - `ssh` - use `-o BatchMode=yes` to fail instead of prompting
 - `apt-get` - use `-y` flag
 - `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
+
+## Rust Formatting
+
+Do not pass individual file paths to `cargo fmt`; Cargo may format every target
+in the workspace anyway. During implementation, keep edits focused and do not
+run the repository-wide formatter. Run `cargo fmt` once immediately before
+commit, then include the resulting formatting in that commit.
