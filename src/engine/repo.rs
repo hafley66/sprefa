@@ -4,13 +4,19 @@ impl Engine {
     /// Resolve a declared rev to a stable commit SHA (WORK stays WORK).
     /// Cached per tick so a moving ref is re-resolved each tick.
     pub(crate) fn resolve_rev(&mut self, repo_root: &Path, rev: &str) -> Result<String> {
-        if rev == "WORK" { return Ok("WORK".to_string()); }
+        if rev == "WORK" {
+            return Ok("WORK".to_string());
+        }
         // Cache by (repo, rev): the same tag resolves to different shas per repo.
         // Immutable (hex-SHA) revs live in the cross-tick cache; movable refs in
         // the per-tick one. A hit in either means we already have it — no spawn.
         let key = format!("{}::{rev}", repo_root.display());
-        if let Some(s) = self.rev_sha_cache.get(&key) { return Ok(s.clone()); }
-        if let Some(s) = self.rev_cache.get(&key) { return Ok(s.clone()); }
+        if let Some(s) = self.rev_sha_cache.get(&key) {
+            return Ok(s.clone());
+        }
+        if let Some(s) = self.rev_cache.get(&key) {
+            return Ok(s.clone());
+        }
         // Present rev: unchanged fast path — rev-parse resolves, cache, return
         // the identical sha the caller has always seen.
         if let Some(sha) = Self::rev_parse(repo_root, rev)? {
@@ -43,12 +49,22 @@ impl Engine {
             &["fetch", "--quiet", "--tags", "origin"],
         ];
         for args in ladder {
-            let _ = Command::new("git").arg("-C").arg(repo_root).args(args).output()?;
-            if let Some(sha) = Self::rev_parse(repo_root, rev)? { resolved = Some(sha); break; }
+            let _ = Command::new("git")
+                .arg("-C")
+                .arg(repo_root)
+                .args(args)
+                .output()?;
+            if let Some(sha) = Self::rev_parse(repo_root, rev)? {
+                resolved = Some(sha);
+                break;
+            }
         }
         if resolved.is_none() && Self::is_shallow(repo_root)? {
-            let _ = Command::new("git").arg("-C").arg(repo_root)
-                .args(["fetch", "--quiet", "--unshallow", "--tags", "origin"]).output()?;
+            let _ = Command::new("git")
+                .arg("-C")
+                .arg(repo_root)
+                .args(["fetch", "--quiet", "--unshallow", "--tags", "origin"])
+                .output()?;
             resolved = Self::rev_parse(repo_root, rev)?;
         }
         match resolved {
@@ -63,8 +79,11 @@ impl Engine {
     /// shallow boundary), so `resolve_rev` deepens with `--unshallow` only when
     /// this holds — `--unshallow` errors on a complete repo.
     pub(crate) fn is_shallow(repo_root: &Path) -> Result<bool> {
-        let out = Command::new("git").arg("-C").arg(repo_root)
-            .args(["rev-parse", "--is-shallow-repository"]).output()?;
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo_root)
+            .args(["rev-parse", "--is-shallow-repository"])
+            .output()?;
         Ok(out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "true")
     }
 
@@ -77,18 +96,28 @@ impl Engine {
     /// (an annotated tag stays the tag-object sha, not the peeled commit).
     /// Propagates only a spawn failure (git absent).
     pub(crate) fn rev_parse(repo_root: &Path, rev: &str) -> Result<Option<String>> {
-        let out = Command::new("git").arg("-C").arg(repo_root)
-            .args(["rev-parse", rev]).output()?;
-        if !out.status.success() { return Ok(None); }
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo_root)
+            .args(["rev-parse", rev])
+            .output()?;
+        if !out.status.success() {
+            return Ok(None);
+        }
         let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
         // Only a hex-SHA rev echoes back from rev-parse WITHOUT proving the
         // object exists, so the existence probe is needed just there. A name
         // (tag/branch/HEAD) only rev-parses when its ref — hence object — is
         // present, so skip the second spawn for it.
         if Self::is_immutable_rev(rev) {
-            let present = Command::new("git").arg("-C").arg(repo_root)
-                .args(["cat-file", "-e", &sha]).output()?;
-            if !present.status.success() { return Ok(None); }
+            let present = Command::new("git")
+                .arg("-C")
+                .arg(repo_root)
+                .args(["cat-file", "-e", &sha])
+                .output()?;
+            if !present.status.success() {
+                return Ok(None);
+            }
         }
         Ok(Some(sha))
     }
@@ -103,8 +132,11 @@ impl Engine {
     /// Record a resolution in the cross-tick cache for an immutable SHA, else the
     /// per-tick cache for a movable ref.
     pub(crate) fn cache_rev(&mut self, key: String, rev: &str, sha: String) {
-        if Self::is_immutable_rev(rev) { self.rev_sha_cache.insert(key, sha); }
-        else { self.rev_cache.insert(key, sha); }
+        if Self::is_immutable_rev(rev) {
+            self.rev_sha_cache.insert(key, sha);
+        } else {
+            self.rev_cache.insert(key, sha);
+        }
     }
 
     /// Resolve a `scan` repo coordinate to `(slug, root)`. The slug is the
@@ -124,7 +156,9 @@ impl Engine {
         }
         let p = PathBuf::from(repo);
         if p.exists() {
-            let slug = p.file_name().map(|s| s.to_string_lossy().to_string())
+            let slug = p
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| repo.to_string());
             return Ok((slug, p));
         }
@@ -154,17 +188,30 @@ impl Engine {
     /// OID once cloned). No-op when the root already exists; an error when the
     /// root is missing and no `url` is configured.
     pub fn ensure_cloned(rc: &crate::config::RepoConfig) -> Result<()> {
-        if rc.root.exists() { return Ok(()); }
+        if rc.root.exists() {
+            return Ok(());
+        }
         let Some(url) = rc.url.as_deref() else {
-            bail!("repo {:?} root {} does not exist and no url is configured to clone it",
-                  rc.slug, rc.root.display());
+            bail!(
+                "repo {:?} root {} does not exist and no url is configured to clone it",
+                rc.slug,
+                rc.root.display()
+            );
         };
-        if let Some(parent) = rc.root.parent() { std::fs::create_dir_all(parent)?; }
+        if let Some(parent) = rc.root.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         eprintln!("[clone] {} <- {url}", rc.root.display());
-        let out = Command::new("git").args(["clone", url]).arg(&rc.root).output()?;
+        let out = Command::new("git")
+            .args(["clone", url])
+            .arg(&rc.root)
+            .output()?;
         if !out.status.success() {
-            bail!("git clone {url} into {} failed: {}", rc.root.display(),
-                  String::from_utf8_lossy(&out.stderr));
+            bail!(
+                "git clone {url} into {} failed: {}",
+                rc.root.display(),
+                String::from_utf8_lossy(&out.stderr)
+            );
         }
         Ok(())
     }
@@ -204,8 +251,16 @@ impl Engine {
     pub(crate) fn resolve_scan_bindings(&mut self, rule: &Rule) -> Result<Vec<ScanBinding>> {
         let spec = scan_spec_of(rule)?;
         let glob = str_of(&spec.glob)?;
-        let repo_var: Option<&str> = if let Term::Var(v) = &spec.repo { Some(v.as_str()) } else { None };
-        let rev_var: Option<&str> = if let Term::Var(v) = &spec.rev { Some(v.as_str()) } else { None };
+        let repo_var: Option<&str> = if let Term::Var(v) = &spec.repo {
+            Some(v.as_str())
+        } else {
+            None
+        };
+        let rev_var: Option<&str> = if let Term::Var(v) = &spec.rev {
+            Some(v.as_str())
+        } else {
+            None
+        };
         tracing::debug!(head = %rule.head.rel, repo_var = ?repo_var, rev_var = ?rev_var,
             origin = ?rule.origin.as_ref().map(|p| p.to_string_lossy().to_string()), "scan bindings");
         if repo_var.is_none() && rev_var.is_none() {
@@ -216,8 +271,10 @@ impl Engine {
             // i.e. ONLY the rootless daemon, whose self.root is a placeholder.
             // Foreground (`--root`/cwd) and LSP (`rootUri`) pass an explicit root
             // that always wins; the script's location is irrelevant there.
-            let repo_coord = if self.root_implicit && matches!(repo_lit.as_str(), "." | "" | "self") {
-                rule.origin.as_deref()
+            let repo_coord = if self.root_implicit && matches!(repo_lit.as_str(), "." | "" | "self")
+            {
+                rule.origin
+                    .as_deref()
                     .and_then(crate::repo::nearest_git)
                     .map(|p| p.to_string_lossy().into_owned())
                     .unwrap_or(repo_lit.clone())
@@ -228,19 +285,35 @@ impl Engine {
             let mut out = Vec::new();
             for (slug, root) in self.resolve_scan_repos(&repo_coord)? {
                 let rev = self.resolve_rev(&root, &rev_lit)?;
-                out.push(ScanBinding { slug, root, rev, glob: glob.clone(), head_binds: vec![] });
+                out.push(ScanBinding {
+                    slug,
+                    root,
+                    rev,
+                    glob: glob.clone(),
+                    head_binds: vec![],
+                });
             }
             return Ok(out);
         }
         let mut sel_vars: Vec<String> = Vec::new();
-        if let Some(v) = repo_var { sel_vars.push(v.to_string()); }
-        if let Some(v) = rev_var { sel_vars.push(v.to_string()); }
-        let binding_atoms: Vec<BodyItem> = rule.body.iter()
+        if let Some(v) = repo_var {
+            sel_vars.push(v.to_string());
+        }
+        if let Some(v) = rev_var {
+            sel_vars.push(v.to_string());
+        }
+        let binding_atoms: Vec<BodyItem> = rule
+            .body
+            .iter()
             .filter(|b| matches!(b, BodyItem::Pos(_) | BodyItem::Neg(_) | BodyItem::Cmp(_)))
-            .cloned().collect();
+            .cloned()
+            .collect();
         if binding_atoms.is_empty() {
-            bail!("data-driven scan needs a coordinate-providing body atom (e.g. \
-                   pin(R,V)) binding the variable repo/rev in rule {}", rule.head.rel);
+            bail!(
+                "data-driven scan needs a coordinate-providing body atom (e.g. \
+                   pin(R,V)) binding the variable repo/rev in rule {}",
+                rule.head.rel
+            );
         }
         let sql = crate::lower::lower_gen(&sel_vars, &binding_atoms, &self.rels)?;
         // Collect the coordinate tuples fully (drop the statement borrow) before
@@ -254,26 +327,48 @@ impl Engine {
             let ncol = sel_vars.len();
             let rows = s.query_map([], |r| {
                 let mut v = Vec::with_capacity(ncol);
-                for i in 0..ncol { v.push(cell_as_string(r, i)?); }
+                for i in 0..ncol {
+                    v.push(cell_as_string(r, i)?);
+                }
                 Ok(v)
             });
-            rows.map(|iter| iter.filter_map(|x| x.ok()).collect()).unwrap_or_default()
+            rows.map(|iter| iter.filter_map(|x| x.ok()).collect())
+                .unwrap_or_default()
         };
         let mut out = Vec::new();
         let repo_lit = str_of(&spec.repo).ok();
         let rev_lit = str_of(&spec.rev).ok();
         for row in tuples {
             let mut col = 0usize;
-            let repo_val = if repo_var.is_some() { row[col].clone() } else { repo_lit.clone().unwrap() };
-            if repo_var.is_some() { col += 1; }
-            let rev_val = if rev_var.is_some() { row[col].clone() } else { rev_lit.clone().unwrap() };
+            let repo_val = if repo_var.is_some() {
+                row[col].clone()
+            } else {
+                repo_lit.clone().unwrap()
+            };
+            if repo_var.is_some() {
+                col += 1;
+            }
+            let rev_val = if rev_var.is_some() {
+                row[col].clone()
+            } else {
+                rev_lit.clone().unwrap()
+            };
             let mut head_binds: Vec<(String, String)> = Vec::new();
-            if let Some(v) = repo_var { head_binds.push((v.to_string(), repo_val.clone())); }
-            if let Some(v) = rev_var { head_binds.push((v.to_string(), rev_val.clone())); }
+            if let Some(v) = repo_var {
+                head_binds.push((v.to_string(), repo_val.clone()));
+            }
+            if let Some(v) = rev_var {
+                head_binds.push((v.to_string(), rev_val.clone()));
+            }
             for (slug, root) in self.resolve_scan_repos(&repo_val)? {
                 let rev = self.resolve_rev(&root, &rev_val)?;
-                out.push(ScanBinding { slug, root, rev, glob: glob.clone(),
-                    head_binds: head_binds.clone() });
+                out.push(ScanBinding {
+                    slug,
+                    root,
+                    rev,
+                    glob: glob.clone(),
+                    head_binds: head_binds.clone(),
+                });
             }
         }
         Ok(out)
@@ -284,14 +379,21 @@ impl Engine {
     /// a restart can diff the previously-registered repos against the new set.
     pub fn save_repos_meta(&self) -> Result<()> {
         let now = unix_secs();
-        let rows: Vec<Vec<Value>> = self.repos.iter().map(|rc| vec![
-            Value::Text(rc.slug.clone()),
-            Value::Text(rc.root.to_string_lossy().into_owned()),
-            Value::Text(rc.url.clone().unwrap_or_default()),
-            Value::Int(now),
-        ]).collect();
+        let rows: Vec<Vec<Value>> = self
+            .repos
+            .iter()
+            .map(|rc| {
+                vec![
+                    Value::Text(rc.slug.clone()),
+                    Value::Text(rc.root.to_string_lossy().into_owned()),
+                    Value::Text(rc.url.clone().unwrap_or_default()),
+                    Value::Int(now),
+                ]
+            })
+            .collect();
         self.db.exec("DELETE FROM _repo")?;
-        self.db.insert_rows("_repo", &["slug", "root", "url", "registered_at"], &rows)?;
+        self.db
+            .insert_rows("_repo", &["slug", "root", "url", "registered_at"], &rows)?;
         Ok(())
     }
 
@@ -314,12 +416,19 @@ impl Engine {
     /// with a stderr line. A missing/empty `org` relation pulls nothing.
     #[tracing::instrument(skip_all, fields(n_sinks = sinks.len()), level = "debug")]
     pub(crate) fn run_repo_pulls(&mut self, sinks: &[&Rule]) -> Result<()> {
-        if sinks.is_empty() { return Ok(()); }
+        if sinks.is_empty() {
+            return Ok(());
+        }
         let allowlist: HashSet<String> = if self.rels.contains_key("org") {
-            self.db.conn()
-                .prepare(&format!("SELECT DISTINCT \"name\" FROM {}", crate::lower::txt_tbl("org")))?
+            self.db
+                .conn()
+                .prepare(&format!(
+                    "SELECT DISTINCT \"name\" FROM {}",
+                    crate::lower::txt_tbl("org")
+                ))?
                 .query_map([], |r| r.get::<_, String>(0))?
-                .filter_map(|x| x.ok()).collect()
+                .filter_map(|x| x.ok())
+                .collect()
         } else {
             HashSet::new()
         };
@@ -347,43 +456,61 @@ impl Engine {
                 match vals.as_deref() {
                     Some([slug]) => vec![(slug.clone(), String::new(), String::new(), true)],
                     Some([slug, root]) => vec![(slug.clone(), root.clone(), String::new(), true)],
-                    Some([slug, root, url]) => vec![(slug.clone(), root.clone(), url.clone(), true)],
+                    Some([slug, root, url]) => {
+                        vec![(slug.clone(), root.clone(), url.clone(), true)]
+                    }
                     _ => {
                         eprintln!("[repo-sink] ground-fact head must be literal (slug[, root[, url]]); skipping");
                         continue;
                     }
                 }
             } else {
-                let vars: Vec<String> = rule.head.terms.iter().filter_map(|t| match t {
-                    Term::Var(v) => Some(v.clone()),
-                    _ => None,
-                }).collect();
+                let vars: Vec<String> = rule
+                    .head
+                    .terms
+                    .iter()
+                    .filter_map(|t| match t {
+                        Term::Var(v) => Some(v.clone()),
+                        _ => None,
+                    })
+                    .collect();
                 if vars.len() != rule.head.terms.len() {
                     eprintln!("[repo-sink] head must be all variables (slug, root, url) or an all-literal ground fact; skipping");
                     continue;
                 }
                 let sql = crate::lower::lower_gen(&vars, &rule.body, &self.rels)?;
-                self.db.conn().prepare(&sql)?
-                    .query_map([], |r| Ok((r.get::<_, String>(0)?,
-                                           r.get::<_, String>(1)?,
-                                           r.get::<_, String>(2)?, false)))?
-                    .filter_map(|x| x.ok()).collect()
+                self.db
+                    .conn()
+                    .prepare(&sql)?
+                    .query_map([], |r| {
+                        Ok((
+                            r.get::<_, String>(0)?,
+                            r.get::<_, String>(1)?,
+                            r.get::<_, String>(2)?,
+                            false,
+                        ))
+                    })?
+                    .filter_map(|x| x.ok())
+                    .collect()
             };
             for (slug, root_str, url, explicit) in rows {
                 if slug.is_empty() {
                     eprintln!("[repo-sink] skip row with empty slug");
                     continue;
                 }
-                if self.repos.iter().any(|r| r.slug == slug
-                    || (!root_str.is_empty() && r.root == PathBuf::from(&root_str)))
-                {
+                if self.repos.iter().any(|r| {
+                    r.slug == slug || (!root_str.is_empty() && r.root == PathBuf::from(&root_str))
+                }) {
                     continue; // already registered
                 }
                 let org = Self::parse_github_org(&url);
                 let allowed = explicit || org.as_ref().is_some_and(|o| allowlist.contains(o));
                 if !allowed {
-                    eprintln!("[repo-sink] skip {slug}: org {:?} not in allowlist ({} listed)",
-                        org, allowlist.len());
+                    eprintln!(
+                        "[repo-sink] skip {slug}: org {:?} not in allowlist ({} listed)",
+                        org,
+                        allowlist.len()
+                    );
                     continue;
                 }
                 let root = if root_str.is_empty() {
@@ -392,13 +519,17 @@ impl Engine {
                     PathBuf::from(&root_str)
                 };
                 let rc = crate::config::RepoConfig {
-                    slug: slug.clone(), root: root.clone(),
-                    url: Some(url.clone()), allow_missing: false,
+                    slug: slug.clone(),
+                    root: root.clone(),
+                    url: Some(url.clone()),
+                    allow_missing: false,
                 };
                 match Self::ensure_cloned(&rc) {
                     Ok(()) => {
-                        eprintln!("[repo-sink] pulled {slug} -> {} (org {org:?})",
-                            root.display());
+                        eprintln!(
+                            "[repo-sink] pulled {slug} -> {} (org {org:?})",
+                            root.display()
+                        );
                         self.repos.push(rc);
                         pulled = true;
                     }
@@ -406,7 +537,9 @@ impl Engine {
                 }
             }
         }
-        if pulled { self.save_repos_meta()?; }
+        if pulled {
+            self.save_repos_meta()?;
+        }
         Ok(())
     }
 
@@ -422,7 +555,8 @@ impl Engine {
     /// (DL_CHECKOUT_MIN_SECS, default 300). 0 disables the gate. Stops a short
     /// clock from re-fetching every repo every tick.
     pub(crate) fn checkout_min_secs() -> u64 {
-        std::env::var("DL_CHECKOUT_MIN_SECS").ok()
+        std::env::var("DL_CHECKOUT_MIN_SECS")
+            .ok()
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(300)
     }
@@ -441,7 +575,8 @@ impl Engine {
     pub(crate) fn checkout_pool() -> &'static rayon::ThreadPool {
         static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
         POOL.get_or_init(|| {
-            let n = std::env::var("DL_CHECKOUT_WIDTH").ok()
+            let n = std::env::var("DL_CHECKOUT_WIDTH")
+                .ok()
                 .and_then(|s| s.parse::<usize>().ok())
                 .filter(|&n| n > 0)
                 .unwrap_or(2);
@@ -461,7 +596,10 @@ impl Engine {
         for rel in ["checkout_done", "checkout_plan"] {
             if self.rels.contains_key(rel) {
                 let n: i64 = conn.query_row(
-                    &format!("SELECT COUNT(*) FROM {}", crate::lower::txt_tbl(rel)), [], |r| r.get(0))?;
+                    &format!("SELECT COUNT(*) FROM {}", crate::lower::txt_tbl(rel)),
+                    [],
+                    |r| r.get(0),
+                )?;
                 return Ok(n as usize);
             }
         }
@@ -475,20 +613,36 @@ impl Engine {
     /// AFTER the fixpoint + `run_repo_pulls` so a repo pulled this tick is
     /// sweepable, and so the rows reflect this tick's derivations.
     pub(crate) fn run_checkout_sweeps(&mut self) -> Result<()> {
-        let Some(meta) = self.rels.get("checkout").cloned() else { return Ok(()); };
+        let Some(meta) = self.rels.get("checkout").cloned() else {
+            return Ok(());
+        };
         if meta.cols.len() < 3 {
-            bail!("checkout needs 3 columns (repo, branch, pr_heads); found {}", meta.cols.len());
+            bail!(
+                "checkout needs 3 columns (repo, branch, pr_heads); found {}",
+                meta.cols.len()
+            );
         }
         let rows: Vec<(String, String, String)> = {
             let conn = self.db.conn();
             let mut s = conn.prepare(&format!(
                 "SELECT DISTINCT \"{}\",\"{}\",\"{}\" FROM {} ORDER BY 1,2",
-                meta.col_name(0), meta.col_name(1), meta.col_name(2), crate::lower::txt_tbl("checkout")))?;
-            let rs = s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?,
-                                    r.get::<_, String>(2)?)))?;
+                meta.col_name(0),
+                meta.col_name(1),
+                meta.col_name(2),
+                crate::lower::txt_tbl("checkout")
+            ))?;
+            let rs = s.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })?;
             rs.filter_map(|x| x.ok()).collect()
         };
-        if rows.is_empty() { return Ok(()); }
+        if rows.is_empty() {
+            return Ok(());
+        }
         let offline = std::env::var_os("DL_NO_FETCH").is_some();
         // Resolve (and clone-if-missing) each repo up front — resolve_repo needs
         // &self, so keep it out of the parallel section.
@@ -514,18 +668,21 @@ impl Engine {
         } else {
             let last = Self::checkout_last_fetch();
             let mut guard = last.lock().unwrap_or_else(|p| p.into_inner());
-            jobs.into_iter().filter(|(slug, _, branch, _)| {
-                let allowed = guard.get(slug)
-                    .map(|t| now.duration_since(*t).as_secs() >= min_secs)
-                    .unwrap_or(true);
-                if allowed {
-                    guard.insert(slug.clone(), now);
-                    true
-                } else {
-                    throttled.push((slug.clone(), branch.clone()));
-                    false
-                }
-            }).collect()
+            jobs.into_iter()
+                .filter(|(slug, _, branch, _)| {
+                    let allowed = guard
+                        .get(slug)
+                        .map(|t| now.duration_since(*t).as_secs() >= min_secs)
+                        .unwrap_or(true);
+                    if allowed {
+                        guard.insert(slug.clone(), now);
+                        true
+                    } else {
+                        throttled.push((slug.clone(), branch.clone()));
+                        false
+                    }
+                })
+                .collect()
         };
         // Run the sweep on a DEDICATED narrow pool (DL_CHECKOUT_WIDTH, default
         // 2). `git fetch` is network+disk bound, so a 2-wide sweep is as fast as
@@ -540,29 +697,45 @@ impl Engine {
             Vec::new()
         } else {
             Self::checkout_pool().install(|| {
-                eligible.par_iter()
+                eligible
+                    .par_iter()
                     .map(|(slug, root, branch, pr)| {
                         let out = Self::checkout_one(root, branch, *pr, offline, dry_run);
                         (slug.clone(), branch.clone(), out)
-                    }).collect()
+                    })
+                    .collect()
             })
         };
         // Surface throttled repos so the program can tell fetch-skipped from
         // git-failed (ok=1, action="skip", detail names the gate).
         for (slug, branch) in throttled {
-            results.push((slug, branch, CheckoutOutcome {
-                action: "skip", ok: true,
-                detail: format!("min-interval {min_secs}s (DL_CHECKOUT_MIN_SECS)"),
-            }));
+            results.push((
+                slug,
+                branch,
+                CheckoutOutcome {
+                    action: "skip",
+                    ok: true,
+                    detail: format!("min-interval {min_secs}s (DL_CHECKOUT_MIN_SECS)"),
+                },
+            ));
         }
         // Log AND surface an outcome rel: stderr goes to daemon.log under the
         // daemon (invisible to a query), so the rel is how a program / live
         // query confirms the sweep fired and reacts to failures. Dry-run emits
         // `checkout_plan` (what would happen); apply emits `checkout_done`.
-        let sink_rel = if dry_run { "checkout_plan" } else { "checkout_done" };
+        let sink_rel = if dry_run {
+            "checkout_plan"
+        } else {
+            "checkout_done"
+        };
         let mut done_rows: Vec<Vec<Value>> = Vec::with_capacity(results.len());
         for (slug, branch, out) in &results {
-            eprintln!("[checkout{}] {slug}: {} {}", if dry_run { " (plan)" } else { "" }, out.action, out.detail);
+            eprintln!(
+                "[checkout{}] {slug}: {} {}",
+                if dry_run { " (plan)" } else { "" },
+                out.action,
+                out.detail
+            );
             done_rows.push(vec![
                 Value::Text(slug.clone()),
                 Value::Text(branch.clone()),
@@ -571,8 +744,11 @@ impl Engine {
                 Value::Text(out.detail.clone()),
             ]);
         }
-        self.refresh_rel(sink_rel,
-            &["repo", "branch", "action", "ok", "detail"], &done_rows)?;
+        self.refresh_rel(
+            sink_rel,
+            &["repo", "branch", "action", "ok", "detail"],
+            &done_rows,
+        )?;
         Ok(())
     }
 
@@ -588,15 +764,32 @@ impl Engine {
     /// When `dry_run` is true the mutations are skipped and the outcome carries
     /// what WOULD have happened (driven by `merge-base --is-ancestor`), so a
     /// program/CLI can preview the sweep without touching any checkout.
-    pub(crate) fn checkout_one(root: &Path, branch: &str, pr_heads: bool, offline: bool, dry_run: bool) -> CheckoutOutcome {
-        let skip = |detail: String| CheckoutOutcome { action: "skip", ok: false, detail };
-        if !root.exists() { return skip(format!("root {} missing", root.display())); }
+    pub(crate) fn checkout_one(
+        root: &Path,
+        branch: &str,
+        pr_heads: bool,
+        offline: bool,
+        dry_run: bool,
+    ) -> CheckoutOutcome {
+        let skip = |detail: String| CheckoutOutcome {
+            action: "skip",
+            ok: false,
+            detail,
+        };
+        if !root.exists() {
+            return skip(format!("root {} missing", root.display()));
+        }
         let git = |args: &[&str]| Command::new("git").arg("-C").arg(root).args(args).output();
         if !offline {
             let _ = git(&["fetch", "--quiet", "origin"]);
             if pr_heads {
-                let _ = git(&["fetch", "--prune", "--quiet", "origin",
-                              "+refs/pull/*/head:refs/remotes/pr/*/head"]);
+                let _ = git(&[
+                    "fetch",
+                    "--prune",
+                    "--quiet",
+                    "origin",
+                    "+refs/pull/*/head:refs/remotes/pr/*/head",
+                ]);
             }
         }
         let default = if !branch.is_empty() {
@@ -604,70 +797,130 @@ impl Engine {
         } else {
             match git(&["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]) {
                 Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
-                    .trim().rsplit('/').next().unwrap_or("").to_string(),
+                    .trim()
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("")
+                    .to_string(),
                 _ => String::new(),
             }
         };
         if default.is_empty() {
-            return skip("no branch given and origin/HEAD unset (run `git remote set-head origin -a`)".into());
+            return skip(
+                "no branch given and origin/HEAD unset (run `git remote set-head origin -a`)"
+                    .into(),
+            );
         }
         let remote_ref = format!("origin/{default}");
         let have_remote = git(&["rev-parse", "--verify", "--quiet", &remote_ref])
-            .map(|o| o.status.success()).unwrap_or(false);
+            .map(|o| o.status.success())
+            .unwrap_or(false);
         if !have_remote {
-            return skip(format!("no {remote_ref}{}",
-                if offline { " (DL_NO_FETCH; never fetched)" } else { " (fetch failed / wrong branch)" }));
+            return skip(format!(
+                "no {remote_ref}{}",
+                if offline {
+                    " (DL_NO_FETCH; never fetched)"
+                } else {
+                    " (fetch failed / wrong branch)"
+                }
+            ));
         }
-        let cur = git(&["symbolic-ref", "--short", "HEAD"]).ok()
+        let cur = git(&["symbolic-ref", "--short", "HEAD"])
+            .ok()
             .filter(|o| o.status.success())
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
         if cur.as_deref() == Some(default.as_str()) {
             // On the default branch. NEVER stash, NEVER reset --hard. The only
             // mutation is a clean fast-forward; dirty or diverged checkouts are
             // the operator's work and are left untouched.
-            let dirty = git(&["status", "--porcelain"]).map(|o| !o.stdout.is_empty()).unwrap_or(false);
+            let dirty = git(&["status", "--porcelain"])
+                .map(|o| !o.stdout.is_empty())
+                .unwrap_or(false);
             if dirty {
-                return CheckoutOutcome { action: "skip", ok: true,
-                    detail: format!("{default}: working tree dirty; left untouched") };
+                return CheckoutOutcome {
+                    action: "skip",
+                    ok: true,
+                    detail: format!("{default}: working tree dirty; left untouched"),
+                };
             }
             if dry_run {
                 // merge-base --is-ancestor HEAD <remote>: exit 0 = HEAD is an
                 // ancestor of remote (ff would succeed); non-zero = diverged.
                 // No mutation: the rel name (checkout_plan) carries the preview.
                 let ff_ok = git(&["merge-base", "--is-ancestor", "HEAD", &remote_ref])
-                    .map(|o| o.status.success()).unwrap_or(false);
+                    .map(|o| o.status.success())
+                    .unwrap_or(false);
                 return if ff_ok {
-                    CheckoutOutcome { action: "ff", ok: true,
-                        detail: format!("{default} -> {remote_ref}") }
+                    CheckoutOutcome {
+                        action: "ff",
+                        ok: true,
+                        detail: format!("{default} -> {remote_ref}"),
+                    }
                 } else {
-                    CheckoutOutcome { action: "skip", ok: false,
-                        detail: format!("{default}: diverged from {remote_ref}; left untouched") }
+                    CheckoutOutcome {
+                        action: "skip",
+                        ok: false,
+                        detail: format!("{default}: diverged from {remote_ref}; left untouched"),
+                    }
                 };
             }
             match git(&["merge", "--ff-only", &remote_ref]) {
-                Ok(o) if o.status.success() => CheckoutOutcome { action: "ff", ok: true,
-                    detail: format!("{default} -> {remote_ref}") },
-                Ok(o) => CheckoutOutcome { action: "skip", ok: false,
-                    detail: format!("{default}: --ff-only {remote_ref} failed (diverged?); left untouched: {}",
-                        String::from_utf8_lossy(&o.stderr).trim()) },
-                Err(e) => CheckoutOutcome { action: "skip", ok: false,
-                    detail: format!("{default}: merge --ff-only {remote_ref} errored; left untouched: {e}") },
+                Ok(o) if o.status.success() => CheckoutOutcome {
+                    action: "ff",
+                    ok: true,
+                    detail: format!("{default} -> {remote_ref}"),
+                },
+                Ok(o) => CheckoutOutcome {
+                    action: "skip",
+                    ok: false,
+                    detail: format!(
+                        "{default}: --ff-only {remote_ref} failed (diverged?); left untouched: {}",
+                        String::from_utf8_lossy(&o.stderr).trim()
+                    ),
+                },
+                Err(e) => CheckoutOutcome {
+                    action: "skip",
+                    ok: false,
+                    detail: format!(
+                        "{default}: merge --ff-only {remote_ref} errored; left untouched: {e}"
+                    ),
+                },
             }
         } else {
             // NOT on the default branch: move ONLY the ref pointer. HEAD + the
             // working tree stay exactly where they are.
             if dry_run {
-                return CheckoutOutcome { action: "branch-f", ok: true, detail: format!(
-                    "{default} -> {remote_ref} (checkout left on {})",
-                    cur.as_deref().unwrap_or("detached HEAD")) };
+                return CheckoutOutcome {
+                    action: "branch-f",
+                    ok: true,
+                    detail: format!(
+                        "{default} -> {remote_ref} (checkout left on {})",
+                        cur.as_deref().unwrap_or("detached HEAD")
+                    ),
+                };
             }
             match git(&["branch", "-f", &default, &remote_ref]) {
-                Ok(o) if o.status.success() => CheckoutOutcome { action: "branch-f", ok: true, detail: format!(
-                    "{default} -> {remote_ref} (checkout left on {})", cur.as_deref().unwrap_or("detached HEAD")) },
-                Ok(o) => CheckoutOutcome { action: "branch-f", ok: false,
-                    detail: format!("branch -f {default} failed: {}", String::from_utf8_lossy(&o.stderr).trim()) },
-                Err(e) => CheckoutOutcome { action: "branch-f", ok: false,
-                    detail: format!("branch -f {default} errored: {e}") },
+                Ok(o) if o.status.success() => CheckoutOutcome {
+                    action: "branch-f",
+                    ok: true,
+                    detail: format!(
+                        "{default} -> {remote_ref} (checkout left on {})",
+                        cur.as_deref().unwrap_or("detached HEAD")
+                    ),
+                },
+                Ok(o) => CheckoutOutcome {
+                    action: "branch-f",
+                    ok: false,
+                    detail: format!(
+                        "branch -f {default} failed: {}",
+                        String::from_utf8_lossy(&o.stderr).trim()
+                    ),
+                },
+                Err(e) => CheckoutOutcome {
+                    action: "branch-f",
+                    ok: false,
+                    detail: format!("branch -f {default} errored: {e}"),
+                },
             }
         }
     }
@@ -678,7 +931,8 @@ impl Engine {
     /// repo's org must appear in the `org` relation.
     pub(crate) fn parse_github_org(url: &str) -> Option<String> {
         let u = url.trim();
-        let path = if let Some(rest) = u.strip_prefix("https://github.com/")
+        let path = if let Some(rest) = u
+            .strip_prefix("https://github.com/")
             .or_else(|| u.strip_prefix("http://github.com/"))
             .or_else(|| u.strip_prefix("git@github.com:"))
         {
@@ -688,9 +942,13 @@ impl Engine {
         };
         let mut parts = path.split('/');
         let org = parts.next()?;
-        if org.is_empty() { return None; }
+        if org.is_empty() {
+            return None;
+        }
         let repo = parts.next()?;
-        if repo.is_empty() { return None; }
+        if repo.is_empty() {
+            return None;
+        }
         Some(org.to_string())
     }
 
@@ -699,18 +957,36 @@ impl Engine {
     /// `Some((old, new))` when the oid changed (old is `None` on first sight),
     /// appending one row to `_rev_log`; `None` when unchanged. The single-event
     /// write path: one ref observed per call, not an N+1 batch.
-    pub fn observe_ref(&self, repo: &str, repo_root: &Path, name: &str)
-        -> Result<Option<(Option<String>, String)>>
-    {
-        let out = Command::new("git").arg("-C").arg(repo_root)
-            .args(["rev-parse", name]).output()?;
-        if !out.status.success() { return Ok(None); }
+    pub fn observe_ref(
+        &self,
+        repo: &str,
+        repo_root: &Path,
+        name: &str,
+    ) -> Result<Option<(Option<String>, String)>> {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo_root)
+            .args(["rev-parse", name])
+            .output()?;
+        if !out.status.success() {
+            return Ok(None);
+        }
         let new = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if new.is_empty() { return Ok(None); }
-        let old: Option<String> = self.db.conn().query_row(
-            "SELECT oid FROM _ref WHERE repo = ?1 AND name = ?2",
-            rusqlite::params![repo, name], |r| r.get(0)).ok();
-        if old.as_deref() == Some(new.as_str()) { return Ok(None); }
+        if new.is_empty() {
+            return Ok(None);
+        }
+        let old: Option<String> = self
+            .db
+            .conn()
+            .query_row(
+                "SELECT oid FROM _ref WHERE repo = ?1 AND name = ?2",
+                rusqlite::params![repo, name],
+                |r| r.get(0),
+            )
+            .ok();
+        if old.as_deref() == Some(new.as_str()) {
+            return Ok(None);
+        }
         let now = unix_secs();
         self.db.conn().execute(
             "INSERT INTO _ref(repo, name, oid, observed_at) VALUES (?1, ?2, ?3, ?4)
@@ -718,7 +994,8 @@ impl Engine {
             rusqlite::params![repo, name, new, now])?;
         self.db.conn().execute(
             "INSERT INTO _rev_log(repo, name, old, new, at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![repo, name, old.clone().unwrap_or_default(), new, now])?;
+            rusqlite::params![repo, name, old.clone().unwrap_or_default(), new, now],
+        )?;
         Ok(Some((old, new)))
     }
 
@@ -726,22 +1003,34 @@ impl Engine {
     /// `_file` path index for `repo` (so a rev advance only reports files the
     /// engine actually tracks). `old` empty = first sight, every tracked path
     /// for that repo is considered changed.
-    pub fn files_changed_between(&self, repo: &str, repo_root: &Path, old: &str, new: &str)
-        -> Result<Vec<String>>
-    {
-        let mut tracked = self.db.conn().prepare(
-            "SELECT DISTINCT path FROM _file WHERE repo = ?1")?;
+    pub fn files_changed_between(
+        &self,
+        repo: &str,
+        repo_root: &Path,
+        old: &str,
+        new: &str,
+    ) -> Result<Vec<String>> {
+        let mut tracked = self
+            .db
+            .conn()
+            .prepare("SELECT DISTINCT path FROM _file WHERE repo = ?1")?;
         let tracked: HashSet<String> = tracked
             .query_map(rusqlite::params![repo], |r| r.get::<_, String>(0))?
-            .filter_map(|x| x.ok()).collect();
+            .filter_map(|x| x.ok())
+            .collect();
         if old.is_empty() {
             let mut v: Vec<String> = tracked.into_iter().collect();
             v.sort();
             return Ok(v);
         }
-        let out = Command::new("git").arg("-C").arg(repo_root)
-            .args(["diff", "--name-only", old, new]).output()?;
-        if !out.status.success() { return Ok(Vec::new()); }
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo_root)
+            .args(["diff", "--name-only", old, new])
+            .output()?;
+        if !out.status.success() {
+            return Ok(Vec::new());
+        }
         let mut changed: Vec<String> = String::from_utf8_lossy(&out.stdout)
             .lines()
             .map(|l| l.trim().to_string())
@@ -752,32 +1041,17 @@ impl Engine {
         Ok(changed)
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     // LANG-JUNCTION(manifest-probe): the manifest filename list probed above the scanned file set; a language whose module resolver reads a manifest (Cargo.toml, package.json, go.mod) must add its name here or the resolver gets no manifest content
     /// Read the Cargo.toml / package.json / go.mod manifests above the file set,
     /// at this rev, into a map (manifest path -> contents) for the resolver's
     /// crate / package / module registries. Probes the distinct ancestor
     /// directories of the files; `read_content` errors (no such manifest) are
     /// skipped. Rev-correct (git show for a git rev, disk for WORK).
-    pub(crate) fn collect_manifests(&self, rev: &str, files: &HashSet<String>) -> HashMap<String, String> {
+    pub(crate) fn collect_manifests(
+        &self,
+        rev: &str,
+        files: &HashSet<String>,
+    ) -> HashMap<String, String> {
         let mut dirs: HashSet<String> = HashSet::new();
         for f in files {
             let mut d = Path::new(f);
@@ -789,7 +1063,11 @@ impl Engine {
         let mut out = HashMap::new();
         for dir in dirs {
             for name in ["Cargo.toml", "package.json", "go.mod"] {
-                let rel = if dir.is_empty() { name.to_string() } else { format!("{dir}/{name}") };
+                let rel = if dir.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{dir}/{name}")
+                };
                 if let Ok(content) = read_content(&self.root, rev, &rel) {
                     out.insert(rel, content);
                 }
@@ -797,7 +1075,6 @@ impl Engine {
         }
         out
     }
-
 }
 
 struct GitBatch {
@@ -810,7 +1087,8 @@ struct GitBatch {
 impl GitBatch {
     pub(crate) fn open(root: &Path) -> Result<GitBatch> {
         let mut child = Command::new("git")
-            .arg("-C").arg(root)
+            .arg("-C")
+            .arg(root)
             .args(["cat-file", "--batch"])
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
@@ -818,7 +1096,11 @@ impl GitBatch {
             .spawn()?;
         let stdin = child.stdin.take().expect("piped stdin");
         let stdout = std::io::BufReader::new(child.stdout.take().expect("piped stdout"));
-        Ok(GitBatch { _child: child, stdin, stdout })
+        Ok(GitBatch {
+            _child: child,
+            stdin,
+            stdout,
+        })
     }
 
     pub(crate) fn read(&mut self, rev: &str, path: &str) -> Result<String> {
@@ -841,15 +1123,19 @@ impl GitBatch {
 }
 
 pub(crate) fn git_batch_read(root: &Path, rev: &str, path: &str) -> Result<String> {
-    static BATCHES: OnceLock<std::sync::Mutex<HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<GitBatch>>>>> = OnceLock::new();
+    static BATCHES: OnceLock<
+        std::sync::Mutex<HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<GitBatch>>>>,
+    > = OnceLock::new();
     let map = BATCHES.get_or_init(Default::default);
     let batch = {
         let mut m = map.lock().unwrap();
         match m.entry(root.to_path_buf()) {
             std::collections::hash_map::Entry::Occupied(e) => e.get().clone(),
-            std::collections::hash_map::Entry::Vacant(e) => {
-                e.insert(std::sync::Arc::new(std::sync::Mutex::new(GitBatch::open(root)?))).clone()
-            }
+            std::collections::hash_map::Entry::Vacant(e) => e
+                .insert(std::sync::Arc::new(std::sync::Mutex::new(GitBatch::open(
+                    root,
+                )?)))
+                .clone(),
         }
     };
     let mut b = batch.lock().unwrap();

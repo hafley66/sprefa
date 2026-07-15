@@ -3,7 +3,9 @@ use super::*;
 impl Engine {
     pub(crate) fn create_rel_view(&self, rel: &str, meta: &RelMeta) -> Result<()> {
         let view = crate::lower::txt_tbl(rel);
-        self.db.conn().execute(&format!("DROP VIEW IF EXISTS {view}"), [])?;
+        self.db
+            .conn()
+            .execute(&format!("DROP VIEW IF EXISTS {view}"), [])?;
         let columns: Vec<String> = meta.cols.iter().map(|col| {
             if col.interned() {
                 format!("(SELECT content FROM _strings WHERE _strings.id = rel_{rel}.\"{}\") AS \"{}\"", col.name, col.name)
@@ -11,9 +13,15 @@ impl Engine {
                 format!("\"{}\"", col.name)
             }
         }).collect();
-        let select = if columns.is_empty() { "*".to_string() } else { columns.join(", ") };
+        let select = if columns.is_empty() {
+            "*".to_string()
+        } else {
+            columns.join(", ")
+        };
         self.db.conn().execute(
-            &format!("CREATE VIEW {view} AS SELECT {select} FROM {}", tbl(rel)), [])?;
+            &format!("CREATE VIEW {view} AS SELECT {select} FROM {}", tbl(rel)),
+            [],
+        )?;
         Ok(())
     }
 }
@@ -25,28 +33,50 @@ impl Engine {
         // for now — the drain reads the envelope, nothing else). The class is
         // the contract, never a transport; binding happens at the CLI (--mcp).
         if let Some(p) = &d.port {
-            let dir = match p.dir { crate::ast::PortDir::In => "@in", crate::ast::PortDir::Out => "@out" };
+            let dir = match p.dir {
+                crate::ast::PortDir::In => "@in",
+                crate::ast::PortDir::Out => "@out",
+            };
             let Some(env) = crate::ast::Port::envelope(&p.class, p.dir) else {
-                bail!("rel {}: unknown port class {dir}({}); `rpc` is the only class today \
-                       (stream/duplex are reserved)", d.name, p.class);
+                bail!(
+                    "rel {}: unknown port class {dir}({}); `rpc` is the only class today \
+                       (stream/duplex are reserved)",
+                    d.name,
+                    p.class
+                );
             };
             for (cname, cty) in env {
                 match d.cols.iter().find(|c| c.name == *cname) {
                     Some(c) if c.ty == *cty => {}
-                    Some(c) => bail!("rel {}: {dir}({}) needs column {cname}: {}, found {cname}: {}",
-                        d.name, p.class, cty.name(), c.ty.name()),
-                    None => bail!("rel {}: {dir}({}) needs column {cname}: {}",
-                        d.name, p.class, cty.name()),
+                    Some(c) => bail!(
+                        "rel {}: {dir}({}) needs column {cname}: {}, found {cname}: {}",
+                        d.name,
+                        p.class,
+                        cty.name(),
+                        c.ty.name()
+                    ),
+                    None => bail!(
+                        "rel {}: {dir}({}) needs column {cname}: {}",
+                        d.name,
+                        p.class,
+                        cty.name()
+                    ),
                 }
             }
             if d.cols.len() != env.len() {
-                let extra: Vec<&str> = d.cols.iter()
+                let extra: Vec<&str> = d
+                    .cols
+                    .iter()
                     .filter(|c| !env.iter().any(|(n, _)| c.name == *n))
-                    .map(|c| c.name.as_str()).collect();
-                bail!("rel {}: {dir}({}) allows only the envelope columns ({}); extra: {}",
-                    d.name, p.class,
+                    .map(|c| c.name.as_str())
+                    .collect();
+                bail!(
+                    "rel {}: {dir}({}) allows only the envelope columns ({}); extra: {}",
+                    d.name,
+                    p.class,
                     env.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", "),
-                    extra.join(", "));
+                    extra.join(", ")
+                );
             }
         }
         // Migrate a stale cached table whose column set OR primary key no longer
@@ -80,12 +110,16 @@ impl Engine {
                 if let Ok(mut s) = conn.prepare(&format!("PRAGMA table_info({table})")) {
                     // PRAGMA table_info columns: 1=name, 5=pk (1-based position
                     // in the primary key, 0 if the column is not part of it).
-                    if let Ok(rows) = s.query_map([], |r| {
-                        Ok((r.get::<_, String>(1)?, r.get::<_, i64>(5)?))
-                    }) {
+                    if let Ok(rows) =
+                        s.query_map([], |r| Ok((r.get::<_, String>(1)?, r.get::<_, i64>(5)?)))
+                    {
                         for (name, pk) in rows.flatten() {
-                            if name == "__src" { continue; }
-                            if pk > 0 { pk_pos.push((pk, name.clone())); }
+                            if name == "__src" {
+                                continue;
+                            }
+                            if pk > 0 {
+                                pk_pos.push((pk, name.clone()));
+                            }
                             have.push(name);
                         }
                     }
@@ -95,13 +129,23 @@ impl Engine {
             };
             // ON CONFLICT matches a constraint by column SET, order-free — so
             // compare PK as sorted sets (a pure column reorder is not a drift).
-            let pk_set = |mut v: Vec<String>| { v.sort(); v };
+            let pk_set = |mut v: Vec<String>| {
+                v.sort();
+                v
+            };
             let key_drift = pk_set(have_pk.clone()) != pk_set(want_pk.clone());
             if !have.is_empty() && (have != want || key_drift) {
-                self.db.conn().execute(&format!("DROP VIEW IF EXISTS {}", crate::lower::txt_tbl(&d.name)), [])?;
-                self.db.conn().execute(&format!("DROP TABLE IF EXISTS {table}"), [])?;
-                self.db.conn().execute(&format!("DELETE FROM _reldigest WHERE rel = ?1"),
-                    rusqlite::params![d.name])?;
+                self.db.conn().execute(
+                    &format!("DROP VIEW IF EXISTS {}", crate::lower::txt_tbl(&d.name)),
+                    [],
+                )?;
+                self.db
+                    .conn()
+                    .execute(&format!("DROP TABLE IF EXISTS {table}"), [])?;
+                self.db.conn().execute(
+                    &format!("DELETE FROM _reldigest WHERE rel = ?1"),
+                    rusqlite::params![d.name],
+                )?;
                 // P1 interaction: before the completion-marker fix, a dropped
                 // derived table read back as 0 rows, and `any_derived_empty`
                 // treated that as "must full-rebuild" — the (accidental) thing
@@ -113,18 +157,26 @@ impl Engine {
                 // empty, never-refilled table. `_derived_complete` may have no
                 // row for `d.name` (a source rel, or a derived rel that never
                 // completed a pass yet) — the DELETE is then simply a no-op.
-                self.db.conn().execute("DELETE FROM _derived_complete WHERE rel = ?1",
-                    rusqlite::params![d.name])?;
+                self.db.conn().execute(
+                    "DELETE FROM _derived_complete WHERE rel = ?1",
+                    rusqlite::params![d.name],
+                )?;
             }
         }
         let sql = if d.cols.is_empty() {
             // Zero-column relation (the built-in `true()` singleton): one row,
             // no user columns. SQLite needs at least one column, so the table
             // carries only the universal `__src` sentinel.
-            format!("CREATE TABLE IF NOT EXISTS {} (__src TEXT DEFAULT '')", tbl(&d.name))
+            format!(
+                "CREATE TABLE IF NOT EXISTS {} (__src TEXT DEFAULT '')",
+                tbl(&d.name)
+            )
         } else {
-            let cols: Vec<String> = d.cols.iter()
-                .map(|c| format!("\"{}\" {}", c.name, c.sql())).collect();
+            let cols: Vec<String> = d
+                .cols
+                .iter()
+                .map(|c| format!("\"{}\" {}", c.name, c.sql()))
+                .collect();
             // The PRIMARY KEY drives dedup. The default (no `key(...)`) is the
             // full row, so identical rows collapse (set semantics). A `key(...)`
             // qualifier narrows the PK to that column subset = a functional
@@ -144,8 +196,9 @@ impl Engine {
             };
             if let Some(merge) = &d.merge {
                 let (mc, _) = merge.col_and_cmp();
-                let key = d.key.as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("rel {} has merge(...) without key(...)", d.name))?;
+                let key = d.key.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("rel {} has merge(...) without key(...)", d.name)
+                })?;
                 if !d.cols.iter().any(|c| c.name == mc) {
                     bail!("merge column {mc} not in rel {}", d.name);
                 }
@@ -155,11 +208,21 @@ impl Engine {
             }
             format!(
                 "CREATE TABLE IF NOT EXISTS {} ({}, __src TEXT DEFAULT '', PRIMARY KEY ({}))",
-                tbl(&d.name), cols.join(", "), pk.join(", ")
+                tbl(&d.name),
+                cols.join(", "),
+                pk.join(", ")
             )
         };
         self.db.conn().execute(&sql, [])?;
-        self.rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone(), key: d.key.clone(), merge: d.merge.clone(), port: d.port.clone() });
+        self.rels.insert(
+            d.name.clone(),
+            RelMeta {
+                cols: d.cols.clone(),
+                key: d.key.clone(),
+                merge: d.merge.clone(),
+                port: d.port.clone(),
+            },
+        );
         let meta = self.rels.get(&d.name).cloned().unwrap_or_default();
         self.create_rel_view(&d.name, &meta)?;
         Ok(())
@@ -167,19 +230,34 @@ impl Engine {
 
     /// Create the join-key indexes derived rules need (see auto_indexes). Skips
     /// closure heads, which are views. Idempotent (CREATE INDEX IF NOT EXISTS).
-    pub(crate) fn create_auto_indexes(&self, derived_rules: &[&Rule], closures: &HashMap<String, String>) -> Result<()> {
+    pub(crate) fn create_auto_indexes(
+        &self,
+        derived_rules: &[&Rule],
+        closures: &HashMap<String, String>,
+    ) -> Result<()> {
         for (rel, col) in auto_indexes(derived_rules, &self.rels) {
-            if closures.contains_key(&rel) { continue; }
+            if closures.contains_key(&rel) {
+                continue;
+            }
             let ix = format!("idx_{rel}_{col}");
             self.db.conn().execute(
-                &format!("CREATE INDEX IF NOT EXISTS \"{ix}\" ON {}(\"{col}\")", tbl(&rel)), [])?;
+                &format!(
+                    "CREATE INDEX IF NOT EXISTS \"{ix}\" ON {}(\"{col}\")",
+                    tbl(&rel)
+                ),
+                [],
+            )?;
         }
         Ok(())
     }
 
     /// Declare every relation: closure heads become a VIEW over the condensation,
     /// everything else a base table.
-    pub(crate) fn declare_all(&mut self, prog: &Program, closures: &HashMap<String, String>) -> Result<()> {
+    pub(crate) fn declare_all(
+        &mut self,
+        prog: &Program,
+        closures: &HashMap<String, String>,
+    ) -> Result<()> {
         // Discovery (`.dl/*.dl`) merges several files into one program, so the
         // same relation may be declared in more than one file. An identical
         // re-declaration is a no-op; a conflicting shape is an error.
@@ -191,29 +269,45 @@ impl Engine {
                 // `resolve_derived_shapes` (after builtins) fills it from _shapes
                 // or records shape-pending. (Frontend already resolved syntax
                 // shapes; a ref surviving to here is derived-only.)
-                if d.shape_ref.is_some() { continue; }
+                if d.shape_ref.is_some() {
+                    continue;
+                }
                 if let Some(prev) = seen.get(&d.name) {
-                    if *prev == d.cols { continue; }
+                    if *prev == d.cols {
+                        continue;
+                    }
                     bail!("rel {} declared twice with different columns", d.name);
                 }
                 seen.insert(d.name.clone(), d.cols.clone());
                 if BUILTIN_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in relation (true/repo/rev/content/file); pick another name", d.name);
+                    bail!(
+                        "{} is a built-in relation (true/repo/rev/content/file); pick another name",
+                        d.name
+                    );
                 }
                 if MODULE_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in module-graph relation; pick another name", d.name);
+                    bail!(
+                        "{} is a built-in module-graph relation; pick another name",
+                        d.name
+                    );
                 }
                 if TYPE_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in type-graph relation (type_edge / type_edge_rev / type_entity / type_entity_rev / type_sig / type_link / type_link_rev); pick another name", d.name);
                 }
                 if DOC_TEXT_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in doc relation (doc_comment / doc_tag); pick another name", d.name);
+                    bail!(
+                        "{} is a built-in doc relation (doc_comment / doc_tag); pick another name",
+                        d.name
+                    );
                 }
                 if CONST_VALUE_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in const-value relation (const_value / const_value_rev); pick another name", d.name);
                 }
                 if COMMENT_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in comment relation (comment_node); pick another name", d.name);
+                    bail!(
+                        "{} is a built-in comment relation (comment_node); pick another name",
+                        d.name
+                    );
                 }
                 if TEMPLATE_RELS.contains(&d.name.as_str()) {
                     bail!("{} is a built-in template-literal relation (template_parts); pick another name", d.name);
@@ -231,10 +325,16 @@ impl Engine {
                     bail!("{} is a built-in document relation (doc_node / doc_ref); pick another name", d.name);
                 }
                 if SPINE_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in ref-spine relation (string / ref); pick another name", d.name);
+                    bail!(
+                        "{} is a built-in ref-spine relation (string / ref); pick another name",
+                        d.name
+                    );
                 }
                 if NODE_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is a built-in CST relation (node / child); pick another name", d.name);
+                    bail!(
+                        "{} is a built-in CST relation (node / child); pick another name",
+                        d.name
+                    );
                 }
                 for k in crate::rels::rel_kinds() {
                     if k.rels().contains(&d.name.as_str()) {
@@ -245,13 +345,22 @@ impl Engine {
                     bail!("{} is a built-in daemon-state relation (program / head / rev_advanced); pick another name", d.name);
                 }
                 if EVERY_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is the built-in clock relation (every); pick another name", d.name);
+                    bail!(
+                        "{} is the built-in clock relation (every); pick another name",
+                        d.name
+                    );
                 }
                 if CLOCK_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is the built-in clock relation (clock); pick another name", d.name);
+                    bail!(
+                        "{} is the built-in clock relation (clock); pick another name",
+                        d.name
+                    );
                 }
                 if HOOK_RELS.contains(&d.name.as_str()) {
-                    bail!("{} is the built-in harness-hook event log (hook_event); pick another name", d.name);
+                    bail!(
+                        "{} is the built-in harness-hook event log (hook_event); pick another name",
+                        d.name
+                    );
                 }
                 if DIAG_RELS.contains(&d.name.as_str()) {
                     bail!("diag is the built-in diagnostic sink (fixed schema: path, line, col, end_line, end_col, severity, code, msg, hint); drop the `rel diag(...)` decl and write it directly — name only the columns you use, e.g. `diag(path: p, line: l, msg: m) <- ...`");
@@ -294,19 +403,45 @@ impl Engine {
     /// `self.rels` entry, which is what lets `lower_rule` join body atoms against
     /// them. Populated by `refresh_builtin_rels`, not by source rules.
     pub(crate) fn declare_builtins(&mut self) -> Result<()> {
-        for d in builtin_rel_decls() { self.declare(&d)?; }
-        for d in module_rel_decls() { self.declare(&d)?; }
-        for d in type_rel_decls() { self.declare(&d)?; }
-        for d in doc_text_rel_decls() { self.declare(&d)?; }
-        for d in const_value_rel_decls() { self.declare(&d)?; }
-        for d in comment_rel_decls() { self.declare(&d)?; }
-        for d in template_rel_decls() { self.declare(&d)?; }
-        for d in unresolved_rel_decls() { self.declare(&d)?; }
-        for d in call_rel_decls() { self.declare(&d)?; }
-        for d in dataflow_rel_decls() { self.declare(&d)?; }
-        for d in doc_rel_decls() { self.declare(&d)?; }
-        for d in spine_rel_decls() { self.declare(&d)?; }
-        for d in node_rel_decls() { self.declare(&d)?; }
+        for d in builtin_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in module_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in type_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in doc_text_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in const_value_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in comment_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in template_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in unresolved_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in call_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in dataflow_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in doc_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in spine_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in node_rel_decls() {
+            self.declare(&d)?;
+        }
         // Optional point/containment index: "innermost CST node covering byte C
         // in file F" is `node(_, _, F, lo, hi, _), lo <= C, C < hi` — a range
         // scan on (file, lo, hi) instead of a full `node` table scan. Mirrors
@@ -314,20 +449,51 @@ impl Engine {
         // pick for full-ancestry materialization (measured); this just makes
         // the LSP-common point query first-class. Idempotent.
         self.db.conn().execute(
-            &format!("CREATE INDEX IF NOT EXISTS node_file_span_idx ON {}(\"file\", \"lo\", \"hi\")", tbl("node")), [])?;
-        for d in crate::rels::rel_kind_decls() { self.declare(&d)?; }
-        for d in daemon_rel_decls() { self.declare(&d)?; }
-        for d in every_rel_decls() { self.declare(&d)?; }
-        for d in clock_rel_decls() { self.declare(&d)?; }
-        for d in effect_rel_decls() { self.declare(&d)?; }
-        for d in hook_rel_decls() { self.declare(&d)?; }
-        for d in diag_rel_decls() { self.declare(&d)?; }
-        for d in hover_note_rel_decls() { self.declare(&d)?; }
-        for d in graph_rel_decls() { self.declare(&d)?; }
-        for d in diag_mute_rel_decls() { self.declare(&d)?; }
-        for d in demand_rel_decls() { self.declare(&d)?; }
-        for d in checkout_out_rel_decls() { self.declare(&d)?; }
-        for d in type_decl_rel_decls() { self.declare(&d)?; }
+            &format!(
+                "CREATE INDEX IF NOT EXISTS node_file_span_idx ON {}(\"file\", \"lo\", \"hi\")",
+                tbl("node")
+            ),
+            [],
+        )?;
+        for d in crate::rels::rel_kind_decls() {
+            self.declare(&d)?;
+        }
+        for d in daemon_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in every_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in clock_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in effect_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in hook_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in diag_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in hover_note_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in graph_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in diag_mute_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in demand_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in checkout_out_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in type_decl_rel_decls() {
+            self.declare(&d)?;
+        }
         Ok(())
     }
 
@@ -337,10 +503,14 @@ impl Engine {
     /// content.id = the content hash. No interning (Stage 2).
     #[tracing::instrument(skip_all, level = "debug")]
     pub(crate) fn refresh_builtin_rels(&self) -> Result<()> {
-        let mut sel = self.db.conn().prepare("SELECT repo, path, rev, hash FROM _file")?;
+        let mut sel = self
+            .db
+            .conn()
+            .prepare("SELECT repo, path, rev, hash FROM _file")?;
         let files: Vec<(String, String, String, String)> = sel
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
-            .filter_map(|x| x.ok()).collect();
+            .filter_map(|x| x.ok())
+            .collect();
         let t = |s: &str| Value::Text(s.to_string());
         // slug -> on-disk root for the repos we can name (self + config). Fills
         // the `repo` relation's root column; an ingested-by-path repo not in
@@ -358,8 +528,11 @@ impl Engine {
         let mut file_rows: Vec<Vec<Value>> = Vec::new();
         let mut repo_slugs: BTreeSet<String> = BTreeSet::new();
         for (repo, path, rev, hash) in files {
-            revs.entry(rev.clone()).or_insert_with(|| vec![t(&rev), t(&repo), t(&rev), Value::Int(0)]);
-            contents.entry(hash.clone()).or_insert_with(|| vec![t(&hash), t(&hash)]);
+            revs.entry(rev.clone())
+                .or_insert_with(|| vec![t(&rev), t(&repo), t(&rev), Value::Int(0)]);
+            contents
+                .entry(hash.clone())
+                .or_insert_with(|| vec![t(&hash), t(&hash)]);
             file_rows.push(vec![t(&repo), t(&rev), t(&path), t(&hash)]);
             repo_slugs.insert(repo);
         }
@@ -369,18 +542,28 @@ impl Engine {
         // (the `allow_missing` flag keeps the engine alive past it; the absence
         // here is what lets a program write `!repo(S, _, _)` to surface misses).
         let repo_rows: Vec<Vec<Value>> = if !self.repos.is_empty() {
-            self.repos.iter()
+            self.repos
+                .iter()
                 .filter(|r| r.root.exists())
                 .map(|r| {
-                    vec![t(&r.slug), t(&r.root.to_string_lossy()),
-                         t(&r.url.clone().unwrap_or_default())]
-                }).collect()
+                    vec![
+                        t(&r.slug),
+                        t(&r.root.to_string_lossy()),
+                        t(&r.url.clone().unwrap_or_default()),
+                    ]
+                })
+                .collect()
         } else {
-            if repo_slugs.is_empty() { repo_slugs.insert(self.self_slug()); }
-            repo_slugs.iter().map(|slug| {
-                let root = root_of.get(slug).cloned().unwrap_or_default();
-                vec![t(slug), t(&root), t("")]
-            }).collect()
+            if repo_slugs.is_empty() {
+                repo_slugs.insert(self.self_slug());
+            }
+            repo_slugs
+                .iter()
+                .map(|slug| {
+                    let root = root_of.get(slug).cloned().unwrap_or_default();
+                    vec![t(slug), t(&root), t("")]
+                })
+                .collect()
         };
         let revs: Vec<Vec<Value>> = revs.into_values().collect();
         let contents: Vec<Vec<Value>> = contents.into_values().collect();
@@ -391,7 +574,10 @@ impl Engine {
         // The `true()` singleton: always exactly one zero-column row. The range
         // anchor for negation-only rules (`diag(...) <- true(), !rel(_,_,_).`).
         self.db.exec(&format!("DELETE FROM {}", tbl("true")))?;
-        self.db.exec(&format!("INSERT OR IGNORE INTO {} DEFAULT VALUES", tbl("true")))?;
+        self.db.exec(&format!(
+            "INSERT OR IGNORE INTO {} DEFAULT VALUES",
+            tbl("true")
+        ))?;
         Ok(())
     }
 
@@ -407,22 +593,33 @@ impl Engine {
     pub(crate) fn refresh_every(&self, intervals: &[i64]) -> Result<bool> {
         use rusqlite::OptionalExtension;
         let before: i64 = self.db.conn().query_row(
-            &format!("SELECT COUNT(*) FROM {}", tbl("every")), [], |r| r.get(0))?;
+            &format!("SELECT COUNT(*) FROM {}", tbl("every")),
+            [],
+            |r| r.get(0),
+        )?;
         self.db.exec(&format!("DELETE FROM {}", tbl("every")))?;
         let now = now_secs();
         let mut rows: Vec<Vec<Value>> = Vec::new();
         for &n in intervals {
-            if n <= 0 { continue; }
+            if n <= 0 {
+                continue;
+            }
             let bucket = now / n;
             let key = format!("every:{n}");
-            let prev: Option<i64> = self.db.conn().query_row(
-                "SELECT tx FROM _carry_meta WHERE k = ?1", [&key], |r| r.get(0)).optional()?;
+            let prev: Option<i64> = self
+                .db
+                .conn()
+                .query_row("SELECT tx FROM _carry_meta WHERE k = ?1", [&key], |r| {
+                    r.get(0)
+                })
+                .optional()?;
             if prev != Some(bucket) {
                 rows.push(vec![Value::Int(n)]);
                 self.db.conn().execute(
                     "INSERT INTO _carry_meta (k, tx) VALUES (?1, ?2) \
                      ON CONFLICT(k) DO UPDATE SET tx = ?2",
-                    rusqlite::params![key, bucket])?;
+                    rusqlite::params![key, bucket],
+                )?;
             }
         }
         let landed = rows.len();
@@ -436,54 +633,80 @@ impl Engine {
     /// content changed so the incremental path re-derives rules that join it.
     pub(crate) fn refresh_clock(&self, periods: &[i64]) -> Result<bool> {
         let now = now_secs();
-        let mut want: Vec<(i64, i64)> =
-            periods.iter().filter(|&&n| n > 0).map(|&n| (n, now / n)).collect();
+        let mut want: Vec<(i64, i64)> = periods
+            .iter()
+            .filter(|&&n| n > 0)
+            .map(|&n| (n, now / n))
+            .collect();
         want.sort();
         want.dedup();
         let have: Vec<(i64, i64)> = {
             let conn = self.db.conn();
             let mut s = conn.prepare(&format!(
                 "SELECT \"secs\", \"bucket\" FROM {} ORDER BY \"secs\", \"bucket\"",
-                tbl("clock")))?;
+                tbl("clock")
+            ))?;
             let v: Vec<(i64, i64)> = s
                 .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?
                 .filter_map(|x| x.ok())
                 .collect();
             v
         };
-        if have == want { return Ok(false); }
-        let rows: Vec<Vec<Value>> =
-            want.into_iter().map(|(s, b)| vec![Value::Int(s), Value::Int(b)]).collect();
+        if have == want {
+            return Ok(false);
+        }
+        let rows: Vec<Vec<Value>> = want
+            .into_iter()
+            .map(|(s, b)| vec![Value::Int(s), Value::Int(b)])
+            .collect();
         self.refresh_rel("clock", &["secs", "bucket"], &rows)?;
         Ok(true)
     }
-
-
 
     /// A closure head `rel_<head>` is a recursive-CTE view over the condensation
     /// tables of its edge relation. The view yields cross-component reach plus
     /// same-cyclic-component pairs (so a node on a cycle reaches itself).
     pub(crate) fn declare_closure(&mut self, d: &RelDecl, edge: &str) -> Result<()> {
-        if d.cols.len() != 2 { bail!("closure head {} must have 2 columns", d.name); }
-        self.rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone(), ..Default::default() });
+        if d.cols.len() != 2 {
+            bail!("closure head {} must have 2 columns", d.name);
+        }
+        self.rels.insert(
+            d.name.clone(),
+            RelMeta {
+                cols: d.cols.clone(),
+                ..Default::default()
+            },
+        );
         let (nt, et, v) = (scc_node_tbl(edge), scc_edge_tbl(edge), tbl(&d.name));
         self.db.conn().execute_batch(&format!(
             "CREATE TABLE IF NOT EXISTS {nt} (name TEXT PRIMARY KEY, comp INTEGER, cyclic INTEGER);
              CREATE TABLE IF NOT EXISTS {et} (comp_src INTEGER, comp_dst INTEGER, PRIMARY KEY(comp_src, comp_dst));"
         ))?;
         // a prior run may have left rel_<head> as a view or a real table; clear both.
-        self.db.conn().execute(&format!("DROP VIEW IF EXISTS {v}"), [])?;
-        self.db.conn().execute(&format!("DROP TABLE IF EXISTS {v}"), [])?;
+        self.db
+            .conn()
+            .execute(&format!("DROP VIEW IF EXISTS {v}"), [])?;
+        self.db
+            .conn()
+            .execute(&format!("DROP TABLE IF EXISTS {v}"), [])?;
         let (c0, c1) = (&d.cols[0].name, &d.cols[1].name);
         let output_name = |column: &str| {
-            if d.cols.iter().find(|c| c.name == column).is_some_and(|c| c.interned()) {
+            if d.cols
+                .iter()
+                .find(|c| c.name == column)
+                .is_some_and(|c| c.interned())
+            {
                 format!("(SELECT id FROM _strings WHERE _strings.content = na.name)")
             } else {
                 "na.name".to_string()
             }
         };
         let output_name_b = |column: &str| {
-            if d.cols.iter().find(|c| c.name == column).is_some_and(|c| c.interned()) {
+            if d.cols
+                .iter()
+                .find(|c| c.name == column)
+                .is_some_and(|c| c.interned())
+            {
                 format!("(SELECT id FROM _strings WHERE _strings.content = nb.name)")
             } else {
                 "nb.name".to_string()
@@ -507,19 +730,29 @@ impl Engine {
                FROM {nt} na JOIN {nt} nb ON na.comp = nb.comp AND na.cyclic = 1;"
         ))?;
         if d.cols[0].interned() && d.cols[1].interned() {
-            self.db.conn().execute(&format!(
-                "DROP VIEW IF EXISTS {}", crate::lower::txt_tbl(&d.name)), [])?;
-            self.db.conn().execute(&format!(
-                "CREATE VIEW {} AS SELECT {} AS \"{}\", {} AS \"{}\" FROM {}",
-                crate::lower::txt_tbl(&d.name),
-                format!("(SELECT content FROM _strings WHERE _strings.id = rel_{}.\"{}\")", d.name, c0),
-                c0,
-                format!("(SELECT content FROM _strings WHERE _strings.id = rel_{}.\"{}\")", d.name, c1),
-                c1,
-                tbl(&d.name),
-            ), [])?;
+            self.db.conn().execute(
+                &format!("DROP VIEW IF EXISTS {}", crate::lower::txt_tbl(&d.name)),
+                [],
+            )?;
+            self.db.conn().execute(
+                &format!(
+                    "CREATE VIEW {} AS SELECT {} AS \"{}\", {} AS \"{}\" FROM {}",
+                    crate::lower::txt_tbl(&d.name),
+                    format!(
+                        "(SELECT content FROM _strings WHERE _strings.id = rel_{}.\"{}\")",
+                        d.name, c0
+                    ),
+                    c0,
+                    format!(
+                        "(SELECT content FROM _strings WHERE _strings.id = rel_{}.\"{}\")",
+                        d.name, c1
+                    ),
+                    c1,
+                    tbl(&d.name),
+                ),
+                [],
+            )?;
         }
         Ok(())
     }
-
 }

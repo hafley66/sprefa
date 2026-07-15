@@ -15,32 +15,43 @@ use crate::spine;
 // The effect runtime moved to crate::effect (engine breakdown Stage 5).
 // Re-export the names external call sites (daemon, tests) and the rest of
 // engine.rs reach via `engine::`, so their paths keep resolving.
-pub use crate::effect::{async_effect_arity, shell_templates, EffectExec, ShellEffectExec};
 use crate::effect::async_bound_vars;
+pub use crate::effect::{async_effect_arity, shell_templates, EffectExec, ShellEffectExec};
 
 // Built-in graph/CST/spine/daemon extractor methods (bucket E) live in a child
 // module to shrink this file; they're still `impl Engine` methods called as
 // `self.refresh_*` from the tick orchestrator (engine breakdown Stage 4).
+mod declare;
+#[cfg(test)]
+mod deltaflow;
+mod derive;
 mod extract;
 mod gen;
-pub(crate) mod query;
-mod symbols;
+#[cfg(test)]
+mod generation;
+mod lang_tables;
 mod lens;
-mod rpc;
-mod declare;
+mod meta;
+#[cfg(test)]
+mod ownership;
+mod path_reconcile;
+pub(crate) mod pipeline;
+pub(crate) mod query;
 mod reconcile;
 mod repo;
-mod meta;
-mod derive;
-mod lang_tables;
-pub(crate) use repo::git_batch_read;
+mod rpc;
+mod source_prepare;
+#[cfg(test)]
+mod staged_delta;
+mod symbols;
 pub(crate) use query::emit_query_json;
+pub(crate) use repo::git_batch_read;
 mod decls;
+pub(crate) use decls::*;
 pub use decls::{
     all_builtin_decls, builtin_enum_brands, builtin_enum_variants, builtin_rel_names, fn_docs,
     op_docs, undocumented_builtins, undocumented_fns,
 };
-pub(crate) use decls::*;
 pub use lang_tables::ast_langs;
 pub(crate) use lang_tables::ts_lang;
 /// The structured result of one `checkout_one` sweep. `action` ∈
@@ -48,7 +59,11 @@ pub(crate) use lang_tables::ts_lang;
 /// the SKIP is intentional); `detail` = the human line. Fed into both the
 /// `[checkout]` log line and the `checkout_done` / `checkout_plan` rel.
 #[derive(Clone, Debug)]
-struct CheckoutOutcome { action: &'static str, ok: bool, detail: String }
+struct CheckoutOutcome {
+    action: &'static str,
+    ok: bool,
+    detail: String,
+}
 // The mixed source+derived / extract+derived rel desugar: a pure Program ->
 // Program rewrite that runs immediately before rule classification in both
 // tick entry points (see `tick.rs`). Public so `crate::rels::perf` can map a
@@ -57,29 +72,38 @@ pub mod desugar;
 // The reactive tick orchestrator (`tick` / `tick_paths`) lives in a child
 // module too; both stay `pub` and reach this module's privates directly
 // (engine breakdown Stage 6).
-mod tick;
 mod strata;
+mod tick;
+pub(crate) mod type_arena;
+pub(crate) mod typed_plan;
 pub(crate) use strata::*;
 mod scan;
 pub(crate) use scan::*;
 mod eval;
 pub(crate) use eval::*;
-pub use tick::{TickReport, is_timer_rel};
+pub use tick::{is_timer_rel, PathTickFallbackPolicy, PathTickOutcome, TickReport};
 
-fn scc_node_tbl(edge: &str) -> String { format!("scc_node_{edge}") }
-fn scc_edge_tbl(edge: &str) -> String { format!("scc_edge_{edge}") }
+fn scc_node_tbl(edge: &str) -> String {
+    format!("scc_node_{edge}")
+}
+fn scc_edge_tbl(edge: &str) -> String {
+    format!("scc_edge_{edge}")
+}
 /// The per-`@next`-rel carry buffer: the live rel's columns plus a `tx`
 /// generation column. Rows staged at `tx = cur+1` surface as the live rel at the
 /// start of the next tick. See docs/research-reactive-effectful-datalog.md §8.
-fn carry_tbl(rel: &str) -> String { format!("_carry_{rel}") }
-
+fn carry_tbl(rel: &str) -> String {
+    format!("_carry_{rel}")
+}
 
 /// Current wall-clock time in whole seconds since the epoch, used by the `every`
 /// clock. `DL_NOW_SECS` overrides it so tests can advance time deterministically
 /// across ticks without sleeping.
 fn now_secs() -> i64 {
     if let Ok(v) = std::env::var("DL_NOW_SECS") {
-        if let Ok(n) = v.parse::<i64>() { return n; }
+        if let Ok(n) = v.parse::<i64>() {
+            return n;
+        }
     }
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -96,14 +120,18 @@ pub(crate) fn knn_rows(pool: &[(String, Vec<f32>)], k: usize) -> Vec<Vec<Value>>
     for (i, (a, va)) in pool.iter().enumerate() {
         let mut scored: Vec<(f32, &str)> = Vec::with_capacity(pool.len().saturating_sub(1));
         for (j, (b, vb)) in pool.iter().enumerate() {
-            if i == j { continue; }
+            if i == j {
+                continue;
+            }
             scored.push((crate::embed::cosine(va, vb), b.as_str()));
         }
         scored.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap_or(std::cmp::Ordering::Equal));
         for (sc, b) in scored.into_iter().take(k) {
             rows.push(vec![
-                Value::Text(a.clone()), Value::Text(b.to_string()),
-                Value::Int((sc * 1_000_000.0).round() as i64)]);
+                Value::Text(a.clone()),
+                Value::Text(b.to_string()),
+                Value::Int((sc * 1_000_000.0).round() as i64),
+            ]);
         }
     }
     rows
@@ -119,9 +147,13 @@ fn blake3_edges(edges: &[(String, String)]) -> [u8; 32] {
     let mut acc = [0u8; 32];
     for (a, b) in edges {
         let mut buf = String::with_capacity(a.len() + b.len() + 1);
-        buf.push_str(a); buf.push('\0'); buf.push_str(b);
+        buf.push_str(a);
+        buf.push('\0');
+        buf.push_str(b);
         let h = blake3::hash(buf.as_bytes());
-        for (x, y) in acc.iter_mut().zip(h.as_bytes()) { *x ^= *y; }
+        for (x, y) in acc.iter_mut().zip(h.as_bytes()) {
+            *x ^= *y;
+        }
     }
     acc
 }
@@ -136,10 +168,16 @@ static CMD_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::n
 static CMD_BUDGET: OnceLock<Option<u32>> = OnceLock::new();
 
 /// Force the cmd budget (the `--cmd-budget` flag). Call before the first tick.
-pub fn set_cmd_budget(n: u32) { let _ = CMD_BUDGET.set(Some(n)); }
+pub fn set_cmd_budget(n: u32) {
+    let _ = CMD_BUDGET.set(Some(n));
+}
 
 fn cmd_budget() -> Option<u32> {
-    *CMD_BUDGET.get_or_init(|| std::env::var("DL_CMD_BUDGET").ok().and_then(|v| v.parse().ok()))
+    *CMD_BUDGET.get_or_init(|| {
+        std::env::var("DL_CMD_BUDGET")
+            .ok()
+            .and_then(|v| v.parse().ok())
+    })
 }
 
 /// Per-file size cap for the walker, in bytes. `DL_MAX_FILESIZE` (e.g. 1048576),
@@ -147,7 +185,11 @@ fn cmd_budget() -> Option<u32> {
 /// content read/hash, in both the WORK walk and the git-rev ls-tree listing.
 static MAX_FILESIZE: OnceLock<Option<u64>> = OnceLock::new();
 fn max_filesize() -> Option<u64> {
-    *MAX_FILESIZE.get_or_init(|| std::env::var("DL_MAX_FILESIZE").ok().and_then(|v| v.parse().ok()))
+    *MAX_FILESIZE.get_or_init(|| {
+        std::env::var("DL_MAX_FILESIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+    })
 }
 
 /// Slow-tick log threshold in ms. A `tick_paths` slower than this prints a
@@ -155,8 +197,12 @@ fn max_filesize() -> Option<u64> {
 /// perf regression. `DL_TICK_LOG_MS` overrides; default 250ms. 0 logs every tick.
 static TICK_LOG_MS: OnceLock<f64> = OnceLock::new();
 fn tick_log_ms() -> f64 {
-    *TICK_LOG_MS.get_or_init(|| std::env::var("DL_TICK_LOG_MS").ok()
-        .and_then(|v| v.parse().ok()).unwrap_or(250.0))
+    *TICK_LOG_MS.get_or_init(|| {
+        std::env::var("DL_TICK_LOG_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(250.0)
+    })
 }
 
 /// Edge-count guard for a `?` query that would evaluate a closure VIEW. The
@@ -169,8 +215,12 @@ fn tick_log_ms() -> f64 {
 /// `DL_CLOSURE_QUERY_MAX_EDGES` overrides; 0 disables. Default 20k.
 static CLOSURE_QUERY_MAX_EDGES: OnceLock<usize> = OnceLock::new();
 fn closure_query_max_edges() -> usize {
-    *CLOSURE_QUERY_MAX_EDGES.get_or_init(|| std::env::var("DL_CLOSURE_QUERY_MAX_EDGES").ok()
-        .and_then(|v| v.parse().ok()).unwrap_or(20_000))
+    *CLOSURE_QUERY_MAX_EDGES.get_or_init(|| {
+        std::env::var("DL_CLOSURE_QUERY_MAX_EDGES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(20_000)
+    })
 }
 
 /// Stringify whatever a cell holds, regardless of its SQLite storage type.
@@ -201,7 +251,9 @@ const BUILTIN_RELS: [&str; 5] = ["repo", "rev", "content", "file", "true"];
 /// print every relation's row count so you can see the cardinality graph at a
 /// glance — dead extractors, blown-up joins, closure explosion.
 static TICK_AUDIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-pub fn set_tick_audit(on: bool) { TICK_AUDIT.store(on, std::sync::atomic::Ordering::Relaxed); }
+pub fn set_tick_audit(on: bool) {
+    TICK_AUDIT.store(on, std::sync::atomic::Ordering::Relaxed);
+}
 
 /// Configure the GLOBAL rayon pool from `DL_RAYON_THREADS` (default 2).
 /// A finite default bounds the CPU the daemon's extract/hash paths can burn;
@@ -283,8 +335,15 @@ pub(crate) const MODULE_RELS: [&str; 10] = [
 /// SCIP-resolved graph where endpoints are definition symbols, not bare names
 /// (already repo-prefixed via type_entity's sym, so it doesn't need its own
 /// repo column).
-pub(crate) const TYPE_RELS: [&str; 7] =
-    ["type_edge", "type_edge_rev", "type_entity", "type_entity_rev", "type_sig", "type_link", "type_link_rev"];
+pub(crate) const TYPE_RELS: [&str; 7] = [
+    "type_edge",
+    "type_edge_rev",
+    "type_entity",
+    "type_entity_rev",
+    "type_sig",
+    "type_link",
+    "type_link_rev",
+];
 
 /// Phase D diet-SCIP call graph. `call_def` is each callable (sym, kind, file,
 /// span); `call_site` is each call occurrence (caller sym, callee text, file,
@@ -295,7 +354,15 @@ pub(crate) const TYPE_RELS: [&str; 7] =
 /// on `write` only. Symbols are `file::kind::name`, the same shape
 /// `type_entity` uses, so the call and type graphs share nodes and a join
 /// reaches both.
-pub(crate) const CALL_RELS: [&str; 7] = ["call_def", "call_def_rev", "call_site", "call_edge", "call_edge_rev", "call_name", "call_kind"];
+pub(crate) const CALL_RELS: [&str; 7] = [
+    "call_def",
+    "call_def_rev",
+    "call_site",
+    "call_edge",
+    "call_edge_rev",
+    "call_name",
+    "call_kind",
+];
 
 /// Intra-procedural dataflow lift: `df_node(id, kind, var, fn, file, line)` is a
 /// value-bearing program point, `df_edge(from, to)` is local value flow. A rule
@@ -317,7 +384,23 @@ pub(crate) const CALL_RELS: [&str; 7] = ["call_def", "call_def_rev", "call_site"
 /// carrying `df_node` (kind lit/template/concat) with its cooked/raw text;
 /// same rev-salted-id shape as `df_field`/`df_field_rev`. See
 /// `typegraph::DataflowFacts::lits`.
-pub(crate) const DATAFLOW_RELS: [&str; 15] = ["df_node", "df_node_rev", "df_node_repo", "df_node_repo_rev", "df_edge", "loop_over", "allocates", "nest", "df_param", "df_arg", "df_arg_rev", "df_field", "df_field_rev", "df_lit", "df_lit_rev"];
+pub(crate) const DATAFLOW_RELS: [&str; 15] = [
+    "df_node",
+    "df_node_rev",
+    "df_node_repo",
+    "df_node_repo_rev",
+    "df_edge",
+    "loop_over",
+    "allocates",
+    "nest",
+    "df_param",
+    "df_arg",
+    "df_arg_rev",
+    "df_field",
+    "df_field_rev",
+    "df_lit",
+    "df_lit_rev",
+];
 
 /// Document structure from non-source text (markdown today; comments and other
 /// tree-sitter grammars to follow via `ingest::IngestLang`). `doc_node` is one row
@@ -531,7 +614,13 @@ const MUTE_RELS: [&str; 1] = ["diag_mute"];
 /// them first-class instead of magic: the engine reading them by name is reading
 /// a catalogued builtin, not an undocumented convention. See docs/reference/
 /// magic-rels.md and the `.dl/magic-rel-audit.dl` rail.
-const DEMAND_RELS: [&str; 5] = ["scip_want", "rev_cmp_want", "def_target", "effect_cmd", "checkout"];
+const DEMAND_RELS: [&str; 5] = [
+    "scip_want",
+    "rev_cmp_want",
+    "def_target",
+    "effect_cmd",
+    "checkout",
+];
 
 /// The derived-shape SINK relation. A user HEADS `type_decl_row(shape, pos, col,
 /// ty)` from a rule (like `diag` / `graph_node`) to DERIVE a relation schema from
@@ -569,14 +658,18 @@ pub(crate) fn scip_descriptor_name(symbol: &str) -> Option<String> {
 }
 
 fn module_manifest_path(path: &str) -> bool {
-    path.ends_with("Cargo.toml") || path.ends_with("package.json") || path.ends_with("tsconfig.json")
+    path.ends_with("Cargo.toml")
+        || path.ends_with("package.json")
+        || path.ends_with("tsconfig.json")
 }
 
 /// Parse a 64-char hex string into 32 bytes. Errs on wrong length or non-hex
 /// (e.g. the `''` __src default on a derived row), so the caller can skip it.
 fn hex_to_32(s: &str) -> Result<[u8; 32]> {
     let b = s.as_bytes();
-    if b.len() != 64 { bail!("not a 32-byte hex digest"); }
+    if b.len() != 64 {
+        bail!("not a 32-byte hex digest");
+    }
     let mut out = [0u8; 32];
     for i in 0..32 {
         out[i] = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)?;
@@ -745,7 +838,13 @@ type Bind = HashMap<String, Value>;
 /// before this column existed) — `file_lines` filters those out.
 type FileMeta = HashMap<(String, String, String), (String, i64, i64, i64)>;
 
-struct Reconcile { changed: bool, extracted: usize, retracted: usize, parsed: usize, total: usize }
+struct Reconcile {
+    changed: bool,
+    extracted: usize,
+    retracted: usize,
+    parsed: usize,
+    total: usize,
+}
 
 #[derive(Default)]
 struct ModuleRows {
@@ -791,7 +890,8 @@ struct ClosureCache {
 }
 
 fn mtime_secs(md: &std::fs::Metadata) -> i64 {
-    md.modified().ok()
+    md.modified()
+        .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
@@ -1011,7 +1111,13 @@ impl Engine {
     pub fn new(db: crate::db::Db, root: PathBuf) -> Self {
         crate::perflog::set_root(&root);
         Engine {
-            db, rels: HashMap::new(), root, dropped: 0, extraction_drops: Vec::new(), shape_diags: Vec::new(), recondensed: 0,
+            db,
+            rels: HashMap::new(),
+            root,
+            dropped: 0,
+            extraction_drops: Vec::new(),
+            shape_diags: Vec::new(),
+            recondensed: 0,
             node2vec_recomputed: 0,
             closure_cache: HashMap::new(),
             adjacency_cache: std::cell::RefCell::new(None),
@@ -1026,10 +1132,12 @@ impl Engine {
             last_node_files_walked: std::cell::Cell::new(0),
             extract_files_parsed: std::cell::Cell::new(0),
             force_separate_analysis_extractors: std::cell::Cell::new(
-                std::env::var("DL_DISABLE_ANALYSIS_BUNDLE").ok().as_deref() == Some("1")),
+                std::env::var("DL_DISABLE_ANALYSIS_BUNDLE").ok().as_deref() == Some("1"),
+            ),
             fixpoint_full_reruns: std::cell::Cell::new(0),
             force_naive_fixpoint: std::cell::Cell::new(
-                std::env::var("DL_NAIVE_FIXPOINT").ok().as_deref() == Some("1")),
+                std::env::var("DL_NAIVE_FIXPOINT").ok().as_deref() == Some("1"),
+            ),
             last_derived_rebuilt: Vec::new(),
             gen_journal: std::cell::RefCell::new(None),
             type_facts_cache: Default::default(),
@@ -1042,14 +1150,20 @@ impl Engine {
     }
 
     /// Emit query results as JSON-lines instead of the human TSV block.
-    pub fn set_query_json(&mut self, on: bool) { self.query_json = on; }
+    pub fn set_query_json(&mut self, on: bool) {
+        self.query_json = on;
+    }
 
     /// Skip `?` evaluation on the next tick (the foreground priming pass).
-    pub fn set_prime_tick(&mut self, on: bool) { self.prime_tick = on; }
+    pub fn set_prime_tick(&mut self, on: bool) {
+        self.prime_tick = on;
+    }
 
     /// Mark `root` as a placeholder (rootless daemon). Self-form scans and gen
     /// writes then fall back to each rule's `.git` ancestor. See `root_implicit`.
-    pub fn set_root_implicit(&mut self, on: bool) { self.root_implicit = on; }
+    pub fn set_root_implicit(&mut self, on: bool) {
+        self.root_implicit = on;
+    }
 
     /// Set the configured repos (from `SprfConfig`). Takes effect on the next
     /// tick via `refresh_builtin_rels`.
@@ -1059,11 +1173,15 @@ impl Engine {
 
     /// This engine's root directory (`--root`). The working dir an `@async`
     /// shell effect runs in, so `git`/`gh` commands resolve against the repo.
-    pub fn root(&self) -> PathBuf { self.root.clone() }
+    pub fn root(&self) -> PathBuf {
+        self.root.clone()
+    }
 
     /// Stable slug for this engine's own repo: the `--root` directory name.
     pub(crate) fn self_slug(&self) -> String {
-        self.root.file_name().map(|s| s.to_string_lossy().to_string())
+        self.root
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| self.root.to_string_lossy().to_string())
     }
 
@@ -1087,10 +1205,18 @@ impl Engine {
 
     /// Wholesale replace one engine-owned relation through the same plural write
     /// seam every built-in module/indexer uses.
-    pub(crate) fn encode_rel_rows(&self, rel: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<Vec<Vec<Value>>> {
-        let meta = self.rels.get(rel)
+    pub(crate) fn encode_rel_rows(
+        &self,
+        rel: &str,
+        cols: &[&str],
+        rows: &[Vec<Value>],
+    ) -> Result<Vec<Vec<Value>>> {
+        let meta = self
+            .rels
+            .get(rel)
             .ok_or_else(|| anyhow::anyhow!("unknown relation {rel}"))?;
-        let positions: Vec<Option<usize>> = cols.iter()
+        let positions: Vec<Option<usize>> = cols
+            .iter()
             .map(|name| meta.cols.iter().position(|col| col.name == *name))
             .collect();
         let mut sink = spine::SymSink::new();
@@ -1098,8 +1224,12 @@ impl Engine {
         for row in rows {
             let mut out = row.clone();
             for (pos, value) in out.iter_mut().enumerate() {
-                let Some(meta_pos) = positions.get(pos).and_then(|p| *p) else { continue };
-                if !meta.cols[meta_pos].interned() { continue; }
+                let Some(meta_pos) = positions.get(pos).and_then(|p| *p) else {
+                    continue;
+                };
+                if !meta.cols[meta_pos].interned() {
+                    continue;
+                }
                 if let Value::Text(text) = value {
                     *value = Value::Int(sink.sym(text).cell());
                 }
@@ -1110,18 +1240,30 @@ impl Engine {
         Ok(encoded)
     }
 
-    pub(crate) fn insert_rel_rows(&self, rel: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
+    pub(crate) fn insert_rel_rows(
+        &self,
+        rel: &str,
+        cols: &[&str],
+        rows: &[Vec<Value>],
+    ) -> Result<usize> {
         let encoded = self.encode_rel_rows(rel, cols, rows)?;
         self.db.insert_rows(&tbl(rel), cols, &encoded)
     }
 
-    pub(crate) fn refresh_rel(&self, rel: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
+    pub(crate) fn refresh_rel(
+        &self,
+        rel: &str,
+        cols: &[&str],
+        rows: &[Vec<Value>],
+    ) -> Result<usize> {
         let table = tbl(rel);
         let start = std::time::Instant::now();
         let encoded = self.encode_rel_rows(rel, cols, rows)?;
         // Whole-table reload with index drop/rebuild for large rels (see
         // Db::reload_rel); DELETE + plain insert for small ones.
-        let n = self.db.reload_rel(&table, cols, &encoded)
+        let n = self
+            .db
+            .reload_rel(&table, cols, &encoded)
             .with_context(|| format!("refresh relation {rel}"))?;
         // Per-rel write cost + the table's schema/size stats (indexes, PK, and
         // per-object dbstat bytes), so perf.jsonl carries WHY a write is slow —
@@ -1129,14 +1271,15 @@ impl Engine {
         if crate::perflog::profile_enabled() {
             let stats = self.db.rel_stats(rel).unwrap_or(serde_json::Value::Null);
             crate::perflog::emit_profile_detail(
-                "write", rel, start.elapsed().as_millis() as u64, rows.len() as u64, stats);
+                "write",
+                rel,
+                start.elapsed().as_millis() as u64,
+                rows.len() as u64,
+                stats,
+            );
         }
         Ok(n)
     }
-
-
-
-
 }
 
 /// (repo, rev, glob, pathvar, revvar) of a source rule's `scan`. `repo` is the
@@ -1146,15 +1289,25 @@ impl Engine {
 /// in `repo`/`rev` is a data-driven coordinate — see `Engine::resolve_scan_bindings`).
 fn scan_spec_of(rule: &Rule) -> Result<ScanSpec> {
     for item in &rule.body {
-        if let BodyItem::Scan { repo, rev, glob, path, rev_out } = item {
+        if let BodyItem::Scan {
+            repo,
+            rev,
+            glob,
+            path,
+            rev_out,
+        } = item
+        {
             let path_var = match path {
                 Term::Var(v) => v.clone(),
                 Term::Wild => bail!("scan path output must be a variable, not `_` (a scan with no path is meaningless)"),
                 other => bail!("expected scan path variable, got {other:?}"),
             };
             return Ok(ScanSpec {
-                repo: repo.clone(), rev: rev.clone(), glob: glob.clone(),
-                path_var, rev_out_var: opt_var(rev_out)?,
+                repo: repo.clone(),
+                rev: rev.clone(),
+                glob: glob.clone(),
+                path_var,
+                rev_out_var: opt_var(rev_out)?,
             });
         }
     }
@@ -1177,9 +1330,18 @@ struct ScanBinding {
 /// Used by `tick_paths` to defer to the full tick (the binding relation is read
 /// at reconcile time, not in the path-scoped loop).
 pub fn scan_has_var_coords(rule: &Rule) -> bool {
-    rule.body.iter().any(|b| matches!(b,
-        BodyItem::Scan { repo: Term::Var(_), .. } |
-        BodyItem::Scan { rev: Term::Var(_), .. }))
+    rule.body.iter().any(|b| {
+        matches!(
+            b,
+            BodyItem::Scan {
+                repo: Term::Var(_),
+                ..
+            } | BodyItem::Scan {
+                rev: Term::Var(_),
+                ..
+            }
+        )
+    })
 }
 
 pub(crate) fn read_content(root: &Path, rev: &str, path: &str) -> Result<String> {
@@ -1217,12 +1379,27 @@ fn repo_id_of(froot: &Path, path: &str, slug: &str) -> String {
 fn normalize_doc_name(s: &str) -> String {
     const ARTICLES: &[&str] = &["the", "a", "an"];
     const KIND: &[&str] = &[
-        "struct", "enum", "trait", "class", "interface", "const",
-        "module", "mod", "type", "item", "macro", "function",
-        "fn", "method", "alias", "def",
+        "struct",
+        "enum",
+        "trait",
+        "class",
+        "interface",
+        "const",
+        "module",
+        "mod",
+        "type",
+        "item",
+        "macro",
+        "function",
+        "fn",
+        "method",
+        "alias",
+        "def",
     ];
     let words: Vec<&str> = s.split_whitespace().collect();
-    if words.is_empty() { return String::new(); }
+    if words.is_empty() {
+        return String::new();
+    }
     let mut start = 0;
     let mut end = words.len();
     // Strip one leading token: an article, or (if no article) a kind word.
@@ -1241,7 +1418,9 @@ fn normalize_doc_name(s: &str) -> String {
             end -= 1;
         }
     }
-    if start >= end { return String::new(); }
+    if start >= end {
+        return String::new();
+    }
     words[start..end].join(" ").to_ascii_lowercase()
 }
 
@@ -1261,7 +1440,11 @@ fn identifiers_in(s: &str) -> Vec<&str> {
             i += 1;
             while i < bytes.len() {
                 let c = bytes[i];
-                if c.is_ascii_alphanumeric() || c == b'_' { i += 1; } else { break; }
+                if c.is_ascii_alphanumeric() || c == b'_' {
+                    i += 1;
+                } else {
+                    break;
+                }
             }
             out.push(&s[start..i]);
         } else {
@@ -1276,12 +1459,27 @@ fn identifiers_in(s: &str) -> Vec<&str> {
 /// pathological (one fork+exec per blob); the batch protocol answers
 /// `rev:path` requests over a single pipe. Requests are serialized per root —
 /// the pipe is one stream — but parallel readers across repos don't contend.
-fn check_type(ty: Type, v: &Value, repo: &str, rev: &str, root: &Path, rev_index: &HashSet<(String, String, String)>) -> bool {
-    let p = match v { Value::Text(s) => s, Value::Int(_) => return ty == Type::Int || ty == Type::Text, Value::Null => return true };
+fn check_type(
+    ty: Type,
+    v: &Value,
+    repo: &str,
+    rev: &str,
+    root: &Path,
+    rev_index: &HashSet<(String, String, String)>,
+) -> bool {
+    let p = match v {
+        Value::Text(s) => s,
+        Value::Int(_) => return ty == Type::Int || ty == Type::Text,
+        Value::Null => return true,
+    };
     if rev != "WORK" {
         return match ty {
-            Type::File | Type::Path => rev_index.contains(&(repo.to_string(), rev.to_string(), p.clone())),
-            Type::Dir => rev_index.iter().any(|(rp, r, pp)| rp == repo && r == rev && pp.starts_with(&format!("{p}/"))),
+            Type::File | Type::Path => {
+                rev_index.contains(&(repo.to_string(), rev.to_string(), p.clone()))
+            }
+            Type::Dir => rev_index
+                .iter()
+                .any(|(rp, r, pp)| rp == repo && r == rev && pp.starts_with(&format!("{p}/"))),
             // repo/rev are coordinate values, not filesystem paths: no check here.
             Type::Text | Type::Int | Type::Repo | Type::Rev => true,
         };
@@ -1301,8 +1499,17 @@ fn check_type(ty: Type, v: &Value, repo: &str, rev: &str, root: &Path, rev_index
 /// twice on one line).
 fn dedup_hits(hits: &mut Vec<RefHit>) {
     let mut seen: HashSet<(String, String, u32, u32, u32, u32, String)> = HashSet::new();
-    hits.retain(|h| seen.insert((h.repo.clone(), h.path.clone(), h.line, h.col,
-        h.end_line, h.end_col, h.role.clone())));
+    hits.retain(|h| {
+        seen.insert((
+            h.repo.clone(),
+            h.path.clone(),
+            h.line,
+            h.col,
+            h.end_line,
+            h.end_col,
+            h.role.clone(),
+        ))
+    });
 }
 
 /// UTF-8 byte offset -> (0-based line, 0-based char column) in `content`. The
@@ -1313,8 +1520,13 @@ fn byte_to_lc0(content: &str, byte: u32) -> (u32, u32) {
     let mut line = 0u32;
     let mut line_start = 0usize;
     for (i, b) in content.bytes().enumerate() {
-        if i >= byte { break; }
-        if b == b'\n' { line += 1; line_start = i + 1; }
+        if i >= byte {
+            break;
+        }
+        if b == b'\n' {
+            line += 1;
+            line_start = i + 1;
+        }
     }
     let col = content[line_start..byte].chars().count() as u32;
     (line, col)
@@ -1327,7 +1539,9 @@ fn like_contains(query: &str) -> String {
     let mut escaped = String::with_capacity(query.len() + 2);
     escaped.push('%');
     for ch in query.chars() {
-        if matches!(ch, '%' | '_' | '\\') { escaped.push('\\'); }
+        if matches!(ch, '%' | '_' | '\\') {
+            escaped.push('\\');
+        }
         escaped.push(ch);
     }
     escaped.push('%');
@@ -1345,12 +1559,12 @@ fn pattern_literals(pat: &str) -> Vec<String> {
     let mut out = Vec::new();
     for m in ident.find_iter(&stripped) {
         let s = m.as_str().to_string();
-        if !out.contains(&s) { out.push(s); }
+        if !out.contains(&s) {
+            out.push(s);
+        }
     }
     out
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -1368,17 +1582,28 @@ mod tests {
         let prog = program(
             "rel s(x: text). rel a(x: text). rel b(x: text). rel c(x: text).\n\
              s(\"seed\").\n\
-             c(x) <- b(x). a(x) <- s(x). b(x) <- a(x).");
-        let rules: Vec<&Rule> = prog.items.iter()
-            .filter_map(|i| match i { Item::Rule(r) if !r.body.is_empty() => Some(r), _ => None })
+             c(x) <- b(x). a(x) <- s(x). b(x) <- a(x).",
+        );
+        let rules: Vec<&Rule> = prog
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Rule(r) if !r.body.is_empty() => Some(r),
+                _ => None,
+            })
             .collect();
         let groups = stratify(&rules).unwrap();
         assert_eq!(groups.len(), 1, "all positive: one stratum");
         let comps = rel_components(&groups[0], &rules);
         assert_eq!(comps.len(), 3);
-        assert!(comps.iter().all(|(_, recursive)| !recursive), "chain is acyclic");
-        let order: Vec<&str> = comps.iter()
-            .map(|(ris, _)| rules[ris[0]].head.rel.as_str()).collect();
+        assert!(
+            comps.iter().all(|(_, recursive)| !recursive),
+            "chain is acyclic"
+        );
+        let order: Vec<&str> = comps
+            .iter()
+            .map(|(ris, _)| rules[ris[0]].head.rel.as_str())
+            .collect();
         assert_eq!(order, ["a", "b", "c"], "dependencies evaluate first");
     }
 
@@ -1393,16 +1618,25 @@ mod tests {
              s(\"seed\"). e(\"seed\", \"z\").\n\
              t(x) <- s(x). t(y) <- t(x), e(x, y).\n\
              p(x) <- q(x). q(x) <- p(x). q(x) <- s(x).\n\
-             lone(x) <- s(x).");
-        let rules: Vec<&Rule> = prog.items.iter()
-            .filter_map(|i| match i { Item::Rule(r) if !r.body.is_empty() => Some(r), _ => None })
+             lone(x) <- s(x).",
+        );
+        let rules: Vec<&Rule> = prog
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Rule(r) if !r.body.is_empty() => Some(r),
+                _ => None,
+            })
             .collect();
         let groups = stratify(&rules).unwrap();
         assert_eq!(groups.len(), 1);
         let comps = rel_components(&groups[0], &rules);
-        let by_head = |name: &str| comps.iter()
-            .find(|(ris, _)| ris.iter().any(|&ri| rules[ri].head.rel == name))
-            .unwrap_or_else(|| panic!("no component holds {name}"));
+        let by_head = |name: &str| {
+            comps
+                .iter()
+                .find(|(ris, _)| ris.iter().any(|&ri| rules[ri].head.rel == name))
+                .unwrap_or_else(|| panic!("no component holds {name}"))
+        };
         assert!(by_head("t").1, "self-recursive t iterates");
         assert!(by_head("p").1, "mutually recursive p/q iterate");
         assert_eq!(by_head("p").0.len(), 3, "p+q rules share one component");

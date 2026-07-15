@@ -1,6 +1,115 @@
 use super::*;
+use crate::storage::call::{
+    CallDefBucketBaseline, CallDeltaOutcome, CallFamilyWrite, CallOwnerBaseline,
+    CallOwnerDelta, CallResolvedEdge, CallSiteBaseline, CallStore,
+};
+use crate::rels::{CallPathRefreshOutcome, PathRefreshContext};
 
 impl Engine {
+    pub(crate) fn refresh_call_rels_delta(
+        &self,
+        context: &PathRefreshContext<'_>,
+    ) -> Result<CallPathRefreshOutcome> {
+        if context.module_full_refresh {
+            return Ok(CallPathRefreshOutcome::Unsupported("call-module-full-refresh"));
+        }
+        if context.module_dependency_changed {
+            return Ok(CallPathRefreshOutcome::Unsupported("call-module-dependency-changed"));
+        }
+        if context.changed_paths.len() != 1 {
+            return Ok(CallPathRefreshOutcome::Unsupported("call-path-count"));
+        }
+        let path = context.changed_paths.iter().next().unwrap();
+        if !self.root.join(path).is_file() {
+            return Ok(CallPathRefreshOutcome::Unsupported("call-path-not-existing"));
+        }
+
+        let files = self.extract_file_set()?;
+        let work_files: Vec<ExtractFile> = files.iter()
+            .filter(|file| file.2 == "WORK")
+            .cloned()
+            .collect();
+        let repos: HashSet<&str> = work_files.iter().map(|file| file.0.as_str()).collect();
+        if repos.len() != 1 {
+            return Ok(CallPathRefreshOutcome::Unsupported("call-multi-repo-corpus"));
+        }
+        let matching: Vec<&ExtractFile> = work_files.iter()
+            .filter(|file| file.1 == *path)
+            .collect();
+        if matching.len() != 1 {
+            return Ok(CallPathRefreshOutcome::Unsupported("call-owner-coordinate"));
+        }
+        let (repo, path, rev, fact_digest) = matching[0];
+        let digest = self.extract_input_digest("call", "WORK", &work_files, true);
+        if self.load_rel_digest(&extract_digest_key("call", "WORK"))? == Some(digest) {
+            return Ok(CallPathRefreshOutcome::Unchanged);
+        }
+
+        let roots = self.repo_roots();
+        let froot = roots.get(repo).map(|root| root.as_path()).unwrap_or(&self.root);
+        let key = (repo.clone(), path.clone(), fact_digest.clone());
+        let (rid, facts) = if let Some((rid, facts)) = self.call_facts_cache.borrow().get(&key) {
+            (rid.clone(), facts.clone())
+        } else {
+            let Some(lang) = typegraph::type_langs().iter().find(|lang| lang.matches(path)) else {
+                return Ok(CallPathRefreshOutcome::Unsupported("call-language-unsupported"));
+            };
+            let content = read_content(froot, rev, path)?;
+            let rid = repo_id_of(froot, path, repo);
+            let facts = Arc::new(lang.extract_calls(path, &content));
+            let mut cache = self.call_facts_cache.borrow_mut();
+            cache.retain(|(cached_repo, cached_path, cached_hash), _| {
+                cached_repo != repo || cached_path != path || cached_hash == fact_digest
+            });
+            cache.insert(key, (rid.clone(), facts.clone()));
+            (rid, facts)
+        };
+
+        let mut sites = Vec::with_capacity(facts.sites.len());
+        let mut ordinals: HashMap<(&str, u32), u32> = HashMap::new();
+        for site in &facts.sites {
+            let caller = facts.defs.iter()
+                .filter(|def| def.file == site.file && site.line >= def.line && site.line <= def.end)
+                .min_by_key(|def| def.end - def.line)
+                .map(|def| format!("{rid}::{}", def.sym))
+                .unwrap_or_default();
+            let ordinal = ordinals.entry((site.file.as_str(), site.line)).or_default();
+            let occurrence = format!("{}:{}:{}", site.file, site.line, *ordinal);
+            *ordinal += 1;
+            sites.push(CallSiteBaseline {
+                occurrence,
+                caller,
+                callee: site.callee.clone(),
+                classification: classify_call_kind(&site.callee).map(str::to_string),
+                file: site.file.clone(),
+                line: site.line,
+                edge: None,
+            });
+        }
+        let owner = CallOwnerBaseline {
+            repo: rid,
+            rev: rev.clone(),
+            path: path.clone(),
+            fact_digest: fact_digest.clone(),
+            def_digest: call_def_digest(&facts.defs),
+            sites,
+        };
+        let outcome = self.db.apply_call_owner_delta(CallOwnerDelta {
+            owner,
+            scip_dependency_digest: self.scip_resolution_dependency_digest("WORK"),
+            module_dependency_digest: self.module_resolution_dependency_digest("WORK"),
+        })?;
+        match outcome {
+            CallDeltaOutcome::Applied => {
+                self.save_rel_digest(&extract_digest_key("call", "WORK"), &digest)?;
+                Ok(CallPathRefreshOutcome::Applied)
+            }
+            CallDeltaOutcome::Unsupported(reason) => {
+                Ok(CallPathRefreshOutcome::Unsupported(reason))
+            }
+        }
+    }
+
     /// Wholesale repopulation of the Phase D call-graph relations. Same shape
     /// as `refresh_type_rels`: parallel per-file extraction via the language
     /// registry, one write per relation. Extractors return empty `CallFacts`
@@ -19,6 +128,12 @@ impl Engine {
 
         let root = self.root.clone();
         let roots = self.repo_roots();
+        let mut fact_digest_by_owner: HashMap<(String, String, String), String> = HashMap::new();
+        for (repo, path, rev, digest) in &files {
+            let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
+            let rid = repo_id_of(froot, path, repo);
+            fact_digest_by_owner.insert((rid, rev.clone(), path.clone()), digest.clone());
+        }
         let facts: Vec<(String, String, String, Arc<typegraph::CallFacts>)> =
             cached_facts(&self.call_facts_cache, &files, &self.extract_files_parsed, |repo, path, rev| {
                 let lang = typegraph::type_langs().iter().find(|l| l.matches(path))?;
@@ -59,6 +174,17 @@ impl Engine {
                 def_by_file.entry((repo.as_str(), d.file.as_str(), rev.as_str())).or_default().push((d.line, d.end, d.sym.as_str()));
             }
         }
+        let mut def_buckets: Vec<CallDefBucketBaseline> = by_name
+            .iter()
+            .map(|(&(repo, rev, name), syms)| CallDefBucketBaseline {
+                repo: repo.to_string(),
+                rev: rev.to_string(),
+                name: name.to_string(),
+                candidate_count: syms.len(),
+                unique_sym: (syms.len() == 1).then(|| format!("{repo}::{}", syms[0])),
+            })
+            .collect();
+        def_buckets.sort_by(|a, b| (&a.repo, &a.rev, &a.name).cmp(&(&b.repo, &b.rev, &b.name)));
         let scip = self.scip_name_defs().unwrap_or_default();
         // Occurrence-level override input: the exact symbol at each call's span,
         // built once for the whole family (see `ScipOccIndex`). Empty when no
@@ -139,6 +265,7 @@ impl Engine {
         let mut site_rows: Vec<Vec<Value>> = Vec::new();
         let mut edge_rev_rows: Vec<Vec<Value>> = Vec::new();
         let mut name_rows: Vec<Vec<Value>> = Vec::new();
+        let mut owners: Vec<CallOwnerBaseline> = Vec::with_capacity(facts.len());
         // call_kind is keyed by (caller, kind); a fn with both a read and a
         // write emits two rows. Accumulate in a set so multiple write sites in
         // the same fn collapse to one (fn, "write") row.
@@ -148,7 +275,10 @@ impl Engine {
         // sym (same crux as type_entity_rev).
         let mut seen_def: HashSet<(&str, &str, &str)> = HashSet::new();
         let mut seen_edge: HashSet<(String, String, &str)> = HashSet::new();
-        for (repo, _path, rev, f) in &facts {
+        let mut seen_owner: HashSet<(&str, &str, &str)> = HashSet::new();
+        for (repo, path, rev, f) in &facts {
+            let mut owned_sites = Vec::with_capacity(f.sites.len());
+            let mut occurrence_ordinals: HashMap<(&str, u32), u32> = HashMap::new();
             for d in &f.defs {
                 if seen_def.insert((repo.as_str(), d.sym.as_str(), rev.as_str())) {
                     let qsym = format!("{repo}::{}", d.sym);
@@ -166,20 +296,53 @@ impl Engine {
                 // rail needs (a fn that only reads through its .conn() does not
                 // fire). Heuristic by name: $R.execute(...) is a write on any
                 // receiver; the rail's conn_fn join narrows to db-shaped sites.
+                let classification = classify_call_kind(&s.callee);
                 if !caller.is_empty() {
-                    if let Some(k) = classify_call_kind(&s.callee) {
+                    if let Some(k) = classification {
                         kind_set.insert((caller.clone(), k));
                     }
                 }
+                let ordinal = occurrence_ordinals.entry((s.file.as_str(), s.line)).or_default();
+                let occurrence = format!("{}:{}:{}", s.file, s.line, *ordinal);
+                *ordinal += 1;
                 // call_edge is the resolved graph: emit only when both endpoints
                 // resolve to def syms, so closure(call_edge) walks one identity
                 // space (same contract as type_link). Unresolved calls stay in
                 // call_site with their bare callee.
-                if let Some(callee_sym) = resolve_callee(repo, rev, &s.file, &s.callee, s.line) {
+                let callee_sym = resolve_callee(repo, rev, &s.file, &s.callee, s.line);
+                let edge = if let Some(callee_sym) = callee_sym {
                     if !caller.is_empty() && seen_edge.insert((caller.clone(), callee_sym.clone(), rev)) {
                         edge_rev_rows.push(vec![t(&caller), t(&callee_sym), t("call"), t(rev)]);
                     }
-                }
+                    (!caller.is_empty()).then(|| CallResolvedEdge {
+                        caller: caller.clone(),
+                        callee: callee_sym,
+                    })
+                } else {
+                    None
+                };
+                owned_sites.push(CallSiteBaseline {
+                    occurrence,
+                    caller,
+                    callee: s.callee.clone(),
+                    classification: classification.map(str::to_string),
+                    file: s.file.clone(),
+                    line: s.line,
+                    edge,
+                });
+            }
+            if seen_owner.insert((repo.as_str(), rev.as_str(), path.as_str())) {
+                owners.push(CallOwnerBaseline {
+                    repo: repo.clone(),
+                    rev: rev.clone(),
+                    path: path.clone(),
+                    fact_digest: fact_digest_by_owner
+                        .get(&(repo.clone(), rev.clone(), path.clone()))
+                        .cloned()
+                        .unwrap_or_default(),
+                    def_digest: call_def_digest(&f.defs),
+                    sites: owned_sites,
+                });
             }
         }
 
@@ -195,37 +358,68 @@ impl Engine {
         // (whole-corpus emit in D5.1 = full `refresh_rel` wipe; see
         // refresh_type_rels' matching comment).
         let all_revs = Self::corpus_revs(&files);
-        let all_rev_refs: Vec<&str> = all_revs.iter().map(|s| s.as_str()).collect();
-        self.refresh_rel_for_revs("call_def_rev", &["repo", "sym", "kind", "file", "line", "end", "rev"], &def_rev_rows, &all_rev_refs)?;
-        self.refresh_rel("call_site", &["repo", "caller", "callee", "file", "line"], &site_rows)?;
-        self.refresh_rel_for_revs("call_edge_rev", &["caller", "callee", "kind", "rev"], &edge_rev_rows, &all_rev_refs)?;
-        self.refresh_rel("call_name", &["sym", "name"], &name_rows)?;
-        self.refresh_rel("call_kind", &["fn", "kind"], &kind_rows)?;
-        self.rebuild_legacy_call_rels()?;
+        let def_rev_rows = self.encode_rel_rows(
+            "call_def_rev",
+            &["repo", "sym", "kind", "file", "line", "end", "rev"],
+            &def_rev_rows,
+        )?;
+        let site_rows = self.encode_rel_rows(
+            "call_site",
+            &["repo", "caller", "callee", "file", "line"],
+            &site_rows,
+        )?;
+        let edge_rev_rows = self.encode_rel_rows(
+            "call_edge_rev",
+            &["caller", "callee", "kind", "rev"],
+            &edge_rev_rows,
+        )?;
+        let name_rows = self.encode_rel_rows("call_name", &["sym", "name"], &name_rows)?;
+        let kind_rows = self.encode_rel_rows("call_kind", &["fn", "kind"], &kind_rows)?;
+        self.db.persist_call_family(CallFamilyWrite {
+            def_rev_rows: &def_rev_rows,
+            site_rows: &site_rows,
+            edge_rev_rows: &edge_rev_rows,
+            name_rows: &name_rows,
+            kind_rows: &kind_rows,
+            revs: &all_revs,
+            owners: &owners,
+            def_buckets: &def_buckets,
+            scip_dependency_digest: self.scip_resolution_dependency_digest("WORK"),
+            module_dependency_digest: self.module_resolution_dependency_digest("WORK"),
+        })?;
         // Persisted only after the writes land, so a failed refresh retries.
         for (rev, d) in &moved { self.save_rel_digest(&extract_digest_key("call", rev), d)?; }
         Ok(true)
     }
 
-    /// Rebuild the convenient rev-less `call_edge` / `call_def` from their
-    /// rev-aware twins, deduped across revs. Same shape as
-    /// `rebuild_legacy_type_rels`: the `_rev` table is the source of truth, the
-    /// legacy rel is the closure/point-query target for the single-rev daemon.
+    /// Keep rev-sweep callers on the same storage-owned compatibility rebuild
+    /// used by the bundled call-family write.
     pub(crate) fn rebuild_legacy_call_rels(&self) -> Result<()> {
-        let edge = tbl("call_edge");
-        let edge_rev = tbl("call_edge_rev");
-        self.db.exec(&format!("DELETE FROM {edge}"))?;
-        self.db.exec(&format!(
-            "INSERT OR IGNORE INTO {edge} (\"caller\", \"callee\", \"kind\") \
-             SELECT \"caller\", \"callee\", \"kind\" FROM {edge_rev}"
-        ))?;
-        let def = tbl("call_def");
-        let def_rev = tbl("call_def_rev");
-        self.db.exec(&format!("DELETE FROM {def}"))?;
-        self.db.exec(&format!(
-            "INSERT OR IGNORE INTO {def} (\"repo\", \"sym\", \"kind\", \"file\", \"line\", \"end\") \
-             SELECT \"repo\", \"sym\", \"kind\", \"file\", \"line\", \"end\" FROM {def_rev}"
-        ))?;
-        Ok(())
+        CallStore::rebuild_legacy_call_rels(&self.db)
     }
+}
+
+fn call_def_digest(defs: &[typegraph::CallDef]) -> [u8; 32] {
+    let mut identities: Vec<(&str, &str, &str, &str, u32, u32)> = defs
+        .iter()
+        .map(|def| (
+            def.sym.as_str(),
+            def.name.as_str(),
+            def.kind.tag(),
+            def.file.as_str(),
+            def.line,
+            def.end,
+        ))
+        .collect();
+    identities.sort_unstable();
+    let mut hash = blake3::Hasher::new();
+    for (sym, name, kind, file, line, end) in identities {
+        for value in [sym, name, kind, file] {
+            hash.update(&(value.len() as u64).to_le_bytes());
+            hash.update(value.as_bytes());
+        }
+        hash.update(&line.to_le_bytes());
+        hash.update(&end.to_le_bytes());
+    }
+    *hash.finalize().as_bytes()
 }

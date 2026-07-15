@@ -2,6 +2,7 @@ use super::*;
 
 impl Engine {
     /// already match, so a converged tick leaves the tree untouched.
+    // ARCH {"url":"engine/gen","role":"output"}
     #[tracing::instrument(skip_all, level = "debug")]
     pub(crate) fn run_gens(&mut self, prog: &Program, quiet: bool) -> Result<()> {
         let mut written: Vec<String> = Vec::new();
@@ -16,7 +17,9 @@ impl Engine {
                 if let Item::Rule(r) = item {
                     if let Some(o) = &r.origin {
                         if let Some(a) = crate::repo::nearest_git(o) {
-                            if !write_roots.contains(&a) { write_roots.push(a); }
+                            if !write_roots.contains(&a) {
+                                write_roots.push(a);
+                            }
                         }
                     }
                 }
@@ -44,7 +47,16 @@ impl Engine {
         let mut appends = Appends::default();
         for item in &prog.items {
             if let Item::Gen(g) = item {
-                self.run_gen(g, &mut written, &mut splices, &mut cursors, &mut zones, &mut claimed, &mut appends, &write_roots)?;
+                self.run_gen(
+                    g,
+                    &mut written,
+                    &mut splices,
+                    &mut cursors,
+                    &mut zones,
+                    &mut claimed,
+                    &mut appends,
+                    &write_roots,
+                )?;
             }
         }
         self.apply_splices(&splices, &mut written, &write_roots)?;
@@ -57,28 +69,48 @@ impl Engine {
         Ok(())
     }
 
-    fn run_gen(&mut self, g: &GenRule, written: &mut Vec<String>, splices: &mut Splices, cursors: &mut Cursors, zones: &mut Zones, claimed: &mut HashMap<String, ()>, appends: &mut Appends, write_roots: &[PathBuf]) -> Result<()> {
+    fn run_gen(
+        &mut self,
+        g: &GenRule,
+        written: &mut Vec<String>,
+        splices: &mut Splices,
+        cursors: &mut Cursors,
+        zones: &mut Zones,
+        claimed: &mut HashMap<String, ()>,
+        appends: &mut Appends,
+        write_roots: &[PathBuf],
+    ) -> Result<()> {
         // Target vars lead the SELECT so grouping reads prefix columns; the
         // ORDER BY over all vars makes render order deterministic.
         let target_vars: Vec<String> = match &g.target {
             GenTarget::File { path_tmpl, .. } => tmpl_holes(path_tmpl),
             GenTarget::Splice { path, l0, l1 } => vec![var_of(path)?, var_of(l0)?, var_of(l1)?],
             GenTarget::Cursor { path, lo, hi, .. } => vec![var_of(path)?, var_of(lo)?, var_of(hi)?],
-            GenTarget::Zone { path_tmpl, name_tmpl } => {
+            GenTarget::Zone {
+                path_tmpl,
+                name_tmpl,
+            } => {
                 // Templates carry their own {var} holes; pull them in
                 // first-appearance order (tmpl_holes dedups), ahead of the row
                 // template's holes (the run_gen loop already merges target vars
                 // first, then row vars, so this is consistent).
                 let mut v: Vec<String> = Vec::new();
-                for h in tmpl_holes(path_tmpl).into_iter().chain(tmpl_holes(name_tmpl)) {
-                    if !v.contains(&h) { v.push(h); }
+                for h in tmpl_holes(path_tmpl)
+                    .into_iter()
+                    .chain(tmpl_holes(name_tmpl))
+                {
+                    if !v.contains(&h) {
+                        v.push(h);
+                    }
                 }
                 v
             }
         };
         let mut vars = target_vars.clone();
         for v in tmpl_holes(&g.row_tmpl) {
-            if !vars.contains(&v) { vars.push(v); }
+            if !vars.contains(&v) {
+                vars.push(v);
+            }
         }
         let sql = crate::lower::lower_gen(&vars, &g.body, &self.rels)?;
         let rows: Vec<HashMap<String, String>> = {
@@ -111,8 +143,13 @@ impl Engine {
                     if path.starts_with('/') || path.split('/').any(|s| s == "..") {
                         bail!("gen path `{path}` escapes the root");
                     }
-                    if !groups.contains_key(&path) { order.push(path.clone()); }
-                    groups.entry(path).or_default().push(render_tmpl(&g.row_tmpl, m));
+                    if !groups.contains_key(&path) {
+                        order.push(path.clone());
+                    }
+                    groups
+                        .entry(path)
+                        .or_default()
+                        .push(render_tmpl(&g.row_tmpl, m));
                 }
                 if *append {
                     // File-append: accumulate this rule's rows (already ORDER
@@ -123,7 +160,9 @@ impl Engine {
                     // Flushed once in apply_appends after every gen rule ran.
                     for p in order {
                         let rows = groups.remove(&p).unwrap();
-                        if !appends.groups.contains_key(&p) { appends.keys.push(p.clone()); }
+                        if !appends.groups.contains_key(&p) {
+                            appends.keys.push(p.clone());
+                        }
                         appends.groups.entry(p).or_default().extend(rows);
                     }
                     return Ok(());
@@ -134,17 +173,23 @@ impl Engine {
                 // and emit them from a single gen rule (or use :append).
                 for p in &order {
                     if claimed.insert(p.clone(), ()).is_some() {
-                        bail!("two gen rules write the same file `{p}`; file emits don't \
+                        bail!(
+                            "two gen rules write the same file `{p}`; file emits don't \
                                concatenate across rules (last would win). Union the rows into \
                                one relation and emit from a single gen rule, or use \
-                               gen(:append, \"{p}\", ...) to concatenate in program order.");
+                               gen(:append, \"{p}\", ...) to concatenate in program order."
+                        );
                     }
                 }
                 for p in order {
                     let content = format!("{}\n", groups[&p].join("\n"));
                     let full = resolve_write_full(write_roots, &p);
-                    if std::fs::read(&full).ok().as_deref() == Some(content.as_bytes()) { continue; }
-                    if let Some(dir) = full.parent() { std::fs::create_dir_all(dir)?; }
+                    if std::fs::read(&full).ok().as_deref() == Some(content.as_bytes()) {
+                        continue;
+                    }
+                    if let Some(dir) = full.parent() {
+                        std::fs::create_dir_all(dir)?;
+                    }
                     self.journaled_write(&full, &p, content.as_bytes())?;
                     written.push(p);
                 }
@@ -155,16 +200,24 @@ impl Engine {
                 // happen once, in apply_splices, after every gen rule ran.
                 for m in &rows {
                     let path = m[&vars[0]].clone();
-                    let l0: i64 = m[&vars[1]].parse()
-                        .map_err(|_| anyhow::anyhow!("gen splice l0 must be an int, got `{}`", m[&vars[1]]))?;
-                    let l1: i64 = m[&vars[2]].parse()
-                        .map_err(|_| anyhow::anyhow!("gen splice l1 must be an int, got `{}`", m[&vars[2]]))?;
+                    let l0: i64 = m[&vars[1]].parse().map_err(|_| {
+                        anyhow::anyhow!("gen splice l0 must be an int, got `{}`", m[&vars[1]])
+                    })?;
+                    let l1: i64 = m[&vars[2]].parse().map_err(|_| {
+                        anyhow::anyhow!("gen splice l1 must be an int, got `{}`", m[&vars[2]])
+                    })?;
                     if l1 <= l0 {
                         bail!("gen splice needs l1 > l0 (paired marker lines), got {l0}..{l1} in {path}");
                     }
                     let key = (path, l0, l1);
-                    if !splices.groups.contains_key(&key) { splices.keys.push(key.clone()); }
-                    splices.groups.entry(key).or_default().push(render_tmpl(&g.row_tmpl, m));
+                    if !splices.groups.contains_key(&key) {
+                        splices.keys.push(key.clone());
+                    }
+                    splices
+                        .groups
+                        .entry(key)
+                        .or_default()
+                        .push(render_tmpl(&g.row_tmpl, m));
                 }
             }
             GenTarget::Cursor { mode, .. } => {
@@ -174,19 +227,41 @@ impl Engine {
                 // -> ref(id, _, path, lo, hi) -> gen(:mode, path, lo, hi, ...).
                 for m in &rows {
                     let path = m[&vars[0]].clone();
-                    let lo: i64 = m[&vars[1]].parse()
-                        .map_err(|_| anyhow::anyhow!("gen :{} lo must be an int, got `{}`", mode.tag(), m[&vars[1]]))?;
-                    let hi: i64 = m[&vars[2]].parse()
-                        .map_err(|_| anyhow::anyhow!("gen :{} hi must be an int, got `{}`", mode.tag(), m[&vars[2]]))?;
+                    let lo: i64 = m[&vars[1]].parse().map_err(|_| {
+                        anyhow::anyhow!(
+                            "gen :{} lo must be an int, got `{}`",
+                            mode.tag(),
+                            m[&vars[1]]
+                        )
+                    })?;
+                    let hi: i64 = m[&vars[2]].parse().map_err(|_| {
+                        anyhow::anyhow!(
+                            "gen :{} hi must be an int, got `{}`",
+                            mode.tag(),
+                            m[&vars[2]]
+                        )
+                    })?;
                     if hi < lo {
-                        bail!("gen :{} needs hi >= lo, got {lo}..{hi} in {path}", mode.tag());
+                        bail!(
+                            "gen :{} needs hi >= lo, got {lo}..{hi} in {path}",
+                            mode.tag()
+                        );
                     }
                     let key = (path.clone(), lo, hi, *mode);
-                    if !cursors.groups.contains_key(&key) { cursors.keys.push(key.clone()); }
-                    cursors.groups.entry(key).or_default().push(render_tmpl(&g.row_tmpl, m));
+                    if !cursors.groups.contains_key(&key) {
+                        cursors.keys.push(key.clone());
+                    }
+                    cursors
+                        .groups
+                        .entry(key)
+                        .or_default()
+                        .push(render_tmpl(&g.row_tmpl, m));
                 }
             }
-            GenTarget::Zone { path_tmpl, name_tmpl } => {
+            GenTarget::Zone {
+                path_tmpl,
+                name_tmpl,
+            } => {
                 // Named-marker zone: path + name are {var}-hole templates,
                 // rendered per row. At apply time the engine resolves each
                 // rendered name to a `BEGIN: <name>`/`END:` line pair and
@@ -199,8 +274,14 @@ impl Engine {
                         bail!("gen :zone name rendered empty in {path}");
                     }
                     let key = (path, name);
-                    if !zones.groups.contains_key(&key) { zones.keys.push(key.clone()); }
-                    zones.groups.entry(key).or_default().push(render_tmpl(&g.row_tmpl, m));
+                    if !zones.groups.contains_key(&key) {
+                        zones.keys.push(key.clone());
+                    }
+                    zones
+                        .groups
+                        .entry(key)
+                        .or_default()
+                        .push(render_tmpl(&g.row_tmpl, m));
                 }
             }
         }
@@ -215,9 +296,18 @@ impl Engine {
     /// assumes every region's line window refers to the ORIGINAL line list.
     /// Two regions whose [l0, l1) windows intersect would corrupt, so bail
     /// loudly.
-    fn apply_splices(&self, splices: &Splices, written: &mut Vec<String>, write_roots: &[PathBuf]) -> Result<()> {
+    fn apply_splices(
+        &self,
+        splices: &Splices,
+        written: &mut Vec<String>,
+        write_roots: &[PathBuf],
+    ) -> Result<()> {
         let mut files: Vec<&str> = Vec::new();
-        for (p, _, _) in &splices.keys { if !files.contains(&p.as_str()) { files.push(p); } }
+        for (p, _, _) in &splices.keys {
+            if !files.contains(&p.as_str()) {
+                files.push(p);
+            }
+        }
         for p in files {
             let full = resolve_write_full(write_roots, p);
             let old = std::fs::read_to_string(&full)
@@ -230,16 +320,24 @@ impl Engine {
             regions.sort_by_key(|k| k.1);
             for w in regions.windows(2) {
                 if w[0].2 > w[1].1 {
-                    bail!("gen splice regions overlap in {p}: lines [{},{}) and [{},{}) \
+                    bail!(
+                        "gen splice regions overlap in {p}: lines [{},{}) and [{},{}) \
                           collide; merge into one rule or disjoint the windows",
-                          w[0].1, w[0].2, w[1].1, w[1].2);
+                        w[0].1,
+                        w[0].2,
+                        w[1].1,
+                        w[1].2
+                    );
                 }
             }
             regions.sort_by_key(|k| std::cmp::Reverse(k.1));
             for k in regions {
                 let (l0, l1) = (k.1 as usize, k.2 as usize);
                 if l1 > lines.len() {
-                    bail!("gen splice region {l0}..{l1} out of range in {p} ({} lines)", lines.len());
+                    bail!(
+                        "gen splice region {l0}..{l1} out of range in {p} ({} lines)",
+                        lines.len()
+                    );
                 }
                 lines.splice(l0..l1 - 1, splices.groups[k].iter().cloned());
             }
@@ -257,16 +355,28 @@ impl Engine {
     /// dir-create as the non-append File arm. A path also written by a plain
     /// File rule (in `claimed`) is a clobber — bail, mirroring the claimed-path
     /// stance (mixing the two forms on one file would race last-wins).
-    fn apply_appends(&self, appends: &Appends, claimed: &HashMap<String, ()>, written: &mut Vec<String>, write_roots: &[PathBuf]) -> Result<()> {
+    fn apply_appends(
+        &self,
+        appends: &Appends,
+        claimed: &HashMap<String, ()>,
+        written: &mut Vec<String>,
+        write_roots: &[PathBuf],
+    ) -> Result<()> {
         for p in &appends.keys {
             if claimed.contains_key(p) {
-                bail!("file `{p}` is written by both a plain gen rule and gen(:append, ...); \
-                       pick one form for a given file");
+                bail!(
+                    "file `{p}` is written by both a plain gen rule and gen(:append, ...); \
+                       pick one form for a given file"
+                );
             }
             let content = format!("{}\n", appends.groups[p].join("\n"));
             let full = resolve_write_full(write_roots, p);
-            if std::fs::read(&full).ok().as_deref() == Some(content.as_bytes()) { continue; }
-            if let Some(dir) = full.parent() { std::fs::create_dir_all(dir)?; }
+            if std::fs::read(&full).ok().as_deref() == Some(content.as_bytes()) {
+                continue;
+            }
+            if let Some(dir) = full.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
             self.journaled_write(&full, p, content.as_bytes())?;
             written.push(p.clone());
         }
@@ -290,13 +400,22 @@ impl Engine {
     /// corruption), so bail loudly — same stance as the file-emit claimed-path
     /// bail. Regions keyed identically (same path/lo/hi/mode) already concat
     /// their rows into one payload, so this only fires across DISTINCT windows.
-    fn apply_cursors(&self, cursors: &Cursors, written: &mut Vec<String>, write_roots: &[PathBuf]) -> Result<()> {
+    fn apply_cursors(
+        &self,
+        cursors: &Cursors,
+        written: &mut Vec<String>,
+        write_roots: &[PathBuf],
+    ) -> Result<()> {
         let mut files: Vec<&str> = Vec::new();
-        for (p, _, _, _) in &cursors.keys { if !files.contains(&p.as_str()) { files.push(p); } }
+        for (p, _, _, _) in &cursors.keys {
+            if !files.contains(&p.as_str()) {
+                files.push(p);
+            }
+        }
         for p in files {
             let full = resolve_write_full(write_roots, p);
-            let original = std::fs::read(&full)
-                .map_err(|e| anyhow::anyhow!("gen :mode target {p}: {e}"))?;
+            let original =
+                std::fs::read(&full).map_err(|e| anyhow::anyhow!("gen :mode target {p}: {e}"))?;
             let mut regions: Vec<&(String, i64, i64, SpliceMode)> =
                 cursors.keys.iter().filter(|k| k.0 == p).collect();
             // Disjointness gate: ascending by lo, require each region's hi <=
@@ -305,9 +424,16 @@ impl Engine {
             regions.sort_by_key(|k| k.1);
             for w in regions.windows(2) {
                 if w[0].2 > w[1].1 {
-                    bail!("gen :{} and :{} regions overlap in {p}: [{},{}) and [{},{}) \
+                    bail!(
+                        "gen :{} and :{} regions overlap in {p}: [{},{}) and [{},{}) \
                           collide; merge into one rule or disjoint the windows",
-                          w[0].3.tag(), w[1].3.tag(), w[0].1, w[0].2, w[1].1, w[1].2);
+                        w[0].3.tag(),
+                        w[1].3.tag(),
+                        w[0].1,
+                        w[0].2,
+                        w[1].1,
+                        w[1].2
+                    );
                 }
             }
             // Right-to-left by lo so prior inserts don't shift later offsets.
@@ -321,14 +447,21 @@ impl Engine {
                 // already share (path, lo, hi, mode); render their templates in
                 // order and concatenate so multi-row groups behave like
                 // line-splice (rows join into one payload).
-                let payload: Vec<u8> = cursors.groups[k].iter()
+                let payload: Vec<u8> = cursors.groups[k]
+                    .iter()
                     .flat_map(|s| s.as_bytes().iter().copied())
                     .collect();
                 match mode {
-                    SpliceMode::Replace => { buf.splice(lo..hi, payload); }
-                    SpliceMode::Append  => { buf.splice(hi..hi, payload); }
-                    SpliceMode::Prepend => { buf.splice(lo..lo, payload); }
-                    SpliceMode::Wrap    => {
+                    SpliceMode::Replace => {
+                        buf.splice(lo..hi, payload);
+                    }
+                    SpliceMode::Append => {
+                        buf.splice(hi..hi, payload);
+                    }
+                    SpliceMode::Prepend => {
+                        buf.splice(lo..lo, payload);
+                    }
+                    SpliceMode::Wrap => {
                         // Insert at hi first so the lo offset stays valid, then lo.
                         buf.splice(hi..hi, payload.clone());
                         buf.splice(lo..lo, payload);
@@ -352,11 +485,22 @@ impl Engine {
     /// the rewrite). Indentation: each emitted row inherits the BEGIN marker's
     /// leading whitespace when present, so a zone inside an indented block
     /// stays indented without per-row whitespace in the template.
-    fn apply_zones(&self, zones: &Zones, written: &mut Vec<String>, write_roots: &[PathBuf]) -> Result<()> {
-        if zones.keys.is_empty() { return Ok(()); }
+    fn apply_zones(
+        &self,
+        zones: &Zones,
+        written: &mut Vec<String>,
+        write_roots: &[PathBuf],
+    ) -> Result<()> {
+        if zones.keys.is_empty() {
+            return Ok(());
+        }
         // Group zone keys by file (one read per file).
         let mut files: Vec<&str> = Vec::new();
-        for (p, _) in &zones.keys { if !files.contains(&p.as_str()) { files.push(p); } }
+        for (p, _) in &zones.keys {
+            if !files.contains(&p.as_str()) {
+                files.push(p);
+            }
+        }
         for p in files {
             let full = resolve_write_full(write_roots, p);
             let old = std::fs::read_to_string(&full)
@@ -367,10 +511,12 @@ impl Engine {
             let mut found: Vec<(usize, usize, &str, &Vec<String>)> = Vec::new();
             for (path, name) in zones.keys.iter().filter(|(pp, _)| pp == p) {
                 let payload = &zones.groups[&(path.clone(), name.clone())];
-                let (begin_line, end_line) = find_zone(&lines, name)
-                    .ok_or_else(|| anyhow::anyhow!(
+                let (begin_line, end_line) = find_zone(&lines, name).ok_or_else(|| {
+                    anyhow::anyhow!(
                         "gen :zone `{name}` not found in {p}; expected a `BEGIN: {name}` line \
-                         followed by an `END:` line (any comment prefix works: // # /* ; <!--)"))?;
+                         followed by an `END:` line (any comment prefix works: // # /* ; <!--)"
+                    )
+                })?;
                 found.push((begin_line, end_line, name.as_str(), payload));
             }
             found.sort_by_key(|(b, _, _, _)| std::cmp::Reverse(*b));
@@ -379,15 +525,20 @@ impl Engine {
                 // every payload row that does not already carry it (avoid
                 // double-indenting a template that already includes leading
                 // whitespace).
-                let indent: String = lines[begin].chars()
-                    .take_while(|c| *c == ' ' || *c == '\t').collect();
-                let rendered: Vec<String> = payload.iter().map(|row| {
-                    if !indent.is_empty() && !row.starts_with(&indent) {
-                        format!("{indent}{row}")
-                    } else {
-                        row.clone()
-                    }
-                }).collect();
+                let indent: String = lines[begin]
+                    .chars()
+                    .take_while(|c| *c == ' ' || *c == '\t')
+                    .collect();
+                let rendered: Vec<String> = payload
+                    .iter()
+                    .map(|row| {
+                        if !indent.is_empty() && !row.starts_with(&indent) {
+                            format!("{indent}{row}")
+                        } else {
+                            row.clone()
+                        }
+                    })
+                    .collect();
                 // Replace lines STRICTLY between begin and end (exclusive both):
                 // indices [begin+1, end). The markers stay.
                 lines.splice((begin + 1)..end, rendered);
@@ -400,7 +551,8 @@ impl Engine {
             }
         }
         Ok(())
-    }}
+    }
+}
 /// Locate a NAMED zone in a file's line list. Returns `(begin_idx, end_idx)`
 /// 0-based LINE INDICES where `lines[begin_idx]` carries `BEGIN: <name>` and
 /// `lines[end_idx]` carries the matching `END:`. The caller splices the
@@ -431,7 +583,8 @@ fn find_zone(lines: &[String], name: &str) -> Option<(usize, usize)> {
 fn zone_marker_name(line: &str, kind: &str) -> Option<String> {
     let trimmed = line.trim();
     // Strip a leading comment prefix if present (any of the common forms).
-    let body = trimmed.trim_start_matches("//")
+    let body = trimmed
+        .trim_start_matches("//")
         .trim_start_matches('#')
         .trim_start_matches("/*")
         .trim_start_matches('*')
@@ -439,9 +592,7 @@ fn zone_marker_name(line: &str, kind: &str) -> Option<String> {
         .trim_start_matches("<!--")
         .trim();
     // Strip a trailing comment closer.
-    let body = body.trim_end_matches("-->")
-        .trim_end_matches("*/")
-        .trim();
+    let body = body.trim_end_matches("-->").trim_end_matches("*/").trim();
     let keyword = format!("{kind}:");
     let after = body.strip_prefix(&keyword)?;
     let name = after.trim();
@@ -503,19 +654,23 @@ fn tmpl_holes(t: &str) -> Vec<String> {
         if b[i] == b'{' {
             // `{{` → literal `{`, skip past both so the inner text is not parsed
             // as a hole name.
-            if b.get(i + 1) == Some(&b'{') { i += 2; continue; }
+            if b.get(i + 1) == Some(&b'{') {
+                i += 2;
+                continue;
+            }
             // `{name}` → hole ONLY if every byte from i+1 to the closing `}` is
             // a plain identifier char. Bail on the first non-identifier byte
             // (treat the `{` as literal); otherwise we'd greedy-scan past an
             // inner `{{x}}` mustache run and mis-parse it as a hole.
             let mut j = i + 1;
-            while j < b.len() && b[j] != b'}'
-                && (b[j].is_ascii_alphanumeric() || b[j] == b'_') {
+            while j < b.len() && b[j] != b'}' && (b[j].is_ascii_alphanumeric() || b[j] == b'_') {
                 j += 1;
             }
             if j < b.len() && b[j] == b'}' && j > i + 1 {
                 let name = &t[i + 1..j];
-                if !out.iter().any(|v| v == name) { out.push(name.to_string()); }
+                if !out.iter().any(|v| v == name) {
+                    out.push(name.to_string());
+                }
                 i = j + 1;
                 continue;
             }
@@ -538,14 +693,15 @@ fn render_tmpl(t: &str, vals: &HashMap<String, String>) -> String {
     while i < b.len() {
         if b[i] == b'{' {
             if b.get(i + 1) == Some(&b'{') {
-                out.push('{'); i += 2; continue;
+                out.push('{');
+                i += 2;
+                continue;
             }
             // Hole ONLY if every byte from i+1 to the closing `}` is a plain
             // identifier char. Same bail-on-non-identifier rule as tmpl_holes,
             // so a `{` followed by `"`, `{`, whitespace, etc. is literal text.
             let mut j = i + 1;
-            while j < b.len() && b[j] != b'}'
-                && (b[j].is_ascii_alphanumeric() || b[j] == b'_') {
+            while j < b.len() && b[j] != b'}' && (b[j].is_ascii_alphanumeric() || b[j] == b'_') {
                 j += 1;
             }
             if j < b.len() && b[j] == b'}' && j > i + 1 {
@@ -554,17 +710,23 @@ fn render_tmpl(t: &str, vals: &HashMap<String, String>) -> String {
                 i = j + 1;
                 continue;
             }
-            out.push('{'); i += 1;
+            out.push('{');
+            i += 1;
         } else if b[i] == b'}' {
             if b.get(i + 1) == Some(&b'}') {
-                out.push('}'); i += 2; continue;
+                out.push('}');
+                i += 2;
+                continue;
             }
-            out.push('}'); i += 1;
+            out.push('}');
+            i += 1;
         } else {
             // Byte-by-byte would corrupt multibyte UTF-8; slice the next run of
             // non-brace bytes (same approach as the lexer's run scanner).
             let start = i;
-            while i < b.len() && b[i] != b'{' && b[i] != b'}' { i += 1; }
+            while i < b.len() && b[i] != b'{' && b[i] != b'}' {
+                i += 1;
+            }
             out.push_str(&t[start..i]);
         }
     }

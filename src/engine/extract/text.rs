@@ -9,15 +9,25 @@ impl Engine {
     /// an unparseable file (`.md`, `.json`) is edited.
     fn comment_file_set(&self) -> Result<Vec<ExtractFile>> {
         let mut files: Vec<ExtractFile> = Vec::new();
-        let mut sel = self.db.conn().prepare("SELECT repo, path, rev, hash FROM _file")?;
-        let rows = sel.query_map([], |r| Ok((
-            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
-            r.get::<_, Option<String>>(3)?.unwrap_or_default())))?;
+        let mut sel = self
+            .db
+            .conn()
+            .prepare("SELECT repo, path, rev, hash FROM _file")?;
+        let rows = sel.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+            ))
+        })?;
         for row in rows.flatten() {
             let p = row.1.as_str();
-            let ts = p.ends_with(".ts") || p.ends_with(".tsx");
+            let ts = p.ends_with(".ts") || p.ends_with(".tsx") || p.ends_with(".mts") || p.ends_with(".cts");
             let md = p.ends_with(".md") || p.ends_with(".markdown");
-            if ts || md || crate::cst::lang_label_for_path(p).is_some() { files.push(row); }
+            if ts || md || crate::cst::lang_label_for_path(p).is_some() {
+                files.push(row);
+            }
         }
         Ok(files)
     }
@@ -38,13 +48,18 @@ impl Engine {
     pub(crate) fn refresh_comment_rels(&self) -> Result<bool> {
         let files = self.comment_file_set()?;
         let moved = self.moved_extract_revs("comment", &files, false)?;
-        if moved.is_empty() { return Ok(false); }
+        if moved.is_empty() {
+            return Ok(false);
+        }
         let root = self.root.clone();
         let roots = self.repo_roots();
         // Per-file comment walk in parallel; TS/TSX via oxc, everything else via
         // the shared tree-sitter walk. Unchanged files come from the cache.
-        let facts: Vec<(String, String, String, Arc<Vec<crate::cst::RawComment>>)> =
-            cached_facts(&self.comment_facts_cache, &files, &self.extract_files_parsed, |repo, path, rev| {
+        let facts: Vec<(String, String, String, Arc<Vec<crate::cst::RawComment>>)> = cached_facts(
+            &self.comment_facts_cache,
+            &files,
+            &self.extract_files_parsed,
+            |repo, path, rev| {
                 let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
                 let content = read_content(froot, rev, path).unwrap_or_default();
                 let rid = repo_id_of(froot, path, repo);
@@ -58,7 +73,8 @@ impl Engine {
                     crate::cst::walk_comments(&content, &lang).unwrap_or_default()
                 };
                 Some((rid, comments))
-            });
+            },
+        );
 
         let t = |s: &str| Value::Text(s.to_string());
         let i = |n: u32| Value::Int(n as i64);
@@ -74,14 +90,24 @@ impl Engine {
                 }
                 let (kind, text) = crate::cst::classify_comment(&c.raw);
                 rows.push(vec![
-                    t(path), i(c.start_row), i(c.start_col), i(c.end_row), i(c.end_col),
-                    t(&text), t(kind),
+                    t(path),
+                    i(c.start_row),
+                    i(c.start_col),
+                    i(c.end_row),
+                    i(c.end_col),
+                    t(&text),
+                    t(kind),
                 ]);
             }
         }
-        self.refresh_rel("comment_node",
-            &["path", "line", "col", "end_line", "end_col", "text", "kind"], &rows)?;
-        for (rev, d) in &moved { self.save_rel_digest(&extract_digest_key("comment", rev), d)?; }
+        self.refresh_rel(
+            "comment_node",
+            &["path", "line", "col", "end_line", "end_col", "text", "kind"],
+            &rows,
+        )?;
+        for (rev, d) in &moved {
+            self.save_rel_digest(&extract_digest_key("comment", rev), d)?;
+        }
         Ok(true)
     }
 
@@ -94,14 +120,29 @@ impl Engine {
     /// unrelated file (`.rs`, `.kt`, `.md`) is edited.
     fn template_file_set(&self) -> Result<Vec<ExtractFile>> {
         let mut files: Vec<ExtractFile> = Vec::new();
-        let mut sel = self.db.conn().prepare("SELECT repo, path, rev, hash FROM _file")?;
-        let rows = sel.query_map([], |r| Ok((
-            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
-            r.get::<_, Option<String>>(3)?.unwrap_or_default())))?;
+        let mut sel = self
+            .db
+            .conn()
+            .prepare("SELECT repo, path, rev, hash FROM _file")?;
+        let rows = sel.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+            ))
+        })?;
         for row in rows.flatten() {
             let p = row.1.as_str();
-            if p.ends_with(".ts") || p.ends_with(".tsx") || p.ends_with(".js")
-                || p.ends_with(".jsx") || p.ends_with(".mjs") || p.ends_with(".cjs") {
+            if p.ends_with(".ts")
+                || p.ends_with(".tsx")
+                || p.ends_with(".js")
+                || p.ends_with(".jsx")
+                || p.ends_with(".mjs")
+                || p.ends_with(".cjs")
+                || p.ends_with(".mts")
+                || p.ends_with(".cts")
+            {
                 files.push(row);
             }
         }
@@ -122,17 +163,28 @@ impl Engine {
     pub(crate) fn refresh_template_rels(&self) -> Result<bool> {
         let files = self.template_file_set()?;
         let moved = self.moved_extract_revs("template", &files, false)?;
-        if moved.is_empty() { return Ok(false); }
+        if moved.is_empty() {
+            return Ok(false);
+        }
         let root = self.root.clone();
         let roots = self.repo_roots();
-        let facts: Vec<(String, String, String, Arc<Vec<crate::typegraph::TemplatePart>>)> =
-            cached_facts(&self.template_facts_cache, &files, &self.extract_files_parsed, |repo, path, rev| {
+        let facts: Vec<(
+            String,
+            String,
+            String,
+            Arc<Vec<crate::typegraph::TemplatePart>>,
+        )> = cached_facts(
+            &self.template_facts_cache,
+            &files,
+            &self.extract_files_parsed,
+            |repo, path, rev| {
                 let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
                 let content = read_content(froot, rev, path).unwrap_or_default();
                 let rid = repo_id_of(froot, path, repo);
                 let parts = typegraph::ts_template_parts(path, &content);
                 Some((rid, parts))
-            });
+            },
+        );
 
         let t = |s: &str| Value::Text(s.to_string());
         let i = |n: u32| Value::Int(n as i64);
@@ -144,13 +196,23 @@ impl Engine {
                     continue;
                 }
                 rows.push(vec![
-                    t(path), i(p.line), t(&p.node), i(p.idx), t(p.kind), t(&p.text),
+                    t(path),
+                    i(p.line),
+                    t(&p.node),
+                    i(p.idx),
+                    t(p.kind),
+                    t(&p.text),
                 ]);
             }
         }
-        self.refresh_rel("template_parts",
-            &["file", "line", "node", "idx", "kind", "text"], &rows)?;
-        for (rev, d) in &moved { self.save_rel_digest(&extract_digest_key("template", rev), d)?; }
+        self.refresh_rel(
+            "template_parts",
+            &["file", "line", "node", "idx", "kind", "text"],
+            &rows,
+        )?;
+        for (rev, d) in &moved {
+            self.save_rel_digest(&extract_digest_key("template", rev), d)?;
+        }
         Ok(true)
     }
 
@@ -158,14 +220,29 @@ impl Engine {
     /// `template_file_set` (v1 scope, see `typegraph::UnresolvedRef`).
     fn unresolved_file_set(&self) -> Result<Vec<ExtractFile>> {
         let mut files: Vec<ExtractFile> = Vec::new();
-        let mut sel = self.db.conn().prepare("SELECT repo, path, rev, hash FROM _file")?;
-        let rows = sel.query_map([], |r| Ok((
-            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
-            r.get::<_, Option<String>>(3)?.unwrap_or_default())))?;
+        let mut sel = self
+            .db
+            .conn()
+            .prepare("SELECT repo, path, rev, hash FROM _file")?;
+        let rows = sel.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+            ))
+        })?;
         for row in rows.flatten() {
             let p = row.1.as_str();
-            if p.ends_with(".ts") || p.ends_with(".tsx") || p.ends_with(".js")
-                || p.ends_with(".jsx") || p.ends_with(".mjs") || p.ends_with(".cjs") {
+            if p.ends_with(".ts")
+                || p.ends_with(".tsx")
+                || p.ends_with(".js")
+                || p.ends_with(".jsx")
+                || p.ends_with(".mjs")
+                || p.ends_with(".cjs")
+                || p.ends_with(".mts")
+                || p.ends_with(".cts")
+            {
                 files.push(row);
             }
         }
@@ -183,17 +260,28 @@ impl Engine {
     pub(crate) fn refresh_unresolved_rel(&self) -> Result<bool> {
         let files = self.unresolved_file_set()?;
         let moved = self.moved_extract_revs("unresolved", &files, false)?;
-        if moved.is_empty() { return Ok(false); }
+        if moved.is_empty() {
+            return Ok(false);
+        }
         let root = self.root.clone();
         let roots = self.repo_roots();
-        let facts: Vec<(String, String, String, Arc<Vec<crate::typegraph::UnresolvedRef>>)> =
-            cached_facts(&self.unresolved_facts_cache, &files, &self.extract_files_parsed, |repo, path, rev| {
+        let facts: Vec<(
+            String,
+            String,
+            String,
+            Arc<Vec<crate::typegraph::UnresolvedRef>>,
+        )> = cached_facts(
+            &self.unresolved_facts_cache,
+            &files,
+            &self.extract_files_parsed,
+            |repo, path, rev| {
                 let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
                 let content = read_content(froot, rev, path).unwrap_or_default();
                 let rid = repo_id_of(froot, path, repo);
                 let refs = typegraph::ts_unresolved_refs(path, &content);
                 Some((rid, refs))
-            });
+            },
+        );
 
         let t = |s: &str| Value::Text(s.to_string());
         let i = |n: u32| Value::Int(n as i64);
@@ -207,9 +295,10 @@ impl Engine {
                 rows.push(vec![t(path), i(r.line), t(r.reason), t(&r.detail)]);
             }
         }
-        self.refresh_rel("unresolved",
-            &["file", "line", "reason", "detail"], &rows)?;
-        for (rev, d) in &moved { self.save_rel_digest(&extract_digest_key("unresolved", rev), d)?; }
+        self.refresh_rel("unresolved", &["file", "line", "reason", "detail"], &rows)?;
+        for (rev, d) in &moved {
+            self.save_rel_digest(&extract_digest_key("unresolved", rev), d)?;
+        }
         Ok(true)
     }
 }

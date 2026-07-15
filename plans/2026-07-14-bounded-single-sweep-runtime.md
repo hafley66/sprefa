@@ -189,7 +189,136 @@ legible before considering safe per-root parallelism.
 <!-- todo(perf): replace corpus-wide extraction payload caches with bounded byte-weighted reuse and stream WORK and Git inventories into staging -->
 <!-- todo(perf): replace per-connection 512 MiB SQLite cache and mmap settings with one measured process-wide budget and permit disk-backed large temporary work -->
 
+## Implementation checkpoint: 2026-07-15
+
+The first production slice now stages full source reconciliation in a
+file-backed SQLite temporary table before mutating live facts. Rayon producers
+feed that stage through a two-slot synchronous channel; staged reads are
+bounded by both 4,096 rows and 256 KiB of encoded payload. Source facts,
+`WhereBytes` span metadata, and their interned strings enter the same source
+transaction. The implementation is split across
+`src/engine/pipeline/full_sources.rs`, `source_stage.rs`,
+`source_stage_read.rs`, and `source_codec.rs` so the orchestration and storage
+hot paths remain reviewable.
+
+The stage also enforces total limits of 1,000,000 rows, 64 MiB of encoded data,
+and 100,000 completed owners. Its seal records the candidate base, generation,
+owner/row counts, encoded bytes, and digest; apply revalidates that seal and
+cleans TEMP state only after the live transaction commits or aborts. This is a
+connection-local, non-durable TEMP stage, not the crash-resumable scheduler
+queue described above. Process-wide SQLite cache leases, mmap disabled by
+default unless explicitly budgeted, and file-backed TEMP storage have landed.
+
+The path-tick source phase has moved from the top-level tick loop into
+`src/engine/path_reconcile.rs`. It stages extraction before a single source
+transaction, verifies the candidate base, retracts plural owners, applies
+staged facts and spans, updates file metadata, and promotes revision/digest
+bookkeeping only after commit. The active stopping point is making each path
+job read, hash, line-count, and parse one immutable content snapshot. That seam
+is now integrated: path jobs share one `Arc<str>` across matching source rules,
+and read/UTF-8 failures abort preparation instead of extracting an empty file.
+The watcher path was then made lazy: its inventory retains only path identity
+and matching rule indices. A Rayon worker reads one path, evaluates all of its
+rules against that snapshot, and drops the `Arc<str>` before its parsed bundle
+crosses the two-slot channel. Changed-path input bytes therefore no longer
+accumulate in the generation-wide job vector.
+
+The post-integration review found two correctness prerequisites before adding
+cancellation. First, keyed/merge source tables do not retain losing candidates:
+removing one owner's winning row cannot promote a clean owner's previously
+ignored row. Path ticks touching those source rules must therefore use full
+source reconciliation until candidate and chosen-fact storage are separated.
+Second, watcher staging must assign a stable unique ordinal per
+`(repo, rev, path, rule)` matching full-inventory order; using only rule index
+can choose a different first-wins row when worker completion order changes.
+Both corrections precede any further concurrency optimization.
+They are now integrated: matching keyed/merge watcher events conservatively
+fall back through the original full-tick program, and lazy path preparation
+sorts identities then prefix-assigns unique owner ordinals before Rayon work.
+Adversarial reversed-input/delayed-reader checks retain stable path order.
+
+This is a material bounded-staging and source-transaction change, but it is
+not yet the complete design above. Derived families still run after the source
+transaction, so extraction-family refresh, derived rebuild, generation
+watermark advancement, effects, and scheduler acknowledgement are not yet one
+generation-atomic boundary. The durable Tokio intent store, capacity-one
+wakeup, committed-generation reader, and crash matrix remain later slices.
+
+The producer channel is bounded by completed-path count, not bytes: each queued
+bundle may still own one path's complete rows and spans across all matching
+rules. Reconciliation also retains corpus-shaped identity and metadata maps.
+The next backpressure cut needs byte leases or chunked producer output,
+including an explicit oversized-item lane, before this can claim bounded
+end-to-end residency.
+
+Cooperative cancellation is now wired through both full and watcher source
+preparation. The first parse/read/stage/send error sets a shared flag; workers
+check it before new files, before each watcher rule, and before publishing.
+An extractor already executing still finishes, but its result is discarded and
+later work does not start. This reduces wasted failure work without changing
+the channel or claiming preemption.
+
+Remaining observability and verification include stage rows, owners, encoded
+bytes, flushes, peak producer-item bytes, apply-page bytes, TEMP-file bytes,
+transaction duration, cleanup debt, and coarse-fallback counts. Permanent
+tests still need to cover no TEMP mutation during live apply, cleanup failure,
+full/path parity, and failure leaving facts, spans, strings, metadata, digests,
+and in-memory promotion at the previous committed state.
+
+Focused watcher checks now pin one physical read shared by two matching rules
+and injected read failure with unchanged live generation/table counts plus
+empty TEMP stage tables. The path/perf, extraction-cache, and mixed
+source/derived integration groups also pass after the lazy conversion. These
+checks exercise the intended seams; they are not a substitute for the pending
+memory counters and failure matrix.
+The safe library suite reports 462 passed, zero failed, one ignored, with the
+host-RSS ceiling check deliberately filtered out.
+
+Delegation for this checkpoint is intentionally narrow: Luna implements the
+one-snapshot path seam; Terra reviews cross-cutting transaction and benchmark
+failure modes; the primary agent owns integration, the living plan, and the
+safe check sequence. No `dl`, daemon, corpus scan, or repository benchmark is
+run during the edit loop.
+
 ## Verification
+
+### Kernel-scale performance gate
+
+Before this checkpoint, `just bench-printk` and
+`just bench-printk-on /path/to/linux` were observational benchmarks, not
+checks: `bench/run.sh` swallowed a non-zero `dl` exit, assumed macOS
+`/usr/bin/time -l`, and asserted neither result rows nor time/RSS budgets.
+`bench/linux-sim` contains only two small C files, while the real-kernel recipe
+is necessarily opt-in.
+
+Harden this in three tiers:
+
+1. A fast fixture check runs the tiny corpus, fails closed on process or query
+   failure, and validates the expected result checksum/row count.
+2. A deterministic medium generated corpus exercises bounded inventory,
+   staging, and warm no-op behavior without risking a developer workstation.
+3. A real Linux checkout remains an explicit perf job. It records cold/warm
+   wall time, peak RSS, source bytes/files, parses, stage high-water marks, and
+   result checksum in machine-readable output. Thresholds are supplied by the
+   perf environment rather than silently applied to every local run.
+
+The runner must select BSD `time -l` on macOS and GNU `time -v` on Linux,
+preserve the benchmark command's exit status, clean its isolated database on
+all exits, and print enough context to compare binary revision, corpus
+revision, platform, and configured Rayon worker count. The real-kernel job is
+not part of the normal edit loop and must never be triggered by the default
+`just test` recipe.
+
+The runner hardening slice is now integrated. It is strict and fail-closed,
+uses an isolated temporary database, runs the root as cwd with `--no-daemon`,
+defaults Rayon to two threads, supports Darwin and GNU time/RSS units, checks
+the exact four-row `linux-sim` answer on both cold and warm runs, and accepts
+opt-in cold/warm/RSS budgets. Release building is explicit through
+`BENCH_BUILD=1`; a normal benchmark never silently rebuilds or falls through
+to an old binary after a failed build. Static shell syntax and `just` dry-run
+checks passed; no benchmark or `dl` invocation was run during integration.
+The deterministic medium corpus and richer revision/counter record remain the
+next harness tier.
 
 ### Correctness and recovery
 

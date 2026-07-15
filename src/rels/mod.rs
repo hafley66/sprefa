@@ -66,8 +66,10 @@ use scip::ScipKind;
 
 pub use extract_family::{
     extract_families, extract_families_paths_pre_node, extract_families_post_node,
-    extract_families_pre_node, CallFamily, ExtractFamily, ModuleFamily, TypeFamily,
+    extract_families_pre_node, CallFamily, ExtractFamily, ModuleFamily, PathRefreshContext,
+    RefreshOutcome, TypeFamily,
 };
+pub(crate) use extract_family::CallPathRefreshOutcome;
 
 /// Refresh the `query_log` projection right now, outside the normal tick
 /// cadence. The daemon `query`/`query_sql` RPC handlers and the LSP `dl/query`

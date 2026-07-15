@@ -308,7 +308,7 @@ fn body_sql_ex(body: &[BodyItem], rels: &Rels, overrides: &HashMap<usize, String
                     Term::Str(_) | Term::Int(_) => wheres.push(format!("{cell} = {}", lit_sql(term).unwrap())),
                     Term::Interp(_) => bail!("interpolated string only allowed in a rule head, not a body atom"),
                     Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
-                    Term::Arith { .. } => bail!("arithmetic only allowed in a rule head or comparison, not a body atom"),
+                    Term::Arith { .. } => wheres.push(format!("{cell} = {}", term_sql(term, &canon, &tys)?)),
                     Term::Call { .. } => bail!("function call only allowed in a rule head or comparison, not a body atom"),
                     Term::Wild => {}
                 }
@@ -408,7 +408,7 @@ fn body_sql_ex(body: &[BodyItem], rels: &Rels, overrides: &HashMap<usize, String
                     Term::Str(_) | Term::Int(_) => sub.push(format!("{cell} = {}", lit_sql(term).unwrap())),
                     Term::Interp(_) => bail!("interpolated string only allowed in a rule head, not a body atom"),
                     Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
-                    Term::Arith { .. } => bail!("arithmetic only allowed in a rule head or comparison, not a body atom"),
+                    Term::Arith { .. } => sub.push(format!("{cell} = {}", term_sql(term, &canon, &tys)?)),
                     Term::Call { .. } => bail!("function call only allowed in a rule head or comparison, not a body atom"),
                     Term::Wild => {}
                 }
@@ -442,6 +442,7 @@ pub fn lower_body_projection(body: &[BodyItem], rels: &Rels, vars: &[String]) ->
     Ok(format!("SELECT DISTINCT {} FROM {}{}", exprs.join(", "), froms.join(", "), where_sql))
 }
 
+// ARCH {"url":"lower","role":"compile"}
 pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
     lower_rule_to(rule, rels, &tbl(&rule.head.rel), &[])
 }

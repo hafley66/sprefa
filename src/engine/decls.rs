@@ -69,17 +69,57 @@ pub fn builtin_rel_names() -> std::collections::HashSet<String> {
 pub fn builtin_enum_brands() -> &'static [(&'static str, &'static [&'static str])] {
     &[
         // typegraph.rs edge emitters (push/bound_edge literal kind args, all 3 langs).
-        ("type_edge_kind", &["field", "variant", "impl", "generic", "param", "returns", "uses"]),
+        (
+            "type_edge_kind",
+            &[
+                "field", "variant", "impl", "generic", "param", "returns", "uses",
+            ],
+        ),
         // typegraph.rs EntityKind::tag.
-        ("type_entity_kind",
-         &["struct", "enum", "trait", "class", "interface", "alias", "function", "method", "const"]),
+        (
+            "type_entity_kind",
+            &[
+                "struct",
+                "enum",
+                "trait",
+                "class",
+                "interface",
+                "alias",
+                "function",
+                "method",
+                "const",
+            ],
+        ),
         // typegraph.rs push_node + ts_push literal kind args (union across the
         // Rust/Kotlin/TS lifts; the two variable-kind call sites resolve to
         // new/call_res).
-        ("df_node_kind",
-         &["binop", "block", "borrow", "call_res", "closure", "concat", "cond", "expr", "if", "let_bind",
-           "lit", "logic", "loop", "match", "member", "new", "param", "ret", "template", "unop",
-           "var_read", "var_write"]),
+        (
+            "df_node_kind",
+            &[
+                "binop",
+                "block",
+                "borrow",
+                "call_res",
+                "closure",
+                "concat",
+                "cond",
+                "expr",
+                "if",
+                "let_bind",
+                "lit",
+                "logic",
+                "loop",
+                "match",
+                "member",
+                "new",
+                "param",
+                "ret",
+                "template",
+                "unop",
+                "var_read",
+                "var_write",
+            ],
+        ),
         // typegraph.rs ConstValueFact.kind literals (ts_collect_const_values /
         // ts_enum_const_values / rust_const_values_from).
         ("const_value_kind", &["lit", "template"]),
@@ -91,7 +131,10 @@ pub fn builtin_enum_brands() -> &'static [(&'static str, &'static [&'static str]
 /// The variant set of one ambient builtin enum brand, or `None` for a user brand
 /// (or any unknown name).
 pub fn builtin_enum_variants(brand: &str) -> Option<&'static [&'static str]> {
-    builtin_enum_brands().iter().find(|(name, _)| *name == brand).map(|(_, vs)| *vs)
+    builtin_enum_brands()
+        .iter()
+        .find(|(name, _)| *name == brand)
+        .map(|(_, vs)| *vs)
 }
 
 /// Built-in relation names whose decl carries an empty `doc`. The
@@ -146,9 +189,16 @@ pub fn fn_docs() -> &'static [(&'static str, usize, &'static str, &'static str)]
 pub fn undocumented_fns() -> Vec<String> {
     let documented: std::collections::HashSet<(&str, usize)> =
         fn_docs().iter().map(|(n, a, _, _)| (*n, *a)).collect();
-    let native: [(&str, usize); 6] = [("split", 3), ("replace", 3), ("int", 1),
-        ("json_object", 2), ("json_array", 1), ("json", 1)];
-    let mut missing: Vec<String> = crate::lower::STR_FNS.iter()
+    let native: [(&str, usize); 6] = [
+        ("split", 3),
+        ("replace", 3),
+        ("int", 1),
+        ("json_object", 2),
+        ("json_array", 1),
+        ("json", 1),
+    ];
+    let mut missing: Vec<String> = crate::lower::STR_FNS
+        .iter()
         .map(|(n, _, a)| (*n, *a))
         .chain(native)
         .filter(|(n, a)| !documented.contains(&(n, *a)))
@@ -308,10 +358,20 @@ pub(crate) fn demand_rel_decls() -> Vec<RelDecl> {
 pub(crate) const CHECKOUT_OUT_RELS: [&str; 2] = ["checkout_done", "checkout_plan"];
 
 pub(crate) fn checkout_out_rel_decls() -> Vec<RelDecl> {
-    let cols = || vec![
-        Col::raw("repo", Type::Text), Col::raw("branch", Type::Text),
-        Col { name: "action".into(), ty: Type::Text, brand: Some("checkout_action".into()), raw: true },
-        Col::plain("ok".into(), Type::Int), Col::raw("detail", Type::Text)];
+    let cols = || {
+        vec![
+            Col::raw("repo", Type::Text),
+            Col::raw("branch", Type::Text),
+            Col {
+                name: "action".into(),
+                ty: Type::Text,
+                brand: Some("checkout_action".into()),
+                raw: true,
+            },
+            Col::plain("ok".into(), Type::Int),
+            Col::raw("detail", Type::Text),
+        ]
+    };
     vec![
         RelDecl { name: "checkout_done".into(), cols: cols(), group: "demand",
             doc: "checkout-sweep outcome (written by the `checkout` sink, read-only): one row per swept repo — action is ff/branch-f/skip, ok is 1/0, detail is the git result. Confirms the sweep fired from a live daemon (stderr goes to daemon.log) and lets a program diag failures (ok=0); one-tick latency like other demand outputs", ..Default::default() },
@@ -339,7 +399,9 @@ pub(crate) fn type_decl_rel_decls() -> Vec<RelDecl> {
 /// end-of-tick persist and tells `expand_shapes` to DEFER (not error) an
 /// unresolved `rel name: shape.` ref (the shape derives next tick).
 pub fn type_decl_row_used(prog: &Program) -> bool {
-    prog.items.iter().any(|it| matches!(it, Item::Rule(r) if r.head.rel == "type_decl_row"))
+    prog.items
+        .iter()
+        .any(|it| matches!(it, Item::Rule(r) if r.head.rel == "type_decl_row"))
 }
 
 pub(crate) fn effect_rel_decls() -> Vec<RelDecl> {
@@ -352,7 +414,9 @@ pub(crate) fn effect_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
-pub(crate) fn effect_rels_used(prog: &Program) -> bool { rels_used(prog, &EFFECT_RELS) }
+pub(crate) fn effect_rels_used(prog: &Program) -> bool {
+    rels_used(prog, &EFFECT_RELS)
+}
 
 /// The harness-hook event log (see `HOOK_RELS`). Accumulating facts, one row per
 /// `dl --hook` invocation; the raw event JSON rides the `json` column so all
@@ -370,7 +434,9 @@ pub(crate) fn hook_rel_decls() -> Vec<RelDecl> {
     ]
 }
 
-pub(crate) fn hook_rels_used(prog: &Program) -> bool { rels_used(prog, &HOOK_RELS) }
+pub(crate) fn hook_rels_used(prog: &Program) -> bool {
+    rels_used(prog, &HOOK_RELS)
+}
 
 pub(crate) fn module_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
@@ -672,27 +738,69 @@ pub(crate) fn spine_rel_decls() -> Vec<RelDecl> {
 pub(crate) fn node_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
-        RelDecl { name: "node".into(), cols: vec![
-            c("id", Type::Text), c("kind", Type::Text), c("file", Type::Text),
-            c("lo", Type::Int), c("hi", Type::Int), c("parent", Type::Text)], group: "node",
-            doc: "CST nodes (nested-set spans): id, kind, file, lo, hi, parent", ..Default::default() },
+        RelDecl {
+            name: "node".into(),
+            cols: vec![
+                c("id", Type::Text),
+                c("kind", Type::Text),
+                c("file", Type::Text),
+                c("lo", Type::Int),
+                c("hi", Type::Int),
+                c("parent", Type::Text),
+            ],
+            group: "node",
+            doc: "CST nodes (nested-set spans): id, kind, file, lo, hi, parent",
+            ..Default::default()
+        },
         // EXACTLY 2 cols: `declare_closure` requires it, so `anc(a,b) <-
         // closure(child).` works with zero new recursion code.
-        RelDecl { name: "child".into(), cols: vec![c("parent", Type::Text), c("child", Type::Text)], group: "node",
-            doc: "CST parent-child edges (exactly 2 cols, so closure(child) gives ancestry)", ..Default::default() },
+        RelDecl {
+            name: "child".into(),
+            cols: vec![c("parent", Type::Text), c("child", Type::Text)],
+            group: "node",
+            doc: "CST parent-child edges (exactly 2 cols, so closure(child) gives ancestry)",
+            ..Default::default()
+        },
     ]
 }
 
 pub(crate) fn daemon_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
     vec![
-        RelDecl { name: "program".into(), cols: vec![c("path", Type::Path), c("hash", Type::Text), c("mtime", Type::Int)], group: "daemon",
-            doc: "dl programs the daemon tracks (path, content hash, mtime)", ..Default::default() },
-        RelDecl { name: "head".into(), cols: vec![c("repo", Type::Text), c("name", Type::Text), c("oid", Type::Text)], group: "daemon",
-            doc: "git HEAD per repo (repo, ref name, oid)", ..Default::default() },
-        RelDecl { name: "rev_advanced".into(), cols: vec![
-            c("repo", Type::Text), c("name", Type::Text), c("old", Type::Text), c("new", Type::Text)], group: "daemon",
-            doc: "daemon signal that a repo ref advanced (repo, name, old oid, new oid)", ..Default::default() },
+        RelDecl {
+            name: "program".into(),
+            cols: vec![
+                c("path", Type::Path),
+                c("hash", Type::Text),
+                c("mtime", Type::Int),
+            ],
+            group: "daemon",
+            doc: "dl programs the daemon tracks (path, content hash, mtime)",
+            ..Default::default()
+        },
+        RelDecl {
+            name: "head".into(),
+            cols: vec![
+                c("repo", Type::Text),
+                c("name", Type::Text),
+                c("oid", Type::Text),
+            ],
+            group: "daemon",
+            doc: "git HEAD per repo (repo, ref name, oid)",
+            ..Default::default()
+        },
+        RelDecl {
+            name: "rev_advanced".into(),
+            cols: vec![
+                c("repo", Type::Text),
+                c("name", Type::Text),
+                c("old", Type::Text),
+                c("new", Type::Text),
+            ],
+            group: "daemon",
+            doc: "daemon signal that a repo ref advanced (repo, name, old oid, new oid)",
+            ..Default::default()
+        },
     ]
 }
 
@@ -713,7 +821,9 @@ pub(crate) fn every_intervals(prog: &Program) -> Vec<i64> {
             if let BodyItem::Pos(a) = b {
                 if a.rel == "every" {
                     if let [Term::Int(n)] = a.terms.as_slice() {
-                        if *n > 0 && !out.contains(n) { out.push(*n); }
+                        if *n > 0 && !out.contains(n) {
+                            out.push(*n);
+                        }
                     }
                 }
             }
@@ -729,7 +839,9 @@ pub(crate) fn every_intervals(prog: &Program) -> Vec<i64> {
     out
 }
 
-pub(crate) fn every_rels_used(prog: &Program) -> bool { rels_used(prog, &EVERY_RELS) }
+pub(crate) fn every_rels_used(prog: &Program) -> bool {
+    rels_used(prog, &EVERY_RELS)
+}
 
 pub(crate) fn clock_rel_decls() -> Vec<RelDecl> {
     let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
@@ -747,7 +859,9 @@ pub(crate) fn clock_periods(prog: &Program) -> Vec<i64> {
             if let BodyItem::Pos(a) = b {
                 if a.rel == "clock" {
                     if let [Term::Int(n), _] = a.terms.as_slice() {
-                        if *n > 0 && !out.contains(n) { out.push(*n); }
+                        if *n > 0 && !out.contains(n) {
+                            out.push(*n);
+                        }
                     }
                 }
             }
@@ -763,7 +877,9 @@ pub(crate) fn clock_periods(prog: &Program) -> Vec<i64> {
     out
 }
 
-pub(crate) fn clock_rels_used(prog: &Program) -> bool { rels_used(prog, &CLOCK_RELS) }
+pub(crate) fn clock_rels_used(prog: &Program) -> bool {
+    rels_used(prog, &CLOCK_RELS)
+}
 
 /// Does the program reference any relation in `rels` (body atom, closure edge,
 /// or query head)? Gates lazy built-in indexers so unrelated programs pay nothing.
@@ -771,25 +887,65 @@ pub(crate) fn rels_used(prog: &Program, rels: &[&str]) -> bool {
     let hit = |r: &str| rels.contains(&r);
     for item in &prog.items {
         match item {
-            Item::Rule(r) => for b in &r.body {
-                match b {
-                    BodyItem::Pos(a) | BodyItem::Neg(a) => if hit(&a.rel) { return true; },
-                    BodyItem::Closure { rel } => if hit(rel) { return true; },
-                    BodyItem::Scc { rel } => if hit(rel) { return true; },
-                    BodyItem::Node2vec { rel } => if hit(rel) { return true; },
-                    _ => {}
+            Item::Rule(r) => {
+                for b in &r.body {
+                    match b {
+                        BodyItem::Pos(a) | BodyItem::Neg(a) => {
+                            if hit(&a.rel) {
+                                return true;
+                            }
+                        }
+                        BodyItem::Closure { rel } => {
+                            if hit(rel) {
+                                return true;
+                            }
+                        }
+                        BodyItem::Scc { rel } => {
+                            if hit(rel) {
+                                return true;
+                            }
+                        }
+                        BodyItem::Node2vec { rel } => {
+                            if hit(rel) {
+                                return true;
+                            }
+                        }
+                        _ => {}
+                    }
                 }
-            },
-            Item::Query(q) => if hit(&q.head.rel) { return true; },
-            Item::Gen(g) => for b in &g.body {
-                match b {
-                    BodyItem::Pos(a) | BodyItem::Neg(a) => if hit(&a.rel) { return true; },
-                    BodyItem::Closure { rel } => if hit(rel) { return true; },
-                    BodyItem::Scc { rel } => if hit(rel) { return true; },
-                    BodyItem::Node2vec { rel } => if hit(rel) { return true; },
-                    _ => {}
+            }
+            Item::Query(q) => {
+                if hit(&q.head.rel) {
+                    return true;
                 }
-            },
+            }
+            Item::Gen(g) => {
+                for b in &g.body {
+                    match b {
+                        BodyItem::Pos(a) | BodyItem::Neg(a) => {
+                            if hit(&a.rel) {
+                                return true;
+                            }
+                        }
+                        BodyItem::Closure { rel } => {
+                            if hit(rel) {
+                                return true;
+                            }
+                        }
+                        BodyItem::Scc { rel } => {
+                            if hit(rel) {
+                                return true;
+                            }
+                        }
+                        BodyItem::Node2vec { rel } => {
+                            if hit(rel) {
+                                return true;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
             // Shapes are expanded to plain RelDecls at load, so none reach here.
             Item::Rel(_) | Item::Anchor(_) | Item::Brand(_) | Item::Shape(_) | Item::Shell(_) => {}
         }
@@ -811,13 +967,15 @@ pub(crate) fn rels_used(prog: &Program, rels: &[&str]) -> bool {
 pub(crate) fn classify_call_kind(callee: &str) -> Option<&'static str> {
     Some(match callee {
         "execute" | "execute_batch" | "execute_returning" => "write",
-        "prepare" | "prepare_cached"
-        | "query_row" | "query_map" | "query_and_then" | "query_named" => "read",
+        "prepare" | "prepare_cached" | "query_row" | "query_map" | "query_and_then"
+        | "query_named" => "read",
         _ => return None,
     })
 }
 
-pub(crate) fn module_rels_used(prog: &Program) -> bool { rels_used(prog, &MODULE_RELS) }
+pub(crate) fn module_rels_used(prog: &Program) -> bool {
+    rels_used(prog, &MODULE_RELS)
+}
 
 /// Whether the module family must run THIS tick: either the program
 /// directly references a module_* relation, or it references type_link/
@@ -841,24 +999,48 @@ pub(crate) fn module_rels_needed(prog: &Program) -> bool {
         || call_rels_used(prog)
 }
 
-pub(crate) fn type_rels_used(prog: &Program) -> bool { rels_used(prog, &TYPE_RELS) }
+pub(crate) fn type_rels_used(prog: &Program) -> bool {
+    rels_used(prog, &TYPE_RELS)
+}
 
-pub(crate) fn doc_text_rels_used(prog: &Program) -> bool { rels_used(prog, &DOC_TEXT_RELS) }
+pub(crate) fn doc_text_rels_used(prog: &Program) -> bool {
+    rels_used(prog, &DOC_TEXT_RELS)
+}
 
-pub(crate) fn const_value_rels_used(prog: &Program) -> bool { rels_used(prog, &CONST_VALUE_RELS) }
-pub(crate) fn comment_rels_used(prog: &Program) -> bool { rels_used(prog, &COMMENT_RELS) }
+pub(crate) fn const_value_rels_used(prog: &Program) -> bool {
+    rels_used(prog, &CONST_VALUE_RELS)
+}
+pub(crate) fn comment_rels_used(prog: &Program) -> bool {
+    rels_used(prog, &COMMENT_RELS)
+}
 
-pub(crate) fn template_rels_used(prog: &Program) -> bool { rels_used(prog, &TEMPLATE_RELS) }
-pub(crate) fn unresolved_rels_used(prog: &Program) -> bool { rels_used(prog, &UNRESOLVED_RELS) }
+pub(crate) fn template_rels_used(prog: &Program) -> bool {
+    rels_used(prog, &TEMPLATE_RELS)
+}
+pub(crate) fn unresolved_rels_used(prog: &Program) -> bool {
+    rels_used(prog, &UNRESOLVED_RELS)
+}
 
-pub(crate) fn call_rels_used(prog: &Program) -> bool { rels_used(prog, &CALL_RELS) }
+pub(crate) fn call_rels_used(prog: &Program) -> bool {
+    rels_used(prog, &CALL_RELS)
+}
 
-pub(crate) fn dataflow_rels_used(prog: &Program) -> bool { rels_used(prog, &DATAFLOW_RELS) }
+pub(crate) fn dataflow_rels_used(prog: &Program) -> bool {
+    rels_used(prog, &DATAFLOW_RELS)
+}
 
-pub(crate) fn doc_rels_used(prog: &Program) -> bool { rels_used(prog, &DOC_RELS) }
+pub(crate) fn doc_rels_used(prog: &Program) -> bool {
+    rels_used(prog, &DOC_RELS)
+}
 
-pub(crate) fn daemon_rels_used(prog: &Program) -> bool { rels_used(prog, &DAEMON_RELS) }
+pub(crate) fn daemon_rels_used(prog: &Program) -> bool {
+    rels_used(prog, &DAEMON_RELS)
+}
 
-pub(crate) fn spine_rels_used(prog: &Program) -> bool { rels_used(prog, &SPINE_RELS) }
+pub(crate) fn spine_rels_used(prog: &Program) -> bool {
+    rels_used(prog, &SPINE_RELS)
+}
 
-pub(crate) fn node_rels_used(prog: &Program) -> bool { rels_used(prog, &NODE_RELS) }
+pub(crate) fn node_rels_used(prog: &Program) -> bool {
+    rels_used(prog, &NODE_RELS)
+}

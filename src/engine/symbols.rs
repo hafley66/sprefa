@@ -12,7 +12,8 @@ impl Engine {
         let Some((string_id, _text, _lo, _hi)) = self.span_at(path, byte)? else {
             return Ok(Vec::new());
         };
-        Ok(self.string_spans(&string_id)?
+        Ok(self
+            .string_spans(&string_id)?
             .into_iter()
             .filter(|(span_path, _, _)| span_path == path)
             .map(|(_, lo, hi)| (lo, hi))
@@ -29,19 +30,23 @@ impl Engine {
         let like = like_contains(query);
         let te = txt_tbl("type_entity");
         let mut rows: Vec<SymbolRow> = self.try_rows(
-            &format!("SELECT \"repo\", \"sym\", \"name\", \"kind\", \"parent\", \"file\", \"line\" \
-                      FROM {te} WHERE \"name\" LIKE ?1 ESCAPE '\\'"),
+            &format!(
+                "SELECT \"repo\", \"sym\", \"name\", \"kind\", \"parent\", \"file\", \"line\" \
+                      FROM {te} WHERE \"name\" LIKE ?1 ESCAPE '\\'"
+            ),
             &[&like],
-            |r| Ok(SymbolRow {
-                repo: r.get::<_, String>(0)?,
-                sym: r.get::<_, String>(1)?,
-                name: r.get::<_, String>(2)?,
-                kind: r.get::<_, String>(3)?,
-                parent: r.get::<_, String>(4)?,
-                file: r.get::<_, String>(5)?,
-                line: r.get::<_, i64>(6)?,
-                container: String::new(),
-            }),
+            |r| {
+                Ok(SymbolRow {
+                    repo: r.get::<_, String>(0)?,
+                    sym: r.get::<_, String>(1)?,
+                    name: r.get::<_, String>(2)?,
+                    kind: r.get::<_, String>(3)?,
+                    parent: r.get::<_, String>(4)?,
+                    file: r.get::<_, String>(5)?,
+                    line: r.get::<_, i64>(6)?,
+                    container: String::new(),
+                })
+            },
         );
         // A type_entity's `parent` sym is its enclosing symbol, the flat list's
         // container qualifier.
@@ -51,33 +56,41 @@ impl Engine {
         let cd = txt_tbl("call_def");
         let cn = txt_tbl("call_name");
         let calls: Vec<SymbolRow> = self.try_rows(
-            &format!("SELECT d.\"repo\", d.\"sym\", n.\"name\", d.\"kind\", d.\"file\", d.\"line\" \
+            &format!(
+                "SELECT d.\"repo\", d.\"sym\", n.\"name\", d.\"kind\", d.\"file\", d.\"line\" \
                       FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" \
-                      WHERE n.\"name\" LIKE ?1 ESCAPE '\\'"),
+                      WHERE n.\"name\" LIKE ?1 ESCAPE '\\'"
+            ),
             &[&like],
-            |r| Ok(SymbolRow {
-                repo: r.get::<_, String>(0)?,
-                sym: r.get::<_, String>(1)?,
-                name: r.get::<_, String>(2)?,
-                kind: r.get::<_, String>(3)?,
-                file: r.get::<_, String>(4)?,
-                line: r.get::<_, i64>(5)?,
-                parent: String::new(),
-                container: String::new(),
-            }),
+            |r| {
+                Ok(SymbolRow {
+                    repo: r.get::<_, String>(0)?,
+                    sym: r.get::<_, String>(1)?,
+                    name: r.get::<_, String>(2)?,
+                    kind: r.get::<_, String>(3)?,
+                    file: r.get::<_, String>(4)?,
+                    line: r.get::<_, i64>(5)?,
+                    parent: String::new(),
+                    container: String::new(),
+                })
+            },
         );
         // Merge, dropping a callable already present as a type_entity sym (a
         // method is declared in both families).
         let mut seen: HashSet<String> = rows.iter().map(|s| s.sym.clone()).collect();
         for row in calls {
-            if seen.insert(row.sym.clone()) { rows.push(row); }
+            if seen.insert(row.sym.clone()) {
+                rows.push(row);
+            }
         }
         // Prefix matches first, then by name; case-insensitive to match the LIKE.
         let needle = query.to_lowercase();
         rows.sort_by(|left, right| {
             let left_prefix = left.name.to_lowercase().starts_with(&needle);
             let right_prefix = right.name.to_lowercase().starts_with(&needle);
-            right_prefix.cmp(&left_prefix).then_with(|| left.name.cmp(&right.name))
+            right_prefix
+                .cmp(&left_prefix)
+                .then_with(|| left.name.cmp(&right.name))
         });
         rows.truncate(limit);
         Ok(rows)
@@ -91,19 +104,23 @@ impl Engine {
     pub fn document_symbols(&self, path: &str) -> Result<Vec<SymbolRow>> {
         let te = txt_tbl("type_entity");
         Ok(self.try_rows(
-            &format!("SELECT \"repo\", \"sym\", \"name\", \"kind\", \"parent\", \"line\" \
-                      FROM {te} WHERE \"file\" = ?1 ORDER BY \"line\""),
+            &format!(
+                "SELECT \"repo\", \"sym\", \"name\", \"kind\", \"parent\", \"line\" \
+                      FROM {te} WHERE \"file\" = ?1 ORDER BY \"line\""
+            ),
             &[&path],
-            |r| Ok(SymbolRow {
-                repo: r.get::<_, String>(0)?,
-                sym: r.get::<_, String>(1)?,
-                name: r.get::<_, String>(2)?,
-                kind: r.get::<_, String>(3)?,
-                parent: r.get::<_, String>(4)?,
-                line: r.get::<_, i64>(5)?,
-                file: path.to_string(),
-                container: String::new(),
-            }),
+            |r| {
+                Ok(SymbolRow {
+                    repo: r.get::<_, String>(0)?,
+                    sym: r.get::<_, String>(1)?,
+                    name: r.get::<_, String>(2)?,
+                    kind: r.get::<_, String>(3)?,
+                    parent: r.get::<_, String>(4)?,
+                    line: r.get::<_, i64>(5)?,
+                    file: path.to_string(),
+                    container: String::new(),
+                })
+            },
         ))
     }
 
@@ -134,18 +151,36 @@ impl Engine {
     /// carry no entity kind, so `kind` defaults to `"function"` — every
     /// `scip_fn_edge` participant IS a function/method by construction (the
     /// extractor's caller is always "the innermost enclosing fn def").
-    fn compiler_call_prepare(&self, path: &str, byte: u32, text: &str) -> Result<Option<HierarchyItem>> {
-        let Some(hit) = self.compiler_locate(path, byte, text)? else { return Ok(None); };
+    fn compiler_call_prepare(
+        &self,
+        path: &str,
+        byte: u32,
+        text: &str,
+    ) -> Result<Option<HierarchyItem>> {
+        let Some(hit) = self.compiler_locate(path, byte, text)? else {
+            return Ok(None);
+        };
         let sfe = txt_tbl("scip_fn_edge");
-        let participates = !self.try_rows(
-            &format!("SELECT 1 FROM {sfe} WHERE \"caller\" = ?1 OR \"callee\" = ?1 LIMIT 1"),
-            &[&hit.symbol], |r| r.get::<_, i64>(0),
-        ).is_empty();
-        if !participates { return Ok(None); }
+        let participates = !self
+            .try_rows(
+                &format!("SELECT 1 FROM {sfe} WHERE \"caller\" = ?1 OR \"callee\" = ?1 LIMIT 1"),
+                &[&hit.symbol],
+                |r| r.get::<_, i64>(0),
+            )
+            .is_empty();
+        if !participates {
+            return Ok(None);
+        }
         Ok(Some(HierarchyItem {
-            tier: "compiler".to_string(), sym: String::new(), scip_symbol: hit.symbol,
-            name: hit.display_name, kind: "function".to_string(),
-            repo: hit.repo, file: hit.file, line: hit.line, end_line: hit.line,
+            tier: "compiler".to_string(),
+            sym: String::new(),
+            scip_symbol: hit.symbol,
+            name: hit.display_name,
+            kind: "function".to_string(),
+            repo: hit.repo,
+            file: hit.file,
+            line: hit.line,
+            end_line: hit.line,
         }))
     }
 
@@ -157,22 +192,40 @@ impl Engine {
         let cd = txt_tbl("call_def");
         let cn = txt_tbl("call_name");
         let candidates: Vec<(String, String, String, String, i64, i64)> = self.try_rows(
-            &format!("SELECT d.\"repo\", d.\"sym\", d.\"kind\", d.\"file\", d.\"line\", d.\"end\" \
-                      FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" WHERE n.\"name\" = ?1"),
+            &format!(
+                "SELECT d.\"repo\", d.\"sym\", d.\"kind\", d.\"file\", d.\"line\", d.\"end\" \
+                      FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" WHERE n.\"name\" = ?1"
+            ),
             &[&text],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?, r.get::<_, i64>(4)?, r.get::<_, i64>(5)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, i64>(4)?,
+                    r.get::<_, i64>(5)?,
+                ))
+            },
         );
-        if candidates.is_empty() { return Ok(None); }
-        let pick = candidates.iter()
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+        let pick = candidates
+            .iter()
             .find(|(repo, _, _, file, _, _)| *repo == path_repo && file == path)
             .or_else(|| candidates.iter().find(|(repo, ..)| *repo == path_repo))
             .cloned()
             .unwrap_or_else(|| candidates[0].clone());
         let (repo, sym, kind, file, line, end) = pick;
         Ok(Some(HierarchyItem {
-            tier: "resolved".to_string(), sym, scip_symbol: String::new(),
-            name: text.to_string(), kind, repo, file,
+            tier: "resolved".to_string(),
+            sym,
+            scip_symbol: String::new(),
+            name: text.to_string(),
+            kind,
+            repo,
+            file,
             line: (line - 1).max(0) as u32,
             end_line: (end.max(line) - 1).max(0) as u32,
         }))
@@ -183,14 +236,18 @@ impl Engine {
     /// `call_edge`/`scip_fn_edge` is refused; the editor recurses by re-calling
     /// this on each returned item for a deeper tree).
     pub fn call_hierarchy_incoming(&self, item: &HierarchyItem) -> Result<Vec<HierarchyCallEdge>> {
-        if item.tier == "compiler" { return self.compiler_incoming(item); }
+        if item.tier == "compiler" {
+            return self.compiler_incoming(item);
+        }
         self.resolved_incoming(item)
     }
 
     /// `callHierarchy/outgoingCalls`: every 1-hop callee of `item`, same tier
     /// matching and no-closure discipline as `call_hierarchy_incoming`.
     pub fn call_hierarchy_outgoing(&self, item: &HierarchyItem) -> Result<Vec<HierarchyCallEdge>> {
-        if item.tier == "compiler" { return self.compiler_outgoing(item); }
+        if item.tier == "compiler" {
+            return self.compiler_outgoing(item);
+        }
         self.resolved_outgoing(item)
     }
 
@@ -236,13 +293,19 @@ impl Engine {
         let ce = txt_tbl("call_edge");
         let callers: Vec<String> = self.try_rows(
             &format!("SELECT \"caller\" FROM {ce} WHERE \"callee\" = ?1"),
-            &[&item.sym], |r| r.get::<_, String>(0),
+            &[&item.sym],
+            |r| r.get::<_, String>(0),
         );
         let mut out = Vec::new();
         for caller_sym in callers {
-            let Some(caller_item) = self.resolved_call_item(&caller_sym) else { continue };
+            let Some(caller_item) = self.resolved_call_item(&caller_sym) else {
+                continue;
+            };
             let from_lines = self.resolved_call_site_lines(&caller_sym, &item.name);
-            out.push(HierarchyCallEdge { item: caller_item, from_lines });
+            out.push(HierarchyCallEdge {
+                item: caller_item,
+                from_lines,
+            });
         }
         Ok(out)
     }
@@ -251,13 +314,19 @@ impl Engine {
         let ce = txt_tbl("call_edge");
         let callees: Vec<String> = self.try_rows(
             &format!("SELECT \"callee\" FROM {ce} WHERE \"caller\" = ?1"),
-            &[&item.sym], |r| r.get::<_, String>(0),
+            &[&item.sym],
+            |r| r.get::<_, String>(0),
         );
         let mut out = Vec::new();
         for callee_sym in callees {
-            let Some(callee_item) = self.resolved_call_item(&callee_sym) else { continue };
+            let Some(callee_item) = self.resolved_call_item(&callee_sym) else {
+                continue;
+            };
             let from_lines = self.resolved_call_site_lines(&item.sym, &callee_item.name);
-            out.push(HierarchyCallEdge { item: callee_item, from_lines });
+            out.push(HierarchyCallEdge {
+                item: callee_item,
+                from_lines,
+            });
         }
         Ok(out)
     }
@@ -283,19 +352,30 @@ impl Engine {
         let sfe = txt_tbl("scip_fn_edge");
         let callers: Vec<String> = self.try_rows(
             &format!("SELECT \"caller\" FROM {sfe} WHERE \"callee\" = ?1"),
-            &[&item.scip_symbol], |r| r.get::<_, String>(0),
+            &[&item.scip_symbol],
+            |r| r.get::<_, String>(0),
         );
         let mut out = Vec::new();
         for caller_sym in callers {
-            let Some((repo, file, line)) = self.scip_def_site(&caller_sym) else { continue };
+            let Some((repo, file, line)) = self.scip_def_site(&caller_sym) else {
+                continue;
+            };
             let from_lines = self.scip_call_site_lines(&item.scip_symbol, &file);
             let caller_item = HierarchyItem {
-                tier: "compiler".to_string(), sym: String::new(), scip_symbol: caller_sym.clone(),
+                tier: "compiler".to_string(),
+                sym: String::new(),
+                scip_symbol: caller_sym.clone(),
                 name: scip_descriptor_name(&caller_sym).unwrap_or_default(),
-                kind: "function".to_string(), repo, file,
-                line: line.max(0) as u32, end_line: line.max(0) as u32,
+                kind: "function".to_string(),
+                repo,
+                file,
+                line: line.max(0) as u32,
+                end_line: line.max(0) as u32,
             };
-            out.push(HierarchyCallEdge { item: caller_item, from_lines });
+            out.push(HierarchyCallEdge {
+                item: caller_item,
+                from_lines,
+            });
         }
         Ok(out)
     }
@@ -304,19 +384,30 @@ impl Engine {
         let sfe = txt_tbl("scip_fn_edge");
         let callees: Vec<String> = self.try_rows(
             &format!("SELECT \"callee\" FROM {sfe} WHERE \"caller\" = ?1"),
-            &[&item.scip_symbol], |r| r.get::<_, String>(0),
+            &[&item.scip_symbol],
+            |r| r.get::<_, String>(0),
         );
         let mut out = Vec::new();
         for callee_sym in callees {
-            let Some((repo, file, line)) = self.scip_def_site(&callee_sym) else { continue };
+            let Some((repo, file, line)) = self.scip_def_site(&callee_sym) else {
+                continue;
+            };
             let from_lines = self.scip_call_site_lines(&callee_sym, &item.file);
             let callee_item = HierarchyItem {
-                tier: "compiler".to_string(), sym: String::new(), scip_symbol: callee_sym.clone(),
+                tier: "compiler".to_string(),
+                sym: String::new(),
+                scip_symbol: callee_sym.clone(),
                 name: scip_descriptor_name(&callee_sym).unwrap_or_default(),
-                kind: "function".to_string(), repo, file,
-                line: line.max(0) as u32, end_line: line.max(0) as u32,
+                kind: "function".to_string(),
+                repo,
+                file,
+                line: line.max(0) as u32,
+                end_line: line.max(0) as u32,
             };
-            out.push(HierarchyCallEdge { item: callee_item, from_lines });
+            out.push(HierarchyCallEdge {
+                item: callee_item,
+                from_lines,
+            });
         }
         Ok(out)
     }
@@ -344,23 +435,48 @@ impl Engine {
     /// (as the implementing type or the interface/supertype). `kind` is a
     /// heuristic (`scip_impl` carries no entity kind): a symbol that only ever
     /// appears as `iface` is `"interface"`, otherwise `"class"`.
-    fn compiler_type_prepare(&self, path: &str, byte: u32, text: &str) -> Result<Option<HierarchyItem>> {
-        let Some(hit) = self.compiler_locate(path, byte, text)? else { return Ok(None); };
+    fn compiler_type_prepare(
+        &self,
+        path: &str,
+        byte: u32,
+        text: &str,
+    ) -> Result<Option<HierarchyItem>> {
+        let Some(hit) = self.compiler_locate(path, byte, text)? else {
+            return Ok(None);
+        };
         let si = txt_tbl("scip_impl");
-        let is_impl = !self.try_rows(
-            &format!("SELECT 1 FROM {si} WHERE \"impl\" = ?1 LIMIT 1"),
-            &[&hit.symbol], |r| r.get::<_, i64>(0),
-        ).is_empty();
-        let is_iface = !self.try_rows(
-            &format!("SELECT 1 FROM {si} WHERE \"iface\" = ?1 LIMIT 1"),
-            &[&hit.symbol], |r| r.get::<_, i64>(0),
-        ).is_empty();
-        if !is_impl && !is_iface { return Ok(None); }
-        let kind = if is_iface && !is_impl { "interface" } else { "class" };
+        let is_impl = !self
+            .try_rows(
+                &format!("SELECT 1 FROM {si} WHERE \"impl\" = ?1 LIMIT 1"),
+                &[&hit.symbol],
+                |r| r.get::<_, i64>(0),
+            )
+            .is_empty();
+        let is_iface = !self
+            .try_rows(
+                &format!("SELECT 1 FROM {si} WHERE \"iface\" = ?1 LIMIT 1"),
+                &[&hit.symbol],
+                |r| r.get::<_, i64>(0),
+            )
+            .is_empty();
+        if !is_impl && !is_iface {
+            return Ok(None);
+        }
+        let kind = if is_iface && !is_impl {
+            "interface"
+        } else {
+            "class"
+        };
         Ok(Some(HierarchyItem {
-            tier: "compiler".to_string(), sym: String::new(), scip_symbol: hit.symbol,
-            name: hit.display_name, kind: kind.to_string(),
-            repo: hit.repo, file: hit.file, line: hit.line, end_line: hit.line,
+            tier: "compiler".to_string(),
+            sym: String::new(),
+            scip_symbol: hit.symbol,
+            name: hit.display_name,
+            kind: kind.to_string(),
+            repo: hit.repo,
+            file: hit.file,
+            line: hit.line,
+            end_line: hit.line,
         }))
     }
 
@@ -378,8 +494,11 @@ impl Engine {
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
                     r.get::<_, String>(3)?, r.get::<_, i64>(4)?)),
         );
-        if candidates.is_empty() { return Ok(None); }
-        let pick = candidates.iter()
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+        let pick = candidates
+            .iter()
             .find(|(repo, _, _, file, _)| *repo == path_repo && file == path)
             .or_else(|| candidates.iter().find(|(repo, ..)| *repo == path_repo))
             .cloned()
@@ -387,8 +506,15 @@ impl Engine {
         let (repo, sym, kind, file, line) = pick;
         let line0 = (line - 1).max(0) as u32;
         Ok(Some(HierarchyItem {
-            tier: "resolved".to_string(), sym, scip_symbol: String::new(),
-            name: text.to_string(), kind, repo, file, line: line0, end_line: line0,
+            tier: "resolved".to_string(),
+            sym,
+            scip_symbol: String::new(),
+            name: text.to_string(),
+            kind,
+            repo,
+            file,
+            line: line0,
+            end_line: line0,
         }))
     }
 
@@ -400,14 +526,18 @@ impl Engine {
     /// bound edges are a type-parameter constraint, not a supertype, and are
     /// excluded by this same owner-kind filter).
     pub fn type_hierarchy_supertypes(&self, item: &HierarchyItem) -> Result<Vec<HierarchyItem>> {
-        if item.tier == "compiler" { return self.compiler_supertypes(item); }
+        if item.tier == "compiler" {
+            return self.compiler_supertypes(item);
+        }
         self.resolved_supertypes(item)
     }
 
     /// `typeHierarchy/subtypes`: the types that implement/extend `item`, one
     /// hop, same kind filter as `type_hierarchy_supertypes`.
     pub fn type_hierarchy_subtypes(&self, item: &HierarchyItem) -> Result<Vec<HierarchyItem>> {
-        if item.tier == "compiler" { return self.compiler_subtypes(item); }
+        if item.tier == "compiler" {
+            return self.compiler_subtypes(item);
+        }
         self.resolved_subtypes(item)
     }
 
@@ -420,7 +550,10 @@ impl Engine {
                       AND (tl.\"kind\" = 'impl' OR (tl.\"kind\" = 'generic' AND te.\"kind\" IN ('interface', 'trait')))"),
             &[&item.sym], |r| r.get::<_, String>(0),
         );
-        Ok(dsts.into_iter().filter_map(|sym| self.resolved_type_item(&sym)).collect())
+        Ok(dsts
+            .into_iter()
+            .filter_map(|sym| self.resolved_type_item(&sym))
+            .collect())
     }
 
     fn resolved_subtypes(&self, item: &HierarchyItem) -> Result<Vec<HierarchyItem>> {
@@ -432,7 +565,10 @@ impl Engine {
                       AND (tl.\"kind\" = 'impl' OR (tl.\"kind\" = 'generic' AND te.\"kind\" IN ('interface', 'trait')))"),
             &[&item.sym], |r| r.get::<_, String>(0),
         );
-        Ok(srcs.into_iter().filter_map(|sym| self.resolved_type_item(&sym)).collect())
+        Ok(srcs
+            .into_iter()
+            .filter_map(|sym| self.resolved_type_item(&sym))
+            .collect())
     }
 
     /// `type_entity` row for one sym -> a resolved-tier `HierarchyItem`, the
@@ -458,32 +594,51 @@ impl Engine {
         let si = txt_tbl("scip_impl");
         let ifaces: Vec<String> = self.try_rows(
             &format!("SELECT \"iface\" FROM {si} WHERE \"impl\" = ?1"),
-            &[&item.scip_symbol], |r| r.get::<_, String>(0),
+            &[&item.scip_symbol],
+            |r| r.get::<_, String>(0),
         );
-        Ok(ifaces.into_iter().filter_map(|iface| {
-            let (repo, file, line) = self.scip_def_site(&iface)?;
-            Some(HierarchyItem {
-                tier: "compiler".to_string(), sym: String::new(), scip_symbol: iface.clone(),
-                name: scip_descriptor_name(&iface).unwrap_or_default(), kind: "interface".to_string(),
-                repo, file, line: line.max(0) as u32, end_line: line.max(0) as u32,
+        Ok(ifaces
+            .into_iter()
+            .filter_map(|iface| {
+                let (repo, file, line) = self.scip_def_site(&iface)?;
+                Some(HierarchyItem {
+                    tier: "compiler".to_string(),
+                    sym: String::new(),
+                    scip_symbol: iface.clone(),
+                    name: scip_descriptor_name(&iface).unwrap_or_default(),
+                    kind: "interface".to_string(),
+                    repo,
+                    file,
+                    line: line.max(0) as u32,
+                    end_line: line.max(0) as u32,
+                })
             })
-        }).collect())
+            .collect())
     }
 
     fn compiler_subtypes(&self, item: &HierarchyItem) -> Result<Vec<HierarchyItem>> {
         let si = txt_tbl("scip_impl");
         let impls: Vec<String> = self.try_rows(
             &format!("SELECT \"impl\" FROM {si} WHERE \"iface\" = ?1"),
-            &[&item.scip_symbol], |r| r.get::<_, String>(0),
+            &[&item.scip_symbol],
+            |r| r.get::<_, String>(0),
         );
-        Ok(impls.into_iter().filter_map(|imp| {
-            let (repo, file, line) = self.scip_def_site(&imp)?;
-            Some(HierarchyItem {
-                tier: "compiler".to_string(), sym: String::new(), scip_symbol: imp.clone(),
-                name: scip_descriptor_name(&imp).unwrap_or_default(), kind: "class".to_string(),
-                repo, file, line: line.max(0) as u32, end_line: line.max(0) as u32,
+        Ok(impls
+            .into_iter()
+            .filter_map(|imp| {
+                let (repo, file, line) = self.scip_def_site(&imp)?;
+                Some(HierarchyItem {
+                    tier: "compiler".to_string(),
+                    sym: String::new(),
+                    scip_symbol: imp.clone(),
+                    name: scip_descriptor_name(&imp).unwrap_or_default(),
+                    kind: "class".to_string(),
+                    repo,
+                    file,
+                    line: line.max(0) as u32,
+                    end_line: line.max(0) as u32,
+                })
             })
-        }).collect())
+            .collect())
     }
-
 }

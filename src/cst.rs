@@ -223,6 +223,11 @@ pub fn lang_label_for_path(path: &str) -> Option<&'static str> {
         "hcl" | "tf" => "hcl",
         "bzl" | "bazel" => "starlark",
         "jsonnet" | "libsonnet" => "jsonnet",
+        "yaml" | "yml" => "yaml",
+        "toml" => "toml",
+        "json" => "json",
+        "css" => "css",
+        // todo(feature): add html once tree-sitter-html is a Cargo dep.
         // `comment_node` powers README narrative notes in the .dl example corpus.
         "dl" => "dl",
         "tmpl" | "gotmpl" | "gohtml" => "gotmpl",

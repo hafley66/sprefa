@@ -2,29 +2,62 @@ use super::*;
 
 type TsLangCtor = fn() -> tree_sitter::Language;
 static AST_LANG_TABLE: &[(&str, &[&str], TsLangCtor)] = &[
-    ("rust",       &["rs"],                    || tree_sitter::Language::new(tree_sitter_rust::LANGUAGE)),
-    ("c",          &[],                        || tree_sitter::Language::new(tree_sitter_c::LANGUAGE)),
-    ("kotlin",     &["kt"],                    || tree_sitter::Language::new(tree_sitter_kotlin_sg::LANGUAGE)),
-    ("python",     &["py"],                    || tree_sitter::Language::new(tree_sitter_python::LANGUAGE)),
-    ("bash",       &["sh", "shell"],           || tree_sitter::Language::new(tree_sitter_bash::LANGUAGE)),
-    ("go",         &["golang"],                || tree_sitter::Language::new(tree_sitter_go::LANGUAGE)),
-    ("hcl",        &["terraform", "tf"],       || tree_sitter::Language::new(tree_sitter_hcl::LANGUAGE)),
-    ("starlark",   &["bzl", "bazel"],          || tree_sitter::Language::new(tree_sitter_starlark::LANGUAGE)),
-    ("jsonnet",    &[],                        || tree_sitter::Language::new(tree_sitter_jsonnet::LANGUAGE)),
-    ("dl",         &["dl"],                  || tree_sitter_dl::language().into()),
-    ("gotmpl",     &["gotemplate", "gohtml"],  || tree_sitter::Language::new(unsafe {
-        tree_sitter_language::LanguageFn::from_raw(tree_sitter_gotmpl)
-    })),
-    ("dockerfile", &["docker"],                || tree_sitter::Language::new(unsafe {
-        tree_sitter_language::LanguageFn::from_raw(tree_sitter_dockerfile)
-    })),
+    ("rust", &["rs"], || {
+        tree_sitter::Language::new(tree_sitter_rust::LANGUAGE)
+    }),
+    ("c", &[], || {
+        tree_sitter::Language::new(tree_sitter_c::LANGUAGE)
+    }),
+    ("kotlin", &["kt"], || {
+        tree_sitter::Language::new(tree_sitter_kotlin_sg::LANGUAGE)
+    }),
+    ("python", &["py"], || {
+        tree_sitter::Language::new(tree_sitter_python::LANGUAGE)
+    }),
+    ("bash", &["sh", "shell"], || {
+        tree_sitter::Language::new(tree_sitter_bash::LANGUAGE)
+    }),
+    ("go", &["golang"], || {
+        tree_sitter::Language::new(tree_sitter_go::LANGUAGE)
+    }),
+    ("hcl", &["terraform", "tf"], || {
+        tree_sitter::Language::new(tree_sitter_hcl::LANGUAGE)
+    }),
+    ("starlark", &["bzl", "bazel"], || {
+        tree_sitter::Language::new(tree_sitter_starlark::LANGUAGE)
+    }),
+    ("jsonnet", &[], || {
+        tree_sitter::Language::new(tree_sitter_jsonnet::LANGUAGE)
+    }),
+    ("dl", &["dl"], || tree_sitter_dl::language().into()),
+    ("gotmpl", &["gotemplate", "gohtml"], || {
+        tree_sitter::Language::new(unsafe {
+            tree_sitter_language::LanguageFn::from_raw(tree_sitter_gotmpl)
+        })
+    }),
+    ("dockerfile", &["docker"], || {
+        tree_sitter::Language::new(unsafe {
+            tree_sitter_language::LanguageFn::from_raw(tree_sitter_dockerfile)
+        })
+    }),
+    ("yaml", &["yml"], || { tree_sitter_yaml::LANGUAGE.into() }),
+    ("toml", &[], || { tree_sitter_toml_ng::LANGUAGE.into() }),
+    ("json", &[], || { tree_sitter_json::LANGUAGE.into() }),
+    ("css", &[], || { tree_sitter::Language::new(tree_sitter_css::LANGUAGE) }),
+    // todo(feature): add html once tree-sitter-html is a Cargo dep.
 ];
 
 pub(crate) fn ts_lang(lang: &str) -> Result<tree_sitter::Language> {
     for (canon, aliases, ctor) in AST_LANG_TABLE {
-        if lang == *canon || aliases.contains(&lang) { return Ok(ctor()); }
+        if lang == *canon || aliases.contains(&lang) {
+            return Ok(ctor());
+        }
     }
-    let compiled = AST_LANG_TABLE.iter().map(|(c, ..)| *c).collect::<Vec<_>>().join(", ");
+    let compiled = AST_LANG_TABLE
+        .iter()
+        .map(|(c, ..)| *c)
+        .collect::<Vec<_>>()
+        .join(", ");
     bail!("no ast grammar for :{lang} (compiled in: {compiled})")
 }
 

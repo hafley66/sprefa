@@ -9,10 +9,12 @@ impl Engine {
             if q.head.terms.len() == 2 {
                 if let Some(cc) = self.closure_cache.get(edge) {
                     match (pinned_value(q, 0), pinned_value(q, 1)) {
-                        (Some(seed), None) if matches!(q.head.terms[1], Term::Var(_)) =>
-                            return self.run_reaches_point(q, cc, &seed, true),
-                        (None, Some(seed)) if matches!(q.head.terms[0], Term::Var(_)) =>
-                            return self.run_reaches_point(q, cc, &seed, false),
+                        (Some(seed), None) if matches!(q.head.terms[1], Term::Var(_)) => {
+                            return self.run_reaches_point(q, cc, &seed, true)
+                        }
+                        (None, Some(seed)) if matches!(q.head.terms[0], Term::Var(_)) => {
+                            return self.run_reaches_point(q, cc, &seed, false)
+                        }
                         // Both pinned: an existence probe. The view pays the full
                         // materialization for it (constraints don't push into the
                         // recursive CTE), the condensation walk answers directly.
@@ -27,13 +29,19 @@ impl Engine {
             let cap = closure_query_max_edges();
             if cap > 0 {
                 let n: i64 = self.db.conn().query_row(
-                    &format!("SELECT COUNT(*) FROM {}", tbl(edge)), [], |r| r.get(0))?;
+                    &format!("SELECT COUNT(*) FROM {}", tbl(edge)),
+                    [],
+                    |r| r.get(0),
+                )?;
                 if n as usize > cap {
-                    bail!("closure query `{0}` would evaluate the reachability view over edge \
+                    bail!(
+                        "closure query `{0}` would evaluate the reachability view over edge \
                            rel `{edge}` ({n} rows > cap {cap}), which is unbounded on a graph \
                            this dense; pin an endpoint (e.g. `? {0}(\"seed\", x)`) for the \
                            seeded fast path, or raise/disable the guard with \
-                           DL_CLOSURE_QUERY_MAX_EDGES=<n|0>", q.head.rel);
+                           DL_CLOSURE_QUERY_MAX_EDGES=<n|0>",
+                        q.head.rel
+                    );
                 }
             }
         }
@@ -48,9 +56,24 @@ impl Engine {
         if self.query_json {
             emit_query_json(&res.rel, &res.columns, &res.rows);
         } else {
-            println!("? {} => {}", res.rel, if res.columns.is_empty() { "(count)".into() } else { res.columns.join("\t") });
+            println!(
+                "? {} => {}",
+                res.rel,
+                if res.columns.is_empty() {
+                    "(count)".into()
+                } else {
+                    res.columns.join("\t")
+                }
+            );
             for cells in &res.rows {
-                println!("  {}", cells.iter().map(json_cell_tsv).collect::<Vec<_>>().join("\t"));
+                println!(
+                    "  {}",
+                    cells
+                        .iter()
+                        .map(json_cell_tsv)
+                        .collect::<Vec<_>>()
+                        .join("\t")
+                );
             }
             println!("  ({} rows)\n", res.rows.len());
         }
@@ -67,11 +90,20 @@ impl Engine {
         let mut out: Vec<Vec<serde_json::Value>> = Vec::new();
         while let Some(row) = rows.next()? {
             let cells = (0..ncols)
-                .map(|i| sqlite_to_json(row.get::<_, rusqlite::types::Value>(i).unwrap_or(rusqlite::types::Value::Null)))
+                .map(|i| {
+                    sqlite_to_json(
+                        row.get::<_, rusqlite::types::Value>(i)
+                            .unwrap_or(rusqlite::types::Value::Null),
+                    )
+                })
                 .collect();
             out.push(cells);
         }
-        Ok(QueryResult { rel: q.head.rel.clone(), columns, rows: out })
+        Ok(QueryResult {
+            rel: q.head.rel.clone(),
+            columns,
+            rows: out,
+        })
     }
 
     /// Run every `?` query in `prog`, returning rows. Used by the daemon RPC
@@ -81,7 +113,9 @@ impl Engine {
     pub fn run_queries_capture(&self, prog: &Program) -> Result<Vec<QueryResult>> {
         let mut out = Vec::new();
         for item in &prog.items {
-            if let Item::Query(q) = item { out.push(self.query_one_sql(q)?); }
+            if let Item::Query(q) = item {
+                out.push(self.query_one_sql(q)?);
+            }
         }
         Ok(out)
     }
@@ -106,7 +140,9 @@ impl Engine {
             let full = self.root.join(&path);
             match original {
                 Some(bytes) => std::fs::write(&full, &bytes)?,
-                None => { let _ = std::fs::remove_file(&full); }
+                None => {
+                    let _ = std::fs::remove_file(&full);
+                }
             }
         }
         Ok(n)

@@ -2,30 +2,175 @@ use super::*;
 
 const SCHEMA_EPOCH: i64 = 10;
 
+/// Persisted watermark plus the readily observable database coordinates for one
+/// atomic semantic generation.
+///
+/// Fingerprints are opaque bytes here. Their canonical construction belongs to
+/// the typed-plan compiler; the watermark only compares and persists them. This
+/// is deliberately not named `BaseStamp`: runtime stale-stage eligibility still
+/// requires `_file`, external-EDB, and program/codec digests in the prepared
+/// base before this can certify every semantic input.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(dead_code)] // Production prerequisite; tick wiring follows in a later slice.
+pub(crate) struct GenerationWatermark {
+    pub(crate) generation: i64,
+    pub(crate) plan_fingerprint: Vec<u8>,
+    pub(crate) schema_fingerprint: Vec<u8>,
+    pub(crate) data_version: i64,
+    pub(crate) user_version: i64,
+    pub(crate) carry_tx: i64,
+}
+
+#[cfg(test)]
+mod semantic_generation_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn engine() -> Engine {
+        let engine = Engine::new(crate::db::open(None).unwrap(), PathBuf::new());
+        engine.ensure_meta().unwrap();
+        engine
+    }
+
+    #[test]
+    fn semantic_generation_initial_stamp_is_zero_and_empty() {
+        let engine = engine();
+        let stamp = engine.read_generation_watermark().unwrap();
+        assert_eq!(stamp.generation, 0);
+        assert!(stamp.plan_fingerprint.is_empty());
+        assert!(stamp.schema_fingerprint.is_empty());
+        assert!(stamp.data_version > 0);
+        assert_eq!(stamp.user_version, SCHEMA_EPOCH);
+        assert_eq!(stamp.carry_tx, 0);
+    }
+
+    #[test]
+    fn semantic_generation_advances_once_inside_semantic_transaction() {
+        let mut engine = engine();
+        let base = engine.read_generation_watermark().unwrap();
+
+        let advanced = engine
+            .with_semantic_generation(|engine| {
+                engine.compare_and_advance_semantic_generation(&base, b"plan-1", b"schema-1")
+            })
+            .unwrap();
+
+        assert_eq!(advanced.generation, 1);
+        assert_eq!(advanced.plan_fingerprint, b"plan-1");
+        assert_eq!(advanced.schema_fingerprint, b"schema-1");
+        assert_eq!(engine.read_generation_watermark().unwrap(), advanced);
+    }
+
+    #[test]
+    fn semantic_generation_stale_base_refuses_without_change() {
+        let engine = engine();
+        let stale = engine.read_generation_watermark().unwrap();
+        engine.db.conn().execute_batch("BEGIN IMMEDIATE").unwrap();
+        let current = engine
+            .compare_and_advance_semantic_generation(&stale, b"plan-current", b"schema-current")
+            .unwrap();
+        engine.db.conn().execute_batch("COMMIT").unwrap();
+
+        engine.db.conn().execute_batch("BEGIN IMMEDIATE").unwrap();
+        let error = engine
+            .compare_and_advance_semantic_generation(&stale, b"plan-stale", b"schema-stale")
+            .unwrap_err();
+        assert!(error.to_string().contains("stale semantic generation"));
+        assert_eq!(engine.read_generation_watermark().unwrap(), current);
+        engine.db.conn().execute_batch("COMMIT").unwrap();
+
+        assert_eq!(engine.read_generation_watermark().unwrap(), current);
+    }
+
+    #[test]
+    fn semantic_generation_rollback_restores_old_stamp() {
+        let engine = engine();
+        let base = engine.read_generation_watermark().unwrap();
+        engine.db.conn().execute_batch("BEGIN IMMEDIATE").unwrap();
+        let advanced = engine
+            .compare_and_advance_semantic_generation(
+                &base,
+                b"plan-rolled-back",
+                b"schema-rolled-back",
+            )
+            .unwrap();
+        assert_eq!(engine.read_generation_watermark().unwrap(), advanced);
+        engine.db.conn().execute_batch("ROLLBACK").unwrap();
+
+        assert_eq!(engine.read_generation_watermark().unwrap(), base);
+    }
+
+    #[test]
+    fn semantic_generation_advance_refuses_autocommit() {
+        let engine = engine();
+        let base = engine.read_generation_watermark().unwrap();
+        let error = engine
+            .compare_and_advance_semantic_generation(&base, b"plan", b"schema")
+            .unwrap_err();
+        assert!(error.to_string().contains("active transaction"));
+        assert_eq!(engine.read_generation_watermark().unwrap(), base);
+    }
+}
+
+#[allow(dead_code)]
+impl GenerationWatermark {
+    pub(crate) fn new(
+        generation: i64,
+        plan_fingerprint: impl AsRef<[u8]>,
+        schema_fingerprint: impl AsRef<[u8]>,
+        data_version: i64,
+        user_version: i64,
+        carry_tx: i64,
+    ) -> Self {
+        Self {
+            generation,
+            plan_fingerprint: plan_fingerprint.as_ref().to_vec(),
+            schema_fingerprint: schema_fingerprint.as_ref().to_vec(),
+            data_version,
+            user_version,
+            carry_tx,
+        }
+    }
+}
+
 impl Engine {
     pub(crate) fn ensure_meta(&self) -> Result<()> {
-        let epoch: i64 = self.db.conn().query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        let epoch: i64 = self
+            .db
+            .conn()
+            .query_row("PRAGMA user_version", [], |row| row.get(0))?;
         if epoch != SCHEMA_EPOCH {
             let mut objects = Vec::new();
             {
                 let mut stmt = self.db.conn().prepare(
                     "SELECT name, type FROM sqlite_master WHERE (type = 'table' OR type = 'view')
                      AND (name LIKE 'rel_%' OR name LIKE 'scc_node_%' OR name LIKE 'scc_edge_%'
-                          OR name LIKE '_delta_%' OR name LIKE '_carry_%')")?;
-                let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
-                for row in rows { objects.push(row?); }
+                          OR name LIKE '_delta_%' OR name LIKE '_carry_%')",
+                )?;
+                let rows = stmt.query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?;
+                for row in rows {
+                    objects.push(row?);
+                }
             }
             for (name, _) in objects.iter().filter(|(_, kind)| kind == "view") {
-                self.db.conn().execute(&format!("DROP VIEW IF EXISTS \"{name}\""), [])?;
+                self.db
+                    .conn()
+                    .execute(&format!("DROP VIEW IF EXISTS \"{name}\""), [])?;
             }
             for (name, _) in objects.iter().filter(|(_, kind)| kind == "table") {
-                self.db.conn().execute(&format!("DROP TABLE IF EXISTS \"{name}\""), [])?;
+                self.db
+                    .conn()
+                    .execute(&format!("DROP TABLE IF EXISTS \"{name}\""), [])?;
             }
             if self.column_exists("_reldigest", "rel")? {
                 self.db.conn().execute("DELETE FROM _reldigest", [])?;
             }
             if self.column_exists("_derived_complete", "rel")? {
-                self.db.conn().execute("DELETE FROM _derived_complete", [])?;
+                self.db
+                    .conn()
+                    .execute("DELETE FROM _derived_complete", [])?;
             }
             if self.column_exists("_shapes", "shape")? {
                 self.db.conn().execute("DELETE FROM _shapes", [])?;
@@ -33,7 +178,9 @@ impl Engine {
             if self.column_exists("_stmt_ms", "rel")? {
                 self.db.conn().execute("DELETE FROM _stmt_ms", [])?;
             }
-            self.db.conn().execute(&format!("PRAGMA user_version = {SCHEMA_EPOCH}"), [])?;
+            self.db
+                .conn()
+                .execute(&format!("PRAGMA user_version = {SCHEMA_EPOCH}"), [])?;
         }
         // Intern-key migration (2026-07-11): `_strings.id` / `_where_bytes.string_id`
         // move from TEXT (decimal StringId::Display) to INTEGER (StringId::sqlite,
@@ -62,6 +209,19 @@ impl Engine {
                  mtime INTEGER DEFAULT 0, size INTEGER DEFAULT 0, lines INTEGER DEFAULT -1, PRIMARY KEY (repo, path, rev));
              CREATE TABLE IF NOT EXISTS _prov (rel TEXT, repo TEXT NOT NULL DEFAULT '', path TEXT, src TEXT, PRIMARY KEY (rel, repo, path, src));
              CREATE TABLE IF NOT EXISTS _reldigest (rel TEXT PRIMARY KEY, digest TEXT);
+             -- Singleton commit watermark for the semantic database state. A
+             -- prepared generation compares all three fields after acquiring
+             -- BEGIN IMMEDIATE, then advances this row in the same transaction
+             -- as its source/derived/digest writes.
+             CREATE TABLE IF NOT EXISTS _semantic_generation (
+                 singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                 generation INTEGER NOT NULL CHECK(generation >= 0),
+                 plan_fingerprint BLOB NOT NULL,
+                 schema_fingerprint BLOB NOT NULL
+             );
+             INSERT OR IGNORE INTO _semantic_generation(
+                 singleton, generation, plan_fingerprint, schema_fingerprint
+             ) VALUES (1, 0, X'', X'');
              -- P1 (2026-07-10 --check perf defect): one row per derived rel that
              -- has completed a `rebuild_derived` pass, regardless of the row
              -- count it ended with. `any_derived_empty`'s old COUNT(*)-per-rel
@@ -237,36 +397,63 @@ impl Engine {
         // The pre-migration default for head_rel is `kind` (head-response 1:1), set
         // on read in `drain_effects` via the empty-string fallback.
         let _ = self.db.conn().execute(
-            "ALTER TABLE pending_effect ADD COLUMN head_rel TEXT NOT NULL DEFAULT ''", []);
+            "ALTER TABLE pending_effect ADD COLUMN head_rel TEXT NOT NULL DEFAULT ''",
+            [],
+        );
         let _ = self.db.conn().execute(
-            "ALTER TABLE pending_effect ADD COLUMN full_json TEXT NOT NULL DEFAULT ''", []);
+            "ALTER TABLE pending_effect ADD COLUMN full_json TEXT NOT NULL DEFAULT ''",
+            [],
+        );
         // Phase 3 job state machine: `state` (queued|running|done|failed) is the
         // reconcile axis; `idem_key` records the `sh!` exactly-once claim. Legacy
         // rows migrate with state derived from `done` below.
         let _ = self.db.conn().execute(
-            "ALTER TABLE pending_effect ADD COLUMN state TEXT NOT NULL DEFAULT 'queued'", []);
-        let _ = self.db.conn().execute(
-            "ALTER TABLE pending_effect ADD COLUMN idem_key TEXT", []);
+            "ALTER TABLE pending_effect ADD COLUMN state TEXT NOT NULL DEFAULT 'queued'",
+            [],
+        );
+        let _ = self
+            .db
+            .conn()
+            .execute("ALTER TABLE pending_effect ADD COLUMN idem_key TEXT", []);
         // Phase 1b.2 `collect(x)`: a batch request gathers `x` across ALL body
         // solutions and fires ONE effect whose response fans back out (line per
         // entity). `batch=1` tells the drain to split the response into N head
         // rows (run_stream) like a stream, but one-shot (marked done).
         let _ = self.db.conn().execute(
-            "ALTER TABLE pending_effect ADD COLUMN batch INTEGER NOT NULL DEFAULT 0", []);
+            "ALTER TABLE pending_effect ADD COLUMN batch INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
         // A db whose rows predate `state` carry the column default 'queued' even
         // when already drained (done=1); reconcile their state from `done` once.
         let _ = self.db.conn().execute(
-            "UPDATE pending_effect SET state = 'done' WHERE done = 1 AND state = 'queued'", []);
+            "UPDATE pending_effect SET state = 'done' WHERE done = 1 AND state = 'queued'",
+            [],
+        );
         // tolerate dbs created before mtime/size existed
-        let _ = self.db.conn().execute("ALTER TABLE _file ADD COLUMN mtime INTEGER DEFAULT 0", []);
-        let _ = self.db.conn().execute("ALTER TABLE _file ADD COLUMN size INTEGER DEFAULT 0", []);
+        let _ = self
+            .db
+            .conn()
+            .execute("ALTER TABLE _file ADD COLUMN mtime INTEGER DEFAULT 0", []);
+        let _ = self
+            .db
+            .conn()
+            .execute("ALTER TABLE _file ADD COLUMN size INTEGER DEFAULT 0", []);
         // tolerate dbs created before the line-count column existed; -1 = unknown,
         // reconcile_sources' fast path forces one read+count on the next tick.
-        let _ = self.db.conn().execute("ALTER TABLE _file ADD COLUMN lines INTEGER DEFAULT -1", []);
+        let _ = self
+            .db
+            .conn()
+            .execute("ALTER TABLE _file ADD COLUMN lines INTEGER DEFAULT -1", []);
         // tolerate _where_bytes created before the path attribution column existed
-        let _ = self.db.conn().execute("ALTER TABLE _where_bytes ADD COLUMN path TEXT NOT NULL DEFAULT ''", []);
+        let _ = self.db.conn().execute(
+            "ALTER TABLE _where_bytes ADD COLUMN path TEXT NOT NULL DEFAULT ''",
+            [],
+        );
         // _stmt_ms gained a statement-count column (SUM+shape telemetry).
-        let _ = self.db.conn().execute("ALTER TABLE _stmt_ms ADD COLUMN n INTEGER NOT NULL DEFAULT 1", []);
+        let _ = self.db.conn().execute(
+            "ALTER TABLE _stmt_ms ADD COLUMN n INTEGER NOT NULL DEFAULT 1",
+            [],
+        );
         // Re-key `_file` and `_prov` on (repo, ...) for dbs that predate the repo
         // coordinate. SQLite can't ALTER a PK, so rebuild: every old row is this
         // engine's own repo (the only one ever ingested before Phase 2), so stamp
@@ -312,6 +499,90 @@ impl Engine {
         Ok(())
     }
 
+    #[allow(dead_code)] // Production prerequisite; tick wiring follows in a later slice.
+    pub(crate) fn read_generation_watermark(&self) -> Result<GenerationWatermark> {
+        let (generation, plan, schema) = self.db.conn().query_row(
+            "SELECT generation, plan_fingerprint, schema_fingerprint
+             FROM _semantic_generation WHERE singleton = 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Vec<u8>>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            },
+        )?;
+        let data_version = self
+            .db
+            .conn()
+            .query_row("PRAGMA data_version", [], |row| row.get(0))?;
+        let user_version = self
+            .db
+            .conn()
+            .query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        let carry_tx = self.current_tx()?;
+        Ok(GenerationWatermark::new(
+            generation,
+            plan,
+            schema,
+            data_version,
+            user_version,
+            carry_tx,
+        ))
+    }
+
+    /// Compare a prepared generation's base stamp and advance the singleton
+    /// watermark in the caller-owned semantic transaction.
+    ///
+    /// A conditional update makes the comparison and advance indivisible. The
+    /// method refuses autocommit so the watermark cannot escape the source,
+    /// derived, digest, and schema writes it is meant to certify.
+    #[allow(dead_code)] // Production prerequisite; tick wiring follows in a later slice.
+    pub(crate) fn compare_and_advance_semantic_generation(
+        &self,
+        base: &GenerationWatermark,
+        next_plan_fingerprint: &[u8],
+        next_schema_fingerprint: &[u8],
+    ) -> Result<GenerationWatermark> {
+        if self.db.conn().is_autocommit() {
+            bail!("semantic generation watermark advance requires an active transaction");
+        }
+        let observed = self.read_generation_watermark()?;
+        if &observed != base {
+            bail!("stale semantic generation base watermark");
+        }
+        let next_generation = base
+            .generation
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("semantic generation overflow"))?;
+        let changed = self.db.conn().execute(
+            "UPDATE _semantic_generation
+             SET generation = ?1, plan_fingerprint = ?2, schema_fingerprint = ?3
+             WHERE singleton = 1 AND generation = ?4
+               AND plan_fingerprint = ?5 AND schema_fingerprint = ?6",
+            rusqlite::params![
+                next_generation,
+                next_plan_fingerprint,
+                next_schema_fingerprint,
+                base.generation,
+                base.plan_fingerprint.as_slice(),
+                base.schema_fingerprint.as_slice(),
+            ],
+        )?;
+        if changed != 1 {
+            bail!("stale semantic generation base watermark");
+        }
+        Ok(GenerationWatermark::new(
+            next_generation,
+            next_plan_fingerprint,
+            next_schema_fingerprint,
+            base.data_version,
+            base.user_version,
+            base.carry_tx,
+        ))
+    }
+
     /// Order-independent content digest of a relation: XOR-fold of the per-row
     /// `__src` hashes in `rel_<rel>`. The table is a set (PK on user cols), so
     /// each `__src` contributes once and XOR cannot cancel a duplicate; XOR is
@@ -323,8 +594,13 @@ impl Engine {
     /// NOT EXISTS`; an old db keeps its columns and needs the rebuild).
     pub(crate) fn column_exists(&self, table: &str, col: &str) -> Result<bool> {
         let n: i64 = self.db.conn().query_row(
-            &format!("SELECT COUNT(*) FROM pragma_table_info('{}') WHERE name = ?1", table.replace('\'', "''")),
-            [col], |r| r.get(0))?;
+            &format!(
+                "SELECT COUNT(*) FROM pragma_table_info('{}') WHERE name = ?1",
+                table.replace('\'', "''")
+            ),
+            [col],
+            |r| r.get(0),
+        )?;
         Ok(n > 0)
     }
 
@@ -335,10 +611,17 @@ impl Engine {
     /// (declare) to resolve a computed `rel name: shape.`.
     pub(crate) fn load_persisted_shapes(&self) -> Result<HashMap<String, Vec<Col>>> {
         let mut out: HashMap<String, Vec<Col>> = HashMap::new();
-        let mut stmt = self.db.conn()
+        let mut stmt = self
+            .db
+            .conn()
             .prepare("SELECT shape, col, type FROM _shapes ORDER BY shape, pos")?;
-        let rows = stmt.query_map([], |r| Ok((
-            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
         for row in rows {
             let (shape, col, ty) = row?;
             let column = match Type::parse(&ty) {
@@ -364,43 +647,77 @@ impl Engine {
     /// syntax shape records `shape-shadowed` (syntax won, the derived rows are
     /// ignored). Called at the top of a tick after the normal declare loop.
     pub(crate) fn resolve_derived_shapes(&mut self, prog: &Program) -> Result<()> {
-        let deferred: Vec<(String, String)> = prog.items.iter().filter_map(|it| match it {
-            Item::Rel(d) => d.shape_ref.as_ref().map(|s| (d.name.clone(), s.clone())),
-            _ => None,
-        }).collect();
-        if deferred.is_empty() && !type_decl_row_used(prog) { return Ok(()); }
+        let deferred: Vec<(String, String)> = prog
+            .items
+            .iter()
+            .filter_map(|it| match it {
+                Item::Rel(d) => d.shape_ref.as_ref().map(|s| (d.name.clone(), s.clone())),
+                _ => None,
+            })
+            .collect();
+        if deferred.is_empty() && !type_decl_row_used(prog) {
+            return Ok(());
+        }
         let persisted = self.load_persisted_shapes()?;
         let builtins = builtin_rel_names();
         for (rel_name, shape) in &deferred {
-            if builtins.contains(rel_name) { continue; } // exotic `rel diag: x` — leave the builtin alone
+            if builtins.contains(rel_name) {
+                continue;
+            } // exotic `rel diag: x` — leave the builtin alone
             match persisted.get(shape) {
                 Some(cols) => {
-                    let d = RelDecl { name: rel_name.clone(), cols: cols.clone(), ..Default::default() };
+                    let d = RelDecl {
+                        name: rel_name.clone(),
+                        cols: cols.clone(),
+                        ..Default::default()
+                    };
                     self.declare(&d)?;
                 }
                 None => self.shape_diags.push(DiagRow {
-                    path: "(shapes)".into(), line: 1, col: 0, end_line: 1, end_col: 0,
-                    severity: "info".into(), code: "shape-pending".into(),
-                    msg: format!("rel `{rel_name}`: shape `{shape}` has no syntax `type {shape}(...)` \
+                    path: "(shapes)".into(),
+                    line: 1,
+                    col: 0,
+                    end_line: 1,
+                    end_col: 0,
+                    severity: "info".into(),
+                    code: "shape-pending".into(),
+                    msg: format!(
+                        "rel `{rel_name}`: shape `{shape}` has no syntax `type {shape}(...)` \
                         decl and no derived rows yet — it derives from type_decl_row and becomes \
-                        available on the next tick"),
+                        available on the next tick"
+                    ),
                     hint: None,
                 }),
             }
         }
         // A syntax `type X(...)` shadows a derived shape of the same name: syntax
         // won for any `rel _: X`, so the derived rows are unused. Warn once.
-        let syntax_shapes: std::collections::HashSet<&str> = prog.items.iter()
-            .filter_map(|it| if let Item::Shape(s) = it { Some(s.name.as_str()) } else { None })
+        let syntax_shapes: std::collections::HashSet<&str> = prog
+            .items
+            .iter()
+            .filter_map(|it| {
+                if let Item::Shape(s) = it {
+                    Some(s.name.as_str())
+                } else {
+                    None
+                }
+            })
             .collect();
         for shape in persisted.keys() {
             if syntax_shapes.contains(shape.as_str()) {
                 self.shape_diags.push(DiagRow {
-                    path: "(shapes)".into(), line: 1, col: 0, end_line: 1, end_col: 0,
-                    severity: "warn".into(), code: "shape-shadowed".into(),
-                    msg: format!("shape `{shape}` is declared both as a syntax `type {shape}(...)` \
+                    path: "(shapes)".into(),
+                    line: 1,
+                    col: 0,
+                    end_line: 1,
+                    end_col: 0,
+                    severity: "warn".into(),
+                    code: "shape-shadowed".into(),
+                    msg: format!(
+                        "shape `{shape}` is declared both as a syntax `type {shape}(...)` \
                         and derived via type_decl_row; the syntax decl wins and the derived rows \
-                        are ignored"),
+                        are ignored"
+                    ),
                     hint: None,
                 });
             }
@@ -417,21 +734,36 @@ impl Engine {
     /// records a `shape-unknown-type` warn and that whole shape is dropped from the
     /// persist (it stays pending). Full replace, batched (no per-row write).
     pub(crate) fn persist_type_decl_shapes(&mut self, prog: &Program) -> Result<()> {
-        if !type_decl_row_used(prog) { return Ok(()); }
+        if !type_decl_row_used(prog) {
+            return Ok(());
+        }
 
         // Valid ty vocabulary: base types + ambient builtin enum brands + program brands.
-        let prog_brands: std::collections::HashSet<&str> = prog.items.iter()
-            .filter_map(|it| if let Item::Brand(b) = it { Some(b.name.as_str()) } else { None })
+        let prog_brands: std::collections::HashSet<&str> = prog
+            .items
+            .iter()
+            .filter_map(|it| {
+                if let Item::Brand(b) = it {
+                    Some(b.name.as_str())
+                } else {
+                    None
+                }
+            })
             .collect();
-        let ty_ok = |ty: &str| Type::parse(ty).is_some()
-            || builtin_enum_variants(ty).is_some()
-            || prog_brands.contains(ty);
+        let ty_ok = |ty: &str| {
+            Type::parse(ty).is_some()
+                || builtin_enum_variants(ty).is_some()
+                || prog_brands.contains(ty)
+        };
 
-        let mut stmt = self.db.conn()
-            .prepare(&format!("SELECT shape, pos, col, type FROM {} ORDER BY shape, pos", crate::lower::txt_tbl("type_decl_row")))?;
-        let raw: Vec<(String, i64, String, String)> = stmt.query_map([], |r| Ok((
-            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
-            .filter_map(|x| x.ok()).collect();
+        let mut stmt = self.db.conn().prepare(&format!(
+            "SELECT shape, pos, col, type FROM {} ORDER BY shape, pos",
+            crate::lower::txt_tbl("type_decl_row")
+        ))?;
+        let raw: Vec<(String, i64, String, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .filter_map(|x| x.ok())
+            .collect();
         drop(stmt);
 
         // Validate ty every tick (cheap, O(rows)) so the shape-unknown-type diag is
@@ -452,28 +784,43 @@ impl Engine {
         // The WRITE is the recompute-guarded step: gate the DELETE + insert on the
         // sink's content digest so an unchanged sink does not re-migrate every tick
         // (the repo's recompute-guard rail).
-        let digest = self.rel_content_digest("type_decl_row", &self.rels["type_decl_row"].clone())?;
-        if self.load_rel_digest("shape:type_decl_row")? == Some(digest) { return Ok(()); }
-        let rows: Vec<Vec<Value>> = raw.iter()
+        let digest =
+            self.rel_content_digest("type_decl_row", &self.rels["type_decl_row"].clone())?;
+        if self.load_rel_digest("shape:type_decl_row")? == Some(digest) {
+            return Ok(());
+        }
+        let rows: Vec<Vec<Value>> = raw
+            .iter()
             .filter(|(shape, _, _, _)| !bad_shapes.contains(shape))
-            .map(|(shape, pos, col, ty)| vec![
-                Value::Text(shape.clone()), Value::Int(*pos),
-                Value::Text(col.clone()), Value::Text(ty.clone())])
+            .map(|(shape, pos, col, ty)| {
+                vec![
+                    Value::Text(shape.clone()),
+                    Value::Int(*pos),
+                    Value::Text(col.clone()),
+                    Value::Text(ty.clone()),
+                ]
+            })
             .collect();
         self.db.conn().execute("DELETE FROM _shapes", [])?;
-        self.db.insert_rows("_shapes", &["shape", "pos", "col", "type"], &rows)?;
+        self.db
+            .insert_rows("_shapes", &["shape", "pos", "col", "type"], &rows)?;
         self.save_rel_digest("shape:type_decl_row", &digest)?;
         Ok(())
     }
 
     pub(crate) fn rel_digest(&self, rel: &str) -> Result<[u8; 32]> {
         let mut acc = [0u8; 32];
-        let mut stmt = self.db.conn().prepare(&format!("SELECT __src FROM {}", tbl(rel)))?;
+        let mut stmt = self
+            .db
+            .conn()
+            .prepare(&format!("SELECT __src FROM {}", tbl(rel)))?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
             let src: String = row.get(0).unwrap_or_default();
             if let Ok(bytes) = hex_to_32(&src) {
-                for (a, b) in acc.iter_mut().zip(bytes.iter()) { *a ^= *b; }
+                for (a, b) in acc.iter_mut().zip(bytes.iter()) {
+                    *a ^= *b;
+                }
             }
         }
         Ok(acc)
@@ -488,8 +835,12 @@ impl Engine {
         let sql = if meta.cols.is_empty() {
             format!("SELECT COUNT(*) FROM {}", tbl(rel))
         } else {
-            let cl = meta.cols.iter().map(|c| format!("\"{}\"", c.name))
-                .collect::<Vec<_>>().join(", ");
+            let cl = meta
+                .cols
+                .iter()
+                .map(|c| format!("\"{}\"", c.name))
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("SELECT {cl} FROM {}", tbl(rel))
         };
         self.digest_of_query(&sql, [])
@@ -503,8 +854,11 @@ impl Engine {
         let cl = if meta.cols.is_empty() {
             "COUNT(*)".to_string()
         } else {
-            meta.cols.iter().map(|c| format!("\"{}\"", c.name))
-                .collect::<Vec<_>>().join(", ")
+            meta.cols
+                .iter()
+                .map(|c| format!("\"{}\"", c.name))
+                .collect::<Vec<_>>()
+                .join(", ")
         };
         let sql = format!("SELECT {cl} FROM {} WHERE tx = ?1", carry_tbl(rel));
         let staged = self.digest_of_query(&sql, [tx])?;
@@ -513,7 +867,11 @@ impl Engine {
 
     /// Order-independent (XOR-folded) content digest of a query's rows. Shared
     /// by `rel_content_digest` and `carry_differs`.
-    pub(crate) fn digest_of_query(&self, sql: &str, params: impl rusqlite::Params) -> Result<[u8; 32]> {
+    pub(crate) fn digest_of_query(
+        &self,
+        sql: &str,
+        params: impl rusqlite::Params,
+    ) -> Result<[u8; 32]> {
         let mut acc = [0u8; 32];
         let mut stmt = self.db.conn().prepare(sql)?;
         let ncol = stmt.column_count();
@@ -522,23 +880,43 @@ impl Engine {
             let mut h = blake3::Hasher::new();
             for i in 0..ncol {
                 match row.get::<_, rusqlite::types::Value>(i)? {
-                    rusqlite::types::Value::Integer(n) => { h.update(b"i"); h.update(&n.to_le_bytes()); }
-                    rusqlite::types::Value::Real(f) => { h.update(b"r"); h.update(&f.to_le_bytes()); }
-                    rusqlite::types::Value::Text(s) => { h.update(b"t"); h.update(s.as_bytes()); }
-                    rusqlite::types::Value::Blob(b) => { h.update(b"b"); h.update(&b); }
-                    rusqlite::types::Value::Null => { h.update(b"n"); }
+                    rusqlite::types::Value::Integer(n) => {
+                        h.update(b"i");
+                        h.update(&n.to_le_bytes());
+                    }
+                    rusqlite::types::Value::Real(f) => {
+                        h.update(b"r");
+                        h.update(&f.to_le_bytes());
+                    }
+                    rusqlite::types::Value::Text(s) => {
+                        h.update(b"t");
+                        h.update(s.as_bytes());
+                    }
+                    rusqlite::types::Value::Blob(b) => {
+                        h.update(b"b");
+                        h.update(&b);
+                    }
+                    rusqlite::types::Value::Null => {
+                        h.update(b"n");
+                    }
                 }
                 h.update(&[0]);
             }
             let d = h.finalize();
-            for (a, b) in acc.iter_mut().zip(d.as_bytes().iter()) { *a ^= *b; }
+            for (a, b) in acc.iter_mut().zip(d.as_bytes().iter()) {
+                *a ^= *b;
+            }
         }
         Ok(acc)
     }
 
     pub(crate) fn load_rel_digest(&self, rel: &str) -> Result<Option<[u8; 32]>> {
-        let hex: Option<String> = self.db.conn()
-            .query_row("SELECT digest FROM _reldigest WHERE rel = ?1", [rel], |r| r.get(0))
+        let hex: Option<String> = self
+            .db
+            .conn()
+            .query_row("SELECT digest FROM _reldigest WHERE rel = ?1", [rel], |r| {
+                r.get(0)
+            })
             .ok();
         Ok(hex.and_then(|h| hex_to_32(&h).ok()))
     }
@@ -548,7 +926,8 @@ impl Engine {
         self.db.conn().execute(
             "INSERT INTO _reldigest(rel, digest) VALUES (?1, ?2)
              ON CONFLICT(rel) DO UPDATE SET digest = excluded.digest",
-            rusqlite::params![rel, hex])?;
+            rusqlite::params![rel, hex],
+        )?;
         Ok(())
     }
 
@@ -560,14 +939,17 @@ impl Engine {
     /// `_reldigest` under a `src:` key (distinct namespace from row-content
     /// digests). Returns (dirty rels, pending saves); the caller persists the
     /// saves only after re-extraction lands, so a failed tick retries.
-    pub(crate) fn source_rule_digests(&self, source_rules: &[&Rule])
-        -> Result<(HashSet<String>, Vec<(String, [u8; 32])>)>
-    {
+    pub(crate) fn source_rule_digests(
+        &self,
+        source_rules: &[&Rule],
+    ) -> Result<(HashSet<String>, Vec<(String, [u8; 32])>)> {
         let mut by_rel: HashMap<String, [u8; 32]> = HashMap::new();
         for r in source_rules {
             let h = blake3::hash(format!("{r:?}").as_bytes());
             let acc = by_rel.entry(r.head.rel.clone()).or_insert([0u8; 32]);
-            for (a, b) in acc.iter_mut().zip(h.as_bytes()) { *a ^= b; }
+            for (a, b) in acc.iter_mut().zip(h.as_bytes()) {
+                *a ^= b;
+            }
         }
         let mut dirty = HashSet::new();
         let mut pending = Vec::new();
@@ -585,11 +967,16 @@ impl Engine {
     /// its stored digest (the file's bytes moved but the extracted rows did
     /// not). Records the new digest for the relations that really changed.
     /// This is v4's `Replay` short-circuit at relation granularity.
-    pub(crate) fn prune_unchanged_by_digest(&self, changed: HashSet<String>) -> Result<HashSet<String>> {
+    pub(crate) fn prune_unchanged_by_digest(
+        &self,
+        changed: HashSet<String>,
+    ) -> Result<HashSet<String>> {
         let mut out = HashSet::new();
         for rel in changed {
             let d_new = self.rel_digest(&rel)?;
-            if self.load_rel_digest(&rel)? == Some(d_new) { continue; }
+            if self.load_rel_digest(&rel)? == Some(d_new) {
+                continue;
+            }
             self.save_rel_digest(&rel, &d_new)?;
             out.insert(rel);
         }
@@ -606,7 +993,9 @@ impl Engine {
         let mut moved = Vec::new();
         for rel in source_rels {
             let d = self.rel_digest(rel)?;
-            if self.load_rel_digest(rel)? == Some(d) { continue; }
+            if self.load_rel_digest(rel)? == Some(d) {
+                continue;
+            }
             self.save_rel_digest(rel, &d)?;
             moved.push(rel.clone());
         }
@@ -622,14 +1011,23 @@ impl Engine {
     /// ONE query (load every completed marker into a set) instead of a
     /// `COUNT(*)` round trip per rel.
     pub(crate) fn derived_incomplete_rels(&self, derived_rels: &[String]) -> Result<Vec<String>> {
-        if derived_rels.is_empty() { return Ok(Vec::new()); }
+        if derived_rels.is_empty() {
+            return Ok(Vec::new());
+        }
         let mut complete: HashSet<String> = HashSet::new();
-        let mut stmt = self.db.conn().prepare("SELECT rel FROM _derived_complete")?;
+        let mut stmt = self
+            .db
+            .conn()
+            .prepare("SELECT rel FROM _derived_complete")?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
             complete.insert(row.get::<_, String>(0)?);
         }
-        Ok(derived_rels.iter().filter(|r| !complete.contains(r.as_str())).cloned().collect())
+        Ok(derived_rels
+            .iter()
+            .filter(|r| !complete.contains(r.as_str()))
+            .cloned()
+            .collect())
     }
 
     /// Mark every rel in `derived_rels` as having completed a rebuild pass —
@@ -638,18 +1036,37 @@ impl Engine {
     /// `INSERT OR IGNORE` via the plural `insert_rows` seam, so this is one
     /// statement (chunked), never a per-rel write.
     pub(crate) fn mark_derived_complete(&self, derived_rels: &[String]) -> Result<()> {
-        if derived_rels.is_empty() { return Ok(()); }
-        let rows: Vec<Vec<Value>> = derived_rels.iter().map(|r| vec![Value::Text(r.clone())]).collect();
+        if derived_rels.is_empty() {
+            return Ok(());
+        }
+        let rows: Vec<Vec<Value>> = derived_rels
+            .iter()
+            .map(|r| vec![Value::Text(r.clone())])
+            .collect();
         self.db.insert_rows("_derived_complete", &["rel"], &rows)?;
         Ok(())
     }
 
     pub(crate) fn load_file_meta(&self) -> Result<FileMeta> {
-        let mut stmt = self.db.conn().prepare("SELECT repo, path, rev, hash, mtime, size, lines FROM _file")?;
-        let rows = stmt.query_map([], |r| Ok((
-            (r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?),
-            (r.get::<_, String>(3)?, r.get::<_, i64>(4)?, r.get::<_, i64>(5)?, r.get::<_, i64>(6)?),
-        )))?;
+        let mut stmt = self
+            .db
+            .conn()
+            .prepare("SELECT repo, path, rev, hash, mtime, size, lines FROM _file")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                (
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ),
+                (
+                    r.get::<_, String>(3)?,
+                    r.get::<_, i64>(4)?,
+                    r.get::<_, i64>(5)?,
+                    r.get::<_, i64>(6)?,
+                ),
+            ))
+        })?;
         Ok(rows.filter_map(|x| x.ok()).collect())
     }
 
@@ -666,31 +1083,49 @@ impl Engine {
             if prev.get(k) != Some(v) {
                 delta.insert(k.clone(), v.clone());
                 if prev.contains_key(k) {
-                    stale.push(vec![Value::Text(k.0.clone()), Value::Text(k.1.clone()), Value::Text(k.2.clone())]);
+                    stale.push(vec![
+                        Value::Text(k.0.clone()),
+                        Value::Text(k.1.clone()),
+                        Value::Text(k.2.clone()),
+                    ]);
                 }
             }
         }
         for k in prev.keys() {
             if !current.contains_key(k) {
-                stale.push(vec![Value::Text(k.0.clone()), Value::Text(k.1.clone()), Value::Text(k.2.clone())]);
+                stale.push(vec![
+                    Value::Text(k.0.clone()),
+                    Value::Text(k.1.clone()),
+                    Value::Text(k.2.clone()),
+                ]);
             }
         }
         if !stale.is_empty() {
             self.db.exec("CREATE TEMP TABLE IF NOT EXISTS _stale_file(repo TEXT, path TEXT, rev TEXT, PRIMARY KEY (repo, path, rev))")?;
             self.db.exec("DELETE FROM _stale_file")?;
-            self.db.insert_rows("_stale_file", &["repo", "path", "rev"], &stale)?;
+            self.db
+                .insert_rows("_stale_file", &["repo", "path", "rev"], &stale)?;
             self.db.exec("DELETE FROM _file WHERE (repo, path, rev) IN (SELECT repo, path, rev FROM _stale_file)")?;
         }
-        let rows: Vec<Vec<Value>> = delta.iter().map(|((repo, path, rev), (h, mt, sz, lines))| vec![
-            Value::Text(repo.clone()),
-            Value::Text(path.clone()),
-            Value::Text(rev.clone()),
-            Value::Text(h.clone()),
-            Value::Int(*mt),
-            Value::Int(*sz),
-            Value::Int(*lines),
-        ]).collect();
-        self.db.insert_rows("_file", &["repo", "path", "rev", "hash", "mtime", "size", "lines"], &rows)?;
+        let rows: Vec<Vec<Value>> = delta
+            .iter()
+            .map(|((repo, path, rev), (h, mt, sz, lines))| {
+                vec![
+                    Value::Text(repo.clone()),
+                    Value::Text(path.clone()),
+                    Value::Text(rev.clone()),
+                    Value::Text(h.clone()),
+                    Value::Int(*mt),
+                    Value::Int(*sz),
+                    Value::Int(*lines),
+                ]
+            })
+            .collect();
+        self.db.insert_rows(
+            "_file",
+            &["repo", "path", "rev", "hash", "mtime", "size", "lines"],
+            &rows,
+        )?;
         self.insert_spine_files(&delta)?;
         Ok(())
     }
@@ -698,42 +1133,74 @@ impl Engine {
     pub(crate) fn insert_spine_files(&self, current: &FileMeta) -> Result<usize> {
         let mut by_id: BTreeMap<String, (String, String, i64)> = BTreeMap::new();
         for ((_repo, path, _rev), (hash, _mt, size, _lines)) in current {
-            let Some(id) = spine::FileId::from_content_address(hash, *size) else { continue };
-            if id == spine::FileId::SYNTHETIC { continue; }
-            let entry = by_id.entry(id.to_string()).or_insert_with(|| (hash.clone(), path.clone(), *size));
+            let Some(id) = spine::FileId::from_content_address(hash, *size) else {
+                continue;
+            };
+            if id == spine::FileId::SYNTHETIC {
+                continue;
+            }
+            let entry = by_id
+                .entry(id.to_string())
+                .or_insert_with(|| (hash.clone(), path.clone(), *size));
             if path < &entry.1 {
                 entry.1 = path.clone();
             }
         }
-        let file_rows: Vec<Vec<Value>> = by_id.into_iter()
+        let file_rows: Vec<Vec<Value>> = by_id
+            .into_iter()
             .map(|(id, (content_hash, path, size))| {
-                vec![Value::Text(id), Value::Text(content_hash), Value::Text(path), Value::Int(size)]
+                vec![
+                    Value::Text(id),
+                    Value::Text(content_hash),
+                    Value::Text(path),
+                    Value::Int(size),
+                ]
             })
             .collect();
-        self.db.insert_rows("_files", &["id", "content_hash", "path", "size"], &file_rows)
+        self.db.insert_rows(
+            "_files",
+            &["id", "content_hash", "path", "size"],
+            &file_rows,
+        )
     }
     /// The current `@next` generation (`_carry_meta.tx`). 0 on a fresh db.
 
     pub(crate) fn current_tx(&self) -> Result<i64> {
-        Ok(self.db.conn().query_row(
-            "SELECT tx FROM _carry_meta WHERE k = 'tx'", [], |r| r.get(0))?)
+        Ok(self
+            .db
+            .conn()
+            .query_row("SELECT tx FROM _carry_meta WHERE k = 'tx'", [], |r| {
+                r.get(0)
+            })?)
     }
 
     /// Advance the carry clock to `tx` (called once per tick after staging).
     pub(crate) fn set_tx(&self, tx: i64) -> Result<()> {
-        self.db.conn().execute("UPDATE _carry_meta SET tx = ?1 WHERE k = 'tx'", [tx])?;
+        self.db
+            .conn()
+            .execute("UPDATE _carry_meta SET tx = ?1 WHERE k = 'tx'", [tx])?;
         Ok(())
     }
 
     /// Create a carry buffer table mirroring the live rel's columns plus `tx`.
     /// PK is (all rel cols, tx) so a re-tick at the same generation is idempotent.
     pub(crate) fn ensure_carry_table(&self, rel: &str, meta: &RelMeta) -> Result<()> {
-        let cols: Vec<String> = meta.cols.iter()
-            .map(|c| format!("\"{}\" {}", c.name, c.sql())).collect();
-        let pk: Vec<String> = meta.cols.iter().map(|c| format!("\"{}\"", c.name)).collect();
+        let cols: Vec<String> = meta
+            .cols
+            .iter()
+            .map(|c| format!("\"{}\" {}", c.name, c.sql()))
+            .collect();
+        let pk: Vec<String> = meta
+            .cols
+            .iter()
+            .map(|c| format!("\"{}\"", c.name))
+            .collect();
         let sql = format!(
             "CREATE TABLE IF NOT EXISTS {} ({}, tx INTEGER NOT NULL, PRIMARY KEY ({}, tx))",
-            carry_tbl(rel), cols.join(", "), pk.join(", "));
+            carry_tbl(rel),
+            cols.join(", "),
+            pk.join(", ")
+        );
         self.db.conn().execute(&sql, [])?;
         Ok(())
     }
@@ -746,13 +1213,23 @@ impl Engine {
     /// otherwise frozen at its first value, since nothing flipped `changed`).
     pub(crate) fn load_carry(&self, rel: &str, meta: &RelMeta, tx: i64) -> Result<bool> {
         let before = self.rel_content_digest(rel, meta)?;
-        let cl = meta.cols.iter().map(|c| format!("\"{}\"", c.name))
-            .collect::<Vec<_>>().join(", ");
-        self.db.conn().execute(&format!("DELETE FROM {}", tbl(rel)), [])?;
+        let cl = meta
+            .cols
+            .iter()
+            .map(|c| format!("\"{}\"", c.name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.db
+            .conn()
+            .execute(&format!("DELETE FROM {}", tbl(rel)), [])?;
         self.db.conn().execute(
-            &format!("INSERT OR IGNORE INTO {dst} ({cl}) SELECT {cl} FROM {src} WHERE tx = ?1",
-                dst = tbl(rel), src = carry_tbl(rel)),
-            [tx])?;
+            &format!(
+                "INSERT OR IGNORE INTO {dst} ({cl}) SELECT {cl} FROM {src} WHERE tx = ?1",
+                dst = tbl(rel),
+                src = carry_tbl(rel)
+            ),
+            [tx],
+        )?;
         let after = self.rel_content_digest(rel, meta)?;
         Ok(before != after)
     }
@@ -761,31 +1238,45 @@ impl Engine {
     /// into its carry buffer at `cur + 1`. One pass: the body reads only relations
     /// that are already converged this tick (including the carried-in live rel),
     /// none of which change during staging, so no fixpoint is needed.
-    pub(crate) fn rebuild_next(&self, next_rules: &[&Rule], next_rels: &[String], cur: i64) -> Result<()> {
+    pub(crate) fn rebuild_next(
+        &self,
+        next_rules: &[&Rule],
+        next_rels: &[String],
+        cur: i64,
+    ) -> Result<()> {
         let nxt = cur + 1;
         for rel in next_rels {
             self.db.conn().execute(
-                &format!("DELETE FROM {} WHERE tx = ?1", carry_tbl(rel)), [nxt])?;
+                &format!("DELETE FROM {} WHERE tx = ?1", carry_tbl(rel)),
+                [nxt],
+            )?;
         }
         for r in next_rules {
             let sql = crate::lower::lower_rule_to(
-                r, &self.rels, &carry_tbl(&r.head.rel),
-                &[("tx".to_string(), nxt.to_string())])?;
+                r,
+                &self.rels,
+                &carry_tbl(&r.head.rel),
+                &[("tx".to_string(), nxt.to_string())],
+            )?;
             self.db.conn().execute(&sql, [])?;
         }
         Ok(())
     }
 
-
     /// Turnkey batched intern: every text cell across `rows` goes through one
     /// `SymSink`, flushed by `Db::flush_syms` (collision-guarded there — two
     /// different texts hashing to the same id within the flush is a loud bail).
-    pub(crate) fn insert_spine_strings(&self, rows: &[(String, String, Vec<Value>)]) -> Result<usize> {
+    pub(crate) fn insert_spine_strings(
+        &self,
+        rows: &[(String, String, Vec<Value>)],
+    ) -> Result<usize> {
         let mut sink = spine::SymSink::new();
         for (_, _, row) in rows {
             for v in row {
                 let Value::Text(s) = v else { continue };
-                if s.is_empty() { continue; }
+                if s.is_empty() {
+                    continue;
+                }
                 sink.sym(s);
             }
         }
@@ -809,31 +1300,50 @@ impl Engine {
     /// `ref(id,_,_,lo,hi)` (the span) and `string(id,text,norm)` (the text).
     /// `None` is for callers that intern the text on a separate path (module
     /// spans, which call `insert_spine_strings` first).
-    pub(crate) fn insert_spine_where_bytes(&self, wheres: &[(String, String, spine::WhereBytes, Option<String>)]) -> Result<usize> {
-        if wheres.is_empty() { return Ok(0); }
+    pub(crate) fn insert_spine_where_bytes(
+        &self,
+        wheres: &[(String, String, spine::WhereBytes, Option<String>)],
+    ) -> Result<usize> {
+        if wheres.is_empty() {
+            return Ok(0);
+        }
         let mut by_id: BTreeMap<String, Vec<Value>> = BTreeMap::new();
         let mut sink = spine::SymSink::new();
         for (repo, path, w, text) in wheres {
             let id = spine::WhereBytesId::of_located(*w, repo, path).to_string();
-            by_id.entry(id.clone()).or_insert_with(|| vec![
-                Value::Text(id),
-                Value::Int(w.string.sqlite()),
-                Value::Text(w.file.to_string()),
-                Value::Int(w.lo as i64),
-                Value::Int(w.hi as i64),
-                Value::Text(repo.clone()),
-                Value::Text(w.rev.to_string()),
-                Value::Text(path.clone()),
-            ]);
+            by_id.entry(id.clone()).or_insert_with(|| {
+                vec![
+                    Value::Text(id),
+                    Value::Int(w.string.sqlite()),
+                    Value::Text(w.file.to_string()),
+                    Value::Int(w.lo as i64),
+                    Value::Int(w.hi as i64),
+                    Value::Text(repo.clone()),
+                    Value::Text(w.rev.to_string()),
+                    Value::Text(path.clone()),
+                ]
+            });
             if let Some(t) = text {
-                if !t.is_empty() { sink.sym(t); }
+                if !t.is_empty() {
+                    sink.sym(t);
+                }
             }
         }
         self.db.flush_syms(&mut sink)?;
         let rows: Vec<Vec<Value>> = by_id.into_values().collect();
-        self.db.insert_rows("_where_bytes", &["id", "string_id", "file_id", "lo", "hi", "repo", "rev", "path"], &rows)
+        self.db.insert_rows(
+            "_where_bytes",
+            &[
+                "id",
+                "string_id",
+                "file_id",
+                "lo",
+                "hi",
+                "repo",
+                "rev",
+                "path",
+            ],
+            &rows,
+        )
     }
-
-
-
 }

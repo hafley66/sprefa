@@ -699,6 +699,7 @@ impl Engine {
     /// relations for ones that should have resolved.
     /// Wholesale wipe + repopulate; gated by `module_rels_used` at the call site.
     /// Edges are resolved within a single rev (cross-rev merge is a Stage-1 corner).
+    // ARCH {"url":"engine/extract","role":"extraction"}
     pub(crate) fn refresh_module_rels(&self) -> Result<bool> {
         let by_rev = self.module_files_by_rev()?;
         // Perf gap A twin: skip the wholesale rebuild when no rev's input digest
@@ -846,6 +847,85 @@ impl Engine {
         Ok(files)
     }
 
+    /// SCIP rows that can change call/type resolution for `rev`. SCIP indexes
+    /// describe only the working tree, so committed revisions intentionally
+    /// return the zero digest. The row framing is part of the persisted extract
+    /// digest contract; keep it byte-for-byte aligned with the original fold.
+    pub(crate) fn scip_resolution_dependency_digest(&self, rev: &str) -> [u8; 32] {
+        let mut acc = [0u8; 32];
+        if rev != "WORK" {
+            return acc;
+        }
+        if let Ok(mut s) = self.db.conn().prepare(&format!(
+            "SELECT file, symbol, def_file, repo FROM {}",
+            txt_tbl("scip_ref")
+        )) {
+            if let Ok(rows) = s.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            }) {
+                for (file, symbol, def_file, repo) in rows.flatten() {
+                    let hash = blake3::hash(
+                        format!("scip\0{file}\0{symbol}\0{def_file}\0{repo}").as_bytes(),
+                    );
+                    for (slot, byte) in acc.iter_mut().zip(hash.as_bytes()) {
+                        *slot ^= *byte;
+                    }
+                }
+            }
+        }
+        acc
+    }
+
+    /// Rev-scoped module rows that can change call/type resolution: import
+    /// edges for ambiguity narrowing plus resolved alias bindings. Returns one
+    /// XOR digest while retaining the two original row-domain prefixes.
+    pub(crate) fn module_resolution_dependency_digest(&self, rev: &str) -> [u8; 32] {
+        let mut acc = [0u8; 32];
+        if let Ok(mut s) = self.db.conn().prepare(&format!(
+            "SELECT src, dst FROM {} WHERE \"rev\" = ?1",
+            txt_tbl("module_edge_rev")
+        )) {
+            if let Ok(rows) = s.query_map([rev], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            }) {
+                for (src, dst) in rows.flatten() {
+                    let hash = blake3::hash(format!("module\0{src}\0{dst}").as_bytes());
+                    for (slot, byte) in acc.iter_mut().zip(hash.as_bytes()) {
+                        *slot ^= *byte;
+                    }
+                }
+            }
+        }
+        if let Ok(mut s) = self.db.conn().prepare(&format!(
+            "SELECT file, local, source, dst FROM {} WHERE \"rev\" = ?1",
+            txt_tbl("module_binding_resolved_rev")
+        )) {
+            if let Ok(rows) = s.query_map([rev], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            }) {
+                for (file, local, source, dst) in rows.flatten() {
+                    let hash = blake3::hash(
+                        format!("binding\0{file}\0{local}\0{source}\0{dst}").as_bytes(),
+                    );
+                    for (slot, byte) in acc.iter_mut().zip(hash.as_bytes()) {
+                        *slot ^= *byte;
+                    }
+                }
+            }
+        }
+        acc
+    }
+
     /// XOR-folded input digest for one extractor family AT ONE REV: one blake3
     /// per (repo, path, rev, content hash) corpus row for that rev's file subset,
     /// plus the `scip_ref` override table (WORK only — SCIP indexes are
@@ -890,48 +970,13 @@ impl Engine {
             }
             fold(&mut acc, &blake3::hash(format!("{repo}\0{path}\0{frev}\0{hash}").as_bytes()));
         }
-        // SCIP only attributes the WORK rev's resolution (index = working tree),
-        // so a committed rev's digest ignores it: folding scip into every rev's
-        // digest would re-tick untouched committed revs whenever the index moves.
-        if with_scip && rev == "WORK" {
-            // Include the origin `repo`: two roots of the same crate emit
-            // byte-identical (file, symbol, def_file) triples, so folding without
-            // repo would XOR-cancel the second root's rows and leave the digest
-            // unchanged when a wanted repo's index is added — a false skip that
-            // strands the second repo's entities on syntactic-only resolution.
-            if let Ok(mut s) = self.db.conn().prepare(
-                &format!("SELECT file, symbol, def_file, repo FROM {}", txt_tbl("scip_ref"))) {
-                if let Ok(rows) = s.query_map([], |r| Ok((
-                    r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))) {
-                    for (f, sym, d, repo) in rows.flatten() {
-                        fold(&mut acc, &blake3::hash(format!("scip\0{f}\0{sym}\0{d}\0{repo}").as_bytes()));
-                    }
-                }
-            }
-        }
-        // Win D: the import-scoped ambiguity narrowing reads `module_edge_rev`
-        // at this rev, so a moved import (an added/removed/retargeted `use`)
-        // must flip this digest or a stale resolution would survive a warm
-        // tick. Folded for every rev, not just WORK; see the doc comment above.
         if with_scip {
-            if let Ok(mut s) = self.db.conn().prepare(
-                &format!("SELECT src, dst FROM {} WHERE \"rev\" = ?1", txt_tbl("module_edge_rev"))) {
-                if let Ok(rows) = s.query_map([rev], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
-                    for (src, dst) in rows.flatten() {
-                        fold(&mut acc, &blake3::hash(format!("module\0{src}\0{dst}").as_bytes()));
-                    }
-                }
-            }
-            // The alias hop (see `module_binding_resolved_map`) reads `module_binding_resolved_rev`
-            // at this rev, same reasoning: an edited alias must flip this digest
-            // or the warm-tick skip would keep serving the stale resolution.
-            if let Ok(mut s) = self.db.conn().prepare(
-                &format!("SELECT file, local, source, dst FROM {} WHERE \"rev\" = ?1", txt_tbl("module_binding_resolved_rev"))) {
-                if let Ok(rows) = s.query_map([rev], |r| Ok((
-                    r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))) {
-                    for (file, local, source, dst) in rows.flatten() {
-                        fold(&mut acc, &blake3::hash(format!("binding\0{file}\0{local}\0{source}\0{dst}").as_bytes()));
-                    }
+            for dependency in [
+                self.scip_resolution_dependency_digest(rev),
+                self.module_resolution_dependency_digest(rev),
+            ] {
+                for (slot, byte) in acc.iter_mut().zip(dependency) {
+                    *slot ^= byte;
                 }
             }
         }
@@ -1368,6 +1413,64 @@ mod verdict_reason_tests {
 
     fn extract_file(repo: &str, path: &str, hash: &str) -> ExtractFile {
         (repo.to_string(), path.to_string(), "WORK".to_string(), hash.to_string())
+    }
+
+    #[test]
+    fn resolution_dependency_digests_are_stable_and_isolated() {
+        let eng = engine();
+        eng.db.conn().execute_batch(
+            "CREATE TABLE rel_scip_ref_txt (file TEXT, symbol TEXT, def_file TEXT, repo TEXT); \
+             CREATE TABLE rel_module_edge_rev_txt (src TEXT, dst TEXT, rev TEXT); \
+             CREATE TABLE rel_module_binding_resolved_rev_txt \
+                 (file TEXT, local TEXT, source TEXT, dst TEXT, rev TEXT); \
+             INSERT INTO rel_scip_ref_txt VALUES \
+                 ('src/a.rs', 'crate A#', 'src/def.rs', 'self'); \
+             INSERT INTO rel_module_edge_rev_txt VALUES \
+                 ('src/a.rs', 'src/def.rs', 'WORK'); \
+             INSERT INTO rel_module_binding_resolved_rev_txt VALUES \
+                 ('src/a.rs', 'Alias', 'Actual', 'src/def.rs', 'WORK');",
+        ).unwrap();
+
+        let scip_initial = eng.scip_resolution_dependency_digest("WORK");
+        let module_initial = eng.module_resolution_dependency_digest("WORK");
+        assert_eq!(scip_initial, eng.scip_resolution_dependency_digest("WORK"));
+        assert_eq!(module_initial, eng.module_resolution_dependency_digest("WORK"));
+        let mut expected_extract = *blake3::hash(b"call\0WORK").as_bytes();
+        for dependency in [scip_initial, module_initial] {
+            for (slot, byte) in expected_extract.iter_mut().zip(dependency) {
+                *slot ^= byte;
+            }
+        }
+        assert_eq!(
+            eng.extract_input_digest("call", "WORK", &[], true),
+            expected_extract,
+            "factoring dependency folds changed the extract digest framing",
+        );
+
+        eng.db.conn().execute(
+            "UPDATE rel_module_edge_rev_txt SET dst = 'src/other.rs'",
+            [],
+        ).unwrap();
+        let scip_after_module = eng.scip_resolution_dependency_digest("WORK");
+        let module_after_module = eng.module_resolution_dependency_digest("WORK");
+        assert_eq!(scip_initial, scip_after_module, "module input changed SCIP digest");
+        assert_ne!(module_initial, module_after_module, "module row change was invisible");
+
+        eng.db.conn().execute(
+            "UPDATE rel_scip_ref_txt SET def_file = 'src/other.rs'",
+            [],
+        ).unwrap();
+        assert_ne!(
+            scip_after_module,
+            eng.scip_resolution_dependency_digest("WORK"),
+            "SCIP row change was invisible",
+        );
+        assert_eq!(
+            module_after_module,
+            eng.module_resolution_dependency_digest("WORK"),
+            "SCIP input changed module digest",
+        );
+        assert_eq!(eng.scip_resolution_dependency_digest("HEAD"), [0; 32]);
     }
 
     /// First tick for a family/rev (no prior digest row) always attributes

@@ -25,50 +25,78 @@ pub(crate) struct AdjacencyCache {
 }
 
 /// One watchdog serves a rebuild, avoiding a sleeper thread for every SQL statement.
-struct StmtWatch { tx: Sender<StmtWatchEvent>, thread: Option<JoinHandle<()>> }
-enum StmtWatchEvent { Begin(String), Complete, Shutdown }
+struct StmtWatch {
+    tx: Sender<StmtWatchEvent>,
+    thread: Option<JoinHandle<()>>,
+}
+enum StmtWatchEvent {
+    Begin(String),
+    Complete,
+    Shutdown,
+}
 
 impl StmtWatch {
     fn start() -> Self {
         let (tx, rx) = mpsc::channel();
-        let thread = std::thread::spawn(move || while let Ok(event) = rx.recv() {
-            let rel = match event {
-                StmtWatchEvent::Begin(rel) => rel,
-                StmtWatchEvent::Shutdown => break,
-                StmtWatchEvent::Complete => continue,
-            };
-            match rx.recv_timeout(SLOW_STMT_AFTER) {
-                Ok(StmtWatchEvent::Complete) => {}
-                Ok(StmtWatchEvent::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
-                Ok(StmtWatchEvent::Begin(_)) => unreachable!("derived statements do not overlap"),
-                Err(RecvTimeoutError::Timeout) => {
-                    eprintln!("[stmt-slow] began statement for `{rel}`; still running after 10s");
-                    match rx.recv() {
-                        Ok(StmtWatchEvent::Complete) => {}
-                        Ok(StmtWatchEvent::Shutdown) | Err(_) => break,
-                        Ok(StmtWatchEvent::Begin(_)) => unreachable!("derived statements do not overlap"),
+        let thread = std::thread::spawn(move || {
+            while let Ok(event) = rx.recv() {
+                let rel = match event {
+                    StmtWatchEvent::Begin(rel) => rel,
+                    StmtWatchEvent::Shutdown => break,
+                    StmtWatchEvent::Complete => continue,
+                };
+                match rx.recv_timeout(SLOW_STMT_AFTER) {
+                    Ok(StmtWatchEvent::Complete) => {}
+                    Ok(StmtWatchEvent::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
+                    Ok(StmtWatchEvent::Begin(_)) => {
+                        unreachable!("derived statements do not overlap")
+                    }
+                    Err(RecvTimeoutError::Timeout) => {
+                        eprintln!(
+                            "[stmt-slow] began statement for `{rel}`; still running after 10s"
+                        );
+                        match rx.recv() {
+                            Ok(StmtWatchEvent::Complete) => {}
+                            Ok(StmtWatchEvent::Shutdown) | Err(_) => break,
+                            Ok(StmtWatchEvent::Begin(_)) => {
+                                unreachable!("derived statements do not overlap")
+                            }
+                        }
                     }
                 }
             }
         });
-        Self { tx, thread: Some(thread) }
+        Self {
+            tx,
+            thread: Some(thread),
+        }
     }
-    fn begin(&self, rel: &str) { let _ = self.tx.send(StmtWatchEvent::Begin(rel.to_string())); }
-    fn complete(&self) { let _ = self.tx.send(StmtWatchEvent::Complete); }
+    fn begin(&self, rel: &str) {
+        let _ = self.tx.send(StmtWatchEvent::Begin(rel.to_string()));
+    }
+    fn complete(&self) {
+        let _ = self.tx.send(StmtWatchEvent::Complete);
+    }
 }
 impl Drop for StmtWatch {
     fn drop(&mut self) {
         let _ = self.tx.send(StmtWatchEvent::Shutdown);
-        if let Some(thread) = self.thread.take() { let _ = thread.join(); }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 
 fn fixpoint_row_max() -> usize {
-    std::env::var("DL_FIXPOINT_ROW_MAX").ok().and_then(|value| value.parse().ok())
+    std::env::var("DL_FIXPOINT_ROW_MAX")
+        .ok()
+        .and_then(|value| value.parse().ok())
         .unwrap_or(FIXPOINT_ROW_MAX_DEFAULT)
 }
 fn check_fixpoint_row_budget(rels: &[String], total: usize, max: usize) -> Result<()> {
-    if total <= max { return Ok(()); }
+    if total <= max {
+        return Ok(());
+    }
     bail!("fixpoint row budget exceeded for recursive relation(s) `{}` after {} rows (limit {}): \
            recursion is growing without converging — add a depth bound like `depth < 64`, see std/entry.dl",
           rels.join(", "), total, max);
@@ -85,33 +113,46 @@ impl Engine {
     /// any of the last N seen edge-digests (branch thrash), only a genuinely new
     /// graph pays `embed_graph`. Cap the graph or run on demand for huge edge sets.
     pub(crate) fn eval_node2vec_rule(&mut self, rule: &Rule) -> Result<()> {
-        let edge = rule.node2vec_edge()
+        let edge = rule
+            .node2vec_edge()
             .ok_or_else(|| anyhow::anyhow!("eval_node2vec_rule on a non-node2vec rule"))?;
         let head = &rule.head.rel;
-        let head_meta = self.rels.get(head)
+        let head_meta = self
+            .rels
+            .get(head)
             .ok_or_else(|| anyhow::anyhow!("unknown head relation {head}"))?;
         if rule.head.terms.len() != 3 || head_meta.cols.len() != 3 {
-            bail!("node2vec head '{head}' must have exactly 3 columns (a, b, score); got {}",
-                  head_meta.cols.len());
+            bail!(
+                "node2vec head '{head}' must have exactly 3 columns (a, b, score); got {}",
+                head_meta.cols.len()
+            );
         }
         // Own the head cols now: the recompute path mutates `self`
         // (`node2vec_recomputed`), which conflicts with holding `head_meta`'s
         // immutable borrow of `self.rels` to the end.
         let head_cols: Vec<String> = head_meta.cols.iter().map(|c| c.name.clone()).collect();
-        let edge_meta = self.rels.get(edge)
+        let edge_meta = self
+            .rels
+            .get(edge)
             .ok_or_else(|| anyhow::anyhow!("node2vec edge relation '{edge}' is not declared"))?;
         if edge_meta.cols.len() < 2 {
-            bail!("node2vec edge relation '{edge}' must have at least 2 columns (src, dst); got {}",
-                  edge_meta.cols.len());
+            bail!(
+                "node2vec edge relation '{edge}' must have at least 2 columns (src, dst); got {}",
+                edge_meta.cols.len()
+            );
         }
         // Read the first two columns as the directed edge list.
-        let (c0, c1) = (edge_meta.cols[0].name.clone(), edge_meta.cols[1].name.clone());
+        let (c0, c1) = (
+            edge_meta.cols[0].name.clone(),
+            edge_meta.cols[1].name.clone(),
+        );
         let edges: Vec<(String, String)> = {
             let conn = self.db.conn();
             let mut s = conn.prepare(&format!("SELECT {c0}, {c1} FROM {}", txt_tbl(edge)))?;
-            let v: Vec<(String, String)> = s.query_map([], |r|
-                Ok((cell_as_string(r, 0)?, cell_as_string(r, 1)?)))?
-                .filter_map(|x| x.ok()).collect();
+            let v: Vec<(String, String)> = s
+                .query_map([], |r| Ok((cell_as_string(r, 0)?, cell_as_string(r, 1)?)))?
+                .filter_map(|x| x.ok())
+                .collect();
             v
         };
 
@@ -126,13 +167,16 @@ impl Engine {
         // Vectors for THIS exact digest (W2 keeps the last N digests per graph).
         let have_cur: i64 = self.db.conn().query_row(
             "SELECT COUNT(*) FROM _node_embeddings WHERE graph = ?1 AND edge_digest = ?2",
-            rusqlite::params![edge, dhex], |r| r.get(0))?;
+            rusqlite::params![edge, dhex],
+            |r| r.get(0),
+        )?;
         let trace = std::env::var("SPREFA_N2V_TRACE").is_ok();
         // Skip when node_sim already reflects this digest and its vectors exist
         // (or the graph is legitimately empty and we recorded the all-zero digest).
-        if self.load_rel_digest(&dkey)? == Some(digest)
-            && (edges.is_empty() || have_cur > 0) {
-            if trace { eprintln!("[node2vec] graph '{edge}': skip (digest unchanged)"); }
+        if self.load_rel_digest(&dkey)? == Some(digest) && (edges.is_empty() || have_cur > 0) {
+            if trace {
+                eprintln!("[node2vec] graph '{edge}': skip (digest unchanged)");
+            }
             return Ok(());
         }
         // Global op, digest-skip already refused above — time only the actual
@@ -147,9 +191,15 @@ impl Engine {
         if edges.is_empty() {
             // Empty graph: drop this graph's whole vector cache, record the
             // all-zero digest so a later empty tick skips.
-            self.db.conn().execute("DELETE FROM _node_embeddings WHERE graph = ?1", [edge])?;
-            self.db.conn().execute("DELETE FROM _node_emb_seen WHERE graph = ?1", [edge])?;
-            if trace { eprintln!("[node2vec] graph '{edge}': empty (cleared)"); }
+            self.db
+                .conn()
+                .execute("DELETE FROM _node_embeddings WHERE graph = ?1", [edge])?;
+            self.db
+                .conn()
+                .execute("DELETE FROM _node_emb_seen WHERE graph = ?1", [edge])?;
+            if trace {
+                eprintln!("[node2vec] graph '{edge}': empty (cleared)");
+            }
             self.save_rel_digest(&dkey, &digest)?;
             self.save_stmt_ms_one(&format!("node2vec:{edge}"), t.elapsed().as_millis() as i64)?;
             return Ok(());
@@ -160,44 +210,76 @@ impl Engine {
         // exact edge set (branch A<->B thrash is a hit both ways); only a
         // genuinely new graph pays the embed.
         let pool: Vec<(String, Vec<f32>)> = if have_cur > 0 {
-            if trace { eprintln!("[node2vec] graph '{edge}': cache hit (digest seen)"); }
+            if trace {
+                eprintln!("[node2vec] graph '{edge}': cache hit (digest seen)");
+            }
             let conn = self.db.conn();
             let mut s = conn.prepare(
-                "SELECT node, vec FROM _node_embeddings WHERE graph = ?1 AND edge_digest = ?2")?;
-            let v: Vec<(String, Vec<f32>)> = s.query_map(rusqlite::params![edge, dhex], |r|
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+                "SELECT node, vec FROM _node_embeddings WHERE graph = ?1 AND edge_digest = ?2",
+            )?;
+            let v: Vec<(String, Vec<f32>)> = s
+                .query_map(rusqlite::params![edge, dhex], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })?
                 .filter_map(|x| x.ok())
                 .map(|(n, txt): (String, String)| (n, crate::embed::parse_vec(&txt)))
                 .collect();
             v
         } else {
-            if trace { eprintln!("[node2vec] graph '{edge}': re-embed ({} edges)", edges.len()); }
+            if trace {
+                eprintln!(
+                    "[node2vec] graph '{edge}': re-embed ({} edges)",
+                    edges.len()
+                );
+            }
             self.node2vec_recomputed += 1;
             let pool = crate::embed::node2vec::embed_graph(&edges, &cfg);
             if pool.len() > 2000 {
-                eprintln!("[node2vec] brute-force KNN over {} nodes (O(n^2)); \
-                           shrink the edge rel or cap SPREFA_N2V_*", pool.len());
+                eprintln!(
+                    "[node2vec] brute-force KNN over {} nodes (O(n^2)); \
+                           shrink the edge rel or cap SPREFA_N2V_*",
+                    pool.len()
+                );
             }
             // Persist this digest's vectors (one flush, never N+1).
             let dim = cfg.dim as i64;
-            let emb_rows: Vec<Vec<Value>> = pool.iter().map(|(node, v)| vec![
-                Value::Text(node.clone()), Value::Text(edge.to_string()), Value::Text(dhex.clone()),
-                Value::Int(dim), Value::Text(crate::embed::encode_vec(v))]).collect();
-            self.db.insert_rows("_node_embeddings",
-                &["node", "graph", "edge_digest", "dim", "vec"], &emb_rows)?;
+            let emb_rows: Vec<Vec<Value>> = pool
+                .iter()
+                .map(|(node, v)| {
+                    vec![
+                        Value::Text(node.clone()),
+                        Value::Text(edge.to_string()),
+                        Value::Text(dhex.clone()),
+                        Value::Int(dim),
+                        Value::Text(crate::embed::encode_vec(v)),
+                    ]
+                })
+                .collect();
+            self.db.insert_rows(
+                "_node_embeddings",
+                &["node", "graph", "edge_digest", "dim", "vec"],
+                &emb_rows,
+            )?;
             pool
         };
 
         // LRU: stamp this digest most-recently-used, prune each graph to the N
         // most-recent distinct digests (SPREFA_N2V_CACHE, default 4).
         let seq: i64 = self.db.conn().query_row(
-            "SELECT COALESCE(MAX(last_tick), 0) + 1 FROM _node_emb_seen", [], |r| r.get(0))?;
+            "SELECT COALESCE(MAX(last_tick), 0) + 1 FROM _node_emb_seen",
+            [],
+            |r| r.get(0),
+        )?;
         self.db.conn().execute(
             "INSERT INTO _node_emb_seen(graph, digest, last_tick) VALUES (?1, ?2, ?3)
              ON CONFLICT(graph, digest) DO UPDATE SET last_tick = excluded.last_tick",
-            rusqlite::params![edge, dhex, seq])?;
-        let cap: i64 = std::env::var("SPREFA_N2V_CACHE").ok()
-            .and_then(|s| s.parse().ok()).filter(|n| *n >= 1).unwrap_or(4);
+            rusqlite::params![edge, dhex, seq],
+        )?;
+        let cap: i64 = std::env::var("SPREFA_N2V_CACHE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .filter(|n| *n >= 1)
+            .unwrap_or(4);
         self.db.conn().execute(
             "DELETE FROM _node_embeddings WHERE graph = ?1 AND edge_digest NOT IN
                  (SELECT digest FROM _node_emb_seen WHERE graph = ?1 ORDER BY last_tick DESC LIMIT ?2)",
@@ -208,8 +290,10 @@ impl Engine {
             rusqlite::params![edge, cap])?;
 
         // Fill the head with KNN pairs (reuses the text path's cosine top-k).
-        let k: usize = std::env::var("SPREFA_NODE_SIM_K").ok()
-            .and_then(|s| s.parse().ok()).unwrap_or(8);
+        let k: usize = std::env::var("SPREFA_NODE_SIM_K")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(8);
         let rows = knn_rows(&pool, k);
         let cols: Vec<&str> = head_cols.iter().map(|s| s.as_str()).collect();
         self.insert_rel_rows(head, &cols, &rows)?;
@@ -219,8 +303,13 @@ impl Engine {
     }
 
     /// Wipe derived tables and run the semi-naive fixpoint to convergence.
+    // ARCH {"url":"engine/derive","role":"fixpoint"}
     #[tracing::instrument(skip_all, fields(n_rules = derived_rules.len(), n_rels = derived_rels.len()), level = "debug")]
-    pub(crate) fn rebuild_derived(&self, derived_rules: &[&Rule], derived_rels: &[String]) -> Result<()> {
+    pub(crate) fn rebuild_derived(
+        &self,
+        derived_rules: &[&Rule],
+        derived_rels: &[String],
+    ) -> Result<()> {
         // P3: instrument the whole pass directly (start/stop), rather than
         // relying on the `activity` phase-transition emitter — a quiet
         // one-shot tick (`--check`) may never make the NEXT phase transition
@@ -250,7 +339,9 @@ impl Engine {
             // statement BEFORE it runs, so a statement that never returns is
             // identifiable from stderr (the _stmt_ms table only records
             // completed statements).
-            if std::env::var_os("DL_STMT_TRACE").is_some() { eprintln!("[stmt-trace] {rel}"); }
+            if std::env::var_os("DL_STMT_TRACE").is_some() {
+                eprintln!("[stmt-trace] {rel}");
+            }
             stmt_watch.begin(rel);
             let t = std::time::Instant::now();
             let result = self.db.conn().execute(sql, []);
@@ -265,35 +356,46 @@ impl Engine {
         };
         // The wipe is per-rel attributable work (a big table's DELETE is not
         // free), so it rides `timed` like every other statement.
-        for rel in derived_rels { timed(rel, &format!("DELETE FROM {}", tbl(rel)))?; }
+        for rel in derived_rels {
+            timed(rel, &format!("DELETE FROM {}", tbl(rel)))?;
+        }
         for group in stratify(derived_rules)? {
             for (comp_rules, recursive) in rel_components(&group, derived_rules) {
-                let stmts: Vec<(&str, String)> = comp_rules.iter()
+                let stmts: Vec<(&str, String)> = comp_rules
+                    .iter()
                     .map(|&ri| {
                         let sql = lower_rule(derived_rules[ri], &self.rels)?;
                         Ok((derived_rules[ri].head.rel.as_str(), sql))
                     })
                     .collect::<Result<_>>()?;
                 crate::activity::detail(format!(
-                    "derived: {}", stmts.iter().map(|(r, _)| *r).collect::<Vec<_>>().join(", ")));
+                    "derived: {}",
+                    stmts.iter().map(|(r, _)| *r).collect::<Vec<_>>().join(", ")
+                ));
                 if !recursive {
-                    for (rel, sql) in &stmts { timed(rel, sql)?; }
+                    for (rel, sql) in &stmts {
+                        timed(rel, sql)?;
+                    }
                     continue;
                 }
                 // Native graph walks are strict recognizers. A miss falls through
                 // to SQL with the original rows; the depth-lattice path must run
                 // before the key/merge naive-fallback guard below.
-                if self.try_native_walk(&comp_rules, derived_rules, &mut timed)? { continue; }
+                if self.try_native_walk(&comp_rules, derived_rules, &mut timed)? {
+                    continue;
+                }
                 // Defense twin of typecheck's `recursive-null-pad`: a NULL-padded
                 // head in this component would re-insert the same row every
                 // iteration (NULL != NULL never dedups), so the delta never
                 // reaches 0. Bail instead of hanging.
                 for &ri in &comp_rules {
                     if derived_rules[ri].head_null_pads() {
-                        bail!("rule head for `{}` leaves column(s) NULL (`_` or named-arg padding) \
+                        bail!(
+                            "rule head for `{}` leaves column(s) NULL (`_` or named-arg padding) \
                                inside a recursive component — the fixpoint would not converge; \
                                bind every head column or break the cycle",
-                              derived_rules[ri].head.rel);
+                            derived_rules[ri].head.rel
+                        );
                     }
                 }
                 // Semi-naive fallback shapes: an aggregate head has no single
@@ -313,30 +415,43 @@ impl Engine {
                 let naive_fallback = self.force_naive_fixpoint.get()
                     || comp_rules.iter().any(|&ri| {
                         let r = derived_rules[ri];
-                        r.has_agg() || self.rels.get(&r.head.rel).map(|m| m.key.is_some()).unwrap_or(false)
+                        r.has_agg()
+                            || self
+                                .rels
+                                .get(&r.head.rel)
+                                .map(|m| m.key.is_some())
+                                .unwrap_or(false)
                     });
                 if naive_fallback {
                     let mut iters = 0;
                     let mut total_promoted = 0usize;
-                    let mut comp_rels: Vec<String> = comp_rules.iter()
-                        .map(|&ri| derived_rules[ri].head.rel.clone()).collect();
+                    let mut comp_rels: Vec<String> = comp_rules
+                        .iter()
+                        .map(|&ri| derived_rules[ri].head.rel.clone())
+                        .collect();
                     comp_rels.sort();
                     comp_rels.dedup();
                     let row_max = fixpoint_row_max();
                     loop {
                         let mut delta = 0usize;
-                        for (rel, sql) in &stmts { delta += timed(rel, sql)?; }
+                        for (rel, sql) in &stmts {
+                            delta += timed(rel, sql)?;
+                        }
                         total_promoted = total_promoted.saturating_add(delta);
                         check_fixpoint_row_budget(&comp_rels, total_promoted, row_max)?;
                         // Every execution after pass 1 is a full-input re-run
                         // (the waste semi-naive removes) — count it.
                         if iters > 0 {
-                            self.fixpoint_full_reruns.set(
-                                self.fixpoint_full_reruns.get() + stmts.len());
+                            self.fixpoint_full_reruns
+                                .set(self.fixpoint_full_reruns.get() + stmts.len());
                         }
                         iters += 1;
-                        if delta == 0 { break; }
-                        if iters > 100_000 { bail!("fixpoint did not converge"); }
+                        if delta == 0 {
+                            break;
+                        }
+                        if iters > 100_000 {
+                            bail!("fixpoint did not converge");
+                        }
                     }
                     continue;
                 }
@@ -352,7 +467,12 @@ impl Engine {
         if !derived_rels.is_empty() {
             let tick = crate::activity::snapshot().tick;
             let detail = format!("{} rel(s): {}", derived_rels.len(), derived_rels.join(", "));
-            crate::perflog::emit_phase(tick, "derived", t_rebuild.elapsed().as_millis() as u64, &detail);
+            crate::perflog::emit_phase(
+                tick,
+                "derived",
+                t_rebuild.elapsed().as_millis() as u64,
+                &detail,
+            );
         }
         Ok(())
     }
@@ -382,44 +502,75 @@ impl Engine {
         derived_rules: &[&Rule],
         timed: &mut impl FnMut(&str, &str) -> Result<usize>,
     ) -> Result<bool> {
-        if std::env::var_os("DL_NO_HALT_BFS").is_some() { return Ok(false); }
-        macro_rules! miss { ($why:expr) => {{
-            if std::env::var_os("DL_BFS_TRACE").is_some() {
-                eprintln!("[bfs-miss] {}: {}", derived_rules[comp_rules[0]].head.rel, $why);
-            }
+        if std::env::var_os("DL_NO_HALT_BFS").is_some() {
             return Ok(false);
-        }}; }
-        if comp_rules.is_empty() { return Ok(false); }
+        }
+        macro_rules! miss {
+            ($why:expr) => {{
+                if std::env::var_os("DL_BFS_TRACE").is_some() {
+                    eprintln!(
+                        "[bfs-miss] {}: {}",
+                        derived_rules[comp_rules[0]].head.rel, $why
+                    );
+                }
+                return Ok(false);
+            }};
+        }
+        if comp_rules.is_empty() {
+            return Ok(false);
+        }
         let head_rel = derived_rules[comp_rules[0]].head.rel.clone();
-        if comp_rules.iter().any(|&rule_index| derived_rules[rule_index].head.rel != head_rel) {
+        if comp_rules
+            .iter()
+            .any(|&rule_index| derived_rules[rule_index].head.rel != head_rel)
+        {
             miss!("multi-rel component");
         }
         let head_meta = self.rels.get(&head_rel).unwrap();
-        let Some(head_key) = head_meta.key.as_ref() else { miss!("head has no key"); };
+        let Some(head_key) = head_meta.key.as_ref() else {
+            miss!("head has no key");
+        };
         let Some(crate::ast::MergeFn::MinBy(depth_column)) = head_meta.merge.as_ref() else {
             miss!("head is not MinBy");
         };
-        let Some(depth_index) = head_meta.cols.iter().position(|column| {
-            column.name == *depth_column && column.ty == crate::ast::Type::Int
-        }) else { miss!("MinBy column is not an int head column"); };
-        if !matches!(head_meta.cols.len(), 2 | 3) { miss!("head is not 2 or 3 columns"); }
+        let Some(depth_index) = head_meta
+            .cols
+            .iter()
+            .position(|column| column.name == *depth_column && column.ty == crate::ast::Type::Int)
+        else {
+            miss!("MinBy column is not an int head column");
+        };
+        if !matches!(head_meta.cols.len(), 2 | 3) {
+            miss!("head is not 2 or 3 columns");
+        }
 
         let non_depth_indices: Vec<usize> = (0..head_meta.cols.len())
-            .filter(|&column_index| column_index != depth_index).collect();
+            .filter(|&column_index| column_index != depth_index)
+            .collect();
         let (tag_index, node_index): (Option<usize>, usize) = match non_depth_indices.as_slice() {
-            [node_column] if head_meta.cols[*node_column].interned()
-                && head_key.len() == 1 && head_key[0] == head_meta.cols[*node_column].name =>
-                (None, *node_column),
+            [node_column]
+                if head_meta.cols[*node_column].interned()
+                    && head_key.len() == 1
+                    && head_key[0] == head_meta.cols[*node_column].name =>
+            {
+                (None, *node_column)
+            }
             [first_column, second_column] => {
                 let (tag_column, node_column) = if head_meta.cols[*first_column].ty.textish()
-                    && head_meta.cols[*second_column].interned() {
+                    && head_meta.cols[*second_column].interned()
+                {
                     (*first_column, *second_column)
                 } else if head_meta.cols[*second_column].ty.textish()
-                    && head_meta.cols[*first_column].interned() {
+                    && head_meta.cols[*first_column].interned()
+                {
                     (*second_column, *first_column)
-                } else { miss!("head tag/node types are not text/sym"); };
-                if head_key.len() != 2 || !head_key.contains(&head_meta.cols[tag_column].name)
-                    || !head_key.contains(&head_meta.cols[node_column].name) {
+                } else {
+                    miss!("head tag/node types are not text/sym");
+                };
+                if head_key.len() != 2
+                    || !head_key.contains(&head_meta.cols[tag_column].name)
+                    || !head_key.contains(&head_meta.cols[node_column].name)
+                {
                     miss!("head key is not tag,node");
                 }
                 (Some(tag_column), node_column)
@@ -427,28 +578,43 @@ impl Engine {
             _ => miss!("head node shape is not sym or text,sym"),
         };
 
-        let is_recursive = |rule: &Rule| rule.body.iter()
-            .any(|body_item| matches!(body_item, BodyItem::Pos(atom) if atom.rel == head_rel));
+        let is_recursive = |rule: &Rule| {
+            rule.body
+                .iter()
+                .any(|body_item| matches!(body_item, BodyItem::Pos(atom) if atom.rel == head_rel))
+        };
         let dedup_structurally = |rule_indices: &[usize]| -> Vec<usize> {
             let mut seen_keys = std::collections::HashSet::new();
-            rule_indices.iter().copied()
+            rule_indices
+                .iter()
+                .copied()
                 .filter(|&rule_index| seen_keys.insert(derived_rules[rule_index].structural_key()))
                 .collect()
         };
-        let recursive_indices = dedup_structurally(&comp_rules.iter().copied()
-            .filter(|&rule_index| is_recursive(derived_rules[rule_index])).collect::<Vec<_>>());
-        if recursive_indices.len() != 1 { miss!(format!("rec rules = {}", recursive_indices.len())); }
+        let recursive_indices = dedup_structurally(
+            &comp_rules
+                .iter()
+                .copied()
+                .filter(|&rule_index| is_recursive(derived_rules[rule_index]))
+                .collect::<Vec<_>>(),
+        );
+        if recursive_indices.len() != 1 {
+            miss!(format!("rec rules = {}", recursive_indices.len()));
+        }
         let recursive_rule = derived_rules[recursive_indices[0]];
         if recursive_rule.has_agg() || recursive_rule.temporal.is_some() {
             miss!("agg/temporal rec rule");
         }
 
         let depth_variable = match &recursive_rule.head.terms[depth_index] {
-            Term::Arith { op: crate::ast::ArithOp::Add, lhs, rhs }
-                if matches!(rhs.as_ref(), Term::Int(1)) => match lhs.as_ref() {
-                    Term::Var(variable) => variable.as_str(),
-                    _ => miss!("head depth lhs is not a variable"),
-                },
+            Term::Arith {
+                op: crate::ast::ArithOp::Add,
+                lhs,
+                rhs,
+            } if matches!(rhs.as_ref(), Term::Int(1)) => match lhs.as_ref() {
+                Term::Var(variable) => variable.as_str(),
+                _ => miss!("head depth lhs is not a variable"),
+            },
             _ => miss!("head depth is not d0 + 1"),
         };
         let node_variable = match &recursive_rule.head.terms[node_index] {
@@ -469,26 +635,41 @@ impl Engine {
         for body_item in &recursive_rule.body {
             match body_item {
                 BodyItem::Pos(atom) if atom.rel == head_rel => {
-                    if self_atom.replace(atom).is_some() { miss!("duplicate recursive atom"); }
+                    if self_atom.replace(atom).is_some() {
+                        miss!("duplicate recursive atom");
+                    }
                 }
                 BodyItem::Pos(atom) => {
-                    if edge_atom.replace(atom).is_some() { miss!("duplicate edge atom"); }
+                    if edge_atom.replace(atom).is_some() {
+                        miss!("duplicate edge atom");
+                    }
                 }
                 BodyItem::Cmp(constraint) => {
-                    if depth_cmp.replace(constraint).is_some() { miss!("duplicate depth guard"); }
+                    if depth_cmp.replace(constraint).is_some() {
+                        miss!("duplicate depth guard");
+                    }
                 }
                 _ => miss!("recursive body contains an unsupported item"),
             }
         }
         let (Some(self_atom), Some(edge_atom), Some(depth_cmp)) = (self_atom, edge_atom, depth_cmp)
-            else { miss!("recursive body is not self,edge,depth-guard"); };
+        else {
+            miss!("recursive body is not self,edge,depth-guard");
+        };
         let self_terms_match = match (tag_index, self_atom.terms.as_slice()) {
-            (None, [Term::Var(from), Term::Var(depth)]) => from != depth_variable && depth == depth_variable,
-            (Some(_), [Term::Var(tag), Term::Var(from), Term::Var(depth)]) =>
-                Some(tag.as_str()) == tag_variable && from != depth_variable && depth == depth_variable,
+            (None, [Term::Var(from), Term::Var(depth)]) => {
+                from != depth_variable && depth == depth_variable
+            }
+            (Some(_), [Term::Var(tag), Term::Var(from), Term::Var(depth)]) => {
+                Some(tag.as_str()) == tag_variable
+                    && from != depth_variable
+                    && depth == depth_variable
+            }
             _ => false,
         };
-        if !self_terms_match { miss!("recursive self atom has the wrong variables"); }
+        if !self_terms_match {
+            miss!("recursive self atom has the wrong variables");
+        }
         let from_variable = match &self_atom.terms[node_index] {
             Term::Var(variable) => variable.as_str(),
             _ => miss!("recursive self node is not a variable"),
@@ -501,23 +682,37 @@ impl Engine {
             _ => miss!("edge is not from,to"),
         }
         let depth_cap = match (&depth_cmp.lhs, depth_cmp.op, &depth_cmp.rhs) {
-            (Term::Var(variable), CmpOp::Lt, Term::Int(cap)) if variable == depth_variable && *cap >= 0 => *cap,
+            (Term::Var(variable), CmpOp::Lt, Term::Int(cap))
+                if variable == depth_variable && *cap >= 0 =>
+            {
+                *cap
+            }
             _ => miss!("depth guard is not d0 < CAP"),
         };
         let edge_rel = edge_atom.rel.clone();
-        let edge_meta = self.rels.get(&edge_rel)
+        let edge_meta = self
+            .rels
+            .get(&edge_rel)
             .ok_or_else(|| anyhow::anyhow!("depth-walk edge relation {edge_rel} not declared"))?;
-        if edge_meta.cols.len() != 2
-            || edge_meta.cols.iter().any(|column| !column.interned()) {
+        if edge_meta.cols.len() != 2 || edge_meta.cols.iter().any(|column| !column.interned()) {
             miss!("edge is not a 2-column sym relation");
         }
-        let base_indices = dedup_structurally(&comp_rules.iter().copied()
-            .filter(|&rule_index| !is_recursive(derived_rules[rule_index])).collect::<Vec<_>>());
-        if base_indices.is_empty() { miss!("no base rules"); }
+        let base_indices = dedup_structurally(
+            &comp_rules
+                .iter()
+                .copied()
+                .filter(|&rule_index| !is_recursive(derived_rules[rule_index]))
+                .collect::<Vec<_>>(),
+        );
+        if base_indices.is_empty() {
+            miss!("no base rules");
+        }
         for &rule_index in &base_indices {
             let base_rule = derived_rules[rule_index];
-            if base_rule.has_agg() || base_rule.temporal.is_some()
-                || !matches!(base_rule.head.terms[depth_index], Term::Int(0)) {
+            if base_rule.has_agg()
+                || base_rule.temporal.is_some()
+                || !matches!(base_rule.head.terms[depth_index], Term::Int(0))
+            {
                 miss!("base rule does not seed depth zero");
             }
         }
@@ -529,28 +724,49 @@ impl Engine {
 
         let walk_started = std::time::Instant::now();
         let load_started = std::time::Instant::now();
-        let (edge_column_zero, edge_column_one) =
-            (edge_meta.cols[0].name.clone(), edge_meta.cols[1].name.clone());
-        let mut adjacency_cache = self.load_edges_keyed_cached(
-            &edge_rel, &edge_column_zero, &edge_column_one, true)?;
+        let (edge_column_zero, edge_column_one) = (
+            edge_meta.cols[0].name.clone(),
+            edge_meta.cols[1].name.clone(),
+        );
+        let mut adjacency_cache =
+            self.load_edges_keyed_cached(&edge_rel, &edge_column_zero, &edge_column_one, true)?;
         let load_elapsed = load_started.elapsed();
-        let AdjacencyCache { adjacency, key_to_node, node_keys, .. } = &mut *adjacency_cache;
+        let AdjacencyCache {
+            adjacency,
+            key_to_node,
+            node_keys,
+            ..
+        } = &mut *adjacency_cache;
         let mut tag_ids: HashMap<String, u32> = HashMap::new();
         let mut tag_names: Vec<String> = Vec::new();
         let mut starts: Vec<(u32, u32, i64)> = Vec::new();
-        let head_columns = head_meta.cols.iter().map(|column| column.name.as_str()).collect::<Vec<_>>();
-        let head_select = head_columns.iter().enumerate().map(|(index, column)| {
-            if Some(index) == tag_index && head_meta.cols[index].interned() {
-                format!("(SELECT content FROM _strings WHERE id = \"{column}\")")
-            } else {
-                format!("\"{column}\"")
-            }
-        }).collect::<Vec<_>>().join(", ");
-        let mut head_statement = self.db.conn().prepare(&format!("SELECT {head_select} FROM {}", tbl(&head_rel)))?;
+        let head_columns = head_meta
+            .cols
+            .iter()
+            .map(|column| column.name.as_str())
+            .collect::<Vec<_>>();
+        let head_select = head_columns
+            .iter()
+            .enumerate()
+            .map(|(index, column)| {
+                if Some(index) == tag_index && head_meta.cols[index].interned() {
+                    format!("(SELECT content FROM _strings WHERE id = \"{column}\")")
+                } else {
+                    format!("\"{column}\"")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut head_statement = self
+            .db
+            .conn()
+            .prepare(&format!("SELECT {head_select} FROM {}", tbl(&head_rel)))?;
         let head_rows = head_statement.query_map([], |row| {
             let node_key = row.get::<_, i64>(node_index)?;
             let depth = row.get::<_, i64>(depth_index)?;
-            let tag_value = tag_index.map(|column_index| cell_as_string(row, column_index)).transpose()?;
+            let tag_value = tag_index
+                .map(|column_index| cell_as_string(row, column_index))
+                .transpose()?;
             Ok((tag_value, node_key, depth))
         })?;
         for head_row in head_rows {
@@ -588,16 +804,22 @@ impl Engine {
         let secondary_indexes: Vec<(String, String)> = {
             let mut index_statement = self.db.conn().prepare(
                 "SELECT name, sql FROM sqlite_master WHERE tbl_name = ?1 AND type = 'index' AND sql IS NOT NULL")?;
-            let index_rows = index_statement.query_map([tbl(&head_rel)], |row|
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+            let index_rows = index_statement.query_map([tbl(&head_rel)], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
             index_rows.collect::<rusqlite::Result<Vec<_>>>()?
         };
         for (index_name, _) in &secondary_indexes {
             self.db.exec(&format!("DROP INDEX \"{index_name}\""))?;
         }
-        let output_columns: Vec<&str> = head_meta.cols.iter().map(|column| column.name.as_str()).collect();
+        let output_columns: Vec<&str> = head_meta
+            .cols
+            .iter()
+            .map(|column| column.name.as_str())
+            .collect();
         const OUTPUT_CHUNK: usize = 16000;
-        let mut output_rows: Vec<Vec<Value>> = Vec::with_capacity(OUTPUT_CHUNK.min(reached.len().max(1)));
+        let mut output_rows: Vec<Vec<Value>> =
+            Vec::with_capacity(OUTPUT_CHUNK.min(reached.len().max(1)));
         let mut insert_result: Result<()> = Ok(());
         for &(tag_id, node_id, depth) in &reached {
             let mut row_values = vec![Value::Null; head_meta.cols.len()];
@@ -616,16 +838,28 @@ impl Engine {
             }
         }
         if insert_result.is_ok() && !output_rows.is_empty() {
-            insert_result = self.insert_rel_rows(&head_rel, &output_columns, &output_rows).map(|_| ());
+            insert_result = self
+                .insert_rel_rows(&head_rel, &output_columns, &output_rows)
+                .map(|_| ());
         }
-        for (_, index_sql) in &secondary_indexes { self.db.exec(index_sql)?; }
+        for (_, index_sql) in &secondary_indexes {
+            self.db.exec(index_sql)?;
+        }
         insert_result?;
         if std::env::var_os("DL_BFS_TRACE").is_some() {
-            eprintln!("[bfs] {head_rel}: load={}ms bfs={}ms out+insert={}ms rows={} nodes={}",
-                load_elapsed.as_millis(), bfs_elapsed.as_millis(), output_started.elapsed().as_millis(),
-                reached.len(), adjacency.len());
+            eprintln!(
+                "[bfs] {head_rel}: load={}ms bfs={}ms out+insert={}ms rows={} nodes={}",
+                load_elapsed.as_millis(),
+                bfs_elapsed.as_millis(),
+                output_started.elapsed().as_millis(),
+                reached.len(),
+                adjacency.len()
+            );
         }
-        self.save_stmt_ms_one(&format!("walk:{head_rel}"), walk_started.elapsed().as_millis() as i64)?;
+        self.save_stmt_ms_one(
+            &format!("walk:{head_rel}"),
+            walk_started.elapsed().as_millis() as i64,
+        )?;
         Ok(true)
     }
 
@@ -650,41 +884,70 @@ impl Engine {
         timed: &mut impl FnMut(&str, &str) -> Result<usize>,
     ) -> Result<bool> {
         // A/B lever: force every component onto the SQL fixpoint (parity check).
-        if std::env::var_os("DL_NO_HALT_BFS").is_some() { return Ok(false); }
+        if std::env::var_os("DL_NO_HALT_BFS").is_some() {
+            return Ok(false);
+        }
         // port_reach has two independent seed rules. Its edge relation can
         // still be growing when the native component is visited, while the
         // SQL scheduler will revisit the component through the dependency.
         // Keep this relation on the complete fixpoint path.
-        if derived_rules[comp_rules[0]].head.rel == "port_reach" { return Ok(false); }
-        macro_rules! miss { ($why:expr) => {{
-            if std::env::var_os("DL_BFS_TRACE").is_some() {
-                eprintln!("[bfs-miss] {}: {}", derived_rules[comp_rules[0]].head.rel, $why);
-            }
+        if derived_rules[comp_rules[0]].head.rel == "port_reach" {
             return Ok(false);
-        }}; }
+        }
+        macro_rules! miss {
+            ($why:expr) => {{
+                if std::env::var_os("DL_BFS_TRACE").is_some() {
+                    eprintln!(
+                        "[bfs-miss] {}: {}",
+                        derived_rules[comp_rules[0]].head.rel, $why
+                    );
+                }
+                return Ok(false);
+            }};
+        }
         // All component rules must head the same single 2-col, non-key rel.
         let head_rel = derived_rules[comp_rules[0]].head.rel.clone();
-        if comp_rules.iter().any(|&ri| derived_rules[ri].head.rel != head_rel) { miss!("multi-rel component"); }
+        if comp_rules
+            .iter()
+            .any(|&ri| derived_rules[ri].head.rel != head_rel)
+        {
+            miss!("multi-rel component");
+        }
         let head_meta = self.rels.get(&head_rel).unwrap();
-        if head_meta.cols.len() != 2 || head_meta.key.is_some() { miss!("head not 2-col non-key"); }
+        if head_meta.cols.len() != 2 || head_meta.key.is_some() {
+            miss!("head not 2-col non-key");
+        }
 
         // Partition into recursive (body references the head rel) vs base. The
         // `.dl` discovery merge can load a file's rules in duplicate, so dedup
         // structurally identical rules first — otherwise the doubled recursive
         // rule reads as two and misses. Set semantics make duplicates a no-op.
-        let is_rec = |r: &Rule| r.body.iter()
-            .any(|b| matches!(b, BodyItem::Pos(a) if a.rel == head_rel));
+        let is_rec = |r: &Rule| {
+            r.body
+                .iter()
+                .any(|b| matches!(b, BodyItem::Pos(a) if a.rel == head_rel))
+        };
         let dedup_structurally = |ris: &[usize]| -> Vec<usize> {
             let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-            ris.iter().copied()
+            ris.iter()
+                .copied()
                 .filter(|&ri| seen.insert(derived_rules[ri].structural_key()))
                 .collect()
         };
-        let rec_ris = dedup_structurally(&comp_rules.iter().copied()
-            .filter(|&ri| is_rec(derived_rules[ri])).collect::<Vec<_>>());
-        if rec_ris.len() != 1 { miss!(format!("rec rules = {}", rec_ris.len())); }
+        let rec_ris = dedup_structurally(
+            &comp_rules
+                .iter()
+                .copied()
+                .filter(|&ri| is_rec(derived_rules[ri]))
+                .collect::<Vec<_>>(),
+        );
+        if rec_ris.len() != 1 {
+            miss!(format!("rec rules = {}", rec_ris.len()));
+        }
         let rec = derived_rules[rec_ris[0]];
-        if rec.has_agg() || rec.temporal.is_some() { miss!("agg/temporal rec rule"); }
+        if rec.has_agg() || rec.temporal.is_some() {
+            miss!("agg/temporal rec rule");
+        }
 
         // Recursive head must be exactly (tag, node), both plain vars.
         let (tag_v, node_v) = match rec.head.terms.as_slice() {
@@ -698,19 +961,27 @@ impl Engine {
         for b in &rec.body {
             match b {
                 BodyItem::Pos(a) if a.rel == head_rel => {
-                    if self_atom.replace(a).is_some() { return Ok(false); }
+                    if self_atom.replace(a).is_some() {
+                        return Ok(false);
+                    }
                 }
                 BodyItem::Neg(a) => {
-                    if halt_atom.replace(a).is_some() { return Ok(false); }
+                    if halt_atom.replace(a).is_some() {
+                        return Ok(false);
+                    }
                 }
                 BodyItem::Pos(a) => {
-                    if edge_atom.replace(a).is_some() { return Ok(false); }
+                    if edge_atom.replace(a).is_some() {
+                        return Ok(false);
+                    }
                 }
                 other => miss!(format!("body item {:?}", std::mem::discriminant(other))),
             }
         }
         let (Some(self_atom), Some(halt_atom), Some(edge_atom)) = (self_atom, halt_atom, edge_atom)
-            else { miss!("body != {self,halt,edge}"); };
+        else {
+            miss!("body != {self,halt,edge}");
+        };
 
         // self head(tag, mid): tag matches the head's tag var, mid is the walk cursor.
         let mid_v = match self_atom.terms.as_slice() {
@@ -728,13 +999,24 @@ impl Engine {
             Some(Term::Var(from)) if from == mid_v => {}
             _ => miss!("halt atom first != mid"),
         }
-        if halt_atom.terms[1..].iter().any(|t| !matches!(t, Term::Wild)) { miss!("halt extra cols bound"); }
+        if halt_atom.terms[1..]
+            .iter()
+            .any(|t| !matches!(t, Term::Wild))
+        {
+            miss!("halt extra cols bound");
+        }
         let halt_rel = halt_atom.rel.clone();
 
-        let edge_meta = self.rels.get(&edge_rel)
+        let edge_meta = self
+            .rels
+            .get(&edge_rel)
             .ok_or_else(|| anyhow::anyhow!("halt-bfs edge relation {edge_rel} not declared"))?;
-        if edge_meta.cols.len() != 2 { miss!("edge not 2-col"); }
-        let halt_meta = self.rels.get(&halt_rel)
+        if edge_meta.cols.len() != 2 {
+            miss!("edge not 2-col");
+        }
+        let halt_meta = self
+            .rels
+            .get(&halt_rel)
             .ok_or_else(|| anyhow::anyhow!("halt-bfs halt relation {halt_rel} not declared"))?;
 
         // Node identity must live in ONE space. The head (tag, node) and halt
@@ -747,16 +1029,27 @@ impl Engine {
         if head_meta.cols[0].ty == Type::Int || head_meta.cols[1].ty == Type::Int {
             miss!("head column is int");
         }
-        if halt_meta.cols[0].ty == Type::Int { miss!("halt column is int"); }
+        if halt_meta.cols[0].ty == Type::Int {
+            miss!("halt column is int");
+        }
         let edge_sym = [edge_meta.cols[0].interned(), edge_meta.cols[1].interned()];
-        if edge_sym[0] != edge_sym[1] { miss!("mixed edge column types"); }
+        if edge_sym[0] != edge_sym[1] {
+            miss!("mixed edge column types");
+        }
         let sym_edge = edge_sym[0];
 
         // Need at least one base rule to seed the frontier; a pure recursion with
         // no base case produces nothing and is better left to the SQL path.
-        let base_ris = dedup_structurally(&comp_rules.iter().copied()
-            .filter(|&ri| !is_rec(derived_rules[ri])).collect::<Vec<_>>());
-        if base_ris.is_empty() { miss!("no base rules"); }
+        let base_ris = dedup_structurally(
+            &comp_rules
+                .iter()
+                .copied()
+                .filter(|&ri| !is_rec(derived_rules[ri]))
+                .collect::<Vec<_>>(),
+        );
+        if base_ris.is_empty() {
+            miss!("no base rules");
+        }
 
         // === recognized: execute ===
         // 1. Base rules populate the head (already DELETE-cleared) = start frontier.
@@ -770,23 +1063,37 @@ impl Engine {
         // 2. Edge adjacency in integer (string-id) space — a sym graph keeps NO
         //    per-node String. Base nodes with no incident edge are interned on the
         //    fly (recorded, never expanded — no out-edges).
-        let (ec0, ec1) = (edge_meta.cols[0].name.clone(), edge_meta.cols[1].name.clone());
+        let (ec0, ec1) = (
+            edge_meta.cols[0].name.clone(),
+            edge_meta.cols[1].name.clone(),
+        );
         let mut adjacency_cache = self.load_edges_keyed_cached(&edge_rel, &ec0, &ec1, sym_edge)?;
-        let AdjacencyCache { adjacency: adj, key_to_node: interner,
-            node_keys: id2key, text_by_node: text_by_id, .. } = &mut *adjacency_cache;
+        let AdjacencyCache {
+            adjacency: adj,
+            key_to_node: interner,
+            node_keys: id2key,
+            text_by_node: text_by_id,
+            ..
+        } = &mut *adjacency_cache;
         // For a sym graph, keep the base nodes' text (known from the head read) and
         // fetch the rest from `_strings` at output time; text edges carry it all.
         let mut sym_text: HashMap<u32, String> = HashMap::new();
-        let intern_key = |key: i64, text: &str,
-                              adj: &mut Vec<Vec<u32>>,
-                              id2key: &mut Vec<i64>,
-                              interner: &mut HashMap<i64, u32>,
-                              text_by_id: &mut Option<Vec<String>>| -> u32 {
-            if let Some(&i) = interner.get(&key) { return i; }
+        let intern_key = |key: i64,
+                          text: &str,
+                          adj: &mut Vec<Vec<u32>>,
+                          id2key: &mut Vec<i64>,
+                          interner: &mut HashMap<i64, u32>,
+                          text_by_id: &mut Option<Vec<String>>|
+         -> u32 {
+            if let Some(&i) = interner.get(&key) {
+                return i;
+            }
             let i = adj.len() as u32;
             adj.push(Vec::new());
             id2key.push(key);
-            if let Some(tb) = text_by_id.as_mut() { tb.push(text.to_string()); }
+            if let Some(tb) = text_by_id.as_mut() {
+                tb.push(text.to_string());
+            }
             interner.insert(key, i);
             i
         };
@@ -797,10 +1104,15 @@ impl Engine {
         let mut tag_names: Vec<String> = Vec::new();
         let mut starts: Vec<(u32, u32)> = Vec::new();
         {
-            let base_sql = format!("SELECT \"{}\", \"{}\" FROM {}",
-                head_meta.cols[0].name, head_meta.cols[1].name, txt_tbl(&head_rel));
+            let base_sql = format!(
+                "SELECT \"{}\", \"{}\" FROM {}",
+                head_meta.cols[0].name,
+                head_meta.cols[1].name,
+                txt_tbl(&head_rel)
+            );
             let mut stmt = self.db.conn().prepare(&base_sql)?;
-            let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+            let rows =
+                stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
             for row in rows.flatten() {
                 let (tag_s, node_s) = row;
                 let tid = match tag_id.get(&tag_s) {
@@ -814,7 +1126,9 @@ impl Engine {
                 };
                 let key = StringId::of(&node_s).sqlite();
                 let nid = intern_key(key, &node_s, adj, id2key, interner, text_by_id);
-                if text_by_id.is_none() { sym_text.entry(nid).or_insert_with(|| node_s.clone()); }
+                if text_by_id.is_none() {
+                    sym_text.entry(nid).or_insert_with(|| node_s.clone());
+                }
                 starts.push((tid, nid));
             }
         }
@@ -827,7 +1141,9 @@ impl Engine {
             let mut stmt = self.db.conn().prepare(&sql)?;
             let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
             for name in rows.flatten() {
-                if let Some(&id) = interner.get(&StringId::of(&name).sqlite()) { halt_mask[id as usize] = true; }
+                if let Some(&id) = interner.get(&StringId::of(&name).sqlite()) {
+                    halt_mask[id as usize] = true;
+                }
             }
         }
 
@@ -843,8 +1159,11 @@ impl Engine {
         //    the whole graph.
         let t_out0 = std::time::Instant::now();
         if text_by_id.is_none() {
-            let mut need: Vec<u32> = pairs.iter().map(|&(_, nid)| nid)
-                .filter(|nid| !sym_text.contains_key(nid)).collect();
+            let mut need: Vec<u32> = pairs
+                .iter()
+                .map(|&(_, nid)| nid)
+                .filter(|nid| !sym_text.contains_key(nid))
+                .collect();
             need.sort_unstable();
             need.dedup();
             // Render in a FEW bulk `IN (...)` reads, not one query per node — the
@@ -854,15 +1173,27 @@ impl Engine {
             let keys: Vec<i64> = need.iter().map(|&nid| id2key[nid as usize]).collect();
             let mut keymap: HashMap<i64, String> = HashMap::with_capacity(keys.len());
             for chunk in keys.chunks(30000) {
-                let placeholders = std::iter::repeat("?").take(chunk.len()).collect::<Vec<_>>().join(",");
+                let placeholders = std::iter::repeat("?")
+                    .take(chunk.len())
+                    .collect::<Vec<_>>()
+                    .join(",");
                 let sql = format!("SELECT id, content FROM _strings WHERE id IN ({placeholders})");
                 let mut stmt = self.db.conn().prepare(&sql)?;
-                let rows = stmt.query_map(rusqlite::params_from_iter(chunk.iter()),
-                    |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
-                for row in rows.flatten() { keymap.insert(row.0, row.1); }
+                let rows = stmt.query_map(rusqlite::params_from_iter(chunk.iter()), |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+                })?;
+                for row in rows.flatten() {
+                    keymap.insert(row.0, row.1);
+                }
             }
             for &nid in &need {
-                sym_text.insert(nid, keymap.get(&id2key[nid as usize]).cloned().unwrap_or_default());
+                sym_text.insert(
+                    nid,
+                    keymap
+                        .get(&id2key[nid as usize])
+                        .cloned()
+                        .unwrap_or_default(),
+                );
             }
         }
         let node_text = |nid: u32| -> String {
@@ -880,19 +1211,30 @@ impl Engine {
         let sidx: Vec<(String, String)> = {
             let mut stmt = self.db.conn().prepare(
                 "SELECT name, sql FROM sqlite_master \
-                 WHERE tbl_name = ?1 AND type = 'index' AND sql IS NOT NULL")?;
-            let rows = stmt.query_map([tbl(&head_rel)], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+                 WHERE tbl_name = ?1 AND type = 'index' AND sql IS NOT NULL",
+            )?;
+            let rows = stmt.query_map([tbl(&head_rel)], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })?;
             rows.flatten().collect()
         };
-        for (name, _) in &sidx { self.db.exec(&format!("DROP INDEX \"{name}\""))?; }
+        for (name, _) in &sidx {
+            self.db.exec(&format!("DROP INDEX \"{name}\""))?;
+        }
         let cols: Vec<&str> = head_meta.cols.iter().map(|c| c.name.as_str()).collect();
         const CHUNK: usize = 16000;
         let mut buf: Vec<Vec<Value>> = Vec::with_capacity(CHUNK.min(pairs.len().max(1)));
         let mut insert_res: Result<()> = Ok(());
         for &(tid, nid) in &pairs {
-            buf.push(vec![Value::Text(tag_names[tid as usize].clone()), Value::Text(node_text(nid))]);
+            buf.push(vec![
+                Value::Text(tag_names[tid as usize].clone()),
+                Value::Text(node_text(nid)),
+            ]);
             if buf.len() >= CHUNK {
-                if let Err(e) = self.insert_rel_rows(&head_rel, &cols, &buf) { insert_res = Err(e); break; }
+                if let Err(e) = self.insert_rel_rows(&head_rel, &cols, &buf) {
+                    insert_res = Err(e);
+                    break;
+                }
                 buf.clear();
             }
         }
@@ -901,14 +1243,24 @@ impl Engine {
         }
         // Rebuild dropped indexes BEFORE propagating any insert error, so a failure
         // never leaves the head table missing its secondary indexes.
-        for (_, sql) in &sidx { self.db.exec(sql)?; }
+        for (_, sql) in &sidx {
+            self.db.exec(sql)?;
+        }
         insert_res?;
         if std::env::var_os("DL_BFS_TRACE").is_some() {
-            eprintln!("[bfs] {head_rel}: load={}ms bfs={}ms out+insert={}ms rows={} nodes={}",
-                t_load.as_millis(), t_bfs.as_millis(), t_out0.elapsed().as_millis(),
-                pairs.len(), adj.len());
+            eprintln!(
+                "[bfs] {head_rel}: load={}ms bfs={}ms out+insert={}ms rows={} nodes={}",
+                t_load.as_millis(),
+                t_bfs.as_millis(),
+                t_out0.elapsed().as_millis(),
+                pairs.len(),
+                adj.len()
+            );
         }
-        self.save_stmt_ms_one(&format!("halt_bfs:{head_rel}"), t.elapsed().as_millis() as i64)?;
+        self.save_stmt_ms_one(
+            &format!("halt_bfs:{head_rel}"),
+            t.elapsed().as_millis() as i64,
+        )?;
         Ok(true)
     }
 
@@ -937,8 +1289,10 @@ impl Engine {
         derived_rules: &[&Rule],
         timed: &mut dyn FnMut(&str, &str) -> Result<usize>,
     ) -> Result<()> {
-        let comp_rels: HashSet<String> = comp_rules.iter()
-            .map(|&ri| derived_rules[ri].head.rel.clone()).collect();
+        let comp_rels: HashSet<String> = comp_rules
+            .iter()
+            .map(|&ri| derived_rules[ri].head.rel.clone())
+            .collect();
         let mut comp_rel_names: Vec<String> = comp_rels.iter().cloned().collect();
         comp_rel_names.sort();
         let row_max = fixpoint_row_max();
@@ -952,7 +1306,11 @@ impl Engine {
         let mut rec_ris: Vec<(usize, Vec<(usize, String)>)> = Vec::new();
         for &ri in comp_rules {
             let occs = crate::lower::recursive_occurrences(derived_rules[ri], &comp_rels);
-            if occs.is_empty() { seed_ris.push(ri); } else { rec_ris.push((ri, occs)); }
+            if occs.is_empty() {
+                seed_ris.push(ri);
+            } else {
+                rec_ris.push((ri, occs));
+            }
         }
 
         for &ri in &seed_ris {
@@ -962,7 +1320,9 @@ impl Engine {
         }
         check_fixpoint_row_budget(&comp_rel_names, total_promoted, row_max)?;
 
-        if rec_ris.is_empty() { return Ok(()); } // pure base case, no cycle to iterate
+        if rec_ris.is_empty() {
+            return Ok(());
+        } // pure base case, no cycle to iterate
 
         // One `_delta_<rel>`/`_delta_new_<rel>` TEMP table pair per targeted
         // rel, shaped exactly like the rel (same cols, same full-row PK) so
@@ -971,28 +1331,54 @@ impl Engine {
         // persists for the connection's lifetime, and a program edit can
         // change a rel's column set between ticks).
         for rel in &comp_rels {
-            let meta = self.rels.get(rel)
+            let meta = self
+                .rels
+                .get(rel)
                 .ok_or_else(|| anyhow::anyhow!("unknown relation {rel}"))?;
-            let col_defs: Vec<String> = meta.cols.iter()
-                .map(|c| format!("\"{}\" {}", c.name, c.sql())).collect();
-            let col_names: Vec<String> = meta.cols.iter()
-                .map(|c| format!("\"{}\"", c.name)).collect();
+            let col_defs: Vec<String> = meta
+                .cols
+                .iter()
+                .map(|c| format!("\"{}\" {}", c.name, c.sql()))
+                .collect();
+            let col_names: Vec<String> = meta
+                .cols
+                .iter()
+                .map(|c| format!("\"{}\"", c.name))
+                .collect();
             for prefix in ["_delta_", "_delta_new_"] {
-                self.db.conn().execute(&format!("DROP TABLE IF EXISTS {prefix}{rel}"), [])?;
-                self.db.conn().execute(&format!(
-                    "CREATE TEMP TABLE {prefix}{rel} ({}, PRIMARY KEY ({}))",
-                    col_defs.join(", "), col_names.join(", ")), [])?;
+                self.db
+                    .conn()
+                    .execute(&format!("DROP TABLE IF EXISTS {prefix}{rel}"), [])?;
+                self.db.conn().execute(
+                    &format!(
+                        "CREATE TEMP TABLE {prefix}{rel} ({}, PRIMARY KEY ({}))",
+                        col_defs.join(", "),
+                        col_names.join(", ")
+                    ),
+                    [],
+                )?;
             }
         }
         // Seed delta_0 = every row the seed rules just produced. `rel_<rel>`
         // was emptied at the top of `rebuild_derived`, so everything in it
         // right now IS new as of this component's first pass.
         for rel in &comp_rels {
-            let col_names: Vec<String> = self.rels.get(rel).unwrap().cols.iter()
-                .map(|c| format!("\"{}\"", c.name)).collect();
+            let col_names: Vec<String> = self
+                .rels
+                .get(rel)
+                .unwrap()
+                .cols
+                .iter()
+                .map(|c| format!("\"{}\"", c.name))
+                .collect();
             let cols = col_names.join(", ");
-            timed(rel, &format!(
-                "INSERT INTO _delta_{rel} ({cols}) SELECT {cols} FROM {}", tbl(rel)))?;
+            timed(
+                rel,
+                &format!(
+                    "INSERT INTO _delta_{rel} ({cols}) SELECT {cols} FROM {}",
+                    tbl(rel)
+                ),
+            )?;
         }
 
         let mut iters = 0usize;
@@ -1012,7 +1398,8 @@ impl Engine {
                 for (k, rel_name) in occs {
                     let mut overrides: HashMap<usize, String> = HashMap::new();
                     overrides.insert(*k, format!("_delta_{rel_name}"));
-                    let sql = crate::lower::lower_rule_to_ex(rule, &self.rels, &target, &[], &overrides)?;
+                    let sql =
+                        crate::lower::lower_rule_to_ex(rule, &self.rels, &target, &[], &overrides)?;
                     timed(&rule.head.rel, &sql)?;
                 }
             }
@@ -1022,33 +1409,64 @@ impl Engine {
             // iteration. What remains is truly new.
             let mut total_new = 0usize;
             for rel in &comp_rels {
-                let col_names: Vec<String> = self.rels.get(rel).unwrap().cols.iter()
-                    .map(|c| format!("\"{}\"", c.name)).collect();
+                let col_names: Vec<String> = self
+                    .rels
+                    .get(rel)
+                    .unwrap()
+                    .cols
+                    .iter()
+                    .map(|c| format!("\"{}\"", c.name))
+                    .collect();
                 let cols = col_names.join(", ");
-                timed(rel, &format!(
-                    "DELETE FROM _delta_new_{rel} WHERE ({cols}) IN (SELECT {cols} FROM {})",
-                    tbl(rel)))?;
+                timed(
+                    rel,
+                    &format!(
+                        "DELETE FROM _delta_new_{rel} WHERE ({cols}) IN (SELECT {cols} FROM {})",
+                        tbl(rel)
+                    ),
+                )?;
                 let n: i64 = self.db.conn().query_row(
-                    &format!("SELECT COUNT(*) FROM _delta_new_{rel}"), [], |r| r.get(0))?;
+                    &format!("SELECT COUNT(*) FROM _delta_new_{rel}"),
+                    [],
+                    |r| r.get(0),
+                )?;
                 total_new += n as usize;
             }
             iters += 1;
-            if total_new == 0 { break; }
+            if total_new == 0 {
+                break;
+            }
             total_promoted = total_promoted.saturating_add(total_new);
             check_fixpoint_row_budget(&comp_rel_names, total_promoted, row_max)?;
-            if iters > 100_000 { bail!("fixpoint did not converge"); }
+            if iters > 100_000 {
+                bail!("fixpoint did not converge");
+            }
             // Promote this iteration's new rows into the real relation, and
             // hand them to the NEXT iteration as its delta.
             for rel in &comp_rels {
-                let col_names: Vec<String> = self.rels.get(rel).unwrap().cols.iter()
-                    .map(|c| format!("\"{}\"", c.name)).collect();
+                let col_names: Vec<String> = self
+                    .rels
+                    .get(rel)
+                    .unwrap()
+                    .cols
+                    .iter()
+                    .map(|c| format!("\"{}\"", c.name))
+                    .collect();
                 let cols = col_names.join(", ");
-                timed(rel, &format!(
-                    "INSERT OR IGNORE INTO {} ({cols}) SELECT {cols} FROM _delta_new_{rel}",
-                    tbl(rel)))?;
+                timed(
+                    rel,
+                    &format!(
+                        "INSERT OR IGNORE INTO {} ({cols}) SELECT {cols} FROM _delta_new_{rel}",
+                        tbl(rel)
+                    ),
+                )?;
                 timed(rel, &format!("DELETE FROM _delta_{rel}"))?;
-                timed(rel, &format!(
-                    "INSERT INTO _delta_{rel} ({cols}) SELECT {cols} FROM _delta_new_{rel}"))?;
+                timed(
+                    rel,
+                    &format!(
+                        "INSERT INTO _delta_{rel} ({cols}) SELECT {cols} FROM _delta_new_{rel}"
+                    ),
+                )?;
             }
         }
         Ok(())
@@ -1059,12 +1477,23 @@ impl Engine {
     /// that did not rebuild this tick stays visible to rails). Each value is
     /// `(sum_ms, statement_count)` for that key's most recent pass.
     pub(crate) fn save_stmt_ms(&self, stmt_ms: &HashMap<String, (i64, i64)>) -> Result<()> {
-        if stmt_ms.is_empty() { return Ok(()); }
-        let names: Vec<String> = stmt_ms.keys().map(|r| format!("'{}'", r.replace('\'', "''"))).collect();
-        self.db.exec(&format!("DELETE FROM _stmt_ms WHERE rel IN ({})", names.join(",")))?;
-        let rows: Vec<Vec<Value>> = stmt_ms.iter()
-            .map(|(rel, (ms, n))| vec![Value::Text(rel.clone()), Value::Int(*ms), Value::Int(*n)]).collect();
-        self.db.insert_rows("_stmt_ms", &["rel", "ms", "n"], &rows)?;
+        if stmt_ms.is_empty() {
+            return Ok(());
+        }
+        let names: Vec<String> = stmt_ms
+            .keys()
+            .map(|r| format!("'{}'", r.replace('\'', "''")))
+            .collect();
+        self.db.exec(&format!(
+            "DELETE FROM _stmt_ms WHERE rel IN ({})",
+            names.join(",")
+        ))?;
+        let rows: Vec<Vec<Value>> = stmt_ms
+            .iter()
+            .map(|(rel, (ms, n))| vec![Value::Text(rel.clone()), Value::Int(*ms), Value::Int(*n)])
+            .collect();
+        self.db
+            .insert_rows("_stmt_ms", &["rel", "ms", "n"], &rows)?;
         Ok(())
     }
 
@@ -1089,8 +1518,13 @@ impl Engine {
     pub(crate) fn first_empty_closure_edge(&self, edges: &[&str]) -> Result<Option<String>> {
         for edge in edges {
             let n: i64 = self.db.conn().query_row(
-                &format!("SELECT COUNT(*) FROM {}", scc_node_tbl(edge)), [], |r| r.get(0))?;
-            if n == 0 { return Ok(Some(edge.to_string())); }
+                &format!("SELECT COUNT(*) FROM {}", scc_node_tbl(edge)),
+                [],
+                |r| r.get(0),
+            )?;
+            if n == 0 {
+                return Ok(Some(edge.to_string()));
+            }
         }
         Ok(None)
     }
@@ -1101,10 +1535,16 @@ impl Engine {
     /// created table counts as empty (cold start must run).
     pub(crate) fn any_rel_empty(&self, rels: &[&str]) -> Result<bool> {
         for rel in rels {
-            let n: i64 = self.db.conn().query_row(
-                &format!("SELECT COUNT(*) FROM {}", tbl(rel)), [], |r| r.get(0))
+            let n: i64 = self
+                .db
+                .conn()
+                .query_row(&format!("SELECT COUNT(*) FROM {}", tbl(rel)), [], |r| {
+                    r.get(0)
+                })
                 .unwrap_or(0);
-            if n == 0 { return Ok(true); }
+            if n == 0 {
+                return Ok(true);
+            }
         }
         Ok(false)
     }
@@ -1118,8 +1558,17 @@ impl Engine {
     /// `text_by_id` for rendering (text edges are the small, non-blowup case).
     /// Both endpoint columns share a type (the caller guarantees it).
     pub(crate) fn load_edges_keyed(
-        &self, edge: &str, c0: &str, c1: &str, sym: bool,
-    ) -> Result<(Vec<Vec<u32>>, HashMap<i64, u32>, Vec<i64>, Option<Vec<String>>)> {
+        &self,
+        edge: &str,
+        c0: &str,
+        c1: &str,
+        sym: bool,
+    ) -> Result<(
+        Vec<Vec<u32>>,
+        HashMap<i64, u32>,
+        Vec<i64>,
+        Option<Vec<String>>,
+    )> {
         use crate::spine::StringId;
         // sym mode keys on the raw interned StringId (i64), so read the RAW table;
         // the head-node side is read raw too (`tbl(head_rel)`), so both agree in
@@ -1147,10 +1596,14 @@ impl Engine {
         for row in rows.flatten() {
             let ((ka, ta), (kb, tb)) = row;
             let mut intern = |key: i64, text: Option<String>| -> u32 {
-                if let Some(&i) = interner.get(&key) { return i; }
+                if let Some(&i) = interner.get(&key) {
+                    return i;
+                }
                 let i = id2key.len() as u32;
                 id2key.push(key);
-                if let Some(tb) = text_by_id.as_mut() { tb.push(text.unwrap_or_default()); }
+                if let Some(tb) = text_by_id.as_mut() {
+                    tb.push(text.unwrap_or_default());
+                }
                 interner.insert(key, i);
                 i
             };
@@ -1159,15 +1612,24 @@ impl Engine {
             pairs.push((a, b));
         }
         let mut adj = vec![Vec::new(); id2key.len()];
-        for (a, b) in pairs { adj[a as usize].push(b); }
+        for (a, b) in pairs {
+            adj[a as usize].push(b);
+        }
         Ok((adj, interner, id2key, text_by_id))
     }
 
     pub(crate) fn load_edges_keyed_cached(
-        &self, edge: &str, c0: &str, c1: &str, sym: bool,
+        &self,
+        edge: &str,
+        c0: &str,
+        c1: &str,
+        sym: bool,
     ) -> Result<std::cell::RefMut<'_, AdjacencyCache>> {
         let row_count: i64 = self.db.conn().query_row(
-            &format!("SELECT COUNT(*) FROM {}", tbl(edge)), [], |row| row.get(0))?;
+            &format!("SELECT COUNT(*) FROM {}", tbl(edge)),
+            [],
+            |row| row.get(0),
+        )?;
         let cache_key = AdjacencyCacheKey {
             edge_relation: edge.to_string(),
             first_column: c0.to_string(),
@@ -1177,13 +1639,18 @@ impl Engine {
         };
         {
             let cache_slot = self.adjacency_cache.borrow();
-            if cache_slot.as_ref().is_some_and(|cache| cache.key == cache_key) {
+            if cache_slot
+                .as_ref()
+                .is_some_and(|cache| cache.key == cache_key)
+            {
                 if std::env::var_os("DL_BFS_TRACE").is_some() {
                     eprintln!("[bfs-cache] reuse edge={edge} columns={c0},{c1} sym={sym}");
                 }
                 drop(cache_slot);
-                return Ok(std::cell::RefMut::map(self.adjacency_cache.borrow_mut(),
-                    |cache| cache.as_mut().unwrap()));
+                return Ok(std::cell::RefMut::map(
+                    self.adjacency_cache.borrow_mut(),
+                    |cache| cache.as_mut().unwrap(),
+                ));
             }
         }
         let (adjacency, key_to_node, node_keys, text_by_node) =
@@ -1199,10 +1666,17 @@ impl Engine {
             node_keys,
             text_by_node,
         });
-        Ok(std::cell::RefMut::map(cache_slot, |cache| cache.as_mut().unwrap()))
+        Ok(std::cell::RefMut::map(cache_slot, |cache| {
+            cache.as_mut().unwrap()
+        }))
     }
 
-    pub(crate) fn load_edges(&self, edge: &str, c0: &str, c1: &str) -> Result<(Vec<Vec<u32>>, Vec<String>)> {
+    pub(crate) fn load_edges(
+        &self,
+        edge: &str,
+        c0: &str,
+        c1: &str,
+    ) -> Result<(Vec<Vec<u32>>, Vec<String>)> {
         let sql = format!("SELECT \"{c0}\", \"{c1}\" FROM {}", txt_tbl(edge));
         let mut stmt = self.db.conn().prepare(&sql)?;
         let mut intern: HashMap<String, u32> = HashMap::new();
@@ -1211,14 +1685,22 @@ impl Engine {
         let rows = stmt.query_map([], |r| Ok((cell_as_string(r, 0)?, cell_as_string(r, 1)?)))?;
         for row in rows.flatten() {
             let mut id = |s: String| -> u32 {
-                if let Some(&i) = intern.get(&s) { return i; }
-                let i = names.len() as u32; intern.insert(s.clone(), i); names.push(s); i
+                if let Some(&i) = intern.get(&s) {
+                    return i;
+                }
+                let i = names.len() as u32;
+                intern.insert(s.clone(), i);
+                names.push(s);
+                i
             };
-            let a = id(row.0); let b = id(row.1);
+            let a = id(row.0);
+            let b = id(row.1);
             pairs.push((a, b));
         }
         let mut adj = vec![Vec::new(); names.len()];
-        for (a, b) in pairs { adj[a as usize].push(b); }
+        for (a, b) in pairs {
+            adj[a as usize].push(b);
+        }
         Ok((adj, names))
     }
 
@@ -1235,9 +1717,13 @@ impl Engine {
         let mut stmt_ms: HashMap<String, (i64, i64)> = HashMap::new();
         for edge in edges {
             let t = std::time::Instant::now();
-            let meta = self.rels.get(*edge)
+            let meta = self
+                .rels
+                .get(*edge)
                 .ok_or_else(|| anyhow::anyhow!("closure edge relation {edge} not declared"))?;
-            if meta.cols.len() < 2 { bail!("closure edge {edge} must have at least 2 columns"); }
+            if meta.cols.len() < 2 {
+                bail!("closure edge {edge} must have at least 2 columns");
+            }
             let (c0, c1) = (meta.cols[0].name.clone(), meta.cols[1].name.clone());
             let (adj, names) = self.load_edges(edge, &c0, &c1)?;
             let cond = scc::build_condensed(&adj);
@@ -1246,17 +1732,28 @@ impl Engine {
             for (id, name) in names.iter().enumerate() {
                 let comp = cond.comp[id] as i64;
                 let cyc = cond.cyclic[cond.comp[id] as usize] as i64;
-                node_rows.push(vec![Value::Text(name.clone()), Value::Int(comp), Value::Int(cyc)]);
+                node_rows.push(vec![
+                    Value::Text(name.clone()),
+                    Value::Int(comp),
+                    Value::Int(cyc),
+                ]);
             }
             let mut edge_rows: Vec<Vec<Value>> = Vec::new();
             for (cu, succ) in cond.cadj.iter().enumerate() {
-                for &cw in succ { edge_rows.push(vec![Value::Int(cu as i64), Value::Int(cw as i64)]); }
+                for &cw in succ {
+                    edge_rows.push(vec![Value::Int(cu as i64), Value::Int(cw as i64)]);
+                }
             }
             self.db.exec(&format!("DELETE FROM {nt}"))?;
             self.db.exec(&format!("DELETE FROM {et}"))?;
-            self.db.insert_rows(&nt, &["name", "comp", "cyclic"], &node_rows)?;
-            self.db.insert_rows(&et, &["comp_src", "comp_dst"], &edge_rows)?;
-            stmt_ms.insert(format!("closure:{edge}"), (t.elapsed().as_millis() as i64, 1));
+            self.db
+                .insert_rows(&nt, &["name", "comp", "cyclic"], &node_rows)?;
+            self.db
+                .insert_rows(&et, &["comp_src", "comp_dst"], &edge_rows)?;
+            stmt_ms.insert(
+                format!("closure:{edge}"),
+                (t.elapsed().as_millis() as i64, 1),
+            );
         }
         self.save_stmt_ms(&stmt_ms)?;
         Ok(())
@@ -1279,7 +1776,9 @@ impl Engine {
             h.update(a.as_bytes());
             h.update(&[0]);
             h.update(b.as_bytes());
-            for (x, y) in acc.iter_mut().zip(h.finalize().as_bytes().iter()) { *x ^= *y; }
+            for (x, y) in acc.iter_mut().zip(h.finalize().as_bytes().iter()) {
+                *x ^= *y;
+            }
         }
         Ok(acc)
     }
@@ -1290,33 +1789,62 @@ impl Engine {
     /// reused with zero work (no scan, no Tarjan). A dirty edge is digest-checked
     /// first; the Tarjan rebuild runs only if the digest moved. This replaces the
     /// old unconditional per-tick rebuild of every edge's condensation.
-    pub(crate) fn refresh_cond_cache(&mut self, edges: &[&str], dirty: &HashSet<&str>) -> Result<()> {
-        self.closure_cache.retain(|k, _| edges.iter().any(|e| *e == k.as_str()));
+    pub(crate) fn refresh_cond_cache(
+        &mut self,
+        edges: &[&str],
+        dirty: &HashSet<&str>,
+    ) -> Result<()> {
+        self.closure_cache
+            .retain(|k, _| edges.iter().any(|e| *e == k.as_str()));
         // Timed only for the edges that actually pay the digest read + Tarjan
         // rebuild below — a reused/unchanged edge costs ~nothing and doesn't
         // need its own row. Key `cond_cache:<edge>`, sibling to `closure:<edge>`
         // (rebuild_closures' SCC-table write) in `_stmt_ms`.
         let mut stmt_ms: HashMap<String, (i64, i64)> = HashMap::new();
         for &edge in edges {
-            let meta = self.rels.get(edge)
+            let meta = self
+                .rels
+                .get(edge)
                 .ok_or_else(|| anyhow::anyhow!("closure edge relation {edge} not declared"))?;
-            if meta.cols.len() < 2 { continue; }
+            if meta.cols.len() < 2 {
+                continue;
+            }
             // Unaffected edge already cached → reuse, no scan.
-            if !dirty.contains(edge) && self.closure_cache.contains_key(edge) { continue; }
+            if !dirty.contains(edge) && self.closure_cache.contains_key(edge) {
+                continue;
+            }
             let t = std::time::Instant::now();
             let (c0, c1) = (meta.cols[0].name.clone(), meta.cols[1].name.clone());
             let digest = self.edge_content_digest(edge, &c0, &c1)?;
             // Dirty but rows unchanged (e.g. comment edit) → reuse, skip Tarjan.
             if self.closure_cache.get(edge).map(|c| c.digest) == Some(digest) {
-                stmt_ms.insert(format!("cond_cache:{edge}"), (t.elapsed().as_millis() as i64, 1));
+                stmt_ms.insert(
+                    format!("cond_cache:{edge}"),
+                    (t.elapsed().as_millis() as i64, 1),
+                );
                 continue;
             }
             let (adj, names) = self.load_edges(edge, &c0, &c1)?;
             let cond = scc::build_condensed(&adj);
             self.recondensed += 1;
-            let id = names.iter().enumerate().map(|(i, n)| (n.clone(), i as u32)).collect();
-            self.closure_cache.insert(edge.to_string(), ClosureCache { cond, names, id, digest });
-            stmt_ms.insert(format!("cond_cache:{edge}"), (t.elapsed().as_millis() as i64, 1));
+            let id = names
+                .iter()
+                .enumerate()
+                .map(|(i, n)| (n.clone(), i as u32))
+                .collect();
+            self.closure_cache.insert(
+                edge.to_string(),
+                ClosureCache {
+                    cond,
+                    names,
+                    id,
+                    digest,
+                },
+            );
+            stmt_ms.insert(
+                format!("cond_cache:{edge}"),
+                (t.elapsed().as_millis() as i64, 1),
+            );
         }
         self.save_stmt_ms(&stmt_ms)?;
         Ok(())
@@ -1327,7 +1855,13 @@ impl Engine {
     /// Seeded closure point query. `forward` = src pinned (walk out, callees);
     /// otherwise dst pinned (walk in, callers). Emits the same rows as the view's
     /// pinned slice, in microseconds.
-    pub(crate) fn run_reaches_point(&self, q: &Query, cc: &ClosureCache, seed: &str, forward: bool) -> Result<()> {
+    pub(crate) fn run_reaches_point(
+        &self,
+        q: &Query,
+        cc: &ClosureCache,
+        seed: &str,
+        forward: bool,
+    ) -> Result<()> {
         let meta = self.rels.get(&q.head.rel).unwrap();
         let header = |pos: usize| match &q.head.terms[pos] {
             Term::Var(v) => v.clone(),
@@ -1335,14 +1869,29 @@ impl Engine {
         };
         let mut hits: Vec<&str> = Vec::new();
         if let Some(&sid) = cc.id.get(seed) {
-            let walk = if forward { scc::reaches_from(&cc.cond, sid) } else { scc::reached_by(&cc.cond, sid) };
-            hits = walk.iter().map(|&i| cc.names[i as usize].as_str()).collect();
+            let walk = if forward {
+                scc::reaches_from(&cc.cond, sid)
+            } else {
+                scc::reached_by(&cc.cond, sid)
+            };
+            hits = walk
+                .iter()
+                .map(|&i| cc.names[i as usize].as_str())
+                .collect();
             hits.sort_unstable();
         }
-        let row = |h: &str| if forward {
-            vec![serde_json::Value::String(seed.to_string()), serde_json::Value::String(h.to_string())]
-        } else {
-            vec![serde_json::Value::String(h.to_string()), serde_json::Value::String(seed.to_string())]
+        let row = |h: &str| {
+            if forward {
+                vec![
+                    serde_json::Value::String(seed.to_string()),
+                    serde_json::Value::String(h.to_string()),
+                ]
+            } else {
+                vec![
+                    serde_json::Value::String(h.to_string()),
+                    serde_json::Value::String(seed.to_string()),
+                ]
+            }
         };
         if self.query_json {
             let rows: Vec<Vec<serde_json::Value>> = hits.iter().map(|h| row(h)).collect();
@@ -1350,7 +1899,11 @@ impl Engine {
         } else {
             println!("? {} => {}\t{}", q.head.rel, header(0), header(1));
             for h in &hits {
-                if forward { println!("  {seed}\t{h}"); } else { println!("  {h}\t{seed}"); }
+                if forward {
+                    println!("  {seed}\t{h}");
+                } else {
+                    println!("  {h}\t{seed}");
+                }
             }
             println!("  ({} rows)\n", hits.len());
         }
@@ -1360,7 +1913,13 @@ impl Engine {
     /// Both endpoints pinned: an existence probe answered by the seeded walk —
     /// same row semantics as the view's doubly-pinned slice (one row when src
     /// reaches dst, zero otherwise), without evaluating the view.
-    pub(crate) fn run_reaches_pair(&self, q: &Query, cc: &ClosureCache, src: &str, dst: &str) -> Result<()> {
+    pub(crate) fn run_reaches_pair(
+        &self,
+        q: &Query,
+        cc: &ClosureCache,
+        src: &str,
+        dst: &str,
+    ) -> Result<()> {
         let meta = self.rels.get(&q.head.rel).unwrap();
         let header = |pos: usize| match &q.head.terms[pos] {
             Term::Var(v) => v.clone(),
@@ -1371,14 +1930,20 @@ impl Engine {
             _ => false,
         };
         let rows: Vec<Vec<serde_json::Value>> = if hit {
-            vec![vec![serde_json::Value::String(src.to_string()),
-                      serde_json::Value::String(dst.to_string())]]
-        } else { Vec::new() };
+            vec![vec![
+                serde_json::Value::String(src.to_string()),
+                serde_json::Value::String(dst.to_string()),
+            ]]
+        } else {
+            Vec::new()
+        };
         if self.query_json {
             emit_query_json(&q.head.rel, &[header(0), header(1)], &rows);
         } else {
             println!("? {} => {}\t{}", q.head.rel, header(0), header(1));
-            if hit { println!("  {src}\t{dst}"); }
+            if hit {
+                println!("  {src}\t{dst}");
+            }
             println!("  ({} rows)\n", rows.len());
         }
         Ok(())
@@ -1393,7 +1958,10 @@ impl Engine {
     pub(crate) fn eval_closure_seed_rule(&self, rule: &Rule, cs: &ClosureSeed) -> Result<()> {
         let t = std::time::Instant::now();
         let r = self.eval_closure_seed_rule_inner(rule, cs);
-        self.save_stmt_ms_one(&format!("closure_seed:{}", rule.head.rel), t.elapsed().as_millis() as i64)?;
+        self.save_stmt_ms_one(
+            &format!("closure_seed:{}", rule.head.rel),
+            t.elapsed().as_millis() as i64,
+        )?;
         r
     }
 
@@ -1402,10 +1970,17 @@ impl Engine {
     /// without an early `?` return skipping the timing write.
     pub(crate) fn eval_closure_seed_rule_inner(&self, rule: &Rule, cs: &ClosureSeed) -> Result<()> {
         let head = &rule.head.rel;
-        let head_meta = self.rels.get(head)
+        let head_meta = self
+            .rels
+            .get(head)
             .ok_or_else(|| anyhow::anyhow!("unknown head relation {head}"))?;
         if rule.head.terms.len() != head_meta.cols.len() {
-            bail!("head {} expects {} cols, got {}", head, head_meta.cols.len(), rule.head.terms.len());
+            bail!(
+                "head {} expects {} cols, got {}",
+                head,
+                head_meta.cols.len(),
+                rule.head.terms.len()
+            );
         }
         self.db.exec(&format!("DELETE FROM {}", tbl(head)))?;
         // The closure atom binds `free_var`; the pinned endpoint var (if any)
@@ -1413,38 +1988,69 @@ impl Engine {
         let pinned_var: Option<&str> = rule.body.iter().find_map(|it| match it {
             BodyItem::Pos(a) if a.rel != *head && a.terms.len() == 2 => {
                 // the closure atom: the non-free endpoint's var, if it is a var
-                let other = a.terms.iter().find(|t| !matches!(t, Term::Var(v) if *v == cs.free_var));
-                match other { Some(Term::Var(v)) => Some(v.as_str()), _ => None }
+                let other = a
+                    .terms
+                    .iter()
+                    .find(|t| !matches!(t, Term::Var(v) if *v == cs.free_var));
+                match other {
+                    Some(Term::Var(v)) => Some(v.as_str()),
+                    _ => None,
+                }
             }
             _ => None,
         });
-        let cells: Result<Vec<Value>> = rule.head.terms.iter().map(|t| match t {
-            Term::Str(s) => Ok(Value::Text(s.clone())),
-            Term::Int(n) => Ok(Value::Int(*n)),
-            Term::Var(v) if *v == cs.free_var => Ok(Value::Text(String::new())), // filled per-row
-            Term::Var(v) if Some(v.as_str()) == pinned_var => Ok(Value::Text(cs.seed.clone())),
-            Term::Var(v) => bail!("seeded closure rule head var '{v}' is neither the \
+        let cells: Result<Vec<Value>> = rule
+            .head
+            .terms
+            .iter()
+            .map(|t| match t {
+                Term::Str(s) => Ok(Value::Text(s.clone())),
+                Term::Int(n) => Ok(Value::Int(*n)),
+                Term::Var(v) if *v == cs.free_var => Ok(Value::Text(String::new())), // filled per-row
+                Term::Var(v) if Some(v.as_str()) == pinned_var => Ok(Value::Text(cs.seed.clone())),
+                Term::Var(v) => bail!(
+                    "seeded closure rule head var '{v}' is neither the \
                                    free reached endpoint nor the pinned seed; only those \
-                                   two (plus literals) can appear in the head"),
-            Term::Wild => bail!("'_' not allowed in a seeded closure rule head"),
-            Term::Interp(_) => bail!("interpolation not supported in a seeded closure rule head"),
-            Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
-                Term::Arith { .. } => bail!("arithmetic not supported in a seeded closure rule head"),
-                Term::Call { .. } => bail!("function call not supported in a seeded closure rule head"),
-        }).collect();
+                                   two (plus literals) can appear in the head"
+                ),
+                Term::Wild => bail!("'_' not allowed in a seeded closure rule head"),
+                Term::Interp(_) => {
+                    bail!("interpolation not supported in a seeded closure rule head")
+                }
+                Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
+                Term::Arith { .. } => {
+                    bail!("arithmetic not supported in a seeded closure rule head")
+                }
+                Term::Call { .. } => {
+                    bail!("function call not supported in a seeded closure rule head")
+                }
+            })
+            .collect();
         let template = cells?;
-        let free_positions: Vec<usize> = rule.head.terms.iter().enumerate()
+        let free_positions: Vec<usize> = rule
+            .head
+            .terms
+            .iter()
+            .enumerate()
             .filter_map(|(i, t)| matches!(t, Term::Var(v) if *v == cs.free_var).then_some(i))
             .collect();
 
-        let Some(cc) = self.closure_cache.get(&cs.edge) else { return Ok(()); };
+        let Some(cc) = self.closure_cache.get(&cs.edge) else {
+            return Ok(());
+        };
         let mut rows: Vec<Vec<Value>> = Vec::new();
         if let Some(&sid) = cc.id.get(&cs.seed) {
-            let walk = if cs.forward { scc::reaches_from(&cc.cond, sid) } else { scc::reached_by(&cc.cond, sid) };
+            let walk = if cs.forward {
+                scc::reaches_from(&cc.cond, sid)
+            } else {
+                scc::reached_by(&cc.cond, sid)
+            };
             for &i in &walk {
                 let name = &cc.names[i as usize];
                 let mut row = template.clone();
-                for &p in &free_positions { row[p] = Value::Text(name.clone()); }
+                for &p in &free_positions {
+                    row[p] = Value::Text(name.clone());
+                }
                 rows.push(row);
             }
         }
@@ -1464,7 +2070,10 @@ impl Engine {
     pub(crate) fn eval_scc_rule(&self, rule: &Rule) -> Result<()> {
         let t = std::time::Instant::now();
         let r = self.eval_scc_rule_inner(rule);
-        self.save_stmt_ms_one(&format!("scc:{}", rule.head.rel), t.elapsed().as_millis() as i64)?;
+        self.save_stmt_ms_one(
+            &format!("scc:{}", rule.head.rel),
+            t.elapsed().as_millis() as i64,
+        )?;
         r
     }
 
@@ -1472,14 +2081,19 @@ impl Engine {
     /// membership-materialization pass into `_stmt_ms` (`scc:<rel>`) past any
     /// early `?` return.
     pub(crate) fn eval_scc_rule_inner(&self, rule: &Rule) -> Result<()> {
-        let edge = rule.scc_edge()
+        let edge = rule
+            .scc_edge()
             .ok_or_else(|| anyhow::anyhow!("eval_scc_rule on a non-scc rule"))?;
         let head = &rule.head.rel;
-        let head_meta = self.rels.get(head)
+        let head_meta = self
+            .rels
+            .get(head)
             .ok_or_else(|| anyhow::anyhow!("unknown head relation {head}"))?;
         if rule.head.terms.len() != 2 || head_meta.cols.len() != 2 {
-            bail!("scc head '{head}' must have exactly 2 columns (rep, member); got {}",
-                  head_meta.cols.len());
+            bail!(
+                "scc head '{head}' must have exactly 2 columns (rep, member); got {}",
+                head_meta.cols.len()
+            );
         }
         self.db.exec(&format!("DELETE FROM {}", tbl(head)))?;
         let Some(cc) = self.closure_cache.get(edge) else {
@@ -1488,8 +2102,11 @@ impl Engine {
         let mut rows: Vec<Vec<Value>> = Vec::new();
         for c in 0..cc.cond.ncomp {
             let members = &cc.cond.members[c];
-            if members.is_empty() { continue; }
-            let rep = members.iter()
+            if members.is_empty() {
+                continue;
+            }
+            let rep = members
+                .iter()
                 .map(|&i| cc.names[i as usize].as_str())
                 .min()
                 .unwrap_or("");
@@ -1504,5 +2121,4 @@ impl Engine {
         self.insert_rel_rows(head, &cols, &rows)?; // one flush, never N+1
         Ok(())
     }
-
 }

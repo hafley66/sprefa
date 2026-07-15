@@ -1,0 +1,299 @@
+# storage-seam-map.dl — sprefa maps its own database seam.
+#
+# This is a source-resident mapping CASE, not a prose architecture diagram. It
+# asks sprefa's module, type, call, dataflow, and SCIP relations what the seam
+# actually looks like, then projects the answer into the generic node/edge/tag/
+# node_ref rows consumed by the graph tooling.
+#
+# Revision convention: the case always compares WORK (the source containing
+# this file) with the commit immediately before the mapping work began. When the
+# case is committed, `previous` is therefore the map commit's parent. Advance
+# the hash only when intentionally minting the next mapping case.
+#
+# Current case:
+#   current  = WORK
+#   previous = 2b10fbd6159b786ef008a6e3d48698821dd44c4b
+#
+# Run deliberately — this asks for two revisions and every analysis family:
+#   dl .dl/storage-seam-map.dl --no-daemon
+#
+# The prior rusqlite rail remains the detailed CRUD/off-ramp counter:
+#   .dl/rusqlite-coupling.dl
+#
+# AUTHORING FEEDBACK (keep beside the case; inputs for later language work):
+#
+# 1. Rev selection is not transparently compositional. `scan(V, ...)` where V
+#    comes from a fact is a data-driven scan and needs later daemon ticks, while
+#    `scan("literal", ...)` executes in the one-shot run. The case therefore
+#    repeats its previous hash in mapping_case + the literal scan. A first-class
+#    case/revision value should not change scheduling semantics this sharply.
+#
+# 2. Relation use is positional and exact. Authoring this required repeatedly
+#    reading decls.rs/docs to remember whether repo precedes rev, whether an id
+#    is salted, and whether a legacy twin dropped rev. Named arguments or typed
+#    destructuring for built-in relations would make cross-family joins safer.
+#
+# 3. The supposedly common "function" identity has three representations:
+#    repo-qualified call/type sym, bare df_node.fn, and SCIP moniker. The map has
+#    to strip the repo prefix for dataflow and build a separate SCIP island.
+#    sprefa needs declared identity bridges/coercions, not replace_re folklore.
+#
+# 4. Family activation is implicit: merely mentioning module/type/call/df/scip
+#    relations opts their extractors in. That is concise but makes the cost of a
+#    mapping query hard to see before execution. The plan/diagnostic surface
+#    should list activated families, expected files, and estimated work.
+#
+# 5. Rev coverage differs by family. module/type/call have rev twins; df_edge
+#    and SCIP are WORK-only. The language cannot encode "this relation is valid
+#    at WORK only" in its type, so the distinction survives only as comments
+#    and manual rule separation. Rev/durability should be a relation capability.
+#
+# 6. Graph projection repeats adapter rules (`map_node_at` -> node/tag/node_ref)
+#    that other map programs also hand-write. A schema/trait declaration for a
+#    graph view should derive the conventional projection without magic names.
+#
+# 7. Aggregated dataflow is necessary because emitting every df_node makes the
+#    visualization enormous. The language has count/grouping, but no obvious
+#    reusable "summarize this subgraph by kind within owner" combinator. That is
+#    a good higher-order/rule-parameter case rather than another built-in.
+#
+# 8. The old deck convention named its projection `node`; `node` is now a
+#    reserved CST relation with a different schema. The parser correctly caught
+#    the collision, but graph consumers have no namespaced/schema capability to
+#    say "this relation implements GraphNode". This case uses map_node/map_edge.
+
+# ── case coordinate ──────────────────────────────────────────────────────────
+rel mapping_case(id: text, current: text, previous: text, focus: text).
+mapping_case("storage-seam-01", "WORK",
+             "2b10fbd6159b786ef008a6e3d48698821dd44c4b", "Db").
+
+# Literal scans keep the command a one-run program. A variable-rev scan sourced
+# from mapping_case would be data-driven and would need daemon ticks to settle.
+rel mapped_source(side: text, path: file, rev: text).
+mapped_source("current", path, rev) <-
+    scan("WORK", "src/**/*.rs", path, rev).
+mapped_source("previous", path, rev) <-
+    scan("2b10fbd6159b786ef008a6e3d48698821dd44c4b",
+         "src/**/*.rs", path, rev).
+
+rel current_rev(rev: text).
+current_rev(rev) <- mapped_source("current", _, rev).
+
+rel previous_rev(rev: text).
+previous_rev(rev) <- mapped_source("previous", _, rev).
+
+# ── focus: explicit architectural roots + structurally discovered bindings ──
+# The explicit roots say what question this case asks. The rusqlite bindings
+# then discover the present blast radius through module_binding_rev rather than
+# a text grep.
+rel focus_file(path: file).
+focus_file("src/db.rs").
+focus_file("src/lower.rs").
+focus_file("src/spine.rs").
+focus_file("src/engine/mod.rs").
+focus_file("src/engine/query.rs").
+focus_file("src/engine/pipeline/apply.rs").
+focus_file("src/engine/staged_delta/mod.rs").
+
+rel rusqlite_file_at(rev: text, file: file).
+rusqlite_file_at(rev, file) <-
+    module_binding_rev(file, _, source, _, _, rev),
+    source =~ /^rusqlite(::|$)/.
+
+rel seam_file_at(rev: text, file: file).
+seam_file_at(rev, file) <- mapped_source(_, file, rev), focus_file(file).
+seam_file_at(rev, file) <- rusqlite_file_at(rev, file).
+
+# ── module layer ─────────────────────────────────────────────────────────────
+rel module_node_at(rev: text, id: text, label: text, file: file, line: int).
+module_node_at(rev, "module:${file}", file, file, 1) <- seam_file_at(rev, file).
+
+# Keep edges whose two ends both live in the discovered seam. One-hop external
+# callers are represented by the call layer below; this module view stays small.
+rel module_map_edge_at(rev: text, src: text, dst: text, kind: text).
+module_map_edge_at(rev, "module:${a}", "module:${b}", "imports") <-
+    module_edge_rev(a, b, rev), seam_file_at(rev, a), seam_file_at(rev, b).
+
+# ── type map ─────────────────────────────────────────────────────────────────
+rel type_node_at(rev: text, id: text, label: text, kind: text,
+                 file: file, line: int).
+type_node_at(rev, sym, name, kind, file, line) <-
+    type_entity_rev(_, sym, name, kind, _, file, line, rev),
+    seam_file_at(rev, file).
+
+# Include a linked type just outside the seam so the type boundary is visible,
+# but do not recursively walk the entire repository type graph.
+rel linked_type_at(rev: text, sym: text).
+linked_type_at(rev, dst) <-
+    type_link_rev(src, dst, _, rev), type_node_at(rev, src, _, _, _, _).
+linked_type_at(rev, src) <-
+    type_link_rev(src, dst, _, rev), type_node_at(rev, dst, _, _, _, _).
+
+type_node_at(rev, sym, name, kind, file, line) <-
+    linked_type_at(rev, sym),
+    type_entity_rev(_, sym, name, kind, _, file, line, rev).
+
+rel type_map_edge_at(rev: text, src: text, dst: text, kind: text).
+type_map_edge_at(rev, src, dst, kind) <-
+    type_link_rev(src, dst, kind, rev),
+    type_node_at(rev, src, _, _, _, _),
+    type_node_at(rev, dst, _, _, _, _).
+
+# ── call graph ───────────────────────────────────────────────────────────────
+rel fn_node_at(rev: text, id: text, label: text, kind: text,
+               file: file, line: int).
+fn_node_at(rev, sym, replace_re(sym, "^.*::", ""), kind, file, line) <-
+    call_def_rev(_, sym, kind, file, line, _, rev), seam_file_at(rev, file).
+
+# One-hop callers/callees expose blast radius without taking transitive closure
+# over the whole program.
+rel adjacent_fn_at(rev: text, sym: text).
+adjacent_fn_at(rev, caller) <-
+    call_edge_rev(caller, callee, _, rev),
+    fn_node_at(rev, callee, _, _, _, _).
+adjacent_fn_at(rev, callee) <-
+    call_edge_rev(caller, callee, _, rev),
+    fn_node_at(rev, caller, _, _, _, _).
+
+fn_node_at(rev, sym, replace_re(sym, "^.*::", ""), kind, file, line) <-
+    adjacent_fn_at(rev, sym),
+    call_def_rev(_, sym, kind, file, line, _, rev).
+
+rel call_map_edge_at(rev: text, src: text, dst: text, kind: text).
+call_map_edge_at(rev, caller, callee, "calls") <-
+    call_edge_rev(caller, callee, _, rev),
+    fn_node_at(rev, caller, _, _, _, _),
+    fn_node_at(rev, callee, _, _, _, _).
+
+# Bridge the repo-qualified call/type sym to df_node.fn's bare sym.
+rel fn_bare_at(rev: text, sym: text, bare: text, file: file, line: int).
+fn_bare_at(rev, sym, replace_re(sym, "^[^:]*::", ""), file, line) <-
+    fn_node_at(rev, sym, _, _, file, line).
+
+# ── WORK-only dataflow shape ─────────────────────────────────────────────────
+# df_edge does not yet have a rev twin. Rather than pretend the base side is
+# comparable, summarize only WORK as kind→kind edges inside each seam function.
+rel df_kind(fn: text, kind: text, n: int).
+df_kind(fn_sym, kind, count(id)) <-
+    current_rev("WORK"),
+    fn_bare_at("WORK", fn_sym, bare, _, _),
+    df_node(id, kind, _, bare, _, _).
+
+rel df_kind_edge(fn: text, from_kind: text, to_kind: text, n: int).
+df_kind_edge(fn_sym, from_kind, to_kind, count(a)) <-
+    current_rev("WORK"),
+    fn_bare_at("WORK", fn_sym, bare, _, _),
+    df_node(a, from_kind, _, bare, _, _),
+    df_edge(a, b),
+    df_node(b, to_kind, _, bare, _, _).
+
+rel df_map_node(id: text, label: text).
+df_map_node("df:${fn}:${kind}", "${kind} (${n})") <- df_kind(fn, kind, n).
+
+rel df_map_edge(src: text, dst: text, kind: text).
+df_map_edge(fn, "df:${fn}:${kind}", "contains-flow") <- df_kind(fn, kind, _).
+df_map_edge("df:${fn}:${a}", "df:${fn}:${b}", "flows:${n}") <-
+    df_kind_edge(fn, a, b, n).
+
+# ── WORK-only SCIP oracle ────────────────────────────────────────────────────
+# SCIP indexes describe the working tree. Keep that asymmetry explicit; these
+# rows improve current precision but never participate in the rev diff.
+rel scip_seam_def(sym: text, file: file).
+scip_seam_def(sym, file) <- scip_def(sym, file, _), seam_file_at("WORK", file).
+
+rel scip_adjacent(sym: text).
+scip_adjacent(caller) <- scip_fn_edge(caller, callee), scip_seam_def(callee, _).
+scip_adjacent(callee) <- scip_fn_edge(caller, callee), scip_seam_def(caller, _).
+
+rel scip_map_node(id: text, label: text, file: file, line: int).
+scip_map_node("scip:${sym}", replace_re(sym, "^.* ", ""), file, 1) <-
+    scip_seam_def(sym, file).
+scip_map_node("scip:${sym}", replace_re(sym, "^.* ", ""), file, 1) <-
+    scip_adjacent(sym), scip_def(sym, file, _).
+
+rel scip_map_edge(src: text, dst: text, kind: text).
+scip_map_edge("scip:${caller}", "scip:${callee}", "scip-call") <-
+    scip_fn_edge(caller, callee).
+
+# ── unified, rev-aware map rows ──────────────────────────────────────────────
+rel map_node_at(rev: text, id: text, kind: text, label: text,
+                file: file, line: int).
+map_node_at(rev, id, "module", label, file, line) <-
+    module_node_at(rev, id, label, file, line).
+map_node_at(rev, id, "type:${kind}", label, file, line) <-
+    type_node_at(rev, id, label, kind, file, line).
+map_node_at(rev, id, "function:${kind}", label, file, line) <-
+    fn_node_at(rev, id, label, kind, file, line).
+
+rel map_edge_at(rev: text, src: text, dst: text, kind: text).
+map_edge_at(rev, src, dst, kind) <- module_map_edge_at(rev, src, dst, kind).
+map_edge_at(rev, src, dst, kind) <- type_map_edge_at(rev, src, dst, kind).
+map_edge_at(rev, src, dst, kind) <- call_map_edge_at(rev, src, dst, kind).
+
+rel map_status(id: text, status: text).
+map_status(id, "stable") <-
+    current_rev(cur), previous_rev(prev),
+    map_node_at(cur, id, _, _, _, _), map_node_at(prev, id, _, _, _, _).
+map_status(id, "added") <-
+    current_rev(cur), previous_rev(prev),
+    map_node_at(cur, id, _, _, _, _), !map_node_at(prev, id, _, _, _, _).
+map_status(id, "removed") <-
+    current_rev(cur), previous_rev(prev),
+    map_node_at(prev, id, _, _, _, _), !map_node_at(cur, id, _, _, _, _).
+
+# Graph rows. Prefer WORK location for surviving nodes; removed nodes retain
+# their previous-rev source location. These are deliberately map_* rather than
+# the old deck node/edge names: `node` is now the reserved CST-node relation.
+rel map_node(id: text, kind: text, label: text).
+map_node(id, kind, label) <- current_rev(rev), map_node_at(rev, id, kind, label, _, _).
+map_node(id, kind, label) <- previous_rev(rev), map_node_at(rev, id, kind, label, _, _),
+    !map_node_at("WORK", id, _, _, _, _).
+map_node(id, "dataflow", label) <- df_map_node(id, label).
+map_node(id, "scip", label) <- scip_map_node(id, label, _, _).
+
+rel map_edge(src: text, dst: text, kind: text).
+map_edge(src, dst, kind) <- current_rev(rev), map_edge_at(rev, src, dst, kind).
+map_edge(src, dst, kind) <- df_map_edge(src, dst, kind).
+map_edge(src, dst, kind) <- scip_map_edge(src, dst, kind).
+
+rel map_tag(node: text, ns: text, value: text).
+map_tag(id, "status", status) <- map_status(id, status).
+map_tag(id, "layer", kind) <- map_node(id, kind, _).
+map_tag(id, "edge", kind) <- current_rev(rev), map_edge_at(rev, id, _, kind).
+map_tag(id, "precision", "WORK-only") <- df_map_node(id, _).
+map_tag(id, "precision", "WORK-only") <- scip_map_node(id, _, _, _).
+
+rel map_ref(node: text, panel: text, locator: text).
+map_ref(id, "fs", "${file}:${line}") <-
+    current_rev(rev), map_node_at(rev, id, _, _, file, line).
+map_ref(id, "fs", "${file}:${line}") <-
+    previous_rev(rev), map_node_at(rev, id, _, _, file, line),
+    !map_node_at("WORK", id, _, _, _, _).
+map_ref(id, "fs", "${file}:${line}") <- scip_map_node(id, _, file, line).
+
+rel map_card(id: text, body: text).
+map_card("storage-seam.case",
+     "storage-seam-01 maps WORK against parent 2b10fbd6 using module/type/call rev twins; dataflow and SCIP are honestly WORK-only").
+
+rel map_card_about(card: text, node: text).
+map_card_about("storage-seam.case", id) <- map_node(id, _, _).
+
+rel map_view(id: text, focus: text, mode: text, layout: text, dir: text, iso: int).
+map_view("storage-seam", db, "cone", "dagre", "LR", 0) <-
+    map_node(db, _, "Db").
+
+# Compact CLI readout. The database retains the full node/edge/tag rows for the
+# flow panel or any other relational renderer.
+rel storage_map_metric(layer: text, n: int).
+storage_map_metric("modules", count(id)) <- map_node(id, "module", _).
+storage_map_metric("types", count(id)) <- map_node(id, kind, _), kind =~ /^type:/.
+storage_map_metric("functions", count(id)) <- map_node(id, kind, _), kind =~ /^function:/.
+storage_map_metric("dataflow-kinds", count(id)) <- map_node(id, "dataflow", _).
+storage_map_metric("scip-symbols", count(id)) <- map_node(id, "scip", _).
+storage_map_metric("edges", count(a)) <- map_edge(a, _, _).
+storage_map_metric("added", count(id)) <- map_status(id, "added").
+storage_map_metric("removed", count(id)) <- map_status(id, "removed").
+
+? mapping_case(id, current, previous, focus).
+? metric(layer, n).
+? map_status(id, status).

@@ -1773,6 +1773,7 @@ impl TypeLang for TsTypes {
         path.ends_with(".ts") || path.ends_with(".tsx")
             || path.ends_with(".js") || path.ends_with(".jsx")
             || path.ends_with(".mjs") || path.ends_with(".cjs")
+            || path.ends_with(".mts") || path.ends_with(".cts")
     }
     // One oxc parse feeds both walks.
     fn extract(&self, file: &str, content: &str) -> TypeFacts {

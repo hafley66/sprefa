@@ -4,9 +4,11 @@
 mod agent_rels;
 mod agg;
 mod analysis_bundle_ab;
+mod arch;
 mod extract_digest_namespace;
 mod json_agg;
 mod arith;
+mod arith_in_body;
 mod ast_grammars;
 mod ast_whole_match_id;
 mod ast_yaml;

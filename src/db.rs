@@ -34,6 +34,11 @@ fn slow_sql() -> Duration {
 
 static SQL_COUNT: AtomicU64 = AtomicU64::new(0);
 static SQL_NANOS: AtomicU64 = AtomicU64::new(0);
+static SQLITE_CACHE_RESERVED_KIB: AtomicU64 = AtomicU64::new(0);
+static SQLITE_MMAP_RESERVED_BYTES: AtomicU64 = AtomicU64::new(0);
+
+const DEFAULT_SQLITE_CACHE_BUDGET_MB: u64 = 32;
+const DEFAULT_CONNECTION_CACHE_MB: u64 = 16;
 
 /// Take-and-reset the per-tick SQL aggregate fed by the profile hook:
 /// (statements executed, total wall ms inside SQLite).
@@ -71,6 +76,7 @@ pub struct Db {
     conn: Connection,
     counts: RefCell<HashMap<String, u32>>,
     pending_syms: Arc<Mutex<Vec<String>>>,
+    _memory_budget: SqliteMemoryBudget,
 }
 
 /// One statement running more than this many times in a tick is almost certainly
@@ -83,6 +89,68 @@ const N1_THRESHOLD: u32 = 64;
 /// so a 3-col relation flushes ~10k rows per statement.
 const PARAM_BUDGET: usize = 32000;
 
+#[derive(Debug, PartialEq, Eq)]
+struct SqliteMemoryBudget {
+    cache_kib: u64,
+    mmap_bytes: u64,
+}
+
+impl Drop for SqliteMemoryBudget {
+    fn drop(&mut self) {
+        SQLITE_CACHE_RESERVED_KIB.fetch_sub(self.cache_kib, Ordering::AcqRel);
+        SQLITE_MMAP_RESERVED_BYTES.fetch_sub(self.mmap_bytes, Ordering::AcqRel);
+    }
+}
+
+fn positive_env_u64(name: &str) -> Option<u64> {
+    std::env::var(name).ok()?.trim().parse().ok().filter(|n| *n > 0)
+}
+
+fn reserve_process_budget(reserved: &AtomicU64, total: u64, requested: u64) -> u64 {
+    let mut used = reserved.load(Ordering::Relaxed);
+    loop {
+        let grant = requested.min(total.saturating_sub(used));
+        if grant == 0 { return 0; }
+        match reserved.compare_exchange_weak(
+            used,
+            used + grant,
+            Ordering::AcqRel,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return grant,
+            Err(actual) => used = actual,
+        }
+    }
+}
+
+fn sqlite_memory_budget() -> SqliteMemoryBudget {
+    // DL_CACHE_MB is now a process-wide ceiling, not a per-connection promise.
+    // A connection receives at most DL_CONNECTION_CACHE_MB so opening several
+    // roots cannot multiply a 512 MiB setting by the root count.
+    let total_cache_kib = positive_env_u64("DL_CACHE_MB")
+        .unwrap_or(DEFAULT_SQLITE_CACHE_BUDGET_MB)
+        .saturating_mul(1024);
+    let per_connection_kib = positive_env_u64("DL_CONNECTION_CACHE_MB")
+        .unwrap_or(DEFAULT_CONNECTION_CACHE_MB)
+        .saturating_mul(1024);
+    let cache_kib = reserve_process_budget(
+        &SQLITE_CACHE_RESERVED_KIB,
+        total_cache_kib,
+        per_connection_kib,
+    );
+
+    // Mapped pages count against process footprint too. Keep mmap disabled by
+    // default; DL_MMAP_MB explicitly grants a process-wide mapping budget.
+    let total_mmap_bytes = positive_env_u64("DL_MMAP_MB").unwrap_or(0).saturating_mul(1024 * 1024);
+    let mmap_bytes = reserve_process_budget(
+        &SQLITE_MMAP_RESERVED_BYTES,
+        total_mmap_bytes,
+        total_mmap_bytes,
+    );
+
+    SqliteMemoryBudget { cache_kib, mmap_bytes }
+}
+
 pub fn open(path: Option<&str>) -> Result<Db> {
     let mut conn = match path {
         Some(p) => Connection::open(p)?,
@@ -91,33 +159,19 @@ pub fn open(path: Option<&str>) -> Result<Db> {
     // busy_timeout: a hook `--check` and a resident `--lsp` share .dl/cache.db
     // across processes; a write collision should wait, not fail "locked".
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
-    // Page cache: SQLite's 2MB default thrashes this workload — the 2026-07-11
-    // cold-tick profile put ~half the derived-phase wall in
-    // BtreeIndexMoveto -> pread (cache-miss page reads on 500k-row index
-    // probes) and another chunk in pagerStress dirty-page spill to the WAL.
-    // Negative cache_size = KiB. DL_CACHE_MB overrides (integer megabytes);
-    // default 512 — pages are allocated only as touched, so an idle db pays
-    // nothing. mmap_size lets read pages come off the page cache entirely.
-    let cache_mb: i64 = std::env::var("DL_CACHE_MB").ok()
-        .and_then(|mb| mb.trim().parse().ok())
-        .filter(|mb: &i64| *mb > 0)
-        .unwrap_or(512);
+    // Cache and mapped-page ceilings are process-wide. The former duplicated
+    // 512 MiB setup made every connection eligible to retain a huge page cache,
+    // while temp_store=MEMORY let sorts/staging escape any byte budget. A root
+    // with no remaining cache lease gets cache_size=0. SQLite still has small
+    // unavoidable connection bookkeeping, but no unaccounted page-cache grant;
+    // correctness never depends on receiving a lease.
+    let memory = sqlite_memory_budget();
+    let configured_cache_kib = memory.cache_kib;
     conn.execute_batch(&format!(
-        "PRAGMA cache_size=-{kib}; PRAGMA mmap_size={bytes}; PRAGMA temp_store=MEMORY;",
-        kib = cache_mb * 1024, bytes = cache_mb * 1024 * 1024))?;
-    // Page cache: the 2MB SQLite default thrashes on this workload — a cold
-    // tick's derived joins probe 500k-row indexes and the 2026-07-11 profile
-    // showed ~half the wall in BtreeIndexMoveto -> pread (cache-miss page
-    // reads) plus pagerStress dirty-page spill. Negative value = KiB.
-    // DL_CACHE_MB overrides (integer MB); default 512MB — RAM is cheaper
-    // than a 40s tick, and SQLite only allocates pages it actually touches.
-    let cache_mb: i64 = std::env::var("DL_CACHE_MB").ok()
-        .and_then(|v| v.trim().parse().ok())
-        .filter(|mb| *mb > 0)
-        .unwrap_or(512);
-    conn.execute_batch(&format!(
-        "PRAGMA cache_size=-{}; PRAGMA mmap_size={};",
-        cache_mb * 1024, cache_mb * 1024 * 1024))?;
+        "PRAGMA cache_size=-{configured_cache_kib}; \
+         PRAGMA mmap_size={}; \
+         PRAGMA temp_store=FILE;",
+        memory.mmap_bytes))?;
     // P2 (--check perf defect ledger): a loud, best-effort heads-up when
     // another live process already holds a write lock on this same db —
     // almost always a resident daemon. A one-shot `--check`/`dl` run that
@@ -171,7 +225,12 @@ pub fn open(path: Option<&str>) -> Result<Db> {
             &[("path", p), ("bytes", &size.to_string()), ("journal_mode", &journal_mode)],
         );
     }
-    Ok(Db { conn, counts: RefCell::new(HashMap::new()), pending_syms })
+    Ok(Db {
+        conn,
+        counts: RefCell::new(HashMap::new()),
+        pending_syms,
+        _memory_budget: memory,
+    })
 }
 
 /// Install a busy handler that mimics the prior fixed 5000ms `busy_timeout`
@@ -358,6 +417,10 @@ impl Db {
     /// Escape hatch for not-yet-migrated call sites. Uncounted — burn these down.
     pub fn conn(&self) -> &Connection { &self.conn }
 
+    /// Whether this connection is outside a transaction, without exposing the
+    /// raw connection through the storage seam.
+    pub fn is_autocommit(&self) -> bool { self.conn.is_autocommit() }
+
     pub fn flush_pending_syms(&self) -> Result<usize> {
         let texts = std::mem::take(&mut *self.pending_syms.lock().expect("pending symbol queue poisoned"));
         if texts.is_empty() { return Ok(0); }
@@ -540,7 +603,11 @@ impl Db {
         self.bump(&key);
         let chunk_rows = (PARAM_BUDGET / ncol.max(1)).max(1);
         let multi = rows.len() > chunk_rows;
-        if multi { self.conn.execute_batch("BEGIN")?; }
+        // A bulk insert is atomic on its own, but it must compose with a wider
+        // semantic-generation transaction. Only open (and therefore only
+        // commit or roll back) the transaction when this helper owns it.
+        let owns_tx = multi && self.conn.is_autocommit();
+        if owns_tx { self.conn.execute_batch("BEGIN")?; }
         let mut total = 0;
         for chunk in rows.chunks(chunk_rows) {
             let tuple = format!("({})", vec!["?"; ncol].join(","));
@@ -555,12 +622,12 @@ impl Db {
             match res {
                 Ok(n) => total += n,
                 Err(e) => {
-                    if multi { let _ = self.conn.execute_batch("ROLLBACK"); }
+                    if owns_tx { let _ = self.conn.execute_batch("ROLLBACK"); }
                     return Err(e.into());
                 }
             }
         }
-        if multi { self.conn.execute_batch("COMMIT")?; }
+        if owns_tx { self.conn.execute_batch("COMMIT")?; }
         Ok(total)
     }
 
@@ -618,6 +685,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn process_budget_reservation_never_exceeds_ceiling() {
+        let reserved = AtomicU64::new(0);
+        assert_eq!(reserve_process_budget(&reserved, 32, 16), 16);
+        assert_eq!(reserve_process_budget(&reserved, 32, 20), 16);
+        assert_eq!(reserve_process_budget(&reserved, 32, 1), 0);
+        assert_eq!(reserved.load(Ordering::Relaxed), 32);
+    }
+
+    #[test]
+    fn sqlite_temp_work_is_file_backed() {
+        let db = open(None).unwrap();
+        let temp_store: i64 = db.conn().query_row("PRAGMA temp_store", [], |r| r.get(0)).unwrap();
+        assert_eq!(temp_store, 1, "TEMP tables and sorts must not consume unbounded heap");
+    }
+
+    #[test]
     fn insert_rows_chunks_by_param_budget() {
         let db = open(None).unwrap();
         db.exec("CREATE TABLE t (a INTEGER, b TEXT)").unwrap();
@@ -632,6 +715,75 @@ mod tests {
         assert!(db.tick_end().is_none(), "chunked insert must not trip the n+1 counter");
         let count: i64 = db.conn().query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
         assert_eq!(count, 33_000);
+    }
+
+    #[test]
+    fn multi_chunk_insert_owns_transaction_when_autocommit() {
+        let db = open(None).unwrap();
+        db.exec("CREATE TABLE t (a INTEGER PRIMARY KEY)").unwrap();
+        let rows: Vec<Vec<Value>> = (0..32_001).map(|i| vec![Value::Int(i)]).collect();
+
+        assert!(db.conn().is_autocommit());
+        assert_eq!(db.insert_rows("t", &["a"], &rows).unwrap(), rows.len());
+        assert!(db.conn().is_autocommit(), "helper-owned transaction must be committed");
+        let count: i64 = db.conn().query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, rows.len() as i64);
+    }
+
+    #[test]
+    fn multi_chunk_insert_composes_with_begin_immediate() {
+        let db = open(None).unwrap();
+        db.exec("CREATE TABLE t (a INTEGER PRIMARY KEY)").unwrap();
+        let rows: Vec<Vec<Value>> = (0..32_001).map(|i| vec![Value::Int(i)]).collect();
+
+        db.conn().execute_batch("BEGIN IMMEDIATE").unwrap();
+        assert_eq!(db.insert_rows("t", &["a"], &rows).unwrap(), rows.len());
+        assert!(!db.conn().is_autocommit(), "caller must still own the transaction");
+        db.conn().execute_batch("COMMIT").unwrap();
+
+        let count: i64 = db.conn().query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, rows.len() as i64);
+    }
+
+    #[test]
+    fn failed_second_chunk_leaves_outer_transaction_for_caller_rollback() {
+        let db = open(None).unwrap();
+        db.exec("CREATE TABLE marker (value TEXT)").unwrap();
+        db.exec("CREATE TABLE t (a INTEGER PRIMARY KEY)").unwrap();
+        db.exec(
+            "CREATE TRIGGER fail_second_chunk BEFORE INSERT ON t \
+             WHEN NEW.a = 32000 BEGIN SELECT RAISE(ABORT, 'second chunk failed'); END",
+        ).unwrap();
+        let rows: Vec<Vec<Value>> = (0..32_001).map(|i| vec![Value::Int(i)]).collect();
+
+        db.conn().execute_batch("BEGIN IMMEDIATE").unwrap();
+        db.exec("INSERT INTO marker VALUES ('before helper')").unwrap();
+        let err = db.insert_rows("t", &["a"], &rows).unwrap_err();
+        assert!(err.to_string().contains("second chunk failed"));
+        assert!(!db.conn().is_autocommit(), "helper must not roll back its caller");
+        let marker_in_tx: i64 = db.conn().query_row("SELECT COUNT(*) FROM marker", [], |r| r.get(0)).unwrap();
+        assert_eq!(marker_in_tx, 1);
+
+        db.conn().execute_batch("ROLLBACK").unwrap();
+        let marker_after: i64 = db.conn().query_row("SELECT COUNT(*) FROM marker", [], |r| r.get(0)).unwrap();
+        let rows_after: i64 = db.conn().query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
+        assert_eq!(marker_after, 0, "caller rollback must include its earlier unrelated write");
+        assert_eq!(rows_after, 0, "caller rollback must include the helper's first chunk");
+    }
+
+    #[test]
+    fn insert_rows_never_commits_caller_transaction() {
+        let db = open(None).unwrap();
+        db.exec("CREATE TABLE t (a INTEGER PRIMARY KEY)").unwrap();
+        let rows: Vec<Vec<Value>> = (0..32_001).map(|i| vec![Value::Int(i)]).collect();
+
+        db.conn().execute_batch("BEGIN IMMEDIATE").unwrap();
+        db.insert_rows("t", &["a"], &rows).unwrap();
+        assert!(!db.conn().is_autocommit());
+        db.conn().execute_batch("ROLLBACK").unwrap();
+
+        let count: i64 = db.conn().query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 0, "caller rollback must undo every helper-written chunk");
     }
 
     // Build a table shaped like a df rel: a wide full-row PRIMARY KEY over an

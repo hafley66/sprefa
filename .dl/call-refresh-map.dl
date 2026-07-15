@@ -1,0 +1,62 @@
+# call-refresh-map.dl — dl maps the call-family refresh slice in dl itself.
+# Kept source-resident so later revisions can rerun the same architectural case.
+
+rel map_file(path: file).
+map_file(path) <- scan("WORK", "src/engine/extract/*.rs", path, rev).
+map_file(path) <- scan("WORK", "src/engine/pipeline/*.rs", path, rev).
+map_file(path) <- scan("WORK", "src/engine/path_reconcile.rs", path, rev).
+map_file(path) <- scan("WORK", "src/engine/reconcile.rs", path, rev).
+map_file(path) <- scan("WORK", "src/rels/extract_family.rs", path, rev).
+map_file(path) <- scan("WORK", "src/db.rs", path, rev).
+
+# Definitions and raw sites in the focused files. Raw call_site is intentional:
+# it retains method/helper calls even when corpus-global symbol resolution cannot
+# produce a call_edge.
+rel map_fn(sym: text, name: text, file: file, line: int).
+map_fn(sym, name, file, line) <-
+    call_def(_, sym, _, file, line, _),
+    call_name(sym, name),
+    map_file(file).
+
+rel map_site(caller: text, callee: text, file: file, line: int).
+map_site(caller, callee, file, line) <-
+    call_site(_, caller, callee, file, line),
+    map_file(file).
+
+rel call_map_edge(caller: text, callee: text).
+call_map_edge(caller, callee) <-
+    call_edge(caller, callee, _),
+    map_fn(caller, _, _, _).
+call_map_edge(caller, callee) <-
+    call_edge(caller, callee, _),
+    map_fn(callee, _, _, _).
+
+# Small summaries make the mapping useful in a terminal without dumping every
+# site. callee_count exposes the actual helper/storage seams called by this slice.
+rel map_count(kind: text, n: int).
+map_count("files", count(path)) <- map_file(path).
+map_count("functions", count(sym)) <- map_fn(sym, _, _, _).
+map_count("raw-sites", count(line)) <- map_site(_, _, _, line).
+map_count("resolved-edges", count(callee)) <- call_map_edge(_, callee).
+
+rel callee_count(callee: text, n: int).
+callee_count(callee, count(line)) <- map_site(_, callee, _, line).
+
+rel focus_name(name: text).
+focus_name("refresh_call_rels").
+focus_name("rebuild_legacy_call_rels").
+focus_name("refresh_rel").
+focus_name("refresh_rel_for_revs").
+focus_name("reconcile_source_paths").
+focus_name("retract_paths").
+focus_name("insert_source_rows_for_paths").
+focus_name("apply").
+
+rel focus_site(caller_name: text, callee: text, file: file, line: int).
+focus_site(caller_name, callee, file, line) <-
+    map_fn(caller, caller_name, file, _),
+    focus_name(caller_name),
+    map_site(caller, callee, file, line).
+
+? map_count(kind, n).
+? focus_site(caller_name, callee, file, line).

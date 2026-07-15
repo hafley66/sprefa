@@ -26,7 +26,10 @@ cp -rf source dest          # NOT: cp -r directory
 
 ## Rust Formatting
 
+Formatting churn is not a review concern. Do not spend implementation or review
+time minimizing, reconstructing, or undoing formatter-only changes.
+
 Do not pass individual file paths to `cargo fmt`; Cargo may format every target
-in the workspace anyway. During implementation, keep edits focused and do not
-run the repository-wide formatter. Run `cargo fmt` once immediately before
-commit, then include the resulting formatting in that commit.
+in the workspace anyway. Do not run the repository-wide formatter during
+implementation. Run `cargo fmt` once immediately before commit and include all
+resulting formatting in that commit.

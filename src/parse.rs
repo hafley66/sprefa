@@ -5,6 +5,7 @@ use crate::lex::Tok;
 
 pub struct Parser { toks: Vec<Tok>, i: usize }
 
+// ARCH {"url":"parse","role":"frontend"}
 pub fn parse(toks: Vec<Tok>) -> Result<Program> {
     let mut p = Parser { toks, i: 0 };
     let mut prog = Program::default();
@@ -1090,9 +1091,9 @@ impl Parser {
                 (self.peek().cloned(), self.peek2().cloned()) {
                 self.next()?; // ident
                 self.next()?; // colon
-                named.push((name, self.term()?));
+                named.push((name, self.expr()?));
             } else {
-                pos.push(self.term()?);
+                pos.push(self.expr()?);
             }
             match self.peek() {
                 Some(Tok::Comma) => {

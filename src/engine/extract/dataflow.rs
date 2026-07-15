@@ -15,7 +15,9 @@ impl Engine {
         // df rels gain `_rev` twins in D5.4; today they stay whole-table
         // `refresh_rel` writes (single-rev daemon sees today's behavior).
         let moved = self.moved_extract_revs("dataflow", &files, false)?;
-        if moved.is_empty() { return Ok(false); }
+        if moved.is_empty() {
+            return Ok(false);
+        }
 
         let root = self.root.clone();
         // Read each file from its OWN repo root (same as type/call), so a config
@@ -26,13 +28,19 @@ impl Engine {
         // can attribute every node to the folder it lives in.
         let roots = self.repo_roots();
         let facts: Vec<(String, String, String, Arc<typegraph::DataflowFacts>)> =
-            cached_facts_profiled(&self.df_facts_cache, &files, &self.extract_files_parsed, "dataflow", |repo, path, rev| {
-                let lang = typegraph::type_langs().iter().find(|l| l.matches(path))?;
-                let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
-                let content = read_content(froot, rev, path).unwrap_or_default();
-                let rid = repo_id_of(froot, path, repo);
-                Some((rid, lang.extract_dataflow(path, &content)))
-            });
+            cached_facts_profiled(
+                &self.df_facts_cache,
+                &files,
+                &self.extract_files_parsed,
+                "dataflow",
+                |repo, path, rev| {
+                    let lang = typegraph::type_langs().iter().find(|l| l.matches(path))?;
+                    let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
+                    let content = read_content(froot, rev, path).unwrap_or_default();
+                    let rid = repo_id_of(froot, path, repo);
+                    Some((rid, lang.extract_dataflow(path, &content)))
+                },
+            );
 
         let t = |s: &str| Value::Text(s.to_string());
         let i = |n: u32| Value::Int(n as i64);
@@ -82,13 +90,25 @@ impl Engine {
         for (repo, _, rev, f) in &facts {
             for n in &f.nodes {
                 if seen_node.insert(n.id.as_str()) {
-                    node_rows.push(vec![sym(&n.id), t(&n.kind), t(&n.var), t(&n.fn_sym), t(&n.file), i(n.line)]);
+                    node_rows.push(vec![
+                        sym(&n.id),
+                        t(&n.kind),
+                        t(&n.var),
+                        t(&n.fn_sym),
+                        t(&n.file),
+                        i(n.line),
+                    ]);
                 }
                 if seen_node_rev.insert((n.id.as_str(), rev.as_str())) {
                     let salted = Self::salt_rev(&n.id, rev);
                     node_rev_rows.push(vec![
-                        sym(&salted), t(&n.kind), t(&n.var),
-                        t(&n.fn_sym), t(&n.file), i(n.line), t(rev),
+                        sym(&salted),
+                        t(&n.kind),
+                        t(&n.var),
+                        t(&n.fn_sym),
+                        t(&n.file),
+                        i(n.line),
+                        t(rev),
                     ]);
                 }
                 // df_node id is `file:line:col` (path only, no repo). Attribute
@@ -117,7 +137,14 @@ impl Engine {
             }
             for l in &f.loops {
                 if seen_loop.insert((l.file.as_str(), l.start)) {
-                    loop_rows.push(vec![t(&l.file), i(l.start), i(l.end), t(&l.var), t(&l.collection), t(&l.fn_sym)]);
+                    loop_rows.push(vec![
+                        t(&l.file),
+                        i(l.start),
+                        i(l.end),
+                        t(&l.var),
+                        t(&l.collection),
+                        t(&l.fn_sym),
+                    ]);
                 }
             }
             for fn_sym in &f.allocators {
@@ -125,7 +152,12 @@ impl Engine {
             }
             for ns in &f.nests {
                 if seen_nest.insert((ns.call_id.as_str(), ns.loop_id.as_str())) {
-                    nest_rows.push(vec![t(&ns.call_id), t(&ns.loop_id), i(ns.depth), t(&ns.collection)]);
+                    nest_rows.push(vec![
+                        t(&ns.call_id),
+                        t(&ns.loop_id),
+                        i(ns.depth),
+                        t(&ns.collection),
+                    ]);
                 }
             }
             for (id, pos) in &f.param_pos {
@@ -141,10 +173,7 @@ impl Engine {
                 if seen_arg_rev.insert((call.as_str(), *pos, arg.as_str(), rev.as_str())) {
                     let scall = Self::salt_rev(call, rev);
                     let sarg = Self::salt_rev(arg, rev);
-                    arg_rev_rows.push(vec![
-                        sym(&scall), Value::Int(*pos),
-                        sym(&sarg), t(rev),
-                    ]);
+                    arg_rev_rows.push(vec![sym(&scall), Value::Int(*pos), sym(&sarg), t(rev)]);
                 }
             }
             for (id, field, value) in &f.fields {
@@ -153,13 +182,15 @@ impl Engine {
                 }
                 // value is always a value df_node id (never a literal), so it
                 // salts like id; the field name is a plain string, unsalted
-                if seen_field_rev.insert((id.as_str(), field.as_str(), value.as_str(), rev.as_str())) {
+                if seen_field_rev.insert((
+                    id.as_str(),
+                    field.as_str(),
+                    value.as_str(),
+                    rev.as_str(),
+                )) {
                     let sid = Self::salt_rev(id, rev);
                     let svalue = Self::salt_rev(value, rev);
-                    field_rev_rows.push(vec![
-                        sym(&sid), t(field),
-                        sym(&svalue), t(rev),
-                    ]);
+                    field_rev_rows.push(vec![sym(&sid), t(field), sym(&svalue), t(rev)]);
                 }
             }
             for (id, text, kind) in &f.lits {
@@ -180,12 +211,24 @@ impl Engine {
         // the N+1 law applies to this intern just like any other.
         self.db.flush_syms(&mut sink)?;
 
-        self.refresh_rel("df_node", &["id", "kind", "var", "fn", "file", "line"], &node_rows)?;
+        self.refresh_rel(
+            "df_node",
+            &["id", "kind", "var", "fn", "file", "line"],
+            &node_rows,
+        )?;
         self.refresh_rel("df_node_repo", &["id", "repo"], &node_repo_rows)?;
         self.refresh_rel("df_edge", &["from", "to"], &edge_rows)?;
-        self.refresh_rel("loop_over", &["file", "start", "end", "var", "collection", "fn"], &loop_rows)?;
+        self.refresh_rel(
+            "loop_over",
+            &["file", "start", "end", "var", "collection", "fn"],
+            &loop_rows,
+        )?;
         self.refresh_rel("allocates", &["fn"], &alloc_rows)?;
-        self.refresh_rel("nest", &["call_id", "loop_id", "depth", "collection"], &nest_rows)?;
+        self.refresh_rel(
+            "nest",
+            &["call_id", "loop_id", "depth", "collection"],
+            &nest_rows,
+        )?;
         self.refresh_rel("df_param", &["id", "pos"], &param_rows)?;
         self.refresh_rel("df_arg", &["call", "pos", "arg"], &arg_rows)?;
         self.refresh_rel("df_field", &["id", "field", "value"], &field_rows)?;
@@ -197,13 +240,40 @@ impl Engine {
         // (the salt is not cleanly reversible in SQL and the raw rows are in hand).
         let all_revs = Self::corpus_revs(&files);
         let all_rev_refs: Vec<&str> = all_revs.iter().map(|s| s.as_str()).collect();
-        self.refresh_rel_for_revs("df_node_rev", &["id", "kind", "var", "fn", "file", "line", "rev"], &node_rev_rows, &all_rev_refs)?;
-        self.refresh_rel_for_revs("df_node_repo_rev", &["id", "repo", "rev"], &node_repo_rev_rows, &all_rev_refs)?;
-        self.refresh_rel_for_revs("df_arg_rev", &["call", "pos", "arg", "rev"], &arg_rev_rows, &all_rev_refs)?;
-        self.refresh_rel_for_revs("df_field_rev", &["id", "field", "value", "rev"], &field_rev_rows, &all_rev_refs)?;
-        self.refresh_rel_for_revs("df_lit_rev", &["id", "text", "kind", "rev"], &lit_rev_rows, &all_rev_refs)?;
+        self.refresh_rel_for_revs(
+            "df_node_rev",
+            &["id", "kind", "var", "fn", "file", "line", "rev"],
+            &node_rev_rows,
+            &all_rev_refs,
+        )?;
+        self.refresh_rel_for_revs(
+            "df_node_repo_rev",
+            &["id", "repo", "rev"],
+            &node_repo_rev_rows,
+            &all_rev_refs,
+        )?;
+        self.refresh_rel_for_revs(
+            "df_arg_rev",
+            &["call", "pos", "arg", "rev"],
+            &arg_rev_rows,
+            &all_rev_refs,
+        )?;
+        self.refresh_rel_for_revs(
+            "df_field_rev",
+            &["id", "field", "value", "rev"],
+            &field_rev_rows,
+            &all_rev_refs,
+        )?;
+        self.refresh_rel_for_revs(
+            "df_lit_rev",
+            &["id", "text", "kind", "rev"],
+            &lit_rev_rows,
+            &all_rev_refs,
+        )?;
         // Persisted only after the writes land, so a failed refresh retries.
-        for (rev, d) in &moved { self.save_rel_digest(&extract_digest_key("dataflow", rev), d)?; }
+        for (rev, d) in &moved {
+            self.save_rel_digest(&extract_digest_key("dataflow", rev), d)?;
+        }
         Ok(true)
     }
 }

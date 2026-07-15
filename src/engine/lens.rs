@@ -12,13 +12,16 @@ impl Engine {
         let mut s = conn.prepare(
             "SELECT w.path, w.lo, w.hi, s.content FROM _where_bytes w \
              JOIN _strings s ON s.id = w.string_id \
-             WHERE w.id != '0' AND w.path != ''")?;
-        let rows = s.query_map([], |r| Ok((
-            r.get::<_, String>(0)?,
-            r.get::<_, i64>(1)? as u32,
-            r.get::<_, i64>(2)? as u32,
-            r.get::<_, String>(3)?,
-        )))?;
+             WHERE w.id != '0' AND w.path != ''",
+        )?;
+        let rows = s.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)? as u32,
+                r.get::<_, i64>(2)? as u32,
+                r.get::<_, String>(3)?,
+            ))
+        })?;
         Ok(rows.filter_map(|x| x.ok()).collect())
     }
 
@@ -29,11 +32,11 @@ impl Engine {
     /// current WORK content are positionally valid for an editor cursor.
     pub(crate) fn work_file_id(&self, path: &str) -> Result<Option<spine::FileId>> {
         let conn = self.db.conn();
-        let mut s = conn.prepare(
-            "SELECT hash, size FROM _file WHERE path = ?1 AND rev = 'WORK' LIMIT 1")?;
-        let row = s.query_row(rusqlite::params![path], |r| Ok((
-            r.get::<_, String>(0)?, r.get::<_, i64>(1)?,
-        )));
+        let mut s =
+            conn.prepare("SELECT hash, size FROM _file WHERE path = ?1 AND rev = 'WORK' LIMIT 1")?;
+        let row = s.query_row(rusqlite::params![path], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        });
         match row {
             Ok((hash, size)) => Ok(spine::FileId::from_content_address(&hash, size)
                 .filter(|f| *f != spine::FileId::SYNTHETIC)),
@@ -48,20 +51,25 @@ impl Engine {
     /// the cursor is not on any located string. Drives the LSP
     /// definition/references handlers.
     pub fn span_at(&self, path: &str, byte: u32) -> Result<Option<(String, String, u32, u32)>> {
-        let Some(fid) = self.work_file_id(path)? else { return Ok(None); };
+        let Some(fid) = self.work_file_id(path)? else {
+            return Ok(None);
+        };
         let conn = self.db.conn();
         let mut s = conn.prepare(
             "SELECT w.string_id, s.content, w.lo, w.hi FROM _where_bytes w \
              JOIN _strings s ON s.id = w.string_id \
              WHERE w.id != '0' AND w.path = ?1 AND w.file_id = ?2 \
                AND w.lo <= ?3 AND ?3 < w.hi \
-             ORDER BY (w.hi - w.lo) ASC LIMIT 1")?;
-        let row = s.query_row(rusqlite::params![path, fid.to_string(), byte as i64], |r| Ok((
-            r.get::<_, i64>(0)?.to_string(),
-            r.get::<_, String>(1)?,
-            r.get::<_, i64>(2)? as u32,
-            r.get::<_, i64>(3)? as u32,
-        )));
+             ORDER BY (w.hi - w.lo) ASC LIMIT 1",
+        )?;
+        let row = s.query_row(rusqlite::params![path, fid.to_string(), byte as i64], |r| {
+            Ok((
+                r.get::<_, i64>(0)?.to_string(),
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)? as u32,
+                r.get::<_, i64>(3)? as u32,
+            ))
+        });
         match row {
             Ok(v) => Ok(Some(v)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -81,13 +89,16 @@ impl Engine {
             let mut s = conn.prepare(
                 "SELECT path, file_id, lo, hi FROM _where_bytes \
                  WHERE string_id = ?1 AND id != '0' AND path != '' \
-                 ORDER BY path, lo")?;
-            let rows = s.query_map(rusqlite::params![sid], |r| Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, i64>(2)? as u32,
-                r.get::<_, i64>(3)? as u32,
-            )))?;
+                 ORDER BY path, lo",
+            )?;
+            let rows = s.query_map(rusqlite::params![sid], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)? as u32,
+                    r.get::<_, i64>(3)? as u32,
+                ))
+            })?;
             rows.filter_map(|x| x.ok()).collect()
         };
         let mut work_ids: HashMap<String, Option<String>> = HashMap::new();
@@ -101,7 +112,9 @@ impl Engine {
                     w
                 }
             };
-            if want.as_deref() == Some(fid.as_str()) { out.push((path, lo, hi)); }
+            if want.as_deref() == Some(fid.as_str()) {
+                out.push((path, lo, hi));
+            }
         }
         Ok(out)
     }
@@ -126,20 +139,37 @@ impl Engine {
         // column name so the program's column ordering/naming is flexible as
         // long as `name`, `file`, `line` are present.
         if let Some(meta) = self.rels.get("def_target") {
-            let idx: HashMap<&str, usize> =
-                meta.cols.iter().enumerate().map(|(i, c)| (c.name.as_str(), i)).collect();
-            if let (Some(ni), Some(fi), Some(li)) = (idx.get("name"), idx.get("file"), idx.get("line")) {
-                let cols: Vec<String> = meta.cols.iter().map(|c| format!("\"{}\"", c.name)).collect();
+            let idx: HashMap<&str, usize> = meta
+                .cols
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (c.name.as_str(), i))
+                .collect();
+            if let (Some(ni), Some(fi), Some(li)) =
+                (idx.get("name"), idx.get("file"), idx.get("line"))
+            {
+                let cols: Vec<String> = meta
+                    .cols
+                    .iter()
+                    .map(|c| format!("\"{}\"", c.name))
+                    .collect();
                 let sql = format!(
                     "SELECT DISTINCT \"{}\", \"{}\" FROM {} WHERE \"{}\" = ?1",
-                    meta.cols[*fi].name, meta.cols[*li].name, txt_tbl("def_target"), meta.cols[*ni].name);
+                    meta.cols[*fi].name,
+                    meta.cols[*li].name,
+                    txt_tbl("def_target"),
+                    meta.cols[*ni].name
+                );
                 let conn = self.db.conn();
                 let mut s = conn.prepare(&sql)?;
-                let rows = s.query_map(rusqlite::params![text], |r|
-                    Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+                let rows = s.query_map(rusqlite::params![text], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+                })?;
                 let out: Vec<(String, i64)> = rows.filter_map(|x| x.ok()).collect();
                 let _ = cols; // (kept for symmetry with diags; unused today)
-                if !out.is_empty() { return Ok(out); }
+                if !out.is_empty() {
+                    return Ok(out);
+                }
             }
         }
 
@@ -147,7 +177,9 @@ impl Engine {
         let dsts: Vec<String> = {
             let conn = self.db.conn();
             let mut s = conn.prepare(&format!(
-                    "SELECT DISTINCT \"dst\" FROM {} WHERE \"src\" = ?1", txt_tbl("module_edge")))?;
+                "SELECT DISTINCT \"dst\" FROM {} WHERE \"src\" = ?1",
+                txt_tbl("module_edge")
+            ))?;
             let rows = s.query_map(rusqlite::params![file], |r| r.get::<_, String>(0))?;
             rows.filter_map(|x| x.ok()).collect()
         };
@@ -155,10 +187,14 @@ impl Engine {
             .split(|c: char| c == ':' || c == '/')
             .filter(|s| !s.is_empty() && !matches!(*s, "crate" | "self" | "super" | "." | ".."))
             .collect();
-        let matched: Vec<String> = dsts.iter()
+        let matched: Vec<String> = dsts
+            .iter()
             .filter(|d| segs.contains(module_stem(d)))
-            .cloned().collect();
-        if matched.is_empty() && dsts.len() == 1 { return Ok(dsts.into_iter().map(|f| (f, 0)).collect()); }
+            .cloned()
+            .collect();
+        if matched.is_empty() && dsts.len() == 1 {
+            return Ok(dsts.into_iter().map(|f| (f, 0)).collect());
+        }
         Ok(matched.into_iter().map(|f| (f, 0)).collect())
     }
 
@@ -183,10 +219,16 @@ impl Engine {
         let te_rows: Vec<(String, String, String, i64)> = {
             let conn = self.db.conn();
             let mut s = conn.prepare(&format!(
-                "SELECT \"sym\", \"kind\", \"file\", \"line\" FROM {te} WHERE \"name\" = ?1"))?;
-            let rows = s.query_map(rusqlite::params![text], |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?, r.get::<_, i64>(3)?)))?;
+                "SELECT \"sym\", \"kind\", \"file\", \"line\" FROM {te} WHERE \"name\" = ?1"
+            ))?;
+            let rows = s.query_map(rusqlite::params![text], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            })?;
             rows.filter_map(|x| x.ok()).collect()
         };
         for (sym, kind, file, line) in te_rows {
@@ -205,10 +247,16 @@ impl Engine {
             let mut s = conn.prepare(&format!(
                 "SELECT d.\"sym\", d.\"kind\", d.\"file\", d.\"line\" \
                  FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" \
-                 WHERE n.\"name\" = ?1"))?;
-            let rows = s.query_map(rusqlite::params![text], |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?, r.get::<_, i64>(3)?)))?;
+                 WHERE n.\"name\" = ?1"
+            ))?;
+            let rows = s.query_map(rusqlite::params![text], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            })?;
             rows.filter_map(|x| x.ok()).collect()
         };
         for (sym, kind, file, line) in cd_rows {
@@ -217,17 +265,24 @@ impl Engine {
             }
         }
 
-        if entries.is_empty() { return Ok(None); }
+        if entries.is_empty() {
+            return Ok(None);
+        }
         entries.sort();
         let mut md = String::new();
         for (i, (kind, sym, file, line)) in entries.into_iter().enumerate() {
-            if i > 0 { md.push_str("\n\n---\n\n"); }
+            if i > 0 {
+                md.push_str("\n\n---\n\n");
+            }
             md.push_str(&format!("**{kind}** `{sym}`  \n{file}:{line}"));
             // Type-profile overlay for data types: Ca, Ce, fields, variants.
             // Callable kinds (function/method) don't have field/variant edges,
             // so the overlay is data-type-only. Cheap (4 COUNT queries on an
             // indexed column); no-op when type_edge isn't populated.
-            if matches!(kind.as_str(), "struct" | "enum" | "trait" | "class" | "interface" | "alias") {
+            if matches!(
+                kind.as_str(),
+                "struct" | "enum" | "trait" | "class" | "interface" | "alias"
+            ) {
                 if let Some(profile) = self.type_profile_overlay(&sym) {
                     md.push_str(&format!("  \n{profile}"));
                 }
@@ -249,7 +304,8 @@ impl Engine {
                 "SELECT \"md\" FROM {hn} WHERE \"path\" = ?1 \
                  AND (\"line\" < ?2 OR (\"line\" = ?2 AND \"col\" <= ?3)) \
                  AND (\"end_line\" > ?2 OR (\"end_line\" = ?2 AND \"end_col\" >= ?3)) \
-                 ORDER BY \"md\""),
+                 ORDER BY \"md\""
+            ),
             &[&path, &line, &character],
             |r| r.get::<_, String>(0),
         ))
@@ -265,22 +321,29 @@ impl Engine {
         let edge = txt_tbl("type_edge");
         let conn = self.db.conn();
         let q = |sql: String| -> Option<i64> {
-            conn.query_row(&sql, rusqlite::params![name], |r| r.get::<_, i64>(0)).ok()
+            conn.query_row(&sql, rusqlite::params![name], |r| r.get::<_, i64>(0))
+                .ok()
         };
         let ca = q(format!(
-            "SELECT COUNT(DISTINCT \"from\") FROM {edge} WHERE \"to\" = ?1"))?;
+            "SELECT COUNT(DISTINCT \"from\") FROM {edge} WHERE \"to\" = ?1"
+        ))?;
         let ce = q(format!(
-            "SELECT COUNT(DISTINCT \"to\") FROM {edge} WHERE \"from\" = ?1"))?;
+            "SELECT COUNT(DISTINCT \"to\") FROM {edge} WHERE \"from\" = ?1"
+        ))?;
         let fields = q(format!(
-            "SELECT COUNT(DISTINCT \"to\") FROM {edge} WHERE \"from\" = ?1 AND \"kind\" = 'field'"))?;
+            "SELECT COUNT(DISTINCT \"to\") FROM {edge} WHERE \"from\" = ?1 AND \"kind\" = 'field'"
+        ))?;
         let variants = q(format!(
             "SELECT COUNT(DISTINCT \"to\") FROM {edge} WHERE \"from\" = ?1 AND \"kind\" = 'variant'"))?;
         let impls = q(format!(
-            "SELECT COUNT(DISTINCT \"to\") FROM {edge} WHERE \"from\" = ?1 AND \"kind\" = 'impl'"))?;
+            "SELECT COUNT(DISTINCT \"to\") FROM {edge} WHERE \"from\" = ?1 AND \"kind\" = 'impl'"
+        ))?;
         if ca == 0 && ce == 0 && fields == 0 && variants == 0 && impls == 0 {
             return None;
         }
-        Some(format!("Ca={ca} Ce={ce} fields={fields} variants={variants} impls={impls}"))
+        Some(format!(
+            "Ca={ca} Ce={ce} fields={fields} variants={variants} impls={impls}"
+        ))
     }
 
     /// Best-effort SELECT that tolerates a missing table (a builtin type/call/
@@ -288,13 +351,22 @@ impl Engine {
     /// never created). Any prepare/query error yields an empty vec, so
     /// `refs_lens` degrades to whatever families ARE populated instead of
     /// erroring out.
-    pub(crate) fn try_rows<T, F>(&self, sql: &str, params: &[&dyn rusqlite::types::ToSql], mut f: F) -> Vec<T>
+    pub(crate) fn try_rows<T, F>(
+        &self,
+        sql: &str,
+        params: &[&dyn rusqlite::types::ToSql],
+        mut f: F,
+    ) -> Vec<T>
     where
         F: FnMut(&rusqlite::Row) -> rusqlite::Result<T>,
     {
         let conn = self.db.conn();
-        let Ok(mut stmt) = conn.prepare(sql) else { return Vec::new(); };
-        let Ok(rows) = stmt.query_map(params, |r| f(r)) else { return Vec::new(); };
+        let Ok(mut stmt) = conn.prepare(sql) else {
+            return Vec::new();
+        };
+        let Ok(rows) = stmt.query_map(params, |r| f(r)) else {
+            return Vec::new();
+        };
         rows.filter_map(|x| x.ok()).collect()
     }
 
@@ -315,10 +387,24 @@ impl Engine {
     /// A resolved-tier `RefHit` off a rel row: 1-based `line` from the graph
     /// becomes a 0-based whole-token-start range (the type/call rels carry no
     /// column, so col is 0).
-    pub(crate) fn rel_hit(repo: String, file: String, line: i64, role: &str, container: String) -> RefHit {
+    pub(crate) fn rel_hit(
+        repo: String,
+        file: String,
+        line: i64,
+        role: &str,
+        container: String,
+    ) -> RefHit {
         let line0 = (line - 1).max(0) as u32;
-        RefHit { repo, path: file, line: line0, col: 0, end_line: line0, end_col: 0,
-            role: role.to_string(), container }
+        RefHit {
+            repo,
+            path: file,
+            line: line0,
+            col: 0,
+            end_line: line0,
+            end_col: 0,
+            role: role.to_string(),
+            container,
+        }
     }
 
     /// Resolve a definition symbol (`file::kind::name`) to a located `RefHit`,
@@ -336,11 +422,23 @@ impl Engine {
             return Some(Self::rel_hit(repo, file, line, role, container));
         }
         let cd = txt_tbl("call_def");
-        if let Some((repo, file, line)) = self.try_rows(
-            &format!("SELECT \"repo\", \"file\", \"line\" FROM {cd} WHERE \"sym\" = ?1 LIMIT 1"),
-            &[&sym],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)),
-        ).into_iter().next() {
+        if let Some((repo, file, line)) = self
+            .try_rows(
+                &format!(
+                    "SELECT \"repo\", \"file\", \"line\" FROM {cd} WHERE \"sym\" = ?1 LIMIT 1"
+                ),
+                &[&sym],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .into_iter()
+            .next()
+        {
             return Some(Self::rel_hit(repo, file, line, role, sym.to_string()));
         }
         None
@@ -349,13 +447,25 @@ impl Engine {
     /// A compiler-tier `RefHit` off a `scip_occurrence` row. SCIP positions are
     /// already 0-based, so they map straight to a `RefHit` range (unlike the
     /// resolved-tier `rel_hit`, which decrements a 1-based graph line).
-    pub(crate) fn scip_hit(repo: String, file: String, line: i64, col: i64,
-                end_line: i64, end_col: i64, role: &str, container: String) -> RefHit {
+    pub(crate) fn scip_hit(
+        repo: String,
+        file: String,
+        line: i64,
+        col: i64,
+        end_line: i64,
+        end_col: i64,
+        role: &str,
+        container: String,
+    ) -> RefHit {
         RefHit {
-            repo, path: file,
-            line: line.max(0) as u32, col: col.max(0) as u32,
-            end_line: end_line.max(0) as u32, end_col: end_col.max(0) as u32,
-            role: role.to_string(), container,
+            repo,
+            path: file,
+            line: line.max(0) as u32,
+            col: col.max(0) as u32,
+            end_line: end_line.max(0) as u32,
+            end_col: end_col.max(0) as u32,
+            role: role.to_string(),
+            container,
         }
     }
 
@@ -366,14 +476,26 @@ impl Engine {
     pub(crate) fn scip_def_hits(&self, sym: &str, role: &str) -> Vec<RefHit> {
         let so = txt_tbl("scip_occurrence");
         self.try_rows(
-            &format!("SELECT \"file\", \"line\", \"col\", \"end_line\", \"end_col\", \"repo\" \
-                      FROM {so} WHERE \"symbol\" = ?1 AND \"role\" = 'definition'"),
+            &format!(
+                "SELECT \"file\", \"line\", \"col\", \"end_line\", \"end_col\", \"repo\" \
+                      FROM {so} WHERE \"symbol\" = ?1 AND \"role\" = 'definition'"
+            ),
             &[&sym],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?,
-                    r.get::<_, i64>(3)?, r.get::<_, i64>(4)?, r.get::<_, String>(5)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, i64>(4)?,
+                    r.get::<_, String>(5)?,
+                ))
+            },
         )
         .into_iter()
-        .map(|(file, line, col, el, ec, repo)| Self::scip_hit(repo, file, line, col, el, ec, role, String::new()))
+        .map(|(file, line, col, el, ec, repo)| {
+            Self::scip_hit(repo, file, line, col, el, ec, role, String::new())
+        })
         .collect()
     }
 
@@ -388,7 +510,12 @@ impl Engine {
     /// spelling. Returns None when no index is loaded for the repo or no
     /// occurrence covers the cursor — the caller then falls through to the
     /// resolved/textual tiers WITHOUT degrading them.
-    pub(crate) fn compiler_lens(&self, path: &str, byte: u32, text: &str) -> Result<Option<RefLens>> {
+    pub(crate) fn compiler_lens(
+        &self,
+        path: &str,
+        byte: u32,
+        text: &str,
+    ) -> Result<Option<RefLens>> {
         let so = txt_tbl("scip_occurrence");
         let repo = self.repo_for_path(path);
 
@@ -397,18 +524,30 @@ impl Engine {
         // char and UTF-16 offsets coincide. Containment (not exact col equality)
         // tolerates the rare wide-char line.
         let roots = self.repo_roots();
-        let root = roots.get(&repo).cloned().unwrap_or_else(|| self.root.clone());
+        let root = roots
+            .get(&repo)
+            .cloned()
+            .unwrap_or_else(|| self.root.clone());
         let content = read_content(&root, "WORK", path).unwrap_or_default();
         let (cl, cc) = byte_to_lc0(&content, byte);
         let (cl, cc) = (cl as i64, cc as i64);
 
         // The innermost occurrence covering the cursor in this file/repo.
         let mut covering: Vec<(String, i64, i64, i64, i64)> = self.try_rows(
-            &format!("SELECT \"symbol\", \"line\", \"col\", \"end_line\", \"end_col\" \
-                      FROM {so} WHERE \"file\" = ?1 AND \"repo\" = ?2"),
+            &format!(
+                "SELECT \"symbol\", \"line\", \"col\", \"end_line\", \"end_col\" \
+                      FROM {so} WHERE \"file\" = ?1 AND \"repo\" = ?2"
+            ),
             &[&path, &repo],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?,
-                    r.get::<_, i64>(3)?, r.get::<_, i64>(4)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, i64>(4)?,
+                ))
+            },
         );
         covering.retain(|(_, sl, sc, el, ec)| {
             let after_start = *sl < cl || (*sl == cl && *sc <= cc);
@@ -464,7 +603,8 @@ impl Engine {
         let mut containing_types: Vec<RefHit> = Vec::new();
         for iface in self.try_rows(
             &format!("SELECT \"iface\" FROM {si} WHERE \"impl\" = ?1"),
-            &[&symbol], |r| r.get::<_, String>(0),
+            &[&symbol],
+            |r| r.get::<_, String>(0),
         ) {
             containing_types.extend(self.scip_def_hits(&iface, "impl"));
         }
@@ -475,13 +615,15 @@ impl Engine {
         let mut callees: Vec<RefHit> = Vec::new();
         for caller in self.try_rows(
             &format!("SELECT \"caller\" FROM {sfe} WHERE \"callee\" = ?1"),
-            &[&symbol], |r| r.get::<_, String>(0),
+            &[&symbol],
+            |r| r.get::<_, String>(0),
         ) {
             callers.extend(self.scip_def_hits(&caller, "caller"));
         }
         for callee in self.try_rows(
             &format!("SELECT \"callee\" FROM {sfe} WHERE \"caller\" = ?1"),
-            &[&symbol], |r| r.get::<_, String>(0),
+            &[&symbol],
+            |r| r.get::<_, String>(0),
         ) {
             callees.extend(self.scip_def_hits(&callee, "callee"));
         }
@@ -496,7 +638,11 @@ impl Engine {
             tier: "compiler".to_string(),
             symbol,
             display_name: text.to_string(),
-            declarations, uses, containing_types, callers, callees,
+            declarations,
+            uses,
+            containing_types,
+            callers,
+            callees,
         }))
     }
 
@@ -531,29 +677,64 @@ impl Engine {
 
         let te = txt_tbl("type_entity");
         for (repo, sym, kind, parent, file, line) in self.try_rows(
-            &format!("SELECT \"repo\", \"sym\", \"kind\", \"parent\", \"file\", \"line\" \
-                      FROM {te} WHERE \"name\" = ?1"),
+            &format!(
+                "SELECT \"repo\", \"sym\", \"kind\", \"parent\", \"file\", \"line\" \
+                      FROM {te} WHERE \"name\" = ?1"
+            ),
             &[&text],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, i64>(5)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, i64>(5)?,
+                ))
+            },
         ) {
-            declarations.push(Self::rel_hit(repo.clone(), file.clone(), line, &kind, parent.clone()));
+            declarations.push(Self::rel_hit(
+                repo.clone(),
+                file.clone(),
+                line,
+                &kind,
+                parent.clone(),
+            ));
             decl_meta.push((sym.clone(), repo, file));
-            if !syms.contains(&sym) { syms.push(sym); }
-            if !parent.is_empty() && !parents.contains(&parent) { parents.push(parent); }
+            if !syms.contains(&sym) {
+                syms.push(sym);
+            }
+            if !parent.is_empty() && !parents.contains(&parent) {
+                parents.push(parent);
+            }
         }
 
         let cd = txt_tbl("call_def");
         let cn = txt_tbl("call_name");
         for (repo, sym, kind, file, line) in self.try_rows(
-            &format!("SELECT d.\"repo\", d.\"sym\", d.\"kind\", d.\"file\", d.\"line\" \
-                      FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" WHERE n.\"name\" = ?1"),
+            &format!(
+                "SELECT d.\"repo\", d.\"sym\", d.\"kind\", d.\"file\", d.\"line\" \
+                      FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" WHERE n.\"name\" = ?1"
+            ),
             &[&text],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?, r.get::<_, i64>(4)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, i64>(4)?,
+                ))
+            },
         ) {
             if !syms.contains(&sym) {
-                declarations.push(Self::rel_hit(repo.clone(), file.clone(), line, &kind, String::new()));
+                declarations.push(Self::rel_hit(
+                    repo.clone(),
+                    file.clone(),
+                    line,
+                    &kind,
+                    String::new(),
+                ));
                 decl_meta.push((sym.clone(), repo, file));
                 syms.push(sym);
             }
@@ -567,7 +748,9 @@ impl Engine {
         // display slot, but every declaration stays in the list (the lens shows
         // the split rather than silently dropping).
         let path_repo = self.repo_for_path(path);
-        let symbol = decl_meta.iter().find(|(_, repo, file)| *repo == path_repo && file == path)
+        let symbol = decl_meta
+            .iter()
+            .find(|(_, repo, file)| *repo == path_repo && file == path)
             .or_else(|| decl_meta.iter().find(|(_, repo, _)| *repo == path_repo))
             .map(|(sym, _, _)| sym.clone())
             .unwrap_or_else(|| decl_meta[0].0.clone());
@@ -583,15 +766,26 @@ impl Engine {
                 &[sym],
                 |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
             ) {
-                if let Some(hit) = self.resolve_sym_hit(&src, &kind) { uses.push(hit); }
+                if let Some(hit) = self.resolve_sym_hit(&src, &kind) {
+                    uses.push(hit);
+                }
             }
         }
         // call_site(repo, caller, callee, file, line): callee is the bare name.
         let cs = txt_tbl("call_site");
         for (repo, caller, file, line) in self.try_rows(
-            &format!("SELECT \"repo\", \"caller\", \"file\", \"line\" FROM {cs} WHERE \"callee\" = ?1"),
+            &format!(
+                "SELECT \"repo\", \"caller\", \"file\", \"line\" FROM {cs} WHERE \"callee\" = ?1"
+            ),
             &[&text],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            },
         ) {
             uses.push(Self::rel_hit(repo, file, line, "call", caller));
         }
@@ -599,14 +793,25 @@ impl Engine {
         // specifier names this identifier as one of its path segments.
         let mi = txt_tbl("module_import");
         for (file, specifier, line) in self.try_rows(
-            &format!("SELECT \"file\", \"specifier\", \"line\" FROM {mi} \
-                      WHERE \"kind\" IN ('use', 'import') AND \"specifier\" LIKE ?1"),
+            &format!(
+                "SELECT \"file\", \"specifier\", \"line\" FROM {mi} \
+                      WHERE \"kind\" IN ('use', 'import') AND \"specifier\" LIKE ?1"
+            ),
             &[&format!("%{text}%")],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            },
         ) {
-            let names = specifier.split(|c: char| c == ':' || c == '/' || c == '.')
+            let names = specifier
+                .split(|c: char| c == ':' || c == '/' || c == '.')
                 .any(|seg| seg == text);
-            if !names { continue; }
+            if !names {
+                continue;
+            }
             let repo = self.repo_for_path(&file);
             uses.push(Self::rel_hit(repo, file, line, "import", specifier));
         }
@@ -626,15 +831,21 @@ impl Engine {
         for sym in &syms {
             for caller in self.try_rows(
                 &format!("SELECT \"caller\" FROM {ce} WHERE \"callee\" = ?1"),
-                &[sym], |r| r.get::<_, String>(0),
+                &[sym],
+                |r| r.get::<_, String>(0),
             ) {
-                if let Some(hit) = self.resolve_sym_hit(&caller, "caller") { callers.push(hit); }
+                if let Some(hit) = self.resolve_sym_hit(&caller, "caller") {
+                    callers.push(hit);
+                }
             }
             for callee in self.try_rows(
                 &format!("SELECT \"callee\" FROM {ce} WHERE \"caller\" = ?1"),
-                &[sym], |r| r.get::<_, String>(0),
+                &[sym],
+                |r| r.get::<_, String>(0),
             ) {
-                if let Some(hit) = self.resolve_sym_hit(&callee, "callee") { callees.push(hit); }
+                if let Some(hit) = self.resolve_sym_hit(&callee, "callee") {
+                    callees.push(hit);
+                }
             }
         }
 
@@ -648,7 +859,11 @@ impl Engine {
             tier: "resolved".to_string(),
             symbol,
             display_name: text,
-            declarations, uses, containing_types, callers, callees,
+            declarations,
+            uses,
+            containing_types,
+            callers,
+            callees,
         }))
     }
 
@@ -659,10 +874,18 @@ impl Engine {
     pub(crate) fn scip_def_site(&self, sym: &str) -> Option<(String, String, i64)> {
         let so = txt_tbl("scip_occurrence");
         self.try_rows(
-            &format!("SELECT \"repo\", \"file\", \"line\" FROM {so} \
-                      WHERE \"symbol\" = ?1 AND \"role\" = 'definition' LIMIT 1"),
+            &format!(
+                "SELECT \"repo\", \"file\", \"line\" FROM {so} \
+                      WHERE \"symbol\" = ?1 AND \"role\" = 'definition' LIMIT 1"
+            ),
             &[&sym],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            },
         )
         .into_iter()
         .next()
@@ -676,21 +899,39 @@ impl Engine {
     /// back to the occurrence's own site when the symbol has no definition
     /// occurrence in this index, e.g. an out-of-workspace target). None when no
     /// index is loaded for the repo or no occurrence covers the cursor.
-    pub(crate) fn compiler_locate(&self, path: &str, byte: u32, text: &str) -> Result<Option<LocateHit>> {
+    pub(crate) fn compiler_locate(
+        &self,
+        path: &str,
+        byte: u32,
+        text: &str,
+    ) -> Result<Option<LocateHit>> {
         let so = txt_tbl("scip_occurrence");
         let repo = self.repo_for_path(path);
         let roots = self.repo_roots();
-        let root = roots.get(&repo).cloned().unwrap_or_else(|| self.root.clone());
+        let root = roots
+            .get(&repo)
+            .cloned()
+            .unwrap_or_else(|| self.root.clone());
         let content = read_content(&root, "WORK", path).unwrap_or_default();
         let (cl, cc) = byte_to_lc0(&content, byte);
         let (cl, cc) = (cl as i64, cc as i64);
 
         let mut covering: Vec<(String, i64, i64, i64, i64, String)> = self.try_rows(
-            &format!("SELECT \"symbol\", \"line\", \"col\", \"end_line\", \"end_col\", \"role\" \
-                      FROM {so} WHERE \"file\" = ?1 AND \"repo\" = ?2"),
+            &format!(
+                "SELECT \"symbol\", \"line\", \"col\", \"end_line\", \"end_col\", \"role\" \
+                      FROM {so} WHERE \"file\" = ?1 AND \"repo\" = ?2"
+            ),
             &[&path, &repo],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?,
-                    r.get::<_, i64>(3)?, r.get::<_, i64>(4)?, r.get::<_, String>(5)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, i64>(4)?,
+                    r.get::<_, String>(5)?,
+                ))
+            },
         );
         covering.retain(|(_, sl, sc, el, ec, _)| {
             let after_start = *sl < cl || (*sl == cl && *sc <= cc);
@@ -705,7 +946,8 @@ impl Engine {
         let (def_repo, def_file, def_line) = if role == "definition" {
             (repo, path.to_string(), occ_line)
         } else {
-            self.scip_def_site(&symbol).unwrap_or((repo, path.to_string(), occ_line))
+            self.scip_def_site(&symbol)
+                .unwrap_or((repo, path.to_string(), occ_line))
         };
 
         Ok(Some(LocateHit {
@@ -740,20 +982,34 @@ impl Engine {
             let cd = txt_tbl("call_def");
             let cn = txt_tbl("call_name");
             candidates = self.try_rows(
-                &format!("SELECT d.\"repo\", d.\"sym\", d.\"kind\", d.\"file\", d.\"line\" \
-                          FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" WHERE n.\"name\" = ?1"),
+                &format!(
+                    "SELECT d.\"repo\", d.\"sym\", d.\"kind\", d.\"file\", d.\"line\" \
+                          FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" WHERE n.\"name\" = ?1"
+                ),
                 &[&text],
-                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
-                        r.get::<_, String>(3)?, r.get::<_, i64>(4)?)),
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                        r.get::<_, i64>(4)?,
+                    ))
+                },
             );
         }
         if candidates.is_empty() {
             return Ok(None);
         }
 
-        let pick = candidates.iter()
+        let pick = candidates
+            .iter()
             .find(|(repo, _, _, file, _)| *repo == path_repo && file == path)
-            .or_else(|| candidates.iter().find(|(repo, _, _, _, _)| *repo == path_repo))
+            .or_else(|| {
+                candidates
+                    .iter()
+                    .find(|(repo, _, _, _, _)| *repo == path_repo)
+            })
             .cloned()
             .unwrap_or_else(|| candidates[0].clone());
         let (repo, sym, kind, file, line) = pick;
@@ -763,7 +1019,8 @@ impl Engine {
             symbol: sym,
             display_name: text.to_string(),
             role: kind,
-            repo, file,
+            repo,
+            file,
             line: (line - 1).max(0) as u32,
         }))
     }
@@ -800,8 +1057,15 @@ impl Engine {
              WHERE s.content = ?1 AND w.id != '0' AND w.path != '' \
              ORDER BY w.path, w.lo",
             &[&text],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
-                    r.get::<_, i64>(3)? as u32, r.get::<_, i64>(4)? as u32)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)? as u32,
+                    r.get::<_, i64>(4)? as u32,
+                ))
+            },
         );
         let roots = self.repo_roots();
         let mut work_ids: HashMap<String, Option<String>> = HashMap::new();
@@ -816,24 +1080,39 @@ impl Engine {
                     w
                 }
             };
-            if want.as_deref() != Some(fid.as_str()) { continue; }
+            if want.as_deref() != Some(fid.as_str()) {
+                continue;
+            }
             let key = (repo.clone(), path.clone());
             let content = contents.entry(key).or_insert_with(|| {
-                let root = roots.get(&repo).cloned().unwrap_or_else(|| self.root.clone());
+                let root = roots
+                    .get(&repo)
+                    .cloned()
+                    .unwrap_or_else(|| self.root.clone());
                 read_content(&root, "WORK", &path).unwrap_or_default()
             });
             let (sl, sc) = byte_to_lc0(content, lo);
             let (el, ec) = byte_to_lc0(content, hi);
-            uses.push(RefHit { repo, path, line: sl, col: sc, end_line: el, end_col: ec,
-                role: "text".to_string(), container: String::new() });
+            uses.push(RefHit {
+                repo,
+                path,
+                line: sl,
+                col: sc,
+                end_line: el,
+                end_col: ec,
+                role: "text".to_string(),
+                container: String::new(),
+            });
         }
         Ok(RefLens {
             tier: "textual".to_string(),
             symbol: String::new(),
             display_name: text.to_string(),
-            declarations: Vec::new(), uses,
-            containing_types: Vec::new(), callers: Vec::new(), callees: Vec::new(),
+            declarations: Vec::new(),
+            uses,
+            containing_types: Vec::new(),
+            callers: Vec::new(),
+            callees: Vec::new(),
         })
     }
-
 }

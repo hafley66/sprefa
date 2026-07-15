@@ -29,6 +29,47 @@ pub struct TickReport {
     pub inflight_effects: usize,
 }
 
+/// Whether a path-scoped tick may widen into the existing full-tick fallback.
+/// The default `Engine::tick_paths` API uses `Allow`; measurement harnesses can
+/// use `Forbid` to prove that a scenario stayed on the incremental path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PathTickFallbackPolicy {
+    Allow,
+    Forbid,
+}
+
+/// The execution path taken by `Engine::tick_paths_with_policy`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PathTickOutcome {
+    Incremental,
+    FullFallback {
+        reason: &'static str,
+        scope: &'static str,
+    },
+    ForbiddenFallback {
+        reason: &'static str,
+        scope: &'static str,
+    },
+}
+
+impl PathTickOutcome {
+    pub fn fallback_reason(self) -> Option<&'static str> {
+        match self {
+            Self::Incremental => None,
+            Self::FullFallback { reason, .. } | Self::ForbiddenFallback { reason, .. } => {
+                Some(reason)
+            }
+        }
+    }
+
+    pub fn fallback_scope(self) -> Option<&'static str> {
+        match self {
+            Self::Incremental => None,
+            Self::FullFallback { scope, .. } | Self::ForbiddenFallback { scope, .. } => Some(scope),
+        }
+    }
+}
+
 impl TickReport {
     /// Settled = this tick produced no NON-timer motion and nothing is pending.
     /// `every`/`clock`/`@stream` are steady-state and excluded, so a
@@ -69,6 +110,7 @@ impl Engine {
     /// One reactive tick: declare, reconcile sources incrementally, rebuild
     /// derived only if a source fact changed, then run queries. Returns a
     /// `TickReport` of what moved (`dl --settle` drives this to a fixpoint).
+    // ARCH {"url":"engine/tick","role":"orchestrator"}
     #[tracing::instrument(skip_all, level = "info")]
     pub fn tick_report(&mut self, prog: &Program, quiet: bool) -> Result<TickReport> {
         let t_tick = std::time::Instant::now();
@@ -361,8 +403,10 @@ impl Engine {
             if !fam.used(prog) { continue; }
             crate::activity::detail(fam.name());
             let t = std::time::Instant::now();
-            if fam.refresh(self)? {
-                for r in fam.rels() { changed_source_rels.insert(r.to_string()); }
+            if fam.refresh(self)?.moved() {
+                for r in fam.rels() {
+                    changed_source_rels.insert(r.to_string());
+                }
             }
             phase(fam.name(), t);
         }
@@ -390,7 +434,11 @@ impl Engine {
             } else {
                 true
             };
-            let moved = if run { fam.refresh(self)? } else { false };
+            let moved = if run {
+                fam.refresh(self)?.moved()
+            } else {
+                false
+            };
             if moved {
                 for r in fam.rels() { changed_source_rels.insert(r.to_string()); }
             }
@@ -742,8 +790,22 @@ impl Engine {
     /// Reactive tick driven by a known set of changed paths (from the file
     /// watcher): reconciles only those paths, never walking or statting the
     /// tree. Only WORK source rules participate; route git-rev changes to `tick`.
+    // ARCH {"url":"engine/tick-paths","role":"orchestrator"}
     #[tracing::instrument(skip_all, fields(n_changed = changed.len()), level = "info")]
     pub fn tick_paths(&mut self, prog: &Program, changed: &[PathBuf], quiet: bool) -> Result<()> {
+        self.tick_paths_with_policy(prog, changed, quiet, PathTickFallbackPolicy::Allow)
+            .map(|_| ())
+    }
+
+    /// Path-scoped tick with an explicit widening policy and structured result.
+    /// `Forbid` reports the fallback boundary without executing the full tick.
+    pub fn tick_paths_with_policy(
+        &mut self,
+        prog: &Program,
+        changed: &[PathBuf],
+        quiet: bool,
+        fallback_policy: PathTickFallbackPolicy,
+    ) -> Result<PathTickOutcome> {
         let _tick_started = std::time::Instant::now();
         self.rev_cache.clear();
         self.extraction_drops.clear();
@@ -772,9 +834,20 @@ impl Engine {
         // invisible to the path-scoped reconcile.) A data-driven scan (variable
         // repo/rev) reads last tick's coordinate relation at reconcile time too,
         // so it also defers.
-        if rules.iter().any(|r| r.is_repo_sink() || r.is_checkout_sink() || scan_has_var_coords(r)) {
-            tracing::debug!("full-tick fallback: program has a repo-sink, checkout-sink, or data-driven scan");
-            return self.tick(original_prog, quiet);
+        if rules
+            .iter()
+            .any(|r| r.is_repo_sink() || r.is_checkout_sink() || scan_has_var_coords(r))
+        {
+            tracing::debug!(
+                "full-tick fallback: program has a repo-sink, checkout-sink, or data-driven scan"
+            );
+            return self.path_tick_fallback(
+                original_prog,
+                quiet,
+                fallback_policy,
+                "dynamic-scan-or-repo-sink",
+                "full-tick",
+            );
         }
 
         let source_rules: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_source()).collect();
@@ -802,14 +875,26 @@ impl Engine {
         // rule digests.
         if !self.source_rule_digests(&source_rules)?.0.is_empty() {
             tracing::debug!("full-tick fallback: source rule edited");
-            return self.tick(original_prog, quiet);
+            return self.path_tick_fallback(
+                original_prog,
+                quiet,
+                fallback_policy,
+                "source-rule-edit",
+                "full-source-reconcile",
+            );
         }
         // Same for the derived layer: an edited derived rule or ground fact
         // rebuilds everything, which is the full tick's job.
         let der_digest = derived_program_digest(&derived_rules, &seed_rules, &edges);
         if self.load_rel_digest("derived:program")? != Some(der_digest) {
             tracing::debug!("full-tick fallback: derived rule/ground-fact edited");
-            return self.tick(original_prog, quiet);
+            return self.path_tick_fallback(
+                original_prog,
+                quiet,
+                fallback_policy,
+                "derived-program-edit",
+                "full-derived-rebuild",
+            );
         }
         // A changed path outside self.root (a config or dynamically-registered
         // repo's source edit) can't be reconciled by the path-scoped loop below,
@@ -817,103 +902,50 @@ impl Engine {
         // every folder in view stays reactive, not just the self worktree.
         if changed.iter().any(|p| !p.starts_with(&self.root)) {
             tracing::debug!("full-tick fallback: changed path outside self.root (#6a)");
-            return self.tick(original_prog, quiet);
+            return self.path_tick_fallback(
+                original_prog,
+                quiet,
+                fallback_policy,
+                "changed-path-outside-root",
+                "full-tick",
+            );
+        }
+        if self.path_delta_needs_full_source_reconcile(&source_rules, changed)? {
+            tracing::debug!(
+                "full-tick fallback: changed path feeds a keyed/merged source relation"
+            );
+            return self.path_tick_fallback(
+                original_prog,
+                quiet,
+                fallback_policy,
+                "keyed-or-merged-source",
+                "full-source-reconcile",
+            );
         }
 
-        // WORK source rules with compiled glob matchers
-        // The incremental watcher delta covers the self repo's WORK tree only
-        // (changed paths under self.root); non-self repos scan via the full tick.
-        let mut work_rules: Vec<(&Rule, globset::GlobMatcher)> = Vec::new();
-        for r in &source_rules {
-            // Variable-coord scans defer to the full tick (guarded above), so
-            // every remaining source rule has a literal scan_spec here.
-            let spec = scan_spec_of(r)?;
-            let (repo, declared, glob) = (str_of(&spec.repo)?, str_of(&spec.rev)?, str_of(&spec.glob)?);
-            let is_self = repo.is_empty() || repo == "." || repo == "self";
-            if declared == "WORK" && is_self { work_rules.push((*r, globset::Glob::new(&glob)?.compile_matcher())); }
-        }
-
-        let prev = self.load_file_meta()?;
-        let mut changed_facts = false;
-        let mut changed_source_rels: HashSet<String> = HashSet::new();
-        let mut module_delta_paths: HashSet<String> = HashSet::new();
-        let mut module_full_work = false;
-        // Files whose `_file` row changed this tick (modified or deleted),
-        // for the path-scoped CST `node`/`child` refresh. A file that the
-        // digest prune skipped (content unchanged) is NOT added.
-        let mut node_delta_paths: HashSet<String> = HashSet::new();
-        let (mut extracted, mut retracted, mut npaths) = (0usize, 0usize, 0usize);
-        // Every repo-relative path this tick saw move; `ScipKind::dirty` reads it
-        // to gate the SCIP reload on `index.scip` itself changing.
-        let mut seen: HashSet<String> = HashSet::new();
         // Win D: `module_rels_needed` (not the narrower `module_rels_used`) so
         // a program reading only type_link/call_edge still gets the module
         // family's incremental refresh. Its resolver narrowing depends on
         // `module_edge_rev` even when the program never names a module_* rel.
         let wants_module_rels = module_rels_needed(prog);
-        // The watcher only watches this engine's own `--root`, so every
-        // incrementally-changed file belongs to the self repo.
-        let slug = self.self_slug();
-
-        for p in changed {
-            let rel = match p.strip_prefix(&self.root) { Ok(r) => r.to_string_lossy().replace('\\', "/"), Err(_) => continue };
-            if !seen.insert(rel.clone()) { continue; }
-            let matching: Vec<&Rule> = work_rules.iter().filter(|(_, m)| m.is_match(&rel)).map(|(r, _)| *r).collect();
-            if matching.is_empty() {
-                if wants_module_rels && module_manifest_path(&rel) { module_full_work = true; }
-                continue;
-            }
-            npaths += 1;
-            let abs = self.root.join(&rel);
-            if abs.is_file() {
-                let bytes = std::fs::read(&abs).unwrap_or_default();
-                let h = blake3::hash(&bytes).to_hex().to_string();
-                if prev.get(&(slug.clone(), rel.clone(), "WORK".to_string())).map(|t| &t.0) == Some(&h) { continue; }
-                if prev.contains_key(&(slug.clone(), rel.clone(), "WORK".to_string())) {
-                    module_delta_paths.insert(rel.clone());
-                } else {
-                    module_full_work = true;
-                }
-                node_delta_paths.insert(rel.clone());
-                retracted += self.retract_path(&slug, &rel, &source_rels)?;
-                // Collect located spans across every matching rule for this file and
-                // flush once after the loop (one `bump()`), not per-rule. Per-rule
-                // flushing trips the N+1 screamer once enough files change.
-                let mut where_rows: Vec<(String, String, spine::WhereBytes, Option<String>)> = Vec::new();
-                for rule in &matching {
-                    let (rows, where_bytes, dropped) = parse_file(rule, &slug, &rel, "WORK", &h, &self.root, &self.rels, &self.rev_index, &[])?;
-                    self.dropped += dropped;
-                    if dropped > 0 { self.record_extraction_drop(&rel, &rule.head.rel, dropped); }
-                    let meta = self.rels.get(&rule.head.rel)
-                        .ok_or_else(|| anyhow::anyhow!("unknown relation {}", rule.head.rel))?.clone();
-                    extracted += self.insert_source_rows(&rule.head.rel, &meta, &slug, &rel, &rows)?;
-                    where_rows.extend(where_bytes.into_iter().map(|(w, t)| (slug.clone(), rel.clone(), w, Some(t))));
-                    changed_source_rels.insert(rule.head.rel.clone());
-                }
-                self.insert_spine_where_bytes(&where_rows)?;
-                let (mt, sz) = std::fs::metadata(&abs).ok().map(|m| (mtime_secs(&m), m.len() as i64)).unwrap_or((0, 0));
-                self.db.conn().execute(
-                    "INSERT INTO _file(repo, path, rev, hash, mtime, size) VALUES (?1, ?2, 'WORK', ?3, ?4, ?5)
-                     ON CONFLICT(repo, path, rev) DO UPDATE SET hash=excluded.hash, mtime=excluded.mtime, size=excluded.size",
-                    rusqlite::params![slug, rel, h, mt, sz])?;
-                changed_facts = true;
-            } else {
-                if prev.contains_key(&(slug.clone(), rel.clone(), "WORK".to_string())) { module_full_work = true; }
-                node_delta_paths.insert(rel.clone());
-                retracted += self.retract_path(&slug, &rel, &source_rels)?;
-                self.db.conn().execute("DELETE FROM _file WHERE repo = ?1 AND path = ?2 AND rev = 'WORK'", [&slug, &rel])?;
-                for rule in &matching { changed_source_rels.insert(rule.head.rel.clone()); }
-                changed_facts = true;
-            }
-        }
+        let path_reconcile =
+            self.reconcile_source_paths(&source_rules, &source_rels, changed, wants_module_rels)?;
+        let crate::engine::path_reconcile::PathSourceReconcile {
+            mut changed_facts,
+            mut changed_source_rels,
+            module_delta_paths,
+            module_full_work,
+            node_delta_paths,
+            seen,
+            extracted,
+            retracted,
+            npaths,
+        } = path_reconcile;
 
         // A changed file's bytes moved, but did its extracted rows? Prune the
         // source rels whose content digest is unchanged (comment/format edits),
         // so they do not propagate a rebuild. v4's `Replay` at relation grain.
         let files_changed = changed_facts;
-        if changed_facts {
-            changed_source_rels = self.prune_unchanged_by_digest(changed_source_rels)?;
-        }
         // Pre-extract RelKinds (scip), mirroring the full tick's ordering: when
         // index.scip moved in the same delta as source files, its reload must
         // precede the extract families inside the guard below. An
@@ -938,6 +970,28 @@ impl Engine {
             // actually moved this tick, since a rev can only disappear from
             // it as part of a file/rev delta.
             self.sweep_gone_revs()?;
+        }
+        let module_dependency_before = self.module_resolution_dependency_digest("WORK");
+        let module_outcome = if wants_module_rels {
+            crate::rels::ModuleFamily
+                .refresh_delta(self, module_full_work, &module_delta_paths)?
+        } else {
+            crate::rels::RefreshOutcome::Unchanged
+        };
+        let module_dependency_after = self.module_resolution_dependency_digest("WORK");
+        let module_dependency_changed = module_dependency_before != module_dependency_after;
+        if module_outcome.moved() {
+            for m in MODULE_RELS {
+                changed_source_rels.insert(m.to_string());
+            }
+            changed_facts = true;
+        }
+        let path_refresh_context = crate::rels::PathRefreshContext {
+            changed_paths: &node_delta_paths,
+            module_dependency_changed,
+            module_full_refresh: module_full_work,
+        };
+        if files_changed || module_outcome.moved() {
             // The ExtractFamily registry, minus module (dispatched below via
             // `ModuleFamily::refresh_delta` — it must also fire on a
             // manifest-only change, outside this files-changed guard). Each
@@ -952,21 +1006,29 @@ impl Engine {
             // requested analysis family.
             super::extract::prime_analysis_bundles(self, prog)?;
             for fam in crate::rels::extract_families_paths_pre_node() {
-                if fam.used(prog) && fam.refresh(self)? {
-                    for r in fam.rels() { changed_source_rels.insert(r.to_string()); }
+                if fam.used(prog) && fam.refresh_paths(self, &path_refresh_context)?.moved() {
+                    for r in fam.rels() {
+                        changed_source_rels.insert(r.to_string());
+                    }
                 }
             }
             // Node rels write into the spine meta tables, so refresh them BEFORE
             // the spine projection (else this tick's `ref`/`string` miss node spans).
             // Path-scoped: re-walk ONLY this tick's changed files; the other
             // files' node/child rows are untouched.
-            if node_rels_used(prog) && self.refresh_node_rels_delta(&node_delta_paths)? {
-                for n in NODE_RELS { changed_source_rels.insert(n.to_string()); }
+            if files_changed && node_rels_used(prog) && self.refresh_node_rels_delta(&node_delta_paths)? {
+                for n in NODE_RELS {
+                    changed_source_rels.insert(n.to_string());
+                }
                 changed_facts = true;
             }
-            for fam in crate::rels::extract_families_post_node() {
-                if fam.used(prog) && fam.refresh(self)? {
-                    for r in fam.rels() { changed_source_rels.insert(r.to_string()); }
+            if files_changed {
+                for fam in crate::rels::extract_families_post_node() {
+                    if fam.used(prog) && fam.refresh(self)?.moved() {
+                        for r in fam.rels() {
+                            changed_source_rels.insert(r.to_string());
+                        }
+                    }
                 }
             }
         }
@@ -980,18 +1042,6 @@ impl Engine {
         }
         if clock_rels_used(prog) && self.refresh_clock(&clock_periods(prog))? {
             changed_source_rels.insert("clock".to_string());
-            changed_facts = true;
-        }
-        // The module family's incremental dispatch: the full-work vs
-        // path-delta decision lives in `ModuleFamily::refresh_delta`; the
-        // per-file loop above computed the classification (manifest / new /
-        // deleted file -> full WORK-rev redo, content edit -> path-scoped).
-        // Outside the files-changed guard on purpose: a manifest-only change
-        // sets `module_full_work` without any matched source file moving.
-        if wants_module_rels
-            && crate::rels::ModuleFamily.refresh_delta(self, module_full_work, &module_delta_paths)?
-        {
-            for m in MODULE_RELS { changed_source_rels.insert(m.to_string()); }
             changed_facts = true;
         }
         // The RelKind families. Most self-diff and re-run every incremental tick
@@ -1144,6 +1194,21 @@ impl Engine {
             effects_inflight: 0,
             total_ms: tick_ms as u64,
         });
-        Ok(())
+        Ok(PathTickOutcome::Incremental)
+    }
+
+    fn path_tick_fallback(
+        &mut self,
+        prog: &Program,
+        quiet: bool,
+        policy: PathTickFallbackPolicy,
+        reason: &'static str,
+        scope: &'static str,
+    ) -> Result<PathTickOutcome> {
+        if policy == PathTickFallbackPolicy::Forbid {
+            return Ok(PathTickOutcome::ForbiddenFallback { reason, scope });
+        }
+        self.tick(prog, quiet)?;
+        Ok(PathTickOutcome::FullFallback { reason, scope })
     }
 }

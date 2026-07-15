@@ -41,15 +41,15 @@ watch name="callgraph-ast":
 
 # ast-grep extraction bench (timing + peak RSS), cold then warm
 bench prog="bench/rust.dl" root=repo:
-    bash bench/run.sh {{prog}} {{root}}
+    bash "{{repo}}/bench/run.sh" "{{prog}}" "{{root}}"
 
 # v4 linux bench equivalent: count printk() call sites
 # local stand-in fixture:
 bench-printk:
-    bash bench/run.sh bench/printk.dl bench/linux-sim
+    bash "{{repo}}/bench/run.sh" "{{repo}}/bench/printk.dl" "{{repo}}/bench/linux-sim"
 # real kernel:  just bench-printk-on /path/to/linux
 bench-printk-on linux:
-    bash bench/run.sh bench/printk.dl {{linux}}
+    bash "{{repo}}/bench/run.sh" "{{repo}}/bench/printk.dl" "{{linux}}"
 
 # remove scratch dbs
 clean-db:
@@ -159,3 +159,12 @@ cut version:
     @awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f&&NF' CHANGELOG.md | grep -q . || { echo "CHANGELOG [Unreleased] is empty"; exit 1; }
     bash scripts/release.sh {{version}}
     git show --stat HEAD
+
+# build the small, daemon-free reactivity probe; never runs it
+perf-reactivity-build:
+    CARGO_BUILD_JOBS=2 DL_RAYON_THREADS=2 cargo build --release --example reactivity_probe
+
+# run only the prebuilt probe against generated repo-local fixtures; never builds
+perf-reactivity out="target/reactivity/probe":
+    @test -x "{{repo}}/target/release/examples/reactivity_probe" || { echo "missing release probe: run 'just perf-reactivity-build' explicitly"; exit 2; }
+    CARGO_BUILD_JOBS=2 DL_RAYON_THREADS=2 python3 "{{repo}}/bench/reactivity/probe.py" --harness "{{repo}}/target/release/examples/reactivity_probe" --output "{{repo}}/{{out}}"

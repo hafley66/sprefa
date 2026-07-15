@@ -9,10 +9,10 @@
 //! - `refresh` takes `&mut Engine`. The type/call/dataflow refreshers mutate
 //!   per-file fact caches (`type_facts_cache` / `call_facts_cache` /
 //!   `df_facts_cache`), unlike `RelKind`'s `&Engine` git reads.
-//! - Not every family reports a real change bool. `module`/`spine` do a
+//! - Not every family reports an exact change. `module`/`spine` do a
 //!   wholesale rebuild with no self-diff, so their `refresh` returns
-//!   `Ok(true)` whenever it runs (the tick marks their rels conservatively
-//!   changed) — same contract as the hand-written blocks this replaces.
+//!   `Coarse` whenever it runs (the tick marks their rels conservatively
+//!   changed) — same behavior as the hand-written blocks this replaces.
 //! - Only `type`/`call`/`dataflow`/`doc` have a persisted `extract:<family>`
 //!   input digest (perf gap A, the warm-tick skip that lives INSIDE each
 //!   refresher); `module`/`spine` always re-derive when called. Hence
@@ -49,6 +49,50 @@ use std::collections::HashSet;
 use crate::ast::{Program, RelDecl};
 use crate::engine::{self, Engine};
 
+/// What an extraction-family refresh can prove about its output. `Coarse`
+/// preserves the legacy `true` contract: owned relations are attributed as
+/// changed, but no exact row delta exists yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RefreshOutcome {
+    Unchanged,
+    Coarse { reason: &'static str },
+}
+
+pub struct PathRefreshContext<'a> {
+    pub changed_paths: &'a HashSet<String>,
+    pub module_dependency_changed: bool,
+    pub module_full_refresh: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CallPathRefreshOutcome {
+    Applied,
+    Unchanged,
+    Unsupported(&'static str),
+}
+
+impl RefreshOutcome {
+    pub const LEGACY_REASON: &'static str = "legacy-family-refresh";
+
+    pub fn from_legacy(moved: bool) -> Self {
+        if moved {
+            Self::Coarse { reason: Self::LEGACY_REASON }
+        } else {
+            Self::Unchanged
+        }
+    }
+
+    pub fn moved(self) -> bool { !matches!(self, Self::Unchanged) }
+
+    /// Exact outcomes require a generation-scoped staged delta, which the
+    /// extraction contract does not have yet.
+    pub fn is_exact(self) -> bool { false }
+}
+
+impl From<bool> for RefreshOutcome {
+    fn from(moved: bool) -> Self { Self::from_legacy(moved) }
+}
+
 /// A builtin rel family populated by parsing the scanned file corpus (module
 /// graph, type/call/dataflow graphs, doc, ref-spine) rather than by reading
 /// git state (that shape is `RelKind`). See the module doc for why this
@@ -81,9 +125,9 @@ pub trait ExtractFamily: Sync {
     /// alone). `spine` overrides true: it projects `_strings`/`_where_bytes`,
     /// which node walks only rewrite from file content.
     fn corpus_gated(&self) -> bool { false }
-    /// Whole-corpus recompute. `Ok(true)` iff the tick should mark this
+    /// Whole-corpus recompute. A moved outcome means the tick should mark this
     /// family's rels changed — a real input-digest diff for `type`/`call`/
-    /// `dataflow`/`doc`, unconditional `true` for the wholesale
+    /// `dataflow`/`doc`, unconditional `Coarse` for the wholesale
     /// `module`/`spine` rebuilds (conservative mark). BOTH tick paths call
     /// this (the digest/self-diff inside each refresher is what makes an
     /// incremental no-op cheap); `module` alone has a different incremental
@@ -95,7 +139,17 @@ pub trait ExtractFamily: Sync {
     /// position the hand-written block held (after the clock refreshes,
     /// OUTSIDE the files-changed guard: a manifest-only change must still
     /// trigger it).
-    fn refresh(&self, eng: &mut Engine) -> Result<bool>;
+    fn refresh(&self, eng: &mut Engine) -> Result<RefreshOutcome>;
+    /// Watcher-path entry point. Object-safe so the existing family registry
+    /// can dispatch it; families without a path specialization retain their
+    /// current whole-family refresh behavior.
+    fn refresh_paths(
+        &self,
+        eng: &mut Engine,
+        _context: &PathRefreshContext<'_>,
+    ) -> Result<RefreshOutcome> {
+        self.refresh(eng)
+    }
     /// Whether the program references any owned name.
     fn used(&self, prog: &Program) -> bool {
         engine::rels_used(prog, self.rels())
@@ -118,8 +172,8 @@ impl ExtractFamily for ModuleFamily {
     fn decls(&self) -> Vec<RelDecl> { engine::module_rel_decls() }
     fn reserved_msg(&self) -> &'static str { "a built-in module-graph relation" }
     fn digest_key(&self) -> Option<&'static str> { None }
-    fn refresh(&self, eng: &mut Engine) -> Result<bool> {
-        eng.refresh_module_rels()
+    fn refresh(&self, eng: &mut Engine) -> Result<RefreshOutcome> {
+        eng.refresh_module_rels().map(RefreshOutcome::from_legacy)
     }
     // Win D: the type/call resolvers' import-scoped ambiguity narrowing reads
     // `module_edge_rev`, so this family must also run whenever type/call
@@ -144,15 +198,15 @@ impl ModuleFamily {
         eng: &mut Engine,
         full_work: bool,
         delta_paths: &HashSet<String>,
-    ) -> Result<bool> {
+    ) -> Result<RefreshOutcome> {
         if full_work {
             eng.refresh_module_rels_for_revs(&["WORK"])?;
         } else if !delta_paths.is_empty() {
             eng.refresh_module_rels_for_paths("WORK", delta_paths)?;
         } else {
-            return Ok(false);
+            return Ok(RefreshOutcome::Unchanged);
         }
-        Ok(true)
+        Ok(RefreshOutcome::Coarse { reason: RefreshOutcome::LEGACY_REASON })
     }
 }
 
@@ -182,7 +236,9 @@ impl ExtractFamily for TypeFamily {
         "a built-in type-graph relation (type_edge / type_edge_rev / type_entity / type_entity_rev / type_sig / type_link / type_link_rev)"
     }
     fn digest_key(&self) -> Option<&'static str> { Some("extract:type") }
-    fn refresh(&self, eng: &mut Engine) -> Result<bool> { eng.refresh_type_rels() }
+    fn refresh(&self, eng: &mut Engine) -> Result<RefreshOutcome> {
+        eng.refresh_type_rels().map(RefreshOutcome::from_legacy)
+    }
     fn used(&self, prog: &Program) -> bool {
         // The union the tick blocks used: doc_comment/doc_tag and
         // const_value/const_value_rev ride the same parse (see rels() above),
@@ -204,7 +260,25 @@ impl ExtractFamily for CallFamily {
         "a built-in call-graph relation (call_def / call_def_rev / call_site / call_edge / call_edge_rev / call_name / call_kind)"
     }
     fn digest_key(&self) -> Option<&'static str> { Some("extract:call") }
-    fn refresh(&self, eng: &mut Engine) -> Result<bool> { eng.refresh_call_rels() }
+    fn refresh(&self, eng: &mut Engine) -> Result<RefreshOutcome> {
+        eng.refresh_call_rels().map(RefreshOutcome::from_legacy)
+    }
+    fn refresh_paths(
+        &self,
+        eng: &mut Engine,
+        context: &PathRefreshContext<'_>,
+    ) -> Result<RefreshOutcome> {
+        match eng.refresh_call_rels_delta(context)? {
+            CallPathRefreshOutcome::Applied => {
+                Ok(RefreshOutcome::Coarse { reason: "call-owner-delta" })
+            }
+            CallPathRefreshOutcome::Unchanged => Ok(RefreshOutcome::Unchanged),
+            CallPathRefreshOutcome::Unsupported(reason) => {
+                eprintln!("[call-delta] fallback reason={reason} scope=call-family");
+                self.refresh(eng)
+            }
+        }
+    }
     fn used(&self, prog: &Program) -> bool { engine::call_rels_used(prog) }
 }
 
@@ -216,7 +290,9 @@ impl ExtractFamily for DataflowFamily {
         "a built-in dataflow relation (df_node / df_node_rev / df_node_repo / df_node_repo_rev / df_edge / loop_over / allocates / nest / df_param / df_arg / df_arg_rev / df_field / df_field_rev / df_lit / df_lit_rev)"
     }
     fn digest_key(&self) -> Option<&'static str> { Some("extract:dataflow") }
-    fn refresh(&self, eng: &mut Engine) -> Result<bool> { eng.refresh_dataflow_rels() }
+    fn refresh(&self, eng: &mut Engine) -> Result<RefreshOutcome> {
+        eng.refresh_dataflow_rels().map(RefreshOutcome::from_legacy)
+    }
     fn used(&self, prog: &Program) -> bool { engine::dataflow_rels_used(prog) }
 }
 
@@ -228,7 +304,9 @@ impl ExtractFamily for DocFamily {
         "a built-in document relation (doc_node / doc_ref)"
     }
     fn digest_key(&self) -> Option<&'static str> { Some("extract:doc") }
-    fn refresh(&self, eng: &mut Engine) -> Result<bool> { eng.refresh_doc_rels() }
+    fn refresh(&self, eng: &mut Engine) -> Result<RefreshOutcome> {
+        eng.refresh_doc_rels().map(RefreshOutcome::from_legacy)
+    }
     fn used(&self, prog: &Program) -> bool { engine::doc_rels_used(prog) }
 }
 
@@ -238,7 +316,9 @@ impl ExtractFamily for CommentFamily {
     fn decls(&self) -> Vec<RelDecl> { engine::comment_rel_decls() }
     fn reserved_msg(&self) -> &'static str { "a built-in comment relation (comment_node)" }
     fn digest_key(&self) -> Option<&'static str> { Some("extract:comment") }
-    fn refresh(&self, eng: &mut Engine) -> Result<bool> { eng.refresh_comment_rels() }
+    fn refresh(&self, eng: &mut Engine) -> Result<RefreshOutcome> {
+        eng.refresh_comment_rels().map(RefreshOutcome::from_legacy)
+    }
     fn used(&self, prog: &Program) -> bool { engine::comment_rels_used(prog) }
 }
 
@@ -248,7 +328,9 @@ impl ExtractFamily for TemplateFamily {
     fn decls(&self) -> Vec<RelDecl> { engine::template_rel_decls() }
     fn reserved_msg(&self) -> &'static str { "a built-in template-literal relation (template_parts)" }
     fn digest_key(&self) -> Option<&'static str> { Some("extract:template") }
-    fn refresh(&self, eng: &mut Engine) -> Result<bool> { eng.refresh_template_rels() }
+    fn refresh(&self, eng: &mut Engine) -> Result<RefreshOutcome> {
+        eng.refresh_template_rels().map(RefreshOutcome::from_legacy)
+    }
     fn used(&self, prog: &Program) -> bool { engine::template_rels_used(prog) }
 }
 
@@ -258,7 +340,9 @@ impl ExtractFamily for UnresolvedFamily {
     fn decls(&self) -> Vec<RelDecl> { engine::unresolved_rel_decls() }
     fn reserved_msg(&self) -> &'static str { "a built-in unresolved-marker relation (unresolved)" }
     fn digest_key(&self) -> Option<&'static str> { Some("extract:unresolved") }
-    fn refresh(&self, eng: &mut Engine) -> Result<bool> { eng.refresh_unresolved_rel() }
+    fn refresh(&self, eng: &mut Engine) -> Result<RefreshOutcome> {
+        eng.refresh_unresolved_rel().map(RefreshOutcome::from_legacy)
+    }
     fn used(&self, prog: &Program) -> bool { engine::unresolved_rels_used(prog) }
 }
 
@@ -271,10 +355,10 @@ impl ExtractFamily for SpineFamily {
     }
     fn digest_key(&self) -> Option<&'static str> { None }
     fn corpus_gated(&self) -> bool { true }
-    fn refresh(&self, eng: &mut Engine) -> Result<bool> {
+    fn refresh(&self, eng: &mut Engine) -> Result<RefreshOutcome> {
         eng.refresh_spine_rels()?;
         // Wholesale projection with no change report; conservative mark.
-        Ok(true)
+        Ok(RefreshOutcome::Coarse { reason: RefreshOutcome::LEGACY_REASON })
     }
     fn used(&self, prog: &Program) -> bool { engine::spine_rels_used(prog) }
 }
@@ -316,6 +400,18 @@ pub fn extract_families_post_node() -> &'static [&'static dyn ExtractFamily] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_bool_mapping_and_helpers_preserve_change_semantics() {
+        assert_eq!(RefreshOutcome::from_legacy(false), RefreshOutcome::Unchanged);
+        assert!(!RefreshOutcome::from(false).moved());
+        assert!(!RefreshOutcome::Unchanged.is_exact());
+
+        let moved = RefreshOutcome::from_legacy(true);
+        assert_eq!(moved, RefreshOutcome::Coarse { reason: "legacy-family-refresh" });
+        assert!(moved.moved());
+        assert!(!moved.is_exact());
+    }
 
     /// The registry order IS the refresh order the hand-written blocks had:
     /// module first, spine last (after node); tick_paths' slice drops module.

@@ -41,3 +41,10 @@ examples/_npm/
 /bench/corpus/otel-*/
 # cached compiler truth indexes built by oracle_corpus.rs
 /bench/corpus/.indexes/
+
+# sqry analysis snapshots are generated local indexes, not source fixtures.
+/.sqry/
+
+# Python bytecode produced by local benchmark helpers.
+__pycache__/
+*.pyc

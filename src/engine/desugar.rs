@@ -39,7 +39,10 @@ pub const DRV_SUFFIX: &str = "__drv";
 /// term-extract+derived twin. Both rewrite identically (see module doc); the
 /// kind is kept only for error attribution and D4 telemetry display.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MixedKind { SourceDerived, ExtractDerived }
+pub enum MixedKind {
+    SourceDerived,
+    ExtractDerived,
+}
 
 /// One rel this tick's desugar rewrote: the visible name a program/query
 /// still uses, and its two hidden twins. Per-tick, used only for diagnostics/
@@ -60,17 +63,27 @@ pub struct MixedRel {
 /// source/derived is a different, pre-existing hazard (its own bail already
 /// fires downstream) that this stage does not touch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum HeadClass { Source, Extract, Derived, Other }
+enum HeadClass {
+    Source,
+    Extract,
+    Derived,
+    Other,
+}
 
 fn classify(rule: &Rule) -> HeadClass {
     // Order matches `tick_report`'s `extract_rules` filter exactly:
     // `r.has_term_extract() && !r.is_source()` — a rule with both wins as
     // Source (impossible in practice: the term forms require `rev: None`,
     // the source forms of the same ops require `rev: Some`).
-    if rule.is_next() || rule.is_async() || rule.is_stream()
-        || rule.is_repo_sink() || rule.is_checkout_sink()
-        || rule.closure_edge().is_some() || rule.scc_edge().is_some()
-        || rule.node2vec_edge().is_some() {
+    if rule.is_next()
+        || rule.is_async()
+        || rule.is_stream()
+        || rule.is_repo_sink()
+        || rule.is_checkout_sink()
+        || rule.closure_edge().is_some()
+        || rule.scc_edge().is_some()
+        || rule.node2vec_edge().is_some()
+    {
         HeadClass::Other
     } else if rule.is_source() {
         HeadClass::Source
@@ -107,7 +120,9 @@ pub fn desugar_mixed_rels(prog: &Program) -> Result<Option<(Program, Vec<MixedRe
     let mut decls: HashMap<&str, &RelDecl> = HashMap::new();
     for item in &prog.items {
         if let Item::Rel(d) = item {
-            if d.shape_ref.is_some() { continue; }
+            if d.shape_ref.is_some() {
+                continue;
+            }
             decls.entry(d.name.as_str()).or_insert(d);
         }
     }
@@ -121,10 +136,16 @@ pub fn desugar_mixed_rels(prog: &Program) -> Result<Option<(Program, Vec<MixedRe
     for item in &prog.items {
         if let Item::Rule(r) = item {
             let c = classify(r);
-            if c == HeadClass::Other { continue; }
+            if c == HeadClass::Other {
+                continue;
+            }
             let entry = classes.entry(r.head.rel.clone()).or_insert_with(Vec::new);
-            if entry.is_empty() { order.push(r.head.rel.clone()); }
-            if !entry.contains(&c) { entry.push(c); }
+            if entry.is_empty() {
+                order.push(r.head.rel.clone());
+            }
+            if !entry.contains(&c) {
+                entry.push(c);
+            }
         }
     }
 
@@ -134,7 +155,9 @@ pub fn desugar_mixed_rels(prog: &Program) -> Result<Option<(Program, Vec<MixedRe
         let has_source = cs.contains(&HeadClass::Source);
         let has_extract = cs.contains(&HeadClass::Extract);
         let has_derived = cs.contains(&HeadClass::Derived);
-        if !has_derived || (!has_source && !has_extract) { continue; }
+        if !has_derived || (!has_source && !has_extract) {
+            continue;
+        }
         let Some(decl) = decls.get(rel.as_str()) else {
             // No user `rel` decl to clone columns from: a reserved builtin
             // sink (diag/hover_note/the demand sinks/...) that a program
@@ -146,22 +169,32 @@ pub fn desugar_mixed_rels(prog: &Program) -> Result<Option<(Program, Vec<MixedRe
         // design (which side wins a key collision is order-dependent) — not
         // designed yet, so keep refusing this combination loudly.
         if decl.key.is_some() || decl.merge.is_some() {
-            bail!("relation '{rel}' is written by both a source/extract rule and a derived \
+            bail!(
+                "relation '{rel}' is written by both a source/extract rule and a derived \
                    rule, and carries a key(...)/merge(...) lattice qualifier; lattice rels \
                    cannot be mixed yet — split the source/extract rule into its own relation \
                    and union it into '{rel}' by hand (see examples/anim-self.dl's pin/fpin \
-                   -> span_of).");
+                   -> span_of)."
+            );
         }
         // Exclusion: `@in`/`@out` port rels already have their own head bail
         // (an @in port's rows are injected by the serving loop; a source or
         // derived rule heading it collides). Leave unrewritten.
-        if decl.port.is_some() { continue; }
+        if decl.port.is_some() {
+            continue;
+        }
         // Triple mix (source AND extract AND derived all heading one rel):
         // out of scope for this stage — no in-tree `.dl` does this, and the
         // manual split for it is not a simple two-twin union. Leave
         // unrewritten; the old source+derived bail still fires first.
-        if has_source && has_extract { continue; }
-        let kind = if has_source { MixedKind::SourceDerived } else { MixedKind::ExtractDerived };
+        if has_source && has_extract {
+            continue;
+        }
+        let kind = if has_source {
+            MixedKind::SourceDerived
+        } else {
+            MixedKind::ExtractDerived
+        };
         mixed.push(MixedRel {
             visible: rel.clone(),
             src_twin: format!("{rel}{SRC_SUFFIX}"),
@@ -170,10 +203,14 @@ pub fn desugar_mixed_rels(prog: &Program) -> Result<Option<(Program, Vec<MixedRe
         });
     }
 
-    if mixed.is_empty() { return Ok(None); }
+    if mixed.is_empty() {
+        return Ok(None);
+    }
 
     let twin_of: HashMap<&str, &MixedRel> = mixed.iter().map(|m| (m.visible.as_str(), m)).collect();
-    let mut out = Program { items: Vec::with_capacity(prog.items.len() + mixed.len() * 4) };
+    let mut out = Program {
+        items: Vec::with_capacity(prog.items.len() + mixed.len() * 4),
+    };
     for item in &prog.items {
         match item {
             // The visible decl is untouched: it becomes an ordinary derived
@@ -211,19 +248,29 @@ pub fn desugar_mixed_rels(prog: &Program) -> Result<Option<(Program, Vec<MixedRe
         let cols = visible_decl.cols.clone();
         let mut src_decl = (*visible_decl).clone();
         src_decl.name = m.src_twin.clone();
-        src_decl.key = None; src_decl.merge = None; src_decl.port = None;
+        src_decl.key = None;
+        src_decl.merge = None;
+        src_decl.port = None;
         let mut drv_decl = (*visible_decl).clone();
         drv_decl.name = m.drv_twin.clone();
-        drv_decl.key = None; drv_decl.merge = None; drv_decl.port = None;
+        drv_decl.key = None;
+        drv_decl.merge = None;
+        drv_decl.port = None;
         out.items.push(Item::Rel(src_decl));
         out.items.push(Item::Rel(drv_decl));
 
         let vars: Vec<Term> = cols.iter().map(|c| Term::Var(c.name.clone())).collect();
         let n = cols.len();
         let union_rule = |from_rel: &str| Rule {
-            head: Atom { rel: m.visible.clone(), terms: vars.clone(), named: Vec::new() },
+            head: Atom {
+                rel: m.visible.clone(),
+                terms: vars.clone(),
+                named: Vec::new(),
+            },
             body: vec![BodyItem::Pos(Atom {
-                rel: from_rel.to_string(), terms: vars.clone(), named: Vec::new(),
+                rel: from_rel.to_string(),
+                terms: vars.clone(),
+                named: Vec::new(),
             })],
             aggs: vec![None; n],
             agg_args2: vec![None; n],
@@ -243,15 +290,21 @@ pub fn desugar_mixed_rels(prog: &Program) -> Result<Option<(Program, Vec<MixedRe
 /// extraction and must be refused rather than silently treated as a filter.
 fn reject_source_relation_joins(prog: &Program) -> Result<()> {
     for item in &prog.items {
-        let Item::Rule(rule) = item else { continue; };
-        if !rule.is_source() { continue; }
+        let Item::Rule(rule) = item else {
+            continue;
+        };
+        if !rule.is_source() {
+            continue;
+        }
         let inputs = source_input_vars(rule);
         for body in &rule.body {
             let rel = match body {
                 BodyItem::Pos(atom) | BodyItem::Neg(atom) => atom,
                 _ => continue,
             };
-            if rel.terms.iter().any(|term| term_vars(term, &inputs)) { continue; }
+            if rel.terms.iter().any(|term| term_vars(term, &inputs)) {
+                continue;
+            }
             bail!(
                 "source rule for relation '{}' mixes source extraction with relation atom '{}' in its body; source rules cannot join relations — write the scan/match rule into a separate relation, then join '{}' in a derived rule",
                 rule.head.rel, rel.rel, rel.rel);
@@ -268,15 +321,39 @@ fn source_input_vars(rule: &Rule) -> HashSet<String> {
     let mut add = |term: &Term| collect_term_vars(term, &mut vars);
     for body in &rule.body {
         match body {
-            BodyItem::Scan { repo, rev, glob, .. } => { add(repo); add(rev); add(glob); }
+            BodyItem::Scan {
+                repo, rev, glob, ..
+            } => {
+                add(repo);
+                add(rev);
+                add(glob);
+            }
             BodyItem::Match { path, rev, .. }
             | BodyItem::Ast { path, rev, .. }
             | BodyItem::AstYaml { path, rev, .. }
             | BodyItem::Cmd { path, rev, .. }
-            | BodyItem::Comment { path, rev, .. } => { add(path); add(rev); }
-            BodyItem::Sg { src, rev: Some(rev), .. }
-            | BodyItem::JsonP { src, rev: Some(rev), .. }
-            | BodyItem::Json { src, rev: Some(rev), .. } => { add(src); add(rev); }
+            | BodyItem::Comment { path, rev, .. } => {
+                add(path);
+                add(rev);
+            }
+            BodyItem::Sg {
+                src,
+                rev: Some(rev),
+                ..
+            }
+            | BodyItem::JsonP {
+                src,
+                rev: Some(rev),
+                ..
+            }
+            | BodyItem::Json {
+                src,
+                rev: Some(rev),
+                ..
+            } => {
+                add(src);
+                add(rev);
+            }
             _ => {}
         }
     }
@@ -286,7 +363,9 @@ fn source_input_vars(rule: &Rule) -> HashSet<String> {
 fn term_vars(term: &Term, wanted: &HashSet<String>) -> bool {
     match term {
         Term::Var(name) => wanted.contains(name),
-        Term::Interp(parts) => parts.iter().any(|p| matches!(p, crate::ast::InterpPart::Var(name) if wanted.contains(name))),
+        Term::Interp(parts) => parts
+            .iter()
+            .any(|p| matches!(p, crate::ast::InterpPart::Var(name) if wanted.contains(name))),
         Term::Arith { lhs, rhs, .. } => term_vars(lhs, wanted) || term_vars(rhs, wanted),
         Term::Call { args, .. } => args.iter().any(|arg| term_vars(arg, wanted)),
         _ => false,
@@ -295,12 +374,25 @@ fn term_vars(term: &Term, wanted: &HashSet<String>) -> bool {
 
 fn collect_term_vars(term: &Term, out: &mut HashSet<String>) {
     match term {
-        Term::Var(name) => { out.insert(name.clone()); }
-        Term::Interp(parts) => for part in parts {
-            if let crate::ast::InterpPart::Var(name) = part { out.insert(name.clone()); }
-        },
-        Term::Arith { lhs, rhs, .. } => { collect_term_vars(lhs, out); collect_term_vars(rhs, out); }
-        Term::Call { args, .. } => for arg in args { collect_term_vars(arg, out); },
+        Term::Var(name) => {
+            out.insert(name.clone());
+        }
+        Term::Interp(parts) => {
+            for part in parts {
+                if let crate::ast::InterpPart::Var(name) = part {
+                    out.insert(name.clone());
+                }
+            }
+        }
+        Term::Arith { lhs, rhs, .. } => {
+            collect_term_vars(lhs, out);
+            collect_term_vars(rhs, out);
+        }
+        Term::Call { args, .. } => {
+            for arg in args {
+                collect_term_vars(arg, out);
+            }
+        }
         _ => {}
     }
 }
@@ -314,9 +406,12 @@ fn reject_reserved_twin_names(prog: &Program) -> Result<()> {
     for item in &prog.items {
         if let Item::Rel(d) = item {
             if d.name.ends_with(SRC_SUFFIX) || d.name.ends_with(DRV_SUFFIX) {
-                bail!("relation '{}' ends in `{SRC_SUFFIX}`/`{DRV_SUFFIX}`, reserved for the \
+                bail!(
+                    "relation '{}' ends in `{SRC_SUFFIX}`/`{DRV_SUFFIX}`, reserved for the \
                        mixed source+derived rel desugar's own hidden twin tables; pick another \
-                       name", d.name);
+                       name",
+                    d.name
+                );
             }
         }
     }
@@ -328,7 +423,9 @@ fn reject_reserved_twin_names(prog: &Program) -> Result<()> {
 /// perf.jsonl's `derived_rebuilt`) use this so a mixed rel's row count/rebuild
 /// cost attributes to the name the user wrote, not the hidden twin (D4).
 pub fn display_rel_name(rel: &str) -> &str {
-    rel.strip_suffix(SRC_SUFFIX).or_else(|| rel.strip_suffix(DRV_SUFFIX)).unwrap_or(rel)
+    rel.strip_suffix(SRC_SUFFIX)
+        .or_else(|| rel.strip_suffix(DRV_SUFFIX))
+        .unwrap_or(rel)
 }
 
 #[cfg(test)]
@@ -362,9 +459,14 @@ mod tests {
         assert_eq!(mixed.len(), 1);
         assert_eq!(mixed[0].visible, "mixed");
         assert_eq!(mixed[0].kind, MixedKind::SourceDerived);
-        let rule_heads: Vec<&str> = rewritten.items.iter().filter_map(|i| match i {
-            Item::Rule(r) => Some(r.head.rel.as_str()), _ => None,
-        }).collect();
+        let rule_heads: Vec<&str> = rewritten
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Rule(r) => Some(r.head.rel.as_str()),
+                _ => None,
+            })
+            .collect();
         assert!(rule_heads.contains(&"mixed__src"));
         assert!(rule_heads.contains(&"mixed__drv"));
         // Two union rules head "mixed" now (reading the twins), plus the
@@ -393,7 +495,10 @@ mod tests {
     fn reserved_twin_suffix_in_user_decl_is_rejected() {
         let prog = parse("rel foo__src(x: text).\nfoo__src(\"a\").\n");
         let err = desugar_mixed_rels(&prog).unwrap_err();
-        assert!(err.to_string().contains("reserved"), "unexpected error: {err}");
+        assert!(
+            err.to_string().contains("reserved"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -404,8 +509,10 @@ mod tests {
              mixed(k, 2) <- mixed(k, _).\n",
         );
         let err = desugar_mixed_rels(&prog).unwrap_err();
-        assert!(err.to_string().contains("lattice rels cannot be mixed yet"),
-            "unexpected error: {err}");
+        assert!(
+            err.to_string().contains("lattice rels cannot be mixed yet"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

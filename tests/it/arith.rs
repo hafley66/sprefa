@@ -1,7 +1,8 @@
 //! Int arithmetic in rule heads and comparisons: `r(p, n + 1) <- ...`,
 //! `n * 2 > 4`. Allowed in derived heads (lowers to SQL arithmetic), source
-//! heads (evaluated on the bound row), and either side of a comparison. Body
-//! atom positions stay binding-only (parse/lower error). `/` after a value is
+//! heads (evaluated on the bound row), either side of a comparison, and as a
+//! `column = expr` filter in a body atom (vars in the expr must be bound by an
+//! earlier body item). `/` after a value is
 //! division; after a delimiter it still opens a /regex/.
 
 use std::fs;
@@ -112,22 +113,31 @@ half(p, line / 2) <- fns(p, line), line % 2 = 0.
     assert!(half.contains("\t1"), "half of line 2: {half}");
 }
 
-/// A regex literal after `,` still lexes as a regex (the `/`-division heuristic
-/// only fires after a value token) — pinned by every other test using match(),
-/// plus an explicit body-position error here: arithmetic in a body atom.
+/// Arithmetic in a body atom lowers as a `column = expr` filter (2026-07-15
+/// fix): vars referenced by the expr must be bound by an earlier body item,
+/// the same binding-only discipline a literal arg already follows. Was a parse
+/// error ("got Plus") before parse.rs/lower.rs accepted body-atom arithmetic.
 #[test]
-fn arithmetic_in_body_atom_is_an_error() {
+fn arithmetic_in_body_atom_works() {
     let d = sandbox("body");
     let prog = r#"
-rel fns(p: file, line: int).
-fns(p, line) <- scan("WORK", "src/*.rs", p, rev), match(p, rev, /fn /, line).
-rel r(p: file).
-r(p) <- fns(p, line + 1).
-? r(p).
+rel step(url: text, idx: int).
+step("a", 1).
+step("a", 2).
+step("a", 3).
+step("b", 5).
+step("b", 6).
+rel gap(url: text, idx: int).
+gap(url, idx) <- step(url, idx), !step(url, idx + 1).
+? gap(url, idx).
 "#;
-    let (code, _out, err) = run(&d, prog);
-    assert_ne!(code, 0, "arithmetic in a body atom must fail");
-    assert!(err.contains("expected , or ) in arg list, got Plus"), "{err}");
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "arithmetic in a body atom must run:\n{err}");
+    assert!(out.contains("a\t3"), "a,3 has no successor:\n{out}");
+    assert!(out.contains("b\t6"), "b,6 has no successor:\n{out}");
+    assert!(!out.contains("a\t1") && !out.contains("a\t2"), "rows with successors dropped:\n{out}");
+    assert!(!out.contains("b\t5"), "b,5 has a successor:\n{out}");
+    assert!(out.contains("(2 rows)"), "exactly two gap rows:\n{out}");
 }
 
 /// Arithmetic into a non-int column is a typecheck error, not a SQLite crash.

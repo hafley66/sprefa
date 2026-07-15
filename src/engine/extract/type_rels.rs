@@ -17,7 +17,9 @@ impl Engine {
         // whole-corpus (per-rev emission scoping is D5.2+; the per-file fact
         // cache keeps re-emit cheap).
         let moved = self.moved_extract_revs("type", &files, true)?;
-        if moved.is_empty() { return Ok(false); }
+        if moved.is_empty() {
+            return Ok(false);
+        }
         // Parse + extract per file in parallel (same shape as module_rows_for_rev),
         // then flatten and write once. Keeps the cold-build parse working set bounded
         // by the rayon pool, not the corpus (peak-RSS invariant). Rows carry their
@@ -32,14 +34,18 @@ impl Engine {
         // facts carry the derived repo id (nearest `.git` of the file) so each
         // entity/edge row is attributed to the folder it lives in. Unchanged
         // files come out of the per-file cache without a parse.
-        let facts: Vec<(String, String, String, Arc<typegraph::TypeFacts>)> =
-            cached_facts(&self.type_facts_cache, &files, &self.extract_files_parsed, |repo, path, rev| {
+        let facts: Vec<(String, String, String, Arc<typegraph::TypeFacts>)> = cached_facts(
+            &self.type_facts_cache,
+            &files,
+            &self.extract_files_parsed,
+            |repo, path, rev| {
                 let lang = typegraph::type_langs().iter().find(|l| l.matches(path))?;
                 let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
                 let content = read_content(froot, rev, path).unwrap_or_default();
                 let rid = repo_id_of(froot, path, repo);
                 Some((rid, lang.extract(path, &content)))
-            });
+            },
+        );
 
         // Resolver: a name maps to its definition symbol when exactly one entity
         // in the SAME repo AT THE SAME REV declares it (syntactic). Keying by
@@ -65,12 +71,25 @@ impl Engine {
                 // a `.git` basename), so an entity declared ONCE would otherwise
                 // be pushed twice and read as ambiguous. Distinct syms (two real
                 // defs of one name) still stack -> len 2 -> unresolved.
-                let bucket = by_name.entry((repo.as_str(), rev.as_str(), e.name.as_str())).or_default();
+                let bucket = by_name
+                    .entry((repo.as_str(), rev.as_str(), e.name.as_str()))
+                    .or_default();
                 if !bucket.iter().any(|s| *s == e.sym.as_str()) {
                     bucket.push(e.sym.as_str());
                 }
-                sym_at.insert((repo.as_str(), e.file.as_str(), rev.as_str(), e.name.as_str()), e.sym.as_str());
-                sym_file.insert((repo.as_str(), rev.as_str(), e.sym.as_str()), e.file.as_str());
+                sym_at.insert(
+                    (
+                        repo.as_str(),
+                        e.file.as_str(),
+                        rev.as_str(),
+                        e.name.as_str(),
+                    ),
+                    e.sym.as_str(),
+                );
+                sym_file.insert(
+                    (repo.as_str(), rev.as_str(), e.sym.as_str()),
+                    e.file.as_str(),
+                );
             }
         }
         let scip = self.scip_name_defs().unwrap_or_default();
@@ -88,7 +107,9 @@ impl Engine {
         let aliases = self.module_binding_resolved_map().unwrap_or_default();
         let resolve = |repo: &str, rev: &str, file: &str, name: &str| -> Option<String> {
             if rev == "WORK" {
-                if let Some(def_file) = scip.get(&(repo.to_string(), file.to_string(), name.to_string())) {
+                if let Some(def_file) =
+                    scip.get(&(repo.to_string(), file.to_string(), name.to_string()))
+                {
                     if let Some(sym) = sym_at.get(&(repo, def_file.as_str(), rev, name)) {
                         return Some(format!("{repo}::{sym}"));
                     }
@@ -105,8 +126,12 @@ impl Engine {
             // through to by_name — a coincidental global match on the alias
             // name elsewhere would be a wrong join, honest bare wins.
             if sym_at.get(&(repo, file, rev, name)).is_none() {
-                if let Some((source, dst)) = aliases.get(&(rev.to_string(), file.to_string())).and_then(|m| m.get(name)) {
-                    return sym_at.get(&(repo, dst.as_str(), rev, source.as_str()))
+                if let Some((source, dst)) = aliases
+                    .get(&(rev.to_string(), file.to_string()))
+                    .and_then(|m| m.get(name))
+                {
+                    return sym_at
+                        .get(&(repo, dst.as_str(), rev, source.as_str()))
                         .map(|sym| format!("{repo}::{sym}"));
                 }
             }
@@ -114,9 +139,8 @@ impl Engine {
                 Some(v) if v.len() == 1 => Some(format!("{repo}::{}", v[0])),
                 // More than one candidate: narrow to the referencing file's own
                 // import neighborhood (Win D) before giving up bare.
-                Some(v) if v.len() > 1 =>
-                    narrow_ambiguous(v, repo, rev, file, &sym_file, &imports)
-                        .map(|sym| format!("{repo}::{sym}")),
+                Some(v) if v.len() > 1 => narrow_ambiguous(v, repo, rev, file, &sym_file, &imports)
+                    .map(|sym| format!("{repo}::{sym}")),
                 _ => None,
             }
         };
@@ -147,11 +171,24 @@ impl Engine {
             // type name don't collapse into one node when scanned together
             // (closure/scc still walk cols[0]/cols[1] = from/to, untouched).
             for edge in &f.edges {
-                edge_rev_rows.push(vec![t(&edge.from), t(&edge.to), t(edge.kind), t(rev), t(repo)]);
+                edge_rev_rows.push(vec![
+                    t(&edge.from),
+                    t(&edge.to),
+                    t(edge.kind),
+                    t(rev),
+                    t(repo),
+                ]);
                 // SCIP-resolved graph: owner sym -> resolved target sym (or the
                 // bare name when external/ambiguous, so leaf types still appear)
-                let src = sym_at.get(&(repo.as_str(), path.as_str(), rev.as_str(), edge.from.as_str()))
-                    .map(|s| format!("{repo}::{s}")).unwrap_or_else(|| edge.from.clone());
+                let src = sym_at
+                    .get(&(
+                        repo.as_str(),
+                        path.as_str(),
+                        rev.as_str(),
+                        edge.from.as_str(),
+                    ))
+                    .map(|s| format!("{repo}::{s}"))
+                    .unwrap_or_else(|| edge.from.clone());
                 let dst = resolve(repo, rev, path, &edge.to).unwrap_or_else(|| edge.to.clone());
                 if seen_link.insert((src.clone(), dst.clone(), edge.kind, rev.as_str())) {
                     link_rev_rows.push(vec![t(&src), t(&dst), t(edge.kind), t(rev)]);
@@ -177,32 +214,48 @@ impl Engine {
                     // construction); ambiguous/external names stay file-scoped
                     // (dangling is honest, a wrong join is not). Same-file parents
                     // are never rewritten (resolve would return the same sym).
-                    let qparent = ent.parent.as_deref().map(|p| {
-                        let owner_name = p.rsplit("::").next().unwrap_or(p);
-                        let same_file =
-                            sym_at.get(&(repo.as_str(), ent.file.as_str(), rev.as_str(), owner_name)) == Some(&p);
-                        if same_file {
-                            format!("{repo}::{p}")
-                        } else {
-                            resolve(repo, rev, &ent.file, owner_name)
-                                .unwrap_or_else(|| format!("{repo}::{p}"))
-                        }
-                    }).unwrap_or_default();
+                    let qparent = ent
+                        .parent
+                        .as_deref()
+                        .map(|p| {
+                            let owner_name = p.rsplit("::").next().unwrap_or(p);
+                            let same_file = sym_at.get(&(
+                                repo.as_str(),
+                                ent.file.as_str(),
+                                rev.as_str(),
+                                owner_name,
+                            )) == Some(&p);
+                            if same_file {
+                                format!("{repo}::{p}")
+                            } else {
+                                resolve(repo, rev, &ent.file, owner_name)
+                                    .unwrap_or_else(|| format!("{repo}::{p}"))
+                            }
+                        })
+                        .unwrap_or_default();
                     entity_rev_rows.push(vec![
-                        t(repo), t(&qsym), t(&ent.name), t(ent.kind.tag()),
-                        t(&qparent), t(&ent.file), i(ent.line), t(rev),
+                        t(repo),
+                        t(&qsym),
+                        t(&ent.name),
+                        t(ent.kind.tag()),
+                        t(&qparent),
+                        t(&ent.file),
+                        i(ent.line),
+                        t(rev),
                     ]);
                 }
                 // the arrow [...A] => B, one row per referenced type per slot
                 if let Some(ty) = &ent.ty {
                     for (pos, slot) in ty.params.iter().enumerate() {
                         for r in slot {
-                            let rf = resolve(repo, rev, path, r.name()).unwrap_or_else(|| r.name().to_string());
+                            let rf = resolve(repo, rev, path, r.name())
+                                .unwrap_or_else(|| r.name().to_string());
                             sig_rows.push(vec![t(&qsym), t("param"), i(pos as u32), t(&rf)]);
                         }
                     }
                     for r in &ty.ret {
-                        let rf = resolve(repo, rev, path, r.name()).unwrap_or_else(|| r.name().to_string());
+                        let rf = resolve(repo, rev, path, r.name())
+                            .unwrap_or_else(|| r.name().to_string());
                         sig_rows.push(vec![t(&qsym), t("ret"), i(0), t(&rf)]);
                     }
                 }
@@ -211,11 +264,19 @@ impl Engine {
             // Same repo-qualified sym + first-seen dedup as the entity rows, so a
             // file present at two revs doesn't duplicate (doc_comment has no rev).
             for doc in &f.docs {
-                if !seen_doc.insert((repo.as_str(), doc.sym.as_str())) { continue; }
+                if !seen_doc.insert((repo.as_str(), doc.sym.as_str())) {
+                    continue;
+                }
                 let qsym = format!("{repo}::{}", doc.sym);
                 doc_rows.push(vec![t(repo), t(&qsym), i(doc.line), t(&doc.text)]);
                 for tag in &doc.tags {
-                    tag_rows.push(vec![t(repo), t(&qsym), t(&tag.tag), t(&tag.arg), t(&tag.text)]);
+                    tag_rows.push(vec![
+                        t(repo),
+                        t(&qsym),
+                        t(&tag.tag),
+                        t(&tag.arg),
+                        t(&tag.text),
+                    ]);
                 }
             }
             // String values folded from const/as-const bindings (item 3). sym
@@ -226,7 +287,14 @@ impl Engine {
                 let qsym = format!("{repo}::{}", c.sym);
                 if seen_const.insert((qsym.clone(), c.field.as_str(), rev.as_str())) {
                     const_rev_rows.push(vec![
-                        t(repo), t(&qsym), t(&c.field), t(&c.text), t(c.kind), t(&c.file), i(c.line), t(rev),
+                        t(repo),
+                        t(&qsym),
+                        t(&c.field),
+                        t(&c.text),
+                        t(c.kind),
+                        t(&c.file),
+                        i(c.line),
+                        t(rev),
                     ]);
                 }
             }
@@ -252,19 +320,42 @@ impl Engine {
         // absent from the corpus is D5.5's retraction sweep, not this path).
         let all_revs = Self::corpus_revs(&files);
         let all_rev_refs: Vec<&str> = all_revs.iter().map(|s| s.as_str()).collect();
-        self.refresh_rel_for_revs("type_edge_rev", &["from", "to", "kind", "rev", "repo"], &edge_rev_rows, &all_rev_refs)?;
-        self.refresh_rel_for_revs("type_entity_rev", &["repo", "sym", "name", "kind", "parent", "file", "line", "rev"], &entity_rev_rows, &all_rev_refs)?;
+        self.refresh_rel_for_revs(
+            "type_edge_rev",
+            &["from", "to", "kind", "rev", "repo"],
+            &edge_rev_rows,
+            &all_rev_refs,
+        )?;
+        self.refresh_rel_for_revs(
+            "type_entity_rev",
+            &[
+                "repo", "sym", "name", "kind", "parent", "file", "line", "rev",
+            ],
+            &entity_rev_rows,
+            &all_rev_refs,
+        )?;
         self.refresh_rel("type_sig", &["sym", "slot", "pos", "ref"], &sig_rows)?;
-        self.refresh_rel_for_revs("type_link_rev", &["src", "dst", "kind", "rev"], &link_rev_rows, &all_rev_refs)?;
+        self.refresh_rel_for_revs(
+            "type_link_rev",
+            &["src", "dst", "kind", "rev"],
+            &link_rev_rows,
+            &all_rev_refs,
+        )?;
         self.refresh_rel("doc_comment", &["repo", "sym", "line", "text"], &doc_rows)?;
         self.refresh_rel("doc_tag", &["repo", "sym", "tag", "arg", "text"], &tag_rows)?;
         self.refresh_rel_for_revs(
-            "const_value_rev", &["repo", "sym", "field", "text", "kind", "file", "line", "rev"],
-            &const_rev_rows, &all_rev_refs,
+            "const_value_rev",
+            &[
+                "repo", "sym", "field", "text", "kind", "file", "line", "rev",
+            ],
+            &const_rev_rows,
+            &all_rev_refs,
         )?;
         self.rebuild_legacy_type_rels()?;
         // Persisted only after the writes land, so a failed refresh retries.
-        for (rev, d) in &moved { self.save_rel_digest(&extract_digest_key("type", rev), d)?; }
+        for (rev, d) in &moved {
+            self.save_rel_digest(&extract_digest_key("type", rev), d)?;
+        }
         Ok(true)
     }
 }

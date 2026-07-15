@@ -14,6 +14,11 @@ tags consumed by cargo-dist.
   existing bounded caches, while source text and ASTs are dropped immediately.
   `DL_DISABLE_ANALYSIS_BUNDLE=1` restores separate family extraction for
   production A/B measurements.
+- SQLite cache allocation now has a 32 MiB process ceiling and 16 MiB
+  per-connection ceiling by default. `DL_CACHE_MB` controls the process ceiling,
+  `DL_CONNECTION_CACHE_MB` controls one connection, `DL_MMAP_MB` explicitly
+  enables a process-wide mmap budget, exhausted connections receive no
+  unaccounted page-cache grant, and temporary work is file-backed.
 
 ## [0.9.0] - 2026-07-11
 

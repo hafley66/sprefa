@@ -1,0 +1,96 @@
+# Standard library: architecture self-documentation from ARCH JSON markers.
+#
+# A comment whose body (tokens stripped by comment_node) starts with `ARCH`
+# followed by a JSON object carrying at least a `url` field becomes a row.
+# The comment kind does not matter (line, block, doc); grammar-backed, so a
+# marker inside a string literal is never a row.
+#
+#     // ARCH {"url":"sprefa/cli/01-dispatch/00-entry"}
+#     #  ARCH {"url":"sprefa/engine/00-tick","role":"spine"}
+#     /* ARCH {"url":"sprefa/stdlib/strings","layer":"std"} */
+#
+# The `url` is the architectural coordinate. By convention it echoes the
+# filesystem path but with numeric ordering prefixes where order matters:
+#
+#     sprefa/cli/01-dispatch/00-entry
+#     sprefa/cli/01-dispatch/01-parse
+#
+# The numeric prefixes are optional; the lib derives parent/order from the URL.
+# Any other JSON fields (role, layer, deps, ...) are payload — extract them with
+# the declarative `json` brace-pattern over arch_json. One pattern binds all the
+# fields you name, and handles nested structures / arrays declaratively:
+#
+#     rel arch_role(path: file, line: int, url: text, role: text).
+#     arch_role(p, l, url, role) <-
+#         arch_json(p, l, j),
+#         json(j, q:{ "url": $url, "role": $role }).
+#
+#     # Nested array of declared dependencies:
+#     rel arch_dep(url: text, dep: text).
+#     arch_dep(url, dep) <-
+#         arch_json(p, l, j),
+#         json(j, q:{ "url": $url, "deps": [...] $dep }).
+#
+# Note: a `json` Object pattern requires every named key to be PRESENT in the
+# marker JSON (the match fails if a key is absent). For independent single-field
+# extraction, `jsonp(j, "field", val)` drops the row only on that one field.
+#
+# For segment-level decomposition at a known depth, use split directly:
+#
+#     rel arch_layer1(url: text, seg: text).
+#     arch_layer1(url, seg) <- arch_node(_, _, url), seg = split(url, "/", 0).
+#
+# ── exports ──────────────────────────────────────────────────────────────────
+#   arch_node(path, line, url)         one row per ARCH marker (the spine)
+#   arch_json(path, line, json)        the raw JSON payload (for ad-hoc json)
+#   arch_last(url, seg)                last segment of the url
+#   arch_parent(url, parent)           url minus its last segment (when it has one)
+#   arch_order(url, order)             leading integer of the last segment
+#
+#   use "std/arch.dl".
+#
+# This file scans nothing; the importer's scan rules decide which files feed
+# comment_node. NO `?` queries live here — a `use`d module must not perturb the
+# importer's query output order.
+
+# ── marker detection + JSON payload extraction ───────────────────────────────
+# comment_node.text has comment tokens stripped (//, #, /*, */, leading *).
+# A marker is `ARCH` immediately followed by optional whitespace and a `{`.
+# The `^ARCH\s*\{` anchor is strict: `ARCHITECTURE:` or prose never matches.
+rel arch_json(path: file, line: int, json: text).
+arch_json(p, l, payload) <-
+    comment_node(p, l, _, _, _, text, _),
+    text =~ /^ARCH\s*\{/,
+    payload = replace_re(text, r"^ARCH\s*", "").
+
+# ── the spine: url is required, extracted via the declarative json pattern ────
+rel arch_node(path: file, line: int, url: text).
+arch_node(p, l, url) <-
+    arch_json(p, l, payload),
+    json(payload, q:{ "url": $url }).
+
+# ── last segment: everything after the final `/` (or the whole url) ───────────
+# `app/cli/00-main` -> `00-main`; `root` -> `root`.
+rel arch_last(url: text, seg: text).
+arch_last(url, seg) <-
+    arch_node(_, _, url),
+    seg = replace_re(url, r"^.*/", "").
+
+# ── parent: url minus the last segment (requires at least one slash) ─────────
+# A single-segment url (e.g. "root") has no parent and yields no row here.
+rel arch_parent(url: text, parent: text).
+arch_parent(url, parent) <-
+    arch_node(_, _, url),
+    url =~ /\//,
+    parent = replace_re(url, r"/[^/]*$", ""),
+    parent != url.
+
+# ── order: leading integer of the last segment ───────────────────────────────
+# The common-case ordering key: where this node sits among its siblings.
+# `00-main` -> 0; `01-parse` -> 1; `entry` (no leading digits) -> no row.
+rel arch_order(url: text, order: int).
+arch_order(url, order) <-
+    arch_last(url, last),
+    last =~ /^[0-9]+/,
+    numstr = replace_re(last, r"[^0-9].*$", ""),
+    order = int(numstr).

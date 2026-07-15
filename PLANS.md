@@ -22,10 +22,11 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `bug` plans/2026-07-11-dataflow-research-program.md:95 — TS class-method df lift hole
 - `bug` plans/2026-07-11-scip-atlas.md:117 — TS class-method bodies emit zero df nodes
 - `bug` plans/2026-07-11-scip-atlas.md:38 — watchgate allowlist for index.scip; dl index pokes daemon
-- `bug` plans/2026-07-14-bounded-single-sweep-runtime.md:247 — decouple daemon socket readiness from cold replay so a healthy daemon does not trigger concurrent in-process fallback
+- `bug` plans/2026-07-14-bounded-single-sweep-runtime.md:376 — decouple daemon socket readiness from cold replay so a healthy daemon does not trigger concurrent in-process fallback
 - `decision` plans/2026-07-10-change-cost-friction-inventory.md:152 — item 5 — a resolution_source column (values scip|syntactic|alias|narrowed) on call_edge/type_link (rev twins included), plus a public eng.ensure_families(&[...])
 - `decision` plans/2026-07-11-codex-feedback-queue.md:122 — CLI flag taxonomy — query/mutate/effects axes
 - `decision` plans/2026-07-11-scip-atlas.md:147 — coordinate policy — no new line-keyed joins; byte spans + edge projection; migrate call_site/df joins when touched
+- `decision` plans/2026-07-15-structural-parsing-coverage.md:107 — whether to add a `doc_inline` rel for link/image URL+text separation, or keep overloaded in `doc_node`
 - `docs` plans/2026-07-10-change-cost-friction-inventory.md:151 — item 6 — a generated per-language coverage table (which node kinds each TypeLang lift emits, tested counts on a fixture) in docs/reference
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:105 — match() trailing positional is a match ID not captured text — rename convention to match_id in shipped examples, show named-capture form in the op quickref
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:106 — comment_node.text strips comment tokens — state it in the relations table row, not only the buried authoring bullet
@@ -72,15 +73,30 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-07-11-scip-atlas.md:52 — repo column on scip_impl + scip_typedef from is_type_definition
 - `feature` plans/2026-07-11-scip-atlas.md:80 — argmax aggregate sugar
 - `feature` plans/2026-07-14-bounded-single-sweep-runtime.md:188 — implement the durable coalescing intent store, generation watermark protocol, and capacity-one Tokio wakeup
-- `feature` plans/2026-07-14-bounded-single-sweep-runtime.md:248 — add committed-generation reads during staging and the crash-injection integration matrix
+- `feature` plans/2026-07-14-bounded-single-sweep-runtime.md:377 — add committed-generation reads during staging and the crash-injection integration matrix
+- `feature` plans/2026-07-15-reproducible-reactivity-evidence.md:233 — project benchmark artifacts into typed node/edge and table relations so sprefa can visualize its own phase, scale, and baseline/candidate history
+- `feature` plans/2026-07-15-structural-parsing-coverage.md:91 — confirm tree-sitter-vue/svelte/astro crates exist and compile before committing to the dep
 - `perf` plans/2026-07-11-codex-feedback-queue.md:92 — semi-naive delta-growth bail + wedge visibility
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:189 — replace corpus-wide extraction payload caches with bounded byte-weighted reuse and stream WORK and Git inventories into staging
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:190 — replace per-connection 512 MiB SQLite cache and mmap settings with one measured process-wide budget and permit disk-backed large temporary work
-- `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:249 — add the 1-to-1000-strata RSS amplification rail and 500-repository steady-state soak
-- `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:250 — profile tick_paths phase time and relation invalidation volume because a one-file edit still costs approximately the full cold tick after bundled extraction
+- `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:378 — add the 1-to-1000-strata RSS amplification rail and 500-repository steady-state soak
+- `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:379 — profile tick_paths phase time and relation invalidation volume because a one-file edit still costs approximately the full cold tick after bundled extraction
+- `perf` plans/2026-07-15-call-family-delta-refresh.md:269 — route WORK call-family path deltas through the owner-scoped refresh and report every unsupported widening reason
+- `perf` plans/2026-07-15-call-family-delta-refresh.md:89 — add durable call definition/site/edge ownership tables and indexes without changing the public call relation schemas
+- `perf` plans/2026-07-15-call-family-delta-refresh.md:91 — enforce the call storage-key invariant with schema and dbstat rails: integer surrogates for entities/occurrences, StringId integers for repeated identities, and no raw TEXT in owner/provenance/TEMP hot tables
+- `perf` plans/2026-07-15-relational-storage-key-audit.md:30 — measure and remove or compact universal rel __src storage, preserving source provenance and public set semantics
+- `perf` plans/2026-07-15-relational-storage-key-audit.md:32 — emit WITHOUT ROWID for measured pure composite-integer junction relations and retain a schema escape hatch
+- `perf` plans/2026-07-15-relational-storage-key-audit.md:34 — normalize remaining identity storage in SCIP occurrences, entity keys, internal metadata, checkout, and embeddings using measured family migrations
+- `perf` plans/2026-07-15-reproducible-reactivity-evidence.md:173 — add the deterministic 10/100/1,000-file reactivity fixture, daemon-free release harness, and separate no-build/build just recipes
+- `perf` plans/2026-07-15-reproducible-reactivity-evidence.md:175 — inventory existing phase/profile/work counters and add only the minimum missing counters required by the baseline evidence contract
+- `perf` plans/2026-07-15-reproducible-reactivity-evidence.md:177 — add a structured path-tick evidence result with actual execution kind and a benchmark policy that fails instead of silently taking a full fallback
+- `perf` plans/2026-07-15-reproducible-reactivity-evidence.md:179 — capture immutable cold, unchanged, one-file-edit, and clean-rebuild JSON artifacts without running dl on the sprefa workspace or any production corpus
+- `perf` plans/2026-07-15-reproducible-reactivity-evidence.md:204 — attribute the one-file edit to exact derived relations, SQL statements/plans, invalidation scope, and fallback boundaries, then select one representative vertical slice
+- `perf` plans/2026-07-15-reproducible-reactivity-evidence.md:214 — route one measured relation family through owner-scoped source deltas and affected derived maintenance while retaining a loud production fallback
 - `triage` plans/2026-07-11-cross-harness-agent-tooling.md:147 — a CodexSessions AgentHarness arm for agent_* rels — session-store format needs research
 - `triage` plans/2026-07-11-docs-and-dogfood-audit.md:40 — re-enable hooks (timeout+advisory) — relights the dark event arm; Chris flips
 - `triage` plans/2026-07-11-engine-mod-split.md:72 — SG_LANG_TABLE final home (src/sg.rs vs engine/lang_tables.rs) when the lang_tables cluster moves
+- `triage` plans/2026-07-15-structural-parsing-coverage.md:119 — CSS comment_node coverage depends on tree-sitter-css being published for tree-sitter 0.25; verify availability
 <!-- END: plans-by-category -->
 
 ## By plan
@@ -155,10 +171,26 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-14-bounded-single-sweep-runtime.md:188 `feature` — implement the durable coalescing intent store, generation watermark protocol, and capacity-one Tokio wakeup
 - plans/2026-07-14-bounded-single-sweep-runtime.md:189 `perf` — replace corpus-wide extraction payload caches with bounded byte-weighted reuse and stream WORK and Git inventories into staging
 - plans/2026-07-14-bounded-single-sweep-runtime.md:190 `perf` — replace per-connection 512 MiB SQLite cache and mmap settings with one measured process-wide budget and permit disk-backed large temporary work
-- plans/2026-07-14-bounded-single-sweep-runtime.md:247 `bug` — decouple daemon socket readiness from cold replay so a healthy daemon does not trigger concurrent in-process fallback
-- plans/2026-07-14-bounded-single-sweep-runtime.md:248 `feature` — add committed-generation reads during staging and the crash-injection integration matrix
-- plans/2026-07-14-bounded-single-sweep-runtime.md:249 `perf` — add the 1-to-1000-strata RSS amplification rail and 500-repository steady-state soak
-- plans/2026-07-14-bounded-single-sweep-runtime.md:250 `perf` — profile tick_paths phase time and relation invalidation volume because a one-file edit still costs approximately the full cold tick after bundled extraction
+- plans/2026-07-14-bounded-single-sweep-runtime.md:376 `bug` — decouple daemon socket readiness from cold replay so a healthy daemon does not trigger concurrent in-process fallback
+- plans/2026-07-14-bounded-single-sweep-runtime.md:377 `feature` — add committed-generation reads during staging and the crash-injection integration matrix
+- plans/2026-07-14-bounded-single-sweep-runtime.md:378 `perf` — add the 1-to-1000-strata RSS amplification rail and 500-repository steady-state soak
+- plans/2026-07-14-bounded-single-sweep-runtime.md:379 `perf` — profile tick_paths phase time and relation invalidation volume because a one-file edit still costs approximately the full cold tick after bundled extraction
+- plans/2026-07-15-call-family-delta-refresh.md:89 `perf` — add durable call definition/site/edge ownership tables and indexes without changing the public call relation schemas
+- plans/2026-07-15-call-family-delta-refresh.md:91 `perf` — enforce the call storage-key invariant with schema and dbstat rails: integer surrogates for entities/occurrences, StringId integers for repeated identities, and no raw TEXT in owner/provenance/TEMP hot tables
+- plans/2026-07-15-call-family-delta-refresh.md:269 `perf` — route WORK call-family path deltas through the owner-scoped refresh and report every unsupported widening reason
+- plans/2026-07-15-relational-storage-key-audit.md:30 `perf` — measure and remove or compact universal rel __src storage, preserving source provenance and public set semantics
+- plans/2026-07-15-relational-storage-key-audit.md:32 `perf` — emit WITHOUT ROWID for measured pure composite-integer junction relations and retain a schema escape hatch
+- plans/2026-07-15-relational-storage-key-audit.md:34 `perf` — normalize remaining identity storage in SCIP occurrences, entity keys, internal metadata, checkout, and embeddings using measured family migrations
+- plans/2026-07-15-reproducible-reactivity-evidence.md:173 `perf` — add the deterministic 10/100/1,000-file reactivity fixture, daemon-free release harness, and separate no-build/build just recipes
+- plans/2026-07-15-reproducible-reactivity-evidence.md:175 `perf` — inventory existing phase/profile/work counters and add only the minimum missing counters required by the baseline evidence contract
+- plans/2026-07-15-reproducible-reactivity-evidence.md:177 `perf` — add a structured path-tick evidence result with actual execution kind and a benchmark policy that fails instead of silently taking a full fallback
+- plans/2026-07-15-reproducible-reactivity-evidence.md:179 `perf` — capture immutable cold, unchanged, one-file-edit, and clean-rebuild JSON artifacts without running dl on the sprefa workspace or any production corpus
+- plans/2026-07-15-reproducible-reactivity-evidence.md:204 `perf` — attribute the one-file edit to exact derived relations, SQL statements/plans, invalidation scope, and fallback boundaries, then select one representative vertical slice
+- plans/2026-07-15-reproducible-reactivity-evidence.md:214 `perf` — route one measured relation family through owner-scoped source deltas and affected derived maintenance while retaining a loud production fallback
+- plans/2026-07-15-reproducible-reactivity-evidence.md:233 `feature` — project benchmark artifacts into typed node/edge and table relations so sprefa can visualize its own phase, scale, and baseline/candidate history
+- plans/2026-07-15-structural-parsing-coverage.md:91 `feature` — confirm tree-sitter-vue/svelte/astro crates exist and compile before committing to the dep
+- plans/2026-07-15-structural-parsing-coverage.md:107 `decision` — whether to add a `doc_inline` rel for link/image URL+text separation, or keep overloaded in `doc_node`
+- plans/2026-07-15-structural-parsing-coverage.md:119 `triage` — CSS comment_node coverage depends on tree-sitter-css being published for tree-sitter 0.25; verify availability
 <!-- END: plans-by-plan -->
 
 ## By code file
