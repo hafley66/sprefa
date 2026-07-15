@@ -72,9 +72,9 @@ pub fn index_path(root: &Path) -> Option<PathBuf> {
         if path.is_file() { return Some(path); }
     }
     for cand in [
-        root.join("index.scip"),
         crate::state_dir(root).join("index.scip"),
         root.join(".dl").join("index.scip"),
+        root.join("index.scip"),
     ] {
         if cand.is_file() { return Some(cand); }
     }

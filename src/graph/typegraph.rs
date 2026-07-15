@@ -272,7 +272,8 @@ pub struct CallDef {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallSite {
     pub caller_sym: Option<String>,   // filled by the engine's span-containment pass
-    pub callee: String,               // bare/qualified text; resolved to a def sym when unique
+    pub callee: String,               // trailing segment (bare name) for resolution
+    pub callee_path: Option<String>,  // full qualified path when >1 segment (e.g. sprefa_v5::cli::run)
     pub file: String,
     pub line: u32,
 }
@@ -2354,7 +2355,7 @@ fn kt_walk_call_sites(node: tree_sitter::Node, src: &[u8], file: &str, out: &mut
     for child in node.children(&mut cur) {
         if child.kind() == "call_expression" {
             if let Some((callee, line)) = kt_callee(child, src) {
-                out.push(CallSite { caller_sym: None, callee, file: file.to_string(), line });
+                out.push(CallSite { caller_sym: None, callee, callee_path: None, file: file.to_string(), line });
             }
         }
         kt_walk_call_sites(child, src, file, out);
@@ -3651,6 +3652,7 @@ impl<'a, 'p> OxcVisit<'a> for TsCallSites<'p> {
             self.sites.push(CallSite {
                 caller_sym: None,
                 callee,
+                callee_path: None,
                 file: self.file.to_string(),
                 line: line_at(self.starts, span_off(&c.callee) as usize),
             });
@@ -3672,6 +3674,7 @@ impl<'a, 'p> OxcVisit<'a> for TsCallSites<'p> {
             self.sites.push(CallSite {
                 caller_sym: None,
                 callee,
+                callee_path: None,
                 file: self.file.to_string(),
                 line: line_at(self.starts, el.opening_element.span.start as usize),
             });
@@ -3971,13 +3974,17 @@ struct CallCollector<'a> {
 impl<'a> syn::visit::Visit<'a> for CallCollector<'a> {
     fn visit_expr(&mut self, e: &'a syn::Expr) {
         match e {
-            // `f(args)` / `Foo(args)`: callee is the path's trailing segment.
+            // `f(args)` / `Foo(args)`: callee is the path's trailing segment;
+            // callee_path carries the full qualified path when >1 segment.
             syn::Expr::Call(c) => {
-                if let syn::Expr::Path(p) = &*c.func {
+                let func = peel_parens(&c.func);
+                if let syn::Expr::Path(p) = func {
                     if let Some(seg) = p.path.segments.last() {
+                        let path_str = path_string(&p.path);
                         self.sites.push(CallSite {
                             caller_sym: None,
                             callee: seg.ident.to_string(),
+                            callee_path: (p.path.segments.len() > 1).then_some(path_str),
                             file: self.file.to_string(),
                             line: c.func.span().start().line as u32,
                         });
@@ -3990,14 +3997,48 @@ impl<'a> syn::visit::Visit<'a> for CallCollector<'a> {
                 self.sites.push(CallSite {
                     caller_sym: None,
                     callee: m.method.to_string(),
+                    callee_path: None,
                     file: self.file.to_string(),
                     line: m.method.span().start().line as u32,
                 });
                 syn::visit::visit_expr(self, e);
             }
+            // `Foo { x: 1 }`: struct literal constructor. callee is the type
+            // path's trailing segment; callee_path carries the full path.
+            syn::Expr::Struct(s) => {
+                if let Some(seg) = s.path.segments.last() {
+                    let path_str = path_string(&s.path);
+                    self.sites.push(CallSite {
+                        caller_sym: None,
+                        callee: seg.ident.to_string(),
+                        callee_path: (s.path.segments.len() > 1).then_some(path_str),
+                        file: self.file.to_string(),
+                        line: s.path.span().start().line as u32,
+                    });
+                }
+                syn::visit::visit_expr(self, e);
+            }
             _ => syn::visit::visit_expr(self, e),
         }
     }
+}
+
+/// Render a syn::Path as `a::b::c`.
+fn path_string(path: &syn::Path) -> String {
+    path.segments
+        .iter()
+        .map(|s| s.ident.to_string())
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
+/// Strip nested `Expr::Paren` to find the inner expression.
+fn peel_parens(e: &syn::Expr) -> &syn::Expr {
+    let mut cur = e;
+    while let syn::Expr::Paren(p) = cur {
+        cur = &p.expr;
+    }
+    cur
 }
 
 // --- Rust intra-procedural dataflow lift (syn). The lift is two rules:
@@ -5118,7 +5159,7 @@ fn go_walk_call_sites(node: tree_sitter::Node, src: &[u8], file: &str, out: &mut
     for child in node.children(&mut cursor) {
         if child.kind() == "call_expression" {
             if let Some((callee, line)) = go_callee(child, src) {
-                out.push(CallSite { caller_sym: None, callee, file: file.to_string(), line });
+                out.push(CallSite { caller_sym: None, callee, callee_path: None, file: file.to_string(), line });
             }
         }
         go_walk_call_sites(child, src, file, out);
@@ -6446,7 +6487,7 @@ fn py_walk_call_sites(node: tree_sitter::Node, src: &[u8], file: &str, out: &mut
     for child in node.children(&mut cur) {
         if child.kind() == "call" {
             if let Some((callee, line)) = py_callee(child, src) {
-                out.push(CallSite { caller_sym: None, callee, file: file.to_string(), line });
+                out.push(CallSite { caller_sym: None, callee, callee_path: None, file: file.to_string(), line });
             }
         }
         py_walk_call_sites(child, src, file, out);
