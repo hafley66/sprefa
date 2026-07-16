@@ -484,7 +484,6 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(20))]
 
     #[test]
-    #[ignore = "real engine bug: router rel-footprint misses empty-input relations (seed cc 0d80eca002b18e65b3098c2eb6b2308ccd1b0ba5edb79c527e349b5751592c9e)"]
     fn equivalence_and_memo_hold_at_every_step(script in script_strategy()) {
         run_equivalence_property(&script);
     }

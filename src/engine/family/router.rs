@@ -53,7 +53,10 @@ impl<'f> FamilyRouter<'f> {
         let mut derived = Vec::with_capacity(self.families.len());
         for family in &self.families {
             let (rows, deps) = derive_family(db, *family)?;
-            self.memo.insert(family.name(), FamilyMemo { rows, rels: rel_footprint(&deps) });
+            self.memo.insert(
+                family.name(),
+                FamilyMemo { rows, rels: rel_footprint(*family, &deps) },
+            );
             derived.push(family.name());
         }
         Ok(derived)
@@ -81,7 +84,7 @@ impl<'f> FamilyRouter<'f> {
                 continue;
             }
             let (rows, deps) = derive_family(db, *family)?;
-            self.memo.insert(name, FamilyMemo { rows, rels: rel_footprint(&deps) });
+            self.memo.insert(name, FamilyMemo { rows, rels: rel_footprint(*family, &deps) });
             rerun.push(name);
         }
         Ok(rerun)
@@ -122,7 +125,7 @@ impl<'f> FamilyRouter<'f> {
             let prev = self.memo.get(name).map(|memo| memo.rows.clone()).unwrap_or_default();
             let (rows, deps) = derive_family(db, *family)?;
             let delta = reconcile(&prev, rows.clone());
-            staged.push((name, FamilyMemo { rows, rels: rel_footprint(&deps) }));
+            staged.push((name, FamilyMemo { rows, rels: rel_footprint(*family, &deps) }));
             deltas.push((name, delta));
         }
         for (name, memo) in staged {
@@ -154,9 +157,17 @@ impl<'f> FamilyRouter<'f> {
     }
 }
 
-/// The set of input relations a derive read, projected from its per-row deps.
-fn rel_footprint(deps: &HashSet<DepKey>) -> HashSet<&'static str> {
-    deps.iter().map(|d| d.rel).collect()
+/// The reactive relation footprint for a derive: the per-row deps projected to
+/// their relations, UNION the family's declared `input_rels`. The union is the
+/// correctness floor: if a family scans an input relation while it is empty,
+/// `Ctx::scan` records no per-row deps for it, so a later INSERT into that
+/// relation would be invisible to a purely projected footprint. Declared
+/// `input_rels` are rel-level dependencies regardless of which rows happened to
+/// be present during the derive.
+fn rel_footprint(family: &dyn Family, deps: &HashSet<DepKey>) -> HashSet<&'static str> {
+    let mut rels: HashSet<&'static str> = deps.iter().map(|d| d.rel).collect();
+    rels.extend(family.input_rels().iter().copied());
+    rels
 }
 
 // ---- T4 property-test accessors -------------------------------------------------
