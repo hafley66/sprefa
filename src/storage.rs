@@ -229,6 +229,146 @@ mod tests {
     }
 
     #[test]
+    fn retract_rows_single_row_is_deleted() {
+        let db = db::open(None).unwrap();
+        Storage::execute(&db, "CREATE TABLE retract_single_row (a INTEGER, b TEXT)").unwrap();
+        let rows = vec![vec![Value::Int(1), Value::Text("one".into())]];
+        Storage::insert_rows(&db, "retract_single_row", &["a", "b"], &rows).unwrap();
+
+        let deleted = Storage::retract_rows(&db, "retract_single_row", &["a", "b"], &rows).unwrap();
+        assert_eq!(deleted, 1);
+        let count: i64 = db
+            .conn()
+            .query_row("SELECT COUNT(*) FROM retract_single_row", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    /// Exactly `chunk_rows` (= `PARAM_BUDGET / ncol`) rows must fit in ONE
+    /// chunked `DELETE ... VALUES` statement — the boundary below `budget + 1`
+    /// pushes into a second chunk.
+    #[test]
+    fn retract_rows_exactly_one_chunk_at_the_budget_boundary() {
+        let db = db::open(None).unwrap();
+        Storage::execute(&db, "CREATE TABLE retract_exact_budget (a INTEGER, b TEXT)").unwrap();
+
+        let ncol = 2;
+        let chunk_rows = crate::db::PARAM_BUDGET / ncol;
+        let rows: Vec<Vec<Value>> = (0..chunk_rows as i64)
+            .map(|row_index| vec![Value::Int(row_index), Value::Text(format!("r{row_index}"))])
+            .collect();
+        Storage::insert_rows(&db, "retract_exact_budget", &["a", "b"], &rows).unwrap();
+
+        let deleted = Storage::retract_rows(&db, "retract_exact_budget", &["a", "b"], &rows).unwrap();
+        assert_eq!(deleted, chunk_rows, "exactly-budget rows must all delete in the single chunk");
+        let count: i64 = db
+            .conn()
+            .query_row("SELECT COUNT(*) FROM retract_exact_budget", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    /// One row past the per-chunk budget must still fully delete — the extra
+    /// row forces a second chunk, proving the chunk boundary doesn't drop it.
+    #[test]
+    fn retract_rows_budget_plus_one_spans_two_chunks() {
+        let db = db::open(None).unwrap();
+        Storage::execute(&db, "CREATE TABLE retract_budget_plus_one (a INTEGER, b TEXT)").unwrap();
+
+        let ncol = 2;
+        let chunk_rows = crate::db::PARAM_BUDGET / ncol;
+        let rows: Vec<Vec<Value>> = (0..(chunk_rows + 1) as i64)
+            .map(|row_index| vec![Value::Int(row_index), Value::Text(format!("r{row_index}"))])
+            .collect();
+        Storage::insert_rows(&db, "retract_budget_plus_one", &["a", "b"], &rows).unwrap();
+
+        let deleted = Storage::retract_rows(&db, "retract_budget_plus_one", &["a", "b"], &rows).unwrap();
+        assert_eq!(deleted, chunk_rows + 1, "budget+1 rows must fully delete across two chunks");
+        let count: i64 = db
+            .conn()
+            .query_row("SELECT COUNT(*) FROM retract_budget_plus_one", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    /// A wide 8-column tuple must shrink `chunk_rows` proportionally (budget is
+    /// spent on PARAMS, not rows): `2 * (PARAM_BUDGET / 8) - 1` rows is one row
+    /// short of what a per-row-fixed (column-count-blind) chunker would need
+    /// two full chunks for — exercising the "per-param not per-row" math the
+    /// P0 fix (4eb5694a) landed.
+    #[test]
+    fn retract_rows_wide_tuple_chunks_by_param_not_row_count() {
+        let db = db::open(None).unwrap();
+        Storage::execute(
+            &db,
+            "CREATE TABLE retract_wide_tuple (\
+                c0 INTEGER, c1 INTEGER, c2 INTEGER, c3 INTEGER, \
+                c4 INTEGER, c5 INTEGER, c6 INTEGER, c7 INTEGER)",
+        ).unwrap();
+        let cols = ["c0", "c1", "c2", "c3", "c4", "c5", "c6", "c7"];
+        let ncol = cols.len();
+        let chunk_rows = crate::db::PARAM_BUDGET / ncol;
+        let row_count = 2 * chunk_rows - 1;
+        let rows: Vec<Vec<Value>> = (0..row_count as i64)
+            .map(|row_index| (0..ncol as i64).map(|col_index| Value::Int(row_index * 10 + col_index)).collect())
+            .collect();
+        Storage::insert_rows(&db, "retract_wide_tuple", &cols, &rows).unwrap();
+
+        let deleted = Storage::retract_rows(&db, "retract_wide_tuple", &cols, &rows).unwrap();
+        assert_eq!(deleted, row_count, "2*chunk_rows-1 wide-tuple rows must all delete across 2 chunks");
+        let count: i64 = db
+            .conn()
+            .query_row("SELECT COUNT(*) FROM retract_wide_tuple", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    /// Pinned semantic: `retract_rows` deletes by full-tuple VALUE identity
+    /// (`WHERE (cols) IN (VALUES ...)`), not by rowid — a table holding the
+    /// SAME tuple twice (no uniqueness constraint on these columns) loses BOTH
+    /// physical copies from a `rows` argument naming that tuple once.
+    #[test]
+    fn retract_rows_duplicate_row_in_table_removes_all_copies() {
+        let db = db::open(None).unwrap();
+        Storage::execute(&db, "CREATE TABLE retract_dup_in_table (a INTEGER, b TEXT)").unwrap();
+
+        let duplicated_row = vec![Value::Int(1), Value::Text("dup".into())];
+        let other_row = vec![Value::Int(2), Value::Text("other".into())];
+        let seed_rows = vec![duplicated_row.clone(), duplicated_row.clone(), other_row.clone()];
+        Storage::insert_rows(&db, "retract_dup_in_table", &["a", "b"], &seed_rows).unwrap();
+
+        let deleted =
+            Storage::retract_rows(&db, "retract_dup_in_table", &["a", "b"], &[duplicated_row]).unwrap();
+        assert_eq!(
+            deleted, 2,
+            "pinned: a full-tuple DELETE removes every physical copy sharing that tuple, not just one"
+        );
+        let count: i64 = db
+            .conn()
+            .query_row("SELECT COUNT(*) FROM retract_dup_in_table", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "the untouched other_row must survive");
+    }
+
+    #[test]
+    fn retract_rows_of_absent_row_is_a_no_op() {
+        let db = db::open(None).unwrap();
+        Storage::execute(&db, "CREATE TABLE retract_absent_row (a INTEGER, b TEXT)").unwrap();
+        let present_row = vec![Value::Int(1), Value::Text("present".into())];
+        Storage::insert_rows(&db, "retract_absent_row", &["a", "b"], &vec![present_row.clone()]).unwrap();
+
+        let absent_row = vec![Value::Int(99), Value::Text("never-inserted".into())];
+        let deleted =
+            Storage::retract_rows(&db, "retract_absent_row", &["a", "b"], &[absent_row]).unwrap();
+        assert_eq!(deleted, 0, "retracting a row that was never present must be a silent no-op");
+        let count: i64 = db
+            .conn()
+            .query_row("SELECT COUNT(*) FROM retract_absent_row", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "the unrelated present_row must survive untouched");
+    }
+
+    #[test]
     fn db_storage_flushes_symbol_batches() {
         let db = db::open(None).unwrap();
         Storage::execute(

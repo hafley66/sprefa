@@ -248,6 +248,133 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
+    // ---- reconcile: diff-engine unit tests (T1, capstone retraction plan) ----
+    //
+    // `Value` derives only `Clone, Debug` (no `PartialEq`), so these tests
+    // compare rows via `row_key` — the same full-tuple identity function
+    // `reconcile` itself uses — rather than `assert_eq!` on raw `OutRow`s.
+
+    /// Build an all-`Int` `OutRow` from plain integers (the common case below).
+    fn int_row(cell_values: &[i64]) -> OutRow {
+        cell_values.iter().map(|value| Value::Int(*value)).collect()
+    }
+
+    /// `row_key` per row, in argument order (both `RowDelta.retracted` and
+    /// `.inserted` are built in deterministic input order, never hashset
+    /// iteration order, so an order-preserving comparison is exact — no sort
+    /// needed and no accidental laundering of a real ordering bug).
+    fn row_keys(rows: &[OutRow]) -> Vec<String> {
+        rows.iter().map(row_key).collect()
+    }
+
+    #[test]
+    fn reconcile_prev_equals_next_is_empty_delta() {
+        let prev = vec![int_row(&[1, 2]), int_row(&[3, 4])];
+        let next = prev.clone();
+        let delta = reconcile(&prev, next);
+        assert!(delta.is_empty(), "identical prev/next must reconcile to an empty delta");
+    }
+
+    #[test]
+    fn reconcile_prev_empty_is_all_inserts() {
+        let prev: Vec<OutRow> = Vec::new();
+        let next = vec![int_row(&[1, 2]), int_row(&[3, 4])];
+        let delta = reconcile(&prev, next.clone());
+        assert!(delta.retracted.is_empty(), "never-derived prev has nothing to retract");
+        assert_eq!(
+            row_keys(&delta.inserted),
+            row_keys(&next),
+            "never-derived prev must insert every fresh row"
+        );
+    }
+
+    #[test]
+    fn reconcile_next_empty_is_all_retracts() {
+        let prev = vec![int_row(&[1, 2]), int_row(&[3, 4])];
+        let next: Vec<OutRow> = Vec::new();
+        let delta = reconcile(&prev, next);
+        assert!(delta.inserted.is_empty(), "everything-gone next has nothing to insert");
+        assert_eq!(
+            row_keys(&delta.retracted),
+            row_keys(&prev),
+            "everything-gone next must retract every prior row"
+        );
+    }
+
+    #[test]
+    fn reconcile_disjoint_sets_full_retract_and_full_insert() {
+        let prev = vec![int_row(&[1, 1]), int_row(&[2, 2])];
+        let next = vec![int_row(&[3, 3]), int_row(&[4, 4])];
+        let delta = reconcile(&prev, next.clone());
+        assert_eq!(row_keys(&delta.retracted), row_keys(&prev), "disjoint sets retract all of prev");
+        assert_eq!(row_keys(&delta.inserted), row_keys(&next), "disjoint sets insert all of next");
+    }
+
+    #[test]
+    fn reconcile_overlap_is_exact_set_difference_both_ways() {
+        let shared_row = int_row(&[1, 1]);
+        let prev_only_row = int_row(&[2, 2]);
+        let next_only_row = int_row(&[3, 3]);
+        let prev = vec![shared_row.clone(), prev_only_row.clone()];
+        let next = vec![shared_row, next_only_row.clone()];
+        let delta = reconcile(&prev, next);
+        assert_eq!(
+            row_keys(&delta.retracted),
+            row_keys(&[prev_only_row]),
+            "only the prev-only row retracts; the shared row is untouched"
+        );
+        assert_eq!(
+            row_keys(&delta.inserted),
+            row_keys(&[next_only_row]),
+            "only the next-only row inserts; the shared row is untouched"
+        );
+    }
+
+    /// Pinned semantic: `reconcile` treats `new` as a SET. A row repeated in
+    /// `new` collapses to one insertion — the 2nd/3rd copy is neither
+    /// re-inserted nor retracted. `HashSet<String>::insert` on `row_key` is
+    /// the dedup mechanism (see `reconcile`'s `fresh` check).
+    #[test]
+    fn reconcile_duplicate_rows_in_next_dedupe_to_one_insert() {
+        let prev: Vec<OutRow> = Vec::new();
+        let repeated_row = int_row(&[1, 1]);
+        let next = vec![repeated_row.clone(), repeated_row.clone(), repeated_row.clone()];
+        let delta = reconcile(&prev, next);
+        assert_eq!(
+            row_keys(&delta.inserted),
+            row_keys(&[repeated_row]),
+            "pinned: 3 identical `new` rows dedupe to a single insert, not one per copy"
+        );
+    }
+
+    /// Pinned semantic: `row_key` tags each cell with its `Value` variant
+    /// (`i`/`t`/`n` prefix) before appending the payload, so `Int(1)` and
+    /// `Text("1")` in the same column hash to different keys. A column that
+    /// only differs by type affinity is a full-tuple identity difference —
+    /// never coerced or compared numerically/textually across variants.
+    #[test]
+    fn reconcile_type_affinity_difference_is_a_distinct_tuple() {
+        let prev = vec![vec![Value::Int(1)]];
+        let next = vec![vec![Value::Text("1".to_string())]];
+        let delta = reconcile(&prev, next.clone());
+        assert_eq!(row_keys(&delta.retracted), row_keys(&prev), "Int(1) row must retract, not match Text(\"1\")");
+        assert_eq!(row_keys(&delta.inserted), row_keys(&next), "Text(\"1\") row must insert as a distinct tuple");
+    }
+
+    /// Pinned semantic: `row_key` maps every `Value::Null` cell to the same
+    /// bare `n` marker with no payload attached, so two otherwise-identical
+    /// NULL-bearing tuples produce the SAME key and compare EQUAL for
+    /// reconcile identity — NULL == NULL here, the opposite of SQL's
+    /// NULL <> NULL. A prev row surviving unchanged into next (both carrying
+    /// NULL in the same column) must not spuriously retract+insert.
+    #[test]
+    fn reconcile_null_bearing_tuples_treat_null_as_equal_to_null() {
+        let prev = vec![vec![Value::Int(1), Value::Null]];
+        let next = vec![vec![Value::Int(1), Value::Null]];
+        let delta = reconcile(&prev, next);
+        assert!(delta.is_empty(), "pinned: NULL cells compare equal to NULL for row identity");
+    }
+
     /// Minimal Rust: `beta` calls `alpha` so both `call_site` and the resolved
     /// `call_edge` are non-empty after a real extraction.
     const RUST_SRC: &str = "\
