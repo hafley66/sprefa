@@ -475,11 +475,79 @@ port_non_port_flow_edge(from_node, to_node) <-
 
 # Factor the two seed classes into their own recursive rels so the original
 # port_reach offender is just a union of precomputed reaches.
-rel port_of_reach(port: text, node: text).
-port_of_reach(port, node) <- port_of_reach_seed(port, node).
-port_of_reach(port, to_node) <-
-  port_of_reach(port, mid_node),
+#
+# port_of_reach is the expensive half: it walks a long graph. Cut the number
+# of fixpoint iterations by materializing five-hop edges and stepping five
+# edges at once in the recursive rule (the intermediate nodes cannot be port_of
+# sources, so the composed path respects the halting rule). Seed rules cover
+# lengths 0-4 directly; length 2 and 3 use the precomputed hop relations, and
+# length 4 is two hops + two hops.
+rel port_non_port_flow_edge_2hop(from_node: text, to_node: text).
+port_non_port_flow_edge_2hop(from_node, to_node) <-
+  port_non_port_flow_edge(from_node, mid_node),
   port_non_port_flow_edge(mid_node, to_node).
+
+rel port_non_port_flow_edge_3hop(from_node: text, to_node: text).
+port_non_port_flow_edge_3hop(from_node, to_node) <-
+  port_non_port_flow_edge_2hop(from_node, mid_node),
+  port_non_port_flow_edge(mid_node, to_node).
+
+rel port_non_port_flow_edge_4hop(from_node: text, to_node: text).
+port_non_port_flow_edge_4hop(from_node, to_node) <-
+  port_non_port_flow_edge_2hop(from_node, mid_node),
+  port_non_port_flow_edge_2hop(mid_node, to_node).
+
+rel port_non_port_flow_edge_5hop(from_node: text, to_node: text).
+port_non_port_flow_edge_5hop(from_node, to_node) <-
+  port_non_port_flow_edge_2hop(from_node, mid_node),
+  port_non_port_flow_edge_3hop(mid_node, to_node).
+
+# Factor the length-1..5 seed joins out of port_of_reach into separate
+# intermediates so the recursive relation is just a base case plus the five-hop
+# step. The public port_reach contents are unchanged.
+rel port_of_reach_len1(port: text, node: text).
+port_of_reach_len1(port, to_node) <-
+  port_of_reach_seed(port, mid_node),
+  port_non_port_flow_edge(mid_node, to_node).
+
+rel port_of_reach_len2(port: text, node: text).
+port_of_reach_len2(port, to_node) <-
+  port_of_reach_seed(port, mid_node),
+  port_non_port_flow_edge_2hop(mid_node, to_node).
+
+rel port_of_reach_len3(port: text, node: text).
+port_of_reach_len3(port, to_node) <-
+  port_of_reach_seed(port, mid_node),
+  port_non_port_flow_edge_3hop(mid_node, to_node).
+
+rel port_of_reach_len4(port: text, node: text).
+port_of_reach_len4(port, to_node) <-
+  port_of_reach_seed(port, mid_node),
+  port_non_port_flow_edge_4hop(mid_node, to_node).
+
+rel port_of_reach_len5(port: text, node: text).
+port_of_reach_len5(port, to_node) <-
+  port_of_reach_seed(port, mid_node),
+  port_non_port_flow_edge_5hop(mid_node, to_node).
+
+# Collect the length-1..5 seeds into one relation so the recursive rel is just
+# a base case plus the five-hop step.
+rel port_of_reach_rec_seed(port: text, node: text).
+port_of_reach_rec_seed(port, node) <- port_of_reach_seed(port, node).
+port_of_reach_rec_seed(port, node) <- port_of_reach_len1(port, node).
+port_of_reach_rec_seed(port, node) <- port_of_reach_len2(port, node).
+port_of_reach_rec_seed(port, node) <- port_of_reach_len3(port, node).
+port_of_reach_rec_seed(port, node) <- port_of_reach_len4(port, node).
+port_of_reach_rec_seed(port, node) <- port_of_reach_len5(port, node).
+
+rel port_of_reach_rec(port: text, node: text).
+port_of_reach_rec(port, node) <- port_of_reach_rec_seed(port, node).
+port_of_reach_rec(port, to_node) <-
+  port_of_reach_rec(port, mid_node),
+  port_non_port_flow_edge_5hop(mid_node, to_node).
+
+rel port_of_reach(port: text, node: text).
+port_of_reach(port, node) <- port_of_reach_rec(port, node).
 
 rel port_out_reach(port: text, node: text).
 port_out_reach(port, node) <- port_out_reach_seed(port, node).

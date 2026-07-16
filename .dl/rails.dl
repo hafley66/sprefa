@@ -49,12 +49,19 @@ conn_fn(fn, p, l) <-
 # (receiver line); call_site's line is the method-name line. Same for
 # single-line calls (the common case); multi-line chains may miss, which is
 # conservative (false negatives, never false positives).
+# The expensive join chains df_node (call_res) → call_site → call_name. Push
+# the call_name resolution down into call_site first and re-key by (caller,
+# file, line) so the loop-nested df_node lookup is a selective indexed join.
+rel named_call_site(caller: text, file: file, line: int, fn: text).
+named_call_site(caller, p, l, fn) <-
+    call_site(_, caller, callee_text, p, l),
+    call_name(fn, callee_text).
+
 rel loop_entry_fn(fn: text).
 loop_entry_fn(fn) <-
     nest(call_id, _, _, _),
     df_node(call_id, "call_res", _, caller, p, l),
-    call_site(_, caller, callee_text, p, l),
-    call_name(fn, callee_text).
+    named_call_site(caller, p, l, fn).
 
 # 2-col view of call_edge. (We do not use closure(call_pair) here because the
 # engine blocks unpinned closure reads in rule bodies; recursive rules over

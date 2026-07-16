@@ -37,9 +37,16 @@ call_edge_bare(cb, eb, cq, eq) <-
 # extractor records it), so this is ONE equality join — the old dual-offset
 # form (`cl = dl + 1` for the 0-based languages) also false-matched a call site
 # on the next line.
+# The expensive join matches df_node call_res rows to call_site rows by
+# (file, line). Re-key call_site by (file, line) once so the callee lookup is
+# indexed; df_node is probed by its (file, line) values.
+rel call_site_at(file: file, line: int, callee: text).
+call_site_at(f, l, callee) <- call_site(_, _, callee, f, l).
+
 rel call_node(id: text, callee: text, file: file, line: int).
 call_node(id, callee, f, l) <-
-    df_node(id, "call_res", _, _, f, l), call_site(_, _, callee, f, l).
+    df_node(id, "call_res", _, _, f, l),
+    call_site_at(f, l, callee).
 
 # Flow summaries: user-asserted propagation MODELS for callees the lift can't
 # see into (library / external functions have no df_* body) — the CodeQL-models
