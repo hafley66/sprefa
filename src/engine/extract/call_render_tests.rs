@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use crate::ast::Value;
 use crate::db;
 use crate::engine::Engine;
-use crate::engine::family::{call_input_rels, call_owner_delta_rels};
+use crate::engine::family::{call_input_rels, call_owner_delta_rels, FamilyRouter};
 use crate::spine::StringId;
 use crate::storage::call::{CallFamilyWrite, CallStore};
 use crate::storage::Storage;
@@ -127,6 +127,70 @@ fn as_int(v: &Value) -> i64 {
         Value::Int(n) => *n,
         _ => panic!("expected Int value in memo row"),
     }
+}
+
+/// Public call rels read back as sorted integer rows, in a fixed order.
+const CALL_REL_QUERIES: &[(&str, &str, usize)] = &[
+    ("call_site", "SELECT repo, caller, callee, file, line FROM rel_call_site", 5),
+    ("call_edge", "SELECT caller, callee, kind FROM rel_call_edge", 3),
+    ("call_kind", "SELECT fn, kind FROM rel_call_kind", 2),
+    (
+        "call_edge_rev",
+        "SELECT caller, callee, kind, rev FROM rel_call_edge_rev",
+        4,
+    ),
+    (
+        "call_def",
+        "SELECT repo, sym, kind, file, line, \"end\" FROM rel_call_def",
+        6,
+    ),
+    (
+        "call_def_rev",
+        "SELECT repo, sym, kind, file, line, \"end\", rev FROM rel_call_def_rev",
+        7,
+    ),
+    ("call_name", "SELECT sym, name FROM rel_call_name", 2),
+];
+
+/// Snapshot every public call rel as sorted integer rows.
+fn public_call_rel_snapshot(engine: &Engine) -> Vec<(&'static str, Vec<Vec<i64>>)> {
+    let mut out = Vec::with_capacity(CALL_REL_QUERIES.len());
+    for (name, sql, ncols) in CALL_REL_QUERIES {
+        let mut stmt = engine.db.conn().prepare(sql).unwrap();
+        let rows: Vec<Vec<i64>> = stmt
+            .query_map([], |row| {
+                let mut v = Vec::with_capacity(*ncols);
+                for i in 0..*ncols {
+                    v.push(row.get(i)?);
+                }
+                Ok(v)
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        let mut sorted = rows;
+        sorted.sort();
+        out.push((*name, sorted));
+    }
+    out
+}
+
+/// Derive every call family afresh from the current DB and snapshot its rows.
+fn cold_derivation_snapshot(engine: &Engine) -> Vec<(&'static str, Vec<Vec<i64>>)> {
+    let mut router = FamilyRouter::new(crate::engine::family::call_families());
+    router.cold(&engine.db).unwrap();
+    let mut out = Vec::with_capacity(CALL_REL_QUERIES.len());
+    for (name, _, _) in CALL_REL_QUERIES {
+        let mut rows: Vec<Vec<i64>> = router
+            .rows(name)
+            .unwrap_or(&[])
+            .iter()
+            .map(|r| r.iter().map(as_int).collect())
+            .collect();
+        rows.sort();
+        out.push((*name, rows));
+    }
+    out
 }
 
 /// Assert that every public call rel holds exactly the rows currently memoized
@@ -474,6 +538,144 @@ fn render_flip_inside_caller_owned_transaction() {
         "render writes made inside the caller transaction must commit"
     );
     assert_all_call_rels_match_memo(&engine);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn render_error_clears_memo_and_cold_recovery_converges() {
+    let dir = make_dir("warm-error-recovery");
+    fs::write(dir.join("lib.rs"), RUST_SRC).unwrap();
+
+    let engine = engine_at(&dir, "v1");
+    engine.refresh_call_rels().unwrap();
+    let pre = public_call_rel_snapshot(&engine);
+
+    // Mutate an owned input so the warm flip has non-empty deltas for the
+    // families that read _call_resolution.
+    engine
+        .db
+        .conn()
+        .execute(
+            "DELETE FROM _call_resolution WHERE site_id IN (SELECT site_id FROM _call_resolution LIMIT 1)",
+            [],
+        )
+        .unwrap();
+
+    // Rename an output table so the render fails midway: call_edge writes
+    // successfully, then call_edge_rev errors because its table is gone.
+    engine
+        .db
+        .conn()
+        .execute(
+            "ALTER TABLE rel_call_edge_rev RENAME TO rel_call_edge_rev_broken",
+            [],
+        )
+        .unwrap();
+
+    let changed = call_owner_delta_rels();
+    let result = engine.flip_call_rels_via_router(&changed);
+    assert!(result.is_err(), "mid-render failure must return Err");
+
+    // Restore the table so we can inspect the rolled-back public rels.
+    engine
+        .db
+        .conn()
+        .execute(
+            "ALTER TABLE rel_call_edge_rev_broken RENAME TO rel_call_edge_rev",
+            [],
+        )
+        .unwrap();
+
+    let post_error = public_call_rel_snapshot(&engine);
+    assert_eq!(
+        post_error, pre,
+        "public call rels must roll back to the pre-flip snapshot"
+    );
+
+    // With the table restored, the next flip cold-reloads the families whose
+    // memo was cleared and converges to a fresh derivation.
+    engine.flip_call_rels_via_router(&changed).unwrap();
+    assert_all_call_rels_match_memo(&engine);
+
+    let expected = cold_derivation_snapshot(&engine);
+    let recovered = public_call_rel_snapshot(&engine);
+    assert_eq!(
+        recovered, expected,
+        "recovered rels must equal a fresh cold derivation"
+    );
+
+    // Sanity check that the resolution mutation actually moved the edge tables.
+    let edge_rev_pre = pre
+        .iter()
+        .find(|(name, _)| *name == "call_edge_rev")
+        .map(|(_, rows)| rows.clone())
+        .unwrap();
+    let edge_rev_recovered = recovered
+        .iter()
+        .find(|(name, _)| *name == "call_edge_rev")
+        .map(|(_, rows)| rows.clone())
+        .unwrap();
+    assert_ne!(
+        edge_rev_pre, edge_rev_recovered,
+        "call_edge_rev must reflect the deleted resolution after recovery"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn react_deltas_derive_failure_does_not_poison_memo() {
+    let dir = make_dir("react-derive-failure");
+    fs::write(dir.join("lib.rs"), RUST_SRC).unwrap();
+
+    let engine = engine_at(&dir, "v1");
+    engine.refresh_call_rels().unwrap();
+    let pre = public_call_rel_snapshot(&engine);
+
+    // Rename an owned input table so react_deltas fails mid-loop while
+    // deriving one of the families that reads _call_resolution.
+    engine
+        .db
+        .conn()
+        .execute(
+            "ALTER TABLE _call_resolution RENAME TO _call_resolution_broken",
+            [],
+        )
+        .unwrap();
+
+    let changed = call_owner_delta_rels();
+    let result = engine.flip_call_rels_via_router(&changed);
+    assert!(
+        result.is_err(),
+        "derive failure inside react_deltas must bubble as Err"
+    );
+
+    // Restore the input table. react_deltas staged its memo updates, so the
+    // memo was never partially poisoned by the families that derived before
+    // the failure.
+    engine
+        .db
+        .conn()
+        .execute(
+            "ALTER TABLE _call_resolution_broken RENAME TO _call_resolution",
+            [],
+        )
+        .unwrap();
+
+    engine.flip_call_rels_via_router(&changed).unwrap();
+    assert_all_call_rels_match_memo(&engine);
+
+    let expected = cold_derivation_snapshot(&engine);
+    let recovered = public_call_rel_snapshot(&engine);
+    assert_eq!(
+        recovered, expected,
+        "recovered rels must match a fresh cold derivation"
+    );
+    assert_eq!(
+        recovered, pre,
+        "no input data changed, so recovery must reproduce the baseline"
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }

@@ -399,8 +399,10 @@ impl Engine {
         if owns_transaction {
             self.db.begin_immediate()?;
         }
+        let mut rerun_names: Vec<&'static str> = Vec::new();
         let result: Result<Vec<&'static str>> = (|| {
             let deltas = router.react_deltas(&self.db, changed)?;
+            rerun_names = deltas.iter().map(|(name, _)| *name).collect();
             let mut rerun = Vec::with_capacity(deltas.len());
             for (name, delta) in &deltas {
                 // Generic render: the family declares its output columns, so a
@@ -420,6 +422,13 @@ impl Engine {
             }
             Ok(rerun)
         })();
+        if result.is_err() {
+            // Render failed (or the transaction rolled back). The memo already
+            // holds the post-derive rows for every family react_deltas reran,
+            // but the public rels do not match. Force a cold reload on the next
+            // flip so we converge instead of diffing against a stale memo.
+            router.forget(&rerun_names);
+        }
         if owns_transaction {
             match &result {
                 Ok(_) => self.db.commit()?,

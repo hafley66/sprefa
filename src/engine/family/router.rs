@@ -105,6 +105,11 @@ impl<'f> FamilyRouter<'f> {
         changed: &HashSet<&'static str>,
     ) -> Result<Vec<(&'static str, RowDelta)>> {
         let mut deltas = Vec::new();
+        // Stage memo updates until every family derives successfully. A
+        // mid-loop derive failure must not leave self.memo partially updated,
+        // or later flips would reconcile against a memo that never matched the
+        // table.
+        let mut staged: Vec<(&'static str, FamilyMemo)> = Vec::new();
         for family in &self.families {
             let name = family.name();
             let affected = match self.memo.get(name) {
@@ -117,8 +122,11 @@ impl<'f> FamilyRouter<'f> {
             let prev = self.memo.get(name).map(|memo| memo.rows.clone()).unwrap_or_default();
             let (rows, deps) = derive_family(db, *family)?;
             let delta = reconcile(&prev, rows.clone());
-            self.memo.insert(name, FamilyMemo { rows, rels: rel_footprint(&deps) });
+            staged.push((name, FamilyMemo { rows, rels: rel_footprint(&deps) }));
             deltas.push((name, delta));
+        }
+        for (name, memo) in staged {
+            self.memo.insert(name, memo);
         }
         Ok(deltas)
     }
@@ -127,6 +135,16 @@ impl<'f> FamilyRouter<'f> {
     /// `None` if it was never derived.
     pub(crate) fn rows(&self, name: &str) -> Option<&[OutRow]> {
         self.memo.get(name).map(|m| m.rows.as_slice())
+    }
+
+    /// Drop the memo for the given family names. Used after a render failure so
+    /// the next flip cold-reloads those families from a fresh derivation rather
+    /// than reconciling against a memo that no longer matches the rolled-back
+    /// table.
+    pub(crate) fn forget(&mut self, names: &[&'static str]) {
+        for name in names {
+            self.memo.remove(name);
+        }
     }
 
     /// The registered family with this name, so the render can read its
