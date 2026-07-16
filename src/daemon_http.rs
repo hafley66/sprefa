@@ -75,9 +75,19 @@ pub fn serve(daemon: Arc<Daemon>, build_id: &str) -> Result<()> {
     let pid = std::process::id();
 
     let info = json!({ "port": port, "pid": pid, "build_id": build_id });
-    std::fs::write(http_json_path(), serde_json::to_string(&info)?)
-        .with_context(|| format!("write {}", http_json_path().display()))?;
-    eprintln!("[daemon] http listening on http://127.0.0.1:{port} ({})", http_json_path().display());
+    // Publish atomically: write a sibling `.tmp` then rename over `http.json`.
+    // A bare `fs::write` truncates-then-writes in place, so a reader that opens
+    // the file between truncate and write sees an empty/partial doc (the
+    // `http_json_published_then_removed_on_stop` it-test flaked on exactly that
+    // race). `rename` on the same filesystem is atomic: a reader sees either the
+    // old file or the fully-written new one, never a torn intermediate.
+    let path = http_json_path();
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string(&info)?)
+        .with_context(|| format!("write {}", tmp.display()))?;
+    std::fs::rename(&tmp, &path)
+        .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
+    tracing::info!("[daemon] http listening on http://127.0.0.1:{port} ({})", http_json_path().display());
 
     std::thread::Builder::new()
         .name("dl-http-accept".into())
@@ -101,7 +111,7 @@ fn accept_loop(daemon: Arc<Daemon>, server: tiny_http::Server) {
             .spawn(move || handle_http(d, request))
             .is_err()
         {
-            eprintln!("[daemon] http thread spawn failed for request {next_id}");
+            tracing::error!("[daemon] http thread spawn failed for request {next_id}");
         }
     }
 }
@@ -124,7 +134,7 @@ fn handle_http(daemon: Arc<Daemon>, mut request: tiny_http::Request) {
         .with_status_code(status)
         .with_header(json_content_type());
     if let Err(e) = request.respond(response) {
-        eprintln!("[daemon] http respond failed: {e}");
+        tracing::warn!("[daemon] http respond failed: {e}");
     }
 }
 
