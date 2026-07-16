@@ -61,6 +61,18 @@ CREATE TABLE IF NOT EXISTS _call_def_bucket (
     PRIMARY KEY(repo_sid, rev_sid, name_sid)
 ) WITHOUT ROWID;
 
+-- Owned def-name store: the (qualified sym, bare name) pairs the `call_name`
+-- family projects. Rewritten only on a full refresh (defs change together);
+-- an owner/site delta requires the def set unchanged, so it never touches this
+-- table. That disjointness is the point — a site-only delta leaves _call_def
+-- untouched, so the `CallName` family's rel footprint ({_call_def}) misses the
+-- delta's changed-set and the router skips it. See src/engine/family/call_name.rs.
+CREATE TABLE IF NOT EXISTS _call_def (
+    sym_sid INTEGER NOT NULL REFERENCES _strings(id),
+    name_sid INTEGER NOT NULL REFERENCES _strings(id),
+    PRIMARY KEY(sym_sid, name_sid)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS _call_delta_marker (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
     schema_version INTEGER NOT NULL,
@@ -185,6 +197,7 @@ fn persist_sqlite_call_family(db: &Db, write: CallFamilyWrite<'_>) -> Result<()>
             write.revs,
         )?;
         Storage::reload_rel(db, &tbl("call_name"), &["sym", "name"], write.name_rows)?;
+        replace_sqlite_call_def(db, write.name_rows)?;
         Storage::reload_rel(db, &tbl("call_kind"), &["fn", "kind"], write.kind_rows)?;
         rebuild_sqlite_legacy_call_rels(db)?;
         replace_sqlite_call_baseline(
@@ -797,6 +810,36 @@ fn replace_sqlite_call_revs(
     Ok(())
 }
 
+/// Rebuild the owned `_call_def` name store from the encoded `call_name` rows
+/// (already interned to `(sym_sid, name_sid)` cells by `encode_rel_rows`). The
+/// `CallName` family reads this table; keeping it distinct here mirrors the
+/// `call_name` rel's PK dedup. A full refresh rewrites it wholesale; owner/site
+/// deltas leave it alone (defs unchanged), which is what lets the router skip
+/// the family.
+fn replace_sqlite_call_def(db: &Db, name_rows: &[Vec<Value>]) -> Result<()> {
+    Storage::execute(db, "DELETE FROM _call_def")?;
+    let mut sink = SymSink::new();
+    let mut seen: std::collections::HashSet<(i64, i64)> = std::collections::HashSet::new();
+    let mut rows: Vec<Vec<Value>> = Vec::with_capacity(name_rows.len());
+    let sid = |sink: &mut SymSink, cell: &Value| -> i64 {
+        match cell {
+            Value::Int(n) => *n,
+            Value::Text(text) => sink.sym(text).cell(),
+            _ => 0,
+        }
+    };
+    for row in name_rows {
+        let sym_sid = sid(&mut sink, &row[0]);
+        let name_sid = sid(&mut sink, &row[1]);
+        if seen.insert((sym_sid, name_sid)) {
+            rows.push(vec![Value::Int(sym_sid), Value::Int(name_sid)]);
+        }
+    }
+    Storage::flush_syms(db, &mut sink)?;
+    Storage::insert_rows(db, "_call_def", &["sym_sid", "name_sid"], &rows)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
@@ -1201,6 +1244,7 @@ mod tests {
             "_call_resolution",
             "_call_edge_support",
             "_call_def_bucket",
+            "_call_def",
             "_call_delta_marker",
         ];
         for table in tables {
@@ -1238,6 +1282,7 @@ mod tests {
             "_call_resolution",
             "_call_edge_support",
             "_call_def_bucket",
+            "_call_def",
         ] {
             let columns = table_info(&db, table);
             let foreign_keys = foreign_keys(&db, table);
@@ -1258,6 +1303,7 @@ mod tests {
             ("_call_resolution", 3),
             ("_call_edge_support", 4),
             ("_call_def_bucket", 3),
+            ("_call_def", 2),
         ] {
             let sql: String = db.query_row(
                 "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
@@ -1463,7 +1509,11 @@ mod tests {
         // live, minus the Engine (this rail owns a raw Db).
         let mut router = FamilyRouter::new(call_families());
         let rerun = router.cold(&db).unwrap();
-        assert_eq!(rerun, vec!["call_site", "call_edge"], "cold derives both families");
+        assert_eq!(
+            rerun,
+            vec!["call_site", "call_edge", "call_name"],
+            "cold derives every hosted family",
+        );
         db.reload_rel(
             &tbl("call_site"),
             &["repo", "caller", "callee", "file", "line"],

@@ -48,8 +48,12 @@ impl Engine {
         let roots = self.repo_roots();
         let froot = roots.get(repo).map(|root| root.as_path()).unwrap_or(&self.root);
         let key = (repo.clone(), path.clone(), fact_digest.clone());
-        let (rid, facts) = if let Some((rid, facts)) = self.call_facts_cache.borrow().get(&key) {
-            (rid.clone(), facts.clone())
+        // Clone out of the cache in its own statement so the immutable borrow is
+        // released before the miss branch takes `borrow_mut` (an `if let`
+        // scrutinee holds its temporary across the whole `else`).
+        let cached = self.call_facts_cache.borrow().get(&key).cloned();
+        let (rid, facts) = if let Some((rid, facts)) = cached {
+            (rid, facts)
         } else {
             let Some(lang) = typegraph::type_langs().iter().find(|lang| lang.matches(path)) else {
                 return Ok(CallPathRefreshOutcome::Unsupported("call-language-unsupported"));
@@ -106,13 +110,15 @@ impl Engine {
                 // re-derive the public rels from the _call_* tables the delta
                 // just mutated. An owner delta rewrites the owner's sites and
                 // their resolutions, touching _call_owner/_call_raw_site/
-                // _call_resolution — every call family reads _call_raw_site, so
-                // both rerun (the router skips only families whose inputs a
-                // delta leaves untouched). Overwrites the storage reproject that
-                // apply_call_owner_delta already ran; the two are byte-identical
-                // by construction (the family projection rails).
+                // _call_resolution but NOT _call_def (the def set is unchanged —
+                // the delta bails otherwise). Passing that exact footprint reruns
+                // CallSite/CallEdge (both read _call_raw_site) and SKIPS CallName
+                // (footprint {_call_def}), so its call_name rows are kept from the
+                // memo instead of rederived — the live skip. The reran families
+                // overwrite the storage reproject apply_call_owner_delta already
+                // ran; the two are byte-identical (the family projection rails).
                 if family_flip_enabled() {
-                    self.flip_call_rels_via_router(&crate::engine::family::call_input_rels())?;
+                    self.flip_call_rels_via_router(&crate::engine::family::call_owner_delta_rels())?;
                 }
                 Ok(CallPathRefreshOutcome::Applied)
             }
@@ -439,6 +445,9 @@ impl Engine {
                 }
                 "call_edge" => {
                     self.db.reload_rel(&tbl("call_edge"), &["caller", "callee", "kind"], rows)?;
+                }
+                "call_name" => {
+                    self.db.reload_rel(&tbl("call_name"), &["sym", "name"], rows)?;
                 }
                 other => anyhow::bail!("router produced unrouted family `{other}`"),
             }

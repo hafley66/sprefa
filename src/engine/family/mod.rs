@@ -17,9 +17,11 @@ use crate::db::Db;
 
 pub(crate) mod call_site;
 pub(crate) mod call_edge;
+pub(crate) mod call_name;
 pub(crate) mod router;
 
 pub(crate) use call_edge::CallEdge;
+pub(crate) use call_name::CallName;
 pub(crate) use call_site::CallSite;
 pub(crate) use router::FamilyRouter;
 
@@ -28,18 +30,32 @@ pub(crate) use router::FamilyRouter;
 /// statics are zero-sized.
 static CALL_SITE: CallSite = CallSite;
 static CALL_EDGE: CallEdge = CallEdge;
+static CALL_NAME: CallName = CallName;
 
 /// The families the reactive call-rel flip routes through, in the order the
 /// public rels are written. Declaration order = `react`'s return order.
 pub(crate) fn call_families() -> Vec<&'static dyn Family> {
-    vec![&CALL_SITE, &CALL_EDGE]
+    vec![&CALL_SITE, &CALL_EDGE, &CALL_NAME]
 }
 
-/// The `_call_*` input relations every call family reads on a full refresh —
-/// the changed-set passed to `react` when the whole owned baseline was
-/// rewritten (nothing to skip). A delta path passes the subset it touched.
+/// Every `_call_*` input relation any call family reads — the changed-set
+/// passed to `react` on a full refresh, when the whole owned baseline was
+/// rewritten (nothing to skip). A delta path passes only the subset it touched.
 pub(crate) fn call_input_rels() -> std::collections::HashSet<&'static str> {
-    ["_call_owner", "_call_raw_site", "_call_resolution"].into_iter().collect()
+    ["_call_owner", "_call_raw_site", "_call_resolution", "_call_def"]
+        .into_iter()
+        .collect()
+}
+
+/// The exact write footprint of an owner/site delta (`apply_call_owner_delta`):
+/// it rewrites the owner row + its sites + their resolutions, but leaves
+/// `_call_def` alone because the def set is unchanged (the delta bails
+/// otherwise). Feeding this to `react` reruns `CallSite`/`CallEdge` and SKIPS
+/// `CallName`, whose footprint is `{_call_def}` — the live, non-latent skip.
+pub(crate) fn call_owner_delta_rels() -> std::collections::HashSet<&'static str> {
+    ["_call_owner", "_call_raw_site", "_call_resolution"]
+        .into_iter()
+        .collect()
 }
 
 /// A captured input dependency: the relation read plus the stable integer
@@ -151,6 +167,16 @@ fn gamma() {
 }
 ";
 
+    /// `DL_FAMILY_CALL` is process-global; tests that toggle it must not run
+    /// concurrently or one test's `remove_var` clears the flag mid-flight in
+    /// another. Serialize them on this lock (poison-tolerant: a failing test
+    /// still hands the flag off cleanly).
+    static FLAG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn lock_flag() -> std::sync::MutexGuard<'static, ()> {
+        FLAG_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     fn fresh_engine(root: &PathBuf) -> Engine {
         let mut engine = Engine::new(db::open(None).unwrap(), root.clone());
         engine.ensure_meta().unwrap();
@@ -165,6 +191,55 @@ fn gamma() {
             )
             .unwrap();
         engine
+    }
+
+    /// A fresh engine rooted at `dir` (which must already hold `lib.rs`) with a
+    /// `_file` row carrying `hash` as its fact digest. The delta path reads the
+    /// `hash` column as the owner's fact digest, so a caller drives a real
+    /// working-tree edit by rewriting `lib.rs` on disk and bumping this column.
+    fn engine_at(dir: &PathBuf, hash: &str) -> Engine {
+        let mut engine = Engine::new(db::open(None).unwrap(), dir.clone());
+        engine.ensure_meta().unwrap();
+        engine.declare_builtins().unwrap();
+        engine
+            .db
+            .conn()
+            .execute(
+                "INSERT INTO _file (repo, path, rev, hash, mtime, size) \
+                 VALUES ('', 'lib.rs', 'WORK', ?1, 0, 0)",
+                [hash],
+            )
+            .unwrap();
+        engine
+    }
+
+    fn names(engine: &Engine) -> Vec<[i64; 2]> {
+        let mut s = engine
+            .db
+            .conn()
+            .prepare("SELECT sym, name FROM rel_call_name")
+            .unwrap();
+        let mut v: Vec<[i64; 2]> = s
+            .query_map([], |row| Ok([row.get(0)?, row.get(1)?]))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        v.sort();
+        v
+    }
+
+    fn make_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "sprf-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
     }
 
     fn snapshot(engine: &Engine) -> (Vec<[i64; 5]>, Vec<[i64; 3]>) {
@@ -208,6 +283,7 @@ fn gamma() {
     /// `rel_call_site` + `rel_call_edge` must be identical.
     #[test]
     fn family_flag_matches_legacy_on_real_extraction() {
+        let _flag = lock_flag();
         let dir = std::env::temp_dir().join(format!(
             "sprf-family-flip-{}-{}",
             std::process::id(),
@@ -270,5 +346,117 @@ fn gamma() {
         let (after_site, after_edge) = snapshot(&b);
         assert_eq!(after_site, legacy_site, "skipped call_site must be untouched");
         assert_eq!(after_edge, legacy_edge, "reran call_edge must stay correct");
+    }
+
+    /// The live-skip proof on a REAL delta (not a hand-passed changed-set): a
+    /// working-tree edit that removes ONE call site while leaving every
+    /// definition intact. That is exactly the shape the owner-delta fast path
+    /// accepts (`apply_call_owner_delta` requires the def digest unchanged), and
+    /// it rewrites `_call_owner`/`_call_raw_site`/`_call_resolution` but never
+    /// `_call_def`. So the router, fed the delta's real footprint, reruns
+    /// `CallSite`/`CallEdge` and SKIPS `CallName` — the skip pays off in
+    /// production, not just in a synthetic changed-set.
+    #[test]
+    fn family_delta_skips_call_name_on_site_only_change() {
+        use crate::rels::PathRefreshContext;
+        let _flag = lock_flag();
+
+        // v1 -> v2 retargets gamma's second call (`alpha()` -> `beta()`). The
+        // edit is line-count preserving, so every def's (line, end) span — hence
+        // the owner def digest — is byte-identical and the owner-delta fast path
+        // accepts it. call_site/call_edge lose the gamma->alpha tuple; call_name
+        // (the def-name projection) is unchanged.
+        const V1: &str = "\
+fn alpha() {}
+fn beta() {
+    alpha();
+}
+fn gamma() {
+    beta();
+    alpha();
+}
+";
+        const V2: &str = "\
+fn alpha() {}
+fn beta() {
+    alpha();
+}
+fn gamma() {
+    beta();
+    beta();
+}
+";
+
+        // Legacy expectation for v2: a flag-OFF engine that extracts v2 directly.
+        // Compute it BEFORE touching the process-global flag.
+        let legacy_dir = make_dir("family-delta-legacy");
+        fs::write(legacy_dir.join("lib.rs"), V2).unwrap();
+        let mut legacy = engine_at(&legacy_dir, "v2");
+        legacy.refresh_call_rels().unwrap();
+        let (legacy_site_v2, legacy_edge_v2) = snapshot(&legacy);
+        let legacy_name_v2 = names(&legacy);
+        let _ = fs::remove_dir_all(&legacy_dir);
+        assert!(!legacy_name_v2.is_empty(), "fixture: v2 has def names");
+
+        // Engine B, flag ON: full refresh over v1 builds the baseline AND the
+        // persistent router memo (call_site/call_edge/call_name all cold-derived).
+        let dir = make_dir("family-delta");
+        fs::write(dir.join("lib.rs"), V1).unwrap();
+        std::env::set_var("DL_FAMILY_CALL", "1");
+        let mut b = engine_at(&dir, "v1");
+        b.refresh_call_rels().unwrap();
+        let (site_v1, _edge_v1) = snapshot(&b);
+        let name_v1 = names(&b);
+        assert_eq!(name_v1, legacy_name_v2, "defs unchanged across v1/v2");
+        assert!(!name_v1.is_empty(), "fixture: v1 has def names");
+
+        // Real working-tree edit: rewrite the file and bump its fact digest.
+        fs::write(dir.join("lib.rs"), V2).unwrap();
+        b.db
+            .conn()
+            .execute("UPDATE _file SET hash = 'v2' WHERE path = 'lib.rs'", [])
+            .unwrap();
+
+        // Drive the genuine incremental path.
+        let mut changed_paths = std::collections::HashSet::new();
+        changed_paths.insert("lib.rs".to_string());
+        let context = PathRefreshContext {
+            changed_paths: &changed_paths,
+            module_dependency_changed: false,
+            module_full_refresh: false,
+        };
+        let outcome = b.refresh_call_rels_delta(&context).unwrap();
+        assert_eq!(
+            outcome,
+            crate::rels::CallPathRefreshOutcome::Applied,
+            "site-only delta must take the owner-delta fast path",
+        );
+
+        // (iii) the reran families are byte-identical to a legacy v2 extraction.
+        let (site_after, edge_after) = snapshot(&b);
+        assert_eq!(site_after, legacy_site_v2, "reran call_site must match legacy v2");
+        assert_eq!(edge_after, legacy_edge_v2, "reran call_edge must match legacy v2");
+        // The change was real: the gamma->alpha site is gone.
+        assert_ne!(site_after, site_v1, "delta must have altered call_site");
+
+        // (ii) the SKIPPED family's public rel is untouched by the delta: the
+        // owner-delta reproject and the router both leave call_name alone, so it
+        // still holds the v1 rows (equal to v2, since defs are identical).
+        assert_eq!(names(&b), name_v1, "skipped call_name rows must be unchanged");
+
+        // (i) the skip itself: replay the router with the delta's real footprint
+        // (`react` is a pure function of memo footprints + changed-set, so the
+        // replay's rerun set equals what the live delta just used). call_name is
+        // absent -> CallName was skipped, not rerun-to-the-same-rows.
+        let rerun = b
+            .flip_call_rels_via_router(&crate::engine::family::call_owner_delta_rels())
+            .unwrap();
+        std::env::remove_var("DL_FAMILY_CALL");
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(
+            rerun,
+            vec!["call_site", "call_edge"],
+            "owner-delta footprint must rerun call_site/call_edge and SKIP call_name",
+        );
     }
 }
