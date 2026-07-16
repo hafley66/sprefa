@@ -1,5 +1,12 @@
 # Capstone cutover — families as sole writer + live react_deltas render
 
+**Landed** (all phases): P0 `4eb5694a`, P1+P2 `35078446`, P3 `c8a3f11c`, P4
+`b690b8c1`, P5 `3ef2c1da`, P6 cleanup (this sweep). P6 found one dead-code
+survivor from P4's flag-toggle test deletion (`CallName` re-export in
+`src/engine/family/mod.rs`, removed) and no legacy/gate doc residue or CI
+matrix to collapse (CI already single-state, `call_golden.rs` already
+collapsed in P4).
+
 Planned by a Fable consult 2026-07-16. Makes the extraction families the SOLE
 writer of the public call rels and flips the live render from full-reload
 (`router.react`) to incremental retraction (`router.react_deltas`, built +

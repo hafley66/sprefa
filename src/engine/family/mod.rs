@@ -25,7 +25,6 @@ pub(crate) mod call_name;
 pub(crate) mod router;
 
 pub(crate) use call_edge::CallEdge;
-pub(crate) use call_name::CallName;
 pub(crate) use call_site::CallSite;
 pub(crate) use router::FamilyRouter;
 
