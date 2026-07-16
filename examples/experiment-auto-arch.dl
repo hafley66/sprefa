@@ -1,0 +1,85 @@
+# experiment-auto-arch.dl — test graph-topology zonings against manual ARCH markers.
+# Ground truth: the 11 `// ARCH {"url":"..."}` markers in src/.
+# Strategies: A (path-echo), B (fan-class), C (dominant-callee-dir), D (entry-depth).
+
+use "std/arch.dl".
+
+rel src(f: file).
+src(f) <- scan("WORK", "src/**/*.rs", f, rev).
+
+# ── ground truth ──────────────────────────────────────────────────────────────
+rel truth(f: file, url: text).
+truth(f, url) <- arch_node(f, _, url).
+
+# ── call-graph features ──────────────────────────────────────────────────────
+rel calls_into(caller_file: file, callee_file: file).
+calls_into(cf, cef) <-
+    call_edge(caller, callee, _),
+    type_entity(_, caller, _, _, _, cf, _),
+    type_entity(_, callee, _, _, _, cef, _),
+    cf != cef.
+
+rel fan_in_file(f: file, n: int).
+fan_in_file(f, count(cf)) <- calls_into(cf, f).
+
+rel fan_out_file(f: file, n: int).
+fan_out_file(f, count(cef)) <- calls_into(f, cef).
+
+# ── Strategy A: path-echo ────────────────────────────────────────────────────
+rel zone_path(f: file, zone: text).
+zone_path(f, "root") <- truth(f, _), stripped = replace_re(f, r"/[^/]*$", ""), stripped = f.
+zone_path(f, zone) <- truth(f, _), stripped = replace_re(f, r"/[^/]*$", ""), stripped != f,
+    zone = replace_re(stripped, r"^src/", "").
+
+# ── Strategy B: fan-class (hub/sink/balanced) ────────────────────────────────
+rel zone_fan(f: file, zone: text).
+zone_fan(f, "hub")      <- truth(f, _), fan_in_file(f, fin), fan_out_file(f, fout), fin > fout * 2, fin > 5.
+zone_fan(f, "sink")     <- truth(f, _), fan_in_file(f, fin), fan_out_file(f, fout), fout > fin * 2, fout > 5.
+zone_fan(f, "balanced") <- truth(f, _), fan_in_file(f, fin), fan_out_file(f, fout),
+    fin <= fout * 2, fout <= fin * 2.
+
+# ── Strategy C: dominant callee dir ──────────────────────────────────────────
+rel callee_dir_count(caller: file, dir: text, n: int).
+callee_dir_count(cf, dir, count(cef)) <-
+    calls_into(cf, cef),
+    dir = replace_re(cef, r"/[^/]*$", "").
+
+rel dominated(f: file, dir: text, n: int).
+dominated(f, dir, n) <-
+    truth(f, _),
+    callee_dir_count(f, dir, n),
+    callee_dir_count(f, dir2, n2),
+    dir2 != dir, n2 > n.
+
+rel zone_dominant(f: file, zone: text).
+zone_dominant(f, dir) <- truth(f, _), callee_dir_count(f, dir, n), !dominated(f, dir, n).
+
+# ── Strategy D: entry-depth from main (BFS) ──────────────────────────────────
+rel reach_file(f: file, d: int).
+reach_file(f, 0) <- scan("WORK", "src/main.rs", f, rev).
+reach_file(cef, d0 + 1) <- reach_file(cf, d0), calls_into(cf, cef), d0 < 20.
+
+rel reach_min(f: file, d: int) key(f) merge(MinBy(d)).
+reach_min(f, d) <- reach_file(f, d).
+
+rel zone_depth(f: file, zone: text).
+zone_depth(f, "L0")  <- truth(f, _), reach_min(f, 0).
+zone_depth(f, "L1")  <- truth(f, _), reach_min(f, 1).
+zone_depth(f, "L2")  <- truth(f, _), reach_min(f, 2).
+zone_depth(f, "L3")  <- truth(f, _), reach_min(f, 3).
+zone_depth(f, "L4+") <- truth(f, _), reach_min(f, d), d >= 4.
+zone_depth(f, "unreachable") <- truth(f, _), !reach_min(f, _).
+
+# ── accuracy: does the strategy zone match the truth URL? ────────────────────
+# For path-echo, a match means the URL starts with the predicted zone.
+rel path_match(f: file).
+path_match(f) <- truth(f, url), zone_path(f, zone), url =~ /^zone/.
+
+# ── report ───────────────────────────────────────────────────────────────────
+? truth(f, url).
+? fan_in_file(f, fin).
+? fan_out_file(f, fout).
+? zone_path(f, zone).
+? zone_fan(f, zone).
+? zone_dominant(f, zone).
+? zone_depth(f, zone).

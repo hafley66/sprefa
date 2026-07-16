@@ -1,0 +1,91 @@
+# graph-measure.dl — objective graph measurements over sprefa's own call graph.
+
+rel src(f: file).
+src(f) <- scan("WORK", "src/**/*.rs", f, rev).
+
+# ── resolved sym-to-sym edges for closure/scc ────────────────────────────────
+rel edge(a: text, b: text).
+edge(caller, callee) <- call_edge(caller, callee, _).
+
+# ── resolved file-to-file edges ──────────────────────────────────────────────
+rel calls_into(caller_file: file, callee_file: file).
+calls_into(cf, cef) <-
+    call_edge(caller, callee, _),
+    type_entity(_, caller, _, _, _, cf, _),
+    type_entity(_, callee, _, _, _, cef, _),
+    cf != cef.
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 1. CYCLES — SCC membership from the sym-level call graph
+# ═══════════════════════════════════════════════════════════════════════════════
+
+rel cluster(rep: text, member: text).
+cluster(rep, member) <- scc(edge).
+
+rel cluster_size(rep: text, n: int).
+cluster_size(rep, count(member)) <- cluster(rep, member).
+
+# cycles = clusters with >1 member
+rel in_cycle(sym: text, rep: text, size: int).
+in_cycle(member, rep, n) <- cluster(rep, member), cluster_size(rep, n), n > 1.
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2. EDGE MULTIPLICITY — how many call sites bind A→B
+# ═══════════════════════════════════════════════════════════════════════════════
+
+rel call_weight(caller: text, callee: text, n: int).
+call_weight(a, b, count(line)) <- call_site(_, a, b, _, line).
+
+rel heavy_edge(caller: text, callee: text, n: int).
+heavy_edge(a, b, n) <- call_weight(a, b, n), n > 5.
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 3. MUTUAL COUPLING — A calls B AND B calls A
+# ═══════════════════════════════════════════════════════════════════════════════
+
+rel mutual(a: text, b: text, w_ab: int, w_ba: int).
+mutual(a, b, wab, wba) <- call_weight(a, b, wab), call_weight(b, a, wba).
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 4. JACCARD — how similar are two files' callee sets (percentage)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+rel callee_of(caller: file, callee: file).
+callee_of(cf, cef) <- calls_into(cf, cef).
+
+rel shared_callee(a: file, b: file, c: file).
+shared_callee(a, b, c) <- callee_of(a, c), callee_of(b, c), a < b.
+
+rel shared_count(a: file, b: file, n: int).
+shared_count(a, b, count(c)) <- shared_callee(a, b, c).
+
+rel callee_set_size(f: file, n: int).
+callee_set_size(f, count(c)) <- callee_of(f, c).
+
+rel union_size(a: file, b: file, u: int).
+union_size(a, b, ua + ub - sh) <-
+    callee_set_size(a, ua), callee_set_size(b, ub), shared_count(a, b, sh).
+
+rel jaccard(a: file, b: file, pct: int).
+jaccard(a, b, sh * 100 / u) <-
+    shared_count(a, b, sh), union_size(a, b, u), u > 0, sh * 100 / u >= 40.
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 5. DEGREE — total attachment (fan-in + fan-out)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+rel fan_in_file(f: file, n: int).
+fan_in_file(f, count(cf)) <- calls_into(cf, f).
+
+rel fan_out_file(f: file, n: int).
+fan_out_file(f, count(cef)) <- calls_into(f, cef).
+
+rel degree(f: file, total: int).
+degree(f, fin + fout) <- fan_in_file(f, fin), fan_out_file(f, fout).
+
+# ── queries ──────────────────────────────────────────────────────────────────
+? in_cycle(sym, rep, size).
+? heavy_edge(caller, callee, n).
+? mutual(a, b, w_ab, w_ba).
+? jaccard(a, b, pct).
+? degree(f, total).

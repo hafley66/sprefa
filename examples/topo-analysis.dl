@@ -1,0 +1,71 @@
+# topo.dl — topology analysis from manually-seeded entry points.
+# Pure dl over the built-in call/module graph. No LLM, just graph stats.
+#
+# The loop: human seeds entry points (test configs, main, etc.), the engine
+# enumerates reachability + per-node stats, and the resulting clusters SUGGEST
+# zone boundaries (which then become ARCH markers). Iterate: adjust seeds,
+# rerun, the zones converge.
+
+# ── seeds (mark entry points; corpus scan is separate) ──────────────────────
+rel entry_file(f: file).
+entry_file(f) <- scan("WORK", "**/main.rs", f, rev).
+entry_file(f) <- scan("WORK", "**/vitest.config.*", f, rev).
+entry_file(f) <- scan("WORK", "src/cli/mod.rs", f, rev).
+
+# ── corpus: all source files feed the call/module graph ─────────────────────
+rel src(f: file).
+src(f) <- scan("WORK", "src/**/*.rs", f, rev).
+
+# ── per-file fan-out: distinct callee FILES this file reaches ────────────────
+# call_edge has resolved syms; join each to type_entity for the file.
+rel calls_into(caller_file: file, callee_file: file).
+calls_into(cf, cef) <-
+    call_edge(caller, callee, _),
+    type_entity(_, caller, _, _, _, cf, _),
+    type_entity(_, callee, _, _, _, cef, _),
+    cf != cef.
+
+rel fan_out_file(f: file, n: int).
+fan_out_file(f, count(cef)) <- calls_into(f, cef).
+
+# ── per-file fan-in: distinct caller FILES reaching into this file ───────────
+rel fan_in_file(f: file, n: int).
+fan_in_file(f, count(cf)) <- calls_into(cf, f).
+
+# ── zone candidates: group by top-level directory ────────────────────────────
+rel dir_of(f: file, dir: text).
+dir_of(f, d) <- fan_in_file(f, _),
+    parts = split(f, "/", 0),
+    d = replace_re(f, r"/[^/]*$", "").
+dir_of(f, d) <- fan_out_file(f, _),
+    parts = split(f, "/", 0),
+    d = replace_re(f, r"/[^/]*$", "").
+
+# per-directory aggregate coupling
+rel dir_fan_in(dir: text, n: int).
+dir_fan_in(d, sum(n)) <- fan_in_file(f, n), dir_of(f, d).
+
+rel dir_fan_out(dir: text, n: int).
+dir_fan_out(d, sum(n)) <- fan_out_file(f, n), dir_of(f, d).
+
+# ── hubs: high fan-in relative to fan-out (the "API surface") ────────────────
+rel hub_file(f: file, fin: int, fout: int).
+hub_file(f, fin, fout) <- fan_in_file(f, fin), fan_out_file(f, fout), fin > fout, fin > 3.
+
+# ── sinks: high fan-out, low fan-in (implementation detail) ──────────────────
+rel sink_file(f: file, fin: int, fout: int).
+sink_file(f, fin, fout) <- fan_in_file(f, fin), fan_out_file(f, fout), fout > fin, fout > 3.
+
+# ── cross-directory edges (the coupling graph between zones) ─────────────────
+rel cross_dir(src_dir: text, dst_dir: text, n: int).
+cross_dir(sd, dd, count(cf)) <-
+    calls_into(cf, cef),
+    dir_of(cf, sd), dir_of(cef, dd),
+    sd != dd.
+
+# ── queries ──────────────────────────────────────────────────────────────────
+? hub_file(f, fin, fout).
+? sink_file(f, fin, fout).
+? dir_fan_in(dir, n).
+? dir_fan_out(dir, n).
+? cross_dir(sd, dd, n).
