@@ -61,16 +61,27 @@ CREATE TABLE IF NOT EXISTS _call_def_bucket (
     PRIMARY KEY(repo_sid, rev_sid, name_sid)
 ) WITHOUT ROWID;
 
--- Owned def-name store: the (qualified sym, bare name) pairs the `call_name`
--- family projects. Rewritten only on a full refresh (defs change together);
--- an owner/site delta requires the def set unchanged, so it never touches this
--- table. That disjointness is the point — a site-only delta leaves _call_def
--- untouched, so the `CallName` family's rel footprint ({_call_def}) misses the
--- delta's changed-set and the router skips it. See src/engine/family/call_name.rs.
+-- Owned def-site store: one row per (sym, rev) definition. Carries the bare
+-- name the `call_name` family projects PLUS the full def-site tuple the
+-- `call_def_rev`/`call_def` families project (repo, kind, file, line, end,
+-- rev). Rewritten only on a full refresh (defs change together); an owner/site
+-- delta requires the def set unchanged, so it never touches this table. That
+-- disjointness is the point — a site-only delta leaves _call_def untouched, so
+-- the def families' rel footprint ({_call_def}) misses the delta's changed-set
+-- and the router skips them. See src/engine/family/call_name.rs. PK is
+-- (sym_sid, rev_sid): def_rev_rows is deduped on (repo, sym, rev) upstream and
+-- sym is repo-qualified, so (sym, rev) is unique — no def row is lost.
+-- `end` is a SQL keyword, so it is quoted throughout.
 CREATE TABLE IF NOT EXISTS _call_def (
     sym_sid INTEGER NOT NULL REFERENCES _strings(id),
     name_sid INTEGER NOT NULL REFERENCES _strings(id),
-    PRIMARY KEY(sym_sid, name_sid)
+    repo_sid INTEGER NOT NULL REFERENCES _strings(id),
+    kind_sid INTEGER NOT NULL REFERENCES _strings(id),
+    file_sid INTEGER NOT NULL REFERENCES _strings(id),
+    line INTEGER NOT NULL CHECK(line >= 0),
+    "end" INTEGER NOT NULL CHECK("end" >= 0),
+    rev_sid INTEGER NOT NULL REFERENCES _strings(id),
+    PRIMARY KEY(sym_sid, rev_sid)
 ) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS _call_delta_marker (
@@ -85,7 +96,26 @@ CREATE TABLE IF NOT EXISTS _call_delta_marker (
 "#;
 
 fn ensure_sqlite_call_delta_schema(db: &Db) -> Result<()> {
+    ensure_sqlite_call_def_shape(db)?;
     Storage::execute_batch(db, SQLITE_CALL_DELTA_SCHEMA)
+}
+
+/// Migrate a pre-existing `_call_def` to the 8-col def-site shape. Probes the
+/// live column count; anything other than 8 (the old 2-col name store, or a
+/// partial/absent table) is dropped so the schema batch's
+/// `CREATE TABLE IF NOT EXISTS` rebuilds the 8-col table. Data loss is fine:
+/// `_call_def` is rewritten wholesale on every full refresh, and the delta path
+/// bails via the `schema_version` bump until that rebuild lands.
+fn ensure_sqlite_call_def_shape(db: &Db) -> Result<()> {
+    let col_count: i64 = db.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('_call_def')",
+        [],
+        |row| row.get(0),
+    )?;
+    if col_count != 8 {
+        Storage::execute(db, "DROP TABLE IF EXISTS _call_def")?;
+    }
+    Ok(())
 }
 
 pub(crate) struct CallFamilyWrite<'a> {
@@ -197,7 +227,7 @@ fn persist_sqlite_call_family(db: &Db, write: CallFamilyWrite<'_>) -> Result<()>
             write.revs,
         )?;
         Storage::reload_rel(db, &tbl("call_name"), &["sym", "name"], write.name_rows)?;
-        replace_sqlite_call_def(db, write.name_rows)?;
+        replace_sqlite_call_def(db, write.name_rows, write.def_rev_rows)?;
         Storage::reload_rel(db, &tbl("call_kind"), &["fn", "kind"], write.kind_rows)?;
         rebuild_sqlite_legacy_call_rels(db)?;
         replace_sqlite_call_baseline(
@@ -274,7 +304,7 @@ fn apply_sqlite_call_owner_delta_inner(
     let Some((schema_version, complete, generation, module_digest, scip_digest)) = marker else {
         return Ok(CallDeltaOutcome::Unsupported("call-baseline-incomplete"));
     };
-    if schema_version != 1 {
+    if schema_version != 2 {
         return Ok(CallDeltaOutcome::Unsupported("call-schema-version"));
     }
     if complete != 1 {
@@ -713,7 +743,7 @@ fn insert_sqlite_call_marker(
 ) -> Result<()> {
     let mut statement = db.prepare(
         "INSERT INTO _call_delta_marker(singleton, schema_version, extractor_digest, generation, complete, module_digest, scip_digest) \
-         VALUES (1, 1, ?1, ?2, 1, ?3, ?4)",
+         VALUES (1, 2, ?1, ?2, 1, ?3, ?4)",
     )?;
     statement.execute(rusqlite::params![
         digest.as_slice(),
@@ -810,33 +840,73 @@ fn replace_sqlite_call_revs(
     Ok(())
 }
 
-/// Rebuild the owned `_call_def` name store from the encoded `call_name` rows
-/// (already interned to `(sym_sid, name_sid)` cells by `encode_rel_rows`). The
-/// `CallName` family reads this table; keeping it distinct here mirrors the
-/// `call_name` rel's PK dedup. A full refresh rewrites it wholesale; owner/site
+/// Rebuild the owned 8-col `_call_def` def-site store. Both inputs arrive
+/// already interned by `encode_rel_rows` (all cells are `Value::Int` sids):
+/// `def_rev_rows` carries the def-site tuple (cols repo, sym, kind, file, line,
+/// end, rev) that `CallDefRev`/`CallDef` project; `name_rows` carries the bare
+/// name (cols sym, name) that `CallName` projects. Populated by joining each
+/// def_rev row's `sym_sid` against a `sym_sid -> name_sid` map built from
+/// `name_rows`. No SymSink: nothing new to intern.
+///
+/// PK is (sym_sid, rev_sid) — `def_rev_rows` is deduped on (repo, sym, rev)
+/// upstream and sym is repo-qualified, so (sym, rev) is unique and no def row is
+/// silently dropped. A full refresh rewrites the table wholesale; owner/site
 /// deltas leave it alone (defs unchanged), which is what lets the router skip
-/// the family.
-fn replace_sqlite_call_def(db: &Db, name_rows: &[Vec<Value>]) -> Result<()> {
+/// the def families.
+fn replace_sqlite_call_def(
+    db: &Db,
+    name_rows: &[Vec<Value>],
+    def_rev_rows: &[Vec<Value>],
+) -> Result<()> {
     Storage::execute(db, "DELETE FROM _call_def")?;
-    let mut sink = SymSink::new();
-    let mut seen: std::collections::HashSet<(i64, i64)> = std::collections::HashSet::new();
-    let mut rows: Vec<Vec<Value>> = Vec::with_capacity(name_rows.len());
-    let sid = |sink: &mut SymSink, cell: &Value| -> i64 {
-        match cell {
+    let cell = |value: &Value| -> i64 {
+        match value {
             Value::Int(n) => *n,
-            Value::Text(text) => sink.sym(text).cell(),
             _ => 0,
         }
     };
+    // sym_sid -> name_sid. name_rows are (sym, name), already interned.
+    let mut name_by_sym: std::collections::HashMap<i64, i64> =
+        std::collections::HashMap::with_capacity(name_rows.len());
     for row in name_rows {
-        let sym_sid = sid(&mut sink, &row[0]);
-        let name_sid = sid(&mut sink, &row[1]);
-        if seen.insert((sym_sid, name_sid)) {
-            rows.push(vec![Value::Int(sym_sid), Value::Int(name_sid)]);
+        name_by_sym.insert(cell(&row[0]), cell(&row[1]));
+    }
+    let mut seen: std::collections::HashSet<(i64, i64)> = std::collections::HashSet::new();
+    let mut rows: Vec<Vec<Value>> = Vec::with_capacity(def_rev_rows.len());
+    for row in def_rev_rows {
+        // def_rev cols: repo, sym, kind, file, line, end, rev.
+        let repo_sid = cell(&row[0]);
+        let sym_sid = cell(&row[1]);
+        let kind_sid = cell(&row[2]);
+        let file_sid = cell(&row[3]);
+        let line = cell(&row[4]);
+        let end = cell(&row[5]);
+        let rev_sid = cell(&row[6]);
+        // A def with no matching name row falls back to the sym as its own name
+        // (a valid interned sid, so the FK holds) rather than dropping the row.
+        let name_sid = name_by_sym.get(&sym_sid).copied().unwrap_or(sym_sid);
+        if seen.insert((sym_sid, rev_sid)) {
+            rows.push(vec![
+                Value::Int(sym_sid),
+                Value::Int(name_sid),
+                Value::Int(repo_sid),
+                Value::Int(kind_sid),
+                Value::Int(file_sid),
+                Value::Int(line),
+                Value::Int(end),
+                Value::Int(rev_sid),
+            ]);
         }
     }
-    Storage::flush_syms(db, &mut sink)?;
-    Storage::insert_rows(db, "_call_def", &["sym_sid", "name_sid"], &rows)?;
+    // `insert_rows` quotes each column name, so `end` is passed bare here (it
+    // becomes `"end"` in the INSERT) — unlike Ctx::scan, which needs it
+    // pre-quoted.
+    Storage::insert_rows(
+        db,
+        "_call_def",
+        &["sym_sid", "name_sid", "repo_sid", "kind_sid", "file_sid", "line", "end", "rev_sid"],
+        &rows,
+    )?;
     Ok(())
 }
 
@@ -1005,6 +1075,57 @@ mod tests {
              INSERT OR IGNORE INTO rel_call_edge_rev SELECT caller_sid, callee_sid, kind_sid, rev_sid FROM _call_edge_support; \
              INSERT OR IGNORE INTO rel_call_edge SELECT DISTINCT caller_sid, callee_sid, kind_sid FROM _call_edge_support;",
         ).unwrap();
+
+        // Seed the 8-col `_call_def` def-site store plus its legacy public twins
+        // (`rel_call_def_rev` / `rel_call_def`) so the CallDefRev/CallDef
+        // families derive non-vacuously and the flip-parity rail has a legacy
+        // oracle to diff against. `def_rev_rows`/`name_rows` are interned exactly
+        // as the extract path produces them; `replace_sqlite_call_def` populates
+        // `_call_def`, and the two INSERT paths mirror the legacy persist
+        // (`replace_sqlite_call_revs` for the rev twin + the rev-deduped union in
+        // `rebuild_sqlite_legacy_call_rels`).
+        {
+            // (sym, name, kind, file, line, end, rev); one def present at two
+            // revs so CallDef collapses it while CallDefRev keeps both rows.
+            let defs = [
+                ("repo::run", "run", "fn", "a.rs", 1u32, 12u32, "WORK"),
+                ("repo::target", "target", "fn", "a.rs", 5, 8, "WORK"),
+                ("repo::other", "other", "fn", "b.rs", 3, 9, "WORK"),
+                ("repo::target", "target", "fn", "a.rs", 5, 8, "HEAD"),
+            ];
+            let mut sink = SymSink::new();
+            let repo_cell = sink.sym("repo").cell();
+            let mut def_rev_rows: Vec<Vec<Value>> = Vec::new();
+            let mut name_rows: Vec<Vec<Value>> = Vec::new();
+            for (sym, name, kind, file, line, end, rev) in defs {
+                let sym_cell = sink.sym(sym).cell();
+                def_rev_rows.push(vec![
+                    Value::Int(repo_cell),
+                    Value::Int(sym_cell),
+                    Value::Int(sink.sym(kind).cell()),
+                    Value::Int(sink.sym(file).cell()),
+                    Value::Int(line as i64),
+                    Value::Int(end as i64),
+                    Value::Int(sink.sym(rev).cell()),
+                ]);
+                name_rows.push(vec![Value::Int(sym_cell), Value::Int(sink.sym(name).cell())]);
+            }
+            Storage::flush_syms(&db, &mut sink).unwrap();
+            replace_sqlite_call_def(&db, &name_rows, &def_rev_rows).unwrap();
+            db.execute_batch(
+                "CREATE TABLE rel_call_def_rev(repo INTEGER, sym INTEGER, kind INTEGER, file INTEGER, line INTEGER, \"end\" INTEGER, rev INTEGER, PRIMARY KEY(repo, sym, kind, file, line, \"end\", rev)); \
+                 CREATE TABLE rel_call_def(repo INTEGER, sym INTEGER, kind INTEGER, file INTEGER, line INTEGER, \"end\" INTEGER, PRIMARY KEY(repo, sym, kind, file, line, \"end\"));",
+            ).unwrap();
+            Storage::insert_rows(
+                &db,
+                "rel_call_def_rev",
+                &["repo", "sym", "kind", "file", "line", "end", "rev"],
+                &def_rev_rows,
+            ).unwrap();
+            db.execute_batch(
+                "INSERT OR IGNORE INTO rel_call_def SELECT DISTINCT repo, sym, kind, file, line, \"end\" FROM rel_call_def_rev;",
+            ).unwrap();
+        }
         db
     }
 
@@ -1255,6 +1376,14 @@ mod tests {
                 "{table} placed TEXT on the compact call-delta rail: {columns:?}",
             );
         }
+
+        // _call_def carries the 8-col def-site shape (sym, name, repo, kind,
+        // file, line, end, rev) that the CallDefRev/CallDef families project.
+        let call_def_columns = table_info(&db, "_call_def");
+        assert_eq!(
+            call_def_columns.len(), 8,
+            "_call_def must carry the 8-col def-site shape: {call_def_columns:?}",
+        );
 
         for (table, id) in [
             ("_call_owner", "owner_id"),
@@ -1516,10 +1645,37 @@ mod tests {
             s.query_map([], |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?]))
                 .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
         };
+        let legacy_def_rev: Vec<[i64; 7]> = {
+            let mut s = db.prepare(
+                "SELECT repo, sym, kind, file, line, \"end\", rev FROM rel_call_def_rev \
+                 ORDER BY repo, sym, kind, file, line, \"end\", rev",
+            ).unwrap();
+            s.query_map([], |row| {
+                Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?])
+            }).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        };
+        let legacy_def: Vec<[i64; 6]> = {
+            let mut s = db.prepare(
+                "SELECT repo, sym, kind, file, line, \"end\" FROM rel_call_def \
+                 ORDER BY repo, sym, kind, file, line, \"end\"",
+            ).unwrap();
+            s.query_map([], |row| {
+                Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?])
+            }).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        };
         assert!(!legacy_site.is_empty(), "fixture precondition: legacy call_site populated");
         assert!(!legacy_edge.is_empty(), "fixture precondition: legacy call_edge populated");
         assert!(!legacy_kind.is_empty(), "fixture precondition: legacy call_kind populated");
         assert!(!legacy_edge_rev.is_empty(), "fixture precondition: legacy call_edge_rev populated");
+        assert!(!legacy_def_rev.is_empty(), "fixture precondition: legacy call_def_rev populated");
+        assert!(!legacy_def.is_empty(), "fixture precondition: legacy call_def populated");
+        // The multi-rev fixture makes the collapse observable: one repo::target
+        // def at two revs -> two rev rows, one collapsed def row.
+        assert!(
+            legacy_def_rev.len() > legacy_def.len(),
+            "fixture precondition: a rev-collapsed def must exist ({} rev rows, {} def rows)",
+            legacy_def_rev.len(), legacy_def.len(),
+        );
 
         // flip: the router derives every hosted family, and we overwrite the
         // public rels from their rows — the same path flip_call_rels_via_router
@@ -1528,7 +1684,10 @@ mod tests {
         let rerun = router.cold(&db).unwrap();
         assert_eq!(
             rerun,
-            vec!["call_edge", "call_edge_rev", "call_kind", "call_name", "call_site"],
+            vec![
+                "call_def", "call_def_rev", "call_edge", "call_edge_rev",
+                "call_kind", "call_name", "call_site",
+            ],
             "cold derives every hosted family (registry order = sorted by name)",
         );
         db.reload_rel(
@@ -1545,6 +1704,18 @@ mod tests {
             &tbl("call_edge_rev"),
             &["caller", "callee", "kind", "rev"],
             router.rows("call_edge_rev").unwrap(),
+        )
+        .unwrap();
+        db.reload_rel(
+            &tbl("call_def_rev"),
+            &["repo", "sym", "kind", "file", "line", "end", "rev"],
+            router.rows("call_def_rev").unwrap(),
+        )
+        .unwrap();
+        db.reload_rel(
+            &tbl("call_def"),
+            &["repo", "sym", "kind", "file", "line", "end"],
+            router.rows("call_def").unwrap(),
         )
         .unwrap();
 
@@ -1581,6 +1752,25 @@ mod tests {
                 .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
         };
 
+        let family_def_rev: Vec<[i64; 7]> = {
+            let mut s = db.prepare(
+                "SELECT repo, sym, kind, file, line, \"end\", rev FROM rel_call_def_rev \
+                 ORDER BY repo, sym, kind, file, line, \"end\", rev",
+            ).unwrap();
+            s.query_map([], |row| {
+                Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?])
+            }).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        };
+        let family_def: Vec<[i64; 6]> = {
+            let mut s = db.prepare(
+                "SELECT repo, sym, kind, file, line, \"end\" FROM rel_call_def \
+                 ORDER BY repo, sym, kind, file, line, \"end\"",
+            ).unwrap();
+            s.query_map([], |row| {
+                Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?])
+            }).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        };
+
         assert_eq!(family_site, legacy_site, "flipped rel_call_site diverged from legacy");
         assert_eq!(family_edge, legacy_edge, "flipped rel_call_edge diverged from legacy");
         assert_eq!(family_kind, legacy_kind, "flipped rel_call_kind diverged from legacy");
@@ -1588,6 +1778,8 @@ mod tests {
             family_edge_rev, legacy_edge_rev,
             "flipped rel_call_edge_rev diverged from legacy",
         );
+        assert_eq!(family_def_rev, legacy_def_rev, "flipped rel_call_def_rev diverged from legacy");
+        assert_eq!(family_def, legacy_def, "flipped rel_call_def diverged from legacy");
     }
 
     // ---- reactive router rails -------------------------------------------
