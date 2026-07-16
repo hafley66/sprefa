@@ -778,6 +778,7 @@ impl Engine {
             effects_inflight: inflight_effects,
             total_ms: t_tick.elapsed().as_millis() as u64,
         });
+        self.clear_exe_identity_cache();
         Ok(TickReport {
             changed,
             derived_moved,
@@ -1194,6 +1195,7 @@ impl Engine {
             effects_inflight: 0,
             total_ms: tick_ms as u64,
         });
+        self.clear_exe_identity_cache();
         Ok(PathTickOutcome::Incremental)
     }
 

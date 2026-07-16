@@ -1072,6 +1072,12 @@ pub struct Engine {
     /// exist) so `rollback_writes` can restore the tree if a checker fails. One
     /// entry per path, first-write wins (the pre-tick state).
     gen_journal: std::cell::RefCell<Option<Vec<(String, Option<Vec<u8>>)>>>,
+    /// Per-tick memo for `exe_identity_changed_since_last_run`. Computed on the
+    /// first extraction-family lookup within a tick and cleared at tick
+    /// completion so a real binary swap causes exactly one full rebuild cycle per
+    /// Engine, not once per process (a process-global cache poisoned every root
+    /// in a multi-root daemon and pinned `true` forever after a swap).
+    exe_identity_changed: std::cell::Cell<Option<bool>>,
     /// Per-file extracted-fact caches for the type/call/dataflow refreshers,
     /// keyed by (repo, path, content hash) — a warm tick re-parses only files
     /// whose content address moved. Each refresh replaces the map with exactly
@@ -1155,6 +1161,7 @@ impl Engine {
             ),
             last_derived_rebuilt: Vec::new(),
             gen_journal: std::cell::RefCell::new(None),
+            exe_identity_changed: std::cell::Cell::new(None),
             type_facts_cache: Default::default(),
             call_facts_cache: Default::default(),
             df_facts_cache: Default::default(),

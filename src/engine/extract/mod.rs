@@ -1058,22 +1058,35 @@ impl Engine {
         format!("corpus-changed ({} paths)", files.len())
     }
 
-    /// One-shot-per-process check of whether the running binary's identity
+    /// Per-Engine, per-tick check of whether the running binary's identity
     /// changed since the last recorded run (the exe stamp `extract_input_
-    /// digest` folds into every family's digest). A binary swap only
-    /// happens across process restarts, so this is stable for the whole
-    /// tick/process lifetime — cached so every family's reason lookup this
-    /// tick reads the same answer instead of racing the persisted key.
+    /// digest` folds into every family's digest). The answer is memoized in
+    /// `self.exe_identity_changed` so every family's reason lookup within ONE
+    /// tick reads the same answer instead of racing the persisted key, and the
+    /// memo is cleared at tick completion so a real binary swap causes exactly
+    /// one full-rebuild cycle per Engine. A process-global `OnceLock<bool>` was
+    /// wrong: the compared stamp is persisted per-Engine/per-root database, and
+    /// a long-lived daemon process serves multiple roots and survives binary
+    /// swaps — the global cache pinned `true` for the whole process after the
+    /// first mismatch, forcing every tick of every root to rebuild forever.
     fn exe_identity_changed_since_last_run(&self) -> bool {
-        use std::sync::OnceLock;
-        static CHANGED: OnceLock<bool> = OnceLock::new();
-        *CHANGED.get_or_init(|| {
-            let cur = blake3::hash(format!("{:032x}", exe_stamp()).as_bytes());
-            let prior = self.load_rel_digest("extract:exe-stamp").ok().flatten();
-            let changed = prior.is_some() && prior != Some(*cur.as_bytes());
-            let _ = self.save_rel_digest("extract:exe-stamp", cur.as_bytes());
-            changed
-        })
+        if let Some(changed) = self.exe_identity_changed.get() {
+            return changed;
+        }
+        let cur = blake3::hash(format!("{:032x}", exe_stamp()).as_bytes());
+        let prior = self.load_rel_digest("extract:exe-stamp").ok().flatten();
+        let changed = prior.is_some() && prior != Some(*cur.as_bytes());
+        let _ = self.save_rel_digest("extract:exe-stamp", cur.as_bytes());
+        self.exe_identity_changed.set(Some(changed));
+        changed
+    }
+
+    /// Clear the per-tick `exe_identity_changed` memo. Called at the end of
+    /// every tick so the next tick re-evaluates the persisted stamp against the
+    /// current binary (after a swap the saved stamp now matches, so only the
+    /// first post-swap tick reports `true`).
+    pub(crate) fn clear_exe_identity_cache(&self) {
+        self.exe_identity_changed.set(None);
     }
 
     /// Fold a rev into a df node id so two revs' `file:line:col` ids stay
@@ -1571,6 +1584,65 @@ mod verdict_reason_tests {
             "extract_input_digest folds a wall-clock nonce for an empty-hash file, so an \
              unchanged corpus digests differently each tick and never skips -> full rebuild \
              every tick (the daemon CPU/battery storm)"
+        );
+    }
+
+    /// REGRESSION (daemon CPU storm, 2026-07-16): `exe_identity_changed_since_
+    /// last_run` used to cache its answer in a process-global `static CHANGED:
+    /// OnceLock<bool>`. That pinned `true` for the whole process after the first
+    /// stamp mismatch, so a daemon that survived a binary swap rebuilt every root
+    /// on every tick forever. The cache must be per-Engine and cleared at tick
+    /// completion: one real binary swap causes exactly one `exe-identity-changed`
+    /// rebuild cycle per root.
+    #[test]
+    fn exe_identity_changed_reports_true_then_false_after_tick_boundary() {
+        let eng = engine();
+        eng.ensure_meta().unwrap();
+        let files = vec![extract_file("self", "src/a.rs", "hash-a")];
+        // Pre-save a mismatched digest to simulate that this db last saw a
+        // different binary. `exe_stamp()` itself is not mocked; injecting via the
+        // persisted key is race-free across parallel tests.
+        let bogus = [0xffu8; 32];
+        eng.save_rel_digest("extract:exe-stamp", &bogus).unwrap();
+
+        let first = eng.extract_rebuild_reason("type", "WORK", &files, false, false);
+        assert_eq!(first, "exe-identity-changed");
+        let second = eng.extract_rebuild_reason("type", "WORK", &files, false, false);
+        assert_eq!(
+            second, "exe-identity-changed",
+            "within one tick the cached answer must stay consistent across family lookups"
+        );
+
+        // Simulate the tick boundary where `tick` clears the cache.
+        eng.clear_exe_identity_cache();
+        let third = eng.extract_rebuild_reason("type", "WORK", &files, false, false);
+        assert_eq!(
+            third, "corpus-changed (1 paths)",
+            "after the tick boundary the saved stamp matches the current binary, so no exe change"
+        );
+    }
+
+    /// The second half of the global-cache bug: in one process, two Engines on
+    /// two distinct roots each have their own db and must evaluate the stamp
+    /// independently. Engine 1's `true` must not poison engine 2.
+    #[test]
+    fn exe_identity_changed_is_isolated_across_engines() {
+        let eng1 = engine();
+        let eng2 = engine();
+        eng1.ensure_meta().unwrap();
+        eng2.ensure_meta().unwrap();
+        let files = vec![extract_file("self", "src/a.rs", "hash-a")];
+        let bogus = [0xffu8; 32];
+        eng1.save_rel_digest("extract:exe-stamp", &bogus).unwrap();
+        eng2.save_rel_digest("extract:exe-stamp", &bogus).unwrap();
+
+        let reason1 = eng1.extract_rebuild_reason("type", "WORK", &files, false, false);
+        assert_eq!(reason1, "exe-identity-changed");
+
+        let reason2 = eng2.extract_rebuild_reason("type", "WORK", &files, false, false);
+        assert_eq!(
+            reason2, "exe-identity-changed",
+            "engine 2 must read its own db, not inherit engine 1's cached answer"
         );
     }
 }
