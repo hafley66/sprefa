@@ -26,6 +26,12 @@ pub trait Storage {
     /// Replace a relation through the existing index-aware reload path.
     fn reload_rel(&self, table: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize>;
 
+    /// Retract specific rows by full-tuple identity in ONE statement (row-value
+    /// `DELETE ... WHERE (cols) IN (VALUES ...)`), never a per-row loop. The
+    /// insert twin of the reconcile/render step: applying a `RowDelta`'s
+    /// retracted set incrementally instead of overwriting the whole relation.
+    fn retract_rows(&self, table: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize>;
+
     /// Return the existing SQLite-backed structural and size statistics.
     fn rel_stats(&self, rel: &str) -> Result<serde_json::Value>;
 
@@ -61,6 +67,28 @@ impl Storage for Db {
 
     fn reload_rel(&self, table: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
         Db::reload_rel(self, table, cols, rows)
+    }
+
+    fn retract_rows(&self, table: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        let col_tuple = cols.join(", ");
+        let one = format!("({})", vec!["?"; cols.len()].join(", "));
+        let values = vec![one; rows.len()].join(", ");
+        let sql = format!("DELETE FROM {table} WHERE ({col_tuple}) IN (VALUES {values})");
+        let params: Vec<rusqlite::types::Value> = rows
+            .iter()
+            .flatten()
+            .map(|cell| match cell {
+                Value::Text(s) => rusqlite::types::Value::Text(s.clone()),
+                Value::Int(n) => rusqlite::types::Value::Integer(*n),
+                Value::Null => rusqlite::types::Value::Null,
+            })
+            .collect();
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&sql)?;
+        Ok(stmt.execute(rusqlite::params_from_iter(params))?)
     }
 
     fn rel_stats(&self, rel: &str) -> Result<serde_json::Value> {

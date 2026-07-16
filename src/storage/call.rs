@@ -1570,6 +1570,21 @@ mod tests {
         v
     }
 
+    fn snap_site(db: &Db) -> Vec<[i64; 5]> {
+        let mut s = db
+            .prepare("SELECT repo, caller, callee, file, line FROM rel_call_site")
+            .unwrap();
+        let mut v: Vec<[i64; 5]> = s
+            .query_map([], |row| {
+                Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?])
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        v.sort();
+        v
+    }
+
     /// The discriminating test: a `_call_resolution`-only change reruns
     /// `CallEdge` (which scans it) and SKIPS `CallSite` (which does not).
     /// `CallSite` keeps its memoized rows; `CallEdge`'s rerun rows match a
@@ -1650,6 +1665,63 @@ mod tests {
         changed.insert("_some_other_table");
         let rerun = router.react(&db, &changed).unwrap();
         assert!(rerun.is_empty(), "no family reads _some_other_table; nothing reruns");
+    }
+
+    /// Incremental RETRACTION through the reconcile/render path: removing an
+    /// input site must surface as a RETRACTED output row in `call_site`'s
+    /// RowDelta (not a silent full rebuild), and applying that delta row-level
+    /// (retract + insert) must leave rel_call_site matching a fresh derive.
+    #[test]
+    fn family_router_retracts_output_row_on_input_retraction() {
+        use crate::engine::family::router::FamilyRouter;
+        use crate::engine::family::{call_families, derive_family, CallSite};
+        use crate::lower::tbl;
+        use crate::storage::Storage;
+
+        let db = delta_test_db(false);
+        let site_cols = ["repo", "caller", "callee", "file", "line"];
+        let call_site = CallSite;
+        let mut router = FamilyRouter::new(call_families());
+        router.cold(&db).unwrap();
+
+        // Establish the table from the cold memo (base state = 2 site rows).
+        db.reload_rel(&tbl("call_site"), &site_cols, router.rows("call_site").unwrap())
+            .unwrap();
+        let cold_rows = snap_site(&db);
+        assert_eq!(cold_rows.len(), 2, "fixture: two call sites");
+
+        // Retract the a.rs site (line 10): drop its resolution then its raw site.
+        db.conn()
+            .execute(
+                "DELETE FROM _call_resolution WHERE site_id IN \
+                 (SELECT site_id FROM _call_raw_site WHERE line = 10)",
+                [],
+            )
+            .unwrap();
+        db.conn().execute("DELETE FROM _call_raw_site WHERE line = 10", []).unwrap();
+
+        // React + reconcile: call_site's delta must carry exactly one retracted
+        // row (the a.rs projection) and no inserts.
+        let mut changed = std::collections::HashSet::new();
+        changed.insert("_call_raw_site");
+        changed.insert("_call_resolution");
+        let deltas = router.react_deltas(&db, &changed).unwrap();
+        let (_, site_delta) = deltas
+            .iter()
+            .find(|(name, _)| *name == "call_site")
+            .expect("call_site reran");
+        assert_eq!(site_delta.retracted.len(), 1, "exactly one output row retracted");
+        assert!(site_delta.inserted.is_empty(), "no inserts on a pure retraction");
+
+        // Render the delta incrementally (retract + insert), NOT a full reload.
+        db.retract_rows(&tbl("call_site"), &site_cols, &site_delta.retracted).unwrap();
+        db.insert_rows(&tbl("call_site"), &site_cols, &site_delta.inserted).unwrap();
+
+        // The incrementally-maintained table equals a fresh full derive.
+        let after = snap_site(&db);
+        assert_eq!(after.len(), 1, "one site row remains after retraction");
+        let (fresh, _) = derive_family(&db, &CallSite).unwrap();
+        assert_eq!(after, sorted5(&fresh), "incremental render diverged from fresh derive");
     }
 
     /// A family with no memo yet (never cold-loaded) always derives on the

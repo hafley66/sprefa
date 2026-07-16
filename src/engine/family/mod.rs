@@ -71,10 +71,71 @@ pub(crate) struct DepKey {
 /// One emitted output row (a public-relation tuple as `Value` cells).
 pub(crate) type OutRow = Vec<Value>;
 
-/// Sink a family emits into. Plain Vec for step 0; the engine wraps reconcile
-/// (diff old vs new, transactional retract/insert) around this in later steps.
+/// Sink a family emits into. Plain Vec; the router wraps [`reconcile`] around
+/// its output to turn a fresh derivation into a [`RowDelta`].
 pub(crate) struct RowSink {
     pub rows: Vec<OutRow>,
+}
+
+/// A row-level output delta: the rows to retract and the rows to insert to move
+/// a relation from its memoized prior state to a fresh derivation. This is the
+/// reconcile/render unit — the engine applies it incrementally (retract old +
+/// insert new) rather than overwriting the whole relation, so a RETRACTED input
+/// row propagates to a retracted output row instead of being silently rebuilt.
+#[derive(Debug, Default)]
+pub(crate) struct RowDelta {
+    pub retracted: Vec<OutRow>,
+    pub inserted: Vec<OutRow>,
+}
+
+impl RowDelta {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.retracted.is_empty() && self.inserted.is_empty()
+    }
+}
+
+/// Type-tagged string identity for one derived row: distinguishes `Int(0)` from
+/// `Text("0")` from `Null` so the diff never conflates cells across types. These
+/// are set-valued relations, so the whole tuple is the identity.
+fn row_key(row: &OutRow) -> String {
+    let mut key = String::new();
+    for cell in row {
+        match cell {
+            Value::Int(n) => {
+                key.push('i');
+                key.push_str(&n.to_string());
+            }
+            Value::Text(s) => {
+                key.push('t');
+                key.push_str(s);
+            }
+            Value::Null => key.push('n'),
+        }
+        key.push('\u{1}');
+    }
+    key
+}
+
+/// Diff a fresh derivation `new` against the memoized `old`, returning the
+/// minimal retract+insert delta by full-tuple identity. Deduplicates `new`
+/// (set semantics). Empty delta = the derivation is unchanged.
+pub(crate) fn reconcile(old: &[OutRow], new: Vec<OutRow>) -> RowDelta {
+    let old_keys: HashSet<String> = old.iter().map(row_key).collect();
+    let mut new_keys: HashSet<String> = HashSet::with_capacity(new.len());
+    let mut inserted = Vec::new();
+    for row in new {
+        let key = row_key(&row);
+        let fresh = new_keys.insert(key.clone());
+        if fresh && !old_keys.contains(&key) {
+            inserted.push(row);
+        }
+    }
+    let retracted = old
+        .iter()
+        .filter(|row| !new_keys.contains(&row_key(row)))
+        .cloned()
+        .collect();
+    RowDelta { retracted, inserted }
 }
 
 /// Tracked read context. Every `scan` records a `DepKey` per row read, so the

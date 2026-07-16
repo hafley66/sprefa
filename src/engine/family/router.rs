@@ -25,7 +25,7 @@
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 
-use super::{derive_family, DepKey, Family, OutRow};
+use super::{derive_family, reconcile, DepKey, Family, OutRow, RowDelta};
 use crate::db::Db;
 
 /// Memoized state for one family: the rows it last emitted and the set of input
@@ -85,6 +85,39 @@ impl<'f> FamilyRouter<'f> {
             rerun.push(name);
         }
         Ok(rerun)
+    }
+
+    /// React AND reconcile: rerun the affected families and, for each, diff the
+    /// fresh derivation against its memoized prior rows into a [`RowDelta`]
+    /// (retract + insert), updating the memo. Returns only families whose delta
+    /// is non-empty, in declaration order. This is the render input — the engine
+    /// applies each delta incrementally instead of overwriting the relation, so
+    /// a retracted input row surfaces as a retracted output row. A never-derived
+    /// family reconciles against an empty base (delta = all inserts).
+    pub(crate) fn react_deltas(
+        &mut self,
+        db: &Db,
+        changed: &HashSet<&'static str>,
+    ) -> Result<Vec<(&'static str, RowDelta)>> {
+        let mut deltas = Vec::new();
+        for family in &self.families {
+            let name = family.name();
+            let affected = match self.memo.get(name) {
+                Some(memo) => !memo.rels.is_disjoint(changed),
+                None => true,
+            };
+            if !affected {
+                continue;
+            }
+            let prev = self.memo.get(name).map(|memo| memo.rows.clone()).unwrap_or_default();
+            let (rows, deps) = derive_family(db, *family)?;
+            let delta = reconcile(&prev, rows.clone());
+            self.memo.insert(name, FamilyMemo { rows, rels: rel_footprint(&deps) });
+            if !delta.is_empty() {
+                deltas.push((name, delta));
+            }
+        }
+        Ok(deltas)
     }
 
     /// The current memoized rows for a family (post-cold or post-react), or
