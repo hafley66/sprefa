@@ -3,11 +3,15 @@
 # runs on any checkout. A high count is a cross-module / cross-language sibling
 # cluster (or an overload), the candidate set a "rename/lands-everywhere" query
 # would expand. Pure string-equality join over the type graph, no embeddings.
+# Bare scan (no match op) -- one source-stage row per FILE, not per CHARACTER.
+# `match(p, rev, /./, _)` matches every character; on a real repo this blows
+# the bounded-storage cap (source stage exceeds total row/byte/owner bounds).
+# See examples/callgraph.dl for the same bare-scan touch idiom.
 rel seen(path: file).
-seen(p) <- scan("WORK", "**/*.rs", p, rev), match(p, rev, /./, _).
-seen(p) <- scan("WORK", "**/*.ts", p, rev), match(p, rev, /./, _).
-seen(p) <- scan("WORK", "**/*.tsx", p, rev), match(p, rev, /./, _).
-seen(p) <- scan("WORK", "**/*.kt", p, rev), match(p, rev, /./, _).
+seen(p) <- scan("WORK", "**/*.rs", p, rev).
+seen(p) <- scan("WORK", "**/*.ts", p, rev).
+seen(p) <- scan("WORK", "**/*.tsx", p, rev).
+seen(p) <- scan("WORK", "**/*.kt", p, rev).
 
 rel decl(name: text, file: file).
 decl(n, f) <- type_entity(_, _, n, _, _, f, _).

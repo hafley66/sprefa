@@ -66,7 +66,7 @@ fn gate_fan_out_over_type_edge() {
     let sprefa_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let prog = r#"
 rel seen(path: file).
-seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./, line).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev).
 rel fan_out(f: text, n: int).
 fan_out(f, count(t)) <- type_edge(f, t, _, _).
 ? fan_out(f, n).
