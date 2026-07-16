@@ -491,7 +491,9 @@ impl ServedRoot {
     /// broadcast `rev_advanced`. Returns (refs advanced, worktree files changed).
     fn on_git_event(&self) -> (usize, Vec<PathBuf>) {
         let mut repos: Vec<(String, PathBuf)> = vec![(self.root_label(), self.root.clone())];
-        for rc in load_repos_eager() {
+        // This engine's corpus (hermetic served root => just its own root; the
+        // config view => the config repos), not every ambient config repo.
+        for rc in lock(&self.eng).snapshot_repos() {
             if rc.root.exists() && !repos.iter().any(|(s, _)| s == &rc.slug) {
                 repos.push((rc.slug, rc.root));
             }
@@ -602,7 +604,7 @@ impl ServedRoot {
         let conn = db::open(db_path)?;
         let mut eng = Engine::new(conn, eng_root.clone());
         if is_config { eng.set_root_implicit(true); }
-        eng.set_repos(load_repos_eager());
+        eng.set_repos(served_repos(is_config));
         crate::activity::set(crate::activity::Phase::ColdTick, display.as_str());
         eng.tick(&prog, false)?;
         crate::activity::end_tick();
@@ -1019,8 +1021,12 @@ fn watcher_loop(d: Arc<ServedRoot>, launch_exe_stamp: Option<ExeStamp>) {
         WatchGate::new(std::slice::from_ref(&d.root))
     };
     let mut watch_count: usize = if is_config { 0 } else { 1 };
-    // Watch every folder in view (config repos) so config-repo edits react.
-    for rc in load_repos_eager() {
+    // Watch every folder in THIS ENGINE'S corpus (its `snapshot_repos()`) so
+    // corpus edits react. A hermetic served root's snapshot is empty (only its
+    // own `--root`, watched above), so one save wakes only that root; the config
+    // view's snapshot is the config repos. Following the engine, not
+    // `load_repos_eager()`, is what makes the watcher hermetic in lockstep.
+    for rc in lock(&d.eng).snapshot_repos() {
         if rc.root.exists() && rc.root != d.root
             && watcher.watch(&rc.root, RecursiveMode::Recursive).is_ok() {
             watch_count += 1;
@@ -1041,9 +1047,9 @@ fn watcher_loop(d: Arc<ServedRoot>, launch_exe_stamp: Option<ExeStamp>) {
         let dl = d.root.join(".dl");
         if dl.is_dir() { let _ = watcher.watch(&dl, RecursiveMode::NonRecursive); }
     }
-    // Narrow-watch the `.git` dir of the root + config repos.
+    // Narrow-watch the `.git` dir of the root + this engine's corpus repos.
     if !is_config { watch_count += watch_git_narrow(&mut watcher, &mut gate, &d.root); }
-    for rc in load_repos_eager() {
+    for rc in lock(&d.eng).snapshot_repos() {
         if rc.root.exists() { watch_count += watch_git_narrow(&mut watcher, &mut gate, &rc.root); }
     }
 
@@ -1052,7 +1058,7 @@ fn watcher_loop(d: Arc<ServedRoot>, launch_exe_stamp: Option<ExeStamp>) {
     const STARTUP_GRACE: Duration = Duration::from_secs(1);
     let mut watched: std::collections::HashSet<PathBuf> = std::collections::HashSet::from_iter([
         d.root.clone(),
-    ].into_iter().chain(load_repos_eager().into_iter().filter(|r| r.root.exists()).map(|r| r.root)));
+    ].into_iter().chain(lock(&d.eng).snapshot_repos().into_iter().filter(|r| r.root.exists()).map(|r| r.root)));
     loop {
         // Observe the drop flag between events so `drop_root` can retire us.
         let first = match rx.recv_timeout(Duration::from_secs(1)) {
@@ -1173,7 +1179,7 @@ fn watcher_loop(d: Arc<ServedRoot>, launch_exe_stamp: Option<ExeStamp>) {
         let result = if touches_cfg {
             tick_label = "config change";
             let mut eng = lock(&d.eng);
-            eng.set_repos(load_repos_eager());
+            eng.set_repos(served_repos(d.key.is_none()));
             drop(eng);
             if let Err(e) = lock(&d.eng).save_repos_meta() {
                 eprintln!("[{}] save_repos_meta: {e}", d.root_label());
@@ -1877,7 +1883,7 @@ fn run_eval(sr: &Arc<ServedRoot>, text: &str) -> Result<Value, (i64, String)> {
 
     let conn = db::open(None).map_err(|e| (INTERNAL_ERROR, format!("db: {e}")))?;
     let mut eng = Engine::new(conn, sr.root.clone());
-    eng.set_repos(load_repos_eager());
+    eng.set_repos(served_repos(sr.key.is_none()));
     eng.tick(&merged, true)
         .map_err(|e| (INTERNAL_ERROR, format!("tick: {e}")))?;
 
@@ -1938,7 +1944,7 @@ fn run_q_eval(
     }
     let conn = db::open(None).map_err(|e| (INTERNAL_ERROR, format!("db: {e}")))?;
     let mut eng = Engine::new(conn, sr.root.clone());
-    eng.set_repos(load_repos_eager());
+    eng.set_repos(served_repos(sr.key.is_none()));
     eng.tick(&merged, true).map_err(|e| (INTERNAL_ERROR, format!("tick: {e}")))?;
     let qprog = Program { items: snippet_queries };
     let results = eng.run_queries_capture(&qprog)
@@ -2290,6 +2296,35 @@ pub(crate) fn load_repos_eager() -> Vec<config::RepoConfig> {
         Ok(cfg) if !cfg.repos.is_empty() => cfg.repos,
         Ok(_) => Vec::new(),
         Err(e) => { eprintln!("[config] ignored: {e}"); Vec::new() }
+    }
+}
+
+/// Whether daemon-SERVED engines ingest the ambient config repos. Off by
+/// default (hermetic): a per-root served engine's corpus is its own repo plus
+/// whatever its program declares, so one file save wakes only that root instead
+/// of ticking every registered engine. `DL_AMBIENT_REPOS=1` on the daemon
+/// process restores the old cross-root behavior. (Ad-hoc CLI runs never route
+/// through here; they load config repos directly and are unaffected. Accepted
+/// truthy spellings: `1` / `true` / `yes`. This is the daemon's counterpart to
+/// the other `DL_*` process knobs like `DL_NO_FETCH`.)
+pub(crate) fn ambient_repos_enabled() -> bool {
+    matches!(
+        std::env::var("DL_AMBIENT_REPOS").ok().as_deref(),
+        Some("1") | Some("true") | Some("yes")
+    )
+}
+
+/// Config repos to seed a daemon-served engine with. `is_config` = the
+/// config-view engine (root:None), which EXISTS to serve the config repos and
+/// always gets them. A per-root served engine (Rule B: hermetic daemon) gets
+/// them only under `DL_AMBIENT_REPOS`; otherwise it stays hermetic (empty).
+/// `Engine::set_repos` still canonical-dedupes whatever it receives, so a
+/// config listing one directory under two slugs collapses to one repo.
+pub(crate) fn served_repos(is_config: bool) -> Vec<config::RepoConfig> {
+    if is_config || ambient_repos_enabled() {
+        load_repos_eager()
+    } else {
+        Vec::new()
     }
 }
 
