@@ -17,6 +17,7 @@ mod ban_gate;
 mod body_binds;
 mod builtin_file_rel;
 mod file_lines;
+mod call_golden;
 mod call_rels;
 mod changed;
 mod check_daemon;

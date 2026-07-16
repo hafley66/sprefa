@@ -1,0 +1,7 @@
+<ROOT>::src/a.rs::function::extra	extra
+<ROOT>::src/a.rs::function::helper	helper
+<ROOT>::src/a.rs::function::leaf	leaf
+<ROOT>::src/a.rs::function::other	other
+<ROOT>::src/a.rs::function::reader	reader
+<ROOT>::src/a.rs::function::run	run
+<ROOT>::src/a.rs::function::writer	writer

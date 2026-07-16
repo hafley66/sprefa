@@ -1,0 +1,4 @@
+<ROOT>::src/a.rs::function::extra	<ROOT>::src/a.rs::function::helper	call
+<ROOT>::src/a.rs::function::other	<ROOT>::src/a.rs::function::leaf	call
+<ROOT>::src/a.rs::function::run	<ROOT>::src/a.rs::function::helper	call
+<ROOT>::src/a.rs::function::run	<ROOT>::src/a.rs::function::leaf	call

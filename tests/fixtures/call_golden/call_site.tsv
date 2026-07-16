@@ -1,0 +1,8 @@
+<ROOT>	<ROOT>::src/a.rs::function::extra	helper	src/a.rs	14
+<ROOT>	<ROOT>::src/a.rs::function::other	leaf	src/a.rs	10
+<ROOT>	<ROOT>::src/a.rs::function::reader	query_row	src/a.rs	17
+<ROOT>	<ROOT>::src/a.rs::function::reader	query_row	src/a.rs	22
+<ROOT>	<ROOT>::src/a.rs::function::run	helper	src/a.rs	6
+<ROOT>	<ROOT>::src/a.rs::function::run	leaf	src/a.rs	7
+<ROOT>	<ROOT>::src/a.rs::function::writer	execute	src/a.rs	13
+<ROOT>	<ROOT>::src/a.rs::function::writer	execute	src/a.rs	18
