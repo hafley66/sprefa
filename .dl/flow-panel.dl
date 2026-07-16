@@ -261,24 +261,87 @@ member_field_flow(v, n, fld, r) <-
 # not per-call-site (std/flow.dl's call_target pins hops per call site for
 # the interprocedural view; this panel edge answers "does fn X touch field
 # F", not "through which call chain").
+# (a)-(d) edges above are built over a few shared selective joins; materialize
+# those joins once as their own rels (the call_target/call_edge_bare precedent)
+# so member_edge itself is just a union of the precomputed edges.
+rel member_node_sym(sym: text).
+member_node_sym(sym) <- member_node(sym, _, _, _, _, _).
+
+# Full type/call edges restricted to member_node endpoints.
+rel member_type_edge(src: text, dst: text, kind: text).
+member_type_edge(src, dst, kind) <-
+  type_link(src, dst, kind),
+  member_node_sym(src),
+  member_node_sym(dst).
+
+rel member_call_edge(src: text, dst: text).
+member_call_edge(src, dst) <-
+  call_edge(src, dst, _),
+  member_node_sym(src),
+  member_node_sym(dst).
+
+# Field node sym materialized once per (owner, field) so the fill/read edge
+# rules do not pay for string interpolation per edge.
+rel field_fill_owner(node: text, owner_sym: text, field_name: text, repo: text, bare_fn: text).
+field_fill_owner(node, owner_sym, field_name, repo, bare_fn) <-
+  df_node(node, "new", type_name, bare_fn, _, _),
+  df_node_repo(node, repo),
+  df_field(node, field_name, _),
+  field_name != "..",
+  owner_in_repo(owner_sym, type_name, repo).
+
+rel field_node_sym(owner_sym: text, field_name: text, sym: text).
+field_node_sym(owner_sym, field_name, "${owner_sym}::field::${field_name}") <-
+  field_fill_owner(_, owner_sym, field_name, _, _).
+
+# Re-key member_bare_repo with the lookup columns first so the fill/read joins
+# hit an index instead of a nested loop over the whole member-node table.
+rel bare_repo_to_member(bare_fn: text, repo: text, fn_sym: text).
+bare_repo_to_member(bare_fn, repo, fn_sym) <- member_bare_repo(fn_sym, bare_fn, repo).
+
+# Project fill/read lookups with (bare_fn, repo) leading so the final edge
+# join is a small indexed lookup.
+rel field_fill_lookup(bare_fn: text, repo: text, field_sym: text).
+field_fill_lookup(bare_fn, repo, field_sym) <-
+  field_fill_owner(_, owner_sym, field_name, repo, bare_fn),
+  field_node_sym(owner_sym, field_name, field_sym).
+
+rel field_fill_edge(fn_sym: text, field_sym: text).
+field_fill_edge(fn_sym, field_sym) <-
+  bare_repo_to_member(bare_fn, repo, fn_sym),
+  field_fill_lookup(bare_fn, repo, field_sym).
+
+rel field_read_lookup(bare_fn: text, repo: text, field_sym: text).
+field_read_lookup(bare_fn, repo, field_sym) <-
+  member_field_flow(_, node, field_name, read_node),
+  field_fill_owner(node, owner_sym, field_name, repo, _),
+  field_node_sym(owner_sym, field_name, field_sym),
+  df_node(read_node, "member", field_name, bare_fn, _, _).
+
+rel field_read_edge(field_sym: text, fn_sym: text).
+field_read_edge(field_sym, fn_sym) <-
+  bare_repo_to_member(bare_fn, repo, fn_sym),
+  field_read_lookup(bare_fn, repo, field_sym).
+
+# Param type reference, materialized once per (fn, var).
+rel param_type_ref(fn_sym: text, var: text, ref_sym: text).
+param_type_ref(fn_sym, var, ref_sym) <-
+  member_param(fn_sym, var, pos, _, _),
+  type_sig(fn_sym, "param", pos, ref_sym).
+
+rel member_uses_edge(param_sym: text, ref_sym: text).
+member_uses_edge("${fn_sym}::param::${var}", ref_sym) <-
+  param_type_ref(fn_sym, var, ref_sym),
+  member_node_sym(ref_sym).
+
 rel member_edge(src: text, dst: text, kind: text).
-member_edge(src, dst, kind) <-
-  type_link(src, dst, kind), member_node(src, _, _, _, _, _), member_node(dst, _, _, _, _, _).
-member_edge(src, dst, "call") <-
-  call_edge(src, dst, _), member_node(src, _, _, _, _, _), member_node(dst, _, _, _, _, _).
-member_edge(fn_sym, "${owner_sym}::field::${fld}", "fill") <-
-  df_node(n, "new", ty, fill_fn, _, _),
-  df_node_repo(n, repo),
-  df_field(n, fld, _), fld != "..",
-  owner_in_repo(owner_sym, ty, repo),
-  member_bare_repo(fn_sym, fill_fn, repo).
-member_edge("${owner_sym}::field::${fld}", fn_sym, "read") <-
-  member_field_flow(_, n, fld, r),
-  df_node(n, "new", ty, _, _, _),
-  df_node_repo(n, repo),
-  df_node(r, "member", fld, read_fn, _, _),
-  owner_in_repo(owner_sym, ty, repo),
-  member_bare_repo(fn_sym, read_fn, repo).
+member_edge(src, dst, kind) <- member_type_edge(src, dst, kind).
+member_edge(src, dst, "call") <- member_call_edge(src, dst).
+member_edge(fn_sym, field_sym, "fill") <- field_fill_edge(fn_sym, field_sym).
+member_edge(field_sym, fn_sym, "read") <- field_read_edge(field_sym, fn_sym).
+member_edge(fn_sym, "${fn_sym}::param::${var}", "param") <-
+  member_param(fn_sym, var, _, _, _).
+member_edge(param_sym, ref_sym, "uses") <- member_uses_edge(param_sym, ref_sym).
 
 # Param nodes: mirrors the field-node mint above, but sourced from
 # df_node(kind="param") instead of a ctor fill. df_node.fn is the bare
@@ -333,9 +396,8 @@ member_edge(fn_sym, "${fn_sym}::param::${var}", "param") <-
 # member_node -- the join below just skips it, same "skip cleanly" contract
 # the field mint above already uses.
 member_edge("${fn_sym}::param::${var}", ref_sym, "uses") <-
-  member_param(fn_sym, var, pos, _, _),
-  type_sig(fn_sym, "param", pos, ref_sym),
-  member_node(ref_sym, _, _, _, _, _).
+  param_type_ref(fn_sym, var, ref_sym),
+  member_node_sym(ref_sym).
 
 # Ports: a node-editor cut of the same graph. A fn/method's params + its
 # owning struct's fields are INPUT ports, its ret is the OUTPUT port; the
@@ -393,10 +455,41 @@ port_out("${owner_sym}::field::${fld}", r) <-
 # own separate port_reach seed, one wire per pin-to-pin hop, not a fully
 # transitive flatten. A port_in landing does NOT halt it: the same value can
 # fork past a field write (still flow elsewhere), so recursion continues.
+# Materialize the base port->first-hop joins and the non-port transition
+# relation so the recursive step is a simple two-atom join instead of a
+# negated three-atom join.
+rel port_of_reach_seed(port: text, node: text).
+port_of_reach_seed(port, node) <-
+  port_of(from_node, port),
+  flow_edge(from_node, node).
+
+rel port_out_reach_seed(port: text, node: text).
+port_out_reach_seed(port, node) <-
+  port_out(port, from_node),
+  flow_edge(from_node, node).
+
+rel port_non_port_flow_edge(from_node: text, to_node: text).
+port_non_port_flow_edge(from_node, to_node) <-
+  flow_edge(from_node, to_node),
+  !port_of(from_node, _).
+
+# Factor the two seed classes into their own recursive rels so the original
+# port_reach offender is just a union of precomputed reaches.
+rel port_of_reach(port: text, node: text).
+port_of_reach(port, node) <- port_of_reach_seed(port, node).
+port_of_reach(port, to_node) <-
+  port_of_reach(port, mid_node),
+  port_non_port_flow_edge(mid_node, to_node).
+
+rel port_out_reach(port: text, node: text).
+port_out_reach(port, node) <- port_out_reach_seed(port, node).
+port_out_reach(port, to_node) <-
+  port_out_reach(port, mid_node),
+  port_non_port_flow_edge(mid_node, to_node).
+
 rel port_reach(port: text, node: text).
-port_reach(p, n) <- port_of(a, p), flow_edge(a, n).
-port_reach(p, n) <- port_out(p, a), flow_edge(a, n).
-port_reach(p, n) <- port_reach(p, m), !port_of(m, _), flow_edge(m, n).
+port_reach(port, node) <- port_of_reach(port, node).
+port_reach(port, node) <- port_out_reach(port, node).
 
 # port_edge: the contracted port-to-port wire. Two landing shapes -- another
 # port's own node (param/ret), or a field port's write site (port_in) --

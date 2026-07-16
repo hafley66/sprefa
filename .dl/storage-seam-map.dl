@@ -173,19 +173,35 @@ fn_bare_at(rev, sym, replace_re(sym, "^[^:]*::", ""), file, line) <-
 # ── WORK-only dataflow shape ─────────────────────────────────────────────────
 # df_edge does not yet have a rev twin. Rather than pretend the base side is
 # comparable, summarize only WORK as kind→kind edges inside each seam function.
-rel df_kind(fn: text, kind: text, n: int).
-df_kind(fn_sym, kind, count(id)) <-
+
+# Bridge each WORK df_node to its owning repo-qualified fn_sym and kind once,
+# then reuse the materialized join in both df_kind and df_kind_edge instead of
+# re-planning the fn_bare_at × df_node join inside each aggregation. Re-key
+# fn_bare_at with the bare name first so the lookup is indexed.
+rel bare_fn_to_sym(bare: text, fn_sym: text).
+bare_fn_to_sym(bare, fn_sym) <- fn_bare_at("WORK", fn_sym, bare, _, _).
+
+rel df_node_in_fn(node: text, fn_sym: text, kind: text).
+df_node_in_fn(node, fn_sym, kind) <-
     current_rev("WORK"),
-    fn_bare_at("WORK", fn_sym, bare, _, _),
-    df_node(id, kind, _, bare, _, _).
+    df_node(node, kind, _, bare, _, _),
+    bare_fn_to_sym(bare, fn_sym).
+
+rel df_kind(fn: text, kind: text, n: int).
+df_kind(fn_sym, kind, count(node)) <-
+    df_node_in_fn(node, fn_sym, kind).
+
+# Split the df_kind_edge join so the engine indexes the df_node_in_fn lookup
+# by node on each side instead of planning a single large three-way join.
+rel df_edge_src_kind(from_node: text, fn_sym: text, from_kind: text, to_node: text).
+df_edge_src_kind(from_node, fn_sym, from_kind, to_node) <-
+    df_edge(from_node, to_node),
+    df_node_in_fn(from_node, fn_sym, from_kind).
 
 rel df_kind_edge(fn: text, from_kind: text, to_kind: text, n: int).
-df_kind_edge(fn_sym, from_kind, to_kind, count(a)) <-
-    current_rev("WORK"),
-    fn_bare_at("WORK", fn_sym, bare, _, _),
-    df_node(a, from_kind, _, bare, _, _),
-    df_edge(a, b),
-    df_node(b, to_kind, _, bare, _, _).
+df_kind_edge(fn_sym, from_kind, to_kind, count(from_node)) <-
+    df_edge_src_kind(from_node, fn_sym, from_kind, to_node),
+    df_node_in_fn(to_node, fn_sym, to_kind).
 
 rel df_map_node(id: text, label: text).
 df_map_node("df:${fn}:${kind}", "${kind} (${n})") <- df_kind(fn, kind, n).
@@ -295,5 +311,5 @@ storage_map_metric("added", count(id)) <- map_status(id, "added").
 storage_map_metric("removed", count(id)) <- map_status(id, "removed").
 
 ? mapping_case(id, current, previous, focus).
-? metric(layer, n).
+? storage_map_metric(layer, n).
 ? map_status(id, status).
