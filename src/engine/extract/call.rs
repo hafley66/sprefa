@@ -102,6 +102,18 @@ impl Engine {
         match outcome {
             CallDeltaOutcome::Applied => {
                 self.save_rel_digest(&extract_digest_key("call", "WORK"), &digest)?;
+                // Flip: under DL_FAMILY_CALL the router is the live producer, so
+                // re-derive the public rels from the _call_* tables the delta
+                // just mutated. An owner delta rewrites the owner's sites and
+                // their resolutions, touching _call_owner/_call_raw_site/
+                // _call_resolution — every call family reads _call_raw_site, so
+                // both rerun (the router skips only families whose inputs a
+                // delta leaves untouched). Overwrites the storage reproject that
+                // apply_call_owner_delta already ran; the two are byte-identical
+                // by construction (the family projection rails).
+                if family_flip_enabled() {
+                    self.flip_call_rels_via_router(&crate::engine::family::call_input_rels())?;
+                }
                 Ok(CallPathRefreshOutcome::Applied)
             }
             CallDeltaOutcome::Unsupported(reason) => {
@@ -389,14 +401,49 @@ impl Engine {
         })?;
         // Persisted only after the writes land, so a failed refresh retries.
         for (rev, d) in &moved { self.save_rel_digest(&extract_digest_key("call", rev), d)?; }
-        // Flip path (plan step 3): when DL_FAMILY_CALL=1, overwrite the public
-        // call_site/call_edge rels from the owned _call_* tables via the hosted
-        // families, instead of the legacy direct-from-extracted-rows writes.
-        // Additive; the legacy writes above already landed.
-        if std::env::var("DL_FAMILY_CALL").is_ok_and(|v| v == "1") {
-            crate::engine::family::family_overwrite_call_rels(&self.db)?;
+        // Flip path (plan step 3): when DL_FAMILY_CALL=1, the reactive router is
+        // the live producer of call_site/call_edge, deriving them from the owned
+        // _call_* tables instead of the legacy direct-from-extracted-rows writes
+        // above. A full refresh rewrote every input, so pass the whole input set
+        // (nothing to skip). Additive; the legacy writes already landed.
+        if family_flip_enabled() {
+            self.flip_call_rels_via_router(&crate::engine::family::call_input_rels())?;
         }
         Ok(true)
+    }
+
+    /// The `DL_FAMILY_CALL` flip through the persistent reactive router: `react`
+    /// against the engine's cross-tick memo, then overwrite each rerun family's
+    /// public rel from its freshly derived rows. On the first flip every family
+    /// has no memo, so all derive (the cold case); later ticks rerun only the
+    /// families whose input rels are in `changed`. Returns the rerun rel names.
+    pub(crate) fn flip_call_rels_via_router(
+        &self,
+        changed: &std::collections::HashSet<&'static str>,
+    ) -> Result<Vec<&'static str>> {
+        use crate::engine::family;
+        use crate::lower::tbl;
+
+        let mut guard = self.call_router.borrow_mut();
+        let router = guard.get_or_insert_with(|| family::FamilyRouter::new(family::call_families()));
+        let rerun = router.react(&self.db, changed)?;
+        for name in &rerun {
+            let rows = router.rows(name).unwrap_or(&[]);
+            match *name {
+                "call_site" => {
+                    self.db.reload_rel(
+                        &tbl("call_site"),
+                        &["repo", "caller", "callee", "file", "line"],
+                        rows,
+                    )?;
+                }
+                "call_edge" => {
+                    self.db.reload_rel(&tbl("call_edge"), &["caller", "callee", "kind"], rows)?;
+                }
+                other => anyhow::bail!("router produced unrouted family `{other}`"),
+            }
+        }
+        Ok(rerun)
     }
 
     /// Keep rev-sweep callers on the same storage-owned compatibility rebuild
@@ -404,6 +451,13 @@ impl Engine {
     pub(crate) fn rebuild_legacy_call_rels(&self) -> Result<()> {
         CallStore::rebuild_legacy_call_rels(&self.db)
     }
+}
+
+/// `DL_FAMILY_CALL=1` gates the reactive-router flip: the router becomes the
+/// live producer of `call_site`/`call_edge`. Unset (the default) leaves the
+/// legacy projection as the producer, byte-identical.
+fn family_flip_enabled() -> bool {
+    std::env::var("DL_FAMILY_CALL").is_ok_and(|v| v == "1")
 }
 
 fn call_def_digest(defs: &[typegraph::CallDef]) -> [u8; 32] {

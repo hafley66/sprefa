@@ -1433,7 +1433,10 @@ mod tests {
     /// direct evidence the family path can be the live producer (DL_FAMILY_CALL).
     #[test]
     fn family_flip_overwrites_legacy_call_rels_identically() {
-        use crate::engine::family::family_overwrite_call_rels;
+        use crate::engine::family::router::FamilyRouter;
+        use crate::engine::family::call_families;
+        use crate::lower::tbl;
+        use crate::storage::Storage;
         let db = delta_test_db(false);
 
         let legacy_site: Vec<[i64; 5]> = {
@@ -1455,8 +1458,20 @@ mod tests {
         assert!(!legacy_site.is_empty(), "fixture precondition: legacy call_site populated");
         assert!(!legacy_edge.is_empty(), "fixture precondition: legacy call_edge populated");
 
-        // flip: family path wipes + re-derives both rels from _call_*.
-        family_overwrite_call_rels(&db).unwrap();
+        // flip: the router derives both families, and we overwrite the public
+        // rels from their rows — the same path flip_call_rels_via_router runs
+        // live, minus the Engine (this rail owns a raw Db).
+        let mut router = FamilyRouter::new(call_families());
+        let rerun = router.cold(&db).unwrap();
+        assert_eq!(rerun, vec!["call_site", "call_edge"], "cold derives both families");
+        db.reload_rel(
+            &tbl("call_site"),
+            &["repo", "caller", "callee", "file", "line"],
+            router.rows("call_site").unwrap(),
+        )
+        .unwrap();
+        db.reload_rel(&tbl("call_edge"), &["caller", "callee", "kind"], router.rows("call_edge").unwrap())
+            .unwrap();
 
         let family_site: Vec<[i64; 5]> = {
             let mut s = db.prepare(

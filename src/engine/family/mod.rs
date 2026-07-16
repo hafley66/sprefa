@@ -19,8 +19,28 @@ pub(crate) mod call_site;
 pub(crate) mod call_edge;
 pub(crate) mod router;
 
-pub(crate) use call_site::CallSite;
 pub(crate) use call_edge::CallEdge;
+pub(crate) use call_site::CallSite;
+pub(crate) use router::FamilyRouter;
+
+/// The call family's hosted relations, as `'static` refs so a persistent
+/// `FamilyRouter` can hold them across engine ticks. Unit structs, so the
+/// statics are zero-sized.
+static CALL_SITE: CallSite = CallSite;
+static CALL_EDGE: CallEdge = CallEdge;
+
+/// The families the reactive call-rel flip routes through, in the order the
+/// public rels are written. Declaration order = `react`'s return order.
+pub(crate) fn call_families() -> Vec<&'static dyn Family> {
+    vec![&CALL_SITE, &CALL_EDGE]
+}
+
+/// The `_call_*` input relations every call family reads on a full refresh —
+/// the changed-set passed to `react` when the whole owned baseline was
+/// rewritten (nothing to skip). A delta path passes the subset it touched.
+pub(crate) fn call_input_rels() -> std::collections::HashSet<&'static str> {
+    ["_call_owner", "_call_raw_site", "_call_resolution"].into_iter().collect()
+}
 
 /// A captured input dependency: the relation read plus the stable integer
 /// primary key of the row read. The engine asks "did any row a family read
@@ -90,10 +110,6 @@ impl<'a> Ctx<'a> {
         }
         Ok(rows)
     }
-
-    pub(crate) fn deps(&self) -> &HashSet<DepKey> {
-        &self.deps
-    }
 }
 
 /// A derived relation. The family declares its name and writes one pure
@@ -112,30 +128,6 @@ pub(crate) fn derive_family(db: &Db, family: &dyn Family) -> Result<(Vec<OutRow>
     let mut sink = RowSink { rows: Vec::new() };
     family.derive(&mut ctx, &mut sink)?;
     Ok((sink.rows, ctx.deps))
-}
-
-/// Flip path (plan step 3, gated on `DL_FAMILY_CALL=1`): overwrite the public
-/// `rel_call_site` + `rel_call_edge` from the owned `_call_*` tables via the
-/// hosted families, instead of the legacy direct-from-extracted-rows writes.
-/// Additive — the legacy path has already written both relations by the time
-/// this runs; this wipes and re-derives them so the two can be compared, and
-/// so the family path is the live producer when the flag is set.
-pub(crate) fn family_overwrite_call_rels(db: &Db) -> Result<()> {
-    use crate::lower::tbl;
-    use crate::storage::Storage;
-
-    let (site_rows, _deps) = derive_family(db, &CallSite)?;
-    Storage::reload_rel(
-        db,
-        &tbl("call_site"),
-        &["repo", "caller", "callee", "file", "line"],
-        &site_rows,
-    )?;
-
-    let (edge_rows, _deps) = derive_family(db, &CallEdge)?;
-    Storage::reload_rel(db, &tbl("call_edge"), &["caller", "callee", "kind"], &edge_rows)?;
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -259,5 +251,24 @@ fn gamma() {
             family_edge, legacy_edge,
             "DL_FAMILY_CALL=1 rel_call_edge diverged from legacy on real extraction"
         );
+
+        // The persistent router: refresh_call_rels above cold-derived both
+        // families into engine B's cross-tick memo. Drive the LIVE flip method
+        // with a _call_resolution-only changed-set: call_edge reads that table,
+        // call_site does not, so a genuine skip must fall out — and it only can
+        // if the memo survived the refresh tick (an empty memo would rerun both
+        // via react's None-branch). This exercises the real Engine method +
+        // persistent RefCell memo + the router's skip, end to end.
+        let mut resolution_only = HashSet::new();
+        resolution_only.insert("_call_resolution");
+        let rerun = b.flip_call_rels_via_router(&resolution_only).unwrap();
+        assert_eq!(
+            rerun,
+            vec!["call_edge"],
+            "live persistent router must skip call_site on a _call_resolution-only change"
+        );
+        let (after_site, after_edge) = snapshot(&b);
+        assert_eq!(after_site, legacy_site, "skipped call_site must be untouched");
+        assert_eq!(after_edge, legacy_edge, "reran call_edge must stay correct");
     }
 }

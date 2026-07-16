@@ -16,10 +16,10 @@
 //! granularity stays useful for future point/filtered reads and for the
 //! selectivity diagnostics the storage rails already assert.
 
-// Landed but not yet wired into the live `apply_call_owner_delta` path (that
-// integration — the delta reporting its touched rels, the engine holding a
-// router across ticks — is the next step). Exercised by the storage rails
-// today, so allow dead_code in non-test builds until it is wired.
+// Wired into the live `refresh_call_rels` flip (Engine holds a persistent
+// `FamilyRouter` across ticks). `cold` is exercised only by the storage rails
+// (the live path calls `react`, whose None-branch subsumes the cold case), so
+// allow dead_code for the non-test-only surface.
 #![allow(dead_code)]
 
 use anyhow::Result;

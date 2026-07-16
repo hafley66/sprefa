@@ -1003,6 +1003,12 @@ pub struct Engine {
     /// One graph adjacency load shared by native reach walks during this tick.
     /// Cleared at tick entry so a large graph is never retained across ticks.
     adjacency_cache: std::cell::RefCell<Option<derive::AdjacencyCache>>,
+    /// Persistent reactive router for the family-derive call-rel flip
+    /// (`DL_FAMILY_CALL`). Holds a per-family memo (rows + rel footprint) across
+    /// ticks so `react` reruns only families whose inputs a tick touched.
+    /// `None` until the first flip; retained for the engine's life (unlike
+    /// `adjacency_cache`, the memo is the point).
+    call_router: std::cell::RefCell<Option<family::FamilyRouter<'static>>>,
     /// Emit `?` query results as JSON-lines (one object per query) instead of the
     /// human TSV block. For tools/editors consuming answers (`--query-json`).
     query_json: bool,
@@ -1122,6 +1128,7 @@ impl Engine {
             node2vec_recomputed: 0,
             closure_cache: HashMap::new(),
             adjacency_cache: std::cell::RefCell::new(None),
+            call_router: std::cell::RefCell::new(None),
             rev_cache: HashMap::new(),
             rev_sha_cache: HashMap::new(),
             rev_index: std::collections::HashSet::new(),
