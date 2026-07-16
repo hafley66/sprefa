@@ -979,6 +979,56 @@ fn linux_inotify_watch_count(pid: u32) -> usize {
     total
 }
 
+/// Rule B (hermetic daemon): a daemon-SERVED engine must NOT ingest the ambient
+/// `SPREFA_CONFIG` repos; its corpus is its own root plus its program, so one
+/// save wakes only that root instead of ticking every registered repo's engine.
+/// `DL_AMBIENT_REPOS=1` restores the old cross-root behavior.
+#[test]
+fn served_engine_hermetic_to_ambient_config_repos() {
+    // An UNRELATED repo the ambient config registers. The served root must not
+    // see it under the hermetic default; DL_AMBIENT_REPOS=1 must pull it back in.
+    let ext = std::env::temp_dir().join(format!("dl_ambient_ext_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&ext);
+    fs::create_dir_all(ext.join("src")).unwrap();
+    fs::write(ext.join("src/lib.rs"), "fn ext() {}\n").unwrap();
+    let cfg = std::env::temp_dir().join(format!("dl_ambient_cfg_{}.toml", std::process::id()));
+    fs::write(&cfg, format!("[[repos]]\nslug = \"ambient-ext\"\nroot = \"{}\"\n", ext.display())).unwrap();
+    let cfg_str = cfg.to_string_lossy().into_owned();
+
+    // The served root's `repo` relation, stringified from its query response.
+    let repo_rel = |sb: &Sandbox| -> String {
+        rpc_root(&sb.sock(), 2, "query", &sb.root, serde_json::json!({}))
+            .expect("query response").to_string()
+    };
+
+    // --- Hermetic default: SPREFA_CONFIG set, no DL_AMBIENT_REPOS. ---
+    let sb = Sandbox::new("hermetic");
+    fs::write(sb.root.join("p.dl"), "? repo(slug, root, url).\n").unwrap();
+    let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[("SPREFA_CONFIG", &cfg_str)]);
+    assert!(sb.wait_ready(), "not ready (hermetic)");
+    let hermetic = repo_rel(&sb);
+    assert!(!hermetic.contains("ambient-ext"),
+        "served engine must NOT ingest the ambient config repo: {hermetic}");
+    assert_eq!(sb.query_rows(), 1, "hermetic corpus is just the served root's own repo: {hermetic}");
+    sb.shutdown();
+    let _ = child.wait_timeout(std::time::Duration::from_secs(5));
+
+    // --- Escape hatch: DL_AMBIENT_REPOS=1 restores the ambient corpus. ---
+    let sb2 = Sandbox::new("ambient");
+    fs::write(sb2.root.join("p.dl"), "? repo(slug, root, url).\n").unwrap();
+    let mut child2 = sb2.spawn(Some(&sb2.root.join("p.dl")),
+        &[("SPREFA_CONFIG", &cfg_str), ("DL_AMBIENT_REPOS", "1")]);
+    assert!(sb2.wait_ready(), "not ready (ambient)");
+    let ambient = repo_rel(&sb2);
+    assert!(ambient.contains("ambient-ext"),
+        "DL_AMBIENT_REPOS=1 restores the ambient config repo in the corpus: {ambient}");
+    sb2.shutdown();
+    let _ = child2.wait_timeout(std::time::Duration::from_secs(5));
+
+    let _ = fs::remove_dir_all(&ext);
+    let _ = fs::remove_file(&cfg);
+}
+
 // ---------- helpers ----------
 
 fn read_frame(s: &mut std::os::unix::net::UnixStream) -> Option<String> {
