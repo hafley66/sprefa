@@ -469,3 +469,8 @@ fn call_def_digest(defs: &[typegraph::CallDef]) -> [u8; 32] {
     }
     *hash.finalize().as_bytes()
 }
+
+#[cfg(test)]
+#[path = "call_render_tests.rs"]
+mod render_tests;
+
