@@ -40,7 +40,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock, RwLockReadGuard};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -113,6 +113,10 @@ fn lock_eng<'a>(sr: &'a ServedRoot, method: &str) -> MutexGuard<'a, Engine> {
     *lock(current_op_cell()) = method.to_string();
     guard
 }
+/// The job-queue `root` id for the key-less config view (registered roots use
+/// their blake3 registry key). One reserved token, never a valid key.
+const CONFIG_JOB_ID: &str = "config";
+
 const CONNECT_BACKOFF_MS: &[u64] = &[10, 20, 40, 80, 160, 320, 500];
 const CONNECT_TOTAL_TIMEOUT_SECS: u64 = 5;
 
@@ -225,6 +229,10 @@ struct Shared {
     build_id: Arc<str>,
     shutdown_requested: Arc<AtomicBool>,
     subscribers: Arc<Mutex<Vec<Arc<Mutex<UnixStream>>>>>,
+    /// The durable job queue (J1). Watchers/pollers `enqueue` tick + sink-drain
+    /// jobs here instead of running them inline; the dispatcher's workers claim
+    /// and run them.
+    jobs: Arc<crate::jobq::JobQueue>,
 }
 
 // ---------- one served root ----------
@@ -267,13 +275,6 @@ pub struct ServedRoot {
     /// chance to see it — `poll_idle`'s cheap "source changed" half. See
     /// `poll_idle` for the full gate (CPU-hog fix Part 1).
     last_full_tick_count: AtomicU64,
-    /// Part 3 (poll error backoff): consecutive `poll_tick` errors for this
-    /// root. Reset to 0 on the first successful poll after a failure.
-    poll_fail_streak: AtomicU32,
-    /// Part 3: poll cycles left to SKIP (decremented, not re-attempted) before
-    /// the next `poll_tick` call. Set by `poll_backoff_cycles(poll_fail_streak)`
-    /// after an error.
-    poll_skip: AtomicU32,
     /// The served root's on-disk db file (the writer engine's db). The lock-free
     /// read path (`crate::daemon_read`) opens READ-ONLY connections on it. `None`
     /// only for a hypothetical in-memory served root (none exist today), which
@@ -305,6 +306,13 @@ impl ServedRoot {
     fn refresh_read_view(&self, eng: &Engine, prog: &Program) {
         let view = crate::daemon_read::ReadView::snapshot(&eng.rels, prog, self.db_path.clone());
         *self.read_view.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(view);
+    }
+
+    /// The job-queue identity for this root: its registry key, or `"config"`
+    /// for the key-less config view. `tick:{id}` / `sink:{id}` job keys are
+    /// built from this, and `Daemon::served_root_for_job` reverses it.
+    fn job_root_id(&self) -> String {
+        self.key.clone().unwrap_or_else(|| CONFIG_JOB_ID.to_string())
     }
 
     fn root_label(&self) -> String {
@@ -755,8 +763,6 @@ impl ServedRoot {
             // tick — it already ran `rebuild_async` once — so start in sync
             // with `tick_count` (both 1), not dirty.
             last_full_tick_count: AtomicU64::new(1),
-            poll_fail_streak: AtomicU32::new(0),
-            poll_skip: AtomicU32::new(0),
             db_path: db_path_buf,
             read_view: RwLock::new(Arc::new(read_view)),
         }))
@@ -812,6 +818,9 @@ pub struct Daemon {
     pub config: Arc<ServedRoot>,
     /// key -> served root. The registry.
     pub roots: Mutex<HashMap<String, Arc<ServedRoot>>>,
+    /// The durable job queue (J1): the `dl daemon jobs` read path + boot reset
+    /// go through this handle; `Shared.jobs` is the same `Arc` for enqueue.
+    pub(crate) jobs: Arc<crate::jobq::JobQueue>,
 }
 
 impl Daemon {
@@ -820,6 +829,18 @@ impl Daemon {
             build_id: self.build_id.clone(),
             shutdown_requested: self.shutdown_requested.clone(),
             subscribers: self.subscribers.clone(),
+            jobs: self.jobs.clone(),
+        }
+    }
+
+    /// Reverse `ServedRoot::job_root_id`: resolve a job's `root` id to its
+    /// served root (`"config"` -> the config view; else the registry key).
+    /// `None` when the root was dropped between enqueue and claim.
+    fn served_root_for_job(&self, id: &str) -> Option<Arc<ServedRoot>> {
+        if id == CONFIG_JOB_ID {
+            Some(self.config.clone())
+        } else {
+            lock(&self.roots).get(id).cloned()
         }
     }
 
@@ -1064,7 +1085,9 @@ pub fn run_daemon(
     let build_id: Arc<str> = Arc::from(build_id().as_str());
     let shutdown_requested = Arc::new(AtomicBool::new(false));
     let subscribers: Arc<Mutex<Vec<Arc<Mutex<UnixStream>>>>> = Arc::new(Mutex::new(Vec::new()));
-    let shared = Shared { build_id: build_id.clone(), shutdown_requested: shutdown_requested.clone(), subscribers: subscribers.clone() };
+    // The durable job queue (J1), in its own `<home>/jobs.sqlite`.
+    let jobs = crate::jobq::JobQueue::open(&home).context("open job queue db")?;
+    let shared = Shared { build_id: build_id.clone(), shutdown_requested: shutdown_requested.clone(), subscribers: subscribers.clone(), jobs: jobs.clone() };
 
     let repos = load_repos_eager();
     if !repos.is_empty() { tracing::info!("[config] {} repo(s) registered", repos.len()); }
@@ -1084,7 +1107,32 @@ pub fn run_daemon(
         subscribers: subscribers.clone(),
         config,
         roots: Mutex::new(HashMap::new()),
+        jobs: jobs.clone(),
     });
+
+    // J1 job dispatcher: crash-recover any jobs a previous process left
+    // `running` (reset to pending), then spawn the worker set that claims and
+    // runs tick + sink-drain jobs. Started BEFORE roots replay so a watcher's
+    // first enqueue has a worker to serve it.
+    match jobs.reset_running_on_boot() {
+        Ok(n) if n > 0 => tracing::info!("[daemon] reset {n} running job(s) to pending on boot"),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("[daemon] reset_running_on_boot: {e}"),
+    }
+    let n_workers = daemon_thread_count(
+        std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2),
+        std::env::var("DL_DAEMON_THREADS").ok().as_deref(),
+    );
+    let runner: Arc<dyn crate::jobq::JobRunner> =
+        Arc::new(DaemonJobRunner { daemon: Arc::downgrade(&daemon) });
+    let _dispatcher = crate::jobq::Dispatcher::spawn(
+        jobs.clone(),
+        runner,
+        shutdown_requested.clone(),
+        n_workers,
+        vec![crate::jobq::JobKind::Tick, crate::jobq::JobKind::SinkDrain],
+    );
+    tracing::info!("[daemon] job dispatcher: {n_workers} worker(s)");
 
     // Bind the socket (reap a stale one first) BEFORE registering roots, so a
     // second daemon fails fast rather than cold-ticking every root then losing
@@ -1246,6 +1294,32 @@ pub(crate) fn shutdown_cleanup(_d: &Daemon) {
     let _ = std::fs::remove_file(crate::daemon_http::http_json_path());
     remove_pid_file();
     tracing::info!("[daemon] shut down cleanly");
+}
+
+// ---------- job dispatcher runner ----------
+
+/// The `JobRunner` the dispatcher's workers call for each claimed job. A `Weak`
+/// avoids a `Daemon -> Dispatcher -> runner -> Daemon` reference cycle; on
+/// shutdown the upgrade fails and the runner no-ops. A worker takes the same
+/// `ServedRoot` handle the inline path used and calls the SAME method
+/// (`tick_paths` / `poll_tick`) under the SAME engine mutex — behavior
+/// preserved, only the calling thread changed.
+struct DaemonJobRunner {
+    daemon: std::sync::Weak<Daemon>,
+}
+
+impl crate::jobq::JobRunner for DaemonJobRunner {
+    fn run(&self, job: &crate::jobq::JobRow) -> Result<()> {
+        let Some(daemon) = self.daemon.upgrade() else { return Ok(()) };
+        let Some(sr) = daemon.served_root_for_job(&job.root) else {
+            // Root dropped between enqueue and claim; nothing to do.
+            return Ok(());
+        };
+        match job.kind {
+            crate::jobq::JobKind::Tick => sr.tick_paths(&job.paths(), true),
+            crate::jobq::JobKind::SinkDrain => sr.poll_tick().map(|_| ()),
+        }
+    }
 }
 
 // ---------- watcher thread (one per served root) ----------
@@ -1438,8 +1512,11 @@ fn watcher_loop(d: Arc<ServedRoot>, launch_exe_stamp: Option<ExeStamp>) {
             tick_label = "empty event";
             d.tick_full(true)
         } else {
-            tick_label = "source change";
-            d.tick_paths(&paths, true)
+            // J1: the hot source-edit path no longer ticks inline on this
+            // watcher thread — it enqueues a coalescing `tick:{root}` job that a
+            // dispatcher worker drains (rapid saves union into one job's paths).
+            tick_label = "source change (queued)";
+            d.shared.jobs.enqueue(crate::jobq::JobRow::tick(&d.job_root_id(), &paths))
         };
         let n_paths = paths.len();
         let tick_num = d.tick_count.load(Ordering::Relaxed);
@@ -1612,22 +1689,14 @@ fn poll_interval_secs() -> Option<u64> {
     }
 }
 
-/// Part 3 (poll error backoff): after `streak` consecutive `poll_tick`
-/// errors, how many subsequent poll cycles to SKIP (not even attempt)
-/// before trying again — `min(2^streak, cap)`, `cap` chosen so a wedged root
-/// is still probed at least once a minute regardless of `poll_secs`.
-/// `streak == 0` (healthy, or the tick right after recovery) skips nothing.
-/// Pure function: no engine/socket access, so it is unit-testable without a
-/// live daemon.
-fn poll_backoff_cycles(streak: u32, poll_secs: u64) -> u32 {
-    if streak == 0 { return 0; }
-    let cap = (60u64 / poll_secs.max(1)).max(1) as u32;
-    let cycles = 1u32.checked_shl(streak.min(31)).unwrap_or(u32::MAX);
-    cycles.min(cap)
-}
-
+/// The poll thread no longer DRAINS inline; it ENQUEUES a `sink:{root}` job for
+/// each effect-bearing root that has drainable work, and a dispatcher worker
+/// runs `poll_tick`. The idle-gate (`has_effects` + `poll_idle`) is the enqueue
+/// CONDITION — unchanged from before. Failure backoff is NOT re-implemented
+/// here: the queue owns it (a job whose `poll_tick` errors backs off via
+/// `finish`), so there is no second poll-error backoff loop.
 fn poll_loop(d: Arc<Daemon>, secs: u64) {
-    tracing::info!("[daemon] poll loop every {secs}s (@async drain)");
+    tracing::info!("[daemon] poll loop every {secs}s (@async drain via job queue)");
     loop {
         std::thread::sleep(Duration::from_secs(secs));
         if d.shutdown_requested.load(Ordering::Relaxed) { return; }
@@ -1644,26 +1713,16 @@ fn poll_loop(d: Arc<Daemon>, secs: u64) {
                 continue;
             }
             if !sr.has_effects() { continue; }
-            // Part 3: a root backing off from a prior poll error skips this
-            // cycle without even attempting `poll_tick`.
-            let skip = sr.poll_skip.load(Ordering::Relaxed);
-            if skip > 0 {
-                sr.poll_skip.store(skip - 1, Ordering::Relaxed);
-                continue;
+            // Idle-gate (the CPU-hog fix, preserved): nothing queued, settled,
+            // no source motion since the last full tick, no `every`/`clock`
+            // cadence -> nothing to drain, so do not enqueue.
+            match sr.poll_idle() {
+                Ok(true) => continue,
+                Ok(false) => {}
+                Err(e) => { tracing::warn!("[{}] poll idle probe: {e}", sr.root_label()); continue; }
             }
-            match sr.poll_tick() {
-                Ok(n) => {
-                    if n > 0 { tracing::info!("[{}] poll: drained {n} effect(s)", sr.root_label()); }
-                    if sr.poll_fail_streak.swap(0, Ordering::Relaxed) > 0 {
-                        tracing::info!("[{}] poll recovered", sr.root_label());
-                    }
-                }
-                Err(e) => {
-                    let streak = sr.poll_fail_streak.fetch_add(1, Ordering::Relaxed) + 1;
-                    let skip = poll_backoff_cycles(streak, secs);
-                    sr.poll_skip.store(skip, Ordering::Relaxed);
-                    tracing::warn!("[{}] poll error (backing off {skip} cycle(s)): {e}", sr.root_label());
-                }
+            if let Err(e) = sr.shared.jobs.enqueue(crate::jobq::JobRow::sink_drain(&sr.job_root_id())) {
+                tracing::warn!("[{}] enqueue sink drain: {e}", sr.root_label());
             }
         }
     }
@@ -1760,6 +1819,15 @@ pub(crate) fn handle_request(d: &Arc<Daemon>, req: &Request, subscriber_stream: 
         // `ping`/`status` WITHOUT a root return the process summary + the roots list.
         "ping" | "status" if req_root(req).is_none() => {
             return daemon_summary(d, req);
+        }
+        // `jobs` lists the whole (process-wide) job table, newest first. Answered
+        // WITHOUT the engine lock: a read-only connection straight on the job db.
+        "jobs" => {
+            return match d.jobs.list() {
+                Ok(rows) => Response::ok(req.id,
+                    json!({"jobs": rows.iter().map(job_row_json).collect::<Vec<_>>()})),
+                Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
+            };
         }
         _ => {}
     }
@@ -2252,6 +2320,15 @@ fn diag_to_json(d: &DiagRow) -> Value {
     })
 }
 
+fn job_row_json(r: &crate::jobq::JobListRow) -> Value {
+    json!({
+        "key": r.key, "kind": r.kind, "root": r.root, "state": r.state,
+        "priority": r.priority, "attempts": r.attempts, "run_at": r.run_at,
+        "enqueued_at": r.enqueued_at, "started_at": r.started_at,
+        "finished_at": r.finished_at, "last_error": r.last_error,
+    })
+}
+
 // ---------- client side ----------
 
 /// True iff the daemon is enabled for this process (env opt-out check).
@@ -2575,6 +2652,18 @@ pub fn status(root: Option<&Path>) -> Result<Option<Value>> {
     }
 }
 
+/// List the running daemon's job table (newest first). The `dl daemon jobs`
+/// backend; process-wide, so no root envelope.
+pub fn jobs() -> Result<Vec<Value>> {
+    let mut s = connect()?;
+    let req = Request::new(0, "jobs", json!({}));
+    let resp = rpc_call(&mut s, &req)?;
+    if let Some(e) = resp.error { bail!("jobs: {}", e.message); }
+    Ok(resp.result
+        .and_then(|v| v.get("jobs").and_then(|j| j.as_array()).cloned())
+        .unwrap_or_default())
+}
+
 /// Register a root with the running singleton (spawning it first if needed), and
 /// wait for the cold tick. Returns the served root's tick count.
 pub fn add_root(root: &Path) -> Result<()> {
@@ -2686,38 +2775,6 @@ mod tests {
         let a = key_of(p);
         assert_eq!(a, key_of(p), "key must be deterministic");
         assert_eq!(a.len(), 16, "key is 16 hex chars");
-    }
-
-    /// Part 3: a healthy root (streak 0, incl. right after recovery) never
-    /// skips a poll cycle.
-    #[test]
-    fn poll_backoff_zero_streak_skips_nothing() {
-        assert_eq!(poll_backoff_cycles(0, 2), 0);
-        assert_eq!(poll_backoff_cycles(0, 1), 0);
-    }
-
-    /// Part 3: 2, 4, 8, ... cycles per consecutive failure at the default
-    /// 2s cadence, capped once the equivalent wall time would exceed ~60s.
-    #[test]
-    fn poll_backoff_doubles_then_caps_near_60s() {
-        let secs = 2u64;
-        let cap = 30; // 60s / 2s
-        assert_eq!(poll_backoff_cycles(1, secs), 2);
-        assert_eq!(poll_backoff_cycles(2, secs), 4);
-        assert_eq!(poll_backoff_cycles(3, secs), 8);
-        assert_eq!(poll_backoff_cycles(4, secs), 16);
-        assert_eq!(poll_backoff_cycles(5, secs), cap, "2^5=32 already exceeds the 30-cycle cap");
-        assert_eq!(poll_backoff_cycles(10, secs), cap, "stays capped, never grows unbounded");
-        assert_eq!(poll_backoff_cycles(31, secs), cap, "a huge streak must not overflow/panic");
-    }
-
-    /// Part 3: the cap tracks `poll_secs` — a slower poll cadence caps at
-    /// fewer cycles so the wall-clock ceiling (~60s) stays roughly constant.
-    #[test]
-    fn poll_backoff_cap_scales_with_poll_secs() {
-        assert_eq!(poll_backoff_cycles(10, 10), 6, "60s / 10s = 6 cycles");
-        assert_eq!(poll_backoff_cycles(10, 60), 1, "60s / 60s = 1 cycle, never zero");
-        assert_eq!(poll_backoff_cycles(10, 0), 60, "poll_secs=0 must not divide by zero");
     }
 
     #[test]
