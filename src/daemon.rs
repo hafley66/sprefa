@@ -41,7 +41,7 @@ use std::collections::HashMap;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock, RwLockReadGuard};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::ast::Program;
@@ -68,6 +68,14 @@ const DEFAULT_POLL_SECS: u64 = 2;
 #[inline]
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Read-lock a poison-tolerant `RwLock` (same policy as `lock`). Used only for
+/// the read-path shape snapshot (`ServedRoot::read_view`), which a reader clones
+/// under a short read lock and a tick refreshes under a short write lock.
+#[inline]
+fn rlock<T>(m: &RwLock<T>) -> RwLockReadGuard<'_, T> {
+    m.read().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Best-effort label for whichever RPC most recently acquired a served
@@ -266,11 +274,37 @@ pub struct ServedRoot {
     /// the next `poll_tick` call. Set by `poll_backoff_cycles(poll_fail_streak)`
     /// after an error.
     poll_skip: AtomicU32,
+    /// The served root's on-disk db file (the writer engine's db). The lock-free
+    /// read path (`crate::daemon_read`) opens READ-ONLY connections on it. `None`
+    /// only for a hypothetical in-memory served root (none exist today), which
+    /// sends every read to the engine-lock fallback.
+    db_path: Option<PathBuf>,
+    /// Shape snapshot for the lock-free read path, refreshed whenever the
+    /// program (re)loads (`refresh_read_view`, called from `tick_full`). A read
+    /// RPC clones this `Arc` under a short read lock and answers `query` /
+    /// `query_rel` / `query_sql` / `schema` from committed SQLite state WITHOUT
+    /// taking `lock_eng`, so read latency is independent of tick duration.
+    read_view: RwLock<Arc<crate::daemon_read::ReadView>>,
 }
 
 impl ServedRoot {
     fn touch(&self) {
         *lock(&self.last_activity) = Instant::now();
+    }
+
+    /// Clone the current read-path shape snapshot — a cheap `Arc` clone under a
+    /// short read lock that never contends with a tick.
+    fn read_view(&self) -> Arc<crate::daemon_read::ReadView> {
+        rlock(&self.read_view).clone()
+    }
+
+    /// Rebuild the read-path snapshot from the given engine + program. Called at
+    /// the end of a full tick — the only path that can change rel shapes or the
+    /// `?` query set — while the tick still holds `eng`+`prog`, so it is a
+    /// straight clone under a short write lock.
+    fn refresh_read_view(&self, eng: &Engine, prog: &Program) {
+        let view = crate::daemon_read::ReadView::snapshot(&eng.rels, prog, self.db_path.clone());
+        *self.read_view.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(view);
     }
 
     fn root_label(&self) -> String {
@@ -286,6 +320,10 @@ impl ServedRoot {
         let prog = lock(&self.prog);
         let mut eng = lock(&self.eng);
         let report = eng.tick_report(&prog, quiet)?;
+        // A full tick is the only path that can change rel shapes or the `?`
+        // query set (program reloads all end here) — refresh the read-path
+        // snapshot while still holding eng+prog.
+        self.refresh_read_view(&eng, &prog);
         drop(eng);
         drop(prog);
         crate::activity::end_tick();
@@ -691,6 +729,10 @@ impl ServedRoot {
             .unwrap_or_else(|| eng_root.to_string_lossy().into_owned());
         eprintln!("[{label}] served ({} type diag(s), program {display})", type_diags.len());
 
+        // Initial read-path snapshot from the cold-tick engine + program.
+        let db_path_buf = db_path.map(PathBuf::from);
+        let read_view = crate::daemon_read::ReadView::snapshot(&eng.rels, &prog, db_path_buf.clone());
+
         Ok(Arc::new(ServedRoot {
             root: eng_root,
             key,
@@ -711,6 +753,8 @@ impl ServedRoot {
             last_full_tick_count: AtomicU64::new(1),
             poll_fail_streak: AtomicU32::new(0),
             poll_skip: AtomicU32::new(0),
+            db_path: db_path_buf,
+            read_view: RwLock::new(Arc::new(read_view)),
         }))
     }
 }
@@ -1771,15 +1815,24 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
             }
         }
         "query" => {
-            let prog = lock(&sr.prog);
-            let eng = lock_eng(sr, &req.method);
-            let _ = eng.log_query("daemon", "query", "", "[]");
-            let _ = crate::rels::refresh_query_log(&eng);
-            match eng.run_queries_capture(&prog) {
-                Ok(results) => Response::ok(req.id, json!({"results": results.iter().map(|r| json!({
-                    "rel": r.rel, "columns": r.columns, "rows": r.rows,
-                })).collect::<Vec<_>>()})),
-                Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
+            // Fast path: answer from committed SQLite state off a read-only
+            // connection, no `lock_eng`. `None` = aggregate query / no on-disk
+            // db, which needs the engine (falls through below).
+            match crate::daemon_read::query(&sr.read_view()) {
+                Some(Ok(v)) => Response::ok(req.id, v),
+                Some(Err((code, msg))) => Response::err(req.id, code, msg),
+                None => {
+                    let prog = lock(&sr.prog);
+                    let eng = lock_eng(sr, &req.method);
+                    let _ = eng.log_query("daemon", "query", "", "[]");
+                    let _ = crate::rels::refresh_query_log(&eng);
+                    match eng.run_queries_capture(&prog) {
+                        Ok(results) => Response::ok(req.id, json!({"results": results.iter().map(|r| json!({
+                            "rel": r.rel, "columns": r.columns, "rows": r.rows,
+                        })).collect::<Vec<_>>()})),
+                        Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
+                    }
+                }
             }
         }
         "diag" => {
@@ -1819,47 +1872,29 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
             }
         }
         "schema" => {
-            let eng = lock_eng(sr, &req.method);
-            let builtin = crate::engine::builtin_rel_names();
-            let mut relations: Vec<Value> = Vec::new();
-            for (name, meta) in eng.rels.iter() {
-                let cols: Vec<Value> = meta.cols.iter().map(|c| json!({
-                    "name": c.name, "ty": format!("{:?}", c.ty),
-                })).collect();
-                let mut rel = json!({"name": name, "columns": cols});
-                if builtin.contains(name) {
-                    rel["builtin"] = Value::Bool(true);
-                }
-                relations.push(rel);
-            }
-            let extra: &[(&str, &[(&str, &str)])] = &[
-                ("_file", &[("repo", "text"), ("path", "text"), ("rev", "text"), ("hash", "text"), ("mtime", "int"), ("size", "int")]),
-                ("_files", &[("id", "int"), ("content_hash", "text"), ("path", "text"), ("size", "int")]),
-                ("_where_bytes", &[("id", "int"), ("repo", "text"), ("path", "text"), ("rev", "text"), ("byte", "int"), ("line", "int"), ("col", "int")]),
-                ("_program", &[("path", "text"), ("hash", "text"), ("mtime", "int"), ("loaded_at", "int")]),
-                ("_repo", &[("slug", "text"), ("root", "text"), ("url", "text"), ("registered_at", "int")]),
-                ("_ref", &[("repo", "text"), ("name", "text"), ("oid", "text"), ("observed_at", "int")]),
-                ("_rev_log", &[("id", "int"), ("repo", "text"), ("name", "text"), ("old", "text"), ("new", "text"), ("at", "int")]),
-            ];
-            for (name, cols) in extra {
-                let cols_json: Vec<Value> = cols.iter().map(|(n, t)| json!({"name": n, "ty": t})).collect();
-                relations.push(json!({"name": name, "columns": cols_json, "builtin": true}));
-            }
-            Response::ok(req.id, json!({"relations": relations}))
+            // Shapes come from the read-path snapshot (refreshed each program
+            // load); no `lock_eng`.
+            Response::ok(req.id, crate::daemon_read::schema(&sr.read_view()))
         }
         "query_rel" => {
             let rel = match req.params.get("rel").and_then(|v| v.as_str()) {
                 Some(s) => s,
                 None => return Response::err(req.id, INVALID_PARAMS, "missing rel"),
             };
-            let eng = lock_eng(sr, &req.method);
-            let Some(meta) = eng.rels.get(rel) else {
-                return Response::err(req.id, INVALID_PARAMS,
-                    format!("unknown relation {rel:?}"));
-            };
-            let cols: Vec<String> = meta.cols.iter().map(|c| c.name.clone()).collect();
-            let rows = eng.rel_rows(rel, cols.len());
-            Response::ok(req.id, json!({"columns": cols, "rows": rows}))
+            match crate::daemon_read::query_rel(&sr.read_view(), rel) {
+                Some(Ok(v)) => Response::ok(req.id, v),
+                Some(Err((code, msg))) => Response::err(req.id, code, msg),
+                None => {
+                    let eng = lock_eng(sr, &req.method);
+                    let Some(meta) = eng.rels.get(rel) else {
+                        return Response::err(req.id, INVALID_PARAMS,
+                            format!("unknown relation {rel:?}"));
+                    };
+                    let cols: Vec<String> = meta.cols.iter().map(|c| c.name.clone()).collect();
+                    let rows = eng.rel_rows(rel, cols.len());
+                    Response::ok(req.id, json!({"columns": cols, "rows": rows}))
+                }
+            }
         }
         "what" => {
             let anchor = match req.params.get("anchor").and_then(|v| v.as_str()) {
@@ -1910,13 +1945,19 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
             };
             let params: Vec<Value> = req.params.get("params")
                 .and_then(|v| v.as_array()).cloned().unwrap_or_default();
-            let eng = lock_eng(sr, &req.method);
-            let params_json = serde_json::to_string(&params).unwrap_or_else(|_| "[]".into());
-            let _ = eng.log_query("daemon", "query_sql", sql_raw, &params_json);
-            let _ = crate::rels::refresh_query_log(&eng);
-            match eng.query_sql(sql_raw, &params) {
-                Ok(rows) => Response::ok(req.id, json!({"rows": rows})),
-                Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
+            match crate::daemon_read::query_sql(&sr.read_view(), sql_raw, &params) {
+                Some(Ok(v)) => Response::ok(req.id, v),
+                Some(Err((code, msg))) => Response::err(req.id, code, msg),
+                None => {
+                    let eng = lock_eng(sr, &req.method);
+                    let params_json = serde_json::to_string(&params).unwrap_or_else(|_| "[]".into());
+                    let _ = eng.log_query("daemon", "query_sql", sql_raw, &params_json);
+                    let _ = crate::rels::refresh_query_log(&eng);
+                    match eng.query_sql(sql_raw, &params) {
+                        Ok(rows) => Response::ok(req.id, json!({"rows": rows})),
+                        Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
+                    }
+                }
             }
         }
         "mcp_request" => {
