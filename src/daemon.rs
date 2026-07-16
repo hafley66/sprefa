@@ -367,7 +367,7 @@ impl ServedRoot {
         let files: Vec<PathBuf> = all.iter().filter(|f| f.exists()).cloned().collect();
         if files.is_empty() {
             if !all.is_empty() {
-                eprintln!("[{}] all {} watched program file(s) missing; keeping last-good program",
+                tracing::warn!("[{}] all {} watched program file(s) missing; keeping last-good program",
                     self.root_label(), all.len());
             }
             return Ok(());
@@ -386,7 +386,7 @@ impl ServedRoot {
             *p = new_prog;
         }
         if let Err(e) = lock(&self.eng).save_program_meta(&all) {
-            eprintln!("[{}] save_program_meta: {e}", self.root_label());
+            tracing::warn!("[{}] save_program_meta: {e}", self.root_label());
         }
         self.tick_full(false)?;
         Ok(())
@@ -418,7 +418,7 @@ impl ServedRoot {
             .count();
         if n_err > 0 {
             crate::render_type_diags_eprintln(&type_diags);
-            eprintln!("[{}] discovery reload: {n_err} type error(s); keeping old", self.root_label());
+            tracing::warn!("[{}] discovery reload: {n_err} type error(s); keeping old", self.root_label());
             return Ok(false);
         }
         crate::render_type_diags_eprintln(&type_diags);
@@ -433,11 +433,11 @@ impl ServedRoot {
         {
             let pf = lock(&self.program_files).clone();
             if let Err(e) = lock(&self.eng).save_program_meta(&pf) {
-                eprintln!("[{}] save_program_meta: {e}", self.root_label());
+                tracing::warn!("[{}] save_program_meta: {e}", self.root_label());
             }
         }
         let n = lock(&self.program_files).len();
-        eprintln!("[{}] discovery reload: {n} file(s)", self.root_label());
+        tracing::info!("[{}] discovery reload: {n} file(s)", self.root_label());
         self.tick_full(false)?;
         Ok(true)
     }
@@ -503,7 +503,7 @@ impl ServedRoot {
             let mut eng = lock(&self.eng);
             crate::activity::set(crate::activity::Phase::Effects, "external sinks");
             eng.drain_external_sinks(&prog).unwrap_or_else(|e| {
-                eprintln!("[{}] drain_external_sinks: {e}", self.root_label());
+                tracing::warn!("[{}] drain_external_sinks: {e}", self.root_label());
                 0
             })
         };
@@ -629,13 +629,13 @@ impl ServedRoot {
                                 old.unwrap_or_default(), new, files));
                         }
                         Ok(None) => {}
-                        Err(e) => eprintln!("[{}] observe_ref {slug}/{name}: {e}", self.root_label()),
+                        Err(e) => tracing::warn!("[{}] observe_ref {slug}/{name}: {e}", self.root_label()),
                     }
                 }
             }
             if !advances.is_empty() {
                 if let Err(e) = eng.refresh_daemon_rels() {
-                    eprintln!("[{}] refresh_daemon_rels: {e}", self.root_label());
+                    tracing::warn!("[{}] refresh_daemon_rels: {e}", self.root_label());
                 }
             }
         }
@@ -721,13 +721,17 @@ impl ServedRoot {
             .iter()
             .map(|f| std::fs::canonicalize(f).unwrap_or_else(|_| f.clone()))
             .collect();
-        if let Err(e) = eng.save_repos_meta() { eprintln!("[daemon] save_repos_meta: {e}"); }
-        if let Err(e) = eng.save_program_meta(&canon_files) { eprintln!("[daemon] save_program_meta: {e}"); }
+        if let Err(e) = eng.save_repos_meta() { tracing::warn!("[daemon] save_repos_meta: {e}"); }
+        if let Err(e) = eng.save_program_meta(&canon_files) { tracing::warn!("[daemon] save_program_meta: {e}"); }
 
         let label = eng_root.file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| eng_root.to_string_lossy().into_owned());
-        eprintln!("[{label}] served ({} type diag(s), program {display})", type_diags.len());
+        // `program {prog_display}`, not `{display}`: the tracing macro pulls its
+        // own `display` field-helper into scope, which shadows the local in the
+        // format capture. The rendered text is byte-identical.
+        let prog_display = display.as_str();
+        tracing::info!("[{label}] served ({} type diag(s), program {prog_display})", type_diags.len());
 
         // Initial read-path snapshot from the cold-tick engine + program.
         let db_path_buf = db_path.map(PathBuf::from);
@@ -913,7 +917,7 @@ impl Daemon {
         let launch_exe_stamp = self.launch_exe_stamp;
         let _ = std::thread::Builder::new().name(format!("dl-watch-{key}"))
             .spawn(move || watcher_loop(sr_watch, launch_exe_stamp));
-        eprintln!("[daemon] registered root {} (key {key})", canon.display());
+        tracing::info!("[daemon] registered root {} (key {key})", canon.display());
         Ok(sr)
     }
 
@@ -935,9 +939,9 @@ impl Daemon {
             let _ = std::fs::remove_dir_all(root_db_dir(&key));
         }
         if sr.is_none() {
-            eprintln!("[daemon] drop_root {}: not registered", canon.display());
+            tracing::warn!("[daemon] drop_root {}: not registered", canon.display());
         } else {
-            eprintln!("[daemon] deregistered root {} (key {key}){}",
+            tracing::info!("[daemon] deregistered root {} (key {key}){}",
                 canon.display(), if purge { ", db purged" } else { "" });
         }
         Ok(())
@@ -1008,6 +1012,32 @@ fn apply_daemon_budget() -> (&'static str, i32, usize) {
     (qos_label, priority, threads)
 }
 
+/// Install the daemon's `tracing` subscriber: an stderr `fmt` layer so every log
+/// line carries a timestamp, level, and the emitting thread's name (`dl-poll`,
+/// `dl-watch-<key>`, `dl-http-N`, `dl-accept`, …). Writer is stderr — the detached
+/// daemon's stderr is redirected into `daemon.log` by `spawn_detached`, so this
+/// keeps that plumbing intact. The filter reads `DL_LOG` (default `info`);
+/// `with_target(false)` drops the module path since call sites already carry a
+/// `[daemon]`/`[<root>]` bracket, and `compact()` keeps each line short.
+///
+/// Idempotent by design: `try_init` returns `Err` (ignored) when a global
+/// subscriber is already installed, so a foreground daemon started inside a
+/// process that already configured tracing — and a test that calls this twice —
+/// does not panic. `crate::trace::init` deliberately skips claiming the global
+/// slot unless `RUST_LOG`/`DL_TRACE` is set, so in the common case this `try_init`
+/// is the one that wins and governs daemon output.
+fn init_daemon_tracing() {
+    let filter = tracing_subscriber::EnvFilter::try_from_env("DL_LOG")
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let _ = tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_thread_names(true)
+        .with_target(false)
+        .compact()
+        .with_env_filter(filter)
+        .try_init();
+}
+
 // ---------- daemon entry ----------
 
 /// Run the singleton daemon in this process. Binds the one socket at the XDG
@@ -1024,7 +1054,8 @@ pub fn run_daemon(
     tray: bool,
 ) -> Result<()> {
     let (qos_label, priority, threads) = apply_daemon_budget();
-    eprintln!("[daemon] background budget: qos={qos_label} nice={priority} threads={threads}");
+    init_daemon_tracing();
+    tracing::info!("[daemon] background budget: qos={qos_label} nice={priority} threads={threads}");
 
     let home = daemon_home();
     let _ = std::fs::create_dir_all(&home);
@@ -1036,7 +1067,7 @@ pub fn run_daemon(
     let shared = Shared { build_id: build_id.clone(), shutdown_requested: shutdown_requested.clone(), subscribers: subscribers.clone() };
 
     let repos = load_repos_eager();
-    if !repos.is_empty() { eprintln!("[config] {} repo(s) registered", repos.len()); }
+    if !repos.is_empty() { tracing::info!("[config] {} repo(s) registered", repos.len()); }
 
     // The config-view engine (root:None). An explicit --db points it at that file;
     // otherwise the home db.
@@ -1071,11 +1102,11 @@ pub fn run_daemon(
     std::fs::set_permissions(&sock, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
     write_pid_file()?;
     let idle_secs = idle_timeout_secs();
-    eprintln!("[daemon] listening on {} (pid {}, idle {}s){}",
+    tracing::info!("[daemon] listening on {} (pid {}, idle {}s){}",
         sock.display(), std::process::id(), idle_secs,
         if foreground { " [foreground]" } else { "" });
     if let Some(p) = crate::perflog::path() {
-        eprintln!("[daemon] perf log {} (tail -f | jq .total_ms, .phase, .ms)", p.display());
+        tracing::info!("[daemon] perf log {} (tail -f | jq .total_ms, .phase, .ms)", p.display());
     }
     crate::verdict::emit_run_header(
         "daemon",
@@ -1105,7 +1136,7 @@ pub fn run_daemon(
     let mut evicted_any = false;
     for rec in read_roots_json() {
         if !rec.root.exists() {
-            eprintln!("[daemon] root {} no longer exists; evicting from roots.json (key {})",
+            tracing::warn!("[daemon] root {} no longer exists; evicting from roots.json (key {})",
                 rec.root.display(), rec.key);
             evicted_any = true;
             continue;
@@ -1114,10 +1145,10 @@ pub fn run_daemon(
         if rec.root.join(".dl").is_dir() {
             match daemon.add_root(&rec.root) {
                 Ok(_) => {}
-                Err(e) => eprintln!("[daemon] replay {}: {e}", rec.root.display()),
+                Err(e) => tracing::warn!("[daemon] replay {}: {e}", rec.root.display()),
             }
         } else {
-            eprintln!("[daemon] replay skip {} (no .dl/)", rec.root.display());
+            tracing::info!("[daemon] replay skip {} (no .dl/)", rec.root.display());
         }
     }
     if evicted_any { write_roots_json(&kept); }
@@ -1144,9 +1175,9 @@ pub fn run_daemon(
                         let stamp = launch_exe_stamp;
                         std::thread::Builder::new().name(format!("dl-watch-{key}"))
                             .spawn(move || watcher_loop(sr_watch, stamp))?;
-                        eprintln!("[daemon] registered initial root {}", canon.display());
+                        tracing::info!("[daemon] registered initial root {}", canon.display());
                     }
-                    Err(e) => eprintln!("[daemon] initial root {}: {e}", canon.display()),
+                    Err(e) => tracing::error!("[daemon] initial root {}: {e}", canon.display()),
                 }
             }
         }
@@ -1172,7 +1203,7 @@ pub fn run_daemon(
     // and publishes `<home>/http.json` so clients can find the port. A bind
     // failure is logged but non-fatal: the UDS transport stays authoritative.
     if let Err(e) = crate::daemon_http::serve(daemon.clone(), &build_id) {
-        eprintln!("[daemon] http transport disabled: {e}");
+        tracing::warn!("[daemon] http transport disabled: {e}");
     }
 
     if tray {
@@ -1201,10 +1232,10 @@ fn accept_loop(daemon: Arc<Daemon>, listener: UnixListener) {
                     .spawn(move || handle_connection(d, stream))
                     .is_err()
                 {
-                    eprintln!("[daemon] thread spawn failed for connection {next_id}");
+                    tracing::error!("[daemon] thread spawn failed for connection {next_id}");
                 }
             }
-            Err(e) => eprintln!("[daemon] accept error: {e}"),
+            Err(e) => tracing::warn!("[daemon] accept error: {e}"),
         }
     }
 }
@@ -1214,7 +1245,7 @@ pub(crate) fn shutdown_cleanup(_d: &Daemon) {
     let _ = std::fs::remove_file(&sock);
     let _ = std::fs::remove_file(crate::daemon_http::http_json_path());
     remove_pid_file();
-    eprintln!("[daemon] shut down cleanly");
+    tracing::info!("[daemon] shut down cleanly");
 }
 
 // ---------- watcher thread (one per served root) ----------
@@ -1225,7 +1256,7 @@ fn watcher_loop(d: Arc<ServedRoot>, launch_exe_stamp: Option<ExeStamp>) {
     let (tx, rx) = std::sync::mpsc::channel();
     let mut watcher = match notify::recommended_watcher(move |res| { let _ = tx.send(res); }) {
         Ok(w) => w,
-        Err(e) => { eprintln!("[{}] watcher init failed: {e}", d.root_label()); return; }
+        Err(e) => { tracing::error!("[{}] watcher init failed: {e}", d.root_label()); return; }
     };
     // The config view roots at the XDG home (which holds the per-root dbs); do NOT
     // watch it recursively. A registered root watches its own tree.
@@ -1233,7 +1264,7 @@ fn watcher_loop(d: Arc<ServedRoot>, launch_exe_stamp: Option<ExeStamp>) {
         WatchGate::new(&[])
     } else {
         if let Err(e) = watcher.watch(&d.root, RecursiveMode::Recursive) {
-            eprintln!("[{}] watch root failed: {e}", d.root_label());
+            tracing::error!("[{}] watch root failed: {e}", d.root_label());
             return;
         }
         WatchGate::new(std::slice::from_ref(&d.root))
@@ -1271,7 +1302,7 @@ fn watcher_loop(d: Arc<ServedRoot>, launch_exe_stamp: Option<ExeStamp>) {
         if rc.root.exists() { watch_count += watch_git_narrow(&mut watcher, &mut gate, &rc.root); }
     }
 
-    eprintln!("[{}] watcher ready — {watch_count} watch(es)", d.root_label());
+    tracing::info!("[{}] watcher ready — {watch_count} watch(es)", d.root_label());
     let watcher_start = std::time::Instant::now();
     const STARTUP_GRACE: Duration = Duration::from_secs(1);
     let mut watched: std::collections::HashSet<PathBuf> = std::collections::HashSet::from_iter([
@@ -1304,7 +1335,7 @@ fn watcher_loop(d: Arc<ServedRoot>, launch_exe_stamp: Option<ExeStamp>) {
                 if ev.need_rescan() { rescan = true; } else { paths.extend(ev.paths); }
             }
             Err(e) => {
-                eprintln!("[{}] watch error, forcing full tick: {e}", d.root_label());
+                tracing::warn!("[{}] watch error, forcing full tick: {e}", d.root_label());
                 rescan = true;
             }
         }
@@ -1316,7 +1347,7 @@ fn watcher_loop(d: Arc<ServedRoot>, launch_exe_stamp: Option<ExeStamp>) {
                     if window_start.elapsed() > MAX_WINDOW { break; }
                 }
                 Ok(Err(e)) => {
-                    eprintln!("[{}] watch error, forcing full tick: {e}", d.root_label());
+                    tracing::warn!("[{}] watch error, forcing full tick: {e}", d.root_label());
                     rescan = true;
                     if window_start.elapsed() > MAX_WINDOW { break; }
                 }
@@ -1327,8 +1358,8 @@ fn watcher_loop(d: Arc<ServedRoot>, launch_exe_stamp: Option<ExeStamp>) {
         if rescan {
             let tick_num = d.tick_count.load(Ordering::Relaxed);
             match d.tick_full(true) {
-                Ok(()) => eprintln!("[{}] tick #{tick_num} (rescan recovery) ok", d.root_label()),
-                Err(e) => eprintln!("[{}] tick #{tick_num} (rescan recovery) error: {e}", d.root_label()),
+                Ok(()) => tracing::info!("[{}] tick #{tick_num} (rescan recovery) ok", d.root_label()),
+                Err(e) => tracing::error!("[{}] tick #{tick_num} (rescan recovery) error: {e}", d.root_label()),
             }
             d.touch();
             enforce_mem_limit(&d.root_label());
@@ -1354,18 +1385,18 @@ fn watcher_loop(d: Arc<ServedRoot>, launch_exe_stamp: Option<ExeStamp>) {
             if d.discovery_mode {
                 match d.reload_discovery() {
                     Ok(false) => {
-                        eprintln!("[{}] program edit ({}) — reloading (discovery)", d.root_label(), names.join(", "));
+                        tracing::info!("[{}] program edit ({}) — reloading (discovery)", d.root_label(), names.join(", "));
                         if let Err(e) = d.reload_program() {
-                            eprintln!("[{}] reload failed, keeping old: {e}", d.root_label());
+                            tracing::warn!("[{}] reload failed, keeping old: {e}", d.root_label());
                         }
                     }
                     Ok(true) => {}
-                    Err(e) => eprintln!("[{}] discovery reload: {e}", d.root_label()),
+                    Err(e) => tracing::warn!("[{}] discovery reload: {e}", d.root_label()),
                 }
             } else {
-                eprintln!("[{}] program edit ({}) — reloading", d.root_label(), names.join(", "));
+                tracing::info!("[{}] program edit ({}) — reloading", d.root_label(), names.join(", "));
                 if let Err(e) = d.reload_program() {
-                    eprintln!("[{}] reload failed, keeping old: {e}", d.root_label());
+                    tracing::warn!("[{}] reload failed, keeping old: {e}", d.root_label());
                 }
             }
             continue;
@@ -1378,9 +1409,9 @@ fn watcher_loop(d: Arc<ServedRoot>, launch_exe_stamp: Option<ExeStamp>) {
                         .unwrap_or(false)
             });
             if has_dl {
-                eprintln!("[{}] .dl discovery change — re-merging program", d.root_label());
+                tracing::info!("[{}] .dl discovery change — re-merging program", d.root_label());
                 if let Err(e) = d.reload_discovery() {
-                    eprintln!("[{}] discovery reload: {e}", d.root_label());
+                    tracing::warn!("[{}] discovery reload: {e}", d.root_label());
                 }
                 continue;
             }
@@ -1388,7 +1419,7 @@ fn watcher_loop(d: Arc<ServedRoot>, launch_exe_stamp: Option<ExeStamp>) {
         if touches_git {
             let (n, changed) = d.on_git_event();
             if n > 0 || !changed.is_empty() {
-                eprintln!("[{}] git change — {n} ref(s) advanced, {} worktree file(s)", d.root_label(), changed.len());
+                tracing::info!("[{}] git change — {n} ref(s) advanced, {} worktree file(s)", d.root_label(), changed.len());
             }
             if changed.is_empty() { continue; }
             paths = changed;
@@ -1400,7 +1431,7 @@ fn watcher_loop(d: Arc<ServedRoot>, launch_exe_stamp: Option<ExeStamp>) {
             eng.set_repos(served_repos(d.key.is_none()));
             drop(eng);
             if let Err(e) = lock(&d.eng).save_repos_meta() {
-                eprintln!("[{}] save_repos_meta: {e}", d.root_label());
+                tracing::warn!("[{}] save_repos_meta: {e}", d.root_label());
             }
             d.tick_full(true)
         } else if paths.is_empty() {
@@ -1414,8 +1445,8 @@ fn watcher_loop(d: Arc<ServedRoot>, launch_exe_stamp: Option<ExeStamp>) {
         let tick_num = d.tick_count.load(Ordering::Relaxed);
         let tick_ok = result.is_ok();
         match result {
-            Ok(()) => eprintln!("[{}] tick #{tick_num} ({tick_label}, {n_paths} paths) ok", d.root_label()),
-            Err(e) => eprintln!("[{}] tick #{tick_num} ({tick_label}, {n_paths} paths) error: {e}", d.root_label()),
+            Ok(()) => tracing::info!("[{}] tick #{tick_num} ({tick_label}, {n_paths} paths) ok", d.root_label()),
+            Err(e) => tracing::error!("[{}] tick #{tick_num} ({tick_label}, {n_paths} paths) error: {e}", d.root_label()),
         }
         // A tick is where the image grows (extract, closure, spine writes), so
         // check the ceiling here too, not only on the idle heartbeat.
@@ -1429,11 +1460,11 @@ fn watcher_loop(d: Arc<ServedRoot>, launch_exe_stamp: Option<ExeStamp>) {
                     watch_count += 1;
                     gate.add_root(&rc.root);
                     watch_count += watch_git_narrow(&mut watcher, &mut gate, &rc.root);
-                    eprintln!("[{}] watching (pulled) {} ({})", d.root_label(), rc.slug, rc.root.display());
+                    tracing::info!("[{}] watching (pulled) {} ({})", d.root_label(), rc.slug, rc.root.display());
                 }
             }
             if watch_count != before {
-                eprintln!("[{}] watch count now {watch_count} (+{})", d.root_label(), watch_count - before);
+                tracing::info!("[{}] watch count now {watch_count} (+{})", d.root_label(), watch_count - before);
             }
         }
     }
@@ -1489,7 +1520,7 @@ fn idle_loop(d: Arc<Daemon>, idle_secs: u64) {
             lock(&sr.last_activity).elapsed() > Duration::from_secs(idle_secs)
         });
         if all_idle {
-            eprintln!("[daemon] all roots idle {}min, exiting", idle_secs / 60);
+            tracing::info!("[daemon] all roots idle {}min, exiting", idle_secs / 60);
             shutdown_cleanup(&d);
             std::process::exit(0);
         }
@@ -1534,7 +1565,7 @@ fn should_exit_for_binary_change(launch: Option<ExeStamp>, current: Option<ExeSt
 fn enforce_fresh_binary(launch_exe_stamp: Option<ExeStamp>) {
     if launch_exe_stamp.is_none() { return; }
     if should_exit_for_binary_change(launch_exe_stamp, current_exe_stamp()) {
-        eprintln!("[daemon] binary replaced on disk, exiting so the next call runs the new version");
+        tracing::info!("[daemon] binary replaced on disk, exiting so the next call runs the new version");
         std::process::exit(0);
     }
 }
@@ -1566,7 +1597,7 @@ fn enforce_mem_limit(label: &str) {
     let Some(limit) = mem_limit_mb() else { return };
     let Some(rss) = self_rss_mb() else { return };
     if rss > limit {
-        eprintln!("[{label}] RSS {rss}MB exceeded limit {limit}MB — exiting (memory guard; \
+        tracing::warn!("[{label}] RSS {rss}MB exceeded limit {limit}MB — exiting (memory guard; \
                    set DL_DAEMON_MEM_MB to adjust, 0 to disable)");
         std::process::exit(MEM_GUARD_EXIT_CODE);
     }
@@ -1596,7 +1627,7 @@ fn poll_backoff_cycles(streak: u32, poll_secs: u64) -> u32 {
 }
 
 fn poll_loop(d: Arc<Daemon>, secs: u64) {
-    eprintln!("[daemon] poll loop every {secs}s (@async drain)");
+    tracing::info!("[daemon] poll loop every {secs}s (@async drain)");
     loop {
         std::thread::sleep(Duration::from_secs(secs));
         if d.shutdown_requested.load(Ordering::Relaxed) { return; }
@@ -1608,7 +1639,7 @@ fn poll_loop(d: Arc<Daemon>, secs: u64) {
             // config view (`key == None`) has no directory of its own to
             // vanish and is never a candidate.
             if sr.key.is_some() && !sr.root.exists() {
-                eprintln!("[daemon] root {} no longer exists; deregistering", sr.root.display());
+                tracing::warn!("[daemon] root {} no longer exists; deregistering", sr.root.display());
                 let _ = d.drop_root(&sr.root, false);
                 continue;
             }
@@ -1622,16 +1653,16 @@ fn poll_loop(d: Arc<Daemon>, secs: u64) {
             }
             match sr.poll_tick() {
                 Ok(n) => {
-                    if n > 0 { eprintln!("[{}] poll: drained {n} effect(s)", sr.root_label()); }
+                    if n > 0 { tracing::info!("[{}] poll: drained {n} effect(s)", sr.root_label()); }
                     if sr.poll_fail_streak.swap(0, Ordering::Relaxed) > 0 {
-                        eprintln!("[{}] poll recovered", sr.root_label());
+                        tracing::info!("[{}] poll recovered", sr.root_label());
                     }
                 }
                 Err(e) => {
                     let streak = sr.poll_fail_streak.fetch_add(1, Ordering::Relaxed) + 1;
                     let skip = poll_backoff_cycles(streak, secs);
                     sr.poll_skip.store(skip, Ordering::Relaxed);
-                    eprintln!("[{}] poll error (backing off {skip} cycle(s)): {e}", sr.root_label());
+                    tracing::warn!("[{}] poll error (backing off {skip} cycle(s)): {e}", sr.root_label());
                 }
             }
         }
@@ -1645,7 +1676,7 @@ fn handle_connection(d: Arc<Daemon>, mut stream: UnixStream) {
         let body = match rpc::read_frame(&mut stream) {
             Ok(Some(b)) => b,
             Ok(None) => return,
-            Err(e) => { eprintln!("[daemon] read error: {e}"); return; }
+            Err(e) => { tracing::warn!("[daemon] read error: {e}"); return; }
         };
         let v: Value = match serde_json::from_str(&body) {
             Ok(v) => v,
@@ -2081,7 +2112,7 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                         Ok(()) => {
                             if let Err(e) = lock_eng(sr, &req.method)
                                 .save_program_meta(&lock(&sr.program_files).clone()) {
-                                eprintln!("[{}] save_program_meta: {e}", sr.root_label());
+                                tracing::warn!("[{}] save_program_meta: {e}", sr.root_label());
                             }
                             let files: Vec<String> = lock(&sr.program_files).iter()
                                 .map(|f| f.to_string_lossy().into_owned()).collect();
@@ -2618,6 +2649,16 @@ mod tests {
         assert_eq!("0".parse::<u64>().ok().filter(|&n| n > 0), None);
         assert_eq!("2048".parse::<u64>().ok().filter(|&n| n > 0), Some(2048));
         assert_eq!(DEFAULT_MEM_LIMIT_MB, 4096);
+    }
+
+    /// `init_daemon_tracing` must be idempotent: a foreground daemon started
+    /// inside a process that already installed a subscriber — and any test that
+    /// exercises it twice — relies on `try_init` swallowing the "global already
+    /// set" error rather than panicking.
+    #[test]
+    fn daemon_tracing_init_is_idempotent() {
+        init_daemon_tracing();
+        init_daemon_tracing();
     }
 
     #[test]
