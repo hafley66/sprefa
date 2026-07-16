@@ -9,7 +9,7 @@ use std::path::Path;
 
 use super::root;
 
-const VERBS: &str = "verbs: status start [--foreground] stop restart drop <root> [--purge] load load-once rows await-settle";
+const VERBS: &str = "verbs: status start [--foreground] stop restart drop <root> [--purge] load load-once rows await-settle url";
 
 /// Dispatch `dl daemon <verb> [args]`. Returns the process exit code.
 pub fn run_cmd(args: &[String]) -> Result<i32> {
@@ -111,6 +111,11 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
             print_rows(&cols, &rows);
             Ok(0)
         }
+        "url" => {
+            // Print the daemon's standard HTTP base URL, read from http.json.
+            println!("{}", crate::daemon_http::base_url()?);
+            Ok(0)
+        }
         "await-settle" => {
             let ms = flag_value(args, "--ms")
                 .and_then(|s| s.parse().ok())
@@ -137,6 +142,7 @@ fn print_help() {
     eprintln!("  load-once <FILE.dl>            load a program for one run");
     eprintln!("  rows <REL>                     print live relation rows");
     eprintln!("  await-settle [--ms N]          wait for the root to become quiescent");
+    eprintln!("  url                            print the daemon's HTTP base URL (from http.json)");
     eprintln!("options: --db PATH, --tray (start); --ms N (await-settle)");
 }
 
