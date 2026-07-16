@@ -9,6 +9,7 @@ pub mod config;
 pub mod corpus;
 pub mod cst;
 pub mod daemon;
+pub mod daemon_http;
 pub mod datapath;
 pub mod db;
 pub mod desc;

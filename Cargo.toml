@@ -131,6 +131,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tree-sitter-dl = { path = "tree-sitter-dl" }
 tree-sitter-language = "0.1"
+# Sync HTTP/1.1 server (thread-per-request, no async runtime) for the daemon's
+# standard HTTP transport. Deliberately NOT tokio: the daemon is a sync tick
+# engine and the UDS server is already thread-per-connection.
+tiny_http = "0.12"
 
 [build-dependencies]
 # Compiles the vendored grammar C sources (vendor/grammars/) into the crate.

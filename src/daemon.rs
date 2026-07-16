@@ -696,6 +696,13 @@ impl Daemon {
         }
     }
 
+    /// Count of registered (non-config) served roots, poison-tolerant. Read by the
+    /// HTTP `/health` probe, which must answer without taking any engine mutex —
+    /// only this roots-map lock. Mirrors `daemon_summary`'s `root_count`.
+    pub(crate) fn served_root_count(&self) -> usize {
+        lock(&self.roots).len()
+    }
+
     /// Every served root (config view + registered), for the idle/poll loops and
     /// status.
     fn all_roots(&self) -> Vec<Arc<ServedRoot>> {
@@ -956,6 +963,13 @@ pub fn run_daemon(
         .name("dl-accept".into())
         .spawn(move || accept_loop(d, listener))?;
 
+    // Standard HTTP/JSON transport alongside the UDS socket. Binds 127.0.0.1:0
+    // and publishes `<home>/http.json` so clients can find the port. A bind
+    // failure is logged but non-fatal: the UDS transport stays authoritative.
+    if let Err(e) = crate::daemon_http::serve(daemon.clone(), &build_id) {
+        eprintln!("[daemon] http transport disabled: {e}");
+    }
+
     if tray {
         crate::tray::run_tray(daemon.clone())?;
     } else {
@@ -993,6 +1007,7 @@ fn accept_loop(daemon: Arc<Daemon>, listener: UnixListener) {
 pub(crate) fn shutdown_cleanup(_d: &Daemon) {
     let sock = socket_path();
     let _ = std::fs::remove_file(&sock);
+    let _ = std::fs::remove_file(crate::daemon_http::http_json_path());
     remove_pid_file();
     eprintln!("[daemon] shut down cleanly");
 }
@@ -1412,7 +1427,7 @@ fn handle_connection(d: Arc<Daemon>, mut stream: UnixStream) {
     }
 }
 
-fn parse_request(v: Value) -> Option<Request> {
+pub(crate) fn parse_request(v: Value) -> Option<Request> {
     let id = v.get("id")?.as_u64()?;
     let method = v.get("method")?.as_str()?.to_string();
     let params = v.get("params").cloned().unwrap_or(Value::Null);
@@ -1425,7 +1440,7 @@ fn req_root(req: &Request) -> Option<String> {
     req.params.get("root").and_then(|v| v.as_str()).map(String::from)
 }
 
-fn handle_request(d: &Arc<Daemon>, req: &Request, subscriber_stream: Option<Arc<Mutex<UnixStream>>>) -> Response {
+pub(crate) fn handle_request(d: &Arc<Daemon>, req: &Request, subscriber_stream: Option<Arc<Mutex<UnixStream>>>) -> Response {
     // ----- process-level methods (no root routing) -----
     match req.method.as_str() {
         "shutdown" => return Response::ok(req.id, json!({"ok": true})),
