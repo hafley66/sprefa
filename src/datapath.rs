@@ -10,23 +10,26 @@
 #[derive(Clone, Copy, PartialEq)]
 enum Fmt {
     Json,
+    Jsonl,
     Yaml,
     Toml,
 }
 
 fn fmt_of(path: &str) -> Fmt {
     match path.rsplit('.').next().unwrap_or("") {
+        "jsonl" | "ndjson" => Fmt::Jsonl,
         "yaml" | "yml" => Fmt::Yaml,
         "toml" => Fmt::Toml,
         _ => Fmt::Json,
     }
 }
 
-/// Extract leaf values along a dotted path from a json/yaml/toml file.
+/// Extract leaf values along a dotted path from a json/yaml/toml/jsonl file.
 pub fn run_data(path: &str, content: &str, jpath: &str) -> Vec<(String, usize, usize)> {
     let fmt = fmt_of(path);
+    if fmt == Fmt::Jsonl { return run_data_jsonl(content, jpath); }
     let lang: tree_sitter::Language = match fmt {
-        Fmt::Json => tree_sitter_json::LANGUAGE.into(),
+        Fmt::Json | Fmt::Jsonl => tree_sitter_json::LANGUAGE.into(),
         Fmt::Yaml => tree_sitter_yaml::LANGUAGE.into(),
         Fmt::Toml => tree_sitter_toml_ng::LANGUAGE.into(),
     };
@@ -42,11 +45,40 @@ pub fn run_data(path: &str, content: &str, jpath: &str) -> Vec<(String, usize, u
     hits.iter().map(|n| value_text_span(fmt, *n, content)).collect()
 }
 
+/// JSONL: each non-empty line is an independent JSON document. Parse each,
+/// apply the dotted path, and offset byte spans to be relative to the full file.
+fn run_data_jsonl(content: &str, jpath: &str) -> Vec<(String, usize, usize)> {
+    let lang: tree_sitter::Language = tree_sitter_json::LANGUAGE.into();
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(&lang).is_err() { return vec![]; }
+    let segs: Vec<&str> = jpath.split('.').collect();
+    let mut out: Vec<(String, usize, usize)> = Vec::new();
+    let mut line_start = 0usize;
+    for line in content.lines() {
+        let ls = line_start;
+        line_start += line.len() + 1;
+        let trimmed = line.trim();
+        if trimmed.is_empty() { continue; }
+        let tree = match parser.parse(trimmed, None) { Some(t) => t, None => continue };
+        let src = trimmed.as_bytes();
+        let mut hits: Vec<tree_sitter::Node> = Vec::new();
+        for root in root_values(Fmt::Json, tree.root_node()) {
+            descend(Fmt::Json, root, &segs, src, &mut hits);
+        }
+        let leading_ws = line.len() - line.trim_start().len();
+        let base = ls + leading_ws;
+        for (text, lo, hi) in hits.iter().map(|n| value_text_span(Fmt::Json, *n, trimmed)) {
+            out.push((text, lo + base, hi + base));
+        }
+    }
+    out
+}
+
 /// The top-level value node(s) under the grammar's document wrapper. YAML
 /// yields one per document in the stream; TOML's root is itself the object.
 fn root_values<'a>(fmt: Fmt, root: tree_sitter::Node<'a>) -> Vec<tree_sitter::Node<'a>> {
     match fmt {
-        Fmt::Json => {
+        Fmt::Json | Fmt::Jsonl => {
             let mut c = root.walk();
             root.named_children(&mut c).take(1).collect()
         }
@@ -100,7 +132,7 @@ fn entries<'a>(
 ) -> Vec<(Vec<String>, tree_sitter::Node<'a>)> {
     let mut out = Vec::new();
     match fmt {
-        Fmt::Json => {
+        Fmt::Json | Fmt::Jsonl => {
             if node.kind() != "object" { return out; }
             let mut c = node.walk();
             for pair in node.named_children(&mut c) {
@@ -153,7 +185,7 @@ fn entries<'a>(
 fn items<'a>(fmt: Fmt, node: tree_sitter::Node<'a>) -> Vec<tree_sitter::Node<'a>> {
     let mut out = Vec::new();
     match fmt {
-        Fmt::Json | Fmt::Toml => {
+        Fmt::Json | Fmt::Jsonl | Fmt::Toml => {
             if node.kind() != "array" { return out; }
             let mut c = node.walk();
             out.extend(node.named_children(&mut c));
@@ -181,7 +213,7 @@ fn value_text_span(fmt: Fmt, n: tree_sitter::Node, content: &str) -> (String, us
     let (lo, hi) = (n.start_byte(), n.end_byte());
     let raw = &content[lo..hi];
     match fmt {
-        Fmt::Json if n.kind() == "string" && hi - lo >= 2 =>
+        Fmt::Json | Fmt::Jsonl if n.kind() == "string" && hi - lo >= 2 =>
             (json_unescape(&raw[1..raw.len() - 1]), lo + 1, hi - 1),
         Fmt::Yaml if matches!(n.kind(), "double_quote_scalar" | "single_quote_scalar") && hi - lo >= 2 =>
             (yaml_scalar_text(n, content.as_bytes()), lo + 1, hi - 1),
@@ -651,8 +683,9 @@ pub type Binding = (String, String, usize, usize);
 /// the same `Step` IR later without touching the parser or this walker's core.
 pub fn run_pattern(path: &str, content: &str, steps: &[Step]) -> Vec<Vec<Binding>> {
     let fmt = fmt_of(path);
+    if fmt == Fmt::Jsonl { return run_pattern_jsonl(content, steps); }
     let lang: tree_sitter::Language = match fmt {
-        Fmt::Json => tree_sitter_json::LANGUAGE.into(),
+        Fmt::Json | Fmt::Jsonl => tree_sitter_json::LANGUAGE.into(),
         Fmt::Yaml => tree_sitter_yaml::LANGUAGE.into(),
         Fmt::Toml => tree_sitter_toml_ng::LANGUAGE.into(),
     };
@@ -663,6 +696,33 @@ pub fn run_pattern(path: &str, content: &str, steps: &[Step]) -> Vec<Vec<Binding
     let mut out: Vec<Vec<Binding>> = Vec::new();
     for root in root_values(fmt, tree.root_node()) {
         walk_steps(fmt, root, steps, src, content, Vec::new(), &mut out);
+    }
+    out
+}
+
+/// JSONL pattern walk: each non-empty line is an independent JSON document.
+fn run_pattern_jsonl(content: &str, steps: &[Step]) -> Vec<Vec<Binding>> {
+    let lang: tree_sitter::Language = tree_sitter_json::LANGUAGE.into();
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(&lang).is_err() { return vec![]; }
+    let mut out: Vec<Vec<Binding>> = Vec::new();
+    let mut line_start = 0usize;
+    for line in content.lines() {
+        let ls = line_start;
+        line_start += line.len() + 1;
+        let trimmed = line.trim();
+        if trimmed.is_empty() { continue; }
+        let tree = match parser.parse(trimmed, None) { Some(t) => t, None => continue };
+        let src = trimmed.as_bytes();
+        let leading_ws = line.len() - line.trim_start().len();
+        let base = ls + leading_ws;
+        for root in root_values(Fmt::Json, tree.root_node()) {
+            let mut batch: Vec<Vec<Binding>> = Vec::new();
+            walk_steps(Fmt::Json, root, steps, src, trimmed, Vec::new(), &mut batch);
+            for binds in batch {
+                out.push(binds.into_iter().map(|(n, t, lo, hi)| (n, t, lo + base, hi + base)).collect());
+            }
+        }
     }
     out
 }
@@ -835,7 +895,7 @@ fn walk_object_entry<'a>(
 /// Whether `node` is an object/map for `fmt` (so `{}` matches it).
 fn is_container(fmt: Fmt, node: tree_sitter::Node) -> bool {
     match fmt {
-        Fmt::Json => node.kind() == "object",
+        Fmt::Json | Fmt::Jsonl => node.kind() == "object",
         Fmt::Yaml => matches!(node.kind(), "block_mapping" | "flow_mapping"),
         Fmt::Toml => matches!(
             node.kind(),
@@ -887,7 +947,7 @@ fn entries_kd<'a>(
 ) -> Vec<(String, (usize, usize), tree_sitter::Node<'a>)> {
     let mut out = Vec::new();
     match fmt {
-        Fmt::Json => {
+        Fmt::Json | Fmt::Jsonl => {
             if node.kind() != "object" { return out; }
             let mut c = node.walk();
             for pair in node.named_children(&mut c) {

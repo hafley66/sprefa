@@ -6,6 +6,7 @@ mod agg;
 mod analysis_bundle_ab;
 mod arch;
 mod extract_digest_namespace;
+mod jsonl;
 mod json_agg;
 mod arith;
 mod arith_in_body;
