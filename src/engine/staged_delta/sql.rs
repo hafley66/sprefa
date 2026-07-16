@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::{FixtureRow, StageError, StageReady};

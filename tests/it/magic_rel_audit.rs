@@ -30,7 +30,13 @@ fn sandbox(tag: &str) -> PathBuf {
 /// Run the shipped rail with `--check` over a temp root that has one planted
 /// source file. Returns (exit code, stdout, stderr).
 fn check(dir: &PathBuf, rs_body: &str) -> (i32, String, String) {
-    fs::write(dir.join("src/planted.rs"), rs_body).unwrap();
+    check_named(dir, "planted.rs", rs_body)
+}
+
+/// Like `check`, but lets the caller pick the planted file's name — needed to
+/// probe the `src/**/*_tests.rs` test-file exemption.
+fn check_named(dir: &PathBuf, file_name: &str, rs_body: &str) -> (i32, String, String) {
+    fs::write(dir.join("src").join(file_name), rs_body).unwrap();
     let out = Command::new(DL)
         .args([&rail(), "--no-daemon", "--check"])
         .current_dir(dir)
@@ -64,6 +70,30 @@ fn rail_green_on_registered_name() {
     let (code, _out, err) = check(&d,
         "fn probe(eng: &Engine) { let _ = eng.rels.get(\"scip_want\"); }\n");
     assert_eq!(code, 0, "rail is green on a catalogued demand sink: {err}");
+}
+
+#[test]
+fn rail_ignores_test_gated_code() {
+    let d = sandbox("gated");
+    // An unregistered name on a line AFTER a `#[cfg(test)]` marker line in the
+    // same file is test scaffolding, not engine API surface, and must not trip
+    // the rail.
+    let (code, _out, err) = check(&d,
+        "#[cfg(test)]\n\
+         mod tests {\n\
+         fn probe(eng: &Engine) { let _ = eng.rels.get(\"totally_unregistered_test_only_rel\"); }\n\
+         }\n");
+    assert_eq!(code, 0, "rail is green on a cfg(test)-gated magic name: {err}");
+}
+
+#[test]
+fn rail_ignores_test_file() {
+    let d = sandbox("testfile");
+    // A dedicated `*_tests.rs` file is test scaffolding by naming convention
+    // alone (no in-file `cfg(test)` marker needed) and must not trip the rail.
+    let (code, _out, err) = check_named(&d, "planted_tests.rs",
+        "fn probe(eng: &Engine) { let _ = eng.rels.get(\"totally_unregistered_named_test_rel\"); }\n");
+    assert_eq!(code, 0, "rail is green on an unregistered name in a *_tests.rs file: {err}");
 }
 
 #[test]

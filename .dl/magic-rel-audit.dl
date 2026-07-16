@@ -48,10 +48,34 @@ magic_ref(source_file, line, rel_name) <- ref_from(source_file, line, rel_name).
 rel known(name: text).
 known(rel_name) <- rel_catalog(rel_name, _, _, _).
 
+# Test scaffolding is not engine API surface: test code declares its own
+# throwaway rels via RelDecl, so their names are catalogued at test runtime
+# and never visible to program authors. A magic-name literal is exempt when
+# it sits in a dedicated test file (src/**/*_tests.rs) or at/after a
+# `cfg(test)` marker line in its file. A child file of a test-only module
+# (e.g. staged_delta/sql.rs) carries its own inner `#![cfg(test)]` so the
+# gate is visible in-file. Match is a text scan: a `cfg(test)` literal in a
+# comment also gates, so spell it `cfg(<t>est)` in engine-source prose.
+rel test_file(file: file).
+test_file(source_file) <- scan("WORK", "src/**/*_tests.rs", source_file, _).
+
+rel test_gate(file: file, line: int).
+test_gate(source_file, line) <-
+    scan("WORK", "src/**/*.rs", source_file, rev),
+    match(source_file, rev, /#!?\[cfg\(test\)\]/, line).
+
+rel test_ref(file: file, line: int, name: text).
+test_ref(source_file, line, rel_name) <-
+    magic_ref(source_file, line, rel_name), test_file(source_file).
+test_ref(source_file, line, rel_name) <-
+    magic_ref(source_file, line, rel_name),
+    test_gate(source_file, gate_line),
+    gate_line <= line.
+
 # The ban: an engine-source literal that names no catalogued relation.
 diag(path: source_file, line: line, severity: "error", code: "magic-rel-unregistered",
      msg: "engine reads rel `${rel_name}` by literal name but it is not a catalogued builtin — give it a RelDecl (for a user-headed demand/overlay sink, add it to demand_rel_decls() + DEMAND_RELS in src/engine/mod.rs, like scip_want)") <-
-    magic_ref(source_file, line, rel_name), !known(rel_name).
+    magic_ref(source_file, line, rel_name), !known(rel_name), !test_ref(source_file, line, rel_name).
 
 ? diag(path, line, severity, code, msg).
 
