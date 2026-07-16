@@ -22,6 +22,7 @@ pub mod frontend;
 pub mod hook;
 pub mod identity;
 pub mod ingest;
+pub mod jobq;
 pub mod ktpath;
 pub mod lex;
 pub mod lower;

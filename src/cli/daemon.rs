@@ -9,7 +9,7 @@ use std::path::Path;
 
 use super::root;
 
-const VERBS: &str = "verbs: status start [--foreground] stop restart drop <root> [--purge] load load-once rows await-settle url";
+const VERBS: &str = "verbs: status start [--foreground] stop restart drop <root> [--purge] load load-once rows jobs await-settle url";
 
 /// Dispatch `dl daemon <verb> [args]`. Returns the process exit code.
 pub fn run_cmd(args: &[String]) -> Result<i32> {
@@ -116,6 +116,7 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
             println!("{}", crate::daemon_http::base_url()?);
             Ok(0)
         }
+        "jobs" => print_jobs(),
         "await-settle" => {
             let ms = flag_value(args, "--ms")
                 .and_then(|s| s.parse().ok())
@@ -141,6 +142,7 @@ fn print_help() {
     eprintln!("  load <FILE.dl>                 load a watched program");
     eprintln!("  load-once <FILE.dl>            load a program for one run");
     eprintln!("  rows <REL>                     print live relation rows");
+    eprintln!("  jobs                           list the tick/sink-drain job queue (newest first)");
     eprintln!("  await-settle [--ms N]          wait for the root to become quiescent");
     eprintln!("  url                            print the daemon's HTTP base URL (from http.json)");
     eprintln!("options: --db PATH, --tray (start); --ms N (await-settle)");
@@ -227,6 +229,33 @@ fn print_status() -> Result<i32> {
             Ok(0)
         }
     }
+}
+
+/// `dl daemon jobs`: print the tick/sink-drain queue as a table, newest first.
+/// Exit 1 if the daemon is not running.
+fn print_jobs() -> Result<i32> {
+    if crate::daemon::status(None)?.is_none() {
+        println!("daemon: not running  (home {})", crate::daemon::daemon_home().display());
+        return Ok(1);
+    }
+    let jobs = crate::daemon::jobs()?;
+    let cell = |job: &Value, key: &str| -> String {
+        job.get(key)
+            .map(|v| match v {
+                Value::String(s) => s.clone(),
+                Value::Null => String::new(),
+                other => other.to_string(),
+            })
+            .unwrap_or_default()
+    };
+    println!("KEY\tKIND\tSTATE\tATTEMPTS\tENQUEUED_AT\tSTARTED_AT");
+    for job in &jobs {
+        println!("{}\t{}\t{}\t{}\t{}\t{}",
+            cell(job, "key"), cell(job, "kind"), cell(job, "state"),
+            cell(job, "attempts"), cell(job, "enqueued_at"), cell(job, "started_at"));
+    }
+    println!("({} jobs)", jobs.len());
+    Ok(0)
 }
 
 /// Print a `--load` / `--load-once` RPC response: the JSON result on success,
