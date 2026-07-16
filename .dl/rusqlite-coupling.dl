@@ -103,3 +103,101 @@ metric("callers_reaching_sql", count(c)) <- raw_sql_reaches(c, _).
 
 # Versioned before/after artifact: re-run after each de-coupling phase, diff the md.
 gen("examples/_auto-doc/rusqlite-coupling.md", "- {name}: {n}") <- metric(name, n).
+
+# ── C6: op/family authoring surface — ZERO raw SQL, not a >=N-site threshold ─
+# The C1 arc (`src/engine/family/`) made a family declare name/out_cols/
+# input_rels/derive and read its inputs only through `Ctx::scan`
+# (src/engine/family/mod.rs) — the framework's ONE sanctioned SQL read site.
+# An op/family file (`call_site.rs`/`call_edge.rs`/`call_name.rs`, and any
+# future `call_*.rs` sibling) must contain NO raw SQL at all. `mod.rs` and
+# `router.rs` ARE the framework (Ctx::scan lives in mod.rs; the router only
+# replays derives and never touches SQL) so both are excluded from the scope —
+# this audits the AUTHORING files only.
+#
+# Reuses the bespoke-sql scan above (`raw_sql_site`, Layer 3) rather than a
+# second scanner, plus two more candidate shapes it doesn't already cover
+# (a hand-rolled `format!("SELECT ...")` string, a bare `rusqlite` reference).
+# Unlike `bespoke_hotspot` (a >=4-site WARNING), any single hit here is an
+# ERROR — an op file gets zero raw SQL, not "under some count".
+
+rel family_op_file(file: file).
+family_op_file(file) <- scan("src/engine/family/*.rs", file),
+    file != "src/engine/family/mod.rs",
+    file != "src/engine/family/router.rs".
+
+# The line span of a family file's own `#[cfg(test)] mod tests { .. }` block
+# (the exact `mod_item`/`has: field: name` shape rails.dl uses to exempt
+# `mod tests` from the unwrap-budget rail). A family's own test fixtures
+# (mirrors mod.rs's own test module, which sets up a fresh engine with raw
+# `execute`/`prepare` calls) are not the op-authoring surface, so a candidate
+# hit inside this span is exempt.
+#
+# NOTE: the mod.rs/router.rs exclusion is inlined here (not routed through
+# `family_op_file`) — joining that derived rel against a SECOND `scan(...)`
+# call on the same glob, in the same rule body, does not filter correctly in
+# this engine (confirmed by hand: the join silently admits the excluded
+# file). `family_op_file` is safe to join against another DERIVED rel (see
+# `family_raw_call` below, which joins it with `raw_sql_site`); it is not
+# safe to join against a fresh `scan`.
+rel family_test_span(file: file, start_line: int, end_line: int).
+family_test_span(file, start_line, end_line) <-
+    scan("src/engine/family/*.rs", file, rev),
+    file != "src/engine/family/mod.rs",
+    file != "src/engine/family/router.rs",
+    ast_yaml(file, rev, :rust, `
+kind: mod_item
+has:
+  field: name
+  regex: '^tests?$'
+`, start_line, _, end_line, _).
+
+# Candidate 1: a raw SQL call verb (prepare/prepare_cached/execute/
+# execute_batch/query_row/query_map — "direct db.<verb>(...) SQL calls"),
+# scoping the SAME raw_sql_site facts computed above to the op-authoring files.
+# Safe: this joins family_op_file against another DERIVED rel, not a scan.
+rel family_raw_call(file: file, line: int, verb: text).
+family_raw_call(file, line, verb) <-
+    raw_sql_site(file, line, _, _, _, verb), family_op_file(file).
+
+# Candidate 2: a hand-authored `format!("...")` string naming a SQL verb — the
+# exact `Ctx::scan` shape (`format!("SELECT {cols} FROM {rel}")`), hand-rolled
+# directly in an op file instead of routed through the framework helper.
+rel family_format_sql(file: file, line: int).
+family_format_sql(file, line) <-
+    scan("src/engine/family/*.rs", file, rev),
+    file != "src/engine/family/mod.rs",
+    file != "src/engine/family/router.rs",
+    match(file, rev, /format!\(\s*"[^"]*\b(SELECT|INSERT|DELETE|UPDATE|CREATE)\b/, line).
+
+# Candidate 3: a bare `rusqlite` reference — binding the crate directly
+# instead of going through `Ctx`/`Db`.
+rel family_rusqlite_ref(file: file, line: int).
+family_rusqlite_ref(file, line) <-
+    scan("src/engine/family/*.rs", file, rev),
+    file != "src/engine/family/mod.rs",
+    file != "src/engine/family/router.rs",
+    match(file, rev, /rusqlite/, line).
+
+# Unify the three candidate shapes, then drop anything inside the file's own
+# test-module span (a legitimate fixture, not the authoring surface).
+rel family_raw_sql_candidate(file: file, line: int, detail: text).
+family_raw_sql_candidate(file, line, verb) <- family_raw_call(file, line, verb).
+family_raw_sql_candidate(file, line, "format!(...) SQL string") <- family_format_sql(file, line).
+family_raw_sql_candidate(file, line, "rusqlite reference") <- family_rusqlite_ref(file, line).
+
+rel family_raw_sql_in_test(file: file, line: int, detail: text).
+family_raw_sql_in_test(file, line, detail) <-
+    family_raw_sql_candidate(file, line, detail),
+    family_test_span(file, start_line, end_line),
+    line >= start_line, line <= end_line.
+
+rel family_raw_sql_finding(file: file, line: int, detail: text).
+family_raw_sql_finding(file, line, detail) <-
+    family_raw_sql_candidate(file, line, detail),
+    !family_raw_sql_in_test(file, line, detail).
+
+diag(path: file, line: line, severity: "error", code: "op-raw-sql",
+     msg: "op/family file hand-rolls SQL (${detail}) — the op-authoring surface must read inputs through Ctx::scan (src/engine/family/mod.rs), the sole sanctioned SQL read site") <-
+    family_raw_sql_finding(file, line, detail).
+
+? family_raw_sql_finding(file, line, detail).

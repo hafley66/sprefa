@@ -37,6 +37,7 @@ mod readme_gen;
 mod scoped_tick;
 mod settle;
 mod magic_rel_audit;
+mod family_op_raw_sql_audit;
 mod dl_chain_discovery;
 mod cmd_op;
 mod comment_op;
