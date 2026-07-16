@@ -44,13 +44,28 @@ SolidJS read-capture deps            ⇄  DepKey capture  ✅ present     — al
 reconcile / retract render           ⇄  built, proven by rail  ✅      — already built
 ```
 
-<!-- todo(feature): C1 self-registration — replace call_families() vec + static CALL_X + call_input_rels()/call_owner_delta_rels() central sets with inventory::submit so a family file registers itself; kills the per-op central-edit fanout (src/engine/family/mod.rs) -->
-<!-- todo(feature): C2 typed read surface — replace Ctx::scan raw format!("SELECT {cols} FROM {rel}") with a framework-owned typed read so op files contain zero SQL; SQL lives in one place (src/engine/family/mod.rs) -->
-<!-- todo(feature): C3 declared schema — family declares schema() -> RowSchema; framework derives owned-table DDL + insert/retract, retiring hand-written SQLITE_CALL_DELTA_SCHEMA per rel (src/storage/call.rs) -->
+### Landed (branch `next`)
+- **C1 self-registration** — DONE (`0f57ca1a`). `Family` trait gained `out_cols` +
+  `input_rels`; families self-register via `register_family!` (inventory). The
+  `static CALL_X` + `call_families()` vec + `call_input_rels()` set are gone
+  (registry-collected / framework-computed); the render's per-family `match name`
+  arm is gone (generic `tbl(name)` + `out_cols`). A new family = 1 file + 1 mod line.
+- **C2 typed read** — already satisfied pre-C1. `Ctx::scan` is the framework's
+  single SQL read site; op files contain zero raw SQL. No work needed.
+- **C-proof** — DONE (`c7f16b4c`). Hosted `call_kind` + `call_edge_rev` as 2 new
+  files + 2 mod lines, zero framework edits, byte-identical to legacy. The drill
+  held: `(1 file, 1 mod line, 0 central-enum growth)` per family.
+- **C6 no-raw-SQL audit rail** — DONE (`8451bfa4`). `.dl/rusqlite-coupling.dl`
+  emits an ERROR `op-raw-sql` (exit 2) for any raw SQL in `src/engine/family/*.rs`
+  (excl. `mod.rs`/`router.rs` + `#[cfg(test)]`). Proven clean on the 5 real
+  families, fires on a planted `db.prepare(...)`. This is the "less SQL everywhere"
+  enforcement, and it subsumes the 584-site canonicalization (route through the
+  sanctioned helper the audit demands).
+
+### Remaining
+<!-- todo(feature): C3 declared schema — family declares schema() -> RowSchema; framework derives owned-table DDL + insert/retract, retiring hand-written SQLITE_CALL_DELTA_SCHEMA per rel (src/storage/call.rs). Bites only when a family needs a NEW owned input table (e.g. call_def_rev's extended _call_def) -->
 <!-- todo(feature): C4 writer helper — owned-table persist + public-rel write route through one framework writer keyed off the declared schema, not per-family persist_sqlite_call_family/DDL (src/storage/call.rs) -->
 <!-- todo(feature): C5 reactive signature — formalize SubscribePolicy/memo as a declared per-op reactive signature over the existing DepKey read-capture; reconcile/retract (built) is the render (src/engine/family/router.rs) -->
-<!-- todo(feature): C6 no-raw-SQL audit rail — dl --check fails when an op/family file contains raw rusqlite or format!("SELECT; this rail IS the "less SQL everywhere" enforcement and subsumes the 584-site canonicalization (route through the writer helper the audit demands) -->
-<!-- todo(perf): C-proof — port ONE existing family (CallName, 43 lines, single-table read) onto the new surface as the executable proof of thesis (mirrors v3 experiments/effect_proof); measure the drill: files created / edited / central growth, and assert 0 raw SQL in the op file -->
 
 ## Folded-in sub-goals (in service of the surface, not separate finish lines)
 
