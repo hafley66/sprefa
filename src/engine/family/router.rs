@@ -158,3 +158,67 @@ impl<'f> FamilyRouter<'f> {
 fn rel_footprint(deps: &HashSet<DepKey>) -> HashSet<&'static str> {
     deps.iter().map(|d| d.rel).collect()
 }
+
+// ---- T4 property-test accessors -------------------------------------------------
+//
+// `tests/it/retraction_props.rs` needs to inspect the router memo and to drive
+// the flip with an explicit changed-set. The T4 plan restricts src changes to
+// this file, so the hooks are surfaced on the public `Engine` type here.
+// Integration-test crates link against the library compiled as a dependency,
+// where `#[cfg(test)]` items are not emitted; therefore these are `pub` rather
+// than `#[cfg(test)]`, but `#[doc(hidden)]` and `_test`-prefixed to discourage
+// production use.
+impl crate::engine::Engine {
+    /// Current router memo rows for a call family, or `None` if the family has
+    /// never been derived in this process. Test-only.
+    #[doc(hidden)]
+    pub fn call_router_memo_rows(&self, name: &str) -> Option<Vec<Vec<crate::ast::Value>>> {
+        self.call_router
+            .borrow()
+            .as_ref()
+            .and_then(|router| router.rows(name))
+            .map(|rows| rows.iter().cloned().collect())
+    }
+
+    /// Family names that would rerun if `flip_call_rels_via_router` were called
+    /// with `changed`. A cold router (no memo yet) reports every family.
+    /// Test-only.
+    #[doc(hidden)]
+    pub fn call_router_rerun_names(
+        &self,
+        changed: &std::collections::HashSet<&'static str>,
+    ) -> Vec<&'static str> {
+        let router = self.call_router.borrow();
+        let router = match router.as_ref() {
+            Some(router) => router,
+            None => {
+                return crate::engine::family::call_families()
+                    .iter()
+                    .map(|family| family.name())
+                    .collect();
+            }
+        };
+        let mut rerun = Vec::new();
+        for family in &router.families {
+            let name = family.name();
+            let affected = match router.memo.get(name) {
+                Some(memo) => !memo.rels.is_disjoint(changed),
+                None => true,
+            };
+            if affected {
+                rerun.push(name);
+            }
+        }
+        rerun
+    }
+
+    /// Test-only hook into `flip_call_rels_via_router` with an explicit
+    /// changed-set. Returns the rerun family names. Test-only.
+    #[doc(hidden)]
+    pub fn flip_call_rels_via_router_test(
+        &self,
+        changed: &std::collections::HashSet<&'static str>,
+    ) -> anyhow::Result<Vec<&'static str>> {
+        self.flip_call_rels_via_router(changed)
+    }
+}

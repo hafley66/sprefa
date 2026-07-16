@@ -150,6 +150,8 @@ debug = 0
 # Snapshot testing for the rel schema/size stats (Db::rel_stats JSON): a
 # regression in table bytes, index count, or PK shape is a snapshot diff.
 insta = { version = "1", features = ["json", "redactions"] }
+# Property-based randomized edit scripts for T4 retraction tests.
+proptest = { version = "1" }
 
 [profile.test]
 debug = 0

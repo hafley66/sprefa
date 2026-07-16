@@ -31,7 +31,7 @@ Open items below are one-liners; full history + landed detail in the archive.
 - [ ] Migrate deck graph (`examples/anim-self.dl` + anim AtlasPanel) from name-keyed `type_edge` to sym-keyed `type_link` + `type_entity` (optional; changes node identity).
 
 ### Bugs / gaps
-- [ ] **SERVED-COPY DIVERGENCE (Chris only)**: running daemon on ~/projects/sprefa runs the old image after a `cargo install`. Restart: `cargo install --path . && (cd ~/projects/sprefa && dl daemon restart)` (root = cwd; `--daemon`/`--root` flags are gone — use the `dl daemon` subcommand). (LSP thin client retires this class.)
+- [x] **daemon cpu hog root-caused and fixed**: 2s poll full-tick storm (7af0e319) + per-process exe-identity cache forcing full corpus rebuilds every tick of the first post-install daemon (c351ed90). Ledger folklore about restart-after-install retired.
 - [ ] **enumerate_with_hash mtime+size fast path**: equal-length edit in the same fs-timestamp tick reads as unchanged (rapid two-tick same-db test flake risk).
 - [ ] **S3** body-level bind for pure-fn values (`x = replace(...)` must inline into head). **S4** no string `+`/`concat` (only template interp). **S5** ast-grep patterns exact-shape (metavar-in-JSX `{ element: <$C/> }` matched nothing). **S6** source-extract rule body silently drops an extra joined rel atom (rel-level guard doesn't cover body-level mix).
 

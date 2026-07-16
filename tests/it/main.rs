@@ -149,6 +149,7 @@ mod repo_sink;
 mod resolver_import_alias;
 mod resolver_import_narrowing;
 mod resolver_repo_scope;
+mod retraction_props;
 mod retraction_scripts;
 mod rule_edit;
 mod scan_kwargs;
