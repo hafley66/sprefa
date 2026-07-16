@@ -15,6 +15,8 @@ use std::collections::HashSet;
 use crate::ast::Value;
 use crate::db::Db;
 
+pub(crate) mod call_def;
+pub(crate) mod call_def_rev;
 pub(crate) mod call_site;
 pub(crate) mod call_edge;
 pub(crate) mod call_edge_rev;
