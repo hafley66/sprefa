@@ -89,11 +89,16 @@ impl<'f> FamilyRouter<'f> {
 
     /// React AND reconcile: rerun the affected families and, for each, diff the
     /// fresh derivation against its memoized prior rows into a [`RowDelta`]
-    /// (retract + insert), updating the memo. Returns only families whose delta
-    /// is non-empty, in registry order (sorted by name). This is the render input — the engine
-    /// applies each delta incrementally instead of overwriting the relation, so
-    /// a retracted input row surfaces as a retracted output row. A never-derived
-    /// family reconciles against an empty base (delta = all inserts).
+    /// (retract + insert), updating the memo. Returns EVERY rerun family, in
+    /// registry order (sorted by name), including ones whose delta came back
+    /// empty (a rerun that reproduced the same rows) — callers that only care
+    /// about actual row movement filter on `RowDelta::is_empty`. Returning the
+    /// full rerun set here mirrors `react`'s contract and preserves the
+    /// rerun-name observability the skip-assertion tests rely on. This is the
+    /// render input — the engine applies each delta incrementally instead of
+    /// overwriting the relation, so a retracted input row surfaces as a
+    /// retracted output row. A never-derived family reconciles against an
+    /// empty base (delta = all inserts).
     pub(crate) fn react_deltas(
         &mut self,
         db: &Db,
@@ -113,9 +118,7 @@ impl<'f> FamilyRouter<'f> {
             let (rows, deps) = derive_family(db, *family)?;
             let delta = reconcile(&prev, rows.clone());
             self.memo.insert(name, FamilyMemo { rows, rels: rel_footprint(&deps) });
-            if !delta.is_empty() {
-                deltas.push((name, delta));
-            }
+            deltas.push((name, delta));
         }
         Ok(deltas)
     }

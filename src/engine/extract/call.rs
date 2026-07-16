@@ -365,35 +365,68 @@ impl Engine {
         Ok(true)
     }
 
-    /// The persistent reactive router flip: `react` against the engine's
-    /// cross-tick memo, then overwrite each rerun family's public rel from its
-    /// freshly derived rows. On the first flip every family has no memo, so
-    /// all derive (the cold case); later ticks rerun only the families whose
-    /// input rels are in `changed`. Returns the rerun rel names. The SOLE
-    /// writer of every public call rel (P4, capstone cutover) — no direct
-    /// extracted-row write competes with it anymore.
+    /// The persistent reactive router flip: `react_deltas` against the
+    /// engine's cross-tick memo, then apply each rerun family's `RowDelta`
+    /// incrementally (retract + insert) instead of overwriting the relation —
+    /// a retracted input row now surfaces as a retracted output row (P5,
+    /// capstone cutover: retraction goes live). The one exception is a family
+    /// with no memo yet this process (a fresh DB, or the first flip after a
+    /// daemon restart): `INSERT OR IGNORE` can never remove stale rows a
+    /// prior process already committed to disk, so that family gets an
+    /// authoritative `reload_rel` instead — the cold set is the guard.
+    /// Returns the rerun rel names (every family `react_deltas` reran,
+    /// including ones whose delta came back empty). The SOLE writer of every
+    /// public call rel (P4, capstone cutover) — no direct extracted-row write
+    /// competes with it anymore. One transaction around the whole render.
     pub(crate) fn flip_call_rels_via_router(
         &self,
         changed: &std::collections::HashSet<&'static str>,
     ) -> Result<Vec<&'static str>> {
         use crate::engine::family;
         use crate::lower::tbl;
+        use crate::storage::Storage;
 
         let mut guard = self.call_router.borrow_mut();
         let router = guard.get_or_insert_with(|| family::FamilyRouter::new(family::call_families()));
-        let rerun = router.react(&self.db, changed)?;
-        for name in &rerun {
-            let rows = router.rows(name).unwrap_or(&[]);
-            // Generic render: the family declares its output columns, so a new
-            // family needs no arm here. `out_cols` and `tbl(name)` are the whole
-            // routing contract.
-            let cols = router
-                .family(name)
-                .ok_or_else(|| anyhow::anyhow!("router produced unrouted family `{name}`"))?
-                .out_cols();
-            self.db.reload_rel(&tbl(name), cols, rows)?;
+
+        let cold: std::collections::HashSet<&'static str> = family::call_families()
+            .iter()
+            .filter(|family| router.rows(family.name()).is_none())
+            .map(|family| family.name())
+            .collect();
+
+        let owns_transaction = self.db.is_autocommit();
+        if owns_transaction {
+            self.db.begin_immediate()?;
         }
-        Ok(rerun)
+        let result: Result<Vec<&'static str>> = (|| {
+            let deltas = router.react_deltas(&self.db, changed)?;
+            let mut rerun = Vec::with_capacity(deltas.len());
+            for (name, delta) in &deltas {
+                // Generic render: the family declares its output columns, so a
+                // new family needs no arm here. `out_cols` and `tbl(name)` are
+                // the whole routing contract.
+                let cols = router
+                    .family(name)
+                    .ok_or_else(|| anyhow::anyhow!("router produced unrouted family `{name}`"))?
+                    .out_cols();
+                if cold.contains(name) {
+                    self.db.reload_rel(&tbl(name), cols, router.rows(name).unwrap_or(&[]))?;
+                } else if !delta.is_empty() {
+                    self.db.retract_rows(&tbl(name), cols, &delta.retracted)?;
+                    self.db.insert_rows(&tbl(name), cols, &delta.inserted)?;
+                }
+                rerun.push(*name);
+            }
+            Ok(rerun)
+        })();
+        if owns_transaction {
+            match &result {
+                Ok(_) => self.db.commit()?,
+                Err(_) => { let _ = self.db.rollback(); }
+            }
+        }
+        result
     }
 
     /// P4's call-family half of the rev-retraction sweep (`sweep_gone_revs`,
