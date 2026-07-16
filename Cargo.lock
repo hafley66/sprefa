@@ -2988,6 +2988,7 @@ dependencies = [
  "ignore",
  "insta",
  "inventory",
+ "libc",
  "lsp-server",
  "lsp-types",
  "notify",

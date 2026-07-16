@@ -891,6 +891,70 @@ impl Daemon {
     }
 }
 
+// ---------- background scheduling budget ----------
+
+/// Positive nice value for the daemon process on unix. Higher values mean lower
+/// CPU priority, keeping the daemon from competing with the user's foreground.
+const DAEMON_NICE: libc::c_int = 10;
+
+/// macOS QoS class for utility/background work. Values come from `<sys/qos.h>`;
+/// UTILITY is `0x11`.
+#[cfg(target_os = "macos")]
+const QOS_CLASS_UTILITY: u32 = 0x11;
+
+/// Compute the rayon thread-count budget for the daemon. Never claim more than a
+/// quarter of the machine's cores, but keep at least 2 threads so small laptops
+/// don't collapse to serial operation. `DL_DAEMON_THREADS` overrides the
+/// heuristic.
+fn daemon_thread_count(cores: usize, env: Option<&str>) -> usize {
+    env.and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or_else(|| std::cmp::max(2, cores / 4))
+}
+
+/// Apply the daemon's background scheduling budget once, at the top of the serve
+/// path. macOS threads inherit the QoS class of the spawning thread, so setting
+/// this on the main thread before spawning any workers keeps the whole daemon in
+/// the utility tier where the platform supports it. On all unix systems the
+/// process also gets a positive nice value as a portable fallback. The rayon
+/// global pool is bounded here; if it was already initialized earlier in this
+/// process (e.g. by the CLI dispatch path) the call is a no-op and we report the
+/// current pool size.
+fn apply_daemon_budget() -> (&'static str, i32, usize) {
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            fn pthread_set_qos_class_self_np(class: u32, priority: libc::c_int) -> libc::c_int;
+        }
+        // SAFETY: libc call with a constant, valid QoS class; ignore errors.
+        unsafe { pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0) };
+    }
+
+    #[cfg(unix)]
+    {
+        // SAFETY: setpriority on this process is always valid; ignore EPERM.
+        unsafe { libc::setpriority(libc::PRIO_PROCESS, 0 as libc::id_t, DAEMON_NICE) };
+    }
+
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2);
+    let desired = daemon_thread_count(
+        cores,
+        std::env::var("DL_DAEMON_THREADS").ok().as_deref(),
+    );
+
+    // Bound the global rayon pool. This may already have been configured by the
+    // CLI entry path; build_global returns an error in that case rather than
+    // panicking, so the daemon stays safe to run both foreground and detached.
+    let _ = rayon::ThreadPoolBuilder::new().num_threads(desired).build_global();
+    let threads = rayon::current_num_threads();
+
+    let qos_label = if cfg!(target_os = "macos") { "utility" } else { "none" };
+    let priority = if cfg!(unix) { DAEMON_NICE as i32 } else { 0 };
+    (qos_label, priority, threads)
+}
+
 // ---------- daemon entry ----------
 
 /// Run the singleton daemon in this process. Binds the one socket at the XDG
@@ -906,6 +970,9 @@ pub fn run_daemon(
     foreground: bool,
     tray: bool,
 ) -> Result<()> {
+    let (qos_label, priority, threads) = apply_daemon_budget();
+    eprintln!("[daemon] background budget: qos={qos_label} nice={priority} threads={threads}");
+
     let home = daemon_home();
     let _ = std::fs::create_dir_all(&home);
     let launch_exe_stamp = current_exe_stamp();
@@ -2202,6 +2269,17 @@ pub fn spawn_detached() -> Result<()> {
     // The detached child runs the singleton in the background with the idle timer
     // on (`serve` = run_daemon(foreground=false)).
     cmd.args(["daemon", "serve"]);
+    // The CLI dispatch path initializes the global rayon pool before the daemon
+    // module runs, so seed DL_RAYON_THREADS with the daemon's budget so the child
+    // process's pool is sized correctly. DL_DAEMON_THREADS wins if present.
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2);
+    let n = daemon_thread_count(
+        cores,
+        std::env::var("DL_DAEMON_THREADS").ok().as_deref(),
+    );
+    cmd.env("DL_RAYON_THREADS", n.to_string());
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::from(log_file))
         .stderr(std::process::Stdio::from(stderr));
@@ -2508,5 +2586,28 @@ mod tests {
         assert_eq!(poll_backoff_cycles(10, 10), 6, "60s / 10s = 6 cycles");
         assert_eq!(poll_backoff_cycles(10, 60), 1, "60s / 60s = 1 cycle, never zero");
         assert_eq!(poll_backoff_cycles(10, 0), 60, "poll_secs=0 must not divide by zero");
+    }
+
+    #[test]
+    fn daemon_thread_count_caps_at_quarter_cores_with_floor_of_two() {
+        assert_eq!(daemon_thread_count(1, None), 2);
+        assert_eq!(daemon_thread_count(2, None), 2);
+        assert_eq!(daemon_thread_count(4, None), 2);
+        assert_eq!(daemon_thread_count(7, None), 2);
+        assert_eq!(daemon_thread_count(8, None), 2);
+        assert_eq!(daemon_thread_count(16, None), 4);
+        assert_eq!(daemon_thread_count(32, None), 8);
+        assert_eq!(daemon_thread_count(100, None), 25);
+    }
+
+    #[test]
+    fn daemon_thread_count_env_override_wins_when_positive() {
+        assert_eq!(daemon_thread_count(16, Some("1")), 1);
+        assert_eq!(daemon_thread_count(16, Some("6")), 6);
+        assert_eq!(daemon_thread_count(16, Some("99")), 99);
+        // Zero / empty / non-numeric fall back to the cores heuristic.
+        assert_eq!(daemon_thread_count(16, Some("0")), 4);
+        assert_eq!(daemon_thread_count(16, Some("")), 4);
+        assert_eq!(daemon_thread_count(16, Some("bogus")), 4);
     }
 }
