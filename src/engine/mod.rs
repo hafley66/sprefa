@@ -1093,6 +1093,12 @@ pub struct Engine {
     /// Per-file unresolved-marker cache for `refresh_unresolved_rel`, same
     /// shape: (repo, path, content hash) -> (repo id, markers).
     unresolved_facts_cache: extract::FactCache<Vec<crate::typegraph::UnresolvedRef>>,
+    /// Effect kinds `drain_effects`/`drain_streams` has already warned about
+    /// having no registered executor template (daemon CPU-hog fix, Part 2).
+    /// Kept for the engine's life (one `Engine` per served root), never
+    /// cleared, so an orphaned kind logs exactly once per root regardless of
+    /// how many polls or how many distinct request ids it re-queues under.
+    pub(crate) warned_orphan_effect_kinds: std::cell::RefCell<std::collections::HashSet<String>>,
 }
 
 struct ScanSpec {
@@ -1155,6 +1161,7 @@ impl Engine {
             comment_facts_cache: Default::default(),
             template_facts_cache: Default::default(),
             unresolved_facts_cache: Default::default(),
+            warned_orphan_effect_kinds: std::cell::RefCell::new(std::collections::HashSet::new()),
         }
     }
 

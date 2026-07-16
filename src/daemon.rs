@@ -40,7 +40,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -251,6 +251,21 @@ pub struct ServedRoot {
     /// Set by `drop_root`; the watcher thread observes it and exits, dropping its
     /// `Arc<ServedRoot>` so the engine closes.
     pub stopped: Arc<AtomicBool>,
+    /// `tick_count`'s value as of the end of the last FULL tick (`tick_full`).
+    /// Only a full tick runs `rebuild_async` (queues fresh `@async`/`@stream`
+    /// requests over the converged derived state); the watcher's incremental
+    /// `tick_paths` never does. So `tick_count != last_full_tick_count` means
+    /// a path-tick landed source motion since we last gave `rebuild_async` a
+    /// chance to see it — `poll_idle`'s cheap "source changed" half. See
+    /// `poll_idle` for the full gate (CPU-hog fix Part 1).
+    last_full_tick_count: AtomicU64,
+    /// Part 3 (poll error backoff): consecutive `poll_tick` errors for this
+    /// root. Reset to 0 on the first successful poll after a failure.
+    poll_fail_streak: AtomicU32,
+    /// Part 3: poll cycles left to SKIP (decremented, not re-attempted) before
+    /// the next `poll_tick` call. Set by `poll_backoff_cycles(poll_fail_streak)`
+    /// after an error.
+    poll_skip: AtomicU32,
 }
 
 impl ServedRoot {
@@ -275,7 +290,11 @@ impl ServedRoot {
         drop(prog);
         crate::activity::end_tick();
         self.settled.store(report.is_settled(), Ordering::Relaxed);
-        self.tick_count.fetch_add(1, Ordering::Relaxed);
+        let n = self.tick_count.fetch_add(1, Ordering::Relaxed) + 1;
+        // This WAS a full tick, so it just ran `rebuild_async` over the
+        // converged state — resync `last_full_tick_count` (`poll_idle`'s
+        // "source changed since the last full tick" half goes false again).
+        self.last_full_tick_count.store(n, Ordering::Relaxed);
         self.touch();
         *lock(&self.last_changed_paths) = Vec::new();
         self.broadcast_diag_changed();
@@ -385,9 +404,61 @@ impl ServedRoot {
         Ok(true)
     }
 
+    /// Cheap idle probe for the poll cycle (CPU-hog fix, Part 1). `true` means
+    /// this root's poll cycle has nothing to do: skip the whole thing (no
+    /// `tick_full`, no drain, no corpus walk) rather than paying `tick_full`'s
+    /// full source reconcile every `DEFAULT_POLL_SECS` regardless of state.
+    ///
+    /// Two probes, both O(1)/indexed — never a corpus walk:
+    ///   (a) `pending_effect` COUNT (queued|running, any kind incl. `@stream`
+    ///       subscriptions, which sit 'running' forever and need a continuing
+    ///       drain) — non-zero means there is already drainable work.
+    ///   (b) `tick_count != last_full_tick_count` — a path-tick (the watcher,
+    ///       on a file change) landed source motion that no full tick has
+    ///       run `rebuild_async` over yet, so a new `@async` request may be
+    ///       owed (e.g. `watch-ext.dl`'s `ext_built`, gated on `ext_src`'s
+    ///       content hash, not on wall-clock time).
+    ///
+    /// One case neither probe catches: an `@async`/`@stream` rule gated on
+    /// `every`/`clock` fires purely off a wall-clock boundary crossing, with
+    /// no associated file change the watcher would ever see — `rebuild_async`
+    /// (the only place that evaluates the cadence and queues a fresh request)
+    /// runs ONLY inside a full tick, so such a program genuinely needs the
+    /// periodic full tick unconditionally, same as before this fix (see
+    /// `gc_done_effects`'s doc comment on "a cadence-bucketed poll queues a
+    /// fresh row every `clock` bucket forever" — a real, intentional pattern).
+    /// `every_rels_used`/`clock_rels_used` scan the whole program (not just
+    /// async rule bodies) — a derived rule elsewhere reading `every`/`clock`
+    /// also opts a root out of the idle skip, which is conservative-correct,
+    /// not a regression (such a root already relied on the always-full-tick
+    /// poll before this fix).
+    fn poll_idle(&self) -> Result<bool> {
+        let cadence_driven = {
+            let prog = lock(&self.prog);
+            crate::engine::every_rels_used(&prog) || crate::engine::clock_rels_used(&prog)
+        };
+        if cadence_driven { return Ok(false); }
+        // `self.settled` is the LAST full tick's `TickReport::is_settled()` —
+        // quiescence can only be CONFIRMED by a tick that sees nothing move
+        // (a tick that just landed a response is itself reported unsettled,
+        // by design: is_settled() requires changed_rels to be timer-only).
+        // So a not-yet-settled root owes one more full tick regardless of the
+        // two cheap probes below — skipping it would freeze `settled` at
+        // `false` forever the moment the queue empties, which is exactly the
+        // state `dl daemon await-settle` blocks on.
+        if !self.settled.load(Ordering::Relaxed) { return Ok(false); }
+        let pending = lock(&self.eng).pending_effect_count()?;
+        if pending > 0 { return Ok(false); }
+        let dirty = self.tick_count.load(Ordering::Relaxed)
+            != self.last_full_tick_count.load(Ordering::Relaxed);
+        Ok(!dirty)
+    }
+
     /// One poll cycle (the clock source for `@async`): advance the tick, then
     /// drain outstanding effects + external sinks. Returns the number drained.
+    /// Skips entirely (see `poll_idle`) when there is nothing to integrate.
     fn poll_tick(&self) -> Result<usize> {
+        if self.poll_idle()? { return Ok(0); }
         self.tick_full(true)?;
         let sinks_drained = {
             let prog = lock(&self.prog);
@@ -632,6 +703,12 @@ impl ServedRoot {
             settled: AtomicBool::new(false),
             last_changed_paths: Mutex::new(Vec::new()),
             stopped: Arc::new(AtomicBool::new(false)),
+            // The cold tick just above (`eng.tick(&prog, false)`) IS a full
+            // tick — it already ran `rebuild_async` once — so start in sync
+            // with `tick_count` (both 1), not dirty.
+            last_full_tick_count: AtomicU64::new(1),
+            poll_fail_streak: AtomicU32::new(0),
+            poll_skip: AtomicU32::new(0),
         }))
     }
 }
@@ -899,7 +976,21 @@ pub fn run_daemon(
     }
 
     // Replay roots.json: re-register every persisted root (warm from its db).
+    // Part 4 (stale-root eviction): a record whose directory no longer
+    // exists AT ALL (not just a missing `.dl/`) is dropped from the
+    // replayed set and roots.json is rewritten without it — vs. the old
+    // behavior of silently re-skipping the same dead entry every boot
+    // forever. Its db under `roots/<key>/` is left on disk untouched.
+    let mut kept: Vec<RootRecord> = Vec::new();
+    let mut evicted_any = false;
     for rec in read_roots_json() {
+        if !rec.root.exists() {
+            eprintln!("[daemon] root {} no longer exists; evicting from roots.json (key {})",
+                rec.root.display(), rec.key);
+            evicted_any = true;
+            continue;
+        }
+        kept.push(rec.clone());
         if rec.root.join(".dl").is_dir() {
             match daemon.add_root(&rec.root) {
                 Ok(_) => {}
@@ -909,6 +1000,7 @@ pub fn run_daemon(
             eprintln!("[daemon] replay skip {} (no .dl/)", rec.root.display());
         }
     }
+    if evicted_any { write_roots_json(&kept); }
 
     // Register the initial root (a `dl daemon start --foreground` from inside a
     // repo, or an explicit program set).
@@ -1357,17 +1449,58 @@ fn poll_interval_secs() -> Option<u64> {
     }
 }
 
+/// Part 3 (poll error backoff): after `streak` consecutive `poll_tick`
+/// errors, how many subsequent poll cycles to SKIP (not even attempt)
+/// before trying again — `min(2^streak, cap)`, `cap` chosen so a wedged root
+/// is still probed at least once a minute regardless of `poll_secs`.
+/// `streak == 0` (healthy, or the tick right after recovery) skips nothing.
+/// Pure function: no engine/socket access, so it is unit-testable without a
+/// live daemon.
+fn poll_backoff_cycles(streak: u32, poll_secs: u64) -> u32 {
+    if streak == 0 { return 0; }
+    let cap = (60u64 / poll_secs.max(1)).max(1) as u32;
+    let cycles = 1u32.checked_shl(streak.min(31)).unwrap_or(u32::MAX);
+    cycles.min(cap)
+}
+
 fn poll_loop(d: Arc<Daemon>, secs: u64) {
     eprintln!("[daemon] poll loop every {secs}s (@async drain)");
     loop {
         std::thread::sleep(Duration::from_secs(secs));
         if d.shutdown_requested.load(Ordering::Relaxed) { return; }
         for sr in d.all_roots() {
+            // Part 4 (stale-root eviction): a registered root whose directory
+            // vanished out from under the daemon (a temp job dir cleaned up
+            // after `dl` auto-registered it on attach, etc.) is deregistered
+            // here instead of being served — and error-looped — forever. The
+            // config view (`key == None`) has no directory of its own to
+            // vanish and is never a candidate.
+            if sr.key.is_some() && !sr.root.exists() {
+                eprintln!("[daemon] root {} no longer exists; deregistering", sr.root.display());
+                let _ = d.drop_root(&sr.root, false);
+                continue;
+            }
             if !sr.has_effects() { continue; }
+            // Part 3: a root backing off from a prior poll error skips this
+            // cycle without even attempting `poll_tick`.
+            let skip = sr.poll_skip.load(Ordering::Relaxed);
+            if skip > 0 {
+                sr.poll_skip.store(skip - 1, Ordering::Relaxed);
+                continue;
+            }
             match sr.poll_tick() {
-                Ok(n) if n > 0 => eprintln!("[{}] poll: drained {n} effect(s)", sr.root_label()),
-                Ok(_) => {}
-                Err(e) => eprintln!("[{}] poll error: {e}", sr.root_label()),
+                Ok(n) => {
+                    if n > 0 { eprintln!("[{}] poll: drained {n} effect(s)", sr.root_label()); }
+                    if sr.poll_fail_streak.swap(0, Ordering::Relaxed) > 0 {
+                        eprintln!("[{}] poll recovered", sr.root_label());
+                    }
+                }
+                Err(e) => {
+                    let streak = sr.poll_fail_streak.fetch_add(1, Ordering::Relaxed) + 1;
+                    let skip = poll_backoff_cycles(streak, secs);
+                    sr.poll_skip.store(skip, Ordering::Relaxed);
+                    eprintln!("[{}] poll error (backing off {skip} cycle(s)): {e}", sr.root_label());
+                }
             }
         }
     }
@@ -2343,5 +2476,37 @@ mod tests {
         let a = key_of(p);
         assert_eq!(a, key_of(p), "key must be deterministic");
         assert_eq!(a.len(), 16, "key is 16 hex chars");
+    }
+
+    /// Part 3: a healthy root (streak 0, incl. right after recovery) never
+    /// skips a poll cycle.
+    #[test]
+    fn poll_backoff_zero_streak_skips_nothing() {
+        assert_eq!(poll_backoff_cycles(0, 2), 0);
+        assert_eq!(poll_backoff_cycles(0, 1), 0);
+    }
+
+    /// Part 3: 2, 4, 8, ... cycles per consecutive failure at the default
+    /// 2s cadence, capped once the equivalent wall time would exceed ~60s.
+    #[test]
+    fn poll_backoff_doubles_then_caps_near_60s() {
+        let secs = 2u64;
+        let cap = 30; // 60s / 2s
+        assert_eq!(poll_backoff_cycles(1, secs), 2);
+        assert_eq!(poll_backoff_cycles(2, secs), 4);
+        assert_eq!(poll_backoff_cycles(3, secs), 8);
+        assert_eq!(poll_backoff_cycles(4, secs), 16);
+        assert_eq!(poll_backoff_cycles(5, secs), cap, "2^5=32 already exceeds the 30-cycle cap");
+        assert_eq!(poll_backoff_cycles(10, secs), cap, "stays capped, never grows unbounded");
+        assert_eq!(poll_backoff_cycles(31, secs), cap, "a huge streak must not overflow/panic");
+    }
+
+    /// Part 3: the cap tracks `poll_secs` — a slower poll cadence caps at
+    /// fewer cycles so the wall-clock ceiling (~60s) stays roughly constant.
+    #[test]
+    fn poll_backoff_cap_scales_with_poll_secs() {
+        assert_eq!(poll_backoff_cycles(10, 10), 6, "60s / 10s = 6 cycles");
+        assert_eq!(poll_backoff_cycles(10, 60), 1, "60s / 60s = 1 cycle, never zero");
+        assert_eq!(poll_backoff_cycles(10, 0), 60, "poll_secs=0 must not divide by zero");
     }
 }

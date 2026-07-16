@@ -255,6 +255,86 @@ fn drop_purge_removes_root_db() {
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
 }
 
+/// Part 4 of the daemon CPU-hog fix (stale-root eviction): a registered
+/// root whose directory was deleted while the daemon was down is evicted —
+/// not silently re-skipped — at the NEXT boot's `roots.json` replay: the
+/// entry is dropped from the served set AND removed from `roots.json`, one
+/// log line, and its still-live sibling root replays normally.
+#[test]
+fn boot_replay_evicts_root_with_deleted_directory() {
+    let base = std::env::temp_dir().join(format!("dl_stale_root_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let home = base.join("xdg");
+    let gone = base.join("gone");
+    let stays = base.join("stays");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(gone.join(".dl")).unwrap();
+    fs::create_dir_all(stays.join(".dl")).unwrap();
+    fs::write(gone.join(".dl").join("p.dl"), "rel g(x: text).\ng(\"g\").\n? g(x).\n").unwrap();
+    fs::write(stays.join(".dl").join("p.dl"), "rel s(x: text).\ns(\"s\").\n? s(x).\n").unwrap();
+
+    let sock = sprefa_v5::daemon::socket_path_for(&home.join("sprefa"));
+    let spawn_at = |cwd: &Path| {
+        DaemonGuard(Command::new(DL)
+            .args(["daemon", "start", "--foreground"])
+            .current_dir(cwd).env("DL_DAEMON_ROOT", cwd).env("XDG_STATE_HOME", &home)
+            .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+            .stdout(Stdio::null()).stderr(Stdio::null())
+            .spawn().expect("spawn"))
+    };
+    let wait_up = |root: &Path| -> bool {
+        for _ in 0..200 {
+            if sock.exists() && rpc_root(&sock, 1, "ping", root, serde_json::json!({})).is_some() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        false
+    };
+
+    // First boot: register BOTH roots (the initial root, `gone`, via the
+    // positional program arg; `stays` by naming it in a query — attach IS
+    // registration, same as `singleton_serves_two_roots_isolated`).
+    let mut child = spawn_at(&gone);
+    assert!(wait_up(&gone), "first boot not ready");
+    let qs = rpc_root(&sock, 2, "query", &stays, serde_json::json!({})).expect("query stays").to_string();
+    assert!(qs.contains('s'), "stays root registered+queried: {qs}");
+    let _ = rpc(&sock, r#"{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}"#);
+    let _ = child.wait_timeout(std::time::Duration::from_secs(5));
+
+    let roots_json_path = home.join("sprefa").join("roots.json");
+    let before: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(&roots_json_path).expect("roots.json after first boot")).unwrap();
+    assert_eq!(before.as_array().map(|a| a.len()), Some(2), "both roots persisted: {before}");
+
+    // Delete `gone`'s entire directory, then restart the daemon rooted at
+    // the surviving `stays` root (so the process cwd stays valid).
+    fs::remove_dir_all(&gone).unwrap();
+    let mut child2 = spawn_at(&stays);
+    assert!(wait_up(&stays), "second boot not ready");
+
+    // `stays` replayed normally.
+    let qs2 = rpc_root(&sock, 3, "query", &stays, serde_json::json!({})).expect("query stays 2").to_string();
+    assert!(qs2.contains('s'), "stays root still served after replay: {qs2}");
+
+    // `gone` was evicted: roots.json now lists only `stays`, and the
+    // process-level summary counts one registered root, not two.
+    let after: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(&roots_json_path).expect("roots.json after second boot")).unwrap();
+    let after_roots: Vec<String> = after.as_array().unwrap().iter()
+        .filter_map(|r| r.get("root").and_then(|x| x.as_str()).map(String::from)).collect();
+    assert_eq!(after_roots.len(), 1, "gone's entry evicted from roots.json: {after}");
+    assert!(after_roots[0].contains("stays"), "surviving entry is `stays`: {after}");
+
+    let summary = rpc(&sock, r#"{"jsonrpc":"2.0","id":4,"method":"ping","params":{}}"#).expect("summary");
+    let v: serde_json::Value = serde_json::from_str(&summary).unwrap();
+    assert_eq!(v["result"]["root_count"].as_u64(), Some(1),
+        "only the surviving root is registered after replay: {v}");
+
+    let _ = rpc(&sock, r#"{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}"#);
+    let _ = child2.wait_timeout(std::time::Duration::from_secs(5));
+}
+
 /// The disc2 class made structurally impossible: a daemon started with
 /// `XDG_STATE_HOME` pointed at a sandbox binds ONLY the sandbox socket and never
 /// creates a per-root `.dl/daemon.sock`, so it cannot bind a developer's real
@@ -601,6 +681,121 @@ fn await_settle_blocks_until_effect_drains() {
     assert!(q.contains("hi-bob"), "the sh response drained into done: {q}");
     sb.shutdown();
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
+}
+
+/// Part 1 of the daemon CPU-hog fix: once a root with `@async` effects has
+/// drained its queue and settled, further poll cycles must perform NO more
+/// full ticks (the cheap idle probe skips them) — `tick_count` stays flat
+/// across several idle poll cycles instead of climbing by one every
+/// `DL_POLL_SECS`. This is the root cause of the reported CPU hog: a full
+/// tick's corpus reconcile ran unconditionally on every poll cycle even
+/// with nothing queued and nothing changed.
+#[test]
+fn idle_root_with_effects_gets_no_further_ticks_once_settled() {
+    let sb = Sandbox::new("idlepoll");
+    fs::write(sb.root.join("p.dl"),
+        "sh greet(name) -> (line: text) = `echo hi-{name}`.\n\
+         rel want(name: text).\n\
+         want(\"bob\").\n\
+         rel greet(name: text, line: text).\n\
+         greet(name, line) <- @async want(name).\n\
+         rel done(line: text).\n\
+         done(line) <- greet(_, line).\n\
+         ? done(line).\n").unwrap();
+    let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[("DL_POLL_SECS", "1")]);
+    assert!(sb.wait_ready(), "not ready");
+
+    // Block until the effect has drained and the program is quiescent (same
+    // mechanism `await_settle_blocks_until_effect_drains` exercises).
+    let out = Command::new(DL)
+        .args(["daemon", "await-settle", "--ms", "20000"])
+        .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+        .output().expect("await-settle");
+    assert_eq!(out.status.code(), Some(0), "await-settle should exit 0: {}", String::from_utf8_lossy(&out.stderr));
+
+    // Settled means the queue is drained; give the poll loop one more cycle
+    // to observe that quiet state, then sample `tick_count` as the baseline.
+    std::thread::sleep(std::time::Duration::from_millis(1200));
+    let baseline = sb.tick(10);
+
+    // Several more idle poll cycles (DL_POLL_SECS=1): nothing queued, nothing
+    // changed, no `every`/`clock` cadence in this program, so `poll_idle`
+    // should skip every one of them.
+    std::thread::sleep(std::time::Duration::from_millis(4000));
+    let after = sb.tick(11);
+
+    assert_eq!(baseline, after,
+        "an idle settled root must receive zero further full ticks from the poll loop \
+         (tick_count {baseline} -> {after} over ~4 idle poll cycles)");
+
+    sb.shutdown();
+    let _ = child.wait_timeout(std::time::Duration::from_secs(5));
+}
+
+/// Part 2 of the daemon CPU-hog fix: a `pending_effect` row whose kind has no
+/// registered executor template (no `sh`/`sh!`/`sh*` decl, no `effect_cmd`
+/// overlay fact) must not abort the whole drain — the observed live-daemon
+/// symptom was `poll error: no effect command registered for kind 'ext_built'`
+/// repeating on every poll cycle forever. It should instead be parked and
+/// warned about ONCE (not once per poll), and the daemon must keep polling
+/// normally (no `poll error` lines at all) afterward.
+#[test]
+fn orphan_effect_kind_warns_once_and_does_not_abort_poll() {
+    let base = std::env::temp_dir().join(format!("dl_orphan_kind_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let home = base.join("xdg");
+    let root = base.join("repo");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(root.join(".dl")).unwrap();
+    // `orphan_kind` is a head-response `@async` rule with NO `sh` decl and NO
+    // `effect_cmd(...)` fact overlay — its executor template can never
+    // resolve, so every drain that reaches it hits the missing-template case.
+    let program = root.join("p.dl");
+    fs::write(&program,
+        "rel want(name: text).\n\
+         want(\"bob\").\n\
+         rel orphan_kind(name: text, out: text).\n\
+         orphan_kind(name, out) <- @async want(name).\n\
+         ? orphan_kind(name, out).\n").unwrap();
+
+    let sock = sprefa_v5::daemon::socket_path_for(&home.join("sprefa"));
+    let mut child = DaemonGuard(Command::new(DL)
+        .args(["daemon", "start", "--foreground"]).arg(&program)
+        .current_dir(&root).env("DL_DAEMON_ROOT", &root).env("XDG_STATE_HOME", &home)
+        .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+        .env("DL_POLL_SECS", "1")
+        .stdout(Stdio::null()).stderr(Stdio::piped())
+        .spawn().expect("spawn"));
+    let mut up = false;
+    for _ in 0..200 {
+        if sock.exists() && rpc_root(&sock, 1, "ping", &root, serde_json::json!({})).is_some() { up = true; break; }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(up, "daemon not ready");
+
+    // Several poll cycles at DL_POLL_SECS=1 — a once-per-poll regression
+    // would clearly repeat the warning/error many times over this window.
+    std::thread::sleep(std::time::Duration::from_millis(4500));
+
+    let _ = rpc(&sock, r#"{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}"#);
+    let status = child.wait_timeout(std::time::Duration::from_secs(5));
+    assert!(status.is_some(), "daemon should exit cleanly, not hang, after an orphaned effect kind");
+
+    let mut stderr_buf = String::new();
+    {
+        use std::io::Read as _;
+        if let Some(mut s) = child.0.stderr.take() {
+            let _ = s.read_to_string(&mut stderr_buf);
+        }
+    }
+    let warn_lines = stderr_buf.lines()
+        .filter(|l| l.contains("no effect command registered for kind `orphan_kind`"))
+        .count();
+    assert_eq!(warn_lines, 1,
+        "orphan kind should warn exactly once across ~4 poll cycles, not once per cycle: {stderr_buf}");
+    let abort_lines = stderr_buf.lines().filter(|l| l.contains("poll error")).count();
+    assert_eq!(abort_lines, 0,
+        "an orphaned effect kind must not abort the poll drain via `?`: {stderr_buf}");
 }
 
 /// `ping` (with root) reports an `activity` object with all fields.

@@ -55,6 +55,17 @@ pub trait EffectExec: Sync {
     fn run_stream(&self, kind: &str, args: &serde_json::Map<String, serde_json::Value>) -> Result<Vec<Vec<String>>> {
         Ok(vec![self.run(kind, args)?])
     }
+    /// Whether `kind` has an executor registered to run it. `drain_effects` /
+    /// `drain_streams` call this BEFORE spawning anything so a `pending_effect`
+    /// row whose kind lost its template (a `.dl` edit dropped the `sh`/
+    /// `effect_cmd` decl while a request for the old kind was still queued)
+    /// is parked instead of aborting the whole drain via `run`'s `Err`.
+    /// Default `true`: a test/mock executor with no notion of "registered
+    /// kinds" keeps the old behavior of letting `run` itself decide.
+    fn has_template(&self, kind: &str) -> bool {
+        let _ = kind;
+        true
+    }
 }
 
 /// An `EffectExec` that shells out per request. `templates` keys on the effect
@@ -132,6 +143,10 @@ impl ShellEffectExec {
 }
 
 impl EffectExec for ShellEffectExec {
+    fn has_template(&self, kind: &str) -> bool {
+        self.templates.contains_key(kind)
+    }
+
     fn run(&self, kind: &str, args: &serde_json::Map<String, serde_json::Value>) -> Result<Vec<String>> {
         let stdout = self.spawn_stdout(kind, args)?;
         let nout = self.n_out.get(kind).copied().unwrap_or(1);
@@ -495,6 +510,53 @@ impl Engine {
             .count())
     }
 
+    /// Cheap COUNT of `pending_effect` rows still owed a drain — queued or
+    /// running, EVERY kind including `@stream` subscriptions (which sit
+    /// 'running' forever and need a continuing drain, unlike
+    /// `inflight_nonstream`'s settle-report count). One indexed SQL COUNT, no
+    /// corpus walk: the daemon's poll loop uses this as the idle probe (a root
+    /// with 0 pending rows and no source motion since its last full tick has
+    /// nothing to integrate, so the poll cycle skips the tick entirely).
+    pub fn pending_effect_count(&self) -> Result<i64> {
+        self.db.conn().query_row(
+            "SELECT COUNT(*) FROM pending_effect WHERE state IN ('queued','running')", [],
+            |r| r.get(0)).map_err(Into::into)
+    }
+
+    /// Permanently park `pending_effect` rows whose kind has no registered
+    /// executor template (Part 2 of the daemon CPU-hog fix). Sets
+    /// `state = 'failed'` (the state machine's documented terminal value, see
+    /// `meta.rs`'s `pending_effect` comment) so every `state IN
+    /// ('queued','running')` scan — `drain_effects`, `drain_streams`,
+    /// `inflight_nonstream`, this method — never revisits it: a crash-loop-y
+    /// orphaned kind stops being rescanned every poll instead of aborting the
+    /// drain via `?` forever. One batched UPDATE, not a per-row write.
+    fn park_orphan_effects(&self, ids: &[String]) -> Result<()> {
+        if ids.is_empty() { return Ok(()); }
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!("UPDATE pending_effect SET state = 'failed' WHERE id IN ({placeholders})");
+        let params: Vec<&dyn rusqlite::ToSql> = ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        self.db.conn().execute(&sql, params.as_slice())?;
+        Ok(())
+    }
+
+    /// Log an orphaned-effect-kind warning at most once per (root, kind) for
+    /// this engine's lifetime — not once per poll cycle. `self` is one
+    /// `Engine` per served root, so `warned_orphan_effect_kinds` is already
+    /// root-scoped; the set is never cleared (unlike the per-tick diag
+    /// buffers), so a kind that keeps re-queueing new distinct request ids
+    /// (the digest is per-args, not per-kind) still warns only once.
+    fn warn_orphan_kind_once(&self, kind: &str) {
+        let mut seen = self.warned_orphan_effect_kinds.borrow_mut();
+        if seen.insert(kind.to_string()) {
+            eprintln!(
+                "[{}] no effect command registered for kind `{kind}`; parking its queued \
+                 request(s) (state=failed) instead of retrying every poll",
+                self.self_slug()
+            );
+        }
+    }
+
     pub fn drain_effects(&mut self, prog: &Program, exec: &dyn EffectExec) -> Result<usize> {
         // Per-kind head reassembly plan, keyed by the @async head rel name. After
         // desugar the head is rebuilt over (full body solution) ∪ (response outs):
@@ -553,10 +615,22 @@ impl Engine {
         let mut work: Vec<(String, String, String,
             serde_json::Map<String, serde_json::Value>,
             serde_json::Map<String, serde_json::Value>, bool)> = Vec::new();
+        // Rows whose kind has no registered executor template (Part 2): parked
+        // (state='failed') and warned about once per kind, never fed to the
+        // rayon pool below — a missing template must not abort the whole
+        // batch via `?` (the crash-loop `poll error: no effect command
+        // registered for kind ...` symptom the daemon CPU-hog fix targets).
+        let mut orphan_ids: Vec<String> = Vec::new();
+        let mut orphan_kinds: Vec<String> = Vec::new();
         for (id, kind, head_rel, args_json, full_json, state, batch) in pending {
             // Pre-migration rows have head_rel='' (head-response 1:1 with kind).
             let head_rel = if head_rel.is_empty() { kind.clone() } else { head_rel };
             if !plans.contains_key(&head_rel) { continue; }
+            if !exec.has_template(&kind) {
+                orphan_ids.push(id);
+                if !orphan_kinds.contains(&kind) { orphan_kinds.push(kind.clone()); }
+                continue;
+            }
             match kind_of(&kind) {
                 // A `sh*` subscription is run by the Phase 4 reader, not the
                 // one-shot drain; never execute it here.
@@ -583,6 +657,10 @@ impl Engine {
                 }
             };
             work.push((id, kind, head_rel, args, full, batch != 0));
+        }
+        if !orphan_ids.is_empty() {
+            self.park_orphan_effects(&orphan_ids)?;
+            for kind in &orphan_kinds { self.warn_orphan_kind_once(kind); }
         }
         if !work.is_empty() {
             tracing::info!(target: "dl::effect", n = work.len(), "draining effects");
@@ -761,10 +839,20 @@ impl Engine {
         let mut work: Vec<(String, String,
             serde_json::Map<String, serde_json::Value>,
             serde_json::Map<String, serde_json::Value>)> = Vec::new();
+        // Same orphaned-kind gate as `drain_effects` (Part 2): a stream row
+        // whose kind lost its executor template is parked, warned about once,
+        // and never subscribed — not left to abort the whole drain.
+        let mut orphan_ids: Vec<String> = Vec::new();
+        let mut orphan_kinds: Vec<String> = Vec::new();
         for (id, kind, head_rel, args_json, full_json) in pending {
             if kinds.get(&kind).copied() != Some(ShellKind::Stream) { continue; }
             let head_rel = if head_rel.is_empty() { kind.clone() } else { head_rel };
             if !plans.contains_key(&head_rel) { continue; }
+            if !exec.has_template(&kind) {
+                orphan_ids.push(id);
+                if !orphan_kinds.contains(&kind) { orphan_kinds.push(kind.clone()); }
+                continue;
+            }
             self.db.conn().execute(
                 "UPDATE pending_effect SET state = 'running' WHERE id = ?1 AND state = 'queued'", [&id])?;
             let args = match serde_json::from_str::<serde_json::Value>(&args_json)? {
@@ -780,6 +868,10 @@ impl Engine {
                 }
             };
             work.push((kind, head_rel, args, full));
+        }
+        if !orphan_ids.is_empty() {
+            self.park_orphan_effects(&orphan_ids)?;
+            for kind in &orphan_kinds { self.warn_orphan_kind_once(kind); }
         }
 
         // Each stream yields N rows (one per output line). Assemble head rows the
