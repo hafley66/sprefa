@@ -1029,6 +1029,58 @@ fn served_engine_hermetic_to_ambient_config_repos() {
     let _ = fs::remove_file(&cfg);
 }
 
+/// J1: after a served-root source edit, the tick runs as a queued job and
+/// `dl daemon jobs` lists a completed `tick:{root}` entry.
+#[test]
+fn daemon_jobs_lists_a_completed_tick_after_a_source_edit() {
+    let sb = Sandbox::new("jobs");
+    fs::create_dir_all(sb.root.join("src")).unwrap();
+    fs::write(sb.root.join("p.dl"), r#"rel seen(path: file, line: int).
+seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
+  match(path, rev, /fn \w+/, line).
+? seen(path, line).
+"#).unwrap();
+    fs::write(sb.root.join("src/a.rs"), "fn a() {}\n").unwrap();
+
+    let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[]);
+    assert!(sb.wait_ready(), "not ready");
+    // Past the watcher's startup grace, then edit a source file to enqueue a tick.
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let t0 = sb.tick(1);
+    fs::write(sb.root.join("src/b.rs"), "fn b() {}\n").unwrap();
+
+    // The tick job drains via a worker; wait for the tick to land.
+    let mut ticked = false;
+    for _ in 0..80 {
+        if sb.tick(2) > t0 { ticked = true; break; }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(ticked, "the queued tick never ran");
+
+    // `dl daemon jobs` lists a completed tick job for this root.
+    let mut listed = false;
+    let mut last = String::new();
+    for _ in 0..40 {
+        let out = Command::new(DL)
+            .args(["daemon", "jobs"])
+            .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home)
+            .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+            .output().expect("jobs");
+        last = String::from_utf8_lossy(&out.stdout).into_owned();
+        // Header + a tick row that has reached `done`.
+        if out.status.success() && last.contains("KEY\tKIND\tSTATE")
+            && last.lines().any(|l| l.starts_with("tick:") && l.contains("done")) {
+            listed = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(listed, "daemon jobs should list a completed tick job: {last}");
+
+    sb.shutdown();
+    let _ = child.wait_timeout(std::time::Duration::from_secs(5));
+}
+
 // ---------- helpers ----------
 
 fn read_frame(s: &mut std::os::unix::net::UnixStream) -> Option<String> {
