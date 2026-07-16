@@ -236,6 +236,44 @@ pub fn open(path: Option<&str>) -> Result<Db> {
     })
 }
 
+/// Open a READ-ONLY connection on an existing on-disk db, for the daemon's
+/// lock-free read path (`crate::daemon_read`). The main daemon connection keeps
+/// the db in WAL mode (`open`, above), so a reader opened here NEVER blocks on
+/// the writer and always sees the last COMMITTED state — the property the read
+/// path relies on to answer row/query RPCs without taking the engine mutex.
+///
+/// Registers the same pure SQL helper functions the writer connection carries
+/// (regexp/split/string fns) so lowered query SQL evaluates identically.
+/// `sprf_sym_intern` is registered in a READ-ONLY form here: it returns the
+/// deterministic `StringId` for the text WITHOUT queueing an intern, because a
+/// read connection never flushes the pending-symbol queue (the aggregate-query
+/// path, whose lowering is the only user of this function, is kept on the
+/// engine lock by `daemon_read` for exactly the newly-interned-string case this
+/// cannot persist).
+pub fn open_read_only(path: &str) -> Result<Connection> {
+    let conn = Connection::open_with_flags(
+        path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    // A WAL reader does not contend for the write lock, so this timeout should
+    // never fire; keep it small so an unexpected -shm race on open surfaces fast
+    // rather than eating into the read SLA.
+    conn.busy_timeout(Duration::from_millis(1000))?;
+    register_regexp(&conn)?;
+    register_split(&conn)?;
+    register_string_fns(&conn)?;
+    conn.create_scalar_function(
+        "sprf_sym_intern",
+        1,
+        rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+        |ctx| {
+            let text = ctx.get::<String>(0)?;
+            Ok(crate::spine::StringId::of(&text).sqlite())
+        },
+    )?;
+    Ok(conn)
+}
+
 /// Install a busy handler that mimics the prior fixed 5000ms `busy_timeout`
 /// (20ms sleep between retries, give up past 5000ms — same behavior SQLite's
 /// own `busy_timeout` pragma implements) but ALSO surfaces a verdict when one
