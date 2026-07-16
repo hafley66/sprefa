@@ -875,6 +875,11 @@ pub struct Engine {
     /// watcher when the config file changes. (File ingestion from the extra
     /// roots is the next step; today only `--root` is scanned into `_file`.)
     repos: Vec<crate::config::RepoConfig>,
+    /// (dropped-slug, kept-slug) dedup collisions already reported, so the
+    /// once-per-engine "two slugs, one directory" line prints only the first
+    /// time each pair is dropped, not on every `set_repos` reload (cold tick +
+    /// each config-file change).
+    logged_repo_dedup: HashSet<(String, String)>,
     /// Per-edge SCC condensation, kept ACROSS ticks. The query phase reused to
     /// rebuild every edge's condensation on every tick (the per-keystroke
     /// closure tax); now an edge is recondensed only when its rows actually
@@ -996,6 +1001,7 @@ impl Engine {
             rev_sha_cache: HashMap::new(),
             rev_index: std::collections::HashSet::new(),
             repos: Vec::new(),
+            logged_repo_dedup: HashSet::new(),
             query_json: false,
             prime_tick: false,
             root_implicit: false,
@@ -1026,10 +1032,54 @@ impl Engine {
     /// writes then fall back to each rule's `.git` ancestor. See `root_implicit`.
     pub fn set_root_implicit(&mut self, on: bool) { self.root_implicit = on; }
 
-    /// Set the configured repos (from `SprfConfig`). Takes effect on the next
-    /// tick via `refresh_builtin_rels`.
+    /// Set the configured repos (from `SprfConfig`), deduplicated by canonical
+    /// root path. Takes effect on the next tick via `refresh_builtin_rels`.
     pub fn set_repos(&mut self, repos: Vec<crate::config::RepoConfig>) {
-        self.repos = repos;
+        self.repos = self.dedupe_repos(repos);
+    }
+
+    /// Drop config repos whose canonical root path collides with an
+    /// already-registered repo, so one directory is never scanned twice under
+    /// two slugs (the tmpdir-plus-symlink case). Repo identity within one engine
+    /// is the canonicalized root; the first slug at a path wins. Each dropped
+    /// pair logs once per engine (naming both slugs), not on every reload.
+    ///
+    /// This folds config-vs-config only. The engine's own `--root` is NOT seeded
+    /// into the dedup set: in an ad-hoc CLI run the root is the transient cwd,
+    /// and folding a config repo that happens to equal it would silently strip
+    /// that slug from `scan("*")`, the `repo` relation, and named-repo
+    /// resolution (`resolve_repo`), changing CLI results, which must stay exact.
+    /// The engine-root-equals-config double-scan the friction inventory measured
+    /// happens on a DAEMON-SERVED engine, and is killed upstream by Rule B (a
+    /// served engine ingests no ambient config at all; see `served_repos`), so
+    /// there is nothing left here to fold against self.
+    fn dedupe_repos(
+        &mut self,
+        repos: Vec<crate::config::RepoConfig>,
+    ) -> Vec<crate::config::RepoConfig> {
+        let canon =
+            |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let mut seen: HashMap<PathBuf, String> = HashMap::new();
+        let mut kept = Vec::with_capacity(repos.len());
+        for rc in repos {
+            let key = canon(&rc.root);
+            if let Some(first_slug) = seen.get(&key) {
+                let pair = (rc.slug.clone(), first_slug.clone());
+                if self.logged_repo_dedup.insert(pair) {
+                    eprintln!(
+                        "[config] repo {:?} and {:?} resolve to the same directory {}; keeping {:?}",
+                        rc.slug,
+                        first_slug,
+                        key.display(),
+                        first_slug,
+                    );
+                }
+                continue;
+            }
+            seen.insert(key, rc.slug.clone());
+            kept.push(rc);
+        }
+        kept
     }
 
     /// This engine's root directory (`--root`). The working dir an `@async`

@@ -5,7 +5,40 @@
 use std::fs;
 use std::process::Command;
 
+use sprefa_v5::config::RepoConfig;
+use sprefa_v5::db;
+use sprefa_v5::engine::Engine;
+
 const DL: &str = env!("CARGO_BIN_EXE_dl");
+
+/// Engine-level dedup (Rule A): two `[[repos]]` whose roots resolve to the SAME
+/// canonical directory (one reached through a symlink) collapse to ONE repo
+/// entry: repo identity within an engine is the canonical root path. The first
+/// slug at a path wins.
+#[test]
+fn same_canonical_root_under_two_slugs_dedupes_to_one() {
+    let d = std::env::temp_dir().join(format!("cfg_dedupe_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&d);
+    let real = d.join("real");
+    fs::create_dir_all(real.join("src")).unwrap();
+    fs::write(real.join("src/lib.rs"), "fn x() {}\n").unwrap();
+    // A symlink to the same directory: a distinct path, one canonical target.
+    let link = d.join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
+    // Engine root is unrelated, so ONLY the two config repos can collide.
+    let mut eng = Engine::new(conn, d.join("engine-root"));
+    eng.set_repos(vec![
+        RepoConfig { slug: "canon".into(), root: real.clone(), url: None, allow_missing: false },
+        RepoConfig { slug: "via-link".into(), root: link.clone(), url: None, allow_missing: false },
+    ]);
+    let repos = eng.snapshot_repos();
+    assert_eq!(repos.len(), 1, "two slugs at one canonical dir collapse to one: {:?}",
+        repos.iter().map(|r| &r.slug).collect::<Vec<_>>());
+    assert_eq!(repos[0].slug, "canon", "first slug at a path wins");
+    let _ = fs::remove_dir_all(&d);
+}
 
 #[test]
 fn config_repos_populate_the_repo_relation() {
