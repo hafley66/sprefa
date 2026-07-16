@@ -17,6 +17,8 @@ use crate::db::Db;
 
 pub(crate) mod call_site;
 pub(crate) mod call_edge;
+pub(crate) mod call_edge_rev;
+pub(crate) mod call_kind;
 pub(crate) mod call_name;
 pub(crate) mod router;
 
@@ -431,8 +433,9 @@ fn gamma() {
         let rerun = b.flip_call_rels_via_router(&resolution_only).unwrap();
         assert_eq!(
             rerun,
-            vec!["call_edge"],
-            "live persistent router must skip call_site on a _call_resolution-only change"
+            vec!["call_edge", "call_edge_rev"],
+            "live persistent router reruns the two _call_resolution readers and skips \
+             call_site/call_kind/call_name on a _call_resolution-only change"
         );
         let (after_site, after_edge) = snapshot(&b);
         assert_eq!(after_site, legacy_site, "skipped call_site must be untouched");
@@ -546,8 +549,9 @@ fn gamma() {
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(
             rerun,
-            vec!["call_edge", "call_site"],
-            "owner-delta footprint must rerun call_site/call_edge and SKIP call_name",
+            vec!["call_edge", "call_edge_rev", "call_kind", "call_site"],
+            "owner-delta footprint must rerun call_site/call_edge/call_edge_rev/call_kind \
+             (every _call_raw_site reader) and SKIP call_name (footprint {{_call_def}})",
         );
     }
 }

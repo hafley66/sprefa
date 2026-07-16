@@ -1501,17 +1501,34 @@ mod tests {
             s.query_map([], |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?]))
                 .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
         };
+        let legacy_kind: Vec<[i64; 2]> = {
+            let mut s = db.prepare(
+                "SELECT fn, kind FROM rel_call_kind ORDER BY fn, kind",
+            ).unwrap();
+            s.query_map([], |row| Ok([row.get(0)?, row.get(1)?]))
+                .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        };
+        let legacy_edge_rev: Vec<[i64; 4]> = {
+            let mut s = db.prepare(
+                "SELECT caller, callee, kind, rev FROM rel_call_edge_rev \
+                 ORDER BY caller, callee, kind, rev",
+            ).unwrap();
+            s.query_map([], |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?]))
+                .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        };
         assert!(!legacy_site.is_empty(), "fixture precondition: legacy call_site populated");
         assert!(!legacy_edge.is_empty(), "fixture precondition: legacy call_edge populated");
+        assert!(!legacy_kind.is_empty(), "fixture precondition: legacy call_kind populated");
+        assert!(!legacy_edge_rev.is_empty(), "fixture precondition: legacy call_edge_rev populated");
 
-        // flip: the router derives both families, and we overwrite the public
-        // rels from their rows — the same path flip_call_rels_via_router runs
-        // live, minus the Engine (this rail owns a raw Db).
+        // flip: the router derives every hosted family, and we overwrite the
+        // public rels from their rows — the same path flip_call_rels_via_router
+        // runs live, minus the Engine (this rail owns a raw Db).
         let mut router = FamilyRouter::new(call_families());
         let rerun = router.cold(&db).unwrap();
         assert_eq!(
             rerun,
-            vec!["call_edge", "call_name", "call_site"],
+            vec!["call_edge", "call_edge_rev", "call_kind", "call_name", "call_site"],
             "cold derives every hosted family (registry order = sorted by name)",
         );
         db.reload_rel(
@@ -1522,6 +1539,14 @@ mod tests {
         .unwrap();
         db.reload_rel(&tbl("call_edge"), &["caller", "callee", "kind"], router.rows("call_edge").unwrap())
             .unwrap();
+        db.reload_rel(&tbl("call_kind"), &["fn", "kind"], router.rows("call_kind").unwrap())
+            .unwrap();
+        db.reload_rel(
+            &tbl("call_edge_rev"),
+            &["caller", "callee", "kind", "rev"],
+            router.rows("call_edge_rev").unwrap(),
+        )
+        .unwrap();
 
         let family_site: Vec<[i64; 5]> = {
             let mut s = db.prepare(
@@ -1540,8 +1565,29 @@ mod tests {
                 .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
         };
 
+        let family_kind: Vec<[i64; 2]> = {
+            let mut s = db.prepare(
+                "SELECT fn, kind FROM rel_call_kind ORDER BY fn, kind",
+            ).unwrap();
+            s.query_map([], |row| Ok([row.get(0)?, row.get(1)?]))
+                .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        };
+        let family_edge_rev: Vec<[i64; 4]> = {
+            let mut s = db.prepare(
+                "SELECT caller, callee, kind, rev FROM rel_call_edge_rev \
+                 ORDER BY caller, callee, kind, rev",
+            ).unwrap();
+            s.query_map([], |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?]))
+                .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        };
+
         assert_eq!(family_site, legacy_site, "flipped rel_call_site diverged from legacy");
         assert_eq!(family_edge, legacy_edge, "flipped rel_call_edge diverged from legacy");
+        assert_eq!(family_kind, legacy_kind, "flipped rel_call_kind diverged from legacy");
+        assert_eq!(
+            family_edge_rev, legacy_edge_rev,
+            "flipped rel_call_edge_rev diverged from legacy",
+        );
     }
 
     // ---- reactive router rails -------------------------------------------
