@@ -1478,4 +1478,132 @@ mod tests {
         assert_eq!(family_site, legacy_site, "flipped rel_call_site diverged from legacy");
         assert_eq!(family_edge, legacy_edge, "flipped rel_call_edge diverged from legacy");
     }
+
+    // ---- reactive router rails -------------------------------------------
+    // The router memoizes each family's rows + rel footprint and reruns only
+    // families whose inputs a delta touched. These prove the SKIP decision
+    // (the piece the step-2 session left unbuilt), not just output-reactivity.
+
+    fn ival(v: &Value) -> i64 {
+        match v {
+            Value::Int(n) => *n,
+            _ => 0,
+        }
+    }
+    fn sorted3(rows: &[Vec<Value>]) -> Vec<[i64; 3]> {
+        let mut v: Vec<[i64; 3]> =
+            rows.iter().map(|r| [ival(&r[0]), ival(&r[1]), ival(&r[2])]).collect();
+        v.sort();
+        v
+    }
+    fn sorted5(rows: &[Vec<Value>]) -> Vec<[i64; 5]> {
+        let mut v: Vec<[i64; 5]> = rows
+            .iter()
+            .map(|r| [ival(&r[0]), ival(&r[1]), ival(&r[2]), ival(&r[3]), ival(&r[4])])
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// The discriminating test: a `_call_resolution`-only change reruns
+    /// `CallEdge` (which scans it) and SKIPS `CallSite` (which does not).
+    /// `CallSite` keeps its memoized rows; `CallEdge`'s rerun rows match a
+    /// fresh derive against the mutated tables.
+    #[test]
+    fn family_router_skips_unaffected_family_on_resolution_only_change() {
+        use crate::engine::family::router::FamilyRouter;
+        use crate::engine::family::{derive_family, CallEdge, CallSite};
+
+        let db = delta_test_db(false);
+        let call_site = CallSite;
+        let call_edge = CallEdge;
+        let mut router = FamilyRouter::new(vec![&call_site, &call_edge]);
+
+        let cold = router.cold(&db).unwrap();
+        assert_eq!(cold, vec!["call_site", "call_edge"], "cold should derive both, in order");
+        let site_cold = sorted5(router.rows("call_site").unwrap());
+        let edge_cold = sorted3(router.rows("call_edge").unwrap());
+        assert!(!site_cold.is_empty(), "fixture: call_site non-empty");
+        assert_eq!(edge_cold.len(), 1, "fixture: one distinct edge (both sites -> target)");
+
+        // resolution-only change: drop every resolution. call_edge collapses to
+        // empty; call_site is untouched (it never reads _call_resolution).
+        db.conn().execute("DELETE FROM _call_resolution", []).unwrap();
+
+        let mut changed = std::collections::HashSet::new();
+        changed.insert("_call_resolution");
+        let rerun = router.react(&db, &changed).unwrap();
+
+        assert_eq!(rerun, vec!["call_edge"], "only CallEdge reads _call_resolution");
+        assert_eq!(
+            sorted5(router.rows("call_site").unwrap()),
+            site_cold,
+            "CallSite was skipped; its memoized rows must be unchanged",
+        );
+        let edge_hot = sorted3(router.rows("call_edge").unwrap());
+        assert!(edge_hot.is_empty(), "CallEdge reran: all resolutions gone -> no edges");
+        assert_ne!(edge_hot, edge_cold, "CallEdge output must reflect the change");
+
+        // consistency: the router's rerun rows equal a fresh full derive.
+        let (fresh_edge, _) = derive_family(&db, &CallEdge).unwrap();
+        assert_eq!(edge_hot, sorted3(&fresh_edge), "memoized rerun diverged from fresh derive");
+    }
+
+    /// A change to a SHARED input relation (`_call_owner`, read by both
+    /// families) reruns both.
+    #[test]
+    fn family_router_reruns_all_on_shared_input_change() {
+        use crate::engine::family::router::FamilyRouter;
+        use crate::engine::family::{CallEdge, CallSite};
+
+        let db = delta_test_db(false);
+        let call_site = CallSite;
+        let call_edge = CallEdge;
+        let mut router = FamilyRouter::new(vec![&call_site, &call_edge]);
+        router.cold(&db).unwrap();
+
+        let mut changed = std::collections::HashSet::new();
+        changed.insert("_call_owner");
+        let rerun = router.react(&db, &changed).unwrap();
+        assert_eq!(rerun, vec!["call_site", "call_edge"], "both families scan _call_owner");
+    }
+
+    /// A change touching NO family's inputs reruns nothing — every family keeps
+    /// its memo.
+    #[test]
+    fn family_router_reruns_none_on_untouched_input() {
+        use crate::engine::family::router::FamilyRouter;
+        use crate::engine::family::{CallEdge, CallSite};
+
+        let db = delta_test_db(false);
+        let call_site = CallSite;
+        let call_edge = CallEdge;
+        let mut router = FamilyRouter::new(vec![&call_site, &call_edge]);
+        router.cold(&db).unwrap();
+
+        let mut changed = std::collections::HashSet::new();
+        changed.insert("_some_other_table");
+        let rerun = router.react(&db, &changed).unwrap();
+        assert!(rerun.is_empty(), "no family reads _some_other_table; nothing reruns");
+    }
+
+    /// A family with no memo yet (never cold-loaded) always derives on the
+    /// first `react`, regardless of the changed set.
+    #[test]
+    fn family_router_derives_unmemoized_family() {
+        use crate::engine::family::router::FamilyRouter;
+        use crate::engine::family::CallSite;
+
+        let db = delta_test_db(false);
+        let call_site = CallSite;
+        let mut router = FamilyRouter::new(vec![&call_site]);
+
+        // no cold(): the memo is empty, so react must derive it even though the
+        // changed set names nothing CallSite reads.
+        let mut changed = std::collections::HashSet::new();
+        changed.insert("_unrelated");
+        let rerun = router.react(&db, &changed).unwrap();
+        assert_eq!(rerun, vec!["call_site"], "unmemoized family derives on first react");
+        assert!(!router.rows("call_site").unwrap().is_empty(), "derive populated rows");
+    }
 }

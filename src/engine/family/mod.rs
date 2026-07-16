@@ -17,6 +17,7 @@ use crate::db::Db;
 
 pub(crate) mod call_site;
 pub(crate) mod call_edge;
+pub(crate) mod router;
 
 pub(crate) use call_site::CallSite;
 pub(crate) use call_edge::CallEdge;
