@@ -26,6 +26,7 @@ mod declare;
 mod deltaflow;
 mod derive;
 mod extract;
+pub(crate) mod family;
 mod gen;
 #[cfg(test)]
 mod generation;

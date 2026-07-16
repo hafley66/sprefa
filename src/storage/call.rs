@@ -1292,4 +1292,190 @@ mod tests {
             "INSERT INTO _call_owner VALUES (2, 99, 1, 1, 1, 0, zeroblob(32))",
         ).is_err(), "unknown StringId foreign key was accepted");
     }
+
+    /// Differential rail for the family-derive engine (plan
+    /// 2026-07-15-family-derive-reactive-engine, step 1). The `CallSite`
+    /// family must produce the same `call_site` tuples as the legacy SQL
+    /// projection (`reproject_sqlite_call_affected_keys`' call_site block),
+    /// and must capture a dep on every owned row it read.
+    #[test]
+    fn family_call_site_matches_legacy_projection() {
+        use crate::engine::family::{derive_family, CallSite};
+        let db = delta_test_db(false);
+
+        // Legacy projection: `delta_test_db` populates `rel_call_site` from
+        // `_call_raw_site JOIN _call_owner` during setup.
+        let legacy: Vec<[i64; 5]> = {
+            let mut s = db.prepare(
+                "SELECT repo, caller, callee, file, line FROM rel_call_site \
+                 ORDER BY repo, caller, callee, file, line",
+            ).unwrap();
+            s.query_map([], |row| {
+                Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?])
+            }).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        };
+
+        // Engine path: derive the same relation from the owned tables.
+        let (rows, deps) = derive_family(&db, &CallSite).unwrap();
+        let ival = |v: &Value| match v { Value::Int(n) => *n, _ => 0 };
+        let mut fam: Vec<[i64; 5]> = rows.iter().map(|r| {
+            [ival(&r[0]), ival(&r[1]), ival(&r[2]), ival(&r[3]), ival(&r[4])]
+        }).collect();
+        fam.sort();
+
+        assert_eq!(fam, legacy, "CallSite family diverged from legacy call_site projection");
+        assert!(!fam.is_empty(), "family emitted no rows (rail is trivial)");
+
+        // Dep capture: the family read both owned tables, by stable PK.
+        let read_raw = deps.iter().any(|d| d.rel == "_call_raw_site");
+        let read_owner = deps.iter().any(|d| d.rel == "_call_owner");
+        assert!(read_raw, "family did not capture a dep on _call_raw_site");
+        assert!(read_owner, "family did not capture a dep on _call_owner");
+        // delta_test_db(false) seeds 2 owners + 2 sites.
+        assert_eq!(deps.len(), 4, "expected 2 owner + 2 site deps, got {deps:?}");
+    }
+
+    /// Differential rail for the aggregation tier (plan step 2). `CallEdge`
+    /// computes support (`GROUP BY caller, callee, kind, rev` with `COUNT`)
+    /// in Rust, then emits `call_edge` as the distinct projection. Must match
+    /// the legacy SQL population of `rel_call_edge`, and must capture a dep on
+    /// the resolution table — the input the aggregation is over.
+    #[test]
+    fn family_call_edge_matches_legacy_projection() {
+        use crate::engine::family::{derive_family, CallEdge};
+        let db = delta_test_db(false);
+
+        let legacy: Vec<[i64; 3]> = {
+            let mut s = db.prepare(
+                "SELECT caller, callee, kind FROM rel_call_edge \
+                 ORDER BY caller, callee, kind",
+            ).unwrap();
+            s.query_map([], |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?]))
+                .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        };
+
+        let (rows, deps) = derive_family(&db, &CallEdge).unwrap();
+        let ival = |v: &Value| match v { Value::Int(n) => *n, _ => 0 };
+        let mut fam: Vec<[i64; 3]> = rows.iter().map(|r| [ival(&r[0]), ival(&r[1]), ival(&r[2])]).collect();
+        fam.sort();
+
+        assert_eq!(fam, legacy, "CallEdge family diverged from legacy call_edge projection");
+        assert!(!fam.is_empty(), "family emitted no rows (rail is trivial)");
+
+        // Aggregation proof: the family read the resolution table it counts
+        // over, plus the two join inputs.
+        assert!(deps.iter().any(|d| d.rel == "_call_resolution"), "no dep on _call_resolution");
+        assert!(deps.iter().any(|d| d.rel == "_call_raw_site"), "no dep on _call_raw_site");
+        assert!(deps.iter().any(|d| d.rel == "_call_owner"), "no dep on _call_owner");
+    }
+
+    /// Selectivity rail (plan Verification): the family engine reacts to a real
+    /// delta and matches the legacy projection afterward, AND the deps captured
+    /// before the delta flag the retracted input rows — the affected-set
+    /// computation the engine would use to scope a rederive. This is the
+    /// "reactive" proof the static rails above do not show.
+    #[test]
+    fn family_call_edge_rederives_after_delta_via_dep_capture() {
+        use crate::engine::family::{derive_family, CallEdge, DepKey};
+        let db = delta_test_db(false);
+        let ival = |v: &Value| match v { Value::Int(n) => *n, _ => 0 };
+        let snap = |db: &Db| -> Vec<[i64; 3]> {
+            let mut s = db.prepare(
+                "SELECT caller, callee, kind FROM rel_call_edge ORDER BY caller, callee, kind",
+            ).unwrap();
+            s.query_map([], |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?]))
+                .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        };
+        let sort3 = |rows: &[Vec<Value>]| -> Vec<[i64; 3]> {
+            let mut v: Vec<[i64; 3]> = rows.iter()
+                .map(|r| [ival(&r[0]), ival(&r[1]), ival(&r[2])]).collect();
+            v.sort();
+            v
+        };
+
+        // cold: derive edge + capture deps; matches legacy before any change.
+        let (cold_rows, cold_deps) = derive_family(&db, &CallEdge).unwrap();
+        assert_eq!(sort3(&cold_rows), snap(&db), "cold family diverged from legacy");
+
+        // apply a real delta: owner a.rs switches its call target -> other.
+        // The other call-family tests prove this delta is Accepted.
+        CallStore::apply_call_owner_delta(&db, delta_for("other", [1; 32], [0; 32])).unwrap();
+
+        // rederive the family against the now-updated _call_* tables.
+        let (hot_rows, _hot_deps) = derive_family(&db, &CallEdge).unwrap();
+        let hot = sort3(&hot_rows);
+        assert_eq!(hot, snap(&db), "family diverged from legacy AFTER delta");
+
+        // the family REACTED: support for repo::target dropped (a.rs left),
+        // and a new repo::other edge appeared. cold was 1 edge, hot is 2.
+        assert_ne!(hot, sort3(&cold_rows), "family did not react to the delta");
+        assert_eq!(hot.len(), 2, "expected 2 post-delta edges (target via b.rs + other via a.rs)");
+
+        // SELECTIVITY: the cold deps include _call_raw_site rows the delta
+        // retracted. The engine's affected-set = captured deps whose row is
+        // gone (or new rows not captured). Find the retracted site ids.
+        let cold_site_pks: Vec<i64> = cold_deps.iter()
+            .filter(|d| d.rel == "_call_raw_site").map(|d: &DepKey| d.pk).collect();
+        assert_eq!(cold_site_pks.len(), 2, "cold derive should have read 2 sites");
+        let present: i64 = {
+            let qs = cold_site_pks.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!("SELECT COUNT(*) FROM _call_raw_site WHERE site_id IN ({qs})");
+            db.query_row(&sql, rusqlite::params_from_iter(cold_site_pks.iter()), |r| r.get(0))
+                .unwrap()
+        };
+        // a.rs's old site was retracted by the delta; only b.rs's site remains.
+        assert_eq!(present, 1, "dep-capture did not flag the retracted row");
+    }
+
+    /// Flip rail (plan step 3): `family_overwrite_call_rels` wipes + re-derives
+    /// `rel_call_site` + `rel_call_edge` from the owned `_call_*` tables. The
+    /// result must be identical to the legacy SQL population. This is the
+    /// direct evidence the family path can be the live producer (DL_FAMILY_CALL).
+    #[test]
+    fn family_flip_overwrites_legacy_call_rels_identically() {
+        use crate::engine::family::family_overwrite_call_rels;
+        let db = delta_test_db(false);
+
+        let legacy_site: Vec<[i64; 5]> = {
+            let mut s = db.prepare(
+                "SELECT repo, caller, callee, file, line FROM rel_call_site \
+                 ORDER BY repo, caller, callee, file, line",
+            ).unwrap();
+            s.query_map([], |row| {
+                Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?])
+            }).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        };
+        let legacy_edge: Vec<[i64; 3]> = {
+            let mut s = db.prepare(
+                "SELECT caller, callee, kind FROM rel_call_edge ORDER BY caller, callee, kind",
+            ).unwrap();
+            s.query_map([], |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?]))
+                .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        };
+        assert!(!legacy_site.is_empty(), "fixture precondition: legacy call_site populated");
+        assert!(!legacy_edge.is_empty(), "fixture precondition: legacy call_edge populated");
+
+        // flip: family path wipes + re-derives both rels from _call_*.
+        family_overwrite_call_rels(&db).unwrap();
+
+        let family_site: Vec<[i64; 5]> = {
+            let mut s = db.prepare(
+                "SELECT repo, caller, callee, file, line FROM rel_call_site \
+                 ORDER BY repo, caller, callee, file, line",
+            ).unwrap();
+            s.query_map([], |row| {
+                Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?])
+            }).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        };
+        let family_edge: Vec<[i64; 3]> = {
+            let mut s = db.prepare(
+                "SELECT caller, callee, kind FROM rel_call_edge ORDER BY caller, callee, kind",
+            ).unwrap();
+            s.query_map([], |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?]))
+                .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        };
+
+        assert_eq!(family_site, legacy_site, "flipped rel_call_site diverged from legacy");
+        assert_eq!(family_edge, legacy_edge, "flipped rel_call_edge diverged from legacy");
+    }
 }

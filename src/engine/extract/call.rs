@@ -389,6 +389,13 @@ impl Engine {
         })?;
         // Persisted only after the writes land, so a failed refresh retries.
         for (rev, d) in &moved { self.save_rel_digest(&extract_digest_key("call", rev), d)?; }
+        // Flip path (plan step 3): when DL_FAMILY_CALL=1, overwrite the public
+        // call_site/call_edge rels from the owned _call_* tables via the hosted
+        // families, instead of the legacy direct-from-extracted-rows writes.
+        // Additive; the legacy writes above already landed.
+        if std::env::var("DL_FAMILY_CALL").is_ok_and(|v| v == "1") {
+            crate::engine::family::family_overwrite_call_rels(&self.db)?;
+        }
         Ok(true)
     }
 
