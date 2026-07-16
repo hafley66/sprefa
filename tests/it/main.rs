@@ -59,6 +59,7 @@ mod hook_inject;
 mod setup_manifest;
 mod goto_flows;
 mod daemon;
+mod daemon_http;
 mod daemon_stateful_revs;
 mod data_driven_scan;
 mod data_ops;
