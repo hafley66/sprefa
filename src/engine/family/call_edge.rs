@@ -23,6 +23,14 @@ impl Family for CallEdge {
         "call_edge"
     }
 
+    fn out_cols(&self) -> &'static [&'static str] {
+        &["caller", "callee", "kind"]
+    }
+
+    fn input_rels(&self) -> &'static [&'static str] {
+        &["_call_owner", "_call_raw_site", "_call_resolution"]
+    }
+
     fn derive(&self, ctx: &mut Ctx, out: &mut RowSink) -> Result<()> {
         // owner_id -> rev_sid
         let owners = ctx.scan("_call_owner", "owner_id", &["rev_sid"])?;
@@ -70,3 +78,5 @@ fn as_int(v: &Value) -> i64 {
         _ => 0,
     }
 }
+
+register_family!(CallEdge);

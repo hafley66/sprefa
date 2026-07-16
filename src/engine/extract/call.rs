@@ -435,22 +435,14 @@ impl Engine {
         let rerun = router.react(&self.db, changed)?;
         for name in &rerun {
             let rows = router.rows(name).unwrap_or(&[]);
-            match *name {
-                "call_site" => {
-                    self.db.reload_rel(
-                        &tbl("call_site"),
-                        &["repo", "caller", "callee", "file", "line"],
-                        rows,
-                    )?;
-                }
-                "call_edge" => {
-                    self.db.reload_rel(&tbl("call_edge"), &["caller", "callee", "kind"], rows)?;
-                }
-                "call_name" => {
-                    self.db.reload_rel(&tbl("call_name"), &["sym", "name"], rows)?;
-                }
-                other => anyhow::bail!("router produced unrouted family `{other}`"),
-            }
+            // Generic render: the family declares its output columns, so a new
+            // family needs no arm here. `out_cols` and `tbl(name)` are the whole
+            // routing contract.
+            let cols = router
+                .family(name)
+                .ok_or_else(|| anyhow::anyhow!("router produced unrouted family `{name}`"))?
+                .out_cols();
+            self.db.reload_rel(&tbl(name), cols, rows)?;
         }
         Ok(rerun)
     }

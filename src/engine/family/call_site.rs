@@ -17,6 +17,14 @@ impl Family for CallSite {
         "call_site"
     }
 
+    fn out_cols(&self) -> &'static [&'static str] {
+        &["repo", "caller", "callee", "file", "line"]
+    }
+
+    fn input_rels(&self) -> &'static [&'static str] {
+        &["_call_owner", "_call_raw_site"]
+    }
+
     fn derive(&self, ctx: &mut Ctx, out: &mut RowSink) -> Result<()> {
         let owners = ctx.scan("_call_owner", "owner_id", &["repo_sid"])?;
         let repo_by_owner: std::collections::HashMap<i64, i64> = owners
@@ -58,3 +66,5 @@ fn as_int(v: &Value) -> i64 {
         _ => 0,
     }
 }
+
+register_family!(CallSite);

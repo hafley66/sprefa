@@ -1511,8 +1511,8 @@ mod tests {
         let rerun = router.cold(&db).unwrap();
         assert_eq!(
             rerun,
-            vec!["call_site", "call_edge", "call_name"],
-            "cold derives every hosted family",
+            vec!["call_edge", "call_name", "call_site"],
+            "cold derives every hosted family (registry order = sorted by name)",
         );
         db.reload_rel(
             &tbl("call_site"),

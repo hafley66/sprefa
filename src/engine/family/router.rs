@@ -48,7 +48,7 @@ impl<'f> FamilyRouter<'f> {
     }
 
     /// Cold load: derive every family and populate the memo. Returns the names
-    /// derived, in declaration order.
+    /// derived, in registry order (sorted by name).
     pub(crate) fn cold(&mut self, db: &Db) -> Result<Vec<&'static str>> {
         let mut derived = Vec::with_capacity(self.families.len());
         for family in &self.families {
@@ -62,7 +62,7 @@ impl<'f> FamilyRouter<'f> {
     /// React to a delta described by the set of changed input relations. Reruns
     /// exactly the families whose last rel footprint intersects `changed`, plus
     /// any family with no memo yet (never cold-loaded). Updates their memo and
-    /// returns the rerun names in declaration order. Families with untouched
+    /// returns the rerun names in registry order (sorted by name). Families with untouched
     /// inputs keep their memoized rows and are absent from the result — the
     /// skip is the point.
     pub(crate) fn react(
@@ -90,7 +90,7 @@ impl<'f> FamilyRouter<'f> {
     /// React AND reconcile: rerun the affected families and, for each, diff the
     /// fresh derivation against its memoized prior rows into a [`RowDelta`]
     /// (retract + insert), updating the memo. Returns only families whose delta
-    /// is non-empty, in declaration order. This is the render input — the engine
+    /// is non-empty, in registry order (sorted by name). This is the render input — the engine
     /// applies each delta incrementally instead of overwriting the relation, so
     /// a retracted input row surfaces as a retracted output row. A never-derived
     /// family reconciles against an empty base (delta = all inserts).
@@ -124,6 +124,12 @@ impl<'f> FamilyRouter<'f> {
     /// `None` if it was never derived.
     pub(crate) fn rows(&self, name: &str) -> Option<&[OutRow]> {
         self.memo.get(name).map(|m| m.rows.as_slice())
+    }
+
+    /// The registered family with this name, so the render can read its
+    /// `out_cols` and write the public rel generically (no per-family arm).
+    pub(crate) fn family(&self, name: &str) -> Option<&'f dyn Family> {
+        self.families.iter().copied().find(|family| family.name() == name)
     }
 }
 

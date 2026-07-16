@@ -70,6 +70,11 @@ regex = "1"
 globset = "0.4"
 ignore = "0.4"
 anyhow = "1"
+# life-before-main registry: extraction families self-register (one
+# `inventory::submit!` per family file) instead of a central `call_families()`
+# vec + `static CALL_X`. The v3 op-authoring surface used this to hit the
+# `(1,0,0)` min-author-ops target. See plans/2026-07-16-op-authoring-surface.
+inventory = "0.3"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

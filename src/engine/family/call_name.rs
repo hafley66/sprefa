@@ -19,6 +19,14 @@ impl Family for CallName {
         "call_name"
     }
 
+    fn out_cols(&self) -> &'static [&'static str] {
+        &["sym", "name"]
+    }
+
+    fn input_rels(&self) -> &'static [&'static str] {
+        &["_call_def"]
+    }
+
     fn derive(&self, ctx: &mut Ctx, out: &mut RowSink) -> Result<()> {
         // Dep-keyed by the leading PK column (`sym_sid`); the rel footprint is
         // `{_call_def}` regardless, which is the sound skip key.
@@ -40,3 +48,5 @@ fn as_int(v: &Value) -> i64 {
         _ => 0,
     }
 }
+
+register_family!(CallName);

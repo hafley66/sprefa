@@ -25,25 +25,25 @@ pub(crate) use call_name::CallName;
 pub(crate) use call_site::CallSite;
 pub(crate) use router::FamilyRouter;
 
-/// The call family's hosted relations, as `'static` refs so a persistent
-/// `FamilyRouter` can hold them across engine ticks. Unit structs, so the
-/// statics are zero-sized.
-static CALL_SITE: CallSite = CallSite;
-static CALL_EDGE: CallEdge = CallEdge;
-static CALL_NAME: CallName = CallName;
-
-/// The families the reactive call-rel flip routes through, in the order the
-/// public rels are written. Declaration order = `react`'s return order.
+/// The families the reactive call-rel flip routes through, collected from the
+/// self-registration inventory (`register_family!` in each family file), sorted
+/// by name so the derive/return order is deterministic across builds. Adding a
+/// family touches no code here — it submits itself.
 pub(crate) fn call_families() -> Vec<&'static dyn Family> {
-    vec![&CALL_SITE, &CALL_EDGE, &CALL_NAME]
+    let mut families: Vec<&'static dyn Family> =
+        inventory::iter::<FamilyReg>().map(|reg| reg.0).collect();
+    families.sort_by_key(|family| family.name());
+    families
 }
 
-/// Every `_call_*` input relation any call family reads — the changed-set
-/// passed to `react` on a full refresh, when the whole owned baseline was
-/// rewritten (nothing to skip). A delta path passes only the subset it touched.
+/// Every internal input relation any call family reads — the changed-set passed
+/// to `react` on a full refresh, when the whole owned baseline was rewritten
+/// (nothing to skip). Framework-computed as the union of each family's
+/// self-declared `input_rels`; a delta path passes only the subset it touched.
 pub(crate) fn call_input_rels() -> std::collections::HashSet<&'static str> {
-    ["_call_owner", "_call_raw_site", "_call_resolution", "_call_def"]
-        .into_iter()
+    call_families()
+        .iter()
+        .flat_map(|family| family.input_rels().iter().copied())
         .collect()
 }
 
@@ -189,13 +189,43 @@ impl<'a> Ctx<'a> {
     }
 }
 
-/// A derived relation. The family declares its name and writes one pure
-/// `derive` body that reads inputs through `Ctx` and emits output rows. No
-/// delta method, no reproject, no preflight: the engine owns those.
+/// A derived relation. The family declares its name, its output columns, the
+/// input relations it reads, and writes one pure `derive` body that reads
+/// inputs through `Ctx` and emits output rows. No delta method, no reproject,
+/// no preflight, no central registration: the engine owns those, and the
+/// family self-registers with `register_family!`.
+///
+/// The four declared slots are the whole authoring surface. `out_cols` lets the
+/// render write the public rel generically (no per-family `match name` arm);
+/// `input_rels` lets the changed-set union be framework-computed (no
+/// hand-maintained `call_input_rels`). This is the v3 min-author-ops
+/// `(1,0,0)` shape: a new family is one file, zero central edits.
 pub(crate) trait Family: Send + Sync {
     fn name(&self) -> &'static str;
+    /// The public relation's column names, in emit order. The render writes
+    /// `tbl(name)` from these, so adding a family needs no routing-arm edit.
+    fn out_cols(&self) -> &'static [&'static str];
+    /// Every internal relation this family's `derive` scans. The engine unions
+    /// these across families to build the full changed-set for a cold refresh.
+    fn input_rels(&self) -> &'static [&'static str];
     fn derive(&self, ctx: &mut Ctx, out: &mut RowSink) -> Result<()>;
 }
+
+/// Self-registration cell. Each family file emits one `register_family!(TYPE)`
+/// (a wrapped `inventory::submit!`), so the family set is collected at binary
+/// init with zero central edits. `call_families` iterates this registry.
+pub(crate) struct FamilyReg(pub &'static dyn Family);
+inventory::collect!(FamilyReg);
+
+/// Register a zero-sized family unit struct into the [`FamilyReg`] inventory.
+/// `&$ty` const-promotes to `'static` (the struct is a unit literal), then
+/// unsizes to `&'static dyn Family`.
+macro_rules! register_family {
+    ($ty:ident) => {
+        inventory::submit! { $crate::engine::family::FamilyReg(&$ty) }
+    };
+}
+pub(crate) use register_family;
 
 /// Run one family's derive against `db`, returning its output rows and the
 /// input dependencies it captured. Cold-load and rederive use the same path;
@@ -516,7 +546,7 @@ fn gamma() {
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(
             rerun,
-            vec!["call_site", "call_edge"],
+            vec!["call_edge", "call_site"],
             "owner-delta footprint must rerun call_site/call_edge and SKIP call_name",
         );
     }
