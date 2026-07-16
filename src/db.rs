@@ -86,8 +86,11 @@ const N1_THRESHOLD: u32 = 64;
 
 /// Bound-parameter budget per multi-row `VALUES` statement. SQLite's default
 /// SQLITE_MAX_VARIABLE_NUMBER is 32766; rows-per-chunk = PARAM_BUDGET / ncol,
-/// so a 3-col relation flushes ~10k rows per statement.
-const PARAM_BUDGET: usize = 32000;
+/// so a 3-col relation flushes ~10k rows per statement. `pub(crate)` so
+/// `storage::retract_rows` chunks its `DELETE ... VALUES` the same way
+/// `insert_rows` chunks its `INSERT ... VALUES` — one bound-parameter budget,
+/// shared, instead of two constants drifting apart.
+pub(crate) const PARAM_BUDGET: usize = 32000;
 
 #[derive(Debug, PartialEq, Eq)]
 struct SqliteMemoryBudget {

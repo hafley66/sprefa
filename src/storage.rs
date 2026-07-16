@@ -26,9 +26,10 @@ pub trait Storage {
     /// Replace a relation through the existing index-aware reload path.
     fn reload_rel(&self, table: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize>;
 
-    /// Retract specific rows by full-tuple identity in ONE statement (row-value
-    /// `DELETE ... WHERE (cols) IN (VALUES ...)`), never a per-row loop. The
-    /// insert twin of the reconcile/render step: applying a `RowDelta`'s
+    /// Retract specific rows by full-tuple identity via chunked, batched
+    /// row-value `DELETE ... WHERE (cols) IN (VALUES ...)` statements (same
+    /// `PARAM_BUDGET` chunking as `insert_rows`), never a per-row loop. The
+    /// delete twin of the reconcile/render step: applying a `RowDelta`'s
     /// retracted set incrementally instead of overwriting the whole relation.
     fn retract_rows(&self, table: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize>;
 
@@ -74,21 +75,30 @@ impl Storage for Db {
             return Ok(0);
         }
         let col_tuple = cols.join(", ");
-        let one = format!("({})", vec!["?"; cols.len()].join(", "));
-        let values = vec![one; rows.len()].join(", ");
-        let sql = format!("DELETE FROM {table} WHERE ({col_tuple}) IN (VALUES {values})");
-        let params: Vec<rusqlite::types::Value> = rows
-            .iter()
-            .flatten()
-            .map(|cell| match cell {
-                Value::Text(s) => rusqlite::types::Value::Text(s.clone()),
-                Value::Int(n) => rusqlite::types::Value::Integer(*n),
-                Value::Null => rusqlite::types::Value::Null,
-            })
-            .collect();
+        let one_tuple = format!("({})", vec!["?"; cols.len()].join(", "));
+        // Same chunk math as `Db::insert_rows`: SQLITE_MAX_VARIABLE_NUMBER caps
+        // one statement's bound parameters, so `rows` is batched into chunks
+        // of `chunk_rows` before each `DELETE ... VALUES` fires. Collect-then-
+        // flush per chunk, never a per-row `DELETE`.
+        let chunk_rows = (crate::db::PARAM_BUDGET / cols.len().max(1)).max(1);
         let conn = self.conn();
-        let mut stmt = conn.prepare(&sql)?;
-        Ok(stmt.execute(rusqlite::params_from_iter(params))?)
+        let mut total_deleted = 0;
+        for chunk in rows.chunks(chunk_rows) {
+            let values = vec![one_tuple.clone(); chunk.len()].join(", ");
+            let sql = format!("DELETE FROM {table} WHERE ({col_tuple}) IN (VALUES {values})");
+            let params: Vec<rusqlite::types::Value> = chunk
+                .iter()
+                .flatten()
+                .map(|cell| match cell {
+                    Value::Text(s) => rusqlite::types::Value::Text(s.clone()),
+                    Value::Int(n) => rusqlite::types::Value::Integer(*n),
+                    Value::Null => rusqlite::types::Value::Null,
+                })
+                .collect();
+            let mut stmt = conn.prepare(&sql)?;
+            total_deleted += stmt.execute(rusqlite::params_from_iter(params))?;
+        }
+        Ok(total_deleted)
     }
 
     fn rel_stats(&self, rel: &str) -> Result<serde_json::Value> {
@@ -183,6 +193,39 @@ mod tests {
         Storage::execute(&db, "INSERT INTO storage_tx VALUES (2)").unwrap();
         Storage::commit(&db).unwrap();
         assert!(Storage::is_autocommit(&db));
+    }
+
+    #[test]
+    fn retract_rows_chunks_by_param_budget() {
+        let db = db::open(None).unwrap();
+        Storage::execute(&db, "CREATE TABLE retract_chunk_budget (a INTEGER, b TEXT)").unwrap();
+
+        // 2 cols -> 16000 rows per statement; 33k rows = 3 chunks, each well
+        // under SQLITE_MAX_VARIABLE_NUMBER, so the DELETE never blows the
+        // bound-parameter limit the way one giant IN (VALUES ...) would.
+        let rows: Vec<Vec<Value>> = (0..33_000)
+            .map(|row_index| vec![Value::Int(row_index), Value::Text(format!("r{row_index}"))])
+            .collect();
+        assert_eq!(
+            Storage::insert_rows(&db, "retract_chunk_budget", &["a", "b"], &rows).unwrap(),
+            33_000
+        );
+
+        let deleted = Storage::retract_rows(&db, "retract_chunk_budget", &["a", "b"], &rows).unwrap();
+        assert_eq!(deleted, 33_000);
+
+        let count: i64 = db
+            .conn()
+            .query_row("SELECT COUNT(*) FROM retract_chunk_budget", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn retract_rows_empty_input_is_a_no_op() {
+        let db = db::open(None).unwrap();
+        Storage::execute(&db, "CREATE TABLE retract_empty_noop (a INTEGER)").unwrap();
+        assert_eq!(Storage::retract_rows(&db, "retract_empty_noop", &["a"], &[]).unwrap(), 0);
     }
 
     #[test]
