@@ -1,6 +1,6 @@
 use super::*;
 use crate::storage::call::{
-    CallDefBucketBaseline, CallDeltaOutcome, CallFamilyWrite, CallOwnerBaseline,
+    CallDefBaseline, CallDefBucketBaseline, CallDeltaOutcome, CallFamilyWrite, CallOwnerBaseline,
     CallOwnerDelta, CallResolvedEdge, CallSiteBaseline, CallStore,
 };
 use crate::rels::{CallPathRefreshOutcome, PathRefreshContext};
@@ -106,20 +106,17 @@ impl Engine {
         match outcome {
             CallDeltaOutcome::Applied => {
                 self.save_rel_digest(&extract_digest_key("call", "WORK"), &digest)?;
-                // Flip: under DL_FAMILY_CALL the router is the live producer, so
-                // re-derive the public rels from the _call_* tables the delta
-                // just mutated. An owner delta rewrites the owner's sites and
-                // their resolutions, touching _call_owner/_call_raw_site/
-                // _call_resolution but NOT _call_def (the def set is unchanged —
-                // the delta bails otherwise). Passing that exact footprint reruns
-                // CallSite/CallEdge (both read _call_raw_site) and SKIPS CallName
-                // (footprint {_call_def}), so its call_name rows are kept from the
-                // memo instead of rederived — the live skip. The reran families
-                // overwrite the storage reproject apply_call_owner_delta already
-                // ran; the two are byte-identical (the family projection rails).
-                if family_flip_enabled() {
-                    self.flip_call_rels_via_router(&crate::engine::family::call_owner_delta_rels())?;
-                }
+                // Flip: the family router is the SOLE writer of the public call
+                // rels (P4, capstone cutover), so re-derive them from the
+                // _call_* tables the delta just mutated. An owner delta
+                // rewrites the owner's sites and their resolutions, touching
+                // _call_owner/_call_raw_site/_call_resolution but NOT _call_def
+                // (the def set is unchanged — the delta bails otherwise).
+                // Passing that exact footprint reruns CallSite/CallEdge (both
+                // read _call_raw_site) and SKIPS CallName (footprint
+                // {_call_def}), so its call_name rows are kept from the memo
+                // instead of rederived — the live skip.
+                self.flip_call_rels_via_router(&crate::engine::family::call_owner_delta_rels())?;
                 Ok(CallPathRefreshOutcome::Applied)
             }
             CallDeltaOutcome::Unsupported(reason) => {
@@ -277,68 +274,55 @@ impl Engine {
             best.map(|(_, s)| format!("{repo}::{s}"))
         };
 
-        let t = |s: &str| Value::Text(s.to_string());
-        let i = |n: u32| Value::Int(n as i64);
-        let mut def_rev_rows: Vec<Vec<Value>> = Vec::new();
-        let mut site_rows: Vec<Vec<Value>> = Vec::new();
-        let mut edge_rev_rows: Vec<Vec<Value>> = Vec::new();
-        let mut name_rows: Vec<Vec<Value>> = Vec::new();
+        let mut defs: Vec<CallDefBaseline> = Vec::new();
         let mut owners: Vec<CallOwnerBaseline> = Vec::with_capacity(facts.len());
-        // call_kind is keyed by (caller, kind); a fn with both a read and a
-        // write emits two rows. Accumulate in a set so multiple write sites in
-        // the same fn collapse to one (fn, "write") row.
-        let mut kind_set: HashSet<(String, &'static str)> = HashSet::new();
         // Dedup carries the rev, so one def present at two revs emits its
-        // call_def_rev row once PER rev — rev is a column, not folded into the
+        // _call_def row once PER rev — rev is a column, not folded into the
         // sym (same crux as type_entity_rev).
         let mut seen_def: HashSet<(&str, &str, &str)> = HashSet::new();
-        let mut seen_edge: HashSet<(String, String, &str)> = HashSet::new();
         let mut seen_owner: HashSet<(&str, &str, &str)> = HashSet::new();
         for (repo, path, rev, f) in &facts {
             let mut owned_sites = Vec::with_capacity(f.sites.len());
             let mut occurrence_ordinals: HashMap<(&str, u32), u32> = HashMap::new();
             for d in &f.defs {
                 if seen_def.insert((repo.as_str(), d.sym.as_str(), rev.as_str())) {
-                    let qsym = format!("{repo}::{}", d.sym);
-                    def_rev_rows.push(vec![t(repo), t(&qsym), t(d.kind.tag()), t(&d.file), i(d.line), i(d.end), t(rev)]);
-                    name_rows.push(vec![t(&qsym), t(&d.name)]);
+                    defs.push(CallDefBaseline {
+                        repo: repo.clone(),
+                        sym: format!("{repo}::{}", d.sym),
+                        name: d.name.clone(),
+                        kind: d.kind.tag().to_string(),
+                        file: d.file.clone(),
+                        line: d.line,
+                        end: d.end,
+                        rev: rev.clone(),
+                    });
                 }
             }
             for s in &f.sites {
-                // call_site is the raw graph: every site, caller resolved when a
-                // def encloses it (repo-qualified), callee as written.
+                // caller resolved when a def encloses the site (repo-qualified);
+                // callee kept as written. Both feed the owned `_call_raw_site`
+                // row the CallSite/CallEdge/CallKind families project from.
                 let caller = resolve_caller(repo, rev, &s.file, s.line).unwrap_or_default();
-                site_rows.push(vec![t(repo), t(&caller), t(&s.callee), t(&s.file), i(s.line)]);
-                // call_kind: classify the callee's bare name as read/write. The
-                // fn-aggregate is the precision axis the conn-loop-reachable
-                // rail needs (a fn that only reads through its .conn() does not
-                // fire). Heuristic by name: $R.execute(...) is a write on any
-                // receiver; the rail's conn_fn join narrows to db-shaped sites.
+                // classify the callee's bare name as read/write. The fn-aggregate
+                // is the precision axis the conn-loop-reachable rail needs (a fn
+                // that only reads through its .conn() does not fire). Heuristic
+                // by name: $R.execute(...) is a write on any receiver; the rail's
+                // conn_fn join narrows to db-shaped sites.
                 let classification = classify_call_kind(&s.callee);
-                if !caller.is_empty() {
-                    if let Some(k) = classification {
-                        kind_set.insert((caller.clone(), k));
-                    }
-                }
                 let ordinal = occurrence_ordinals.entry((s.file.as_str(), s.line)).or_default();
                 let occurrence = format!("{}:{}:{}", s.file, s.line, *ordinal);
                 *ordinal += 1;
-                // call_edge is the resolved graph: emit only when both endpoints
-                // resolve to def syms, so closure(call_edge) walks one identity
-                // space (same contract as type_link). Unresolved calls stay in
-                // call_site with their bare callee.
+                // The resolved edge: set only when both endpoints resolve to def
+                // syms, so closure(call_edge) walks one identity space (same
+                // contract as type_link). Unresolved calls stay in call_site
+                // (via CallSite's projection) with their bare callee.
                 let callee_sym = resolve_callee(repo, rev, &s.file, &s.callee, s.line);
-                let edge = if let Some(callee_sym) = callee_sym {
-                    if !caller.is_empty() && seen_edge.insert((caller.clone(), callee_sym.clone(), rev)) {
-                        edge_rev_rows.push(vec![t(&caller), t(&callee_sym), t("call"), t(rev)]);
-                    }
+                let edge = callee_sym.and_then(|callee_sym| {
                     (!caller.is_empty()).then(|| CallResolvedEdge {
                         caller: caller.clone(),
                         callee: callee_sym,
                     })
-                } else {
-                    None
-                };
+                });
                 owned_sites.push(CallSiteBaseline {
                     occurrence,
                     caller,
@@ -364,65 +348,30 @@ impl Engine {
             }
         }
 
-        let mut kind_pairs: Vec<(String, &'static str)> = kind_set.into_iter().collect();
-        kind_pairs.sort();
-        let kind_rows: Vec<Vec<Value>> = kind_pairs
-            .into_iter()
-            .map(|(f, k)| vec![t(&f), t(k)])
-            .collect();
-
-        // call_def_rev / call_edge_rev are the rev-carrying twins: write them
-        // through the rev-scoped helper. Delete scope = every corpus rev
-        // (whole-corpus emit in D5.1 = full `refresh_rel` wipe; see
-        // refresh_type_rels' matching comment).
-        let all_revs = Self::corpus_revs(&files);
-        let def_rev_rows = self.encode_rel_rows(
-            "call_def_rev",
-            &["repo", "sym", "kind", "file", "line", "end", "rev"],
-            &def_rev_rows,
-        )?;
-        let site_rows = self.encode_rel_rows(
-            "call_site",
-            &["repo", "caller", "callee", "file", "line"],
-            &site_rows,
-        )?;
-        let edge_rev_rows = self.encode_rel_rows(
-            "call_edge_rev",
-            &["caller", "callee", "kind", "rev"],
-            &edge_rev_rows,
-        )?;
-        let name_rows = self.encode_rel_rows("call_name", &["sym", "name"], &name_rows)?;
-        let kind_rows = self.encode_rel_rows("call_kind", &["fn", "kind"], &kind_rows)?;
         self.db.persist_call_family(CallFamilyWrite {
-            def_rev_rows: &def_rev_rows,
-            site_rows: &site_rows,
-            edge_rev_rows: &edge_rev_rows,
-            name_rows: &name_rows,
-            kind_rows: &kind_rows,
-            revs: &all_revs,
             owners: &owners,
             def_buckets: &def_buckets,
+            defs: &defs,
             scip_dependency_digest: self.scip_resolution_dependency_digest("WORK"),
             module_dependency_digest: self.module_resolution_dependency_digest("WORK"),
         })?;
         // Persisted only after the writes land, so a failed refresh retries.
         for (rev, d) in &moved { self.save_rel_digest(&extract_digest_key("call", rev), d)?; }
-        // Flip path (plan step 3): when DL_FAMILY_CALL=1, the reactive router is
-        // the live producer of call_site/call_edge, deriving them from the owned
-        // _call_* tables instead of the legacy direct-from-extracted-rows writes
-        // above. A full refresh rewrote every input, so pass the whole input set
-        // (nothing to skip). Additive; the legacy writes already landed.
-        if family_flip_enabled() {
-            self.flip_call_rels_via_router(&crate::engine::family::call_input_rels())?;
-        }
+        // The family router is the SOLE writer of the public call rels (P4,
+        // capstone cutover): derive every one of them from the owned _call_*
+        // tables the write above just populated. A full refresh rewrote every
+        // input, so pass the whole input set (nothing to skip).
+        self.flip_call_rels_via_router(&crate::engine::family::call_input_rels())?;
         Ok(true)
     }
 
-    /// The `DL_FAMILY_CALL` flip through the persistent reactive router: `react`
-    /// against the engine's cross-tick memo, then overwrite each rerun family's
-    /// public rel from its freshly derived rows. On the first flip every family
-    /// has no memo, so all derive (the cold case); later ticks rerun only the
-    /// families whose input rels are in `changed`. Returns the rerun rel names.
+    /// The persistent reactive router flip: `react` against the engine's
+    /// cross-tick memo, then overwrite each rerun family's public rel from its
+    /// freshly derived rows. On the first flip every family has no memo, so
+    /// all derive (the cold case); later ticks rerun only the families whose
+    /// input rels are in `changed`. Returns the rerun rel names. The SOLE
+    /// writer of every public call rel (P4, capstone cutover) — no direct
+    /// extracted-row write competes with it anymore.
     pub(crate) fn flip_call_rels_via_router(
         &self,
         changed: &std::collections::HashSet<&'static str>,
@@ -447,18 +396,20 @@ impl Engine {
         Ok(rerun)
     }
 
-    /// Keep rev-sweep callers on the same storage-owned compatibility rebuild
-    /// used by the bundled call-family write.
-    pub(crate) fn rebuild_legacy_call_rels(&self) -> Result<()> {
-        CallStore::rebuild_legacy_call_rels(&self.db)
+    /// P4's call-family half of the rev-retraction sweep (`sweep_gone_revs`,
+    /// `src/engine/extract/mod.rs`): a gone rev's call-graph data now
+    /// disappears by deleting it straight from the 6 owned `_call_*` tables
+    /// (`CallStore::sweep_gone_call_inputs`) rather than through the old
+    /// REV_TWINS-delete-then-legacy-rebuild path — there is no legacy path
+    /// left to rebuild. Flips the call families through the router only when
+    /// a row actually moved, so a no-op sweep costs nothing.
+    pub(crate) fn sweep_gone_call_inputs(&self) -> Result<()> {
+        let moved = self.db.sweep_gone_call_inputs()?;
+        if moved > 0 {
+            self.flip_call_rels_via_router(&crate::engine::family::call_input_rels())?;
+        }
+        Ok(())
     }
-}
-
-/// `DL_FAMILY_CALL=1` gates the reactive-router flip: the router becomes the
-/// live producer of `call_site`/`call_edge`. Unset (the default) leaves the
-/// legacy projection as the producer, byte-identical.
-fn family_flip_enabled() -> bool {
-    std::env::var("DL_FAMILY_CALL").is_ok_and(|v| v == "1")
 }
 
 fn call_def_digest(defs: &[typegraph::CallDef]) -> [u8; 32] {

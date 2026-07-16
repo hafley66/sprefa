@@ -1,7 +1,8 @@
-//! P3 (capstone cutover, `plans/2026-07-16-capstone-cutover.md`): freeze the 7
-//! public call rels as text-decoded goldens BEFORE P4 deletes the legacy
-//! writer. The goldens are the oracle P4/P5 verify against once the family
-//! router becomes the sole writer.
+//! P3 (capstone cutover, `plans/2026-07-16-capstone-cutover.md`) froze the 7
+//! public call rels as text-decoded goldens before P4 deleted the legacy
+//! writer. The goldens are the acceptance baseline P4 (the sole-writer cut)
+//! and P5 verify against — the family router is now the ONLY producer of
+//! every public call rel, no gate involved.
 //!
 //! The fixture is ONE git checkout carrying both a committed rev and a
 //! divergent working tree, so the rev union is exactly {HEAD-sha, "WORK"} —
@@ -40,18 +41,6 @@ fn init_git(d: &Path) {
     git(d, &["init", "-q"]);
     git(d, &["config", "user.email", "t@example.com"]);
     git(d, &["config", "user.name", "T"]);
-}
-
-/// `DL_FAMILY_CALL` is process-global; tests that toggle it must not run
-/// concurrently or one test's `remove_var` clears the flag mid-flight in
-/// another. Serialize on this lock (poison-tolerant: a failing test still
-/// hands the flag off cleanly). Replicated locally per
-/// `src/engine/family/mod.rs:265-272` — `tests/it` is a separate test binary
-/// from the in-crate one.
-static FLAG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-fn lock_flag() -> std::sync::MutexGuard<'static, ()> {
-    FLAG_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// The rev-pair extraction program: a data-driven scan over both the
@@ -258,16 +247,12 @@ fn assert_matches_golden(rel: &str, got: &[String], golden: &[String], label: &s
     );
 }
 
-/// Producer (Deliverable 1): dumps the 7 rels with `DL_FAMILY_CALL` OFF — the
-/// legacy projection is the oracle being frozen, BEFORE P4 deletes it. Run
-/// explicitly (`--ignored`) to regenerate; never runs as part of the default
-/// suite.
+/// Producer (Deliverable 1): dumps the 7 rels through the family router — the
+/// sole writer of every public call rel post-P4. Run explicitly (`--ignored`)
+/// to regenerate; never runs as part of the default suite.
 #[test]
 #[ignore]
 fn regen_call_goldens() {
-    let _flag = lock_flag();
-    std::env::remove_var("DL_FAMILY_CALL");
-
     let dump = build_and_dump("regen");
 
     let dir = fixtures_dir();
@@ -282,34 +267,14 @@ fn regen_call_goldens() {
 }
 
 /// Consumer (Deliverable 2): the SAME fixture + dump, compared against the
-/// frozen goldens under BOTH `DL_FAMILY_CALL` states — unset (legacy) and
-/// `"1"` (the family router flip). Both must match the same goldens
-/// byte-for-byte; this is the parity oracle P4's sole-writer cut relies on.
+/// frozen goldens. Post-P4 there is only one state to check — the family
+/// router is the sole writer of every public call rel, no gate involved —
+/// collapsed from the pre-cutover both-gate-states parameterization.
 #[test]
 fn call_family_matches_golden() {
-    let _flag = lock_flag();
     let goldens = load_goldens();
-
-    struct FlagGuard;
-    impl Drop for FlagGuard {
-        fn drop(&mut self) {
-            std::env::remove_var("DL_FAMILY_CALL");
-        }
-    }
-
-    // Pass 1: DL_FAMILY_CALL unset (legacy projection).
-    std::env::remove_var("DL_FAMILY_CALL");
-    let off = build_and_dump("consumer_off");
+    let dump = build_and_dump("consumer");
     for &(rel, _) in REL_COLS {
-        assert_matches_golden(rel, &off[rel], &goldens[rel], "DL_FAMILY_CALL unset");
-    }
-
-    // Pass 2: DL_FAMILY_CALL=1 (the family router flip). The guard removes
-    // the var on every exit path, including a panic from the assert below.
-    std::env::set_var("DL_FAMILY_CALL", "1");
-    let _guard = FlagGuard;
-    let on = build_and_dump("consumer_on");
-    for &(rel, _) in REL_COLS {
-        assert_matches_golden(rel, &on[rel], &goldens[rel], "DL_FAMILY_CALL=1");
+        assert_matches_golden(rel, &dump[rel], &goldens[rel], "family router");
     }
 }

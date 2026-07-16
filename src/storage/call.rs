@@ -3,7 +3,6 @@ use anyhow::Result;
 use super::Storage;
 use crate::ast::Value;
 use crate::db::Db;
-use crate::lower::tbl;
 use crate::spine::{StringId, SymSink};
 
 const SQLITE_CALL_DELTA_SCHEMA: &str = r#"
@@ -119,16 +118,28 @@ fn ensure_sqlite_call_def_shape(db: &Db) -> Result<()> {
 }
 
 pub(crate) struct CallFamilyWrite<'a> {
-    pub(crate) def_rev_rows: &'a [Vec<Value>],
-    pub(crate) site_rows: &'a [Vec<Value>],
-    pub(crate) edge_rev_rows: &'a [Vec<Value>],
-    pub(crate) name_rows: &'a [Vec<Value>],
-    pub(crate) kind_rows: &'a [Vec<Value>],
-    pub(crate) revs: &'a [String],
     pub(crate) owners: &'a [CallOwnerBaseline],
     pub(crate) def_buckets: &'a [CallDefBucketBaseline],
+    pub(crate) defs: &'a [CallDefBaseline],
     pub(crate) scip_dependency_digest: [u8; 32],
     pub(crate) module_dependency_digest: [u8; 32],
+}
+
+/// One def-site fact, the source `replace_sqlite_call_def` interns and writes
+/// to the owned `_call_def` store. Replaces the old public-rel-shaped
+/// `def_rev_rows`/`name_rows` pair (P4, capstone cutover): those two vectors
+/// existed only to feed the now-deleted legacy `call_def_rev`/`call_name`
+/// writes, and `_call_def`'s population piggybacked on them. This is the
+/// direct owned-input shape instead.
+pub(crate) struct CallDefBaseline {
+    pub(crate) repo: String,
+    pub(crate) sym: String,
+    pub(crate) name: String,
+    pub(crate) kind: String,
+    pub(crate) file: String,
+    pub(crate) line: u32,
+    pub(crate) end: u32,
+    pub(crate) rev: String,
 }
 
 pub(crate) struct CallOwnerBaseline {
@@ -175,10 +186,17 @@ pub(crate) enum CallDeltaOutcome {
     Unsupported(&'static str),
 }
 
-/// Backend contract for persisting the logical call-relation family.
+/// Backend contract for persisting the logical call-relation family. The
+/// public `call_*` rels are no longer written here at all (P4, capstone
+/// cutover): the family router (`Engine::flip_call_rels_via_router`) is the
+/// SOLE writer of every public call rel, deriving them from the owned
+/// `_call_*` tables this trait's methods populate.
 pub(crate) trait CallStore {
     fn persist_call_family(&self, write: CallFamilyWrite<'_>) -> Result<()>;
-    fn rebuild_legacy_call_rels(&self) -> Result<()>;
+    /// Delete a gone rev's rows straight from the 6 owned `_call_*` tables;
+    /// returns the total row count deleted so the caller can skip the router
+    /// flip when nothing moved. See `sweep_sqlite_gone_call_inputs`.
+    fn sweep_gone_call_inputs(&self) -> Result<usize>;
     fn apply_call_owner_delta(&self, delta: CallOwnerDelta) -> Result<CallDeltaOutcome>;
 }
 
@@ -187,8 +205,8 @@ impl CallStore for Db {
         persist_sqlite_call_family(self, write)
     }
 
-    fn rebuild_legacy_call_rels(&self) -> Result<()> {
-        rebuild_sqlite_legacy_call_rels(self)
+    fn sweep_gone_call_inputs(&self) -> Result<usize> {
+        sweep_sqlite_gone_call_inputs(self)
     }
 
     fn apply_call_owner_delta(&self, delta: CallOwnerDelta) -> Result<CallDeltaOutcome> {
@@ -197,8 +215,6 @@ impl CallStore for Db {
 }
 
 fn persist_sqlite_call_family(db: &Db, write: CallFamilyWrite<'_>) -> Result<()> {
-    // Slice one creates the durable delta rails but intentionally does not
-    // populate them. Existing call-family persistence remains the baseline.
     ensure_sqlite_call_delta_schema(db)?;
     let owns_transaction = Storage::is_autocommit(db);
     if owns_transaction {
@@ -206,30 +222,7 @@ fn persist_sqlite_call_family(db: &Db, write: CallFamilyWrite<'_>) -> Result<()>
     }
 
     let result = (|| {
-        replace_sqlite_call_revs(
-            db,
-            "call_def_rev",
-            &["repo", "sym", "kind", "file", "line", "end", "rev"],
-            write.def_rev_rows,
-            write.revs,
-        )?;
-        Storage::reload_rel(
-            db,
-            &tbl("call_site"),
-            &["repo", "caller", "callee", "file", "line"],
-            write.site_rows,
-        )?;
-        replace_sqlite_call_revs(
-            db,
-            "call_edge_rev",
-            &["caller", "callee", "kind", "rev"],
-            write.edge_rev_rows,
-            write.revs,
-        )?;
-        Storage::reload_rel(db, &tbl("call_name"), &["sym", "name"], write.name_rows)?;
-        replace_sqlite_call_def(db, write.name_rows, write.def_rev_rows)?;
-        Storage::reload_rel(db, &tbl("call_kind"), &["fn", "kind"], write.kind_rows)?;
-        rebuild_sqlite_legacy_call_rels(db)?;
+        replace_sqlite_call_def(db, write.defs)?;
         replace_sqlite_call_baseline(
             db,
             write.owners,
@@ -518,36 +511,18 @@ fn insert_sqlite_call_delta_sites(
     Ok(())
 }
 
+/// Recompute the OWNED `_call_edge_support` aggregate over the affected keys
+/// an owner/site delta just touched. P4 (capstone cutover) deleted the 4
+/// public-rel DELETE/INSERT blocks this function used to also run
+/// (`call_site`/`call_kind`/`call_edge_rev`/`call_edge`): the family router
+/// is now the sole writer of every public call rel, reprojecting them fresh
+/// from `_call_owner`/`_call_raw_site`/`_call_resolution`/`_call_def` via
+/// `Engine::flip_call_rels_via_router` right after this returns. Retaining
+/// `_call_edge_support` here (rather than folding its GROUP BY into the
+/// `CallEdge`/`CallEdgeRev` families, which already recompute the same
+/// aggregate from `_call_resolution` directly) is a deliberate deferral — see
+/// the cutover plan's Risk 2.
 fn reproject_sqlite_call_affected_keys(db: &Db) -> Result<()> {
-    let call_site = tbl("call_site");
-    Storage::execute(db, &format!(
-        "DELETE FROM {call_site} WHERE EXISTS (SELECT 1 FROM _call_affected_site AS a \
-         WHERE a.repo_sid = {call_site}.repo AND a.caller_sid = {call_site}.caller \
-           AND a.callee_sid = {call_site}.callee AND a.file_sid = {call_site}.file \
-           AND a.line = {call_site}.line)"
-    ))?;
-    Storage::execute(db, &format!(
-        "INSERT OR IGNORE INTO {call_site}(repo, caller, callee, file, line) \
-         SELECT DISTINCT o.repo_sid, s.caller_sid, s.callee_sid, s.file_sid, s.line \
-         FROM _call_raw_site AS s JOIN _call_owner AS o USING(owner_id) \
-         JOIN _call_affected_site AS a \
-           ON a.repo_sid = o.repo_sid AND a.caller_sid = s.caller_sid \
-          AND a.callee_sid = s.callee_sid AND a.file_sid = s.file_sid AND a.line = s.line"
-    ))?;
-
-    let call_kind = tbl("call_kind");
-    Storage::execute(db, &format!(
-        "DELETE FROM {call_kind} WHERE EXISTS (SELECT 1 FROM _call_affected_kind AS a \
-         WHERE a.caller_sid = {call_kind}.fn AND a.classification_sid = {call_kind}.kind)"
-    ))?;
-    Storage::execute(db, &format!(
-        "INSERT OR IGNORE INTO {call_kind}(fn, kind) \
-         SELECT DISTINCT s.caller_sid, s.classification_sid FROM _call_raw_site AS s \
-         JOIN _call_affected_kind AS a \
-           ON a.caller_sid = s.caller_sid AND a.classification_sid = s.classification_sid \
-         WHERE s.caller_sid != 0 AND s.classification_sid IS NOT NULL"
-    ))?;
-
     Storage::execute(
         db,
         "DELETE FROM _call_edge_support WHERE EXISTS (SELECT 1 FROM _call_affected_edge_rev AS a \
@@ -568,30 +543,6 @@ fn reproject_sqlite_call_affected_keys(db: &Db) -> Result<()> {
           AND a.kind_sid = r.kind_sid AND a.rev_sid = o.rev_sid \
          GROUP BY s.caller_sid, r.callee_sid, r.kind_sid, o.rev_sid",
     )?;
-
-    let edge_rev = tbl("call_edge_rev");
-    Storage::execute(db, &format!(
-        "DELETE FROM {edge_rev} WHERE EXISTS (SELECT 1 FROM _call_affected_edge_rev AS a \
-         WHERE a.caller_sid = {edge_rev}.caller AND a.callee_sid = {edge_rev}.callee \
-           AND a.kind_sid = {edge_rev}.kind AND a.rev_sid = {edge_rev}.rev)"
-    ))?;
-    Storage::execute(db, &format!(
-        "INSERT OR IGNORE INTO {edge_rev}(caller, callee, kind, rev) \
-         SELECT e.caller_sid, e.callee_sid, e.kind_sid, e.rev_sid \
-         FROM _call_edge_support AS e JOIN _call_affected_edge_rev AS a USING(caller_sid, callee_sid, kind_sid, rev_sid)"
-    ))?;
-
-    let edge = tbl("call_edge");
-    Storage::execute(db, &format!(
-        "DELETE FROM {edge} WHERE EXISTS (SELECT 1 FROM _call_affected_edge AS a \
-         WHERE a.caller_sid = {edge}.caller AND a.callee_sid = {edge}.callee \
-           AND a.kind_sid = {edge}.kind)"
-    ))?;
-    Storage::execute(db, &format!(
-        "INSERT OR IGNORE INTO {edge}(caller, callee, kind) \
-         SELECT DISTINCT e.caller_sid, e.callee_sid, e.kind_sid \
-         FROM _call_edge_support AS e JOIN _call_affected_edge AS a USING(caller_sid, callee_sid, kind_sid)"
-    ))?;
     Ok(())
 }
 
@@ -794,97 +745,68 @@ fn call_baseline_digest(
     *hash.finalize().as_bytes()
 }
 
-fn rebuild_sqlite_legacy_call_rels(db: &Db) -> Result<()> {
-    let edge = tbl("call_edge");
-    let edge_rev = tbl("call_edge_rev");
-    Storage::execute(db, &format!("DELETE FROM {edge}"))?;
-    Storage::execute(db, &format!(
-        "INSERT OR IGNORE INTO {edge} (\"caller\", \"callee\", \"kind\") \
-         SELECT \"caller\", \"callee\", \"kind\" FROM {edge_rev}"
-    ))?;
-    let def = tbl("call_def");
-    let def_rev = tbl("call_def_rev");
-    Storage::execute(db, &format!("DELETE FROM {def}"))?;
-    Storage::execute(db, &format!(
-        "INSERT OR IGNORE INTO {def} (\"repo\", \"sym\", \"kind\", \"file\", \"line\", \"end\") \
-         SELECT \"repo\", \"sym\", \"kind\", \"file\", \"line\", \"end\" FROM {def_rev}"
-    ))?;
-    Ok(())
-}
-
-fn replace_sqlite_call_revs(
-    db: &Db,
-    rel: &str,
-    cols: &[&str],
-    rows: &[Vec<Value>],
-    revs: &[String],
-) -> Result<()> {
-    if revs.is_empty() {
-        return Ok(());
-    }
-    Storage::execute(
-        db,
-        "CREATE TEMP TABLE IF NOT EXISTS _call_refresh_rev(rev TEXT PRIMARY KEY)",
-    )?;
-    Storage::execute(db, "DELETE FROM _call_refresh_rev")?;
-    let rev_rows: Vec<Vec<Value>> = revs
-        .iter()
-        .map(|rev| vec![Value::Text(rev.clone())])
-        .collect();
-    Storage::insert_rows(db, "_call_refresh_rev", &["rev"], &rev_rows)?;
-    Storage::execute(db, &format!(
-        "DELETE FROM {} WHERE \"rev\" IN (SELECT sprf_sym(rev) FROM _call_refresh_rev)",
-        tbl(rel)
-    ))?;
-    Storage::insert_rows(db, &tbl(rel), cols, rows)?;
-    Ok(())
-}
-
-/// Rebuild the owned 8-col `_call_def` def-site store. Both inputs arrive
-/// already interned by `encode_rel_rows` (all cells are `Value::Int` sids):
-/// `def_rev_rows` carries the def-site tuple (cols repo, sym, kind, file, line,
-/// end, rev) that `CallDefRev`/`CallDef` project; `name_rows` carries the bare
-/// name (cols sym, name) that `CallName` projects. Populated by joining each
-/// def_rev row's `sym_sid` against a `sym_sid -> name_sid` map built from
-/// `name_rows`. No SymSink: nothing new to intern.
+/// P4's replacement for the legacy REV_TWINS-based call sweep (capstone
+/// cutover): a gone rev's rows are deleted straight from the 6 owned
+/// `_call_*` tables rather than surfacing via a public-rel twin delete +
+/// legacy rebuild. Explicit per-table DELETEs, not FK CASCADE — FK
+/// enforcement is not guaranteed on every connection (see
+/// `call_owner_delta_without_foreign_keys_leaves_no_orphan_resolutions`),
+/// so a gone rev must not rely on it to reach `_call_raw_site`/
+/// `_call_resolution`. Deletion order respects the dependency chain
+/// (`_call_resolution` -> `_call_raw_site` -> `_call_owner`: each DELETE's
+/// WHERE clause still needs its parent row intact to compute the join);
+/// `_call_def`/`_call_def_bucket`/`_call_edge_support` carry `rev_sid`
+/// directly and delete independently of that chain. Returns the total row
+/// count deleted, so the caller (`Engine::sweep_gone_call_inputs`) can skip
+/// the family-router flip when a tick's sweep is a no-op.
 ///
-/// PK is (sym_sid, rev_sid) — `def_rev_rows` is deduped on (repo, sym, rev)
-/// upstream and sym is repo-qualified, so (sym, rev) is unique and no def row is
-/// silently dropped. A full refresh rewrites the table wholesale; owner/site
-/// deltas leave it alone (defs unchanged), which is what lets the router skip
-/// the def families.
-fn replace_sqlite_call_def(
-    db: &Db,
-    name_rows: &[Vec<Value>],
-    def_rev_rows: &[Vec<Value>],
-) -> Result<()> {
+/// Precondition: a temp table `_live_rev_scope(rev TEXT PRIMARY KEY)` holding
+/// this tick's live revs already exists — the caller (`sweep_gone_revs`)
+/// builds and populates it before sweeping any twin, call included.
+fn sweep_sqlite_gone_call_inputs(db: &Db) -> Result<usize> {
+    ensure_sqlite_call_delta_schema(db)?;
+    const GONE: &str = "rev_sid NOT IN (SELECT sprf_sym(rev) FROM _live_rev_scope)";
+    let mut moved = 0usize;
+    moved += Storage::execute(db, &format!(
+        "DELETE FROM _call_resolution WHERE site_id IN (\
+         SELECT s.site_id FROM _call_raw_site AS s JOIN _call_owner AS o USING(owner_id) \
+         WHERE o.{GONE})"
+    ))?;
+    moved += Storage::execute(db, &format!(
+        "DELETE FROM _call_raw_site WHERE owner_id IN (\
+         SELECT owner_id FROM _call_owner WHERE {GONE})"
+    ))?;
+    moved += Storage::execute(db, &format!("DELETE FROM _call_owner WHERE {GONE}"))?;
+    moved += Storage::execute(db, &format!("DELETE FROM _call_def WHERE {GONE}"))?;
+    moved += Storage::execute(db, &format!("DELETE FROM _call_def_bucket WHERE {GONE}"))?;
+    moved += Storage::execute(db, &format!("DELETE FROM _call_edge_support WHERE {GONE}"))?;
+    Ok(moved)
+}
+
+/// Rebuild the owned 8-col `_call_def` def-site store directly from the
+/// extraction's def facts (P4, capstone cutover: replaces the old
+/// public-rel-shaped `def_rev_rows`/`name_rows` split — those two vectors
+/// existed only to feed the now-deleted legacy `call_def_rev`/`call_name`
+/// writes). Interns each def's strings itself (one `SymSink` batch, flushed
+/// once), then a single plural `insert_rows`.
+///
+/// PK is (sym_sid, rev_sid) — the caller already dedupes on (repo, sym, rev)
+/// upstream (sym is repo-qualified, so (sym, rev) is unique); the `seen` set
+/// here is a defensive second dedup, not the primary one. A full refresh
+/// rewrites the table wholesale; owner/site deltas leave it alone (defs
+/// unchanged), which is what lets the router skip the def families.
+fn replace_sqlite_call_def(db: &Db, defs: &[CallDefBaseline]) -> Result<()> {
     Storage::execute(db, "DELETE FROM _call_def")?;
-    let cell = |value: &Value| -> i64 {
-        match value {
-            Value::Int(n) => *n,
-            _ => 0,
-        }
-    };
-    // sym_sid -> name_sid. name_rows are (sym, name), already interned.
-    let mut name_by_sym: std::collections::HashMap<i64, i64> =
-        std::collections::HashMap::with_capacity(name_rows.len());
-    for row in name_rows {
-        name_by_sym.insert(cell(&row[0]), cell(&row[1]));
-    }
+    let mut sink = SymSink::new();
     let mut seen: std::collections::HashSet<(i64, i64)> = std::collections::HashSet::new();
-    let mut rows: Vec<Vec<Value>> = Vec::with_capacity(def_rev_rows.len());
-    for row in def_rev_rows {
-        // def_rev cols: repo, sym, kind, file, line, end, rev.
-        let repo_sid = cell(&row[0]);
-        let sym_sid = cell(&row[1]);
-        let kind_sid = cell(&row[2]);
-        let file_sid = cell(&row[3]);
-        let line = cell(&row[4]);
-        let end = cell(&row[5]);
-        let rev_sid = cell(&row[6]);
-        // A def with no matching name row falls back to the sym as its own name
-        // (a valid interned sid, so the FK holds) rather than dropping the row.
-        let name_sid = name_by_sym.get(&sym_sid).copied().unwrap_or(sym_sid);
+    let mut rows: Vec<Vec<Value>> = Vec::with_capacity(defs.len());
+    for def in defs {
+        let sym_sid = sink.sym(&def.sym).cell();
+        let name_sid = sink.sym(&def.name).cell();
+        let repo_sid = sink.sym(&def.repo).cell();
+        let kind_sid = sink.sym(&def.kind).cell();
+        let file_sid = sink.sym(&def.file).cell();
+        let rev_sid = sink.sym(&def.rev).cell();
         if seen.insert((sym_sid, rev_sid)) {
             rows.push(vec![
                 Value::Int(sym_sid),
@@ -892,12 +814,13 @@ fn replace_sqlite_call_def(
                 Value::Int(repo_sid),
                 Value::Int(kind_sid),
                 Value::Int(file_sid),
-                Value::Int(line),
-                Value::Int(end),
+                Value::Int(def.line as i64),
+                Value::Int(def.end as i64),
                 Value::Int(rev_sid),
             ]);
         }
     }
+    Storage::flush_syms(db, &mut sink)?;
     // `insert_rows` quotes each column name, so `end` is passed bare here (it
     // becomes `"end"` in the INSERT) — unlike Ctx::scan, which needs it
     // pre-quoted.
@@ -927,9 +850,9 @@ mod tests {
             Ok(())
         }
 
-        fn rebuild_legacy_call_rels(&self) -> Result<()> {
-            self.operations.borrow_mut().push("rebuild_legacy_call_rels".to_string());
-            Ok(())
+        fn sweep_gone_call_inputs(&self) -> Result<usize> {
+            self.operations.borrow_mut().push("sweep_gone_call_inputs".to_string());
+            Ok(0)
         }
 
         fn apply_call_owner_delta(&self, _delta: CallOwnerDelta) -> Result<CallDeltaOutcome> {
@@ -941,17 +864,10 @@ mod tests {
     #[test]
     fn call_family_is_one_logical_storage_operation() {
         let store = RecordingStore::default();
-        let rows = vec![vec![Value::Int(1)]];
-        let revs = vec!["WORK".to_string()];
         store.persist_call_family(CallFamilyWrite {
-            def_rev_rows: &rows,
-            site_rows: &rows,
-            edge_rev_rows: &rows,
-            name_rows: &rows,
-            kind_rows: &rows,
-            revs: &revs,
             owners: &[],
             def_buckets: &[],
+            defs: &[],
             scip_dependency_digest: [0; 32],
             module_dependency_digest: [0; 32],
         }).unwrap();
@@ -1078,40 +994,49 @@ mod tests {
 
         // Seed the 8-col `_call_def` def-site store plus its legacy public twins
         // (`rel_call_def_rev` / `rel_call_def`) so the CallDefRev/CallDef
-        // families derive non-vacuously and the flip-parity rail has a legacy
-        // oracle to diff against. `def_rev_rows`/`name_rows` are interned exactly
-        // as the extract path produces them; `replace_sqlite_call_def` populates
-        // `_call_def`, and the two INSERT paths mirror the legacy persist
-        // (`replace_sqlite_call_revs` for the rev twin + the rev-deduped union in
-        // `rebuild_sqlite_legacy_call_rels`).
+        // families derive non-vacuously and the flip-parity rail
+        // (`family_flip_overwrites_legacy_call_rels_identically`) has an oracle
+        // to diff the family output against. `replace_sqlite_call_def` (the
+        // real, owned-input path) populates `_call_def`; the `rel_call_def_rev`/
+        // `rel_call_def` INSERTs below are test-only fixture seeding standing in
+        // for what the pre-P4 legacy writer used to produce.
         {
             // (sym, name, kind, file, line, end, rev); one def present at two
             // revs so CallDef collapses it while CallDefRev keeps both rows.
-            let defs = [
+            let defs_data = [
                 ("repo::run", "run", "fn", "a.rs", 1u32, 12u32, "WORK"),
                 ("repo::target", "target", "fn", "a.rs", 5, 8, "WORK"),
                 ("repo::other", "other", "fn", "b.rs", 3, 9, "WORK"),
                 ("repo::target", "target", "fn", "a.rs", 5, 8, "HEAD"),
             ];
+            let defs: Vec<CallDefBaseline> = defs_data.iter()
+                .map(|&(sym, name, kind, file, line, end, rev)| CallDefBaseline {
+                    repo: "repo".into(),
+                    sym: sym.into(),
+                    name: name.into(),
+                    kind: kind.into(),
+                    file: file.into(),
+                    line,
+                    end,
+                    rev: rev.into(),
+                })
+                .collect();
+            replace_sqlite_call_def(&db, &defs).unwrap();
+
             let mut sink = SymSink::new();
             let repo_cell = sink.sym("repo").cell();
-            let mut def_rev_rows: Vec<Vec<Value>> = Vec::new();
-            let mut name_rows: Vec<Vec<Value>> = Vec::new();
-            for (sym, name, kind, file, line, end, rev) in defs {
-                let sym_cell = sink.sym(sym).cell();
-                def_rev_rows.push(vec![
+            let def_rev_rows: Vec<Vec<Value>> = defs_data.iter()
+                .map(|&(sym, _name, kind, file, line, end, rev)| vec![
                     Value::Int(repo_cell),
-                    Value::Int(sym_cell),
+                    Value::Int(sink.sym(sym).cell()),
                     Value::Int(sink.sym(kind).cell()),
                     Value::Int(sink.sym(file).cell()),
                     Value::Int(line as i64),
                     Value::Int(end as i64),
                     Value::Int(sink.sym(rev).cell()),
-                ]);
-                name_rows.push(vec![Value::Int(sym_cell), Value::Int(sink.sym(name).cell())]);
-            }
+                ])
+                .collect();
             Storage::flush_syms(&db, &mut sink).unwrap();
-            replace_sqlite_call_def(&db, &name_rows, &def_rev_rows).unwrap();
             db.execute_batch(
                 "CREATE TABLE rel_call_def_rev(repo INTEGER, sym INTEGER, kind INTEGER, file INTEGER, line INTEGER, \"end\" INTEGER, rev INTEGER, PRIMARY KEY(repo, sym, kind, file, line, \"end\", rev)); \
                  CREATE TABLE rel_call_def(repo INTEGER, sym INTEGER, kind INTEGER, file INTEGER, line INTEGER, \"end\" INTEGER, PRIMARY KEY(repo, sym, kind, file, line, \"end\"));",
@@ -1141,17 +1066,20 @@ mod tests {
         }
     }
 
-    fn delta_snapshot(db: &Db) -> (i64, i64, i64, i64, i64, i64) {
+    /// Owned-table counters only — the public call rels are no longer written
+    /// by this storage layer at all (P4, capstone cutover): they are the
+    /// family router's job (`Engine::flip_call_rels_via_router`), which runs
+    /// one layer up from `apply_call_owner_delta`. A storage-only test cannot
+    /// observe that flip, so it has nothing to assert about `rel_call_*`.
+    fn delta_snapshot(db: &Db) -> (i64, i64, i64, i64) {
         db.query_row(
             "SELECT \
                (SELECT generation FROM _call_delta_marker), \
                (SELECT COUNT(*) FROM _call_raw_site), \
                (SELECT COUNT(*) FROM _call_resolution), \
-               (SELECT COUNT(*) FROM _call_edge_support), \
-               (SELECT COUNT(*) FROM rel_call_site), \
-               (SELECT COUNT(*) FROM rel_call_edge)",
+               (SELECT COUNT(*) FROM _call_edge_support)",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         ).unwrap()
     }
 
@@ -1159,15 +1087,21 @@ mod tests {
     fn call_owner_delta_reprojects_affected_keys_and_retains_duplicate_support() {
         let db = delta_test_db(false);
         assert_eq!(CallStore::apply_call_owner_delta(&db, delta_for("other", [1; 32], [0; 32])).unwrap(), CallDeltaOutcome::Applied);
-        assert_eq!(delta_snapshot(&db), (2, 2, 2, 2, 2, 2));
+        assert_eq!(delta_snapshot(&db), (2, 2, 2, 2));
         let target_support: i64 = db.query_row(
             "SELECT support_count FROM _call_edge_support WHERE callee_sid = ?1",
             [StringId::of("repo::target").sqlite()],
             |row| row.get(0),
         ).unwrap();
         assert_eq!(target_support, 1, "the untouched duplicate owner was retracted");
+        // Owned-table check (not `rel_call_kind`, which the storage layer no
+        // longer writes): a.rs's site reclassified read -> write, b.rs's stays
+        // read, so the owned set carries both kinds.
         let kinds: Vec<i64> = {
-            let mut statement = db.prepare("SELECT kind FROM rel_call_kind ORDER BY kind").unwrap();
+            let mut statement = db.prepare(
+                "SELECT DISTINCT classification_sid FROM _call_raw_site \
+                 WHERE classification_sid IS NOT NULL ORDER BY classification_sid",
+            ).unwrap();
             statement.query_map([], |row| row.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap()
         };
         let mut expected = vec![StringId::of("read").sqlite(), StringId::of("write").sqlite()];
@@ -1198,7 +1132,7 @@ mod tests {
             |row| row.get(0),
         ).unwrap();
         assert_eq!(orphan_resolutions, 0);
-        assert_eq!(delta_snapshot(&db), (2, 2, 2, 2, 2, 2));
+        assert_eq!(delta_snapshot(&db), (2, 2, 2, 2));
     }
 
     #[test]
@@ -1545,10 +1479,19 @@ mod tests {
     }
 
     /// Selectivity rail (plan Verification): the family engine reacts to a real
-    /// delta and matches the legacy projection afterward, AND the deps captured
-    /// before the delta flag the retracted input rows — the affected-set
-    /// computation the engine would use to scope a rederive. This is the
-    /// "reactive" proof the static rails above do not show.
+    /// delta and matches the expected post-delta edge set, AND the deps
+    /// captured before the delta flag the retracted input rows — the
+    /// affected-set computation the engine would use to scope a rederive.
+    /// This is the "reactive" proof the static rails above do not show.
+    ///
+    /// The cold (pre-delta) comparison still diffs against `rel_call_edge`
+    /// (the fixture's one-time legacy snapshot, `delta_test_db`). The
+    /// post-delta comparison CANNOT: `CallStore::apply_call_owner_delta` no
+    /// longer writes `rel_call_edge` at all (P4, capstone cutover — that is
+    /// the family router's job, one layer up, not exercised by this
+    /// storage-only test), so the table would just be reasserting its own
+    /// stale seed. Explicit expected values replace the legacy-table oracle
+    /// there (plan Risk 4: "parity tests lose oracle").
     #[test]
     fn family_call_edge_rederives_after_delta_via_dep_capture() {
         use crate::engine::family::{derive_family, CallEdge, DepKey};
@@ -1576,10 +1519,20 @@ mod tests {
         // The other call-family tests prove this delta is Accepted.
         CallStore::apply_call_owner_delta(&db, delta_for("other", [1; 32], [0; 32])).unwrap();
 
-        // rederive the family against the now-updated _call_* tables.
+        // rederive the family against the now-updated _call_* tables. Expected
+        // post-delta edges, computed directly (not from the now-stale
+        // `rel_call_edge` fixture table): a.rs's site now resolves repo::run ->
+        // repo::other, b.rs's untouched site still resolves repo::run ->
+        // repo::target; both resolutions carry kind "call" (see
+        // `insert_sqlite_call_delta_sites`).
         let (hot_rows, _hot_deps) = derive_family(&db, &CallEdge).unwrap();
         let hot = sort3(&hot_rows);
-        assert_eq!(hot, snap(&db), "family diverged from legacy AFTER delta");
+        let mut expected_hot = vec![
+            [StringId::of("repo::run").sqlite(), StringId::of("repo::other").sqlite(), StringId::of("call").sqlite()],
+            [StringId::of("repo::run").sqlite(), StringId::of("repo::target").sqlite(), StringId::of("call").sqlite()],
+        ];
+        expected_hot.sort();
+        assert_eq!(hot, expected_hot, "family diverged from expected post-delta edges");
 
         // the family REACTED: support for repo::target dropped (a.rs left),
         // and a new repo::other edge appeared. cold was 1 edge, hot is 2.
@@ -1602,10 +1555,11 @@ mod tests {
         assert_eq!(present, 1, "dep-capture did not flag the retracted row");
     }
 
-    /// Flip rail (plan step 3): `family_overwrite_call_rels` wipes + re-derives
-    /// `rel_call_site` + `rel_call_edge` from the owned `_call_*` tables. The
-    /// result must be identical to the legacy SQL population. This is the
-    /// direct evidence the family path can be the live producer (DL_FAMILY_CALL).
+    /// Flip rail (plan step 3): the router flip wipes + re-derives every
+    /// public call rel from the owned `_call_*` tables. The result must be
+    /// identical to the legacy SQL population fixture seeds. This is the
+    /// direct evidence the family path is a correct live producer — the
+    /// property P4 (capstone cutover) relies on making it the SOLE one.
     #[test]
     fn family_flip_overwrites_legacy_call_rels_identically() {
         use crate::engine::family::router::FamilyRouter;

@@ -262,16 +262,6 @@ fn gamma() {
 }
 ";
 
-    /// `DL_FAMILY_CALL` is process-global; tests that toggle it must not run
-    /// concurrently or one test's `remove_var` clears the flag mid-flight in
-    /// another. Serialize them on this lock (poison-tolerant: a failing test
-    /// still hands the flag off cleanly).
-    static FLAG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    fn lock_flag() -> std::sync::MutexGuard<'static, ()> {
-        FLAG_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
     fn fresh_engine(root: &PathBuf) -> Engine {
         let mut engine = Engine::new(db::open(None).unwrap(), root.clone());
         engine.ensure_meta().unwrap();
@@ -372,13 +362,12 @@ fn gamma() {
     }
 
     /// The real-extraction proof: a genuine `refresh_call_rels` over Rust
-    /// source on disk, run twice over identical input — once with
-    /// `DL_FAMILY_CALL` unset (legacy projection) and once with it set (the
-    /// family flip gate fires `family_overwrite_call_rels`). The public
-    /// `rel_call_site` + `rel_call_edge` must be identical.
+    /// source on disk populates `rel_call_site`/`rel_call_edge` non-vacuously
+    /// through the family router — the SOLE writer of every public call rel
+    /// (P4, capstone cutover; there is no more legacy projection to diff
+    /// against).
     #[test]
     fn family_flag_matches_legacy_on_real_extraction() {
-        let _flag = lock_flag();
         let dir = std::env::temp_dir().join(format!(
             "sprf-family-flip-{}-{}",
             std::process::id(),
@@ -391,57 +380,40 @@ fn gamma() {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("lib.rs"), RUST_SRC).unwrap();
 
-        // Engine A: flag OFF — legacy projection is the live producer.
-        let mut a = fresh_engine(&dir);
-        a.refresh_call_rels().unwrap();
-        let (legacy_site, legacy_edge) = snapshot(&a);
-
-        // Engine B: flag ON — the gate in refresh_call_rels fires and the
-        // family path overwrites rel_call_site + rel_call_edge from _call_*.
-        std::env::set_var("DL_FAMILY_CALL", "1");
-        let mut b = fresh_engine(&dir);
-        b.refresh_call_rels().unwrap();
-        std::env::remove_var("DL_FAMILY_CALL");
-
-        let (family_site, family_edge) = snapshot(&b);
+        let mut engine = fresh_engine(&dir);
+        engine.refresh_call_rels().unwrap();
+        let (site, edge) = snapshot(&engine);
         let _ = fs::remove_dir_all(&dir);
 
         assert!(
-            !legacy_site.is_empty(),
+            !site.is_empty(),
             "extraction produced no call_site rows; the rail is vacuous"
         );
         assert!(
-            !legacy_edge.is_empty(),
+            !edge.is_empty(),
             "extraction produced no resolved call_edge rows; the rail is vacuous"
         );
-        assert_eq!(
-            family_site, legacy_site,
-            "DL_FAMILY_CALL=1 rel_call_site diverged from legacy on real extraction"
-        );
-        assert_eq!(
-            family_edge, legacy_edge,
-            "DL_FAMILY_CALL=1 rel_call_edge diverged from legacy on real extraction"
-        );
 
-        // The persistent router: refresh_call_rels above cold-derived both
-        // families into engine B's cross-tick memo. Drive the LIVE flip method
-        // with a _call_resolution-only changed-set: call_edge reads that table,
-        // call_site does not, so a genuine skip must fall out — and it only can
-        // if the memo survived the refresh tick (an empty memo would rerun both
-        // via react's None-branch). This exercises the real Engine method +
-        // persistent RefCell memo + the router's skip, end to end.
+        // The persistent router: refresh_call_rels above cold-derived every
+        // family into the engine's cross-tick memo. Drive the LIVE flip method
+        // with a _call_resolution-only changed-set: call_edge/call_edge_rev
+        // read that table, call_site does not, so a genuine skip must fall
+        // out — and it only can if the memo survived the refresh tick (an
+        // empty memo would rerun everything via react's None-branch). This
+        // exercises the real Engine method + persistent RefCell memo + the
+        // router's skip, end to end.
         let mut resolution_only = HashSet::new();
         resolution_only.insert("_call_resolution");
-        let rerun = b.flip_call_rels_via_router(&resolution_only).unwrap();
+        let rerun = engine.flip_call_rels_via_router(&resolution_only).unwrap();
         assert_eq!(
             rerun,
             vec!["call_edge", "call_edge_rev"],
             "live persistent router reruns the two _call_resolution readers and skips \
              call_site/call_kind/call_name on a _call_resolution-only change"
         );
-        let (after_site, after_edge) = snapshot(&b);
-        assert_eq!(after_site, legacy_site, "skipped call_site must be untouched");
-        assert_eq!(after_edge, legacy_edge, "reran call_edge must stay correct");
+        let (after_site, after_edge) = snapshot(&engine);
+        assert_eq!(after_site, site, "skipped call_site must be untouched");
+        assert_eq!(after_edge, edge, "reran call_edge must stay correct");
     }
 
     /// The live-skip proof on a REAL delta (not a hand-passed changed-set): a
@@ -455,7 +427,6 @@ fn gamma() {
     #[test]
     fn family_delta_skips_call_name_on_site_only_change() {
         use crate::rels::PathRefreshContext;
-        let _flag = lock_flag();
 
         // v1 -> v2 retargets gamma's second call (`alpha()` -> `beta()`). The
         // edit is line-count preserving, so every def's (line, end) span — hence
@@ -483,32 +454,32 @@ fn gamma() {
 }
 ";
 
-        // Legacy expectation for v2: a flag-OFF engine that extracts v2 directly.
-        // Compute it BEFORE touching the process-global flag.
-        let legacy_dir = make_dir("family-delta-legacy");
-        fs::write(legacy_dir.join("lib.rs"), V2).unwrap();
-        let mut legacy = engine_at(&legacy_dir, "v2");
-        legacy.refresh_call_rels().unwrap();
-        let (legacy_site_v2, legacy_edge_v2) = snapshot(&legacy);
-        let legacy_name_v2 = names(&legacy);
-        let _ = fs::remove_dir_all(&legacy_dir);
-        assert!(!legacy_name_v2.is_empty(), "fixture: v2 has def names");
+        // Reference expectation for v2: a fresh engine that extracts v2 directly
+        // (no delta path involved) — the oracle the delta-path result below must
+        // match.
+        let reference_dir = make_dir("family-delta-reference");
+        fs::write(reference_dir.join("lib.rs"), V2).unwrap();
+        let mut reference = engine_at(&reference_dir, "v2");
+        reference.refresh_call_rels().unwrap();
+        let (reference_site_v2, reference_edge_v2) = snapshot(&reference);
+        let reference_name_v2 = names(&reference);
+        let _ = fs::remove_dir_all(&reference_dir);
+        assert!(!reference_name_v2.is_empty(), "fixture: v2 has def names");
 
-        // Engine B, flag ON: full refresh over v1 builds the baseline AND the
-        // persistent router memo (call_site/call_edge/call_name all cold-derived).
+        // Engine under test: full refresh over v1 builds the baseline AND the
+        // persistent router memo (every family cold-derived).
         let dir = make_dir("family-delta");
         fs::write(dir.join("lib.rs"), V1).unwrap();
-        std::env::set_var("DL_FAMILY_CALL", "1");
-        let mut b = engine_at(&dir, "v1");
-        b.refresh_call_rels().unwrap();
-        let (site_v1, _edge_v1) = snapshot(&b);
-        let name_v1 = names(&b);
-        assert_eq!(name_v1, legacy_name_v2, "defs unchanged across v1/v2");
+        let mut engine = engine_at(&dir, "v1");
+        engine.refresh_call_rels().unwrap();
+        let (site_v1, _edge_v1) = snapshot(&engine);
+        let name_v1 = names(&engine);
+        assert_eq!(name_v1, reference_name_v2, "defs unchanged across v1/v2");
         assert!(!name_v1.is_empty(), "fixture: v1 has def names");
 
         // Real working-tree edit: rewrite the file and bump its fact digest.
         fs::write(dir.join("lib.rs"), V2).unwrap();
-        b.db
+        engine.db
             .conn()
             .execute("UPDATE _file SET hash = 'v2' WHERE path = 'lib.rs'", [])
             .unwrap();
@@ -521,33 +492,32 @@ fn gamma() {
             module_dependency_changed: false,
             module_full_refresh: false,
         };
-        let outcome = b.refresh_call_rels_delta(&context).unwrap();
+        let outcome = engine.refresh_call_rels_delta(&context).unwrap();
         assert_eq!(
             outcome,
             crate::rels::CallPathRefreshOutcome::Applied,
             "site-only delta must take the owner-delta fast path",
         );
 
-        // (iii) the reran families are byte-identical to a legacy v2 extraction.
-        let (site_after, edge_after) = snapshot(&b);
-        assert_eq!(site_after, legacy_site_v2, "reran call_site must match legacy v2");
-        assert_eq!(edge_after, legacy_edge_v2, "reran call_edge must match legacy v2");
+        // (iii) the reran families are byte-identical to a reference v2 extraction.
+        let (site_after, edge_after) = snapshot(&engine);
+        assert_eq!(site_after, reference_site_v2, "reran call_site must match reference v2");
+        assert_eq!(edge_after, reference_edge_v2, "reran call_edge must match reference v2");
         // The change was real: the gamma->alpha site is gone.
         assert_ne!(site_after, site_v1, "delta must have altered call_site");
 
         // (ii) the SKIPPED family's public rel is untouched by the delta: the
-        // owner-delta reproject and the router both leave call_name alone, so it
-        // still holds the v1 rows (equal to v2, since defs are identical).
-        assert_eq!(names(&b), name_v1, "skipped call_name rows must be unchanged");
+        // router leaves call_name alone, so it still holds the v1 rows (equal
+        // to v2, since defs are identical).
+        assert_eq!(names(&engine), name_v1, "skipped call_name rows must be unchanged");
 
         // (i) the skip itself: replay the router with the delta's real footprint
         // (`react` is a pure function of memo footprints + changed-set, so the
         // replay's rerun set equals what the live delta just used). call_name is
         // absent -> CallName was skipped, not rerun-to-the-same-rows.
-        let rerun = b
+        let rerun = engine
             .flip_call_rels_via_router(&crate::engine::family::call_owner_delta_rels())
             .unwrap();
-        std::env::remove_var("DL_FAMILY_CALL");
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(
             rerun,

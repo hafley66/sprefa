@@ -1119,9 +1119,13 @@ impl Engine {
     /// call (def/edge), df (node/node_repo/arg/field), and the module family's
     /// own pair. One shared list so `sweep_gone_revs` and any future twin
     /// addition touch a single place.
+    /// `call_def_rev`/`call_edge_rev` are deliberately absent (P4, capstone
+    /// cutover): the call family router is the sole writer of every public
+    /// call rel, and a gone rev's call-graph data is retracted at the OWNED
+    /// input layer by `Engine::sweep_gone_call_inputs` (below), not by a
+    /// public-rel twin delete + legacy rebuild.
     const REV_TWINS: &[&str] = &[
         "type_entity_rev", "type_link_rev", "type_edge_rev", "const_value_rev",
-        "call_def_rev", "call_edge_rev",
         "df_node_rev", "df_node_repo_rev", "df_arg_rev", "df_field_rev", "df_lit_rev",
         "module_edge_rev", "module_unresolved_rev", "module_binding_resolved_rev", "module_binding_rev",
     ];
@@ -1138,18 +1142,21 @@ impl Engine {
     ///
     /// The legacy rebuilds run here too, unconditionally, rather than being
     /// left to each family's own `rebuild_legacy_*` call: those live at the
-    /// END of `refresh_type_rels`/`refresh_call_rels`, gated behind the same
-    /// per-rev digest early return (`moved.is_empty()`) that skips the whole
-    /// family when every currently-live rev's digest is unchanged. A rev that
-    /// just disappeared moves nothing in that check, so a family with no
-    /// other reason to run this tick would never reach its internal legacy
-    /// rebuild — the gone rev's rows would vanish from the twin but linger in
-    /// legacy for another tick or more. Rebuilding legacy directly here is
-    /// what makes a gone rev disappear from twin AND legacy within the SAME
-    /// tick, independent of whether any family's digest moved. `module` now has
-    /// its own digest gate (`refresh_module_rels`), so its `extract:module:<rev>`
-    /// digest is swept here like the rest — without that, a gone rev's surviving
-    /// digest would make the next tick skip repopulating the wiped module rels.
+    /// END of `refresh_type_rels`, gated behind the same per-rev digest early
+    /// return (`moved.is_empty()`) that skips the whole family when every
+    /// currently-live rev's digest is unchanged. A rev that just disappeared
+    /// moves nothing in that check, so a family with no other reason to run
+    /// this tick would never reach its internal legacy rebuild — the gone
+    /// rev's rows would vanish from the twin but linger in legacy for another
+    /// tick or more. Rebuilding legacy directly here is what makes a gone rev
+    /// disappear from twin AND legacy within the SAME tick, independent of
+    /// whether any family's digest moved. `module` now has its own digest gate
+    /// (`refresh_module_rels`), so its `extract:module:<rev>` digest is swept
+    /// here like the rest — without that, a gone rev's surviving digest would
+    /// make the next tick skip repopulating the wiped module rels. `call` has
+    /// no legacy rebuild anymore (P4, capstone cutover): its gone-rev sweep
+    /// (`sweep_gone_call_inputs`, below) retracts straight from the owned
+    /// `_call_*` tables and flips the family router instead.
     ///
     /// Called once per tick, right after `refresh_builtin_rels` settles this
     /// tick's `_file` set and before the extraction families run — see the
@@ -1194,7 +1201,7 @@ impl Engine {
         }
 
         self.rebuild_legacy_type_rels()?;
-        self.rebuild_legacy_call_rels()?;
+        self.sweep_gone_call_inputs()?;
         self.rebuild_legacy_module_rels()?;
         Ok(())
     }
