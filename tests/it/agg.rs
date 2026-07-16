@@ -96,12 +96,16 @@ fan_out(f, count(t)) <- type_edge(f, t, _, _).
     assert_eq!(sorted[0].1, "Tok", "top fan-out drifted: {:?}", &sorted[..4.min(sorted.len())]);
     assert!(sorted[0].0 > sorted[1].0,
         "Tok must be the strict, unique top fan-out: {:?}", &sorted[..4.min(sorted.len())]);
-    // BodyItem, ProjectCx, Engine all sit in the top band below Tok.
+    // BodyItem, ProjectCx, Engine all sit in the top band below Tok. The window
+    // is top-8: the high-fan-out set grew (ServedRoot reached 15 with the
+    // read-path snapshot fields, and a three-way tie at 13 — StageError /
+    // ProjectCx / IdentityError — occupies ranks 6-8 whose internal order is
+    // unstable), so take(8) captures the whole tie rather than clipping it.
     let top: std::collections::HashSet<&str> =
-        sorted.iter().take(6).map(|(_, f)| f.as_str()).collect();
+        sorted.iter().take(8).map(|(_, f)| f.as_str()).collect();
     for name in ["BodyItem", "ProjectCx", "Engine"] {
         assert!(top.contains(name), "{name} fell out of the top fan-out band: {:?}",
-            &sorted[..6.min(sorted.len())]);
+            &sorted[..8.min(sorted.len())]);
     }
 }
 
