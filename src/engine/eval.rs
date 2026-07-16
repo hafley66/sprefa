@@ -214,6 +214,15 @@ pub(crate) fn bind_match_op(
     Ok(next)
 }
 
+/// True when an engine read error is a non-UTF-8 decode failure (the io error
+/// `read_to_string` raises as `ErrorKind::InvalidData`), as opposed to a
+/// missing file or a git-object read failure.
+fn is_invalid_utf8(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|io| io.kind() == std::io::ErrorKind::InvalidData)
+}
+
 /// Parse one file for one source rule (no DB access); returns (rows, dropped).
 /// Safe to call in parallel: reads file content, runs extractors, builds rows.
 #[tracing::instrument(skip_all, fields(repo = repo, path = path), level = "trace")]
@@ -245,7 +254,18 @@ pub(crate) fn parse_file(
         .collect();
     let content: std::borrow::Cow<'_, str> = match content {
         Some(content) => std::borrow::Cow::Borrowed(content),
-        None => std::borrow::Cow::Owned(read_content(root, rev, path)?),
+        None => match read_content(root, rev, path) {
+            Ok(content) => std::borrow::Cow::Owned(content),
+            // A non-UTF-8 source file (e.g. a Latin-1 test fixture in a C repo)
+            // is out of scope for text/ast/sg extraction: skip it (empty content
+            // -> zero rows) rather than aborting the whole tick. Every other
+            // content reader degrades read errors to empty via unwrap_or_default;
+            // this narrows that to the invalid-UTF-8 case so a genuinely missing
+            // file still errors loudly. Lossy decode is rejected on purpose: it
+            // shifts byte offsets and would emit wrong match/ast spans.
+            Err(error) if is_invalid_utf8(&error) => std::borrow::Cow::Borrowed(""),
+            Err(error) => return Err(error),
+        },
     };
     // Ref-spine: locate each capture's bytes in the file content. The file id is
     // derived from the same stored content address `_files` uses (blake3 for
