@@ -1047,6 +1047,27 @@ impl Engine {
         Ok(())
     }
 
+    /// Clear the completion marker for every rel in `rels` — called by
+    /// `rebuild_derived` immediately BEFORE it wipes a component's rels, so a
+    /// SIGKILL between the wipe and the refill reads as incomplete on the next
+    /// boot (the marker must never outlive the rows it vouches for). One
+    /// statement (a single `DELETE ... WHERE rel IN (...)`), never a per-rel
+    /// write.
+    pub(crate) fn unmark_derived_complete(&self, rels: &[String]) -> Result<()> {
+        if rels.is_empty() {
+            return Ok(());
+        }
+        let names: Vec<String> = rels
+            .iter()
+            .map(|r| format!("'{}'", r.replace('\'', "''")))
+            .collect();
+        self.db.exec(&format!(
+            "DELETE FROM _derived_complete WHERE rel IN ({})",
+            names.join(",")
+        ))?;
+        Ok(())
+    }
+
     pub(crate) fn load_file_meta(&self) -> Result<FileMeta> {
         let mut stmt = self
             .db

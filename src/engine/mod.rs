@@ -1064,6 +1064,13 @@ pub struct Engine {
     /// set the field directly (no process-global env mutation, which would
     /// race parallel tests).
     pub force_naive_fixpoint: std::cell::Cell<bool>,
+    /// Test-only crash-window hook: when set to `Some(rel)`, `rebuild_derived`
+    /// bails right AFTER that rel's component is unmarked + wiped but BEFORE it
+    /// runs (or is re-marked), simulating a SIGKILL between the wipe and the
+    /// refill. Lets a test assert that completed components stay marked+populated
+    /// while the interrupted one reads incomplete+empty. Set the field directly
+    /// (per-engine, no process-global env race); `None` in production.
+    pub fail_rebuild_at_rel: std::cell::RefCell<Option<String>>,
     /// Test/bench instrumentation: the pre-stratum derived rels the LAST tick
     /// (full or incremental) actually rebuilt. A scoped tick (perf gap B) lists
     /// only the rels dependency-reachable from what changed; a full rebuild
@@ -1172,6 +1179,7 @@ impl Engine {
             force_naive_fixpoint: std::cell::Cell::new(
                 std::env::var("DL_NAIVE_FIXPOINT").ok().as_deref() == Some("1"),
             ),
+            fail_rebuild_at_rel: std::cell::RefCell::new(None),
             last_derived_rebuilt: Vec::new(),
             gen_journal: std::cell::RefCell::new(None),
             exe_identity_changed: std::cell::Cell::new(None),

@@ -354,116 +354,79 @@ impl Engine {
             e.1 += 1;
             Ok(n)
         };
-        // The wipe is per-rel attributable work (a big table's DELETE is not
-        // free), so it rides `timed` like every other statement.
-        for rel in derived_rels {
-            timed(rel, &format!("DELETE FROM {}", tbl(rel)))?;
-        }
+        // Crash-window fix: the wipe is NO LONGER a single upfront DELETE of
+        // every derived rel. That shape left every rel wiped (or partial) from
+        // the first component's start until `mark_derived_complete` ran once at
+        // the very end — a SIGKILL anywhere in a 30s+ pass left EVERY rel
+        // unmarked, so the next boot re-ran the whole pass, re-choked, re-killed
+        // (self-perpetuating). Instead each component wipes ONLY its own rels,
+        // immediately before it runs, bracketed by unmark (before the wipe) and
+        // mark (after it converges), so a kill leaves completed components
+        // marked+populated and only the in-flight/unreached ones incomplete.
+        // Every rel is wiped exactly once — a rel's rules live in one component
+        // of one stratum, asserted below via `wiped`.
+        let mut wiped: HashSet<String> = HashSet::new();
         for group in stratify(derived_rules)? {
             for (comp_rules, recursive) in rel_components(&group, derived_rules) {
-                let stmts: Vec<(&str, String)> = comp_rules
+                let mut comp_rels: Vec<String> = comp_rules
                     .iter()
-                    .map(|&ri| {
-                        let sql = lower_rule(derived_rules[ri], &self.rels)?;
-                        Ok((derived_rules[ri].head.rel.as_str(), sql))
-                    })
-                    .collect::<Result<_>>()?;
-                crate::activity::detail(format!(
-                    "derived: {}",
-                    stmts.iter().map(|(r, _)| *r).collect::<Vec<_>>().join(", ")
-                ));
-                if !recursive {
-                    for (rel, sql) in &stmts {
-                        timed(rel, sql)?;
-                    }
-                    continue;
-                }
-                // Native graph walks are strict recognizers. A miss falls through
-                // to SQL with the original rows; the depth-lattice path must run
-                // before the key/merge naive-fallback guard below.
-                if self.try_native_walk(&comp_rules, derived_rules, &mut timed)? {
-                    continue;
-                }
-                // Defense twin of typecheck's `recursive-null-pad`: a NULL-padded
-                // head in this component would re-insert the same row every
-                // iteration (NULL != NULL never dedups), so the delta never
-                // reaches 0. Bail instead of hanging.
-                for &ri in &comp_rules {
-                    if derived_rules[ri].head_null_pads() {
+                    .map(|&ri| derived_rules[ri].head.rel.clone())
+                    .collect();
+                comp_rels.sort();
+                comp_rels.dedup();
+                for rel in &comp_rels {
+                    if !wiped.insert(rel.clone()) {
                         bail!(
-                            "rule head for `{}` leaves column(s) NULL (`_` or named-arg padding) \
-                               inside a recursive component — the fixpoint would not converge; \
-                               bind every head column or break the cycle",
-                            derived_rules[ri].head.rel
+                            "derived rel `{rel}` is headed by rules in more than one \
+                             dependency component — rebuild_derived's per-component wipe \
+                             assumes one component per rel"
                         );
                     }
                 }
-                // Semi-naive fallback shapes: an aggregate head has no single
-                // new-row identity to differentiate on (COUNT/SUM/etc. must
-                // see the WHOLE group every pass); a `key(...)` head (choice
-                // domain, with or without `merge(...)`) narrows the PK below
-                // the full row, so "new full row" and "new key" disagree —
-                // the anti-join-based delta below assumes a full-row PK.
-                // Both stay on the naive re-run-to-delta-0 loop (correct,
-                // just not accelerated); everything else gets the delta
-                // treatment. A mixed component (some rules eligible, some
-                // not) falls back as a whole — simplest correct choice, and
-                // these shapes are rare inside a recursive cycle in practice.
-                // `DL_NAIVE_FIXPOINT=1` forces every recursive component onto
-                // the naive loop — the A/B lever the `fixpoint_full_reruns`
-                // counter tests (and any field bisection) flip.
-                let naive_fallback = self.force_naive_fixpoint.get()
-                    || comp_rules.iter().any(|&ri| {
-                        let r = derived_rules[ri];
-                        r.has_agg()
-                            || self
-                                .rels
-                                .get(&r.head.rel)
-                                .map(|m| m.key.is_some())
-                                .unwrap_or(false)
-                    });
-                if naive_fallback {
-                    let mut iters = 0;
-                    let mut total_promoted = 0usize;
-                    let mut comp_rels: Vec<String> = comp_rules
-                        .iter()
-                        .map(|&ri| derived_rules[ri].head.rel.clone())
-                        .collect();
-                    comp_rels.sort();
-                    comp_rels.dedup();
-                    let row_max = fixpoint_row_max();
-                    loop {
-                        let mut delta = 0usize;
-                        for (rel, sql) in &stmts {
-                            delta += timed(rel, sql)?;
-                        }
-                        total_promoted = total_promoted.saturating_add(delta);
-                        check_fixpoint_row_budget(&comp_rels, total_promoted, row_max)?;
-                        // Every execution after pass 1 is a full-input re-run
-                        // (the waste semi-naive removes) — count it.
-                        if iters > 0 {
-                            self.fixpoint_full_reruns
-                                .set(self.fixpoint_full_reruns.get() + stmts.len());
-                        }
-                        iters += 1;
-                        if delta == 0 {
-                            break;
-                        }
-                        if iters > 100_000 {
-                            bail!("fixpoint did not converge");
-                        }
-                    }
-                    continue;
+                // Ordering here is critical for crash safety: drop the completion
+                // markers BEFORE the wipe (a marker must never outlive the rows
+                // it vouches for), then wipe, then run, then re-mark only after
+                // the component converges. The wipe is per-rel attributable work
+                // (a big table's DELETE is not free), so it rides `timed`.
+                self.unmark_derived_complete(&comp_rels)?;
+                for rel in &comp_rels {
+                    timed(rel, &format!("DELETE FROM {}", tbl(rel)))?;
                 }
-                self.rebuild_derived_seminaive(&comp_rules, derived_rules, &mut timed)?;
+                // Test-only crash-window injection: bail after the wipe+unmark
+                // but before the refill+mark, so the interrupted component reads
+                // incomplete+empty on the next boot while earlier ones stay
+                // marked+populated. Never armed in production (`None`).
+                if let Some(fail_rel) = self.fail_rebuild_at_rel.borrow().as_ref() {
+                    if comp_rels.iter().any(|rel| rel == fail_rel) {
+                        bail!("test-injected crash while rebuilding component `{fail_rel}`");
+                    }
+                }
+                self.run_component(&comp_rules, recursive, derived_rules, &mut timed)?;
+                // Reached only when the component converged with no error (every
+                // path inside `run_component` propagates failure via `?`), so a
+                // failed component is never marked complete.
+                self.mark_derived_complete(&comp_rels)?;
             }
         }
+        // Rels asked for but headed by no rule in `derived_rules` (possible on
+        // the scoped path, where `sub_rels` is filtered independently of
+        // `sub_rules`) still need the wipe + unmark/mark cycle: a stale populated
+        // table with no rule to refill it would otherwise linger, and its marker
+        // must reflect that it was reconciled this pass (to zero rows). Same
+        // crash-safe order: unmark, wipe, mark.
+        let orphan_rels: Vec<String> = derived_rels
+            .iter()
+            .filter(|rel| !wiped.contains(rel.as_str()))
+            .cloned()
+            .collect();
+        if !orphan_rels.is_empty() {
+            self.unmark_derived_complete(&orphan_rels)?;
+            for rel in &orphan_rels {
+                timed(rel, &format!("DELETE FROM {}", tbl(rel)))?;
+            }
+            self.mark_derived_complete(&orphan_rels)?;
+        }
         self.save_stmt_ms(&stmt_ms)?;
-        // P1: every rel this call rebuilt (deleted + re-derived) just completed
-        // a pass, whatever row count it ended with — mark it so the NEXT
-        // tick's `derived_incomplete_rels` sees it as legitimately derived,
-        // not "never derived".
-        self.mark_derived_complete(derived_rels)?;
         if !derived_rels.is_empty() {
             let tick = crate::activity::snapshot().tick;
             let detail = format!("{} rel(s): {}", derived_rels.len(), derived_rels.join(", "));
@@ -475,6 +438,118 @@ impl Engine {
             );
         }
         Ok(())
+    }
+
+    /// Evaluate ONE already-wiped rel-component to convergence. The rels this
+    /// component heads have been DELETE-cleared and unmarked by the caller; this
+    /// fills them and returns Ok on convergence (the caller then re-marks them
+    /// complete). Every internal path — non-recursive one-shot, native graph
+    /// walk, naive re-run-to-delta-0 loop, semi-naive delta — propagates failure
+    /// via `?`, so a component that errors is never marked complete. Extracted
+    /// from `rebuild_derived`'s inner loop so the per-component wipe/mark bracket
+    /// wraps a single call instead of straddling several `continue` arms.
+    fn run_component(
+        &self,
+        comp_rules: &[usize],
+        recursive: bool,
+        derived_rules: &[&Rule],
+        timed: &mut impl FnMut(&str, &str) -> Result<usize>,
+    ) -> Result<()> {
+        let stmts: Vec<(&str, String)> = comp_rules
+            .iter()
+            .map(|&ri| {
+                let sql = lower_rule(derived_rules[ri], &self.rels)?;
+                Ok((derived_rules[ri].head.rel.as_str(), sql))
+            })
+            .collect::<Result<_>>()?;
+        crate::activity::detail(format!(
+            "derived: {}",
+            stmts.iter().map(|(r, _)| *r).collect::<Vec<_>>().join(", ")
+        ));
+        if !recursive {
+            for (rel, sql) in &stmts {
+                timed(rel, sql)?;
+            }
+            return Ok(());
+        }
+        // Native graph walks are strict recognizers. A miss falls through
+        // to SQL with the original rows; the depth-lattice path must run
+        // before the key/merge naive-fallback guard below.
+        if self.try_native_walk(comp_rules, derived_rules, timed)? {
+            return Ok(());
+        }
+        // Defense twin of typecheck's `recursive-null-pad`: a NULL-padded
+        // head in this component would re-insert the same row every
+        // iteration (NULL != NULL never dedups), so the delta never
+        // reaches 0. Bail instead of hanging.
+        for &ri in comp_rules {
+            if derived_rules[ri].head_null_pads() {
+                bail!(
+                    "rule head for `{}` leaves column(s) NULL (`_` or named-arg padding) \
+                       inside a recursive component — the fixpoint would not converge; \
+                       bind every head column or break the cycle",
+                    derived_rules[ri].head.rel
+                );
+            }
+        }
+        // Semi-naive fallback shapes: an aggregate head has no single
+        // new-row identity to differentiate on (COUNT/SUM/etc. must
+        // see the WHOLE group every pass); a `key(...)` head (choice
+        // domain, with or without `merge(...)`) narrows the PK below
+        // the full row, so "new full row" and "new key" disagree —
+        // the anti-join-based delta below assumes a full-row PK.
+        // Both stay on the naive re-run-to-delta-0 loop (correct,
+        // just not accelerated); everything else gets the delta
+        // treatment. A mixed component (some rules eligible, some
+        // not) falls back as a whole — simplest correct choice, and
+        // these shapes are rare inside a recursive cycle in practice.
+        // `DL_NAIVE_FIXPOINT=1` forces every recursive component onto
+        // the naive loop — the A/B lever the `fixpoint_full_reruns`
+        // counter tests (and any field bisection) flip.
+        let naive_fallback = self.force_naive_fixpoint.get()
+            || comp_rules.iter().any(|&ri| {
+                let r = derived_rules[ri];
+                r.has_agg()
+                    || self
+                        .rels
+                        .get(&r.head.rel)
+                        .map(|m| m.key.is_some())
+                        .unwrap_or(false)
+            });
+        if naive_fallback {
+            let mut iters = 0;
+            let mut total_promoted = 0usize;
+            let mut comp_rels: Vec<String> = comp_rules
+                .iter()
+                .map(|&ri| derived_rules[ri].head.rel.clone())
+                .collect();
+            comp_rels.sort();
+            comp_rels.dedup();
+            let row_max = fixpoint_row_max();
+            loop {
+                let mut delta = 0usize;
+                for (rel, sql) in &stmts {
+                    delta += timed(rel, sql)?;
+                }
+                total_promoted = total_promoted.saturating_add(delta);
+                check_fixpoint_row_budget(&comp_rels, total_promoted, row_max)?;
+                // Every execution after pass 1 is a full-input re-run
+                // (the waste semi-naive removes) — count it.
+                if iters > 0 {
+                    self.fixpoint_full_reruns
+                        .set(self.fixpoint_full_reruns.get() + stmts.len());
+                }
+                iters += 1;
+                if delta == 0 {
+                    break;
+                }
+                if iters > 100_000 {
+                    bail!("fixpoint did not converge");
+                }
+            }
+            return Ok(());
+        }
+        self.rebuild_derived_seminaive(comp_rules, derived_rules, timed)
     }
 
     /// Try each native graph-walk shape in order. Every recognizer miss returns
