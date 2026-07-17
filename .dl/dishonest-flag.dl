@@ -1,0 +1,113 @@
+# Rail: unconditional Ok(true) change flag
+#
+# A refresh/flip function that returns Result<bool> is supposed to report
+# whether its work actually changed any rows. Returning Ok(true) unconditionally
+# makes every downstream tick think the world moved, cascading whole-table
+# rewrites. This rail flags such functions when the body contains a literal
+# Ok(true) and no `rows_changed` accumulator that is returned instead.
+#
+# Scope: src/**/*.rs, warning severity. Approximate (regex/line-window over fn
+# spans); suppress false positives with a comment containing `@flag-honest:`
+# inside or just above the function.
+#
+# Run: dl .dl/dishonest-flag.dl --check
+
+rel result_bool_fn(source_file: file, fn_line: int, fn_end_line: int, NAME: text).
+
+# ast-grep function patterns for the common visibility/sync/async shapes.
+# The return type is required to be Result<bool> or Result<bool, E>.
+result_bool_fn(source_file, fn_line, fn_end_line, NAME) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    sg(source_file, source_rev, :rust, "fn $NAME($$$P) -> Result<bool> { $$$B }", line: fn_line, end_line: fn_end_line).
+
+result_bool_fn(source_file, fn_line, fn_end_line, NAME) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    sg(source_file, source_rev, :rust, "pub fn $NAME($$$P) -> Result<bool> { $$$B }", line: fn_line, end_line: fn_end_line).
+
+result_bool_fn(source_file, fn_line, fn_end_line, NAME) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    sg(source_file, source_rev, :rust, "pub(crate) fn $NAME($$$P) -> Result<bool> { $$$B }", line: fn_line, end_line: fn_end_line).
+
+result_bool_fn(source_file, fn_line, fn_end_line, NAME) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    sg(source_file, source_rev, :rust, "fn $NAME($$$P) -> Result<bool, $E> { $$$B }", line: fn_line, end_line: fn_end_line).
+
+result_bool_fn(source_file, fn_line, fn_end_line, NAME) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    sg(source_file, source_rev, :rust, "pub fn $NAME($$$P) -> Result<bool, $E> { $$$B }", line: fn_line, end_line: fn_end_line).
+
+result_bool_fn(source_file, fn_line, fn_end_line, NAME) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    sg(source_file, source_rev, :rust, "pub(crate) fn $NAME($$$P) -> Result<bool, $E> { $$$B }", line: fn_line, end_line: fn_end_line).
+
+result_bool_fn(source_file, fn_line, fn_end_line, NAME) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    sg(source_file, source_rev, :rust, "async fn $NAME($$$P) -> Result<bool> { $$$B }", line: fn_line, end_line: fn_end_line).
+
+result_bool_fn(source_file, fn_line, fn_end_line, NAME) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    sg(source_file, source_rev, :rust, "pub async fn $NAME($$$P) -> Result<bool> { $$$B }", line: fn_line, end_line: fn_end_line).
+
+result_bool_fn(source_file, fn_line, fn_end_line, NAME) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    sg(source_file, source_rev, :rust, "pub(crate) async fn $NAME($$$P) -> Result<bool> { $$$B }", line: fn_line, end_line: fn_end_line).
+
+rel refresh_or_flip_fn(source_file: file, fn_line: int, fn_end_line: int, NAME: text).
+refresh_or_flip_fn(source_file, fn_line, fn_end_line, NAME) <-
+    result_bool_fn(source_file, fn_line, fn_end_line, NAME),
+    NAME =~ /^refresh|^flip/.
+
+# Literal Ok(true) return sites.
+rel ok_true_line(source_file: file, line_number: int).
+ok_true_line(source_file, line_number) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    match(source_file, source_rev, /Ok\(true\)/, line_number).
+
+# Honest change signal: a local `rows_changed` accumulator that is returned
+# instead of a literal Ok(true). `moved` and `.get()` are intentionally NOT
+# treated as honest here — several historical refreshers computed `moved` and
+# row.get() but still returned Ok(true) unconditionally.
+rel honest_signal_line(source_file: file, line_number: int).
+honest_signal_line(source_file, line_number) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    match(source_file, source_rev, /(?i)rows_changed/, line_number).
+
+# A flagged function contains Ok(true) somewhere in its body and no honest
+# signal anywhere in its body.
+rel dishonest_flag(source_file: file, fn_line: int, NAME: text).
+dishonest_flag(source_file, fn_line, NAME) <-
+    refresh_or_flip_fn(source_file, fn_line, fn_end_line, NAME),
+    ok_true_line(source_file, ok_line),
+    ok_line >= fn_line,
+    ok_line <= fn_end_line,
+    !honest_signal_in_fn(source_file, fn_line, fn_end_line).
+
+# Helper: does this function span contain any honest signal line?
+rel honest_signal_in_fn(source_file: file, fn_line: int, fn_end_line: int).
+honest_signal_in_fn(source_file, fn_line, fn_end_line) <-
+    refresh_or_flip_fn(source_file, fn_line, fn_end_line, _),
+    honest_signal_line(source_file, signal_line),
+    signal_line >= fn_line,
+    signal_line <= fn_end_line.
+
+# Waiver: @flag-honest: in a comment from just above the fn through its body.
+rel dishonest_flag_waiver(source_file: file, fn_line: int).
+dishonest_flag_waiver(source_file, fn_line) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    comment(source_file, source_rev, /@flag-honest:/, waiver_line, label: _),
+    refresh_or_flip_fn(source_file, fn_line, fn_end_line, _),
+    waiver_line >= fn_line - 3,
+    waiver_line <= fn_end_line.
+
+# The advisory diag.
+diag(
+    path: source_file,
+    line: fn_line,
+    severity: "warning",
+    code: "dishonest-change-flag",
+    msg: "`${NAME}` returns Result<bool> but hardcodes Ok(true) with no `rows_changed` accumulator — change flag is dishonest"
+) <-
+    dishonest_flag(source_file, fn_line, NAME),
+    !dishonest_flag_waiver(source_file, fn_line).
+
+? diag(path, line, severity, code, msg).

@@ -1,0 +1,42 @@
+# Rail: naked first-wins dedup
+#
+# `if set.insert(key) { ... }` keeps only the first row for a key. If the key
+# is lossy (e.g., `file:line:col` with no repo), the winner is arbitrary and
+# can vary between runs, making derived digests move. Flag these gates unless
+# the author has annotated that the key is complete with a `@dedup-key-complete:`
+# comment in the three lines above.
+#
+# Scope: src/**/*.rs, warning severity.
+#
+# Run: dl .dl/lossy-dedup.dl --check
+
+rel dedup_insert_gate(source_file: file, line_number: int).
+
+# Structural match for `if <ident>.insert(...) { ... }`. ast-grep binds $SET to
+# the receiver identifier; the gate body is ignored.
+dedup_insert_gate(source_file, line_number) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    sg(source_file, source_rev, :rust, "if $SET.insert($$$K) { $$$B }", line: line_number).
+
+# Waiver: @dedup-key-complete: in a comment within the three lines above the
+# insert gate.
+rel dedup_insert_waiver(source_file: file, gate_line: int).
+dedup_insert_waiver(source_file, gate_line) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    comment(source_file, source_rev, /@dedup-key-complete:/, waiver_line, label: _),
+    dedup_insert_gate(source_file, gate_line),
+    waiver_line >= gate_line - 3,
+    waiver_line < gate_line.
+
+# The advisory diag.
+diag(
+    path: source_file,
+    line: line_number,
+    severity: "warning",
+    code: "lossy-dedup",
+    msg: "first-wins `if <set>.insert(...)` gate with no `@dedup-key-complete:` annotation — key may be lossy"
+) <-
+    dedup_insert_gate(source_file, line_number),
+    !dedup_insert_waiver(source_file, line_number).
+
+? diag(path, line, severity, code, msg).

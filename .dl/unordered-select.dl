@@ -1,0 +1,78 @@
+# Rail: unordered row-builder SELECT
+#
+# Static SQL literals that read multiple rows must be deterministic. A SELECT
+# without ORDER BY risks rowid-order drift between extractions, which in turn
+# makes downstream digests move and can cascade into whole-table rewrites.
+#
+# Scope: src/**/*.rs, warning severity. Excludes single-row/scalar probes
+# (COUNT, EXISTS, LIMIT 1, MAX/MIN, sqlite_master, PRAGMA) and test code.
+# Waiver with a comment containing `@unordered-ok:` on the line above the SQL
+# or in the enclosing function's doc comment.
+#
+# Run: dl .dl/unordered-select.dl --check
+
+rel unordered_select(source_file: file, line_number: int, sql_text: text).
+
+# A double-quoted SQL literal fragment with SELECT ... FROM on the same line.
+# Multi-line strings are included; the near-line exclusion rules then drop the
+# ones that carry ORDER BY / LIMIT 1 / etc. on the following lines.
+unordered_select(source_file, line_number, sql_text) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    match(source_file, source_rev, /"(?<sql_text>(?i)select\b[^{"]*\bfrom\b[^{"]*)/, line_number).
+
+# Raw source facts used for exclusions.
+rel select_scalar_line(source_file: file, line_number: int).
+select_scalar_line(source_file, line_number) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    match(source_file, source_rev, /(?i)(order\s+by|count\s*\(|exists|limit\s+1|max\s*\(|min\s*\(|sqlite_master|pragma)/, line_number).
+
+# Exclusion: scalar / single-row / meta probes within the literal's first few
+# lines (the common case is ORDER BY or LIMIT 1 on the next line).
+rel unordered_select_scalar(source_file: file, line_number: int).
+unordered_select_scalar(source_file, select_line) <-
+    unordered_select(source_file, select_line, _),
+    select_scalar_line(source_file, scalar_line),
+    scalar_line >= select_line,
+    scalar_line <= select_line + 3.
+
+# Test code is not engine surface: exempt dedicated test files and anything
+# at or below a cfg(test) marker, mirroring .dl/magic-rel-audit.dl.
+rel test_only_file(source_file: file).
+test_only_file(source_file) <- scan("WORK", "src/**/*_tests.rs", source_file, _).
+
+rel test_cfg_gate(source_file: file, line_number: int).
+test_cfg_gate(source_file, line_number) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    match(source_file, source_rev, /#!?\[cfg\(test\)\]/, line_number).
+
+rel unordered_select_test_hit(source_file: file, line_number: int).
+unordered_select_test_hit(source_file, line_number) <-
+    unordered_select(source_file, line_number, _), test_only_file(source_file).
+unordered_select_test_hit(source_file, line_number) <-
+    unordered_select(source_file, line_number, _),
+    test_cfg_gate(source_file, gate_line),
+    gate_line <= line_number.
+
+# Waiver: @unordered-ok: in a comment within the ten lines above the SQL.
+rel unordered_select_waiver(source_file: file, sql_line: int).
+unordered_select_waiver(source_file, sql_line) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    comment(source_file, source_rev, /@unordered-ok:/, waiver_line, label: _),
+    unordered_select(source_file, sql_line, _),
+    waiver_line >= sql_line - 10,
+    waiver_line < sql_line.
+
+# The advisory diag.
+diag(
+    path: source_file,
+    line: line_number,
+    severity: "warning",
+    code: "unordered-select",
+    msg: "multi-row SELECT literal without ORDER BY — extraction order is nondeterministic (`${sql_text}`)"
+) <-
+    unordered_select(source_file, line_number, sql_text),
+    !unordered_select_scalar(source_file, line_number),
+    !unordered_select_test_hit(source_file, line_number),
+    !unordered_select_waiver(source_file, line_number).
+
+? diag(path, line, severity, code, msg).
