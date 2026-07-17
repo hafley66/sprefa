@@ -1016,7 +1016,14 @@ fn daemon_thread_count(cores: usize, env: Option<&str>) -> usize {
 /// global pool is bounded here; if it was already initialized earlier in this
 /// process (e.g. by the CLI dispatch path) the call is a no-op and we report the
 /// current pool size.
-fn apply_daemon_budget() -> (&'static str, i32, usize) {
+/// Apply the CPU + disk-I/O scheduling budget to THIS process, minus the rayon
+/// thread cap. macOS QoS UTILITY on the calling thread (spawned workers inherit
+/// it), a positive nice value on every unix, and a process-scope IOPOL_THROTTLE
+/// on macOS so bulk db writes land in the background disk tier. Split out of
+/// `apply_daemon_budget` so the one-shot CLI entry can apply the same cap
+/// (standing law: nothing seizes the machine). Every syscall here is idempotent,
+/// so applying it twice — CLI entry then the daemon serve path — is harmless.
+pub(crate) fn apply_process_budget() {
     #[cfg(target_os = "macos")]
     {
         extern "C" {
@@ -1049,6 +1056,10 @@ fn apply_daemon_budget() -> (&'static str, i32, usize) {
         // SAFETY: constant, documented arguments; scope is this process.
         unsafe { setiopolicy_np(0, 0, 3) };
     }
+}
+
+fn apply_daemon_budget() -> (&'static str, i32, usize) {
+    apply_process_budget();
 
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -2076,15 +2087,74 @@ fn with_root(mut params: Value, root: Option<&Path>) -> Value {
     params
 }
 
-/// Send one request, read one response.
+/// Send one request, read one response — but never block forever on a wedged
+/// daemon. The read runs under [`read_frame_watched`], which polls on a 10s
+/// socket read timeout and gives up after `DL_MAX_WALL_SECS` (default 300).
 pub fn rpc_call(stream: &mut UnixStream, req: &Request) -> Result<Response> {
     let body = serde_json::to_string(&req.to_json())?;
     rpc::write_frame(stream, &body)?;
-    let resp_body = rpc::read_frame(stream)?
-        .ok_or_else(|| anyhow::anyhow!("daemon closed connection without responding"))?;
+    let resp_body = read_frame_watched(stream)?;
     let v: Value = serde_json::from_str(&resp_body)?;
     let r = Response::from_value(v)?;
     Ok(r)
+}
+
+/// Poll interval for a blocked attach client, in seconds.
+const ATTACH_POLL_SECS: u64 = 10;
+
+/// Read one response frame without an unbounded silent wait. Sets a 10s socket
+/// read timeout; on each timeout it prints one stderr line naming the daemon's
+/// current phase (from the same on-disk `why.jsonl` trail `dl daemon why` reads,
+/// no socket, no engine lock), and after `DL_MAX_WALL_SECS` total (default 300)
+/// it exits 75 pointing at `dl daemon why`. `DL_MAX_WALL_SECS=0` disables the
+/// give-up deadline but keeps the 10s "still waiting" heartbeat.
+fn read_frame_watched(stream: &mut UnixStream) -> Result<String> {
+    let budget = crate::watchdog::max_wall_secs();
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(ATTACH_POLL_SECS)));
+    let start = Instant::now();
+    loop {
+        match rpc::read_frame(stream) {
+            Ok(Some(body)) => {
+                let _ = stream.set_read_timeout(None);
+                return Ok(body);
+            }
+            Ok(None) => {
+                let _ = stream.set_read_timeout(None);
+                bail!("daemon closed connection without responding");
+            }
+            Err(e) if is_read_timeout(&e) => {
+                let waited = start.elapsed().as_secs();
+                if budget != 0 && waited >= budget {
+                    eprintln!(
+                        "[daemon] no response after {waited}s — the daemon is busy or wedged"
+                    );
+                    eprintln!("  run `dl daemon why` to see what it is doing; giving up (75)");
+                    std::process::exit(75);
+                }
+                let phase = crate::why::last_phase(&daemon_home())
+                    .unwrap_or_else(|| "phase unknown, run: dl daemon why".to_string());
+                eprintln!("waiting on daemon ({waited}s): {phase}");
+            }
+            Err(e) => {
+                let _ = stream.set_read_timeout(None);
+                return Err(e);
+            }
+        }
+    }
+}
+
+/// True iff `e` is a socket read-timeout (the 10s poll expired with no bytes),
+/// as opposed to a real transport error. `read_frame` surfaces the raw
+/// `io::Error` through `?`, so it downcasts cleanly.
+fn is_read_timeout(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<std::io::Error>()
+        .map(|io| {
+            matches!(
+                io.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            )
+        })
+        .unwrap_or(false)
 }
 
 /// Ensure the singleton daemon is running (spawn detached if not). Attaches only

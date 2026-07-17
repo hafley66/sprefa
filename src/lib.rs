@@ -50,6 +50,7 @@ pub mod trace;
 pub mod update;
 pub mod verbs;
 pub mod typecheck;
+pub mod watchdog;
 pub mod watchgate;
 pub mod why;
 
@@ -228,6 +229,8 @@ fn json_cell_tsv_render(v: &serde_json::Value) -> String {
 /// The pre-daemon `run_file` body, in-process. Kept for the no-daemon fallback
 /// and the test path (`DL_NO_DAEMON=1`).
 fn run_file_inproc(programs: &[String], db_path: Option<&str>, root: PathBuf, query_json: bool) -> Result<()> {
+    watchdog::arm_wall_watchdog("run_file");
+    watchdog::test_hang_hook();
     let files = resolve_programs(programs, &root)?;
     let (prog, type_diags, _) = prepare_paths(&files)?;
     render_type_diags(&type_diags, false);
@@ -304,6 +307,7 @@ fn load_repos() -> Vec<config::RepoConfig> {
 pub fn run_verify(programs: &[String], db_path: Option<&str>, root: PathBuf, checker: &str)
     -> Result<bool>
 {
+    watchdog::arm_wall_watchdog("run_verify");
     let files = resolve_programs(programs, &root)?;
     let (prog, type_diags, _) = prepare_paths(&files)?;
     render_type_diags(&type_diags, false);
@@ -454,6 +458,7 @@ pub fn run_parse_only(programs: &[String], root: PathBuf) -> Result<i32> {
 /// Drive one incremental tick over an existing db for a set of changed paths
 /// (relative to root or absolute). The delta entry point the watcher uses.
 pub fn run_changed(programs: &[String], db_path: Option<&str>, root: PathBuf, changed: Vec<PathBuf>) -> Result<()> {
+    watchdog::arm_wall_watchdog("run_changed");
     let files = resolve_programs(programs, &root)?;
     let (prog, type_diags, _) = prepare_paths(&files)?;
     render_type_diags(&type_diags, false);
@@ -474,6 +479,7 @@ pub fn run_changed(programs: &[String], db_path: Option<&str>, root: PathBuf, ch
 /// the still-moving rels/effects. See plans/2026-07-06-settle-quiescence.md.
 pub fn run_settle(programs: &[String], db_path: Option<&str>, root: PathBuf,
                   budget: usize, query_json: bool) -> Result<()> {
+    watchdog::arm_wall_watchdog("run_settle");
     let files = resolve_programs(programs, &root)?;
     let (prog, type_diags, _) = prepare_paths(&files)?;
     render_type_diags(&type_diags, false);

@@ -201,6 +201,27 @@ fn fmt_ago(secs: i64) -> String {
     }
 }
 
+/// The running daemon's current phase from the trail's last sample, e.g.
+/// `extract repo=smashy`. `None` if the trail is missing/unreadable or has no
+/// samples yet. The attach client prints this while blocked on a busy daemon so
+/// the wait names what the daemon is doing — the same last-sample the `report`
+/// above reads, without opening the socket.
+pub fn last_phase(home: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(trail_path(home)).ok()?;
+    let last = text
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(|l| l["kind"] == "sample")
+        .last()?;
+    let phase = last["phase"].as_str().unwrap_or("?");
+    let detail = last["detail"].as_str().unwrap_or("");
+    Some(if detail.is_empty() {
+        phase.to_string()
+    } else {
+        format!("{phase} {detail}")
+    })
+}
+
 /// Render the report from the on-disk trail alone. Works with the daemon
 /// alive, hung, or dead.
 pub fn report(home: &Path) -> String {

@@ -59,6 +59,8 @@ mod lang_matrix;
 mod lang_skill_gen;
 mod sg_term;
 mod parse_only;
+mod process_budget;
+mod wall_watchdog;
 mod cst_node_rel;
 mod chat_marks;
 mod hook_inject;

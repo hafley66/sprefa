@@ -207,6 +207,15 @@ pub fn run() -> Result<()> {
     crate::trace::init();
     crate::engine::init_thread_pool();
     let raw: Vec<String> = std::env::args().skip(1).collect();
+    // Standing law: nothing seizes the machine. Every one-shot CLI mode runs
+    // under the same CPU/IO budget the daemon uses. The daemon-serve verb
+    // (`dl daemon ...` -> run_daemon) applies its own budget with a thread cap,
+    // so it is skipped here; a double-apply would be harmless regardless (the
+    // syscalls are idempotent), but skipping keeps the debug line honest about
+    // which path set the budget.
+    if raw.first().map(String::as_str) != Some("daemon") {
+        apply_cli_budget();
+    }
     if let Some(code) = dispatch_subcommand(&raw)? {
         std::process::exit(code);
     }
@@ -220,6 +229,27 @@ pub fn run() -> Result<()> {
     let cli = Cli::parse_from(std::iter::once("dl".to_string()).chain(rest));
     apply_global_toggles(&cli);
     dispatch_mode(cli)
+}
+
+/// Apply the process CPU/disk-I/O scheduling budget for a one-shot CLI run
+/// (standing law: nothing seizes the machine). `DL_NO_BUDGET=1` skips it for
+/// benchmarking and prints nothing; `DL_BUDGET_DEBUG=1` prints one verifiable
+/// stderr line so an external observer can confirm the budget was applied.
+fn apply_cli_budget() {
+    if std::env::var("DL_NO_BUDGET").ok().as_deref() == Some("1") {
+        return;
+    }
+    crate::daemon::apply_process_budget();
+    if std::env::var("DL_BUDGET_DEBUG").ok().as_deref() == Some("1") {
+        let (qos, iopol) = if cfg!(target_os = "macos") {
+            ("utility", "throttle")
+        } else {
+            ("none", "none")
+        };
+        let nice = if cfg!(unix) { 10 } else { 0 };
+        let threads = rayon::current_num_threads();
+        eprintln!("[budget] qos={qos} nice={nice} iopol={iopol} threads={threads}");
+    }
 }
 
 /// Pre-clap subcommand intercepts. clap's flat positional parser would swallow

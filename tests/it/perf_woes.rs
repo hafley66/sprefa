@@ -54,6 +54,12 @@ fn run(dir: &Path, companion_path: &Path) -> (i32, String, String) {
         .args([&rail(), companion_path.to_str().unwrap(), "--no-daemon", "--check"])
         .current_dir(dir)
         .args(["--db", dir.join("db").to_str().unwrap()])
+        // This rail asserts on 1ms per-rule perf telemetry (stmt_ms). The
+        // process CPU/IO budget (nice + IOPOL_THROTTLE) inflates db-write time
+        // and destabilizes which rules trip under a loaded parallel `cargo
+        // test`, so measure the binary unthrottled — exactly what the
+        // benchmarking escape hatch is for.
+        .env("DL_NO_BUDGET", "1")
         .output()
         .expect("run dl over the sandbox");
     (out.status.code().unwrap_or(-1),

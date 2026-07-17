@@ -670,6 +670,7 @@ _what_scan(path) <- scan("WORK", "**/go.mod", path, rev).
 /// MCP `Local` tool pump: both need a warm engine that never disturbs any
 /// served program. `db` reuses a cache file, else the db is in-memory.
 pub fn warm_engine(root: PathBuf, db: Option<&str>) -> Result<Engine> {
+    crate::watchdog::arm_wall_watchdog("warm_engine");
     let conn = crate::db::open(db)?;
     let mut eng = Engine::new(conn, root);
     eng.set_repos(crate::daemon::load_repos_eager());
