@@ -539,7 +539,7 @@ const CLOCK_RELS: [&str; 1] = ["clock"];
 /// The effect-drain audit view: a thin query rel over `pending_effect`, the job
 /// table @async/@stream requests land in. One row per distinct request (digest
 /// `id`), carrying its template `kind`, the `head` rel it rebuilds, the job
-/// `state` (queued|running|done|failed), the request `args` JSON (the hole map —
+/// `state` (queued|running|done|failed|orphaned), the request `args` JSON (the hole map —
 /// the call's parameters, the endpoint analog), and `req_tx` (the tx it was
 /// queued at). This is the dl-native call log: `? effect_log(...)` shows the
 /// drain queue live, and it doubles as the parity surface against ghcacher's

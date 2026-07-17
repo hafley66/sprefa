@@ -1554,13 +1554,20 @@ pub(crate) fn handle_request(d: &Arc<Daemon>, req: &Request) -> Response {
 /// served root with its tick count.
 fn daemon_summary(d: &Arc<Daemon>, req: &Request) -> Response {
     let act = crate::activity::snapshot();
-    let roots: Vec<Value> = lock(&d.roots).values().map(|sr| json!({
-        "root": sr.root.to_string_lossy(),
-        "key": sr.key,
-        "tick_count": sr.tick_count.load(Ordering::Relaxed),
-        "program": sr.program_display,
-        "settled": sr.settled.load(Ordering::Relaxed),
-    })).collect();
+    let roots: Vec<Value> = lock(&d.roots).values().map(|sr| {
+        let (fx_failed, fx_orphaned) = lock(&sr.eng)
+            .effect_status_counts()
+            .unwrap_or((0, 0));
+        json!({
+            "root": sr.root.to_string_lossy(),
+            "key": sr.key,
+            "tick_count": sr.tick_count.load(Ordering::Relaxed),
+            "program": sr.program_display,
+            "settled": sr.settled.load(Ordering::Relaxed),
+            "effects_failed": fx_failed,
+            "effects_orphaned": fx_orphaned,
+        })
+    }).collect();
     Response::ok(req.id, json!({
         "ok": true,
         "build_id": &*d.build_id,

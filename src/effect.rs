@@ -334,6 +334,14 @@ fn json_to_value(v: Option<&serde_json::Value>) -> Value {
     }
 }
 
+// `pending_effect.state` values. Keep them centralized so the orphaned/failed
+// distinction (new in the daemon CPU-hog fix Part 3) is explicit.
+const STATE_QUEUED: &str = "queued";
+const STATE_RUNNING: &str = "running";
+const STATE_DONE: &str = "done";
+const STATE_FAILED: &str = "failed";
+const STATE_ORPHANED: &str = "orphaned";
+
 impl Engine {
     /// Emit one `pending_effect` request row per @async-rule body solution. The
     /// body binds the request args (the distinct positive-atom vars); each
@@ -499,8 +507,9 @@ impl Engine {
         let kinds = shell_kinds(prog);
         let rows: Vec<String> = {
             let mut stmt = self.db.conn().prepare(
-                "SELECT kind FROM pending_effect WHERE state IN ('queued','running')")?;
-            let v = stmt.query_map([], |r| r.get(0))?.filter_map(|x| x.ok()).collect();
+                "SELECT kind FROM pending_effect WHERE state IN (?1,?2)")?;
+            let params = [STATE_QUEUED, STATE_RUNNING];
+            let v = stmt.query_map(params, |r| r.get(0))?.filter_map(|x| x.ok()).collect();
             v
         };
         // A kind with no `sh` decl defaults to Read (the legacy effect_cmd path),
@@ -519,23 +528,64 @@ impl Engine {
     /// nothing to integrate, so the poll cycle skips the tick entirely).
     pub fn pending_effect_count(&self) -> Result<i64> {
         self.db.conn().query_row(
-            "SELECT COUNT(*) FROM pending_effect WHERE state IN ('queued','running')", [],
+            "SELECT COUNT(*) FROM pending_effect WHERE state IN (?1,?2)", [STATE_QUEUED, STATE_RUNNING],
             |r| r.get(0)).map_err(Into::into)
     }
 
-    /// Permanently park `pending_effect` rows whose kind has no registered
-    /// executor template (Part 2 of the daemon CPU-hog fix). Sets
-    /// `state = 'failed'` (the state machine's documented terminal value, see
-    /// `meta.rs`'s `pending_effect` comment) so every `state IN
-    /// ('queued','running')` scan — `drain_effects`, `drain_streams`,
+    /// Count `pending_effect` rows in terminal failure states for status surfacing.
+    /// Returns `(failed_count, orphaned_count)`.
+    pub fn effect_status_counts(&self) -> Result<(i64, i64)> {
+        let failed: i64 = self.db.conn().query_row(
+            "SELECT COUNT(*) FROM pending_effect WHERE state = ?1", [STATE_FAILED],
+            |r| r.get(0))?;
+        let orphaned: i64 = self.db.conn().query_row(
+            "SELECT COUNT(*) FROM pending_effect WHERE state = ?1", [STATE_ORPHANED],
+            |r| r.get(0))?;
+        Ok((failed, orphaned))
+    }
+
+    /// Park `pending_effect` rows whose kind has no registered executor template
+    /// (Part 2 of the daemon CPU-hog fix). Sets `state = 'orphaned'` so every
+    /// `state IN ('queued','running')` scan — `drain_effects`, `drain_streams`,
     /// `inflight_nonstream`, this method — never revisits it: a crash-loop-y
     /// orphaned kind stops being rescanned every poll instead of aborting the
     /// drain via `?` forever. One batched UPDATE, not a per-row write.
     fn park_orphan_effects(&self, ids: &[String]) -> Result<()> {
         if ids.is_empty() { return Ok(()); }
         let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql = format!("UPDATE pending_effect SET state = 'failed' WHERE id IN ({placeholders})");
+        let sql = format!("UPDATE pending_effect SET state = '{STATE_ORPHANED}' WHERE id IN ({placeholders})");
         let params: Vec<&dyn rusqlite::ToSql> = ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        self.db.conn().execute(&sql, params.as_slice())?;
+        Ok(())
+    }
+
+    /// Re-queue `pending_effect` rows parked as `orphaned` whose kind NOW has a
+    /// registered executor template. One batched UPDATE by recoverable kind,
+    /// never per-row. Heals first-tick races where the effect row was parked
+    /// before `effect_cmd` landed. `failed` (real execution failure) is NOT
+    /// covered: a failing command's kind has a template by definition, so
+    /// re-queueing it here would retry it every drain forever — the crash loop
+    /// the park path exists to prevent. Rows the OLD park path wrote as
+    /// `failed` need a one-time manual `UPDATE ... SET state='queued'`.
+    fn requeue_orphaned_effects(&self, exec: &dyn EffectExec) -> Result<()> {
+        let kinds: Vec<String> = {
+            let mut stmt = self.db.conn().prepare(
+                "SELECT DISTINCT kind FROM pending_effect WHERE state = ?1")?;
+            let v = stmt.query_map([STATE_ORPHANED], |r| r.get(0))?
+                .filter_map(|x| x.ok()).collect();
+            v
+        };
+        let recoverable: Vec<String> = kinds.into_iter()
+            .filter(|k| exec.has_template(k))
+            .collect();
+        if recoverable.is_empty() { return Ok(()); }
+        let placeholders = recoverable.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "UPDATE pending_effect SET state = ?1 WHERE state = ?2 AND kind IN ({placeholders})");
+        let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(2 + recoverable.len());
+        params.push(&STATE_QUEUED as &dyn rusqlite::ToSql);
+        params.push(&STATE_ORPHANED as &dyn rusqlite::ToSql);
+        for k in &recoverable { params.push(k as &dyn rusqlite::ToSql); }
         self.db.conn().execute(&sql, params.as_slice())?;
         Ok(())
     }
@@ -551,13 +601,18 @@ impl Engine {
         if seen.insert(kind.to_string()) {
             eprintln!(
                 "[{}] no effect command registered for kind `{kind}`; parking its queued \
-                 request(s) (state=failed) instead of retrying every poll",
+                 request(s) (state=orphaned) instead of retrying every poll",
                 self.self_slug()
             );
         }
     }
 
     pub fn drain_effects(&mut self, prog: &Program, exec: &dyn EffectExec) -> Result<usize> {
+        // Phase 0 recovery: rows parked as orphaned (or legacy failed) may now
+        // have a template available; re-queue them in one UPDATE before the
+        // queued/running scan so this drain can run them.
+        self.requeue_orphaned_effects(exec)?;
+
         // Per-kind head reassembly plan, keyed by the @async head rel name. After
         // desugar the head is rebuilt over (full body solution) ∪ (response outs):
         // each head term resolves against that env (a body var, an out var, or a
@@ -592,8 +647,8 @@ impl Engine {
         let pending: Vec<(String, String, String, String, String, String, i64)> = {
             let mut stmt = self.db.conn().prepare(
                 "SELECT id, kind, head_rel, args_json, full_json, state, batch \
-                 FROM pending_effect WHERE state IN ('queued','running')")?;
-            let v = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))?
+                 FROM pending_effect WHERE state IN (?1,?2)")?;
+            let v = stmt.query_map([STATE_QUEUED, STATE_RUNNING], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))?
                 .filter_map(|x| x.ok()).collect();
             v
         };
@@ -603,8 +658,8 @@ impl Engine {
         // this drain. `Read`/`Stream` rows pass through unclaimed.
         let claim = |id: &str| -> Result<bool> {
             let n = self.db.conn().execute(
-                "UPDATE pending_effect SET state = 'running', idem_key = id \
-                 WHERE id = ?1 AND state = 'queued'", [id])?;
+                "UPDATE pending_effect SET state = ?1, idem_key = id \
+                 WHERE id = ?2 AND state = ?3", [STATE_RUNNING, id, STATE_QUEUED])?;
             Ok(n == 1)
         };
 
@@ -616,7 +671,7 @@ impl Engine {
             serde_json::Map<String, serde_json::Value>,
             serde_json::Map<String, serde_json::Value>, bool)> = Vec::new();
         // Rows whose kind has no registered executor template (Part 2): parked
-        // (state='failed') and warned about once per kind, never fed to the
+        // (state='orphaned') and warned about once per kind, never fed to the
         // rayon pool below — a missing template must not abort the whole
         // batch via `?` (the crash-loop `poll error: no effect command
         // registered for kind ...` symptom the daemon CPU-hog fix targets).
@@ -674,7 +729,7 @@ impl Engine {
         // by `head_rel` (the response rel). A `collect` batch (`batch=true`) runs
         // ONE request whose response fans into N rows (run_stream); a plain request
         // is one row (run). Both mark `id` done once.
-        let assembled: Vec<(String, String, Vec<Value>)> = work.par_iter()
+        let results: Vec<Result<Vec<(String, String, Vec<Value>)>>> = work.par_iter()
             .map(|(id, kind, head_rel, args, full, batch)| {
                 let (head_terms, out_vars) = &plans[head_rel];
                 // Each response line -> the out slots. A batch fans many lines; a
@@ -715,8 +770,29 @@ impl Engine {
                 }
                 Ok(out_rows)
             })
-            .collect::<Result<Vec<_>>>()?
-            .into_iter().flatten().collect::<Vec<_>>();
+            .collect();
+
+        let mut assembled: Vec<(String, String, Vec<Value>)> = Vec::new();
+        let mut failed_ids: Vec<String> = Vec::new();
+        for (i, res) in results.into_iter().enumerate() {
+            match res {
+                Ok(rows) => assembled.extend(rows),
+                Err(e) => {
+                    let id = work[i].0.clone();
+                    tracing::warn!(target: "dl::effect", %id, error = %e, "effect execution failed");
+                    failed_ids.push(id);
+                }
+            }
+        }
+        if !failed_ids.is_empty() {
+            let placeholders = failed_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "UPDATE pending_effect SET state = ?1 WHERE id IN ({placeholders})");
+            let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(1 + failed_ids.len());
+            params.push(&STATE_FAILED as &dyn rusqlite::ToSql);
+            for id in &failed_ids { params.push(id as &dyn rusqlite::ToSql); }
+            self.db.conn().execute(&sql, params.as_slice())?;
+        }
 
         if assembled.is_empty() { return Ok(0); }
 
@@ -743,7 +819,7 @@ impl Engine {
             let conn = self.db.conn();
             let tx = conn.unchecked_transaction()?;
             for id in &done_ids {
-                tx.execute("UPDATE pending_effect SET done = 1, state = 'done' WHERE id = ?1", [id])?;
+                tx.execute("UPDATE pending_effect SET done = 1, state = ?1 WHERE id = ?2", [STATE_DONE, id])?;
             }
             tx.commit()?;
         }
@@ -782,9 +858,10 @@ impl Engine {
         let cutoff = cur_tx - keep;
         let placeholders = read_kinds.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "DELETE FROM pending_effect WHERE state = 'done' AND req_tx < ? AND kind IN ({placeholders})");
+            "DELETE FROM pending_effect WHERE state = ?1 AND req_tx < ?2 AND kind IN ({placeholders})");
         let conn = self.db.conn();
-        let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(read_kinds.len() + 1);
+        let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(read_kinds.len() + 2);
+        params.push(&STATE_DONE as &dyn rusqlite::ToSql);
         params.push(&cutoff);
         for k in &read_kinds { params.push(*k); }
         let n = conn.execute(&sql, params.as_slice())?;
@@ -828,8 +905,8 @@ impl Engine {
         let pending: Vec<(String, String, String, String, String)> = {
             let mut stmt = self.db.conn().prepare(
                 "SELECT id, kind, head_rel, args_json, full_json \
-                 FROM pending_effect WHERE state IN ('queued','running')")?;
-            let v = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
+                 FROM pending_effect WHERE state IN (?1,?2)")?;
+            let v = stmt.query_map([STATE_QUEUED, STATE_RUNNING], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
                 .filter_map(|x| x.ok()).collect();
             v
         };
@@ -854,7 +931,8 @@ impl Engine {
                 continue;
             }
             self.db.conn().execute(
-                "UPDATE pending_effect SET state = 'running' WHERE id = ?1 AND state = 'queued'", [&id])?;
+                "UPDATE pending_effect SET state = ?1 WHERE id = ?2 AND state = ?3",
+                [STATE_RUNNING, &id, STATE_QUEUED])?;
             let args = match serde_json::from_str::<serde_json::Value>(&args_json)? {
                 serde_json::Value::Object(m) => m,
                 _ => bail!("pending_effect.args_json for `{kind}` is not a JSON object"),
@@ -918,5 +996,74 @@ impl Engine {
             self.insert_rel_rows(head_rel, &col_refs, rows)?;
         }
         Ok(assembled.len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+
+    /// Mock executor whose `has_template` answer is configurable per kind.
+    struct TemplatableExec {
+        kinds: HashSet<String>,
+    }
+
+    impl EffectExec for TemplatableExec {
+        fn run(&self, _kind: &str, _args: &serde_json::Map<String, serde_json::Value>) -> Result<Vec<String>> {
+            Ok(vec!["ok".to_string()])
+        }
+        fn has_template(&self, kind: &str) -> bool {
+            self.kinds.contains(kind)
+        }
+    }
+
+    fn engine_with(state: &str, kind: &str) -> (Engine, String) {
+        let mut eng = Engine::new(crate::db::open(None).unwrap(), PathBuf::from("/tmp"));
+        eng.ensure_meta().unwrap();
+        let id = format!("test-{state}-{kind}");
+        eng.db.insert_rows(
+            "pending_effect",
+            &["id", "kind", "head_rel", "args_json", "full_json", "req_tx", "batch", "state"],
+            &[vec![
+                Value::Text(id.clone()),
+                Value::Text(kind.to_string()),
+                Value::Text("resp".to_string()),
+                Value::Text(r#"{"x":"1"}"#.to_string()),
+                Value::Text(r#"{"x":"1"}"#.to_string()),
+                Value::Int(1),
+                Value::Int(0),
+                Value::Text(state.to_string()),
+            ]],
+        ).unwrap();
+        (eng, id)
+    }
+
+    fn state_of(eng: &Engine, id: &str) -> String {
+        eng.db
+            .conn()
+            .query_row("SELECT state FROM pending_effect WHERE id = ?1", [id], |r| {
+                r.get::<_, String>(0)
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn orphaned_effect_requeues_when_template_appears() {
+        let (mut eng, id) = engine_with(STATE_ORPHANED, "gh");
+        let prog = Program::default();
+
+        // No template registered: the orphaned row stays orphaned.
+        let no_template = TemplatableExec { kinds: HashSet::new() };
+        eng.drain_effects(&prog, &no_template).unwrap();
+        assert_eq!(state_of(&eng, &id), STATE_ORPHANED);
+
+        // Template now registered: the orphaned row is re-queued for drain.
+        let has_template = TemplatableExec {
+            kinds: HashSet::from_iter(vec!["gh".to_string()]),
+        };
+        eng.drain_effects(&prog, &has_template).unwrap();
+        assert_eq!(state_of(&eng, &id), STATE_QUEUED);
     }
 }

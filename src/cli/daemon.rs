@@ -218,6 +218,11 @@ fn print_status() -> Result<i32> {
                         get("root"), get("tick_count"),
                         if r.get("settled").and_then(|v| v.as_bool()).unwrap_or(false) { "settled" } else { "active" },
                         get("program"));
+                    let fx_failed = r.get("effects_failed").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let fx_orphaned = r.get("effects_orphaned").and_then(|v| v.as_i64()).unwrap_or(0);
+                    if fx_failed != 0 || fx_orphaned != 0 {
+                        println!("      effects: {} failed, {} orphaned", fx_failed, fx_orphaned);
+                    }
                 }
             }
             let activity = info.get("activity");

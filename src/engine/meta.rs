@@ -404,9 +404,9 @@ impl Engine {
             "ALTER TABLE pending_effect ADD COLUMN full_json TEXT NOT NULL DEFAULT ''",
             [],
         );
-        // Phase 3 job state machine: `state` (queued|running|done|failed) is the
-        // reconcile axis; `idem_key` records the `sh!` exactly-once claim. Legacy
-        // rows migrate with state derived from `done` below.
+        // Phase 3 job state machine: `state` (queued|running|done|failed|orphaned)
+        // is the reconcile axis; `idem_key` records the `sh!` exactly-once claim.
+        // Legacy rows migrate with state derived from `done` below.
         let _ = self.db.conn().execute(
             "ALTER TABLE pending_effect ADD COLUMN state TEXT NOT NULL DEFAULT 'queued'",
             [],
