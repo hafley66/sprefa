@@ -789,3 +789,111 @@ fn effect_log_mirrors_the_drain_queue() {
     assert_eq!(rows(&dbp, "SELECT id FROM rel_queued").len(), 0, "no longer queued");
     assert_eq!(rows(&dbp, "SELECT id FROM rel_landed").len(), 1, "landed rail fires on done");
 }
+
+/// Build the same `ShellEffectExec` the daemon builds from dynamic
+/// `effect_cmd(kind, template)` rows. Reads the text view because the base
+/// `rel_effect_cmd` stores interned ids.
+fn shell_exec(eng: &Engine, prog: &sprefa_v5::ast::Program) -> ShellEffectExec {
+    let mut templates = HashMap::new();
+    for row in eng.query_sql("SELECT kind, template FROM rel_effect_cmd_txt", &[]).unwrap() {
+        templates.insert(
+            row[0].as_str().unwrap().to_string(),
+            row[1].as_str().unwrap().to_string(),
+        );
+    }
+    ShellEffectExec { templates, n_out: async_effect_arity(prog), cwd: eng.root() }
+}
+
+/// Boot-time template race: an `@async` request is queued before its
+/// `effect_cmd` template lands. The first drain parks it as `orphaned`.
+/// When the template row arrives later, the next drain must re-queue the
+/// orphan and run it even though no *other* effect queued in the meantime.
+#[test]
+fn orphaned_effect_requeues_and_runs_when_rel_effect_cmd_arrives() {
+    let d = sandbox("orphan_requeue");
+    let dbp = d.join("db");
+    fs::write(
+        d.join("p.dl"),
+        "rel want(key: str).\n\
+         want(\"k1\").\n\
+         rel resp(key: str, out: str).\n\
+         resp(key, out) <- @async want(key).\n",
+    )
+    .unwrap();
+    let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+
+    // Tick queues the request; drain with no registered template parks it.
+    eng.tick(&prog, true).unwrap();
+    let exec_no_template = ShellEffectExec {
+        templates: HashMap::new(),
+        n_out: async_effect_arity(&prog),
+        cwd: PathBuf::new(),
+    };
+    assert_eq!(
+        eng.drain_effects(&prog, &exec_no_template).unwrap(),
+        0,
+        "no template: nothing drained"
+    );
+    assert_eq!(
+        rows(&dbp, "SELECT state FROM pending_effect"),
+        vec![vec!["orphaned".to_string()]],
+        "missing-template request is parked orphaned"
+    );
+    assert_eq!(
+        rows(&dbp, "SELECT COUNT(*) FROM rel_resp_txt"),
+        vec![vec!["0".to_string()]],
+        "no response before the template arrives"
+    );
+    // There is no other queued effect; the orphan is the only row.
+    assert_eq!(
+        rows(&dbp, "SELECT COUNT(*) FROM pending_effect WHERE state IN ('queued','running')"),
+        vec![vec!["0".to_string()]],
+        "only the orphaned row is waiting"
+    );
+
+    // The template arrives via `effect_cmd`. Re-prepare and tick to load it.
+    // The digest id collides with the orphaned row, so no new pending row emits.
+    fs::write(
+        d.join("p.dl"),
+        "rel want(key: str).\n\
+         want(\"k1\").\n\
+         effect_cmd(\"resp\", \"printf '%s' '{key}'\").\n\
+         rel resp(key: str, out: str).\n\
+         resp(key, out) <- @async want(key).\n",
+    )
+    .unwrap();
+    let (prog2, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    eng.tick(&prog2, true).unwrap();
+    assert_eq!(
+        rows(&dbp, "SELECT COUNT(*) FROM pending_effect"),
+        vec![vec!["1".to_string()]],
+        "the orphaned row stays the only pending row (digest dedup)"
+    );
+    assert_eq!(
+        rows(&dbp, "SELECT state FROM pending_effect"),
+        vec![vec!["orphaned".to_string()]],
+        "orphaned row is still orphaned before the drain"
+    );
+
+    // Drain with the dynamic template: the orphan is re-queued and executed in
+    // the same call, with no unrelated queued effect to wake it up.
+    let exec = shell_exec(&eng, &prog2);
+    assert_eq!(
+        eng.drain_effects(&prog2, &exec).unwrap(),
+        1,
+        "orphan re-queued and drained"
+    );
+    assert_eq!(
+        rows(&dbp, "SELECT state FROM pending_effect"),
+        vec![vec!["done".to_string()]],
+        "orphaned -> queued -> done in one drain"
+    );
+    eng.tick(&prog2, true).unwrap();
+    assert_eq!(
+        rows(&dbp, "SELECT key, out FROM rel_resp_txt"),
+        vec![vec!["k1".to_string(), "k1".to_string()]],
+        "response row landed from the re-queued orphan"
+    );
+}

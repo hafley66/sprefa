@@ -575,9 +575,31 @@ impl Engine {
                 .filter_map(|x| x.ok()).collect();
             v
         };
-        let recoverable: Vec<String> = kinds.into_iter()
+        if kinds.is_empty() { return Ok(()); }
+        let mut recoverable: Vec<String> = kinds.iter()
             .filter(|k| exec.has_template(k))
+            .cloned()
             .collect();
+
+        // Also recover kinds whose template comes from the dynamic `effect_cmd`
+        // overlay relation, even if the executor registry passed to this drain
+        // has not been rebuilt yet. The base `rel_effect_cmd` stores interned
+        // ids, so the text view is the source of truth for kind names.
+        if recoverable.len() < kinds.len() {
+            let placeholders = kinds.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "SELECT DISTINCT kind FROM rel_effect_cmd_txt WHERE kind IN ({placeholders})");
+            let params: Vec<&dyn rusqlite::ToSql> = kinds.iter()
+                .map(|s| s as &dyn rusqlite::ToSql).collect();
+            if let Ok(mut stmt) = self.db.conn().prepare(&sql) {
+                let dynamic: Vec<String> = stmt.query_map(params.as_slice(), |r| r.get::<_, String>(0))?
+                    .filter_map(|x| x.ok()).collect();
+                for k in dynamic {
+                    if !recoverable.contains(&k) { recoverable.push(k); }
+                }
+            }
+        }
+
         if recoverable.is_empty() { return Ok(()); }
         let placeholders = recoverable.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(

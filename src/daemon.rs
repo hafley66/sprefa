@@ -558,7 +558,7 @@ impl ServedRoot {
                 crate::engine::shell_templates(&prog)
             };
             let eng = lock(&self.eng);
-            if let Ok(rows) = eng.query_sql("SELECT kind, template FROM rel_effect_cmd", &[]) {
+            if let Ok(rows) = eng.query_sql("SELECT kind, template FROM rel_effect_cmd_txt", &[]) {
                 for row in rows {
                     if let (Some(k), Some(t)) = (row.first().and_then(|v| v.as_str()),
                                                  row.get(1).and_then(|v| v.as_str())) {
