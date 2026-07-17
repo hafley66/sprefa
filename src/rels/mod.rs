@@ -123,6 +123,20 @@ pub trait RelKind: Sync {
     fn dirty(&self, _changed: &HashSet<String>) -> bool {
         true
     }
+    /// A bookkeeping family projects state the tick itself writes (`stmt_ms`
+    /// timings, `rel_count` after a rebuild, `query_log`). Its motion still
+    /// refreshes rows and re-derives dependents (perf rails must stay live),
+    /// but `is_settled` treats it as timer-like: a tick whose only motion is
+    /// its own bookkeeping must not keep the daemon's poll loop scheduling
+    /// full ticks forever (the sink-loop that wrote GBs per boot).
+    fn bookkeeping(&self) -> bool {
+        false
+    }
+}
+
+/// Whether `rel` belongs to a bookkeeping family (see `RelKind::bookkeeping`).
+pub fn is_bookkeeping_rel(rel: &str) -> bool {
+    rel_kinds().iter().any(|k| k.bookkeeping() && k.rels().contains(&rel))
 }
 
 /// Every git-derived built-in family, in declaration order. `tick`,

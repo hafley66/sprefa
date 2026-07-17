@@ -44,13 +44,14 @@ impl RelKind for CatalogKind {
         "the built-in self-describing relation catalog (rel_catalog / fn_catalog / op_catalog / rel_col)"
     }
     fn refresh(&self, eng: &Engine) -> Result<bool> {
+        let mut rows_changed = false;
         let rows: Vec<Vec<Value>> = all_builtin_decls().iter().map(|d| {
             let cols = format!("({})",
                 d.cols.iter().map(|c| c.name.clone()).collect::<Vec<_>>().join(", "));
             vec![Value::Text(d.name.clone()), Value::Text(d.group.to_string()),
                  Value::Text(cols), Value::Text(d.doc.to_string())]
         }).collect();
-        eng.refresh_rel("rel_catalog", &["name", "group", "cols", "doc"], &rows)?;
+        rows_changed |= eng.refresh_rel("rel_catalog", &["name", "group", "cols", "doc"], &rows)?;
 
         // Per-column rows, with the enum vocabulary for a branded column as a
         // JSON array ("" for an open column). Collect-then-flush: one batched
@@ -71,20 +72,20 @@ impl RelKind for CatalogKind {
                      Value::Text(variants)]
             }).collect::<Vec<_>>()
         }).collect();
-        eng.refresh_rel("rel_col", &["rel", "pos", "col", "type", "variants"], &col_rows)?;
+        rows_changed |= eng.refresh_rel("rel_col", &["rel", "pos", "col", "type", "variants"], &col_rows)?;
 
         let fn_rows: Vec<Vec<Value>> = fn_docs().iter().map(|(n, a, g, d)| {
             vec![Value::Text(n.to_string()), Value::Int(*a as i64),
                  Value::Text(g.to_string()), Value::Text(d.to_string())]
         }).collect();
-        eng.refresh_rel("fn_catalog", &["name", "arity", "group", "doc"], &fn_rows)?;
+        rows_changed |= eng.refresh_rel("fn_catalog", &["name", "arity", "group", "doc"], &fn_rows)?;
 
         let op_rows: Vec<Vec<Value>> = op_docs().iter().map(|(op, kind, syn, d)| {
             vec![Value::Text(op.to_string()), Value::Text(kind.to_string()),
                  Value::Text(syn.to_string()), Value::Text(d.to_string())]
         }).collect();
-        eng.refresh_rel("op_catalog", &["op", "kind", "syntax", "doc"], &op_rows)?;
-        Ok(true)
+        rows_changed |= eng.refresh_rel("op_catalog", &["op", "kind", "syntax", "doc"], &op_rows)?;
+        Ok(rows_changed)
     }
 }
 

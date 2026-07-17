@@ -211,28 +211,30 @@ impl Engine {
         // the N+1 law applies to this intern just like any other.
         self.db.flush_syms(&mut sink)?;
 
-        self.refresh_rel(
+        let mut rows_changed = false;
+
+        rows_changed |= self.refresh_rel(
             "df_node",
             &["id", "kind", "var", "fn", "file", "line"],
             &node_rows,
         )?;
-        self.refresh_rel("df_node_repo", &["id", "repo"], &node_repo_rows)?;
-        self.refresh_rel("df_edge", &["from", "to"], &edge_rows)?;
-        self.refresh_rel(
+        rows_changed |= self.refresh_rel("df_node_repo", &["id", "repo"], &node_repo_rows)?;
+        rows_changed |= self.refresh_rel("df_edge", &["from", "to"], &edge_rows)?;
+        rows_changed |= self.refresh_rel(
             "loop_over",
             &["file", "start", "end", "var", "collection", "fn"],
             &loop_rows,
         )?;
-        self.refresh_rel("allocates", &["fn"], &alloc_rows)?;
-        self.refresh_rel(
+        rows_changed |= self.refresh_rel("allocates", &["fn"], &alloc_rows)?;
+        rows_changed |= self.refresh_rel(
             "nest",
             &["call_id", "loop_id", "depth", "collection"],
             &nest_rows,
         )?;
-        self.refresh_rel("df_param", &["id", "pos"], &param_rows)?;
-        self.refresh_rel("df_arg", &["call", "pos", "arg"], &arg_rows)?;
-        self.refresh_rel("df_field", &["id", "field", "value"], &field_rows)?;
-        self.refresh_rel("df_lit", &["id", "text", "kind"], &lit_rows)?;
+        rows_changed |= self.refresh_rel("df_param", &["id", "pos"], &param_rows)?;
+        rows_changed |= self.refresh_rel("df_arg", &["call", "pos", "arg"], &arg_rows)?;
+        rows_changed |= self.refresh_rel("df_field", &["id", "field", "value"], &field_rows)?;
+        rows_changed |= self.refresh_rel("df_lit", &["id", "text", "kind"], &lit_rows)?;
         // Rev-carrying twins: same delete scope as type/call — wipe every corpus
         // rev and reinsert the whole-corpus salted rows (the emit above is
         // whole-corpus; a rev absent from the corpus is D5.5's retraction sweep,
@@ -240,31 +242,31 @@ impl Engine {
         // (the salt is not cleanly reversible in SQL and the raw rows are in hand).
         let all_revs = Self::corpus_revs(&files);
         let all_rev_refs: Vec<&str> = all_revs.iter().map(|s| s.as_str()).collect();
-        self.refresh_rel_for_revs(
+        rows_changed |= self.refresh_rel_for_revs(
             "df_node_rev",
             &["id", "kind", "var", "fn", "file", "line", "rev"],
             &node_rev_rows,
             &all_rev_refs,
         )?;
-        self.refresh_rel_for_revs(
+        rows_changed |= self.refresh_rel_for_revs(
             "df_node_repo_rev",
             &["id", "repo", "rev"],
             &node_repo_rev_rows,
             &all_rev_refs,
         )?;
-        self.refresh_rel_for_revs(
+        rows_changed |= self.refresh_rel_for_revs(
             "df_arg_rev",
             &["call", "pos", "arg", "rev"],
             &arg_rev_rows,
             &all_rev_refs,
         )?;
-        self.refresh_rel_for_revs(
+        rows_changed |= self.refresh_rel_for_revs(
             "df_field_rev",
             &["id", "field", "value", "rev"],
             &field_rev_rows,
             &all_rev_refs,
         )?;
-        self.refresh_rel_for_revs(
+        rows_changed |= self.refresh_rel_for_revs(
             "df_lit_rev",
             &["id", "text", "kind", "rev"],
             &lit_rev_rows,
@@ -274,6 +276,6 @@ impl Engine {
         for (rev, d) in &moved {
             self.save_rel_digest(&extract_digest_key("dataflow", rev), d)?;
         }
-        Ok(true)
+        Ok(rows_changed)
     }
 }

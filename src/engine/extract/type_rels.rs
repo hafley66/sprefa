@@ -320,13 +320,17 @@ impl Engine {
         // absent from the corpus is D5.5's retraction sweep, not this path).
         let all_revs = Self::corpus_revs(&files);
         let all_rev_refs: Vec<&str> = all_revs.iter().map(|s| s.as_str()).collect();
-        self.refresh_rel_for_revs(
+        // OR of per-rel content movement: a rebuild that reproduced identical
+        // rows (binary swap, spurious digest miss) marks nothing changed, so
+        // the legacy rebuild and the derived cascade both stay skipped.
+        let mut rows_changed = false;
+        rows_changed |= self.refresh_rel_for_revs(
             "type_edge_rev",
             &["from", "to", "kind", "rev", "repo"],
             &edge_rev_rows,
             &all_rev_refs,
         )?;
-        self.refresh_rel_for_revs(
+        rows_changed |= self.refresh_rel_for_revs(
             "type_entity_rev",
             &[
                 "repo", "sym", "name", "kind", "parent", "file", "line", "rev",
@@ -334,16 +338,16 @@ impl Engine {
             &entity_rev_rows,
             &all_rev_refs,
         )?;
-        self.refresh_rel("type_sig", &["sym", "slot", "pos", "ref"], &sig_rows)?;
-        self.refresh_rel_for_revs(
+        rows_changed |= self.refresh_rel("type_sig", &["sym", "slot", "pos", "ref"], &sig_rows)?;
+        rows_changed |= self.refresh_rel_for_revs(
             "type_link_rev",
             &["src", "dst", "kind", "rev"],
             &link_rev_rows,
             &all_rev_refs,
         )?;
-        self.refresh_rel("doc_comment", &["repo", "sym", "line", "text"], &doc_rows)?;
-        self.refresh_rel("doc_tag", &["repo", "sym", "tag", "arg", "text"], &tag_rows)?;
-        self.refresh_rel_for_revs(
+        rows_changed |= self.refresh_rel("doc_comment", &["repo", "sym", "line", "text"], &doc_rows)?;
+        rows_changed |= self.refresh_rel("doc_tag", &["repo", "sym", "tag", "arg", "text"], &tag_rows)?;
+        rows_changed |= self.refresh_rel_for_revs(
             "const_value_rev",
             &[
                 "repo", "sym", "field", "text", "kind", "file", "line", "rev",
@@ -351,11 +355,13 @@ impl Engine {
             &const_rev_rows,
             &all_rev_refs,
         )?;
-        self.rebuild_legacy_type_rels()?;
+        if rows_changed {
+            self.rebuild_legacy_type_rels()?;
+        }
         // Persisted only after the writes land, so a failed refresh retries.
         for (rev, d) in &moved {
             self.save_rel_digest(&extract_digest_key("type", rev), d)?;
         }
-        Ok(true)
+        Ok(rows_changed)
     }
 }

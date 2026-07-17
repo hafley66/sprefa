@@ -54,6 +54,9 @@ impl RelKind for PerfKind {
     fn rels(&self) -> &'static [&'static str] {
         &["rel_count", "stmt_ms"]
     }
+    // Projections of the tick's own bookkeeping (`_stmt_ms` timings jitter on
+    // every rebuild); see `RelKind::bookkeeping`.
+    fn bookkeeping(&self) -> bool { true }
     fn decls(&self) -> Vec<RelDecl> {
         vec![
             RelDecl {

@@ -31,6 +31,8 @@ impl RelKind for QueryLogKind {
     fn rels(&self) -> &'static [&'static str] {
         &["query_log"]
     }
+    // The query log grows as a side effect of serving; see `RelKind::bookkeeping`.
+    fn bookkeeping(&self) -> bool { true }
     fn decls(&self) -> Vec<RelDecl> {
         vec![RelDecl {
             name: "query_log".into(),

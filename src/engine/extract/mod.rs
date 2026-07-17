@@ -1111,21 +1111,40 @@ impl Engine {
     /// fresh set in one batch. Generalizes `refresh_module_rels_for_revs`'s
     /// DELETE-by-rev pattern to any `_rev` twin. Collect-then-flush, one
     /// `insert_rows` (the tick counter screams on a per-row write).
-    fn refresh_rel_for_revs(&self, rel: &str, cols: &[&str], rows: &[Vec<Value>], revs: &[&str]) -> Result<()> {
-        if revs.is_empty() { return Ok(()); }
+    /// Returns whether the scoped rows actually moved (same contract and same
+    /// identical-content skip as `refresh_rel`; the count guard is scoped to
+    /// the named revs so out-of-scope rows never mask an external delete).
+    fn refresh_rel_for_revs(&self, rel: &str, cols: &[&str], rows: &[Vec<Value>], revs: &[&str]) -> Result<bool> {
+        if revs.is_empty() { return Ok(false); }
         self.db.exec("CREATE TEMP TABLE IF NOT EXISTS _rel_refresh_rev(rev TEXT PRIMARY KEY)")?;
         self.db.exec("DELETE FROM _rel_refresh_rev")?;
         let rev_rows: Vec<Vec<Value>> = revs.iter().map(|rev| vec![Value::Text((*rev).to_string())]).collect();
         self.db.insert_rows("_rel_refresh_rev", &["rev"], &rev_rows)?;
+        let encoded = self.encode_rel_rows(rel, cols, rows)?;
+        let mut scope: Vec<&str> = revs.to_vec();
+        scope.sort_unstable();
+        let content_key = format!("rows:{rel}");
+        let digest = crate::engine::rows_content_digest(cols, &encoded, &scope);
+        if self.load_rel_digest(&content_key)? == Some(digest) {
+            let live: i64 = self.db.conn()
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {} WHERE \"rev\" IN (SELECT sprf_sym(rev) FROM _rel_refresh_rev)", tbl(rel)),
+                    [], |r| r.get(0),
+                )
+                .unwrap_or(-1);
+            if live == encoded.len() as i64 {
+                return Ok(false);
+            }
+        }
         // The twin's `rev` column is interned (i64 StringId); `_rel_refresh_rev`
         // holds the raw text revs. Hash the text side into id-space so the
         // set-match happens in the same representation (else i64 IN (text…)
         // never matches and the stale rows are never cleared before re-insert).
         self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT sprf_sym(rev) FROM _rel_refresh_rev)", tbl(rel)))?;
-        let encoded = self.encode_rel_rows(rel, cols, rows)?;
         self.db.insert_rows(&tbl(rel), cols, &encoded)
             .map_err(|error| anyhow::anyhow!("refresh relation {rel}: {error}"))?;
-        Ok(())
+        self.save_rel_digest(&content_key, &digest)?;
+        Ok(true)
     }
 
     /// Every `_rev` twin an extraction family writes: type (node/link/edge),

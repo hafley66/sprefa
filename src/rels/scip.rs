@@ -104,21 +104,22 @@ impl RelKind for ScipKind {
         // SCIP resolution is intentionally NOT reconstructed: a ref resolves only
         // within its own index's document set, matching the syntactic resolver's
         // per-repo scoping.
+        let mut rows_changed = false;
         let inputs = self.index_inputs(eng)?;
         if inputs.is_empty() {
-            eng.refresh_rel("scip_def", &["symbol", "file", "repo"], &[])?;
-            eng.refresh_rel("scip_name", &["symbol", "name"], &[])?;
-            eng.refresh_rel("scip_ref", &["file", "symbol", "def_file", "repo"], &[])?;
-            eng.refresh_rel("scip_edge", &["src", "dst", "repo"], &[])?;
-            eng.refresh_rel("scip_fn_edge", &["caller", "callee"], &[])?;
-            eng.refresh_rel("scip_callee_type", &["sym", "type"], &[])?;
-            eng.refresh_rel("scip_local", &["fn", "name"], &[])?;
-            eng.refresh_rel("scip_impl", &["impl", "iface"], &[])?;
-            eng.refresh_rel("scip_occurrence",
+            rows_changed |= eng.refresh_rel("scip_def", &["symbol", "file", "repo"], &[])?;
+            rows_changed |= eng.refresh_rel("scip_name", &["symbol", "name"], &[])?;
+            rows_changed |= eng.refresh_rel("scip_ref", &["file", "symbol", "def_file", "repo"], &[])?;
+            rows_changed |= eng.refresh_rel("scip_edge", &["src", "dst", "repo"], &[])?;
+            rows_changed |= eng.refresh_rel("scip_fn_edge", &["caller", "callee"], &[])?;
+            rows_changed |= eng.refresh_rel("scip_callee_type", &["sym", "type"], &[])?;
+            rows_changed |= eng.refresh_rel("scip_local", &["fn", "name"], &[])?;
+            rows_changed |= eng.refresh_rel("scip_impl", &["impl", "iface"], &[])?;
+            rows_changed |= eng.refresh_rel("scip_occurrence",
                 &["file", "symbol", "line", "col", "end_line", "end_col", "role", "repo"], &[])?;
-            eng.refresh_rel("scip_binding",
+            rows_changed |= eng.refresh_rel("scip_binding",
                 &["file", "symbol", "local_name", "line", "col", "repo"], &[])?;
-            return Ok(true);
+            return Ok(rows_changed);
         }
         let mut all = scip_import::ScipRows::default();
         // Local binding names are computed per-input (the on-disk root is known
@@ -171,19 +172,19 @@ impl RelKind for ScipKind {
             .map(|(file, sym, name, sl, sc, repo)|
                 vec![t(file), t(sym), t(name), n(sl), n(sc), t(repo)])
             .collect();
-        eng.refresh_rel("scip_def", &["symbol", "file", "repo"], &defs)?;
-        eng.refresh_rel("scip_name", &["symbol", "name"], &names)?;
-        eng.refresh_rel("scip_ref", &["file", "symbol", "def_file", "repo"], &refs)?;
-        eng.refresh_rel("scip_edge", &["src", "dst", "repo"], &edges)?;
-        eng.refresh_rel("scip_fn_edge", &["caller", "callee"], &fn_edges)?;
-        eng.refresh_rel("scip_callee_type", &["sym", "type"], &callee_types)?;
-        eng.refresh_rel("scip_local", &["fn", "name"], &locals)?;
-        eng.refresh_rel("scip_impl", &["impl", "iface"], &impls)?;
-        eng.refresh_rel("scip_occurrence",
+        rows_changed |= eng.refresh_rel("scip_def", &["symbol", "file", "repo"], &defs)?;
+        rows_changed |= eng.refresh_rel("scip_name", &["symbol", "name"], &names)?;
+        rows_changed |= eng.refresh_rel("scip_ref", &["file", "symbol", "def_file", "repo"], &refs)?;
+        rows_changed |= eng.refresh_rel("scip_edge", &["src", "dst", "repo"], &edges)?;
+        rows_changed |= eng.refresh_rel("scip_fn_edge", &["caller", "callee"], &fn_edges)?;
+        rows_changed |= eng.refresh_rel("scip_callee_type", &["sym", "type"], &callee_types)?;
+        rows_changed |= eng.refresh_rel("scip_local", &["fn", "name"], &locals)?;
+        rows_changed |= eng.refresh_rel("scip_impl", &["impl", "iface"], &impls)?;
+        rows_changed |= eng.refresh_rel("scip_occurrence",
             &["file", "symbol", "line", "col", "end_line", "end_col", "role", "repo"], &occurrences)?;
-        eng.refresh_rel("scip_binding",
+        rows_changed |= eng.refresh_rel("scip_binding",
             &["file", "symbol", "local_name", "line", "col", "repo"], &bindings)?;
-        Ok(true)
+        Ok(rows_changed)
     }
 }
 

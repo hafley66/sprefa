@@ -77,13 +77,19 @@ impl TickReport {
     /// spinning forever.
     pub fn is_settled(&self) -> bool {
         !self.derived_moved
-            && self.changed_rels.iter().all(|r| is_timer_rel(r))
+            && self.changed_rels.iter().all(|r| is_timer_rel(r) || crate::rels::is_bookkeeping_rel(r))
             && !self.staged_next
             && self.inflight_effects == 0
     }
 }
 
-/// The rels whose motion is a recurring timer, not real progress.
+/// The rels whose motion is a recurring timer, not real progress. Bookkeeping
+/// rels (`stmt_ms`/`rel_count`/`query_log`, see `RelKind::bookkeeping`) get the
+/// same settle treatment in `is_settled`: the tick writes their inputs itself,
+/// so a tick whose only motion is its own bookkeeping is quiescent — counting
+/// it kept the daemon's poll loop scheduling full ticks forever (the sink-loop
+/// that wrote GBs per boot). Their derived dependents still rebuild on the one
+/// trailing tick after real motion, so perf rails stay fresh.
 pub fn is_timer_rel(rel: &str) -> bool {
     rel == "every" || rel == "clock"
 }

@@ -1323,21 +1323,46 @@ impl Engine {
         self.db.insert_rows(&tbl(rel), cols, &encoded)
     }
 
+    /// Returns whether the table's content actually moved. A rebuild that
+    /// reproduces byte-identical rows (the classic case: a binary swap opened
+    /// a fresh digest namespace and re-extracted an unchanged corpus) must not
+    /// rewrite the table — the whole-table DELETE+insert of every big rel was
+    /// measured at 4.5GB of WAL per daemon boot. Skip = digest match over the
+    /// encoded rows PLUS a live COUNT(*) guard (a sweep or hand edit that
+    /// changed the table behind the digest's back forces the write).
     pub(crate) fn refresh_rel(
         &self,
         rel: &str,
         cols: &[&str],
         rows: &[Vec<Value>],
-    ) -> Result<usize> {
+    ) -> Result<bool> {
         let table = tbl(rel);
         let start = std::time::Instant::now();
         let encoded = self.encode_rel_rows(rel, cols, rows)?;
+        let content_key = format!("rows:{rel}");
+        let digest = rows_content_digest(cols, &encoded, &[]);
+        if self.load_rel_digest(&content_key)? == Some(digest) {
+            let live: i64 = self
+                .db
+                .conn()
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap_or(-1);
+            if live == encoded.len() as i64 {
+                crate::verdict::debug_verdict(
+                    "rel-refresh",
+                    &format!("[write] {rel}: skipped (rows identical)"),
+                    &[("rel", rel), ("outcome", "skip")],
+                );
+                return Ok(false);
+            }
+        }
         // Whole-table reload with index drop/rebuild for large rels (see
         // Db::reload_rel); DELETE + plain insert for small ones.
         let n = self
             .db
             .reload_rel(&table, cols, &encoded)
             .with_context(|| format!("refresh relation {rel}"))?;
+        self.save_rel_digest(&content_key, &digest)?;
         // Per-rel write cost + the table's schema/size stats (indexes, PK, and
         // per-object dbstat bytes), so perf.jsonl carries WHY a write is slow —
         // gated inside emit_profile/rel_stats so a normal run pays nothing.
@@ -1351,8 +1376,39 @@ impl Engine {
                 stats,
             );
         }
-        Ok(n)
+        let _ = n;
+        Ok(true)
     }
+}
+
+/// Order-independent, duplicate-sensitive digest of encoded rows: per-row
+/// blake3 folded by wrapping-add (so row order — a rayon artifact — never
+/// perturbs it, while a duplicated row still moves it), finalized with the
+/// row count, the column list, and any scope tags (`refresh_rel_for_revs`
+/// folds its rev set so a different delete scope never digest-matches).
+pub(crate) fn rows_content_digest(cols: &[&str], rows: &[Vec<Value>], scope: &[&str]) -> [u8; 32] {
+    let mut sum = [0u64; 4];
+    for row in rows {
+        let mut h = blake3::Hasher::new();
+        for cell in row {
+            match cell {
+                Value::Null => { h.update(b"\x00"); }
+                Value::Int(i) => { h.update(b"\x01"); h.update(&i.to_le_bytes()); }
+                Value::Text(s) => { h.update(b"\x02"); h.update(s.as_bytes()); }
+            }
+            h.update(b"\x1f");
+        }
+        let d = h.finalize();
+        for (k, s) in sum.iter_mut().enumerate() {
+            *s = s.wrapping_add(u64::from_le_bytes(d.as_bytes()[k * 8..k * 8 + 8].try_into().unwrap()));
+        }
+    }
+    let mut out = blake3::Hasher::new();
+    out.update(&(rows.len() as u64).to_le_bytes());
+    for c in cols { out.update(c.as_bytes()); out.update(b","); }
+    for s in scope { out.update(s.as_bytes()); out.update(b";"); }
+    for s in sum { out.update(&s.to_le_bytes()); }
+    *out.finalize().as_bytes()
 }
 
 /// (repo, rev, glob, pathvar, revvar) of a source rule's `scan`. `repo` is the
