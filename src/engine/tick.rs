@@ -713,15 +713,16 @@ impl Engine {
 
         if !quiet {
             let (slowest_rel, slowest_ms) = self.slowest_stmt_ms();
-            eprintln!("[tick] files {}/{} parsed, +{} -{} source facts, derived {} | source {:.1}ms, derived {:.1}ms, slowest {slowest_rel}={slowest_ms}ms, trigger=full",
+            let reason = full_reason.as_deref().unwrap_or("-");
+            eprintln!("[tick] files {}/{} parsed, +{} -{} source facts, derived {} | source {:.1}ms, derived {:.1}ms, slowest {slowest_rel}={slowest_ms}ms, trigger=full, reason={reason}",
                 recon.parsed, recon.total, recon.extracted, recon.retracted,
                 if changed { "rebuilt" } else { "unchanged" }, src_ms, der_ms);
             crate::verdict::verdict(
-                "tick-summary",
-                &format!("[tick-verdict] full derived_ms={der_ms:.1} slowest_rel={slowest_rel} slowest_ms={slowest_ms} trigger=full"),
+                "tick-verdict",
+                &format!("[tick-verdict] full derived_ms={der_ms:.1} slowest_rel={slowest_rel} slowest_ms={slowest_ms} trigger=full reason={reason}"),
                 &[("kind", "full"), ("derived_ms", &format!("{der_ms:.1}")),
                   ("slowest_rel", &slowest_rel), ("slowest_ms", &slowest_ms.to_string()),
-                  ("trigger", "full")],
+                  ("trigger", "full"), ("reason", reason)],
             );
         }
         // Only the edges actually rebuilt this tick are dirty for the cond
