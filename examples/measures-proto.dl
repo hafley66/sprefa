@@ -1,0 +1,80 @@
+# Architectural measure prototypes — round 1 (R6).
+# Run against a COPY of a served db so extraction skips and only these rules
+# evaluate:  dl --no-daemon --db <scratch-copy> examples/measures-proto.dl
+# Everything below reads built-in family rels only (call_edge, df_*), so the
+# same file runs unchanged on any served corpus (sprefa, smashy, ...).
+
+# ---- file corpus (must be declared HERE) ------------------------------------
+# A --no-daemon run of this file ALONE (no merge with the repo's .dl/*.dl rail
+# corpus) sees a ZERO-file scan scope if this program declares no scan of its
+# own; the engine then treats that as authoritative and WIPES _file/call_edge/
+# call_def down to 0 rows on the very first "trigger=full, reason=program-edit"
+# tick — even call_edge_bare (the raw pre-resolution table) survives, only the
+# file-scoped resolved rels get zeroed. Hit this empirically: a fresh
+# VACUUM INTO snapshot of the daemon's own served db (787 files, 11919
+# call_edge rows) still went to 0/0/0 after one --no-daemon run of a
+# scan-less program. Declaring the same glob the repo's own file-size.dl rail
+# uses re-establishes file scope; content is unchanged so extraction hits the
+# fast "identical content, write nothing" path.
+rel src_file(path: text).
+src_file(path) <- scan("src/**/*.rs", path, rev).
+
+# ---- M1: fan-out / fan-in per function (instability raw material) ----------
+# High fan-out = orchestrator; high fan-in = load point whose signature is
+# expensive to change. The refactor each drives: split (fan-out), or
+# interface-extract (fan-in).
+rel fan_out(caller: text, n: int).
+fan_out(caller, count(callee)) <- call_edge(caller, callee, _).
+
+rel fan_in(callee: text, n: int).
+fan_in(callee, count(caller)) <- call_edge(caller, callee, _).
+
+# ---- M2: blast radius — transitive dependents per function -----------------
+# reach_from(src, callee): src transitively calls callee. Dependents of f =
+# srcs that reach f. `closure(call_edge)` read unpinned is banned ("rule
+# 'blast' reads closure relation 'reach' in its body in an unpinned shape" —
+# src/engine/strata.rs:214, the recursive view only materializes pinned), so
+# this uses the depth-lattice idiom from std/entry.dl:88-130 (op_reach_node)
+# instead: key(src, callee) + merge(MinBy(d)) keeps one row per pair no matter
+# how many paths/cycles reach it, so the row count stays O(pairs) not
+# O(pairs x depths). d0 < 32 bounds the walk (entry_reach_node uses 64; this
+# call graph is shallower so 32 was tried first — see wall-time note below).
+# The refactor it drives: ranking = where a change is most expensive, i.e.
+# where to add the seam/test first.
+rel reach_from(src: text, callee: text, d: int) key(src, callee) merge(MinBy(d)).
+reach_from(src, callee, 0) <- call_edge(src, callee, _).
+reach_from(src, to, d0 + 1) <-
+    reach_from(src, from, d0), call_edge(from, to, _), d0 < 32.
+
+rel blast(callee: text, dependents: int).
+blast(callee, count(src)) <- reach_from(src, callee, _).
+
+# ---- M3: call cycles — mutual reach pairs (SCC proxy) ----------------------
+# A pair of functions each reachable from the other = a recursion knot or a
+# module cycle at fn granularity. The refactor: break the cycle (invert one
+# dependency) or bless it (a real recursive algorithm) with a waiver.
+rel cycle_pair(fn_a: text, fn_b: text).
+cycle_pair(fn_a, fn_b) <-
+    reach_from(fn_a, fn_b, _), reach_from(fn_b, fn_a, _), fn_a < fn_b.
+
+rel cycle_member(fn: text, partners: int).
+cycle_member(fn, count(other)) <- cycle_pair(fn, other).
+cycle_member(fn, count(other)) <- cycle_pair(other, fn).
+
+# ---- thresholded views (query grammar is bare `? rel(vars).` only) ---------
+rel fan_out_hot(caller: text, n: int).
+fan_out_hot(caller, n) <- fan_out(caller, n), n > 40.
+
+rel fan_in_hot(callee: text, n: int).
+fan_in_hot(callee, n) <- fan_in(callee, n), n > 60.
+
+rel blast_hot(callee: text, dependents: int).
+blast_hot(callee, dependents) <- blast(callee, dependents), dependents > 300.
+
+rel cycle_hot(fn: text, partners: int).
+cycle_hot(fn, partners) <- cycle_member(fn, partners), partners > 5.
+
+? fan_out_hot(caller, n).
+? fan_in_hot(callee, n).
+? blast_hot(callee, dependents).
+? cycle_hot(fn, partners).
