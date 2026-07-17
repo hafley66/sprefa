@@ -127,7 +127,13 @@ fn append_line(home: &Path, line: &Value) {
         }
     }
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
-        let _ = writeln!(f, "{line}");
+        // One write_all per line: `writeln!` streams many small writes, and two
+        // process threads appending concurrently interleave them into corrupt
+        // JSON (seen live: the double shutdown_cleanup race). A single
+        // O_APPEND write does not interleave.
+        let mut buf = line.to_string();
+        buf.push('\n');
+        let _ = f.write_all(buf.as_bytes());
     }
 }
 

@@ -1334,12 +1334,17 @@ pub fn run_daemon(
 }
 
 pub(crate) fn shutdown_cleanup(d: &Daemon) {
-    let sock = socket_path();
-    let _ = std::fs::remove_file(&sock);
-    let _ = std::fs::remove_file(crate::daemon_http::http_json_path());
-    remove_pid_file();
-    crate::why::mark_shutdown(&d.home);
-    tracing::info!("[daemon] shut down cleanly");
+    // The shutdown task and the main thread's post-block_on path both call
+    // this; run it once so the why-trail gets exactly one shutdown marker.
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let sock = socket_path();
+        let _ = std::fs::remove_file(&sock);
+        let _ = std::fs::remove_file(crate::daemon_http::http_json_path());
+        remove_pid_file();
+        crate::why::mark_shutdown(&d.home);
+        tracing::info!("[daemon] shut down cleanly");
+    });
 }
 
 // ---------- job dispatcher runner ----------
