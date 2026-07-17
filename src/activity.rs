@@ -12,7 +12,8 @@
 //! `ping` handlers (each on its own connection thread) take the lock only long
 //! enough to clone the small struct.
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
@@ -55,6 +56,15 @@ struct Activity {
     root: String,
     tick: u64,
     since: Instant,
+    /// Active-root accounting so concurrent jobs on different roots do not
+    /// stomp each other's `why.jsonl` / `perf.jsonl` attribution. A count map
+    /// handles overlapping stamps; the stack gives a deterministic "current"
+    /// root (the most recent still-active stamp).
+    root_counts: HashMap<PathBuf, usize>,
+    root_stack: Vec<PathBuf>,
+    /// The root pushed by the current `begin_tick`/`set_root` pair; `end_tick`
+    /// pops it so open/tick lifecycle stays balanced.
+    tick_root: Option<PathBuf>,
 }
 
 impl Activity {
@@ -66,7 +76,44 @@ impl Activity {
             root: String::new(),
             tick: 0,
             since: Instant::now(),
+            root_counts: HashMap::new(),
+            root_stack: Vec::new(),
+            tick_root: None,
         }
+    }
+
+    fn push_root(&mut self, root: &Path) {
+        *self.root_counts.entry(root.to_path_buf()).or_insert(0) += 1;
+        self.root_stack.push(root.to_path_buf());
+    }
+
+    fn pop_root(&mut self, root: &Path) {
+        let key = root.to_path_buf();
+        if let Some(c) = self.root_counts.get_mut(&key) {
+            if *c > 0 {
+                *c -= 1;
+            }
+            if *c == 0 {
+                self.root_counts.remove(&key);
+            }
+        }
+        while let Some(top) = self.root_stack.last() {
+            if self.root_counts.contains_key(top) {
+                break;
+            }
+            self.root_stack.pop();
+        }
+    }
+
+    /// Sync `self.root` and the perf log's current-root resolver to the top of
+    /// the active-root stack.
+    fn sync_root(&mut self) {
+        let current = self.root_stack.last().cloned();
+        self.root = current
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        crate::perflog::set_current_root(current.as_deref());
     }
 }
 
@@ -105,13 +152,19 @@ pub fn set(phase: Phase, detail: impl Into<String>) {
     a.since = Instant::now();
 }
 
-/// Set the repo root currently being served. Called by the daemon when it starts
-/// a tick so `why.jsonl` samples and `perf.jsonl` records identify which root
-/// the work belongs to. Pass `None` to clear the root (idle / unknown).
+/// Set the repo root currently being served. Called by the daemon when it opens
+/// a root so `why.jsonl` samples and `perf.jsonl` records identify which root
+/// the work belongs to. The root stays active until the matching `end_tick`.
+/// Pass `None` to clear the root pushed by the most recent `set_root`.
 pub fn set_root(root: Option<&Path>) {
     let mut a = slot().lock().unwrap_or_else(|p| p.into_inner());
-    a.root = root.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
-    crate::perflog::set_current_root(root);
+    if let Some(r) = root {
+        a.push_root(r);
+        a.tick_root = Some(r.to_path_buf());
+    } else if let Some(r) = a.tick_root.take() {
+        a.pop_root(&r);
+    }
+    a.sync_root();
 }
 
 /// Update only the detail within the current phase (per-file / per-rel). Leaves
@@ -130,8 +183,9 @@ pub fn begin_tick(tick: u64, program: &str, root: &Path) {
     let mut a = slot().lock().unwrap_or_else(|p| p.into_inner());
     a.tick = tick;
     a.program = program.to_string();
-    a.root = root.to_string_lossy().into_owned();
-    crate::perflog::set_current_root(Some(root));
+    a.push_root(root);
+    a.tick_root = Some(root.to_path_buf());
+    a.sync_root();
     a.since = Instant::now();
 }
 
@@ -145,8 +199,43 @@ pub fn end_tick() {
     }
     a.phase = Phase::Idle;
     a.detail.clear();
-    a.root.clear();
-    crate::perflog::set_current_root(None);
+    a.program.clear();
+    if let Some(r) = a.tick_root.take() {
+        a.pop_root(&r);
+    }
+    a.sync_root();
+}
+
+/// Stamp the repo root for a scope (e.g. a daemon job). The root stays active
+/// until the guard drops; concurrent stamps stack, so a job finishing does not
+/// clear a root still being ticked by another job.
+pub struct RootGuard {
+    root: PathBuf,
+}
+
+impl RootGuard {
+    fn new(root: PathBuf) -> Self {
+        {
+            let mut a = slot().lock().unwrap_or_else(|p| p.into_inner());
+            a.push_root(&root);
+            a.sync_root();
+        }
+        Self { root }
+    }
+}
+
+impl Drop for RootGuard {
+    fn drop(&mut self) {
+        let mut a = slot().lock().unwrap_or_else(|p| p.into_inner());
+        a.pop_root(&self.root);
+        a.sync_root();
+    }
+}
+
+/// Stamp `root` as active for the current scope. Returns a guard that restores
+/// the previous active root (if any) when dropped.
+pub fn stamp_root(root: &Path) -> RootGuard {
+    RootGuard::new(root.to_path_buf())
 }
 
 /// Read a snapshot for ping / `dl daemon status`.
@@ -198,5 +287,31 @@ mod tests {
         assert_eq!(done.phase, Phase::Idle);
         assert!(done.detail.is_empty());
         assert!(done.root.is_empty());
+    }
+
+    /// P2 (per-root perf/why attribution): a `stamp_root` guard routes both the
+    /// activity snapshot and the perf-log path to that root while held, and
+    /// reverts to the prior state when dropped. The slot is process-global, so
+    /// the test brackets against its own prior state instead of assuming idle.
+    #[test]
+    fn root_stamp_routes_activity_and_perf_path() {
+        end_tick(); // start clean
+        let active = PathBuf::from(format!("/tmp/dl_stamp_{}", std::process::id()));
+        std::env::remove_var("DL_PERF_LOG");
+        let before_root = snapshot().root;
+        let before_path = crate::perflog::path();
+
+        {
+            let _g = stamp_root(&active);
+            assert_eq!(snapshot().root, active.to_string_lossy());
+            assert_eq!(
+                crate::perflog::path(),
+                Some(active.join(".dl").join("perf.jsonl")),
+                "perf path should follow the stamped root"
+            );
+        }
+
+        assert_eq!(snapshot().root, before_root, "root should revert after guard drop");
+        assert_eq!(crate::perflog::path(), before_path, "perf path should revert after guard drop");
     }
 }

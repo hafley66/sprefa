@@ -1382,6 +1382,12 @@ impl crate::jobq::JobRunner for DaemonJobRunner {
             // Root dropped between enqueue and claim; nothing to do.
             return Ok(());
         };
+        // Stamp the served root for the whole job so `why.jsonl` samples and
+        // `perf.jsonl` records during the drain half of a sink job are attributed
+        // even though `poll_tick`/`tick_paths` clear the tick-scoped root when
+        // the engine tick itself finishes. The guard restores the previous root
+        // (or none) when the job ends, so idle samples do not carry a stale root.
+        let _stamp = crate::activity::stamp_root(&sr.root);
         match job.kind {
             crate::jobq::JobKind::Tick => sr.tick_paths(&job.paths(), true),
             crate::jobq::JobKind::SinkDrain => sr.poll_tick().map(|_| ()),
