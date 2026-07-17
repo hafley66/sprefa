@@ -38,6 +38,32 @@ use crate::db::Db;
 /// after this many attempts instead of retrying forever.
 pub(crate) const MAX_ATTEMPTS: i64 = 5;
 
+/// A `running` row whose `started_at` predates `now - LEASE_SECS` is treated by
+/// `sweep` as an abandoned lease and reset to `pending`. `reset_running_on_boot`
+/// recovers a dead PROCESS; this recovers a dead WORKER in a live process (a
+/// silently-exited worker thread, a wedged tick) whose `tick:{root}` row would
+/// otherwise block that root forever — one row exists per key, so every new
+/// enqueue only sets `dirty` and waits for a `finish` that never comes. This is
+/// the live-sweeper both effectum and apalis converge on (effectum's
+/// `expires_at` startup recovery leaves peer-worker jobs stuck until restart;
+/// apalis's `reenqueue_orphaned` runs it on a live interval).
+///
+/// Coarse on purpose: with no per-job heartbeat this must exceed the longest
+/// legitimate tick (a cold full-corpus rebuild) so a merely-slow tick is never
+/// reclaimed and double-run. effectum's `expires_at` heartbeat extension is the
+/// finer-grained refinement (J3). The `finish` state-check makes the reclaim
+/// race safe even if a slow tick IS reclaimed: the original worker's late
+/// `finish` sees the row no longer `running` and declines to stomp it.
+pub(crate) const LEASE_SECS: i64 = 900;
+
+/// `done` rows finished before `now - DONE_RETAIN_SECS` are deleted by `sweep`.
+/// Row count is bounded by distinct `key` already (the UPSERT reuses one row per
+/// `tick:{root}`/`sink:{root}`), so this only reaps terminal rows for roots that
+/// were dropped — it is not a defense against per-execution row growth (there is
+/// none). Both effectum (a `// TODO delete old jobs`) and apalis (a manual
+/// `vacuum()` never scheduled) leave retention unaddressed.
+pub(crate) const DONE_RETAIN_SECS: i64 = 3600;
+
 const SCHEMA: &str = "\
 CREATE TABLE IF NOT EXISTS _job(
   key TEXT PRIMARY KEY, kind TEXT NOT NULL, root TEXT NOT NULL,
@@ -69,6 +95,30 @@ fn now_secs() -> i64 {
 pub(crate) fn backoff_secs(attempts: i64) -> i64 {
     let shift = attempts.clamp(1, 20) as u32;
     (1i64 << shift).min(300)
+}
+
+/// `backoff_secs` plus additive jitter spread over `[base, base + base/2]`,
+/// deterministic in `seed` (unit-testable). Per-root keys mean a single bad
+/// global config fails EVERY root's tick on the same wall-second; without jitter
+/// they all back off to an identical `run_at` and wake together — a thundering
+/// herd on the engine mutex. effectum multiplies its backoff by
+/// `1 + rand()*randomization`; apalis adds none and its fixed-interval poll
+/// wakes every worker in lockstep. Jitter is applied at the `finish` call site
+/// (seeded from key+now), leaving `backoff_secs` a pure, testable base.
+pub(crate) fn jittered_backoff(attempts: i64, seed: u64) -> i64 {
+    let base = backoff_secs(attempts);
+    let spread = (base / 2).max(1);
+    base + (seed % (spread as u64 + 1)) as i64
+}
+
+/// Deterministic per-call jitter seed: mix the job key with the wall-second so
+/// two roots failing on the same tick draw different offsets.
+fn jitter_seed(key: &str, now: i64) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut hasher);
+    now.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// The job kinds J1 routes. `DeriveStratum` (per-stratum derive jobs) is J3.
@@ -290,15 +340,25 @@ impl JobQueue {
             let conn = db.conn();
             conn.execute_batch("BEGIN IMMEDIATE")?;
             let body = (|| -> Result<Requeue> {
-                let row: Option<(i64, i64)> = conn
-                    .query_row("SELECT dirty, attempts FROM _job WHERE key=?1", params![key], |r| {
-                        Ok((r.get(0)?, r.get(1)?))
-                    })
+                let row: Option<(String, i64, i64)> = conn
+                    .query_row(
+                        "SELECT state, dirty, attempts FROM _job WHERE key=?1",
+                        params![key],
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                    )
                     .optional()?;
-                let Some((dirty, attempts)) = row else {
+                let Some((state, dirty, attempts)) = row else {
                     // Row vanished (dropped/cancelled out from under us).
                     return Ok(Requeue::Done);
                 };
+                if state != "running" {
+                    // The lease `sweep` reclaimed this row (reset it to `pending`)
+                    // while our slow tick ran, and another worker may already own
+                    // the rerun. Do not stomp the superseding row back to done/
+                    // failed — the reclaimed attempt is authoritative now. Safe
+                    // because this read and any write share one BEGIN IMMEDIATE tx.
+                    return Ok(Requeue::Done);
+                }
                 match outcome {
                     Ok(()) => {
                         if dirty != 0 {
@@ -328,7 +388,7 @@ impl JobQueue {
                             )?;
                             Ok(Requeue::Parked)
                         } else {
-                            let run_at = now + backoff_secs(attempts_new);
+                            let run_at = now + jittered_backoff(attempts_new, jitter_seed(key, now));
                             conn.execute(
                                 "UPDATE _job SET state='pending', attempts=?2, run_at=?3, \
                                  started_at=NULL, finished_at=NULL, last_error=?4 WHERE key=?1",
@@ -369,6 +429,42 @@ impl JobQueue {
             [],
         )?;
         Ok(n)
+    }
+
+    /// Periodic maintenance, two ops in one write tx (the daemon's `idle_loop`
+    /// calls it, ~30s cadence):
+    ///   1. **lease reclaim** — any row still `running` whose `started_at`
+    ///      predates `now - lease_secs` is reset to `pending` (see `LEASE_SECS`).
+    ///      Wakes a worker when it reclaims anything so the re-pended job runs.
+    ///   2. **terminal retention** — `done` rows finished before
+    ///      `now - done_retain_secs` are deleted (see `DONE_RETAIN_SECS`).
+    /// Returns `(reclaimed, deleted)`. Both are set-ops, no per-row loop.
+    pub(crate) fn sweep(&self, lease_secs: i64, done_retain_secs: i64) -> Result<(usize, usize)> {
+        let now = now_secs();
+        let out = {
+            let db = plock(&self.db);
+            let conn = db.conn();
+            conn.execute_batch("BEGIN IMMEDIATE")?;
+            let body = (|| -> Result<(usize, usize)> {
+                let reclaimed = conn.execute(
+                    "UPDATE _job SET state='pending', started_at=NULL \
+                     WHERE state='running' AND started_at IS NOT NULL AND started_at < ?1",
+                    params![now - lease_secs],
+                )?;
+                let deleted = conn.execute(
+                    "DELETE FROM _job \
+                     WHERE state='done' AND finished_at IS NOT NULL AND finished_at < ?1",
+                    params![now - done_retain_secs],
+                )?;
+                Ok((reclaimed, deleted))
+            })();
+            finish_tx(conn, &body)?;
+            body?
+        };
+        if out.0 > 0 {
+            self.wake();
+        }
+        Ok(out)
     }
 
     /// Every job, newest first (`enqueued_at DESC`), off a read-only
