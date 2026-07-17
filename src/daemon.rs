@@ -1014,6 +1014,24 @@ fn apply_daemon_budget() -> (&'static str, i32, usize) {
         unsafe { libc::setpriority(libc::PRIO_PROCESS, 0 as libc::id_t, DAEMON_NICE) };
     }
 
+    #[cfg(target_os = "macos")]
+    {
+        // Demote every disk read/write this process issues to the background
+        // I/O tier (Time Machine's). QoS/nice cap CPU only; the first-run
+        // rebuild's bulk db writes are what beachball the machine, and only
+        // this throttle reaches them. IOPOL_TYPE_DISK=0, IOPOL_SCOPE_PROCESS=0,
+        // IOPOL_THROTTLE=3 per <sys/resource.h>.
+        extern "C" {
+            fn setiopolicy_np(
+                iotype: libc::c_int,
+                scope: libc::c_int,
+                policy: libc::c_int,
+            ) -> libc::c_int;
+        }
+        // SAFETY: constant, documented arguments; scope is this process.
+        unsafe { setiopolicy_np(0, 0, 3) };
+    }
+
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(2);
@@ -1028,7 +1046,7 @@ fn apply_daemon_budget() -> (&'static str, i32, usize) {
     let _ = rayon::ThreadPoolBuilder::new().num_threads(desired).build_global();
     let threads = rayon::current_num_threads();
 
-    let qos_label = if cfg!(target_os = "macos") { "utility" } else { "none" };
+    let qos_label = if cfg!(target_os = "macos") { "utility+iothrottle" } else { "none" };
     let priority = if cfg!(unix) { DAEMON_NICE as i32 } else { 0 };
     (qos_label, priority, threads)
 }
@@ -1087,6 +1105,11 @@ pub fn run_daemon(
     let subscribers: Arc<Mutex<Vec<Arc<Mutex<UnixStream>>>>> = Arc::new(Mutex::new(Vec::new()));
     // The durable job queue (J1), in its own `<home>/jobs.sqlite`.
     let jobs = crate::jobq::JobQueue::open(&home).context("open job queue db")?;
+    // Self-diagnosis trail: boot marker + `dl-why` sampler, before anything
+    // heavy runs, so even a first-tick death leaves an answer for
+    // `dl daemon why`.
+    crate::why::mark_boot(&home, &build_id);
+    crate::why::start_sampler(home.clone(), jobs.clone());
     let shared = Shared { build_id: build_id.clone(), shutdown_requested: shutdown_requested.clone(), subscribers: subscribers.clone(), jobs: jobs.clone() };
 
     let repos = load_repos_eager();
@@ -1288,11 +1311,12 @@ fn accept_loop(daemon: Arc<Daemon>, listener: UnixListener) {
     }
 }
 
-pub(crate) fn shutdown_cleanup(_d: &Daemon) {
+pub(crate) fn shutdown_cleanup(d: &Daemon) {
     let sock = socket_path();
     let _ = std::fs::remove_file(&sock);
     let _ = std::fs::remove_file(crate::daemon_http::http_json_path());
     remove_pid_file();
+    crate::why::mark_shutdown(&d.home);
     tracing::info!("[daemon] shut down cleanly");
 }
 

@@ -15,6 +15,22 @@ logs + `plans/`. This file is the standing task ledger only.
 `.agent/memories/sprefa-task-ledger.md` — read it on demand, not auto-loaded. This
 file keeps only the standing laws + currently-open work.
 
+## Standing laws (user-set, non-negotiable, apply to every agent at every level)
+
+- **Build-vs-buy**: never assert "we should write our own" for any common-shaped
+  problem (queues, servers, schedulers, parsers, telemetry) without FIRST running
+  library research and presenting a written analysis of the candidates and why each
+  does or does not fit. No one-line dismissals of libraries. The analysis comes
+  before any bespoke line of code.
+- **Self-diagnosis before execution**: the daemon does not run until `dl daemon why`
+  can state, from the on-disk trail alone, what it was doing and what it consumed
+  (CPU, disk I/O) — including after a SIGKILL or crash. No receipt runs, no smoke
+  tests that start the daemon, until that capability is installed. Never make the
+  user ask "why is it slow" — the system answers that itself.
+- **Nothing seizes the machine**: CPU (QoS/nice), disk I/O (IOPOL_THROTTLE), and
+  thread budget are all capped in `apply_daemon_budget`. First-run rebuild included.
+  A change that can beachball the machine is a blocking defect, not a follow-up.
+
 ## v5 Work — Tasks Context
 
 The recurring debt we keep re-hitting has two shapes: **(1) per-row write loops
@@ -33,7 +49,7 @@ Open items below are one-liners; full history + landed detail in the archive.
 ### Bugs / gaps
 - [x] **daemon cpu hog root-caused and fixed**: 2s poll full-tick storm (7af0e319) + per-process exe-identity cache forcing full corpus rebuilds every tick of the first post-install daemon (c351ed90). Ledger folklore about restart-after-install retired.
 - [ ] **enumerate_with_hash mtime+size fast path**: equal-length edit in the same fs-timestamp tick reads as unchanged (rapid two-tick same-db test flake risk).
-- [ ] **S3** body-level bind for pure-fn values (`x = replace(...)` must inline into head). **S4** no string `+`/`concat` (only template interp). **S5** ast-grep patterns exact-shape (metavar-in-JSX `{ element: <$C/> }` matched nothing). **S6** source-extract rule body silently drops an extra joined rel atom (rel-level guard doesn't cover body-level mix).
+- [ ] **S3** retired — body-level bind for pure-fn values lowers as inlined expr (src/lower.rs `bind_lowers_to_inlined_expr_sql`). **S4** retired — text `+` concat landed (docs/reference/syntax.md:23; heads + comparison sides, never in a binding atom). **S5** ast-grep patterns exact-shape (metavar-in-JSX `{ element: <$C/> }` matched nothing). **S6** source-extract rule body silently drops an extra joined rel atom (rel-level guard doesn't cover body-level mix).
 
 ### Debriefs / friction (backprop candidates)
 - [ ] **Change-cost friction inventory** — 12 ranked items, fix shapes + sequencing: `plans/2026-07-10-change-cost-friction-inventory.md`. Top: ambient-config hermeticity, declared cross-family read edges, query --format=json, engine-monolith epic, resolution_source column.

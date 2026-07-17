@@ -50,6 +50,7 @@ pub mod update;
 pub mod verbs;
 pub mod typecheck;
 pub mod watchgate;
+pub mod why;
 
 /// Pure graph algorithms (`walk`, `scc`, `modgraph`, `typegraph`), grouped under
 /// one module. Re-exported at the crate root so `crate::walk::` etc. still work.
