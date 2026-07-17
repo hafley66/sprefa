@@ -15,7 +15,7 @@ impl Engine {
         let mut files: Vec<ExtractFile> = Vec::new();
         {
             let mut sel = self.db.conn().prepare(
-                "SELECT repo, path, rev, hash FROM _file WHERE path LIKE '%.md' OR path LIKE '%.markdown'")?;
+                "SELECT repo, path, rev, hash FROM _file WHERE path LIKE '%.md' OR path LIKE '%.markdown' ORDER BY repo, path, rev")?;
             let rows = sel.query_map([], |r| {
                 Ok((
                     r.get::<_, String>(0)?,

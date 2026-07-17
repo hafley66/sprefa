@@ -85,7 +85,8 @@ fn extract_digest_key(family: &str, rev: &str) -> String {
 /// Split `files` into cache hits and misses (keyed by (repo, path, content
 /// hash)), run `parse` over the misses in parallel, then replace the cache
 /// with exactly the current file set's entries. Returns one
-/// (repo id, path, rev, facts) tuple per input row; order is not preserved.
+/// (repo id, path, rev, facts) tuple per input row in the same order as
+/// `files`.
 /// A row with an empty content hash is never cached (no identity to key on).
 /// `parsed_counter` accumulates the miss count (the `extract_files_parsed`
 /// instrumentation).
@@ -115,6 +116,10 @@ fn cached_facts_profiled<T: Send + Sync>(
     let mut out: Vec<(String, String, String, Arc<T>)> = Vec::with_capacity(files.len());
     let mut next: HashMap<(String, String, String), (String, Arc<T>)> =
         HashMap::with_capacity(files.len());
+    // Parsed misses keyed by (repo, path, rev) so `out` can be assembled in
+    // strict `files` order independent of hit/miss scheduling.
+    let mut miss_map: HashMap<(String, String, String), (String, Arc<T>)> =
+        HashMap::with_capacity(files.len());
     let mut misses: Vec<&ExtractFile> = Vec::new();
     {
         let cur = cache.borrow();
@@ -124,7 +129,6 @@ fn cached_facts_profiled<T: Send + Sync>(
             };
             match hit {
                 Some((rid, facts)) => {
-                    out.push((rid.clone(), f.1.clone(), f.2.clone(), facts.clone()));
                     next.insert((f.0.clone(), f.1.clone(), f.3.clone()),
                                 (rid.clone(), facts.clone()));
                 }
@@ -146,12 +150,21 @@ fn cached_facts_profiled<T: Send + Sync>(
             crate::perflog::emit_profile("parse", &f.1, *ms, 0, family);
         }
     }
-    let parsed: Vec<(&ExtractFile, String, Arc<T>)> =
-        parsed.into_iter().map(|(f, rid, facts, _)| (f, rid, facts)).collect();
-    for (f, rid, facts) in parsed {
-        out.push((rid.clone(), f.1.clone(), f.2.clone(), facts.clone()));
+    for (f, rid, facts, _) in parsed {
+        miss_map.insert((f.0.clone(), f.1.clone(), f.2.clone()), (rid.clone(), facts.clone()));
         if !f.3.is_empty() {
             next.insert((f.0.clone(), f.1.clone(), f.3.clone()), (rid, facts));
+        }
+    }
+    for f in files {
+        let miss_key = (f.0.clone(), f.1.clone(), f.2.clone());
+        if let Some((rid, facts)) = miss_map.get(&miss_key) {
+            out.push((rid.clone(), f.1.clone(), f.2.clone(), facts.clone()));
+            continue;
+        }
+        let cache_key = (f.0.clone(), f.1.clone(), f.3.clone());
+        if let Some((rid, facts)) = next.get(&cache_key) {
+            out.push((rid.clone(), f.1.clone(), f.2.clone(), facts.clone()));
         }
     }
     *cache.borrow_mut() = next;
@@ -529,7 +542,7 @@ impl Engine {
     fn module_files_by_rev(&self) -> Result<HashMap<String, Vec<(String, String)>>> {
         let mut by_rev: HashMap<String, Vec<(String, String)>> = HashMap::new();
         let conn = self.db.conn();
-        let mut sel = conn.prepare("SELECT path, rev, hash FROM _file")?;
+        let mut sel = conn.prepare("SELECT path, rev, hash FROM _file ORDER BY repo, path, rev")?;
         let rows = sel.query_map([], |r| Ok((
             r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
         for row in rows.flatten() { by_rev.entry(row.1).or_default().push((row.0, row.2)); }
@@ -839,7 +852,7 @@ impl Engine {
             "SELECT repo, path, rev, hash FROM _file WHERE path LIKE '%.rs' OR path LIKE '%.kt' OR path LIKE '%.kts' \
              OR path LIKE '%.ts' OR path LIKE '%.tsx' \
              OR path LIKE '%.js' OR path LIKE '%.jsx' OR path LIKE '%.mjs' OR path LIKE '%.cjs' \
-             OR path LIKE '%.go' OR path LIKE '%.py'")?;
+             OR path LIKE '%.go' OR path LIKE '%.py' ORDER BY repo, path, rev")?;
         let rows = sel.query_map([], |r| Ok((
             r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
             r.get::<_, Option<String>>(3)?.unwrap_or_default())))?;
@@ -1662,6 +1675,53 @@ mod verdict_reason_tests {
         assert_eq!(
             reason2, "exe-identity-changed",
             "engine 2 must read its own db, not inherit engine 1's cached answer"
+        );
+    }
+
+    /// REGRESSION (deterministic rebuilds, 2026-07-17): `cached_facts_profiled`
+    /// used to append parsed misses after cache hits, so a warm run (all hits)
+    /// emitted facts in input order while a cold run (all misses) emitted them
+    /// in parallel scheduling order. That order leaked into downstream dedup
+    /// (e.g. df_node ids scoped only by file:line:col), making full rebuilds
+    /// non-deterministic. Output must follow `files` order regardless of hit/miss.
+    #[test]
+    fn cached_facts_profiled_order_is_independent_of_cache_hit_ratio() {
+        let cache: FactCache<String> = std::cell::RefCell::new(HashMap::new());
+        let parsed = std::cell::Cell::new(0);
+        let files = vec![
+            extract_file("repo-b", "src/a.rs", "hash-a"),
+            extract_file("repo-a", "src/b.rs", "hash-b"),
+            extract_file("repo-a", "src/a.rs", "hash-c"),
+        ];
+        fn parse(repo: &str, path: &str, _rev: &str) -> Option<(String, String)> {
+            Some((format!("rid-{repo}"), format!("facts-{path}")))
+        }
+
+        let cold = cached_facts_profiled(&cache, &files, &parsed, "test", parse);
+        assert_eq!(parsed.get(), files.len(), "cold call should parse every file");
+        let cold_order: Vec<_> = cold.iter()
+            .map(|(rid, path, _rev, _facts)| (rid.clone(), path.clone()))
+            .collect();
+
+        parsed.set(0);
+        let warm = cached_facts_profiled(&cache, &files, &parsed, "test", parse);
+        assert_eq!(parsed.get(), 0, "warm call should parse no files");
+        let warm_order: Vec<_> = warm.iter()
+            .map(|(rid, path, _rev, _facts)| (rid.clone(), path.clone()))
+            .collect();
+
+        assert_eq!(
+            cold_order, warm_order,
+            "cold and warm output order must be identical"
+        );
+        assert_eq!(
+            cold_order,
+            vec![
+                ("rid-repo-b".to_string(), "src/a.rs".to_string()),
+                ("rid-repo-a".to_string(), "src/b.rs".to_string()),
+                ("rid-repo-a".to_string(), "src/a.rs".to_string()),
+            ],
+            "output must follow input order"
         );
     }
 }

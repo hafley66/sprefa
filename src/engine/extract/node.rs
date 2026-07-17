@@ -151,7 +151,7 @@ impl Engine {
     ) -> Result<Vec<(String, String, String, String)>> {
         let mut files: Vec<(String, String, String, String)> = Vec::new();
         let conn = self.db.conn();
-        let mut sel = conn.prepare("SELECT repo, path, rev, hash FROM _file")?;
+        let mut sel = conn.prepare("SELECT repo, path, rev, hash FROM _file ORDER BY repo, path, rev")?;
         let rows = sel.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,

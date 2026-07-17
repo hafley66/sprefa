@@ -12,7 +12,7 @@ impl Engine {
         let mut sel = self
             .db
             .conn()
-            .prepare("SELECT repo, path, rev, hash FROM _file")?;
+            .prepare("SELECT repo, path, rev, hash FROM _file ORDER BY repo, path, rev")?;
         let rows = sel.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
@@ -123,7 +123,7 @@ impl Engine {
         let mut sel = self
             .db
             .conn()
-            .prepare("SELECT repo, path, rev, hash FROM _file")?;
+            .prepare("SELECT repo, path, rev, hash FROM _file ORDER BY repo, path, rev")?;
         let rows = sel.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
@@ -223,7 +223,7 @@ impl Engine {
         let mut sel = self
             .db
             .conn()
-            .prepare("SELECT repo, path, rev, hash FROM _file")?;
+            .prepare("SELECT repo, path, rev, hash FROM _file ORDER BY repo, path, rev")?;
         let rows = sel.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
