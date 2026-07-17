@@ -17,10 +17,16 @@ pub(crate) trait JobRunner: Send + Sync {
     fn run(&self, job: &JobRow) -> Result<()>;
 }
 
-/// The worker set. Each worker independently claims -> runs -> finishes;
-/// per-root serialization is guaranteed by the `key` dedup (one `tick:{root}`
-/// row at a time), not by pinning a worker to a root. A separate dispatcher
-/// thread would only forward what a claim already coordinates, so there is none.
+/// The OS-thread worker set. The live daemon no longer spawns this — its
+/// dispatcher is now `crate::daemon_shell::jobs` (tokio tasks whose job-RUN
+/// bodies are `spawn_blocking`) — so this stays purely as jobq's own unit-test
+/// driver (hence `#[allow(dead_code)]` outside `cfg(test)`). The queue SEMANTICS
+/// it exercises (`claim`/`finish`/coalesce/backoff) are shared by both.
+///
+/// Each worker independently claims -> runs -> finishes; per-root serialization
+/// is guaranteed by the `key` dedup (one `tick:{root}` row at a time), not by
+/// pinning a worker to a root.
+#[allow(dead_code)]
 pub(crate) struct Dispatcher {
     /// Owns the worker `JoinHandle`s so they outlive `spawn`; the live daemon
     /// never joins them (it exits on the shutdown flag), only tests do.
@@ -31,6 +37,7 @@ pub(crate) struct Dispatcher {
 impl Dispatcher {
     /// Spawn `n_workers` (floored at 1) claiming the given kinds until
     /// `shutdown` flips.
+    #[allow(dead_code)]
     pub(crate) fn spawn(
         queue: Arc<JobQueue>,
         runner: Arc<dyn JobRunner>,
@@ -65,6 +72,7 @@ impl Dispatcher {
     }
 }
 
+#[allow(dead_code)]
 fn worker_loop(
     queue: Arc<JobQueue>,
     runner: Arc<dyn JobRunner>,
