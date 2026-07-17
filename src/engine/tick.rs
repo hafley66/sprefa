@@ -385,7 +385,32 @@ impl Engine {
             }))
             .collect();
         crate::activity::set(crate::activity::Phase::Reconcile, "");
-        let recon = self.reconcile_sources(&source_rules, &source_rels, &consumed)?;
+        // Guard: a program with NO scan rules must not treat its empty scan scope
+        // as authoritative and wipe an existing db's file-scoped source relations.
+        // Scan rules that matched zero files still run reconcile normally (a real
+        // empty corpus legitimately reconciles down). Only the no-scan-rules case
+        // is skipped, and only when the db already has scanned files.
+        let recon = if source_rules.is_empty() {
+            let file_count: i64 = self
+                .db
+                .conn()
+                .query_row("SELECT COUNT(*) FROM _file", [], |r| r.get(0))
+                .unwrap_or(0);
+            if file_count > 0 {
+                eprintln!("[reconcile] program has no scan rules; leaving {file_count} existing files untouched");
+                Reconcile {
+                    changed: false,
+                    extracted: 0,
+                    retracted: 0,
+                    parsed: 0,
+                    total: 0,
+                }
+            } else {
+                self.reconcile_sources(&source_rules, &source_rels, &consumed)?
+            }
+        } else {
+            self.reconcile_sources(&source_rules, &source_rels, &consumed)?
+        };
         phase("reconcile-sources", t);
         // A carried-in @next rel that moved is an EDB change for this tick's
         // derived rules (e.g. a `poll` rule that reads the carried `etag`).

@@ -80,6 +80,7 @@ mod doc_comment;
 mod doc_node;
 mod doc_ref;
 mod embed_similar;
+mod empty_scan_scope_guard;
 mod entity_parent_xfile;
 mod env_rel;
 mod extraction_determinism;
