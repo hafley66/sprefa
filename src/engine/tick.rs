@@ -7,6 +7,55 @@
 //! visibility change is needed for the lift.
 
 use super::*;
+use crate::db::Db;
+
+/// RAII I/O-mode switch for a FULL derived rebuild, scoped to the two full-tick
+/// rebuild spans (`need_full` and the `extract_changed` rerun). For the duration
+/// it sets `PRAGMA synchronous=OFF` and `PRAGMA wal_autocheckpoint=0`, then on
+/// drop restores the prior values and runs `PRAGMA wal_checkpoint(TRUNCATE)` —
+/// on the normal path, an early `?` error, or a panic alike, since `Drop` runs
+/// regardless.
+///
+/// This is safe ONLY because the derived tables live in the CACHE db: a process
+/// kill (SIGKILL) under WAL still leaves a consistent, recoverable database —
+/// synchronous=OFF only widens the window in which an OS-level crash or power
+/// loss could roll the WAL back, and the worst outcome there is a stale/partial
+/// derived cache, which the next boot's `derived_incomplete_rels` check detects
+/// and rebuilds. Never wrap a write to un-recomputable state in this guard.
+struct BulkRebuildIo<'a> {
+    db: &'a Db,
+    prior_synchronous: i64,
+    prior_wal_autocheckpoint: i64,
+}
+
+impl<'a> BulkRebuildIo<'a> {
+    fn enter(db: &'a Db) -> Result<Self> {
+        let prior_synchronous: i64 = db
+            .conn()
+            .query_row("PRAGMA synchronous", [], |row| row.get(0))?;
+        let prior_wal_autocheckpoint: i64 = db
+            .conn()
+            .query_row("PRAGMA wal_autocheckpoint", [], |row| row.get(0))?;
+        db.conn()
+            .execute_batch("PRAGMA synchronous=OFF; PRAGMA wal_autocheckpoint=0;")?;
+        Ok(Self {
+            db,
+            prior_synchronous,
+            prior_wal_autocheckpoint,
+        })
+    }
+}
+
+impl Drop for BulkRebuildIo<'_> {
+    fn drop(&mut self) {
+        // Best-effort restore + checkpoint; a failure here cannot unwind out of
+        // Drop, and the next tick would re-apply these pragmas anyway.
+        let _ = self.db.conn().execute_batch(&format!(
+            "PRAGMA synchronous={}; PRAGMA wal_autocheckpoint={}; PRAGMA wal_checkpoint(TRUNCATE);",
+            self.prior_synchronous, self.prior_wal_autocheckpoint
+        ));
+    }
+}
 
 /// What a full `tick` moved this pass, for settle/quiescence detection
 /// (`plans/2026-07-06-settle-quiescence.md`). Every field is surfaced from a
@@ -610,8 +659,15 @@ impl Engine {
             crate::activity::set(crate::activity::Phase::Derived, "");
         }
         if need_full {
-            self.rebuild_derived(&strata.pre_rules, &strata.pre_rels)?;
-            self.rebuild_closures(&edges)?;
+            // A full derived rebuild is the choke this arc targets. On the cache
+            // db, drop fsync + autocheckpoint for its duration (RAII restores +
+            // truncates on the way out, error paths included) so the 30s+ rebuild
+            // is not also paying a WAL fsync per statement.
+            {
+                let _io = BulkRebuildIo::enter(&self.db)?;
+                self.rebuild_derived(&strata.pre_rules, &strata.pre_rels)?;
+                self.rebuild_closures(&edges)?;
+            }
             dirty_edges = edges.iter().copied().collect();
             self.last_derived_rebuilt = strata.pre_rels.clone();
         } else if changed {
@@ -634,8 +690,13 @@ impl Engine {
         // (No feedback INTO the extracted inputs, so one extra pass converges.)
         let extract_changed = self.eval_extract_rules(&extract_rules)?;
         if extract_changed {
-            self.rebuild_derived(&strata.pre_rules, &strata.pre_rels)?;
-            self.rebuild_closures(&edges)?;
+            // Same full-rebuild span as the `need_full` arm — same cache-db I/O
+            // relaxation for the same reason.
+            {
+                let _io = BulkRebuildIo::enter(&self.db)?;
+                self.rebuild_derived(&strata.pre_rules, &strata.pre_rels)?;
+                self.rebuild_closures(&edges)?;
+            }
             dirty_edges = edges.iter().copied().collect();
             self.last_derived_rebuilt = strata.pre_rels.clone();
         }
