@@ -360,9 +360,12 @@ impl Engine {
         // The family router is the SOLE writer of the public call rels (P4,
         // capstone cutover): derive every one of them from the owned _call_*
         // tables the write above just populated. A full refresh rewrote every
-        // input, so pass the whole input set (nothing to skip).
+        // input, so pass the whole input set (nothing to skip). The router is
+        // delta-based, so change is reported from what the flip actually
+        // wrote, never assumed — an exe-swap re-derive of an unchanged corpus
+        // flips zero rows and must not cascade the flow rails.
         self.flip_call_rels_via_router(&crate::engine::family::call_input_rels())?;
-        Ok(true)
+        Ok(self.call_flip_moved.get())
     }
 
     /// The persistent reactive router flip: `react_deltas` against the
@@ -400,6 +403,7 @@ impl Engine {
             self.db.begin_immediate()?;
         }
         let mut rerun_names: Vec<&'static str> = Vec::new();
+        let mut any_moved = false;
         let result: Result<Vec<&'static str>> = (|| {
             let deltas = router.react_deltas(&self.db, changed)?;
             rerun_names = deltas.iter().map(|(name, _)| *name).collect();
@@ -414,9 +418,11 @@ impl Engine {
                     .out_cols();
                 if cold.contains(name) {
                     self.db.reload_rel(&tbl(name), cols, router.rows(name).unwrap_or(&[]))?;
+                    any_moved = true;
                 } else if !delta.is_empty() {
                     self.db.retract_rows(&tbl(name), cols, &delta.retracted)?;
                     self.db.insert_rows(&tbl(name), cols, &delta.inserted)?;
+                    any_moved = true;
                 }
                 rerun.push(*name);
             }
@@ -435,6 +441,7 @@ impl Engine {
                 Err(_) => { let _ = self.db.rollback(); }
             }
         }
+        self.call_flip_moved.set(any_moved && result.is_ok());
         result
     }
 

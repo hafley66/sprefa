@@ -1083,6 +1083,13 @@ pub struct Engine {
     /// Engine, not once per process (a process-global cache poisoned every root
     /// in a multi-root daemon and pinned `true` forever after a swap).
     exe_identity_changed: std::cell::Cell<Option<bool>>,
+    /// Whether the LAST `flip_call_rels_via_router` actually moved any public
+    /// call-rel row (a cold reload or a non-empty delta). `refresh_call_rels`
+    /// reads it to report honest change: an exe-swap re-derive that reproduces
+    /// identical rows must not mark the call rels changed — that mark cascaded
+    /// the flow rails (`flow_edge`, `port_of_reach_*`) into a 2.6GB derived
+    /// rebuild on every daemon respawn after a reinstall.
+    pub(crate) call_flip_moved: std::cell::Cell<bool>,
     /// Per-file extracted-fact caches for the type/call/dataflow refreshers,
     /// keyed by (repo, path, content hash) — a warm tick re-parses only files
     /// whose content address moved. Each refresh replaces the map with exactly
@@ -1168,6 +1175,7 @@ impl Engine {
             last_derived_rebuilt: Vec::new(),
             gen_journal: std::cell::RefCell::new(None),
             exe_identity_changed: std::cell::Cell::new(None),
+            call_flip_moved: std::cell::Cell::new(false),
             type_facts_cache: Default::default(),
             call_facts_cache: Default::default(),
             df_facts_cache: Default::default(),
