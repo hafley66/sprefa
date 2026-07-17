@@ -281,6 +281,68 @@ fn health_answers_under_engine_lock_contention() {
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
 }
 
+/// The D-arc property survives the tokio shell swap: 50 CONCURRENT `GET /health`
+/// issued while a background thread keeps the engine mutex churning must ALL
+/// answer 200. Under the tokio shell, engine work runs on the `spawn_blocking`
+/// pool, so the shell's worker threads stay free to serve `/health` (roots-map
+/// lock only) — none of the 50 block behind the held engine mutex.
+#[test]
+fn fifty_concurrent_health_all_answer_under_engine_lock() {
+    let sb = Sandbox::new("health50");
+    // A recursive closure so each `query` does real work under the engine lock.
+    fs::write(sb.root.join("p.dl"),
+        "rel edge(a: text, b: text).\n\
+         edge(\"a\", \"b\").\nedge(\"b\", \"c\").\nedge(\"c\", \"d\").\nedge(\"d\", \"e\").\n\
+         rel reach(a: text, b: text).\n\
+         reach(x, y) <- edge(x, y).\n\
+         reach(x, z) <- edge(x, y), reach(y, z).\n\
+         ? reach(x, y).\n").unwrap();
+    let mut child = sb.spawn(&sb.root.join("p.dl"));
+    assert!(sb.wait_ready(), "not ready");
+
+    let base = sb.base_url();
+    let sock = sb.sock();
+    let root = sb.root.clone();
+
+    // Background thread: keep the engine lock churning for the whole window.
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stop_bg = stop.clone();
+    let bg = std::thread::spawn(move || {
+        let mut n = 0u64;
+        while !stop_bg.load(std::sync::atomic::Ordering::Relaxed) {
+            n += 1;
+            let _ = rpc_root(&sock, 2000 + n, "query", &root, serde_json::json!({}));
+        }
+    });
+    // Give the churn thread a moment to actually be holding the lock in a loop.
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    // Fire 50 /health calls CONCURRENTLY (one thread each) mid-contention.
+    let mut handles = Vec::new();
+    for _ in 0..50 {
+        let b = base.clone();
+        handles.push(std::thread::spawn(move || match http_get(&b, "/health") {
+            Some((200, body)) => serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| v["build_id"].as_str().map(|s| !s.is_empty()))
+                .unwrap_or(false),
+            _ => false,
+        }));
+    }
+    let ok = handles.into_iter()
+        .map(|h| h.join().unwrap_or(false))
+        .filter(|&answered| answered)
+        .count();
+
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = bg.join();
+    assert_eq!(ok, 50,
+        "all 50 concurrent /health calls must answer 200 while the engine mutex is held");
+
+    sb.shutdown();
+    let _ = child.wait_timeout(std::time::Duration::from_secs(5));
+}
+
 // ---------- child wait helper (mirrors daemon.rs) ----------
 
 trait WaitTimeoutExt {

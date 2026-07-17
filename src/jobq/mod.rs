@@ -590,6 +590,8 @@ pub(crate) struct JobListRow {
 }
 
 mod dispatch;
+#[allow(unused_imports)] // `Dispatcher` is jobq-test-only since the daemon's
+                         // dispatcher moved to `daemon_shell::jobs`.
 pub(crate) use dispatch::{Dispatcher, JobRunner};
 #[cfg(test)]
 mod tests;

@@ -44,14 +44,17 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock, RwLockReadGuard};
 use std::time::{Duration, Instant, SystemTime};
 
+use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::Notify;
+
 use crate::ast::Program;
+use crate::daemon_shell::{self, BroadcastMsg, ShellCtx};
 use crate::engine::{DiagRow, Engine};
 use crate::rpc::{self, Request, Response, INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND};
-use crate::watchgate::WatchGate;
 use crate::{config, db};
 
 const DEFAULT_IDLE_SECS: u64 = 30 * 60;
-const IDLE_TICK_SECS: u64 = 30;
+pub(crate) const IDLE_TICK_SECS: u64 = 30;
 /// Default effect-drain cadence when `DL_POLL_SECS` is unset. A program with
 /// `@async`/`@stream` effects needs SOME poll to drain its queue off-tick; making
 /// this a default (rather than opt-in) is what stops effects silently sitting at
@@ -66,7 +69,7 @@ const DEFAULT_POLL_SECS: u64 = 2;
 /// back on unwind. Centralizing the lock here also keeps `daemon.rs` under the
 /// unwrap budget (the poison policy lives in one place, not 48 call sites).
 #[inline]
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
@@ -227,12 +230,34 @@ fn remove_pid_file() {
 #[derive(Clone)]
 struct Shared {
     build_id: Arc<str>,
-    shutdown_requested: Arc<AtomicBool>,
-    subscribers: Arc<Mutex<Vec<Arc<Mutex<UnixStream>>>>>,
+    /// Subscriber-push channel: tick methods (on `spawn_blocking` threads) send
+    /// a serialized `diag_changed` / `rev_advanced` frame here; the async
+    /// subscriber pump fans it out over the kept-open UDS write halves. Replaces
+    /// the old `Arc<Mutex<Vec<Arc<Mutex<UnixStream>>>>>` inline-write list.
+    broadcast_tx: UnboundedSender<BroadcastMsg>,
+    /// Job doorbell: `enqueue` rings it so a parked dispatcher task wakes.
+    job_notify: Arc<Notify>,
     /// The durable job queue (J1). Watchers/pollers `enqueue` tick + sink-drain
     /// jobs here instead of running them inline; the dispatcher's workers claim
     /// and run them.
     jobs: Arc<crate::jobq::JobQueue>,
+}
+
+impl Shared {
+    /// Enqueue a job and ring the tokio doorbell so a dispatcher task wakes.
+    /// Callable from any thread (including `spawn_blocking`): `Notify::notify_one`
+    /// is sync + `Send`, so a tick/watcher running on a blocking thread can wake
+    /// a shell task without a runtime handle.
+    fn enqueue(&self, job: crate::jobq::JobRow) -> Result<()> {
+        self.jobs.enqueue(job)?;
+        self.job_notify.notify_one();
+        Ok(())
+    }
+
+    /// Push a pre-serialized notification frame to all subscribers (best-effort).
+    fn push_frame(&self, body: String) {
+        let _ = self.broadcast_tx.send(BroadcastMsg::Frame(body));
+    }
 }
 
 // ---------- one served root ----------
@@ -289,8 +314,15 @@ pub struct ServedRoot {
 }
 
 impl ServedRoot {
-    fn touch(&self) {
+    pub(crate) fn touch(&self) {
         *lock(&self.last_activity) = Instant::now();
+    }
+
+    /// Enqueue a tick/drain job for this root and ring the tokio doorbell. The
+    /// shell's watcher/poll tasks call this (through `spawn_blocking`) instead of
+    /// reaching the private `shared`/`Shared` handle directly.
+    pub(crate) fn enqueue_job(&self, job: crate::jobq::JobRow) -> Result<()> {
+        self.shared.enqueue(job)
     }
 
     /// Clone the current read-path shape snapshot — a cheap `Arc` clone under a
@@ -311,18 +343,18 @@ impl ServedRoot {
     /// The job-queue identity for this root: its registry key, or `"config"`
     /// for the key-less config view. `tick:{id}` / `sink:{id}` job keys are
     /// built from this, and `Daemon::served_root_for_job` reverses it.
-    fn job_root_id(&self) -> String {
+    pub(crate) fn job_root_id(&self) -> String {
         self.key.clone().unwrap_or_else(|| CONFIG_JOB_ID.to_string())
     }
 
-    fn root_label(&self) -> String {
+    pub(crate) fn root_label(&self) -> String {
         self.root
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| self.root.to_string_lossy().into_owned())
     }
 
-    fn tick_full(&self, quiet: bool) -> Result<()> {
+    pub(crate) fn tick_full(&self, quiet: bool) -> Result<()> {
         let tick_next = self.tick_count.load(Ordering::Relaxed) + 1;
         crate::activity::begin_tick(tick_next, &self.program_display);
         let prog = lock(&self.prog);
@@ -370,7 +402,7 @@ impl ServedRoot {
 
     /// Re-parse the program files, swap the parsed `Program`, re-tick. A parse or
     /// type error keeps the last good program.
-    fn reload_program(&self) -> Result<()> {
+    pub(crate) fn reload_program(&self) -> Result<()> {
         let all = lock(&self.program_files).clone();
         let files: Vec<PathBuf> = all.iter().filter(|f| f.exists()).cloned().collect();
         if files.is_empty() {
@@ -403,7 +435,7 @@ impl ServedRoot {
     /// Re-discover `.dl` files under `<root>/.dl/`, re-merge the program if the
     /// file set changed, re-tick. `Ok(true)` = set changed and re-merged;
     /// `Ok(false)` = set unchanged (content edit, or not in discovery mode).
-    fn reload_discovery(&self) -> Result<bool> {
+    pub(crate) fn reload_discovery(&self) -> Result<bool> {
         if !self.discovery_mode {
             return Ok(false);
         }
@@ -478,7 +510,7 @@ impl ServedRoot {
     /// also opts a root out of the idle skip, which is conservative-correct,
     /// not a regression (such a root already relied on the always-full-tick
     /// poll before this fix).
-    fn poll_idle(&self) -> Result<bool> {
+    pub(crate) fn poll_idle(&self) -> Result<bool> {
         let cadence_driven = {
             let prog = lock(&self.prog);
             crate::engine::every_rels_used(&prog) || crate::engine::clock_rels_used(&prog)
@@ -554,7 +586,7 @@ impl ServedRoot {
         Ok(n)
     }
 
-    fn has_effects(&self) -> bool {
+    pub(crate) fn has_effects(&self) -> bool {
         let prog = lock(&self.prog);
         !crate::engine::async_effect_arity(&prog).is_empty()
     }
@@ -571,18 +603,9 @@ impl ServedRoot {
             Ok(s) => s,
             Err(_) => return,
         };
-        let mut subs = lock(&self.shared.subscribers);
-        let mut broken: Vec<usize> = Vec::new();
-        for (i, s) in subs.iter().enumerate() {
-            let mut guard = match s.lock() {
-                Ok(g) => g,
-                Err(_) => { broken.push(i); continue; }
-            };
-            if rpc::write_frame(&mut *guard, &body).is_err() {
-                broken.push(i);
-            }
-        }
-        for i in broken.into_iter().rev() { subs.swap_remove(i); }
+        // Push through the async pump (best-effort); no socket write on the tick
+        // thread anymore, so a slow subscriber can never stall a tick.
+        self.shared.push_frame(body);
     }
 
     /// The git refs to watch for advance: always `HEAD`, plus every non-WORK rev
@@ -606,7 +629,7 @@ impl ServedRoot {
 
     /// React to a `.git` change: diff each watched ref old→new against `_file` and
     /// broadcast `rev_advanced`. Returns (refs advanced, worktree files changed).
-    fn on_git_event(&self) -> (usize, Vec<PathBuf>) {
+    pub(crate) fn on_git_event(&self) -> (usize, Vec<PathBuf>) {
         let mut repos: Vec<(String, PathBuf)> = vec![(self.root_label(), self.root.clone())];
         // This engine's corpus (hermetic served root => just its own root; the
         // config view => the config repos), not every ambient config repo.
@@ -655,29 +678,17 @@ impl ServedRoot {
     }
 
     fn broadcast_rev_advanced(&self, advances: &[(String, String, String, String, Vec<String>)]) {
-        let mut subs = lock(&self.shared.subscribers);
-        let mut broken: Vec<usize> = Vec::new();
         for (repo, name, old, new, files) in advances {
             let note = json!({"jsonrpc": "2.0", "method": "rev_advanced", "params": {
                 "root": self.root.to_string_lossy(),
                 "repo": repo, "ref": name, "old": old, "new": new, "paths": files,
             }});
             let body = match serde_json::to_string(&note) { Ok(s) => s, Err(_) => continue };
-            for (i, s) in subs.iter().enumerate() {
-                let mut guard = match s.lock() {
-                    Ok(g) => g,
-                    Err(_) => { if !broken.contains(&i) { broken.push(i); } continue; }
-                };
-                if rpc::write_frame(&mut *guard, &body).is_err() && !broken.contains(&i) {
-                    broken.push(i);
-                }
-            }
+            self.shared.push_frame(body);
         }
-        broken.sort_unstable();
-        for i in broken.into_iter().rev() { subs.swap_remove(i); }
     }
 
-    fn program_in_paths(&self, paths: &[PathBuf]) -> bool {
+    pub(crate) fn program_in_paths(&self, paths: &[PathBuf]) -> bool {
         let pf = lock(&self.program_files);
         for p in paths {
             let canon = p.canonicalize().unwrap_or_else(|_| p.clone());
@@ -813,7 +824,10 @@ pub struct Daemon {
     launch_exe_stamp: Option<ExeStamp>,
     pub build_id: Arc<str>,
     pub shutdown_requested: Arc<AtomicBool>,
-    pub subscribers: Arc<Mutex<Vec<Arc<Mutex<UnixStream>>>>>,
+    /// Shell handles (runtime, cancellation token, job doorbell, subscriber
+    /// channel). `add_root` spawns each root's watcher task through `shell.rt`;
+    /// the poll/idle/shutdown tasks select on `shell.cancel`.
+    pub(crate) shell: ShellCtx,
     /// The `root`-absent config view (org/folders model).
     pub config: Arc<ServedRoot>,
     /// key -> served root. The registry.
@@ -827,8 +841,8 @@ impl Daemon {
     fn shared(&self) -> Shared {
         Shared {
             build_id: self.build_id.clone(),
-            shutdown_requested: self.shutdown_requested.clone(),
-            subscribers: self.subscribers.clone(),
+            broadcast_tx: self.shell.broadcast_tx.clone(),
+            job_notify: self.shell.job_notify.clone(),
             jobs: self.jobs.clone(),
         }
     }
@@ -853,7 +867,7 @@ impl Daemon {
 
     /// Every served root (config view + registered), for the idle/poll loops and
     /// status.
-    fn all_roots(&self) -> Vec<Arc<ServedRoot>> {
+    pub(crate) fn all_roots(&self) -> Vec<Arc<ServedRoot>> {
         let mut v = vec![self.config.clone()];
         v.extend(lock(&self.roots).values().cloned());
         v
@@ -933,18 +947,17 @@ impl Daemon {
                 write_roots_json(&records);
             }
         }
-        // Spawn its watcher.
-        let sr_watch = sr.clone();
-        let launch_exe_stamp = self.launch_exe_stamp;
-        let _ = std::thread::Builder::new().name(format!("dl-watch-{key}"))
-            .spawn(move || watcher_loop(sr_watch, launch_exe_stamp));
+        // Spawn its watcher as a tokio task (notify's callback thread forwards
+        // events into a channel this task drains; engine ticks run via
+        // `spawn_blocking`).
+        self.shell.rt.spawn(daemon_shell::watch::watch_task(sr.clone(), self.shell.clone(), self.launch_exe_stamp));
         tracing::info!("[daemon] registered root {} (key {key})", canon.display());
         Ok(sr)
     }
 
     /// Deregister a root: stop its watcher, drop the engine, keep the db (re-add
     /// warms from it). `purge` deletes `<home>/roots/<key>/`.
-    fn drop_root(self: &Arc<Self>, root: &Path, purge: bool) -> Result<()> {
+    pub(crate) fn drop_root(self: &Arc<Self>, root: &Path, purge: bool) -> Result<()> {
         let canon = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
         let key = key_of(&canon);
         let sr = lock(&self.roots).remove(&key);
@@ -1102,15 +1115,41 @@ pub fn run_daemon(
 
     let build_id: Arc<str> = Arc::from(build_id().as_str());
     let shutdown_requested = Arc::new(AtomicBool::new(false));
-    let subscribers: Arc<Mutex<Vec<Arc<Mutex<UnixStream>>>>> = Arc::new(Mutex::new(Vec::new()));
+
+    // Build the ONE shell runtime NOW — after `apply_daemon_budget` ran on this
+    // main thread, so the runtime's worker + blocking threads inherit the QoS.
+    // The tick engine stays strictly sync; the runtime drives only the shell
+    // (sockets, timers, dispatch) and reaches the engine solely via
+    // `spawn_blocking`. Worker count is a small FIXED 2, independent of the
+    // rayon/job-dispatcher budget below.
+    let runtime = daemon_shell::build_runtime().context("build shell runtime")?;
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let job_notify = Arc::new(Notify::new());
+    let (broadcast_tx, broadcast_rx) = tokio::sync::mpsc::unbounded_channel();
+    let shell = ShellCtx {
+        rt: runtime.handle().clone(),
+        cancel: cancel.clone(),
+        job_notify: job_notify.clone(),
+        broadcast_tx: broadcast_tx.clone(),
+    };
+    // The subscriber-push pump owns the kept-open write halves and drains the
+    // broadcast channel.
+    daemon_shell::spawn_subscriber_pump(&shell, broadcast_rx);
+
     // The durable job queue (J1), in its own `<home>/jobs.sqlite`.
     let jobs = crate::jobq::JobQueue::open(&home).context("open job queue db")?;
     // Self-diagnosis trail: boot marker + `dl-why` sampler, before anything
     // heavy runs, so even a first-tick death leaves an answer for
-    // `dl daemon why`.
+    // `dl daemon why`. The sampler is a plain OS thread by design — it must
+    // keep writing while the tokio shell or the engine is wedged.
     crate::why::mark_boot(&home, &build_id);
     crate::why::start_sampler(home.clone(), jobs.clone());
-    let shared = Shared { build_id: build_id.clone(), shutdown_requested: shutdown_requested.clone(), subscribers: subscribers.clone(), jobs: jobs.clone() };
+    let shared = Shared {
+        build_id: build_id.clone(),
+        broadcast_tx: broadcast_tx.clone(),
+        job_notify: job_notify.clone(),
+        jobs: jobs.clone(),
+    };
 
     let repos = load_repos_eager();
     if !repos.is_empty() { tracing::info!("[config] {} repo(s) registered", repos.len()); }
@@ -1127,7 +1166,7 @@ pub fn run_daemon(
         launch_exe_stamp,
         build_id: build_id.clone(),
         shutdown_requested: shutdown_requested.clone(),
-        subscribers: subscribers.clone(),
+        shell: shell.clone(),
         config,
         roots: Mutex::new(HashMap::new()),
         jobs: jobs.clone(),
@@ -1148,10 +1187,10 @@ pub fn run_daemon(
     );
     let runner: Arc<dyn crate::jobq::JobRunner> =
         Arc::new(DaemonJobRunner { daemon: Arc::downgrade(&daemon) });
-    let _dispatcher = crate::jobq::Dispatcher::spawn(
+    daemon_shell::jobs::spawn(
+        &shell,
         jobs.clone(),
         runner,
-        shutdown_requested.clone(),
         n_workers,
         vec![crate::jobq::JobKind::Tick, crate::jobq::JobKind::SinkDrain],
     );
@@ -1170,6 +1209,9 @@ pub fn run_daemon(
     }
     if let Some(dir) = sock.parent() { std::fs::create_dir_all(dir)?; }
     let listener = UnixListener::bind(&sock)?;
+    // The accept task adopts this into the runtime via `from_std`, which requires
+    // a non-blocking listener.
+    listener.set_nonblocking(true).context("set UDS listener non-blocking")?;
     std::fs::set_permissions(&sock, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
     write_pid_file()?;
     let idle_secs = idle_timeout_secs();
@@ -1189,13 +1231,8 @@ pub fn run_daemon(
         &build_id,
     );
 
-    // Config-view watcher (watches the config repos).
-    {
-        let c = daemon.config.clone();
-        let stamp = launch_exe_stamp;
-        std::thread::Builder::new().name("dl-watch-config".into())
-            .spawn(move || watcher_loop(c, stamp))?;
-    }
+    // Config-view watcher (watches the config repos) — a tokio task.
+    daemon.shell.rt.spawn(daemon_shell::watch::watch_task(daemon.config.clone(), shell.clone(), launch_exe_stamp));
 
     // Replay roots.json: re-register every persisted root (warm from its db).
     // Part 4 (stale-root eviction): a record whose directory no longer
@@ -1242,10 +1279,7 @@ pub fn run_daemon(
                             records.push(RootRecord { root: canon.clone(), key: key.clone(), added_at });
                             write_roots_json(&records);
                         }
-                        let sr_watch = sr.clone();
-                        let stamp = launch_exe_stamp;
-                        std::thread::Builder::new().name(format!("dl-watch-{key}"))
-                            .spawn(move || watcher_loop(sr_watch, stamp))?;
+                        daemon.shell.rt.spawn(daemon_shell::watch::watch_task(sr.clone(), shell.clone(), launch_exe_stamp));
                         tracing::info!("[daemon] registered initial root {}", canon.display());
                     }
                     Err(e) => tracing::error!("[daemon] initial root {}: {e}", canon.display()),
@@ -1254,60 +1288,48 @@ pub fn run_daemon(
         }
     }
 
+    // Poll (@async clock) + idle (self-reap) timers — tokio interval tasks.
     if !foreground {
-        let d = daemon.clone();
-        std::thread::Builder::new().name("dl-idle".into())
-            .spawn(move || idle_loop(d, idle_secs))?;
+        daemon.shell.rt.spawn(daemon_shell::timers::idle_task(daemon.clone(), shell.clone(), idle_secs));
     }
     if let Some(secs) = poll_interval_secs() {
-        let d = daemon.clone();
-        std::thread::Builder::new().name("dl-poll".into())
-            .spawn(move || poll_loop(d, secs))?;
+        daemon.shell.rt.spawn(daemon_shell::timers::poll_task(daemon.clone(), shell.clone(), secs));
     }
 
-    let d = daemon.clone();
-    std::thread::Builder::new()
-        .name("dl-accept".into())
-        .spawn(move || accept_loop(d, listener))?;
-
-    // Standard HTTP/JSON transport alongside the UDS socket. Binds 127.0.0.1:0
-    // and publishes `<home>/http.json` so clients can find the port. A bind
-    // failure is logged but non-fatal: the UDS transport stays authoritative.
-    if let Err(e) = crate::daemon_http::serve(daemon.clone(), &build_id) {
+    // UDS accept + standard HTTP/JSON transport. HTTP binds 127.0.0.1:0 and
+    // publishes `<home>/http.json`; a bind failure is logged non-fatal (the UDS
+    // transport stays authoritative).
+    daemon_shell::uds::spawn_accept(&shell, daemon.clone(), listener);
+    if let Err(e) = daemon_shell::http::spawn(&shell, daemon.clone(), &build_id) {
         tracing::warn!("[daemon] http transport disabled: {e}");
     }
 
-    if tray {
-        crate::tray::run_tray(daemon.clone())?;
-    } else {
-        while !daemon.shutdown_requested.load(Ordering::Relaxed) {
-            std::thread::sleep(Duration::from_millis(100));
-        }
+    // Graceful shutdown: SIGINT/SIGTERM and the shutdown RPC both cancel the
+    // token; this task then removes the control files and exits the process. It
+    // is the single cancel-driven exit path (foreground, detached, and the
+    // tray's own Quit handler exits directly via `process::exit`).
+    daemon_shell::spawn_signal(&shell);
+    {
+        let d = daemon.clone();
+        let cancel_task = cancel.clone();
+        shell.rt.spawn(async move {
+            cancel_task.cancelled().await;
+            shutdown_cleanup(&d);
+            std::process::exit(0);
+        });
     }
-    shutdown_cleanup(&daemon);
-    Ok(())
-}
 
-fn accept_loop(daemon: Arc<Daemon>, listener: UnixListener) {
-    let mut next_id: u64 = 0;
-    for stream in listener.incoming() {
-        if daemon.shutdown_requested.load(Ordering::Relaxed) {
-            break;
-        }
-        match stream {
-            Ok(stream) => {
-                next_id += 1;
-                let d = daemon.clone();
-                if std::thread::Builder::new()
-                    .name(format!("dl-conn-{next_id}"))
-                    .spawn(move || handle_connection(d, stream))
-                    .is_err()
-                {
-                    tracing::error!("[daemon] thread spawn failed for connection {next_id}");
-                }
-            }
-            Err(e) => tracing::warn!("[daemon] accept error: {e}"),
-        }
+    if tray {
+        // The tray owns the platform main thread; the runtime keeps driving the
+        // shell tasks on its worker threads. Quit / SIGINT exit the process.
+        crate::tray::run_tray(daemon.clone())?;
+        Ok(())
+    } else {
+        // Park the main thread until cancellation; the shutdown task races us to
+        // `process::exit`. Clean up + return in case it has not fired yet.
+        runtime.block_on(async { cancel.cancelled().await });
+        shutdown_cleanup(&daemon);
+        Ok(())
     }
 }
 
@@ -1346,253 +1368,6 @@ impl crate::jobq::JobRunner for DaemonJobRunner {
     }
 }
 
-// ---------- watcher thread (one per served root) ----------
-
-fn watcher_loop(d: Arc<ServedRoot>, launch_exe_stamp: Option<ExeStamp>) {
-    use notify::{RecursiveMode, Watcher};
-    let is_config = d.key.is_none();
-    let (tx, rx) = std::sync::mpsc::channel();
-    let mut watcher = match notify::recommended_watcher(move |res| { let _ = tx.send(res); }) {
-        Ok(w) => w,
-        Err(e) => { tracing::error!("[{}] watcher init failed: {e}", d.root_label()); return; }
-    };
-    // The config view roots at the XDG home (which holds the per-root dbs); do NOT
-    // watch it recursively. A registered root watches its own tree.
-    let mut gate = if is_config {
-        WatchGate::new(&[])
-    } else {
-        if let Err(e) = watcher.watch(&d.root, RecursiveMode::Recursive) {
-            tracing::error!("[{}] watch root failed: {e}", d.root_label());
-            return;
-        }
-        WatchGate::new(std::slice::from_ref(&d.root))
-    };
-    let mut watch_count: usize = if is_config { 0 } else { 1 };
-    // Watch every folder in THIS ENGINE'S corpus (its `snapshot_repos()`) so
-    // corpus edits react. A hermetic served root's snapshot is empty (only its
-    // own `--root`, watched above), so one save wakes only that root; the config
-    // view's snapshot is the config repos. Following the engine, not
-    // `load_repos_eager()`, is what makes the watcher hermetic in lockstep.
-    for rc in lock(&d.eng).snapshot_repos() {
-        if rc.root.exists() && rc.root != d.root
-            && watcher.watch(&rc.root, RecursiveMode::Recursive).is_ok() {
-            watch_count += 1;
-            gate.add_root(&rc.root);
-        }
-    }
-    let cfg_path = config::SprfConfig::config_path()
-        .and_then(|p| p.canonicalize().ok().or(Some(p)));
-    if is_config {
-        if let Some(cp) = &cfg_path {
-            if let Some(dir) = cp.parent() {
-                if dir.exists() && watcher.watch(dir, RecursiveMode::NonRecursive).is_ok() {
-                    watch_count += 1;
-                }
-            }
-        }
-        // Watch home/.dl for load'd programs (non-recursive; not the dbs).
-        let dl = d.root.join(".dl");
-        if dl.is_dir() { let _ = watcher.watch(&dl, RecursiveMode::NonRecursive); }
-    }
-    // Narrow-watch the `.git` dir of the root + this engine's corpus repos.
-    if !is_config { watch_count += watch_git_narrow(&mut watcher, &mut gate, &d.root); }
-    for rc in lock(&d.eng).snapshot_repos() {
-        if rc.root.exists() { watch_count += watch_git_narrow(&mut watcher, &mut gate, &rc.root); }
-    }
-
-    tracing::info!("[{}] watcher ready — {watch_count} watch(es)", d.root_label());
-    let watcher_start = std::time::Instant::now();
-    const STARTUP_GRACE: Duration = Duration::from_secs(1);
-    let mut watched: std::collections::HashSet<PathBuf> = std::collections::HashSet::from_iter([
-        d.root.clone(),
-    ].into_iter().chain(lock(&d.eng).snapshot_repos().into_iter().filter(|r| r.root.exists()).map(|r| r.root)));
-    loop {
-        // Observe the drop flag between events so `drop_root` can retire us.
-        let first = match rx.recv_timeout(Duration::from_secs(1)) {
-            Ok(ev) => ev,
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                if d.stopped.load(Ordering::Relaxed) { return; }
-                enforce_mem_limit(&d.root_label());
-                enforce_fresh_binary(launch_exe_stamp);
-                continue;
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
-        };
-        if d.stopped.load(Ordering::Relaxed) { return; }
-        if watcher_start.elapsed() < STARTUP_GRACE {
-            while rx.try_recv().is_ok() {}
-            std::thread::sleep(Duration::from_millis(50));
-            continue;
-        }
-        const QUIET: Duration = Duration::from_millis(120);
-        const MAX_WINDOW: Duration = Duration::from_millis(600);
-        let mut paths: Vec<PathBuf> = Vec::new();
-        let mut rescan = false;
-        match first {
-            Ok(ev) => {
-                if ev.need_rescan() { rescan = true; } else { paths.extend(ev.paths); }
-            }
-            Err(e) => {
-                tracing::warn!("[{}] watch error, forcing full tick: {e}", d.root_label());
-                rescan = true;
-            }
-        }
-        let window_start = Instant::now();
-        loop {
-            match rx.recv_timeout(QUIET) {
-                Ok(Ok(ev)) => {
-                    if ev.need_rescan() { rescan = true; } else { paths.extend(ev.paths); }
-                    if window_start.elapsed() > MAX_WINDOW { break; }
-                }
-                Ok(Err(e)) => {
-                    tracing::warn!("[{}] watch error, forcing full tick: {e}", d.root_label());
-                    rescan = true;
-                    if window_start.elapsed() > MAX_WINDOW { break; }
-                }
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
-            }
-        }
-        if rescan {
-            let tick_num = d.tick_count.load(Ordering::Relaxed);
-            match d.tick_full(true) {
-                Ok(()) => tracing::info!("[{}] tick #{tick_num} (rescan recovery) ok", d.root_label()),
-                Err(e) => tracing::error!("[{}] tick #{tick_num} (rescan recovery) error: {e}", d.root_label()),
-            }
-            d.touch();
-            enforce_mem_limit(&d.root_label());
-            enforce_fresh_binary(launch_exe_stamp);
-            continue;
-        }
-        let touches_git = gate.touches_git(&paths);
-        let paths: Vec<PathBuf> = gate.filter(paths);
-        if paths.is_empty() && !touches_git {
-            continue;
-        }
-        d.touch();
-        let touches_cfg = cfg_path.as_ref().is_some_and(|c|
-            paths.iter().any(|p| p.canonicalize().ok().as_deref() == Some(c) || p == c));
-        let mut paths = paths;
-        let touches_program = d.program_in_paths(&paths);
-        if touches_program {
-            let names: Vec<String> = paths.iter()
-                .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(|s| s.to_string()))
-                .collect();
-            // Singleton daemon: program edits ALWAYS hot-reload (never exit for
-            // respawn — one exit would kill every served root).
-            if d.discovery_mode {
-                match d.reload_discovery() {
-                    Ok(false) => {
-                        tracing::info!("[{}] program edit ({}) — reloading (discovery)", d.root_label(), names.join(", "));
-                        if let Err(e) = d.reload_program() {
-                            tracing::warn!("[{}] reload failed, keeping old: {e}", d.root_label());
-                        }
-                    }
-                    Ok(true) => {}
-                    Err(e) => tracing::warn!("[{}] discovery reload: {e}", d.root_label()),
-                }
-            } else {
-                tracing::info!("[{}] program edit ({}) — reloading", d.root_label(), names.join(", "));
-                if let Err(e) = d.reload_program() {
-                    tracing::warn!("[{}] reload failed, keeping old: {e}", d.root_label());
-                }
-            }
-            continue;
-        }
-        if d.discovery_mode {
-            let has_dl = paths.iter().any(|p| {
-                p.extension().and_then(|e| e.to_str()) == Some("dl")
-                    && p.strip_prefix(&d.root)
-                        .map(|r| r.starts_with(".dl"))
-                        .unwrap_or(false)
-            });
-            if has_dl {
-                tracing::info!("[{}] .dl discovery change — re-merging program", d.root_label());
-                if let Err(e) = d.reload_discovery() {
-                    tracing::warn!("[{}] discovery reload: {e}", d.root_label());
-                }
-                continue;
-            }
-        }
-        if touches_git {
-            let (n, changed) = d.on_git_event();
-            if n > 0 || !changed.is_empty() {
-                tracing::info!("[{}] git change — {n} ref(s) advanced, {} worktree file(s)", d.root_label(), changed.len());
-            }
-            if changed.is_empty() { continue; }
-            paths = changed;
-        }
-        let tick_label;
-        let result = if touches_cfg {
-            tick_label = "config change";
-            let mut eng = lock(&d.eng);
-            eng.set_repos(served_repos(d.key.is_none()));
-            drop(eng);
-            if let Err(e) = lock(&d.eng).save_repos_meta() {
-                tracing::warn!("[{}] save_repos_meta: {e}", d.root_label());
-            }
-            d.tick_full(true)
-        } else if paths.is_empty() {
-            tick_label = "empty event";
-            d.tick_full(true)
-        } else {
-            // J1: the hot source-edit path no longer ticks inline on this
-            // watcher thread — it enqueues a coalescing `tick:{root}` job that a
-            // dispatcher worker drains (rapid saves union into one job's paths).
-            tick_label = "source change (queued)";
-            d.shared.jobs.enqueue(crate::jobq::JobRow::tick(&d.job_root_id(), &paths))
-        };
-        let n_paths = paths.len();
-        let tick_num = d.tick_count.load(Ordering::Relaxed);
-        let tick_ok = result.is_ok();
-        match result {
-            Ok(()) => tracing::info!("[{}] tick #{tick_num} ({tick_label}, {n_paths} paths) ok", d.root_label()),
-            Err(e) => tracing::error!("[{}] tick #{tick_num} ({tick_label}, {n_paths} paths) error: {e}", d.root_label()),
-        }
-        // A tick is where the image grows (extract, closure, spine writes), so
-        // check the ceiling here too, not only on the idle heartbeat.
-        enforce_mem_limit(&d.root_label());
-        enforce_fresh_binary(launch_exe_stamp);
-        if tick_ok {
-            let before = watch_count;
-            for rc in lock(&d.eng).snapshot_repos() {
-                if rc.root.exists() && watched.insert(rc.root.clone())
-                    && watcher.watch(&rc.root, RecursiveMode::Recursive).is_ok() {
-                    watch_count += 1;
-                    gate.add_root(&rc.root);
-                    watch_count += watch_git_narrow(&mut watcher, &mut gate, &rc.root);
-                    tracing::info!("[{}] watching (pulled) {} ({})", d.root_label(), rc.slug, rc.root.display());
-                }
-            }
-            if watch_count != before {
-                tracing::info!("[{}] watch count now {watch_count} (+{})", d.root_label(), watch_count - before);
-            }
-        }
-    }
-}
-
-/// Narrow-watch a repo's `.git` dir. Returns the number of watch registrations
-/// installed.
-fn watch_git_narrow(watcher: &mut notify::RecommendedWatcher, gate: &mut WatchGate, root: &Path) -> usize {
-    use notify::{RecursiveMode, Watcher};
-    let out = match std::process::Command::new("git").arg("-C").arg(root)
-        .args(["rev-parse", "--git-dir"]).output() {
-        Ok(o) if o.status.success() => o,
-        _ => return 0,
-    };
-    let gd = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let gdp = if Path::new(&gd).is_absolute() { PathBuf::from(&gd) } else { root.join(&gd) };
-    if !gdp.exists() { return 0; }
-    gate.add_git_dir(&gdp);
-    let mut added = 0;
-    for (path, recursive) in gate.git_watch_targets(&gdp) {
-        if !path.exists() { continue; }
-        let mode = if recursive { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
-        if watcher.watch(&path, mode).is_ok() { added += 1; }
-    }
-    added
-}
-
 /// Identity of the currently-running `dl` binary: crate version + the exe's
 /// mtime. A client that rebuilt/reinstalled computes a different id and respawns.
 fn build_id() -> String {
@@ -1605,31 +1380,6 @@ fn build_id() -> String {
     match mtime {
         Some(secs) => format!("{version}:{secs}"),
         None => version.to_string(),
-    }
-}
-
-// ---------- idle thread (all roots) ----------
-
-/// Exit when EVERY served root has been idle past the threshold (keep engines
-/// warm while any is active). Per-root eviction is a follow-up; this arc keeps
-/// them all warm until the whole process idles out.
-fn idle_loop(d: Arc<Daemon>, idle_secs: u64) {
-    loop {
-        std::thread::sleep(Duration::from_secs(IDLE_TICK_SECS));
-        // Job-queue maintenance: reclaim abandoned leases (a dead worker in a
-        // live process) and trim old `done` rows. See `jobq::sweep`.
-        if let Err(e) = d.jobs.sweep(crate::jobq::LEASE_SECS, crate::jobq::DONE_RETAIN_SECS) {
-            tracing::warn!("[daemon] job sweep: {e}");
-        }
-        let roots = d.all_roots();
-        let all_idle = roots.iter().all(|sr| {
-            lock(&sr.last_activity).elapsed() > Duration::from_secs(idle_secs)
-        });
-        if all_idle {
-            tracing::info!("[daemon] all roots idle {}min, exiting", idle_secs / 60);
-            shutdown_cleanup(&d);
-            std::process::exit(0);
-        }
     }
 }
 
@@ -1650,7 +1400,7 @@ const DEFAULT_MEM_LIMIT_MB: u64 = 4096;
 const MEM_GUARD_EXIT_CODE: i32 = 137;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ExeStamp {
+pub(crate) struct ExeStamp {
     len: u64,
     mtime: SystemTime,
 }
@@ -1668,7 +1418,7 @@ fn should_exit_for_binary_change(launch: Option<ExeStamp>, current: Option<ExeSt
     matches!((launch, current), (Some(before), Some(after)) if before != after)
 }
 
-fn enforce_fresh_binary(launch_exe_stamp: Option<ExeStamp>) {
+pub(crate) fn enforce_fresh_binary(launch_exe_stamp: Option<ExeStamp>) {
     if launch_exe_stamp.is_none() { return; }
     if should_exit_for_binary_change(launch_exe_stamp, current_exe_stamp()) {
         tracing::info!("[daemon] binary replaced on disk, exiting so the next call runs the new version");
@@ -1699,7 +1449,7 @@ fn self_rss_mb() -> Option<u64> {
 /// Exit the process if RSS has crossed the ceiling. Called on the serve loop's
 /// 1s heartbeat and after each tick, so both an idle leak and a busy-tick storm
 /// trip it. Logs the numbers before exiting so the cause is in the daemon log.
-fn enforce_mem_limit(label: &str) {
+pub(crate) fn enforce_mem_limit(label: &str) {
     let Some(limit) = mem_limit_mb() else { return };
     let Some(rss) = self_rss_mb() else { return };
     if rss > limit {
@@ -1709,90 +1459,12 @@ fn enforce_mem_limit(label: &str) {
     }
 }
 
-// ---------- poll thread (the @async clock source, all roots) ----------
+// ---------- poll task (the @async clock source, all roots) ----------
 
 fn poll_interval_secs() -> Option<u64> {
     match std::env::var("DL_POLL_SECS") {
         Ok(s) => s.parse::<u64>().ok().filter(|&n| n > 0),
         Err(_) => Some(DEFAULT_POLL_SECS),
-    }
-}
-
-/// The poll thread no longer DRAINS inline; it ENQUEUES a `sink:{root}` job for
-/// each effect-bearing root that has drainable work, and a dispatcher worker
-/// runs `poll_tick`. The idle-gate (`has_effects` + `poll_idle`) is the enqueue
-/// CONDITION — unchanged from before. Failure backoff is NOT re-implemented
-/// here: the queue owns it (a job whose `poll_tick` errors backs off via
-/// `finish`), so there is no second poll-error backoff loop.
-fn poll_loop(d: Arc<Daemon>, secs: u64) {
-    tracing::info!("[daemon] poll loop every {secs}s (@async drain via job queue)");
-    loop {
-        std::thread::sleep(Duration::from_secs(secs));
-        if d.shutdown_requested.load(Ordering::Relaxed) { return; }
-        for sr in d.all_roots() {
-            // Part 4 (stale-root eviction): a registered root whose directory
-            // vanished out from under the daemon (a temp job dir cleaned up
-            // after `dl` auto-registered it on attach, etc.) is deregistered
-            // here instead of being served — and error-looped — forever. The
-            // config view (`key == None`) has no directory of its own to
-            // vanish and is never a candidate.
-            if sr.key.is_some() && !sr.root.exists() {
-                tracing::warn!("[daemon] root {} no longer exists; deregistering", sr.root.display());
-                let _ = d.drop_root(&sr.root, false);
-                continue;
-            }
-            if !sr.has_effects() { continue; }
-            // Idle-gate (the CPU-hog fix, preserved): nothing queued, settled,
-            // no source motion since the last full tick, no `every`/`clock`
-            // cadence -> nothing to drain, so do not enqueue.
-            match sr.poll_idle() {
-                Ok(true) => continue,
-                Ok(false) => {}
-                Err(e) => { tracing::warn!("[{}] poll idle probe: {e}", sr.root_label()); continue; }
-            }
-            if let Err(e) = sr.shared.jobs.enqueue(crate::jobq::JobRow::sink_drain(&sr.job_root_id())) {
-                tracing::warn!("[{}] enqueue sink drain: {e}", sr.root_label());
-            }
-        }
-    }
-}
-
-// ---------- per-connection handler ----------
-
-fn handle_connection(d: Arc<Daemon>, mut stream: UnixStream) {
-    loop {
-        let body = match rpc::read_frame(&mut stream) {
-            Ok(Some(b)) => b,
-            Ok(None) => return,
-            Err(e) => { tracing::warn!("[daemon] read error: {e}"); return; }
-        };
-        let v: Value = match serde_json::from_str(&body) {
-            Ok(v) => v,
-            Err(e) => {
-                let r = Response::err(0, rpc::PARSE_ERROR, format!("parse: {e}"));
-                let _ = rpc::write_frame(&mut stream, &serde_json::to_string(&r.to_json()).unwrap());
-                continue;
-            }
-        };
-        let req = match parse_request(v) {
-            Some(r) => r,
-            None => continue,
-        };
-        let is_shutdown = req.method == "shutdown";
-        let is_subscribe = req.method == "subscribe";
-        let sub = if is_subscribe {
-            stream.try_clone().ok().map(|s| Arc::new(Mutex::new(s)))
-        } else {
-            None
-        };
-        let resp = handle_request(&d, &req, sub);
-        let out = serde_json::to_string(&resp.to_json()).unwrap_or_else(|_| "{}".into());
-        if rpc::write_frame(&mut stream, &out).is_err() { return; }
-        if is_shutdown {
-            d.shutdown_requested.store(true, Ordering::Relaxed);
-            shutdown_cleanup(&d);
-            std::process::exit(0);
-        }
     }
 }
 
@@ -1809,19 +1481,16 @@ fn req_root(req: &Request) -> Option<String> {
     req.params.get("root").and_then(|v| v.as_str()).map(String::from)
 }
 
-pub(crate) fn handle_request(d: &Arc<Daemon>, req: &Request, subscriber_stream: Option<Arc<Mutex<UnixStream>>>) -> Response {
+/// Dispatch one request. Transport-agnostic and synchronous — both the UDS
+/// connection task and the axum `/rpc` handler call it through `spawn_blocking`,
+/// since it takes `lock_eng` / the `prog` lock. `subscribe` is NOT handled here:
+/// both transports intercept it (the UDS task registers the write half with the
+/// subscriber pump; the HTTP path rejects it), so a `subscribe` never reaches
+/// this function.
+pub(crate) fn handle_request(d: &Arc<Daemon>, req: &Request) -> Response {
     // ----- process-level methods (no root routing) -----
     match req.method.as_str() {
         "shutdown" => return Response::ok(req.id, json!({"ok": true})),
-        "subscribe" => {
-            let events = req.params.get("events").cloned().unwrap_or(Value::Array(vec![]));
-            return if let Some(s) = subscriber_stream {
-                lock(&d.subscribers).push(s);
-                Response::ok(req.id, json!({"events": events, "ok": true}))
-            } else {
-                Response::err(req.id, INVALID_PARAMS, "subscribe requires a kept-open socket")
-            };
-        }
         "add_root" => {
             let Some(path) = req_root(req) else {
                 return Response::err(req.id, INVALID_PARAMS, "add_root needs root");

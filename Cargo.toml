@@ -138,10 +138,22 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tree-sitter-dl = { path = "tree-sitter-dl" }
 tree-sitter-language = "0.1"
-# Sync HTTP/1.1 server (thread-per-request, no async runtime) for the daemon's
-# standard HTTP transport. Deliberately NOT tokio: the daemon is a sync tick
-# engine and the UDS server is already thread-per-connection.
-tiny_http = "0.12"
+# The daemon SHELL (sockets, timers, watchers, dispatch) runs on tokio; the tick
+# ENGINE stays strictly sync and is reached only via `spawn_blocking`. Features:
+# `rt-multi-thread` for a small FIXED worker pool (2, independent of the rayon
+# budget); `net` for the UDS listener + axum's TCP listener; `time` for the
+# poll/idle intervals; `sync` for the job-doorbell `Notify` + subscriber mpsc;
+# `signal` for graceful SIGINT/SIGTERM; `io-util`/`macros` for async framing +
+# `select!`. (Replaces tiny_http; the UDS wire protocol is byte-unchanged.)
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "signal", "io-util", "macros"] }
+# `CancellationToken`: one token both the shutdown RPC and the signal handler
+# cancel; every shell task selects on it for a graceful stop.
+tokio-util = "0.7"
+# axum for the two-route HTTP transport (POST /rpc, GET /health). Chosen over
+# bare hyper: hyper 1.x makes you hand-roll the accept loop + service + graceful
+# shutdown, which for two routes is more code than axum's `Router` + `axum::serve`
+# `.with_graceful_shutdown`. It rides the tokio runtime already pulled in above.
+axum = "0.7"
 
 [build-dependencies]
 # Compiles the vendored grammar C sources (vendor/grammars/) into the crate.
