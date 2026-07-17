@@ -2197,3 +2197,155 @@ impl Engine {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod crash_window_tests {
+    //! Force-kill crash window: `rebuild_derived` wipes + marks completion
+    //! PER COMPONENT (not one upfront DELETE + one final mark), and the tick
+    //! DEFERS its source-digest saves until after the rebuild lands. Both
+    //! properties are exercised through the `fail_rebuild_at_rel` hook, which
+    //! bails between one component's wipe and its refill — the on-disk shape a
+    //! SIGKILL would leave.
+
+    use crate::{db, engine::Engine, lex, parse};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    // Two INDEPENDENT derived rels over one source rel: `reach_a`/`reach_b`
+    // land in separate dependency components, so a failure injected at
+    // `reach_b` leaves `reach_a` fully derived.
+    const PROG: &str = r#"
+rel src_a(p: file, w: text).
+src_a(p, w) <- scan("WORK", "src/*.rs", p, rev), match(p, rev, /alpha_(?<w>\w+)/, line).
+rel reach_a(w: text).
+reach_a(w) <- src_a(_, w).
+rel reach_b(w: text).
+reach_b(w) <- src_a(_, w).
+"#;
+
+    fn sandbox(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("crash_window_{tag}_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        dir
+    }
+
+    fn fresh_engine(dir: &Path) -> (Engine, crate::ast::Program) {
+        let prog = parse::parse(lex::lex(PROG).unwrap()).unwrap();
+        let conn = db::open(Some(dir.join("db").to_str().unwrap())).unwrap();
+        (Engine::new(conn, dir.to_path_buf()), prog)
+    }
+
+    fn complete_set(eng: &Engine) -> std::collections::HashSet<String> {
+        eng.query_sql("SELECT rel FROM _derived_complete", &[])
+            .unwrap()
+            .into_iter()
+            .map(|row| row[0].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    fn rel_len(eng: &Engine, rel: &str) -> usize {
+        eng.query_sql(&format!("SELECT w FROM rel_{rel}_txt"), &[])
+            .unwrap()
+            .len()
+    }
+
+    /// A rebuild interrupted between one component's wipe and its refill leaves
+    /// the completed component marked+populated and the interrupted one
+    /// unmarked+empty; `derived_incomplete_rels` names exactly the unfinished
+    /// rel; and a follow-up rebuild scoped to just that rel repairs it without
+    /// touching the finished one.
+    #[test]
+    fn interrupted_component_is_incomplete_finished_one_survives() {
+        let dir = sandbox("interrupt");
+        fs::write(dir.join("src/a.rs"), "// alpha_one\n").unwrap();
+        let (mut eng, prog) = fresh_engine(&dir);
+
+        // Clean tick: both rels complete + populated.
+        eng.tick(&prog, true).unwrap();
+        assert_eq!(rel_len(&eng, "reach_a"), 1);
+        assert_eq!(rel_len(&eng, "reach_b"), 1);
+        let done = complete_set(&eng);
+        assert!(done.contains("reach_a") && done.contains("reach_b"));
+
+        // Edit the source so both derived rels are affected, and arm the crash
+        // hook at `reach_b`. The scoped rebuild wipes each component, then bails
+        // when it reaches `reach_b` — after that component's wipe, before refill.
+        fs::write(dir.join("src/a.rs"), "// alpha_seventeen\n").unwrap();
+        *eng.fail_rebuild_at_rel.borrow_mut() = Some("reach_b".into());
+        let err = eng.tick(&prog, true).unwrap_err();
+        assert!(
+            err.to_string().contains("test-injected crash"),
+            "expected the injected crash, got: {err}"
+        );
+
+        // Completed component survived; interrupted one is wiped + unmarked.
+        let done = complete_set(&eng);
+        assert!(
+            done.contains("reach_a"),
+            "the finished component must stay marked complete, got {done:?}"
+        );
+        assert!(
+            !done.contains("reach_b"),
+            "the interrupted component's marker must have been cleared before its wipe, got {done:?}"
+        );
+        assert!(rel_len(&eng, "reach_a") >= 1, "reach_a must stay populated");
+        assert_eq!(rel_len(&eng, "reach_b"), 0, "reach_b was wiped and never refilled");
+
+        // `derived_incomplete_rels` names exactly the unfinished rel.
+        let derived_rels = vec!["reach_a".to_string(), "reach_b".to_string()];
+        let incomplete = eng.derived_incomplete_rels(&derived_rels).unwrap();
+        assert_eq!(incomplete, vec!["reach_b".to_string()]);
+
+        // Disarm, then a rebuild SCOPED to just `reach_b` repairs it and leaves
+        // `reach_a` untouched (still complete + populated).
+        *eng.fail_rebuild_at_rel.borrow_mut() = None;
+        let reach_b_rules: Vec<&crate::ast::Rule> = prog
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                crate::ast::Item::Rule(rule) if rule.head.rel == "reach_b" => Some(rule),
+                _ => None,
+            })
+            .collect();
+        eng.rebuild_derived(&reach_b_rules, &["reach_b".to_string()]).unwrap();
+
+        let done = complete_set(&eng);
+        assert!(done.contains("reach_a") && done.contains("reach_b"));
+        assert!(rel_len(&eng, "reach_a") >= 1);
+        assert_eq!(rel_len(&eng, "reach_b"), 1, "the follow-up repaired reach_b");
+    }
+
+    /// A tick that fails during the derived rebuild must NOT have persisted the
+    /// source digests it detected: the next tick re-detects the same source
+    /// change (proving the change was not silently swallowed by a premature
+    /// digest save).
+    #[test]
+    fn failed_tick_does_not_persist_source_digests() {
+        let dir = sandbox("digest_defer");
+        fs::write(dir.join("src/a.rs"), "// alpha_one\n").unwrap();
+        let (mut eng, prog) = fresh_engine(&dir);
+
+        // Clean tick baselines `src_a`'s digest.
+        eng.tick(&prog, true).unwrap();
+
+        // Edit the source, arm the crash hook, and run a tick that detects the
+        // `src_a` change but dies in the derived rebuild before the deferred
+        // digest flush.
+        fs::write(dir.join("src/a.rs"), "// alpha_seventeen\n").unwrap();
+        *eng.fail_rebuild_at_rel.borrow_mut() = Some("reach_b".into());
+        assert!(eng.tick(&prog, true).is_err());
+
+        // Rerun cleanly: because the failed tick never flushed `src_a`'s new
+        // digest, the change is re-detected here. Had the save raced ahead of
+        // the rebuild, `src_a` would read unchanged and drop out of the report.
+        *eng.fail_rebuild_at_rel.borrow_mut() = None;
+        let report = eng.tick_report(&prog, true).unwrap();
+        assert!(
+            report.changed_rels.contains(&"src_a".to_string()),
+            "the rerun must re-detect the src_a change the killed tick left unpersisted, got {:?}",
+            report.changed_rels
+        );
+        assert_eq!(rel_len(&eng, "reach_b"), 1, "reach_b is repaired on the rerun");
+    }
+}
