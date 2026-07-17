@@ -52,6 +52,7 @@ mod perf;
 mod propose;
 mod querylog;
 mod scip;
+mod write_ledger;
 
 use analysis::{AgentKind, DlDiagKind, TypeLggKind, TypeShapeKind};
 use catalog::{CatalogKind, VerbCatalogKind};
@@ -63,6 +64,7 @@ use perf::PerfKind;
 use propose::{ProposeCloneKind, ProposeExtractKind};
 use querylog::QueryLogKind;
 use scip::ScipKind;
+use write_ledger::WriteLedgerKind;
 
 pub use extract_family::{
     extract_families, extract_families_paths_pre_node, extract_families_post_node,
@@ -146,7 +148,7 @@ pub fn rel_kinds() -> &'static [&'static dyn RelKind] {
     &[&ChangedKind, &ChangedLineKind, &CreatedKind, &GitRefKind, &RevBehindKind,
       &AgentKind, &DlDiagKind, &TypeShapeKind, &TypeLggKind, &CatalogKind, &VerbCatalogKind,
       &ScipKind, &ProposeExtractKind, &ProposeCloneKind, &EmbedKind, &PerfKind,
-      &QueryLogKind, &EnvKind, &FileLinesKind]
+      &QueryLogKind, &EnvKind, &FileLinesKind, &WriteLedgerKind]
 }
 
 /// Flattened column decls across the registry, for `all_builtin_decls` /

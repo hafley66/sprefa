@@ -191,3 +191,4 @@ mod seminaive;
 mod where_removed;
 mod wildcard_slots;
 mod tick_digest;
+mod write_ledger;

@@ -1124,6 +1124,13 @@ pub struct Engine {
     /// cleared, so an orphaned kind logs exactly once per root regardless of
     /// how many polls or how many distinct request ids it re-queues under.
     pub(crate) warned_orphan_effect_kinds: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// In-memory derived-side write ledger for this tick. Complements the
+    /// source-side ledger kept inside `Db`; drained and flushed into
+    /// `_write_ledger` once at tick end.
+    write_ledger: std::cell::RefCell<Vec<(String, usize, String)>>,
+    /// Monotonic per-engine tick sequence number, used to timestamp ledger rows.
+    /// Starts at 1 on the first tick that runs.
+    tick_seq: std::cell::Cell<i64>,
 }
 
 struct ScanSpec {
@@ -1191,6 +1198,8 @@ impl Engine {
             template_facts_cache: Default::default(),
             unresolved_facts_cache: Default::default(),
             warned_orphan_effect_kinds: std::cell::RefCell::new(std::collections::HashSet::new()),
+            write_ledger: std::cell::RefCell::new(Vec::new()),
+            tick_seq: std::cell::Cell::new(0),
         }
     }
 
@@ -1337,6 +1346,56 @@ impl Engine {
     ) -> Result<usize> {
         let encoded = self.encode_rel_rows(rel, cols, rows)?;
         self.db.insert_rows(&tbl(rel), cols, &encoded)
+    }
+
+    /// Record one derived-side write in the tick's in-memory ledger.
+    /// Zero-row writes are dropped; aggregating happens at flush time.
+    pub(crate) fn record_write(&self, rel: &str, rows: usize, seam: &str) {
+        if rows == 0 {
+            return;
+        }
+        self.write_ledger
+            .borrow_mut()
+            .push((rel.to_string(), rows, seam.to_string()));
+    }
+
+    /// Flush the tick's source + derived write ledger into `_write_ledger` in
+    /// ONE batched insert, then prune rows older than 200 ticks. Called exactly
+    /// once per tick after all writes have landed.
+    pub(crate) fn flush_write_ledger(&self, tick: i64) -> Result<()> {
+        use std::collections::BTreeMap;
+        let mut combined: BTreeMap<(String, String), usize> = BTreeMap::new();
+        for (rel, rows) in self.db.take_write_ledger() {
+            *combined
+                .entry((rel, "source".to_string()))
+                .or_insert(0) += rows;
+        }
+        for (rel, rows, seam) in self.write_ledger.borrow_mut().drain(..) {
+            *combined.entry((rel, seam)).or_insert(0) += rows;
+        }
+        // Retention: keep the last 200 ticks. Safe on first ticks (tick - 200
+        // underflows i64 to a large negative, deleting nothing).
+        self.db.conn().execute(
+            "DELETE FROM _write_ledger WHERE tick < ?1",
+            [tick.saturating_sub(200)],
+        )?;
+        let rows: Vec<Vec<Value>> = combined
+            .into_iter()
+            .filter(|(_, rows)| *rows > 0)
+            .map(|((rel, seam), rows)| {
+                vec![
+                    Value::Int(tick),
+                    Value::Text(rel),
+                    Value::Int(rows as i64),
+                    Value::Text(seam),
+                ]
+            })
+            .collect();
+        if !rows.is_empty() {
+            self.db
+                .insert_rows("_write_ledger", &["tick", "rel", "rows", "seam"], &rows)?;
+        }
+        Ok(())
     }
 
     /// Returns whether the table's content actually moved. A rebuild that

@@ -174,6 +174,10 @@ impl Engine {
         self.shape_diags.clear();
         CMD_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
         self.db.tick_begin();
+        self.db.clear_write_ledger();
+        self.write_ledger.borrow_mut().clear();
+        let tick = self.tick_seq.get() + 1;
+        self.tick_seq.set(tick);
         self.adjacency_cache.borrow_mut().take();
         // Rewrite any rel headed by both a source/extract rule and a derived
         // rule into hidden twins + a synthesized union, BEFORE rule
@@ -856,6 +860,7 @@ impl Engine {
             self.set_tx(cur_tx + 1)?;
         }
         self.last_n1 = self.db.tick_end();
+        self.flush_write_ledger(tick)?;
 
         // Settle report: peek whether any @next carry just staged at cur_tx+1
         // differs from the live rel (non-destructively — load_carry that applies
@@ -1033,6 +1038,11 @@ impl Engine {
                 "full-source-reconcile",
             );
         }
+
+        self.db.clear_write_ledger();
+        self.write_ledger.borrow_mut().clear();
+        let tick = self.tick_seq.get() + 1;
+        self.tick_seq.set(tick);
 
         // Win D: `module_rels_needed` (not the narrower `module_rels_used`) so
         // a program reading only type_link/call_edge still gets the module
@@ -1278,6 +1288,7 @@ impl Engine {
         self.run_gens(prog, quiet)?;
         if self.dropped > 0 { eprintln!("[checked-type] dropped {} rows", self.dropped); self.dropped = 0; }
         self.last_n1 = self.db.tick_end();
+        self.flush_write_ledger(tick)?;
         // Surface a slow incremental tick in the LSP server log so live
         // dogfooding catches a perf regression (e.g. a CST refresh that
         // silently went full-corpus). Gated on `tick_log_ms()` (env

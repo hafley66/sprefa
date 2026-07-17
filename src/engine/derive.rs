@@ -347,6 +347,9 @@ impl Engine {
             let result = self.db.conn().execute(sql, []);
             stmt_watch.complete();
             let n = result?;
+            if sql.trim_start().to_ascii_uppercase().starts_with("INSERT") {
+                self.record_write(rel, n, "derived");
+            }
             self.db.flush_pending_syms()?;
             let ms = t.elapsed().as_millis() as i64;
             let e = stmt_ms.entry(rel.to_string()).or_insert((0, 0));

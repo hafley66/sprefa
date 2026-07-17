@@ -77,6 +77,10 @@ pub struct Db {
     counts: RefCell<HashMap<String, u32>>,
     pending_syms: Arc<Mutex<Vec<String>>>,
     _memory_budget: SqliteMemoryBudget,
+    /// Per-tick capture of every write that flows through `insert_rows`:
+    /// (relation name, rows actually inserted). Collected in memory and flushed
+    /// once at tick end into `_write_ledger`; never a per-row write.
+    write_ledger: RefCell<Vec<(String, usize)>>,
 }
 
 /// One statement running more than this many times in a tick is almost certainly
@@ -233,6 +237,7 @@ pub fn open(path: Option<&str>) -> Result<Db> {
         counts: RefCell::new(HashMap::new()),
         pending_syms,
         _memory_budget: memory,
+        write_ledger: RefCell::new(Vec::new()),
     })
 }
 
@@ -501,6 +506,18 @@ impl Db {
         None
     }
 
+    /// Drain the in-memory source-side write ledger. Called once per tick by the
+    /// engine's flush.
+    pub fn take_write_ledger(&self) -> Vec<(String, usize)> {
+        std::mem::take(&mut *self.write_ledger.borrow_mut())
+    }
+
+    /// Clear any stale source-side ledger entries (e.g. after an error aborted a
+    /// tick before flush).
+    pub fn clear_write_ledger(&self) {
+        self.write_ledger.borrow_mut().clear();
+    }
+
     /// Whole-statement DDL / bulk op (e.g. `DELETE FROM t`), counted once.
     pub fn exec(&self, sql: &str) -> Result<usize> {
         self.bump(sql);
@@ -669,6 +686,15 @@ impl Db {
             }
         }
         if owns_tx { self.conn.execute_batch("COMMIT")?; }
+        if total > 0 && table != "_write_ledger" {
+            // Record the logical rel name: `rel_<name>` -> `<name>`; raw internal
+            // tables like `_file` pass through verbatim.
+            let rel = table
+                .strip_prefix("rel_")
+                .unwrap_or(table)
+                .to_string();
+            self.write_ledger.borrow_mut().push((rel, total));
+        }
         Ok(total)
     }
 

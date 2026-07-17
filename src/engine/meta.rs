@@ -249,6 +249,17 @@ impl Engine {
              -- big join, large n = many fixpoint passes). Written batched by
              -- rebuild_derived; projected by the perf built-in stmt_ms.
              CREATE TABLE IF NOT EXISTS _stmt_ms (rel TEXT PRIMARY KEY, ms INTEGER NOT NULL, n INTEGER NOT NULL DEFAULT 1);
+             -- Per-tick write ledger: one row per (rel, seam) that actually wrote
+             -- rows this tick. Source writes are captured at the plural Db seam;
+             -- derived writes are captured from the per-rel timed rebuild closure.
+             -- Bookkeeping (excluded from settle) so a quiet tick does not loop.
+             CREATE TABLE IF NOT EXISTS _write_ledger (
+                 tick INTEGER NOT NULL,
+                 rel TEXT NOT NULL,
+                 rows INTEGER NOT NULL,
+                 seam TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS _write_ledger_tick_idx ON _write_ledger(tick);
              -- CST node path attribution (not a public rel column): maps a
              -- node id to its source path so the delta refresh can prune one
              -- file's `node` rows. The `node.file` column is a content FileId
