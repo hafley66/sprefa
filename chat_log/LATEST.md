@@ -1,1 +1,1 @@
-20260716.1.capstone-p3-goldens-and-daemon-stale-roots.md
+20260717.1.auto-session-instant-fix-rails-ledger.md
