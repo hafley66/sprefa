@@ -356,7 +356,7 @@ impl ServedRoot {
 
     pub(crate) fn tick_full(&self, quiet: bool) -> Result<()> {
         let tick_next = self.tick_count.load(Ordering::Relaxed) + 1;
-        crate::activity::begin_tick(tick_next, &self.program_display);
+        crate::activity::begin_tick(tick_next, &self.program_display, &self.root);
         let prog = lock(&self.prog);
         let mut eng = lock(&self.eng);
         let report = eng.tick_report(&prog, quiet)?;
@@ -381,7 +381,7 @@ impl ServedRoot {
 
     fn tick_paths(&self, paths: &[PathBuf], quiet: bool) -> Result<()> {
         let tick_next = self.tick_count.load(Ordering::Relaxed) + 1;
-        crate::activity::begin_tick(tick_next, &self.program_display);
+        crate::activity::begin_tick(tick_next, &self.program_display, &self.root);
         crate::activity::set(
             crate::activity::Phase::Reconcile,
             format!("{} changed path(s)", paths.len()),
@@ -737,6 +737,7 @@ impl ServedRoot {
         let mut eng = Engine::new(conn, eng_root.clone());
         if is_config { eng.set_root_implicit(true); }
         eng.set_repos(served_repos(is_config));
+        crate::activity::set_root(Some(&eng_root));
         crate::activity::set(crate::activity::Phase::ColdTick, display.as_str());
         eng.tick(&prog, false)?;
         crate::activity::end_tick();

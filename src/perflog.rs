@@ -17,6 +17,7 @@
 //! effects). `stmt_ms`/`rel_count` relations remain the after-the-fact query
 //! surface; this log is the live, append-only timeline.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::OnceLock;
@@ -44,13 +45,33 @@ pub struct TickRec<'a> {
 }
 
 static ROOT: OnceLock<PathBuf> = OnceLock::new();
-static FILE: OnceLock<Mutex<Option<std::fs::File>>> = OnceLock::new();
+/// The root currently being ticked, updated by `activity::set_root`/`begin_tick`.
+/// Separate from the `ROOT` fallback so the daemon can serve multiple roots in
+/// one process without the first-created engine pinning the perf-log path.
+static CURRENT_ROOT: Mutex<Option<PathBuf>> = Mutex::new(None);
+/// Open append handles, one per resolved log path. Replaced the single `FILE`
+/// OnceLock so per-root records can land in different `<root>/.dl/perf.jsonl`
+/// files within the same daemon process.
+static FILES: OnceLock<Mutex<HashMap<PathBuf, Option<std::fs::File>>>> = OnceLock::new();
 
 /// Seed the resolver with the daemon/engine root so `<root>/.dl/perf.jsonl`
 /// can be resolved lazily on first emit. Idempotent. Called from `Engine::new`
-/// (covers the daemon + in-process one-shots).
+/// (covers the daemon + in-process one-shots). The activity root (set via
+/// `set_current_root`) wins at emit time when it is known.
 pub fn set_root(root: &Path) {
     let _ = ROOT.set(root.to_path_buf());
+}
+
+/// Update the root currently being ticked. Called from `activity` on every
+/// `begin_tick`/`set_root` so `emit_*` routes to that root's `.dl/perf.jsonl`.
+pub(crate) fn set_current_root(root: Option<&Path>) {
+    if let Ok(mut g) = CURRENT_ROOT.lock() {
+        *g = root.map(|p| p.to_path_buf());
+    }
+}
+
+fn current_root() -> Option<PathBuf> {
+    CURRENT_ROOT.lock().ok().and_then(|g| g.clone())
 }
 
 /// Logging is on unless `DL_PERF_LOG` is exactly a falsy token. A truthy or
@@ -65,65 +86,74 @@ fn enabled() -> bool {
 
 /// The resolved log path, for the daemon to announce at startup. `None` when
 /// disabled, or when neither an explicit path nor a root is known (an engine
-/// with no root and no env override).
+/// with no root and no env override). At emit time the current activity root
+/// (see `set_current_root`) is preferred over the process-global `ROOT` fallback.
 pub fn path() -> Option<PathBuf> {
     if !enabled() {
         return None;
     }
     match std::env::var("DL_PERF_LOG") {
-        Ok(p) if is_truthy(&p) => ROOT.get().map(|r| r.join(".dl").join("perf.jsonl")),
+        Ok(p) if is_truthy(&p) => default_path(),
         Ok(p) => Some(PathBuf::from(p)),
-        Err(_) => ROOT.get().map(|r| r.join(".dl").join("perf.jsonl")),
+        Err(_) => default_path(),
     }
+}
+
+fn default_path() -> Option<PathBuf> {
+    current_root()
+        .or_else(|| ROOT.get().cloned())
+        .map(|r| r.join(".dl").join("perf.jsonl"))
 }
 
 fn is_truthy(s: &str) -> bool {
     matches!(s, "" | "1" | "true" | "on" | "yes")
 }
 
-fn file() -> &'static Mutex<Option<std::fs::File>> {
-    FILE.get_or_init(|| {
-        if !enabled() {
-            return Mutex::new(None);
-        }
-        let Some(path) = path() else { return Mutex::new(None) };
-        // Never be the thing that creates `<root>/.dl`. The default perf.jsonl
-        // path lives under `.dl/`; if that dir does not already exist (a one-shot
-        // `dl p.dl` in a fresh dir, a `--check` over a non-setup repo), SKIP
-        // logging entirely rather than leave a `.dl/` behind — that side effect
-        // broke discovery ("explicit program must not create .dl/") and wastes a
-        // caller's tokens tracking a spurious dir. The daemon and any setup'd
-        // repo already have `.dl/`, so they log normally. An explicit
-        // `DL_PERF_LOG=<path>` opt-in MAY create its parent (the user asked).
-        let is_default = matches!(
-            std::env::var("DL_PERF_LOG").as_deref(),
-            Err(_) | Ok("" | "1" | "true" | "on" | "yes")
-        );
-        let parent = path.parent().unwrap_or(Path::new("."));
-        if is_default && !parent.exists() {
-            return Mutex::new(None);
-        }
-        if !is_default {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        // Append-mode: each `write` is a syscall, immediately visible to
-        // `tail -f` (no userspace buffer to flush). Truncation is never done;
-        // the log grows monotonically so a spike stays in view.
-        let f = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .ok();
-        Mutex::new(f)
-    })
+fn is_default_path() -> bool {
+    matches!(
+        std::env::var("DL_PERF_LOG").as_deref(),
+        Err(_) | Ok("" | "1" | "true" | "on" | "yes")
+    )
+}
+
+fn open_file(path: &Path) -> Option<std::fs::File> {
+    // Never be the thing that creates `<root>/.dl`. The default perf.jsonl
+    // path lives under `.dl/`; if that dir does not already exist (a one-shot
+    // `dl p.dl` in a fresh dir, a `--check` over a non-setup repo), SKIP
+    // logging entirely rather than leave a `.dl/` behind — that side effect
+    // broke discovery ("explicit program must not create .dl/") and wastes a
+    // caller's tokens tracking a spurious dir. The daemon and any setup'd
+    // repo already have `.dl/`, so they log normally. An explicit
+    // `DL_PERF_LOG=<path>` opt-in MAY create its parent (the user asked).
+    let parent = path.parent().unwrap_or(Path::new("."));
+    if is_default_path() && !parent.exists() {
+        return None;
+    }
+    if !is_default_path() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    // Append-mode: each `write` is a syscall, immediately visible to
+    // `tail -f` (no userspace buffer to flush). Truncation is never done;
+    // the log grows monotonically so a spike stays in view.
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .ok()
+}
+
+fn files() -> &'static Mutex<HashMap<PathBuf, Option<std::fs::File>>> {
+    FILES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn write_json(line: String) {
     if !enabled() {
         return;
     }
-    if let Ok(mut g) = file().lock() {
-        if let Some(f) = g.as_mut() {
+    let Some(path) = path() else { return };
+    if let Ok(mut map) = files().lock() {
+        let f = map.entry(path).or_insert_with_key(|p| open_file(p));
+        if let Some(f) = f.as_mut() {
             use std::io::Write;
             let _ = writeln!(f, "{line}");
         }
@@ -324,5 +354,28 @@ mod tests {
         std::env::set_var("DL_PERF_LOG", "0");
         assert_eq!(path(), None, "DL_PERF_LOG=0 disables");
         std::env::remove_var("DL_PERF_LOG");
+    }
+
+    /// The current activity root routes the default perf.jsonl path, falling
+    /// back to the process-global ROOT only when no activity is in progress.
+    /// ROOT/CURRENT_ROOT are process-global, so this test derives the fallback
+    /// from whatever value actually stuck (parallel tests may set them first).
+    #[test]
+    fn path_routes_by_current_root() {
+        std::env::remove_var("DL_PERF_LOG");
+        let active = PathBuf::from("/tmp/dl_perf_active");
+        set_current_root(Some(&active));
+        assert_eq!(
+            path(),
+            Some(active.join(".dl").join("perf.jsonl")),
+            "activity root wins over process ROOT"
+        );
+        set_current_root(None);
+        let fallback = ROOT.get().expect("ROOT set by this or another test");
+        assert_eq!(
+            path(),
+            Some(fallback.join(".dl").join("perf.jsonl")),
+            "falls back to ROOT when no activity root"
+        );
     }
 }
