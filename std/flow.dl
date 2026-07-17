@@ -156,23 +156,31 @@ flow_edge(callee_ret, call_id) <-
 rel flow_lambda(callee: text, lam_pos: int, src_pos: int, param_pos: int).
 rel flow_lambda_ret(callee: text, lam_pos: int).
 
+# Shared join prefix for the two lambda-hop rules below: at a call site whose
+# callee is a higher-order combinator, resolve the closure argument at the
+# lambda slot once, instead of redoing the call_node/df_arg/df_node(closure)
+# join in both the element hop and the result hop. The intermediate is keyed
+# by (call_id, lambda_pos) so each flow_lambda/flow_lambda_ret lookup is an
+# equality probe.
+rel flow_lambda_call(call_id: text, lambda_sym: text, name: text, lambda_pos: int).
+flow_lambda_call(call_id, lambda_sym, name, lambda_pos) <-
+    call_node(call_id, name, _, _),
+    df_arg(call_id, lambda_pos, lambda_arg),
+    df_node(lambda_arg, "closure", lambda_sym, _, _, _).
+
 # Element hop: the source value enters the lambda's parameter.
-flow_edge(src, p) <-
-    flow_lambda(name, lpos, spos, ppos),
-    call_node(c, name, _, _),
-    df_arg(c, lpos, lam),
-    df_node(lam, "closure", lam_sym, _, _, _),
-    df_arg(c, spos, src),
-    df_node(p, "param", _, lam_sym, _, _),
-    df_param(p, ppos).
+flow_edge(src, param) <-
+    flow_lambda(name, lambda_pos, src_pos, param_pos),
+    flow_lambda_call(call_id, lambda_sym, name, lambda_pos),
+    df_arg(call_id, src_pos, src),
+    df_node(param, "param", _, lambda_sym, _, _),
+    df_param(param, param_pos).
 
 # Result hop: the lambda's return value becomes the call's result.
-flow_edge(r, c) <-
-    flow_lambda_ret(name, lpos),
-    call_node(c, name, _, _),
-    df_arg(c, lpos, lam),
-    df_node(lam, "closure", lam_sym, _, _, _),
-    df_node(r, "ret", _, lam_sym, _, _).
+flow_edge(ret, call_id) <-
+    flow_lambda_ret(name, lambda_pos),
+    flow_lambda_call(call_id, lambda_sym, name, lambda_pos),
+    df_node(ret, "ret", _, lambda_sym, _, _).
 
 # Field-sensitive interprocedural view: a value stored into field F of a
 # composite that is passed as an argument reaches the resolved callee's reads

@@ -52,10 +52,16 @@ conn_fn(fn, p, l) <-
 # The expensive join chains df_node (call_res) → call_site → call_name. Push
 # the call_name resolution down into call_site first and re-key by (caller,
 # file, line) so the loop-nested df_node lookup is a selective indexed join.
+# call_name is declared as (fn, callee_text); the consuming join binds
+# callee_text from call_site and probes for fn. Re-key once with callee_text
+# leading so the lookup is indexable rather than a scan over the first column.
+rel call_name_by_text(callee_text: text, fn: text).
+call_name_by_text(callee_text, fn) <- call_name(fn, callee_text).
+
 rel named_call_site(caller: text, file: file, line: int, fn: text).
 named_call_site(caller, p, l, fn) <-
     call_site(_, caller, callee_text, p, l),
-    call_name(fn, callee_text).
+    call_name_by_text(callee_text, fn).
 
 rel loop_entry_fn(fn: text).
 loop_entry_fn(fn) <-
