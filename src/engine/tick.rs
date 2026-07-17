@@ -346,8 +346,18 @@ impl Engine {
         // Baselining each source relation's content digest doubles as the
         // attribution for extraction rels (the digests were already computed
         // here for tick_paths' bytes-moved-rows-didn't prune).
-        let mut changed_source_rels: HashSet<String> =
-            self.seed_rel_digests(&source_rels)?.into_iter().collect();
+        // Source-attribution digest saves are DEFERRED to after the rebuild
+        // lands (flushed at the `derived:program` deferral point below): a tick
+        // killed mid-rebuild must leave every `_reldigest` baseline unmoved, so
+        // the next boot re-detects the change and re-scopes the rebuild. Before
+        // the crash-window fix this was safe only because the whole-pass
+        // derived-missing full rebuild re-attributed anything lost; `rebuild_derived`
+        // now marks completion per component, so that backstop is gone and the
+        // saves must not race ahead of the rows they describe.
+        let mut pending_digests: Vec<(String, [u8; 32])> = Vec::new();
+        let (seed_moved, seed_pending) = self.seed_rel_digests(&source_rels)?;
+        pending_digests.extend(seed_pending);
+        let mut changed_source_rels: HashSet<String> = seed_moved.into_iter().collect();
         // refresh built-in repo/rev/content/file from the updated _file cache,
         // before derived rules that may join them are rebuilt.
         let t = std::time::Instant::now();
@@ -482,7 +492,7 @@ impl Engine {
                 let d = self.rel_content_digest(rel, &meta)?;
                 let key = format!("daemon:{rel}");
                 if self.load_rel_digest(&key)? != Some(d) {
-                    self.save_rel_digest(&key, &d)?;
+                    pending_digests.push((key, d));
                     changed = true;
                     changed_source_rels.insert(rel.to_string());
                 }
@@ -495,7 +505,7 @@ impl Engine {
                 let d = self.rel_content_digest(rel, &meta)?;
                 let key = format!("effect:{rel}");
                 if self.load_rel_digest(&key)? != Some(d) {
-                    self.save_rel_digest(&key, &d)?;
+                    pending_digests.push((key, d));
                     changed = true;
                     changed_source_rels.insert(rel.to_string());
                 }
@@ -512,7 +522,7 @@ impl Engine {
             let d = self.rel_content_digest(rel, &meta)?;
             let key = format!("async:{rel}");
             if self.load_rel_digest(&key)? != Some(d) {
-                self.save_rel_digest(&key, &d)?;
+                pending_digests.push((key, d));
                 changed = true;
                 changed_source_rels.insert(rel.clone());
             }
@@ -529,7 +539,7 @@ impl Engine {
                 let d = self.rel_content_digest(rel, &meta)?;
                 let key = format!("hook:{rel}");
                 if self.load_rel_digest(&key)? != Some(d) {
-                    self.save_rel_digest(&key, &d)?;
+                    pending_digests.push((key, d));
                     changed = true;
                     changed_source_rels.insert(rel.to_string());
                 }
@@ -556,7 +566,7 @@ impl Engine {
             let d = self.rel_content_digest(rel, &meta)?;
             let key = format!("port:{rel}");
             if self.load_rel_digest(&key)? != Some(d) {
-                self.save_rel_digest(&key, &d)?;
+                pending_digests.push((key, d));
                 changed = true;
                 changed_source_rels.insert(rel.clone());
             }
@@ -629,8 +639,15 @@ impl Engine {
             dirty_edges = edges.iter().copied().collect();
             self.last_derived_rebuilt = strata.pre_rels.clone();
         }
-        // persisted only after the rebuild lands, so a failed tick retries
+        // Deferred saves land only after the rebuild lands, so a failed tick
+        // retries: the `derived:program` shape digest AND every source-attribution
+        // digest (`seed_rel_digests` + the daemon/effect/async/hook/port keys)
+        // collected above. A tick killed before this point leaves the baselines
+        // unmoved and the change is re-detected next boot.
         if derived_moved { self.save_rel_digest("derived:program", &der_digest)?; }
+        for (key, digest) in &pending_digests {
+            self.save_rel_digest(key, digest)?;
+        }
         let der_ms = t_der.elapsed().as_secs_f64() * 1000.0;
 
         if !quiet {

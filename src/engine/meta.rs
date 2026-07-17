@@ -984,22 +984,32 @@ impl Engine {
     }
 
     /// Seed `_reldigest` for every source relation, so the first delta after a
-    /// cold run has a baseline to compare against. Returns the relations whose
-    /// digest MOVED against the stored baseline (first-ever seeding counts as
-    /// moved) — the full tick's per-rel change attribution, feeding the same
-    /// `affected_derived` scoping `tick_paths` uses (perf gap B). An unchanged
-    /// relation skips the save.
-    pub(crate) fn seed_rel_digests(&self, source_rels: &[String]) -> Result<Vec<String>> {
+    /// cold run has a baseline to compare against. Returns `(moved, pending)`:
+    /// `moved` is the relations whose digest MOVED against the stored baseline
+    /// (first-ever seeding counts as moved) — the full tick's per-rel change
+    /// attribution, feeding the same `affected_derived` scoping `tick_paths`
+    /// uses (perf gap B). `pending` is the `(rel, digest)` pairs to persist, NOT
+    /// saved here: the caller flushes them only after the derived rebuild lands,
+    /// so a tick killed mid-rebuild leaves the baseline unmoved and the next
+    /// boot re-detects the change (the crash-window fix — the whole-pass
+    /// derived-missing full rebuild that used to re-attribute these is gone once
+    /// `rebuild_derived` marks completion per component). An unchanged relation
+    /// contributes to neither list.
+    pub(crate) fn seed_rel_digests(
+        &self,
+        source_rels: &[String],
+    ) -> Result<(Vec<String>, Vec<(String, [u8; 32])>)> {
         let mut moved = Vec::new();
+        let mut pending = Vec::new();
         for rel in source_rels {
             let d = self.rel_digest(rel)?;
             if self.load_rel_digest(rel)? == Some(d) {
                 continue;
             }
-            self.save_rel_digest(rel, &d)?;
+            pending.push((rel.clone(), d));
             moved.push(rel.clone());
         }
-        Ok(moved)
+        Ok((moved, pending))
     }
 
     /// P1 fix: which of `derived_rels` have NEVER completed a `rebuild_derived`
