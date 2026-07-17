@@ -10,8 +10,8 @@
 //! Line kinds:
 //!   {"kind":"boot","ts":..,"pid":..,"build":".."}
 //!   {"kind":"sample","ts":..,"pid":..,"tick":..,"phase":"..","detail":"..",
-//!    "program":"..","job":"..","cpu_ms":..,"io_read_mb":..,"io_write_mb":..,
-//!    "rss_mb":..}   (cpu/io are CUMULATIVE since process start)
+//!    "program":"..","job":"..","root":"..","cpu_ms":..,"io_read_mb":..,
+//!    "io_write_mb":..,"rss_mb":..}   (cpu/io are CUMULATIVE since process start)
 //!   {"kind":"shutdown","ts":..,"pid":..}
 //!
 //! A boot line with no matching shutdown line and a dead pid = the run was
@@ -160,7 +160,7 @@ fn sample_line(jobs: &crate::jobq::JobQueue) -> Value {
     json!({
         "kind": "sample", "ts": now_secs(), "pid": std::process::id(),
         "tick": a.tick, "phase": a.phase.as_str(), "detail": a.detail,
-        "program": a.program, "job": job,
+        "program": a.program, "job": job, "root": a.root,
         "cpu_ms": u.cpu_ms, "io_read_mb": mb(u.io_read_bytes),
         "io_write_mb": mb(u.io_write_bytes), "rss_mb": mb(u.rss_bytes),
     })
@@ -316,7 +316,7 @@ mod tests {
             append_line(home, &json!({
                 "kind":"sample","ts":ts,"pid":dead_pid,
                 "tick":3,"phase":"extract","detail":"repo=smashy",
-                "program":"self.dl","job":"tick:/x/smashy",
+                "program":"self.dl","job":"tick:/x/smashy","root":"/x/smashy",
                 "cpu_ms": 1000 * (i + 1), "io_read_mb": 50.0 * (i + 1) as f64,
                 "io_write_mb": 200.0 * (i + 1) as f64, "rss_mb": 900.0,
             }));
@@ -334,6 +334,23 @@ mod tests {
         assert!(r.contains("repo=smashy"), "detail missing:\n{r}");
         assert!(r.contains("write 400.0MB"), "60s io delta wrong:\n{r}");
         assert!(r.contains("job tick:/x/smashy"), "job missing:\n{r}");
+    }
+
+    #[test]
+    fn sample_line_includes_root() {
+        use std::path::Path;
+        let dir = std::env::temp_dir().join(format!("dl_why_root_sample_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let jobs = crate::jobq::JobQueue::open(&dir).unwrap();
+
+        crate::activity::end_tick(); // start clean
+        crate::activity::begin_tick(7, "test.dl", Path::new("/tmp/myroot"));
+        let line = sample_line(&jobs);
+        crate::activity::end_tick();
+
+        assert_eq!(line["root"].as_str(), Some("/tmp/myroot"), "root missing:\n{line}");
+        assert_eq!(line["phase"].as_str(), Some("idle"));
     }
 
 }

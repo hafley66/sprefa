@@ -12,6 +12,7 @@
 //! `ping` handlers (each on its own connection thread) take the lock only long
 //! enough to clone the small struct.
 
+use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
@@ -49,6 +50,9 @@ struct Activity {
     phase: Phase,
     detail: String,
     program: String,
+    /// The repo root currently being served/ticked, or empty when none is known
+    /// (idle, config view, or one-shot CLI path).
+    root: String,
     tick: u64,
     since: Instant,
 }
@@ -59,6 +63,7 @@ impl Activity {
             phase: Phase::Idle,
             detail: String::new(),
             program: String::new(),
+            root: String::new(),
             tick: 0,
             since: Instant::now(),
         }
@@ -79,6 +84,8 @@ pub struct Snapshot {
     pub phase: Phase,
     pub detail: String,
     pub program: String,
+    /// Repo root being served/ticked; empty when unknown.
+    pub root: String,
     pub tick: u64,
     pub elapsed_ms: u64,
 }
@@ -98,6 +105,15 @@ pub fn set(phase: Phase, detail: impl Into<String>) {
     a.since = Instant::now();
 }
 
+/// Set the repo root currently being served. Called by the daemon when it starts
+/// a tick so `why.jsonl` samples and `perf.jsonl` records identify which root
+/// the work belongs to. Pass `None` to clear the root (idle / unknown).
+pub fn set_root(root: Option<&Path>) {
+    let mut a = slot().lock().unwrap_or_else(|p| p.into_inner());
+    a.root = root.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+    crate::perflog::set_current_root(root);
+}
+
 /// Update only the detail within the current phase (per-file / per-rel). Leaves
 /// the phase and its timer alone so a phase spanning many items reports one
 /// duration, not one-per-item.
@@ -106,18 +122,21 @@ pub fn detail(detail: impl Into<String>) {
     a.detail = detail.into();
 }
 
-/// Record the tick number + program at tick start. Does not touch the phase;
-/// the first `set` inside the tick establishes it. Between `begin_tick` and
-/// that first `set`, a reader sees the previous tick's terminal `Idle`.
-pub fn begin_tick(tick: u64, program: &str) {
+/// Record the tick number + program + served root at tick start. Does not
+/// touch the phase; the first `set` inside the tick establishes it. Between
+/// `begin_tick` and that first `set`, a reader sees the previous tick's
+/// terminal `Idle`.
+pub fn begin_tick(tick: u64, program: &str, root: &Path) {
     let mut a = slot().lock().unwrap_or_else(|p| p.into_inner());
     a.tick = tick;
     a.program = program.to_string();
+    a.root = root.to_string_lossy().into_owned();
+    crate::perflog::set_current_root(Some(root));
     a.since = Instant::now();
 }
 
-/// Mark the tick done: phase back to Idle, detail cleared. Emits a final
-/// perf-log record for the phase that was running when the tick ended.
+/// Mark the tick done: phase back to Idle, detail + root cleared. Emits a
+/// final perf-log record for the phase that was running when the tick ended.
 pub fn end_tick() {
     let mut a = slot().lock().unwrap_or_else(|p| p.into_inner());
     if a.phase != Phase::Idle {
@@ -126,6 +145,8 @@ pub fn end_tick() {
     }
     a.phase = Phase::Idle;
     a.detail.clear();
+    a.root.clear();
+    crate::perflog::set_current_root(None);
 }
 
 /// Read a snapshot for ping / `dl daemon status`.
@@ -135,6 +156,7 @@ pub fn snapshot() -> Snapshot {
         phase: a.phase,
         detail: a.detail.clone(),
         program: a.program.clone(),
+        root: a.root.clone(),
         tick: a.tick,
         elapsed_ms: a.since.elapsed().as_millis() as u64,
     }
@@ -149,12 +171,13 @@ mod tests {
     #[test]
     fn lifecycle_round_trips() {
         end_tick(); // start clean
-        begin_tick(7, ".dl/*.dl");
+        begin_tick(7, ".dl/*.dl", Path::new("/tmp/root"));
         set(Phase::Declare, "");
         let s = snapshot();
         assert_eq!(s.phase, Phase::Declare);
         assert_eq!(s.program, ".dl/*.dl");
         assert_eq!(s.tick, 7);
+        assert_eq!(s.root, "/tmp/root");
 
         set(Phase::ParseExtract, "type family");
         assert_eq!(snapshot().phase, Phase::ParseExtract);
@@ -174,5 +197,6 @@ mod tests {
         let done = snapshot();
         assert_eq!(done.phase, Phase::Idle);
         assert!(done.detail.is_empty());
+        assert!(done.root.is_empty());
     }
 }
