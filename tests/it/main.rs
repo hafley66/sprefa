@@ -80,6 +80,7 @@ mod doc_ref;
 mod embed_similar;
 mod entity_parent_xfile;
 mod env_rel;
+mod extraction_determinism;
 mod facts;
 mod flow_breaking;
 mod flow_ctor;
