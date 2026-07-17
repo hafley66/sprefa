@@ -583,6 +583,10 @@ impl ServedRoot {
             self.tick_full(true)?;
             self.broadcast_diag_changed();
         }
+        // The drain set Phase::Effects outside any tick; reset it so a settled
+        // daemon's activity slot (and the why-trail samples) read idle, not a
+        // forever-stale "effects drain".
+        crate::activity::end_tick();
         Ok(n)
     }
 
