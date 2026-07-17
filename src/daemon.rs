@@ -1592,6 +1592,11 @@ fn build_id() -> String {
 fn idle_loop(d: Arc<Daemon>, idle_secs: u64) {
     loop {
         std::thread::sleep(Duration::from_secs(IDLE_TICK_SECS));
+        // Job-queue maintenance: reclaim abandoned leases (a dead worker in a
+        // live process) and trim old `done` rows. See `jobq::sweep`.
+        if let Err(e) = d.jobs.sweep(crate::jobq::LEASE_SECS, crate::jobq::DONE_RETAIN_SECS) {
+            tracing::warn!("[daemon] job sweep: {e}");
+        }
         let roots = d.all_roots();
         let all_idle = roots.iter().all(|sr| {
             lock(&sr.last_activity).elapsed() > Duration::from_secs(idle_secs)

@@ -149,8 +149,18 @@ fn failure_backs_off_then_parks_after_the_attempt_bound() {
 
     // Keep failing until the bound; the row parks in `failed` and stops.
     // One finish already landed (attempts=1), so MAX_ATTEMPTS-1 more reach it.
+    // A worker re-claims (-> running) before each retry, as it does live — the
+    // `finish` ownership guard requires the row be `running`, so force it ready
+    // and re-claim between attempts rather than finishing a `pending` row.
     let mut last = Requeue::Repending;
     for _ in 1..MAX_ATTEMPTS {
+        {
+            let db = plock(&q.db);
+            db.conn()
+                .execute("UPDATE _job SET run_at=0 WHERE key='tick:r1' AND state='pending'", [])
+                .unwrap();
+        }
+        q.claim(&[JobKind::Tick]).unwrap().expect("re-claim before the next attempt");
         last = q.finish("tick:r1", Err(anyhow::anyhow!("x"))).unwrap();
     }
     assert_eq!(last, Requeue::Parked);
@@ -251,4 +261,198 @@ fn dispatcher_parks_a_persistently_failing_job() {
     dispatcher.join(&q);
     assert!(parked, "a persistently failing job must park in `failed`, not spin");
     assert_eq!(q.peek("sink:r1").unwrap().4, MAX_ATTEMPTS);
+}
+
+// ---- library-mined hardening (effectum/apalis embodied knowledge) ----
+
+/// A runner that PANICS on one root and records the rest — the proof that a
+/// worker survives an unwinding job (effectum wraps its runner in
+/// `AssertUnwindSafe(..).catch_unwind()`; apalis's bare handler panic kills the
+/// poll task, #639). Our `worker_loop` catches the unwind and fails the job.
+struct PanicOnRootRunner {
+    boom_root: String,
+    seen: Arc<Mutex<Vec<String>>>,
+}
+impl JobRunner for PanicOnRootRunner {
+    fn run(&self, job: &JobRow) -> Result<()> {
+        if job.root == self.boom_root {
+            panic!("runner unwind on {}", job.root);
+        }
+        plock(&self.seen).push(job.root.clone());
+        Ok(())
+    }
+}
+
+/// A single worker panics on the `boom` tick, then still runs the `ok` tick —
+/// proof the panic did not kill the worker thread. The panicked job backs off
+/// (its unwind is treated as a job failure), it does not vanish or wedge.
+#[test]
+fn worker_survives_a_panicking_runner_and_keeps_serving() {
+    let (q, _d) = queue();
+    q.enqueue(JobRow::tick("boom", &[PathBuf::from("/a")])).unwrap();
+    q.enqueue(JobRow::tick("ok", &[PathBuf::from("/b")])).unwrap();
+
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let runner: Arc<dyn JobRunner> =
+        Arc::new(PanicOnRootRunner { boom_root: "boom".into(), seen: seen.clone() });
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let dispatcher =
+        Dispatcher::spawn(q.clone(), runner, shutdown.clone(), 1, vec![JobKind::Tick]);
+
+    // Wait for the good job to complete — it can only do so on a live worker.
+    let mut ok_done = false;
+    for _ in 0..200 {
+        if q.peek("tick:ok").map(|r| r.0 == "done").unwrap_or(false) {
+            ok_done = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    shutdown.store(true, Ordering::Relaxed);
+    dispatcher.join(&q);
+
+    assert!(ok_done, "the worker died on the panic; the good job never ran");
+    assert_eq!(*plock(&seen), vec!["ok".to_string()]);
+    // The panicked job was treated as a failure (backed off, attempts bumped),
+    // not silently dropped or left running.
+    let (state, _dirty, _arg, _prio, attempts, _run_at) = q.peek("tick:boom").unwrap();
+    assert!(attempts >= 1, "a panicking job must count as an attempt, got {attempts}");
+    assert_ne!(state, "running", "a panicked job must not be left `running`");
+}
+
+/// Many workers, many distinct-key jobs: each job runs EXACTLY once. Proves the
+/// `BEGIN IMMEDIATE` claim + queue mutex admit no double-claim under concurrency
+/// (effectum funnels claims through one writer thread; apalis relies on an
+/// atomic conditional `UPDATE ... WHERE status='Pending'`). Distinct keys so
+/// coalescing is not what enforces once-ness here.
+#[test]
+fn concurrent_workers_claim_each_job_exactly_once() {
+    let (q, _d) = queue();
+    const N: usize = 24;
+    for i in 0..N {
+        q.enqueue(JobRow::tick(&format!("r{i}"), &[PathBuf::from("/x")])).unwrap();
+    }
+    let seen = Arc::new(Mutex::new(Vec::<JobRow>::new()));
+    let runner: Arc<dyn JobRunner> = Arc::new(RecordingRunner { seen: seen.clone() });
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let dispatcher =
+        Dispatcher::spawn(q.clone(), runner, shutdown.clone(), 8, vec![JobKind::Tick]);
+
+    let mut all_done = false;
+    for _ in 0..400 {
+        let done = (0..N).all(|i| {
+            q.peek(&format!("tick:r{i}")).map(|r| r.0 == "done").unwrap_or(false)
+        });
+        if done {
+            all_done = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    shutdown.store(true, Ordering::Relaxed);
+    dispatcher.join(&q);
+
+    assert!(all_done, "not every job reached done");
+    let runs = plock(&seen);
+    assert_eq!(runs.len(), N, "each job must run exactly once across the worker set");
+    let mut keys: Vec<String> = runs.iter().map(|j| j.key.clone()).collect();
+    keys.sort();
+    keys.dedup();
+    assert_eq!(keys.len(), N, "a job was claimed and run by more than one worker");
+}
+
+/// `sweep` reclaims a `running` row whose lease expired — a worker that died
+/// WITHOUT the process dying (silent thread exit / wedged tick), which
+/// `reset_running_on_boot` (a boot-only op) would never reach. This is apalis's
+/// live `reenqueue_orphaned`; effectum only recovers such rows at restart.
+#[test]
+fn sweep_reclaims_an_expired_running_lease() {
+    let (q, _d) = queue();
+    q.enqueue(JobRow::tick("r1", &[PathBuf::from("/a")])).unwrap();
+    q.claim(&[JobKind::Tick]).unwrap().expect("claim");
+    assert_eq!(q.peek("tick:r1").unwrap().0, "running");
+    // Backdate the lease so it predates now - LEASE_SECS regardless of the
+    // wall-second the claim stamped.
+    {
+        let db = plock(&q.db);
+        db.conn()
+            .execute("UPDATE _job SET started_at=1 WHERE key='tick:r1'", [])
+            .unwrap();
+    }
+
+    let (reclaimed, _deleted) = q.sweep(LEASE_SECS, DONE_RETAIN_SECS).unwrap();
+    assert_eq!(reclaimed, 1, "the expired lease was not reclaimed");
+    assert_eq!(q.peek("tick:r1").unwrap().0, "pending",
+        "an expired running lease must return to pending");
+    assert!(q.claim(&[JobKind::Tick]).unwrap().is_some(),
+        "the reclaimed job must be claimable again");
+
+    // A freshly-claimed (started_at = now) lease is NOT reclaimed.
+    let (reclaimed2, _) = q.sweep(LEASE_SECS, DONE_RETAIN_SECS).unwrap();
+    assert_eq!(reclaimed2, 0, "a live lease must not be reclaimed");
+}
+
+/// A worker whose slow job was reclaimed by `sweep` mid-run must NOT stomp the
+/// superseding row when it finally finishes: the reclaimed `pending` attempt is
+/// authoritative. Guards the lease-reclaim race (effectum's worker-scoped
+/// `expires_at`/heartbeat ownership check is the analog).
+#[test]
+fn finish_declines_to_stomp_a_reclaimed_row() {
+    let (q, _d) = queue();
+    q.enqueue(JobRow::tick("r1", &[PathBuf::from("/a")])).unwrap();
+    q.claim(&[JobKind::Tick]).unwrap().expect("claim");
+    // Simulate the sweep reclaiming it (state back to pending) while the slow
+    // worker is still running the job.
+    {
+        let db = plock(&q.db);
+        db.conn()
+            .execute("UPDATE _job SET state='pending', started_at=NULL WHERE key='tick:r1'", [])
+            .unwrap();
+    }
+    // The slow worker's late success must be a no-op, not a stomp to `done`.
+    assert_eq!(q.finish("tick:r1", Ok(())).unwrap(), Requeue::Done);
+    assert_eq!(q.peek("tick:r1").unwrap().0, "pending",
+        "a late finish stomped the reclaimed pending row");
+}
+
+/// `sweep` deletes `done` rows older than the retention window and leaves fresh
+/// ones. Both effectum and apalis leave this entirely to the operator.
+#[test]
+fn sweep_trims_old_done_rows_but_keeps_fresh_ones() {
+    let (q, _d) = queue();
+    q.enqueue(JobRow::tick("old", &[PathBuf::from("/a")])).unwrap();
+    q.claim(&[JobKind::Tick]).unwrap().expect("claim");
+    q.finish("tick:old", Ok(())).unwrap();
+    q.enqueue(JobRow::tick("fresh", &[PathBuf::from("/b")])).unwrap();
+    q.claim(&[JobKind::Tick]).unwrap().expect("claim");
+    q.finish("tick:fresh", Ok(())).unwrap();
+    // Backdate only the `old` row's finish time past the retention window.
+    {
+        let db = plock(&q.db);
+        db.conn()
+            .execute("UPDATE _job SET finished_at=1 WHERE key='tick:old'", [])
+            .unwrap();
+    }
+
+    let (_reclaimed, deleted) = q.sweep(LEASE_SECS, DONE_RETAIN_SECS).unwrap();
+    assert_eq!(deleted, 1, "the aged done row was not trimmed");
+    assert!(q.peek("tick:old").is_none(), "the aged done row still exists");
+    assert!(q.peek("tick:fresh").is_some(), "a fresh done row was wrongly trimmed");
+}
+
+#[test]
+fn jittered_backoff_stays_in_band_and_never_panics() {
+    for attempts in 1..=64i64 {
+        let base = backoff_secs(attempts);
+        let spread = (base / 2).max(1);
+        for seed in [0u64, 1, 7, 12345, u64::MAX] {
+            let j = jittered_backoff(attempts, seed);
+            assert!(j >= base, "jitter dropped below base ({j} < {base})");
+            assert!(j <= base + spread, "jitter exceeded base+spread ({j} > {base}+{spread})");
+        }
+    }
+    // Distinct seeds spread across the band (not all pinned to base).
+    let spread_vals: std::collections::HashSet<i64> =
+        (0..50u64).map(|s| jittered_backoff(20, s)).collect();
+    assert!(spread_vals.len() > 1, "jitter never varies — thundering herd not broken");
 }
