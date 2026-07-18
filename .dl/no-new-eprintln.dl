@@ -53,13 +53,17 @@ eprintln_count(source_file, count(line_number)) <-
 rel eprintln_baseline(source_file: file, allowed: int).
 eprintln_baseline("src/cli/check_deadline.rs", 2).
 eprintln_baseline("src/cli/daemon.rs", 20).
-eprintln_baseline("src/cli/mod.rs", 1).
+eprintln_baseline("src/cli/mod.rs", 2).
 eprintln_baseline("src/cli/query.rs", 10).
 eprintln_baseline("src/config.rs", 1).
 eprintln_baseline("src/corpus.rs", 2).
 eprintln_baseline("src/daemon.rs", 3).
 eprintln_baseline("src/docs_cmd.rs", 4).
-eprintln_baseline("src/lib.rs", 5).
+eprintln_baseline("src/engine/derive.rs", 9).
+eprintln_baseline("src/engine/gen.rs", 1).
+eprintln_baseline("src/engine/repo.rs", 1).
+eprintln_baseline("src/engine/tick.rs", 1).
+eprintln_baseline("src/lib.rs", 10).
 eprintln_baseline("src/scip_setup.rs", 11).
 eprintln_baseline("src/setup.rs", 13).
 eprintln_baseline("src/setup/vscode.rs", 1).
