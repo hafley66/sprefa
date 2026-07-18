@@ -99,10 +99,10 @@ impl DaemonClient {
                     Err(_elapsed) => {
                         let waited = start.elapsed().as_secs();
                         if budget != 0 && waited >= budget {
-                            eprintln!(
-                                "[daemon] no response after {waited}s — the daemon is busy or wedged"
-                            ); // @eprintln-ok: final user-facing error before process exit
-                            eprintln!("  run `dl daemon why` to see what it is doing; giving up (75)"); // @eprintln-ok: final user-facing error before process exit
+                            // @eprintln-ok: final user-facing error before process exit
+                            eprintln!("[daemon] no response after {waited}s — the daemon is busy or wedged");
+                            // @eprintln-ok: final user-facing error before process exit
+                            eprintln!("  run `dl daemon why` to see what it is doing; giving up (75)");
                             std::process::exit(75);
                         }
                         let phase = crate::why::last_phase(&crate::daemon::daemon_home())
