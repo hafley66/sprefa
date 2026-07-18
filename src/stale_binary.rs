@@ -39,19 +39,35 @@ static ALREADY_WARNED: AtomicBool = AtomicBool::new(false);
 /// here, since root resolution has its own `.dl`-ancestor rules this module
 /// has no business reimplementing.
 pub fn warn_if_stale(start: &Path) {
+    let Some(running_exe) = std::env::current_exe().ok() else { return };
+    let Some(running_mtime) = mtime(&running_exe) else { return };
+    warn_if_stale_with_reference(start, &running_exe.to_string_lossy(), running_mtime);
+}
+
+/// Same rail, compared against an explicit `(reference_label, reference_mtime)`
+/// instead of this process's own `current_exe()` — the launchd/systemd
+/// re-point (plans/2026-07-18-infra-library-adoption.md section 4c): once
+/// supervision owns `dl daemon start`, `dl daemon status` is asking whether
+/// the SUPERVISED daemon binary is stale, not whether the `dl` binary running
+/// the status check itself is — those can differ (multiple installs on PATH,
+/// a `cargo build` run since the daemon was last (re)started). The daemon's
+/// own self-check at `run_daemon` startup still calls `warn_if_stale` plain
+/// (its `current_exe()` IS the supervised binary from inside that process);
+/// this variant is for a caller checking on a DIFFERENT process's binary via
+/// out-of-band identity (e.g. the daemon's reported `build_id` mtime, decoded
+/// by `crate::cli::daemon_cmd`'s supervised `status` path).
+pub fn warn_if_stale_with_reference(start: &Path, reference_label: &str, reference_mtime: SystemTime) {
     if std::env::var("DL_NO_STALE_WARN").ok().as_deref() == Some("1") {
         return;
     }
     if ALREADY_WARNED.load(Ordering::Relaxed) {
         return;
     }
-    let Some(running_exe) = std::env::current_exe().ok() else { return };
-    let Some(running_mtime) = mtime(&running_exe) else { return };
     let Some(build_root) = crate_build_root(start) else { return };
     for profile in ["debug", "release"] {
         let candidate = build_root.join("target").join(profile).join(BIN_NAME);
         let Some(built_mtime) = mtime(&candidate) else { continue };
-        if built_mtime <= running_mtime {
+        if built_mtime <= reference_mtime {
             continue;
         }
         // Compare-and-set so a race between two call sites in the same
@@ -62,10 +78,9 @@ pub fn warn_if_stale(start: &Path) {
         }
         let msg = format!(
             "[dl] warning: installed dl is older than this repo's build — \
-             installed {running_exe} ({running_age} ago) vs {candidate} ({built_age} ago) — \
+             installed {reference_label} ({running_age} ago) vs {candidate} ({built_age} ago) — \
              cargo install --path . to deploy",
-            running_exe = running_exe.display(),
-            running_age = humanize_age(running_mtime),
+            running_age = humanize_age(reference_mtime),
             candidate = candidate.display(),
             built_age = humanize_age(built_mtime),
         );
@@ -73,8 +88,8 @@ pub fn warn_if_stale(start: &Path) {
             "stale-binary",
             &msg,
             &[
-                ("running_exe", &running_exe.to_string_lossy()),
-                ("running_mtime_secs", &epoch_secs(running_mtime).to_string()),
+                ("running_exe", reference_label),
+                ("running_mtime_secs", &epoch_secs(reference_mtime).to_string()),
                 ("build_candidate", &candidate.to_string_lossy()),
                 ("build_mtime_secs", &epoch_secs(built_mtime).to_string()),
             ],

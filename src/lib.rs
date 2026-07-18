@@ -51,6 +51,7 @@ pub mod stale_binary;
 pub mod verdict;
 pub mod spine;
 pub mod storage;
+pub mod supervise;
 pub mod tray;
 pub mod trace;
 pub mod update;

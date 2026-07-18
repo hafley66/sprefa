@@ -9,7 +9,22 @@ use std::path::Path;
 
 use super::root;
 
-const VERBS: &str = "verbs: status start [--foreground] stop restart drop <root> [--purge] load load-once rows jobs await-settle url why invocations [--limit N]";
+const VERBS: &str = "verbs: status start [--foreground] stop restart install uninstall drop <root> [--purge] load load-once rows jobs await-settle url why invocations [--limit N]";
+
+/// Route `start`/`stop`/`restart` through the OS service manager (plan
+/// section 3.5.2: `dl daemon start/stop/restart` become thin launchctl/
+/// systemctl wrappers once installed) instead of the bespoke `spawn_detached`
+/// fallback (plan section 3.4) — but ONLY for the real, unsandboxed default
+/// home. The installed LaunchAgent/systemd unit always serves
+/// `daemon_home()`'s default resolution (no per-invocation env baked into the
+/// unit); a `dl daemon` call under a sandboxed `XDG_STATE_HOME` (every
+/// `tests/it/daemon.rs` case) is asking about a DIFFERENT daemon than the one
+/// launchd/systemd supervises, so it must stay on the fallback path
+/// regardless of whether a LaunchAgent happens to be installed for the real
+/// user running the tests.
+fn use_supervision() -> bool {
+    std::env::var_os("XDG_STATE_HOME").is_none() && crate::supervise::is_installed()
+}
 
 /// Dispatch `dl daemon <verb> [args]`. Returns the process exit code.
 pub fn run_cmd(args: &[String]) -> Result<i32> {
@@ -27,7 +42,23 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
             let stale_check_root = root_opt.map(Path::to_path_buf)
                 .or_else(|| std::env::current_dir().ok());
             if let Some(check_root) = &stale_check_root {
-                crate::stale_binary::warn_if_stale(check_root);
+                if use_supervision() {
+                    // Re-pointed at the launchd world (plan section 4c):
+                    // compare against the SUPERVISED daemon's own reported
+                    // build mtime (`build_id` = "version:exe_mtime_secs"),
+                    // not the `dl daemon status` CLI process's own exe —
+                    // under launchd those can differ.
+                    let reference = crate::daemon::status(None).ok().flatten()
+                        .and_then(|info| info.get("build_id").and_then(|v| v.as_str().map(String::from)))
+                        .and_then(|build_id| build_id.rsplit_once(':').map(|(_, s)| s.to_string()))
+                        .and_then(|secs| secs.parse::<u64>().ok())
+                        .map(|secs| std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs));
+                    if let Some(mtime) = reference {
+                        crate::stale_binary::warn_if_stale_with_reference(check_root, "supervised daemon", mtime);
+                    }
+                } else {
+                    crate::stale_binary::warn_if_stale(check_root);
+                }
             }
             print_status()
         }
@@ -78,7 +109,11 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
                 crate::daemon::run_daemon(&programs, db, init_root, true, tray)?;
                 Ok(0)
             } else {
-                crate::daemon::start_singleton()?;
+                if use_supervision() {
+                    crate::daemon::start_singleton_supervised()?;
+                } else {
+                    crate::daemon::start_singleton()?;
+                }
                 match &init_root {
                     Some(r) => {
                         crate::daemon::add_root(r)?;
@@ -95,11 +130,33 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
             }
         }
         "stop" => {
-            crate::daemon::stop()?;
+            if use_supervision() {
+                crate::supervise::stop()?;
+            } else {
+                crate::daemon::stop()?;
+            }
             Ok(0)
         }
         "restart" => {
-            crate::daemon::restart()?;
+            if use_supervision() {
+                crate::daemon::restart_supervised()?;
+            } else {
+                crate::daemon::restart()?;
+            }
+            Ok(0)
+        }
+        "install" => {
+            let home = crate::daemon::daemon_home();
+            let path = crate::supervise::install(&home)?;
+            println!(
+                "installed {} — registered, not started (`dl daemon start` to run it)",
+                path.display()
+            );
+            Ok(0)
+        }
+        "uninstall" => {
+            crate::supervise::uninstall()?;
+            println!("uninstalled the dl supervision unit");
             Ok(0)
         }
         "drop" => {
@@ -173,6 +230,8 @@ fn print_help() {
     eprintln!("  start [PROGRAMS] [--foreground] start the singleton (or run it in this process)"); // @eprintln-ok: usage/help text
     eprintln!("  stop                           stop the singleton"); // @eprintln-ok: usage/help text
     eprintln!("  restart                        restart the singleton"); // @eprintln-ok: usage/help text
+    eprintln!("  install                        register a launchd LaunchAgent / systemd user unit (does not start it)"); // @eprintln-ok: usage/help text
+    eprintln!("  uninstall                      deregister the LaunchAgent/unit (stops it first)"); // @eprintln-ok: usage/help text
     eprintln!("  drop <ROOT> [--purge]          unregister a root, optionally purge its db"); // @eprintln-ok: usage/help text
     eprintln!("  load <FILE.dl>                 load a watched program"); // @eprintln-ok: usage/help text
     eprintln!("  load-once <FILE.dl>            load a program for one run"); // @eprintln-ok: usage/help text
@@ -199,7 +258,11 @@ pub fn run_watch(args: &[String]) -> Result<i32> {
         eprintln!("dl watch: nothing to watch"); // @eprintln-ok: final user-facing error print at CLI top level
         return Ok(2);
     }
-    crate::daemon::start_singleton()?;
+    if use_supervision() {
+        crate::daemon::start_singleton_supervised()?;
+    } else {
+        crate::daemon::start_singleton()?;
+    }
     if let Some(r) = root_opt { crate::daemon::add_root(r)?; }
     for file in &expanded.files {
         let resp = crate::daemon::load(root_opt, file, "watched")?;
@@ -220,6 +283,12 @@ pub fn run_watch(args: &[String]) -> Result<i32> {
 /// Ping the singleton and print a status block: the process summary + every
 /// registered root with its tick count. Exit 0 running, 1 not.
 fn print_status() -> Result<i32> {
+    // Supervision line: best-effort, informational only (plan section 3.1 —
+    // `launchctl print`'s own format is explicitly not API-stable, so this
+    // never gates the exit code; liveness stays on the socket ping below).
+    if crate::supervise::is_installed() {
+        println!("supervised   installed (com.sprefa.dl)");
+    }
     match crate::daemon::status(None)? {
         None => {
             println!("daemon: not running  (home {})", crate::daemon::daemon_home().display());

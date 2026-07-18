@@ -441,6 +441,24 @@ consistent with the obs plan's subscriber migration.
    rusqlite bump; effectum's fork rationale loses its pin argument.
 2. **ProcessType=Background clamp** (3.6 q1) — decides whether first-run
    rebuild stays acceptable on efficiency cores; shapes the budget split.
+   **RESOLVED 2026-07-18 (prototyped)**: temporary LaunchAgent A/B, 5s fixed
+   CPU spinner (arm64, macOS 14.6.1, `RunAtLoad` + explicit `kickstart -p`
+   since the automation session's `gui/$UID` domain came up in
+   on-demand-only mode and never auto-fired `RunAtLoad`), bootout + plist
+   delete after each trial. Two trials: no-`ProcessType` baseline
+   2,505,048,064 / 2,500,853,760 iterations vs `ProcessType=Background`
+   1,145,044,992 / 1,127,219,200 iterations — Background sustained
+   **~45%** of baseline throughput both times (a ~2.2x wall-clock
+   slowdown), consistent with the efficiency-core-only clamp on Apple
+   Silicon. Verdict: **Nice+LowPriorityIO, not ProcessType=Background.**
+   The in-process CPU-percent governor (`budget::start_governor`, kept
+   per 3.5 point 3) already bounds total consumption to a fixed ceiling —
+   that is the mechanism doing "nothing seizes the machine" duty here.
+   `ProcessType=Background`'s hard efficiency-core clamp stacks on top of
+   that ceiling for no added safety and a measured ~2.2x cost to a
+   legitimate first-run rebuild. `Nice`+`LowPriorityIO` mirror the deleted
+   in-process `nice()`/`setiopolicy_np()` calls at the plist level without
+   the extra clamp.
 3. **rc pin tolerance** — user call: pin apalis rc.9 now vs wait for 1.0.
    **DECIDED 2026-07-18 (user)**: pin the rc (`=` pins + committed lockfile);
    absorb the rc→1.0 diff whenever upstream ships it.
