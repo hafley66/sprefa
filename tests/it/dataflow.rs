@@ -827,3 +827,165 @@ fn rust_lift_carries_branch_tails_into_bindings() {
         );
     }
 }
+
+/// Loop break-value flow: `loop { ... break EXPR; ... }` is Rust's only
+/// value-yielding loop, so `let x = loop { ... break v; ... }` must carry v
+/// through to x the same way an if/match tail does above. Pre-fix, `break`
+/// fell into flow_expr's conservative default arm — the break's own value
+/// expression was never even walked, so `produce()`/`fallback()` inside the
+/// loop dead-ended: no node reached the `loop` expr, so nothing reached the
+/// let_bind `outcome`.
+#[test]
+fn rust_lift_carries_loop_break_tails_into_bindings() {
+    let d = sandbox("breaktails");
+    fs::create_dir_all(d.join("src")).unwrap();
+    fs::write(
+        d.join("src/lib.rs"),
+        "fn produce() -> i64 { 1 }\n\
+         fn fallback() -> i64 { 0 }\n\
+         fn consume(value: i64) {}\n\
+         fn orchestrate(flag: bool) {\n    \
+             let outcome = loop {\n        \
+                 if flag {\n            \
+                     break produce();\n        \
+                 }\n        \
+                 break fallback();\n    \
+             };\n    \
+             consume(outcome);\n\
+         }\n",
+    )
+    .unwrap();
+    let prog = concat!(
+        "rel seen(path: file).\n",
+        "seen(path) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /./, line).\n",
+        "rel df_reaches(from: text, to: text).\n",
+        "df_reaches(a, b) <- closure(df_edge).\n",
+        "? df_node(id, kind, var, fn, file, line).\n",
+        "? df_reaches(from, to).\n",
+    );
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "Rust lift must not error:\n{err}");
+
+    let secs = sections(&out);
+    assert!(secs.len() >= 2, "expected 2 query sections:\n{out}");
+
+    let mut nodes: HashMap<String, (String, String, String)> = HashMap::new();
+    for r in rows(&secs[0]) {
+        assert!(r.len() >= 6, "df_node row too short: {r:?}");
+        nodes.insert(r[0].clone(), (r[1].clone(), r[2].clone(), r[5].clone()));
+    }
+    let mut reaches: HashSet<(String, String)> = HashSet::new();
+    for r in rows(&secs[1]) {
+        assert!(r.len() >= 2, "df_reaches row too short: {r:?}");
+        reaches.insert((r[0].clone(), r[1].clone()));
+    }
+
+    let call_res_on = |line: &str| -> Vec<String> {
+        nodes
+            .iter()
+            .filter(|(_, (k, _, l))| k == "call_res" && l == line)
+            .map(|(id, _)| id.clone())
+            .collect()
+    };
+    let bind_of = |var: &str| -> String {
+        let hits: Vec<String> = nodes
+            .iter()
+            .filter(|(_, (k, v, _))| k == "let_bind" && v == var)
+            .map(|(id, _)| id.clone())
+            .collect();
+        assert_eq!(hits.len(), 1, "expected one let_bind `{var}`:\n{out}");
+        hits[0].clone()
+    };
+
+    // produce() sits on line 7 (inside the `if`), fallback() on line 9 (the
+    // loop's other break) — both must reach let_bind `outcome` on line 5.
+    let outcome_id = bind_of("outcome");
+    let break_calls: Vec<String> = call_res_on("7").into_iter().chain(call_res_on("9")).collect();
+    assert_eq!(
+        break_calls.len(), 2,
+        "expected produce+fallback call_res on the break lines:\n{out}"
+    );
+    for c in &break_calls {
+        assert!(
+            reaches.contains(&(c.clone(), outcome_id.clone())),
+            "loop break-value call_res {c} must reach let_bind outcome:\n{out}"
+        );
+    }
+}
+
+/// Labeled break-value flow: `break 'outer v` inside a loop nested under the
+/// labeled `loop` must route v to the OUTER loop's node, not dead-end at the
+/// inner (unlabeled) loop it lexically sits inside. Proves the `loop_breaks`
+/// stack resolves a labeled break against its named frame rather than always
+/// the innermost one.
+#[test]
+fn rust_lift_carries_labeled_loop_break_tails_into_bindings() {
+    let d = sandbox("labeledbreaktails");
+    fs::create_dir_all(d.join("src")).unwrap();
+    fs::write(
+        d.join("src/lib.rs"),
+        "fn produce() -> i64 { 1 }\n\
+         fn consume(value: i64) {}\n\
+         fn orchestrate(flag: bool) {\n    \
+             let outcome = 'outer: loop {\n        \
+                 loop {\n            \
+                     break 'outer produce();\n        \
+                 }\n    \
+             };\n    \
+             consume(outcome);\n\
+         }\n",
+    )
+    .unwrap();
+    let prog = concat!(
+        "rel seen(path: file).\n",
+        "seen(path) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /./, line).\n",
+        "rel df_reaches(from: text, to: text).\n",
+        "df_reaches(a, b) <- closure(df_edge).\n",
+        "? df_node(id, kind, var, fn, file, line).\n",
+        "? df_reaches(from, to).\n",
+    );
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "Rust lift must not error:\n{err}");
+
+    let secs = sections(&out);
+    assert!(secs.len() >= 2, "expected 2 query sections:\n{out}");
+
+    let mut nodes: HashMap<String, (String, String, String)> = HashMap::new();
+    for r in rows(&secs[0]) {
+        assert!(r.len() >= 6, "df_node row too short: {r:?}");
+        nodes.insert(r[0].clone(), (r[1].clone(), r[2].clone(), r[5].clone()));
+    }
+    let mut reaches: HashSet<(String, String)> = HashSet::new();
+    for r in rows(&secs[1]) {
+        assert!(r.len() >= 2, "df_reaches row too short: {r:?}");
+        reaches.insert((r[0].clone(), r[1].clone()));
+    }
+
+    let call_res_on = |line: &str| -> Vec<String> {
+        nodes
+            .iter()
+            .filter(|(_, (k, _, l))| k == "call_res" && l == line)
+            .map(|(id, _)| id.clone())
+            .collect()
+    };
+    let bind_of = |var: &str| -> String {
+        let hits: Vec<String> = nodes
+            .iter()
+            .filter(|(_, (k, v, _))| k == "let_bind" && v == var)
+            .map(|(id, _)| id.clone())
+            .collect();
+        assert_eq!(hits.len(), 1, "expected one let_bind `{var}`:\n{out}");
+        hits[0].clone()
+    };
+
+    // produce() sits on line 6 (`break 'outer produce();`), let_bind `outcome`
+    // on line 4 (the OUTER `loop` binding).
+    let outcome_id = bind_of("outcome");
+    let break_calls = call_res_on("6");
+    assert_eq!(break_calls.len(), 1, "expected one produce() call_res on the labeled break line:\n{out}");
+    assert!(
+        reaches.contains(&(break_calls[0].clone(), outcome_id.clone())),
+        "labeled break-value call_res {} must reach let_bind outcome through the outer loop:\n{out}",
+        break_calls[0]
+    );
+}

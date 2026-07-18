@@ -99,6 +99,7 @@ pub fn builtin_enum_brands() -> &'static [(&'static str, &'static [&'static str]
                 "binop",
                 "block",
                 "borrow",
+                "break",
                 "call_res",
                 "closure",
                 "concat",

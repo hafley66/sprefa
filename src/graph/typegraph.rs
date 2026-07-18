@@ -4148,7 +4148,13 @@ fn flow_fn_body(
     // anywhere in the body is handled in `flow_expr` (Expr::Return). The `ret`
     // node is the interprocedural sink the backward flow hop reads — a callee's
     // returned value reaches the caller's `call_res`.
-    if let Some((tail, l, c)) = flow_block(block, file, fn_sym, &mut scope, out) {
+    //
+    // `loop_breaks` is the stack of live enclosing `loop` frames — each entry is
+    // (label, collected break-value tail ids) — threaded through every recursive
+    // flow_block/flow_expr call so `Expr::Break` can find the loop it targets and
+    // `Expr::Loop` can drain the tails it collected. Starts empty at the fn body.
+    let mut loop_breaks: Vec<(Option<String>, Vec<String>)> = Vec::new();
+    if let Some((tail, l, c)) = flow_block(block, file, fn_sym, &mut scope, out, &mut loop_breaks) {
         let ret = push_node(out, file, l, c, "ret", "", fn_sym);
         out.edges.push(DfEdge { from: tail, to: ret });
     }
@@ -4163,6 +4169,7 @@ fn flow_block(
     fn_sym: &str,
     scope: &mut std::collections::HashMap<String, String>,
     out: &mut DataflowFacts,
+    loop_breaks: &mut Vec<(Option<String>, Vec<String>)>,
 ) -> Option<(String, u32, u32)> {
     let mut tail = None;
     let n = b.stmts.len();
@@ -4170,7 +4177,7 @@ fn flow_block(
         match stmt {
             syn::Stmt::Local(loc) => {
                 if let Some(init) = loc.init.as_ref() {
-                    let rhs = flow_expr(&init.expr, file, fn_sym, scope, out);
+                    let rhs = flow_expr(&init.expr, file, fn_sym, scope, out, loop_breaks);
                     // bind every ident in the pattern (handles `let (a, b) = pair`),
                     // each tainted by the rhs conservatively.
                     for (_, bid) in bind_pat(&loc.pat, file, fn_sym, scope, out) {
@@ -4180,7 +4187,7 @@ fn flow_block(
             }
             syn::Stmt::Expr(e, semi) => {
                 let start = e.span().start();
-                let id = flow_expr(e, file, fn_sym, scope, out);
+                let id = flow_expr(e, file, fn_sym, scope, out, loop_breaks);
                 if idx + 1 == n && semi.is_none() {
                     tail = Some((id, start.line as u32, start.column as u32));
                 }
@@ -4263,13 +4270,17 @@ fn is_allocator_method(ident: &syn::Ident) -> bool {
 }
 
 /// Post-order value flow for one expression. Returns the node id for `e` and
-/// emits every internal edge as a side effect.
+/// emits every internal edge as a side effect. `loop_breaks` is the live stack
+/// of enclosing `loop` frames (see `flow_fn_body`) — `Expr::Loop` pushes/pops
+/// its own frame, `Expr::Break` records its value's tail into the frame it
+/// targets, every other arm just forwards the stack unchanged.
 fn flow_expr(
     e: &syn::Expr,
     file: &str,
     fn_sym: &str,
     scope: &mut std::collections::HashMap<String, String>,
     out: &mut DataflowFacts,
+    loop_breaks: &mut Vec<(Option<String>, Vec<String>)>,
 ) -> String {
     let start = e.span().start();
     let (line, col) = (start.line as u32, start.column as u32);
@@ -4301,7 +4312,7 @@ fn flow_expr(
             let ctor = ctor_name(&c.func);
             let mut children = Vec::new();
             for arg in &c.args {
-                children.push(flow_expr(arg, file, fn_sym, scope, out));
+                children.push(flow_expr(arg, file, fn_sym, scope, out, loop_breaks));
             }
             let (kind, var) = match &ctor {
                 Some(n) => ("new", n.as_str()),
@@ -4320,10 +4331,10 @@ fn flow_expr(
         // callee's typed params.
         syn::Expr::MethodCall(m) => {
             if is_allocator_method(&m.method) { out.allocators.insert(fn_sym.to_string()); }
-            let recv = flow_expr(&m.receiver, file, fn_sym, scope, out);
+            let recv = flow_expr(&m.receiver, file, fn_sym, scope, out, loop_breaks);
             let mut children = Vec::new();
             for arg in &m.args {
-                children.push(flow_expr(arg, file, fn_sym, scope, out));
+                children.push(flow_expr(arg, file, fn_sym, scope, out, loop_breaks));
             }
             // The node sits at the METHOD ident, not the receiver expression's
             // start — the same line the call-site extractor records, so the
@@ -4346,14 +4357,14 @@ fn flow_expr(
             let ty = s.path.segments.last().map(|sg| sg.ident.to_string()).unwrap_or_default();
             let mut filled: Vec<(String, String)> = Vec::new();
             for f in &s.fields {
-                let v = flow_expr(&f.expr, file, fn_sym, scope, out);
+                let v = flow_expr(&f.expr, file, fn_sym, scope, out, loop_breaks);
                 let name = match &f.member {
                     syn::Member::Named(i) => i.to_string(),
                     syn::Member::Unnamed(i) => i.index.to_string(),
                 };
                 filled.push((name, v));
             }
-            let base = s.rest.as_ref().map(|r| flow_expr(r, file, fn_sym, scope, out));
+            let base = s.rest.as_ref().map(|r| flow_expr(r, file, fn_sym, scope, out, loop_breaks));
             let id = push_node(out, file, line, col, "new", &ty, fn_sym);
             for (name, v) in filled {
                 out.edges.push(DfEdge { from: v.clone(), to: id.clone() });
@@ -4369,7 +4380,7 @@ fn flow_expr(
         // node whose var is the field name, so a query can match a `df_field`
         // write against the read of the same field (field-sensitive flow).
         syn::Expr::Field(f) => {
-            let base = flow_expr(&f.base, file, fn_sym, scope, out);
+            let base = flow_expr(&f.base, file, fn_sym, scope, out, loop_breaks);
             let name = match &f.member {
                 syn::Member::Named(i) => i.to_string(),
                 syn::Member::Unnamed(i) => i.index.to_string(),
@@ -4378,36 +4389,68 @@ fn flow_expr(
             out.edges.push(DfEdge { from: base, to: id.clone() });
             id
         }
-        syn::Expr::Paren(p) => flow_expr(&p.expr, file, fn_sym, scope, out),
+        syn::Expr::Paren(p) => flow_expr(&p.expr, file, fn_sym, scope, out, loop_breaks),
         syn::Expr::Reference(r) => {
-            let inner = flow_expr(&r.expr, file, fn_sym, scope, out);
+            let inner = flow_expr(&r.expr, file, fn_sym, scope, out, loop_breaks);
             let id = push_node(out, file, line, col, "borrow", "", fn_sym);
             out.edges.push(DfEdge { from: inner, to: id.clone() });
             id
         }
         syn::Expr::Binary(b) => {
-            let l = flow_expr(&b.left, file, fn_sym, scope, out);
-            let r = flow_expr(&b.right, file, fn_sym, scope, out);
+            let l = flow_expr(&b.left, file, fn_sym, scope, out, loop_breaks);
+            let r = flow_expr(&b.right, file, fn_sym, scope, out, loop_breaks);
             let id = push_node(out, file, line, col, "binop", "", fn_sym);
             out.edges.push(DfEdge { from: l, to: id.clone() });
             out.edges.push(DfEdge { from: r, to: id.clone() });
             id
         }
         syn::Expr::Unary(u) => {
-            let inner = flow_expr(&u.expr, file, fn_sym, scope, out);
+            let inner = flow_expr(&u.expr, file, fn_sym, scope, out, loop_breaks);
             let id = push_node(out, file, line, col, "unop", "", fn_sym);
             out.edges.push(DfEdge { from: inner, to: id.clone() });
             id
         }
         // transparent pass-through: the ? operator does not alter value flow.
-        syn::Expr::Try(t) => flow_expr(&t.expr, file, fn_sym, scope, out),
+        syn::Expr::Try(t) => flow_expr(&t.expr, file, fn_sym, scope, out, loop_breaks),
         // `return EXPR`: the returned value flows into the fn's `ret` node — the
         // sink the interprocedural backward hop reads.
         syn::Expr::Return(r) => {
             let id = push_node(out, file, line, col, "ret", "", fn_sym);
             if let Some(inner) = &r.expr {
-                let v = flow_expr(inner, file, fn_sym, scope, out);
+                let v = flow_expr(inner, file, fn_sym, scope, out, loop_breaks);
                 out.edges.push(DfEdge { from: v, to: id.clone() });
+            }
+            id
+        }
+        // `break EXPR;` / `break 'label EXPR;`: Rust's only value-yielding break
+        // (`while`/`for` breaks never carry a value, so this is the loop-only
+        // counterpart of the if/match/block tail routing above). The value's
+        // tail id is recorded into the `loop_breaks` frame it targets — the
+        // innermost live `loop` frame for an unlabeled break, or the frame whose
+        // label matches for a labeled one — and `Expr::Loop` drains its frame's
+        // collected tails into edges on its own node when it finishes walking
+        // its body, exactly mirroring how `then_tail`/`arm_tails` feed the `if`/
+        // `match` node. Only `Expr::Loop` ever pushes a frame (`while`/`for`
+        // can't be break-value targets in valid Rust), so a label that resolves
+        // to a `while`/`for` loop — never legal for a value-carrying break —
+        // finds no frame: the value still gets its own node (never silently
+        // dropped), it just has nowhere to route to.
+        syn::Expr::Break(brk) => {
+            let id = push_node(out, file, line, col, "break", "", fn_sym);
+            if let Some(value_expr) = &brk.expr {
+                let value_id = flow_expr(value_expr, file, fn_sym, scope, out, loop_breaks);
+                out.edges.push(DfEdge { from: value_id, to: id.clone() });
+                let target_label = brk.label.as_ref().map(|lt| lt.ident.to_string());
+                let frame = match &target_label {
+                    Some(label) => loop_breaks
+                        .iter_mut()
+                        .rev()
+                        .find(|(frame_label, _)| frame_label.as_deref() == Some(label.as_str())),
+                    None => loop_breaks.last_mut(),
+                };
+                if let Some((_, tails)) = frame {
+                    tails.push(id.clone());
+                }
             }
             id
         }
@@ -4415,7 +4458,7 @@ fn flow_expr(
         // record the loop span so loop_over can flag loop-invariant calls inside
         // it, then walk the body. Each element taints the loop var conservatively.
         syn::Expr::ForLoop(f) => {
-            let coll = flow_expr(&f.expr, file, fn_sym, scope, out);
+            let coll = flow_expr(&f.expr, file, fn_sym, scope, out, loop_breaks);
             let binds = bind_pat(&f.pat, file, fn_sym, scope, out);
             // the whole collection taints each bound element conservatively
             // (a tuple element derives from the iterator's yield value).
@@ -4430,37 +4473,57 @@ fn flow_expr(
                 collection: String::new(),
                 fn_sym: fn_sym.into(),
             });
-            flow_block(&f.body, file, fn_sym, scope, out);
+            // No `loop_breaks` frame here: a `for` loop cannot yield a value
+            // through `break` in Rust, so there is nothing to route. Its body
+            // still shares the same live stack — a `loop` nested inside pushes
+            // and pops its own frame regardless of what encloses it.
+            flow_block(&f.body, file, fn_sym, scope, out, loop_breaks);
             push_node(out, file, line, col, "loop", &lvar, fn_sym)
         }
         // `while cond { body }`: `while let` is ExprWhile with cond = Expr::Let.
         // No collection, but the span is still recorded so calls in the body can
-        // be flagged.
+        // be flagged. Same no-frame reasoning as `for` above: `while` can't
+        // yield a break value either.
         syn::Expr::While(w) => {
-            let _ = flow_expr(&w.cond, file, fn_sym, scope, out);
+            let _ = flow_expr(&w.cond, file, fn_sym, scope, out, loop_breaks);
             if let syn::Expr::Let(l) = &*w.cond { let _ = bind_pat(&l.pat, file, fn_sym, scope, out); }
             let end = w.body.span().end().line as u32;
             out.loops.push(LoopFact { file: file.into(), start: line, end, var: String::new(), collection: String::new(), fn_sym: fn_sym.into() });
-            flow_block(&w.body, file, fn_sym, scope, out);
+            flow_block(&w.body, file, fn_sym, scope, out, loop_breaks);
             push_node(out, file, line, col, "loop", "", fn_sym)
         }
+        // `loop { body }`: Rust's only value-yielding loop construct — a
+        // `break EXPR` anywhere inside (including nested `if`/`match`/inner
+        // loops) supplies the value of the whole `loop` expression, the same
+        // way a block's tail supplies a block's value. Push a fresh
+        // `loop_breaks` frame (carrying this loop's label, if any) before
+        // walking the body so nested `Expr::Break` calls have somewhere to
+        // record their tail; pop it after and edge every collected tail into
+        // this loop's own node, mirroring the if/match/block tail routing.
         syn::Expr::Loop(l) => {
             let end = l.body.span().end().line as u32;
             out.loops.push(LoopFact { file: file.into(), start: line, end, var: String::new(), collection: String::new(), fn_sym: fn_sym.into() });
-            flow_block(&l.body, file, fn_sym, scope, out);
-            push_node(out, file, line, col, "loop", "", fn_sym)
+            let label = l.label.as_ref().map(|lbl| lbl.name.ident.to_string());
+            loop_breaks.push((label, Vec::new()));
+            flow_block(&l.body, file, fn_sym, scope, out, loop_breaks);
+            let (_, break_tails) = loop_breaks.pop().expect("Expr::Loop popping the frame it just pushed");
+            let id = push_node(out, file, line, col, "loop", "", fn_sym);
+            for tail in break_tails {
+                out.edges.push(DfEdge { from: tail, to: id.clone() });
+            }
+            id
         }
         // `if cond { then } else { els }`: flow each branch; taint is the union.
         // Branch TAILS flow into the `if` node itself, so a value-position if
         // (`let x = if c { a() } else { b() }`) carries a()/b() through to the
         // binding instead of dead-ending at the branch (the arch_df starvation).
         syn::Expr::If(i) => {
-            let _ = flow_expr(&i.cond, file, fn_sym, scope, out);
-            let then_tail = flow_block(&i.then_branch, file, fn_sym, scope, out);
+            let _ = flow_expr(&i.cond, file, fn_sym, scope, out, loop_breaks);
+            let then_tail = flow_block(&i.then_branch, file, fn_sym, scope, out, loop_breaks);
             let else_tail = i
                 .else_branch
                 .as_ref()
-                .map(|(_, els)| flow_expr(els, file, fn_sym, scope, out));
+                .map(|(_, els)| flow_expr(els, file, fn_sym, scope, out, loop_breaks));
             let id = push_node(out, file, line, col, "if", "", fn_sym);
             if let Some((t, _, _)) = then_tail {
                 out.edges.push(DfEdge { from: t, to: id.clone() });
@@ -4475,14 +4538,14 @@ fn flow_expr(
         // tainted by it — this is what makes match-bound vars track as loop-carried
         // when the scrutinee is the loop variable.
         syn::Expr::Match(m) => {
-            let scrut = flow_expr(&m.expr, file, fn_sym, scope, out);
+            let scrut = flow_expr(&m.expr, file, fn_sym, scope, out, loop_breaks);
             let mut arm_tails = Vec::new();
             for arm in &m.arms {
                 for (_, bid) in bind_pat(&arm.pat, file, fn_sym, scope, out) {
                     out.edges.push(DfEdge { from: scrut.clone(), to: bid });
                 }
-                if let Some((_, g)) = &arm.guard { let _ = flow_expr(g, file, fn_sym, scope, out); }
-                arm_tails.push(flow_expr(&arm.body, file, fn_sym, scope, out));
+                if let Some((_, g)) = &arm.guard { let _ = flow_expr(g, file, fn_sym, scope, out, loop_breaks); }
+                arm_tails.push(flow_expr(&arm.body, file, fn_sym, scope, out, loop_breaks));
             }
             // Arm tails flow into the `match` node: a value-position match
             // carries every arm's value to the consumer (same as `if` above).
@@ -4495,7 +4558,7 @@ fn flow_expr(
         // `{ stmts }` as an expression: reuse the block walker; the tail
         // statement's value flows through the block node.
         syn::Expr::Block(b) => {
-            let tail = flow_block(&b.block, file, fn_sym, scope, out);
+            let tail = flow_block(&b.block, file, fn_sym, scope, out, loop_breaks);
             let id = push_node(out, file, line, col, "block", "", fn_sym);
             if let Some((t, _, _)) = tail {
                 out.edges.push(DfEdge { from: t, to: id.clone() });
@@ -4531,11 +4594,16 @@ fn flow_expr(
                 }
                 pos += 1;
             }
+            // A `break` cannot cross a closure boundary in Rust (it would be a
+            // compile error), so the closure body gets its own fresh, empty
+            // `loop_breaks` stack rather than inheriting the enclosing fn's —
+            // a `loop` written inside the closure pushes/pops onto this one.
+            let mut closure_loop_breaks: Vec<(Option<String>, Vec<String>)> = Vec::new();
             let body_val = match c.body.as_ref() {
-                syn::Expr::Block(b) => flow_block(&b.block, file, &lam_sym, scope, out),
+                syn::Expr::Block(b) => flow_block(&b.block, file, &lam_sym, scope, out, &mut closure_loop_breaks),
                 other => {
                     let sp = other.span().start();
-                    Some((flow_expr(other, file, &lam_sym, scope, out), sp.line as u32, sp.column as u32))
+                    Some((flow_expr(other, file, &lam_sym, scope, out, &mut closure_loop_breaks), sp.line as u32, sp.column as u32))
                 }
             };
             if let Some((v, l, cl)) = body_val {
@@ -4547,7 +4615,7 @@ fn flow_expr(
         // `lhs = rhs`: flow rhs, rebind a write slot so later reads see the new
         // value (taint-correct for reassignment). Compound assignment (`+=`) and
         // macros fall through to the conservative default below.
-        syn::Expr::Assign(a) => assign_flow(&a.left, &a.right, file, line, col, fn_sym, scope, out),
+        syn::Expr::Assign(a) => assign_flow(&a.left, &a.right, file, line, col, fn_sym, scope, out, loop_breaks),
         // macros (format!/println!), verbatim, and remaining variants: syn exposes
         // these as token streams or non-Expr children, so mint a node but don't
         // chase. Conservative — may miss flows into macro args, never invents.
@@ -4617,8 +4685,9 @@ fn assign_flow(
     fn_sym: &str,
     scope: &mut std::collections::HashMap<String, String>,
     out: &mut DataflowFacts,
+    loop_breaks: &mut Vec<(Option<String>, Vec<String>)>,
 ) -> String {
-    let r = flow_expr(rhs, file, fn_sym, scope, out);
+    let r = flow_expr(rhs, file, fn_sym, scope, out, loop_breaks);
     if let syn::Expr::Path(p) = lhs {
         if let Some(name) = p.path.segments.last().map(|s| s.ident.to_string()) {
             let id = push_node(out, file, line, col, "var_write", &name, fn_sym);
