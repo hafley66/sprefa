@@ -35,6 +35,11 @@ file keeps only the standing laws + currently-open work.
   status — following its "how a new rail gets born" pipeline (incident -> RCA ->
   fail-pre-fix test -> rail -> entry). No incident closes without its entry. Do
   not rely on skill self-updates to carry this knowledge; the doc is the record.
+- **eprintln never comes back** (user-set 2026-07-18 PM): no `eprintln!` ever
+  returns to `src/**`. Diagnostics go through `tracing` macros only; the rare
+  CLI-UX line that must bypass tracing carries an explicit `@eprintln-ok`
+  waiver. `.dl/no-new-eprintln.dl` ratchets the count to zero and the baseline
+  never rises. Applies to every agent at every level.
 - **Infra is bought, never built** (user-set 2026-07-18 PM, supersedes the
   scheduler plan's build-on-jobq verdict): scheduling, job queue, HTTP serving,
   daemon lifecycle/supervision, and logging/telemetry run on established Rust
