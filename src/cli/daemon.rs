@@ -20,7 +20,17 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
     let target = root::daemon_target()?;
     let root_opt = target.root();
     match args.first().map(String::as_str).unwrap_or("status") {
-        "status" => print_status(),
+        "status" => {
+            // Class-13 stale-binary rail: `daemon status` is one of the three
+            // named surfaces (docs/failure-modes.md:300-327) — a status probe
+            // against a stale singleton should say so, not just report green.
+            let stale_check_root = root_opt.map(Path::to_path_buf)
+                .or_else(|| std::env::current_dir().ok());
+            if let Some(check_root) = &stale_check_root {
+                crate::stale_binary::warn_if_stale(check_root);
+            }
+            print_status()
+        }
         "serve" => {
             // Internal: the detached background singleton (idle timer ON). Runs in
             // THIS process, no cwd root — replays roots.json + the config view.

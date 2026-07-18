@@ -469,6 +469,10 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
     } else if cli.mcp {
         crate::mcp::run_mcp(programs, db.as_deref(), root)
     } else if cli.check || cli.diag_json {
+        // Class-13 stale-binary rail: `--check` is the third named surface
+        // (docs/failure-modes.md:300-327) — the pre-commit/agent-turn hook
+        // path that answered from a stale install during freeze #1.
+        crate::stale_binary::warn_if_stale(&root);
         // Exit contract: 0 clean, 2 rail violations (Claude Code's blocking-hook
         // code; stderr feeds the agent), 1 broken program (user-facing).
         // R7: resolve the routing stage (default the pre-commit surface); reject

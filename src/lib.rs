@@ -15,6 +15,7 @@ pub mod daemon_read;
 pub mod daemon_shell;
 pub mod datapath;
 pub mod db;
+pub mod db_ratio;
 pub mod desc;
 pub mod docs_cmd;
 pub mod embed;
@@ -46,6 +47,7 @@ pub mod scip_setup;
 pub mod setup;
 pub mod sg;
 pub mod stage;
+pub mod stale_binary;
 pub mod verdict;
 pub mod spine;
 pub mod storage;
@@ -451,6 +453,13 @@ fn run_check_inproc(programs: &[String], db_path: Option<&str>, root: PathBuf, j
     let conn = db::open(db_path)?;
     let mut eng = engine::Engine::new(conn, root);
     let diags = if type_errors { Vec::new() } else { eng.tick(&prog, true)?; eng.diags(None)? };
+    // Class-17 db-ratio rail (docs/failure-modes.md:407-441): the cold
+    // `--no-daemon --check` completion is the one-shot twin of a daemon's
+    // per-root boot (`ServedRoot::open` in `src/daemon.rs` carries the other
+    // call site) — the moment a corpus has just been read into this db.
+    if let Some(db_path_str) = db_path {
+        db_ratio::emit_verdict(&eng.root, Path::new(db_path_str));
+    }
     // R7 stage routing: keep only the diags this stage surfaces. The db still
     // holds every row (`? diag(...)` stays complete); `diag_stage` rows colocated
     // in the program supply the per-code routes, else the severity default.

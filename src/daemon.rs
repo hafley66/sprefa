@@ -830,6 +830,17 @@ impl ServedRoot {
         let db_path_buf = db_path.map(PathBuf::from);
         let read_view = crate::daemon_read::ReadView::snapshot(&eng.rels, &prog, db_path_buf.clone());
 
+        // Class-17 db-ratio rail (docs/failure-modes.md:407-441): once per
+        // root at daemon boot (this fn also runs for a later `add_root`,
+        // which is the same "a corpus just got read into a db" moment for
+        // that root). The config view (`is_config`, root:None) scans
+        // nothing of its own, so it has no corpus to ratio against.
+        if !is_config {
+            if let Some(db_path_ref) = db_path_buf.as_deref() {
+                crate::db_ratio::emit_verdict(&eng_root, db_path_ref);
+            }
+        }
+
         Ok(Arc::new(ServedRoot {
             root: eng_root,
             key,
@@ -1367,6 +1378,14 @@ pub fn run_daemon(
         env!("CARGO_PKG_VERSION"),
         &build_id,
     );
+    // Class-13 stale-binary rail: this same singleton is what freeze #1
+    // auto-started from a stale install (docs/failure-modes.md:300-327).
+    // Check against the served root if the caller named one, else cwd (the
+    // shell the daemon was launched from).
+    let stale_check_root = initial_root.clone()
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| home.clone());
+    crate::stale_binary::warn_if_stale(&stale_check_root);
 
     // Config-view watcher (watches the config repos) — a tokio task.
     daemon.shell.rt.spawn(daemon_shell::watch::watch_task(daemon.config.clone(), shell.clone(), launch_exe_stamp));
