@@ -215,11 +215,11 @@ pub fn open(path: Option<&str>) -> Result<Db> {
         conn.create_scalar_function("sprf_sym_intern", 1,
             rusqlite::functions::FunctionFlags::SQLITE_UTF8,
             move |ctx| {
-                let text = ctx.get::<String>(0)?;
+                let Some(text) = ctx.get::<Option<String>>(0)? else { return Ok(None); };
                 if !text.is_empty() {
                     pending.lock().expect("pending symbol queue poisoned").push(text.clone());
                 }
-                Ok(crate::spine::StringId::of(&text).sqlite())
+                Ok(Some(crate::spine::StringId::of(&text).sqlite()))
             })?;
     }
     if profiling() { conn.profile(Some(profile_hook)); }
@@ -272,8 +272,8 @@ pub fn open_read_only(path: &str) -> Result<Connection> {
         1,
         rusqlite::functions::FunctionFlags::SQLITE_UTF8,
         |ctx| {
-            let text = ctx.get::<String>(0)?;
-            Ok(crate::spine::StringId::of(&text).sqlite())
+            let Some(text) = ctx.get::<Option<String>>(0)? else { return Ok(None); };
+            Ok(Some(crate::spine::StringId::of(&text).sqlite()))
         },
     )?;
     Ok(conn)
@@ -334,11 +334,12 @@ fn register_regexp(conn: &Connection) -> Result<()> {
         2,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            let pattern = ctx.get::<String>(0)?;
-            let value = ctx.get::<String>(1)?;
+            let (Some(pattern), Some(value)) =
+                (ctx.get::<Option<String>>(0)?, ctx.get::<Option<String>>(1)?)
+            else { return Ok(None); };
             let re = compiled_regex(&pattern)
                 .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?;
-            Ok(re.is_match(&value))
+            Ok(Some(re.is_match(&value)))
         },
     )?;
     Ok(())
@@ -370,9 +371,11 @@ fn register_split(conn: &Connection) -> Result<()> {
         3,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            let text = ctx.get::<String>(0)?;
-            let sep = ctx.get::<String>(1)?;
-            let idx = ctx.get::<i64>(2)?;
+            let (Some(text), Some(sep), Some(idx)) = (
+                ctx.get::<Option<String>>(0)?,
+                ctx.get::<Option<String>>(1)?,
+                ctx.get::<Option<i64>>(2)?,
+            ) else { return Ok(None); };
             if sep.is_empty() { return Ok(None); }
             let parts: Vec<&str> = text.split(&sep).collect();
             let n = parts.len() as i64;
@@ -406,32 +409,38 @@ fn register_string_fns(conn: &Connection) -> Result<()> {
     use rusqlite::functions::FunctionFlags;
     let det = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
 
+    // Every text fn propagates NULL (SQL semantics: NULL in, NULL out), same
+    // as SQLite's own lower()/upper(). A NON-Option `ctx.get::<String>` on a
+    // NULL argument aborts the whole statement with "Invalid function
+    // parameter type Null at index 0" — the 2026-07-18 cold-extract poison-job
+    // incident (failure-modes class 18 follow-on): one NULL fed to sprf_norm
+    // failed a 109s ColdExtract job on every retry.
     conn.create_scalar_function("sprf_lower", 1, det,
-        |ctx| Ok(ctx.get::<String>(0)?.to_lowercase()))?;
+        |ctx| Ok(ctx.get::<Option<String>>(0)?.map(|s| s.to_lowercase())))?;
     conn.create_scalar_function("sprf_upper", 1, det,
-        |ctx| Ok(ctx.get::<String>(0)?.to_uppercase()))?;
+        |ctx| Ok(ctx.get::<Option<String>>(0)?.map(|s| s.to_uppercase())))?;
     conn.create_scalar_function("sprf_lcfirst", 1, det,
-        |ctx| Ok(map_first(&ctx.get::<String>(0)?, false)))?;
+        |ctx| Ok(ctx.get::<Option<String>>(0)?.map(|s| map_first(&s, false))))?;
     conn.create_scalar_function("sprf_ucfirst", 1, det,
-        |ctx| Ok(map_first(&ctx.get::<String>(0)?, true)))?;
+        |ctx| Ok(ctx.get::<Option<String>>(0)?.map(|s| map_first(&s, true))))?;
     conn.create_scalar_function("sprf_trim", 1, det,
-        |ctx| Ok(ctx.get::<String>(0)?.trim().to_string()))?;
+        |ctx| Ok(ctx.get::<Option<String>>(0)?.map(|s| s.trim().to_string())))?;
     // Same normalization the ref-spine folds into `_strings.norm` / the
     // `string(id,text,norm)` rel: ASCII-alnum only, lowercased. Exposed as a
     // scalar so `norm(a) = norm(b)` is a punctuation/case-blind compare, and
     // arbitrary text joins against `string.norm`.
     conn.create_scalar_function("sprf_norm", 1, det,
-        |ctx| Ok(crate::spine::normalize(&ctx.get::<String>(0)?)))?;
+        |ctx| Ok(ctx.get::<Option<String>>(0)?.map(|s| crate::spine::normalize(&s))))?;
 
     conn.create_scalar_function("sprf_strip_prefix", 2, det, |ctx| {
-        let s = ctx.get::<String>(0)?;
-        let p = ctx.get::<String>(1)?;
-        Ok(s.strip_prefix(&p).map(str::to_string).unwrap_or(s))
+        let (Some(s), Some(p)) = (ctx.get::<Option<String>>(0)?, ctx.get::<Option<String>>(1)?)
+        else { return Ok(None); };
+        Ok(Some(s.strip_prefix(&p).map(str::to_string).unwrap_or(s)))
     })?;
     conn.create_scalar_function("sprf_strip_suffix", 2, det, |ctx| {
-        let s = ctx.get::<String>(0)?;
-        let p = ctx.get::<String>(1)?;
-        Ok(s.strip_suffix(&p).map(str::to_string).unwrap_or(s))
+        let (Some(s), Some(p)) = (ctx.get::<Option<String>>(0)?, ctx.get::<Option<String>>(1)?)
+        else { return Ok(None); };
+        Ok(Some(s.strip_suffix(&p).map(str::to_string).unwrap_or(s)))
     })?;
 
     // Content-addressed intern id of a text (StringId::of as i64) — lets a
@@ -439,22 +448,25 @@ fn register_string_fns(conn: &Connection) -> Result<()> {
     // side (one hash per candidate row, zero `_strings` lookups) instead of
     // decoding the sym side.
     conn.create_scalar_function("sprf_sym", 1, det,
-        |ctx| Ok(crate::spine::StringId::of(&ctx.get::<String>(0)?).sqlite()))?;
+        |ctx| Ok(ctx.get::<Option<String>>(0)?
+            .map(|s| crate::spine::StringId::of(&s).sqlite())))?;
 
     // Line count of a text value (newline count + 1, 0 for empty) — feeds the
     // file-size rail (`lines(content)`).
     conn.create_scalar_function("sprf_lines", 1, det, |ctx| {
-        let s = ctx.get::<String>(0)?;
-        Ok(if s.is_empty() { 0i64 } else { s.lines().count() as i64 })
+        let Some(s) = ctx.get::<Option<String>>(0)? else { return Ok(None); };
+        Ok(Some(if s.is_empty() { 0i64 } else { s.lines().count() as i64 }))
     })?;
 
     conn.create_scalar_function("sprf_replace_re", 3, det, |ctx| {
-        let s = ctx.get::<String>(0)?;
-        let pattern = ctx.get::<String>(1)?;
-        let repl = ctx.get::<String>(2)?;
+        let (Some(s), Some(pattern), Some(repl)) = (
+            ctx.get::<Option<String>>(0)?,
+            ctx.get::<Option<String>>(1)?,
+            ctx.get::<Option<String>>(2)?,
+        ) else { return Ok(None); };
         let re = compiled_regex(&pattern)
             .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?;
-        Ok(re.replace_all(&s, repl.as_str()).into_owned())
+        Ok(Some(re.replace_all(&s, repl.as_str()).into_owned()))
     })?;
     Ok(())
 }
@@ -756,6 +768,31 @@ mod tests {
         assert_eq!(reserve_process_budget(&reserved, 32, 20), 16);
         assert_eq!(reserve_process_budget(&reserved, 32, 1), 0);
         assert_eq!(reserved.load(Ordering::Relaxed), 32);
+    }
+
+    /// Fail-pre-fix for the 2026-07-18 poison-job incident: every registered
+    /// scalar takes NULL and yields NULL. Before the fix each call aborted the
+    /// statement with "Invalid function parameter type Null at index 0",
+    /// failing whole ColdExtract jobs into retry loops.
+    #[test]
+    fn scalar_fns_propagate_null() {
+        let db = open(None).unwrap();
+        let conn = db.conn();
+        for expr in [
+            "sprf_lower(NULL)", "sprf_upper(NULL)", "sprf_lcfirst(NULL)",
+            "sprf_ucfirst(NULL)", "sprf_trim(NULL)", "sprf_norm(NULL)",
+            "sprf_strip_prefix(NULL, 'p')", "sprf_strip_prefix('s', NULL)",
+            "sprf_strip_suffix(NULL, 'p')", "sprf_sym(NULL)",
+            "sprf_sym_intern(NULL)", "sprf_lines(NULL)",
+            "sprf_replace_re(NULL, 'a', 'b')", "sprf_replace_re('s', NULL, 'b')",
+            "sprf_split(NULL, ',', 0)", "sprf_split('a,b', NULL, 0)",
+            "NULL REGEXP 'a'", "'a' REGEXP NULL",
+        ] {
+            let got: Option<String> = conn
+                .query_row(&format!("SELECT {expr}"), [], |r| r.get(0))
+                .unwrap_or_else(|e| panic!("{expr} errored instead of NULL: {e}"));
+            assert_eq!(got, None, "{expr} must be NULL");
+        }
     }
 
     #[test]
