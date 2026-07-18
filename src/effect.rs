@@ -595,11 +595,12 @@ impl Engine {
         // ids, so the text view is the source of truth for kind names.
         if recoverable.len() < kinds.len() {
             let kind_params: Vec<crate::db::SqlVal> = kinds.iter().map(|s| s.as_str().into()).collect();
+            let effect_cmd_txt = crate::lower::txt_tbl("effect_cmd");
             // Tolerant: `rel_effect_cmd_txt` may not exist on a fresh/empty db.
             if let Ok(dynamic) = self.db.query_in_chunks(
                 "effect_cmd",
                 |n| format!(
-                    "SELECT DISTINCT kind FROM rel_effect_cmd_txt WHERE kind IN ({})",
+                    "SELECT DISTINCT kind FROM {effect_cmd_txt} WHERE kind IN ({})",
                     crate::db::holes(n)
                 ),
                 &[],
