@@ -200,26 +200,33 @@ fn key_of(canon: &Path) -> String {
     blake3::hash(canon.as_os_str().as_encoded_bytes()).to_hex()[..16].to_string()
 }
 
-fn write_pid_file() -> Result<()> {
+/// Open (create if missing) `<home>/daemon.pid` for the fd-lock single-
+/// instance witness (plan section 3.3: "belt-and-suspenders against `dl serve
+/// --foreground` beside the [launchd] agent" — replaces the old bespoke
+/// pidfile, which was informational only and enforced nothing; a real
+/// advisory `flock` now makes a second `run_daemon` in this home fail fast
+/// instead of silently double-serving). Split out of the lock-acquisition
+/// call site so the open/create-dir step stays testable without the
+/// borrow-checker shape `fd_lock::RwLock`'s guard imposes on its caller.
+// Deliberately no `.truncate(true)`: truncating here, before the fd-lock is
+// even attempted, would wipe a RUNNING daemon's pid content out from under it
+// on the losing side of a lock race. The winner truncates explicitly (via
+// `set_len(0)` on the locked guard) only after `try_write` confirms it holds
+// the lock; the loser's `open` must leave the holder's file untouched.
+#[allow(clippy::suspicious_open_options)]
+fn open_pid_lock_file() -> Result<std::fs::File> {
     let dir = daemon_home();
     std::fs::create_dir_all(&dir)?;
-    let pid = std::process::id();
-    let start = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
-    std::fs::write(pid_path(), format!("{pid}\n{start}\n"))?;
-    Ok(())
-}
-
-#[allow(dead_code)]
-fn read_pid_file() -> Option<(u32, u64)> {
-    let txt = std::fs::read_to_string(pid_path()).ok()?;
-    let mut lines = txt.lines();
-    let pid: u32 = lines.next()?.parse().ok()?;
-    let start: u64 = lines.next()?.parse().ok()?;
-    Some((pid, start))
-}
-
-fn remove_pid_file() {
-    let _ = std::fs::remove_file(pid_path());
+    std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        // Never truncate on open: a second instance opens this file too (to
+        // attempt the lock) and must not blank the holder's pid/start-time
+        // record. The lock HOLDER truncates after `try_write` succeeds.
+        .truncate(false)
+        .open(pid_path())
+        .with_context(|| format!("open singleton lock {}", pid_path().display()))
 }
 
 // ---------- shared process handles ----------
@@ -1148,33 +1155,58 @@ pub(crate) fn apply_process_budget() {
 }
 
 fn apply_daemon_budget() -> (&'static str, i32, usize) {
-    apply_process_budget();
+    // Supervision arc (plans/2026-07-18-infra-library-adoption.md section 3;
+    // standing law a1f049ff "infra is bought, never built"): `launchd` injects
+    // `XPC_SERVICE_NAME` into every process it spawns (confirmed via
+    // `launchctl print` during the 2026-07-18 gate-2 probe). Its presence
+    // means the LaunchAgent's `Nice`/`LowPriorityIO` plist keys
+    // (`crate::supervise::plist_contents`) already govern this process's
+    // CPU/disk scheduling class, so re-applying `nice()`/`setiopolicy_np()`/
+    // the QoS class here — and the extra PRIO_DARWIN_BG tier below — would be
+    // redundant self-throttling stacked on top of what supervision now owns.
+    // Gate 2 (plan section 5.2 q2) measured the PRIO_DARWIN_BG-equivalent
+    // plist key (`ProcessType=Background`) at ~45% of baseline CPU throughput
+    // (two 5s fixed-duration spinner trials); the plist deliberately does NOT
+    // set that key, so re-imposing the same clamp in-process here would
+    // silently reinstate exactly what that gate decided against.
+    //
+    // Absent `XPC_SERVICE_NAME` — `dl daemon serve` launched via the bespoke
+    // `spawn_detached` fallback (plan section 3.4: no service manager
+    // installed, CI, `cargo test`) — nothing else applies these caps, so the
+    // full nice/IOPOL/QoS/PRIO_DARWIN_BG stack stays exactly as it was before
+    // this arc: the 2026-07-17 incident that motivated PRIO_DARWIN_BG ran
+    // under this same un-supervised shape.
+    let launchd_managed = std::env::var_os("XPC_SERVICE_NAME").is_some();
+    if !launchd_managed {
+        apply_process_budget();
 
-    #[cfg(target_os = "macos")]
-    {
-        // The daemon additionally drops into the darwin BACKGROUND resource
-        // tier — the OS switch that keeps a background process from competing
-        // with the user at all (CPU to leftover cycles, disk to the throttled
-        // tier with deeper backoff, network deprioritized). QoS UTILITY +
-        // nice + IOPOL_THROTTLE demonstrably did NOT prevent a 4.2GB/min boot
-        // rebuild from freezing the foreground (2026-07-17 receipts); this
-        // tier is what Time Machine and Spotlight reindex actually run under.
-        // Daemon-only: one-shot CLI runs keep UTILITY so an interactive
-        // `dl` answer is not starved behind foreground load.
-        // PRIO_DARWIN_PROCESS=4, PRIO_DARWIN_BG=0x1000 per <sys/resource.h>.
-        if std::env::var("DL_NO_BUDGET").ok().as_deref() != Some("1") {
-            const PRIO_DARWIN_PROCESS: libc::c_int = 4;
-            const PRIO_DARWIN_BG: libc::c_int = 0x1000;
-            // SAFETY: setpriority on this process with documented darwin
-            // constants; ignore EPERM.
-            unsafe { libc::setpriority(PRIO_DARWIN_PROCESS, 0 as libc::id_t, PRIO_DARWIN_BG) };
+        #[cfg(target_os = "macos")]
+        {
+            // The daemon additionally drops into the darwin BACKGROUND resource
+            // tier — the OS switch that keeps a background process from competing
+            // with the user at all (CPU to leftover cycles, disk to the throttled
+            // tier with deeper backoff, network deprioritized). QoS UTILITY +
+            // nice + IOPOL_THROTTLE demonstrably did NOT prevent a 4.2GB/min boot
+            // rebuild from freezing the foreground (2026-07-17 receipts); this
+            // tier is what Time Machine and Spotlight reindex actually run under.
+            // Daemon-only: one-shot CLI runs keep UTILITY so an interactive
+            // `dl` answer is not starved behind foreground load.
+            // PRIO_DARWIN_PROCESS=4, PRIO_DARWIN_BG=0x1000 per <sys/resource.h>.
+            if std::env::var("DL_NO_BUDGET").ok().as_deref() != Some("1") {
+                const PRIO_DARWIN_PROCESS: libc::c_int = 4;
+                const PRIO_DARWIN_BG: libc::c_int = 0x1000;
+                // SAFETY: setpriority on this process with documented darwin
+                // constants; ignore EPERM.
+                unsafe { libc::setpriority(PRIO_DARWIN_PROCESS, 0 as libc::id_t, PRIO_DARWIN_BG) };
+            }
         }
     }
 
     // The tiers above are scheduling advice; the governor is the ceiling
     // (receipt 2026-07-18: 278% cpu through a full re-extract with every tier
     // applied). Daemon default 100% of one core; DL_MAX_CPU_PCT overrides,
-    // 0 disables.
+    // 0 disables. Stays bespoke regardless of supervision (plan section 3.5
+    // point 3): no OS mechanism gives a CPU-percent cap on macOS.
     if std::env::var("DL_NO_BUDGET").ok().as_deref() != Some("1") {
         crate::budget::start_governor(crate::budget::ceiling_from_env(100));
     }
@@ -1190,11 +1222,19 @@ fn apply_daemon_budget() -> (&'static str, i32, usize) {
     // Bound the global rayon pool. This may already have been configured by the
     // CLI entry path; build_global returns an error in that case rather than
     // panicking, so the daemon stays safe to run both foreground and detached.
+    // Thread caps stay bespoke regardless of supervision (plan section 3.5
+    // point 3): rayon/tokio pool sizing has no OS-level equivalent.
     let _ = rayon::ThreadPoolBuilder::new().num_threads(desired).build_global();
     let threads = rayon::current_num_threads();
 
-    let qos_label = if cfg!(target_os = "macos") { "utility+iothrottle" } else { "none" };
-    let priority = if cfg!(unix) { DAEMON_NICE as i32 } else { 0 };
+    let qos_label = if launchd_managed {
+        "launchd(nice+lowprioio)"
+    } else if cfg!(target_os = "macos") {
+        "utility+iothrottle"
+    } else {
+        "none"
+    };
+    let priority = if launchd_managed { 0 } else if cfg!(unix) { DAEMON_NICE } else { 0 };
     (qos_label, priority, threads)
 }
 
@@ -1257,6 +1297,29 @@ pub fn run_daemon(
     let home = daemon_home();
     let _ = std::fs::create_dir_all(&home);
     let launch_exe_stamp = current_exe_stamp();
+
+    // Single-instance witness (plan section 3.3): acquired BEFORE any other
+    // setup so a second `run_daemon` in this home (a stray `dl daemon start
+    // --foreground` racing the launchd-supervised instance) fails fast rather
+    // than opening the job queue/engine dbs and losing a slower race later.
+    // Both locals must stay alive for the rest of this function — dropping
+    // either releases the OS-level `flock` immediately.
+    let pid_lock_file = open_pid_lock_file()?;
+    let mut singleton_lock = fd_lock::RwLock::new(pid_lock_file);
+    let mut singleton_guard = singleton_lock.try_write().map_err(|_| anyhow::anyhow!(
+        "another dl daemon instance already holds {} — refusing to start a second one \
+         (fd-lock single-instance witness; `dl daemon status` to check, `dl daemon stop` to clear)",
+        pid_path().display()
+    ))?;
+    {
+        use std::io::{Seek, SeekFrom, Write as _};
+        let pid = std::process::id();
+        let start = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let _ = singleton_guard.set_len(0);
+        let _ = singleton_guard.seek(SeekFrom::Start(0));
+        let _ = write!(singleton_guard, "{pid}\n{start}\n");
+        let _ = singleton_guard.flush();
+    }
 
     let build_id: Arc<str> = Arc::from(build_id().as_str());
     let shutdown_requested = Arc::new(AtomicBool::new(false));
@@ -1369,11 +1432,15 @@ pub fn run_daemon(
     // a non-blocking listener.
     listener.set_nonblocking(true).context("set UDS listener non-blocking")?;
     std::fs::set_permissions(&sock, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
-    write_pid_file()?;
     let idle_secs = idle_timeout_secs();
     tracing::info!("[daemon] listening on {} (pid {}, idle {}s){}",
         sock.display(), std::process::id(), idle_secs,
         if foreground { " [foreground]" } else { "" });
+    // systemd readiness (plan section 3.2, `Type=notify`): a no-op everywhere
+    // else — `sd_notify::notify` returns `Ok(())` immediately when
+    // `NOTIFY_SOCKET` is unset (macOS, or a systemd unit not using
+    // `Type=notify`), so this call is unconditional and cheap.
+    let _ = sd_notify::notify(&[sd_notify::NotifyState::Ready]);
     if let Some(p) = crate::perflog::path() {
         tracing::info!("[daemon] perf log {} (tail -f | jq .total_ms, .phase, .ms)", p.display());
     }
@@ -1505,7 +1572,11 @@ pub(crate) fn shutdown_cleanup(d: &Daemon) {
         let sock = socket_path();
         let _ = std::fs::remove_file(&sock);
         let _ = std::fs::remove_file(crate::daemon_http::http_json_path());
-        remove_pid_file();
+        // The fd-lock itself releases when this process exits (its fd closes)
+        // regardless of whether this unlink runs — SIGKILL-safe by
+        // construction. Removing the file too is tidiness only: a fresh
+        // `run_daemon` truncates and rewrites it either way.
+        let _ = std::fs::remove_file(pid_path());
         crate::why::mark_shutdown(&d.home);
         tracing::info!("[daemon] shut down cleanly");
     });
@@ -2450,11 +2521,59 @@ fn ensure_singleton_inner(explicit: bool) -> Result<()> {
 }
 
 /// Stop the singleton and respawn it detached with the CURRENT binary. The
-/// `dl daemon restart` backend.
+/// `dl daemon restart` backend for the un-supervised (fallback) path — plan
+/// section 3.4: no service manager installed, CI, `cargo test`.
 pub fn restart() -> Result<()> {
     let was_running = is_running();
     if was_running { let _ = stop(); }
     spawn_detached()?;
+    let ready = wait_ready().is_ok();
+    eprintln!("[daemon] {} (build {}){}",
+        if was_running { "restarted" } else { "started" },
+        build_id(),
+        if ready { "" } else { " — starting (first tick still in progress)" }); // @eprintln-ok: human-facing status report for dl daemon restart
+    Ok(())
+}
+
+/// Attach-or-spawn via the OS service manager, for `dl daemon start` on the
+/// real (non-sandboxed) default home once `dl daemon install` has registered
+/// it. Mirrors `ensure_singleton_inner`'s ping-then-spawn shape, but the
+/// "spawn" step is `crate::supervise::start`/`restart` (launchctl kickstart /
+/// systemctl start) instead of `spawn_detached` — plan section 3.5.2: "become
+/// thin wrappers with raw launchctl/systemctl... fallbacks", this is that
+/// wrapper for the CLI's explicit-start path.
+pub fn start_singleton_supervised() -> Result<()> {
+    if is_running() {
+        let mut s = connect()?;
+        let req = Request::new(0, "ping", json!({}));
+        if let Ok(r) = rpc_call(&mut s, &req) {
+            if r.error.is_none() {
+                let running_id = r.result.as_ref()
+                    .and_then(|v| v.get("build_id"))
+                    .and_then(|v| v.as_str());
+                match running_id {
+                    Some(id) if id == build_id() => return Ok(()),
+                    Some(stale) => {
+                        tracing::warn!(running_build = %stale, self_build = build_id(),
+                            "[daemon] supervised singleton binary changed — restarting via the service manager");
+                        crate::supervise::restart()?;
+                        return wait_ready();
+                    }
+                    None => return Ok(()),
+                }
+            }
+        }
+    }
+    crate::supervise::start()?;
+    wait_ready()
+}
+
+/// `dl daemon restart` under supervision: same UX contract as `restart()`
+/// (identical status line) with `crate::supervise::restart` (`kickstart -k`)
+/// as the respawn mechanism instead of `stop()` + `spawn_detached()`.
+pub fn restart_supervised() -> Result<()> {
+    let was_running = is_running();
+    crate::supervise::restart()?;
     let ready = wait_ready().is_ok();
     eprintln!("[daemon] {} (build {}){}",
         if was_running { "restarted" } else { "started" },
@@ -2501,7 +2620,7 @@ pub fn spawn_detached() -> Result<()> {
     Ok(())
 }
 
-fn wait_ready() -> Result<()> {
+pub(crate) fn wait_ready() -> Result<()> {
     let start = Instant::now();
     let timeout = Duration::from_secs(CONNECT_TOTAL_TIMEOUT_SECS);
     let mut backoff_idx = 0;
@@ -2527,7 +2646,7 @@ fn wait_ready() -> Result<()> {
 pub fn stop() -> Result<()> {
     if !is_running() {
         let _ = std::fs::remove_file(socket_path());
-        remove_pid_file();
+        let _ = std::fs::remove_file(pid_path());
         return Ok(());
     }
     let mut s = connect()?;
