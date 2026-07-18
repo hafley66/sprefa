@@ -30,6 +30,11 @@ file keeps only the standing laws + currently-open work.
 - **Nothing seizes the machine**: CPU (QoS/nice), disk I/O (IOPOL_THROTTLE), and
   thread budget are all capped in `apply_daemon_budget`. First-run rebuild included.
   A change that can beachball the machine is a blocking defect, not a follow-up.
+- **The failure ledger is standing** (user-set 2026-07-18): every incident that
+  bites us gets an entry in docs/failure-modes.md — incident receipt, law, rail
+  status — following its "how a new rail gets born" pipeline (incident -> RCA ->
+  fail-pre-fix test -> rail -> entry). No incident closes without its entry. Do
+  not rely on skill self-updates to carry this knowledge; the doc is the record.
 
 ## v5 Work — Tasks Context
 
