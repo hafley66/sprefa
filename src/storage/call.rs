@@ -938,8 +938,8 @@ mod tests {
         let db = crate::db::open(None).unwrap();
         db.execute_batch(
             "PRAGMA foreign_keys = ON; \
-             CREATE TABLE _strings (id INTEGER PRIMARY KEY, content TEXT NOT NULL, norm TEXT NOT NULL); \
-             INSERT INTO _strings(id, content, norm) VALUES (0, '', ''); \
+             CREATE TABLE _strings (id INTEGER PRIMARY KEY, content TEXT NOT NULL); \
+             INSERT INTO _strings(id, content) VALUES (0, ''); \
              CREATE TABLE rel_call_site(repo INTEGER, caller INTEGER, callee INTEGER, file INTEGER, line INTEGER, PRIMARY KEY(repo, caller, callee, file, line)); \
              CREATE TABLE rel_call_kind(fn INTEGER, kind INTEGER, PRIMARY KEY(fn, kind)); \
              CREATE TABLE rel_call_edge_rev(caller INTEGER, callee INTEGER, kind INTEGER, rev INTEGER, PRIMARY KEY(caller, callee, kind, rev)); \
@@ -1157,8 +1157,8 @@ mod tests {
         let db = crate::db::open(None).unwrap();
         db.execute_batch(
             "PRAGMA foreign_keys = ON; \
-             CREATE TABLE _strings (id INTEGER PRIMARY KEY, content TEXT NOT NULL, norm TEXT NOT NULL); \
-             INSERT INTO _strings(id, content, norm) VALUES (0, '', '');",
+             CREATE TABLE _strings (id INTEGER PRIMARY KEY, content TEXT NOT NULL); \
+             INSERT INTO _strings(id, content) VALUES (0, '');",
         ).unwrap();
         ensure_sqlite_call_delta_schema(&db).unwrap();
         let owners = vec![CallOwnerBaseline {
@@ -1288,8 +1288,8 @@ mod tests {
         let db = crate::db::open(None).unwrap();
         db.execute_batch(
             "PRAGMA foreign_keys = ON; \
-             CREATE TABLE _strings (id INTEGER PRIMARY KEY, content TEXT NOT NULL, norm TEXT NOT NULL); \
-             INSERT INTO _strings(id, content, norm) VALUES (1, 'sid', 'sid');",
+             CREATE TABLE _strings (id INTEGER PRIMARY KEY, content TEXT NOT NULL); \
+             INSERT INTO _strings(id, content) VALUES (1, 'sid');",
         ).unwrap();
         ensure_sqlite_call_delta_schema(&db).unwrap();
 

@@ -79,17 +79,18 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
     run(&d, prog);
 
     let conn = Connection::open(d.join("db")).unwrap();
-    let string_row: (i64, String, String) = conn
+    // No stored `norm` column (storage-diet Direction 3b, 2026-07-18): the
+    // `string` rel's third column is now folded at read time from `content`
+    // via the `sprf_norm` scalar — see tests/it/storage_diet_norm.rs for the
+    // dedicated coverage of that projection and the schema shape itself.
+    let string_row: (i64, String) = conn
         .query_row(
-            "SELECT id, content, norm FROM _strings WHERE id = 0",
+            "SELECT id, content FROM _strings WHERE id = 0",
             [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
-    assert_eq!(
-        string_row,
-        (StringId::EMPTY.sqlite(), String::new(), String::new())
-    );
+    assert_eq!(string_row, (StringId::EMPTY.sqlite(), String::new()));
 
     let file_row: (String, String, String, i64) = conn
         .query_row(
@@ -155,20 +156,16 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
         )
     );
 
-    let symbol_row: (i64, String, String) = conn
+    let symbol_row: (i64, String) = conn
         .query_row(
-            "SELECT id, content, norm FROM _strings WHERE id = ?1",
+            "SELECT id, content FROM _strings WHERE id = ?1",
             [StringId::of("AuthService").sqlite()],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
     assert_eq!(
         symbol_row,
-        (
-            StringId::of("AuthService").sqlite(),
-            "AuthService".to_string(),
-            "authservice".to_string()
-        )
+        (StringId::of("AuthService").sqlite(), "AuthService".to_string())
     );
 }
 

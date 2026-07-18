@@ -439,7 +439,13 @@ impl Engine {
         // below for the Some branch.
         let _ = delta; // future Some() will drive a targeted merge instead
         let conn = self.db.conn();
-        let mut s = conn.prepare("SELECT id, content, norm FROM _strings WHERE id != 0")?;
+        // No stored `norm` column (storage-diet Direction 3b): the third
+        // column is folded at read time by the same scalar the `norm()`
+        // builtin calls (src/db.rs `sprf_norm`, itself `spine::normalize`),
+        // so `string(id, text, norm)` rows stay byte-identical to the old
+        // stored-column values.
+        let mut s = conn.prepare(
+            "SELECT id, content, sprf_norm(content) FROM _strings WHERE id != 0")?;
         let strings: Vec<Vec<Value>> = s
             .query_map([], |r| Ok(vec![
                 Value::Int(r.get::<_, i64>(0)?),

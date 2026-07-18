@@ -726,12 +726,9 @@ impl Db {
             }
         }
         let rows: Vec<Vec<Value>> = by_id.into_iter()
-            .map(|(id, text)| {
-                let norm = crate::spine::normalize(&text);
-                vec![Value::Int(id), Value::Text(text), Value::Text(norm)]
-            })
+            .map(|(id, text)| vec![Value::Int(id), Value::Text(text)])
             .collect();
-        self.insert_rows("_strings", &["id", "content", "norm"], &rows)
+        self.insert_rows("_strings", &["id", "content"], &rows)
     }
 }
 

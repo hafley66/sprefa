@@ -285,10 +285,13 @@ impl Engine {
              -- id = StringId::sqlite() (the i64 bit-pattern of the content-derived
              -- u64 hash) as an INTEGER PRIMARY KEY / rowid alias — single-word int
              -- compares + smaller keys instead of TEXT memcmp on every join probe.
+             -- No `norm` column (storage-diet Direction 3b, 2026-07-18): its only
+             -- reader was the `string(id,text,norm)` rel projection, and the dl
+             -- `norm()` builtin is the query-time `sprf_norm` scalar, never a
+             -- column read. The projection now computes the fold at read time.
              CREATE TABLE IF NOT EXISTS _strings (
                  id INTEGER PRIMARY KEY,
-                 content TEXT NOT NULL,
-                 norm TEXT NOT NULL
+                 content TEXT NOT NULL
              );
              CREATE TABLE IF NOT EXISTS _files (
                  id TEXT PRIMARY KEY,
@@ -370,11 +373,10 @@ impl Engine {
                  last_tick INTEGER NOT NULL,
                  PRIMARY KEY (graph, digest)
              );
-             CREATE INDEX IF NOT EXISTS _strings_norm_idx ON _strings(norm);
              CREATE INDEX IF NOT EXISTS _where_bytes_string_idx ON _where_bytes(string_id);
              CREATE INDEX IF NOT EXISTS _where_bytes_file_span_idx ON _where_bytes(file_id, lo, hi);
              CREATE INDEX IF NOT EXISTS _where_bytes_path_idx ON _where_bytes(path);
-             INSERT OR IGNORE INTO _strings (id, content, norm) VALUES (0, '', '');
+             INSERT OR IGNORE INTO _strings (id, content) VALUES (0, '');
              INSERT OR IGNORE INTO _files (id, content_hash, path, size)
                  VALUES ('0', '0000000000000000000000000000000000000000000000000000000000000000', '', 0);
              INSERT OR IGNORE INTO _where_bytes (id, string_id, file_id, lo, hi, repo, rev, path)
@@ -522,6 +524,23 @@ impl Engine {
                      PRIMARY KEY (node, graph, edge_digest));
                  CREATE INDEX IF NOT EXISTS _node_embeddings_graph_idx ON _node_embeddings(graph);
                  CREATE INDEX IF NOT EXISTS _node_embeddings_gd_idx ON _node_embeddings(graph, edge_digest);")?;
+        }
+        // Storage diet, Direction 3a+3b (2026-07-18, plans/2026-07-18-
+        // storage-diet.md): `_strings.norm` and its index had exactly one
+        // reader (the `string(id,text,norm)` rel projection); the dl `norm()`
+        // builtin is the query-time `sprf_norm` scalar and never read the
+        // column. Drop the index unconditionally first — cheap once already
+        // gone, and SQLite refuses `DROP COLUMN` while an index still names
+        // the column — then drop the column itself on a db that still has it.
+        // Idempotent: a db already migrated (or freshly created off the DDL
+        // above, which no longer declares either) hits neither statement.
+        self.db
+            .conn()
+            .execute("DROP INDEX IF EXISTS _strings_norm_idx", [])?;
+        if self.column_exists("_strings", "norm")? {
+            self.db
+                .conn()
+                .execute("ALTER TABLE _strings DROP COLUMN norm", [])?;
         }
         Ok(())
     }

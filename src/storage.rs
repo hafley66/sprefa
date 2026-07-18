@@ -373,7 +373,7 @@ mod tests {
         let db = db::open(None).unwrap();
         Storage::execute(
             &db,
-            "CREATE TABLE _strings (id INTEGER PRIMARY KEY, content TEXT NOT NULL, norm TEXT NOT NULL)",
+            "CREATE TABLE _strings (id INTEGER PRIMARY KEY, content TEXT NOT NULL)",
         ).unwrap();
         let mut sink = SymSink::new();
         sink.sym("StorageTraitSymbol");
