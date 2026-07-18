@@ -144,6 +144,9 @@ touched(path) <- agent_touch(_, _, path).
     let mut child = Command::new(DL)
         .arg(d.join("p.dl"))
         .args(["--db", d.join("db").to_str().unwrap(), "--hook", "--no-daemon"])
+        // Test-harness escape: blank db each run; the deadlined hook path
+        // deliberately cold-skips those.
+        .env("DL_HOOK_DEADLINE_MS", "0")
         .env("SPREFA_CONFIG", d.join("no.toml"))
         .env("SPREFA_CLAUDE_PROJECTS", &projects)
         .env("SPREFA_OPENCODE_DB", d.join("no-opencode.db"))

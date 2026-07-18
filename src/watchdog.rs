@@ -52,6 +52,40 @@ pub fn arm_wall_watchdog(label: &str) {
         });
 }
 
+/// Run `work` on a named worker thread and wait at most `deadline` for its
+/// result — the thread+channel deadline shape shared by `--check --max-wall`
+/// (`cli::check_deadline`) and the `--hook` self-timeout. `Ok(Some(_))` is the
+/// finished result; `Ok(None)` means the deadline expired and the worker was
+/// abandoned (it dies with the process — the caller is expected to exit soon,
+/// and SQLite is WAL-crash-safe); `Err` means the worker stopped without
+/// reporting (a panic). Give-up reporting (stderr/tracing/exit code) is the
+/// caller's job: each surface has its own contract.
+pub fn run_with_deadline<T: Send + 'static>(
+    deadline: Duration,
+    thread_name: &str,
+    work: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
+) -> anyhow::Result<Option<T>> {
+    use std::sync::mpsc;
+    let (tx, rx) = mpsc::sync_channel(1);
+    std::thread::Builder::new()
+        .name(thread_name.to_string())
+        .spawn(move || {
+            let _ = tx.send(work());
+        })?;
+    tracing::debug!(
+        deadline_ms = deadline.as_millis() as u64,
+        thread = thread_name,
+        "deadline wait begin"
+    );
+    match rx.recv_timeout(deadline) {
+        Ok(result) => result.map(Some),
+        Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            anyhow::bail!("deadline worker `{thread_name}` stopped before reporting a result")
+        }
+    }
+}
+
 /// Test-only seam: block the calling (work) thread long enough for the armed
 /// watchdog thread to fire, stamping an activity phase so the timeout message
 /// has a real phase to name. Does nothing unless `DL_TEST_HANG_SECS` is set, so
