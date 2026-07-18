@@ -1,0 +1,84 @@
+# doc-marks.dl — marker-driven doc routing from agent/user chat.
+#
+#   dl setup --project    # registers `dl --hook` under UserPromptSubmit
+#   ...then every user message you send is fed into the engine as a row.
+#
+# Open a message with the doc marker and its body lands in a markdown file
+# named after the first word — no assistant involvement:
+#
+#   @@doc vision ship the calm query engine
+#
+# appends "ship the calm query engine" (under a session/seq header) to
+# docs/marks/vision.md. Each file is a materialized view of the marks for its
+# slug: the daemon re-renders it on every hook tick, and gen is convergent
+# (writes only when bytes differ), so a hand edit to a rendered file lasts
+# until the next mark for that slug arrives.
+#
+# The marker phrase is a plain string in ONE rule (doc_mark below); change it
+# and the whole notion of a doc mark changes, with no Rust edit. The seam is
+# the built-in hook_event(kind, session, seq, json) rel — one row per
+# `dl --hook` event; see examples/chat-marks.dl for the full story.
+#
+# Rendering notes:
+#   - The gen path carries a `{target}` hole: a file-form gen fans out over
+#     body bindings, so ONE rule writes one file per target slug. Rows render
+#     ordered by (target, seq) — the path hole leads the SELECT and {seq} is
+#     the first hole in the row template.
+#   - A one-shot `dl examples/doc-marks.dl` needs --apply to drain the gen
+#     sink (a bare `dl` is a read); the daemon's hook tick renders on its own.
+#   - A COLD in-process `dl --hook` (no daemon serving the root) strips gen
+#     and `?` items — emit/observe only, no codegen (src/hook.rs). The daemon
+#     path is the one that writes the docs.
+#
+# Smoke test (hermetic, no daemon):
+#   mkdir -p /tmp/doc-marks-test && cd /tmp/doc-marks-test
+#   echo '{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"@@doc vision ship it"}' \
+#     | dl <this file> --hook --no-daemon --db cache.db   # rows accumulate in the db
+#   dl <this file> --no-daemon --db cache.db --apply      # derives + writes docs/marks/
+# hook_event persists across invocations in the same db, so no fixture rel is
+# needed to exercise the real pipeline.
+
+# --- extract the prompt (term-extract, its own rel) --------------------------
+# `jsonp` parses the bound `body` (the raw event JSON). A term-extract rule
+# cannot co-head with a derived rule (rebuild_derived would drop its rows),
+# so the extracted prompt gets its OWN rel and every derived rule reads from
+# here — the chat-marks.dl shape, sanctioned by the gh-cache.dl split.
+rel prompt_of(session: text, seq: int, prompt: text).
+prompt_of(session, seq, prompt) <-
+    hook_event("UserPromptSubmit", session, seq, body),
+    jsonp(body, "prompt", prompt).
+
+# --- a doc mark is a prompt that opens with the marker -----------------------
+# Grammar: `@@doc <slug> <content...>` — the marker, one space, a slug, one
+# space, then the rest of the message (newlines included) as the content. The
+# regex is anchored (^) so only a leading marker routes. The slug charset
+# [a-z0-9-] doubles as the path-safety rail: the slug interpolates into the
+# gen path docs/marks/{target}.md, and this charset can never spell `..` or a
+# separator. A message of just `@@doc` or `@@doc slug` (no content) yields no
+# row — honest, no empty marks.
+rel doc_mark(target: text, session: text, seq: int, content: text).
+doc_mark(target, session, seq, content) <-
+    prompt_of(session, seq, prompt),
+    prompt =~ /^@@doc [a-z0-9-]+ /,
+    target = replace_re(prompt, "(?s)^@@doc ([a-z0-9-]+) .*$", "$1"),
+    content = trim(replace_re(prompt, "(?s)^@@doc [a-z0-9-]+ (.*)$", "$1")).
+
+# --- one row per target (drives the per-file header) -------------------------
+rel doc_target(target: text).
+doc_target(target) <- doc_mark(target, _, _, _).
+
+# --- render: one markdown file per target ------------------------------------
+# :append so the header rule and the marks rule concatenate in program order
+# into the same file (a second PLAIN file-form rule on one path is a clobber
+# bail). Each mark renders as a session/seq header line over its content.
+gen(:append, "docs/marks/{target}.md", `# doc marks: {target}
+
+`) <- doc_target(target).
+
+gen(:append, "docs/marks/{target}.md", `## seq {seq} — session {session}
+
+{content}
+`) <- doc_mark(target, session, seq, content).
+
+# --- inspect -----------------------------------------------------------------
+? doc_mark(target, session, seq, content).
