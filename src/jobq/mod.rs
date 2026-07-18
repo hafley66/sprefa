@@ -29,7 +29,6 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use rusqlite::params;
 use serde_json::{json, Value};
 
 use crate::db::Db;

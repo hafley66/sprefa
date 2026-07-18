@@ -200,6 +200,7 @@ fn wal_reader_sees_atomic_snapshot_then_new_generation_after_restart() {
     // (raw connection, manual BEGIN/COMMIT) rather than through `writer`.
     let path_str = path.to_str().unwrap();
     let reader = crate::db::open_read_only(path_str).unwrap();
+    // @rusqlite-ok: independent raw read-only connection is the point of this WAL snapshot test
     let read_reader_rows = |conn: &rusqlite::Connection| -> Vec<FixtureRow> {
         let mut stmt = conn
             .prepare("SELECT scope, name, value FROM rel_fixture ORDER BY scope, name, value")
