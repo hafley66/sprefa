@@ -113,6 +113,31 @@ repos". A capability that only works here is not done.
 - Effects/locks/channels ANALYSIS plan: queued (next planning slot),
   consumes the seed inventory.
 
+## Non-resident reactivity (the memo-graph question, 2026-07-18)
+
+Goal at hundreds-of-repos scale: the reactivity/memo graph must not assume
+RAM. The canonical split: the DERIVATION GRAPH (rel/task-level trigger
+edges — tiny, hundreds of nodes, persistable metadata) vs the MEMO TABLE
+(values — big, lives in SQLite). Row-level lineage is never stored:
+semi-naive deltas + either DRed (delete-rederive, pure SQL) or
+counting/Z-set weights (DBSP algebra: retraction = weight -1, weights live
+in the table). Differential dataflow supplied the math, not the runtime —
+its arrangements are RAM-resident; the DB-hosted lineage is DBToaster/IVM.
+
+Sprefa's engine is ALREADY the non-resident shape: SQL fixpoint (values on
+disk), drv:/src: digests (persisted trigger graph, coarse grain), dirty-rel
+scoping (delta propagation), scoped rebuild (coarse DRed),
+_derived_complete (crash-safe frontier). The arc is a SPLIT, not an
+invention: extract **derive-core** (rel graph + digests + fixpoint +
+retraction + jobq/staging) as a generic library; code extraction becomes
+its first client. Grain upgrade inside the arc: per-rel weight column buys
+row-grained retraction with zero residency.
+
+The honest tradeoff (per-rel knob, not global): zero stored view + correct
+retraction + no recompute — pick two. Sharding law: one SQLite per root,
+attach/detach = LRU non-residency for free; cross-repo edges are one more
+rel layer in a coordinator db.
+
 ## Open threads
 
 - Lock interval analysis needs guard-lifetime df edges (drop points) —
