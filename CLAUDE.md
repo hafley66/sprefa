@@ -40,6 +40,7 @@ The recurring debt we keep re-hitting has two shapes: **(1) per-row write loops
 Open items below are one-liners; full history + landed detail in the archive.
 
 ### Features / arcs
+- [ ] **Callable completeness (in flight 2026-07-18)**: EntityKind::Lambda (user-named; a lambda is an inner non-top-level fn) for anonymous callables in all 5 langs + nested named fns + TS/Kotlin constructors (user law: a ctor is philosophically always a fn call, behind the parens — without ctor+lambda rows taint tracking is broken for df/scip/call fams). Self-verifying table: `@callable <lang> <kind>` comment markers joined against call_def rows from tests/fixtures/callables/ by examples/callable-coverage.dl (diag error on rot). Audit matrix: docs/callable-coverage.md (4e7b297f).
 - [ ] **Auto-refactor**, rides C: `edit(ref_id, new_string_id)` sink, `--fix`/LSP rename. Route A (`--move`) landed; residual = brace-head `use crate::{clk::X, ..}` + physical file move + moved file's own imports. Plan: `plans/2026-05-31-auto-refactor-use-path-rewrite.md`.
 - [ ] **vscode Wave 4**: B4 dl/locate follow-user; B5 call/type hierarchy; C3 exploded stratum view; C4 3D iso go/no-go. Plan: `plans/2026-07-10-vscode-ext-review.md`.
 - [ ] **LSP thin client over the daemon**: `--lsp` = stdio<->socket adapter (LspPump mirrors mcp::Pump); retires served-copy divergence. Plan: `plans/2026-07-10-lsp-thin-client-daemon.md`.
