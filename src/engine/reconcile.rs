@@ -215,24 +215,39 @@ impl Engine {
         // Extract any file whose path was retracted, not just hash-moved ones:
         // retraction is path-grain across ALL source rels, so a clean rule
         // sharing a path with a dirty one must re-provide its rows too.
-        let to_extract: Vec<crate::engine::source_prepare::SourceExtractJob> = rule_files
-            .iter()
-            .filter(|(_, repo, p, r, h, _)| {
-                hash_of(&prev, repo, p, r).as_ref() != Some(h)
-                    || to_retract.contains(&(repo.clone(), p.clone()))
-            })
-            .map(|(idx, repo, path, rev, hash, head_binds)| {
-                crate::engine::source_prepare::SourceExtractJob {
-                    rule_idx: *idx,
-                    repo: repo.clone(),
-                    path: path.clone(),
-                    rev: rev.clone(),
-                    hash: hash.clone(),
-                    head_binds: head_binds.clone(),
+        // Jobs are per FILE, each carrying every matching rule: the preparer
+        // reads the content once and shares one tree cache across the rules
+        // (one parse per grammar, not one per rule). `rule_files` lists rules
+        // contiguously per file, so first-occurrence grouping keeps the flat
+        // (file, rule) order — and therefore the staged ordinals — unchanged.
+        let mut to_extract: Vec<crate::engine::source_prepare::SourceExtractJob> = Vec::new();
+        let mut job_index: HashMap<(String, String, String), usize> = HashMap::new();
+        for (idx, repo, path, rev, hash, head_binds) in rule_files.iter() {
+            let stale = hash_of(&prev, repo, path, rev).as_ref() != Some(hash)
+                || to_retract.contains(&(repo.clone(), path.clone()));
+            if !stale {
+                continue;
+            }
+            let rule = crate::engine::source_prepare::SourceExtractRule {
+                rule_idx: *idx,
+                head_binds: head_binds.clone(),
+            };
+            match job_index.get(&(repo.clone(), path.clone(), rev.clone())) {
+                Some(&slot) => to_extract[slot].rules.push(rule),
+                None => {
+                    job_index.insert((repo.clone(), path.clone(), rev.clone()), to_extract.len());
+                    to_extract.push(crate::engine::source_prepare::SourceExtractJob {
+                        repo: repo.clone(),
+                        path: path.clone(),
+                        rev: rev.clone(),
+                        hash: hash.clone(),
+                        rules: vec![rule],
+                    });
                 }
-            })
-            .collect();
-        let parsed = to_extract.len();
+            }
+        }
+        // `parsed` keeps its historical meaning: (file, rule) extractions run.
+        let parsed = to_extract.iter().map(|job| job.rules.len()).sum();
 
         let (stage_generation, stage_base) =
             crate::engine::pipeline::source_stage_base(self, source_rules)?;

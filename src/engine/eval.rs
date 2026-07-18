@@ -223,9 +223,87 @@ fn is_invalid_utf8(error: &anyhow::Error) -> bool {
         .is_some_and(|io| io.kind() == std::io::ErrorKind::InvalidData)
 }
 
+/// Read one source file for extraction, with the shared degrade rule:
+/// a non-UTF-8 source file (e.g. a Latin-1 test fixture in a C repo) is out of
+/// scope for text/ast/sg extraction — return empty content (zero rows) rather
+/// than aborting the whole tick. A genuinely missing file still errors loudly.
+/// Lossy decode is rejected on purpose: it shifts byte offsets and would emit
+/// wrong match/ast spans. Shared by `parse_file` (content: None) and the
+/// batch preparers, which read once per file and fan the snapshot across every
+/// matching rule.
+pub(crate) fn read_source_content(root: &Path, rev: &str, path: &str) -> Result<String> {
+    match read_content(root, rev, path) {
+        Ok(content) => Ok(content),
+        Err(error) if is_invalid_utf8(&error) => Ok(String::new()),
+        Err(error) => Err(error),
+    }
+}
+
+/// Count of actual tree-sitter parses performed by the `ast` op (the expensive
+/// step `AstTreeCache` dedups). Observable by tests so parse amplification —
+/// K ast rules over one file costing K parses — fails loudly: one tick parses
+/// each file at most once per grammar.
+pub static AST_PARSE_COUNT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// One file's tree-sitter parses, shared across every source rule matching the
+/// file in a tick: at most one parse per grammar. Keyed by the CANONICAL
+/// grammar label so alias spellings (`:rs` / `:rust`) share a tree. Scoped to
+/// a single content snapshot — callers build one per file and drop it with the
+/// file; a cached tree must never outlive the content it was parsed from.
+#[derive(Default)]
+pub(crate) struct AstTreeCache {
+    trees: HashMap<&'static str, tree_sitter::Tree>,
+}
+
+impl AstTreeCache {
+    /// Number of real parses taken through this cache (== grammars parsed).
+    pub(crate) fn parse_count(&self) -> usize {
+        self.trees.len()
+    }
+
+    /// Canonical labels of the grammars parsed, sorted for stable trace output.
+    pub(crate) fn grammar_labels(&self) -> Vec<&'static str> {
+        let mut labels: Vec<&'static str> = self.trees.keys().copied().collect();
+        labels.sort_unstable();
+        labels
+    }
+
+    /// The tree for `content` under `canon`'s grammar, parsing at most once.
+    fn tree(
+        &mut self,
+        canon: &'static str,
+        language: &tree_sitter::Language,
+        content: &str,
+    ) -> Result<&tree_sitter::Tree> {
+        use std::collections::hash_map::Entry;
+        Ok(match self.trees.entry(canon) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                AST_PARSE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                tracing::trace!(
+                    grammar = canon,
+                    bytes = content.len(),
+                    "[source] ast parse"
+                );
+                let mut parser = tree_sitter::Parser::new();
+                parser.set_language(language)?;
+                let tree = parser
+                    .parse(content, None)
+                    .ok_or_else(|| anyhow::anyhow!("ast parse failed"))?;
+                entry.insert(tree)
+            }
+        })
+    }
+}
+
 /// Parse one file for one source rule (no DB access); returns (rows, dropped).
 /// Safe to call in parallel: reads file content, runs extractors, builds rows.
+/// `tree_cache` is the file's shared tree-sitter cache — the caller keys it to
+/// ONE content snapshot and reuses it across every rule matching that file, so
+/// the tick parses the file at most once per grammar.
 #[tracing::instrument(skip_all, fields(repo = repo, path = path), level = "trace")]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn parse_file(
     rule: &Rule,
     repo: &str,
@@ -237,6 +315,7 @@ pub(crate) fn parse_file(
     rev_index: &HashSet<(String, String, String)>,
     head_binds: &[(String, String)],
     content: Option<&str>,
+    tree_cache: &mut AstTreeCache,
 ) -> Result<(Vec<Vec<Value>>, Vec<(spine::WhereBytes, String)>, usize)> {
     let spec = scan_spec_of(rule)?;
     let pathvar = spec.path_var;
@@ -254,18 +333,9 @@ pub(crate) fn parse_file(
         .collect();
     let content: std::borrow::Cow<'_, str> = match content {
         Some(content) => std::borrow::Cow::Borrowed(content),
-        None => match read_content(root, rev, path) {
-            Ok(content) => std::borrow::Cow::Owned(content),
-            // A non-UTF-8 source file (e.g. a Latin-1 test fixture in a C repo)
-            // is out of scope for text/ast/sg extraction: skip it (empty content
-            // -> zero rows) rather than aborting the whole tick. Every other
-            // content reader degrades read errors to empty via unwrap_or_default;
-            // this narrows that to the invalid-UTF-8 case so a genuinely missing
-            // file still errors loudly. Lossy decode is rejected on purpose: it
-            // shifts byte offsets and would emit wrong match/ast spans.
-            Err(error) if is_invalid_utf8(&error) => std::borrow::Cow::Borrowed(""),
-            Err(error) => return Err(error),
-        },
+        // Degrade rule (invalid UTF-8 -> empty content, zero rows) lives in
+        // `read_source_content`, shared with the batch preparers.
+        None => std::borrow::Cow::Owned(read_source_content(root, rev, path)?),
     };
     // Ref-spine: locate each capture's bytes in the file content. The file id is
     // derived from the same stored content address `_files` uses (blake3 for
@@ -369,7 +439,7 @@ pub(crate) fn parse_file(
                 // interned for both the id and the span is the literal source
                 // slice over that range, so `node`/`ref`/`string` all agree.
                 let idv = id.as_ref().map(var_of).transpose()?;
-                let hits = run_ts(&content, lang, query)?;
+                let hits = run_ts(&content, lang, query, tree_cache)?;
                 let mut next: Vec<Bind> = Vec::new();
                 for b in &binds {
                     for (start, endln, caps) in &hits {
@@ -959,18 +1029,17 @@ extern "C" {
 /// Returns (start_line, end_line, captures) per match; start = min capture start
 /// row, end = max capture end row (the matched region's span). Each capture is
 /// `(name, text, lo, hi)` where `[lo, hi)` is the node's byte range in `content`.
+/// The parse itself goes through `tree_cache`, so K ast rules over one file
+/// cost one parse per grammar, never K.
 pub(crate) fn run_ts(
     content: &str,
     lang: &str,
     query_str: &str,
+    tree_cache: &mut AstTreeCache,
 ) -> Result<Vec<(i64, i64, Vec<(String, String, usize, usize)>)>> {
     use streaming_iterator::StreamingIterator;
-    let language = ts_lang(lang)?;
-    let mut parser = tree_sitter::Parser::new();
-    parser.set_language(&language)?;
-    let tree = parser
-        .parse(content, None)
-        .ok_or_else(|| anyhow::anyhow!("ast parse failed"))?;
+    let (canon, language) = ts_lang_resolved(lang)?;
+    let tree = tree_cache.tree(canon, &language, content)?;
     let query = tree_sitter::Query::new(&language, query_str)?;
     let names = query.capture_names();
     let src = content.as_bytes();
