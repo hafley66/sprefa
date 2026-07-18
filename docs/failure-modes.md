@@ -439,6 +439,34 @@ sites but not against new code. **missing** = nothing.
   -la` the root db and its WAL — reads scale with db bytes, and a GB-scale db
   on a MB-scale corpus is the defect.
 
+## 18. Per-rule parse amplification, tiers-not-ceiling
+
+- WHAT IT LOOKS LIKE: the daemon pegs 250-278% CPU inside source extraction
+  while every OS background tier (QoS utility, nice 10, darwin BG, IOPOL
+  throttle — all verified applied) is active; stack samples show every rayon
+  worker in `prepare_source_batch` → tree-sitter.
+- HOW IT BIT US: 2026-07-18 midday, same incident day as classes 16+17. Source
+  extraction created one job per (file, RULE): `parse_file` parsed the file
+  internally, so K ast/comment rules over one file = K full tree-sitter
+  parses — and the grouped work-path shape looped rules with a fresh parse
+  each. ~7 served .dl programs x their rules x 712 files, re-triggered by
+  binary swaps, kills mid-extract (class 16 blank slate), and every
+  cargo build re-tick during development. Named by stack capture
+  (`scripts/dl-trace.sh`, /tmp/dl-trace/20260718-114412), not by guessing.
+- THE LAW: (a) OS background tiers are scheduling advice, not ceilings; only
+  an in-process duty-cycle governor caps CPU (src/budget.rs, daemon default
+  100%, `DL_MAX_CPU_PCT`). (b) A tick parses a file at most once per grammar,
+  no matter how many rules match it.
+- THE RAIL: enforced. Parse-counter tests pin the invariant
+  (`full_batch_parses_once_per_file_per_grammar` fail-pre-fix at 6 parses for
+  3, `work_path_parses_once_per_grammar_across_ast_rules` at 2 for 1,
+  `non_tree_rules_do_not_parse` at 0); `tests/it/budget_cpu.rs` pins the
+  governor toggle (uncapped 1.10x vs capped@60% 0.87x). Fix receipt on a
+  5-rule program over 159 files: 636 → 159 parses (4x), ~35% cpu, ~30% wall.
+- SAY THIS TO AN AGENT: when a daemon burns CPU, capture stacks first
+  (`scripts/dl-trace.sh`) — the 2026-07-18 RCA came from one sample naming
+  the exact function, after a day of plausible wrong theories.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
@@ -458,8 +486,9 @@ sites but not against new code. **missing** = nothing.
 | 13 | stale-binary verification | half | hook compares installed `build_id` (src/cli/daemon.rs:209) against the worktree target; refuse or warn on mismatch |
 | 14 | pre-commit worktree hang | missing | worktree-root detection or hook fast-path for blank-db roots (CLAUDE.md:70(i)) |
 | 15 | dishonest change flags | half | waiver-audit the 25 HEAD findings, promote `.dl/dishonest-flag.dl` to error severity (792cc902) |
-| 16 | kill-respawn cold-restart loop | missing | client autostart-once + backoff; mid-cold digest persistence; kill-mid-cold resume it-test (fail-pre-fix provable) |
-| 17 | unbounded db growth | missing | boot verdict line (db bytes, corpus bytes, ratio) + `--check` ceiling warn; storage diet arc (`_strings` 187MB, autoindex doubling) |
+| 16 | kill-respawn cold-restart loop | half | `--hook` is attach-only since 2026-07-18 (never autostarts; sub-second self-deadline); still missing: `--check` autostart-once + backoff, mid-cold digest persistence, kill-mid-cold resume it-test |
+| 17 | unbounded db growth | half | boot verdict line (db bytes, corpus bytes, ratio) + `--check` ceiling warn; diet steps 1+3 landed (norm drop, -60% `_strings` on fixture), step 2 index audit + 4a WITHOUT ROWID open |
+| 18 | per-rule parse amplification / tiers-not-ceiling | enforced | — (parse-counter tests + governor toggle test; `dl --hook` self-deadline `DL_HOOK_DEADLINE_MS` landed same day) |
 
 ## How a new rail gets born here
 
