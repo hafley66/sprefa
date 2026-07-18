@@ -71,7 +71,6 @@ rusqlite_baseline("src/engine/family/mod.rs", 1).
 rusqlite_baseline("src/engine/gen.rs", 1).
 rusqlite_baseline("src/engine/generation.rs", 7).
 rusqlite_baseline("src/engine/lens.rs", 12).
-rusqlite_baseline("src/engine/meta.rs", 12).
 rusqlite_baseline("src/engine/mod.rs", 6).
 rusqlite_baseline("src/engine/ownership.rs", 2).
 rusqlite_baseline("src/engine/pipeline/apply.rs", 1).
@@ -157,7 +156,6 @@ conn_baseline("src/engine/extract/text.rs", 3).
 conn_baseline("src/engine/family/mod.rs", 6).
 conn_baseline("src/engine/gen.rs", 1).
 conn_baseline("src/engine/lens.rs", 10).
-conn_baseline("src/engine/meta.rs", 60).
 conn_baseline("src/engine/mod.rs", 2).
 conn_baseline("src/engine/path_reconcile.rs", 2).
 conn_baseline("src/engine/pipeline/apply.rs", 14).
@@ -233,7 +231,6 @@ sqlite_swallow_count(source_file, count(line_number)) <-
 # (The seam files are IN this ratchet: a swallowed Result is a defect risk
 # wherever it lives, seam included.)
 rel sqlite_swallow_baseline(source_file: file, allowed: int).
-sqlite_swallow_baseline("src/engine/meta.rs", 7).
 sqlite_swallow_baseline("src/engine/pipeline/apply.rs", 3).
 sqlite_swallow_baseline("src/jobq/mod.rs", 2).
 sqlite_swallow_baseline("src/invlog.rs", 2).

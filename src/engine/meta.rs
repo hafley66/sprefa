@@ -78,19 +78,19 @@ mod semantic_generation_tests {
     fn semantic_generation_stale_base_refuses_without_change() {
         let engine = engine();
         let stale = engine.read_generation_watermark().unwrap();
-        engine.db.conn().execute_batch("BEGIN IMMEDIATE").unwrap();
+        engine.db.begin_immediate().unwrap();
         let current = engine
             .compare_and_advance_semantic_generation(&stale, b"plan-current", b"schema-current")
             .unwrap();
-        engine.db.conn().execute_batch("COMMIT").unwrap();
+        engine.db.commit().unwrap();
 
-        engine.db.conn().execute_batch("BEGIN IMMEDIATE").unwrap();
+        engine.db.begin_immediate().unwrap();
         let error = engine
             .compare_and_advance_semantic_generation(&stale, b"plan-stale", b"schema-stale")
             .unwrap_err();
         assert!(error.to_string().contains("stale semantic generation"));
         assert_eq!(engine.read_generation_watermark().unwrap(), current);
-        engine.db.conn().execute_batch("COMMIT").unwrap();
+        engine.db.commit().unwrap();
 
         assert_eq!(engine.read_generation_watermark().unwrap(), current);
     }
@@ -99,7 +99,7 @@ mod semantic_generation_tests {
     fn semantic_generation_rollback_restores_old_stamp() {
         let engine = engine();
         let base = engine.read_generation_watermark().unwrap();
-        engine.db.conn().execute_batch("BEGIN IMMEDIATE").unwrap();
+        engine.db.begin_immediate().unwrap();
         let advanced = engine
             .compare_and_advance_semantic_generation(
                 &base,
@@ -108,7 +108,7 @@ mod semantic_generation_tests {
             )
             .unwrap();
         assert_eq!(engine.read_generation_watermark().unwrap(), advanced);
-        engine.db.conn().execute_batch("ROLLBACK").unwrap();
+        engine.db.rollback().unwrap();
 
         assert_eq!(engine.read_generation_watermark().unwrap(), base);
     }
@@ -148,52 +148,34 @@ impl GenerationWatermark {
 
 impl Engine {
     pub(crate) fn ensure_meta(&self) -> Result<()> {
-        let epoch: i64 = self
-            .db
-            .conn()
-            .query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        let epoch = self.db.pragma_i64("user_version")?;
         if epoch != SCHEMA_EPOCH {
-            let mut objects = Vec::new();
-            {
-                let mut stmt = self.db.conn().prepare(
-                    "SELECT name, type FROM sqlite_master WHERE (type = 'table' OR type = 'view')
-                     AND (name LIKE 'rel_%' OR name LIKE 'scc_node_%' OR name LIKE 'scc_edge_%'
-                          OR name LIKE '_delta_%' OR name LIKE '_carry_%')",
-                )?;
-                let rows = stmt.query_map([], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })?;
-                for row in rows {
-                    objects.push(row?);
-                }
-            }
+            let objects = self.db.schema_objects(&[
+                "rel_%",
+                "scc_node_%",
+                "scc_edge_%",
+                "_delta_%",
+                "_carry_%",
+            ])?;
             for (name, _) in objects.iter().filter(|(_, kind)| kind == "view") {
-                self.db
-                    .conn()
-                    .execute(&format!("DROP VIEW IF EXISTS \"{name}\""), [])?;
+                self.db.exec_on("_meta", &format!("DROP VIEW IF EXISTS \"{name}\""))?;
             }
             for (name, _) in objects.iter().filter(|(_, kind)| kind == "table") {
-                self.db
-                    .conn()
-                    .execute(&format!("DROP TABLE IF EXISTS \"{name}\""), [])?;
+                self.db.exec_on("_meta", &format!("DROP TABLE IF EXISTS \"{name}\""))?;
             }
             if self.column_exists("_reldigest", "rel")? {
-                self.db.conn().execute("DELETE FROM _reldigest", [])?;
+                self.db.exec_on("_reldigest", "DELETE FROM _reldigest")?;
             }
             if self.column_exists("_derived_complete", "rel")? {
-                self.db
-                    .conn()
-                    .execute("DELETE FROM _derived_complete", [])?;
+                self.db.exec_on("_derived_complete", "DELETE FROM _derived_complete")?;
             }
             if self.column_exists("_shapes", "shape")? {
-                self.db.conn().execute("DELETE FROM _shapes", [])?;
+                self.db.exec_on("_shapes", "DELETE FROM _shapes")?;
             }
             if self.column_exists("_stmt_ms", "rel")? {
-                self.db.conn().execute("DELETE FROM _stmt_ms", [])?;
+                self.db.exec_on("_stmt_ms", "DELETE FROM _stmt_ms")?;
             }
-            self.db
-                .conn()
-                .execute(&format!("PRAGMA user_version = {SCHEMA_EPOCH}"), [])?;
+            self.db.exec_on("_pragma", &format!("PRAGMA user_version = {SCHEMA_EPOCH}"))?;
         }
         // Intern-key migration (2026-07-11): `_strings.id` / `_where_bytes.string_id`
         // move from TEXT (decimal StringId::Display) to INTEGER (StringId::sqlite,
@@ -203,21 +185,27 @@ impl Engine {
         // refills both tables from scratch (every extract:<family> digest folds
         // exe identity already, so a new binary re-extracts regardless).
         {
-            let conn = self.db.conn();
-            let strings_is_text = conn
-                .prepare("SELECT type FROM pragma_table_info('_strings') WHERE name = 'id'")
-                .and_then(|mut s| s.query_row([], |r| r.get::<_, String>(0)))
+            let strings_is_text: bool = self
+                .db
+                .query_opt(
+                    "_strings",
+                    "SELECT type FROM pragma_table_info('_strings') WHERE name = 'id'",
+                    &[],
+                    |r| Ok(r.get::<_, String>(0)?),
+                )?
                 .map(|t| t.eq_ignore_ascii_case("text"))
                 .unwrap_or(false);
             if strings_is_text {
-                conn.execute_batch(
+                self.db.execute_batch_on(
+                    "_strings",
                     "DROP TABLE IF EXISTS _strings;
                      DROP TABLE IF EXISTS _where_bytes;
                      DELETE FROM _reldigest WHERE key LIKE 'extract:%';",
                 )?;
             }
         }
-        self.db.conn().execute_batch(
+        self.db.execute_batch_on(
+            "_meta",
             "CREATE TABLE IF NOT EXISTS _file (repo TEXT NOT NULL DEFAULT '', path TEXT, rev TEXT, hash TEXT,
                  mtime INTEGER DEFAULT 0, size INTEGER DEFAULT 0, lines INTEGER DEFAULT -1, PRIMARY KEY (repo, path, rev));
              CREATE TABLE IF NOT EXISTS _prov (rel TEXT, repo TEXT NOT NULL DEFAULT '', path TEXT, src TEXT, PRIMARY KEY (rel, repo, path, src));
@@ -425,64 +413,76 @@ impl Engine {
         // tolerate a pending_effect created before the body-effect columns existed.
         // The pre-migration default for head_rel is `kind` (head-response 1:1), set
         // on read in `drain_effects` via the empty-string fallback.
-        let _ = self.db.conn().execute(
+        self.db.ensure_column(
+            "pending_effect",
+            "head_rel",
             "ALTER TABLE pending_effect ADD COLUMN head_rel TEXT NOT NULL DEFAULT ''",
-            [],
-        );
-        let _ = self.db.conn().execute(
+        )?;
+        self.db.ensure_column(
+            "pending_effect",
+            "full_json",
             "ALTER TABLE pending_effect ADD COLUMN full_json TEXT NOT NULL DEFAULT ''",
-            [],
-        );
+        )?;
         // Phase 3 job state machine: `state` (queued|running|done|failed|orphaned)
         // is the reconcile axis; `idem_key` records the `sh!` exactly-once claim.
         // Legacy rows migrate with state derived from `done` below.
-        let _ = self.db.conn().execute(
+        self.db.ensure_column(
+            "pending_effect",
+            "state",
             "ALTER TABLE pending_effect ADD COLUMN state TEXT NOT NULL DEFAULT 'queued'",
-            [],
-        );
-        let _ = self
-            .db
-            .conn()
-            .execute("ALTER TABLE pending_effect ADD COLUMN idem_key TEXT", []);
+        )?;
+        self.db.ensure_column(
+            "pending_effect",
+            "idem_key",
+            "ALTER TABLE pending_effect ADD COLUMN idem_key TEXT",
+        )?;
         // Phase 1b.2 `collect(x)`: a batch request gathers `x` across ALL body
         // solutions and fires ONE effect whose response fans back out (line per
         // entity). `batch=1` tells the drain to split the response into N head
         // rows (run_stream) like a stream, but one-shot (marked done).
-        let _ = self.db.conn().execute(
+        self.db.ensure_column(
+            "pending_effect",
+            "batch",
             "ALTER TABLE pending_effect ADD COLUMN batch INTEGER NOT NULL DEFAULT 0",
-            [],
-        );
+        )?;
         // A db whose rows predate `state` carry the column default 'queued' even
         // when already drained (done=1); reconcile their state from `done` once.
-        let _ = self.db.conn().execute(
-            "UPDATE pending_effect SET state = 'done' WHERE done = 1 AND state = 'queued'",
-            [],
-        );
+        if self.column_exists("pending_effect", "state")? {
+            self.db.exec_on(
+                "pending_effect",
+                "UPDATE pending_effect SET state = 'done' WHERE done = 1 AND state = 'queued'",
+            )?;
+        }
         // tolerate dbs created before mtime/size existed
-        let _ = self
-            .db
-            .conn()
-            .execute("ALTER TABLE _file ADD COLUMN mtime INTEGER DEFAULT 0", []);
-        let _ = self
-            .db
-            .conn()
-            .execute("ALTER TABLE _file ADD COLUMN size INTEGER DEFAULT 0", []);
+        self.db.ensure_column(
+            "_file",
+            "mtime",
+            "ALTER TABLE _file ADD COLUMN mtime INTEGER DEFAULT 0",
+        )?;
+        self.db.ensure_column(
+            "_file",
+            "size",
+            "ALTER TABLE _file ADD COLUMN size INTEGER DEFAULT 0",
+        )?;
         // tolerate dbs created before the line-count column existed; -1 = unknown,
         // reconcile_sources' fast path forces one read+count on the next tick.
-        let _ = self
-            .db
-            .conn()
-            .execute("ALTER TABLE _file ADD COLUMN lines INTEGER DEFAULT -1", []);
+        self.db.ensure_column(
+            "_file",
+            "lines",
+            "ALTER TABLE _file ADD COLUMN lines INTEGER DEFAULT -1",
+        )?;
         // tolerate _where_bytes created before the path attribution column existed
-        let _ = self.db.conn().execute(
+        self.db.ensure_column(
+            "_where_bytes",
+            "path",
             "ALTER TABLE _where_bytes ADD COLUMN path TEXT NOT NULL DEFAULT ''",
-            [],
-        );
+        )?;
         // _stmt_ms gained a statement-count column (SUM+shape telemetry).
-        let _ = self.db.conn().execute(
+        self.db.ensure_column(
+            "_stmt_ms",
+            "n",
             "ALTER TABLE _stmt_ms ADD COLUMN n INTEGER NOT NULL DEFAULT 1",
-            [],
-        );
+        )?;
         // Re-key `_file` and `_prov` on (repo, ...) for dbs that predate the repo
         // coordinate. SQLite can't ALTER a PK, so rebuild: every old row is this
         // engine's own repo (the only one ever ingested before Phase 2), so stamp
@@ -490,32 +490,39 @@ impl Engine {
         // real slug keeps that tick's prev/current keys matching (no false churn).
         let slug = self.self_slug();
         if !self.column_exists("_file", "repo")? {
-            self.db.conn().execute_batch(&format!(
-                "ALTER TABLE _file RENAME TO _file_old;
-                 CREATE TABLE _file (repo TEXT NOT NULL DEFAULT '', path TEXT, rev TEXT, hash TEXT,
-                     mtime INTEGER DEFAULT 0, size INTEGER DEFAULT 0, lines INTEGER DEFAULT -1, PRIMARY KEY (repo, path, rev));
-                 INSERT INTO _file (repo, path, rev, hash, mtime, size)
-                     SELECT '{s}', path, rev, hash, mtime, size FROM _file_old;
-                 DROP TABLE _file_old;",
-                s = slug.replace('\'', "''"),
-            ))?;
+            self.db.execute_batch_on(
+                "_file",
+                &format!(
+                    "ALTER TABLE _file RENAME TO _file_old;
+                     CREATE TABLE _file (repo TEXT NOT NULL DEFAULT '', path TEXT, rev TEXT, hash TEXT,
+                         mtime INTEGER DEFAULT 0, size INTEGER DEFAULT 0, lines INTEGER DEFAULT -1, PRIMARY KEY (repo, path, rev));
+                     INSERT INTO _file (repo, path, rev, hash, mtime, size)
+                         SELECT '{s}', path, rev, hash, mtime, size FROM _file_old;
+                     DROP TABLE _file_old;",
+                    s = slug.replace('\'', "''"),
+                ),
+            )?;
         }
         if !self.column_exists("_prov", "repo")? {
-            self.db.conn().execute_batch(&format!(
-                "ALTER TABLE _prov RENAME TO _prov_old;
-                 CREATE TABLE _prov (rel TEXT, repo TEXT NOT NULL DEFAULT '', path TEXT, src TEXT,
-                     PRIMARY KEY (rel, repo, path, src));
-                 INSERT INTO _prov (rel, repo, path, src)
-                     SELECT rel, '{s}', path, src FROM _prov_old;
-                 DROP TABLE _prov_old;",
-                s = slug.replace('\'', "''"),
-            ))?;
+            self.db.execute_batch_on(
+                "_prov",
+                &format!(
+                    "ALTER TABLE _prov RENAME TO _prov_old;
+                     CREATE TABLE _prov (rel TEXT, repo TEXT NOT NULL DEFAULT '', path TEXT, src TEXT,
+                         PRIMARY KEY (rel, repo, path, src));
+                     INSERT INTO _prov (rel, repo, path, src)
+                         SELECT rel, '{s}', path, src FROM _prov_old;
+                     DROP TABLE _prov_old;",
+                    s = slug.replace('\'', "''"),
+                ),
+            )?;
         }
         // _node_embeddings gained an edge_digest column (W2 vector cache). It is
         // a pure derived cache (vectors re-embed on the next tick), so an old
         // single-digest table is dropped and rebuilt empty, not data-migrated.
         if !self.column_exists("_node_embeddings", "edge_digest")? {
-            self.db.conn().execute_batch(
+            self.db.execute_batch_on(
+                "_node_embeddings",
                 "DROP TABLE IF EXISTS _node_embeddings;
                  CREATE TABLE _node_embeddings (
                      node TEXT NOT NULL, graph TEXT NOT NULL,
@@ -523,7 +530,8 @@ impl Engine {
                      dim INTEGER NOT NULL, vec TEXT NOT NULL,
                      PRIMARY KEY (node, graph, edge_digest));
                  CREATE INDEX IF NOT EXISTS _node_embeddings_graph_idx ON _node_embeddings(graph);
-                 CREATE INDEX IF NOT EXISTS _node_embeddings_gd_idx ON _node_embeddings(graph, edge_digest);")?;
+                 CREATE INDEX IF NOT EXISTS _node_embeddings_gd_idx ON _node_embeddings(graph, edge_digest);",
+            )?;
         }
         // Storage diet, Direction 3a+3b (2026-07-18, plans/2026-07-18-
         // storage-diet.md): `_strings.norm` and its index had exactly one
@@ -534,23 +542,20 @@ impl Engine {
         // the column — then drop the column itself on a db that still has it.
         // Idempotent: a db already migrated (or freshly created off the DDL
         // above, which no longer declares either) hits neither statement.
-        self.db
-            .conn()
-            .execute("DROP INDEX IF EXISTS _strings_norm_idx", [])?;
+        self.db.exec_on("_strings", "DROP INDEX IF EXISTS _strings_norm_idx")?;
         if self.column_exists("_strings", "norm")? {
-            self.db
-                .conn()
-                .execute("ALTER TABLE _strings DROP COLUMN norm", [])?;
+            self.db.exec_on("_strings", "ALTER TABLE _strings DROP COLUMN norm")?;
         }
         Ok(())
     }
 
     #[allow(dead_code)] // Production prerequisite; tick wiring follows in a later slice.
     pub(crate) fn read_generation_watermark(&self) -> Result<GenerationWatermark> {
-        let (generation, plan, schema) = self.db.conn().query_row(
+        let (generation, plan, schema) = self.db.query_one(
+            "_semantic_generation",
             "SELECT generation, plan_fingerprint, schema_fingerprint
              FROM _semantic_generation WHERE singleton = 1",
-            [],
+            &[],
             |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
@@ -559,14 +564,8 @@ impl Engine {
                 ))
             },
         )?;
-        let data_version = self
-            .db
-            .conn()
-            .query_row("PRAGMA data_version", [], |row| row.get(0))?;
-        let user_version = self
-            .db
-            .conn()
-            .query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        let data_version = self.db.pragma_i64("data_version")?;
+        let user_version = self.db.pragma_i64("user_version")?;
         let carry_tx = self.current_tx()?;
         Ok(GenerationWatermark::new(
             generation,
@@ -591,7 +590,7 @@ impl Engine {
         next_plan_fingerprint: &[u8],
         next_schema_fingerprint: &[u8],
     ) -> Result<GenerationWatermark> {
-        if self.db.conn().is_autocommit() {
+        if self.db.is_autocommit() {
             bail!("semantic generation watermark advance requires an active transaction");
         }
         let observed = self.read_generation_watermark()?;
@@ -602,18 +601,19 @@ impl Engine {
             .generation
             .checked_add(1)
             .ok_or_else(|| anyhow::anyhow!("semantic generation overflow"))?;
-        let changed = self.db.conn().execute(
+        let changed = self.db.exec_params(
+            "_semantic_generation",
             "UPDATE _semantic_generation
              SET generation = ?1, plan_fingerprint = ?2, schema_fingerprint = ?3
              WHERE singleton = 1 AND generation = ?4
                AND plan_fingerprint = ?5 AND schema_fingerprint = ?6",
-            rusqlite::params![
-                next_generation,
-                next_plan_fingerprint,
-                next_schema_fingerprint,
-                base.generation,
-                base.plan_fingerprint.as_slice(),
-                base.schema_fingerprint.as_slice(),
+            &[
+                next_generation.into(),
+                next_plan_fingerprint.into(),
+                next_schema_fingerprint.into(),
+                base.generation.into(),
+                base.plan_fingerprint.as_slice().into(),
+                base.schema_fingerprint.as_slice().into(),
             ],
         )?;
         if changed != 1 {
@@ -639,15 +639,7 @@ impl Engine {
     /// schema migrations (a fresh db gets the new schema from `CREATE TABLE IF
     /// NOT EXISTS`; an old db keeps its columns and needs the rebuild).
     pub(crate) fn column_exists(&self, table: &str, col: &str) -> Result<bool> {
-        let n: i64 = self.db.conn().query_row(
-            &format!(
-                "SELECT COUNT(*) FROM pragma_table_info('{}') WHERE name = ?1",
-                table.replace('\'', "''")
-            ),
-            [col],
-            |r| r.get(0),
-        )?;
-        Ok(n > 0)
+        self.db.column_exists(table, col)
     }
 
     /// Load the persisted derived shapes from `_shapes` (Phase 5): shape name ->
@@ -657,19 +649,19 @@ impl Engine {
     /// (declare) to resolve a computed `rel name: shape.`.
     pub(crate) fn load_persisted_shapes(&self) -> Result<HashMap<String, Vec<Col>>> {
         let mut out: HashMap<String, Vec<Col>> = HashMap::new();
-        let mut stmt = self
-            .db
-            .conn()
-            .prepare("SELECT shape, col, type FROM _shapes ORDER BY shape, pos")?;
-        let rows = stmt.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-            ))
-        })?;
-        for row in rows {
-            let (shape, col, ty) = row?;
+        let rows = self.db.query_rows(
+            "_shapes",
+            "SELECT shape, col, type FROM _shapes ORDER BY shape, pos",
+            &[],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            },
+        )?;
+        for (shape, col, ty) in rows {
             let column = match Type::parse(&ty) {
                 Some(base) => Col::plain(col, base),
                 // A validated brand name (persist checked it): enum brands store
@@ -802,15 +794,15 @@ impl Engine {
                 || prog_brands.contains(ty)
         };
 
-        let mut stmt = self.db.conn().prepare(&format!(
-            "SELECT shape, pos, col, type FROM {} ORDER BY shape, pos",
-            crate::lower::txt_tbl("type_decl_row")
-        ))?;
-        let raw: Vec<(String, i64, String, String)> = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
-            .filter_map(|x| x.ok())
-            .collect();
-        drop(stmt);
+        let raw: Vec<(String, i64, String, String)> = self.db.query_rows(
+            "type_decl_row",
+            &format!(
+                "SELECT shape, pos, col, type FROM {} ORDER BY shape, pos",
+                crate::lower::txt_tbl("type_decl_row")
+            ),
+            &[],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
 
         // Validate ty every tick (cheap, O(rows)) so the shape-unknown-type diag is
         // steady, not just on the tick the sink changed. Drop any shape carrying
@@ -847,7 +839,7 @@ impl Engine {
                 ]
             })
             .collect();
-        self.db.conn().execute("DELETE FROM _shapes", [])?;
+        self.db.exec_on("_shapes", "DELETE FROM _shapes")?;
         self.db
             .insert_rows("_shapes", &["shape", "pos", "col", "type"], &rows)?;
         self.save_rel_digest("shape:type_decl_row", &digest)?;
@@ -856,19 +848,20 @@ impl Engine {
 
     pub(crate) fn rel_digest(&self, rel: &str) -> Result<[u8; 32]> {
         let mut acc = [0u8; 32];
-        let mut stmt = self
-            .db
-            .conn()
-            .prepare(&format!("SELECT __src FROM {}", tbl(rel)))?;
-        let mut rows = stmt.query([])?;
-        while let Some(row) = rows.next()? {
-            let src: String = row.get(0).unwrap_or_default();
-            if let Ok(bytes) = hex_to_32(&src) {
-                for (a, b) in acc.iter_mut().zip(bytes.iter()) {
-                    *a ^= *b;
+        self.db.for_each_row(
+            rel,
+            &format!("SELECT __src FROM {}", tbl(rel)),
+            &[],
+            |row| {
+                let src: String = row.get(0).unwrap_or_default();
+                if let Ok(bytes) = hex_to_32(&src) {
+                    for (a, b) in acc.iter_mut().zip(bytes.iter()) {
+                        *a ^= *b;
+                    }
                 }
-            }
-        }
+                Ok(())
+            },
+        )?;
         Ok(acc)
     }
 
@@ -889,7 +882,7 @@ impl Engine {
                 .join(", ");
             format!("SELECT {cl} FROM {}", tbl(rel))
         };
-        self.digest_of_query(&sql, [])
+        self.db.digest_rows(rel, &sql, &[])
     }
 
     /// Whether the @next carry staged at `tx` differs from `rel`'s live rows —
@@ -907,72 +900,29 @@ impl Engine {
                 .join(", ")
         };
         let sql = format!("SELECT {cl} FROM {} WHERE tx = ?1", carry_tbl(rel));
-        let staged = self.digest_of_query(&sql, [tx])?;
+        let staged = self.db.digest_rows(rel, &sql, &[tx.into()])?;
         Ok(live != staged)
-    }
-
-    /// Order-independent (XOR-folded) content digest of a query's rows. Shared
-    /// by `rel_content_digest` and `carry_differs`.
-    pub(crate) fn digest_of_query(
-        &self,
-        sql: &str,
-        params: impl rusqlite::Params,
-    ) -> Result<[u8; 32]> {
-        let mut acc = [0u8; 32];
-        let mut stmt = self.db.conn().prepare(sql)?;
-        let ncol = stmt.column_count();
-        let mut rows = stmt.query(params)?;
-        while let Some(row) = rows.next()? {
-            let mut h = blake3::Hasher::new();
-            for i in 0..ncol {
-                match row.get::<_, rusqlite::types::Value>(i)? {
-                    rusqlite::types::Value::Integer(n) => {
-                        h.update(b"i");
-                        h.update(&n.to_le_bytes());
-                    }
-                    rusqlite::types::Value::Real(f) => {
-                        h.update(b"r");
-                        h.update(&f.to_le_bytes());
-                    }
-                    rusqlite::types::Value::Text(s) => {
-                        h.update(b"t");
-                        h.update(s.as_bytes());
-                    }
-                    rusqlite::types::Value::Blob(b) => {
-                        h.update(b"b");
-                        h.update(&b);
-                    }
-                    rusqlite::types::Value::Null => {
-                        h.update(b"n");
-                    }
-                }
-                h.update(&[0]);
-            }
-            let d = h.finalize();
-            for (a, b) in acc.iter_mut().zip(d.as_bytes().iter()) {
-                *a ^= *b;
-            }
-        }
-        Ok(acc)
     }
 
     pub(crate) fn load_rel_digest(&self, rel: &str) -> Result<Option<[u8; 32]>> {
         let hex: Option<String> = self
             .db
-            .conn()
-            .query_row("SELECT digest FROM _reldigest WHERE rel = ?1", [rel], |r| {
-                r.get(0)
-            })
-            .ok();
+            .query_opt(
+                "_reldigest",
+                "SELECT digest FROM _reldigest WHERE rel = ?1",
+                &[rel.into()],
+                |r| Ok(r.get::<_, String>(0)?),
+            )?;
         Ok(hex.and_then(|h| hex_to_32(&h).ok()))
     }
 
     pub(crate) fn save_rel_digest(&self, rel: &str, digest: &[u8; 32]) -> Result<()> {
         let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
-        self.db.conn().execute(
+        self.db.exec_params(
+            "_reldigest",
             "INSERT INTO _reldigest(rel, digest) VALUES (?1, ?2)
              ON CONFLICT(rel) DO UPDATE SET digest = excluded.digest",
-            rusqlite::params![rel, hex],
+            &[rel.into(), hex.into()],
         )?;
         Ok(())
     }
@@ -1096,14 +1046,14 @@ impl Engine {
         &self,
         prefix: &str,
     ) -> Result<HashMap<String, [u8; 32]>> {
-        let conn = self.db.conn();
-        let mut s =
-            conn.prepare("SELECT rel, digest FROM _reldigest WHERE rel LIKE ?1 || '%'")?;
-        let rows = s.query_map([prefix], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        })?;
+        let rows = self.db.query_rows(
+            "_reldigest",
+            "SELECT rel, digest FROM _reldigest WHERE rel LIKE ?1 || '%'",
+            &[prefix.into()],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )?;
         let mut out = HashMap::new();
-        for (key, hex) in rows.flatten() {
+        for (key, hex) in rows {
             if let (Some(rel), Ok(d)) = (key.strip_prefix(prefix), hex_to_32(&hex)) {
                 out.insert(rel.to_string(), d);
             }
@@ -1117,20 +1067,22 @@ impl Engine {
         if pairs.is_empty() {
             return Ok(());
         }
-        let values = vec!["(?, ?)"; pairs.len()].join(", ");
-        let sql = format!(
-            "INSERT INTO _reldigest(rel, digest) VALUES {values}
-             ON CONFLICT(rel) DO UPDATE SET digest = excluded.digest"
-        );
-        let params: Vec<String> = pairs
+        let rows: Vec<Vec<crate::db::SqlVal>> = pairs
             .iter()
-            .flat_map(|(k, d)| {
-                [k.clone(), d.iter().map(|b| format!("{b:02x}")).collect()]
+            .map(|(k, d)| {
+                vec![
+                    k.clone().into(),
+                    d.iter().map(|b| format!("{b:02x}")).collect::<String>().into(),
+                ]
             })
             .collect();
-        self.db
-            .conn()
-            .execute(&sql, rusqlite::params_from_iter(params))?;
+        self.db.upsert_rows(
+            "_reldigest",
+            &["rel", "digest"],
+            &["rel"],
+            &["digest"],
+            &rows,
+        )?;
         Ok(())
     }
 
@@ -1139,10 +1091,14 @@ impl Engine {
         if keys.is_empty() {
             return Ok(());
         }
-        let holes = vec!["?"; keys.len()].join(", ");
-        self.db.conn().execute(
-            &format!("DELETE FROM _reldigest WHERE rel IN ({holes})"),
-            rusqlite::params_from_iter(keys.iter()),
+        self.db.exec_in_chunks(
+            "_reldigest",
+            |n| format!(
+                "DELETE FROM _reldigest WHERE rel IN ({})",
+                crate::db::holes(n)
+            ),
+            &[],
+            &keys.iter().map(|k| k.as_str().into()).collect::<Vec<_>>(),
         )?;
         Ok(())
     }
@@ -1209,14 +1165,15 @@ impl Engine {
             return Ok(Vec::new());
         }
         let mut complete: HashSet<String> = HashSet::new();
-        let mut stmt = self
-            .db
-            .conn()
-            .prepare("SELECT rel FROM _derived_complete")?;
-        let mut rows = stmt.query([])?;
-        while let Some(row) = rows.next()? {
-            complete.insert(row.get::<_, String>(0)?);
-        }
+        self.db.for_each_row(
+            "_derived_complete",
+            "SELECT rel FROM _derived_complete",
+            &[],
+            |row| {
+                complete.insert(row.get::<_, String>(0)?);
+                Ok(())
+            },
+        )?;
         Ok(derived_rels
             .iter()
             .filter(|r| !complete.contains(r.as_str()))
@@ -1263,26 +1220,27 @@ impl Engine {
     }
 
     pub(crate) fn load_file_meta(&self) -> Result<FileMeta> {
-        let mut stmt = self
-            .db
-            .conn()
-            .prepare("SELECT repo, path, rev, hash, mtime, size, lines FROM _file")?;
-        let rows = stmt.query_map([], |r| {
-            Ok((
-                (
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                ),
-                (
-                    r.get::<_, String>(3)?,
-                    r.get::<_, i64>(4)?,
-                    r.get::<_, i64>(5)?,
-                    r.get::<_, i64>(6)?,
-                ),
-            ))
-        })?;
-        Ok(rows.filter_map(|x| x.ok()).collect())
+        let rows = self.db.query_rows(
+            "_file",
+            "SELECT repo, path, rev, hash, mtime, size, lines FROM _file",
+            &[],
+            |r| {
+                Ok((
+                    (
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                    ),
+                    (
+                        r.get::<_, String>(3)?,
+                        r.get::<_, i64>(4)?,
+                        r.get::<_, i64>(5)?,
+                        r.get::<_, i64>(6)?,
+                    ),
+                ))
+            },
+        )?;
+        Ok(rows.into_iter().collect())
     }
 
     /// Persist the `_file` cache DIFFERENTIALLY: delete keys that vanished or
@@ -1353,12 +1311,12 @@ impl Engine {
     pub(crate) fn load_walk_ref_secs(&self) -> Result<i64> {
         Ok(self
             .db
-            .conn()
-            .query_row(
+            .query_opt(
+                "_file_walk",
                 "SELECT ref_secs FROM _file_walk WHERE singleton = 1",
-                [],
-                |r| r.get(0),
-            )
+                &[],
+                |r| Ok(r.get::<_, i64>(0)?),
+            )?
             .unwrap_or(0))
     }
 
@@ -1368,10 +1326,11 @@ impl Engine {
     /// self-heals as soon as real wall-clock time moves past its mtime's
     /// whole-second tick.
     pub(crate) fn save_walk_ref_secs(&self, now_secs: i64) -> Result<()> {
-        self.db.conn().execute(
+        self.db.exec_params(
+            "_file_walk",
             "INSERT INTO _file_walk(singleton, ref_secs) VALUES (1, ?1)
              ON CONFLICT(singleton) DO UPDATE SET ref_secs = excluded.ref_secs",
-            rusqlite::params![now_secs],
+            &[now_secs.into()],
         )?;
         Ok(())
     }
@@ -1414,17 +1373,21 @@ impl Engine {
     pub(crate) fn current_tx(&self) -> Result<i64> {
         Ok(self
             .db
-            .conn()
-            .query_row("SELECT tx FROM _carry_meta WHERE k = 'tx'", [], |r| {
-                r.get(0)
-            })?)
+            .query_one(
+                "_carry_meta",
+                "SELECT tx FROM _carry_meta WHERE k = 'tx'",
+                &[],
+                |r| Ok(r.get::<_, i64>(0)?),
+            )?)
     }
 
     /// Advance the carry clock to `tx` (called once per tick after staging).
     pub(crate) fn set_tx(&self, tx: i64) -> Result<()> {
-        self.db
-            .conn()
-            .execute("UPDATE _carry_meta SET tx = ?1 WHERE k = 'tx'", [tx])?;
+        self.db.exec_params(
+            "_carry_meta",
+            "UPDATE _carry_meta SET tx = ?1 WHERE k = 'tx'",
+            &[tx.into()],
+        )?;
         Ok(())
     }
 
@@ -1447,7 +1410,7 @@ impl Engine {
             cols.join(", "),
             pk.join(", ")
         );
-        self.db.conn().execute(&sql, [])?;
+        self.db.exec_on(rel, &sql)?;
         Ok(())
     }
 
@@ -1465,16 +1428,15 @@ impl Engine {
             .map(|c| format!("\"{}\"", c.name))
             .collect::<Vec<_>>()
             .join(", ");
-        self.db
-            .conn()
-            .execute(&format!("DELETE FROM {}", tbl(rel)), [])?;
-        self.db.conn().execute(
+        self.db.exec_on(rel, &format!("DELETE FROM {}", tbl(rel)))?;
+        self.db.exec_params(
+            rel,
             &format!(
                 "INSERT OR IGNORE INTO {dst} ({cl}) SELECT {cl} FROM {src} WHERE tx = ?1",
                 dst = tbl(rel),
                 src = carry_tbl(rel)
             ),
-            [tx],
+            &[tx.into()],
         )?;
         let after = self.rel_content_digest(rel, meta)?;
         Ok(before != after)
@@ -1492,9 +1454,10 @@ impl Engine {
     ) -> Result<()> {
         let nxt = cur + 1;
         for rel in next_rels {
-            self.db.conn().execute(
+            self.db.exec_params(
+                rel,
                 &format!("DELETE FROM {} WHERE tx = ?1", carry_tbl(rel)),
-                [nxt],
+                &[nxt.into()],
             )?;
         }
         for r in next_rules {
@@ -1504,7 +1467,7 @@ impl Engine {
                 &carry_tbl(&r.head.rel),
                 &[("tx".to_string(), nxt.to_string())],
             )?;
-            self.db.conn().execute(&sql, [])?;
+            self.db.exec_on(&r.head.rel, &sql)?;
         }
         Ok(())
     }
