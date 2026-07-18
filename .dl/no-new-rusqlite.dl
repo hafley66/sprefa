@@ -114,4 +114,97 @@ diag(
     rusqlite_counted(source_file, line_number),
     !rusqlite_baseline(source_file, _).
 
+# ---- .conn() escape-hatch ratchet ----
+# `.conn()` bypasses the Db seam without naming rusqlite, so it gets its own
+# ratchet with the same rules. Same waiver comment applies.
+
+rel conn_hit(source_file: file, line_number: int).
+conn_hit(source_file, line_number) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    match(source_file, source_rev, /\.conn\(\)/, line_number).
+
+rel conn_counted(source_file: file, line_number: int).
+conn_counted(source_file, line_number) <-
+    conn_hit(source_file, line_number),
+    !rusqlite_seam(source_file),
+    !rusqlite_waived(source_file, line_number).
+
+rel conn_count(source_file: file, hits: int).
+conn_count(source_file, count(line_number)) <-
+    conn_counted(source_file, line_number).
+
+# Grandfathered .conn() baseline, measured 2026-07-18. Ratchet down only.
+rel conn_baseline(source_file: file, allowed: int).
+conn_baseline("src/anchor.rs", 2).
+conn_baseline("src/daemon_read.rs", 3).
+conn_baseline("src/effect.rs", 18).
+conn_baseline("src/engine/cold_stage.rs", 12).
+conn_baseline("src/engine/declare.rs", 21).
+conn_baseline("src/engine/decls.rs", 4).
+conn_baseline("src/engine/derive.rs", 25).
+conn_baseline("src/engine/extract/call.rs", 1).
+conn_baseline("src/engine/extract/call_render_tests.rs", 20).
+conn_baseline("src/engine/extract/doc.rs", 1).
+conn_baseline("src/engine/extract/mod.rs", 17).
+conn_baseline("src/engine/extract/node.rs", 2).
+conn_baseline("src/engine/extract/text.rs", 3).
+conn_baseline("src/engine/family/mod.rs", 6).
+conn_baseline("src/engine/gen.rs", 1).
+conn_baseline("src/engine/lens.rs", 10).
+conn_baseline("src/engine/meta.rs", 60).
+conn_baseline("src/engine/mod.rs", 2).
+conn_baseline("src/engine/path_reconcile.rs", 2).
+conn_baseline("src/engine/pipeline/apply.rs", 14).
+conn_baseline("src/engine/pipeline/full_sources.rs", 2).
+conn_baseline("src/engine/pipeline/full_sources_tests.rs", 18).
+conn_baseline("src/engine/query.rs", 2).
+conn_baseline("src/engine/reconcile.rs", 4).
+conn_baseline("src/engine/repo.rs", 9).
+conn_baseline("src/engine/rpc.rs", 14).
+conn_baseline("src/engine/source_prepare.rs", 9).
+conn_baseline("src/engine/tick.rs", 7).
+conn_baseline("src/jobq/mod.rs", 8).
+conn_baseline("src/jobq/tests.rs", 5).
+conn_baseline("src/rels/analysis.rs", 7).
+conn_baseline("src/rels/embed.rs", 3).
+conn_baseline("src/rels/env.rs", 1).
+conn_baseline("src/rels/filelines.rs", 2).
+conn_baseline("src/rels/git.rs", 7).
+conn_baseline("src/rels/perf.rs", 5).
+conn_baseline("src/rels/propose.rs", 2).
+conn_baseline("src/rels/querylog.rs", 2).
+conn_baseline("src/rels/scip.rs", 1).
+
+diag(
+    path: source_file,
+    line: 1,
+    severity: "warning",
+    code: "conn-ratchet-exceeded",
+    msg: ".conn() escape-hatch use grew past this file's baseline — add a named method on the Db seam instead, or waive with @rusqlite-ok: <reason>"
+) <-
+    conn_count(source_file, hits),
+    conn_baseline(source_file, allowed),
+    hits > allowed.
+
+diag(
+    path: source_file,
+    line: line_number,
+    severity: "warning",
+    code: "conn-new-file",
+    msg: "new .conn() escape-hatch outside the Db seam — add a named method on the seam instead, or waive with @rusqlite-ok: <reason>"
+) <-
+    conn_counted(source_file, line_number),
+    !conn_baseline(source_file, _).
+
+# Route all four codes to the agent-turn surface as well as commit: a seam
+# violation should confront the agent that just wrote it, not wait for commit.
+diag_stage("rusqlite-ratchet-exceeded", "agent-turn").
+diag_stage("rusqlite-ratchet-exceeded", "commit").
+diag_stage("rusqlite-new-file", "agent-turn").
+diag_stage("rusqlite-new-file", "commit").
+diag_stage("conn-ratchet-exceeded", "agent-turn").
+diag_stage("conn-ratchet-exceeded", "commit").
+diag_stage("conn-new-file", "agent-turn").
+diag_stage("conn-new-file", "commit").
+
 ? diag(path, line, severity, code, msg).
