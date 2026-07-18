@@ -1,5 +1,15 @@
 use super::*;
 
+/// `comment_node`'s declared column order, shared by the wholesale write
+/// (`refresh_rel`) and the cold-chunk append (`append_rel`) so the two paths
+/// can never drift.
+const COMMENT_NODE_COLS: [&str; 7] =
+    ["path", "line", "col", "end_line", "end_col", "text", "kind"];
+/// `template_parts`' declared column order (see `COMMENT_NODE_COLS`).
+const TEMPLATE_PARTS_COLS: [&str; 6] = ["file", "line", "node", "idx", "kind", "text"];
+/// `unresolved`'s declared column order (see `COMMENT_NODE_COLS`).
+const UNRESOLVED_COLS: [&str; 4] = ["file", "line", "reason", "detail"];
+
 impl Engine {
     /// The comment corpus: every `_file` row whose path has a grammar the
     /// comment walk can parse — the oxc TS/TSX front-end (`.ts`/`.tsx`) or one of
@@ -7,7 +17,13 @@ impl Engine {
     /// Kotlin, Python, Go, C, bash, ...). Scoping the set here (rather than
     /// reading all of `_file`) keeps the family's input digest from moving when
     /// an unparseable file (`.md`, `.json`) is edited.
-    fn comment_file_set(&self) -> Result<Vec<ExtractFile>> {
+    ///
+    /// `pub(crate)` (not just this module): `cold_stage.rs`'s per-family chunk
+    /// partitioning needs comment's OWN file set, which is a strict superset of
+    /// `extract_file_set()` (adds `.md` and the broader `AST_LANG_TABLE`
+    /// grammars) — using the corpus-wide set would silently under-chunk (and
+    /// under-cover) this family.
+    pub(crate) fn comment_file_set(&self) -> Result<Vec<ExtractFile>> {
         let mut files: Vec<ExtractFile> = Vec::new();
         let mut sel = self
             .db
@@ -51,13 +67,52 @@ impl Engine {
         if moved.is_empty() {
             return Ok(false);
         }
+        let rows = self.collect_comment_rows(&files)?;
+        self.refresh_rel("comment_node", &COMMENT_NODE_COLS, &rows)?;
+        for (rev, d) in &moved {
+            self.save_rel_digest(&extract_digest_key("comment", rev), d)?;
+        }
+        Ok(true)
+    }
+
+    /// Cold-start chunk write (`cold_stage.rs`): parse `files` (one byte-bounded
+    /// slice of `comment_file_set()`) and APPEND their comment rows via
+    /// `append_rel` — no wholesale delete, no digest save. `comment_node` has no
+    /// corpus-global resolver (each row is a pure function of its own file's
+    /// bytes), so a per-file slice emits exactly the rows a whole-corpus pass
+    /// would; the completion gate saves the family digest once every slice has
+    /// landed. Mirrors `Engine::refresh_dataflow_rels_slice`.
+    pub(crate) fn refresh_comment_rels_slice(&self, files: &[ExtractFile]) -> Result<()> {
+        if files.is_empty() {
+            return Ok(());
+        }
+        let rows = self.collect_comment_rows(files)?;
+        self.append_rel("comment_node", &COMMENT_NODE_COLS, &rows)
+    }
+
+    /// Cold completion gate: save comment's per-rev `extract:` digest over the
+    /// whole `comment_file_set()` once every chunk slice has been appended, so
+    /// the completion tick's wholesale `refresh_comment_rels` sees the family
+    /// unchanged and SKIPS it. Mirrors `Engine::save_dataflow_cold_digest`.
+    pub(crate) fn save_comment_cold_digest(&self) -> Result<()> {
+        let files = self.comment_file_set()?;
+        for (rev, d) in self.moved_extract_revs("comment", &files, false)? {
+            self.save_rel_digest(&extract_digest_key("comment", &rev), &d)?;
+        }
+        Ok(())
+    }
+
+    /// Parse `files` and build `comment_node`'s row set (dedup by span). Shared
+    /// by the wholesale refresh and the cold-chunk slice append; the ONLY
+    /// difference between them is the write path (`refresh_rel` vs `append_rel`).
+    fn collect_comment_rows(&self, files: &[ExtractFile]) -> Result<Vec<Vec<Value>>> {
         let root = self.root.clone();
         let roots = self.repo_roots();
         // Per-file comment walk in parallel; TS/TSX via oxc, everything else via
         // the shared tree-sitter walk. Unchanged files come from the cache.
         let facts: Vec<(String, String, String, Arc<Vec<crate::cst::RawComment>>)> = cached_facts(
             &self.comment_facts_cache,
-            &files,
+            files,
             &self.extract_files_parsed,
             |repo, path, rev| {
                 let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
@@ -84,6 +139,7 @@ impl Engine {
         let mut seen: HashSet<(String, u32, u32, u32, u32)> = HashSet::new();
         let mut rows: Vec<Vec<Value>> = Vec::new();
         for (_repo, path, _rev, comments) in &facts {
+            tracing::trace!(path = %path, comments = comments.len(), "[extract] comment fold file");
             for c in comments.iter() {
                 if !seen.insert((path.clone(), c.start_row, c.start_col, c.end_row, c.end_col)) {
                     continue;
@@ -100,15 +156,7 @@ impl Engine {
                 ]);
             }
         }
-        self.refresh_rel(
-            "comment_node",
-            &["path", "line", "col", "end_line", "end_col", "text", "kind"],
-            &rows,
-        )?;
-        for (rev, d) in &moved {
-            self.save_rel_digest(&extract_digest_key("comment", rev), d)?;
-        }
-        Ok(true)
+        Ok(rows)
     }
 
     /// The `template_parts` corpus: every `_file` row the oxc TS front-end
@@ -118,7 +166,11 @@ impl Engine {
     /// different grammar entirely and are explicitly OUT of scope), so scoping
     /// the set here keeps the family's input digest from moving when an
     /// unrelated file (`.rs`, `.kt`, `.md`) is edited.
-    fn template_file_set(&self) -> Result<Vec<ExtractFile>> {
+    ///
+    /// `pub(crate)` — `cold_stage.rs` chunks against this family-scoped set
+    /// (see `comment_file_set`'s doc for why the corpus-wide `extract_file_set`
+    /// is the wrong set to partition).
+    pub(crate) fn template_file_set(&self) -> Result<Vec<ExtractFile>> {
         let mut files: Vec<ExtractFile> = Vec::new();
         let mut sel = self
             .db
@@ -166,6 +218,44 @@ impl Engine {
         if moved.is_empty() {
             return Ok(false);
         }
+        let rows = self.collect_template_rows(&files)?;
+        self.refresh_rel("template_parts", &TEMPLATE_PARTS_COLS, &rows)?;
+        for (rev, d) in &moved {
+            self.save_rel_digest(&extract_digest_key("template", rev), d)?;
+        }
+        Ok(true)
+    }
+
+    /// Cold-start chunk write (`cold_stage.rs`): parse `files` (one byte-bounded
+    /// slice of `template_file_set()`) and APPEND their rows — no wholesale
+    /// delete, no digest save. `template_parts` has no corpus-global resolver, so
+    /// a per-file slice emits exactly the rows a whole-corpus pass would; the
+    /// completion gate saves the family digest once every slice has landed.
+    /// Mirrors `Engine::refresh_dataflow_rels_slice`.
+    pub(crate) fn refresh_template_rels_slice(&self, files: &[ExtractFile]) -> Result<()> {
+        if files.is_empty() {
+            return Ok(());
+        }
+        let rows = self.collect_template_rows(files)?;
+        self.append_rel("template_parts", &TEMPLATE_PARTS_COLS, &rows)
+    }
+
+    /// Cold completion gate: save template's per-rev `extract:` digest over the
+    /// whole `template_file_set()` once every chunk slice has been appended, so
+    /// the completion tick's wholesale `refresh_template_rels` sees the family
+    /// unchanged and SKIPS it. Mirrors `Engine::save_dataflow_cold_digest`.
+    pub(crate) fn save_template_cold_digest(&self) -> Result<()> {
+        let files = self.template_file_set()?;
+        for (rev, d) in self.moved_extract_revs("template", &files, false)? {
+            self.save_rel_digest(&extract_digest_key("template", &rev), &d)?;
+        }
+        Ok(())
+    }
+
+    /// Parse `files` and build `template_parts`' row set (dedup by (node, idx)).
+    /// Shared by the wholesale refresh and the cold-chunk slice append; the ONLY
+    /// difference between them is the write path (`refresh_rel` vs `append_rel`).
+    fn collect_template_rows(&self, files: &[ExtractFile]) -> Result<Vec<Vec<Value>>> {
         let root = self.root.clone();
         let roots = self.repo_roots();
         let facts: Vec<(
@@ -175,7 +265,7 @@ impl Engine {
             Arc<Vec<crate::typegraph::TemplatePart>>,
         )> = cached_facts(
             &self.template_facts_cache,
-            &files,
+            files,
             &self.extract_files_parsed,
             |repo, path, rev| {
                 let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
@@ -191,6 +281,7 @@ impl Engine {
         let mut seen: HashSet<(String, u32)> = HashSet::new();
         let mut rows: Vec<Vec<Value>> = Vec::new();
         for (_repo, path, _rev, parts) in &facts {
+            tracing::trace!(path = %path, parts = parts.len(), "[extract] template fold file");
             for p in parts.iter() {
                 if !seen.insert((p.node.clone(), p.idx)) {
                     continue;
@@ -205,20 +296,14 @@ impl Engine {
                 ]);
             }
         }
-        self.refresh_rel(
-            "template_parts",
-            &["file", "line", "node", "idx", "kind", "text"],
-            &rows,
-        )?;
-        for (rev, d) in &moved {
-            self.save_rel_digest(&extract_digest_key("template", rev), d)?;
-        }
-        Ok(true)
+        Ok(rows)
     }
 
     /// The `unresolved` corpus: same TS/JS-family extension set as
     /// `template_file_set` (v1 scope, see `typegraph::UnresolvedRef`).
-    fn unresolved_file_set(&self) -> Result<Vec<ExtractFile>> {
+    ///
+    /// `pub(crate)` — same reason as `template_file_set`.
+    pub(crate) fn unresolved_file_set(&self) -> Result<Vec<ExtractFile>> {
         let mut files: Vec<ExtractFile> = Vec::new();
         let mut sel = self
             .db
@@ -263,6 +348,45 @@ impl Engine {
         if moved.is_empty() {
             return Ok(false);
         }
+        let rows = self.collect_unresolved_rows(&files)?;
+        self.refresh_rel("unresolved", &UNRESOLVED_COLS, &rows)?;
+        for (rev, d) in &moved {
+            self.save_rel_digest(&extract_digest_key("unresolved", rev), d)?;
+        }
+        Ok(true)
+    }
+
+    /// Cold-start chunk write (`cold_stage.rs`): parse `files` (one byte-bounded
+    /// slice of `unresolved_file_set()`) and APPEND their rows — no wholesale
+    /// delete, no digest save. `unresolved` has no corpus-global resolver, so a
+    /// per-file slice emits exactly the rows a whole-corpus pass would; the
+    /// completion gate saves the family digest once every slice has landed.
+    /// Mirrors `Engine::refresh_dataflow_rels_slice`.
+    pub(crate) fn refresh_unresolved_rel_slice(&self, files: &[ExtractFile]) -> Result<()> {
+        if files.is_empty() {
+            return Ok(());
+        }
+        let rows = self.collect_unresolved_rows(files)?;
+        self.append_rel("unresolved", &UNRESOLVED_COLS, &rows)
+    }
+
+    /// Cold completion gate: save unresolved's per-rev `extract:` digest over the
+    /// whole `unresolved_file_set()` once every chunk slice has been appended, so
+    /// the completion tick's wholesale `refresh_unresolved_rel` sees the family
+    /// unchanged and SKIPS it. Mirrors `Engine::save_dataflow_cold_digest`.
+    pub(crate) fn save_unresolved_cold_digest(&self) -> Result<()> {
+        let files = self.unresolved_file_set()?;
+        for (rev, d) in self.moved_extract_revs("unresolved", &files, false)? {
+            self.save_rel_digest(&extract_digest_key("unresolved", &rev), &d)?;
+        }
+        Ok(())
+    }
+
+    /// Parse `files` and build `unresolved`'s row set (dedup by (file, line,
+    /// reason, detail)). Shared by the wholesale refresh and the cold-chunk
+    /// slice append; the ONLY difference between them is the write path
+    /// (`refresh_rel` vs `append_rel`).
+    fn collect_unresolved_rows(&self, files: &[ExtractFile]) -> Result<Vec<Vec<Value>>> {
         let root = self.root.clone();
         let roots = self.repo_roots();
         let facts: Vec<(
@@ -272,7 +396,7 @@ impl Engine {
             Arc<Vec<crate::typegraph::UnresolvedRef>>,
         )> = cached_facts(
             &self.unresolved_facts_cache,
-            &files,
+            files,
             &self.extract_files_parsed,
             |repo, path, rev| {
                 let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
@@ -288,6 +412,7 @@ impl Engine {
         let mut seen: HashSet<(String, u32, String, String)> = HashSet::new();
         let mut rows: Vec<Vec<Value>> = Vec::new();
         for (_repo, path, _rev, refs) in &facts {
+            tracing::trace!(path = %path, refs = refs.len(), "[extract] unresolved fold file");
             for r in refs.iter() {
                 if !seen.insert((path.clone(), r.line, r.reason.to_string(), r.detail.clone())) {
                     continue;
@@ -295,10 +420,6 @@ impl Engine {
                 rows.push(vec![t(path), i(r.line), t(r.reason), t(&r.detail)]);
             }
         }
-        self.refresh_rel("unresolved", &["file", "line", "reason", "detail"], &rows)?;
-        for (rev, d) in &moved {
-            self.save_rel_digest(&extract_digest_key("unresolved", rev), d)?;
-        }
-        Ok(true)
+        Ok(rows)
     }
 }

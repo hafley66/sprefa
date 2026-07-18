@@ -456,3 +456,129 @@ fn jittered_backoff_stays_in_band_and_never_panics() {
         (0..50u64).map(|s| jittered_backoff(20, s)).collect();
     assert!(spread_vals.len() > 1, "jitter never varies — thundering herd not broken");
 }
+
+// ---- root serialization for ColdExtract (2026-07-18 incident: 4 registered
+// roots cold-rebuilt concurrently on a blank-slate boot) ----
+
+/// Fail-pre-fix: seed cold nodes for two sandbox roots exactly as
+/// `Engine::seed_cold_nodes` would (a `scip-index` node above every OTHER
+/// family, priority scale restarting at each root's own family count), drain
+/// every `ColdExtract` job to completion, and assert root-a's cold work
+/// finishes BEFORE root-b's first claim. Before the `active_cold_root` fix,
+/// global `ORDER BY priority DESC` let root-b's `scip-index` (priority 4)
+/// jump ahead of root-a's still-pending `module-rels`/`type-rels`/`call-rels`
+/// (priorities 3/2/1) the moment root-a's own scip node finished — this test
+/// fails on that code (root-b's scip claims 2nd, not 5th).
+#[test]
+fn cold_extract_claim_finishes_one_root_before_starting_another() {
+    let (q, _d) = queue();
+    // root-a seeded first: scip-index highest, then module/type/call descending
+    // (the canonical extraction order `cold_family_priority` produces).
+    q.enqueue(JobRow::cold_extract("root-a", "scip-index", 0, 4)).unwrap();
+    q.enqueue(JobRow::cold_extract("root-a", "module-rels", 0, 3)).unwrap();
+    q.enqueue(JobRow::cold_extract("root-a", "type-rels", 0, 2)).unwrap();
+    q.enqueue(JobRow::cold_extract("root-a", "call-rels", 0, 1)).unwrap();
+    // root-b seeded second, same priority SCALE (its own scip-index is also
+    // priority 4 — the exact incident shape: a second root's scip node ties or
+    // beats the first root's remaining non-scip nodes on a GLOBAL ordering).
+    q.enqueue(JobRow::cold_extract("root-b", "scip-index", 0, 4)).unwrap();
+    q.enqueue(JobRow::cold_extract("root-b", "module-rels", 0, 3)).unwrap();
+
+    let mut order: Vec<String> = Vec::new();
+    while let Some(job) = q.claim(&[JobKind::ColdExtract]).unwrap() {
+        order.push(job.key.clone());
+        q.finish(&job.key, Ok(())).unwrap();
+    }
+    assert_eq!(order.len(), 6, "every seeded node claimed exactly once: {order:?}");
+
+    let last_a = order.iter().rposition(|k| k.starts_with("cold:root-a:")).unwrap();
+    let first_b = order.iter().position(|k| k.starts_with("cold:root-b:")).unwrap();
+    assert!(
+        last_a < first_b,
+        "root-a's cold work must fully finish before root-b's first claim; order={order:?}"
+    );
+    // scip-index still claims first WITHIN each root (priority ordering intact
+    // once the active root is chosen).
+    assert_eq!(order[0], "cold:root-a:scip-index:0", "root-a's scip claims first overall");
+    let b_order: Vec<&str> = order.iter().filter(|k| k.starts_with("cold:root-b:"))
+        .map(|s| s.as_str()).collect();
+    assert_eq!(
+        b_order[0], "cold:root-b:scip-index:0",
+        "root-b's own scip-index still claims first among root-b's nodes"
+    );
+}
+
+/// `active_cold_root` unit-level: no root has any progress yet (a fresh
+/// multi-root blank boot) picks the EARLIEST-SEEDED root, not an arbitrary
+/// one. `root-z` is enqueued first but backdated `enqueued_at` makes the
+/// ordering unambiguous regardless of same-wall-clock-second ties (`root-a`
+/// sorts first alphabetically, the tie-break — this pins the PRIMARY key,
+/// `enqueued_at`, wins over it).
+#[test]
+fn active_cold_root_picks_earliest_seeded_when_no_root_has_progress() {
+    let (q, _d) = queue();
+    q.enqueue(JobRow::cold_extract("root-z", "module-rels", 0, 3)).unwrap();
+    q.enqueue(JobRow::cold_extract("root-a", "module-rels", 0, 3)).unwrap();
+    let now = now_secs();
+    let db = plock(&q.db);
+    // Backdates `enqueued_at` so the earliest-seeded assertion below is
+    // unambiguous regardless of same-wall-clock-second ties (same
+    // test-scenario poke shape as `finish_declines_to_stomp_a_reclaimed_row`).
+    // @rusqlite-ok: test-only direct `_job` write
+    let conn = db.conn();
+    conn.execute(
+        "UPDATE _job SET enqueued_at=?1 WHERE key='cold:root-z:module-rels:0'",
+        params![now - 100],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE _job SET enqueued_at=?1 WHERE key='cold:root-a:module-rels:0'",
+        params![now],
+    )
+    .unwrap();
+    let root = active_cold_root(conn, now + 1).unwrap();
+    assert_eq!(root, Some("root-z".to_string()), "root-z was seeded first, so it stays active");
+}
+
+/// A mid-batch root with only a backed-off (future `run_at`) row remaining
+/// does not stall another root's ready work: `active_cold_root` falls through
+/// once its remaining row is not yet ready.
+#[test]
+fn active_cold_root_falls_through_a_backed_off_root() {
+    let (q, _d) = queue();
+    q.enqueue(JobRow::cold_extract("root-a", "module-rels", 0, 3)).unwrap();
+    q.enqueue(JobRow::cold_extract("root-b", "module-rels", 0, 3)).unwrap();
+    let now = now_secs();
+    {
+        let db = plock(&q.db);
+        // root-a: one row already done, its only remaining row not seeded here
+        // — simulate "mid-batch but backed off" by marking root-a done directly
+        // (same test-scenario poke shape as the sibling
+        // `active_cold_root_picks_earliest_seeded...` test).
+        // @rusqlite-ok: test-only direct `_job` write
+        let conn = db.conn();
+        conn.execute(
+            "UPDATE _job SET state='done' WHERE key='cold:root-a:module-rels:0'",
+            [],
+        )
+        .unwrap();
+    }
+    q.enqueue(JobRow::cold_extract("root-a", "type-rels", 0, 2)).unwrap();
+    let db = plock(&q.db);
+    // Same test-scenario poke as above, plus reuses this transaction's
+    // connection to call `active_cold_root` directly (the raw connection type
+    // it takes is the same seam-adjacent shape `claim` passes it).
+    // @rusqlite-ok: test-only direct `_job` write
+    let conn = db.conn();
+    conn.execute(
+        "UPDATE _job SET run_at=?1 WHERE key='cold:root-a:type-rels:0'",
+        params![now + 10_000],
+    )
+    .unwrap();
+    let root = active_cold_root(conn, now).unwrap();
+    assert_eq!(
+        root,
+        Some("root-b".to_string()),
+        "root-a's only remaining row is backed off, so root-b's ready work claims instead"
+    );
+}

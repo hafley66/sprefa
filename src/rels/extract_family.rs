@@ -156,11 +156,15 @@ pub trait ExtractFamily: Sync {
     }
     /// Cold-start staging (plan `2026-07-17-cold-start-staging.md`): may this
     /// family split into per-file shards, or must it run wholesale as one node?
-    /// Default `false` (wholesale, `N_SHARDS=1`). No family sets this in the
-    /// staging arc: the type/call/dataflow resolvers run a corpus-global name→def
-    /// barrier and the `extract:<family>` skip digest is per-rev, so a per-file
-    /// slice cannot be made digest-consistent without new infra (Shape B is a
-    /// follow-up; see the cold_stage module doc).
+    /// Default `false` (wholesale, `N_SHARDS=1`) — the true default for `module`/
+    /// `type`/`call`/`spine`: the type/call resolvers run a corpus-global
+    /// name→def barrier and the `extract:<family>` skip digest is per-rev, so a
+    /// per-file slice cannot be made digest-consistent without new infra (Shape B
+    /// is a follow-up; see the cold_stage module doc). `dataflow`/`comment`/
+    /// `template`/`unresolved` override `true`: each is a pure per-file fold with
+    /// no resolver, so a byte-bounded slice emits exactly the rows a whole-corpus
+    /// pass would (2026-07-18 chunking arc, incident: a single corpus-global
+    /// `comment-rels` node ran 109s on a large corpus).
     fn shardable_cold(&self) -> bool {
         false
     }
@@ -337,6 +341,12 @@ impl ExtractFamily for CommentFamily {
         eng.refresh_comment_rels().map(RefreshOutcome::from_legacy)
     }
     fn used(&self, prog: &Program) -> bool { engine::comment_rels_used(prog) }
+    // Cold-start chunking (2026-07-18 incident: a single corpus-global
+    // `comment-rels` node ran 109s on a large corpus): `comment_node` has NO
+    // corpus-global resolver barrier — every row is a pure function of its own
+    // file's bytes — so it splits into `cold_chunk_slices_of`'s byte-bounded
+    // slices exactly like dataflow. See `Engine::refresh_comment_rels_slice`.
+    fn shardable_cold(&self) -> bool { true }
 }
 
 impl ExtractFamily for TemplateFamily {
@@ -349,6 +359,9 @@ impl ExtractFamily for TemplateFamily {
         eng.refresh_template_rels().map(RefreshOutcome::from_legacy)
     }
     fn used(&self, prog: &Program) -> bool { engine::template_rels_used(prog) }
+    // Cold-start chunking (see `CommentFamily::shardable_cold`'s doc): no
+    // corpus-global resolver, splits into byte-bounded slices.
+    fn shardable_cold(&self) -> bool { true }
 }
 
 impl ExtractFamily for UnresolvedFamily {
@@ -361,6 +374,9 @@ impl ExtractFamily for UnresolvedFamily {
         eng.refresh_unresolved_rel().map(RefreshOutcome::from_legacy)
     }
     fn used(&self, prog: &Program) -> bool { engine::unresolved_rels_used(prog) }
+    // Cold-start chunking (see `CommentFamily::shardable_cold`'s doc): no
+    // corpus-global resolver, splits into byte-bounded slices.
+    fn shardable_cold(&self) -> bool { true }
 }
 
 impl ExtractFamily for SpineFamily {
