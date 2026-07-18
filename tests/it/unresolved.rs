@@ -74,11 +74,9 @@ fn require_with_computed_argument_is_flagged() {
         "function loadModule(moduleName) {\n\
          \x20 return require(moduleName);\n\
          }\n").unwrap();
-    let prog = format!(
-        "rel seen(path: file).\n\
+    let prog = "rel seen(path: file).\n\
          seen(path) <- scan(\"WORK\", \"src/**/*.js\", path, rev).\n\
-         ? unresolved(file, line, reason, detail).\n"
-    );
+         ? unresolved(file, line, reason, detail).\n".to_string();
     let (code, out, err) = run(&dir, &prog);
     assert_eq!(code, 0, "stderr:\n{err}");
     let rows = data_rows(&out);
@@ -94,11 +92,9 @@ fn require_with_string_literal_is_not_flagged() {
     let dir = sandbox("require_static");
     fs::write(dir.join("src/loader.js"),
         "const fs = require(\"fs\");\n").unwrap();
-    let prog = format!(
-        "rel seen(path: file).\n\
+    let prog = "rel seen(path: file).\n\
          seen(path) <- scan(\"WORK\", \"src/**/*.js\", path, rev).\n\
-         ? unresolved(file, line, reason, detail).\n"
-    );
+         ? unresolved(file, line, reason, detail).\n".to_string();
     let (code, out, err) = run(&dir, &prog);
     assert_eq!(code, 0, "stderr:\n{err}");
     assert_eq!(data_rows(&out).len(), 0, "{out}");

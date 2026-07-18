@@ -684,7 +684,7 @@ fn nest_depth_records_loop_nesting_per_call() {
     assert_eq!(code, 0, "nest extraction must not error:\n{err}");
 
     let secs = sections(&out);
-    assert!(secs.len() >= 1, "expected nest section:\n{out}");
+    assert!(!secs.is_empty(), "expected nest section:\n{out}");
     let nests = rows(&secs[0]);
 
     // DECISIVE: exactly two nest rows, both for the inner call, depths {1, 2}.
@@ -702,7 +702,7 @@ fn nest_depth_records_loop_nesting_per_call() {
     );
     // both rows share the same call_id (one call site, two enclosing loops)
     let call_ids: HashSet<&str> = nests.iter()
-        .filter_map(|r| r.get(0).map(|s| s.as_str()))
+        .filter_map(|r| r.first().map(|s| s.as_str()))
         .collect();
     assert_eq!(
         call_ids.len(),

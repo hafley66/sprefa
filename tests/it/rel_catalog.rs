@@ -7,7 +7,6 @@
 //! can never drift from the engine's actual declarations.
 
 use sprefa_v5::{db, engine::{self, Engine}, lex, parse};
-use std::path::PathBuf;
 
 fn s(v: &serde_json::Value) -> String { v.as_str().unwrap_or_default().to_string() }
 

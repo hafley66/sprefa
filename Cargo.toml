@@ -44,7 +44,7 @@ autotests = false
 # don't let a count creep up between now and then — fix the offending line or
 # add a scoped `#[allow(clippy::<lint>)]` with a reason instead.
 [lints.clippy]
-correctness = "warn"  # 2 diagnostics / 1 site: src/update.rs:30 `never_loop` — real bug (only first CLI arg is inspected); not fixed here, src/** is in-flight on 3 other agent branches (no repo-wide sweep rule)
+correctness = "warn"  # src/update.rs:30 `never_loop` (only first CLI arg was inspected) fixed 2026-07-18; src/** still in-flight on other agent branches so the category stays "warn" pending a full repo-wide sweep
 suspicious  = "warn"  # 18 diagnostics / 9 files — mostly `empty_line_after_doc_comments` (14)
 perf        = "warn"  # 26 diagnostics / 9 files — `cloned_ref_to_slice_refs` (9), `manual_contains` (6), `unnecessary_to_owned` (4), rest singles/pairs
 style       = "warn"  # 188 diagnostics / 52 files — `doc_lazy_continuation` (66), `needless_return` (17), `ptr_arg` (15), `needless_range_loop` (14), `unnecessary_map_or` (13), rest smaller

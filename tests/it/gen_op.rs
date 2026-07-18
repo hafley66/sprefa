@@ -138,8 +138,7 @@ fn append_mode_concatenates_rules_in_program_order() {
 #[test]
 fn append_constant_line_emits_once() {
     let d = sandbox("append_const");
-    let (code, _, err) = run(&d, concat!(
-        "gen(:append, \"out/c.md\", \"# Title\") <- true().\n"));
+    let (code, _, err) = run(&d, "gen(:append, \"out/c.md\", \"# Title\") <- true().\n");
     assert_eq!(code, 0, "{err}");
     assert_eq!(fs::read_to_string(d.join("out/c.md")).unwrap(), "# Title\n");
 }
@@ -587,9 +586,7 @@ fn zone_form_replaces_between_named_markers_and_keeps_them() {
 fn zone_unknown_name_bails_loudly() {
     let d = sandbox("zone_missing");
     fs::write(d.join("page.html"), "<html>\n  <body>nothing here</body>\n</html>\n").unwrap();
-    let (code, _out, err) = run(&d, concat!(
-        "gen(:zone, \"page.html\", \"does-not-exist\", \"x\") <- true().\n",
-    ));
+    let (code, _out, err) = run(&d, "gen(:zone, \"page.html\", \"does-not-exist\", \"x\") <- true().\n");
     assert_ne!(code, 0, "missing zone name must bail");
     assert!(err.contains("does-not-exist") && err.contains("BEGIN:"),
         "error names the missing zone + the expected marker: {err}");

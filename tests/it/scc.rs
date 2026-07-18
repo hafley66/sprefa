@@ -121,8 +121,8 @@ csize(rep, count(member)) <- g(rep, member).
 }
 
 /// A second derived rule downstream of the scc-reading one (post-stratum depth
-/// > 1): the partition must pull the whole transitive chain into the post
-/// stratum, not just the direct reader.
+/// greater than 1): the partition must pull the whole transitive chain into
+/// the post stratum, not just the direct reader.
 #[test]
 fn derived_chain_below_scc_head_fills() {
     let dir = sandbox("chain_below_scc");

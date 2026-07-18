@@ -13,7 +13,7 @@ const DL: &str = env!("CARGO_BIN_EXE_dl");
 fn sandbox(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("what_verb_{tag}"));
     let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir.join("src")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
     // model.ts: a type + a function the repo calls.
     fs::write(
         dir.join("src/model.ts"),

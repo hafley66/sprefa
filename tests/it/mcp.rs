@@ -65,7 +65,7 @@ fn serve(dir: &Path, prog: &str, requests: &[&str]) -> (i32, Vec<serde_json::Val
      String::from_utf8_lossy(&out.stderr).into_owned())
 }
 
-fn result_of<'a>(msgs: &'a [serde_json::Value], id: i64) -> Option<&'a serde_json::Value> {
+fn result_of(msgs: &[serde_json::Value], id: i64) -> Option<&serde_json::Value> {
     msgs.iter().find(|m| m.get("id").and_then(|i| i.as_i64()) == Some(id))
 }
 
@@ -208,7 +208,7 @@ fn write_ts_fixture(dir: &Path) {
 
 /// The parsed JSON payload of a `tools/call` result (the built-in tools return a
 /// single text content block carrying the answer envelope).
-fn tool_payload<'a>(msgs: &'a [serde_json::Value], id: i64) -> serde_json::Value {
+fn tool_payload(msgs: &[serde_json::Value], id: i64) -> serde_json::Value {
     let m = result_of(msgs, id).unwrap_or_else(|| panic!("no response id {id}: {msgs:?}"));
     let text = m["result"]["content"][0]["text"].as_str()
         .unwrap_or_else(|| panic!("no text content in {m}"));

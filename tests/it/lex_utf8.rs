@@ -4,7 +4,7 @@
 //! The fix slices runs of boring bytes via `src[start..i]`.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 const DL: &str = env!("CARGO_BIN_EXE_dl");

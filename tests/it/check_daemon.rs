@@ -61,11 +61,10 @@ impl Sandbox {
     fn wait_ready(&self) -> bool {
         let sock = self.sock();
         for _ in 0..200 {
-            if sock.exists() && std::os::unix::net::UnixStream::connect(&sock).is_ok() {
-                if rpc_root(&sock, 1, "ping", &self.root, serde_json::json!({})).is_some() {
+            if sock.exists() && std::os::unix::net::UnixStream::connect(&sock).is_ok()
+                && rpc_root(&sock, 1, "ping", &self.root, serde_json::json!({})).is_some() {
                     return true;
                 }
-            }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         false
