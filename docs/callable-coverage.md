@@ -116,6 +116,14 @@ AST-tier only — `scip-does-not-index-this`, a finding, not a failure. A coarse
 line-only join (ignoring the name) spuriously "pairs" ~96% of closures against a
 same-line local/param definition; the name join above is the honest test.
 
+Upstream status (researched 2026-07-18): unreported in both rust-lang/rust-analyzer
+and the SCIP repo. Adjacent fixes exist — closure-CAPTURE scoping (PR 18758) and
+builtin monikers returning None then being skipped (PR 19105) — but the
+closure-definition gap itself is undiscussed. Likely mechanism: `def_to_moniker`
+returns None for closures, so no symbol and no occurrence are emitted (the same
+shape as the builtins bug). SCIP's `local N` symbol grammar could carry them.
+Candidate upstream feature request; not filed.
+
 The `callable-coverage.dl` rail's scip proof is therefore an **optional stratum**:
 it activates only when `scip_occurrence` rows exist (an index is present). With no
 index the rail stays green on the AST tier alone; the pairing table above is the
