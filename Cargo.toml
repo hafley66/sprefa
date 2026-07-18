@@ -152,6 +152,12 @@ tao = "0.35"
 # Span-CLOSE formatting surfaces per-phase durations so hotspots need no recompile.
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Exact-pinned (not a caret range like the rest of this file): a chrome-trace
+# JSON exporter is a small, rarely-touched vendor surface where an unplanned
+# minor bump changing its Drop/flush timing is a correctness risk (kill-safety
+# depends on exactly when it writes), not just a compile risk. DL_TRACE_CHROME
+# activates it (src/trace.rs); see docs/tracing-chrome.md.
+tracing-chrome = "=0.7.2"
 tree-sitter-dl = { path = "tree-sitter-dl" }
 tree-sitter-language = "0.1"
 # The daemon SHELL (sockets, timers, watchers, dispatch) runs on tokio; the tick

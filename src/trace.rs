@@ -1,4 +1,4 @@
-//! Structured tracing (`tracing` crate). Two independent knobs:
+//! Structured tracing (`tracing` crate). Three independent knobs:
 //!
 //!   - `DL_TRACE`/`RUST_LOG` (CLI-entry only): an stderr layer for extra
 //!     verbosity, off by default — set it to see debug/trace spans/events live
@@ -11,6 +11,12 @@
 //!     process — one-shot CLI, daemon, hook — writes into the SAME two
 //!     files: this is the apache-style access/error log the daemon-respawn
 //!     incident was missing.
+//!   - `DL_TRACE_CHROME=<path>` (off by default, one path = one export): a
+//!     `tracing-chrome` layer that turns every SPAN (tick / phase / job) into
+//!     a chrome-trace-format JSON event, loadable at ui.perfetto.dev as a
+//!     zoomable timeline. Absent, the layer is never constructed — zero
+//!     overhead beyond the `std::env::var_os` check in `chrome_layer`. See
+//!     `docs/tracing-chrome.md` for the repro command and kill-safety notes.
 //!
 //! Span CLOSE events carry durations, so the tick phases and reactivity
 //! decisions surface as timed lines without recompiling or scattering ad-hoc
@@ -22,6 +28,7 @@
 //! `XDG_STATE_HOME` and call `init`/exercise a code path that does.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -58,7 +65,7 @@ pub fn init(is_daemon_foreground: bool) {
         .with(stderr_warn_layer);
     if std::env::var_os("RUST_LOG").is_none() && std::env::var_os("DL_TRACE").is_none() {
         // No extra verbosity requested: file layers + stderr warn/error only.
-        let _ = registry.try_init();
+        let _ = registry.with(chrome_layer()).try_init();
         return;
     }
     // DL_TRACE seeds the filter when RUST_LOG is unset, so the project keeps its
@@ -72,7 +79,74 @@ pub fn init(is_daemon_foreground: bool) {
         .with_span_events(fmt::format::FmtSpan::CLOSE)
         .compact()
         .with_filter(filter);
-    let _ = registry.with(stderr_layer).try_init();
+    let _ = registry.with(stderr_layer).with(chrome_layer()).try_init();
+}
+
+/// The chrome-trace layer's `FlushGuard`, stashed process-globally rather than
+/// returned up through `init`'s call chain. Reason: `std::process::exit` (used
+/// at several one-shot CLI exit points, see `cli::run`) skips `Drop` entirely,
+/// so a guard held only as a local variable in `init`'s caller would silently
+/// never flush/close on those paths. `finish_chrome_trace`/`flush_chrome_trace`
+/// let any call site reach it explicitly instead — the same "explicit, not
+/// RAII" reasoning `invlog::record_end`'s doc comment already states for the
+/// identical `process::exit`-skips-Drop hazard.
+static CHROME_GUARD: OnceLock<Mutex<Option<tracing_chrome::FlushGuard>>> = OnceLock::new();
+
+fn chrome_guard_slot() -> &'static Mutex<Option<tracing_chrome::FlushGuard>> {
+    CHROME_GUARD.get_or_init(|| Mutex::new(None))
+}
+
+/// Build the optional `tracing-chrome` layer from `DL_TRACE_CHROME=<path>`.
+/// `None` when the var is unset — `.with(None::<L>)` is a documented no-op in
+/// `tracing_subscriber` (`Layer` is implemented for `Option<L>`), so the
+/// layer is never constructed and costs nothing beyond this one `var_os`
+/// check on every other invocation. Called at most once per process (each of
+/// `init`'s two mutually-exclusive `try_init` branches ends in a `return`, so
+/// only one call actually executes at runtime even though both are
+/// monomorphized at compile time — same reasoning as `dl_log_layer`/
+/// `error_log_layer` above for why this isn't a single generic call site).
+///
+/// `include_args(true)`: field values (tick number, root, phase name, job
+/// key/kind) land in the chrome trace's `args` object, which is what makes
+/// the perfetto view identify WHICH tick/phase/job a slice is, not just that
+/// a same-named slice happened.
+pub(crate) fn chrome_layer<S>() -> Option<impl tracing_subscriber::Layer<S> + Send + Sync + 'static>
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a> + Send + Sync,
+{
+    let path = std::env::var_os("DL_TRACE_CHROME")?;
+    let (layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
+        .file(PathBuf::from(path))
+        .include_args(true)
+        .build();
+    *chrome_guard_slot().lock().unwrap_or_else(|p| p.into_inner()) = Some(guard);
+    Some(layer)
+}
+
+/// Explicit finalize: signal the chrome-trace writer thread to stop, join it,
+/// and write the closing `]` — the only thing that makes the file strict-JSON
+/// (`jq`-parseable). MUST be called before every `std::process::exit` in the
+/// one-shot CLI path (see `cli::run`'s exit sites) since `process::exit` skips
+/// `Drop`; the crate's own README example relies on scope-exit `Drop`, which
+/// does not fire there. No-op (idempotent) when no chrome layer was installed,
+/// or when this was already called once. A SIGKILL still loses this call
+/// entirely — see `docs/tracing-chrome.md` for exactly what that costs.
+pub fn finish_chrome_trace() {
+    let mut slot = chrome_guard_slot().lock().unwrap_or_else(|p| p.into_inner());
+    drop(slot.take());
+}
+
+/// Best-effort mid-run flush: pushes the chrome layer's internal `BufWriter`
+/// to disk WITHOUT writing the closing `]` (so the file is still open for more
+/// events after this call — unlike `finish_chrome_trace`). Called at tick
+/// boundaries (`activity::end_tick`) so a long-lived daemon killed between
+/// ticks loses at most the in-flight tick's spans, not the whole run since
+/// process start. No-op when no chrome layer is installed.
+pub fn flush_chrome_trace() {
+    let slot = chrome_guard_slot().lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(guard) = slot.as_ref() {
+        guard.flush();
+    }
 }
 
 /// The two rolling file layers every `dl` process shares:
@@ -219,5 +293,23 @@ mod tests {
         assert_eq!(rotated, "hello world\n");
         let current = std::fs::read_to_string(dir.join("t.log")).unwrap();
         assert_eq!(current, "second line\n");
+    }
+
+    /// `finish_chrome_trace`/`flush_chrome_trace` are safe no-ops when no
+    /// chrome layer was ever installed (`CHROME_GUARD` slot stays empty) —
+    /// the common case for every test and for a plain run with
+    /// `DL_TRACE_CHROME` unset. Guards against a future edit making these
+    /// panic (e.g. an `.unwrap()` on the slot) instead of silently no-op'ing,
+    /// which the real CLI exit-site call pattern (finalize called from many
+    /// paths, some of which never activated tracing at all) depends on.
+    #[test]
+    fn chrome_trace_finalize_and_flush_are_no_ops_without_a_layer() {
+        // Idempotent: calling twice (as several CLI exit sites can, e.g. a
+        // nested `daemon serve` finalizing in `shutdown_cleanup` and then
+        // `cli::run`'s own exit-site call finding it already taken) must not
+        // panic either.
+        finish_chrome_trace();
+        finish_chrome_trace();
+        flush_chrome_trace();
     }
 }
