@@ -60,8 +60,6 @@ rusqlite_count(source_file, count(line_number)) <-
 # Lower a row when your commit shrinks the file's count; never raise one.
 rel rusqlite_baseline(source_file: file, allowed: int).
 rusqlite_baseline("src/engine/extract/call_render_tests.rs", 2).
-rusqlite_baseline("src/engine/staged_delta/mod.rs", 4).
-rusqlite_baseline("src/engine/staged_delta/sql.rs", 3).
 rusqlite_baseline("src/engine/staged_delta/tests.rs", 1).
 rusqlite_baseline("src/jobq/mod.rs", 1).
 
