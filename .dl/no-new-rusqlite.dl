@@ -1,0 +1,117 @@
+# Rail: rusqlite containment ratchet
+#
+# The database seam is src/db.rs + src/storage.rs + src/storage/** (the plural
+# Db struct chokepoint). New database code routes through it; rusqlite does not
+# spread further. User ruling 2026-07-18: the seam stays a struct, welded to
+# SQLite on purpose; it becomes a trait only when a second backend arrives.
+# A backend-specific need (a pragma, an option) gets a named method on the
+# seam, never an inline rusqlite call at the use site.
+#
+# Mechanism: ratchet baseline. Every file outside the seam that mentions
+# rusqlite today is grandfathered at its current count. A file OVER its
+# baseline count warns at the file head; a file with NO baseline row warns at
+# every hit line (a brand-new spread site). When refactoring shrinks a file's
+# count, lower its baseline row here in the same commit; rows at 0 get deleted.
+#
+# Waiver: a comment containing `@rusqlite-ok: <reason>` on the hit line or the
+# line above exempts that hit (for the "this one call needs an SQLite-specific
+# option" case; prefer a named seam method first).
+#
+# Run: dl .dl/no-new-rusqlite.dl --check
+
+rel rusqlite_hit(source_file: file, line_number: int).
+rusqlite_hit(source_file, line_number) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    match(source_file, source_rev, /use\s+rusqlite|rusqlite::/, line_number).
+
+# The seam: the only files allowed to grow rusqlite freely.
+rel rusqlite_seam(source_file: file).
+rusqlite_seam(source_file) <- scan("WORK", "src/db.rs", source_file, _).
+rusqlite_seam(source_file) <- scan("WORK", "src/storage.rs", source_file, _).
+rusqlite_seam(source_file) <- scan("WORK", "src/storage/**/*.rs", source_file, _).
+
+# Waiver comment lines (source rel; the range join lives in the derived rule
+# below — a source-op body cannot join other rels, the S6 sharp edge).
+rel rusqlite_waiver_line(source_file: file, waiver_line: int).
+rusqlite_waiver_line(source_file, waiver_line) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    comment(source_file, source_rev, /@rusqlite-ok:/, waiver_line, label: _).
+
+# Waivered hits: @rusqlite-ok: comment on the hit line or the line above.
+rel rusqlite_waived(source_file: file, line_number: int).
+rusqlite_waived(source_file, line_number) <-
+    rusqlite_waiver_line(source_file, waiver_line),
+    rusqlite_hit(source_file, line_number),
+    waiver_line >= line_number - 1,
+    waiver_line <= line_number.
+
+# Countable hits: outside the seam, not waived.
+rel rusqlite_counted(source_file: file, line_number: int).
+rusqlite_counted(source_file, line_number) <-
+    rusqlite_hit(source_file, line_number),
+    !rusqlite_seam(source_file),
+    !rusqlite_waived(source_file, line_number).
+
+rel rusqlite_count(source_file: file, hits: int).
+rusqlite_count(source_file, count(line_number)) <-
+    rusqlite_counted(source_file, line_number).
+
+# Grandfathered baseline, measured 2026-07-18 with the rail's own regex.
+# Lower a row when your commit shrinks the file's count; never raise one.
+rel rusqlite_baseline(source_file: file, allowed: int).
+rusqlite_baseline("src/agent.rs", 2).
+rusqlite_baseline("src/anchor.rs", 15).
+rusqlite_baseline("src/daemon_read.rs", 21).
+rusqlite_baseline("src/effect.rs", 16).
+rusqlite_baseline("src/engine/cold_stage.rs", 2).
+rusqlite_baseline("src/engine/declare.rs", 4).
+rusqlite_baseline("src/engine/deltaflow.rs", 4).
+rusqlite_baseline("src/engine/derive.rs", 8).
+rusqlite_baseline("src/engine/extract/call_render_tests.rs", 2).
+rusqlite_baseline("src/engine/family/mod.rs", 1).
+rusqlite_baseline("src/engine/gen.rs", 1).
+rusqlite_baseline("src/engine/generation.rs", 7).
+rusqlite_baseline("src/engine/lens.rs", 12).
+rusqlite_baseline("src/engine/meta.rs", 12).
+rusqlite_baseline("src/engine/mod.rs", 6).
+rusqlite_baseline("src/engine/ownership.rs", 2).
+rusqlite_baseline("src/engine/pipeline/apply.rs", 1).
+rusqlite_baseline("src/engine/pipeline/full_sources.rs", 1).
+rusqlite_baseline("src/engine/pipeline/source_stage.rs", 6).
+rusqlite_baseline("src/engine/pipeline/source_stage_read.rs", 1).
+rusqlite_baseline("src/engine/query.rs", 4).
+rusqlite_baseline("src/engine/reconcile.rs", 8).
+rusqlite_baseline("src/engine/repo.rs", 4).
+rusqlite_baseline("src/engine/rpc.rs", 23).
+rusqlite_baseline("src/engine/staged_delta/mod.rs", 4).
+rusqlite_baseline("src/engine/staged_delta/sql.rs", 3).
+rusqlite_baseline("src/engine/staged_delta/tests.rs", 1).
+rusqlite_baseline("src/invlog.rs", 2).
+rusqlite_baseline("src/jobq/mod.rs", 2).
+rusqlite_baseline("src/rels/embed.rs", 2).
+
+# A grandfathered file grew past its baseline.
+diag(
+    path: source_file,
+    line: 1,
+    severity: "warning",
+    code: "rusqlite-ratchet-exceeded",
+    msg: "rusqlite use grew past this file's grandfathered baseline — route new database code through the Db seam (src/db.rs), or waive the line with @rusqlite-ok: <reason>"
+) <-
+    rusqlite_count(source_file, hits),
+    rusqlite_baseline(source_file, allowed),
+    hits > allowed.
+
+# A file with no baseline row mentions rusqlite: brand-new spread, flag every
+# hit line precisely.
+diag(
+    path: source_file,
+    line: line_number,
+    severity: "warning",
+    code: "rusqlite-new-file",
+    msg: "new rusqlite use outside the Db seam (src/db.rs + src/storage*) — add a named method on the seam instead, or waive with @rusqlite-ok: <reason>"
+) <-
+    rusqlite_counted(source_file, line_number),
+    !rusqlite_baseline(source_file, _).
+
+? diag(path, line, severity, code, msg).
