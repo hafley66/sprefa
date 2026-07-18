@@ -344,6 +344,18 @@ impl JobQueue {
     /// Claim the highest-priority ready job of an open kind, marking it
     /// `running` in one `BEGIN IMMEDIATE` transaction (SQLite single-writer is
     /// the coordinator). `None` = nothing ready.
+    ///
+    /// Root serialization for `ColdExtract` (2026-07-18 incident: 4 registered
+    /// roots cold-rebuilt concurrently on a blank-slate boot): when `kinds` is
+    /// scoped to `ColdExtract` alone — the single-flight cold worker's call
+    /// shape — the candidate set is further restricted to ONE `active_cold_root`
+    /// (see its doc). Without this, a second root's `scip-index` node (priority
+    /// `count+1`, ABOVE every OTHER root's non-scip nodes — each root's priority
+    /// scale restarts at its own family count) would jump the queue ahead of the
+    /// first root's still-pending nodes; `scip-index` keeps its highest-priority
+    /// rank only WITHIN the active root. `Tick`/`SinkDrain` need no such scoping:
+    /// their `key` dedup (`tick:{root}` / `sink:{root}`) already serializes
+    /// per-root work by construction.
     pub(crate) fn claim(&self, kinds: &[JobKind]) -> Result<Option<JobRow>> {
         if kinds.is_empty() {
             return Ok(None);
@@ -357,22 +369,42 @@ impl JobQueue {
             .map(|k| format!("'{}'", k.as_str()))
             .collect::<Vec<_>>()
             .join(",");
+        let root_scoped = kinds == [JobKind::ColdExtract];
         let db = plock(&self.db);
         let conn = db.conn();
         conn.execute_batch("BEGIN IMMEDIATE")?;
         let body = (|| -> Result<Option<JobRow>> {
+            let active_root = if root_scoped { active_cold_root(conn, now)? } else { None };
+            if let Some(root) = &active_root {
+                tracing::debug!(root = %root, "[jobq] claim scoped to active cold root");
+            }
             #[allow(clippy::type_complexity)]
-            let picked: Option<(String, String, String, String, i64, i64, i64, Option<String>)> = conn
-                .query_row(
-                    &format!(
-                        "SELECT key, kind, root, arg, priority, attempts, run_at, req_id FROM _job \
-                         WHERE state='pending' AND cancelled=0 AND run_at<=?1 AND kind IN ({kind_list}) \
-                         ORDER BY priority DESC, run_at ASC, enqueued_at ASC LIMIT 1"
-                    ),
-                    params![now],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
-                )
-                .optional()?;
+            let picked: Option<(String, String, String, String, i64, i64, i64, Option<String>)> =
+                match &active_root {
+                    Some(root) => conn
+                        .query_row(
+                            &format!(
+                                "SELECT key, kind, root, arg, priority, attempts, run_at, req_id FROM _job \
+                                 WHERE state='pending' AND cancelled=0 AND run_at<=?1 \
+                                 AND kind IN ({kind_list}) AND root=?2 \
+                                 ORDER BY priority DESC, run_at ASC, enqueued_at ASC LIMIT 1"
+                            ),
+                            params![now, root],
+                            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
+                        )
+                        .optional()?,
+                    None => conn
+                        .query_row(
+                            &format!(
+                                "SELECT key, kind, root, arg, priority, attempts, run_at, req_id FROM _job \
+                                 WHERE state='pending' AND cancelled=0 AND run_at<=?1 AND kind IN ({kind_list}) \
+                                 ORDER BY priority DESC, run_at ASC, enqueued_at ASC LIMIT 1"
+                            ),
+                            params![now],
+                            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
+                        )
+                        .optional()?,
+                };
             let Some((key, kind_s, root, arg_s, priority, attempts, run_at, req_id)) = picked else {
                 return Ok(None);
             };
@@ -599,6 +631,55 @@ impl JobQueue {
             .ok()
             .flatten()
     }
+}
+
+/// The one root a root-scoped `ColdExtract` claim should draw from (see
+/// `JobQueue::claim`'s doc):
+///
+/// - a root already MID-BATCH — has at least one `cold_extract` row `done` AND
+///   at least one still `pending` AND READY (`run_at<=now`) — stays active, so
+///   its remaining nodes (including a lower-priority one than another root's
+///   `scip-index`) finish before any other root's cold work starts. The
+///   single-flight cold worker never has two roots `running` at once, so at
+///   most one root can match here in steady state; `ORDER BY root` breaks a
+///   tie deterministically if crash-recovery ever produces one.
+/// - else (no root has any progress yet — a genuinely fresh multi-root blank
+///   boot) the root whose `cold_extract` rows were seeded EARLIEST (min
+///   `enqueued_at` among its pending rows) — first-seeded root goes first.
+/// - `None` when no `cold_extract` row is pending at all (nothing to scope).
+///
+/// A mid-batch root whose only remaining rows are backed off (`run_at` in the
+/// future, e.g. a retried failure) is NOT held active — it drops out of the
+/// "ready" check above so a claim falls through to another root's ready work
+/// instead of stalling every root behind one retry window; that root
+/// re-qualifies as active on its own next `done` (there is always at least a
+/// `done` row once it has run anything, and a `pending` id row it's still
+/// working through). Runs inside `claim`'s already-open `BEGIN IMMEDIATE`
+/// transaction on the shared connection; taking `&Db` here would need a
+/// second connection and break the transaction (SQLite single-writer).
+// @rusqlite-ok: shares claim()'s open transaction connection, see doc above
+fn active_cold_root(conn: &rusqlite::Connection, now: i64) -> Result<Option<String>> {
+    let in_progress: Option<String> = conn
+        .query_row(
+            "SELECT root FROM _job WHERE kind='cold_extract' \
+             AND root IN (SELECT root FROM _job WHERE kind='cold_extract' AND state='done') \
+             AND state='pending' AND cancelled=0 AND run_at<=?1 \
+             ORDER BY root LIMIT 1",
+            params![now],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if in_progress.is_some() {
+        return Ok(in_progress);
+    }
+    conn.query_row(
+        "SELECT root FROM _job WHERE kind='cold_extract' AND state='pending' AND cancelled=0 \
+         AND run_at<=?1 ORDER BY enqueued_at ASC, root ASC LIMIT 1",
+        params![now],
+        |r| r.get(0),
+    )
+    .optional()
+    .map_err(Into::into)
 }
 
 /// Commit on `Ok`, roll back on `Err` — keeps a failed mid-transaction op from
