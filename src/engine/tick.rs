@@ -164,6 +164,47 @@ impl Engine {
             .unwrap_or_else(|_| ("none".to_string(), 0))
     }
 
+    /// Force each named extraction-tied builtin rel family (module/type/call/
+    /// dataflow/doc/comment/template/unresolved/spine — the exact strings are
+    /// `ExtractFamily::name()`'s: `"module-rels"`, `"type-rels"`,
+    /// `"call-rels"`, `"dataflow-rels"`, `"doc-rels"`, `"comment-rels"`,
+    /// `"template-rels"`, `"unresolved-rels"`, `"spine-rels"`) to refresh
+    /// RIGHT NOW, bypassing the `used(prog)` gate a normal `tick`/`run`
+    /// applies. For a caller that needs a family's rows present (e.g.
+    /// `type_edge` from `"type-rels"`) without running a full tick over a
+    /// program that happens to mention the rel.
+    ///
+    /// Does NOT run a derived-rule rebuild (`rebuild_derived`): a caller that
+    /// also needs derived rels populated still needs a `tick`/`run`
+    /// afterward. Does NOT run `prime_analysis_bundles`'s shared-parse
+    /// optimization (that needs a `Program` to know which families it may
+    /// skip priming for), so requesting several of type/call/dataflow here
+    /// costs one parse pass each instead of one shared pass. DOES run the
+    /// CST `node` refresh first when `"spine-rels"` is requested: spine
+    /// projects the `_strings`/`_where_bytes` tables the node walk writes,
+    /// so it would otherwise read stale/empty meta tables (mirrors the
+    /// pre-node/post-node split `tick_report` applies below). Every other
+    /// family is independent of the others. Errors (rather than silently
+    /// no-opping) on a name that matches no registered family.
+    pub fn ensure_families(&mut self, names: &[&str]) -> Result<()> {
+        let families = crate::rels::extract_families();
+        for name in names {
+            if !families.iter().any(|fam| fam.name() == *name) {
+                let available: Vec<&str> = families.iter().map(|fam| fam.name()).collect();
+                bail!("ensure_families: unknown family {name:?}; available: {}", available.join(", "));
+            }
+        }
+        if names.contains(&"spine-rels") {
+            self.refresh_node_rels()?;
+        }
+        for fam in families {
+            if names.contains(&fam.name()) {
+                fam.refresh(self)?;
+            }
+        }
+        Ok(())
+    }
+
     /// One reactive tick, discarding the settle report (the common path). See
     /// `tick_report` for the settle/quiescence driver.
     #[tracing::instrument(skip_all, level = "info")]
