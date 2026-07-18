@@ -1,0 +1,72 @@
+# callable-coverage: a self-verifying rail for the per-language callable
+# registry (call_def). Every emitter arm in src/graph/typegraph.rs carries a
+# `// @callable <lang> <kind>` marker; a fixture file under
+# tests/fixtures/callables/ exercises every emitted kind per language. This
+# program joins the two: for every marked (lang, kind) there must be a matching
+# call_def row in that language's fixture, and vice versa. A mismatch is a
+# `callable-coverage` diagnostic (error). This is the living source of truth for
+# docs/callable-coverage.md — an emitter that stops emitting a kind (its marker
+# still present) trips "claimed but not emitted"; a fixture that grows a kind
+# with no marker trips "emitted but unmarked".
+#
+# Run: dl examples/callable-coverage.dl --check   (exit 2 on any diag)
+#
+# Style: descriptive names; one rel = one rule kind; the scan-carrying source
+# rule (cov_src) is separate from every rule that joins comment_node / call_def
+# (the S6 split), and no source rule heads a diag.
+
+# --- the corpus in scope: the emitter file (for markers) + the fixtures (for
+# call_def). A bare scan rule, joined by nothing (S6). ---
+rel cov_src(path: file, rev: text).
+cov_src(path, rev) <- scan("WORK", "src/graph/typegraph.rs", path, rev).
+cov_src(path, rev) <- scan("WORK", "tests/fixtures/callables/rust.rs", path, rev).
+cov_src(path, rev) <- scan("WORK", "tests/fixtures/callables/ts.ts", path, rev).
+cov_src(path, rev) <- scan("WORK", "tests/fixtures/callables/kotlin.kt", path, rev).
+cov_src(path, rev) <- scan("WORK", "tests/fixtures/callables/go.go", path, rev).
+cov_src(path, rev) <- scan("WORK", "tests/fixtures/callables/python.py", path, rev).
+
+# --- markers: `// @callable <lang> <kind>` comments, extracted from the emitter
+# file. comment_node.text arrives with the `//` already stripped. ---
+rel marker(path: file, line: int, lang: text, kind: text).
+marker(path, line, lang, kind) <-
+    comment_node(path, line, _, _, _, text, _),
+    text =~ /^@callable /,
+    rest = trim(replace_re(text, "^@callable ", "")),
+    lang = split(rest, " ", 0),
+    kind = split(rest, " ", 1).
+
+rel claimed(lang: text, kind: text).
+claimed(lang, kind) <- marker(_, _, lang, kind).
+
+# --- fixtures: which language each fixture file is, by extension. Restricted to
+# the callables fixture dir so the emitter file (also .rs) is never counted. ---
+rel fixture_lang(path: file, lang: text).
+fixture_lang(path, "rust")   <- cov_src(path, _), path =~ /callables\/[a-z]+\.rs$/.
+fixture_lang(path, "ts")     <- cov_src(path, _), path =~ /callables\/[a-z]+\.ts$/.
+fixture_lang(path, "kotlin") <- cov_src(path, _), path =~ /callables\/[a-z]+\.kt$/.
+fixture_lang(path, "go")     <- cov_src(path, _), path =~ /callables\/[a-z]+\.go$/.
+fixture_lang(path, "python") <- cov_src(path, _), path =~ /callables\/[a-z]+\.py$/.
+
+# --- what the extractor actually emitted on the fixtures: one row per
+# (lang, kind) present, plus a witness row+line for the diag location. ---
+rel present(lang: text, kind: text).
+present(lang, kind) <-
+    call_def(_, _, kind, file, _, _),
+    fixture_lang(file, lang).
+
+rel present_row(lang: text, kind: text, file: file, line: int).
+present_row(lang, kind, file, line) <-
+    call_def(_, _, kind, file, line, _),
+    fixture_lang(file, lang).
+
+# --- the check (mirrors examples/chaos-soak.dl's anti-join self-check). ---
+
+# (1) marked but the fixture yields no such call_def row — a broken emitter arm.
+diag(path: path, line: line, severity: "error", code: "callable-coverage",
+     msg: "emitter marks (" + lang + " " + kind + ") but its fixture has no call_def row of that kind") <-
+    marker(path, line, lang, kind), !present(lang, kind).
+
+# (2) a fixture call_def kind with no emitter marker — an unclaimed kind.
+diag(path: file, line: line, severity: "error", code: "callable-coverage",
+     msg: "fixture emits a (" + lang + " " + kind + ") call_def with no @callable emitter marker") <-
+    present_row(lang, kind, file, line), !claimed(lang, kind).

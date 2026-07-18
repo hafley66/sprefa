@@ -20,6 +20,7 @@ mod builtin_file_rel;
 mod file_lines;
 mod call_golden;
 mod call_rels;
+mod callable_defs;
 mod changed;
 mod check_daemon;
 mod check_deadline;
