@@ -123,11 +123,21 @@ conn_hit(source_file, line_number) <-
     scan("WORK", "src/**/*.rs", source_file, source_rev),
     match(source_file, source_rev, /\.conn\(\)/, line_number).
 
+# Waivers must join THIS ratchet's hit lines: `.conn()` lines don't match the
+# rusqlite regex, so rusqlite_waived can never contain them (rail defect found
+# red-proving the swallow ratchet 2026-07-18).
+rel conn_waived(source_file: file, line_number: int).
+conn_waived(source_file, line_number) <-
+    rusqlite_waiver_line(source_file, waiver_line),
+    conn_hit(source_file, line_number),
+    waiver_line >= line_number - 1,
+    waiver_line <= line_number.
+
 rel conn_counted(source_file: file, line_number: int).
 conn_counted(source_file, line_number) <-
     conn_hit(source_file, line_number),
     !rusqlite_seam(source_file),
-    !rusqlite_waived(source_file, line_number).
+    !conn_waived(source_file, line_number).
 
 rel conn_count(source_file: file, hits: int).
 conn_count(source_file, count(line_number)) <-
@@ -196,7 +206,70 @@ diag(
     conn_counted(source_file, line_number),
     !conn_baseline(source_file, _).
 
-# Route all four codes to the agent-turn surface as well as commit: a seam
+# ---- swallowed-result ratchet ----
+# `let _ = ...execute/query...` throws away a SQLite Result. The grandfathered
+# sites are deliberate best-effort (ROLLBACK cleanup, PRAGMA tuning, the Drop
+# checkpoint, invlog telemetry); NEW swallows are how the next silent failure
+# is born (2026-07-18 poison-job incident: error diagnosis depends on every
+# statement failure surfacing). Waive a deliberate one with
+# `@rusqlite-ok: <reason>` and say why losing the error is safe.
+
+rel sqlite_swallow_hit(source_file: file, line_number: int).
+sqlite_swallow_hit(source_file, line_number) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    match(source_file, source_rev, /let _ = [^;]*(execute|query_row|query\(|prepare)/, line_number).
+
+rel sqlite_swallow_waived(source_file: file, line_number: int).
+sqlite_swallow_waived(source_file, line_number) <-
+    rusqlite_waiver_line(source_file, waiver_line),
+    sqlite_swallow_hit(source_file, line_number),
+    waiver_line >= line_number - 1,
+    waiver_line <= line_number.
+
+rel sqlite_swallow_counted(source_file: file, line_number: int).
+sqlite_swallow_counted(source_file, line_number) <-
+    sqlite_swallow_hit(source_file, line_number),
+    !sqlite_swallow_waived(source_file, line_number).
+
+rel sqlite_swallow_count(source_file: file, hits: int).
+sqlite_swallow_count(source_file, count(line_number)) <-
+    sqlite_swallow_counted(source_file, line_number).
+
+# Grandfathered swallow baseline, measured 2026-07-18. Ratchet down only.
+# (The seam files are IN this ratchet: a swallowed Result is a defect risk
+# wherever it lives, seam included.)
+rel sqlite_swallow_baseline(source_file: file, allowed: int).
+sqlite_swallow_baseline("src/engine/meta.rs", 7).
+sqlite_swallow_baseline("src/db.rs", 4).
+sqlite_swallow_baseline("src/engine/pipeline/apply.rs", 3).
+sqlite_swallow_baseline("src/jobq/mod.rs", 2).
+sqlite_swallow_baseline("src/invlog.rs", 2).
+sqlite_swallow_baseline("src/daemon.rs", 2).
+sqlite_swallow_baseline("src/jobq/tests.rs", 1).
+sqlite_swallow_baseline("src/engine/tick.rs", 1).
+
+diag(
+    path: source_file,
+    line: 1,
+    severity: "warning",
+    code: "sqlite-swallow-exceeded",
+    msg: "a new `let _ =` on a SQLite call swallows its Result — propagate the error (?), or waive with @rusqlite-ok: <why losing this error is safe>"
+) <-
+    sqlite_swallow_count(source_file, hits),
+    sqlite_swallow_baseline(source_file, allowed),
+    hits > allowed.
+
+diag(
+    path: source_file,
+    line: line_number,
+    severity: "warning",
+    code: "sqlite-swallow-new-file",
+    msg: "`let _ =` on a SQLite call in a file with no swallow baseline — propagate the error (?), or waive with @rusqlite-ok: <why losing this error is safe>"
+) <-
+    sqlite_swallow_counted(source_file, line_number),
+    !sqlite_swallow_baseline(source_file, _).
+
+# Route all codes to the agent-turn surface as well as commit: a seam
 # violation should confront the agent that just wrote it, not wait for commit.
 diag_stage("rusqlite-ratchet-exceeded", "agent-turn").
 diag_stage("rusqlite-ratchet-exceeded", "commit").
@@ -206,5 +279,9 @@ diag_stage("conn-ratchet-exceeded", "agent-turn").
 diag_stage("conn-ratchet-exceeded", "commit").
 diag_stage("conn-new-file", "agent-turn").
 diag_stage("conn-new-file", "commit").
+diag_stage("sqlite-swallow-exceeded", "agent-turn").
+diag_stage("sqlite-swallow-exceeded", "commit").
+diag_stage("sqlite-swallow-new-file", "agent-turn").
+diag_stage("sqlite-swallow-new-file", "commit").
 
 ? diag(path, line, severity, code, msg).

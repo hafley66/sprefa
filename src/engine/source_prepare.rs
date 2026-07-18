@@ -700,11 +700,13 @@ mod tests {
         engine
             .with_semantic_generation(|engine| facts.apply(engine, base))
             .unwrap();
+        // @rusqlite-ok: test asserts staged rows through the raw conn
         facts.discard(engine.db.conn()).unwrap();
         for (table, expected) in [("rel_fn_item", 2i64), ("rel_use_item", 1), ("rel_todo_note", 1)]
         {
             let count: i64 = engine
                 .db
+                // @rusqlite-ok: test asserts staged rows through the raw conn
                 .conn()
                 .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
                     row.get(0)
@@ -767,11 +769,13 @@ mod tests {
         engine
             .with_semantic_generation(|engine| facts.apply(engine, base))
             .unwrap();
+        // @rusqlite-ok: test asserts staged rows through the raw conn
         facts.discard(engine.db.conn()).unwrap();
         for (table, expected) in [("rel_fn_item", 6i64), ("rel_use_item", 3), ("rel_todo_note", 3)]
         {
             let count: i64 = engine
                 .db
+                // @rusqlite-ok: test asserts staged rows through the raw conn
                 .conn()
                 .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
                     row.get(0)
@@ -810,6 +814,7 @@ mod tests {
             0,
             "match/comment-only rules must not tree-sitter-parse"
         );
+        // @rusqlite-ok: test asserts staged rows through the raw conn
         prepared.facts.discard(engine.db.conn()).unwrap();
     }
 
