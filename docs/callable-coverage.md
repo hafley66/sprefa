@@ -123,7 +123,7 @@ dataflow lift.
 | prototype-assigned function | **N/A** | not a Python construct. |
 | export-default anonymous fn | **N/A** | not a Python construct. |
 | operator overload / dunder method | **EMITTED** | `__add__`, `__call__`, `__init__`, etc. inside a class are `function_definition` (`src/graph/typegraph.rs:6573-6575`). |
-| async variants | **NOT EMITTED** | `py_walk_call_defs` matches only `function_definition`; `async_function_definition` has no arm. |
+| async variants | **EMITTED** | empirically verified 2026-07-18: `async def` free fn and `async def` method both emit call_def rows (tree-sitter folds async into `function_definition`); the `async_function_definition` node kind does not occur in this grammar version. |
 | generator functions | **EMITTED** | `def` containing `yield` is still `function_definition` (`src/graph/typegraph.rs:6571-6585`). |
 
 ## C status
@@ -171,5 +171,5 @@ dataflow lift.
 | prototype-assigned function | N/A | NOT EMITTED | N/A | N/A | N/A | N/A |
 | export-default anonymous fn | N/A | NOT EMITTED | N/A | N/A | N/A | N/A |
 | operator overload / dunder method | EMITTED | N/A | EMITTED | N/A | EMITTED | N/A |
-| async variants | EMITTED | EMITTED | EMITTED | N/A | NOT EMITTED | N/A |
+| async variants | EMITTED | EMITTED | EMITTED | N/A | EMITTED | N/A |
 | generator functions | N/A | EMITTED | N/A | N/A | EMITTED | N/A |
