@@ -559,6 +559,14 @@ const EFFECT_RELS: [&str; 1] = ["effect_log"];
 /// program's rules like any other derived rel.
 const DIAG_RELS: [&str; 1] = ["diag"];
 
+/// The diag-stage routing sink. Same shape as `diag` (engine-declared,
+/// USER-WRITTEN): a rail heads `diag_stage(code, stage)` to route a diagnostic
+/// code to a surface (live / commit / agent-turn / agent-session). Fixed 2-col
+/// schema. Read only, never populated by a refresh — `rebuild_derived` fills it
+/// from the program's rules like any other derived rel. Presentation-time
+/// filtering only; the db keeps every `diag` row. See R7 (src/stage.rs).
+const DIAG_STAGE_RELS: [&str; 1] = ["diag_stage"];
+
 /// The hover-note sink. Same shape as `diag` (engine-declared, USER-WRITTEN): a
 /// rule heads `hover_note(path, line, col, end_line, end_col, md)` to attach
 /// markdown to a source span; the LSP hover path appends each matching row's

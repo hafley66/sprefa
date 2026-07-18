@@ -365,6 +365,9 @@ impl Engine {
                 if DIAG_RELS.contains(&d.name.as_str()) {
                     bail!("diag is the built-in diagnostic sink (fixed schema: path, line, col, end_line, end_col, severity, code, msg, hint); drop the `rel diag(...)` decl and write it directly — name only the columns you use, e.g. `diag(path: p, line: l, msg: m) <- ...`");
                 }
+                if DIAG_STAGE_RELS.contains(&d.name.as_str()) {
+                    bail!("diag_stage is the built-in diag-routing sink (fixed schema: code, stage); drop the `rel diag_stage(...)` decl and head it directly from a rule, like diag — e.g. `diag_stage(\"my-code\", \"agent-turn\") <- ...` (stage in live | commit | agent-turn | agent-session)");
+                }
                 if HOVER_RELS.contains(&d.name.as_str()) {
                     bail!("hover_note is the built-in hover-note sink (fixed schema: path, line, col, end_line, end_col, md); drop the `rel hover_note(...)` decl and head it directly from a rule, like diag — name only the columns you use, e.g. `hover_note(path: p, line: l, end_line: l, end_col: c, md: text) <- ...`");
                 }
@@ -474,6 +477,9 @@ impl Engine {
             self.declare(&d)?;
         }
         for d in diag_rel_decls() {
+            self.declare(&d)?;
+        }
+        for d in diag_stage_rel_decls() {
             self.declare(&d)?;
         }
         for d in hover_note_rel_decls() {

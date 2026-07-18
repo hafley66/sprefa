@@ -128,6 +128,13 @@ struct Cli {
     /// Like --check but emit the diagnostics as a JSON array on stdout.
     #[arg(long, help_heading = "Run modes")]
     diag_json: bool,
+    /// R7 diag routing stage whose diagnostics to surface — `live` | `commit` |
+    /// `agent-turn` | `agent-session`. Default `commit` (the pre-commit /
+    /// --check surface, unchanged). A code with no `diag_stage` row routes by
+    /// severity: an error reaches every stage, a warning only `commit`. Rails
+    /// opt a code into other stages by heading `diag_stage(code, stage)`.
+    #[arg(long, help_heading = "Run modes")]
+    stage: Option<String>,
     /// Parse + typecheck + op resolution + metavar sanity over the program
     /// file(s), with NO scan and NO db writes (sub-second). The authoring
     /// fast-fail: a parse/type error surfaces without paying a full scan. Exit 0
@@ -392,19 +399,26 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
     } else if cli.check || cli.diag_json {
         // Exit contract: 0 clean, 2 rail violations (Claude Code's blocking-hook
         // code; stderr feeds the agent), 1 broken program (user-facing).
+        // R7: resolve the routing stage (default the pre-commit surface); reject
+        // an unknown name loudly rather than silently surfacing nothing.
+        let stage = cli.stage.as_deref().unwrap_or(crate::stage::DEFAULT_STAGE).to_string();
+        if !crate::stage::is_stage(&stage) {
+            anyhow::bail!("unknown --stage `{stage}` (expected live, commit, agent-turn, or agent-session)");
+        }
         let errors = if let Some(max_wall) = cli.max_wall {
             let Some(errors) = check_deadline::run(max_wall, {
                 let programs = programs.to_vec();
                 let db = db.clone();
                 let root = root.clone();
                 let json = cli.diag_json;
-                move || crate::run_check(&programs, db.as_deref(), db_defaulted, root, json)
+                let stage = stage.clone();
+                move || crate::run_check(&programs, db.as_deref(), db_defaulted, root, json, &stage)
             })? else {
                 return Ok(());
             };
             errors
         } else {
-            crate::run_check(programs, db.as_deref(), db_defaulted, root, cli.diag_json)?
+            crate::run_check(programs, db.as_deref(), db_defaulted, root, cli.diag_json, &stage)?
         };
         if errors > 0 {
             eprintln!("{errors} error-severity diagnostic(s) found");

@@ -42,6 +42,7 @@ pub mod scip_import;
 pub mod scip_setup;
 pub mod setup;
 pub mod sg;
+pub mod stage;
 pub mod verdict;
 pub mod spine;
 pub mod storage;
@@ -338,32 +339,46 @@ pub fn run_verify(programs: &[String], db_path: Option<&str>, root: PathBuf, che
     }
 }
 
-pub fn run_check(programs: &[String], db_path: Option<&str>, db_defaulted: bool, root: PathBuf, json: bool) -> Result<usize> {
+pub fn run_check(programs: &[String], db_path: Option<&str>, db_defaulted: bool, root: PathBuf, json: bool, stage: &str) -> Result<usize> {
     // Same daemon gate as run_file: explicit multi-file merges stay in-process.
     // The discovery-mode default db does NOT opt out (it names the same
     // `.dl/cache.db` the daemon owns via `db_defaulted`), matching run_file's gate.
     let daemon_eligible = (db_path.is_none() || db_defaulted) && programs.len() <= 1;
     if daemon_eligible && daemon::enabled_for(&root) {
-        match run_check_via_daemon(programs.first().map(|s| s.as_str()), &root, json) {
+        match run_check_via_daemon(programs.first().map(|s| s.as_str()), &root, json, stage) {
             Ok(n) => return Ok(n),
             Err(e) => eprintln!("[daemon] check attach failed, falling back to in-process: {e}"),
         }
     } else if daemon_eligible {
         eprintln!("[check] no daemon serving this root — one-shot engine on .dl/.state/cache.db (start one: dl daemon start)");
     }
-    run_check_inproc(programs, db_path, root, json)
+    run_check_inproc(programs, db_path, root, json, stage)
 }
 
 /// Daemon check path: ensure daemon up, send `diag` RPC, render same as
 /// `run_check_inproc`. Returns the error-severity count for the exit contract.
-fn run_check_via_daemon(program: Option<&str>, root: &Path, json: bool) -> Result<usize> {
+/// `stage` (R7) filters the diags to the routing stage before render — the db
+/// still holds every row; the `diag` RPC returns the `diag_stage` routes so the
+/// filter runs client-side (one round trip).
+fn run_check_via_daemon(program: Option<&str>, root: &Path, json: bool, stage: &str) -> Result<usize> {
     daemon::ensure_daemon(root, program)?;
     let mut s = daemon::connect()?;
     let req = rpc::Request::new(1, "diag", serde_json::json!({"root": root.to_string_lossy()}));
     let resp = daemon::rpc_call(&mut s, &req)?;
     if let Some(e) = resp.error { anyhow::bail!("daemon diag: {}", e.message); }
-    let arr = resp.result.and_then(|v| v.get("rows").cloned()).and_then(|v| v.as_array().cloned())
-        .unwrap_or_default();
+    let result = resp.result.unwrap_or(serde_json::Value::Null);
+    let mut arr = result.get("rows").and_then(|v| v.as_array().cloned()).unwrap_or_default();
+    // R7 stage routing: drop diags not routed to `stage`. `stage_rows` are the
+    // `diag_stage` [code, stage] pairs the daemon read alongside the diags.
+    let stage_rows = diag_stage_rows_from_json(result.get("stages"));
+    let routes = stage::routes_from_rows(&stage_rows);
+    let before = arr.len();
+    arr.retain(|d| {
+        let code = d.get("code").and_then(|v| v.as_str()).unwrap_or("");
+        let sev = d.get("severity").and_then(|v| v.as_str()).unwrap_or("");
+        stage::routed_to(code, sev, stage, &routes)
+    });
+    tracing::debug!(stage, kept = arr.len(), dropped = before - arr.len(), "check stage routing (daemon)");
     if json {
         println!("{}", serde_json::to_string_pretty(&serde_json::Value::Array(arr.clone()))?);
     } else {
@@ -383,7 +398,19 @@ fn run_check_via_daemon(program: Option<&str>, root: &Path, json: bool) -> Resul
     Ok(arr.iter().filter(|d| d.get("severity").and_then(|v| v.as_str()) == Some("error")).count())
 }
 
-fn run_check_inproc(programs: &[String], db_path: Option<&str>, root: PathBuf, json: bool) -> Result<usize> {
+/// Parse the `diag` RPC's `stages` field — a JSON array of `[code, stage]`
+/// string pairs — into the `Vec<Vec<String>>` shape `stage::routes_from_rows`
+/// consumes. Tolerant of a missing/absent field (empty = no routing rows =
+/// severity defaults everywhere).
+fn diag_stage_rows_from_json(v: Option<&serde_json::Value>) -> Vec<Vec<String>> {
+    let Some(arr) = v.and_then(|v| v.as_array()) else { return Vec::new() };
+    arr.iter()
+        .filter_map(|row| row.as_array())
+        .map(|cells| cells.iter().map(|c| c.as_str().unwrap_or("").to_string()).collect())
+        .collect()
+}
+
+fn run_check_inproc(programs: &[String], db_path: Option<&str>, root: PathBuf, json: bool, stage: &str) -> Result<usize> {
     let files = resolve_programs(programs, &root)?;
     // Drop `?` queries so their stdout rows don't mix with --diag-json output.
     let (mut prog, type_diags, _) = prepare_paths(&files)?;
@@ -398,6 +425,14 @@ fn run_check_inproc(programs: &[String], db_path: Option<&str>, root: PathBuf, j
     let conn = db::open(db_path)?;
     let mut eng = engine::Engine::new(conn, root);
     let diags = if type_errors { Vec::new() } else { eng.tick(&prog, true)?; eng.diags(None)? };
+    // R7 stage routing: keep only the diags this stage surfaces. The db still
+    // holds every row (`? diag(...)` stays complete); `diag_stage` rows colocated
+    // in the program supply the per-code routes, else the severity default.
+    let stage_rows = eng.rel_rows("diag_stage", 2);
+    let routes = stage::routes_from_rows(&stage_rows);
+    let before = diags.len();
+    let diags = stage::stage_filter(diags, stage, &routes);
+    tracing::debug!(stage, kept = diags.len(), dropped = before - diags.len(), "check stage routing (in-process)");
 
     if json {
         let mut arr: Vec<serde_json::Value> = diags.iter().map(|d| serde_json::json!({

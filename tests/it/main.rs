@@ -53,6 +53,7 @@ mod created_perf;
 mod cst_node_perf;
 mod dl_diag;
 mod diag_mute;
+mod stage_routing;
 mod error_reporting;
 mod authoring_edges;
 mod lang_matrix;

@@ -34,10 +34,16 @@
 //!   (`{"inject": text}` / `{"block": reason}`). Our plugin, our schema.
 
 use crate::ast;
+use crate::engine::DiagRow;
+use crate::stage;
 use anyhow::Result;
+use std::collections::HashSet;
 use std::io::Read;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+
+/// R7: how many sample diags an `agent-session` summary lists under the counts.
+const SESSION_TOP_N: usize = 10;
 
 /// The harness whose JSON shapes `dl --hook` reads on stdin and writes on
 /// stdout. Parse/render arms only — no engine or rel-contract difference.
@@ -93,14 +99,21 @@ fn resolve_skill(name: &str, root: &Path) -> Option<String> {
     cands.into_iter().find_map(|c| std::fs::read_to_string(&c).ok())
 }
 
-/// The three emit relations read off one tick. `broken` is the in-process
-/// 1/2-split signal (a malformed program surfaces to the user, never the agent).
+/// The three emit relations read off one tick, plus the R7 staged-diagnostics
+/// inputs. `broken` is the in-process 1/2-split signal (a malformed program
+/// surfaces to the user, never the agent).
 #[derive(Default)]
 struct EmitRels {
     inject: Vec<String>,
     skills: Vec<String>,
     blocks: Vec<String>,
     broken: bool,
+    /// R7: every `diag` row, unfiltered; the routing filter runs at render time.
+    diags: Vec<DiagRow>,
+    /// R7: the `diag_stage` [code, stage] routing rows.
+    stage_rows: Vec<Vec<String>>,
+    /// R7: the latest agent turn's touched paths (`agent_touch`).
+    touch_paths: Vec<String>,
 }
 
 /// Read a single-column emit relation off an in-process engine (empty if the
@@ -228,18 +241,61 @@ fn daemon_feed_event(s: &mut UnixStream, root: &Path, ev: &HookEvent) -> Result<
     Ok(())
 }
 
+/// One `diag` row parsed off the daemon `diag` RPC's JSON (the `diag_to_json`
+/// shape: `message` for the text, `line`/`col`/`endLine`/`endCol` ints).
+fn diag_from_json(v: &serde_json::Value) -> DiagRow {
+    let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let i = |k: &str| v.get(k).and_then(|x| x.as_i64()).unwrap_or(0);
+    let hint = v.get("hint").and_then(|x| x.as_str()).filter(|h| !h.is_empty()).map(str::to_string);
+    DiagRow {
+        path: s("path"),
+        line: i("line"),
+        col: i("col"),
+        end_line: i("endLine"),
+        end_col: i("endCol"),
+        severity: s("severity"),
+        code: s("code"),
+        msg: s("message"),
+        hint,
+    }
+}
+
+/// R7: read the diags + `diag_stage` routes + `agent_touch` paths off the
+/// daemon in one `diag` RPC (the handler bundles all three). A missing field is
+/// tolerated as empty.
+fn diags_via_daemon(s: &mut UnixStream, root: &Path) -> (Vec<DiagRow>, Vec<Vec<String>>, Vec<String>) {
+    let req = crate::rpc::Request::new(1, "diag",
+        serde_json::json!({ "root": root.to_string_lossy() }));
+    let Ok(resp) = crate::daemon::rpc_call(s, &req) else { return (vec![], vec![], vec![]) };
+    if resp.error.is_some() { return (vec![], vec![], vec![]); }
+    let Some(result) = resp.result else { return (vec![], vec![], vec![]) };
+    let diags = result.get("rows").and_then(|v| v.as_array())
+        .map(|a| a.iter().map(diag_from_json).collect()).unwrap_or_default();
+    let stage_rows = result.get("stages").and_then(|v| v.as_array()).map(|a| a.iter()
+        .filter_map(|row| row.as_array())
+        .map(|cells| cells.iter().map(|c| c.as_str().unwrap_or("").to_string()).collect())
+        .collect()).unwrap_or_default();
+    let touch = result.get("touch").and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default();
+    (diags, stage_rows, touch)
+}
+
 /// Read the emit rels from the running daemon — the primary reactive engine.
 /// Feed the event (append the `hook_event` row + tick), then read the emit rels
-/// off the re-derived tables. One connection: feed, then three reads.
+/// off the re-derived tables. One connection: feed, then the reads.
 fn rels_via_daemon(ev: &HookEvent, program: Option<&str>, root: &Path) -> Result<EmitRels> {
     crate::daemon::ensure_daemon(root, program)?;
     let mut s = crate::daemon::connect()?;
     daemon_feed_event(&mut s, root, ev)?;
+    let (diags, stage_rows, touch_paths) = diags_via_daemon(&mut s, root);
     Ok(EmitRels {
         inject: daemon_col(&mut s, root, "rel_inject"),
         skills: daemon_col(&mut s, root, "rel_inject_skill"),
         blocks: daemon_col(&mut s, root, "rel_block"),
         broken: false,
+        diags,
+        stage_rows,
+        touch_paths,
     })
 }
 
@@ -264,12 +320,65 @@ fn rels_inproc(ev: &HookEvent, programs: &[String], db_path: Option<&str>, root:
     eng.tick(&prog, true)?;
     eng.insert_hook_event(&ev.kind, &ev.session, ev.seq, &ev.json)?;
     eng.tick(&prog, true)?;
+    let touch_paths = eng.rel_rows("agent_touch", 3)
+        .into_iter().filter_map(|r| r.into_iter().nth(2)).collect();
     Ok(EmitRels {
         inject: emit_col(&eng, "inject"),
         skills: emit_col(&eng, "inject_skill"),
         blocks: emit_col(&eng, "block"),
         broken: false,
+        diags: eng.diags(None).unwrap_or_default(),
+        stage_rows: eng.rel_rows("diag_stage", 2),
+        touch_paths,
     })
+}
+
+/// R7: render the routed diagnostics as agent context for this hook event. A
+/// session-boundary event (`SessionStart`/`SessionEnd`) gets the `agent-session`
+/// summary — per-code counts plus a top-N sample; every other event gets the
+/// `agent-turn` list, gated to the files the latest turn touched (an agent
+/// hears about what it just touched, never the whole audit list). Returns None
+/// when nothing routes to this surface.
+fn staged_diag_context(
+    kind: &str,
+    diags: Vec<DiagRow>,
+    stage_rows: &[Vec<String>],
+    touch_paths: &[String],
+) -> Option<String> {
+    let routes = stage::routes_from_rows(stage_rows);
+    if stage::is_session_event(kind) {
+        let staged = stage::stage_filter(diags, "agent-session", &routes);
+        if staged.is_empty() {
+            return None;
+        }
+        let (counts, sample) = stage::session_summary(&staged, SESSION_TOP_N);
+        let mut out = String::from("# dl diagnostics (session summary)\n\n");
+        for (code, n) in &counts {
+            let label = if code.is_empty() { "(no code)" } else { code.as_str() };
+            out.push_str(&format!("- {label}: {n}\n"));
+        }
+        out.push_str("\ntop:\n");
+        for d in sample {
+            out.push_str(&format!("- {}:{}: {}: {}\n", d.path, d.line, d.severity, d.msg));
+        }
+        tracing::debug!(kind, codes = counts.len(), total = staged.len(),
+            "hook agent-session diag summary");
+        Some(out)
+    } else {
+        let staged = stage::stage_filter(diags, "agent-turn", &routes);
+        let touched: HashSet<String> = touch_paths.iter().cloned().collect();
+        let staged = stage::touched_only(staged, &touched);
+        if staged.is_empty() {
+            return None;
+        }
+        let mut out = String::from("# dl diagnostics (files edited this turn)\n\n");
+        for d in &staged {
+            let code = if d.code.is_empty() { String::new() } else { format!("[{}]", d.code) };
+            out.push_str(&format!("- {}:{}: {}{}: {}\n", d.path, d.line, d.severity, code, d.msg));
+        }
+        tracing::debug!(kind, kept = staged.len(), "hook agent-turn diag routing");
+        Some(out)
+    }
 }
 
 /// `dl --hook`: read the event, get the emit rels (daemon-first, in-process
@@ -323,6 +432,13 @@ pub fn run_hook(
             Some(body) => ctx.push(format!("# Skill `{name}` (auto-loaded by dl --hook)\n\n{body}")),
             None => eprintln!("dl --hook: skill `{name}` not found under .agents/skills or .claude/skills"),
         }
+    }
+
+    // R7: append the routed diagnostics for this surface — the agent-turn list
+    // (gated to touched files) or the agent-session summary. The db keeps every
+    // diag; this is presentation-time routing only.
+    if let Some(staged) = staged_diag_context(&ev.kind, rels.diags, &rels.stage_rows, &rels.touch_paths) {
+        ctx.push(staged);
     }
 
     if ctx.is_empty() {

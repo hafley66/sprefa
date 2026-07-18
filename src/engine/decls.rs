@@ -42,6 +42,7 @@ pub fn all_builtin_decls() -> Vec<RelDecl> {
         .chain(effect_rel_decls())
         .chain(hook_rel_decls())
         .chain(diag_rel_decls())
+        .chain(diag_stage_rel_decls())
         .chain(hover_note_rel_decls())
         .chain(graph_rel_decls())
         .chain(diag_mute_rel_decls())
@@ -261,6 +262,24 @@ pub(crate) fn diag_rel_decls() -> Vec<RelDecl> {
             c("msg", Type::Text), c("hint", Type::Text)],
             group: "diag",
             doc: "diagnostic sink; head it from a rule to emit an editor squiggle (--lsp), a --check finding, or a daemon-hook message. Fixed 9-col schema — write only the cols you need via named args (diag(path: p, line: l, msg: m)); the rest are NULL and default (severity warn, end_line=line, ints 0). path is TEXT so a synthetic origin isn't file-checked away; line/col: 0-based",
+            ..Default::default() },
+    ]
+}
+
+/// The diag-stage routing sink (see `DIAG_STAGE_RELS`). Fixed 2-col schema
+/// (code, stage). Like `diag`, engine-declared but USER-WRITTEN: a rail heads
+/// `diag_stage(code, stage)` beside its `diag(...)` rule to route a diagnostic
+/// code to one or more surfaces (live / commit / agent-turn / agent-session).
+/// A code with no `diag_stage` row routes by severity default (error ->
+/// everywhere, warning -> commit only). Staging is presentation-time only; the
+/// db keeps every `diag` row. See plans/2026-07-17-diag-stage-routing.md (R7).
+pub(crate) fn diag_stage_rel_decls() -> Vec<RelDecl> {
+    let c = |n: &str, t: Type| Col::plain(n.to_string(), t);
+    vec![
+        RelDecl { name: "diag_stage".into(), cols: vec![
+            c("code", Type::Text), c("stage", Type::Text)],
+            group: "diag",
+            doc: "diag routing sink; head diag_stage(code, stage) from a rule to route a diagnostic code to a surface — stage is one of live / commit / agent-turn / agent-session. A code may carry several rows (one per stage it opts into). A code with NO diag_stage row routes by severity default: error -> every stage, warning -> commit only. Presentation-time filtering only; the db keeps every diag (`? diag(...)` stays complete)",
             ..Default::default() },
     ]
 }

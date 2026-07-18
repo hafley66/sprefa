@@ -1692,7 +1692,20 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
             let only = req.params.get("path").and_then(|p| p.as_str());
             let eng = lock_eng(sr, &req.method);
             match eng.diags(only) {
-                Ok(rows) => Response::ok(req.id, json!({"rows": rows.iter().map(diag_to_json).collect::<Vec<_>>()})),
+                // R7: alongside the diag rows, ship the `diag_stage` routes
+                // ([code, stage] pairs) and the latest-turn `agent_touch` paths
+                // so the client filters by stage (and, for the hook's
+                // agent-turn surface, by touched path) in one round trip.
+                Ok(rows) => {
+                    let stages = eng.rel_rows("diag_stage", 2);
+                    let touch: Vec<String> = eng.rel_rows("agent_touch", 3)
+                        .into_iter().filter_map(|r| r.into_iter().nth(2)).collect();
+                    Response::ok(req.id, json!({
+                        "rows": rows.iter().map(diag_to_json).collect::<Vec<_>>(),
+                        "stages": stages,
+                        "touch": touch,
+                    }))
+                }
                 Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
             }
         }
