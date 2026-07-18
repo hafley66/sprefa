@@ -922,6 +922,19 @@ one revert away; the schema is additive throughout (no _job rewrite).
    rank degrades gracefully with cost=1 (pure consumer-count ordering).
    Recommendation: constant-1 in step 3; perf-fed costs as a follow-up with a
    receipt comparing schedules.
+   USER AMENDMENT (2026-07-18, voice): overridden in two parts. (a) Family
+   weight is unknowable a priori and the one measurement taken (cold-chunk arc)
+   inverted the assumed ranking (dataflow 4.4s was the hog, parse 4%), so
+   constant-1 over family-sized lumps re-encodes exactly that blindness.
+   Perf-fed observed cost per (family, shard-bytes) rides from the start; the
+   trail already records it (extract-rebuild verdicts: family, files, ms).
+   (b) The schedulable unit is the SHARD (byte-bounded chunk) for EVERY
+   family, not only dataflow; family survives as a locality grouping and the
+   code that runs, never as the admission-sized lump. Corollary: the demand
+   join (program -> rel -> family -> shard) must exist as rows so the
+   scheduler can order shards by which served programs are blocked on them;
+   both inputs already exist in code (served-program body atoms walked at
+   strata.rs auto_indexes; supply side named by ExtractFamily::input_rels()).
 7. **Keep the `priority` column?** After step 3 it is tiebreak-only.
    Recommendation: keep through step 4, then fold into utility's low bits and
    drop the column in a schema-cleanup arc once receipts hold.
