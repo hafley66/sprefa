@@ -94,8 +94,33 @@ fn timed_run(dir: &Path, state: &Path, db_tag: &str, cap: Option<&str>) -> (f64,
     (real, cpu)
 }
 
+/// 1-minute load average divided by core count. The toggle receipt compares
+/// cpu/wall ratios, and a busy machine (fleet builds, parallel suites) starves
+/// the uncapped run of cores — ratio_off collapses toward 1x and the relative
+/// assertion flakes. The receipt only means something on a quiet machine.
+fn load_per_core() -> f64 {
+    let out = Command::new("sysctl")
+        .args(["-n", "vm.loadavg"])
+        .output()
+        .expect("sysctl vm.loadavg");
+    let text = String::from_utf8_lossy(&out.stdout);
+    // Format: `{ 1.86 2.06 2.21 }` — the first number is the 1-minute average.
+    let load_1min: f64 = text
+        .split_whitespace()
+        .nth(1)
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| panic!("unparseable vm.loadavg: {text}"));
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    load_1min / cores as f64
+}
+
 #[test]
 fn governor_toggle_caps_cpu_concurrency() {
+    let load = load_per_core();
+    if load > 0.5 {
+        eprintln!("skip: machine load {load:.2}/core — timing receipt needs a quiet machine");
+        return;
+    }
     let dir = sandbox("toggle");
     let state = dir.join("state");
     fs::create_dir_all(&state).unwrap();
