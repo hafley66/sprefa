@@ -1024,6 +1024,15 @@ pub struct Engine {
     /// nothing to read on tick 1. The priming tick derives the coordinates (and
     /// pulls repos) silently; the follow-up tick reads them and prints answers.
     prime_tick: bool,
+    /// This engine is ticked repeatedly by a scheduler (daemon poll loop,
+    /// `--settle`, `--watch`). In that mode, bookkeeping-family motion
+    /// (`stmt_ms`/`rel_count`/`query_log`) must not seed the scoped derived
+    /// rebuild: the tick writes those rels' inputs itself and rebuilding their
+    /// dependents re-jitters the timings they report, so the loop never
+    /// converges (75GB/2.7h of diag-rail rebuilds, 2026-07-17). A one-shot
+    /// tick (default false) cannot loop, and the perf rails' documented
+    /// second-invocation contract depends on bookkeeping motion counting there.
+    pub poll_loop: bool,
     /// Test/bench instrumentation: the N+1 detector's verdict for the LAST tick
     /// (`db.tick_end()`), so a test can assert no per-row write slipped through
     /// the plural API. `None` = silent (good); `Some((stmt, count))` = a
@@ -1176,6 +1185,7 @@ impl Engine {
             query_json: false,
             prime_tick: false,
             root_implicit: false,
+            poll_loop: false,
             last_n1: None,
             last_node_files_walked: std::cell::Cell::new(0),
             extract_files_parsed: std::cell::Cell::new(0),

@@ -563,6 +563,7 @@ pub fn run_watch(programs: &[String], db_path: Option<&str>, root: PathBuf) -> R
     render_type_diags(&type_diags, false);
     let conn = db::open(db_path)?;
     let mut eng = engine::Engine::new(conn, root.clone());
+    eng.poll_loop = true;
     eng.set_repos(load_repos());
     eng.tick(&prog, false)?;
     // `--watch` is the foreground daemon twin: drain network/mutating sinks

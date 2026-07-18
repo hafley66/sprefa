@@ -735,6 +735,7 @@ impl ServedRoot {
         if let Some(k) = &key { let _ = std::fs::create_dir_all(root_db_dir(k)); }
         let conn = db::open(db_path)?;
         let mut eng = Engine::new(conn, eng_root.clone());
+        eng.poll_loop = true;
         if is_config { eng.set_root_implicit(true); }
         eng.set_repos(served_repos(is_config));
         crate::activity::set_root(Some(&eng_root));

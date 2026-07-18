@@ -483,7 +483,7 @@ impl Engine {
         // so it must land first — otherwise a fresh db's first tick extracts
         // index-blind and only heals on tick 2 via the digest fold.
         for k in crate::rels::rel_kinds() {
-            if k.pre_extract() && k.used(prog) && k.refresh(self)? {
+            if k.pre_extract() && k.used(prog) && k.refresh(self)? && !(self.poll_loop && k.bookkeeping()) {
                 changed = true;
                 for r in k.rels() { changed_source_rels.insert(r.to_string()); }
             }
@@ -547,6 +547,16 @@ impl Engine {
         for k in crate::rels::rel_kinds() {
             if k.pre_extract() { continue; } // ran before the extract families
             if k.used(prog) && k.refresh(self)? {
+                // Under a repeated-tick scheduler, bookkeeping families
+                // (stmt_ms/rel_count/query_log) move on every tick by
+                // construction: the tick writes their inputs, and rebuilding
+                // their dependents re-jitters the timings they report, so
+                // seeding the scoped rebuild from them can never converge —
+                // derived_moved stays true and the poll loop schedules full
+                // ticks forever (75GB/2.7h measured 2026-07-17). One-shot
+                // ticks keep the seed: they cannot loop, and the perf rails'
+                // second-invocation contract needs it (see Engine::poll_loop).
+                if self.poll_loop && k.bookkeeping() { continue; }
                 changed = true;
                 for r in k.rels() { changed_source_rels.insert(r.to_string()); }
             }

@@ -208,3 +208,47 @@ fn cli_settle_bails_on_non_convergence() {
     assert_ne!(code, 0, "a divergent program must not exit 0");
     assert!(err.contains("did not settle"), "bails loudly naming the failure: {err}");
 }
+
+/// Engine-level: bookkeeping motion (`rel_count`/`stmt_ms`) must never seed
+/// the scoped rebuild. The tick writes those rels' inputs itself and their
+/// dependents' rebuilds re-jitter the timings they report, so counting them as
+/// change can never converge — the 2026-07-17 perpetual-loop storm (75GB
+/// written across 4k ticks of diag-rail rebuilds) was exactly this shape under
+/// the daemon's poll loop. Sandbox timings are too stable to jitter on their
+/// own, so the test forces PerfKind's moved-detection deterministically: poke
+/// the materialized `rel_count` table so the refresh sees a mismatch, rewrites
+/// it, and reports moved. That motion must stay out of `changed_rels` and the
+/// tick must stay settled.
+#[test]
+fn bookkeeping_motion_never_seeds_the_scoped_rebuild() {
+    let d = sandbox("bookkeeping");
+    let dbp = d.join("db");
+    fs::write(
+        d.join("p.dl"),
+        "rel probe(rel: str, rows: int).\n\
+         probe(rel, rows) <- rel_count(rel, rows), rows > 100000.\n",
+    )
+    .unwrap();
+    let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    // The hazard exists only under a repeated-tick scheduler; one-shot ticks
+    // keep bookkeeping as a seed (the perf rails' second-invocation contract,
+    // tests/it/perf_woes.rs).
+    eng.poll_loop = true;
+
+    // Ticks 1-2: derive, then steady state.
+    eng.tick_report(&prog, true).unwrap();
+    eng.tick_report(&prog, true).unwrap();
+
+    // Force the bookkeeping family to report moved on the next refresh.
+    eng.query_sql("UPDATE rel_rel_count SET rows = rows + 1", &[]).unwrap();
+
+    let r3 = eng.tick_report(&prog, true).unwrap();
+    assert!(
+        !r3.changed_rels.iter().any(|r| r == "rel_count" || r == "stmt_ms"),
+        "bookkeeping rels must not seed the rebuild scope: {:?}",
+        r3.changed_rels
+    );
+    assert!(r3.is_settled(), "bookkeeping-only motion is quiescent: {:?}", r3.changed_rels);
+}
