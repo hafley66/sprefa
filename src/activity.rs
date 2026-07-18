@@ -273,6 +273,24 @@ pub fn begin_tick(tick: u64, program: &str, root: &Path, trigger: &str) {
 /// final perf-log record for the phase that was running when the tick ended,
 /// and closes both `PHASE_SPAN` (if still open) and `TICK_SPAN`.
 pub fn end_tick() {
+    // Span close + flush run BEFORE the slot lock, not after the mutation:
+    // neither needs slot state (spans are thread-local; `emit_phase` below is
+    // a direct perflog file write, not a tracing event, so it does not care
+    // that the spans are already closed), and doing them after `drop(a)` was
+    // observed to widen the window between "slot says Idle" and the caller's
+    // next `snapshot()` enough for another thread's engine tick to interleave
+    // a fresh `set()` in between (the slot is process-global; see the tests'
+    // SLOT_LOCK comment). The one cost: the `[tick] end` event below is
+    // emitted after this flush, so it stays in the chrome layer's buffer
+    // until the next flush — within the doc'd "loses at most the in-flight
+    // tick" bound.
+    PHASE_SPAN.with(exit_span);
+    TICK_SPAN.with(exit_span);
+    // Best-effort mid-run flush (BufWriter -> disk, no closing bracket): bounds
+    // a DL_TRACE_CHROME daemon run's kill-loss window to "the tick in flight",
+    // not "everything since process start". No-op when no chrome layer is
+    // installed (see `crate::trace::flush_chrome_trace`'s doc).
+    crate::trace::flush_chrome_trace();
     let mut a = slot().lock().unwrap_or_else(|p| p.into_inner());
     if a.phase != Phase::Idle {
         let ms = a.since.elapsed().as_millis() as u64;
@@ -289,13 +307,6 @@ pub fn end_tick() {
     }
     a.sync_root();
     drop(a);
-    PHASE_SPAN.with(exit_span);
-    TICK_SPAN.with(exit_span);
-    // Best-effort mid-run flush (BufWriter -> disk, no closing bracket): bounds
-    // a DL_TRACE_CHROME daemon run's kill-loss window to "the tick in flight",
-    // not "everything since process start". No-op when no chrome layer is
-    // installed (see `crate::trace::flush_chrome_trace`'s doc).
-    crate::trace::flush_chrome_trace();
     if let Some(root) = root {
         tracing::info!(tick, root = %root.display(), ms = total_ms, "[tick] end");
     }
