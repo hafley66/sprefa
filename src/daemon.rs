@@ -1182,7 +1182,16 @@ fn apply_daemon_budget() -> (&'static str, i32, usize) {
     // full nice/IOPOL/QoS/PRIO_DARWIN_BG stack stays exactly as it was before
     // this arc: the 2026-07-17 incident that motivated PRIO_DARWIN_BG ran
     // under this same un-supervised shape.
-    let launchd_managed = std::env::var_os("XPC_SERVICE_NAME").is_some();
+    //
+    // Presence alone is NOT proof of launchd management: Terminal/iTerm app
+    // contexts leave `XPC_SERVICE_NAME=0` (or their bundle id) in every shell
+    // child, so a fallback-spawned daemon would skip the whole budget with no
+    // plist covering it — the 2026-07-18 evening unbudgeted cold rebuild
+    // (pid 4424, NI=0, XPC_SERVICE_NAME=0, failure-modes class 19/20 receipt).
+    // Only our own label, which launchd sets when it spawns the LaunchAgent,
+    // counts.
+    let launchd_managed = std::env::var_os("XPC_SERVICE_NAME")
+        .is_some_and(|name| name.to_string_lossy() == crate::supervise::service_label().to_string());
     if !launchd_managed {
         apply_process_budget();
 

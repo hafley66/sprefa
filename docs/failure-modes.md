@@ -527,6 +527,74 @@ sites but not against new code. **missing** = nothing.
   to redraw. A subscribed UI multiplies every needless push by its render
   cost, and WindowServer pays the bill.
 
+## 20. Phantom extract diff, whole-program derived rebuild
+
+- WHAT IT LOOKS LIKE: every tick is expensive no matter how small the change
+  — 271 `[derived] full wipe` lines per tick on a 6-path edit, N+1 counter
+  screaming on completion marks, deploy and start costs that "everything
+  plausibly explains" (swap, disk, cold extract) while the real generator
+  stays silent.
+- HOW IT BIT US (2026-07-18, full chain in docs/rca-phantom-extract-diff.md):
+  `eval_extract_rules` compared a `SELECT *` before-snapshot (which includes
+  the `__src` bookkeeping column, src/engine/declare.rs:290) against
+  declared-columns-only after-rows, and encoded NULL as `"t"` on one side,
+  `"n"` on the other (src/engine/reconcile.rs:487,501). Any non-empty json
+  term-extract head (armed here by .dl/git-graph.dl:55-57,120-126) made
+  `extract_changed` permanently true, which took the escalation arm at
+  src/engine/tick.rs:879-890: unconditional `rebuild_derived` over all 271
+  pre-stratum rels, every full tick — bypassing the fully-working
+  `affected_derived` scoping (tick.rs:859-873, strata.rs:332-361) forever.
+  Receipt: 5,521 full-wipe lines in one short session, ~7MB daemon.log in
+  2 minutes, engine lock held for whole passes (feeding class 19's exhaust
+  and the class-21 client freeze).
+- THE LAW: a change-detector's two sides share one projection and one
+  encoding, and every steady state carries a test: nothing changed ⇒
+  nothing rebuilt. An escalation arm that bypasses scoping gets its own
+  fail-pre-fix coverage; testing only the machinery it bypasses proves
+  nothing.
+- THE RAIL: enforced. Fix f9414e3c (explicit declared-column projection,
+  `"n"` NULL both sides) + fail-pre-fix it-test
+  `f_term_extract_steady_state_does_not_force_full_rebuild`
+  (tests/it/tick_digest.rs) — failed pre-fix with
+  `got ["payload","downstream"]` on an unchanged tick. Companion c3148d90
+  keys the `_derived_complete` crash-rail marks per rel-set
+  (`Db::insert_rows_keyed`) so the N+1 counter stops false-screaming there;
+  its witness failed pre-fix with `("INSERT _derived_complete", 71)`.
+- SAY THIS TO AN AGENT: when every tick full-rebuilds the derived layer,
+  don't profile the rebuild — find who set the flag that forced it, and ask
+  whether the two sides of that comparison could EVER be equal.
+
+## 21. Client poll blocking its own UI thread (instant)
+
+- WHAT IT LOOKS LIKE: the client app freezes solid the instant the daemon
+  starts — immediate, deterministic, every time — and is fine the moment
+  the daemon is absent. Reads as "dl kills instant"; is instant freezing
+  itself.
+- HOW IT BIT US (2026-07-18, all week in lesser forms): instant's
+  `sprefa_ping` poll (every 4s) was a sync `#[tauri::command]` — Tauri 2
+  runs those on the MAIN thread — doing blocking socket I/O with a 10s read
+  timeout (src-tauri/src/sprefa_plugin/commands.rs:104), byte-per-syscall
+  reads (:60). No daemon: connect fails in µs, harmless. Daemon up but slow
+  (engine lock held, class 20): read blocks 10s on the main thread; 10s
+  block > 4s period ⇒ continuously frozen. Same class ran the whole status
+  loop on the main thread: `list_sessions` (tmux), `rogue_agent_sessions`
+  (ps+lsof+tmux), `cdp_status` (blocking HTTP) every 4-8s — the baseline
+  "chokes while merely open" under load.
+- THE LAW: a UI-process poll never shares a thread with the UI, and a
+  liveness probe's timeout is shorter than its period — otherwise the probe
+  IS the outage. A daemon being slow must degrade the client's data
+  freshness, never its input loop.
+- THE RAIL: partial, lives in the instant repo. All 5 `sprefa_*` commands
+  plus the 3 poll probes converted to async + `spawn_blocking`; ping
+  timeout 10s→1s (dl's ping handler is lock-free — daemon.rs:1878 reads an
+  atomic — so slow ping means wedged, and the status row should say so).
+  Gaps: changes uncommitted in instant; no regression test pins
+  "poll never blocks main"; ~40 remaining sync commands are on-demand, not
+  polled, unconverted.
+- SAY THIS TO AN AGENT: "app freezes when X starts" means find the client
+  code that blocks on X, and check what thread it runs on, before touching
+  X at all.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
@@ -549,6 +617,9 @@ sites but not against new code. **missing** = nothing.
 | 16 | kill-respawn cold-restart loop | half | `--hook` is attach-only since 2026-07-18 (never autostarts; sub-second self-deadline); still missing: `--check` autostart-once + backoff, mid-cold digest persistence, kill-mid-cold resume it-test |
 | 17 | unbounded db growth | half | boot verdict line (db bytes, corpus bytes, ratio) + `--check` ceiling warn; diet steps 1+3 landed (norm drop, -60% `_strings` on fixture); 4a WITHOUT ROWID landed on vouched Rust-authored junctions (`pk_never_null` vouch, 17 autoindex twins dropped; see the step-4a NULL-in-PK incident in this class) — `.dl`-declared junctions (flow_edge, df_edge_src_kind) still open pending a derived-nullability story; step 2 index audit open |
 | 18 | per-rule parse amplification / tiers-not-ceiling | enforced | — (parse-counter tests + governor toggle test; `dl --hook` self-deadline `DL_HOOK_DEADLINE_MS` landed same day) |
+| 19 | subscriber render storm / daemon exhaust feedback | half | fail-pre-fix it-tests for watch filter + broadcast gate (unit/witness only today); cold-extract write-rate budget (scheduler arc); per-family extractor versioning vs exe_stamp; perf.jsonl rotation (tracing-appender, obs arc) |
+| 20 | phantom extract diff / whole-program derived rebuild | enforced | — (f9414e3c + fail-pre-fix steady-state test; c3148d90 counter keying) |
+| 21 | client poll blocking its own UI thread | half | commit the instant conversions; a "poll never blocks main" regression test in instant; audit remaining ~40 sync commands there |
 
 ## How a new rail gets born here
 
