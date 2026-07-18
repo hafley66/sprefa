@@ -86,10 +86,124 @@ The upgrade path is grain, not architecture. Add a weight column to a derived re
 
 The honest tradeoff, stated once: for any derived relation, you can have zero stored view, correct retraction, or no recompute — pick two. Keep nothing and re-run the rule at read time: no storage, no wasted maintenance, but every read recomputes. Store the view without weights and rebuild it wholesale on change: correct results, but maintenance cost proportional to the relation. Or store the view with weights and maintain it by deltas: a little more storage, correct retraction, no recompute. In an engine built this way the choice is a per-relation knob, not a global one — weight columns where edits are frequent and re-derivation is expensive, plain rebuild where relations are small. The algebra does not care which you pick. The disk does not care. The workload decides.
 
+---
+
+## Part II
+
+Part I made two claims: weights make deletion ordinary, and the derivation state belongs on disk. This part shows the algebra behind the first claim, takes one short detour into what "pathfinding" means when the graph is not in memory, and ends with a map of how tightly each system in the space is coupled to RAM.
+
+## The DBSP algebra, actually.
+
+DBSP — Database Stream Processor, the formalism implemented by Feldera — is usually presented in seventy pages of notation. The core is a handful of ideas, each simple. Here they are in order, over the same call graph, under the same edit.
+
+**The object.** A Z-set is a table whose rows carry integer weights, and the point of the weights is that they make tables into something you can do arithmetic on. Add two Z-sets row by row, summing the weights of rows that match. Negate one by flipping every sign. The empty table is zero.
+
+> **Definition.** The Z-sets over a given row type form a *group*: an addition that is associative, a zero, and a negative for every element. In plain terms — you can always add two tables of weighted rows, and you can always subtract. Nothing is ever undeletable.
+
+Subtraction is the whole game, and the running example is one addition:
+
+```
+  { (main,a)+1, (a,b)+1, (b,c)+1, (a,c)+1 }     the edge table
++ { (a,b)-1 }                                    the edit
+= { (main,a)+1, (b,c)+1, (a,c)+1 }               the new table
+```
+
+The delete was not a special operation. It was addition of a negative.
+
+**Streams.** Now let time in. A *stream* is an infinite sequence of Z-sets, one per timestep, ticking forever. And here is the identification the whole theory rests on:
+
+> A changing database IS a stream of deltas. At each tick, whatever edits arrived: timestep 0 delivers the four edges, timestep 1 delivers the retraction of `(a, b)`, timestep 2 delivers nothing — the zero Z-set — and the stream ticks on, mostly zeros, for as long as the database lives.
+
+**Two operators.** On streams, two operators that undo each other. *Integration*, written I, is a running sum: position t of I(s) holds the sum of positions 0 through t of s. It replays deltas into the current state — what applying a commit log does. *Differentiation*, written D, is the adjacent difference: position t of D(s) holds position t minus position t−1. It turns states back into deltas.
+
+Three timesteps of the example, all of it:
+
+| timestep | delta arriving, d | state so far, I(d) | D(I(d)) |
+|---|---|---|---|
+| 0 | the four edges, +1 each | four edges | the four edges |
+| 1 | (a,b) −1 | three edges | (a,b) −1 |
+| 2 | nothing | three edges | nothing |
+
+Compare the last column with the second. Identical — always, for any stream. D undoes I, and I undoes D. A history has two interchangeable descriptions: a log of changes, or a sequence of snapshots.
+
+**Lifting.** Take any ordinary query Q — say `reach`. *Lifting* it, written lift(Q), means running it independently on every timestep of a stream: state in, state out, no memory between ticks. Lifting moves a query from tables to streams wholesale. Nothing clever has happened yet.
+
+**The construction.** Assemble the pieces. The incremental version of Q is:
+
+```
+Q^inc  =  D ∘ lift(Q) ∘ I
+```
+
+Read right to left, in the order data flows: integrate the input deltas into states, run the full original Q on each state, differentiate the outputs back into deltas. Deltas in, deltas out.
+
+This looks uselessly circular. It is — on purpose. I rebuilds the entire input at every step, lift(Q) recomputes the entire query on it, D subtracts consecutive answers: batch recomputation wearing a costume, saving nothing. DBSP says so itself, plainly. The construction is a specification — a precise statement of what the correct incremental answer even is. Its job is to exist so the next step has something to rewrite.
+
+**The punchline.** The next step is algebraic rewriting: push I and D inward, through the individual operators inside Q, where they simplify or cancel. What happens depends on the operator's shape.
+
+A *linear* operator distributes over addition: f(a + b) = f(a) + f(b). Filter, map, union, negation are linear. For these, the rewrites collapse to something almost funny: the incremental version of f is f. Deltas pass straight through. Feed a filter a four-row delta and it costs four rows of work; the million rows behind it are never read.
+
+A *bilinear* operator — linear in each argument separately, the join being the standard example — obeys a product rule:
+
+```
+Δ(A ⋈ B)  =  ΔA ⋈ B  +  A ⋈ ΔB  +  ΔA ⋈ ΔB
+```
+
+The change in a product is the change on the left against the old right, plus the old left against the change on the right, plus the two changes together. This is the product rule from calculus, d(uv) = du·v + u·dv + du·dv, turning up uninvited in a discrete setting to govern database joins (the chain rule has a counterpart too); it is worth one quiet moment that the same algebra runs underneath both.
+
+Watch it work. Let Q be edge ⋈ edge, the two-hop paths — (x, z) when edge(x, y) and edge(y, z). Both inputs are the edge table, so both deltas are the edit: {(a,b) −1}. Three terms:
+
+- ΔA ⋈ B — the dead edge as first hop, extended by b's surviving edge (b,c): path (a, c) via b, weight −1.
+- A ⋈ ΔB — the live edge into a, (main,a), extended by the dead second hop: path (main, b) via a, weight −1.
+- ΔA ⋈ ΔB — (a,b) against itself; the first hop ends at b, and no edge in the delta leaves b. Empty, as it usually is: the product of two small deltas is smaller still.
+
+Two deltas out — exactly the two two-hop paths the edit destroys, found by matching the delta against the tables, never by re-running the join. Cost scales with the change, not with state times state.
+
+**Recursion.** The remaining operator is the fixpoint — the loop-until-nothing-changes that computes `reach`. DBSP handles it by letting one timestep contain a stream of its own: a stream of streams, the outer ticks carrying edits, the inner ticks carrying the refinement steps toward the fixpoint, with their own I and D inside. That is the one honest sentence you get here; the machinery is the middle of the paper, and it works.
+
+**Closedness.** Count what is now on the table. Union, filter, map: linear, their own incremental versions. Join and its relatives: bilinear, product rule. Fixpoint: nested streams. That is the entire relational vocabulary. Every operator a datalog program can compose has an incremental form — and the incremental form of a composition is the composition of the incremental forms.
+
+So the rewrite is mechanical. Take any datalog program, push I and D through it operator by operator, and out comes a delta program that is correct by construction. No operator left behind means no case left unhandled: the theory cannot leak. Most incremental systems offer the opposite experience — each operator's update behavior a special case, composition an act of hope. Here the guarantee is the theorem. You know it is going to work before you write the code.
+
+That is the algebra Part I spent as prose. Weights, deltas, retraction-by-cancellation: not a trick but a group, not a heuristic but a rewrite with a proof behind it.
+
+## Sidebar: what pathfinding means.
+
+Pathfinding is route-finding through a graph — the shortest way from A to B. The classics: breadth-first search, which explores the graph in layers, one hop further each round, and finds shortest paths when edges are unweighted; Dijkstra's algorithm, which handles weighted edges by always extending the cheapest known route; and A*, which is Dijkstra plus a heuristic — an estimate of the remaining distance that steers the search toward the goal.
+
+The Rust crate named pathfinding implements all three, and it matters here for one reason only: its algorithms take a closure — a function you supply, "give me a node, I return its neighbors" — instead of a graph object. The graph never has to exist in memory. The closure can answer each neighbor request with a SQLite query against the edge table on disk, and the search walks a graph that is never resident anywhere. For a call graph spanning a hundred repositories, that is the difference between feasible and not.
+
+## How married is each system to RAM?
+
+The algebra is agnostic about where state lives. The systems are not. The coverage map:
+
+Differential dataflow. Arrangements — the sorted, indexed, shareable copies of each relation that keep its joins fast — are in-memory indexes by construction; residency is not an option but the design. The math is hosting-agnostic. The runtime is the arrangements, and it is not.
+
+DBSP, algebra versus implementation. The algebra is representation-independent: a Z-set is weighted rows, and weighted rows can live in a heap, a file, or a table — the rewrites never ask. Feldera, the implementation, ships storage-backed operators that spill state to disk when it outgrows memory: off by default, but present.
+
+DBToaster compiles a query into delta programs — standing queries that compute the view's delta from each input's delta, the product-rule rewrite generated mechanically. The compiled code keeps state to answer those queries, and the state is hostable in ordinary tables; nothing in the scheme insists on RAM.
+
+pg_ivm inhabits the disk pole fully: triggers on the base tables, views stored as tables, every byte of state inside PostgreSQL, maintenance synchronous per statement — the view updates in the same transaction as the write.
+
+Salsa is the deliberate contrast. A memo graph in RAM: cached function results keyed by their inputs, a dependency graph recording who called whom, invalidation by graph walk rather than by weighted delta. The keep-everything-in-memory pole from Part I, engineered to excellence, making no apology.
+
+Side by side:
+
+| system | incremental algebra | retraction | recursion / fixpoints | disk-hosted state | reactive daemon |
+|---|---|---|---|---|---|
+| Differential dataflow | ✓ | ✓ | ✓ | — | ✓ |
+| DBSP / Feldera | ✓ | ✓ | ✓ | opt-in | ✓ |
+| DBToaster | ✓ | ✓ | — | hostable | embeds |
+| pg_ivm | ✓ | ✓ | — | ✓ | ✓ (PostgreSQL) |
+| salsa | memoization | invalidation | ✓ | — | library |
+
+Read the table twice. Down the first column: near-unanimity, because the algebra is settled — everyone has some form of incremental maintenance. Across the rest: divergence, almost all of it about hosting. No shipped row is full; no system today combines weighted deltas, correct retraction, recursive fixpoints, disk-hosted state, and daemon-style reactivity in one engine. A datalog-over-SQLite engine needs exactly that full row. The empty row in the table is the slot this repository occupies.
+
 ## Further reading
 
 - DBSP, the paper: <https://arxiv.org/abs/2203.16684>
 - Differential dataflow: <https://github.com/TimelyDataflow/differential-dataflow>
+- Feldera: <https://github.com/feldera/feldera>
 - DBToaster: <https://dbtoaster.github.io/>
 - pg_ivm: <https://github.com/sraoss/pg_ivm>
 - Salsa: <https://github.com/salsa-rs/salsa>
+- pathfinding (Rust crate): <https://docs.rs/pathfinding>
