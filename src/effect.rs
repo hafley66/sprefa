@@ -366,22 +366,17 @@ impl Engine {
             }
             let sql = crate::lower::lower_body_projection(&r.body, &self.rels, &vars)?;
             let solutions: Vec<serde_json::Map<String, serde_json::Value>> = {
-                let mut stmt = self.db.conn().prepare(&sql)?;
-                let it = stmt.query_map([], |row| {
-                    let mut obj = serde_json::Map::new();
-                    for (i, v) in vars.iter().enumerate() {
-                        let val: rusqlite::types::Value = row.get(i)?;
-                        let jv = match val {
-                            rusqlite::types::Value::Integer(n) => serde_json::json!(n),
-                            rusqlite::types::Value::Real(f) => serde_json::json!(f),
-                            rusqlite::types::Value::Text(s) => serde_json::json!(s),
-                            _ => serde_json::Value::Null,
-                        };
-                        obj.insert(v.clone(), jv);
-                    }
-                    Ok(obj)
-                })?;
-                it.filter_map(|x| x.ok()).collect()
+                let rows = self.db.query_values(&r.head.rel, &sql, &[])?;
+                rows.into_iter()
+                    .map(|row| {
+                        let mut obj = serde_json::Map::new();
+                        for (i, v) in vars.iter().enumerate() {
+                            let jv = row.get(i).map_or(serde_json::Value::Null, |cell| cell.to_json());
+                            obj.insert(v.clone(), jv);
+                        }
+                        obj
+                    })
+                    .collect()
             };
             // Hole-name resolution: in the explicit body-effect form the holes are
             // the `sh` decl's params, filled positionally; in the head-response
@@ -505,13 +500,12 @@ impl Engine {
     /// not settled until the daemon (or `dl --settle`) runs `drain_effects`.
     pub fn inflight_nonstream(&self, prog: &Program) -> Result<usize> {
         let kinds = shell_kinds(prog);
-        let rows: Vec<String> = {
-            let mut stmt = self.db.conn().prepare(
-                "SELECT kind FROM pending_effect WHERE state IN (?1,?2)")?;
-            let params = [STATE_QUEUED, STATE_RUNNING];
-            let v = stmt.query_map(params, |r| r.get(0))?.filter_map(|x| x.ok()).collect();
-            v
-        };
+        let rows: Vec<String> = self.db.query_rows(
+            "pending_effect",
+            "SELECT kind FROM pending_effect WHERE state IN (?1,?2)",
+            &[STATE_QUEUED.into(), STATE_RUNNING.into()],
+            |r| Ok(r.get::<_, String>(0)?),
+        )?;
         // A kind with no `sh` decl defaults to Read (the legacy effect_cmd path),
         // so it counts as in-flight, matching drain_effects' `kind_of` default.
         Ok(rows.into_iter()
@@ -527,20 +521,29 @@ impl Engine {
     /// with 0 pending rows and no source motion since its last full tick has
     /// nothing to integrate, so the poll cycle skips the tick entirely).
     pub fn pending_effect_count(&self) -> Result<i64> {
-        self.db.conn().query_row(
-            "SELECT COUNT(*) FROM pending_effect WHERE state IN (?1,?2)", [STATE_QUEUED, STATE_RUNNING],
-            |r| r.get(0)).map_err(Into::into)
+        self.db.query_one(
+            "pending_effect",
+            "SELECT COUNT(*) FROM pending_effect WHERE state IN (?1,?2)",
+            &[STATE_QUEUED.into(), STATE_RUNNING.into()],
+            |r| Ok(r.get::<_, i64>(0)?),
+        )
     }
 
     /// Count `pending_effect` rows in terminal failure states for status surfacing.
     /// Returns `(failed_count, orphaned_count)`.
     pub fn effect_status_counts(&self) -> Result<(i64, i64)> {
-        let failed: i64 = self.db.conn().query_row(
-            "SELECT COUNT(*) FROM pending_effect WHERE state = ?1", [STATE_FAILED],
-            |r| r.get(0))?;
-        let orphaned: i64 = self.db.conn().query_row(
-            "SELECT COUNT(*) FROM pending_effect WHERE state = ?1", [STATE_ORPHANED],
-            |r| r.get(0))?;
+        let failed: i64 = self.db.query_one(
+            "pending_effect",
+            "SELECT COUNT(*) FROM pending_effect WHERE state = ?1",
+            &[STATE_FAILED.into()],
+            |r| Ok(r.get::<_, i64>(0)?),
+        )?;
+        let orphaned: i64 = self.db.query_one(
+            "pending_effect",
+            "SELECT COUNT(*) FROM pending_effect WHERE state = ?1",
+            &[STATE_ORPHANED.into()],
+            |r| Ok(r.get::<_, i64>(0)?),
+        )?;
         Ok((failed, orphaned))
     }
 
@@ -552,10 +555,15 @@ impl Engine {
     /// drain via `?` forever. One batched UPDATE, not a per-row write.
     fn park_orphan_effects(&self, ids: &[String]) -> Result<()> {
         if ids.is_empty() { return Ok(()); }
-        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql = format!("UPDATE pending_effect SET state = '{STATE_ORPHANED}' WHERE id IN ({placeholders})");
-        let params: Vec<&dyn rusqlite::ToSql> = ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
-        self.db.conn().execute(&sql, params.as_slice())?;
+        self.db.exec_in_chunks(
+            "pending_effect",
+            |n| format!(
+                "UPDATE pending_effect SET state = '{STATE_ORPHANED}' WHERE id IN ({})",
+                crate::db::holes(n)
+            ),
+            &[],
+            &ids.iter().map(|s| s.as_str().into()).collect::<Vec<_>>(),
+        )?;
         Ok(())
     }
 
@@ -568,15 +576,15 @@ impl Engine {
     /// the park path exists to prevent. Rows the OLD park path wrote as
     /// `failed` need a one-time manual `UPDATE ... SET state='queued'`.
     fn requeue_orphaned_effects(&self, exec: &dyn EffectExec) -> Result<()> {
-        let kinds: Vec<String> = {
-            let mut stmt = self.db.conn().prepare(
-                "SELECT DISTINCT kind FROM pending_effect WHERE state = ?1")?;
-            let v = stmt.query_map([STATE_ORPHANED], |r| r.get(0))?
-                .filter_map(|x| x.ok()).collect();
-            v
-        };
+        let kinds: Vec<String> = self.db.query_rows(
+            "pending_effect",
+            "SELECT DISTINCT kind FROM pending_effect WHERE state = ?1",
+            &[STATE_ORPHANED.into()],
+            |r| Ok(r.get::<_, String>(0)?),
+        )?;
         if kinds.is_empty() { return Ok(()); }
-        let mut recoverable: Vec<String> = kinds.iter()
+        let mut recoverable: Vec<String> = kinds
+            .iter()
             .filter(|k| exec.has_template(k))
             .cloned()
             .collect();
@@ -586,14 +594,18 @@ impl Engine {
         // has not been rebuilt yet. The base `rel_effect_cmd` stores interned
         // ids, so the text view is the source of truth for kind names.
         if recoverable.len() < kinds.len() {
-            let placeholders = kinds.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-            let sql = format!(
-                "SELECT DISTINCT kind FROM rel_effect_cmd_txt WHERE kind IN ({placeholders})");
-            let params: Vec<&dyn rusqlite::ToSql> = kinds.iter()
-                .map(|s| s as &dyn rusqlite::ToSql).collect();
-            if let Ok(mut stmt) = self.db.conn().prepare(&sql) {
-                let dynamic: Vec<String> = stmt.query_map(params.as_slice(), |r| r.get::<_, String>(0))?
-                    .filter_map(|x| x.ok()).collect();
+            let kind_params: Vec<crate::db::SqlVal> = kinds.iter().map(|s| s.as_str().into()).collect();
+            // Tolerant: `rel_effect_cmd_txt` may not exist on a fresh/empty db.
+            if let Ok(dynamic) = self.db.query_in_chunks(
+                "effect_cmd",
+                |n| format!(
+                    "SELECT DISTINCT kind FROM rel_effect_cmd_txt WHERE kind IN ({})",
+                    crate::db::holes(n)
+                ),
+                &[],
+                &kind_params,
+                |r| Ok(r.get::<_, String>(0)?),
+            ) {
                 for k in dynamic {
                     if !recoverable.contains(&k) { recoverable.push(k); }
                 }
@@ -601,14 +613,15 @@ impl Engine {
         }
 
         if recoverable.is_empty() { return Ok(()); }
-        let placeholders = recoverable.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql = format!(
-            "UPDATE pending_effect SET state = ?1 WHERE state = ?2 AND kind IN ({placeholders})");
-        let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(2 + recoverable.len());
-        params.push(&STATE_QUEUED as &dyn rusqlite::ToSql);
-        params.push(&STATE_ORPHANED as &dyn rusqlite::ToSql);
-        for k in &recoverable { params.push(k as &dyn rusqlite::ToSql); }
-        self.db.conn().execute(&sql, params.as_slice())?;
+        self.db.exec_in_chunks(
+            "pending_effect",
+            |n| format!(
+                "UPDATE pending_effect SET state = ?1 WHERE state = ?2 AND kind IN ({})",
+                crate::db::holes(n)
+            ),
+            &[STATE_QUEUED.into(), STATE_ORPHANED.into()],
+            &recoverable.iter().map(|s| s.as_str().into()).collect::<Vec<_>>(),
+        )?;
         Ok(())
     }
 
@@ -666,22 +679,34 @@ impl Engine {
         // a row left 'running' by a crash is quarantined (never silently re-fired).
         // A `Stream` row is skipped here (Phase 4 owns it).
         // (id, kind = executor/template key, head_rel = reconstruction key, state).
-        let pending: Vec<(String, String, String, String, String, String, i64)> = {
-            let mut stmt = self.db.conn().prepare(
-                "SELECT id, kind, head_rel, args_json, full_json, state, batch \
-                 FROM pending_effect WHERE state IN (?1,?2)")?;
-            let v = stmt.query_map([STATE_QUEUED, STATE_RUNNING], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))?
-                .filter_map(|x| x.ok()).collect();
-            v
-        };
+        let pending: Vec<(String, String, String, String, String, String, i64)> = self.db.query_rows(
+            "pending_effect",
+            "SELECT id, kind, head_rel, args_json, full_json, state, batch \
+             FROM pending_effect WHERE state IN (?1,?2)",
+            &[STATE_QUEUED.into(), STATE_RUNNING.into()],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, i64>(6)?,
+                ))
+            },
+        )?;
         // The exactly-once claim for `sh!`: flip queued -> running under the row's
         // own conditional UPDATE (changes()==1 wins the claim). A row not claimed
         // (already running/done, or a concurrent drainer took it) is dropped from
         // this drain. `Read`/`Stream` rows pass through unclaimed.
         let claim = |id: &str| -> Result<bool> {
-            let n = self.db.conn().execute(
+            let n = self.db.exec_params(
+                "pending_effect",
                 "UPDATE pending_effect SET state = ?1, idem_key = id \
-                 WHERE id = ?2 AND state = ?3", [STATE_RUNNING, id, STATE_QUEUED])?;
+                 WHERE id = ?2 AND state = ?3",
+                &[STATE_RUNNING.into(), id.into(), STATE_QUEUED.into()],
+            )?;
             Ok(n == 1)
         };
 
@@ -807,13 +832,15 @@ impl Engine {
             }
         }
         if !failed_ids.is_empty() {
-            let placeholders = failed_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-            let sql = format!(
-                "UPDATE pending_effect SET state = ?1 WHERE id IN ({placeholders})");
-            let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(1 + failed_ids.len());
-            params.push(&STATE_FAILED as &dyn rusqlite::ToSql);
-            for id in &failed_ids { params.push(id as &dyn rusqlite::ToSql); }
-            self.db.conn().execute(&sql, params.as_slice())?;
+            self.db.exec_in_chunks(
+                "pending_effect",
+                |n| format!(
+                    "UPDATE pending_effect SET state = ?1 WHERE id IN ({})",
+                    crate::db::holes(n)
+                ),
+                &[STATE_FAILED.into()],
+                &failed_ids.iter().map(|s| s.as_str().into()).collect::<Vec<_>>(),
+            )?;
         }
 
         if assembled.is_empty() { return Ok(0); }
@@ -837,14 +864,15 @@ impl Engine {
             let col_refs: Vec<&str> = cols.iter().map(|s| s.as_str()).collect();
             self.insert_rel_rows(head_rel, &col_refs, rows)?;
         }
-        {
-            let conn = self.db.conn();
-            let tx = conn.unchecked_transaction()?;
-            for id in &done_ids {
-                tx.execute("UPDATE pending_effect SET done = 1, state = ?1 WHERE id = ?2", [STATE_DONE, id])?;
-            }
-            tx.commit()?;
-        }
+        self.db.exec_in_chunks(
+            "pending_effect",
+            |n| format!(
+                "UPDATE pending_effect SET done = 1, state = ?1 WHERE id IN ({})",
+                crate::db::holes(n)
+            ),
+            &[STATE_DONE.into()],
+            &done_ids.iter().map(|s| s.as_str().into()).collect::<Vec<_>>(),
+        )?;
         self.gc_done_effects(&kinds)?;
         Ok(done_ids.len())
     }
@@ -874,19 +902,23 @@ impl Engine {
             .and_then(|s| s.parse().ok()).unwrap_or(256);
         // Read the carry clock directly (the private `current_tx` lives in the
         // engine module); `_carry_meta` is the same row `set_tx` advances.
-        let cur_tx: i64 = self.db.conn().query_row(
-            "SELECT tx FROM _carry_meta WHERE k = 'tx'", [], |r| r.get(0))?;
+        let cur_tx: i64 = self.db.query_one(
+            "_carry_meta",
+            "SELECT tx FROM _carry_meta WHERE k = 'tx'",
+            &[],
+            |r| Ok(r.get::<_, i64>(0)?),
+        )?;
         if cur_tx <= keep { return Ok(()); }
         let cutoff = cur_tx - keep;
-        let placeholders = read_kinds.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql = format!(
-            "DELETE FROM pending_effect WHERE state = ?1 AND req_tx < ?2 AND kind IN ({placeholders})");
-        let conn = self.db.conn();
-        let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(read_kinds.len() + 2);
-        params.push(&STATE_DONE as &dyn rusqlite::ToSql);
-        params.push(&cutoff);
-        for k in &read_kinds { params.push(*k); }
-        let n = conn.execute(&sql, params.as_slice())?;
+        let n = self.db.exec_in_chunks(
+            "pending_effect",
+            |n| format!(
+                "DELETE FROM pending_effect WHERE state = ?1 AND req_tx < ?2 AND kind IN ({})",
+                crate::db::holes(n)
+            ),
+            &[STATE_DONE.into(), cutoff.into()],
+            &read_kinds.iter().map(|s| s.as_str().into()).collect::<Vec<_>>(),
+        )?;
         if n > 0 {
             tracing::debug!(target: "dl::effect", reclaimed = n, cutoff, "gc done effects");
         }
@@ -924,14 +956,21 @@ impl Engine {
         // Pending stream rows: queued (just subscribed) or running (live). Only a
         // kind declared `sh*` is a stream; anything else is a one-shot (handled by
         // `drain_effects`) and skipped here.
-        let pending: Vec<(String, String, String, String, String)> = {
-            let mut stmt = self.db.conn().prepare(
-                "SELECT id, kind, head_rel, args_json, full_json \
-                 FROM pending_effect WHERE state IN (?1,?2)")?;
-            let v = stmt.query_map([STATE_QUEUED, STATE_RUNNING], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
-                .filter_map(|x| x.ok()).collect();
-            v
-        };
+        let pending: Vec<(String, String, String, String, String)> = self.db.query_rows(
+            "pending_effect",
+            "SELECT id, kind, head_rel, args_json, full_json \
+             FROM pending_effect WHERE state IN (?1,?2)",
+            &[STATE_QUEUED.into(), STATE_RUNNING.into()],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            },
+        )?;
 
         // Subscribe a freshly-queued stream (queued -> running); a stream never
         // returns to 'done' on its own (it is long-lived). Build the run set.
@@ -952,9 +991,11 @@ impl Engine {
                 if !orphan_kinds.contains(&kind) { orphan_kinds.push(kind.clone()); }
                 continue;
             }
-            self.db.conn().execute(
+            self.db.exec_params(
+                "pending_effect",
                 "UPDATE pending_effect SET state = ?1 WHERE id = ?2 AND state = ?3",
-                [STATE_RUNNING, &id, STATE_QUEUED])?;
+                &[STATE_RUNNING.into(), id.clone().into(), STATE_QUEUED.into()],
+            )?;
             let args = match serde_json::from_str::<serde_json::Value>(&args_json)? {
                 serde_json::Value::Object(m) => m,
                 _ => bail!("pending_effect.args_json for `{kind}` is not a JSON object"),
@@ -1064,10 +1105,12 @@ mod tests {
 
     fn state_of(eng: &Engine, id: &str) -> String {
         eng.db
-            .conn()
-            .query_row("SELECT state FROM pending_effect WHERE id = ?1", [id], |r| {
-                r.get::<_, String>(0)
-            })
+            .query_one(
+                "pending_effect",
+                "SELECT state FROM pending_effect WHERE id = ?1",
+                &[id.into()],
+                |r| Ok(r.get::<_, String>(0)?),
+            )
             .unwrap()
     }
 

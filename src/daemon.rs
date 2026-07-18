@@ -1830,8 +1830,8 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                 None => {
                     let prog = lock(&sr.prog);
                     let eng = lock_eng(sr, &req.method);
-                    let _ = eng.log_query("daemon", "query", "", "[]");
-                    let _ = crate::rels::refresh_query_log(&eng);
+                    _ = eng.log_query("daemon", "query", "", "[]");
+                    _ = crate::rels::refresh_query_log(&eng);
                     match eng.run_queries_capture(&prog) {
                         Ok(results) => Response::ok(req.id, json!({"results": results.iter().map(|r| json!({
                             "rel": r.rel, "columns": r.columns, "rows": r.rows,
@@ -1970,8 +1970,8 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                 None => {
                     let eng = lock_eng(sr, &req.method);
                     let params_json = serde_json::to_string(&params).unwrap_or_else(|_| "[]".into());
-                    let _ = eng.log_query("daemon", "query_sql", sql_raw, &params_json);
-                    let _ = crate::rels::refresh_query_log(&eng);
+                    _ = eng.log_query("daemon", "query_sql", sql_raw, &params_json);
+                    _ = crate::rels::refresh_query_log(&eng);
                     match eng.query_sql(sql_raw, &params) {
                         Ok(rows) => Response::ok(req.id, json!({"rows": rows})),
                         Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),

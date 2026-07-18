@@ -536,7 +536,7 @@ fn active_cold_root_picks_earliest_seeded_when_no_root_has_progress() {
         params![now],
     )
     .unwrap();
-    let root = active_cold_root(conn, now + 1).unwrap();
+    let root = active_cold_root(&db, now + 1).unwrap();
     assert_eq!(root, Some("root-z".to_string()), "root-z was seeded first, so it stays active");
 }
 
@@ -575,7 +575,7 @@ fn active_cold_root_falls_through_a_backed_off_root() {
         params![now + 10_000],
     )
     .unwrap();
-    let root = active_cold_root(conn, now).unwrap();
+    let root = active_cold_root(&db, now).unwrap();
     assert_eq!(
         root,
         Some("root-b".to_string()),

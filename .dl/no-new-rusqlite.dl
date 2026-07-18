@@ -61,7 +61,6 @@ rusqlite_count(source_file, count(line_number)) <-
 rel rusqlite_baseline(source_file: file, allowed: int).
 rusqlite_baseline("src/agent.rs", 2).
 rusqlite_baseline("src/anchor.rs", 15).
-rusqlite_baseline("src/effect.rs", 16).
 rusqlite_baseline("src/engine/cold_stage.rs", 2).
 rusqlite_baseline("src/engine/deltaflow.rs", 4).
 rusqlite_baseline("src/engine/extract/call_render_tests.rs", 2).
@@ -81,7 +80,7 @@ rusqlite_baseline("src/engine/staged_delta/mod.rs", 4).
 rusqlite_baseline("src/engine/staged_delta/sql.rs", 3).
 rusqlite_baseline("src/engine/staged_delta/tests.rs", 1).
 rusqlite_baseline("src/invlog.rs", 2).
-rusqlite_baseline("src/jobq/mod.rs", 2).
+rusqlite_baseline("src/jobq/mod.rs", 1).
 rusqlite_baseline("src/rels/embed.rs", 2).
 
 # A grandfathered file grew past its baseline.
@@ -140,7 +139,6 @@ conn_count(source_file, count(line_number)) <-
 # Grandfathered .conn() baseline, measured 2026-07-18. Ratchet down only.
 rel conn_baseline(source_file: file, allowed: int).
 conn_baseline("src/anchor.rs", 2).
-conn_baseline("src/effect.rs", 18).
 conn_baseline("src/engine/cold_stage.rs", 12).
 conn_baseline("src/engine/extract/call.rs", 1).
 conn_baseline("src/engine/extract/call_render_tests.rs", 20).
@@ -160,7 +158,6 @@ conn_baseline("src/engine/reconcile.rs", 4).
 conn_baseline("src/engine/repo.rs", 9).
 conn_baseline("src/engine/source_prepare.rs", 9).
 conn_baseline("src/engine/tick.rs", 7).
-conn_baseline("src/jobq/mod.rs", 8).
 conn_baseline("src/jobq/tests.rs", 5).
 conn_baseline("src/rels/analysis.rs", 7).
 conn_baseline("src/rels/embed.rs", 3).
@@ -227,9 +224,7 @@ sqlite_swallow_count(source_file, count(line_number)) <-
 # wherever it lives, seam included.)
 rel sqlite_swallow_baseline(source_file: file, allowed: int).
 sqlite_swallow_baseline("src/engine/pipeline/apply.rs", 3).
-sqlite_swallow_baseline("src/jobq/mod.rs", 2).
 sqlite_swallow_baseline("src/invlog.rs", 2).
-sqlite_swallow_baseline("src/daemon.rs", 2).
 sqlite_swallow_baseline("src/jobq/tests.rs", 1).
 sqlite_swallow_baseline("src/engine/tick.rs", 1).
 

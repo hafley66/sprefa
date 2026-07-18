@@ -29,7 +29,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use rusqlite::{params, OptionalExtension};
+use rusqlite::params;
 use serde_json::{json, Value};
 
 use crate::db::Db;
@@ -276,11 +276,11 @@ impl JobQueue {
     pub(crate) fn open(home: &Path) -> Result<Arc<JobQueue>> {
         let db_path = home.join("jobs.sqlite");
         let db = crate::db::open(Some(&db_path.to_string_lossy()))?;
-        db.execute_batch(SCHEMA)?;
+        db.execute_batch_on("_job", SCHEMA)?;
         // Duplicate-column errors are the expected steady state (every boot
         // after the first); anything else would surface loudly the next time
         // this connection is used, so swallowing here is safe.
-        let _ = db.conn().execute(MIGRATE_REQ_ID, []);
+        let _ = db.exec_on("_job", MIGRATE_REQ_ID);
         Ok(Arc::new(JobQueue {
             db_path,
             db: Mutex::new(db),
@@ -300,18 +300,21 @@ impl JobQueue {
         let now = now_secs();
         let inner = {
             let db = plock(&self.db);
-            let conn = db.conn();
-            conn.execute_batch("BEGIN IMMEDIATE")?;
+            db.begin_immediate()?;
             let body = (|| -> Result<()> {
-                let existing: Option<String> = conn
-                    .query_row("SELECT arg FROM _job WHERE key=?1", params![job.key], |r| r.get(0))
-                    .optional()?;
+                let existing: Option<String> = db.query_opt(
+                    "_job",
+                    "SELECT arg FROM _job WHERE key=?1",
+                    &[job.key.clone().into()],
+                    |r| Ok(r.get::<_, String>(0)?),
+                )?;
                 let merged = match &existing {
                     Some(prev) => merge_args(prev, &job.arg),
                     None => job.arg.to_string(),
                 };
                 let run_at = job.run_at.max(0);
-                conn.execute(
+                db.exec_params(
+                    "_job",
                     "INSERT INTO _job(key, kind, root, arg, priority, state, dirty, cancelled, \
                        attempts, run_at, enqueued_at, req_id) \
                      VALUES(?1,?2,?3,?4,?5,'pending',0,0,0,?6,?7,?8) \
@@ -328,11 +331,20 @@ impl JobQueue {
                        finished_at = CASE WHEN state='running' THEN finished_at ELSE NULL END, \
                        last_error = CASE WHEN state='running' THEN last_error ELSE NULL END, \
                        req_id = ?8",
-                    params![job.key, job.kind.as_str(), job.root, merged, job.priority, run_at, now, job.req_id],
+                    &[
+                        job.key.into(),
+                        job.kind.as_str().into(),
+                        job.root.into(),
+                        merged.into(),
+                        job.priority.into(),
+                        run_at.into(),
+                        now.into(),
+                        job.req_id.into(),
+                    ],
                 )?;
                 Ok(())
             })();
-            finish_tx(conn, &body)?;
+            finish_tx(&db, &body)?;
             body
         };
         if inner.is_ok() {
@@ -371,52 +383,52 @@ impl JobQueue {
             .join(",");
         let root_scoped = kinds == [JobKind::ColdExtract];
         let db = plock(&self.db);
-        let conn = db.conn();
-        conn.execute_batch("BEGIN IMMEDIATE")?;
+        db.begin_immediate()?;
         let body = (|| -> Result<Option<JobRow>> {
-            let active_root = if root_scoped { active_cold_root(conn, now)? } else { None };
+            let active_root = if root_scoped { active_cold_root(&db, now)? } else { None };
             if let Some(root) = &active_root {
                 tracing::debug!(root = %root, "[jobq] claim scoped to active cold root");
             }
             #[allow(clippy::type_complexity)]
             let picked: Option<(String, String, String, String, i64, i64, i64, Option<String>)> =
                 match &active_root {
-                    Some(root) => conn
-                        .query_row(
+                    Some(root) => db
+                        .query_opt(
+                            "_job",
                             &format!(
                                 "SELECT key, kind, root, arg, priority, attempts, run_at, req_id FROM _job \
                                  WHERE state='pending' AND cancelled=0 AND run_at<=?1 \
                                  AND kind IN ({kind_list}) AND root=?2 \
                                  ORDER BY priority DESC, run_at ASC, enqueued_at ASC LIMIT 1"
                             ),
-                            params![now, root],
+                            &[now.into(), root.clone().into()],
                             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
-                        )
-                        .optional()?,
-                    None => conn
-                        .query_row(
+                        )?,
+                    None => db
+                        .query_opt(
+                            "_job",
                             &format!(
                                 "SELECT key, kind, root, arg, priority, attempts, run_at, req_id FROM _job \
                                  WHERE state='pending' AND cancelled=0 AND run_at<=?1 AND kind IN ({kind_list}) \
                                  ORDER BY priority DESC, run_at ASC, enqueued_at ASC LIMIT 1"
                             ),
-                            params![now],
+                            &[now.into()],
                             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
-                        )
-                        .optional()?,
+                        )?,
                 };
             let Some((key, kind_s, root, arg_s, priority, attempts, run_at, req_id)) = picked else {
                 return Ok(None);
             };
-            conn.execute(
+            db.exec_params(
+                "_job",
                 "UPDATE _job SET state='running', started_at=?2 WHERE key=?1",
-                params![key, now],
+                &[key.clone().into(), now.into()],
             )?;
             let kind = JobKind::parse(&kind_s).unwrap_or(JobKind::Tick);
             let arg = serde_json::from_str(&arg_s).unwrap_or_else(|_| json!({}));
             Ok(Some(JobRow { key, kind, root, arg, priority, attempts, run_at, req_id }))
         })();
-        finish_tx(conn, &body)?;
+        finish_tx(&db, &body)?;
         body
     }
 
@@ -428,16 +440,15 @@ impl JobQueue {
         let now = now_secs();
         let inner = {
             let db = plock(&self.db);
-            let conn = db.conn();
-            conn.execute_batch("BEGIN IMMEDIATE")?;
+            db.begin_immediate()?;
             let body = (|| -> Result<Requeue> {
-                let row: Option<(String, i64, i64)> = conn
-                    .query_row(
+                let row: Option<(String, i64, i64)> = db
+                    .query_opt(
+                        "_job",
                         "SELECT state, dirty, attempts FROM _job WHERE key=?1",
-                        params![key],
+                        &[key.into()],
                         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-                    )
-                    .optional()?;
+                    )?;
                 let Some((state, dirty, attempts)) = row else {
                     // Row vanished (dropped/cancelled out from under us).
                     return Ok(Requeue::Done);
@@ -453,17 +464,19 @@ impl JobQueue {
                 match outcome {
                     Ok(()) => {
                         if dirty != 0 {
-                            conn.execute(
+                            db.exec_params(
+                                "_job",
                                 "UPDATE _job SET state='pending', dirty=0, run_at=?2, \
                                  started_at=NULL, finished_at=?2, last_error=NULL WHERE key=?1",
-                                params![key, now],
+                                &[key.into(), now.into()],
                             )?;
                             Ok(Requeue::Repending)
                         } else {
-                            conn.execute(
+                            db.exec_params(
+                                "_job",
                                 "UPDATE _job SET state='done', finished_at=?2, last_error=NULL \
                                  WHERE key=?1",
-                                params![key, now],
+                                &[key.into(), now.into()],
                             )?;
                             Ok(Requeue::Done)
                         }
@@ -475,10 +488,11 @@ impl JobQueue {
                             tracing::warn!(key, attempts = attempts_new, max = MAX_ATTEMPTS,
                                 error = %msg,
                                 "[jobq] job PARKED failed — attempt cap hit, no more retries");
-                            conn.execute(
+                            db.exec_params(
+                                "_job",
                                 "UPDATE _job SET state='failed', attempts=?2, started_at=NULL, \
                                  finished_at=?3, last_error=?4 WHERE key=?1",
-                                params![key, attempts_new, now, msg],
+                                &[key.into(), attempts_new.into(), now.into(), msg.into()],
                             )?;
                             Ok(Requeue::Parked)
                         } else {
@@ -486,17 +500,18 @@ impl JobQueue {
                             tracing::warn!(key, attempts = attempts_new, max = MAX_ATTEMPTS,
                                 retry_in_secs = run_at - now, error = %msg,
                                 "[jobq] job failed — backoff repend");
-                            conn.execute(
+                            db.exec_params(
+                                "_job",
                                 "UPDATE _job SET state='pending', attempts=?2, run_at=?3, \
                                  started_at=NULL, finished_at=NULL, last_error=?4 WHERE key=?1",
-                                params![key, attempts_new, run_at, msg],
+                                &[key.into(), attempts_new.into(), run_at.into(), msg.into()],
                             )?;
                             Ok(Requeue::Repending)
                         }
                     }
                 }
             })();
-            finish_tx(conn, &body)?;
+            finish_tx(&db, &body)?;
             body
         };
         if matches!(inner, Ok(Requeue::Repending)) {
@@ -511,8 +526,7 @@ impl JobQueue {
     #[allow(dead_code)]
     pub(crate) fn cancel(&self, key: &str) -> Result<()> {
         let db = plock(&self.db);
-        db.conn()
-            .execute("UPDATE _job SET cancelled=1 WHERE key=?1", params![key])?;
+        db.exec_params("_job", "UPDATE _job SET cancelled=1 WHERE key=?1", &[key.into()])?;
         Ok(())
     }
 
@@ -521,9 +535,9 @@ impl JobQueue {
     /// picks it up again. Returns the count reset.
     pub(crate) fn reset_running_on_boot(&self) -> Result<usize> {
         let db = plock(&self.db);
-        let n = db.conn().execute(
+        let n = db.exec_on(
+            "_job",
             "UPDATE _job SET state='pending', started_at=NULL WHERE state='running'",
-            [],
         )?;
         Ok(n)
     }
@@ -540,22 +554,23 @@ impl JobQueue {
         let now = now_secs();
         let out = {
             let db = plock(&self.db);
-            let conn = db.conn();
-            conn.execute_batch("BEGIN IMMEDIATE")?;
+            db.begin_immediate()?;
             let body = (|| -> Result<(usize, usize)> {
-                let reclaimed = conn.execute(
+                let reclaimed = db.exec_params(
+                    "_job",
                     "UPDATE _job SET state='pending', started_at=NULL \
                      WHERE state='running' AND started_at IS NOT NULL AND started_at < ?1",
-                    params![now - lease_secs],
+                    &[(now - lease_secs).into()],
                 )?;
-                let deleted = conn.execute(
+                let deleted = db.exec_params(
+                    "_job",
                     "DELETE FROM _job \
                      WHERE state='done' AND finished_at IS NOT NULL AND finished_at < ?1",
-                    params![now - done_retain_secs],
+                    &[(now - done_retain_secs).into()],
                 )?;
                 Ok((reclaimed, deleted))
             })();
-            finish_tx(conn, &body)?;
+            finish_tx(&db, &body)?;
             body?
         };
         if out.0 > 0 {
@@ -568,28 +583,30 @@ impl JobQueue {
     /// connection — the lock-free `dl daemon jobs` read (never the engine lock,
     /// never the queue mutex).
     pub(crate) fn list(&self) -> Result<Vec<JobListRow>> {
-        let conn = crate::db::open_read_only(&self.db_path.to_string_lossy())?;
-        let mut stmt = conn.prepare(
+        let db = crate::db::ReadDb::open(&self.db_path.to_string_lossy())?;
+        let rows = db.query_rows(
+            "_job",
             "SELECT key, kind, root, state, priority, attempts, run_at, \
                     enqueued_at, started_at, finished_at, last_error \
              FROM _job ORDER BY enqueued_at DESC, key",
+            &[],
+            |r| {
+                Ok(JobListRow {
+                    key: r.get(0)?,
+                    kind: r.get(1)?,
+                    root: r.get(2)?,
+                    state: r.get(3)?,
+                    priority: r.get(4)?,
+                    attempts: r.get(5)?,
+                    run_at: r.get(6)?,
+                    enqueued_at: r.get(7)?,
+                    started_at: r.get(8)?,
+                    finished_at: r.get(9)?,
+                    last_error: r.get(10)?,
+                })
+            },
         )?;
-        let rows = stmt.query_map([], |r| {
-            Ok(JobListRow {
-                key: r.get(0)?,
-                kind: r.get(1)?,
-                root: r.get(2)?,
-                state: r.get(3)?,
-                priority: r.get(4)?,
-                attempts: r.get(5)?,
-                run_at: r.get(6)?,
-                enqueued_at: r.get(7)?,
-                started_at: r.get(8)?,
-                finished_at: r.get(9)?,
-                last_error: r.get(10)?,
-            })
-        })?;
-        Ok(rows.filter_map(|x| x.ok()).collect())
+        Ok(rows)
     }
 
     /// Bump the doorbell and wake every worker parked in `wait_for_work`.
@@ -621,15 +638,14 @@ impl JobQueue {
     #[cfg(test)]
     fn peek(&self, key: &str) -> Option<(String, i64, String, i64, i64, i64)> {
         let db = plock(&self.db);
-        db.conn()
-            .query_row(
-                "SELECT state, dirty, arg, priority, attempts, run_at FROM _job WHERE key=?1",
-                params![key],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
-            )
-            .optional()
-            .ok()
-            .flatten()
+        db.query_opt(
+            "_job",
+            "SELECT state, dirty, arg, priority, attempts, run_at FROM _job WHERE key=?1",
+            &[key.into()],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        )
+        .ok()
+        .flatten()
     }
 }
 
@@ -657,28 +673,27 @@ impl JobQueue {
 /// working through). Runs inside `claim`'s already-open `BEGIN IMMEDIATE`
 /// transaction on the shared connection; taking `&Db` here would need a
 /// second connection and break the transaction (SQLite single-writer).
-// @rusqlite-ok: shares claim()'s open transaction connection, see doc above
-fn active_cold_root(conn: &rusqlite::Connection, now: i64) -> Result<Option<String>> {
-    let in_progress: Option<String> = conn
-        .query_row(
+fn active_cold_root(db: &Db, now: i64) -> Result<Option<String>> {
+    let in_progress: Option<String> = db
+        .query_opt(
+            "_job",
             "SELECT root FROM _job WHERE kind='cold_extract' \
              AND root IN (SELECT root FROM _job WHERE kind='cold_extract' AND state='done') \
              AND state='pending' AND cancelled=0 AND run_at<=?1 \
              ORDER BY root LIMIT 1",
-            params![now],
-            |r| r.get(0),
-        )
-        .optional()?;
+            &[now.into()],
+            |r| Ok(r.get::<_, String>(0)?),
+        )?;
     if in_progress.is_some() {
         return Ok(in_progress);
     }
-    conn.query_row(
+    db.query_opt(
+        "_job",
         "SELECT root FROM _job WHERE kind='cold_extract' AND state='pending' AND cancelled=0 \
          AND run_at<=?1 ORDER BY enqueued_at ASC, root ASC LIMIT 1",
-        params![now],
-        |r| r.get(0),
+        &[now.into()],
+        |r| Ok(r.get::<_, String>(0)?),
     )
-    .optional()
     .map_err(Into::into)
 }
 
@@ -686,11 +701,11 @@ fn active_cold_root(conn: &rusqlite::Connection, now: i64) -> Result<Option<Stri
 /// leaving the shared connection stuck inside a transaction (the next
 /// `BEGIN IMMEDIATE` would otherwise fail "cannot start a transaction within a
 /// transaction").
-fn finish_tx<T>(conn: &rusqlite::Connection, body: &Result<T>) -> Result<()> {
+fn finish_tx<T>(db: &Db, body: &Result<T>) -> Result<()> {
     match body {
-        Ok(_) => conn.execute_batch("COMMIT")?,
+        Ok(_) => db.commit()?,
         Err(_) => {
-            let _ = conn.execute_batch("ROLLBACK");
+            let _ = db.rollback();
         }
     }
     Ok(())
