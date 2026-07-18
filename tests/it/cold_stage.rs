@@ -423,6 +423,19 @@ fn measure_longest_cold_node() {
         println!("[receipt] family {family}: {ms}ms total across its nodes");
     }
     println!("[receipt] LONGEST single node: {} = {}ms", longest.0, longest.1);
+    // Completion tick: must SKIP dataflow (chunks saved the digest) — measure it.
+    assert!(eng.cold_nodes_complete().unwrap());
+    let df_before = eng.count_rows("df_node").unwrap();
+    let t = std::time::Instant::now();
+    eng.tick(&prog, true).unwrap();
+    let df_after = eng.count_rows("df_node").unwrap();
+    println!(
+        "[receipt] completion tick: {}ms (df_node {}->{}; expect dataflow SKIPPED)",
+        t.elapsed().as_millis(),
+        df_before,
+        df_after
+    );
+    assert_eq!(df_before, df_after, "chunk-written df rows survive the completion tick");
 }
 
 /// A `--no-daemon` (one-shot) cold run is unchanged: the inline path runs, no
