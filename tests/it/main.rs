@@ -204,3 +204,5 @@ mod wildcard_slots;
 mod tick_digest;
 mod write_ledger;
 mod budget_cpu;
+mod db_ratio;
+mod stale_binary;
