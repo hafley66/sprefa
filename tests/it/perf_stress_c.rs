@@ -59,11 +59,19 @@ fn first_c(root: &Path) -> Option<String> {
     None
 }
 
-/// Pull the `[tick] files N/N parsed` line's parsed count out of stderr.
-fn parsed_count(stderr: &str) -> Option<usize> {
-    let line = stderr.lines().find(|l| l.contains("[tick]"))?;
-    let parsed = line.split("files").nth(1)?;
-    parsed.split('/').next()?.trim().parse().ok()
+/// Count the `? seen` query's rows on stdout — one per scanned file. The C
+/// program's scan+sg families never print an `[extract] … files parsed`
+/// stderr line (that line belongs to the type/call/dataflow graph families,
+/// which C lacks), and the old `[tick] files N/N parsed` line was retired in
+/// the tracing conversion, so the query output is the work receipt here.
+fn scanned_count(stdout: &str) -> usize {
+    stdout
+        .lines()
+        .skip_while(|line| !line.starts_with("? seen"))
+        .skip(1)
+        .take_while(|line| !line.starts_with("? "))
+        .filter(|line| !line.trim().is_empty())
+        .count()
 }
 
 #[test]
@@ -90,9 +98,9 @@ fn c_stress_cold_and_incremental_on_large_repo() {
     assert!(cold.status.success(), "cold tick failed:\n{}",
         String::from_utf8_lossy(&cold.stderr));
     let cold_stderr = String::from_utf8_lossy(&cold.stderr);
-    let parsed = parsed_count(&cold_stderr).unwrap_or(0);
-    assert!(parsed > 0, "cold tick parsed no files:\n{cold_stderr}");
-    eprintln!("perf_stress_c: cold {cold_ms:.0}ms ({parsed} files parsed)\n{cold_stderr}");
+    let scanned = scanned_count(&String::from_utf8_lossy(&cold.stdout));
+    assert!(scanned > 0, "cold tick scanned no files:\n{cold_stderr}");
+    eprintln!("perf_stress_c: cold {cold_ms:.0}ms ({scanned} files scanned)\n{cold_stderr}");
 
     // Incremental: one --changed path against the warm db. Should be a small
     // fraction of cold (the corpus did not move; only the one path re-runs).

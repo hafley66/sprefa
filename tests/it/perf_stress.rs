@@ -59,11 +59,16 @@ fn first_rs(root: &Path) -> Option<String> {
     None
 }
 
-/// Pull the `[tick] files N/N parsed` line's parsed count out of stderr.
+/// Pull a parsed-file count out of stderr from an `[extract]` line shaped
+/// like `[extract] type: REBUILD (first-run) — 1483 files parsed, 729.2ms`.
+/// (The old `[tick] files N/N parsed` line was retired in the tracing
+/// conversion; the `[extract]` lines are the surviving stderr contract.)
 fn parsed_count(stderr: &str) -> Option<usize> {
-    let line = stderr.lines().find(|l| l.contains("[tick]"))?;
-    let parsed = line.split("files").nth(1)?;
-    parsed.split('/').next()?.trim().parse().ok()
+    let line = stderr
+        .lines()
+        .find(|l| l.contains("[extract]") && l.contains("files parsed"))?;
+    let before_marker = line.split("files parsed").next()?;
+    before_marker.split_whitespace().last()?.parse().ok()
 }
 
 #[test]
