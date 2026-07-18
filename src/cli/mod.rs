@@ -269,6 +269,11 @@ pub fn run() -> Result<()> {
         // be explicit, not an RAII guard.
         crate::invlog::record_end(inv_id, code);
         tracing::info!(pid = std::process::id(), code, "[process] end");
+        // Same "process::exit skips Drop" reasoning as invlog::record_end just
+        // above: close the chrome trace's `]` explicitly. No-op if
+        // DL_TRACE_CHROME was never set, or a nested `daemon serve` already
+        // closed it in `shutdown_cleanup`.
+        crate::trace::finish_chrome_trace();
         std::process::exit(code);
     }
     // `dl load <target>` is a synonym for the one-shot `dl <target>` (the `load`
@@ -287,6 +292,11 @@ pub fn run() -> Result<()> {
     };
     crate::invlog::record_end(inv_id, exit_code);
     tracing::info!(pid = std::process::id(), code = exit_code, "[process] end");
+    // The normal (non-`process::exit`) return path: Rust's own runtime exit
+    // after `main` returns WOULD run `Drop`, but the chrome guard is only
+    // reachable process-globally (see `trace::finish_chrome_trace`'s doc), so
+    // this call is still explicit rather than relying on that.
+    crate::trace::finish_chrome_trace();
     result
 }
 
@@ -383,7 +393,9 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
     // `--parse-only`: no scan, no db. Dispatch BEFORE the db-defaulting block so
     // it never opens (or `.gitignore`-writes into) `<root>/.dl/`.
     if cli.parse_only {
-        std::process::exit(crate::run_parse_only(&programs, root)?);
+        let code = crate::run_parse_only(&programs, root)?;
+        crate::trace::finish_chrome_trace();
+        std::process::exit(code);
     }
     // Discovery mode (no positional) defaults the db to <root>/.dl/cache.db so
     // a one-shot run without a daemon still gets warm incremental ticks instead
@@ -466,6 +478,7 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
         // worker: `std::process::exit` is what tears its thread down.
         crate::invlog::record_end_current(code);
         tracing::info!(pid = std::process::id(), code, "[process] end");
+        crate::trace::finish_chrome_trace();
         std::process::exit(code);
     } else if cli.mcp {
         crate::mcp::run_mcp(programs, db.as_deref(), root)
@@ -499,6 +512,7 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
         };
         if errors > 0 {
             eprintln!("{errors} error-severity diagnostic(s) found"); // @eprintln-ok: final user-facing error count before exit 2
+            crate::trace::finish_chrome_trace();
             std::process::exit(2);
         }
         Ok(())
@@ -506,6 +520,7 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
         // Transactional codemod: apply gen edits, run the checker, keep-if-pass.
         let kept = crate::run_verify(programs, db.as_deref(), root, cmd)?;
         if !kept {
+            crate::trace::finish_chrome_trace();
             std::process::exit(1);
         }
         Ok(())
