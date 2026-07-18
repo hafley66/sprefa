@@ -5,7 +5,7 @@ description: Use the `dl` engine (sprefa v5) to query a codebase as datalog-over
 
 # sprefa `dl` — datalog over code
 
-`dl` extracts facts from source (`scan` + `match`/`ast`/`sg`/`json`), lets you
+`dl` extracts facts from source (`scan` + `ast`/`sg`/`json`), lets you
 write recursive datalog rules, and lowers them to a SQLite fixpoint. Output is a
 `?` query, an LSP/`--check` diagnostic, an MCP response, or a generated/spliced
 file (`gen`). Every fact is keyed on `(repo, path, rev)`; matched values carry
