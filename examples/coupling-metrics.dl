@@ -11,27 +11,28 @@
 #   relkind_* family   ~93 near-identical methods/consts  ->  1 trait + 24 impls
 #   dispatch_*         the hand-written fan-out from tick  ->  1 registry loop
 # So after the refactor, dispatch_refresh + dispatch_used collapse toward 0
-# (replaced by `for k in REGISTRY { k.refresh(self) }`), and the family counts
-# move from free functions into trait-impl methods. Re-run; diff the snapshot.
+# (replaced by `for kind in REGISTRY { kind.refresh(self) }`), and the family
+# counts move from free functions into trait-impl methods. Re-run; diff the
+# snapshot.
 #
 #   Run:  dl examples/coupling-metrics.dl   (from the repo root)
 
 # --- the RelKind family: the dup-shape that becomes trait impls --------------
 rel relkind_decl(name: text).
-relkind_decl(name) <- scan("src/engine/*.rs", p, rev),
-    ast(p, rev, :rust, "(function_item name: (identifier) @name)", line),
+relkind_decl(name) <- scan("src/engine/*.rs", path, rev),
+    ast(path, rev, :rust, "(function_item name: (identifier) @name)", line),
     name =~ /_rel_decls$/.
 rel relkind_used(name: text).
-relkind_used(name) <- scan("src/engine/*.rs", p, rev),
-    ast(p, rev, :rust, "(function_item name: (identifier) @name)", line),
+relkind_used(name) <- scan("src/engine/*.rs", path, rev),
+    ast(path, rev, :rust, "(function_item name: (identifier) @name)", line),
     name =~ /_rels_used$/.
 rel relkind_refresh(name: text).
-relkind_refresh(name) <- scan("src/engine/*.rs", p, rev),
-    ast(p, rev, :rust, "(function_item name: (identifier) @name)", line),
+relkind_refresh(name) <- scan("src/engine/*.rs", path, rev),
+    ast(path, rev, :rust, "(function_item name: (identifier) @name)", line),
     name =~ /^refresh_.*_rels?$/.
 rel relkind_const(name: text).
-relkind_const(name) <- scan("src/engine/*.rs", p, rev),
-    ast(p, rev, :rust, "(const_item name: (identifier) @name)", line),
+relkind_const(name) <- scan("src/engine/*.rs", path, rev),
+    ast(path, rev, :rust, "(const_item name: (identifier) @name)", line),
     name =~ /_RELS$/.
 
 # --- the dispatch fan-out: the coupling the trait+registry collapses ---------
@@ -39,49 +40,54 @@ relkind_const(name) <- scan("src/engine/*.rs", p, rev),
 # `X_rels_used(...)` gate. `_` keeps the line, so count() tallies SITES, not the
 # (smaller) set of distinct callees.
 rel dispatch_refresh(callee: text, line: int).
-dispatch_refresh(callee, line) <- scan("src/engine/*.rs", p, rev),
-    ast(p, rev, :rust,
+dispatch_refresh(callee, line) <- scan("src/engine/*.rs", path, rev),
+    ast(path, rev, :rust,
         "(call_expression function: (field_expression field: (field_identifier) @callee))", line),
     callee =~ /^refresh_.*_rels?$/.
 rel dispatch_used(callee: text, line: int).
-dispatch_used(callee, line) <- scan("src/engine/*.rs", p, rev),
-    ast(p, rev, :rust, "(call_expression function: (identifier) @callee)", line),
+dispatch_used(callee, line) <- scan("src/engine/*.rs", path, rev),
+    ast(path, rev, :rust, "(call_expression function: (identifier) @callee)", line),
     callee =~ /_rels_used$/.
 
-# --- file-size budget (refactor v2, phase R2): smaller files, loudly ---------
-# One row per engine/rels source file with its line count; the rail warns on
-# any file over budget. Goes quiet exactly when the seam-split is done.
-rel file_lines(path: file, lines: text).
-file_lines(path, lines) <- scan("src/engine/*.rs", path, rev),
-    cmd(path, rev, "awk 'END{print NR}' {file}", line, lines).
-file_lines(path, lines) <- scan("src/rels/*.rs", path, rev),
-    cmd(path, rev, "awk 'END{print NR}' {file}", line, lines).
+# --- file-size budget: whole first-party src, loudly -------------------------
+# Rides the file_lines BUILTIN (repo, path, rev, line_count) — populated from
+# the corpus walk's own byte count (enumerate_with_hash), no cmd/awk
+# subprocess. Glob widened to src/**/*.rs (was src/engine/*.rs + src/rels/*.rs
+# only, so the five worst offenders — typegraph.rs, modgraph.rs, daemon.rs,
+# storage/call.rs, parse.rs, propose.rs — never tripped this rail). One row
+# per scanned .rs file with its line count; the rail warns on any file over
+# budget. Goes quiet exactly when a split target lands under budget.
+# Split into a pure-scan rel + a derived join: a source rule's body can't join
+# another rel atom (S6 — the join is silently dropped, engine bails at
+# typecheck instead).
+rel scanned_rust_file(path: file, rev: text).
+scanned_rust_file(path, rev) <- scan("src/**/*.rs", path, rev).
 
-# violation-only probe: emits a row IFF the file exceeds the budget (the
-# comparison happens in awk, so no text->int coercion in rule space)
-rel file_over_budget(path: file, lines: text).
-file_over_budget(path, lines) <- scan("src/engine/*.rs", path, rev),
-    cmd(path, rev, "awk 'END{if(NR>1500)print NR}' {file}", line, lines).
-file_over_budget(path, lines) <- scan("src/rels/*.rs", path, rev),
-    cmd(path, rev, "awk 'END{if(NR>1500)print NR}' {file}", line, lines).
+rel src_file_lines(path: file, line_count: int).
+src_file_lines(path, line_count) <- scanned_rust_file(path, rev),
+    file_lines(_, path, rev, line_count).
+
+rel file_over_budget(path: file, line_count: int).
+file_over_budget(path, line_count) <- src_file_lines(path, line_count),
+    line_count > 1500.
 
 diag(path, line: 1, severity: "warning", code: "file-size-budget",
-     msg: "${lines} lines (budget 1500); split along a behavior seam per plans/2026-07-02-engine-trait-refactor-v2.md") <-
-    file_over_budget(path, lines).
+     msg: "${line_count} lines (budget 1500); split along a behavior seam per plans/2026-07-18-decomposition-normalization.md") <-
+    file_over_budget(path, line_count).
 
 # --- the snapshot: one metric row per number --------------------------------
-rel metric(name: text, n: int).
-metric("relkind_decls",    count(x)) <- relkind_decl(x).
-metric("relkind_used",     count(x)) <- relkind_used(x).
-metric("relkind_refresh",  count(x)) <- relkind_refresh(x).
-metric("relkind_consts",   count(x)) <- relkind_const(x).
-metric("dispatch_refresh", count(c)) <- dispatch_refresh(c, _).
-metric("dispatch_used",    count(c)) <- dispatch_used(c, _).
-metric("files_over_budget", count(p)) <- file_over_budget(p, _).
+rel metric(name: text, metric_value: int).
+metric("relkind_decls",    count(name)) <- relkind_decl(name).
+metric("relkind_used",     count(name)) <- relkind_used(name).
+metric("relkind_refresh",  count(name)) <- relkind_refresh(name).
+metric("relkind_consts",   count(name)) <- relkind_const(name).
+metric("dispatch_refresh", count(callee)) <- dispatch_refresh(callee, _).
+metric("dispatch_used",    count(callee)) <- dispatch_used(callee, _).
+metric("files_over_budget", count(path)) <- file_over_budget(path, _).
 
-? metric(name, n).
-? file_lines(path, lines).
+? metric(name, metric_value).
+? src_file_lines(path, line_count).
 ? diag(path, line, severity, code, msg).
 
 # Versioned before/after artifact: re-run after each refactor phase, diff the md.
-gen("examples/_auto-doc/coupling-metrics.md", "- {name}: {n}") <- metric(name, n).
+gen("examples/_auto-doc/coupling-metrics.md", "- {name}: {metric_value}") <- metric(name, metric_value).
