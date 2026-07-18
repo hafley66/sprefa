@@ -65,6 +65,7 @@ fn constructors_nested_and_trait_call_defs_emit() {
 
     // Nested named fns (previously NOT EMITTED per the audit).
     assert!(out.contains("rust.rs::function::nested_helper"), "rust nested fn missing:\n{out}");
+    assert!(out.contains("ts.ts::function::tally"), "ts nested fn missing:\n{out}");
     assert!(out.contains("kotlin.kt::function::nestedHelper"), "kt nested fn missing:\n{out}");
     assert!(out.contains("python.py::function::nested_helper"), "py nested fn missing:\n{out}");
 

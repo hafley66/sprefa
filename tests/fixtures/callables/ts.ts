@@ -53,9 +53,13 @@ export class Widget {
 
 // unbound arrow passed as an argument -> lambda
 export function useCallbacks(values: number[]): number {
+    // nested named function declaration -> function (file-level mint)
+    function tally(runningTotal: number, value: number): number {
+        return runningTotal + value;
+    }
     const doubled = values.map((value) => value * 2);
     // unbound function expression argument -> lambda
     return doubled.reduce(function (acc, value) {
-        return acc + value;
+        return tally(acc, value);
     }, 0);
 }

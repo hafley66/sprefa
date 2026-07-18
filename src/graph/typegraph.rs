@@ -1872,6 +1872,10 @@ impl TypeLang for TsTypes {
         // by construction. (Same already-parsed program, one extra walk.)
         let df = ts_dataflow_from(&ret.program, file, content);
         ts_push_lambda_defs(&df, file, &mut defs);
+        // Nested named function declarations (below top level), file-level mint.
+        let mut nested = TsNestedFnDefs { file, starts: &starts, depth: 0, out: Vec::new() };
+        nested.visit_program(&ret.program);
+        defs.extend(nested.out);
         let mut sites = TsCallSites { file, starts: &starts, sites: Vec::new() };
         sites.visit_program(&ret.program);
         CallFacts { defs, sites: sites.sites }
@@ -3768,7 +3772,46 @@ fn ts_push_lambda_defs(df: &DataflowFacts, file: &str, out: &mut Vec<CallDef>) {
     }
 }
 
+/// Nested (below top level) named function DECLARATIONS — `function inner(){}`
+/// inside another callable's body. Top-level declarations are `ts_fn_call_def`'s
+/// job, so this walker only emits at `depth > 0`; the `FunctionType` guard skips
+/// function expressions and method values (already Methods). File-level mint (df
+/// does not lift a nested named-fn body, so there is no owner-scoped df sym to
+/// match), mirroring the Rust nested-fn convention.
 // @callable ts function
+struct TsNestedFnDefs<'p> {
+    file: &'p str,
+    starts: &'p [usize],
+    depth: u32,
+    out: Vec<CallDef>,
+}
+
+impl<'a, 'p> OxcVisit<'a> for TsNestedFnDefs<'p> {
+    fn visit_function(&mut self, f: &ts_ast::Function<'a>, flags: oxc_syntax::scope::ScopeFlags) {
+        if self.depth > 0 && f.r#type == ts_ast::FunctionType::FunctionDeclaration {
+            if let (Some(id), Some(body)) = (&f.id, f.body.as_deref()) {
+                let name = id.name.to_string();
+                self.out.push(CallDef {
+                    sym: mint_sym(self.file, EntityKind::Function, &name, None),
+                    name,
+                    kind: CallKind::Free,
+                    file: self.file.to_string(),
+                    line: line_at(self.starts, id.span.start as usize),
+                    end: line_at(self.starts, body.span.end as usize),
+                });
+            }
+        }
+        self.depth += 1;
+        oxc_ast_visit::walk::walk_function(self, f, flags);
+        self.depth -= 1;
+    }
+    fn visit_arrow_function_expression(&mut self, a: &ts_ast::ArrowFunctionExpression<'a>) {
+        self.depth += 1;
+        oxc_ast_visit::walk::walk_arrow_function_expression(self, a);
+        self.depth -= 1;
+    }
+}
+
 fn ts_var_call_defs(v: &ts_ast::VariableDeclaration, file: &str, starts: &[usize], out: &mut Vec<CallDef>) {
     for d in &v.declarations {
         let ts_ast::BindingPattern::BindingIdentifier(name) = &d.id else { continue };

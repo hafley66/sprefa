@@ -127,7 +127,7 @@ generated for those languages in this arc).
 | callable kind | AST-tier | scip-tier | evidence |
 |---|---|---|---|
 | free function | **EMITTED** | unverified | `FunctionDeclaration` → `ts_fn_call_def`. |
-| nested/local function | NOT EMITTED | unverified | `ts_call_defs_from` iterates `program.body` only. (df also does not lift nested named-fn bodies; unbound arrows/fn-exprs ARE covered below.) |
+| nested/local function | **EMITTED** ✓ | unverified | `TsNestedFnDefs` visitor emits `function inner(){}` below top level as Function (file-level mint), like Rust nested fns. Was NOT EMITTED. |
 | instance method | **EMITTED** | unverified | `ClassDeclaration` → `ts_class_call_defs`. |
 | static method | **EMITTED (as Method)** | unverified | same arm, no static filter. |
 | constructor | **EMITTED** ✓ | unverified | `ts_class_call_defs` no longer skips the ctor: sym `…::method::<Class>.constructor` (df-matching), name = class. Was NOT EMITTED. |
@@ -191,7 +191,7 @@ Unchanged: C has an empty alias list (`src/engine/lang_tables.rs`) and no
 | callable kind | Rust | TS/JS | Kotlin | Go | Python | C |
 |---|---|---|---|---|---|---|
 | free function | EMITTED | EMITTED | EMITTED | EMITTED | EMITTED | N/A |
-| nested/local function | **EMITTED** | NOT EMITTED | EMITTED (Free) | N/A | EMITTED (Free) | N/A |
+| nested/local function | **EMITTED** | **EMITTED** | EMITTED (Free) | N/A | EMITTED (Free) | N/A |
 | instance method | EMITTED | EMITTED | EMITTED | EMITTED | EMITTED | N/A |
 | static method | EMITTED (Method) | EMITTED (Method) | N/A | N/A | EMITTED (Method) | N/A |
 | constructor | N/A | **EMITTED** | **EMITTED** | N/A | EMITTED (Method) | N/A |
