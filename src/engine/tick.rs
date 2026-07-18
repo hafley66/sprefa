@@ -665,6 +665,19 @@ impl Engine {
         let der_digest = derived_program_digest(&derived_rules, &seed_rules, &edges);
         let prior_der_digest = self.load_rel_digest("derived:program")?;
         let derived_moved = prior_der_digest != Some(der_digest);
+        // #13 write-storm fix, dirty-rel scoping: when the program digest moved,
+        // the per-rel `drv:` shape digests name WHICH heads' rules moved. If
+        // every motion is attributable to current derived heads, the program-
+        // edit full rebuild below downgrades to the scoped arm seeded with
+        // those heads — byte-identical derived tables downstream of nothing
+        // are never wiped and rewritten (the GB-boot cost was whole-layer
+        // DELETE+INSERT for a one-rule edit). Diff computed only on a moved
+        // tick; its pending saves flush at the deferred-digest point below.
+        let shape_diff = if derived_moved {
+            Some(self.derived_rule_diff(&derived_rules, &seed_rules, &edges)?)
+        } else {
+            None
+        };
         // A blank slate, a program-shape change, or an unattributable EDB change
         // (a carried @next rel has no per-rel entry above) rebuilds everything.
         // Otherwise a changed tick scopes the rebuild to the derived rels
@@ -678,23 +691,55 @@ impl Engine {
         // db, so effectively every tick.
         let incomplete_derived = self.derived_incomplete_rels(&derived_rels)?;
         let empty_closure_edge = self.first_empty_closure_edge(&edges)?;
-        let need_full = derived_moved || carry_changed
+        let mut need_full = derived_moved || carry_changed
             || !incomplete_derived.is_empty() || empty_closure_edge.is_some();
         // P3: name WHY a full rebuild happened, in tick record priority order
         // matching the `need_full` OR above (a blank slate/program-shape
         // change is the more useful diagnosis when several conditions coincide,
         // e.g. the very first tick on a fresh db has both `derived_moved` and
         // every rel "incomplete").
-        let full_reason: Option<String> = if !need_full { None }
+        let mut full_reason: Option<String> = if !need_full { None }
             else if derived_moved && prior_der_digest.is_none() { Some("blank-slate".to_string()) }
             else if derived_moved { Some("program-edit".to_string()) }
             else if carry_changed { Some("carry-changed".to_string()) }
             else if !incomplete_derived.is_empty() { Some(format!("derived-missing:{}", incomplete_derived.join(","))) }
             else { empty_closure_edge.as_ref().map(|edge| format!("closure-missing:{edge}")) };
+        // The #13 downgrade: ONLY the pure program-edit trigger is scopable — a
+        // blank slate has nothing to keep, carry/closure triggers mean table
+        // state (not rule shape) is untrustworthy. `full_reason` is priority-
+        // ordered and can mask coincident triggers, so each is re-checked
+        // explicitly; incomplete rels are tolerable only when the scope
+        // rebuilds every one of them anyway (a newly declared rel is both
+        // "incomplete" and "moved"). Unattributable or empty diffs keep the
+        // full rebuild (safety net: the monolithic digest moved but no head
+        // owns the motion).
+        let mut program_scope: HashSet<String> = HashSet::new();
+        if full_reason.as_deref() == Some("program-edit")
+            && !carry_changed && empty_closure_edge.is_none()
+        {
+            if let Some(diff) = &shape_diff {
+                if diff.attributable && !diff.moved.is_empty()
+                    && incomplete_derived.iter().all(|rel| diff.moved.contains(rel))
+                {
+                    need_full = false;
+                    full_reason = None;
+                    program_scope = diff.moved.clone();
+                    if !quiet {
+                        let mut names: Vec<&str> =
+                            program_scope.iter().map(|s| s.as_str()).collect();
+                        names.sort_unstable();
+                        eprintln!(
+                            "[derived-scope] program edit scoped to {} rel(s): {}",
+                            names.len(), names.join(", ")
+                        );
+                    }
+                }
+            }
+        }
         let mut affected: HashSet<String> = HashSet::new();
         let mut dirty_edges: HashSet<&str> = HashSet::new();
         self.last_derived_rebuilt = Vec::new();
-        if changed || need_full {
+        if changed || need_full || !program_scope.is_empty() {
             crate::activity::set(crate::activity::Phase::Derived, "");
         }
         if need_full {
@@ -709,8 +754,10 @@ impl Engine {
             }
             dirty_edges = edges.iter().copied().collect();
             self.last_derived_rebuilt = strata.pre_rels.clone();
-        } else if changed {
-            affected = affected_derived(&derived_rules, &changed_source_rels);
+        } else if changed || !program_scope.is_empty() {
+            let mut scope_seed = changed_source_rels.clone();
+            scope_seed.extend(program_scope.iter().cloned());
+            affected = affected_derived(&derived_rules, &scope_seed);
             let sub_rules: Vec<&Rule> = strata.pre_rules.iter().copied()
                 .filter(|r| affected.contains(&r.head.rel)).collect();
             let sub_rels: Vec<String> = strata.pre_rels.iter()
@@ -744,7 +791,13 @@ impl Engine {
         // digest (`seed_rel_digests` + the daemon/effect/async/hook/port keys)
         // collected above. A tick killed before this point leaves the baselines
         // unmoved and the change is re-detected next boot.
-        if derived_moved { self.save_rel_digest("derived:program", &der_digest)?; }
+        if derived_moved {
+            self.save_rel_digest("derived:program", &der_digest)?;
+            if let Some(diff) = &shape_diff {
+                self.save_rel_digests(&diff.pending)?;
+                self.delete_rel_digests(&diff.stale)?;
+            }
+        }
         for (key, digest) in &pending_digests {
             self.save_rel_digest(key, digest)?;
         }
@@ -755,7 +808,7 @@ impl Engine {
             let reason = full_reason.as_deref().unwrap_or("-");
             eprintln!("[tick] files {}/{} parsed, +{} -{} source facts, derived {} | source {:.1}ms, derived {:.1}ms, slowest {slowest_rel}={slowest_ms}ms, trigger=full, reason={reason}",
                 recon.parsed, recon.total, recon.extracted, recon.retracted,
-                if changed { "rebuilt" } else { "unchanged" }, src_ms, der_ms);
+                if changed || !program_scope.is_empty() { "rebuilt" } else { "unchanged" }, src_ms, der_ms);
             crate::verdict::verdict(
                 "tick-verdict",
                 &format!("[tick-verdict] full derived_ms={der_ms:.1} slowest_rel={slowest_rel} slowest_ms={slowest_ms} trigger=full reason={reason}"),
@@ -785,8 +838,9 @@ impl Engine {
         if !strata.post_rels.is_empty() {
             if need_full || extract_changed {
                 self.rebuild_derived(&strata.post_rules, &strata.post_rels)?;
-            } else if changed {
+            } else if changed || !program_scope.is_empty() {
                 let mut seed = changed_source_rels.clone();
+                seed.extend(program_scope.iter().cloned());
                 for r in scc_rules.iter().chain(node2vec_rules.iter()) {
                     let edge = r.scc_edge().or_else(|| r.node2vec_edge())
                         .expect("operator rule has an scc/node2vec edge");
@@ -888,7 +942,9 @@ impl Engine {
         // tick's wall cost. `derived_strategy` names WHY everything re-ran
         // ("full" = program/blank-slate/carry; "scoped" = only reachable rels;
         // "unchanged" = nothing propagated) — the fact the spike hunter wants.
-        let derived_strategy = if need_full { "full" } else if changed { "scoped" } else { "unchanged" };
+        let derived_strategy = if need_full { "full" }
+            else if changed || !program_scope.is_empty() { "scoped" }
+            else { "unchanged" };
         crate::perflog::emit_tick(&crate::perflog::TickRec {
             tick: crate::activity::snapshot().tick,
             kind: "full",

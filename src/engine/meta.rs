@@ -2,6 +2,18 @@ use super::*;
 
 const SCHEMA_EPOCH: i64 = 10;
 
+/// Result of `Engine::derived_rule_diff` — which derived rels' rule shapes
+/// moved since the stored `drv:` baseline, whether that motion is fully
+/// attributable to current derived heads (if not, the caller keeps the full
+/// rebuild), and the deferred `_reldigest` writes to flush after the rebuild
+/// lands.
+pub(crate) struct DerivedShapeDiff {
+    pub(crate) moved: HashSet<String>,
+    pub(crate) attributable: bool,
+    pub(crate) pending: Vec<(String, [u8; 32])>,
+    pub(crate) stale: Vec<String>,
+}
+
 /// Persisted watermark plus the readily observable database coordinates for one
 /// atomic semantic generation.
 ///
@@ -972,6 +984,144 @@ impl Engine {
             }
         }
         Ok((dirty, pending))
+    }
+
+    /// Derived twin of `source_rule_digests`: digest each derived rel's RULE
+    /// SHAPES (derived rules + closure-seed rules, XOR-folded per head over the
+    /// same Debug reprs `derived_program_digest` hashes), stored under `drv:`
+    /// keys, plus the closure edge list under `drv::edges` (':' cannot occur in
+    /// a rel name, so the key cannot collide). A program edit then names the
+    /// rels whose rules moved, and the caller scopes the derived rebuild to
+    /// them instead of wiping the whole layer (the #13 write-storm fix).
+    ///
+    /// `attributable` is false when the motion cannot be pinned to current
+    /// derived heads — no `drv:` baseline yet (pre-feature db / blank slate),
+    /// the edge list moved, a stored rel lost all its rules, or a moved head
+    /// only closure-seed rules cover — and the caller keeps the full rebuild.
+    /// `pending`/`stale` follow the `seed_rel_digests` crash discipline: the
+    /// caller persists them only after the rebuild lands, so a killed tick
+    /// re-detects the edit next boot.
+    pub(crate) fn derived_rule_diff(
+        &self,
+        derived_rules: &[&Rule],
+        seed_rules: &[(&Rule, ClosureSeed)],
+        edges: &[&str],
+    ) -> Result<DerivedShapeDiff> {
+        let mut by_rel: HashMap<String, [u8; 32]> = HashMap::new();
+        let mut fold = |rel: &str, repr: String| {
+            let h = blake3::hash(repr.as_bytes());
+            let acc = by_rel.entry(rel.to_string()).or_insert([0u8; 32]);
+            for (a, b) in acc.iter_mut().zip(h.as_bytes()) {
+                *a ^= b;
+            }
+        };
+        for r in derived_rules {
+            fold(&r.head.rel, format!("{r:?}"));
+        }
+        for (r, _) in seed_rules {
+            fold(&r.head.rel, format!("seed:{r:?}"));
+        }
+        let mut edge_list: Vec<&str> = edges.to_vec();
+        edge_list.sort_unstable();
+        let mut edge_hash = blake3::Hasher::new();
+        for e in &edge_list {
+            edge_hash.update(e.as_bytes());
+            edge_hash.update(&[0]);
+        }
+        by_rel.insert(":edges".to_string(), *edge_hash.finalize().as_bytes());
+
+        let stored = self.load_rel_digests_prefix("drv:")?;
+        let derived_heads: HashSet<&str> =
+            derived_rules.iter().map(|r| r.head.rel.as_str()).collect();
+        let mut moved = HashSet::new();
+        let mut pending = Vec::new();
+        let mut attributable = !stored.is_empty();
+        for (rel, digest) in &by_rel {
+            if stored.get(rel) == Some(digest) {
+                continue;
+            }
+            pending.push((format!("drv:{rel}"), *digest));
+            if rel == ":edges" {
+                // A brand-new baseline is already unattributable via the
+                // `stored.is_empty()` gate; a MOVED edge list changes which
+                // closure views exist, outside per-head scoping.
+                if stored.contains_key(":edges") {
+                    attributable = false;
+                }
+                continue;
+            }
+            if !derived_heads.contains(rel.as_str()) {
+                attributable = false; // seed-only head: rebuilt outside rebuild_derived
+                continue;
+            }
+            moved.insert(rel.clone());
+        }
+        let stale: Vec<String> = stored
+            .keys()
+            .filter(|k| !by_rel.contains_key(*k))
+            .map(|k| format!("drv:{k}"))
+            .collect();
+        if !stale.is_empty() {
+            attributable = false; // a rel lost all its rules; not a current head
+        }
+        Ok(DerivedShapeDiff { moved, attributable, pending, stale })
+    }
+
+    /// All `_reldigest` rows under a key prefix, prefix stripped. One query,
+    /// never a per-key point-read loop.
+    pub(crate) fn load_rel_digests_prefix(
+        &self,
+        prefix: &str,
+    ) -> Result<HashMap<String, [u8; 32]>> {
+        let conn = self.db.conn();
+        let mut s =
+            conn.prepare("SELECT rel, digest FROM _reldigest WHERE rel LIKE ?1 || '%'")?;
+        let rows = s.query_map([prefix], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        let mut out = HashMap::new();
+        for (key, hex) in rows.flatten() {
+            if let (Some(rel), Ok(d)) = (key.strip_prefix(prefix), hex_to_32(&hex)) {
+                out.insert(rel.to_string(), d);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Batched upsert of `(key, digest)` pairs into `_reldigest` — one
+    /// multi-row statement, never a per-row loop.
+    pub(crate) fn save_rel_digests(&self, pairs: &[(String, [u8; 32])]) -> Result<()> {
+        if pairs.is_empty() {
+            return Ok(());
+        }
+        let values = vec!["(?, ?)"; pairs.len()].join(", ");
+        let sql = format!(
+            "INSERT INTO _reldigest(rel, digest) VALUES {values}
+             ON CONFLICT(rel) DO UPDATE SET digest = excluded.digest"
+        );
+        let params: Vec<String> = pairs
+            .iter()
+            .flat_map(|(k, d)| {
+                [k.clone(), d.iter().map(|b| format!("{b:02x}")).collect()]
+            })
+            .collect();
+        self.db
+            .conn()
+            .execute(&sql, rusqlite::params_from_iter(params))?;
+        Ok(())
+    }
+
+    /// Batched delete of `_reldigest` keys — one statement.
+    pub(crate) fn delete_rel_digests(&self, keys: &[String]) -> Result<()> {
+        if keys.is_empty() {
+            return Ok(());
+        }
+        let holes = vec!["?"; keys.len()].join(", ");
+        self.db.conn().execute(
+            &format!("DELETE FROM _reldigest WHERE rel IN ({holes})"),
+            rusqlite::params_from_iter(keys.iter()),
+        )?;
+        Ok(())
     }
 
     /// Drop from `changed` every relation whose freshly computed digest equals

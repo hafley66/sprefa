@@ -259,28 +259,42 @@ fn source_rule_edit_falls_back_to_full_reconcile() {
     );
 }
 
-/// Editing a DERIVED rule moves the derived-program digest, forcing `need_full`
-/// on the next tick — every derived rel rebuilds. The fact: a program-shape
-/// change is a full re-derivation (this is the cost of `dl daemon load`-ing a
-/// new rule, and why it is not free).
+/// Editing the derived layer used to force `need_full` — EVERY derived rel
+/// rebuilt on any program edit (the #13 write storm: whole-layer DELETE+INSERT
+/// for a one-rule change). The per-rel `drv:` shape digests retire that:
+/// adding `extra(w) <- da(w).` rebuilds `extra` alone; da's rules did not
+/// move, so its table is never wiped and still serves its rows.
 #[test]
-fn derived_rule_edit_forces_full_rederivation() {
+fn derived_rule_edit_rebuilds_only_the_moved_subgraph() {
     let d = sandbox("deredit");
     fs::write(d.join("src/a.rs"), "// alpha_one\n").unwrap();
     fs::write(d.join("src/b.txt"), "beta_one\n").unwrap();
     let (mut eng, prog) = fresh_engine(&d);
     eng.tick(&prog, true).unwrap();
 
-    // Edited program: da now also joins src_b (a real shape change to a derived
-    // rule). derived_program_digest moves -> need_full on the next tick.
+    // Edited program: a new rel reading da. Only extra's rule shape is new;
+    // the derived-program digest moves but the motion is attributable.
     let edited = prog_of(&format!("{PROG}rel extra(w: text).\nextra(w) <- da(w).\n"));
     eng.tick(&edited, true).unwrap();
     let rebuilt = eng.last_derived_rebuilt.clone();
     assert!(
-        rebuilt.contains(&"extra".to_string()) && rebuilt.contains(&"da".to_string()),
-        "a derived-rule edit forces a full re-derivation including the new rel, got {:?}",
-        rebuilt
+        rebuilt.contains(&"extra".to_string()),
+        "the new rel derives on the edit tick, got {rebuilt:?}"
     );
+    assert!(
+        !rebuilt.contains(&"da".to_string()),
+        "da's rules did not move; the edit must scope past it, got {rebuilt:?}"
+    );
+    // The scoped rebuild is not a skipped rebuild: extra read da's intact
+    // table and derived the right rows.
+    let extra = eng
+        .query_sql("SELECT w FROM rel_extra_txt ORDER BY w", &[])
+        .unwrap();
+    let words: Vec<String> = extra
+        .iter()
+        .filter_map(|r| r.first().and_then(|v| v.as_str()).map(String::from))
+        .collect();
+    assert_eq!(words, vec!["one".to_string()], "extra rows derived from da: {words:?}");
 }
 
 /// Timing ceiling: a tiny program's full tick is well under a generous bound.
