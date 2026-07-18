@@ -128,6 +128,10 @@ pub(crate) enum JobKind {
     Tick,
     /// Drain a root's `@async`/external-sink effects (`poll_tick`).
     SinkDrain,
+    /// Run ONE cold-start `(family, shard)` extraction node (cold-start staging,
+    /// plan `2026-07-17-cold-start-staging.md`). Distinct from the reserved J3
+    /// `DeriveStratum` (D6): this stages FACT extraction, that stages DERIVE.
+    ColdExtract,
 }
 
 impl JobKind {
@@ -135,12 +139,14 @@ impl JobKind {
         match self {
             JobKind::Tick => "tick",
             JobKind::SinkDrain => "sink_drain",
+            JobKind::ColdExtract => "cold_extract",
         }
     }
     fn parse(s: &str) -> Option<JobKind> {
         match s {
             "tick" => Some(JobKind::Tick),
             "sink_drain" => Some(JobKind::SinkDrain),
+            "cold_extract" => Some(JobKind::ColdExtract),
             _ => None,
         }
     }
@@ -192,9 +198,33 @@ impl JobRow {
         }
     }
 
+    /// A `cold:{root_id}:{family}:{shard}` staged-extraction job. One row per
+    /// `_cold_node`, so a re-seed UPSERT is idempotent and per-node work
+    /// serializes. `priority` orders the canonical extraction sequence (module
+    /// before type/call, so import resolution matches the inline path) — a
+    /// single-flight ColdExtract worker claims highest-priority-first.
+    pub fn cold_extract(root_id: &str, family: &str, shard: u32, priority: i64) -> JobRow {
+        JobRow {
+            key: format!("cold:{root_id}:{family}:{shard}"),
+            kind: JobKind::ColdExtract,
+            root: root_id.to_string(),
+            arg: json!({ "family": family, "shard": shard }),
+            priority,
+            attempts: 0,
+            run_at: 0,
+        }
+    }
+
     /// The changed paths carried by a Tick job's coalesced `arg`.
     pub fn paths(&self) -> Vec<PathBuf> {
         paths_of(&self.arg).into_iter().map(PathBuf::from).collect()
+    }
+
+    /// The `(family, shard)` a ColdExtract job carries in its `arg`.
+    pub fn cold_target(&self) -> Option<(String, u32)> {
+        let family = self.arg.get("family")?.as_str()?.to_string();
+        let shard = self.arg.get("shard")?.as_u64()? as u32;
+        Some((family, shard))
     }
 }
 
