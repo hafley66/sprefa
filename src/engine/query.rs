@@ -50,10 +50,11 @@ impl Engine {
             // big edge rel instead of hanging the tick.
             let cap = closure_query_max_edges();
             if cap > 0 {
-                let n: i64 = self.db.conn().query_row(
+                let n: i64 = self.db.query_one(
+                    edge,
                     &format!("SELECT COUNT(*) FROM {}", tbl(edge)),
-                    [],
-                    |r| r.get(0),
+                    &[],
+                    |r| Ok(r.get(0)?),
                 )?;
                 if n as usize > cap {
                     bail!(
@@ -111,25 +112,15 @@ impl Engine {
     /// rows without capturing stdout.
     fn query_one_sql(&self, q: &Query) -> Result<QueryResult> {
         let (sql, columns) = lower_query(q, &self.rels)?;
-        let mut stmt = self.db.conn().prepare(&sql)?;
-        let ncols = stmt.column_count();
-        let mut rows = stmt.query([])?;
-        let mut out: Vec<Vec<serde_json::Value>> = Vec::new();
-        while let Some(row) = rows.next()? {
-            let cells = (0..ncols)
-                .map(|i| {
-                    sqlite_to_json(
-                        row.get::<_, rusqlite::types::Value>(i)
-                            .unwrap_or(rusqlite::types::Value::Null),
-                    )
-                })
-                .collect();
-            out.push(cells);
-        }
+        let raw_rows = self.db.query_values(&q.head.rel, &sql, &[])?;
+        let rows: Vec<Vec<serde_json::Value>> = raw_rows
+            .iter()
+            .map(|row| row.iter().map(sqlval_to_json).collect())
+            .collect();
         Ok(QueryResult {
             rel: q.head.rel.clone(),
             columns,
-            rows: out,
+            rows,
         })
     }
 
@@ -198,12 +189,12 @@ impl Engine {
 /// everything else (NULL/blob) becomes JSON null. The TSV path stringifies these
 /// back via `json_cell_tsv`, so both renderers share one cell representation.
 
-fn sqlite_to_json(v: rusqlite::types::Value) -> serde_json::Value {
-    use rusqlite::types::Value as V;
+fn sqlval_to_json(v: &crate::db::SqlVal) -> serde_json::Value {
+    use crate::db::SqlVal;
     match v {
-        V::Text(s) => serde_json::Value::String(s),
-        V::Integer(n) => serde_json::Value::from(n),
-        V::Real(f) => serde_json::Value::from(f),
+        SqlVal::Text(s) => serde_json::Value::String(s.clone()),
+        SqlVal::Int(n) => serde_json::Value::from(*n),
+        SqlVal::Real(f) => serde_json::Value::from(*f),
         _ => serde_json::Value::Null,
     }
 }

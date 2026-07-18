@@ -6,21 +6,20 @@ impl Engine {
     /// discovery (`rspath::crate_roots`) for the `--move` rewriter, so a crate
     /// whose root is `rust/kernel/lib.rs` (no `src/`) still yields module paths.
     pub fn source_paths(&self) -> Result<Vec<String>> {
-        let conn = self.db.conn();
-        let mut s = conn.prepare("SELECT DISTINCT path FROM _file WHERE rev = 'WORK'")?;
-        let rows = s.query_map([], |r| r.get::<_, String>(0))?;
-        Ok(rows.filter_map(|x| x.ok()).collect())
+        let rows = self.db.query_rows(
+            "_file",
+            "SELECT DISTINCT path FROM _file WHERE rev = 'WORK'",
+            &[],
+            |r| Ok(r.get::<_, String>(0)?),
+        )?;
+        Ok(rows)
     }
 
     /// Row count of a relation's backing table (`rel_<name>`). Test/bench
     /// instrumentation; returns 0 when the table is empty, errors if absent.
     pub fn count_rows(&self, rel: &str) -> Result<i64> {
-        let conn = self.db.conn();
-        Ok(
-            conn.query_row(&format!("SELECT COUNT(*) FROM {}", txt_tbl(rel)), [], |r| {
-                r.get(0)
-            })?,
-        )
+        let table = txt_tbl(rel);
+        self.db.query_one(rel, &format!("SELECT COUNT(*) FROM {}", table), &[], |r| Ok(r.get(0)?))
     }
 
     pub fn query_sql(
@@ -28,47 +27,12 @@ impl Engine {
         sql: &str,
         params: &[serde_json::Value],
     ) -> Result<Vec<Vec<serde_json::Value>>> {
-        let conn = self.db.conn();
-        let mut stmt = conn.prepare(sql)?;
-        let col_count = stmt.column_count();
-        let param_vals: Vec<rusqlite::types::Value> = params
+        let sqlval_params: Vec<crate::db::SqlVal> = params.iter().map(crate::db::SqlVal::from_json).collect();
+        let raw_rows = self.db.query_values("_query_sql", sql, &sqlval_params)?;
+        Ok(raw_rows
             .iter()
-            .map(|v| match v {
-                serde_json::Value::String(s) => rusqlite::types::Value::Text(s.clone()),
-                serde_json::Value::Number(n) => {
-                    if let Some(i) = n.as_i64() {
-                        rusqlite::types::Value::Integer(i)
-                    } else if let Some(f) = n.as_f64() {
-                        rusqlite::types::Value::Real(f)
-                    } else {
-                        rusqlite::types::Value::Null
-                    }
-                }
-                serde_json::Value::Null => rusqlite::types::Value::Null,
-                _ => rusqlite::types::Value::Text(v.to_string()),
-            })
-            .collect();
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = param_vals
-            .iter()
-            .map(|v| v as &dyn rusqlite::types::ToSql)
-            .collect();
-        let rows_iter = stmt.query_map(param_refs.as_slice(), |row| {
-            let mut vals: Vec<serde_json::Value> = Vec::new();
-            for i in 0..col_count {
-                let v: rusqlite::types::Value = row.get_unwrap(i);
-                vals.push(match v {
-                    rusqlite::types::Value::Null => serde_json::Value::Null,
-                    rusqlite::types::Value::Integer(n) => serde_json::json!(n),
-                    rusqlite::types::Value::Real(f) => serde_json::json!(f),
-                    rusqlite::types::Value::Text(s) => serde_json::json!(s),
-                    rusqlite::types::Value::Blob(b) => {
-                        serde_json::json!(format!("<blob {}B>", b.len()))
-                    }
-                });
-            }
-            Ok(vals)
-        })?;
-        Ok(rows_iter.filter_map(|r| r.ok()).collect())
+            .map(|row| row.iter().map(sqlval_to_json_rpc).collect())
+            .collect())
     }
 
     /// (file, specifier) for every `use`/`import` row in `module_import`. The
@@ -76,25 +40,27 @@ impl Engine {
     /// which the refactor sink uses to detect imports it cannot yet splice (a
     /// brace leaf's located span covers the leaf name, not the full path).
     pub fn module_imports(&self) -> Result<Vec<(String, String)>> {
-        let conn = self.db.conn();
-        let mut s = conn.prepare(&format!(
-            "SELECT \"file\", \"specifier\" FROM {} WHERE \"kind\" IN ('use', 'import')",
-            txt_tbl("module_import")
-        ))?;
-        let rows = s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
-        Ok(rows.filter_map(|x| x.ok()).collect())
+        let table = txt_tbl("module_import");
+        let rows = self.db.query_rows(
+            "module_import",
+            &format!("SELECT \"file\", \"specifier\" FROM {table} WHERE \"kind\" IN ('use', 'import')"),
+            &[],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )?;
+        Ok(rows)
     }
 
     /// (file, decl-name) for every Kotlin same-package implicit ref. These have
     /// no import text to rewrite, so `--move` can only count them loudly.
     pub fn same_package_uses(&self) -> Result<Vec<(String, String)>> {
-        let conn = self.db.conn();
-        let mut s = conn.prepare(&format!(
-            "SELECT \"file\", \"specifier\" FROM {} WHERE \"kind\" = 'same-package'",
-            txt_tbl("module_import")
-        ))?;
-        let rows = s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
-        Ok(rows.filter_map(|x| x.ok()).collect())
+        let table = txt_tbl("module_import");
+        let rows = self.db.query_rows(
+            "module_import",
+            &format!("SELECT \"file\", \"specifier\" FROM {table} WHERE \"kind\" = 'same-package'"),
+            &[],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )?;
+        Ok(rows)
     }
 
     /// Read the `diag` relation, if declared, as normalized DiagRows. Maps each
@@ -119,22 +85,24 @@ impl Engine {
         if only.is_some() {
             sql.push_str(" WHERE \"path\" = ?1");
         }
-        let mut stmt = self.db.conn().prepare(&sql)?;
-        let map_row = |row: &rusqlite::Row| -> rusqlite::Result<DiagRow> {
-            let text = |i: usize| {
-                row.get::<_, rusqlite::types::Value>(i)
-                    .map(|v| match v {
-                        rusqlite::types::Value::Text(s) => s,
-                        rusqlite::types::Value::Integer(n) => n.to_string(),
-                        _ => String::new(),
-                    })
-                    .unwrap_or_default()
+        let params: Vec<crate::db::SqlVal> = only.map(|p| vec![p.into()]).unwrap_or_default();
+        let raw_rows = self.db.query_values("diag", &sql, &params)?;
+        let mut out = Vec::new();
+        for row in &raw_rows {
+            let text = |i: usize| -> String {
+                match &row[i] {
+                    crate::db::SqlVal::Text(s) => s.clone(),
+                    crate::db::SqlVal::Int(n) => n.to_string(),
+                    _ => String::new(),
+                }
             };
-            // NULL (unnamed column) -> None, so a default can fill it.
-            let int_opt = |i: usize| row.get::<_, Option<i64>>(i).ok().flatten();
+            let int_opt = |i: usize| match row.get(i) {
+                Some(crate::db::SqlVal::Int(n)) => Some(*n),
+                _ => None,
+            };
             let line = int_opt(1).unwrap_or(0);
             let sev = text(5);
-            Ok(DiagRow {
+            out.push(DiagRow {
                 path: text(0),
                 line,
                 col: int_opt(2).unwrap_or(0),
@@ -145,21 +113,9 @@ impl Engine {
                 msg: text(7),
                 hint: {
                     let h = text(8);
-                    if h.is_empty() {
-                        None
-                    } else {
-                        Some(h)
-                    }
+                    if h.is_empty() { None } else { Some(h) }
                 },
-            })
-        };
-        let mut out = Vec::new();
-        let mut rows = match only {
-            Some(p) => stmt.query(rusqlite::params![p])?,
-            None => stmt.query([])?,
-        };
-        while let Some(row) = rows.next()? {
-            out.push(map_row(row)?);
+            });
         }
         // Engine-structural shape diagnostics (Phase 5): not `diag`-rel rows, so
         // append them here — the single read seam --check / --lsp / the daemon
@@ -315,21 +271,18 @@ impl Engine {
         if !self.rels.contains_key("diag_mute") {
             bail!("diag_mute rel is not declared; run a tick before toggling a mute");
         }
-        let already: i64 = self.db.conn().query_row(
-            &format!(
-                "SELECT COUNT(*) FROM {} WHERE \"code\" = ?1",
-                txt_tbl("diag_mute")
-            ),
-            rusqlite::params![code],
-            |r| r.get(0),
+        let table = txt_tbl("diag_mute");
+        let already: i64 = self.db.query_one(
+            "diag_mute",
+            &format!("SELECT COUNT(*) FROM {table} WHERE \"code\" = ?1"),
+            &[code.into()],
+            |r| Ok(r.get(0)?),
         )?;
         if already > 0 {
-            self.db.conn().execute(
-                &format!(
-                    "DELETE FROM {} WHERE \"code\" = sprf_sym(?1)",
-                    tbl("diag_mute")
-                ),
-                rusqlite::params![code],
+            self.db.exec_params(
+                "diag_mute",
+                &format!("DELETE FROM {} WHERE \"code\" = sprf_sym(?1)", tbl("diag_mute")),
+                &[code.into()],
             )?;
             Ok(false)
         } else {
@@ -344,10 +297,14 @@ impl Engine {
         if !self.rels.contains_key("diag_mute") {
             return Ok(std::collections::HashSet::new());
         }
-        let conn = self.db.conn();
-        let mut stmt = conn.prepare(&format!("SELECT \"code\" FROM {}", txt_tbl("diag_mute")))?;
-        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-        Ok(rows.filter_map(|x| x.ok()).collect())
+        let table = txt_tbl("diag_mute");
+        let rows = self.db.query_rows(
+            "diag_mute",
+            &format!("SELECT \"code\" FROM {table}"),
+            &[],
+            |r| Ok(r.get::<_, String>(0)?),
+        )?;
+        Ok(rows.into_iter().collect())
     }
 
     /// Every distinct diagnostic code currently in the `diag` relation, paired
@@ -359,13 +316,14 @@ impl Engine {
         let muted = self.muted_codes()?;
         let mut codes: std::collections::BTreeSet<String> = muted.iter().cloned().collect();
         if self.rels.contains_key("diag") {
-            let conn = self.db.conn();
-            let mut stmt = conn.prepare(&format!(
-                "SELECT DISTINCT \"code\" FROM {} WHERE \"code\" IS NOT NULL AND \"code\" != ''",
-                txt_tbl("diag")
-            ))?;
-            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-            for c in rows.filter_map(|x| x.ok()) {
+            let table = txt_tbl("diag");
+            let rows = self.db.query_rows(
+                "diag",
+                &format!("SELECT DISTINCT \"code\" FROM {table} WHERE \"code\" IS NOT NULL AND \"code\" != ''"),
+                &[],
+                |r| Ok(r.get::<_, String>(0)?),
+            )?;
+            for c in rows {
                 codes.insert(c);
             }
         }
@@ -393,13 +351,14 @@ impl Engine {
             return Ok(Vec::new());
         }
         let rows: Vec<(String, String)> = {
-            let conn = self.db.conn();
-            let mut s = conn.prepare(&format!("SELECT id, result FROM {}", txt_tbl(out_rel)))?;
-            let rows = s
-                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
-                .filter_map(|x| x.ok())
-                .collect();
-            conn.execute(&format!("DELETE FROM {}", tbl(out_rel)), [])?;
+            let table = txt_tbl(out_rel);
+            let rows = self.db.query_rows(
+                out_rel,
+                &format!("SELECT id, result FROM {table}"),
+                &[],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            self.db.exec_on(out_rel, &format!("DELETE FROM {}", tbl(out_rel)))?;
             rows
         };
         let ids: Vec<String> = rows.iter().map(|(id, _)| id.clone()).collect();
@@ -428,64 +387,49 @@ impl Engine {
             })
             .collect::<Vec<_>>()
             .join(",");
-        self.db.conn().execute(
+        let params: Vec<crate::db::SqlVal> = ids.iter().map(|id| id.as_str().into()).collect();
+        self.db.exec_params(
+            in_rel,
             &format!("DELETE FROM {} WHERE id IN ({ph})", tbl(in_rel)),
-            rusqlite::params_from_iter(ids),
+            &params,
         )?;
         Ok(())
     }
 
-    // (cell_as_string lives at module scope, just above this impl block, so
-    // every generic row reader — rel_rows, load_edges, edge_content_digest —
-    // shares one stringify path across TEXT and INTEGER (sym) columns.)
+    // (legacy cell_as_string helper removed; rel_rows now uses SqlVal::to_lossy_string.)
 
     /// Read a relation's table as positional String rows (test/diagnostic).
     /// Returns empty if the relation isn't declared.
-    pub fn rel_rows(&self, rel: &str, ncols: usize) -> Vec<Vec<String>> {
+    pub fn rel_rows(&self, rel: &str, _ncols: usize) -> Vec<Vec<String>> {
         if !self.rels.contains_key(rel) {
             return Vec::new();
         }
-        let conn = self.db.conn();
-        let mut s = match conn.prepare(&format!("SELECT * FROM {}", txt_tbl(rel))) {
-            Ok(s) => s,
+        let table = txt_tbl(rel);
+        let raw_rows = match self.db.query_values(rel, &format!("SELECT * FROM {table}"), &[]) {
+            Ok(rows) => rows,
             Err(_) => return Vec::new(),
         };
-        let rows = s.query_map([], |r| {
-            let mut v = Vec::with_capacity(ncols);
-            for i in 0..ncols {
-                // Stringify whatever the column holds: an int column read as
-                // String is a rusqlite type error, which would silently drop
-                // the whole row from a diagnostic read.
-                v.push(cell_as_string(r, i)?);
-            }
-            Ok(v)
-        });
-        rows.map(|iter| iter.filter_map(|x| x.ok()).collect())
-            .unwrap_or_default()
+        raw_rows
+            .iter()
+            .map(|row| row.iter().map(|cell| cell.to_lossy_string()).collect())
+            .collect()
     }
 
     /// The query-facing `repo` relation (slug, root, url) as it stood after the
     /// last tick's `refresh_builtin_rels` — the union of config and dynamically
     /// pulled repos whose root exists. Diagnostics/tests.
     pub fn repo_relation(&self) -> Vec<(String, String, String)> {
-        let conn = self.db.conn();
-        let mut s = match conn.prepare(&format!(
-            "SELECT slug, root, url FROM {} ORDER BY slug",
-            txt_tbl("repo")
-        )) {
-            Ok(s) => s,
+        let table = txt_tbl("repo");
+        let rows = match self.db.query_rows(
+            "repo",
+            &format!("SELECT slug, root, url FROM {table} ORDER BY slug"),
+            &[],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+        ) {
+            Ok(rows) => rows,
             Err(_) => return Vec::new(),
         };
-        let rows = s.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-            ))
-        });
-        rows.ok()
-            .map(|iter| iter.filter_map(|x| x.ok()).collect())
-            .unwrap_or_default()
+        rows
     }
 
     /// Drain the NETWORK/MUTATING sinks (`repo` pulls + `checkout` sweeps) AFTER
@@ -541,5 +485,17 @@ impl Engine {
                 .saturating_sub(outcomes_before);
         }
         Ok(sink_rows)
+    }
+}
+
+/// JSON rendering for the RPC query_sql path: text/int/real/null map to the
+/// obvious JSON shapes; blobs report their byte count (legacy behavior).
+fn sqlval_to_json_rpc(v: &crate::db::SqlVal) -> serde_json::Value {
+    match v {
+        crate::db::SqlVal::Text(s) => serde_json::Value::String(s.clone()),
+        crate::db::SqlVal::Int(n) => serde_json::Value::from(*n),
+        crate::db::SqlVal::Real(f) => serde_json::Value::from(*f),
+        crate::db::SqlVal::Blob(b) => serde_json::Value::String(format!("<blob {}B>", b.len())),
+        crate::db::SqlVal::Null => serde_json::Value::Null,
     }
 }
