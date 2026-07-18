@@ -91,10 +91,16 @@ honest_signal_in_fn(source_file, fn_line, fn_end_line) <-
     signal_line <= fn_end_line.
 
 # Waiver: @flag-honest: in a comment from just above the fn through its body.
+# Source-only rel: just the comment coordinates, no join.
+rel dishonest_flag_waiver_comment(source_file: file, waiver_line: int).
+dishonest_flag_waiver_comment(source_file, waiver_line) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    comment(source_file, source_rev, /@flag-honest:/, waiver_line, label: _).
+
+# Derived rule: join the waiver comments against the flagged fn spans.
 rel dishonest_flag_waiver(source_file: file, fn_line: int).
 dishonest_flag_waiver(source_file, fn_line) <-
-    scan("WORK", "src/**/*.rs", source_file, source_rev),
-    comment(source_file, source_rev, /@flag-honest:/, waiver_line, label: _),
+    dishonest_flag_waiver_comment(source_file, waiver_line),
     refresh_or_flip_fn(source_file, fn_line, fn_end_line, _),
     waiver_line >= fn_line - 3,
     waiver_line <= fn_end_line.

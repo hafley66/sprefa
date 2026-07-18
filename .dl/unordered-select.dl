@@ -54,10 +54,16 @@ unordered_select_test_hit(source_file, line_number) <-
     gate_line <= line_number.
 
 # Waiver: @unordered-ok: in a comment within the ten lines above the SQL.
+# Source-only rel: just the comment coordinates, no join.
+rel unordered_select_waiver_comment(source_file: file, waiver_line: int).
+unordered_select_waiver_comment(source_file, waiver_line) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    comment(source_file, source_rev, /@unordered-ok:/, waiver_line, label: _).
+
+# Derived rule: join the waiver comments against the SQL literal lines.
 rel unordered_select_waiver(source_file: file, sql_line: int).
 unordered_select_waiver(source_file, sql_line) <-
-    scan("WORK", "src/**/*.rs", source_file, source_rev),
-    comment(source_file, source_rev, /@unordered-ok:/, waiver_line, label: _),
+    unordered_select_waiver_comment(source_file, waiver_line),
     unordered_select(source_file, sql_line, _),
     waiver_line >= sql_line - 10,
     waiver_line < sql_line.
