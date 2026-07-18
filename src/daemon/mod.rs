@@ -124,7 +124,10 @@ mod budget;
 mod client;
 mod dispatch;
 mod home;
+pub mod http_discovery;
+pub mod read;
 mod root;
+pub mod shell;
 
 pub(crate) use budget::*;
 pub use client::*;

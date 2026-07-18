@@ -11,9 +11,12 @@ pub mod corpus;
 pub mod cst;
 pub mod daemon;
 pub mod daemon_client;
-pub mod daemon_http;
-pub mod daemon_read;
-pub mod daemon_shell;
+// Back-compat aliases for the pre-absorption module paths (decomposition plan
+// step 10): the transport shell, lock-free read path, and HTTP discovery
+// helpers live under src/daemon/ now.
+pub use daemon::http_discovery as daemon_http;
+pub use daemon::read as daemon_read;
+pub use daemon::shell as daemon_shell;
 pub mod datapath;
 pub mod db;
 pub mod db_ratio;
