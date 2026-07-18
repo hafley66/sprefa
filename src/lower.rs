@@ -442,7 +442,7 @@ pub fn lower_body_projection(body: &[BodyItem], rels: &Rels, vars: &[String]) ->
     Ok(format!("SELECT DISTINCT {} FROM {}{}", exprs.join(", "), froms.join(", "), where_sql))
 }
 
-// ARCH {"url":"lower","role":"compile"}
+// ARCH {"url":"30-lower","role":"compile"}
 pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
     lower_rule_to(rule, rels, &tbl(&rule.head.rel), &[])
 }

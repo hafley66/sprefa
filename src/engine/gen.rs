@@ -2,7 +2,7 @@ use super::*;
 
 impl Engine {
     /// already match, so a converged tick leaves the tree untouched.
-    // ARCH {"url":"engine/gen","role":"output"}
+    // ARCH {"url":"engine/60-gen","role":"output"}
     #[tracing::instrument(skip_all, level = "debug")]
     pub(crate) fn run_gens(&mut self, prog: &Program, quiet: bool) -> Result<()> {
         let mut written: Vec<String> = Vec::new();

@@ -1,3 +1,4 @@
+// ARCH {"url":"engine/34-strata","role":"planner"}
 use super::*;
 
 pub(crate) fn closure_map(rules: &[&Rule]) -> HashMap<String, String> {

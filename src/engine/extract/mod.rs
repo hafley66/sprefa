@@ -712,7 +712,7 @@ impl Engine {
     /// relations for ones that should have resolved.
     /// Wholesale wipe + repopulate; gated by `module_rels_used` at the call site.
     /// Edges are resolved within a single rev (cross-rev merge is a Stage-1 corner).
-    // ARCH {"url":"engine/extract","role":"extraction"}
+    // ARCH {"url":"engine/30-extract","role":"extraction"}
     pub(crate) fn refresh_module_rels(&self) -> Result<bool> {
         let by_rev = self.module_files_by_rev()?;
         // Perf gap A twin: skip the wholesale rebuild when no rev's input digest

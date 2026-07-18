@@ -303,7 +303,7 @@ impl Engine {
     }
 
     /// Wipe derived tables and run the semi-naive fixpoint to convergence.
-    // ARCH {"url":"engine/derive","role":"fixpoint"}
+    // ARCH {"url":"engine/50-derive","role":"fixpoint"}
     #[tracing::instrument(skip_all, fields(n_rules = derived_rules.len(), n_rels = derived_rels.len()), level = "debug")]
     pub(crate) fn rebuild_derived(
         &self,

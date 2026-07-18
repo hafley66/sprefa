@@ -105,7 +105,7 @@ pub(crate) fn count_lines(bytes: &[u8]) -> i64 {
     }
 }
 
-// ARCH {"url":"engine/scan","role":"file-discovery"}
+// ARCH {"url":"engine/10-scan","role":"file-discovery"}
 pub(crate) fn enumerate_with_hash(
     repo: &str,
     repo_root: &Path,

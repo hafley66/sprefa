@@ -165,7 +165,7 @@ impl Engine {
     /// One reactive tick: declare, reconcile sources incrementally, rebuild
     /// derived only if a source fact changed, then run queries. Returns a
     /// `TickReport` of what moved (`dl --settle` drives this to a fixpoint).
-    // ARCH {"url":"engine/tick","role":"orchestrator"}
+    // ARCH {"url":"engine/40-tick","role":"orchestrator"}
     #[tracing::instrument(skip_all, level = "info")]
     pub fn tick_report(&mut self, prog: &Program, quiet: bool) -> Result<TickReport> {
         let t_tick = std::time::Instant::now();
@@ -972,7 +972,7 @@ impl Engine {
     /// Reactive tick driven by a known set of changed paths (from the file
     /// watcher): reconciles only those paths, never walking or statting the
     /// tree. Only WORK source rules participate; route git-rev changes to `tick`.
-    // ARCH {"url":"engine/tick-paths","role":"orchestrator"}
+    // ARCH {"url":"engine/41-tick-paths","role":"orchestrator"}
     #[tracing::instrument(skip_all, fields(n_changed = changed.len()), level = "info")]
     pub fn tick_paths(&mut self, prog: &Program, changed: &[PathBuf], quiet: bool) -> Result<()> {
         self.tick_paths_with_policy(prog, changed, quiet, PathTickFallbackPolicy::Allow)

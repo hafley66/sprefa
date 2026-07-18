@@ -202,7 +202,7 @@ struct Cli {
 }
 
 /// The `dl` entry point. `main` is a one-liner over this.
-// ARCH {"url":"cli","role":"dispatch"}
+// ARCH {"url":"10-cli","role":"dispatch"}
 pub fn run() -> Result<()> {
     crate::trace::init();
     crate::engine::init_thread_pool();

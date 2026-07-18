@@ -1,0 +1,106 @@
+# arch-expr.dl — the architecture draws ITSELF as an rx-flavored expression.
+#
+# Nothing below hand-types the tree. Every fact is derived from:
+#   - comment space: the `// ARCH {"url":...}` markers (std/arch.dl lifts them);
+#     the url IS the tree — parent = url minus last segment, sibling order =
+#     text order of the segment (adopt the 00-/10-/20- prefix convention from
+#     std/arch.dl to make order mean pipeline order, not the alphabet).
+#   - code space: a node whose file contains loops gets a `*` glyph
+#     (loop_over), a file with a poll/serve loop gets `$` (match idiom).
+#
+# Printer = four recursive rules over text `+` concat. Conformance =
+# ax_undeclared: real imports between ARCH-marked files that the derived tree
+# does not relate (either direction, any depth).
+#
+#   dl examples/arch-expr.dl
+
+use "std/arch.dl".
+
+rel src(path: file).
+src(path) <- scan("WORK", "src/**/*.rs", path, rev).
+
+# ── facts FROM COMMENTS: tree shape out of the ARCH urls ─────────────────────
+rel ax_parent(url: text, parent_url: text).
+ax_parent(url, parent_url) <-
+  arch_node(_, _, url),
+  parent_url = replace_re(url, "/[^/]*$", ""), parent_url != url.
+# a slashless url hangs off the synthetic root
+ax_parent(url, "sprefa") <-
+  arch_node(_, _, url),
+  stripped = replace_re(url, "/[^/]*$", ""), stripped = url.
+# an INTERMEDIATE segment (engine/ has no marker of its own) becomes a node too
+ax_parent(parent_url, "sprefa") <-
+  ax_parent(_, parent_url), parent_url != "sprefa",
+  !arch_node(_, _, parent_url).
+
+# sibling order = text order of the url (numeric prefixes make this pipeline
+# order; without them it degrades to the alphabet, visibly)
+rel ax_has_earlier(url: text).
+ax_has_earlier(url) <-
+  ax_parent(url, parent_url), ax_parent(sibling, parent_url), sibling < url.
+rel ax_ord(url: text, ord: int).
+ax_ord(url, count(sibling)) <-
+  ax_parent(url, parent_url), ax_parent(sibling, parent_url), sibling < url.
+ax_ord(url, 0) <- ax_parent(url, _), !ax_has_earlier(url).
+
+rel ax_app(parent_url: text, ord: int, child_url: text).
+ax_app(parent_url, ord, url) <- ax_parent(url, parent_url), ax_ord(url, ord).
+
+# display name = last segment, numeric prefix stripped
+rel ax_show(url: text, shown: text).
+ax_show(url, shown) <-
+  ax_parent(url, _),
+  seg = split(url, "/", -1), shown = replace_re(seg, "^[0-9]+-", "").
+ax_show("sprefa", "sprefa").
+
+# ── glyphs FROM CODE: * = the file loops, $ = the file hosts a poll loop ─────
+rel poll_file(path: file).
+poll_file(path) <-
+  scan("WORK", "src/**/*.rs", path, rev),
+  match(path, rev, /fn (poll_loop|serve|run_watch)/, line).
+
+rel ax_mark(url: text, mark: text).
+ax_mark(url, "*") <- arch_node(path, _, url), loop_over(path, _, _, _, _, _).
+ax_mark(url, "$") <- arch_node(path, _, url), poll_file(path).
+
+rel ax_glyph(url: text, glyph: text).
+ax_glyph(url, min(mark)) <- ax_mark(url, mark).
+ax_glyph(url, "") <- ax_parent(url, _), !ax_mark(url, _).
+ax_glyph("sprefa", "").
+
+# ── the printer: four recursive rules ────────────────────────────────────────
+rel ax_expr(url: text, rendered: text).
+ax_expr(url, rendered) <-
+  ax_show(url, shown), ax_glyph(url, glyph),
+  !ax_app(url, _, _), rendered = shown + glyph.
+
+rel ax_tail(parent_url: text, ord: int, rendered: text).
+ax_tail(parent_url, ord, rendered) <-
+  ax_app(parent_url, ord, child_url), ax_expr(child_url, child_txt),
+  next_ord = ord + 1, !ax_app(parent_url, next_ord, _),
+  rendered = child_txt + "".
+ax_tail(parent_url, ord, rendered) <-
+  ax_app(parent_url, ord, child_url), ax_expr(child_url, child_txt),
+  next_ord = ord + 1, ax_tail(parent_url, next_ord, rest),
+  rendered = child_txt + " >> " + rest.
+
+ax_expr(parent_url, rendered) <-
+  ax_tail(parent_url, 0, inner),
+  ax_show(parent_url, shown), ax_glyph(parent_url, glyph),
+  rendered = shown + "(" + inner + ")" + glyph.
+
+# ── conformance FROM CODE: imports the tree does not relate ──────────────────
+rel ax_desc(top: text, below: text).
+ax_desc(parent_url, child_url) <- ax_app(parent_url, _, child_url).
+ax_desc(top, below) <- ax_desc(top, mid), ax_app(mid, _, below).
+
+rel ax_undeclared(src_path: file, dst_path: file).
+ax_undeclared(src_path, dst_path) <-
+  module_edge(src_path, dst_path),
+  arch_node(src_path, _, src_url), arch_node(dst_path, _, dst_url),
+  !ax_desc(src_url, dst_url), !ax_desc(dst_url, src_url),
+  src_url != dst_url.
+
+# ── output ───────────────────────────────────────────────────────────────────
+? ax_expr(url: "sprefa", rendered: expression).
+? ax_undeclared(src_path, dst_path).

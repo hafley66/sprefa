@@ -5,7 +5,7 @@ use crate::lex::Tok;
 
 pub struct Parser { toks: Vec<Tok>, i: usize }
 
-// ARCH {"url":"parse","role":"frontend"}
+// ARCH {"url":"20-parse","role":"frontend"}
 pub fn parse(toks: Vec<Tok>) -> Result<Program> {
     let mut p = Parser { toks, i: 0 };
     let mut prog = Program::default();

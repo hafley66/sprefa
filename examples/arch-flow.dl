@@ -1,0 +1,394 @@
+# arch-flow.dl — how ARCH nodes literally intersect in the code, three ways,
+# with a resolution ladder and golden-receipt rails.
+#
+# Anchors come from the `// ARCH {"url":...}` comments (std/arch.dl). Then:
+#   1. arch_flow_native: fn-level edges WITHOUT scip — call_edge syms carry
+#      their file path, regex it out, join both ends to ARCH files.
+#   2. arch_flow_scip: the same edges WITH scip — scip_fn_edge symbols
+#      resolved through scip occurrences (compiler-backed), span-scoped.
+#   3. arch_df: INTRAPROCEDURAL unification inside the orchestrator
+#      (tick.rs): a call whose target lives in arch node A produces a value,
+#      that value df-flows into an argument of a call targeting arch node B.
+#      The witness column is the LOCAL VARIABLE both nodes meet in — the
+#      unifier. 3b is the same unifier without scip (tree-sitter targets).
+#
+# MARKER SPANS: a file may carry several ARCH markers (tick.rs: engine/40-tick
+# at its head, engine/41-tick-paths further down). arch_span gives each marker
+# a line range — from its line (the first marker owns from line 1) to the line
+# before the next marker, or EOF. Every line-bearing join below attributes
+# through the span, so the two tick.rs sections are distinct nodes instead of
+# duplicating every edge under both urls.
+#
+# RESOLUTION LADDER (arch_flow_resolved): a name-keyed call resolves through
+# the first rung that claims it, and only uniquely:
+#   qualified  Type::fn — the def file declares/impls Type AND defines fn,
+#              exactly one such file. Vec::new dies here: no in-corpus Vec.
+#   import     the caller's file imports (module_edge / module_binding_resolved
+#              alias) exactly one file defining the name; own file counts.
+#   unique     the whole corpus defines the name in exactly one file.
+# Anything else stays unresolved and is COUNTED, with the subset scip could
+# still recover (a reference occurrence on the call line whose symbol name
+# matches) counted separately — the honest residual.
+#
+# RAILS (dl examples/arch-flow.dl --check):
+#   arch-golden-missing   reconcile -> derive via save_stmt_ms must resolve
+#   arch-false-edge       parse.rs Vec::new must never resolve into meta.rs
+#   arch-guard-breach     a "unique"-rung edge whose name has >1 home
+#   arch-df-empty         the scip df unifier found nothing (stale index.scip?)
+#   arch-df-golden        strata -> derive unifier edge gone (warn)
+#   scip-stale-file       an ARCH file has >=5 fns the index has no def for
+#
+#   dl examples/arch-flow.dl            # exploratory queries
+#   dl examples/arch-flow.dl --check    # rails only, exit 2 on error
+
+use "std/arch.dl".
+
+rel src(path: file).
+src(path) <- scan("WORK", "src/**/*.rs", path, rev).
+
+# ── marker spans: each ARCH marker owns a line range of its file ─────────────
+rel arch_marker_next(path: file, line: int, next_line: int).
+arch_marker_next(path, line, min(other_line)) <-
+  arch_node(path, line, _), arch_node(path, other_line, _), other_line > line.
+rel arch_first_marker(path: file, line: int).
+arch_first_marker(path, min(line)) <- arch_node(path, line, _).
+
+rel arch_span(path: file, url: text, span_start: int, span_end: int).
+arch_span(path, url, 1, next_line - 1) <-
+  arch_node(path, line, url), arch_first_marker(path, line),
+  arch_marker_next(path, line, next_line).
+arch_span(path, url, 1, 99999999) <-
+  arch_node(path, line, url), arch_first_marker(path, line),
+  !arch_marker_next(path, line, _).
+arch_span(path, url, line, next_line - 1) <-
+  arch_node(path, line, url), !arch_first_marker(path, line),
+  arch_marker_next(path, line, next_line).
+arch_span(path, url, line, 99999999) <-
+  arch_node(path, line, url), !arch_first_marker(path, line),
+  !arch_marker_next(path, line, _).
+
+# ── 1. fn-level, no scip: file path lives inside the call_edge sym ───────────
+rel sym_file(sym: text, path: text).
+sym_file(sym, path) <-
+  call_edge(sym, _, _),
+  stripped = replace_re(sym, "^[a-z_-]+::", ""),
+  path = replace_re(stripped, "::.*$", "").
+sym_file(sym, path) <-
+  call_edge(_, sym, _),
+  stripped = replace_re(sym, "^[a-z_-]+::", ""),
+  path = replace_re(stripped, "::.*$", "").
+
+rel arch_flow_native(src_url: text, dst_url: text, callee_fn: text).
+arch_flow_native(src_url, dst_url, callee_fn) <-
+  call_edge(caller_sym, callee_sym, _),
+  sym_file(caller_sym, caller_path), sym_file(callee_sym, callee_path),
+  arch_node(caller_path, _, src_url), arch_node(callee_path, _, dst_url),
+  src_url != dst_url,
+  callee_fn = replace_re(callee_sym, "^.*::", "").
+
+# ── 2. fn-level, with scip, span-scoped through definition occurrences ───────
+# scip_occurrence lines are 0-BASED; +1 shifts to the 1-based span space
+# (friction item (b)).
+rel scip_def_line(sym: text, path: text, def_line: int).
+scip_def_line(sym, path, occ_line + 1) <-
+  scip_occurrence(path, sym, occ_line, _, _, _, "definition", _).
+
+rel arch_flow_scip(src_url: text, dst_url: text, callee_fn: text).
+arch_flow_scip(src_url, dst_url, callee_fn) <-
+  scip_fn_edge(caller_sym, callee_sym),
+  scip_def_line(caller_sym, caller_path, caller_line),
+  arch_span(caller_path, src_url, src_start, src_end),
+  src_start <= caller_line, caller_line <= src_end,
+  scip_def_line(callee_sym, callee_path, callee_line),
+  arch_span(callee_path, dst_url, dst_start, dst_end),
+  dst_start <= callee_line, callee_line <= dst_end,
+  src_url != dst_url,
+  callee_fn = replace_re(callee_sym, "^.*/", "").
+
+# ── the with/without diff ────────────────────────────────────────────────────
+rel flow_native_only(src_url: text, dst_url: text).
+flow_native_only(src_url, dst_url) <-
+  arch_flow_native(src_url, dst_url, _), !arch_flow_scip(src_url, dst_url, _).
+rel flow_scip_only(src_url: text, dst_url: text).
+flow_scip_only(src_url, dst_url) <-
+  arch_flow_scip(src_url, dst_url, _), !arch_flow_native(src_url, dst_url, _).
+
+# ── the resolution ladder's raw material ─────────────────────────────────────
+rel ax_fndef(called: text, def_path: file, body_start: int, body_end: int).
+ax_fndef(called, def_path, body_start, body_end) <-
+  scan("WORK", "src/**/*.rs", def_path, rev),
+  ast(def_path, rev, :rust,
+      "(function_item name: (identifier) @called) @fn", body_start, body_end).
+
+rel ax_callsite(called: text, call_path: file, call_line: int).
+ax_callsite(called, call_path, call_line) <-
+  scan("WORK", "src/**/*.rs", call_path, rev),
+  ast(call_path, rev, :rust,
+      "(call_expression function: [ (identifier) @called (field_expression field: (field_identifier) @called) (scoped_identifier name: (identifier) @called) ])",
+      call_line).
+
+# Type::fn callsites keep their qualifier (simple one-segment quals only;
+# crate::mod::Type::fn paths fall through to the lower rungs).
+rel ax_scoped_call(qual: text, called: text, call_path: file, call_line: int).
+ax_scoped_call(qual, called, call_path, call_line) <-
+  scan("WORK", "src/**/*.rs", call_path, rev),
+  ast(call_path, rev, :rust,
+      "(call_expression function: (scoped_identifier path: (identifier) @qual name: (identifier) @called))",
+      call_line).
+
+# where a type name lives: its declaration or any impl block for it
+rel ty_home(type_name: text, def_path: file).
+ty_home(type_name, def_path) <-
+  scan("WORK", "src/**/*.rs", def_path, rev),
+  ast(def_path, rev, :rust,
+      "[ (struct_item name: (type_identifier) @type_name) (enum_item name: (type_identifier) @type_name) (trait_item name: (type_identifier) @type_name) (impl_item type: (type_identifier) @type_name) (impl_item type: (generic_type type: (type_identifier) @type_name)) ]",
+      def_line).
+
+rel fn_file(called: text, def_path: file).
+fn_file(called, def_path) <- ax_fndef(called, def_path, _, _).
+rel fn_homes(called: text, homes: int).
+fn_homes(called, count(def_path)) <- fn_file(called, def_path).
+
+# ── rung 1: qualified — Type and fn share exactly one file ───────────────────
+rel qual_home(qual: text, called: text, def_path: file).
+qual_home(qual, called, def_path) <-
+  ax_scoped_call(qual, called, _, _),
+  fn_file(called, def_path), ty_home(qual, def_path).
+rel qual_homes(qual: text, called: text, homes: int).
+qual_homes(qual, called, count(def_path)) <- qual_home(qual, called, def_path).
+
+rel qualified_site(call_path: file, call_line: int, called: text, def_path: file).
+qualified_site(call_path, call_line, called, def_path) <-
+  ax_scoped_call(qual, called, call_path, call_line),
+  qual_home(qual, called, def_path), qual_homes(qual, called, 1).
+
+# ── rung 2: import-scoped — exactly one defining file among the caller's
+#            imports (plus its own file) ─────────────────────────────────────
+rel import_home(call_path: file, called: text, def_path: file).
+import_home(call_path, called, def_path) <-
+  ax_callsite(called, call_path, _),
+  fn_file(called, def_path), module_edge(call_path, def_path).
+import_home(call_path, called, def_path) <-
+  ax_callsite(called, call_path, _),
+  fn_file(called, def_path), def_path = call_path.
+# aliased import: local name at the callsite, source name at the def file
+import_home(call_path, local_name, def_path) <-
+  ax_callsite(local_name, call_path, _),
+  module_binding_resolved(call_path, local_name, source_name, def_path),
+  fn_file(source_name, def_path).
+rel import_homes(call_path: file, called: text, homes: int).
+import_homes(call_path, called, count(def_path)) <-
+  import_home(call_path, called, def_path).
+
+rel import_site(call_path: file, call_line: int, called: text, def_path: file).
+import_site(call_path, call_line, called, def_path) <-
+  ax_callsite(called, call_path, call_line),
+  import_home(call_path, called, def_path), import_homes(call_path, called, 1).
+
+# ── rung 3: corpus-unique ────────────────────────────────────────────────────
+rel unique_site(call_path: file, call_line: int, called: text, def_path: file).
+unique_site(call_path, call_line, called, def_path) <-
+  ax_callsite(called, call_path, call_line),
+  fn_file(called, def_path), fn_homes(called, 1).
+
+# ── the ladder: first rung that claims a callsite wins ───────────────────────
+rel resolved_site(call_path: file, call_line: int, called: text, def_path: file, rung: text).
+resolved_site(call_path, call_line, called, def_path, "qualified") <-
+  qualified_site(call_path, call_line, called, def_path).
+resolved_site(call_path, call_line, called, def_path, "import") <-
+  import_site(call_path, call_line, called, def_path),
+  !qualified_site(call_path, call_line, called, _).
+resolved_site(call_path, call_line, called, def_path, "unique") <-
+  unique_site(call_path, call_line, called, def_path),
+  !qualified_site(call_path, call_line, called, _),
+  !import_site(call_path, call_line, called, _).
+
+# ── line receipts: WHICH call, WHERE, resolving to WHERE, via WHICH rung ─────
+# (the audit's verification pattern, kept as a first-class rel)
+rel edge_receipt(caller_path: file, call_line: int, called: text, def_path: file, rung: text).
+edge_receipt(caller_path, call_line, called, def_path, rung) <-
+  ax_fndef(_, caller_path, enclosing_start, enclosing_end),
+  resolved_site(caller_path, call_line, called, def_path, rung),
+  enclosing_start <= call_line, call_line <= enclosing_end.
+
+rel arch_flow_resolved(src_url: text, dst_url: text, callee_fn: text, rung: text).
+arch_flow_resolved(src_url, dst_url, callee_fn, rung) <-
+  edge_receipt(caller_path, call_line, callee_fn, def_path, rung),
+  arch_span(caller_path, src_url, src_start, src_end),
+  src_start <= call_line, call_line <= src_end,
+  ax_fndef(callee_fn, def_path, def_line, _),
+  arch_span(def_path, dst_url, dst_start, dst_end),
+  dst_start <= def_line, def_line <= dst_end,
+  src_url != dst_url.
+
+# ── the honest residual: what the ladder cannot claim ────────────────────────
+rel unresolved_call(call_path: file, call_line: int, called: text).
+unresolved_call(call_path, call_line, called) <-
+  ax_callsite(called, call_path, call_line),
+  !resolved_site(call_path, call_line, called, _, _).
+rel unresolved_count(calls: int).
+unresolved_count(count(call_line)) <- unresolved_call(_, call_line, _).
+
+# the subset scip still recovers: a reference occurrence on the call line
+# whose symbol carries the same name and defs to an in-corpus file
+rel scip_recovers(call_path: file, call_line: int, called: text, def_path: text).
+scip_recovers(call_path, call_line, called, def_path) <-
+  unresolved_call(call_path, call_line, called),
+  occ_line = call_line - 1,
+  scip_occurrence(call_path, sym, occ_line, _, _, _, "reference", _),
+  sym =~ /\(\)\.$/,
+  scip_name(sym, called),
+  scip_def_line(sym, def_path, _).
+rel scip_recovered_count(calls: int).
+scip_recovered_count(count(call_line)) <- scip_recovers(_, call_line, _, _).
+
+rel rung_count(rung: text, edges: int).
+rung_count(rung, count(call_line)) <- resolved_site(_, call_line, _, _, rung).
+
+rel flow_scip_beyond_resolved(src_url: text, dst_url: text).
+flow_scip_beyond_resolved(src_url, dst_url) <-
+  arch_flow_scip(src_url, dst_url, _), !arch_flow_resolved(src_url, dst_url, _, _).
+
+# ── 3. intraprocedural unification in the orchestrator ───────────────────────
+# which arch node a call LINE targets: a scip reference occurrence on that
+# line whose definition lands in an ARCH span (0-based -> +1 shift)
+rel line_target(file: text, line: int, target_url: text).
+line_target(file, line, target_url) <-
+  scip_occurrence(file, sym, line, _, _, _, "reference", _),
+  sym =~ /\(\)\.$/,
+  scip_def_line(sym, def_path, def_line),
+  arch_span(def_path, target_url, span_start, span_end),
+  span_start <= def_line, def_line <= span_end,
+  file = "src/engine/tick.rs".
+
+# scoped reach: ordinary recursion over df_edge, rooted in tick.rs ids only
+# (df ids embed file:line:col, so the glob pins the root set; the engine's
+# closure operator refuses an unpinned full-closure read by design)
+rel df_near(from: text, to: text).
+df_near(from, to) <- df_edge(from, to), from ~~ "src/engine/tick.rs*".
+df_near(from, to) <- df_near(from, mid), df_edge(mid, to).
+
+# call result born on a line targeting A flows into an argument of a call on a
+# line targeting B. The meeting node's local is `via` — the unifier.
+rel arch_df(src_url: text, dst_url: text, via: text).
+arch_df(src_url, dst_url, via) <-
+  df_node(result_id, "call_res", _, _, "src/engine/tick.rs", result_line),
+  scip_result_line = result_line - 1,
+  line_target("src/engine/tick.rs", scip_result_line, src_url),
+  df_near(result_id, meeting_id),
+  df_arg(consumer_call, _, meeting_id),
+  df_node(meeting_id, _, via, _, "src/engine/tick.rs", _), via != "",
+  df_node(consumer_call, "call_res", _, _, "src/engine/tick.rs", consumer_line),
+  scip_consumer_line = consumer_line - 1,
+  line_target("src/engine/tick.rs", scip_consumer_line, dst_url),
+  src_url != dst_url.
+# 0-hop: the call result IS the argument (f(g(...)) direct nesting)
+arch_df(src_url, dst_url, via) <-
+  df_node(result_id, "call_res", via, _, "src/engine/tick.rs", result_line),
+  scip_result_line = result_line - 1,
+  line_target("src/engine/tick.rs", scip_result_line, src_url),
+  df_arg(consumer_call, _, result_id),
+  df_node(consumer_call, "call_res", _, _, "src/engine/tick.rs", consumer_line),
+  scip_consumer_line = consumer_line - 1,
+  line_target("src/engine/tick.rs", scip_consumer_line, dst_url),
+  src_url != dst_url.
+
+# ── 3b. the same unifier WITHOUT scip: tree-sitter resolves call targets ─────
+# fresh from current content (no index staleness), 1-based on both sides.
+# Name-keyed, so the corpus-unique guard applies.
+rel tick_call(line: int, called: text).
+tick_call(line, called) <-
+  scan("WORK", "src/engine/tick.rs", path, rev),
+  ast(path, rev, :rust,
+      "(call_expression function: (field_expression field: (field_identifier) @called))",
+      line).
+tick_call(line, called) <-
+  scan("WORK", "src/engine/tick.rs", path, rev),
+  ast(path, rev, :rust,
+      "(call_expression function: (identifier) @called)", line).
+
+rel line_target_native(line: int, target_url: text).
+line_target_native(line, target_url) <-
+  tick_call(line, called),
+  ax_fndef(called, def_path, def_line, _), fn_homes(called, 1),
+  arch_span(def_path, target_url, span_start, span_end),
+  span_start <= def_line, def_line <= span_end.
+
+rel arch_df_native(src_url: text, dst_url: text, via: text).
+arch_df_native(src_url, dst_url, via) <-
+  df_node(result_id, "call_res", _, _, "src/engine/tick.rs", result_line),
+  line_target_native(result_line, src_url),
+  df_near(result_id, meeting_id),
+  df_arg(consumer_call, _, meeting_id),
+  df_node(meeting_id, _, via, _, "src/engine/tick.rs", _), via != "",
+  df_node(consumer_call, "call_res", _, _, "src/engine/tick.rs", consumer_line),
+  line_target_native(consumer_line, dst_url),
+  src_url != dst_url.
+
+# ── rails ────────────────────────────────────────────────────────────────────
+# golden MUST-resolve: reconcile.rs flushes its stmt timings through derive.rs'
+# save_stmt_ms (reconcile.rs:436 today). If the ladder ever drops this edge,
+# the resolver regressed.
+diag(path: "src/engine/reconcile.rs", line: 1, severity: "error", code: "arch-golden-missing",
+     msg: "golden edge gone: engine/20-reconcile -> engine/50-derive via save_stmt_ms no longer resolves") <-
+  src("src/engine/reconcile.rs"),
+  !arch_flow_resolved("engine/20-reconcile", "engine/50-derive", "save_stmt_ms", _).
+
+# golden MUST-NOT-resolve: Vec::new in parse.rs once resolved into meta.rs'
+# `fn new` (the audit's false positive). No rung may ever claim it again.
+diag(path: caller_path, line: call_line, severity: "error", code: "arch-false-edge",
+     msg: "Vec::new resolved into src/engine/meta.rs again — a ladder rung lost its uniqueness guard") <-
+  edge_receipt(caller_path, call_line, "new", "src/engine/meta.rs", _),
+  caller_path = "src/parse.rs".
+
+# guard breach: a corpus-unique-rung edge whose name is not corpus-unique
+# (can only fire if someone edits the guard out of unique_site)
+diag(path: caller_path, line: call_line, severity: "error", code: "arch-guard-breach",
+     msg: "a 'unique'-rung edge resolved a name with more than one defining file") <-
+  edge_receipt(caller_path, call_line, called, _, "unique"),
+  fn_homes(called, homes), homes > 1.
+
+# df unifier starved: no scip-backed arch_df rows at all — stale or missing
+# index.scip (the native unifier keeps working, so this is index-specific)
+diag(path: "index.scip", line: 1, severity: "error", code: "arch-df-empty",
+     msg: "scip df unifier is empty — index.scip stale or missing (re-run rust-analyzer scip)") <-
+  src("src/engine/tick.rs"),
+  !arch_df(_, _, _).
+
+# golden unifier edge: strata hands the derive phase its plan through tick.rs
+# locals (the cs/r receipt). Warn when it disappears; usually index staleness.
+diag(path: "src/engine/tick.rs", line: 1, severity: "warn", code: "arch-df-golden",
+     msg: "unifier edge engine/34-strata -> engine/50-derive vanished from arch_df (stale index.scip?)") <-
+  src("src/engine/tick.rs"),
+  arch_df(_, _, _),
+  !arch_df("engine/34-strata", "engine/50-derive", _).
+
+# scip freshness per file: an ARCH file whose current fns the index has no
+# definition occurrence for is behind the working tree
+rel scip_def_seen(path: text, fn_name: text).
+scip_def_seen(path, fn_name) <-
+  scip_def_line(sym, path, _), scip_name(sym, fn_name).
+rel scip_missing_fn(path: file, fn_name: text).
+scip_missing_fn(path, fn_name) <-
+  ax_fndef(fn_name, path, _, _), arch_node(path, _, _),
+  !scip_def_seen(path, fn_name).
+rel scip_missing_count(path: file, missing: int).
+scip_missing_count(path, count(fn_name)) <- scip_missing_fn(path, fn_name).
+diag(path: path, line: 1, severity: "warn", code: "scip-stale-file",
+     msg: "index.scip has no definition for 5+ fns currently in this ARCH file — re-index") <-
+  scip_missing_count(path, missing), missing >= 5.
+
+# ── output ───────────────────────────────────────────────────────────────────
+? arch_flow_native(src_url, dst_url, count(callee_fn)).
+? arch_flow_scip(src_url, dst_url, count(callee_fn)).
+? flow_native_only(src_url, dst_url).
+? flow_scip_only(src_url, dst_url).
+? arch_flow_resolved(src_url, dst_url, count(callee_fn), rung).
+? rung_count(rung, edges).
+? unresolved_count(calls).
+? scip_recovered_count(calls).
+? flow_scip_beyond_resolved(src_url, dst_url).
+? arch_df(src_url, dst_url, via).
+? arch_df_native(src_url, dst_url, via).
+? edge_receipt(caller_path: "src/engine/reconcile.rs", call_line, called, def_path: "src/engine/derive.rs", rung).
+? diag(path, line, severity, code, msg).
