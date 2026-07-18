@@ -7,9 +7,10 @@
 //! because they are shared by `shutdown_cleanup` (which deletes the file) and the
 //! `dl daemon url` verb (which reads it) — neither of which touches the runtime.
 //!
-//! This lives in a flat top-level module (not `crate::daemon::http`) because the
-//! crate already carries a `crate::daemon` vs `crate::cli::daemon` name clash;
-//! `daemon_http` sidesteps growing that ambiguity.
+//! This lives in a flat top-level module (not `crate::daemon::http`) to avoid
+//! growing `crate::daemon` further; the `crate::daemon` vs `crate::cli::daemon`
+//! name clash `daemon_http` was originally sidestepping is gone now that the
+//! CLI verb module is `crate::cli::daemon_cmd`.
 
 use std::path::PathBuf;
 

@@ -2,12 +2,12 @@
 //! are daemon-first: when a daemon serves this root the answer comes from its
 //! warm engine over a `what`/`summary` RPC; otherwise a fresh in-process engine
 //! ticks a family-forcing probe (see [`crate::anchor::probe_program`]) and reads
-//! the same tables. Output goes through the shared `daemon::print_rows` plus a
-//! total/paging + notes footer.
+//! the same tables. Output goes through the shared `daemon_cmd::print_rows`
+//! plus a total/paging + notes footer.
 
 use anyhow::Result;
 
-use super::daemon as cli_daemon; // print_rows (the CLI output helper)
+use super::daemon_cmd as cli_daemon; // print_rows (the CLI output helper)
 use super::root;
 use crate::anchor::QueryOut;
 use crate::daemon; // status / what / summary / enabled / load_repos_eager (the server module)
