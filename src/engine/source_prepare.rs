@@ -142,7 +142,6 @@ pub(super) fn prepare_source_batch(
                         rev_index,
                         &producer_cancel,
                     );
->>>>>>> worktree-agent-a50814e629374063a
                     let result = match result {
                         Ok(Some(parsed)) => {
                             if producer_cancel.load(Ordering::Acquire) {
