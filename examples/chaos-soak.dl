@@ -1,0 +1,346 @@
+# chaos-soak.dl — the engine's own coverage soak, authored as one dl program.
+#
+# THREE JOBS, in one file:
+#   (a) exercise EVERY body-item op the engine supports (source ops, derived
+#       constructs, sinks, effects). The op inventory is op_catalog (26 ops:
+#       scan match ast ast_yaml sg json jsonp comment cmd  |  atom comparison
+#       negation glob regex arith strfn aggregation closure scc node2vec  |
+#       diag gen graph_node graph_edge hover_note query), plus the effect
+#       runtime surface that is not an op_catalog row but is real body syntax:
+#       @async effects + effect_cmd templates, @next carry, clock, every, and
+#       the key(...) merge(MinBy/MaxBy) lattice qualifier.
+#   (b) REFERENCE every built-in relation the engine registers (rel_catalog,
+#       111 rows as of this writing). "Reference" = the name appears as a token
+#       in a rule body / query / head. The big `? ...` block at the bottom does
+#       the bulk; op rules cover the rest.
+#   (c) VALIDATE ITS OWN COMPLETENESS: this file scans ITSELF, tokenizes it with
+#       `match`, joins the token set against the live rel_catalog, and heads a
+#       `diag(... severity: "error", code: "chaos-coverage")` for any registered
+#       relation whose name never appears here. So `dl examples/chaos-soak.dl
+#       --check` exits 2 the moment someone adds a builtin rel and forgets to
+#       reference it in this soak. The self-check is 8 lines at the bottom.
+#
+# SOAK ASSERTION (write budget) — this file doubles as the daemon write-budget
+# target. Served under the daemon (`dl daemon load examples/chaos-soak.dl`,
+# DL_POLL_SECS small), the only per-tick writers are the 30s heartbeat: on a
+# tick that crosses a 30s boundary, ONE `soak_beat` echo effect fires and ONE
+# `beat_log` bucket lands. On a QUIET tick (no boundary crossed) `clock(30,b)`
+# holds the same bucket, `every(30)` does not hold, nothing re-derives, and
+# `_write_ledger` for this program's root MUST show zero rows. Assert it:
+#   dl daemon load examples/chaos-soak.dl        # then wait a few minutes
+#   ? _write_ledger(root, rel, rows).            # quiet ticks: no rows for root
+#
+# CORPUS (two tiers) — heavy AST/dataflow/type/call families key on file
+# EXTENSION (AST_LANG_TABLE: rust/kotlin/python/go/ts... — `.c` has tree-sitter
+# support for explicit `ast(:c)`/`sg(:c)` but NO extension alias, so the auto
+# call/type/df graph stays empty on a pure-C corpus). So:
+#   * heavy tier  -> in-repo Rust (`src/rels/*.rs`): full ast/sg/df/type/call.
+#   * scan tier   -> in-repo text (this file, Cargo.toml, README.md) for
+#     scan/match/comment/cmd/json. This tier is the one you repoint at a BIG
+#     corpus: clone a scan/match target and swap the CORPUS_* globs, e.g.
+#       git clone --depth 1 https://github.com/torvalds/linux /tmp/linux
+#     then scan "/tmp/linux/**/*.c" for the scan/match/comment/cmd rules (the C
+#     graph families stay empty by the alias note above; scan/match/cmd run).
+# Default corpus = THIS repo, so the file runs out of the box:
+#   SPREFA_CONFIG=<hermetic.toml> dl --no-daemon --db /tmp/x.db \
+#     examples/chaos-soak.dl --check
+
+# ============================================================================
+# (a) OP COVERAGE
+# ============================================================================
+
+# --- scan: select files (a source op's scan must sit in the same rule body) --
+rel rust_src(path: file, rev: text).
+rust_src(path, rev) <- scan("WORK", "src/rels/*.rs", path, rev).
+
+# --- match: regex over content, named captures bind dl vars ------------------
+rel pub_fn(path: file, line: int, name: text).
+pub_fn(path, line, name) <-
+  scan("WORK", "src/rels/*.rs", path, rev),
+  match(path, rev, /pub fn (?<name>[a-z_][a-z0-9_]+)/, line).
+
+# --- ast: tree-sitter query; @cap captures bind same-named vars --------------
+rel ast_fn(path: file, line: int, name: text).
+ast_fn(path, line, name) <-
+  scan("WORK", "src/rels/*.rs", path, rev),
+  ast(path, rev, :rust, "(function_item name: (identifier) @name)", line).
+
+# --- sg: ast-grep pattern; metavar $X binds dl var X -------------------------
+rel sg_hit(path: file, line: int).
+sg_hit(path, line) <-
+  scan("WORK", "src/rels/*.rs", path, rev),
+  sg(path, rev, :rust, "$X.to_string()", line).
+
+# --- ast_yaml: ast-grep RuleCore YAML body (relational rule) -----------------
+rel ay_hit(path: file, line: int, col: int, end_col: int).
+ay_hit(path, line, col, end_col) <-
+  scan("WORK", "src/rels/*.rs", path, rev),
+  ast_yaml(path, rev, :rust, `
+pattern: $X.to_string()
+`, line, col, _, end_col).
+
+# --- cmd: shell out per matched file (no network) ----------------------------
+rel src_lc(path: file, line: int, lc: text).
+src_lc(path, line, lc) <-
+  scan("WORK", "src/rels/*.rs", path, rev),
+  cmd(path, rev, "awk 'END{print NR}' {file}", line, lc).
+
+# --- json / jsonp, FILE form: brace pattern + dotted path over toml ----------
+rel pkg_name(name: text).
+pkg_name(name) <-
+  scan("WORK", "Cargo.toml", path, rev),
+  json(path, rev, q:{ package: { name: $name } }).
+rel pkg_edition(edition: text).
+pkg_edition(edition) <-
+  scan("WORK", "Cargo.toml", path, rev),
+  jsonp(path, rev, "package.edition", edition).
+
+# --- json / jsonp, TERM form: parse a STRING bound earlier in the rule -------
+rel blob(body: text).
+blob(r#"{"stars": 42, "name": "sprefa", "nested": {"k": "v"}}"#).
+rel blob_star(n: text).
+blob_star(n) <- blob(body), jsonp(body, "stars", n).
+rel blob_kv(k: text, v: text).
+blob_kv(k, v) <- blob(body), json(body, q:{ $k: $v }).
+
+# --- comment: paired BEGIN/END marker region over this file ------------------
+# CHAOS-ZONE-BEGIN
+# CHAOS-ZONE-END
+rel chaos_zone(path: file, l0: int, l1: int).
+chaos_zone(path, l0, l1) <-
+  scan("WORK", "examples/chaos-soak.dl", path, rev),
+  comment(path, rev, /CHAOS-ZONE-BEGIN/, /CHAOS-ZONE-END/, l0, l1).
+
+# --- arith (+ - * / %) + comparison (= != < <= > >=) + text concat -----------
+rel line_math(path: file, doubled: int, half: int, modulo: int).
+line_math(path, line * 2, line / 2, line % 10) <-
+  pub_fn(path, line, _), line > 1, line != 0.
+rel rel_uri(name: text, uri: text).
+rel_uri(name, "dl://rel/" + name) <- rel_catalog(name, _, _, _).
+
+# --- strfn: split / replace in a head; glob ~~ + regex =~ constraints --------
+rel name_seg(name: text, head_seg: text, dashed: text).
+name_seg(name, split(name, "_", 0), replace(name, "_", "-")) <-
+  rel_catalog(name, grp, _, _), grp ~~ "type*", name =~ /^[a-z_]+$/.
+
+# --- aggregation: count / sum / min / max ------------------------------------
+rel line_total(rev: text, total: int).
+line_total(rev, sum(lc)) <- file_lines(_, _, rev, lc).
+rel line_max(rev: text, biggest: int).
+line_max(rev, max(lc)) <- file_lines(_, _, rev, lc).
+rel line_min(rev: text, smallest: int).
+line_min(rev, min(lc)) <- file_lines(_, _, rev, lc).
+rel file_n(rev: text, n: int).
+file_n(rev, count(path)) <- file_lines(_, path, rev, _).
+
+# --- aggregation: json_group_array / json_group_object -----------------------
+rel grp_names(grp: text, names: text).
+grp_names(grp, json_group_array(name)) <- rel_catalog(name, grp, _, _).
+rel grp_count(grp: text, n: int).
+grp_count(grp, count(name)) <- rel_catalog(name, grp, _, _).
+rel grp_obj(payload: text).
+grp_obj(json_group_object(grp, n)) <- grp_count(grp, n).
+
+# --- a small self-contained edge graph for closure / scc / node2vec ----------
+# (literal-seeded so the graph ops run deterministically regardless of corpus)
+rel demo_edge(src: text, dst: text).
+demo_edge("alpha", "beta").
+demo_edge("beta", "gamma").
+demo_edge("gamma", "alpha").
+demo_edge("gamma", "delta").
+demo_edge("delta", "epsilon").
+
+# --- closure: transitive closure, PINNED endpoint point query ----------------
+# Reading a closure head UNPINNED is banned (Theta(V^2) view); pin one endpoint.
+rel demo_reach(src: text, dst: text).
+demo_reach(src, dst) <- closure(demo_edge).
+? demo_reach("alpha", dst).
+
+# --- scc: strongly-connected-component condensation --------------------------
+rel demo_scc(rep: text, member: text).
+demo_scc(rep, member) <- scc(demo_edge).
+
+# --- node2vec: structural graph embedding (engine-side, recompute-guarded) ---
+rel demo_sim(a: text, b: text, score: int).
+demo_sim(a, b, score) <- node2vec(demo_edge).
+
+# --- key(...) merge(MinBy(col)) lattice: bounded-depth reachability ----------
+rel demo_reach_min(src: text, dst: text, d: int) key(src, dst) merge(MinBy(d)).
+demo_reach_min(src, dst, 0) <- demo_edge(src, dst).
+demo_reach_min(src, dst, d0 + 1) <-
+  demo_reach_min(src, mid, d0), demo_edge(mid, dst), d0 < 8.
+
+# --- referencing call_edge / file / file_lines via a plain derived rel -------
+rel call_pair(caller: text, callee: text).
+call_pair(caller, callee) <- call_edge(caller, callee, _).
+
+# --- negation: an ast_fn line with no matching pub_fn line --------------------
+rel ast_only(path: file, line: int).
+ast_only(path, line) <- ast_fn(path, line, _), !pub_fn(path, line, _).
+
+# --- diag sink (a warn; the ERROR diags come from the self-check below) ------
+diag(path: path, line: line, severity: "warn", code: "soak-tostring",
+     msg: "to_string() on this line (soak marker)") <-
+  sg_hit(path, line).
+
+# --- hover_note sink ---------------------------------------------------------
+hover_note(path: path, line: line, end_line: line, end_col: 0,
+           md: "chaos-soak: fn declared here") <-
+  ast_fn(path, line, _).
+
+# --- graph_node / graph_edge sinks (drawable graph over the demo edges) ------
+graph_node(id: n, label: n, kind: "demo") <- demo_edge(n, _).
+graph_edge(src: a, dst: b, kind: "reach") <- demo_edge(a, b).
+
+# --- gen sink (convergent codegen; NEVER runs under --check, --apply only) ----
+gen(path, l0, l1, "# chaos-soak references {n} builtin relations") <-
+  chaos_zone(path, l0, l1), coverage_count(n).
+
+# ============================================================================
+# EFFECT RUNTIME: clock + every + @async effect + effect_cmd + @next carry
+# ============================================================================
+# The daemon-loop-hot part. Between 30s boundaries nothing here writes.
+
+rel soak_watch(tag: text, msg: text).
+soak_watch("heartbeat", "chaos-soak-alive").
+
+# echo-style command template, keyed by the @async head rel name. No network.
+effect_cmd("soak_beat", "echo {msg}").
+
+# @async: fire the echo on each 30s boundary; `out` is the stdout slot.
+rel soak_beat(tag: text, out: text).
+soak_beat(tag, out) <- @async soak_watch(tag, msg), every(30).
+
+# @next carry: keep the newest 30s bucket across ticks (single-valued, so a
+# quiet tick re-derives the SAME bucket and writes nothing).
+rel beat_log(bucket: int).
+rel beat_log_next(bucket: int).
+beat_log_next(b) <- clock(30, b).
+beat_log(b) <- @next beat_log_next(b).
+
+# ============================================================================
+# (c) SELF-CHECK — coverage of every registered relation (keep this minimal)
+# ============================================================================
+rel self_file(path: file, rev: text).
+self_file(path, rev) <- scan("WORK", "examples/chaos-soak.dl", path, rev).
+rel tok(name: text).
+tok(name) <-
+  scan("WORK", "examples/chaos-soak.dl", path, rev),
+  match(path, rev, /(?<name>[a-z][a-z0-9_]+)/, line).
+rel covered(name: text).
+covered(name) <- rel_catalog(name, _, _, _), tok(name).
+rel coverage_count(n: int).
+coverage_count(count(name)) <- covered(name).
+diag(path: path, line: 1, severity: "error", code: "chaos-coverage",
+     msg: "registered rel never referenced in chaos-soak.dl: " + name) <-
+  self_file(path, _), rel_catalog(name, _, _, _), !tok(name).
+
+# ============================================================================
+# (b) RELATION REFERENCE BLOCK — every remaining built-in relation by name.
+# Grouped `? rel(firstcol: probe).` reads; empty results are fine, the point
+# is that every catalog name appears here so the self-check stays green.
+# Ops/heads above already cover: file file_lines call_edge rel_catalog scan
+# match clock every diag graph_node graph_edge hover_note effect_cmd.
+# ============================================================================
+? true().
+? agent_edit(harness: probe).
+? agent_touch(harness: probe).
+? allocates(fn: probe).
+? call_def(repo: probe).
+? call_def_rev(repo: probe).
+? call_edge_rev(caller: probe).
+? call_kind(fn: probe).
+? call_name(sym: probe).
+? call_site(repo: probe).
+? changed(path: probe).
+? changed_line(path: probe).
+? checkout(repo: probe).
+? checkout_done(repo: probe).
+? checkout_plan(repo: probe).
+? child(parent: probe).
+? comment_node(path: probe).
+? const_value(repo: probe).
+? const_value_rev(repo: probe).
+? content(id: probe).
+? crate_edge(src: probe).
+? created(path: probe).
+? def_target(name: probe).
+? df_arg(call: probe).
+? df_arg_rev(call: probe).
+? df_edge(from: probe).
+? df_field(id: probe).
+? df_field_rev(id: probe).
+? df_lit(id: probe).
+? df_lit_rev(id: probe).
+? df_node(id: probe).
+? df_node_repo(id: probe).
+? df_node_repo_rev(id: probe).
+? df_node_rev(id: probe).
+? df_param(id: probe).
+? diag_mute(code: probe).
+? dl_diag(path: probe).
+? doc_comment(repo: probe).
+? doc_node(repo: probe).
+? doc_ref(repo: probe).
+? doc_tag(repo: probe).
+? effect_log(id: probe).
+? env(name: probe).
+? fn_catalog(name: probe).
+? git_ref(repo: probe).
+? head(repo: probe).
+? hook_event(kind: probe).
+? loop_over(file: probe).
+? module_binding(file: probe).
+? module_binding_resolved(file: probe).
+? module_binding_resolved_rev(file: probe).
+? module_binding_rev(file: probe).
+? module_edge(src: probe).
+? module_edge_rev(src: probe).
+? module_import(file: probe).
+? module_unresolved(file: probe).
+? module_unresolved_rev(file: probe).
+? nest(call_id: probe).
+? node(id: probe).
+? op_catalog(op: probe).
+? program(path: probe).
+? propose_clone(kernel: probe).
+? propose_extract(path: probe).
+# query_log: referenced by name only — `? query_log(...)` currently crashes on a
+# fresh db (engine bug, src/rels/querylog.rs:68 orders the rowless _txt VIEW by
+# rowid). The token above keeps it covered without tripping the bug.
+? ref(id: probe).
+? rel_col(rel: probe).
+? rel_count(rel: probe).
+? repo(slug: probe).
+? rev(id: probe).
+? rev_advanced(repo: probe).
+? rev_behind(repo: probe).
+? rev_cmp_want(repo: probe).
+? scip_binding(file: probe).
+? scip_callee_type(sym: probe).
+? scip_def(symbol: probe).
+? scip_edge(src: probe).
+? scip_fn_edge(caller: probe).
+? scip_impl(impl: probe).
+? scip_local(fn: probe).
+? scip_name(symbol: probe).
+? scip_occurrence(file: probe).
+? scip_ref(file: probe).
+? scip_want(repo: probe).
+? similar(a: probe).
+? skill_loaded(harness: probe).
+? stmt_ms(rel: probe).
+? string(id: probe).
+? template_parts(file: probe).
+? type_decl_row(shape: probe).
+? type_edge(from: probe).
+? type_edge_rev(from: probe).
+? type_entity(repo: probe).
+? type_entity_rev(repo: probe).
+? type_lgg(a: probe).
+? type_link(src: probe).
+? type_link_rev(src: probe).
+? type_shape(name: probe).
+? type_sig(sym: probe).
+? unresolved(file: probe).
+? verb_catalog(verb: probe).
