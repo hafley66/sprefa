@@ -153,6 +153,17 @@ pub(crate) async fn watch_task(d: Arc<ServedRoot>, ctx: ShellCtx, launch_exe_sta
         let touches_cfg = cfg_path.as_ref().is_some_and(|c|
             paths.iter().any(|p| p.canonicalize().ok().as_deref() == Some(c) || p == c));
         let mut paths = paths;
+        // Daemon-owned state under <root>/.dl (perf.jsonl, why.jsonl, invlog,
+        // cache.db + wal/shm) is appended on every tick; letting those events
+        // schedule ticks feeds the watcher its own exhaust (instant
+        // 2026-07-18: tick -> perf.jsonl append -> event -> tick, ~350MB/min
+        // of no-op reconcile writes). Programs (*.dl) stay: discovery and
+        // hot-reload need them.
+        let had_paths = !paths.is_empty();
+        paths.retain(|p| !daemon_state_path(&d.root, p));
+        if had_paths && paths.is_empty() && !touches_cfg {
+            continue;
+        }
         let touches_program = d.program_in_paths(&paths);
         if touches_program {
             let names: Vec<String> = paths.iter()
@@ -327,4 +338,43 @@ async fn run_enqueue_tick(d: &Arc<ServedRoot>, paths: &[PathBuf]) -> Result<()> 
     })
     .await
     .unwrap_or_else(|_| Err(anyhow::anyhow!("enqueue task panicked")))
+}
+
+/// True for files the daemon itself writes under `<root>/.dl` — telemetry
+/// (perf.jsonl, why.jsonl), invocation log, and the cache db + its WAL/SHM
+/// siblings. Their change events are the daemon's own exhaust and must never
+/// schedule a tick. `.dl` programs are NOT state: discovery and hot-reload
+/// depend on their events.
+fn daemon_state_path(root: &std::path::Path, path: &std::path::Path) -> bool {
+    let Ok(rel) = path.strip_prefix(root) else { return false };
+    if !rel.starts_with(".dl") { return false; }
+    path.extension().and_then(|e| e.to_str()) != Some("dl")
+}
+
+#[cfg(test)]
+mod watch_filter_tests {
+    use super::daemon_state_path;
+    use std::path::Path;
+
+    #[test]
+    fn telemetry_and_db_files_are_state_but_programs_are_not() {
+        let root = Path::new("/repo");
+        for state in [
+            "/repo/.dl/perf.jsonl",
+            "/repo/.dl/why.jsonl",
+            "/repo/.dl/.state/cache.db",
+            "/repo/.dl/.state/cache.db-wal",
+            "/repo/.dl/.state/cache.db-shm",
+        ] {
+            assert!(daemon_state_path(root, Path::new(state)), "{state} must be filtered");
+        }
+        for kept in [
+            "/repo/.dl/serve.dl",
+            "/repo/.dl/nested/rules.dl",
+            "/repo/src/main.rs",
+            "/other/.dl/perf.jsonl",
+        ] {
+            assert!(!daemon_state_path(root, Path::new(kept)), "{kept} must pass through");
+        }
+    }
 }
