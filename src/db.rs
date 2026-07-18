@@ -176,6 +176,11 @@ pub fn open(path: Option<&str>) -> Result<Db> {
         Some(p) => Connection::open(p)?,
         None => Connection::open_in_memory()?,
     };
+    // Seam statement cache: every Db method prepares via prepare_cached, so
+    // hot per-row statements (source-stage completion marks, extract loops)
+    // parse once per connection instead of once per call. Default capacity
+    // is 16, far below a tick's distinct-statement count.
+    conn.set_prepared_statement_cache_capacity(256);
     // busy_timeout: a hook `--check` and a resident `--lsp` share .dl/cache.db
     // across processes; a write collision should wait, not fail "locked".
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
@@ -764,7 +769,13 @@ impl Db {
             }
         }
         let counts = self.counts.borrow();
-        let (key, &n) = counts.iter().max_by_key(|(_, n)| **n)?;
+        // Reads bump under a "SELECT {rel}" key and stay out of the scream:
+        // the fixpoint legitimately queries a shared head rel once per rule,
+        // which is O(program), never O(rows). The scream is for write loops.
+        let (key, &n) = counts
+            .iter()
+            .filter(|(key, _)| !key.starts_with("SELECT "))
+            .max_by_key(|(_, n)| **n)?;
         if n > N1_THRESHOLD {
             tracing::warn!(key = %key, n, "[n+1] '{key}' ran {n}x this tick — collect the set and call Db::insert_rows once");
             return Some((key.clone(), n));
@@ -793,11 +804,26 @@ impl Db {
             .map_err(|e| sql_err(rel, sql, e))
     }
 
+    /// Fixpoint executor: one lowered statement per derived rule. Bumps the
+    /// statement's own SQL head (distinct per rule) instead of the shared
+    /// head rel, so O(rules) legitimate statements against one rel don't
+    /// read as a per-row write loop — while a real per-row loop (the same
+    /// SQL repeated O(rows) times) still trips the scream. Error context
+    /// still names the rel.
+    pub fn exec_derived(&self, rel: &str, sql: &str) -> Result<usize> {
+        // Key on the FULL SQL: rules lowering into the same head rel share
+        // any fixed-length prefix (same INSERT head, different SELECT body),
+        // while a per-row loop repeats one statement verbatim.
+        self.bump(sql);
+        self.conn.prepare_cached(sql).and_then(|mut stmt| stmt.execute([]))
+            .map_err(|e| sql_err(rel, sql, e))
+    }
+
     /// Deprecated wrapper: old call sites supply only SQL; the rel is implicit.
     /// Kept until the final burn-down commit removes all remaining callers.
     pub fn exec(&self, sql: &str) -> Result<usize> {
         self.bump(sql);
-        self.conn.execute(sql, [])
+        self.conn.prepare_cached(sql).and_then(|mut stmt| stmt.execute([]))
             .map_err(|e| sql_err("_exec", sql, e))
     }
 
@@ -805,7 +831,7 @@ impl Db {
     pub fn exec_params(&self, rel: &str, sql: &str, params: &[SqlVal]) -> Result<usize> {
         self.bump(rel);
         let refs = to_sql_params(params);
-        self.conn.execute(sql, refs.as_slice())
+        self.conn.prepare_cached(sql).and_then(|mut stmt| stmt.execute(refs.as_slice()))
             .map_err(|e| sql_err(rel, sql, e))
     }
 
@@ -834,10 +860,10 @@ impl Db {
     /// required: QueryReturnedNoRows propagates, context-wrapped like the rest.
     pub fn query_one<T>(&self, rel: &str, sql: &str, params: &[SqlVal],
                         read: impl FnOnce(&Row<'_>) -> Result<T>) -> Result<T> {
-        self.bump(rel);
+        self.bump(&format!("SELECT {rel}"));
         let refs = to_sql_params(params);
         let head = stmt_head(sql);
-        let mut stmt = self.conn.prepare(sql)
+        let mut stmt = self.conn.prepare_cached(sql)
             .map_err(|e| sql_err(rel, sql, e))?;
         stmt.query_row(refs.as_slice(), |row| {
             map_row(read(row), rel, &head)
@@ -847,10 +873,10 @@ impl Db {
     /// Same as query_one; zero-or-one row. Absorbs every `OptionalExtension` site.
     pub fn query_opt<T>(&self, rel: &str, sql: &str, params: &[SqlVal],
                         read: impl FnOnce(&Row<'_>) -> Result<T>) -> Result<Option<T>> {
-        self.bump(rel);
+        self.bump(&format!("SELECT {rel}"));
         let refs = to_sql_params(params);
         let head = stmt_head(sql);
-        let mut stmt = self.conn.prepare(sql)
+        let mut stmt = self.conn.prepare_cached(sql)
             .map_err(|e| sql_err(rel, sql, e))?;
         match stmt.query_row(refs.as_slice(), |row| {
             map_row(read(row), rel, &head)
@@ -864,10 +890,10 @@ impl Db {
     /// prepare; query; map each row; collect with `?` — NEVER filter_map(ok).
     pub fn query_rows<T>(&self, rel: &str, sql: &str, params: &[SqlVal],
                          mut read: impl FnMut(&Row<'_>) -> Result<T>) -> Result<Vec<T>> {
-        self.bump(rel);
+        self.bump(&format!("SELECT {rel}"));
         let refs = to_sql_params(params);
         let head = stmt_head(sql);
-        let mut stmt = self.conn.prepare(sql)
+        let mut stmt = self.conn.prepare_cached(sql)
             .map_err(|e| sql_err(rel, sql, e))?;
         let rows = stmt.query_map(refs.as_slice(), |row| {
             map_row(read(row), rel, &head)
@@ -878,9 +904,9 @@ impl Db {
     /// Streaming fold for scans that must not materialize a Vec.
     pub fn for_each_row(&self, rel: &str, sql: &str, params: &[SqlVal],
                         mut f: impl FnMut(&Row<'_>) -> Result<()>) -> Result<()> {
-        self.bump(rel);
+        self.bump(&format!("SELECT {rel}"));
         let refs = to_sql_params(params);
-        let mut stmt = self.conn.prepare(sql)
+        let mut stmt = self.conn.prepare_cached(sql)
             .map_err(|e| sql_err(rel, sql, e))?;
         let head = stmt_head(sql);
         let mut rows = stmt.query(refs.as_slice())
@@ -911,7 +937,7 @@ impl Db {
                               head: &[SqlVal], keys: &[SqlVal],
                               mut read: impl FnMut(&Row<'_>) -> Result<T>) -> Result<Vec<T>> {
         if keys.is_empty() { return Ok(Vec::new()); }
-        self.bump(rel);
+        self.bump(&format!("SELECT {rel}"));
         let head_params: Vec<rusqlite::types::Value> = head.iter().map(Into::into).collect();
         let chunk_size = PARAM_BUDGET.saturating_sub(head.len()).max(1);
         let mut out = Vec::new();
@@ -1309,7 +1335,7 @@ impl ReadDb {
                         read: impl FnOnce(&Row<'_>) -> Result<T>) -> Result<T> {
         let refs = to_sql_params(params);
         let head = stmt_head(sql);
-        let mut stmt = self.conn.prepare(sql)
+        let mut stmt = self.conn.prepare_cached(sql)
             .map_err(|e| sql_err(rel, sql, e))?;
         stmt.query_row(refs.as_slice(), |row| {
             map_row(read(row), rel, &head)
@@ -1320,7 +1346,7 @@ impl ReadDb {
                         read: impl FnOnce(&Row<'_>) -> Result<T>) -> Result<Option<T>> {
         let refs = to_sql_params(params);
         let head = stmt_head(sql);
-        let mut stmt = self.conn.prepare(sql)
+        let mut stmt = self.conn.prepare_cached(sql)
             .map_err(|e| sql_err(rel, sql, e))?;
         match stmt.query_row(refs.as_slice(), |row| {
             map_row(read(row), rel, &head)
@@ -1335,7 +1361,7 @@ impl ReadDb {
                          mut read: impl FnMut(&Row<'_>) -> Result<T>) -> Result<Vec<T>> {
         let refs = to_sql_params(params);
         let head = stmt_head(sql);
-        let mut stmt = self.conn.prepare(sql)
+        let mut stmt = self.conn.prepare_cached(sql)
             .map_err(|e| sql_err(rel, sql, e))?;
         let rows = stmt.query_map(refs.as_slice(), |row| {
             map_row(read(row), rel, &head)

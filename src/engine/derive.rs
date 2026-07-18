@@ -358,7 +358,7 @@ impl Engine {
             }
             stmt_watch.begin(rel);
             let t = std::time::Instant::now();
-            let result = self.db.exec_on(rel, sql);
+            let result = self.db.exec_derived(rel, sql);
             stmt_watch.complete();
             let n = result?;
             if sql.trim_start().to_ascii_uppercase().starts_with("INSERT") {

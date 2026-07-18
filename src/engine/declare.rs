@@ -657,7 +657,7 @@ impl Engine {
                     "_carry_meta",
                     "INSERT INTO _carry_meta (k, tx) VALUES (?1, ?2) \
                      ON CONFLICT(k) DO UPDATE SET tx = ?2",
-                    &[key.into(), bucket.into(), bucket.into()],
+                    &[key.into(), bucket.into()],
                 )?;
             }
         }
