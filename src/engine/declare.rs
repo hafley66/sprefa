@@ -25,6 +25,60 @@ impl Engine {
     }
 }
 
+/// Storage-diet step 4a (plans/2026-07-18-storage-diet.md Direction 4a,
+/// storage-key-audit decision 2): classifies a rel decl as a `WITHOUT ROWID`
+/// candidate — a "pure junction/set" relation. SQLite backs a plain rowid
+/// table's full-row `PRIMARY KEY` with a UNIQUE autoindex that duplicates the
+/// entire row (measured: rel_flow_edge 8.6MB table + 8.6MB autoindex,
+/// rel_df_edge_src_kind 8.3+8.3); `WITHOUT ROWID` makes the table its own PK
+/// B-tree, storing the row once.
+///
+/// Four conditions, each critical:
+/// - `d.pk_never_null`: an explicit per-decl vouch (see the field doc on
+///   `RelDecl`) that no row will ever carry NULL in a PK column. This is the
+///   FIRST check, not a formality: `WITHOUT ROWID` requires every PK column
+///   NOT NULL, but a plain rowid table's composite `PRIMARY KEY` tolerates
+///   NULL (SQLite treats it as always-distinct there), and the `.dl`
+///   surface's named-arg partial-head padding (`person(name: "z").` leaves
+///   `age` NULL) can put a NULL in any column of any parsed decl. Without
+///   this gate, `wants_without_rowid` judged purely by shape and made a
+///   `.dl`-declared 2-column no-`key()` rel silently DROP its NULL-padded
+///   row under `INSERT OR IGNORE` — caught by tests/it/named_args.rs
+///   `named_args_in_a_rule_head_resolve` (docs/failure-modes.md, 2026-07-18,
+///   step-4a NULL-in-PK incident). Default `false`, so every `.dl`-parsed
+///   decl is excluded unconditionally; only specific Rust-authored decls
+///   with an audited, tuple-sourced insert path opt in.
+/// - `d.key.is_none()`: no `key(...)` narrowing, so the full row already IS
+///   the uniqueness contract (Soufflé APLAS'21 set semantics per the audit's
+///   decision 2) — there is no separate narrow identity a secondary index
+///   would want to reference instead.
+/// - every column is SQLite INTEGER (`Col::sql() == "INTEGER"`, true for
+///   `Type::Int` and any interned text column): no raw TEXT payload sitting
+///   in the clustered PK leaf, keeping the composite key compact and
+///   comparison-cheap.
+/// - column count in 2..=4: the plan's own scope ("flow_edge, df_edge, the
+///   many two-and-three-column edge rels"). This is the guard against the
+///   locator-growth risk the plan flags: a WITHOUT ROWID table's secondary
+///   indexes carry the FULL pk as locator instead of an 8-byte rowid, so this
+///   lever only wins where the PK is narrow or the table has few secondary
+///   indexes. A wide entity/occurrence table with several join-key indexes
+///   (df_node at 6 cols + 6 indexes, scip_occurrence at 8 cols) fails this
+///   cap and is deferred to Direction 1/4b (dense single-column node_id,
+///   step 5/6), which narrows the PK before applying WITHOUT ROWID to it —
+///   never widens a WITHOUT ROWID table's secondary-index locators.
+///
+/// Revertable by construction: flip this fn's answer for a rel (or the
+/// `pk_never_null` vouch) and the drift check in `declare` (rowid-mode
+/// mismatch) drops and recreates the table on the next tick, same mechanism
+/// a column-set or key-shape change already uses. No separate migration
+/// path needed.
+pub(crate) fn wants_without_rowid(d: &RelDecl) -> bool {
+    d.pk_never_null
+        && d.key.is_none()
+        && (2..=4).contains(&d.cols.len())
+        && d.cols.iter().all(|c| c.sql() == "INTEGER")
+}
+
 impl Engine {
     pub(crate) fn declare(&mut self, d: &RelDecl) -> Result<()> {
         // Port envelope check: a `@in(class)`/`@out(class)` rel must carry the
@@ -101,6 +155,25 @@ impl Engine {
                 Some(k) => k.clone(),
                 None => want.clone(),
             };
+            // Step 4a: WITHOUT ROWID mismatch is a drift trigger too — the
+            // classifier (`wants_without_rowid`) is pure code, so a decl edit
+            // that moves a rel across the 2..=4 column boundary or adds/drops
+            // its `key(...)` must drop+recreate the table the same way a
+            // column-set or key-shape edit already does, or the cached table
+            // shape silently outlives the decl.
+            let want_without_rowid = wants_without_rowid(d);
+            let have_without_rowid: bool = self
+                .db
+                .query_rows(
+                    &d.name,
+                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    &[table.as_str().into()],
+                    |r| Ok(r.get::<_, String>(0)?),
+                )
+                .ok()
+                .and_then(|rows| rows.into_iter().next())
+                .map(|sql| sql.to_uppercase().ends_with("WITHOUT ROWID"))
+                .unwrap_or(false);
             let (have, have_pk): (Vec<String>, Vec<String>) = {
                 let mut have = Vec::new();
                 // (pk_position, column) for columns in the existing PRIMARY KEY.
@@ -132,7 +205,8 @@ impl Engine {
                 v
             };
             let key_drift = pk_set(have_pk.clone()) != pk_set(want_pk.clone());
-            if !have.is_empty() && (have != want || key_drift) {
+            let rowid_drift = have_without_rowid != want_without_rowid;
+            if !have.is_empty() && (have != want || key_drift || rowid_drift) {
                 self.db.exec_on(
                     &d.name,
                     &format!("DROP VIEW IF EXISTS {}", crate::lower::txt_tbl(&d.name)),
@@ -205,11 +279,19 @@ impl Engine {
                     bail!("rel {}: merge column {mc} is also a key column; the merge ranks rows WITHIN a key", d.name);
                 }
             }
+            // Step 4a (storage-diet Direction 4a): a pure junction/set rel
+            // (see `wants_without_rowid`) gets `WITHOUT ROWID` — the table
+            // becomes its own PK B-tree instead of a rowid table plus a
+            // duplicate full-row autoindex. `__src` rides along as an
+            // ordinary non-key column in the WITHOUT ROWID leaf; SQLite does
+            // not require the PK to cover every column.
+            let without_rowid = if wants_without_rowid(d) { " WITHOUT ROWID" } else { "" };
             format!(
-                "CREATE TABLE IF NOT EXISTS {} ({}, __src TEXT DEFAULT '', PRIMARY KEY ({}))",
+                "CREATE TABLE IF NOT EXISTS {} ({}, __src TEXT DEFAULT '', PRIMARY KEY ({})){}",
                 tbl(&d.name),
                 cols.join(", "),
-                pk.join(", ")
+                pk.join(", "),
+                without_rowid
             )
         };
         self.db.exec_on(&d.name, &sql)?;
@@ -794,5 +876,90 @@ impl Engine {
             )?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod without_rowid_classifier_tests {
+    // Storage-diet step 4a (plans/2026-07-18-storage-diet.md): `wants_without_
+    // rowid` is a pure fn of `RelDecl` shape, so its boundary cases (raw text
+    // payload column, column count above/below the 2..=4 scope) are cheaper
+    // and more precise to pin here than through a `.dl` fixture — the DSL
+    // surface has no way to declare a raw-text column on a user rel (only
+    // built-ins like `df_lit` use `Col::raw`), and the column-count boundary
+    // needs exact 1/2/4/5-column decls, not a plausible-looking program.
+    // End-to-end DDL wiring (the CREATE TABLE actually carries WITHOUT ROWID,
+    // an eligible table has no PK autoindex, a byte receipt) is pinned by
+    // tests/it/storage_diet_without_rowid.rs through the real `dl` binary.
+    use super::wants_without_rowid;
+    use crate::ast::{Col, RelDecl, Type};
+
+    // `pk_never_null` defaults to `false` via `..Default::default()` — this
+    // helper's default arm is deliberately the SAME shape any `.dl`-parsed
+    // decl gets, so a test that wants the vouch must ask for it explicitly.
+    fn decl(cols: Vec<Col>, key: Option<Vec<String>>, pk_never_null: bool) -> RelDecl {
+        RelDecl { name: "t".into(), cols, key, pk_never_null, ..Default::default() }
+    }
+
+    fn int_col(name: &str) -> Col {
+        Col::plain(name.to_string(), Type::Int)
+    }
+
+    #[test]
+    fn two_to_four_column_all_integer_no_key_vouched_rels_qualify() {
+        for n in 2..=4 {
+            let cols: Vec<Col> = (0..n).map(|i| int_col(&format!("c{i}"))).collect();
+            assert!(wants_without_rowid(&decl(cols, None, true)), "{n}-column all-INTEGER no-key vouched rel should qualify");
+        }
+    }
+
+    /// The regression this gate exists to prevent: docs/failure-modes.md,
+    /// 2026-07-18 step-4a NULL-in-PK incident. A `.dl`-parsed decl (the
+    /// `person(name: text, age: int)` shape from tests/it/named_args.rs
+    /// `named_args_in_a_rule_head_resolve`) is a 2-column, all-INTEGER,
+    /// no-`key()` rel — otherwise a perfect classifier match — but the
+    /// parser never sets `pk_never_null`, so it must NOT qualify: named-arg
+    /// partial-head padding can leave `age` NULL, and `WITHOUT ROWID`
+    /// silently drops such a row under `INSERT OR IGNORE` where a plain
+    /// rowid table's composite PK would not.
+    #[test]
+    fn unvouched_rel_does_not_qualify_even_when_shape_matches() {
+        let cols = vec![Col::plain("name".into(), Type::Text), Col::plain("age".into(), Type::Int)];
+        assert!(
+            !wants_without_rowid(&decl(cols, None, false)),
+            "pk_never_null defaults false; an un-vouched decl must never get WITHOUT ROWID regardless of shape"
+        );
+    }
+
+    #[test]
+    fn single_column_rel_does_not_qualify() {
+        assert!(!wants_without_rowid(&decl(vec![int_col("a")], None, true)));
+    }
+
+    #[test]
+    fn five_column_rel_does_not_qualify() {
+        let cols: Vec<Col> = (0..5).map(|i| int_col(&format!("c{i}"))).collect();
+        assert!(!wants_without_rowid(&decl(cols, None, true)), "wide rels ride Direction 1/4b, not step 4a");
+    }
+
+    #[test]
+    fn key_narrowed_rel_does_not_qualify() {
+        let cols = vec![int_col("a"), int_col("b"), int_col("c")];
+        assert!(!wants_without_rowid(&decl(cols, Some(vec!["a".to_string()]), true)), "key(...) means the full row is not the PK — not a pure junction");
+    }
+
+    #[test]
+    fn raw_text_payload_column_does_not_qualify() {
+        let cols = vec![int_col("a"), Col::raw("text", Type::Text)];
+        assert!(!wants_without_rowid(&decl(cols, None, true)), "a raw TEXT payload column sitting in the clustered PK leaf is not the narrow-int shape this step targets");
+    }
+
+    #[test]
+    fn interned_text_columns_count_as_integer() {
+        // Type::Text columns intern to _strings and store as SQLite INTEGER
+        // (Col::interned() / Col::sql()) — this is the df_edge shape
+        // (`from: text, to: text`), one of the plan's own named examples.
+        let cols = vec![Col::plain("from".into(), Type::Text), Col::plain("to".into(), Type::Text)];
+        assert!(wants_without_rowid(&decl(cols, None, true)));
     }
 }

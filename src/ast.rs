@@ -173,6 +173,31 @@ pub struct RelDecl {
     /// left empty). Resolved to the shape's columns by `typecheck::expand_shapes`
     /// at load; `None` (and expanded) before the engine sees the decl.
     pub shape_ref: Option<String>,
+    /// Storage-diet step 4a (plans/2026-07-18-storage-diet.md): an explicit,
+    /// per-decl vouch that no row of this rel will EVER carry a NULL in a
+    /// column that is part of its PRIMARY KEY. `false` by default (every
+    /// decl the `.dl` parser produces) — deliberately closed, not opt-out.
+    ///
+    /// The `.dl` surface has a documented feature (named-arg partial-head
+    /// padding: `person(name: "z").` leaves `age` NULL) that can leave ANY
+    /// column of ANY parsed decl NULL, for ANY rel, with no visibility into
+    /// or control over an internal storage classifier. `WITHOUT ROWID`
+    /// requires every PK column NOT NULL; a plain rowid table's composite
+    /// `PRIMARY KEY` does not (SQLite treats NULL as always-distinct there).
+    /// Wiring `wants_without_rowid` (src/engine/declare.rs) to shape alone
+    /// let a 2-column no-`key()` `.dl` rel like `person(name, age)` silently
+    /// DROP its NULL-padded row under `INSERT OR IGNORE` — caught by
+    /// tests/it/named_args.rs `named_args_in_a_rule_head_resolve` (docs/
+    /// failure-modes.md incident, 2026-07-18, step-4a NULL-in-PK).
+    ///
+    /// Only set `true` at a Rust construction site whose insert path is
+    /// verified to push a fully-bound value for every column, every time —
+    /// a plain tuple/struct source (never `Option`), never a `.dl`-parsed
+    /// fact or rule head. See dataflow_rel_decls (df_edge, df_arg, df_field,
+    /// df_param, nest) and ScipKind::decls (scip_fn_edge, scip_callee_type,
+    /// scip_local, scip_impl, scip_edge, scip_ref, scip_def) for the audited
+    /// call sites; each carries a comment naming the exact push site.
+    pub pk_never_null: bool,
 }
 
 #[derive(Clone, Debug, Default)]
