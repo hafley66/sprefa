@@ -355,6 +355,15 @@ lands last because it is the most entangled with other arcs.
 
 ## 4. Open decisions with recommendations
 
+USER RULINGS (2026-07-18, voice): A = 1a dense dictionary ("dense, hash,
+autoincrement, I don't care, just do something"). D = drop the norm column;
+norm stays available as the query-time `norm()` scalar (the v0 self-join-on-
+norm exploration survives unindexed; index-on-demand if a program joins it).
+C = both levers (per-table drops + demand-aware policy; "index conditionally
+if they're joined"). B and E stand as recommended. Posture note: prefer
+integrating existing crates over building; the mod list may grow and get
+whittled later.
+
 - **A. df_node identity representation.** Dense dictionary (1a) vs content
   hash (1b). Recommend 1a: it keeps the determinism contract free of a
   collision waiver, at the cost of a coord->id map build during flush
