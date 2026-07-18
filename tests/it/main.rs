@@ -73,6 +73,7 @@ mod daemon_stateful_revs;
 mod data_driven_scan;
 mod data_ops;
 mod dataflow;
+mod derived_intern_n1;
 mod derived_scope;
 mod digest_skip;
 mod discover;

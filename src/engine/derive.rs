@@ -350,7 +350,16 @@ impl Engine {
             if sql.trim_start().to_ascii_uppercase().starts_with("INSERT") {
                 self.record_write(rel, n, "derived");
             }
-            self.db.flush_pending_syms()?;
+            // No `flush_pending_syms` here: draining the intern queue after EVERY
+            // derived statement is an N+1 on `INSERT _strings` (one flush per
+            // rule per fixpoint pass — 108x on a fact-heavy recursive rebuild).
+            // The queue is a process-global accumulator, so interns collect
+            // across statements for free; the flush is hoisted to each fixpoint
+            // PASS boundary in `run_component` / `rebuild_derived_seminaive`.
+            // Per-pass (not per-statement, not per-component) is the minimal
+            // correct frequency: semi-naive/naive each read the PRIOR pass's
+            // rows, so a string a rule mints (a text `+` concat head) must be in
+            // `_strings` before the next pass decodes it — but no more often.
             let ms = t.elapsed().as_millis() as i64;
             let e = stmt_ms.entry(rel.to_string()).or_insert((0, 0));
             e.0 += ms;
@@ -405,6 +414,10 @@ impl Engine {
                     }
                 }
                 self.run_component(&comp_rules, recursive, derived_rules, &mut timed)?;
+                // `run_component` flushes the intern queue at each fixpoint pass
+                // boundary (below), so by the time it returns every string this
+                // component minted is durable in `_strings` — the completion
+                // mark can safely vouch for rows referencing those sym ids.
                 // Reached only when the component converged with no error (every
                 // path inside `run_component` propagates failure via `?`), so a
                 // failed component is never marked complete.
@@ -473,12 +486,20 @@ impl Engine {
             for (rel, sql) in &stmts {
                 timed(rel, sql)?;
             }
+            // One pass, one flush: drain any strings these rules minted (literal
+            // or `+` concat heads) so a later component / the final query decodes
+            // them. Empty for the common pass-through-id rule (no bump).
+            self.db.flush_pending_syms()?;
             return Ok(());
         }
         // Native graph walks are strict recognizers. A miss falls through
         // to SQL with the original rows; the depth-lattice path must run
         // before the key/merge naive-fallback guard below.
         if self.try_native_walk(comp_rules, derived_rules, timed)? {
+            // Native walks carry pass-through node ids (no minted strings), but
+            // flush once on the way out to keep the invariant "run_component
+            // returns with an empty intern queue" uniform across every path.
+            self.db.flush_pending_syms()?;
             return Ok(());
         }
         // Defense twin of typecheck's `recursive-null-pad`: a NULL-padded
@@ -534,6 +555,11 @@ impl Engine {
                 for (rel, sql) in &stmts {
                     delta += timed(rel, sql)?;
                 }
+                // Pass boundary: make this pass's minted strings durable before
+                // the next pass re-runs `stmts` and decodes them (a `+` concat
+                // head reading the row it produced last pass). One flush per
+                // pass, not per statement — the N+1 collapse.
+                self.db.flush_pending_syms()?;
                 total_promoted = total_promoted.saturating_add(delta);
                 check_fixpoint_row_budget(&comp_rels, total_promoted, row_max)?;
                 // Every execution after pass 1 is a full-input re-run
@@ -1397,6 +1423,9 @@ impl Engine {
             total_promoted = total_promoted.saturating_add(timed(&rule.head.rel, &sql)?);
         }
         check_fixpoint_row_budget(&comp_rel_names, total_promoted, row_max)?;
+        // Drain the seed rules' minted strings before the first recursive pass
+        // (or the pure-seed return) decodes them. Pass boundary, one flush.
+        self.db.flush_pending_syms()?;
 
         if rec_ris.is_empty() {
             return Ok(());
@@ -1546,7 +1575,16 @@ impl Engine {
                     ),
                 )?;
             }
+            // Pass boundary: this iteration's promoted rows (now in `_delta_`)
+            // become the next iteration's differentiated input, so their minted
+            // strings must be in `_strings` before the next pass's variant
+            // statements decode them. One flush per pass — the N+1 collapse.
+            self.db.flush_pending_syms()?;
         }
+        // The breaking iteration (total_new == 0) leaves only duplicate interns
+        // queued (strings already in `_strings` from when their row first
+        // derived); drain them so the queue never leaks across components.
+        self.db.flush_pending_syms()?;
         Ok(())
     }
 
