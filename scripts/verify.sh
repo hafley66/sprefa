@@ -28,6 +28,29 @@ else
 echo "[verify] cargo build --bin dl"
 cargo build --bin dl || exit 1
 
+echo "[verify] cargo clippy --all-targets"
+# Lint-level baseline lives in Cargo.toml [lints.clippy] — see the comment
+# there. All 5 default-active categories (correctness/suspicious/perf/style/
+# complexity) currently carry existing findings and are pinned to "warn" so
+# this gate is non-fatal on day one; an entry flips to "deny" once its count
+# reaches 0, which then makes THIS command fail on any regression.
+cargo clippy --all-targets || exit 1
+
+echo "[verify] cargo fmt --check (warn-only, not gating — see TODO below)"
+# TODO(fmt-gate): tree is far from rustfmt-clean (328 files as of 2026-07-18,
+# agent aaca266d75100c3a5) — three other agents have large in-flight branches
+# over src/**, so a repo-wide `cargo fmt` sweep here would conflict with all
+# of them. Warn-only until a rustfmt pass lands on a quiet tree; then promote
+# the `|| exit 1` below like the clippy step above.
+fmt_check_log=$(mktemp)
+if ! cargo fmt --check >"$fmt_check_log" 2>&1; then
+  # `Diff in <file>:` prints once per changed *line-range*, not once per file —
+  # dedupe on the path to get a file count.
+  fmt_file_count=$(grep '^Diff in' "$fmt_check_log" | sed -E 's/^Diff in (.*):[0-9]+:.*/\1/' | sort -u | wc -l | tr -d ' ')
+  echo "[verify] WARN: cargo fmt --check found $fmt_file_count file(s) out of format (not gating; see TODO(fmt-gate) in this script)"
+fi
+rm -f "$fmt_check_log"
+
 echo "[verify] cargo test"
 suite_log=$(mktemp)
 cargo test 2>&1 | tee "$suite_log"
