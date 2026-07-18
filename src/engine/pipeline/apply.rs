@@ -14,7 +14,7 @@ impl Engine {
     /// Run the SQLite-owned portion of one semantic generation atomically.
     ///
     /// This deliberately uses SQL transaction control instead of holding a
-    /// `rusqlite::Transaction<'_>` borrow across engine calls. The outermost
+    /// `SQLite transaction<'_>` borrow across engine calls. The outermost
     /// boundary owns `BEGIN IMMEDIATE` and its matching commit/rollback. When a
     /// caller already owns a wider transaction, the boundary only runs `work`;
     /// it never commits or rolls back its caller. Panics roll back an owned
@@ -23,25 +23,25 @@ impl Engine {
         &mut self,
         work: impl FnOnce(&mut Self) -> Result<T>,
     ) -> Result<T> {
-        if !self.db.conn().is_autocommit() {
+        if !self.db.is_autocommit() {
             return work(self);
         }
 
-        self.db.conn().execute_batch("BEGIN IMMEDIATE")?;
+        self.db.begin_immediate()?;
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(self))) {
             Ok(Ok(value)) => {
-                if let Err(error) = self.db.conn().execute_batch("COMMIT") {
-                    let _ = self.db.conn().execute_batch("ROLLBACK");
-                    return Err(error.into());
+                if let Err(error) = self.db.commit() {
+                    let _ = self.db.rollback();
+                    return Err(error);
                 }
                 Ok(value)
             }
             Ok(Err(error)) => {
-                let _ = self.db.conn().execute_batch("ROLLBACK");
+                let _ = self.db.rollback();
                 Err(error)
             }
             Err(payload) => {
-                let _ = self.db.conn().execute_batch("ROLLBACK");
+                let _ = self.db.rollback();
                 std::panic::resume_unwind(payload)
             }
         }
@@ -66,10 +66,12 @@ mod tests {
     fn generation_rows(engine: &Engine) -> i64 {
         engine
             .db
-            .conn()
-            .query_row("SELECT COUNT(*) FROM generation_boundary", [], |row| {
-                row.get(0)
-            })
+            .query_one(
+                "generation_boundary",
+                "SELECT COUNT(*) FROM generation_boundary",
+                &[],
+                |row| Ok(row.get(0)?),
+            )
             .unwrap()
     }
 
@@ -86,7 +88,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(value, 7);
-        assert!(engine.db.conn().is_autocommit());
+        assert!(engine.db.is_autocommit());
         assert_eq!(generation_rows(&engine), 1);
     }
 
@@ -104,7 +106,7 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("generation failed"));
-        assert!(engine.db.conn().is_autocommit());
+        assert!(engine.db.is_autocommit());
         assert_eq!(generation_rows(&engine), 0);
     }
 
@@ -122,14 +124,14 @@ mod tests {
 
         let payload = panic.expect_err("panic must resume after rollback");
         assert_eq!(payload.downcast_ref::<&str>(), Some(&"generation panicked"));
-        assert!(engine.db.conn().is_autocommit());
+        assert!(engine.db.is_autocommit());
         assert_eq!(generation_rows(&engine), 0);
     }
 
     #[test]
     fn semantic_generation_never_owns_callers_transaction() {
         let mut engine = generation_engine();
-        engine.db.conn().execute_batch("BEGIN IMMEDIATE").unwrap();
+        engine.db.begin_immediate().unwrap();
         engine
             .db
             .exec("INSERT INTO generation_boundary VALUES ('before boundary')")
@@ -144,7 +146,7 @@ mod tests {
 
         assert!(result.is_err());
         assert!(
-            !engine.db.conn().is_autocommit(),
+            !engine.db.is_autocommit(),
             "boundary must leave caller transaction open"
         );
         assert_eq!(
@@ -152,7 +154,7 @@ mod tests {
             2,
             "boundary must not roll back its caller"
         );
-        engine.db.conn().execute_batch("ROLLBACK").unwrap();
+        engine.db.rollback().unwrap();
         assert_eq!(generation_rows(&engine), 0);
     }
 
@@ -178,8 +180,12 @@ mod tests {
         assert!(result.is_err());
         let persisted: i64 = engine
             .db
-            .conn()
-            .query_row("SELECT COUNT(*) FROM generation_bulk", [], |row| row.get(0))
+            .query_one(
+                "generation_bulk",
+                "SELECT COUNT(*) FROM generation_bulk",
+                &[],
+                |row| Ok(row.get(0)?),
+            )
             .unwrap();
         assert_eq!(
             persisted, 0,

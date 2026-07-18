@@ -174,7 +174,7 @@ impl Engine {
             }
         }
         if retracts.is_empty() {
-            facts.discard(self.db.conn())?;
+            facts.discard(&self.db)?;
             return Ok(result);
         }
         let retract_owned: Vec<(String, String)> = retracts.into_iter().collect();
@@ -193,7 +193,7 @@ impl Engine {
             let changed_rels = engine.prune_unchanged_by_digest(candidate_rels)?;
             Ok((extracted, retracted, changed_rels))
         });
-        let cleanup = facts.discard(self.db.conn());
+        let cleanup = facts.discard(&self.db);
         match outcome {
             Ok((extracted, retracted, changed_rels)) => {
                 self.rev_index = next_rev_index;

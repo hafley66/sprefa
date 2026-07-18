@@ -4,10 +4,10 @@
 //! and owners, then applies sealed fact batches inside its short transaction.
 
 use anyhow::Result;
-use rusqlite::Connection;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::ast::{Rule, Value};
+use crate::db::Db;
 use crate::engine::Engine;
 use crate::spine;
 
@@ -74,7 +74,7 @@ pub(crate) fn source_stage_base(engine: &Engine, rules: &[&Rule]) -> Result<(i64
 }
 
 pub(crate) struct FullSourceStageBuilder<'a> {
-    conn: &'a Connection,
+    db: &'a Db,
     writer: Option<StageWriter<'a>>,
     stage_id: StageId,
     generation: i64,
@@ -83,12 +83,12 @@ pub(crate) struct FullSourceStageBuilder<'a> {
 }
 
 impl<'a> FullSourceStageBuilder<'a> {
-    pub(crate) fn new(conn: &'a Connection, generation: i64, base: [u8; 32]) -> Result<Self> {
-        let stage = SourceStage::open(conn)?;
+    pub(crate) fn new(db: &'a Db, generation: i64, base: [u8; 32]) -> Result<Self> {
+        let stage = SourceStage::open(db)?;
         let stage_id = fresh_stage_id();
         let writer = stage.begin(stage_id, StageLimits::default())?;
         Ok(Self {
-            conn,
+            db,
             writer: Some(writer),
             stage_id,
             generation,
@@ -155,7 +155,7 @@ impl<'a> FullSourceStageBuilder<'a> {
         let writer = self.writer.take().expect("source stage writer is active");
         writer.finish()?;
         let sealed =
-            SourceStage::open(self.conn)?.seal(self.stage_id, self.generation, self.base)?;
+            SourceStage::open(self.db)?.seal(self.stage_id, self.generation, self.base)?;
         self.sealed = true;
         Ok(PreparedSourceFacts { sealed })
     }
@@ -164,7 +164,7 @@ impl<'a> FullSourceStageBuilder<'a> {
 impl Drop for FullSourceStageBuilder<'_> {
     fn drop(&mut self) {
         if !self.sealed {
-            let _ = SourceStage::existing(self.conn).discard(self.stage_id);
+            let _ = SourceStage::existing(self.db).discard(self.stage_id);
         }
     }
 }
@@ -177,7 +177,7 @@ impl PreparedSourceFacts {
     /// Verify and insert fact rows in bounded relation-local batches.
     /// Retraction, metadata, digests, and commit remain the caller's transaction.
     pub(crate) fn apply(&self, engine: &Engine, current_base: [u8; 32]) -> Result<usize> {
-        let stage = SourceStage::existing(engine.db.conn());
+        let stage = SourceStage::existing(&engine.db);
         stage.verify_seal(&self.sealed, StageBase::from_bytes(current_base))?;
         let mut relation: Option<String> = None;
         let mut batch: Vec<(String, String, Vec<Value>)> = Vec::with_capacity(APPLY_BATCH_ROWS);
@@ -212,14 +212,14 @@ impl PreparedSourceFacts {
     }
 
     pub(crate) fn verify(&self, engine: &Engine, current_base: [u8; 32]) -> Result<()> {
-        SourceStage::existing(engine.db.conn())
+        SourceStage::existing(&engine.db)
             .verify_seal(&self.sealed, StageBase::from_bytes(current_base))?;
         Ok(())
     }
 
     /// TEMP cleanup is outside the main WAL transaction by construction.
-    pub(crate) fn discard(self, conn: &Connection) -> Result<()> {
-        SourceStage::open(conn)?.discard(self.sealed.stage_id)?;
+    pub(crate) fn discard(self, db: &Db) -> Result<()> {
+        SourceStage::open(db)?.discard(self.sealed.stage_id)?;
         Ok(())
     }
 }

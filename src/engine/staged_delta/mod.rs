@@ -10,7 +10,8 @@
 use std::fmt;
 use std::path::Path;
 
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use crate::ast::Value;
+use crate::db::Db;
 
 mod sql;
 #[cfg(test)]
@@ -86,7 +87,7 @@ struct SinkStats {
 }
 
 struct SqliteStageSink<'a> {
-    conn: &'a Connection,
+    db: &'a Db,
     limits: SinkLimits,
     rows: Vec<FixtureRow>,
     buffered_bytes: usize,
@@ -94,7 +95,7 @@ struct SqliteStageSink<'a> {
 }
 
 impl<'a> SqliteStageSink<'a> {
-    fn new(conn: &'a Connection, limits: SinkLimits) -> Result<Self, StageError> {
+    fn new(db: &'a Db, limits: SinkLimits) -> Result<Self, StageError> {
         if limits.max_rows == 0
             || limits.max_bytes == 0
             || limits.max_rows > MAX_BUFFERED_ROWS
@@ -103,7 +104,7 @@ impl<'a> SqliteStageSink<'a> {
             return Err(StageError::InvalidLimits);
         }
         Ok(Self {
-            conn,
+            db,
             limits,
             rows: Vec::with_capacity(limits.max_rows),
             buffered_bytes: 0,
@@ -144,13 +145,14 @@ impl<'a> SqliteStageSink<'a> {
         if self.rows.is_empty() {
             return Ok(());
         }
-        let mut insert = self.conn.prepare_cached(
-            "INSERT OR IGNORE INTO _next(scope, name, value) VALUES (?1, ?2, ?3)",
-        )?;
-        for row in self.rows.drain(..) {
-            insert.execute(params![row.scope, row.name, row.value])?;
-            self.stats.rows_flushed += 1;
-        }
+        let attempted = self.rows.len();
+        let values: Vec<Vec<Value>> = self
+            .rows
+            .drain(..)
+            .map(|row| vec![Value::Text(row.scope), Value::Text(row.name), Value::Int(row.value)])
+            .collect();
+        self.db.insert_rows("_next", &["scope", "name", "value"], &values)?;
+        self.stats.rows_flushed += attempted;
         self.buffered_bytes = 0;
         self.stats.flushes += 1;
         Ok(())
@@ -183,32 +185,37 @@ struct ApplyReport {
 }
 
 struct StagedDeltaHarness {
-    conn: Connection,
+    db: Db,
 }
 
 impl StagedDeltaHarness {
     fn new() -> Result<Self, StageError> {
-        Self::from_connection(Connection::open_in_memory()?)
+        Self::from_db(crate::db::open(None)?)
     }
 
     fn open_file(path: &Path) -> Result<Self, StageError> {
-        let conn = Connection::open(path)?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
-        Self::from_connection(conn)
+        let path_str = path.to_str().expect("stage harness path must be valid UTF-8");
+        Self::from_db(crate::db::open(Some(path_str))?)
     }
 
-    fn from_connection(conn: Connection) -> Result<Self, StageError> {
-        sql::initialize(&conn)?;
-        Ok(Self { conn })
+    fn from_db(db: Db) -> Result<Self, StageError> {
+        sql::initialize(&db)?;
+        Ok(Self { db })
     }
 
     fn seed(&self, rows: &[FixtureRow]) -> Result<(), StageError> {
-        let mut insert = self.conn.prepare_cached(
-            "INSERT OR IGNORE INTO rel_fixture(scope, name, value) VALUES (?1, ?2, ?3)",
-        )?;
-        for row in rows {
-            insert.execute(params![row.scope, row.name, row.value])?;
+        if rows.is_empty() {
+            return Ok(());
         }
+        let values: Vec<Vec<Value>> = rows
+            .iter()
+            .map(|row| vec![
+                Value::Text(row.scope.clone()),
+                Value::Text(row.name.clone()),
+                Value::Int(row.value),
+            ])
+            .collect();
+        self.db.insert_rows("rel_fixture", &["scope", "name", "value"], &values)?;
         Ok(())
     }
 
@@ -220,22 +227,22 @@ impl StagedDeltaHarness {
         next: impl IntoIterator<Item = FixtureRow>,
         limits: SinkLimits,
     ) -> Result<SinkStats, StageError> {
-        self.conn.execute_batch(
+        self.db.execute_batch_on(
+            "_stage_ready",
             "DELETE FROM _stage_ready;
                                  DELETE FROM _next;
                                  DELETE FROM _changed_key;
                                  DELETE FROM _plus;
                                  DELETE FROM _minus;",
         )?;
-        {
-            let mut insert = self.conn.prepare_cached(
-                "INSERT OR IGNORE INTO _changed_key(scope, name) VALUES (?1, ?2)",
-            )?;
-            for key in changed {
-                insert.execute(params![key.scope, key.name])?;
-            }
+        if !changed.is_empty() {
+            let values: Vec<Vec<Value>> = changed
+                .iter()
+                .map(|key| vec![Value::Text(key.scope.clone()), Value::Text(key.name.clone())])
+                .collect();
+            self.db.insert_rows("_changed_key", &["scope", "name"], &values)?;
         }
-        let mut sink = SqliteStageSink::new(&self.conn, limits)?;
+        let mut sink = SqliteStageSink::new(&self.db, limits)?;
         for row in next {
             sink.push(row)?;
         }
@@ -243,15 +250,16 @@ impl StagedDeltaHarness {
     }
 
     fn seal_stage(&self, generation: i64) -> Result<StageReady, StageError> {
-        let ready = derive_stage_ready(&self.conn, generation)?;
-        self.conn.execute(
+        let ready = derive_stage_ready(&self.db, generation)?;
+        self.db.exec_params(
+            "_stage_ready",
             "INSERT INTO _stage_ready(singleton, generation, key_count, row_count, digest)
              VALUES (1, ?1, ?2, ?3, ?4)",
-            params![
-                ready.generation,
-                ready.key_count,
-                ready.row_count,
-                ready.digest.as_slice()
+            &[
+                ready.generation.into(),
+                ready.key_count.into(),
+                ready.row_count.into(),
+                ready.digest.to_vec().into(),
             ],
         )?;
         Ok(ready)
@@ -269,32 +277,32 @@ impl StagedDeltaHarness {
     }
 
     fn abort_stage(&self) -> Result<(), StageError> {
-        self.conn.execute("DELETE FROM _stage_ready", [])?;
+        self.db.exec_on("_stage_ready", "DELETE FROM _stage_ready")?;
         Ok(())
     }
 
-    fn consume_stage(
-        &mut self,
+    /// Statement sequence run inside the `BEGIN IMMEDIATE` consume transaction.
+    /// Split out of `consume_stage` so the caller controls commit/rollback: any
+    /// `Err` returned here (a seam failure or an injected `FailPoint`) must roll
+    /// the whole transaction back, mirroring the Drop-rollback a raw SQL
+    /// transaction guard gave for free before this seam migration.
+    fn consume_stage_in_tx(
+        &self,
         ready: &StageReady,
-        sink: SinkStats,
         fail: FailPoint,
-    ) -> Result<ApplyReport, StageError> {
-        verify_stage_ready(&self.conn, ready)?;
-        assert_diff_plans(&self.conn)?;
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx.execute_batch("DELETE FROM _plus; DELETE FROM _minus;")?;
+    ) -> Result<(usize, usize), StageError> {
+        self.db
+            .execute_batch_on("_plus", "DELETE FROM _plus; DELETE FROM _minus;")?;
 
-        let plus = tx.execute(PLUS_SQL, [])?;
+        let plus = self.db.exec_on("_plus", PLUS_SQL)?;
         if fail == FailPoint::AfterPlus {
             return Err(StageError::Injected(fail));
         }
-        let minus = tx.execute(MINUS_SQL, [])?;
+        let minus = self.db.exec_on("_minus", MINUS_SQL)?;
         if fail == FailPoint::AfterMinus {
             return Err(StageError::Injected(fail));
         }
-        let deleted = apply_minus(&tx)?;
+        let deleted = apply_minus(&self.db)?;
         if deleted != minus {
             return Err(StageError::ApplyCount {
                 expected: minus,
@@ -304,7 +312,7 @@ impl StagedDeltaHarness {
         if fail == FailPoint::AfterDelete {
             return Err(StageError::Injected(fail));
         }
-        let inserted = apply_plus(&tx)?;
+        let inserted = apply_plus(&self.db)?;
         if inserted != plus {
             return Err(StageError::ApplyCount {
                 expected: plus,
@@ -315,31 +323,54 @@ impl StagedDeltaHarness {
             return Err(StageError::Injected(fail));
         }
 
-        tx.execute(
+        self.db.exec_params(
+            "_delta_manifest",
             "INSERT INTO _delta_manifest(
                  generation, key_count, row_count, plus_count, minus_count, digest, exact)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1)",
-            params![
-                ready.generation,
-                ready.key_count,
-                ready.row_count,
-                plus,
-                minus,
-                ready.digest.as_slice()
+            &[
+                ready.generation.into(),
+                ready.key_count.into(),
+                ready.row_count.into(),
+                plus.into(),
+                minus.into(),
+                ready.digest.to_vec().into(),
             ],
         )?;
-        tx.execute(
+        self.db.exec_params(
+            "_delta_watermark",
             "INSERT INTO _delta_watermark(singleton, generation, digest) VALUES (1, ?1, ?2)
              ON CONFLICT(singleton) DO UPDATE SET
                  generation = excluded.generation, digest = excluded.digest",
-            params![ready.generation, ready.digest.as_slice()],
+            &[ready.generation.into(), ready.digest.to_vec().into()],
         )?;
-        tx.execute("DELETE FROM _stage_ready", [])?;
+        self.db.exec_on("_stage_ready", "DELETE FROM _stage_ready")?;
         if fail == FailPoint::AfterManifestWatermark {
             return Err(StageError::Injected(fail));
         }
-        tx.commit()?;
-        Ok(ApplyReport { plus, minus, sink })
+        Ok((plus, minus))
+    }
+
+    fn consume_stage(
+        &mut self,
+        ready: &StageReady,
+        sink: SinkStats,
+        fail: FailPoint,
+    ) -> Result<ApplyReport, StageError> {
+        verify_stage_ready(&self.db, ready)?;
+        assert_diff_plans(&self.db)?;
+        self.db.begin_immediate()?;
+        match self.consume_stage_in_tx(ready, fail) {
+            Ok((plus, minus)) => {
+                self.db.commit()?;
+                Ok(ApplyReport { plus, minus, sink })
+            }
+            Err(error) => {
+                // @rusqlite-ok: rollback failure is unactionable; the original error wins.
+                let _ = self.db.rollback();
+                Err(error)
+            }
+        }
     }
 
     fn apply_generation(
@@ -355,39 +386,35 @@ impl StagedDeltaHarness {
     }
 
     fn rows(&self) -> Result<Vec<FixtureRow>, StageError> {
-        read_fixture_rows(&self.conn)
+        Ok(read_fixture_rows(&self.db)?)
     }
 
     fn manifest(&self, generation: i64) -> Result<Option<Manifest>, StageError> {
-        Ok(self
-            .conn
-            .query_row(
-                "SELECT key_count, row_count, plus_count, minus_count, digest, exact
+        Ok(self.db.query_opt(
+            "_delta_manifest",
+            "SELECT key_count, row_count, plus_count, minus_count, digest, exact
              FROM _delta_manifest WHERE generation = ?1",
-                [generation],
-                |row| {
-                    Ok(Manifest {
-                        key_count: row.get(0)?,
-                        row_count: row.get(1)?,
-                        plus: row.get(2)?,
-                        minus: row.get(3)?,
-                        digest: blob32(row.get(4)?)?,
-                        exact: row.get::<_, i64>(5)? == 1,
-                    })
-                },
-            )
-            .optional()?)
+            &[generation.into()],
+            |row| {
+                Ok(Manifest {
+                    key_count: row.get(0)?,
+                    row_count: row.get(1)?,
+                    plus: row.get(2)?,
+                    minus: row.get(3)?,
+                    digest: blob32(row.get(4)?)?,
+                    exact: row.get::<_, i64>(5)? == 1,
+                })
+            },
+        )?)
     }
 
     fn watermark(&self) -> Result<Option<(i64, [u8; 32])>, StageError> {
-        Ok(self
-            .conn
-            .query_row(
-                "SELECT generation, digest FROM _delta_watermark WHERE singleton = 1",
-                [],
-                |row| Ok((row.get(0)?, blob32(row.get(1)?)?)),
-            )
-            .optional()?)
+        Ok(self.db.query_opt(
+            "_delta_watermark",
+            "SELECT generation, digest FROM _delta_watermark WHERE singleton = 1",
+            &[],
+            |row| Ok((row.get(0)?, blob32(row.get(1)?)?)),
+        )?)
     }
 }
 
@@ -403,7 +430,9 @@ struct Manifest {
 
 #[derive(Debug)]
 enum StageError {
-    Sqlite(rusqlite::Error),
+    /// Any Db-seam statement failure (`anyhow::Error` from `src/db.rs`, already
+    /// carrying the failing rel + statement head — see `db::sql_err`).
+    Sqlite(anyhow::Error),
     InvalidLimits,
     RowTooLarge { bytes: usize, limit: usize },
     IdentityTooLarge,
@@ -415,8 +444,8 @@ enum StageError {
     Injected(FailPoint),
 }
 
-impl From<rusqlite::Error> for StageError {
-    fn from(error: rusqlite::Error) -> Self {
+impl From<anyhow::Error> for StageError {
+    fn from(error: anyhow::Error) -> Self {
         Self::Sqlite(error)
     }
 }
@@ -424,7 +453,7 @@ impl From<rusqlite::Error> for StageError {
 impl fmt::Display for StageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Sqlite(error) => error.fmt(f),
+            Self::Sqlite(error) => write!(f, "{error}"),
             Self::InvalidLimits => write!(f,
                 "stage sink limits must be within 1..={MAX_BUFFERED_ROWS} rows and 1..={MAX_BUFFERED_BYTES} bytes"),
             Self::RowTooLarge { bytes, limit } => {

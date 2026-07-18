@@ -49,16 +49,18 @@ impl RelKind for ProposeExtractKind {
             }
         }
         computed.sort(); computed.dedup();
-        let stored: Vec<(String, i64, i64, String)> = {
-            let conn = eng.db.conn();
-            let mut s = conn.prepare(&format!(
+        let stored: Vec<(String, i64, i64, String)> = eng.db.query_rows(
+            "propose_extract",
+            &format!(
                 "SELECT \"path\",\"lo\",\"hi\",\"param\" FROM {} ORDER BY \"path\",\"lo\",\"hi\",\"param\"",
-                txt_tbl("propose_extract")))?;
-            let rows = s.query_map([], |r| Ok((
+                txt_tbl("propose_extract")
+            ),
+            &[],
+            |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, i64>(1)?,
-                r.get::<_, i64>(2)?, r.get::<_, String>(3)?)))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
+                r.get::<_, i64>(2)?, r.get::<_, String>(3)?,
+            )),
+        )?;
         if stored == computed { return Ok(false); }
         let rows: Vec<Vec<Value>> = computed.into_iter()
             .map(|(p, lo, hi, pm)| vec![Value::Text(p), Value::Int(lo), Value::Int(hi), Value::Text(pm)])
@@ -149,13 +151,14 @@ impl RelKind for ProposeCloneKind {
         }
         computed.sort();
         computed.dedup();
-        let stored: Vec<(String, String, i64, i64, String)> = {
-            let conn = eng.db.conn();
-            let mut s = conn.prepare(&format!(
+        let stored: Vec<(String, String, i64, i64, String)> = eng.db.query_rows(
+            "propose_clone",
+            &format!(
                 "SELECT \"kernel\",\"path\",\"lo\",\"hi\",\"param\" FROM {} ORDER BY \"kernel\",\"path\",\"lo\",\"hi\",\"param\"",
                 txt_tbl("propose_clone")
-            ))?;
-            let rows = s.query_map([], |r| {
+            ),
+            &[],
+            |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
@@ -163,9 +166,8 @@ impl RelKind for ProposeCloneKind {
                     r.get::<_, i64>(3)?,
                     r.get::<_, String>(4)?,
                 ))
-            })?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
+            },
+        )?;
         if stored == computed {
             return Ok(false);
         }

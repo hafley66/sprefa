@@ -31,8 +31,9 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use rusqlite::Connection;
 use serde_json::{json, Value};
+
+use crate::db::ReadDb;
 
 use crate::ast::{AggFn, Item, Program, Query, Rels, Term};
 use crate::lower::{lower_query, txt_tbl};
@@ -111,7 +112,7 @@ pub fn query(view: &ReadView) -> Served {
 }
 
 fn run_query(view: &ReadView, db_path: &str) -> Result<Value, (i64, String)> {
-    let conn = crate::db::open_read_only(db_path)
+    let conn = ReadDb::open(db_path)
         .map_err(|e| (INTERNAL_ERROR, format!("open read-only db: {e}")))?;
     let mut results: Vec<Value> = Vec::with_capacity(view.queries.len());
     for q in &view.queries {
@@ -135,7 +136,7 @@ pub fn query_rel(view: &ReadView, rel: &str) -> Served {
     let cols: Vec<String> = meta.cols.iter().map(|c| c.name.clone()).collect();
     let ncols = cols.len();
     Some((|| {
-        let conn = crate::db::open_read_only(db_path)
+        let conn = ReadDb::open(db_path)
             .map_err(|e| (INTERNAL_ERROR, format!("open read-only db: {e}")))?;
         let rows = string_rows(&conn, &txt_tbl(rel), ncols);
         Ok(json!({ "columns": cols, "rows": rows }))
@@ -149,7 +150,7 @@ pub fn query_rel(view: &ReadView, rel: &str) -> Served {
 pub fn query_sql(view: &ReadView, sql: &str, params: &[Value]) -> Served {
     let db_path = view.db_path_str()?;
     Some((|| {
-        let conn = crate::db::open_read_only(db_path)
+        let conn = ReadDb::open(db_path)
             .map_err(|e| (INTERNAL_ERROR, format!("open read-only db: {e}")))?;
         let rows = json_rows(&conn, sql, params).map_err(|e| (INTERNAL_ERROR, format!("{e}")))?;
         Ok(json!({ "rows": rows }))
@@ -197,86 +198,38 @@ pub fn schema(view: &ReadView) -> Value {
 /// Run `sql` and shape rows as JSON values, matching `engine::query.rs`'s
 /// `sqlite_to_json` (text -> string, int/real -> number, null/blob -> null for
 /// the lowered-query path). Params bind like `engine::rpc.rs`'s `query_sql`.
-fn json_rows(conn: &Connection, sql: &str, params: &[Value]) -> Result<Vec<Vec<Value>>> {
-    let mut stmt = conn.prepare(sql)?;
-    let ncols = stmt.column_count();
-    let param_vals: Vec<rusqlite::types::Value> = params
+fn json_rows(conn: &ReadDb, sql: &str, params: &[Value]) -> Result<Vec<Vec<Value>>> {
+    let sqlval_params: Vec<crate::db::SqlVal> = params.iter().map(crate::db::SqlVal::from_json).collect();
+    let raw_rows = conn.query_values("_query_sql", sql, &sqlval_params)?;
+    Ok(raw_rows
         .iter()
-        .map(|v| match v {
-            Value::String(s) => rusqlite::types::Value::Text(s.clone()),
-            Value::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    rusqlite::types::Value::Integer(i)
-                } else if let Some(f) = n.as_f64() {
-                    rusqlite::types::Value::Real(f)
-                } else {
-                    rusqlite::types::Value::Null
-                }
-            }
-            Value::Null => rusqlite::types::Value::Null,
-            other => rusqlite::types::Value::Text(other.to_string()),
-        })
-        .collect();
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-        param_vals.iter().map(|v| v as &dyn rusqlite::types::ToSql).collect();
-    let mut rows = stmt.query(param_refs.as_slice())?;
-    let mut out: Vec<Vec<Value>> = Vec::new();
-    while let Some(row) = rows.next()? {
-        let cells = (0..ncols)
-            .map(|i| {
-                cell_to_json(
-                    row.get::<_, rusqlite::types::Value>(i)
-                        .unwrap_or(rusqlite::types::Value::Null),
-                )
-            })
-            .collect();
-        out.push(cells);
-    }
-    Ok(out)
+        .map(|row| row.iter().map(sqlval_to_json_rpc).collect())
+        .collect())
 }
 
-/// One SQLite value -> JSON. Matches `engine::query.rs::sqlite_to_json` AND
-/// `engine::rpc.rs::query_sql`'s cell mapping (blob -> `<blob NB>` there, null
-/// elsewhere; both collapse to `Null` for query_sql's blob-free result sets, so
-/// this single mapping keeps `query`/`query_sql` output identical for real rows).
-fn cell_to_json(v: rusqlite::types::Value) -> Value {
-    use rusqlite::types::Value as V;
+/// One SQLite value -> JSON. Matches `engine::rpc.rs::query_sql`'s cell mapping
+/// (blob reports its byte count, null elsewhere).
+fn sqlval_to_json_rpc(v: &crate::db::SqlVal) -> Value {
     match v {
-        V::Text(s) => Value::String(s),
-        V::Integer(n) => Value::from(n),
-        V::Real(f) => Value::from(f),
-        V::Blob(b) => Value::String(format!("<blob {}B>", b.len())),
-        V::Null => Value::Null,
+        crate::db::SqlVal::Text(s) => Value::String(s.clone()),
+        crate::db::SqlVal::Int(n) => Value::from(*n),
+        crate::db::SqlVal::Real(f) => Value::from(*f),
+        crate::db::SqlVal::Blob(b) => Value::String(format!("<blob {}B>", b.len())),
+        crate::db::SqlVal::Null => Value::Null,
     }
 }
 
 /// Read `SELECT * FROM <txt_view>` as positional String rows, matching
 /// `engine::rpc.rs::rel_rows` (every cell stringified, row dropped on error).
-fn string_rows(conn: &Connection, txt_view: &str, ncols: usize) -> Vec<Vec<String>> {
-    let mut stmt = match conn.prepare(&format!("SELECT * FROM {txt_view}")) {
-        Ok(s) => s,
+fn string_rows(conn: &ReadDb, txt_view: &str, _ncols: usize) -> Vec<Vec<String>> {
+    let raw_rows = match conn.query_values(txt_view, &format!("SELECT * FROM {txt_view}"), &[]) {
+        Ok(rows) => rows,
         Err(_) => return Vec::new(),
     };
-    let rows = stmt.query_map([], |r| {
-        let mut cells = Vec::with_capacity(ncols);
-        for i in 0..ncols {
-            cells.push(cell_as_string(r, i)?);
-        }
-        Ok(cells)
-    });
-    rows.map(|iter| iter.filter_map(|x| x.ok()).collect())
-        .unwrap_or_default()
-}
-
-/// Stringify one cell, matching `engine::mod.rs::cell_as_string`.
-fn cell_as_string(r: &rusqlite::Row, i: usize) -> rusqlite::Result<String> {
-    Ok(match r.get_ref(i)? {
-        rusqlite::types::ValueRef::Null => String::new(),
-        rusqlite::types::ValueRef::Integer(n) => n.to_string(),
-        rusqlite::types::ValueRef::Real(f) => f.to_string(),
-        rusqlite::types::ValueRef::Text(t) => String::from_utf8_lossy(t).into_owned(),
-        rusqlite::types::ValueRef::Blob(b) => String::from_utf8_lossy(b).into_owned(),
-    })
+    raw_rows
+        .iter()
+        .map(|row| row.iter().map(|cell| cell.to_lossy_string()).collect())
+        .collect()
 }
 
 #[cfg(test)]
@@ -420,10 +373,11 @@ mod tests {
         let writer = crate::db::open(Some(&db_str)).unwrap();
         let a_id = crate::spine::StringId::of("a").sqlite();
         let d_id = crate::spine::StringId::of("d").sqlite();
-        writer.conn().execute_batch("BEGIN IMMEDIATE;").unwrap();
-        writer.conn().execute(
+        writer.begin_immediate().unwrap();
+        writer.exec_params(
+            "edge",
             &format!("INSERT INTO {} (a, b) VALUES (?1, ?2)", crate::lower::tbl("edge")),
-            rusqlite::params![a_id, d_id],
+            &[a_id.into(), d_id.into()],
         ).unwrap();
 
         // A read opened now must still see only the 3 committed rows.
@@ -431,7 +385,7 @@ mod tests {
         assert_eq!(mid["rows"].as_array().unwrap().len(), 3,
             "reader must not see the in-flight uncommitted insert");
 
-        writer.conn().execute_batch("COMMIT;").unwrap();
+        writer.commit().unwrap();
 
         // A fresh read after commit sees the 4th row.
         let after = super::query_rel(&view, "edge").expect("served").expect("ok");

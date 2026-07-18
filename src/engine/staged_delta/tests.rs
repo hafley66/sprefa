@@ -56,7 +56,7 @@ fn unsealed_aborted_and_partial_stages_are_refused_without_changes() {
                 SinkLimits::default(),
             )
             .unwrap();
-        let ready = derive_stage_ready(&h.conn, generation).unwrap();
+        let ready = derive_stage_ready(&h.db, generation).unwrap();
         match case {
             "unsealed" => {}
             "aborted" => {
@@ -67,11 +67,8 @@ fn unsealed_aborted_and_partial_stages_are_refused_without_changes() {
             "partial" => {
                 let sealed = h.seal_stage(generation).unwrap();
                 assert_eq!(sealed, ready);
-                h.conn
-                    .execute(
-                        "INSERT INTO _next(scope, name, value) VALUES ('r', 'a', 3)",
-                        [],
-                    )
+                h.db
+                    .exec_on("_next", "INSERT INTO _next(scope, name, value) VALUES ('r', 'a', 3)")
                     .unwrap();
             }
             _ => unreachable!(),
@@ -159,18 +156,12 @@ fn populated_analyzed_plans_use_changed_key_driver_and_pk_probes() {
         SinkLimits::default(),
     )
     .unwrap();
-    h.conn
-        .execute_batch("ANALYZE rel_fixture; ANALYZE _next; ANALYZE _changed_key;")
+    h.db
+        .execute_batch_on("rel_fixture", "ANALYZE rel_fixture; ANALYZE _next; ANALYZE _changed_key;")
         .unwrap();
-    assert_diff_plans(&h.conn).unwrap();
-    let auto_index: i64 = h
-        .conn
-        .query_row("PRAGMA automatic_index", [], |row| row.get(0))
-        .unwrap();
-    let temp_store: i64 = h
-        .conn
-        .query_row("PRAGMA temp_store", [], |row| row.get(0))
-        .unwrap();
+    assert_diff_plans(&h.db).unwrap();
+    let auto_index = h.db.pragma_i64("automatic_index").unwrap();
+    let temp_store = h.db.pragma_i64("temp_store").unwrap();
     assert_eq!((auto_index, temp_store), (0, 1));
 }
 
@@ -184,8 +175,12 @@ fn null_identity_is_refused_by_every_staging_table() {
         "INSERT INTO _plus(scope,name,value) VALUES('r','a',NULL)",
         "INSERT INTO _minus(scope,name,value) VALUES(NULL,'a',1)",
     ] {
-        let error = h.conn.execute(sql, []).unwrap_err();
-        assert!(matches!(error, rusqlite::Error::SqliteFailure(_, _)));
+        let error = h.db.exec_on("_null_check", sql).unwrap_err();
+        let message = error.to_string();
+        assert!(
+            message.contains("NOT NULL constraint failed"),
+            "expected a NOT NULL constraint failure, got: {message}"
+        );
     }
 }
 
@@ -198,13 +193,31 @@ fn wal_reader_sees_atomic_snapshot_then_new_generation_after_restart() {
     let path = std::env::temp_dir().join(format!("sprefa-stage-{}-{nonce}.db", std::process::id()));
     let mut writer = StagedDeltaHarness::open_file(&path).unwrap();
     writer.seed(&[FixtureRow::new("r", "a", 1)]).unwrap();
-    let reader = Connection::open(&path).unwrap();
-    reader.pragma_update(None, "journal_mode", "WAL").unwrap();
+
+    // A second, independent read-only connection on the same WAL file — the
+    // point of this test is cross-connection snapshot isolation, so it
+    // deliberately reads outside the `Db` seam via `db::open_read_only`
+    // (raw connection, manual BEGIN/COMMIT) rather than through `writer`.
+    let path_str = path.to_str().unwrap();
+    let reader = crate::db::open_read_only(path_str).unwrap();
+    let read_reader_rows = |conn: &rusqlite::Connection| -> Vec<FixtureRow> {
+        let mut stmt = conn
+            .prepare("SELECT scope, name, value FROM rel_fixture ORDER BY scope, name, value")
+            .unwrap();
+        stmt.query_map([], |row| {
+            Ok(FixtureRow {
+                scope: row.get(0)?,
+                name: row.get(1)?,
+                value: row.get(2)?,
+            })
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+    };
+
     reader.execute_batch("BEGIN").unwrap();
-    assert_eq!(
-        read_fixture_rows(&reader).unwrap(),
-        [FixtureRow::new("r", "a", 1)]
-    );
+    assert_eq!(read_reader_rows(&reader), [FixtureRow::new("r", "a", 1)]);
 
     writer
         .apply_generation(
@@ -215,15 +228,9 @@ fn wal_reader_sees_atomic_snapshot_then_new_generation_after_restart() {
             FailPoint::None,
         )
         .unwrap();
-    assert_eq!(
-        read_fixture_rows(&reader).unwrap(),
-        [FixtureRow::new("r", "a", 1)]
-    );
+    assert_eq!(read_reader_rows(&reader), [FixtureRow::new("r", "a", 1)]);
     reader.execute_batch("COMMIT").unwrap();
-    assert_eq!(
-        read_fixture_rows(&reader).unwrap(),
-        [FixtureRow::new("r", "a", 2)]
-    );
+    assert_eq!(read_reader_rows(&reader), [FixtureRow::new("r", "a", 2)]);
 
     drop(reader);
     drop(writer);

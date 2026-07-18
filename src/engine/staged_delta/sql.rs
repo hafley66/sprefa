@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use rusqlite::{params, Connection, OptionalExtension};
+use crate::db::Db;
 
 use super::{FixtureRow, StageError, StageReady};
 
@@ -24,8 +24,9 @@ pub(super) const MINUS_SQL: &str = "
     WHERE p.scope = k.scope AND p.name = k.name
       AND n.scope IS NULL";
 
-pub(super) fn initialize(conn: &Connection) -> Result<(), StageError> {
-    conn.execute_batch(
+pub(super) fn initialize(db: &Db) -> Result<(), StageError> {
+    db.execute_batch_on(
+        "_stage_schema",
         "PRAGMA temp_store=FILE;
         PRAGMA automatic_index=OFF;
         CREATE TABLE IF NOT EXISTS rel_fixture(
@@ -82,20 +83,16 @@ pub(super) fn initialize(conn: &Connection) -> Result<(), StageError> {
     Ok(())
 }
 
-pub(super) fn derive_stage_ready(
-    conn: &Connection,
-    generation: i64,
-) -> Result<StageReady, StageError> {
-    let outside_key = conn
-        .query_row(
-            "SELECT n.scope, n.name
+pub(super) fn derive_stage_ready(db: &Db, generation: i64) -> Result<StageReady, StageError> {
+    let outside_key = db.query_opt(
+        "_next",
+        "SELECT n.scope, n.name
          FROM _next AS n
          LEFT JOIN _changed_key AS k ON k.scope = n.scope AND k.name = n.name
          WHERE k.scope IS NULL LIMIT 1",
-            [],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-        )
-        .optional()?;
+        &[],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+    )?;
     if let Some((scope, name)) = outside_key {
         return Err(StageError::RowOutsideChangedKey { scope, name });
     }
@@ -104,29 +101,33 @@ pub(super) fn derive_stage_ready(
     digest.update(&generation.to_be_bytes());
 
     let mut key_count = 0usize;
-    {
-        let mut stmt = conn.prepare("SELECT scope, name FROM _changed_key ORDER BY scope, name")?;
-        let mut rows = stmt.query([])?;
-        while let Some(row) = rows.next()? {
+    db.for_each_row(
+        "_changed_key",
+        "SELECT scope, name FROM _changed_key ORDER BY scope, name",
+        &[],
+        |row| {
             digest.update(&[1]);
             hash_str(&mut digest, &row.get::<_, String>(0)?)?;
             hash_str(&mut digest, &row.get::<_, String>(1)?)?;
             key_count += 1;
-        }
-    }
+            Ok(())
+        },
+    )?;
+
     let mut row_count = 0usize;
-    {
-        let mut stmt =
-            conn.prepare("SELECT scope, name, value FROM _next ORDER BY scope, name, value")?;
-        let mut rows = stmt.query([])?;
-        while let Some(row) = rows.next()? {
+    db.for_each_row(
+        "_next",
+        "SELECT scope, name, value FROM _next ORDER BY scope, name, value",
+        &[],
+        |row| {
             digest.update(&[2]);
             hash_str(&mut digest, &row.get::<_, String>(0)?)?;
             hash_str(&mut digest, &row.get::<_, String>(1)?)?;
             digest.update(&row.get::<_, i64>(2)?.to_be_bytes());
             row_count += 1;
-        }
-    }
+            Ok(())
+        },
+    )?;
     Ok(StageReady {
         generation,
         key_count,
@@ -135,21 +136,20 @@ pub(super) fn derive_stage_ready(
     })
 }
 
-fn hash_str(digest: &mut blake3::Hasher, value: &str) -> Result<(), StageError> {
-    let len = u32::try_from(value.len()).map_err(|_| StageError::IdentityTooLarge)?;
+fn hash_str(digest: &mut blake3::Hasher, value: &str) -> anyhow::Result<()> {
+    let len = u32::try_from(value.len())
+        .map_err(|_| anyhow::anyhow!("staged identity string exceeds u32 length"))?;
     digest.update(&len.to_be_bytes());
     digest.update(value.as_bytes());
     Ok(())
 }
 
-pub(super) fn verify_stage_ready(
-    conn: &Connection,
-    expected: &StageReady,
-) -> Result<(), StageError> {
-    let stored = conn
-        .query_row(
+pub(super) fn verify_stage_ready(db: &Db, expected: &StageReady) -> Result<(), StageError> {
+    let stored = db
+        .query_opt(
+            "_stage_ready",
             "SELECT generation, key_count, row_count, digest FROM _stage_ready WHERE singleton = 1",
-            [],
+            &[],
             |row| {
                 Ok(StageReady {
                     generation: row.get(0)?,
@@ -158,95 +158,74 @@ pub(super) fn verify_stage_ready(
                     digest: blob32(row.get(3)?)?,
                 })
             },
-        )
-        .optional()?
+        )?
         .ok_or(StageError::StageNotReady)?;
-    let actual = derive_stage_ready(conn, expected.generation)?;
+    let actual = derive_stage_ready(db, expected.generation)?;
     if stored != *expected || actual != *expected {
         return Err(StageError::StageSealMismatch);
     }
     Ok(())
 }
 
-pub(super) fn blob32(bytes: Vec<u8>) -> rusqlite::Result<[u8; 32]> {
+pub(super) fn blob32(bytes: Vec<u8>) -> anyhow::Result<[u8; 32]> {
+    let len = bytes.len();
     bytes
         .try_into()
-        .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(32, 32))
+        .map_err(|_| anyhow::anyhow!("digest blob must be exactly 32 bytes, got {len}"))
 }
 
-pub(super) fn apply_minus(conn: &Connection) -> Result<usize, StageError> {
-    let mut read = conn.prepare("SELECT scope, name, value FROM _minus")?;
-    let mut rows = read.query([])?;
-    let mut delete = conn
-        .prepare_cached("DELETE FROM rel_fixture WHERE scope = ?1 AND name = ?2 AND value = ?3")?;
-    let mut affected = 0;
-    while let Some(row) = rows.next()? {
-        affected += delete.execute(params![
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, i64>(2)?
-        ])?;
-    }
-    Ok(affected)
+/// Set-based delete: every `_minus` row (already scoped to this generation's
+/// changed keys, computed earlier in the same consume transaction) leaves
+/// `rel_fixture` in one statement — never a per-row delete loop.
+pub(super) fn apply_minus(db: &Db) -> Result<usize, StageError> {
+    Ok(db.exec_on(
+        "rel_fixture",
+        "DELETE FROM rel_fixture WHERE (scope, name, value) IN (SELECT scope, name, value FROM _minus)",
+    )?)
 }
 
-pub(super) fn apply_plus(conn: &Connection) -> Result<usize, StageError> {
-    let mut read = conn.prepare("SELECT scope, name, value FROM _plus")?;
-    let mut rows = read.query([])?;
-    let mut insert =
-        conn.prepare_cached("INSERT INTO rel_fixture(scope, name, value) VALUES (?1, ?2, ?3)")?;
-    let mut affected = 0;
-    while let Some(row) = rows.next()? {
-        affected += insert.execute(params![
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, i64>(2)?
-        ])?;
-    }
-    Ok(affected)
+/// Set-based insert, the `apply_minus` counterpart: every `_plus` row lands in
+/// one statement.
+pub(super) fn apply_plus(db: &Db) -> Result<usize, StageError> {
+    Ok(db.exec_on(
+        "rel_fixture",
+        "INSERT INTO rel_fixture(scope, name, value) SELECT scope, name, value FROM _plus",
+    )?)
 }
 
-pub(super) fn read_fixture_rows(conn: &Connection) -> Result<Vec<FixtureRow>, StageError> {
-    let mut stmt =
-        conn.prepare("SELECT scope, name, value FROM rel_fixture ORDER BY scope, name, value")?;
-    let rows = stmt
-        .query_map([], |row| {
+pub(super) fn read_fixture_rows(db: &Db) -> Result<Vec<FixtureRow>, StageError> {
+    Ok(db.query_rows(
+        "rel_fixture",
+        "SELECT scope, name, value FROM rel_fixture ORDER BY scope, name, value",
+        &[],
+        |row| {
             Ok(FixtureRow {
                 scope: row.get(0)?,
                 name: row.get(1)?,
                 value: row.get(2)?,
             })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+        },
+    )?)
 }
 
-pub(super) fn assert_diff_plans(conn: &Connection) -> Result<(), StageError> {
+pub(super) fn assert_diff_plans(db: &Db) -> Result<(), StageError> {
     assert_plan(
-        conn,
+        db,
         "plus",
         PLUS_SQL,
         &["SEARCH N USING PRIMARY KEY", "SEARCH P USING PRIMARY KEY"],
     )?;
     assert_plan(
-        conn,
+        db,
         "minus",
         MINUS_SQL,
         &["SEARCH P USING PRIMARY KEY", "SEARCH N USING PRIMARY KEY"],
     )
 }
 
-fn assert_plan(
-    conn: &Connection,
-    label: &'static str,
-    sql: &str,
-    required: &[&str],
-) -> Result<(), StageError> {
+fn assert_plan(db: &Db, label: &'static str, sql: &str, required: &[&str]) -> Result<(), StageError> {
     let explain = format!("EXPLAIN QUERY PLAN {sql}");
-    let mut stmt = conn.prepare(&explain)?;
-    let details = stmt
-        .query_map([], |row| row.get::<_, String>(3))?
-        .collect::<Result<Vec<_>, _>>()?;
+    let details: Vec<String> = db.query_rows("_explain", &explain, &[], |row| Ok(row.get::<_, String>(3)?))?;
     let upper: Vec<String> = details
         .iter()
         .map(|line| line.to_ascii_uppercase())

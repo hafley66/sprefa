@@ -1,5 +1,5 @@
-use anyhow::Result;
-use rusqlite::Connection;
+use anyhow::{Context, Result};
+use rusqlite::{Connection, Row, ToSql};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -7,6 +7,22 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use crate::ast::Value;
+
+/// Re-exported so a generic row-mapping closure parameter outside the seam
+/// (e.g. a tolerant-read helper's `FnMut` bound) can name its argument type
+/// without importing `rusqlite` directly — the seam stays the only file that
+/// spells `rusqlite::`.
+pub type SqlRow<'a> = Row<'a>;
+
+/// Same reasoning as [`SqlRow`]: the raw per-cell `rusqlite::Result` a
+/// `Row::get` call returns, named without an outside-the-seam `rusqlite::`
+/// mention.
+pub type SqlRowResult<T> = rusqlite::Result<T>;
+
+/// Same reasoning as [`SqlRow`]: the zero-copy cell view `Row::get_ref`
+/// returns, for a reader that must branch on the SQLite storage type (a
+/// `sym`-typed column may store INTEGER, not TEXT) instead of assuming one.
+pub type SqlValueRef<'a> = rusqlite::types::ValueRef<'a>;
 
 /// Profile mode: `--profile` or `DL_PROFILE=1`. When on, every SQL statement
 /// over the slow threshold logs with its wall time (via SQLite's profile hook,
@@ -69,10 +85,6 @@ fn profile_hook(sql: &str, dur: Duration) {
 /// boundary. A per-tick statement counter screams when one statement runs more
 /// than `N1_THRESHOLD` times in a tick — the runtime N+1 detector that replaces
 /// the (unworkable) static sniff.
-///
-/// `conn()` is the migration escape hatch: call sites still on the raw
-/// `Connection` bypass the counter; their number (grep `.conn()`) is the
-/// remaining SQL-seam debt to burn down.
 pub struct Db {
     conn: Connection,
     counts: RefCell<HashMap<String, u32>>,
@@ -190,6 +202,7 @@ pub fn open(path: Option<&str>) -> Result<Db> {
     // fails for ANY reason (lock contention or otherwise) just prints and
     // moves on; an in-memory db has no `path` and is skipped entirely.
     if let Some(p) = path {
+        // @rusqlite-ok: probe setup; failure only means the real busy_timeout stays in effect.
         let _ = conn.execute_batch("PRAGMA busy_timeout=50;");
         if conn.execute_batch("BEGIN IMMEDIATE;").is_err() {
             tracing::warn!(
@@ -199,6 +212,7 @@ pub fn open(path: Option<&str>) -> Result<Db> {
                  on writes or serve stale reads; use --no-daemon to isolate"
             );
         } else {
+            // @rusqlite-ok: rollback the probe transaction; errors here are harmless.
             let _ = conn.execute_batch("ROLLBACK;");
         }
     }
@@ -473,8 +487,244 @@ fn register_string_fns(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// One bound parameter or result cell, seam-owned. Call sites build these;
+/// `rusqlite::types::Value` never leaves db.rs.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SqlVal {
+    Null,
+    Int(i64),
+    Real(f64),
+    Text(String),
+    Blob(Vec<u8>),
+}
+
+impl SqlVal {
+    /// Borrow the text payload, if this cell is text.
+    pub fn as_text(&self) -> Option<&str> {
+        match self { SqlVal::Text(s) => Some(s), _ => None }
+    }
+
+    /// Borrow the integer payload, if this cell is an integer.
+    pub fn as_int(&self) -> Option<i64> {
+        match self { SqlVal::Int(i) => Some(*i), _ => None }
+    }
+
+    /// The param mapping engine/rpc.rs::query_sql and daemon_read.rs::json_rows
+    /// duplicate today: String->Text, i64->Int, f64->Real, Null->Null,
+    /// other->Text(v.to_string()).
+    pub fn from_json(v: &serde_json::Value) -> SqlVal {
+        match v {
+            serde_json::Value::Null => SqlVal::Null,
+            serde_json::Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    SqlVal::Int(i)
+                } else if let Some(r) = n.as_f64() {
+                    SqlVal::Real(r)
+                } else {
+                    SqlVal::Text(v.to_string())
+                }
+            }
+            serde_json::Value::String(s) => SqlVal::Text(s.clone()),
+            serde_json::Value::Bool(b) => SqlVal::Int(i64::from(*b)),
+            other => SqlVal::Text(other.to_string()),
+        }
+    }
+
+    /// Text->String, Int->Number, Real->Number, Null->Null, Blob->"<blob NB>"
+    /// (the rpc.rs::query_sql flavor).
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            SqlVal::Null => serde_json::Value::Null,
+            SqlVal::Int(i) => serde_json::Value::Number((*i).into()),
+            SqlVal::Real(r) => serde_json::Value::Number(
+                serde_json::Number::from_f64(*r).unwrap_or_else(|| 0.into())),
+            SqlVal::Text(s) => serde_json::Value::String(s.clone()),
+            SqlVal::Blob(_) => serde_json::Value::String("<blob NB>".to_string()),
+        }
+    }
+
+    /// The engine/mod.rs::cell_as_string flavor: Null->"", Int/Real->to_string,
+    /// Text->clone, Blob->lossy utf8.
+    pub fn to_lossy_string(&self) -> String {
+        match self {
+            SqlVal::Null => String::new(),
+            SqlVal::Int(i) => i.to_string(),
+            SqlVal::Real(r) => r.to_string(),
+            SqlVal::Text(s) => s.clone(),
+            SqlVal::Blob(b) => String::from_utf8_lossy(b).into_owned(),
+        }
+    }
+}
+
+impl From<&str> for SqlVal {
+    fn from(value: &str) -> Self { SqlVal::Text(value.to_string()) }
+}
+
+impl From<String> for SqlVal {
+    fn from(value: String) -> Self { SqlVal::Text(value) }
+}
+
+impl From<&String> for SqlVal {
+    fn from(value: &String) -> Self { SqlVal::Text(value.clone()) }
+}
+
+impl From<i64> for SqlVal {
+    fn from(value: i64) -> Self { SqlVal::Int(value) }
+}
+
+impl From<i32> for SqlVal {
+    fn from(value: i32) -> Self { SqlVal::Int(i64::from(value)) }
+}
+
+impl From<u32> for SqlVal {
+    fn from(value: u32) -> Self { SqlVal::Int(i64::from(value)) }
+}
+
+impl From<usize> for SqlVal {
+    fn from(value: usize) -> Self { SqlVal::Int(value as i64) }
+}
+
+impl From<f64> for SqlVal {
+    fn from(value: f64) -> Self { SqlVal::Real(value) }
+}
+
+impl From<&[u8]> for SqlVal {
+    fn from(value: &[u8]) -> Self { SqlVal::Blob(value.to_vec()) }
+}
+
+impl From<Vec<u8>> for SqlVal {
+    fn from(value: Vec<u8>) -> Self { SqlVal::Blob(value) }
+}
+
+impl<T: Into<SqlVal>> From<Option<T>> for SqlVal {
+    fn from(value: Option<T>) -> Self {
+        match value {
+            Some(v) => v.into(),
+            None => SqlVal::Null,
+        }
+    }
+}
+
+impl From<&Value> for SqlVal {
+    fn from(value: &Value) -> Self {
+        match value {
+            Value::Text(s) => SqlVal::Text(s.clone()),
+            Value::Int(n) => SqlVal::Int(*n),
+            Value::Null => SqlVal::Null,
+        }
+    }
+}
+
+impl From<Value> for SqlVal {
+    fn from(value: Value) -> Self {
+        match value {
+            Value::Text(s) => SqlVal::Text(s),
+            Value::Int(n) => SqlVal::Int(n),
+            Value::Null => SqlVal::Null,
+        }
+    }
+}
+
+impl From<SqlVal> for rusqlite::types::Value {
+    fn from(value: SqlVal) -> Self {
+        match value {
+            SqlVal::Null => rusqlite::types::Value::Null,
+            SqlVal::Int(i) => rusqlite::types::Value::Integer(i),
+            SqlVal::Real(r) => rusqlite::types::Value::Real(r),
+            SqlVal::Text(s) => rusqlite::types::Value::Text(s),
+            SqlVal::Blob(b) => rusqlite::types::Value::Blob(b),
+        }
+    }
+}
+
+impl From<&SqlVal> for rusqlite::types::Value {
+    fn from(value: &SqlVal) -> Self {
+        match value {
+            SqlVal::Null => rusqlite::types::Value::Null,
+            SqlVal::Int(i) => rusqlite::types::Value::Integer(*i),
+            SqlVal::Real(r) => rusqlite::types::Value::Real(*r),
+            SqlVal::Text(s) => rusqlite::types::Value::Text(s.clone()),
+            SqlVal::Blob(b) => rusqlite::types::Value::Blob(b.clone()),
+        }
+    }
+}
+
+impl From<rusqlite::types::Value> for SqlVal {
+    fn from(value: rusqlite::types::Value) -> Self {
+        match value {
+            rusqlite::types::Value::Null => SqlVal::Null,
+            rusqlite::types::Value::Integer(i) => SqlVal::Int(i),
+            rusqlite::types::Value::Real(r) => SqlVal::Real(r),
+            rusqlite::types::Value::Text(s) => SqlVal::Text(s),
+            rusqlite::types::Value::Blob(b) => SqlVal::Blob(b),
+        }
+    }
+}
+
+impl rusqlite::types::ToSql for SqlVal {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(rusqlite::types::ToSqlOutput::Owned(self.into()))
+    }
+}
+
+impl rusqlite::types::FromSql for SqlVal {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        Ok(match value {
+            rusqlite::types::ValueRef::Null => SqlVal::Null,
+            rusqlite::types::ValueRef::Integer(i) => SqlVal::Int(i),
+            rusqlite::types::ValueRef::Real(r) => SqlVal::Real(r),
+            rusqlite::types::ValueRef::Text(t) => SqlVal::Text(String::from_utf8_lossy(t).into_owned()),
+            rusqlite::types::ValueRef::Blob(b) => SqlVal::Blob(b.to_vec()),
+        })
+    }
+}
+
+/// Wrapper so an `anyhow::Error` can ride inside `rusqlite::Error::UserFunctionError`
+/// when a row-mapping closure fails. `anyhow::Error` itself does not implement
+/// `std::error::Error` (by design), so we delegate Display/Debug to it.
+#[derive(Debug)]
+struct RowMapError(anyhow::Error);
+
+impl std::fmt::Display for RowMapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for RowMapError {}
+
+fn map_row<T>(result: Result<T>, rel: &str, head: &str) -> rusqlite::Result<T> {
+    result
+        .with_context(|| format!("row map on {rel}: {head}"))
+        .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(RowMapError(e))))
+}
+
+/// Statement head for logs and errors: whitespace-compacted, first 80 chars.
+fn stmt_head(sql: &str) -> String {
+    let compact: String = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+    let head: String = compact.chars().take(80).collect();
+    let ellipsis = if compact.chars().count() > 80 { "…" } else { "" };
+    format!("{head}{ellipsis}")
+}
+
+/// THE error-context wrapper. Every statement failure leaves the seam as:
+///   sql failed on <rel>: <stmt_head> — <rusqlite error>
+fn sql_err(rel: &str, sql: &str, e: rusqlite::Error) -> anyhow::Error {
+    anyhow::anyhow!("sql failed on {rel}: {} — {e}", stmt_head(sql))
+}
+
+/// "?, ?, …" n times — IN-list rendering for the *_in_chunks helpers.
+pub fn holes(n: usize) -> String {
+    std::iter::repeat("?").take(n).collect::<Vec<_>>().join(", ")
+}
+
+fn to_sql_params(params: &[SqlVal]) -> Vec<&dyn ToSql> {
+    params.iter().map(|v| v as &dyn ToSql).collect()
+}
+
 impl Db {
-    /// Escape hatch for not-yet-migrated call sites. Uncounted — burn these down.
+    /// Escape hatch for not-yet-migrated call sites. Deleted in the final
+    /// burn-down commit once every call site routes through a named seam method.
     pub fn conn(&self) -> &Connection { &self.conn }
 
     /// Whether this connection is outside a transaction, without exposing the
@@ -535,65 +785,262 @@ impl Db {
     }
 
     /// Whole-statement DDL / bulk op (e.g. `DELETE FROM t`), counted once.
-    pub fn exec(&self, sql: &str) -> Result<usize> {
-        self.bump(sql);
-        Ok(self.conn.execute(sql, [])?)
+    /// `rel` names the table the statement chiefly touches; it feeds error
+    /// context and the N+1 counter key.
+    pub fn exec_on(&self, rel: &str, sql: &str) -> Result<usize> {
+        self.bump(rel);
+        self.conn.execute(sql, [])
+            .map_err(|e| sql_err(rel, sql, e))
     }
 
-    /// Structural + on-disk stats for a rel's backing table, straight from
-    /// SQLite's own introspection — the "where did the bytes and the write time
-    /// go" surface behind a slow whole-table refresh:
-    ///   - `rows`, `ncol`, `pk` (PRIMARY KEY columns), `indexes` (secondary),
-    ///   - `bytes`: per-object on-disk size (the table, its PK autoindex, and
-    ///     each secondary index) from the `dbstat` vtab, in bytes.
-    /// A full-row PK shows here as an autoindex LARGER than the table (it
-    /// duplicates every column); a fat un-interned text column shows as an
-    /// oversized per-column index. Snapshot this (see the perf tests) and a
-    /// regression in table size / index count / PK shape is a snapshot diff, not
-    /// a hand-run `sqlite3` session. `dbstat` sizes are best-effort: the map is
-    /// empty if the vtab is unavailable in this build.
+    /// Deprecated wrapper: old call sites supply only SQL; the rel is implicit.
+    /// Kept until the final burn-down commit removes all remaining callers.
+    pub fn exec(&self, sql: &str) -> Result<usize> {
+        self.bump(sql);
+        self.conn.execute(sql, [])
+            .map_err(|e| sql_err("_exec", sql, e))
+    }
+
+    /// One prepared execute with bound params; returns rows-affected.
+    pub fn exec_params(&self, rel: &str, sql: &str, params: &[SqlVal]) -> Result<usize> {
+        self.bump(rel);
+        let refs = to_sql_params(params);
+        self.conn.execute(sql, refs.as_slice())
+            .map_err(|e| sql_err(rel, sql, e))
+    }
+
+    /// UPDATE/DELETE … WHERE k IN (<holes>), chunked like query_in_chunks; sums
+    /// rows-affected; one logical bump.
+    pub fn exec_in_chunks(&self, rel: &str, sql: impl Fn(usize) -> String,
+                          head: &[SqlVal], keys: &[SqlVal]) -> Result<usize> {
+        if keys.is_empty() { return Ok(0); }
+        self.bump(rel);
+        let head_params: Vec<rusqlite::types::Value> = head.iter().map(Into::into).collect();
+        let chunk_size = PARAM_BUDGET.saturating_sub(head.len()).max(1);
+        let mut total = 0usize;
+        for chunk in keys.chunks(chunk_size) {
+            let sql = sql(chunk.len());
+            let mut params: Vec<rusqlite::types::Value> = head_params.clone();
+            params.extend(chunk.iter().map(Into::into));
+            let refs: Vec<&dyn ToSql> = params.iter().map(|v| v as &dyn ToSql).collect();
+            total += self.conn.execute(&sql, refs.as_slice())
+                .map_err(|e| sql_err(rel, &sql, e))?;
+        }
+        Ok(total)
+    }
+
+    /// prepare; bind params; query_row. Prepare/query errors -> sql_err(rel, sql).
+    /// read-closure errors -> context "row map on {rel}: {head}". Exactly one row
+    /// required: QueryReturnedNoRows propagates, context-wrapped like the rest.
+    pub fn query_one<T>(&self, rel: &str, sql: &str, params: &[SqlVal],
+                        read: impl FnOnce(&Row<'_>) -> Result<T>) -> Result<T> {
+        self.bump(rel);
+        let refs = to_sql_params(params);
+        let head = stmt_head(sql);
+        let mut stmt = self.conn.prepare(sql)
+            .map_err(|e| sql_err(rel, sql, e))?;
+        stmt.query_row(refs.as_slice(), |row| {
+            map_row(read(row), rel, &head)
+        }).map_err(|e| sql_err(rel, sql, e))
+    }
+
+    /// Same as query_one; zero-or-one row. Absorbs every `OptionalExtension` site.
+    pub fn query_opt<T>(&self, rel: &str, sql: &str, params: &[SqlVal],
+                        read: impl FnOnce(&Row<'_>) -> Result<T>) -> Result<Option<T>> {
+        self.bump(rel);
+        let refs = to_sql_params(params);
+        let head = stmt_head(sql);
+        let mut stmt = self.conn.prepare(sql)
+            .map_err(|e| sql_err(rel, sql, e))?;
+        match stmt.query_row(refs.as_slice(), |row| {
+            map_row(read(row), rel, &head)
+        }) {
+            Ok(v) => Ok(Some(v)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(sql_err(rel, sql, e)),
+        }
+    }
+
+    /// prepare; query; map each row; collect with `?` — NEVER filter_map(ok).
+    pub fn query_rows<T>(&self, rel: &str, sql: &str, params: &[SqlVal],
+                         mut read: impl FnMut(&Row<'_>) -> Result<T>) -> Result<Vec<T>> {
+        self.bump(rel);
+        let refs = to_sql_params(params);
+        let head = stmt_head(sql);
+        let mut stmt = self.conn.prepare(sql)
+            .map_err(|e| sql_err(rel, sql, e))?;
+        let rows = stmt.query_map(refs.as_slice(), |row| {
+            map_row(read(row), rel, &head)
+        }).map_err(|e| sql_err(rel, sql, e))?;
+        rows.map(|r| r.map_err(|e| sql_err(rel, sql, e))).collect()
+    }
+
+    /// Streaming fold for scans that must not materialize a Vec.
+    pub fn for_each_row(&self, rel: &str, sql: &str, params: &[SqlVal],
+                        mut f: impl FnMut(&Row<'_>) -> Result<()>) -> Result<()> {
+        self.bump(rel);
+        let refs = to_sql_params(params);
+        let mut stmt = self.conn.prepare(sql)
+            .map_err(|e| sql_err(rel, sql, e))?;
+        let head = stmt_head(sql);
+        let mut rows = stmt.query(refs.as_slice())
+            .map_err(|e| sql_err(rel, sql, e))?;
+        while let Some(row) = rows.next().map_err(|e| sql_err(rel, sql, e))? {
+            f(row).with_context(|| format!("row map on {rel}: {head}"))?;
+        }
+        Ok(())
+    }
+
+    /// Rows as seam values — the rpc.rs::query_sql / daemon_read.rs::json_rows /
+    /// string_rows shape. Callers map each cell with SqlVal::to_json or
+    /// to_lossy_string.
+    pub fn query_values(&self, rel: &str, sql: &str, params: &[SqlVal])
+        -> Result<Vec<Vec<SqlVal>>> {
+        self.query_rows(rel, sql, params, |row| {
+            let ncol = row.as_ref().column_count();
+            let mut cells = Vec::with_capacity(ncol);
+            for col_index in 0..ncol {
+                cells.push(row.get::<_, SqlVal>(col_index)?);
+            }
+            Ok(cells)
+        })
+    }
+
+    /// SELECT … WHERE k IN (<n holes>), chunked so head.len() + n <= PARAM_BUDGET.
+    pub fn query_in_chunks<T>(&self, rel: &str, sql: impl Fn(usize) -> String,
+                              head: &[SqlVal], keys: &[SqlVal],
+                              mut read: impl FnMut(&Row<'_>) -> Result<T>) -> Result<Vec<T>> {
+        if keys.is_empty() { return Ok(Vec::new()); }
+        self.bump(rel);
+        let head_params: Vec<rusqlite::types::Value> = head.iter().map(Into::into).collect();
+        let chunk_size = PARAM_BUDGET.saturating_sub(head.len()).max(1);
+        let mut out = Vec::new();
+        for chunk in keys.chunks(chunk_size) {
+            let sql = sql(chunk.len());
+            let mut params: Vec<rusqlite::types::Value> = head_params.clone();
+            params.extend(chunk.iter().map(Into::into));
+            let refs: Vec<&dyn ToSql> = params.iter().map(|v| v as &dyn ToSql).collect();
+            let mut stmt = self.conn.prepare(&sql)
+                .map_err(|e| sql_err(rel, &sql, e))?;
+            let head_str = stmt_head(&sql);
+            let rows = stmt.query_map(refs.as_slice(), |row| {
+                map_row(read(row), rel, &head_str)
+            }).map_err(|e| sql_err(rel, &sql, e))?;
+            for row in rows { out.push(row.map_err(|e| sql_err(rel, &sql, e))?); }
+        }
+        Ok(out)
+    }
+
+    /// Moves engine/meta.rs::digest_of_query into the seam, byte-identical.
+    pub fn digest_rows(&self, rel: &str, sql: &str, params: &[SqlVal]) -> Result<[u8; 32]> {
+        let mut acc = [0u8; 32];
+        self.for_each_row(rel, sql, params, |row| {
+            let mut hasher = blake3::Hasher::new();
+            let ncol = row.as_ref().column_count();
+            for col_index in 0..ncol {
+                let cell: SqlVal = row.get(col_index)?;
+                let tag_bytes: &[u8] = match cell {
+                    SqlVal::Null => b"n",
+                    SqlVal::Int(i) => { hasher.update(b"i"); hasher.update(&i.to_le_bytes()); b"" }
+                    SqlVal::Real(r) => { hasher.update(b"r"); hasher.update(&r.to_le_bytes()); b"" }
+                    SqlVal::Text(ref s) => { hasher.update(b"t"); hasher.update(s.as_bytes()); b"" }
+                    SqlVal::Blob(ref b) => { hasher.update(b"b"); hasher.update(b); b"" }
+                };
+                hasher.update(tag_bytes);
+                hasher.update(&[0x00]);
+            }
+            let row_hash = hasher.finalize();
+            let bytes = row_hash.as_bytes();
+            for (i, byte) in acc.iter_mut().enumerate() {
+                *byte ^= bytes[i];
+            }
+            Ok(())
+        })?;
+        Ok(acc)
+    }
+
+    /// Chunked multi-row INSERT INTO table (cols) VALUES … ON CONFLICT(key_cols)
+    /// DO UPDATE SET update_cols = excluded.* (empty update_cols -> DO NOTHING).
+    pub fn upsert_rows(&self, table: &str, cols: &[&str], key_cols: &[&str],
+                       update_cols: &[&str], rows: &[Vec<SqlVal>]) -> Result<usize> {
+        if rows.is_empty() { return Ok(0); }
+        let ncol = cols.len();
+        anyhow::ensure!(ncol > 0, "upsert_rows requires at least one column");
+        let collist = cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
+        let key_list = key_cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
+        let on_conflict = if update_cols.is_empty() {
+            "DO NOTHING".to_string()
+        } else {
+            let updates = update_cols.iter()
+                .map(|c| format!("\"{c}\" = excluded.\"{c}\""))
+                .collect::<Vec<_>>().join(", ");
+            format!("DO UPDATE SET {updates}")
+        };
+        let key = format!("UPSERT {table}");
+        self.bump(&key);
+        let chunk_rows = (PARAM_BUDGET / ncol.max(1)).max(1);
+        let owns_tx = rows.len() > chunk_rows && self.conn.is_autocommit();
+        if owns_tx { self.conn.execute_batch("BEGIN").map_err(|e| sql_err(table, "BEGIN", e))?; }
+        let mut total = 0;
+        let tuple = format!("({})", vec!["?"; ncol].join(","));
+        for chunk in rows.chunks(chunk_rows) {
+            let values = vec![tuple.clone(); chunk.len()].join(", ");
+            let sql = format!(
+                "INSERT INTO {table} ({collist}) VALUES {values} \
+                 ON CONFLICT({key_list}) {on_conflict}");
+            let params: Vec<rusqlite::types::Value> = chunk.iter().flatten().map(Into::into).collect();
+            let refs: Vec<&dyn ToSql> = params.iter().map(|v| v as &dyn ToSql).collect();
+            match self.conn.execute(&sql, refs.as_slice()) {
+                Ok(n) => total += n,
+                Err(e) => {
+                    if owns_tx {
+                        // @rusqlite-ok: best-effort rollback of helper-owned tx; original error wins.
+                        let _ = self.conn.execute_batch("ROLLBACK");
+                    }
+                    return Err(sql_err(table, &sql, e));
+                }
+            }
+        }
+        if owns_tx { self.conn.execute_batch("COMMIT").map_err(|e| sql_err(table, "COMMIT", e))?; }
+        Ok(total)
+    }
+
+    /// Structural + on-disk stats for a rel's backing table.
     pub fn rel_stats(&self, rel: &str) -> Result<serde_json::Value> {
         let table = crate::lower::tbl(rel);
-        let rows: i64 = self.conn
-            .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
-            .unwrap_or(0);
+        let rows: i64 = self.query_one(&table, &format!("SELECT count(*) FROM {table}"), &[], |r| Ok(r.get(0)?))?;
         let mut ncol = 0i64;
         let mut pk: Vec<(i64, String)> = Vec::new();
-        {
-            let mut s = self.conn.prepare(&format!("PRAGMA table_info({table})"))?;
-            for row in s.query_map([], |r| Ok((r.get::<_, String>(1)?, r.get::<_, i64>(5)?)))?.flatten() {
-                if row.0 == "__src" { continue; }
-                ncol += 1;
-                if row.1 > 0 { pk.push((row.1, row.0)); }
-            }
+        let col_info: Vec<(String, i64)> = self.query_rows(
+            &table,
+            &format!("PRAGMA table_info({table})"),
+            &[],
+            |r| Ok((r.get::<_, String>(1)?, r.get::<_, i64>(5)?)),
+        )?;
+        for (name, pk_pos) in col_info {
+            if name == "__src" { continue; }
+            ncol += 1;
+            if pk_pos > 0 { pk.push((pk_pos, name)); }
         }
         pk.sort_by_key(|(pos, _)| *pos);
         let pk: Vec<String> = pk.into_iter().map(|(_, c)| c).collect();
-        let mut indexes: Vec<String> = Vec::new();
-        {
-            let mut s = self.conn.prepare(
-                "SELECT name FROM sqlite_master WHERE tbl_name = ?1 AND type = 'index' \
-                 AND sql IS NOT NULL ORDER BY name")?;
-            for n in s.query_map([table.as_str()], |r| r.get::<_, String>(0))?.flatten() {
-                indexes.push(n);
-            }
-        }
-        // Per-object bytes from dbstat, keyed by object name (table + every index,
-        // including the PK autoindex). Best-effort: skip silently if dbstat is
-        // absent. One grouped scan over the objects belonging to this table.
+        let indexes: Vec<String> = self.query_rows(
+            "sqlite_master",
+            "SELECT name FROM sqlite_master WHERE tbl_name = ?1 AND type = 'index' \
+             AND sql IS NOT NULL ORDER BY name",
+            &[table.as_str().into()],
+            |r| Ok(r.get::<_, String>(0)?),
+        )?;
         let mut bytes = serde_json::Map::new();
-        let obj_bytes = |name: &str| -> Option<i64> {
-            self.conn.query_row(
-                "SELECT sum(pgsize) FROM dbstat WHERE name = ?1",
-                [name], |r| r.get::<_, Option<i64>>(0)).ok().flatten()
+        let obj_bytes = |name: &str| -> Result<Option<i64>> {
+            self.query_one("dbstat", "SELECT sum(pgsize) FROM dbstat WHERE name = ?1",
+                &[name.into()], |r| Ok(r.get::<_, Option<i64>>(0)?))
         };
-        if let Some(b) = obj_bytes(&table) { bytes.insert(table.clone(), b.into()); }
-        // The PK autoindex has no sqlite_master.sql; its name is the conventional
-        // sqlite_autoindex_<table>_1 (present only when the table has a PK).
+        if let Some(b) = obj_bytes(&table)? { bytes.insert(table.clone(), b.into()); }
         let pk_autoindex = format!("sqlite_autoindex_{table}_1");
-        if let Some(b) = obj_bytes(&pk_autoindex) { bytes.insert(pk_autoindex, b.into()); }
+        if let Some(b) = obj_bytes(&pk_autoindex)? { bytes.insert(pk_autoindex, b.into()); }
         for ix in &indexes {
-            if let Some(b) = obj_bytes(ix) { bytes.insert(ix.clone(), b.into()); }
+            if let Some(b) = obj_bytes(ix)? { bytes.insert(ix.clone(), b.into()); }
         }
         Ok(serde_json::json!({
             "rel": rel,
@@ -605,16 +1052,14 @@ impl Db {
         }))
     }
 
-    /// Counted prepare — wraps `Connection::prepare`. Call sites that need a
-    /// `Statement` (e.g. multi-row `query_map`) migrate off `conn().prepare(...)`.
+    /// Counted prepare — wraps `Connection::prepare`. Kept until final burn-down
+    /// for not-yet-migrated call sites; new code uses query_*/exec_* instead.
     pub fn prepare(&self, sql: &str) -> Result<rusqlite::Statement<'_>> {
         self.bump(sql);
         Ok(self.conn.prepare(sql)?)
     }
 
-    /// Counted query_row — single-row scalar lookup. Wraps
-    /// `Connection::query_row` so common `SELECT COUNT(*)` / metadata queries
-    /// don't bypass the counter.
+    /// Counted query_row — single-row scalar lookup. Kept until final burn-down.
     pub fn query_row<T, P, F>(&self, sql: &str, params: P, f: F) -> Result<T>
     where
         P: rusqlite::Params,
@@ -624,52 +1069,142 @@ impl Db {
         Ok(self.conn.query_row(sql, params, f)?)
     }
 
-    /// Counted execute_batch — multi-statement SQL script (DDL like
-    /// `CREATE TABLE t (...); CREATE INDEX ...`). Wraps
-    /// `Connection::execute_batch`.
+    /// Counted execute_batch — multi-statement SQL script (DDL). `rel` names the
+    /// first object the script creates or drops.
+    pub fn execute_batch_on(&self, rel: &str, sql: &str) -> Result<()> {
+        self.bump(rel);
+        self.conn.execute_batch(sql)
+            .map_err(|e| sql_err(rel, sql, e))
+    }
+
+    /// Deprecated wrapper: old call sites supply only SQL.
     pub fn execute_batch(&self, sql: &str) -> Result<()> {
         self.bump(sql);
-        Ok(self.conn.execute_batch(sql)?)
+        self.conn.execute_batch(sql)
+            .map_err(|e| sql_err("_ddl", sql, e))
+    }
+
+    /// SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2 via query_opt.
+    pub fn column_exists(&self, table: &str, column: &str) -> Result<bool> {
+        self.query_opt(
+            table,
+            "SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2",
+            &[table.into(), column.into()],
+            |_| Ok(()),
+        ).map(|o| o.is_some())
+    }
+
+    /// column_exists -> Ok(false); else exec(table, alter_ddl) -> Ok(true).
+    pub fn ensure_column(&self, table: &str, column: &str, alter_ddl: &str) -> Result<bool> {
+        if self.column_exists(table, column)? { return Ok(false); }
+        self.exec_on(table, alter_ddl)?;
+        Ok(true)
+    }
+
+    /// (name, sql) FROM sqlite_master WHERE tbl_name=?1 AND type='index'
+    ///   AND sql IS NOT NULL ORDER BY name.
+    pub fn secondary_indexes(&self, table: &str) -> Result<Vec<(String, String)>> {
+        self.query_rows(
+            "sqlite_master",
+            "SELECT name, sql FROM sqlite_master \
+             WHERE tbl_name = ?1 AND type = 'index' AND sql IS NOT NULL ORDER BY name",
+            &[table.into()],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )
+    }
+
+    /// (name, type) FROM sqlite_master WHERE type IN ('table','view') AND name
+    /// LIKE any(patterns).
+    pub fn schema_objects(&self, name_like: &[&str]) -> Result<Vec<(String, String)>> {
+        if name_like.is_empty() { return Ok(Vec::new()); }
+        let mut sql = String::from(
+            "SELECT name, type FROM sqlite_master \
+             WHERE type IN ('table','view') AND ("
+        );
+        let mut parts = Vec::new();
+        for _ in name_like { parts.push("name LIKE ?".to_string()); }
+        sql.push_str(&parts.join(" OR "));
+        sql.push_str(") ORDER BY name");
+        let params: Vec<SqlVal> = name_like.iter().map(|p| (*p).into()).collect();
+        self.query_rows("sqlite_master", &sql, &params, |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })
+    }
+
+    /// PRAGMA <name> as one i64. PRAGMAs can't bind params; `name` is a
+    /// compile-time literal at every call site.
+    pub fn pragma_i64(&self, name: &str) -> Result<i64> {
+        let sql = format!("PRAGMA {name}");
+        self.query_one("_pragma", &sql, &[], |r| Ok(r.get(0)?))
+    }
+
+    /// execute_batch("_tx", "BEGIN")
+    pub fn begin(&self) -> Result<()> {
+        self.execute_batch_on("_tx", "BEGIN")
+    }
+
+    /// execute_batch("_tx", "BEGIN IMMEDIATE")
+    pub fn begin_immediate(&self) -> Result<()> {
+        self.execute_batch_on("_tx", "BEGIN IMMEDIATE")
+    }
+
+    /// execute_batch("_tx", "COMMIT")
+    pub fn commit(&self) -> Result<()> {
+        self.execute_batch_on("_tx", "COMMIT")
+    }
+
+    /// execute_batch("_tx", "ROLLBACK")
+    pub fn rollback(&self) -> Result<()> {
+        self.execute_batch_on("_tx", "ROLLBACK")
+    }
+
+    /// If not autocommit, run work() (caller owns outer tx). Else begin_immediate,
+    /// commit on Ok, rollback on Err; on panic, rollback then resume_unwind.
+    pub fn transact<T>(&self, work: impl FnOnce() -> Result<T>) -> Result<T> {
+        if !self.is_autocommit() {
+            return work();
+        }
+        self.begin_immediate()?;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work));
+        match result {
+            Ok(Ok(value)) => {
+                self.commit()?;
+                Ok(value)
+            }
+            Ok(Err(error)) => {
+                // @rusqlite-ok: rollback failure is unactionable; the original error wins.
+                let _ = self.rollback();
+                Err(error)
+            }
+            Err(payload) => {
+                // @rusqlite-ok: rollback failure is unactionable; the panic wins.
+                let _ = self.rollback();
+                std::panic::resume_unwind(payload);
+            }
+        }
+    }
+
+    /// Counted prepare — wraps `Connection::prepare`. Call sites that need a
+    /// `Statement` (e.g. multi-row `query_map`) migrate off `conn().prepare(...)`.
+    /// Kept until final burn-down.
+
+    /// Whole-table reload: `DELETE`, then bulk-insert `rows`.
+    pub fn reload_rel(&self, table: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
+        const INDEX_DROP_MIN: usize = 4096;
+        tracing::debug!(table, rows = rows.len(), "[rel] wipe + reload");
+        self.exec_on(table, &format!("DELETE FROM {table}"))?;
+        if rows.len() < INDEX_DROP_MIN {
+            return self.insert_rows(table, cols, rows);
+        }
+        let sidx: Vec<(String, String)> = self.secondary_indexes(table)?;
+        for (name, _) in &sidx { self.exec_on(table, &format!("DROP INDEX \"{name}\""))?; }
+        let res = self.insert_rows(table, cols, rows);
+        for (_, sql) in &sidx { self.exec_on(table, sql)?; }
+        res
     }
 
     /// Insert a set of rows in chunked multi-row `VALUES` statements — ONE logical
     /// op (a few executes for very large N), never one-per-row. `INSERT OR IGNORE`.
-    /// The counter keys on `INSERT <table>`, so a caller that loops this with
-    /// singletons trips the N+1 scream.
-    /// Whole-table reload: `DELETE`, then bulk-insert `rows`. For a large load,
-    /// the secondary indexes are DROPPED first and rebuilt in one pass after —
-    /// maintaining a table's index B-trees on every one of N inserts dominates a
-    /// bulk load (df_node: 154k rows across 5 secondary indexes + a wide
-    /// composite PK was ~925ms of per-row upkeep). A bulk index build over the
-    /// finished table is far cheaper. The PRIMARY KEY autoindex (its
-    /// `sqlite_master.sql IS NULL`) is KEPT, so `INSERT OR IGNORE` still dedups
-    /// during the load. Rebuild runs BEFORE any insert error propagates, so a
-    /// failure never strands the table without its indexes.
-    ///
-    /// `INDEX_DROP_MIN` gates the drop/rebuild: below it the two `sqlite_master`
-    /// reads + drop/create round-trips cost more than they save, so a small rel
-    /// takes the plain `DELETE`+insert path.
-    pub fn reload_rel(&self, table: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
-        const INDEX_DROP_MIN: usize = 4096;
-        tracing::debug!(table, rows = rows.len(), "[rel] wipe + reload");
-        self.exec(&format!("DELETE FROM {table}"))?;
-        if rows.len() < INDEX_DROP_MIN {
-            return self.insert_rows(table, cols, rows);
-        }
-        // Secondary indexes only: the PK autoindex has a NULL `sql` and is skipped.
-        let sidx: Vec<(String, String)> = {
-            let mut stmt = self.conn.prepare(
-                "SELECT name, sql FROM sqlite_master \
-                 WHERE tbl_name = ?1 AND type = 'index' AND sql IS NOT NULL")?;
-            let found = stmt.query_map([table], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
-            found.flatten().collect()
-        };
-        for (name, _) in &sidx { self.exec(&format!("DROP INDEX \"{name}\""))?; }
-        let res = self.insert_rows(table, cols, rows);
-        for (_, sql) in &sidx { self.exec(sql)?; }
-        res
-    }
-
     pub fn insert_rows(&self, table: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
         if rows.is_empty() { return Ok(0); }
         let ncol = cols.len();
@@ -678,11 +1213,8 @@ impl Db {
         self.bump(&key);
         let chunk_rows = (PARAM_BUDGET / ncol.max(1)).max(1);
         let multi = rows.len() > chunk_rows;
-        // A bulk insert is atomic on its own, but it must compose with a wider
-        // semantic-generation transaction. Only open (and therefore only
-        // commit or roll back) the transaction when this helper owns it.
         let owns_tx = multi && self.conn.is_autocommit();
-        if owns_tx { self.conn.execute_batch("BEGIN")?; }
+        if owns_tx { self.conn.execute_batch("BEGIN").map_err(|e| sql_err(table, "BEGIN", e))?; }
         let mut total = 0;
         for chunk in rows.chunks(chunk_rows) {
             let tuple = format!("({})", vec!["?"; ncol].join(","));
@@ -693,19 +1225,20 @@ impl Db {
                 Value::Int(n) => rusqlite::types::Value::Integer(*n),
                 Value::Null => rusqlite::types::Value::Null,
             }).collect();
-            let res = self.conn.execute(&sql, rusqlite::params_from_iter(params));
-            match res {
+            let refs: Vec<&dyn ToSql> = params.iter().map(|v| v as &dyn ToSql).collect();
+            match self.conn.execute(&sql, refs.as_slice()) {
                 Ok(n) => total += n,
                 Err(e) => {
-                    if owns_tx { let _ = self.conn.execute_batch("ROLLBACK"); }
-                    return Err(e.into());
+                    if owns_tx {
+                        // @rusqlite-ok: rollback helper-owned tx on chunk failure; original error wins.
+                        let _ = self.conn.execute_batch("ROLLBACK");
+                    }
+                    return Err(sql_err(table, &sql, e));
                 }
             }
         }
-        if owns_tx { self.conn.execute_batch("COMMIT")?; }
+        if owns_tx { self.conn.execute_batch("COMMIT").map_err(|e| sql_err(table, "COMMIT", e))?; }
         if total > 0 && table != "_write_ledger" {
-            // Record the logical rel name: `rel_<name>` -> `<name>`; raw internal
-            // tables like `_file` pass through verbatim.
             let rel = table
                 .strip_prefix("rel_")
                 .unwrap_or(table)
@@ -715,14 +1248,7 @@ impl Db {
         Ok(total)
     }
 
-    /// Drain a `SymSink`'s queued interns into ONE batched `_strings` insert —
-    /// the turnkey emit-side API every dataflow/spine refresh routes through,
-    /// so no call site open-codes `StringId::of(text).sqlite()` + a bespoke
-    /// insert. Collision guard: two different texts hashing to the same id
-    /// within this ONE drain is a loud bail (a silent 64-bit collision would
-    /// corrupt every join keyed on the id); a collision across separate
-    /// flushes is accepted as negligible at 64-bit and resolved by
-    /// `INSERT OR IGNORE` (first writer wins).
+    /// Drain a `SymSink`'s queued interns into ONE batched `_strings` insert.
     pub fn flush_syms(&self, sink: &mut crate::spine::SymSink) -> Result<usize> {
         use std::collections::BTreeMap;
         let pending = sink.drain();
@@ -749,6 +1275,87 @@ impl Db {
     }
 }
 
+/// Read-only connection owner for daemon_read. Counted into the process-wide
+/// profile hook; not part of per-tick N+1 counting (a read RPC has no tick).
+pub struct ReadDb { conn: Connection }
+
+impl ReadDb {
+    /// Was db::open_read_only: READ_ONLY|NO_MUTEX flags, 1s busy_timeout, the
+    /// same scalar-fn registry (read-only sprf_sym_intern: id of text, no
+    /// intern queue).
+    pub fn open(path: &str) -> Result<ReadDb> {
+        let mut conn = Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        conn.busy_timeout(Duration::from_millis(1000))?;
+        register_regexp(&conn)?;
+        register_split(&conn)?;
+        register_string_fns(&conn)?;
+        conn.create_scalar_function(
+            "sprf_sym_intern",
+            1,
+            rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+            |ctx| {
+                let Some(text) = ctx.get::<Option<String>>(0)? else { return Ok(None); };
+                Ok(Some(crate::spine::StringId::of(&text).sqlite()))
+            },
+        )?;
+        if profiling() { conn.profile(Some(profile_hook)); }
+        Ok(ReadDb { conn })
+    }
+
+    pub fn query_one<T>(&self, rel: &str, sql: &str, params: &[SqlVal],
+                        read: impl FnOnce(&Row<'_>) -> Result<T>) -> Result<T> {
+        let refs = to_sql_params(params);
+        let head = stmt_head(sql);
+        let mut stmt = self.conn.prepare(sql)
+            .map_err(|e| sql_err(rel, sql, e))?;
+        stmt.query_row(refs.as_slice(), |row| {
+            map_row(read(row), rel, &head)
+        }).map_err(|e| sql_err(rel, sql, e))
+    }
+
+    pub fn query_opt<T>(&self, rel: &str, sql: &str, params: &[SqlVal],
+                        read: impl FnOnce(&Row<'_>) -> Result<T>) -> Result<Option<T>> {
+        let refs = to_sql_params(params);
+        let head = stmt_head(sql);
+        let mut stmt = self.conn.prepare(sql)
+            .map_err(|e| sql_err(rel, sql, e))?;
+        match stmt.query_row(refs.as_slice(), |row| {
+            map_row(read(row), rel, &head)
+        }) {
+            Ok(v) => Ok(Some(v)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(sql_err(rel, sql, e)),
+        }
+    }
+
+    pub fn query_rows<T>(&self, rel: &str, sql: &str, params: &[SqlVal],
+                         mut read: impl FnMut(&Row<'_>) -> Result<T>) -> Result<Vec<T>> {
+        let refs = to_sql_params(params);
+        let head = stmt_head(sql);
+        let mut stmt = self.conn.prepare(sql)
+            .map_err(|e| sql_err(rel, sql, e))?;
+        let rows = stmt.query_map(refs.as_slice(), |row| {
+            map_row(read(row), rel, &head)
+        }).map_err(|e| sql_err(rel, sql, e))?;
+        rows.map(|r| r.map_err(|e| sql_err(rel, sql, e))).collect()
+    }
+
+    pub fn query_values(&self, rel: &str, sql: &str, params: &[SqlVal])
+        -> Result<Vec<Vec<SqlVal>>> {
+        self.query_rows(rel, sql, params, |row| {
+            let ncol = row.as_ref().column_count();
+            let mut cells = Vec::with_capacity(ncol);
+            for col_index in 0..ncol {
+                cells.push(row.get::<_, SqlVal>(col_index)?);
+            }
+            Ok(cells)
+        })
+    }
+}
+
 /// P2 (--check perf defect ledger): on a clean close, shrink the WAL back
 /// into the main db file so a long-lived daemon (or a burst of one-shot
 /// runs) doesn't leave an ever-growing `-wal` file behind. Best-effort —
@@ -757,6 +1364,7 @@ impl Db {
 /// never block the process from exiting.
 impl Drop for Db {
     fn drop(&mut self) {
+        // @rusqlite-ok: best-effort checkpoint on drop; WAL cleanup is advisory.
         let _ = self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
     }
 }
@@ -781,7 +1389,6 @@ mod tests {
     #[test]
     fn scalar_fns_propagate_null() {
         let db = open(None).unwrap();
-        let conn = db.conn();
         for expr in [
             "sprf_lower(NULL)", "sprf_upper(NULL)", "sprf_lcfirst(NULL)",
             "sprf_ucfirst(NULL)", "sprf_trim(NULL)", "sprf_norm(NULL)",
@@ -792,8 +1399,8 @@ mod tests {
             "sprf_split(NULL, ',', 0)", "sprf_split('a,b', NULL, 0)",
             "NULL REGEXP 'a'", "'a' REGEXP NULL",
         ] {
-            let got: Option<String> = conn
-                .query_row(&format!("SELECT {expr}"), [], |r| r.get(0))
+            let got: Option<String> = db
+                .query_one("_scalar", &format!("SELECT {expr}"), &[], |r| Ok(r.get::<_, Option<String>>(0)?))
                 .unwrap_or_else(|e| panic!("{expr} errored instead of NULL: {e}"));
             assert_eq!(got, None, "{expr} must be NULL");
         }
@@ -802,16 +1409,14 @@ mod tests {
     #[test]
     fn sqlite_temp_work_is_file_backed() {
         let db = open(None).unwrap();
-        let temp_store: i64 = db.conn().query_row("PRAGMA temp_store", [], |r| r.get(0)).unwrap();
+        let temp_store: i64 = db.pragma_i64("temp_store").unwrap();
         assert_eq!(temp_store, 1, "TEMP tables and sorts must not consume unbounded heap");
     }
 
     #[test]
     fn insert_rows_chunks_by_param_budget() {
         let db = open(None).unwrap();
-        db.exec("CREATE TABLE t (a INTEGER, b TEXT)").unwrap();
-        // 2 cols -> 16000 rows per statement; 33k rows = 3 chunks under one
-        // transaction, still ONE counted logical op (no n+1 scream).
+        db.exec_on("t", "CREATE TABLE t (a INTEGER, b TEXT)").unwrap();
         let rows: Vec<Vec<Value>> = (0..33_000)
             .map(|i| vec![Value::Int(i), Value::Text(format!("r{i}"))])
             .collect();
@@ -819,60 +1424,61 @@ mod tests {
         let n = db.insert_rows("t", &["a", "b"], &rows).unwrap();
         assert_eq!(n, 33_000);
         assert!(db.tick_end().is_none(), "chunked insert must not trip the n+1 counter");
-        let count: i64 = db.conn().query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
+        let count: i64 = db.query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?)).unwrap();
         assert_eq!(count, 33_000);
     }
 
     #[test]
     fn multi_chunk_insert_owns_transaction_when_autocommit() {
         let db = open(None).unwrap();
-        db.exec("CREATE TABLE t (a INTEGER PRIMARY KEY)").unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER PRIMARY KEY)").unwrap();
         let rows: Vec<Vec<Value>> = (0..32_001).map(|i| vec![Value::Int(i)]).collect();
 
-        assert!(db.conn().is_autocommit());
+        assert!(db.is_autocommit());
         assert_eq!(db.insert_rows("t", &["a"], &rows).unwrap(), rows.len());
-        assert!(db.conn().is_autocommit(), "helper-owned transaction must be committed");
-        let count: i64 = db.conn().query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
+        assert!(db.is_autocommit(), "helper-owned transaction must be committed");
+        let count: i64 = db.query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?)).unwrap();
         assert_eq!(count, rows.len() as i64);
     }
 
     #[test]
     fn multi_chunk_insert_composes_with_begin_immediate() {
         let db = open(None).unwrap();
-        db.exec("CREATE TABLE t (a INTEGER PRIMARY KEY)").unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER PRIMARY KEY)").unwrap();
         let rows: Vec<Vec<Value>> = (0..32_001).map(|i| vec![Value::Int(i)]).collect();
 
-        db.conn().execute_batch("BEGIN IMMEDIATE").unwrap();
+        db.begin_immediate().unwrap();
         assert_eq!(db.insert_rows("t", &["a"], &rows).unwrap(), rows.len());
-        assert!(!db.conn().is_autocommit(), "caller must still own the transaction");
-        db.conn().execute_batch("COMMIT").unwrap();
+        assert!(!db.is_autocommit(), "caller must still own the transaction");
+        db.commit().unwrap();
 
-        let count: i64 = db.conn().query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
+        let count: i64 = db.query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?)).unwrap();
         assert_eq!(count, rows.len() as i64);
     }
 
     #[test]
     fn failed_second_chunk_leaves_outer_transaction_for_caller_rollback() {
         let db = open(None).unwrap();
-        db.exec("CREATE TABLE marker (value TEXT)").unwrap();
-        db.exec("CREATE TABLE t (a INTEGER PRIMARY KEY)").unwrap();
-        db.exec(
+        db.exec_on("marker", "CREATE TABLE marker (value TEXT)").unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER PRIMARY KEY)").unwrap();
+        db.exec_on(
+            "t",
             "CREATE TRIGGER fail_second_chunk BEFORE INSERT ON t \
              WHEN NEW.a = 32000 BEGIN SELECT RAISE(ABORT, 'second chunk failed'); END",
         ).unwrap();
         let rows: Vec<Vec<Value>> = (0..32_001).map(|i| vec![Value::Int(i)]).collect();
 
-        db.conn().execute_batch("BEGIN IMMEDIATE").unwrap();
-        db.exec("INSERT INTO marker VALUES ('before helper')").unwrap();
+        db.begin_immediate().unwrap();
+        db.exec_on("marker", "INSERT INTO marker VALUES ('before helper')").unwrap();
         let err = db.insert_rows("t", &["a"], &rows).unwrap_err();
         assert!(err.to_string().contains("second chunk failed"));
-        assert!(!db.conn().is_autocommit(), "helper must not roll back its caller");
-        let marker_in_tx: i64 = db.conn().query_row("SELECT COUNT(*) FROM marker", [], |r| r.get(0)).unwrap();
+        assert!(!db.is_autocommit(), "helper must not roll back its caller");
+        let marker_in_tx: i64 = db.query_one("marker", "SELECT COUNT(*) FROM marker", &[], |r| Ok(r.get(0)?)).unwrap();
         assert_eq!(marker_in_tx, 1);
 
-        db.conn().execute_batch("ROLLBACK").unwrap();
-        let marker_after: i64 = db.conn().query_row("SELECT COUNT(*) FROM marker", [], |r| r.get(0)).unwrap();
-        let rows_after: i64 = db.conn().query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
+        db.rollback().unwrap();
+        let marker_after: i64 = db.query_one("marker", "SELECT COUNT(*) FROM marker", &[], |r| Ok(r.get(0)?)).unwrap();
+        let rows_after: i64 = db.query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?)).unwrap();
         assert_eq!(marker_after, 0, "caller rollback must include its earlier unrelated write");
         assert_eq!(rows_after, 0, "caller rollback must include the helper's first chunk");
     }
@@ -880,15 +1486,15 @@ mod tests {
     #[test]
     fn insert_rows_never_commits_caller_transaction() {
         let db = open(None).unwrap();
-        db.exec("CREATE TABLE t (a INTEGER PRIMARY KEY)").unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER PRIMARY KEY)").unwrap();
         let rows: Vec<Vec<Value>> = (0..32_001).map(|i| vec![Value::Int(i)]).collect();
 
-        db.conn().execute_batch("BEGIN IMMEDIATE").unwrap();
+        db.begin_immediate().unwrap();
         db.insert_rows("t", &["a"], &rows).unwrap();
-        assert!(!db.conn().is_autocommit());
-        db.conn().execute_batch("ROLLBACK").unwrap();
+        assert!(!db.is_autocommit());
+        db.rollback().unwrap();
 
-        let count: i64 = db.conn().query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
+        let count: i64 = db.query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?)).unwrap();
         assert_eq!(count, 0, "caller rollback must undo every helper-written chunk");
     }
 
@@ -897,10 +1503,10 @@ mod tests {
     // given text width, so dbstat sizes are non-trivial (multi-page).
     fn wide_rel(db: &Db, rel: &str, n: i64, text_width: usize) {
         let table = crate::lower::tbl(rel);
-        db.exec(&format!(
+        db.exec_on(&table, &format!(
             "CREATE TABLE {table} (\"id\" INTEGER, \"fn\" TEXT, \"file\" TEXT, \"line\" INTEGER, \
              __src TEXT DEFAULT '', PRIMARY KEY (\"id\", \"fn\", \"file\", \"line\"))")).unwrap();
-        db.exec(&format!("CREATE INDEX \"idx_{rel}_fn\" ON {table}(\"fn\")")).unwrap();
+        db.exec_on(&table, &format!("CREATE INDEX \"idx_{rel}_fn\" ON {table}(\"fn\")")).unwrap();
         let pad = "x".repeat(text_width);
         let rows: Vec<Vec<Value>> = (0..n).map(|i| vec![
             Value::Int(i), Value::Text(format!("fn_{i}_{pad}")),
@@ -909,9 +1515,6 @@ mod tests {
         db.insert_rows(&table, &["id", "fn", "file", "line"], &rows).unwrap();
     }
 
-    // rel_stats reports the schema (rows, ncol, PK columns, secondary indexes).
-    // The dbstat byte map is redacted in the snapshot (page sizes drift across
-    // SQLite builds); the STRUCTURE is the regression guard.
     #[test]
     fn rel_stats_snapshot_of_schema() {
         let db = open(None).unwrap();
@@ -920,11 +1523,6 @@ mod tests {
         insta::assert_json_snapshot!(stats, { ".bytes" => "[dbstat-bytes]" });
     }
 
-    // The full-row PK "smell": an autoindex that duplicates every column ends up
-    // LARGER than the table heap itself. This is the exact regression that made
-    // df_node's write slow; assert dbstat catches it so a future fat-PK rel trips
-    // a test instead of a production spike. (Needs enough rows to exceed one
-    // page; 4000 wide rows do.)
     #[test]
     fn full_row_pk_autoindex_exceeds_table_the_fat_pk_smell() {
         let db = open(None).unwrap();
@@ -938,16 +1536,12 @@ mod tests {
              pk={pk} table={table} (dbstat)");
     }
 
-    // Correctness guard for reload_rel's drop/rebuild path: after a large reload,
-    // every secondary index the table started with is still present (and usable),
-    // never left dropped.
     #[test]
     fn reload_rel_keeps_secondary_indexes() {
         let db = open(None).unwrap();
-        wide_rel(&db, "reloadme", 1, 4); // create shape + its idx
+        wide_rel(&db, "reloadme", 1, 4);
         let table = crate::lower::tbl("reloadme");
         let before = db.rel_stats("reloadme").unwrap()["indexes"].clone();
-        // Reload above the INDEX_DROP_MIN threshold so the drop/rebuild path runs.
         let pad = "y".repeat(16);
         let rows: Vec<Vec<Value>> = (0..5000).map(|i| vec![
             Value::Int(i), Value::Text(format!("fn_{i}_{pad}")),
@@ -956,53 +1550,44 @@ mod tests {
         db.reload_rel(&table, &["id", "fn", "file", "line"], &rows).unwrap();
         let after = db.rel_stats("reloadme").unwrap()["indexes"].clone();
         assert_eq!(before, after, "secondary indexes must survive a reload_rel drop/rebuild");
-        let count: i64 = db.conn().query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0)).unwrap();
+        let count: i64 = db.query_one(&table, &format!("SELECT count(*) FROM {table}"), &[], |r| Ok(r.get(0)?)).unwrap();
         assert_eq!(count, 5000);
     }
 
     #[test]
     fn insert_rows_or_ignore_holds_across_chunks() {
-        // OR IGNORE semantics survive the chunk/transaction plumbing: a
-        // constraint-violating row anywhere in a multi-chunk batch is skipped,
-        // never an error, never a partial abort.
         let db = open(None).unwrap();
-        db.exec("CREATE TABLE t (a INTEGER PRIMARY KEY)").unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER PRIMARY KEY)").unwrap();
         let mut rows: Vec<Vec<Value>> = (0..40_000).map(|i| vec![Value::Int(i)]).collect();
-        rows.push(vec![Value::Int(7)]); // duplicate key, lands in the last chunk
+        rows.push(vec![Value::Int(7)]);
         let n = db.insert_rows("t", &["a"], &rows).unwrap();
         assert_eq!(n, 40_000, "duplicate ignored, everything else lands");
-        let count: i64 = db.conn().query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
+        let count: i64 = db.query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?)).unwrap();
         assert_eq!(count, 40_000);
     }
 
     #[test]
     fn bundled_sqlite_accepts_order_by_inside_aggregate() {
-        // json_agg determinism rides `ORDER BY` inside the aggregate call (SQLite
-        // >= 3.44). If the bundled SQLite ever regresses below that, this fails and
-        // the fallback (a windowed ordered subquery) must ship instead. Also proves
-        // json_group_array / json_group_object are present (core since 3.38).
         let db = open(None).unwrap();
-        db.exec("CREATE TABLE t (g TEXT, k TEXT, v INTEGER)").unwrap();
+        db.exec_on("t", "CREATE TABLE t (g TEXT, k TEXT, v INTEGER)").unwrap();
         let rows = vec![
             vec![Value::Text("a".into()), Value::Text("z".into()), Value::Int(1)],
             vec![Value::Text("a".into()), Value::Text("x".into()), Value::Int(2)],
             vec![Value::Text("a".into()), Value::Text("y".into()), Value::Int(3)],
         ];
         db.insert_rows("t", &["g", "k", "v"], &rows).unwrap();
-        // ORDER BY inside json_group_array makes the element order deterministic.
-        let arr: String = db.conn().query_row(
-            "SELECT json_group_array(k ORDER BY k) FROM t GROUP BY g", [], |r| r.get(0)).unwrap();
+        let arr: String = db.query_one("t",
+            "SELECT json_group_array(k ORDER BY k) FROM t GROUP BY g", &[], |r| Ok(r.get(0)?)).unwrap();
         assert_eq!(arr, r#"["x","y","z"]"#);
-        // ORDER BY the key inside json_group_object.
-        let obj: String = db.conn().query_row(
-            "SELECT json_group_object(k, v ORDER BY k) FROM t GROUP BY g", [], |r| r.get(0)).unwrap();
+        let obj: String = db.query_one("t",
+            "SELECT json_group_object(k, v ORDER BY k) FROM t GROUP BY g", &[], |r| Ok(r.get(0)?)).unwrap();
         assert_eq!(obj, r#"{"x":2,"y":3,"z":1}"#);
     }
 
     #[test]
     fn prepare_and_query_map_works() {
         let db = open(None).unwrap();
-        db.exec("CREATE TABLE t (a INTEGER, b TEXT)").unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER, b TEXT)").unwrap();
         let rows: Vec<Vec<Value>> = (0..5)
             .map(|i| vec![Value::Int(i), Value::Text(format!("r{i}"))])
             .collect();
@@ -1023,13 +1608,11 @@ mod tests {
     #[test]
     fn query_row_returns_scalar() {
         let db = open(None).unwrap();
-        db.exec("CREATE TABLE t (a INTEGER)").unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER)").unwrap();
         let rows: Vec<Vec<Value>> = (0..7).map(|i| vec![Value::Int(i)]).collect();
         db.insert_rows("t", &["a"], &rows).unwrap();
         db.tick_begin();
-        let count: i64 = db
-            .query_row("SELECT COUNT(*) FROM t", [], |r| r.get::<_, i64>(0))
-            .unwrap();
+        let count: i64 = db.query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get::<_, i64>(0)?)).unwrap();
         assert!(db.tick_end().is_none());
         assert_eq!(count, 7);
     }
@@ -1038,14 +1621,213 @@ mod tests {
     fn execute_batch_runs_multi_statement_ddl() {
         let db = open(None).unwrap();
         db.tick_begin();
-        db.execute_batch(
+        db.execute_batch_on(
+            "_ddl",
             "CREATE TABLE a (x INTEGER); CREATE TABLE b (y TEXT);",
         )
         .unwrap();
         assert!(db.tick_end().is_none());
-        let na: i64 = db.conn().query_row("SELECT COUNT(*) FROM a", [], |r| r.get(0)).unwrap();
-        let nb: i64 = db.conn().query_row("SELECT COUNT(*) FROM b", [], |r| r.get(0)).unwrap();
+        let na: i64 = db.query_one("a", "SELECT COUNT(*) FROM a", &[], |r| Ok(r.get(0)?)).unwrap();
+        let nb: i64 = db.query_one("b", "SELECT COUNT(*) FROM b", &[], |r| Ok(r.get(0)?)).unwrap();
         assert_eq!(na, 0);
         assert_eq!(nb, 0);
+    }
+
+    #[test]
+    fn sql_val_round_trip_and_conversions() {
+        let db = open(None).unwrap();
+        db.exec_on("t", "CREATE TABLE t (i INTEGER, r REAL, t TEXT, b BLOB, n INTEGER)").unwrap();
+        db.exec_params("t",
+            "INSERT INTO t VALUES (?, ?, ?, ?, ?)",
+            &[42i64.into(), 3.14.into(), "hello".into(), vec![1u8, 2, 3].into(), SqlVal::Null],
+        ).unwrap();
+
+        let vals = db.query_values("t", "SELECT i, r, t, b, n FROM t", &[]).unwrap();
+        assert_eq!(vals.len(), 1);
+        assert_eq!(vals[0], vec![
+            SqlVal::Int(42),
+            SqlVal::Real(3.14),
+            SqlVal::Text("hello".into()),
+            SqlVal::Blob(vec![1, 2, 3]),
+            SqlVal::Null,
+        ]);
+
+        let one: i64 = db.query_one("t", "SELECT i FROM t", &[], |r| Ok(r.get(0)?)).unwrap();
+        assert_eq!(one, 42);
+
+        let opt: Option<i64> = db.query_opt("t", "SELECT i FROM t WHERE i = ?", &[99i64.into()], |r| Ok(r.get(0)?)).unwrap();
+        assert_eq!(opt, None);
+
+        let rows: Vec<i64> = db.query_rows("t", "SELECT i FROM t ORDER BY i", &[], |r| Ok(r.get(0)?)).unwrap();
+        assert_eq!(rows, vec![42]);
+
+        let mut sum = 0i64;
+        db.for_each_row("t", "SELECT i FROM t", &[], |r| { sum += r.get::<_, i64>(0)?; Ok(()) }).unwrap();
+        assert_eq!(sum, 42);
+    }
+
+    #[test]
+    fn query_opt_absorbs_optional_extension() {
+        let db = open(None).unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER)").unwrap();
+        let present: Option<i64> = db.query_opt("t", "SELECT a FROM t WHERE a = ?", &[1i64.into()], |r| Ok(r.get(0)?)).unwrap();
+        assert_eq!(present, None);
+        db.exec_params("t", "INSERT INTO t VALUES (?)", &[1i64.into()]).unwrap();
+        let present: Option<i64> = db.query_opt("t", "SELECT a FROM t WHERE a = ?", &[1i64.into()], |r| Ok(r.get(0)?)).unwrap();
+        assert_eq!(present, Some(1));
+    }
+
+    #[test]
+    fn exec_in_chunks_sums_affected_rows() {
+        let db = open(None).unwrap();
+        db.exec_on("t", "CREATE TABLE t (k INTEGER PRIMARY KEY, v INTEGER)").unwrap();
+        let keys: Vec<SqlVal> = (0..10).map(|i| SqlVal::Int(i)).collect();
+        for key in &keys { db.exec_params("t", "INSERT INTO t VALUES (?, 0)", &[key.clone()]).unwrap(); }
+        let affected = db.exec_in_chunks(
+            "t",
+            |n| format!("UPDATE t SET v = 1 WHERE k IN ({})", holes(n)),
+            &[],
+            &keys,
+        ).unwrap();
+        assert_eq!(affected, 10);
+        let count: i64 = db.query_one("t", "SELECT COUNT(*) FROM t WHERE v = 1", &[], |r| Ok(r.get(0)?)).unwrap();
+        assert_eq!(count, 10);
+    }
+
+    #[test]
+    fn query_in_chunks_collects_chunked_results() {
+        let db = open(None).unwrap();
+        db.exec_on("t", "CREATE TABLE t (k INTEGER PRIMARY KEY)").unwrap();
+        let keys: Vec<SqlVal> = (0..10).map(|i| SqlVal::Int(i)).collect();
+        for key in &keys { db.exec_params("t", "INSERT INTO t VALUES (?)", &[key.clone()]).unwrap(); }
+        let results: Vec<i64> = db.query_in_chunks(
+            "t",
+            |n| format!("SELECT k FROM t WHERE k IN ({}) ORDER BY k", holes(n)),
+            &[],
+            &keys,
+            |r| Ok(r.get(0)?),
+        ).unwrap();
+        assert_eq!(results, (0..10).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn upsert_rows_insert_and_update() {
+        let db = open(None).unwrap();
+        db.exec_on("t", "CREATE TABLE t (k INTEGER PRIMARY KEY, v INTEGER)").unwrap();
+        let rows: Vec<Vec<SqlVal>> = vec![
+            vec![1i64.into(), 10i64.into()],
+            vec![2i64.into(), 20i64.into()],
+        ];
+        assert_eq!(db.upsert_rows("t", &["k", "v"], &["k"], &["v"], &rows).unwrap(), 2);
+        let rows2: Vec<Vec<SqlVal>> = vec![vec![1i64.into(), 100i64.into()]];
+        assert_eq!(db.upsert_rows("t", &["k", "v"], &["k"], &["v"], &rows2).unwrap(), 1);
+        let v: i64 = db.query_one("t", "SELECT v FROM t WHERE k = 1", &[], |r| Ok(r.get(0)?)).unwrap();
+        assert_eq!(v, 100);
+    }
+
+    #[test]
+    fn ensure_column_idempotent() {
+        let db = open(None).unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER)").unwrap();
+        assert!(db.ensure_column("t", "b", "ALTER TABLE t ADD COLUMN b TEXT").unwrap());
+        assert!(!db.ensure_column("t", "b", "ALTER TABLE t ADD COLUMN b TEXT").unwrap());
+        let cols: i64 = db.query_one("t", "SELECT COUNT(*) FROM pragma_table_info('t')", &[], |r| Ok(r.get(0)?)).unwrap();
+        assert_eq!(cols, 2);
+    }
+
+    #[test]
+    fn column_exists_and_secondary_indexes() {
+        let db = open(None).unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER, b TEXT)").unwrap();
+        db.exec_on("t", "CREATE INDEX idx_t_b ON t(b)").unwrap();
+        assert!(db.column_exists("t", "a").unwrap());
+        assert!(!db.column_exists("t", "c").unwrap());
+        let idxs = db.secondary_indexes("t").unwrap();
+        assert_eq!(idxs.len(), 1);
+        assert_eq!(idxs[0].0, "idx_t_b");
+    }
+
+    #[test]
+    fn schema_objects_filters_by_like_patterns() {
+        let db = open(None).unwrap();
+        db.exec_on("a", "CREATE TABLE alpha (x INTEGER)").unwrap();
+        db.exec_on("b", "CREATE TABLE beta (x INTEGER)").unwrap();
+        db.exec_on("g", "CREATE VIEW gamma AS SELECT * FROM alpha").unwrap();
+        let objs = db.schema_objects(&["alph%", "gamm%"]).unwrap();
+        assert_eq!(objs.len(), 2);
+    }
+
+    #[test]
+    fn pragma_i64_reads_pragmas() {
+        let db = open(None).unwrap();
+        let user_version = db.pragma_i64("user_version").unwrap();
+        assert_eq!(user_version, 0);
+    }
+
+    #[test]
+    fn digest_rows_xor_fold() {
+        let db = open(None).unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER, b TEXT)").unwrap();
+        db.exec_params("t", "INSERT INTO t VALUES (?, ?)", &[1i64.into(), "x".into()]).unwrap();
+        db.exec_params("t", "INSERT INTO t VALUES (?, ?)", &[2i64.into(), "y".into()]).unwrap();
+        let d1 = db.digest_rows("t", "SELECT a, b FROM t ORDER BY a", &[]).unwrap();
+        let d2 = db.digest_rows("t", "SELECT a, b FROM t ORDER BY a", &[]).unwrap();
+        assert_eq!(d1, d2);
+        // Different content gives a different digest.
+        db.exec_params("t", "INSERT INTO t VALUES (?, ?)", &[3i64.into(), "z".into()]).unwrap();
+        let d3 = db.digest_rows("t", "SELECT a, b FROM t ORDER BY a", &[]).unwrap();
+        assert_ne!(d1, d3);
+    }
+
+    #[test]
+    fn transact_commits_ok_and_rolls_back_err() {
+        let db = open(None).unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER PRIMARY KEY)").unwrap();
+        let got = db.transact(|| {
+            db.exec_params("t", "INSERT INTO t VALUES (?)", &[1i64.into()])?;
+            Ok(42i64)
+        }).unwrap();
+        assert_eq!(got, 42);
+        assert!(db.is_autocommit());
+        let count: i64 = db.query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?)).unwrap();
+        assert_eq!(count, 1);
+
+        let err = db.transact(|| -> Result<()> {
+            db.exec_params("t", "INSERT INTO t VALUES (?)", &[2i64.into()])?;
+            anyhow::bail!("boom")
+        }).unwrap_err();
+        assert!(err.to_string().contains("boom"));
+        assert!(db.is_autocommit());
+        let count: i64 = db.query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?)).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    /// Fail-pre-fix for the 2026-07-18 poison-job incident class: a failing
+    /// statement must surface the table name AND the statement head.
+    #[test]
+    fn sql_error_includes_rel_and_statement_head() {
+        let db = open(None).unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER NOT NULL)").unwrap();
+        let err = db.exec_params("t", "INSERT INTO t VALUES (?)", &[SqlVal::Null]).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("t"), "error must name the table: {msg}");
+        assert!(msg.contains("INSERT INTO t VALUES"), "error must include statement head: {msg}");
+    }
+
+    #[test]
+    fn read_db_open_and_query() {
+        let path = format!("/tmp/sprefa_test_read_db_{}.db", std::process::id());
+        let _ = std::fs::remove_file(&path);
+        {
+            let db = open(Some(&path)).unwrap();
+            db.exec_on("t", "CREATE TABLE t (a INTEGER)").unwrap();
+            db.exec_params("t", "INSERT INTO t VALUES (?)", &[7i64.into()]).unwrap();
+        }
+        let rdb = ReadDb::open(&path).unwrap();
+        let a: i64 = rdb.query_one("t", "SELECT a FROM t", &[], |r| Ok(r.get(0)?)).unwrap();
+        assert_eq!(a, 7);
+        let vals = rdb.query_values("t", "SELECT a FROM t", &[]).unwrap();
+        assert_eq!(vals[0][0], SqlVal::Int(7));
+        let _ = std::fs::remove_file(&path);
     }
 }

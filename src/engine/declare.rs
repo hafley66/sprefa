@@ -4,8 +4,7 @@ impl Engine {
     pub(crate) fn create_rel_view(&self, rel: &str, meta: &RelMeta) -> Result<()> {
         let view = crate::lower::txt_tbl(rel);
         self.db
-            .conn()
-            .execute(&format!("DROP VIEW IF EXISTS {view}"), [])?;
+            .exec_on(rel, &format!("DROP VIEW IF EXISTS {view}"))?;
         let columns: Vec<String> = meta.cols.iter().map(|col| {
             if col.interned() {
                 format!("(SELECT content FROM _strings WHERE _strings.id = rel_{rel}.\"{}\") AS \"{}\"", col.name, col.name)
@@ -18,9 +17,9 @@ impl Engine {
         } else {
             columns.join(", ")
         };
-        self.db.conn().execute(
+        self.db.exec_on(
+            rel,
             &format!("CREATE VIEW {view} AS SELECT {select} FROM {}", tbl(rel)),
-            [],
         )?;
         Ok(())
     }
@@ -103,25 +102,24 @@ impl Engine {
                 None => want.clone(),
             };
             let (have, have_pk): (Vec<String>, Vec<String>) = {
-                let conn = self.db.conn();
                 let mut have = Vec::new();
                 // (pk_position, column) for columns in the existing PRIMARY KEY.
                 let mut pk_pos: Vec<(i64, String)> = Vec::new();
-                if let Ok(mut s) = conn.prepare(&format!("PRAGMA table_info({table})")) {
-                    // PRAGMA table_info columns: 1=name, 5=pk (1-based position
-                    // in the primary key, 0 if the column is not part of it).
-                    if let Ok(rows) =
-                        s.query_map([], |r| Ok((r.get::<_, String>(1)?, r.get::<_, i64>(5)?)))
-                    {
-                        for (name, pk) in rows.flatten() {
-                            if name == "__src" {
-                                continue;
-                            }
-                            if pk > 0 {
-                                pk_pos.push((pk, name.clone()));
-                            }
-                            have.push(name);
+                let rows = self.db.query_rows(
+                    &d.name,
+                    &format!("PRAGMA table_info({table})"),
+                    &[],
+                    |r| Ok((r.get::<_, String>(1)?, r.get::<_, i64>(5)?)),
+                );
+                if let Ok(rows) = rows {
+                    for (name, pk) in rows {
+                        if name == "__src" {
+                            continue;
                         }
+                        if pk > 0 {
+                            pk_pos.push((pk, name.clone()));
+                        }
+                        have.push(name);
                     }
                 }
                 pk_pos.sort_by_key(|(p, _)| *p);
@@ -135,16 +133,16 @@ impl Engine {
             };
             let key_drift = pk_set(have_pk.clone()) != pk_set(want_pk.clone());
             if !have.is_empty() && (have != want || key_drift) {
-                self.db.conn().execute(
+                self.db.exec_on(
+                    &d.name,
                     &format!("DROP VIEW IF EXISTS {}", crate::lower::txt_tbl(&d.name)),
-                    [],
                 )?;
                 self.db
-                    .conn()
-                    .execute(&format!("DROP TABLE IF EXISTS {table}"), [])?;
-                self.db.conn().execute(
-                    &format!("DELETE FROM _reldigest WHERE rel = ?1"),
-                    rusqlite::params![d.name],
+                    .exec_on(&d.name, &format!("DROP TABLE IF EXISTS {table}"))?;
+                self.db.exec_params(
+                    "_reldigest",
+                    "DELETE FROM _reldigest WHERE rel = ?1",
+                    &[d.name.as_str().into()],
                 )?;
                 // P1 interaction: before the completion-marker fix, a dropped
                 // derived table read back as 0 rows, and `any_derived_empty`
@@ -157,9 +155,10 @@ impl Engine {
                 // empty, never-refilled table. `_derived_complete` may have no
                 // row for `d.name` (a source rel, or a derived rel that never
                 // completed a pass yet) — the DELETE is then simply a no-op.
-                self.db.conn().execute(
+                self.db.exec_params(
+                    "_derived_complete",
                     "DELETE FROM _derived_complete WHERE rel = ?1",
-                    rusqlite::params![d.name],
+                    &[d.name.as_str().into()],
                 )?;
             }
         }
@@ -213,7 +212,7 @@ impl Engine {
                 pk.join(", ")
             )
         };
-        self.db.conn().execute(&sql, [])?;
+        self.db.exec_on(&d.name, &sql)?;
         self.rels.insert(
             d.name.clone(),
             RelMeta {
@@ -257,16 +256,12 @@ impl Engine {
             .map(|(rel, col)| format!("idx_{rel}_{col}"))
             .collect();
 
-        let existing: Vec<String> = {
-            let mut stmt = self.db.prepare(
-                "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx\\_%' ESCAPE '\\'",
-            )?;
-            let mut names = Vec::new();
-            for row in stmt.query_map([], |r| r.get::<_, String>(0))? {
-                names.push(row?);
-            }
-            names
-        };
+        let existing: Vec<String> = self.db.query_rows(
+            "sqlite_master",
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx\\_%' ESCAPE '\\'",
+            &[],
+            |row| Ok(row.get::<_, String>(0)?),
+        )?;
         let stale: Vec<&String> = existing.iter().filter(|n| !wanted_names.contains(*n)).collect();
         if !stale.is_empty() {
             tracing::debug!(
@@ -280,10 +275,13 @@ impl Engine {
 
         for (rel, col) in &wanted {
             let ix = format!("idx_{rel}_{col}");
-            self.db.exec(&format!(
-                "CREATE INDEX IF NOT EXISTS \"{ix}\" ON {}(\"{col}\")",
-                tbl(rel)
-            ))?;
+            self.db.exec_on(
+                rel,
+                &format!(
+                    "CREATE INDEX IF NOT EXISTS \"{ix}\" ON {}(\"{col}\")",
+                    tbl(rel)
+                ),
+            )?;
         }
         Ok(())
     }
@@ -488,12 +486,12 @@ impl Engine {
         // `_where_bytes_file_span_idx`. The closure(child) path is still the
         // pick for full-ancestry materialization (measured); this just makes
         // the LSP-common point query first-class. Idempotent.
-        self.db.conn().execute(
+        self.db.exec_on(
+            "node",
             &format!(
                 "CREATE INDEX IF NOT EXISTS node_file_span_idx ON {}(\"file\", \"lo\", \"hi\")",
                 tbl("node")
             ),
-            [],
         )?;
         for d in crate::rels::rel_kind_decls() {
             self.declare(&d)?;
@@ -546,14 +544,12 @@ impl Engine {
     /// content.id = the content hash. No interning (Stage 2).
     #[tracing::instrument(skip_all, level = "debug")]
     pub(crate) fn refresh_builtin_rels(&self) -> Result<()> {
-        let mut sel = self
-            .db
-            .conn()
-            .prepare("SELECT repo, path, rev, hash FROM _file")?;
-        let files: Vec<(String, String, String, String)> = sel
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
-            .filter_map(|x| x.ok())
-            .collect();
+        let files: Vec<(String, String, String, String)> = self.db.query_rows(
+            "_file",
+            "SELECT repo, path, rev, hash FROM _file",
+            &[],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
         let t = |s: &str| Value::Text(s.to_string());
         // slug -> on-disk root for the repos we can name (self + config). Fills
         // the `repo` relation's root column; an ingested-by-path repo not in
@@ -634,13 +630,13 @@ impl Engine {
     /// cleared after the previous tick had some) — the incremental path uses it to
     /// re-derive rules that join `every`.
     pub(crate) fn refresh_every(&self, intervals: &[i64]) -> Result<bool> {
-        use rusqlite::OptionalExtension;
-        let before: i64 = self.db.conn().query_row(
+        let before: i64 = self.db.query_one(
+            "every",
             &format!("SELECT COUNT(*) FROM {}", tbl("every")),
-            [],
-            |r| r.get(0),
+            &[],
+            |r| Ok(r.get(0)?),
         )?;
-        self.db.exec(&format!("DELETE FROM {}", tbl("every")))?;
+        self.db.exec_on("every", &format!("DELETE FROM {}", tbl("every")))?;
         let now = now_secs();
         let mut rows: Vec<Vec<Value>> = Vec::new();
         for &n in intervals {
@@ -649,19 +645,19 @@ impl Engine {
             }
             let bucket = now / n;
             let key = format!("every:{n}");
-            let prev: Option<i64> = self
-                .db
-                .conn()
-                .query_row("SELECT tx FROM _carry_meta WHERE k = ?1", [&key], |r| {
-                    r.get(0)
-                })
-                .optional()?;
+            let prev: Option<i64> = self.db.query_opt(
+                "_carry_meta",
+                "SELECT tx FROM _carry_meta WHERE k = ?1",
+                &[key.clone().into()],
+                |r| Ok(r.get::<_, i64>(0)?),
+            )?;
             if prev != Some(bucket) {
                 rows.push(vec![Value::Int(n)]);
-                self.db.conn().execute(
+                self.db.exec_params(
+                    "_carry_meta",
                     "INSERT INTO _carry_meta (k, tx) VALUES (?1, ?2) \
                      ON CONFLICT(k) DO UPDATE SET tx = ?2",
-                    rusqlite::params![key, bucket],
+                    &[key.into(), bucket.into(), bucket.into()],
                 )?;
             }
         }
@@ -683,18 +679,15 @@ impl Engine {
             .collect();
         want.sort();
         want.dedup();
-        let have: Vec<(i64, i64)> = {
-            let conn = self.db.conn();
-            let mut s = conn.prepare(&format!(
+        let have: Vec<(i64, i64)> = self.db.query_rows(
+            "clock",
+            &format!(
                 "SELECT \"secs\", \"bucket\" FROM {} ORDER BY \"secs\", \"bucket\"",
                 tbl("clock")
-            ))?;
-            let v: Vec<(i64, i64)> = s
-                .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?
-                .filter_map(|x| x.ok())
-                .collect();
-            v
-        };
+            ),
+            &[],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+        )?;
         if have == want {
             return Ok(false);
         }
@@ -721,17 +714,18 @@ impl Engine {
             },
         );
         let (nt, et, v) = (scc_node_tbl(edge), scc_edge_tbl(edge), tbl(&d.name));
-        self.db.conn().execute_batch(&format!(
-            "CREATE TABLE IF NOT EXISTS {nt} (name TEXT PRIMARY KEY, comp INTEGER, cyclic INTEGER);
-             CREATE TABLE IF NOT EXISTS {et} (comp_src INTEGER, comp_dst INTEGER, PRIMARY KEY(comp_src, comp_dst));"
-        ))?;
+        self.db.execute_batch_on(
+            &d.name,
+            &format!(
+                "CREATE TABLE IF NOT EXISTS {nt} (name TEXT PRIMARY KEY, comp INTEGER, cyclic INTEGER);
+                 CREATE TABLE IF NOT EXISTS {et} (comp_src INTEGER, comp_dst INTEGER, PRIMARY KEY(comp_src, comp_dst));"
+            ),
+        )?;
         // a prior run may have left rel_<head> as a view or a real table; clear both.
         self.db
-            .conn()
-            .execute(&format!("DROP VIEW IF EXISTS {v}"), [])?;
+            .exec_on(&d.name, &format!("DROP VIEW IF EXISTS {v}"))?;
         self.db
-            .conn()
-            .execute(&format!("DROP TABLE IF EXISTS {v}"), [])?;
+            .exec_on(&d.name, &format!("DROP TABLE IF EXISTS {v}"))?;
         let (c0, c1) = (&d.cols[0].name, &d.cols[1].name);
         let output_name = |column: &str| {
             if d.cols
@@ -759,25 +753,29 @@ impl Engine {
         let first_b = output_name_b(c1);
         let second_a = output_name(c0);
         let second_b = output_name_b(c1);
-        self.db.conn().execute_batch(&format!(
-            "CREATE VIEW {v} AS
-             WITH RECURSIVE cr(a, b) AS (
-               SELECT comp_src, comp_dst FROM {et}
-               UNION
-               SELECT cr.a, e.comp_dst FROM cr JOIN {et} e ON e.comp_src = cr.b
-             )
-             SELECT {first_a} AS \"{c0}\", {first_b} AS \"{c1}\"
-               FROM cr JOIN {nt} na ON na.comp = cr.a JOIN {nt} nb ON nb.comp = cr.b
-             UNION
-             SELECT {second_a} AS \"{c0}\", {second_b} AS \"{c1}\"
-               FROM {nt} na JOIN {nt} nb ON na.comp = nb.comp AND na.cyclic = 1;"
-        ))?;
+        self.db.execute_batch_on(
+            &d.name,
+            &format!(
+                "CREATE VIEW {v} AS
+                 WITH RECURSIVE cr(a, b) AS (
+                   SELECT comp_src, comp_dst FROM {et}
+                   UNION
+                   SELECT cr.a, e.comp_dst FROM cr JOIN {et} e ON e.comp_src = cr.b
+                 )
+                 SELECT {first_a} AS \"{c0}\", {first_b} AS \"{c1}\"
+                   FROM cr JOIN {nt} na ON na.comp = cr.a JOIN {nt} nb ON nb.comp = cr.b
+                 UNION
+                 SELECT {second_a} AS \"{c0}\", {second_b} AS \"{c1}\"
+                   FROM {nt} na JOIN {nt} nb ON na.comp = nb.comp AND na.cyclic = 1;"
+            ),
+        )?;
         if d.cols[0].interned() && d.cols[1].interned() {
-            self.db.conn().execute(
+            self.db.exec_on(
+                &d.name,
                 &format!("DROP VIEW IF EXISTS {}", crate::lower::txt_tbl(&d.name)),
-                [],
             )?;
-            self.db.conn().execute(
+            self.db.exec_on(
+                &d.name,
                 &format!(
                     "CREATE VIEW {} AS SELECT {} AS \"{}\", {} AS \"{}\" FROM {}",
                     crate::lower::txt_tbl(&d.name),
@@ -793,7 +791,6 @@ impl Engine {
                     c1,
                     tbl(&d.name),
                 ),
-                [],
             )?;
         }
         Ok(())

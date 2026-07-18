@@ -84,17 +84,23 @@ impl RelKind for PerfKind {
         // closure head is a reachability view, and COUNT(*) on it materializes
         // the full closure — the exact unbounded evaluation the closure-query
         // guard refuses. Only real tables are counted.
-        let views: std::collections::HashSet<String> = {
-            let conn = eng.db.conn();
-            let mut s = conn.prepare("SELECT name FROM sqlite_master WHERE type = 'view'")?;
-            let rows = s.query_map([], |r| r.get::<_, String>(0))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
+        let views: std::collections::HashSet<String> = eng.db.query_rows(
+            "sqlite_master",
+            "SELECT name FROM sqlite_master WHERE type = 'view'",
+            &[],
+            |r| Ok(r.get::<_, String>(0)?),
+        )?
+            .into_iter()
+            .collect();
         let mut counts: Vec<(String, i64)> = Vec::new();
         for rel in eng.rels.keys() {
             if self.rels().contains(&rel.as_str()) || views.contains(&tbl(rel)) { continue; }
-            let n: i64 = eng.db.conn().query_row(
-                &format!("SELECT COUNT(*) FROM {}", txt_tbl(rel)), [], |r| r.get(0))?;
+            let n: i64 = eng.db.query_one(
+                rel,
+                &format!("SELECT COUNT(*) FROM {}", txt_tbl(rel)),
+                &[],
+                |r| Ok(r.get(0)?),
+            )?;
             counts.push((rel.clone(), n));
         }
         let counts = fold_twins(counts);
@@ -108,22 +114,25 @@ impl RelKind for PerfKind {
         // declared-rel filter as long as its suffix rel is still declared.
         let mut timings: Vec<(String, i64, i64)> = Vec::new();
         {
-            let conn = eng.db.conn();
-            let mut s = conn.prepare("SELECT rel, ms, n FROM _stmt_ms ORDER BY rel")?;
-            let rows = s.query_map([], |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)))?;
-            for row in rows.flatten() {
+            let rows = eng.db.query_rows(
+                "_stmt_ms",
+                "SELECT rel, ms, n FROM _stmt_ms ORDER BY rel",
+                &[],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)),
+            )?;
+            for row in rows {
                 let name = row.0.split_once(':').map(|(_, suffix)| suffix).unwrap_or(&row.0);
                 if eng.rels.contains_key(name) { timings.push(row); }
             }
         }
         let timings = fold_twin_triples(timings);
         let read_pairs = |rel: &str, c0: &str, c1: &str| -> Result<Vec<(String, i64)>> {
-            let conn = eng.db.conn();
-            let mut s = conn.prepare(&format!(
-                "SELECT \"{c0}\", \"{c1}\" FROM {} ORDER BY \"{c0}\"", txt_tbl(rel)))?;
-            let rows = s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
-            Ok(rows.filter_map(|x| x.ok()).collect())
+            eng.db.query_rows(
+                rel,
+                &format!("SELECT \"{c0}\", \"{c1}\" FROM {} ORDER BY \"{c0}\"", txt_tbl(rel)),
+                &[],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+            )
         };
         let mut changed = false;
         if read_pairs("rel_count", "rel", "rows")? != counts {
@@ -133,12 +142,12 @@ impl RelKind for PerfKind {
             changed = true;
         }
         let read_triples = || -> Result<Vec<(String, i64, i64)>> {
-            let conn = eng.db.conn();
-            let mut s = conn.prepare(&format!(
-                "SELECT \"rel\", \"ms\", \"n\" FROM {} ORDER BY \"rel\"", txt_tbl("stmt_ms")))?;
-            let rows = s.query_map([], |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)))?;
-            Ok(rows.filter_map(|x| x.ok()).collect())
+            eng.db.query_rows(
+                "stmt_ms",
+                &format!("SELECT \"rel\", \"ms\", \"n\" FROM {} ORDER BY \"rel\"", txt_tbl("stmt_ms")),
+                &[],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)),
+            )
         };
         if read_triples()? != timings {
             let rows: Vec<Vec<Value>> = timings.into_iter()

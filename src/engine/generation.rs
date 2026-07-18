@@ -6,7 +6,7 @@
 
 #[cfg(test)]
 mod tests {
-    use rusqlite::{Connection, TransactionBehavior};
+    use crate::db::{self, Db};
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -21,19 +21,36 @@ mod tests {
 
     #[derive(Debug)]
     enum HarnessError {
-        Sql(rusqlite::Error),
+        Sql(anyhow::Error),
         Injected(Failpoint),
     }
 
-    impl From<rusqlite::Error> for HarnessError {
-        fn from(error: rusqlite::Error) -> Self {
-            Self::Sql(error)
+    impl std::fmt::Display for HarnessError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Self::Sql(e) => e.fmt(f),
+                Self::Injected(fp) => write!(f, "injected failpoint: {fp:?}"),
+            }
         }
     }
 
-    type Result<T> = std::result::Result<T, HarnessError>;
+    impl std::error::Error for HarnessError {}
 
-    fn inject(selected: Option<Failpoint>, here: Failpoint) -> Result<()> {
+    impl From<anyhow::Error> for HarnessError {
+        fn from(error: anyhow::Error) -> Self {
+            // `db.transact` round-trips the closure's error through `anyhow::Error`
+            // (the `?` conversions inside `apply_generation` go the other way via
+            // the blanket `std::error::Error` impl). Recover the original
+            // `HarnessError` — in particular `Injected` — before falling back to
+            // wrapping a genuine SQL failure.
+            match error.downcast::<HarnessError>() {
+                Ok(harness_error) => harness_error,
+                Err(error) => Self::Sql(error),
+            }
+        }
+    }
+
+    fn inject(selected: Option<Failpoint>, here: Failpoint) -> Result<(), HarnessError> {
         if selected == Some(here) {
             Err(HarnessError::Injected(here))
         } else {
@@ -41,13 +58,18 @@ mod tests {
         }
     }
 
-    fn configure(conn: &Connection) -> rusqlite::Result<()> {
-        conn.execute_batch("PRAGMA temp_store=FILE; PRAGMA busy_timeout=1000;")
+    fn configure(db: &Db) -> Result<(), HarnessError> {
+        db.execute_batch_on(
+            "_pragma",
+            "PRAGMA temp_store=FILE; PRAGMA busy_timeout=1000;",
+        )?;
+        Ok(())
     }
 
-    fn initialize(conn: &Connection) -> rusqlite::Result<()> {
-        configure(conn)?;
-        conn.execute_batch(
+    fn initialize(db: &Db) -> Result<(), HarnessError> {
+        configure(db)?;
+        db.execute_batch_on(
+            "source_state",
             "CREATE TABLE source_state (id INTEGER PRIMARY KEY, value TEXT NOT NULL);
              CREATE TABLE derived_state (id INTEGER PRIMARY KEY, value TEXT NOT NULL);
              CREATE TABLE generation_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -57,51 +79,53 @@ mod tests {
                  ('digest', 'digest-old'),
                  ('plan_fingerprint', 'plan-old'),
                  ('watermark', '7');",
-        )
+        )?;
+        Ok(())
     }
 
     /// Apply all semantic state under exactly one `BEGIN IMMEDIATE` transaction.
-    /// Dropping `tx` on any injected or SQL error proves the rollback behavior
-    /// production wiring must preserve. `before_commit` is a read-only test seam
-    /// used to inspect visibility from a second connection while the writer is
-    /// still inside the transaction.
+    /// `Db::transact` owns the boundary: rollback on any injected or SQL error,
+    /// commit on success. `before_commit` is a read-only test seam used to inspect
+    /// visibility from a second connection while the writer is still inside the
+    /// transaction.
     fn apply_generation(
-        conn: &mut Connection,
+        db: &Db,
         failpoint: Option<Failpoint>,
-        before_commit: impl FnOnce() -> Result<()>,
-    ) -> Result<()> {
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        inject(failpoint, Failpoint::BeforeSource)?;
+        before_commit: impl FnOnce() -> Result<(), HarnessError>,
+    ) -> Result<(), HarnessError> {
+        db.transact(|| {
+            inject(failpoint, Failpoint::BeforeSource)?;
 
-        tx.execute(
-            "UPDATE source_state SET value = 'source-new' WHERE id = 1",
-            [],
-        )?;
-        inject(failpoint, Failpoint::AfterSource)?;
+            db.exec_on(
+                "source_state",
+                "UPDATE source_state SET value = 'source-new' WHERE id = 1",
+            )?;
+            inject(failpoint, Failpoint::AfterSource)?;
 
-        tx.execute(
-            "UPDATE derived_state SET value = 'derived-new' WHERE id = 1",
-            [],
-        )?;
-        inject(failpoint, Failpoint::AfterDerived)?;
+            db.exec_on(
+                "derived_state",
+                "UPDATE derived_state SET value = 'derived-new' WHERE id = 1",
+            )?;
+            inject(failpoint, Failpoint::AfterDerived)?;
 
-        tx.execute(
-            "UPDATE generation_meta SET value = 'digest-new' WHERE key = 'digest'",
-            [],
-        )?;
-        tx.execute(
-            "UPDATE generation_meta SET value = 'plan-new' WHERE key = 'plan_fingerprint'",
-            [],
-        )?;
-        inject(failpoint, Failpoint::AfterDigest)?;
+            db.exec_on(
+                "generation_meta",
+                "UPDATE generation_meta SET value = 'digest-new' WHERE key = 'digest'",
+            )?;
+            db.exec_on(
+                "generation_meta",
+                "UPDATE generation_meta SET value = 'plan-new' WHERE key = 'plan_fingerprint'",
+            )?;
+            inject(failpoint, Failpoint::AfterDigest)?;
 
-        tx.execute(
-            "UPDATE generation_meta SET value = '8' WHERE key = 'watermark'",
-            [],
-        )?;
-        inject(failpoint, Failpoint::BeforeCommit)?;
-        before_commit()?;
-        tx.commit()?;
+            db.exec_on(
+                "generation_meta",
+                "UPDATE generation_meta SET value = '8' WHERE key = 'watermark'",
+            )?;
+            inject(failpoint, Failpoint::BeforeCommit)?;
+            before_commit()?;
+            Ok(())
+        })?;
         Ok(())
     }
 
@@ -114,8 +138,10 @@ mod tests {
         watermark: String,
     }
 
-    fn snapshot(conn: &Connection) -> rusqlite::Result<Snapshot> {
-        let scalar = |sql: &str| conn.query_row(sql, [], |row| row.get::<_, String>(0));
+    fn snapshot(db: &Db) -> Result<Snapshot, HarnessError> {
+        let scalar = |sql: &str| -> Result<String, HarnessError> {
+            Ok(db.query_one("gen_snapshot", sql, &[], |row| Ok(row.get::<_, String>(0)?))?)
+        };
         Ok(Snapshot {
             source: scalar("SELECT value FROM source_state WHERE id = 1")?,
             derived: scalar("SELECT value FROM derived_state WHERE id = 1")?,
@@ -156,12 +182,12 @@ mod tests {
             Failpoint::AfterDigest,
             Failpoint::BeforeCommit,
         ] {
-            let mut conn = Connection::open_in_memory().unwrap();
-            initialize(&conn).unwrap();
-            let error = apply_generation(&mut conn, Some(failpoint), || Ok(())).unwrap_err();
+            let db = db::open(None).unwrap();
+            initialize(&db).unwrap();
+            let error = apply_generation(&db, Some(failpoint), || Ok(())).unwrap_err();
             assert!(matches!(error, HarnessError::Injected(actual) if actual == failpoint));
             assert_eq!(
-                snapshot(&conn).unwrap(),
+                snapshot(&db).unwrap(),
                 old_snapshot(),
                 "failed at {failpoint:?}"
             );
@@ -170,10 +196,10 @@ mod tests {
 
     #[test]
     fn success_commits_source_derived_digest_plan_and_watermark_together() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        initialize(&conn).unwrap();
-        apply_generation(&mut conn, None, || Ok(())).unwrap();
-        assert_eq!(snapshot(&conn).unwrap(), new_snapshot());
+        let db = db::open(None).unwrap();
+        initialize(&db).unwrap();
+        apply_generation(&db, None, || Ok(())).unwrap();
+        assert_eq!(snapshot(&db).unwrap(), new_snapshot());
     }
 
     static NEXT_DB: AtomicU64 = AtomicU64::new(0);
@@ -189,17 +215,16 @@ mod tests {
     #[test]
     fn separate_reader_sees_only_committed_generations() {
         let path = test_db_path();
-        let mut writer = Connection::open(&path).unwrap();
+        let writer = db::open(Some(path.to_str().unwrap())).unwrap();
         configure(&writer).unwrap();
-        writer.pragma_update(None, "journal_mode", "WAL").unwrap();
         initialize(&writer).unwrap();
 
-        let reader = Connection::open(&path).unwrap();
+        let reader = db::open(Some(path.to_str().unwrap())).unwrap();
         configure(&reader).unwrap();
-        reader.execute_batch("BEGIN").unwrap();
+        reader.begin().unwrap();
         assert_eq!(snapshot(&reader).unwrap(), old_snapshot());
 
-        apply_generation(&mut writer, None, || {
+        apply_generation(&writer, None, || {
             assert_eq!(snapshot(&reader)?, old_snapshot());
             Ok(())
         })
@@ -208,7 +233,7 @@ mod tests {
         // The reader's existing snapshot remains coherent across the writer's
         // commit. A fresh read transaction advances to the new generation.
         assert_eq!(snapshot(&reader).unwrap(), old_snapshot());
-        reader.execute_batch("COMMIT").unwrap();
+        reader.commit().unwrap();
         assert_eq!(snapshot(&reader).unwrap(), new_snapshot());
 
         drop(reader);

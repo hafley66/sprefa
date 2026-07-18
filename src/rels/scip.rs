@@ -249,12 +249,15 @@ impl ScipKind {
                 if meta.cols.is_empty() {
                     anyhow::bail!("scip_want needs a repo column");
                 }
-                let conn = eng.db.conn();
-                let mut s = conn.prepare(&format!(
-                    "SELECT DISTINCT \"{}\" FROM {} ORDER BY 1",
-                    meta.col_name(0), crate::lower::txt_tbl("scip_want")))?;
-                let rs = s.query_map([], |r| r.get::<_, String>(0))?;
-                rs.filter_map(|x| x.ok()).collect()
+                eng.db.query_rows(
+                    "scip_want",
+                    &format!(
+                        "SELECT DISTINCT \"{}\" FROM {} ORDER BY 1",
+                        meta.col_name(0), crate::lower::txt_tbl("scip_want")
+                    ),
+                    &[],
+                    |r| Ok(r.get::<_, String>(0)?),
+                )?
             }
         };
         if want.is_empty() {

@@ -1,5 +1,6 @@
 use super::*;
 
+use crate::db::SqlVal;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn stage_id(byte: u8) -> StageId {
@@ -9,7 +10,7 @@ fn base(byte: u8) -> StageBase {
     StageBase::from_bytes([byte; 32])
 }
 
-fn file_connection() -> (Connection, std::path::PathBuf) {
+fn file_connection() -> (Db, std::path::PathBuf) {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -18,9 +19,10 @@ fn file_connection() -> (Connection, std::path::PathBuf) {
         "sprefa-source-stage-{}-{nonce}.db",
         std::process::id()
     ));
-    let conn = Connection::open(&path).unwrap();
-    conn.execute_batch("PRAGMA temp_store=FILE").unwrap();
-    (conn, path)
+    let db = crate::db::open(Some(path.to_str().unwrap())).unwrap();
+    db.execute_batch_on("_source_stage", "PRAGMA temp_store=FILE")
+        .unwrap();
+    (db, path)
 }
 
 fn remove_db(path: &std::path::Path) {
@@ -75,8 +77,8 @@ fn value_codec_is_canonical_roundtrippable_and_rejects_corruption() {
 
 #[test]
 fn writer_obeys_row_and_encoded_byte_caps() {
-    let (conn, path) = file_connection();
-    let stage = SourceStage::open(&conn).unwrap();
+    let (db, path) = file_connection();
+    let stage = SourceStage::open(&db).unwrap();
     let mut writer = stage
         .begin(
             stage_id(1),
@@ -118,14 +120,14 @@ fn writer_obeys_row_and_encoded_byte_caps() {
         (stats.flushes, stats.rows, stats.peak_rows, stats.peak_bytes),
         (3, 3, 1, 50)
     );
-    drop(conn);
+    drop(db);
     remove_db(&path);
 }
 
 #[test]
 fn ready_covers_coordinates_counts_digest_and_decoded_rows() {
-    let (conn, path) = file_connection();
-    let stage = SourceStage::open(&conn).unwrap();
+    let (db, path) = file_connection();
+    let stage = SourceStage::open(&db).unwrap();
     let id = stage_id(3);
     let mut writer = stage.begin(id, StageLimits::default()).unwrap();
     writer
@@ -198,15 +200,15 @@ fn ready_covers_coordinates_counts_digest_and_decoded_rows() {
     writer.finish().unwrap();
     let same = stage.seal(id, 7, base(4)).unwrap();
     assert_eq!(same.digest, ready.digest);
-    drop(conn);
+    drop(db);
     remove_db(&path);
 }
 
 #[test]
 fn unsealed_partial_corrupt_and_stale_stages_never_visit_rows() {
     for case in ["unsealed", "partial", "corrupt", "stale-base", "stale-id"] {
-        let (conn, path) = file_connection();
-        let stage = SourceStage::open(&conn).unwrap();
+        let (db, path) = file_connection();
+        let stage = SourceStage::open(&db).unwrap();
         let id = stage_id(5);
         let mut writer = stage.begin(id, StageLimits::default()).unwrap();
         writer
@@ -214,7 +216,7 @@ fn unsealed_partial_corrupt_and_stale_stages_never_visit_rows() {
             .unwrap();
         writer.complete_owner("fn", "repo", "a.rs").unwrap();
         writer.finish().unwrap();
-        let forged = derive_ready(&conn, id, 9, base(6)).unwrap();
+        let forged = derive_ready(&db, id, 9, base(6)).unwrap();
         let ready = if case == "unsealed" {
             forged.clone()
         } else {
@@ -223,16 +225,18 @@ fn unsealed_partial_corrupt_and_stale_stages_never_visit_rows() {
         match case {
             "partial" => {
                 let encoded = encode_values(&[Value::Int(2)]).unwrap();
-                conn.execute(
+                db.exec_params(
+                    "_source_stage_row",
                     "INSERT INTO _source_stage_row VALUES (?1,'fn','repo','a.rs',99,?2)",
-                    params![id.0.as_slice(), encoded],
+                    &[SqlVal::Blob(id.0.to_vec()), SqlVal::Blob(encoded)],
                 )
                 .unwrap();
             }
             "corrupt" => {
-                conn.execute(
+                db.exec_params(
+                    "_source_stage_row",
                     "UPDATE _source_stage_row SET encoded=x'ff' WHERE stage_id=?1",
-                    [id.0.as_slice()],
+                    &[SqlVal::Blob(id.0.to_vec())],
                 )
                 .unwrap();
             }
@@ -259,15 +263,15 @@ fn unsealed_partial_corrupt_and_stale_stages_never_visit_rows() {
         });
         assert!(result.is_err(), "{case} must be refused");
         assert_eq!(visited, 0, "{case} exposed partial rows");
-        drop(conn);
+        drop(db);
         remove_db(&path);
     }
 }
 
 #[test]
 fn owner_completion_is_explicit_and_can_seal_an_exact_empty_owner() {
-    let (conn, path) = file_connection();
-    let stage = SourceStage::open(&conn).unwrap();
+    let (db, path) = file_connection();
+    let stage = SourceStage::open(&db).unwrap();
     let id = stage_id(8);
     let mut writer = stage.begin(id, StageLimits::default()).unwrap();
     writer
@@ -295,36 +299,41 @@ fn owner_completion_is_explicit_and_can_seal_an_exact_empty_owner() {
         stage.visit_ready_rows(&sealed, base(1), |_| Ok(())),
         Err(SourceStageError::Unsealed)
     ));
-    drop(conn);
+    drop(db);
     remove_db(&path);
 }
 
 #[test]
 fn stage_tables_are_file_backed_temp_and_connection_local() {
-    let (conn, path) = file_connection();
-    let _stage = SourceStage::open(&conn).unwrap();
-    let temp_store: i64 = conn
-        .query_row("PRAGMA temp_store", [], |row| row.get(0))
+    let (db, path) = file_connection();
+    let _stage = SourceStage::open(&db).unwrap();
+    let temp_store: i64 = db
+        .query_one("_pragma", "PRAGMA temp_store", &[], |row| Ok(row.get(0)?))
         .unwrap();
-    let tables: i64 = conn
-        .query_row(
+    let tables: i64 = db
+        .query_one(
+            "sqlite_temp_master",
             "SELECT count(*) FROM sqlite_temp_master WHERE name LIKE '_source_stage_%'",
-            [],
-            |row| row.get(0),
+            &[],
+            |row| Ok(row.get(0)?),
         )
         .unwrap();
     assert_eq!((temp_store, tables), (1, 3));
-    let other = Connection::open(&path).unwrap();
-    assert!(other.prepare("SELECT * FROM _source_stage_row").is_err());
+    let other = crate::db::open(Some(path.to_str().unwrap())).unwrap();
+    assert!(other
+        .query_rows::<()>("_source_stage_row", "SELECT * FROM _source_stage_row", &[], |_| {
+            Ok(())
+        })
+        .is_err());
     drop(other);
-    drop(conn);
+    drop(db);
     remove_db(&path);
 }
 
 #[test]
 fn ready_row_pages_obey_encoded_byte_budget() {
-    let (conn, path) = file_connection();
-    let stage = SourceStage::open(&conn).unwrap();
+    let (db, path) = file_connection();
+    let stage = SourceStage::open(&db).unwrap();
     let id = stage_id(9);
     let mut writer = stage.begin(id, StageLimits::default()).unwrap();
     for ordinal in 0..3 {
@@ -350,6 +359,6 @@ fn ready_row_pages_obey_encoded_byte_budget() {
         .read_ready_rows_after(&ready, Some(&cursor), 4096, 128 * 1024)
         .unwrap();
     assert_eq!(second.len(), 1);
-    drop(conn);
+    drop(db);
     remove_db(&path);
 }

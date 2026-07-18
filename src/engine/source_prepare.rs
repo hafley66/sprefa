@@ -94,7 +94,7 @@ pub(super) fn prepare_source_batch(
     base: [u8; 32],
 ) -> Result<PreparedSourceBatch> {
     let mut stage =
-        crate::engine::pipeline::FullSourceStageBuilder::new(engine.db.conn(), generation, base)?;
+        crate::engine::pipeline::FullSourceStageBuilder::new(&engine.db, generation, base)?;
     let mut dropped = 0usize;
     let mut drop_diags = Vec::new();
     let (sender, receiver) = sync_channel::<(String, Result<Vec<ParsedWorkRule>>)>(READY_FILE_SLOTS);
@@ -303,7 +303,7 @@ fn prepare_work_path_batch_with_reader(
     reader: &(dyn Fn(&Path) -> Result<String> + Sync),
 ) -> Result<PreparedWorkPathBatch> {
     let mut stage =
-        crate::engine::pipeline::FullSourceStageBuilder::new(engine.db.conn(), generation, base)?;
+        crate::engine::pipeline::FullSourceStageBuilder::new(&engine.db, generation, base)?;
     let mut changed = Vec::new();
     let mut dropped = 0usize;
     let mut drop_diags = Vec::new();
@@ -701,16 +701,13 @@ mod tests {
             .with_semantic_generation(|engine| facts.apply(engine, base))
             .unwrap();
         // @rusqlite-ok: test asserts staged rows through the raw conn
-        facts.discard(engine.db.conn()).unwrap();
+        facts.discard(&engine.db).unwrap();
         for (table, expected) in [("rel_fn_item", 2i64), ("rel_use_item", 1), ("rel_todo_note", 1)]
         {
             let count: i64 = engine
                 .db
-                // @rusqlite-ok: test asserts staged rows through the raw conn
-                .conn()
-                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
-                    row.get(0)
-                })
+
+                .query_one(table, &format!("SELECT count(*) FROM {table}"), &[], |row| Ok(row.get(0)?))
                 .unwrap();
             assert_eq!(count, expected, "{table} rows from the shared tree");
         }
@@ -770,16 +767,13 @@ mod tests {
             .with_semantic_generation(|engine| facts.apply(engine, base))
             .unwrap();
         // @rusqlite-ok: test asserts staged rows through the raw conn
-        facts.discard(engine.db.conn()).unwrap();
+        facts.discard(&engine.db).unwrap();
         for (table, expected) in [("rel_fn_item", 6i64), ("rel_use_item", 3), ("rel_todo_note", 3)]
         {
             let count: i64 = engine
                 .db
-                // @rusqlite-ok: test asserts staged rows through the raw conn
-                .conn()
-                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
-                    row.get(0)
-                })
+
+                .query_one(table, &format!("SELECT count(*) FROM {table}"), &[], |row| Ok(row.get(0)?))
                 .unwrap();
             assert_eq!(count, expected, "{table} rows across the batch");
         }
@@ -815,7 +809,7 @@ mod tests {
             "match/comment-only rules must not tree-sitter-parse"
         );
         // @rusqlite-ok: test asserts staged rows through the raw conn
-        prepared.facts.discard(engine.db.conn()).unwrap();
+        prepared.facts.discard(&engine.db).unwrap();
     }
 
     #[test]
@@ -893,14 +887,11 @@ mod tests {
         engine
             .with_semantic_generation(|engine| facts.apply(engine, base))
             .unwrap();
-        facts.discard(engine.db.conn()).unwrap();
+        facts.discard(&engine.db).unwrap();
         for table in ["rel_left", "rel_right"] {
             let count: i64 = engine
                 .db
-                .conn()
-                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
-                    row.get(0)
-                })
+                .query_one(table, &format!("SELECT count(*) FROM {table}"), &[], |row| Ok(row.get(0)?))
                 .unwrap();
             assert_eq!(count, 1, "both matching rules parse the shared snapshot");
         }
@@ -919,10 +910,7 @@ mod tests {
             .map(|table| {
                 engine
                     .db
-                    .conn()
-                    .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
-                        row.get(0)
-                    })
+                    .query_one(table, &format!("SELECT count(*) FROM {table}"), &[], |row| Ok(row.get(0)?))
                     .unwrap()
             })
             .collect();
@@ -944,10 +932,7 @@ mod tests {
         for (table, before_count) in tables.into_iter().zip(before_counts) {
             let count: i64 = engine
                 .db
-                .conn()
-                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
-                    row.get(0)
-                })
+                .query_one(table, &format!("SELECT count(*) FROM {table}"), &[], |row| Ok(row.get(0)?))
                 .unwrap();
             assert_eq!(count, before_count, "read failure must not mutate {table}");
         }
@@ -958,10 +943,7 @@ mod tests {
         ] {
             let count: i64 = engine
                 .db
-                .conn()
-                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
-                    row.get(0)
-                })
+                .query_one(table, &format!("SELECT count(*) FROM {table}"), &[], |row| Ok(row.get(0)?))
                 .unwrap();
             assert_eq!(count, 0, "failed stage must clean up {table}");
         }
@@ -1020,11 +1002,10 @@ mod tests {
             .with_semantic_generation(|engine| facts.apply(engine, base))
             .unwrap();
         assert_eq!(inserted, 2);
-        facts.discard(engine.db.conn()).unwrap();
+        facts.discard(&engine.db).unwrap();
         let count: i64 = engine
             .db
-            .conn()
-            .query_row("SELECT count(*) FROM rel_left", [], |row| row.get(0))
+            .query_one("rel_left", "SELECT count(*) FROM rel_left", &[], |row| Ok(row.get(0)?))
             .unwrap();
         assert_eq!(count, 2);
     }

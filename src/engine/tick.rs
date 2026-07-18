@@ -30,14 +30,12 @@ struct BulkRebuildIo<'a> {
 
 impl<'a> BulkRebuildIo<'a> {
     fn enter(db: &'a Db) -> Result<Self> {
-        let prior_synchronous: i64 = db
-            .conn()
-            .query_row("PRAGMA synchronous", [], |row| row.get(0))?;
-        let prior_wal_autocheckpoint: i64 = db
-            .conn()
-            .query_row("PRAGMA wal_autocheckpoint", [], |row| row.get(0))?;
-        db.conn()
-            .execute_batch("PRAGMA synchronous=OFF; PRAGMA wal_autocheckpoint=0;")?;
+        let prior_synchronous = db.pragma_i64("synchronous")?;
+        let prior_wal_autocheckpoint = db.pragma_i64("wal_autocheckpoint")?;
+        db.execute_batch_on(
+            "_pragma",
+            "PRAGMA synchronous=OFF; PRAGMA wal_autocheckpoint=0;",
+        )?;
         Ok(Self {
             db,
             prior_synchronous,
@@ -50,10 +48,14 @@ impl Drop for BulkRebuildIo<'_> {
     fn drop(&mut self) {
         // Best-effort restore + checkpoint; a failure here cannot unwind out of
         // Drop, and the next tick would re-apply these pragmas anyway.
-        let _ = self.db.conn().execute_batch(&format!(
-            "PRAGMA synchronous={}; PRAGMA wal_autocheckpoint={}; PRAGMA wal_checkpoint(TRUNCATE);",
-            self.prior_synchronous, self.prior_wal_autocheckpoint
-        ));
+        // @rusqlite-ok: Drop can't propagate an error; the next tick reapplies these pragmas regardless.
+        let _ = self.db.execute_batch_on(
+            "_pragma",
+            &format!(
+                "PRAGMA synchronous={}; PRAGMA wal_autocheckpoint={}; PRAGMA wal_checkpoint(TRUNCATE);",
+                self.prior_synchronous, self.prior_wal_autocheckpoint
+            ),
+        );
     }
 }
 
@@ -158,9 +160,13 @@ impl Engine {
     /// verdict line. `("none", 0)` when no rebuild has landed yet (a
     /// one-shot's first tick, before any derived rel writes `_stmt_ms`).
     fn slowest_stmt_ms(&self) -> (String, i64) {
-        self.db.conn()
-            .query_row("SELECT rel, ms FROM _stmt_ms ORDER BY ms DESC LIMIT 1", [],
-                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+        self.db
+            .query_one(
+                "_stmt_ms",
+                "SELECT rel, ms FROM _stmt_ms ORDER BY ms DESC LIMIT 1",
+                &[],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+            )
             .unwrap_or_else(|_| ("none".to_string(), 0))
     }
 
@@ -451,8 +457,7 @@ impl Engine {
         let recon = if source_rules.is_empty() {
             let file_count: i64 = self
                 .db
-                .conn()
-                .query_row("SELECT COUNT(*) FROM _file", [], |r| r.get(0))
+                .query_one("_file", "SELECT COUNT(*) FROM _file", &[], |r| Ok(r.get(0)?))
                 .unwrap_or(0);
             if file_count > 0 {
                 tracing::warn!(
@@ -1013,8 +1018,12 @@ impl Engine {
         if tick_audit() {
             let mut counts: Vec<(String, i64)> = Vec::new();
             for rel in self.rels.keys() {
-                let n: i64 = self.db.conn().query_row(
-                    &format!("SELECT COUNT(*) FROM {}", tbl(rel)), [], |r| r.get(0))?;
+                let n: i64 = self.db.query_one(
+                    rel,
+                    &format!("SELECT COUNT(*) FROM {}", tbl(rel)),
+                    &[],
+                    |r| Ok(r.get(0)?),
+                )?;
                 counts.push((rel.clone(), n));
             }
             counts.sort_by(|a, b| a.0.cmp(&b.0));

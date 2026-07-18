@@ -64,22 +64,23 @@ impl RelKind for AgentKind {
         touch.sort(); touch.dedup();
         skills.sort(); skills.dedup();
         // Early-out: nothing refreshes unless edits OR skill loads changed.
-        let conn = eng.db.conn();
-        let existing_edits: Vec<(String, String, i64, String)> = {
-            let mut s = conn.prepare(&format!(
+        let existing_edits: Vec<(String, String, i64, String)> = eng.db.query_rows(
+            "agent_edit",
+            &format!(
                 "SELECT \"harness\", \"session\", \"idx\", \"path\" FROM {} ORDER BY 1,2,3,4",
-                txt_tbl("agent_edit")))?;
-            let rows = s.query_map([], |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?)))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
-        let existing_skills: Vec<(String, String, String)> = {
-            let mut s = conn.prepare(&format!(
-                "SELECT \"harness\", \"session\", \"name\" FROM {} ORDER BY 1,2,3", txt_tbl("skill_loaded")))?;
-            let rows = s.query_map([], |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
+                txt_tbl("agent_edit")
+            ),
+            &[],
+            |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?,
+            )),
+        )?;
+        let existing_skills: Vec<(String, String, String)> = eng.db.query_rows(
+            "skill_loaded",
+            &format!("SELECT \"harness\", \"session\", \"name\" FROM {} ORDER BY 1,2,3", txt_tbl("skill_loaded")),
+            &[],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+        )?;
         if existing_edits == edits && existing_skills == skills { return Ok(false); }
         let edit_rows: Vec<Vec<Value>> = edits.into_iter()
             .map(|(h, s, i, p)| vec![Value::Text(h), Value::Text(s), Value::Int(i), Value::Text(p)])
@@ -189,14 +190,15 @@ impl RelKind for DlDiagKind {
         // content hash, not the source). Validates the on-disk working copy — the
         // lint-on-edit target. A path that can't be read (a non-self repo root, a
         // git-only rev) is skipped, never a false diag.
-        let paths: Vec<String> = {
-            let conn = eng.db.conn();
-            let mut s = conn.prepare(&format!(
+        let paths: Vec<String> = eng.db.query_rows(
+            "file",
+            &format!(
                 "SELECT DISTINCT \"path\" FROM {} WHERE \"path\" LIKE '%.dl' ORDER BY \"path\"",
-                txt_tbl("file")))?;
-            let rows = s.query_map([], |r| r.get::<_, String>(0))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
+                txt_tbl("file")
+            ),
+            &[],
+            |r| Ok(r.get::<_, String>(0)?),
+        )?;
         let mut rows: Vec<DlDiagRow> = Vec::new();
         for path in &paths {
             let Ok(content) = std::fs::read_to_string(eng.root.join(path)) else { continue };
@@ -204,16 +206,18 @@ impl RelKind for DlDiagKind {
         }
         rows.sort();
         rows.dedup();
-        let existing: Vec<DlDiagRow> = {
-            let conn = eng.db.conn();
-            let mut s = conn.prepare(&format!(
+        let existing: Vec<DlDiagRow> = eng.db.query_rows(
+            "dl_diag",
+            &format!(
                 "SELECT \"path\",\"line\",\"col\",\"end_line\",\"end_col\",\"severity\",\"code\",\"msg\" \
-                 FROM {} ORDER BY 1,2,3,4,5,6,7,8", txt_tbl("dl_diag")))?;
-            let rows = s.query_map([], |r| Ok((
+                 FROM {} ORDER BY 1,2,3,4,5,6,7,8", txt_tbl("dl_diag")
+            ),
+            &[],
+            |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)?,
-                r.get::<_, i64>(4)?, r.get::<_, String>(5)?, r.get::<_, String>(6)?, r.get::<_, String>(7)?)))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
+                r.get::<_, i64>(4)?, r.get::<_, String>(5)?, r.get::<_, String>(6)?, r.get::<_, String>(7)?,
+            )),
+        )?;
         if existing == rows { return Ok(false); }
         let out: Vec<Vec<Value>> = rows.into_iter().map(|(p, l, c, el, ec, sev, code, msg)| vec![
             Value::Text(p), Value::Int(l), Value::Int(c), Value::Int(el), Value::Int(ec),
@@ -245,23 +249,19 @@ impl RelKind for TypeShapeKind {
         "the built-in type-shape relation"
     }
     fn refresh(&self, eng: &Engine) -> Result<bool> {
-        let edges: Vec<(String, String, String)> = {
-            let conn = eng.db.conn();
-            let mut s = conn.prepare(&format!(
-                "SELECT \"from\",\"to\",\"kind\" FROM {}", txt_tbl("type_edge")))?;
-            let rows = s.query_map([], |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
+        let edges: Vec<(String, String, String)> = eng.db.query_rows(
+            "type_edge",
+            &format!("SELECT \"from\",\"to\",\"kind\" FROM {}", txt_tbl("type_edge")),
+            &[],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+        )?;
         let computed: Vec<(String, String)> = typegraph::type_shape_hashes(&edges);
-        let stored: Vec<(String, String)> = {
-            let conn = eng.db.conn();
-            let mut s = conn.prepare(&format!(
-                "SELECT \"name\",\"hash\" FROM {} ORDER BY \"name\",\"hash\"", txt_tbl("type_shape")))?;
-            let rows = s.query_map([], |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
+        let stored: Vec<(String, String)> = eng.db.query_rows(
+            "type_shape",
+            &format!("SELECT \"name\",\"hash\" FROM {} ORDER BY \"name\",\"hash\"", txt_tbl("type_shape")),
+            &[],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )?;
         if stored == computed { return Ok(false); }
         let rows: Vec<Vec<Value>> = computed.into_iter()
             .map(|(n, h)| vec![Value::Text(n), Value::Text(h)]).collect();
@@ -291,23 +291,19 @@ impl RelKind for TypeLggKind {
         "the built-in type-lgg relation"
     }
     fn refresh(&self, eng: &Engine) -> Result<bool> {
-        let edges: Vec<(String, String, String)> = {
-            let conn = eng.db.conn();
-            let mut s = conn.prepare(&format!(
-                "SELECT \"src\",\"dst\",\"kind\" FROM {}", txt_tbl("type_link")))?;
-            let rows = s.query_map([], |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
+        let edges: Vec<(String, String, String)> = eng.db.query_rows(
+            "type_link",
+            &format!("SELECT \"src\",\"dst\",\"kind\" FROM {}", txt_tbl("type_link")),
+            &[],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+        )?;
         let computed: Vec<(String, String, i64)> = typegraph::type_lgg_pairs(&edges);
-        let stored: Vec<(String, String, i64)> = {
-            let conn = eng.db.conn();
-            let mut s = conn.prepare(&format!(
-                "SELECT \"a\",\"b\",\"vars\" FROM {} ORDER BY \"a\",\"b\",\"vars\"", txt_tbl("type_lgg")))?;
-            let rows = s.query_map([], |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
+        let stored: Vec<(String, String, i64)> = eng.db.query_rows(
+            "type_lgg",
+            &format!("SELECT \"a\",\"b\",\"vars\" FROM {} ORDER BY \"a\",\"b\",\"vars\"", txt_tbl("type_lgg")),
+            &[],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)),
+        )?;
         if stored == computed { return Ok(false); }
         let rows: Vec<Vec<Value>> = computed.into_iter()
             .map(|(a, b, v)| vec![Value::Text(a), Value::Text(b), Value::Int(v)]).collect();

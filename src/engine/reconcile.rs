@@ -347,7 +347,7 @@ impl Engine {
                 total: rule_files.len(),
             })
         });
-        let cleanup = prepared.discard(self.db.conn());
+        let cleanup = prepared.discard(&self.db);
         match outcome {
             Ok(report) => {
                 self.rev_index = next_rev_index;
@@ -489,25 +489,21 @@ impl Engine {
                     .collect()
             };
             let mut before: Vec<Vec<String>> = {
-                let n = cols.len();
                 let sql = format!("SELECT * FROM {}", tbl(head_rel));
-                let mut stmt = self.db.conn().prepare(&sql)?;
-                let v = stmt
-                    .query_map([], |row| {
-                        let mut r = Vec::with_capacity(n);
-                        for i in 0..n {
-                            r.push(match row.get::<_, rusqlite::types::Value>(i)? {
-                                rusqlite::types::Value::Integer(x) => format!("i{x}"),
-                                rusqlite::types::Value::Text(s) => format!("t{s}"),
-                                rusqlite::types::Value::Null => "t".to_string(),
+                self.db
+                    .query_values(&tbl(head_rel), &sql, &[])?
+                    .into_iter()
+                    .map(|row| {
+                        row.into_iter()
+                            .map(|cell| match cell {
+                                crate::db::SqlVal::Int(x) => format!("i{x}"),
+                                crate::db::SqlVal::Text(s) => format!("t{s}"),
+                                crate::db::SqlVal::Null => "t".to_string(),
                                 other => format!("{other:?}"),
-                            });
-                        }
-                        Ok(r)
-                    })?
-                    .filter_map(|x| x.ok())
-                    .collect();
-                v
+                            })
+                            .collect()
+                    })
+                    .collect()
             };
             let mut after: Vec<Vec<String>> = encoded_rows.iter().map(|r| key(r)).collect();
             before.sort();
@@ -516,8 +512,7 @@ impl Engine {
                 any_changed = true;
             }
             self.db
-                .conn()
-                .execute(&format!("DELETE FROM {}", tbl(head_rel)), [])?;
+                .exec_on(&tbl(head_rel), &format!("DELETE FROM {}", tbl(head_rel)))?;
             self.db
                 .insert_rows(&tbl(head_rel), &col_refs, &encoded_rows)?;
             stmt_ms.insert(
@@ -574,24 +569,24 @@ impl Engine {
         }
         let sql = crate::lower::lower_body_projection(&r.body, &self.rels, &vars)?;
         let join_rows: Vec<Bind> = {
-            let mut stmt = self.db.conn().prepare(&sql)?;
-            let v = stmt
-                .query_map([], |row| {
+            let rel = crate::lower::tbl(&r.head.rel);
+            self.db
+                .query_values(&rel, &sql, &[])?
+                .into_iter()
+                .map(|row| {
                     let mut b: Bind = HashMap::new();
                     for (i, v) in vars.iter().enumerate() {
-                        let val = match row.get::<_, rusqlite::types::Value>(i)? {
-                            rusqlite::types::Value::Integer(x) => Value::Int(x),
-                            rusqlite::types::Value::Text(s) => Value::Text(s),
-                            rusqlite::types::Value::Null => Value::Text(String::new()),
+                        let val = match row.get(i) {
+                            Some(crate::db::SqlVal::Int(x)) => Value::Int(*x),
+                            Some(crate::db::SqlVal::Text(s)) => Value::Text(s.clone()),
+                            Some(crate::db::SqlVal::Null) => Value::Text(String::new()),
                             other => Value::Text(format!("{other:?}")),
                         };
                         b.insert(v.clone(), val);
                     }
-                    Ok(b)
-                })?
-                .filter_map(|x| x.ok())
-                .collect();
-            v
+                    b
+                })
+                .collect()
         };
         // A term source has no extension to dispatch on (response bodies are
         // json); the synthetic name routes `run_data`/`run_pattern` to the json

@@ -20,6 +20,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 
 use crate::ast::Program;
+use crate::db::SqlVal;
 use crate::engine::Engine;
 use crate::lower::txt_tbl;
 
@@ -123,34 +124,25 @@ fn like_pattern(glob: &str) -> String {
     out
 }
 
-/// Stringify one SQLite cell (Text as-is, Integer/Real rendered, Null empty).
-fn cell(row: &rusqlite::Row, idx: usize) -> String {
-    match row.get::<_, rusqlite::types::Value>(idx) {
-        Ok(rusqlite::types::Value::Text(s)) => s,
-        Ok(rusqlite::types::Value::Integer(n)) => n.to_string(),
-        Ok(rusqlite::types::Value::Real(f)) => f.to_string(),
-        _ => String::new(),
-    }
-}
-
 /// Tolerant multi-row read: a prepare/query error (typically a missing table
 /// for a never-extracted family) yields an empty vec instead of erroring.
-fn rows_of(eng: &Engine, sql: &str, params: &[&dyn rusqlite::types::ToSql]) -> Vec<Vec<String>> {
-    let conn = eng.db.conn();
-    let Ok(mut stmt) = conn.prepare(sql) else { return Vec::new(); };
-    let ncol = stmt.column_count();
-    let mapped = stmt.query_map(params, |row| {
-        Ok((0..ncol).map(|i| cell(row, i)).collect::<Vec<String>>())
-    });
-    let Ok(rows) = mapped else { return Vec::new(); };
-    rows.filter_map(|r| r.ok()).collect()
+/// Cells stringify via `SqlVal::to_lossy_string` (Text as-is, Int/Real
+/// rendered, Null empty) — the same shape the removed `cell` helper had.
+fn rows_of(eng: &Engine, rel: &str, sql: &str, params: &[SqlVal]) -> Vec<Vec<String>> {
+    eng.db
+        .query_values(rel, sql, params)
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| row.iter().map(SqlVal::to_lossy_string).collect())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Tolerant scalar count: a missing table or query error reads as 0.
-fn count_of(eng: &Engine, sql: &str, params: &[&dyn rusqlite::types::ToSql]) -> i64 {
+fn count_of(eng: &Engine, rel: &str, sql: &str, params: &[SqlVal]) -> i64 {
     eng.db
-        .conn()
-        .query_row(sql, params, |r| r.get::<_, i64>(0))
+        .query_one(rel, sql, params, |r| Ok(r.get::<_, i64>(0)?))
         .unwrap_or(0)
 }
 
@@ -161,7 +153,7 @@ fn count_of(eng: &Engine, sql: &str, params: &[&dyn rusqlite::types::ToSql]) -> 
 /// family table contributes nothing.
 pub fn resolve_name(eng: &Engine, pattern: &str) -> Result<Vec<AnchorHit>> {
     let like = like_pattern(pattern);
-    let p: &[&dyn rusqlite::types::ToSql] = &[&like];
+    let p = [SqlVal::from(like.as_str())];
     let mut hits: Vec<AnchorHit> = Vec::new();
 
     // type_entity(repo, sym, name, kind, parent, file, line)
@@ -170,7 +162,7 @@ pub fn resolve_name(eng: &Engine, pattern: &str) -> Result<Vec<AnchorHit>> {
          WHERE \"name\" LIKE ?1 ESCAPE '\\'",
         txt_tbl("type_entity")
     );
-    for r in rows_of(eng, &sql, p) {
+    for r in rows_of(eng, "type_entity", &sql, &p) {
         hits.push(AnchorHit {
             family: "type",
             rel: "type_entity",
@@ -191,7 +183,7 @@ pub fn resolve_name(eng: &Engine, pattern: &str) -> Result<Vec<AnchorHit>> {
         txt_tbl("call_def"),
         txt_tbl("call_name")
     );
-    for r in rows_of(eng, &sql, p) {
+    for r in rows_of(eng, "call_def", &sql, &p) {
         hits.push(AnchorHit {
             family: "call",
             rel: "call_def",
@@ -212,7 +204,7 @@ pub fn resolve_name(eng: &Engine, pattern: &str) -> Result<Vec<AnchorHit>> {
         txt_tbl("scip_name"),
         txt_tbl("scip_def")
     );
-    for r in rows_of(eng, &sql, p) {
+    for r in rows_of(eng, "scip_name", &sql, &p) {
         hits.push(AnchorHit {
             family: "scip",
             rel: "scip_name",
@@ -231,7 +223,7 @@ pub fn resolve_name(eng: &Engine, pattern: &str) -> Result<Vec<AnchorHit>> {
          WHERE \"local_name\" LIKE ?1 ESCAPE '\\'",
         txt_tbl("scip_binding")
     );
-    for r in rows_of(eng, &sql, p) {
+    for r in rows_of(eng, "scip_binding", &sql, &p) {
         hits.push(AnchorHit {
             family: "scip",
             rel: "scip_binding",
@@ -255,7 +247,7 @@ pub fn resolve_name(eng: &Engine, pattern: &str) -> Result<Vec<AnchorHit>> {
         txt_tbl("module_binding_resolved"),
         txt_tbl("type_entity")
     );
-    for r in rows_of(eng, &sql, p) {
+    for r in rows_of(eng, "module_binding_resolved", &sql, &p) {
         hits.push(AnchorHit {
             family: "module",
             rel: "module_binding_resolved",
@@ -277,7 +269,7 @@ pub fn resolve_name(eng: &Engine, pattern: &str) -> Result<Vec<AnchorHit>> {
         txt_tbl("df_node"),
         txt_tbl("df_node_repo")
     );
-    for r in rows_of(eng, &sql, p) {
+    for r in rows_of(eng, "df_node", &sql, &p) {
         hits.push(AnchorHit {
             family: "dataflow",
             rel: "df_node",
@@ -298,36 +290,42 @@ pub fn resolve_name(eng: &Engine, pattern: &str) -> Result<Vec<AnchorHit>> {
 /// `type_link` in/out, whether a doc comment exists, and the SCIP occurrence
 /// count. Every count is one set-based SQL statement — no per-row loop.
 fn neighborhood(eng: &Engine, sym: &str) -> String {
-    let s: &[&dyn rusqlite::types::ToSql] = &[&sym];
+    let s = [SqlVal::from(sym)];
     let callers = count_of(
         eng,
+        "call_edge",
         &format!("SELECT COUNT(DISTINCT \"caller\") FROM {} WHERE \"callee\" = ?1", txt_tbl("call_edge")),
-        s,
+        &s,
     );
     let callees = count_of(
         eng,
+        "call_edge",
         &format!("SELECT COUNT(DISTINCT \"callee\") FROM {} WHERE \"caller\" = ?1", txt_tbl("call_edge")),
-        s,
+        &s,
     );
     let type_in = count_of(
         eng,
+        "type_link",
         &format!("SELECT COUNT(DISTINCT \"src\") FROM {} WHERE \"dst\" = ?1", txt_tbl("type_link")),
-        s,
+        &s,
     );
     let type_out = count_of(
         eng,
+        "type_link",
         &format!("SELECT COUNT(DISTINCT \"dst\") FROM {} WHERE \"src\" = ?1", txt_tbl("type_link")),
-        s,
+        &s,
     );
     let doc = count_of(
         eng,
+        "doc_comment",
         &format!("SELECT COUNT(*) FROM {} WHERE \"sym\" = ?1", txt_tbl("doc_comment")),
-        s,
+        &s,
     ) > 0;
     let scip_occ = count_of(
         eng,
+        "scip_occurrence",
         &format!("SELECT COUNT(*) FROM {} WHERE \"symbol\" = ?1", txt_tbl("scip_occurrence")),
-        s,
+        &s,
     );
     format!(
         "callers={callers} callees={callees} type_in={type_in} type_out={type_out} doc={} scip_occ={scip_occ}",
@@ -367,7 +365,7 @@ pub fn what(eng: &Engine, anchor: &str, limit: Option<usize>, offset: Option<usi
             // comment_node keys its file on the `path` column.
             let (cpred, _) = path_predicate("path", &path);
             let ln = line.to_string();
-            let params: &[&dyn rusqlite::types::ToSql] = &[&pp[0], &pp[1], &ln];
+            let params = [SqlVal::from(pp[0].as_str()), SqlVal::from(pp[1].as_str()), SqlVal::from(ln.as_str())];
 
             // call_site(repo, caller, callee, file, line)
             let sql = format!(
@@ -375,7 +373,7 @@ pub fn what(eng: &Engine, anchor: &str, limit: Option<usize>, offset: Option<usi
                  WHERE {pred} AND \"line\" = ?3",
                 txt_tbl("call_site")
             );
-            for r in rows_of(eng, &sql, params) {
+            for r in rows_of(eng, "call_site", &sql, &params) {
                 rows.push(vec![
                     "call".into(),
                     "call_site".into(),
@@ -393,7 +391,7 @@ pub fn what(eng: &Engine, anchor: &str, limit: Option<usize>, offset: Option<usi
                  WHERE {pred} AND \"line\" = ?3",
                 txt_tbl("df_node")
             );
-            for r in rows_of(eng, &sql, params) {
+            for r in rows_of(eng, "df_node", &sql, &params) {
                 rows.push(vec![
                     "dataflow".into(),
                     "df_node".into(),
@@ -411,7 +409,7 @@ pub fn what(eng: &Engine, anchor: &str, limit: Option<usize>, offset: Option<usi
                  WHERE {cpred} AND \"line\" = ?3",
                 txt_tbl("comment_node")
             );
-            for r in rows_of(eng, &sql, params) {
+            for r in rows_of(eng, "comment_node", &sql, &params) {
                 rows.push(vec![
                     "comment".into(),
                     "comment_node".into(),
@@ -430,7 +428,7 @@ pub fn what(eng: &Engine, anchor: &str, limit: Option<usize>, offset: Option<usi
                  ORDER BY (\"end\" - \"line\") ASC LIMIT 1",
                 txt_tbl("call_def")
             );
-            for r in rows_of(eng, &sql, params) {
+            for r in rows_of(eng, "call_def", &sql, &params) {
                 rows.push(vec![
                     "call".into(),
                     "call_def".into(),
@@ -446,13 +444,13 @@ pub fn what(eng: &Engine, anchor: &str, limit: Option<usize>, offset: Option<usi
             // A bare path anchor with no line: list the definitions declared in
             // the file, each with its neighborhood.
             let (pred, pp) = path_predicate("file", &path);
-            let params: &[&dyn rusqlite::types::ToSql] = &[&pp[0], &pp[1]];
+            let params = [SqlVal::from(pp[0].as_str()), SqlVal::from(pp[1].as_str())];
             let sql = format!(
                 "SELECT \"repo\", \"sym\", \"name\", \"kind\", \"file\", \"line\" FROM {} \
                  WHERE {pred} ORDER BY \"line\"",
                 txt_tbl("type_entity")
             );
-            for r in rows_of(eng, &sql, params) {
+            for r in rows_of(eng, "type_entity", &sql, &params) {
                 let detail = neighborhood(eng, &r[1]);
                 rows.push(vec![
                     "type".into(),
@@ -484,7 +482,7 @@ pub fn what(eng: &Engine, anchor: &str, limit: Option<usize>, offset: Option<usi
     }
 
     // SCIP tier honesty.
-    if count_of(eng, &format!("SELECT COUNT(*) FROM {}", txt_tbl("scip_def")), &[]) == 0 {
+    if count_of(eng, "scip_def", &format!("SELECT COUNT(*) FROM {}", txt_tbl("scip_def")), &[]) == 0 {
         notes.push("scip: no index (run dl index to upgrade)".into());
     }
 
@@ -503,12 +501,12 @@ pub fn summary(eng: &Engine, path: &str) -> QueryOut {
 
     // Entities declared in the file.
     let (fpred, fp) = path_predicate("file", path);
-    let fparams: &[&dyn rusqlite::types::ToSql] = &[&fp[0], &fp[1]];
+    let fparams = [SqlVal::from(fp[0].as_str()), SqlVal::from(fp[1].as_str())];
     let sql = format!(
         "SELECT \"name\", \"kind\", \"line\" FROM {} WHERE {fpred} ORDER BY \"line\"",
         txt_tbl("type_entity")
     );
-    for r in rows_of(eng, &sql, fparams) {
+    for r in rows_of(eng, "type_entity", &sql, &fparams) {
         rows.push(vec!["entity".into(), r[0].clone(), format!("{} L{}", r[1], r[2])]);
     }
 
@@ -521,7 +519,7 @@ pub fn summary(eng: &Engine, path: &str) -> QueryOut {
         ce = txt_tbl("call_edge"),
         cd = txt_tbl("call_def"),
     );
-    for r in rows_of(eng, &sql, fparams) {
+    for r in rows_of(eng, "call_def", &sql, &fparams) {
         rows.push(vec![
             "callable".into(),
             r[0].clone(),
@@ -531,21 +529,21 @@ pub fn summary(eng: &Engine, path: &str) -> QueryOut {
 
     // Imports out (this file's edges) and in (edges landing here).
     let (spred, sp) = path_predicate("src", path);
-    let sparams: &[&dyn rusqlite::types::ToSql] = &[&sp[0], &sp[1]];
+    let sparams = [SqlVal::from(sp[0].as_str()), SqlVal::from(sp[1].as_str())];
     let sql = format!(
         "SELECT DISTINCT \"dst\" FROM {} WHERE {spred} ORDER BY \"dst\"",
         txt_tbl("module_edge")
     );
-    for r in rows_of(eng, &sql, sparams) {
+    for r in rows_of(eng, "module_edge", &sql, &sparams) {
         rows.push(vec!["import_out".into(), r[0].clone(), String::new()]);
     }
     let (dpred, dp) = path_predicate("dst", path);
-    let dparams: &[&dyn rusqlite::types::ToSql] = &[&dp[0], &dp[1]];
+    let dparams = [SqlVal::from(dp[0].as_str()), SqlVal::from(dp[1].as_str())];
     let sql = format!(
         "SELECT DISTINCT \"src\" FROM {} WHERE {dpred} ORDER BY \"src\"",
         txt_tbl("module_edge")
     );
-    for r in rows_of(eng, &sql, dparams) {
+    for r in rows_of(eng, "module_edge", &sql, &dparams) {
         rows.push(vec!["import_in".into(), r[0].clone(), String::new()]);
     }
 
@@ -554,7 +552,7 @@ pub fn summary(eng: &Engine, path: &str) -> QueryOut {
         "SELECT \"specifier\", \"reason\", \"line\" FROM {} WHERE {fpred} ORDER BY \"line\"",
         txt_tbl("module_unresolved")
     );
-    for r in rows_of(eng, &sql, fparams) {
+    for r in rows_of(eng, "module_unresolved", &sql, &fparams) {
         rows.push(vec![
             "unresolved".into(),
             r[0].clone(),
@@ -570,7 +568,7 @@ pub fn summary(eng: &Engine, path: &str) -> QueryOut {
         te = txt_tbl("type_entity"),
         doc = txt_tbl("doc_comment"),
     );
-    if let Some(r) = rows_of(eng, &sql, fparams).into_iter().next() {
+    if let Some(r) = rows_of(eng, "type_entity", &sql, &fparams).into_iter().next() {
         let total: i64 = r[0].parse().unwrap_or(0);
         let documented: i64 = r[1].parse().unwrap_or(0);
         let pct = if total > 0 { documented * 100 / total } else { 0 };
@@ -583,21 +581,23 @@ pub fn summary(eng: &Engine, path: &str) -> QueryOut {
 
     // Comment + dataflow node counts.
     let (cpred, cp) = path_predicate("path", path);
-    let cparams: &[&dyn rusqlite::types::ToSql] = &[&cp[0], &cp[1]];
+    let cparams = [SqlVal::from(cp[0].as_str()), SqlVal::from(cp[1].as_str())];
     let comments = count_of(
         eng,
+        "comment_node",
         &format!("SELECT COUNT(*) FROM {} WHERE {cpred}", txt_tbl("comment_node")),
-        cparams,
+        &cparams,
     );
     rows.push(vec!["metric".into(), "comment_nodes".into(), comments.to_string()]);
     let df_nodes = count_of(
         eng,
+        "df_node",
         &format!("SELECT COUNT(*) FROM {} WHERE {fpred}", txt_tbl("df_node")),
-        fparams,
+        &fparams,
     );
     rows.push(vec!["metric".into(), "df_nodes".into(), df_nodes.to_string()]);
 
-    if count_of(eng, &format!("SELECT COUNT(*) FROM {}", txt_tbl("scip_def")), &[]) == 0 {
+    if count_of(eng, "scip_def", &format!("SELECT COUNT(*) FROM {}", txt_tbl("scip_def")), &[]) == 0 {
         notes.push("scip: no index (run dl index to upgrade)".into());
     }
 

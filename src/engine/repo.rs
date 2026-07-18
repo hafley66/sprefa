@@ -1,4 +1,5 @@
 use super::*;
+use crate::db::SqlVal;
 
 impl Engine {
     /// Resolve a declared rev to a stable commit SHA (WORK stays WORK).
@@ -322,20 +323,15 @@ impl Engine {
         // Collect the coordinate tuples fully (drop the statement borrow) before
         // the resolve loop: resolve_rev takes &mut self (rev_cache).
         let tuples: Vec<Vec<String>> = {
-            let conn = self.db.conn();
-            let mut s = match conn.prepare(&sql) {
-                Ok(s) => s,
-                Err(_) => return Ok(Vec::new()),
-            };
             let ncol = sel_vars.len();
-            let rows = s.query_map([], |r| {
-                let mut v = Vec::with_capacity(ncol);
-                for i in 0..ncol {
-                    v.push(cell_as_string(r, i)?);
-                }
-                Ok(v)
-            });
-            rows.map(|iter| iter.filter_map(|x| x.ok()).collect())
+            self.db
+                .query_rows(&rule.head.rel, &sql, &[], |r| {
+                    let mut v = Vec::with_capacity(ncol);
+                    for i in 0..ncol {
+                        v.push(cell_as_string(r, i)?);
+                    }
+                    Ok(v)
+                })
                 .unwrap_or_default()
         };
         let mut out = Vec::new();
@@ -394,7 +390,7 @@ impl Engine {
                 ]
             })
             .collect();
-        self.db.exec("DELETE FROM _repo")?;
+        self.db.exec_on("_repo", "DELETE FROM _repo")?;
         self.db
             .insert_rows("_repo", &["slug", "root", "url", "registered_at"], &rows)?;
         Ok(())
@@ -424,13 +420,13 @@ impl Engine {
         }
         let allowlist: HashSet<String> = if self.rels.contains_key("org") {
             self.db
-                .conn()
-                .prepare(&format!(
-                    "SELECT DISTINCT \"name\" FROM {}",
-                    crate::lower::txt_tbl("org")
-                ))?
-                .query_map([], |r| r.get::<_, String>(0))?
-                .filter_map(|x| x.ok())
+                .query_rows(
+                    "org",
+                    &format!("SELECT DISTINCT \"name\" FROM {}", crate::lower::txt_tbl("org")),
+                    &[],
+                    |r| Ok(r.get::<_, String>(0)?),
+                )?
+                .into_iter()
                 .collect()
         } else {
             HashSet::new()
@@ -482,19 +478,14 @@ impl Engine {
                     continue;
                 }
                 let sql = crate::lower::lower_gen(&vars, &rule.body, &self.rels)?;
-                self.db
-                    .conn()
-                    .prepare(&sql)?
-                    .query_map([], |r| {
-                        Ok((
-                            r.get::<_, String>(0)?,
-                            r.get::<_, String>(1)?,
-                            r.get::<_, String>(2)?,
-                            false,
-                        ))
-                    })?
-                    .filter_map(|x| x.ok())
-                    .collect()
+                self.db.query_rows(&rule.head.rel, &sql, &[], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        false,
+                    ))
+                })?
             };
             for (slug, root_str, url, explicit) in rows {
                 if slug.is_empty() {
@@ -604,13 +595,13 @@ impl Engine {
     /// plan). Used by `drain_external_sinks` to surface "did this drain land
     /// new facts the next tick must derive from" without juggling schema.
     pub(crate) fn checkout_outcome_count(&self) -> Result<usize> {
-        let conn = self.db.conn();
         for rel in ["checkout_done", "checkout_plan"] {
             if self.rels.contains_key(rel) {
-                let n: i64 = conn.query_row(
+                let n: i64 = self.db.query_one(
+                    rel,
                     &format!("SELECT COUNT(*) FROM {}", crate::lower::txt_tbl(rel)),
-                    [],
-                    |r| r.get(0),
+                    &[],
+                    |r| Ok(r.get(0)?),
                 )?;
                 return Ok(n as usize);
             }
@@ -634,24 +625,24 @@ impl Engine {
                 meta.cols.len()
             );
         }
-        let rows: Vec<(String, String, String)> = {
-            let conn = self.db.conn();
-            let mut s = conn.prepare(&format!(
+        let rows: Vec<(String, String, String)> = self.db.query_rows(
+            "checkout",
+            &format!(
                 "SELECT DISTINCT \"{}\",\"{}\",\"{}\" FROM {} ORDER BY 1,2",
                 meta.col_name(0),
                 meta.col_name(1),
                 meta.col_name(2),
                 crate::lower::txt_tbl("checkout")
-            ))?;
-            let rs = s.query_map([], |r| {
+            ),
+            &[],
+            |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
                     r.get::<_, String>(2)?,
                 ))
-            })?;
-            rs.filter_map(|x| x.ok()).collect()
-        };
+            },
+        )?;
         if rows.is_empty() {
             return Ok(());
         }
@@ -992,24 +983,34 @@ impl Engine {
         }
         let old: Option<String> = self
             .db
-            .conn()
-            .query_row(
+            .query_opt(
+                "_ref",
                 "SELECT oid FROM _ref WHERE repo = ?1 AND name = ?2",
-                rusqlite::params![repo, name],
-                |r| r.get(0),
+                &[SqlVal::from(repo), SqlVal::from(name)],
+                |r| Ok(r.get(0)?),
             )
-            .ok();
+            .ok()
+            .flatten();
         if old.as_deref() == Some(new.as_str()) {
             return Ok(None);
         }
         let now = unix_secs();
-        self.db.conn().execute(
+        self.db.exec_params(
+            "_ref",
             "INSERT INTO _ref(repo, name, oid, observed_at) VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(repo, name) DO UPDATE SET oid=excluded.oid, observed_at=excluded.observed_at",
-            rusqlite::params![repo, name, new, now])?;
-        self.db.conn().execute(
+            &[SqlVal::from(repo), SqlVal::from(name), SqlVal::from(&new), SqlVal::from(now)],
+        )?;
+        self.db.exec_params(
+            "_rev_log",
             "INSERT INTO _rev_log(repo, name, old, new, at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![repo, name, old.clone().unwrap_or_default(), new, now],
+            &[
+                SqlVal::from(repo),
+                SqlVal::from(name),
+                SqlVal::from(old.clone().unwrap_or_default()),
+                SqlVal::from(&new),
+                SqlVal::from(now),
+            ],
         )?;
         Ok(Some((old, new)))
     }
@@ -1025,13 +1026,15 @@ impl Engine {
         old: &str,
         new: &str,
     ) -> Result<Vec<String>> {
-        let mut tracked = self
+        let tracked: HashSet<String> = self
             .db
-            .conn()
-            .prepare("SELECT DISTINCT path FROM _file WHERE repo = ?1")?;
-        let tracked: HashSet<String> = tracked
-            .query_map(rusqlite::params![repo], |r| r.get::<_, String>(0))?
-            .filter_map(|x| x.ok())
+            .query_rows(
+                "_file",
+                "SELECT DISTINCT path FROM _file WHERE repo = ?1",
+                &[SqlVal::from(repo)],
+                |r| Ok(r.get::<_, String>(0)?),
+            )?
+            .into_iter()
             .collect();
         if old.is_empty() {
             let mut v: Vec<String> = tracked.into_iter().collect();

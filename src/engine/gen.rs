@@ -116,24 +116,23 @@ impl Engine {
         }
         let sql = crate::lower::lower_gen(&vars, &g.body, &self.rels)?;
         let rows: Vec<HashMap<String, String>> = {
-            let mut stmt = self.db.conn().prepare(&sql)?;
-            let mut it = stmt.query([])?;
-            let mut out = Vec::new();
-            while let Some(row) = it.next()? {
-                let mut m = HashMap::new();
-                for (i, v) in vars.iter().enumerate() {
-                    use rusqlite::types::Value as V;
-                    let cell = match row.get::<_, V>(i)? {
-                        V::Text(s) => s,
-                        V::Integer(n) => n.to_string(),
-                        V::Real(f) => f.to_string(),
-                        _ => String::new(),
-                    };
-                    m.insert(v.clone(), cell);
-                }
-                out.push(m);
-            }
-            out
+            let values = self.db.query_values("gen", &sql, &[])?;
+            values
+                .into_iter()
+                .map(|row| {
+                    let mut m = HashMap::new();
+                    for (i, v) in vars.iter().enumerate() {
+                        let cell = match row.get(i) {
+                            Some(crate::db::SqlVal::Text(s)) => s.clone(),
+                            Some(crate::db::SqlVal::Int(n)) => n.to_string(),
+                            Some(crate::db::SqlVal::Real(f)) => f.to_string(),
+                            _ => String::new(),
+                        };
+                        m.insert(v.clone(), cell);
+                    }
+                    m
+                })
+                .collect()
         };
 
         match &g.target {

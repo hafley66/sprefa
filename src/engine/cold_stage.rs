@@ -35,6 +35,7 @@
 use anyhow::{bail, Result};
 
 use crate::ast::{Program, Value};
+use crate::db::SqlVal;
 
 use super::Engine;
 
@@ -121,17 +122,21 @@ impl Engine {
             .filter(|n| *n > 0)
             .unwrap_or(COLD_CHUNK_MAX_FILES);
         // Per-file bytes from `_file.size`, keyed by (repo, path, rev).
-        let sizes: std::collections::HashMap<(String, String, String), i64> = {
-            let conn = self.db.conn();
-            let mut stmt = conn.prepare("SELECT repo, path, rev, size FROM _file")?;
-            let found = stmt.query_map([], |r| {
-                Ok((
-                    (r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?),
-                    r.get::<_, i64>(3)?,
-                ))
-            })?;
-            found.filter_map(|x| x.ok()).collect()
-        };
+        let sizes: std::collections::HashMap<(String, String, String), i64> = self
+            .db
+            .query_rows(
+                "_file",
+                "SELECT repo, path, rev, size FROM _file",
+                &[],
+                |r| {
+                    Ok((
+                        (r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?),
+                        r.get::<_, i64>(3)?,
+                    ))
+                },
+            )?
+            .into_iter()
+            .collect();
         let mut slices: Vec<Vec<crate::engine::extract::ExtractFile>> = Vec::new();
         let mut cur: Vec<crate::engine::extract::ExtractFile> = Vec::new();
         let mut cur_bytes: i64 = 0;
@@ -183,8 +188,7 @@ impl Engine {
 
     fn cold_corpus_file_count(&self) -> i64 {
         self.db
-            .conn()
-            .query_row("SELECT COUNT(*) FROM _file", [], |r| r.get(0))
+            .query_one("_file", "SELECT COUNT(*) FROM _file", &[], |r| Ok(r.get(0)?))
             .unwrap_or(0)
     }
 
@@ -203,8 +207,9 @@ impl Engine {
         self.ensure_cold_schema()?;
         let already: i64 = self
             .db
-            .conn()
-            .query_row("SELECT COUNT(*) FROM _cold_node", [], |r| r.get(0))
+            .query_one("_cold_node", "SELECT COUNT(*) FROM _cold_node", &[], |r| {
+                Ok(r.get(0)?)
+            })
             .unwrap_or(0);
         if already > 0 {
             return Ok(false);
@@ -228,8 +233,12 @@ impl Engine {
         self.ensure_cold_schema()?;
         let pending: i64 = self
             .db
-            .conn()
-            .query_row("SELECT COUNT(*) FROM _cold_node WHERE state != 'done'", [], |r| r.get(0))
+            .query_one(
+                "_cold_node",
+                "SELECT COUNT(*) FROM _cold_node WHERE state != 'done'",
+                &[],
+                |r| Ok(r.get(0)?),
+            )
             .unwrap_or(0);
         Ok(pending > 0)
     }
@@ -301,14 +310,13 @@ impl Engine {
             rank.insert(fam.name(), idx);
         }
         let mut jobs: Vec<ColdJob> = Vec::new();
-        let conn = self.db.conn();
-        let mut stmt =
-            conn.prepare("SELECT family, shard FROM _cold_node WHERE state != 'done'")?;
-        let found = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u32))
-        })?;
-        for row in found {
-            let (family, shard) = row?;
+        let found = self.db.query_rows(
+            "_cold_node",
+            "SELECT family, shard FROM _cold_node WHERE state != 'done'",
+            &[],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u32)),
+        )?;
+        for (family, shard) in found {
             // scip stays above every family (mirrors seed); a node whose family is
             // no longer used (program shrank mid-start) gets the lowest priority;
             // it will be swept at declare time.
@@ -329,9 +337,10 @@ impl Engine {
     /// derived rebuild.
     pub fn cold_nodes_complete(&self) -> Result<bool> {
         self.ensure_cold_schema()?;
-        let (total, pending): (i64, i64) = self.db.conn().query_row(
+        let (total, pending): (i64, i64) = self.db.query_one(
+            "_cold_node",
             "SELECT COUNT(*), COALESCE(SUM(state != 'done'), 0) FROM _cold_node",
-            [],
+            &[],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
         Ok(total > 0 && pending == 0)
@@ -355,11 +364,11 @@ impl Engine {
         self.ensure_cold_schema()?;
         let already_done: i64 = self
             .db
-            .conn()
-            .query_row(
+            .query_one(
+                "_cold_node",
                 "SELECT COUNT(*) FROM _cold_node WHERE family=?1 AND shard=?2 AND state='done'",
-                rusqlite::params![family, shard as i64],
-                |r| r.get(0),
+                &[SqlVal::Text(family.into()), SqlVal::Int(shard as i64)],
+                |r| Ok(r.get(0)?),
             )
             .unwrap_or(0);
         if already_done > 0 {
@@ -406,16 +415,18 @@ impl Engine {
             }
         }
         let now = super::now_secs();
-        self.db.conn().execute(
+        self.db.exec_params(
+            "_cold_node",
             "UPDATE _cold_node SET state='done', done_at=?3 WHERE family=?1 AND shard=?2",
-            rusqlite::params![family, shard as i64, now],
+            &[SqlVal::Text(family.into()), SqlVal::Int(shard as i64), SqlVal::Int(now)],
         )?;
         // Cold-start progress is always see-able: one verdict line per node
         // (stderr + perf.jsonl), N/M cumulative.
         {
-            let (done, total): (i64, i64) = self.db.query_row(
+            let (done, total): (i64, i64) = self.db.query_one(
+                "_cold_node",
                 "SELECT SUM(state='done'), COUNT(*) FROM _cold_node",
-                [],
+                &[],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
             crate::verdict::verdict(
@@ -429,11 +440,11 @@ impl Engine {
         if family != COLD_SCIP_FAMILY {
             let pending: i64 = self
                 .db
-                .conn()
-                .query_row(
+                .query_one(
+                    "_cold_node",
                     "SELECT COUNT(*) FROM _cold_node WHERE family=?1 AND state != 'done'",
-                    [family],
-                    |r| r.get(0),
+                    &[SqlVal::Text(family.into())],
+                    |r| Ok(r.get(0)?),
                 )
                 .unwrap_or(0);
             if pending == 0 {
@@ -456,11 +467,11 @@ impl Engine {
     pub(crate) fn sweep_cold_nodes(&self, prog: &Program) -> Result<()> {
         let exists: i64 = self
             .db
-            .conn()
-            .query_row(
+            .query_one(
+                "sqlite_master",
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='_cold_node'",
-                [],
-                |r| r.get(0),
+                &[],
+                |r| Ok(r.get(0)?),
             )
             .unwrap_or(0);
         if exists == 0 {
@@ -472,17 +483,19 @@ impl Engine {
         if self.cold_pre_extract_used(prog) {
             used.insert(COLD_SCIP_FAMILY);
         }
-        let stored: Vec<String> = {
-            let conn = self.db.conn();
-            let mut stmt = conn.prepare("SELECT DISTINCT family FROM _cold_node")?;
-            let found = stmt.query_map([], |r| r.get::<_, String>(0))?;
-            found.filter_map(|x| x.ok()).collect()
-        };
+        let stored: Vec<String> = self.db.query_rows(
+            "_cold_node",
+            "SELECT DISTINCT family FROM _cold_node",
+            &[],
+            |r| Ok(r.get::<_, String>(0)?),
+        )?;
         for family in stored {
             if !used.contains(family.as_str()) {
-                self.db
-                    .conn()
-                    .execute("DELETE FROM _cold_node WHERE family=?1", [&family])?;
+                self.db.exec_params(
+                    "_cold_node",
+                    "DELETE FROM _cold_node WHERE family=?1",
+                    &[SqlVal::Text(family)],
+                )?;
             }
         }
         Ok(())
