@@ -43,16 +43,15 @@ impl RelKind for EnvKind {
             })
             .collect();
         rows.sort();
-        let existing: Vec<(String, String)> = {
-            let conn = eng.db.conn();
-            let mut s = conn.prepare(&format!(
+        let existing: Vec<(String, String)> = eng.db.query_rows(
+            "env",
+            &format!(
                 "SELECT \"name\", \"value\" FROM {} ORDER BY \"name\", \"value\"",
-                txt_tbl("env")))?;
-            let rs = s.query_map([], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-            })?;
-            rs.filter_map(|x| x.ok()).collect()
-        };
+                txt_tbl("env")
+            ),
+            &[],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )?;
         if existing == rows { return Ok(false); }
         let out: Vec<Vec<Value>> = rows.into_iter()
             .map(|(name, value)| vec![Value::Text(name), Value::Text(value)]).collect();

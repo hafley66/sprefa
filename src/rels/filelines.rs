@@ -42,28 +42,28 @@ impl RelKind for FileLinesKind {
         "the built-in per-file line-count relation"
     }
     fn refresh(&self, eng: &Engine) -> Result<bool> {
-        let mut rows: Vec<(String, String, String, i64)> = {
-            let conn = eng.db.conn();
-            let mut s = conn.prepare(
-                "SELECT repo, path, rev, lines FROM _file WHERE lines >= 0 ORDER BY repo, path, rev")?;
-            let rs = s.query_map([], |r| Ok((
+        let mut rows: Vec<(String, String, String, i64)> = eng.db.query_rows(
+            "_file",
+            "SELECT repo, path, rev, lines FROM _file WHERE lines >= 0 ORDER BY repo, path, rev",
+            &[],
+            |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?, r.get::<_, i64>(3)?,
-            )))?;
-            rs.filter_map(|x| x.ok()).collect()
-        };
+            )),
+        )?;
         rows.sort();
-        let existing: Vec<(String, String, String, i64)> = {
-            let conn = eng.db.conn();
-            let mut s = conn.prepare(&format!(
+        let existing: Vec<(String, String, String, i64)> = eng.db.query_rows(
+            "file_lines",
+            &format!(
                 "SELECT \"repo\", \"path\", \"rev\", \"line_count\" FROM {} ORDER BY \"repo\", \"path\", \"rev\"",
-                txt_tbl("file_lines")))?;
-            let rs = s.query_map([], |r| Ok((
+                txt_tbl("file_lines")
+            ),
+            &[],
+            |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?, r.get::<_, i64>(3)?,
-            )))?;
-            rs.filter_map(|x| x.ok()).collect()
-        };
+            )),
+        )?;
         if existing == rows { return Ok(false); }
         let out: Vec<Vec<Value>> = rows.into_iter()
             .map(|(repo, path, rev, n)| vec![

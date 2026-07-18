@@ -305,9 +305,9 @@ impl Engine {
                 let caller = resolve_caller(repo, rev, &s.file, s.line).unwrap_or_default();
                 // classify the callee's bare name as read/write. The fn-aggregate
                 // is the precision axis the conn-loop-reachable rail needs (a fn
-                // that only reads through its .conn() does not fire). Heuristic
-                // by name: $R.execute(...) is a write on any receiver; the rail's
-                // conn_fn join narrows to db-shaped sites.
+                // that only reads through its db connection does not fire).
+                // Heuristic by name: $R.execute(...) is a write on any receiver;
+                // the rail's conn_fn join narrows to db-shaped sites.
                 let classification = classify_call_kind(&s.callee);
                 let ordinal = occurrence_ordinals.entry((s.file.as_str(), s.line)).or_default();
                 let occurrence = format!("{}:{}:{}", s.file, s.line, *ordinal);

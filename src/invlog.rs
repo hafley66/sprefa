@@ -23,6 +23,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// A separate machine-global process log (invocations.db), not the engine's
+// schema; `Db::open` would inject a "[db] opened..." verdict line and a
+// lock-contention warning into every `dl` invocation's stderr — unacceptable
+// for a module whose whole contract is best-effort silence.
+// @rusqlite-ok: foreign-purpose db; the seam's side effects don't fit here.
 use rusqlite::{params, Connection};
 
 /// Rows older than this are swept on every `record_start` (cheap, bounded —
@@ -80,6 +85,7 @@ fn open() -> Option<Connection> {
 
 fn retain(conn: &Connection) {
     let cutoff = now_ms() - RETENTION_DAYS * 24 * 3600 * 1000;
+    // @rusqlite-ok: best-effort retention sweep; a failed DELETE just means next call's sweep tries again.
     let _ = conn.execute("DELETE FROM invocation WHERE ts_start_ms < ?1", params![cutoff]);
 }
 
@@ -204,6 +210,7 @@ pub fn record_end(id: Option<i64>, exit_code: i32) {
     }
     let Some(conn) = open() else { return };
     let u = crate::why::read_self_usage();
+    // @rusqlite-ok: best-effort finalize; a failed UPDATE just leaves the row open (reported KILLED/RUNNING-forever).
     let _ = conn.execute(
         "UPDATE invocation SET ts_end_ms=?2, exit_code=?3, cpu_ms=?4, io_read_mb=?5, \
          io_write_mb=?6, rss_mb=?7 WHERE id=?1",
@@ -236,7 +243,7 @@ pub struct InvocationRow {
 const SELECT_COLS: &str =
     "id, ts_start_ms, ts_end_ms, pid, ppid, ancestry, argv, cwd, exit_code";
 
-fn row_from(r: &rusqlite::Row) -> rusqlite::Result<InvocationRow> {
+fn row_from(r: &crate::db::SqlRow) -> crate::db::SqlRowResult<InvocationRow> {
     Ok(InvocationRow {
         id: r.get(0)?,
         ts_start_ms: r.get(1)?,

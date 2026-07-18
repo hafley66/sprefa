@@ -25,19 +25,20 @@ impl Engine {
     /// under-cover) this family.
     pub(crate) fn comment_file_set(&self) -> Result<Vec<ExtractFile>> {
         let mut files: Vec<ExtractFile> = Vec::new();
-        let mut sel = self
-            .db
-            .conn()
-            .prepare("SELECT repo, path, rev, hash FROM _file ORDER BY repo, path, rev")?;
-        let rows = sel.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, Option<String>>(3)?.unwrap_or_default(),
-            ))
-        })?;
-        for row in rows.flatten() {
+        let rows = self.db.query_rows(
+            "_file",
+            "SELECT repo, path, rev, hash FROM _file ORDER BY repo, path, rev",
+            &[],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                ))
+            },
+        )?;
+        for row in rows {
             let p = row.1.as_str();
             let ts = p.ends_with(".ts") || p.ends_with(".tsx") || p.ends_with(".mts") || p.ends_with(".cts");
             let md = p.ends_with(".md") || p.ends_with(".markdown");
@@ -172,19 +173,20 @@ impl Engine {
     /// is the wrong set to partition).
     pub(crate) fn template_file_set(&self) -> Result<Vec<ExtractFile>> {
         let mut files: Vec<ExtractFile> = Vec::new();
-        let mut sel = self
-            .db
-            .conn()
-            .prepare("SELECT repo, path, rev, hash FROM _file ORDER BY repo, path, rev")?;
-        let rows = sel.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, Option<String>>(3)?.unwrap_or_default(),
-            ))
-        })?;
-        for row in rows.flatten() {
+        let rows = self.db.query_rows(
+            "_file",
+            "SELECT repo, path, rev, hash FROM _file ORDER BY repo, path, rev",
+            &[],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                ))
+            },
+        )?;
+        for row in rows {
             let p = row.1.as_str();
             if p.ends_with(".ts")
                 || p.ends_with(".tsx")
@@ -305,19 +307,20 @@ impl Engine {
     /// `pub(crate)` — same reason as `template_file_set`.
     pub(crate) fn unresolved_file_set(&self) -> Result<Vec<ExtractFile>> {
         let mut files: Vec<ExtractFile> = Vec::new();
-        let mut sel = self
-            .db
-            .conn()
-            .prepare("SELECT repo, path, rev, hash FROM _file ORDER BY repo, path, rev")?;
-        let rows = sel.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, Option<String>>(3)?.unwrap_or_default(),
-            ))
-        })?;
-        for row in rows.flatten() {
+        let rows = self.db.query_rows(
+            "_file",
+            "SELECT repo, path, rev, hash FROM _file ORDER BY repo, path, rev",
+            &[],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                ))
+            },
+        )?;
+        for row in rows {
             let p = row.1.as_str();
             if p.ends_with(".ts")
                 || p.ends_with(".tsx")

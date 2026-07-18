@@ -9,6 +9,10 @@
 //! plans/2026-06-28-agent-turn-builtin-and-harness-plug.md); these cover plain
 //! terminal runs the daemon can only observe at rest.
 
+// This module reads a THIRD-PARTY tool's own SQLite schema (opencode's
+// session store) read-only; it is not sprefa's data model, so `Db` (welded
+// to the engine's own schema/pragmas/scalar-fn registry) does not fit.
+// @rusqlite-ok: foreign schema needs a plain, unopinionated connection.
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 
@@ -237,6 +241,7 @@ impl AgentHarness for OpenCodeDb {
             None => match home() { Some(h) => h.join(".local/share/opencode/opencode.db"), None => return vec![] },
         };
         if !db.exists() { return vec![]; }
+        // @rusqlite-ok: read-only open of opencode's own db, not sprefa's schema.
         let Ok(conn) = Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else { return vec![] };
         oc_edits_from_conn(&conn, repo_root)
     }

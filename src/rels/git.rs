@@ -50,13 +50,12 @@ impl RelKind for ChangedKind {
         }
         paths.sort();
         paths.dedup();
-        let existing: Vec<String> = {
-            let conn = eng.db.conn();
-            let mut s = conn.prepare(&format!(
-                "SELECT \"path\" FROM {} ORDER BY \"path\"", txt_tbl("changed")))?;
-            let rows = s.query_map([], |r| r.get::<_, String>(0))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
+        let existing: Vec<String> = eng.db.query_rows(
+            "changed",
+            &format!("SELECT \"path\" FROM {} ORDER BY \"path\"", txt_tbl("changed")),
+            &[],
+            |r| Ok(r.get::<_, String>(0)?),
+        )?;
         if existing == paths { return Ok(false); }
         let rows: Vec<Vec<Value>> = paths.into_iter().map(|p| vec![Value::Text(p)]).collect();
         eng.refresh_rel("changed", &["path"], &rows)?;
@@ -70,7 +69,7 @@ impl RelKind for ChangedKind {
 /// hunk in `git diff -U0 HEAD`, plus every line of untracked files (which the
 /// diff omits). Lets a rail scope to the touched lines, not the touched path:
 /// `diag(p, l, ...) <- hit(p, l), changed_line(p, l).` instead of `changed(p)`,
-/// so a touch on engine.rs surfaces only the `.conn()` calls on edited lines.
+/// so a touch on engine.rs surfaces only the db calls on edited lines.
 pub struct ChangedLineKind;
 
 impl RelKind for ChangedLineKind {
@@ -131,16 +130,15 @@ impl RelKind for ChangedLineKind {
         }
         rows.sort();
         rows.dedup();
-        let existing: Vec<(String, i64)> = {
-            let conn = eng.db.conn();
-            let mut s = conn.prepare(&format!(
+        let existing: Vec<(String, i64)> = eng.db.query_rows(
+            "changed_line",
+            &format!(
                 "SELECT \"path\", \"line\" FROM {} ORDER BY \"path\", \"line\"",
-                txt_tbl("changed_line")))?;
-            let rs = s.query_map([], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
-            })?;
-            rs.filter_map(|x| x.ok()).collect()
-        };
+                txt_tbl("changed_line")
+            ),
+            &[],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+        )?;
         if existing == rows { return Ok(false); }
         let out: Vec<Vec<Value>> = rows.into_iter()
             .map(|(p, l)| vec![Value::Text(p), Value::Int(l)]).collect();
@@ -210,16 +208,18 @@ impl RelKind for GitRefKind {
         }
         rows.sort();
         rows.dedup();
-        let existing: Vec<(String, String, String, String)> = {
-            let conn = eng.db.conn();
-            let mut s = conn.prepare(&format!(
+        let existing: Vec<(String, String, String, String)> = eng.db.query_rows(
+            "git_ref",
+            &format!(
                 "SELECT \"repo\",\"refname\",\"kind\",\"sha\" FROM {} ORDER BY 1,2,3,4",
-                txt_tbl("git_ref")))?;
-            let rs = s.query_map([], |r| Ok((
+                txt_tbl("git_ref")
+            ),
+            &[],
+            |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?, r.get::<_, String>(3)?)))?;
-            rs.filter_map(|x| x.ok()).collect()
-        };
+                r.get::<_, String>(2)?, r.get::<_, String>(3)?,
+            )),
+        )?;
         if existing == rows { return Ok(false); }
         let out: Vec<Vec<Value>> = rows.into_iter()
             .map(|(r, n, k, s)| vec![Value::Text(r), Value::Text(n), Value::Text(k), Value::Text(s)])
@@ -269,15 +269,19 @@ impl RelKind for RevBehindKind {
                     anyhow::bail!("rev_cmp_want needs 3 columns (repo, refname, upstream); \
                                    found {}", meta.cols.len());
                 }
-                let conn = eng.db.conn();
-                let mut s = conn.prepare(&format!(
-                    "SELECT DISTINCT \"{}\",\"{}\",\"{}\" FROM {} ORDER BY 1,2,3",
-                    meta.col_name(0), meta.col_name(1), meta.col_name(2),
-                    txt_tbl("rev_cmp_want")))?;
-                let rs = s.query_map([], |r| Ok((
-                    r.get::<_, String>(0)?, r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?)))?;
-                rs.filter_map(|x| x.ok()).collect()
+                eng.db.query_rows(
+                    "rev_cmp_want",
+                    &format!(
+                        "SELECT DISTINCT \"{}\",\"{}\",\"{}\" FROM {} ORDER BY 1,2,3",
+                        meta.col_name(0), meta.col_name(1), meta.col_name(2),
+                        txt_tbl("rev_cmp_want")
+                    ),
+                    &[],
+                    |r| Ok((
+                        r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                    )),
+                )?
             }
         };
         let roots = eng.repo_roots();
@@ -331,16 +335,18 @@ impl RelKind for RevBehindKind {
         }
         rows.sort();
         rows.dedup();
-        let existing: Vec<(String, String, String, i64, i64)> = {
-            let conn = eng.db.conn();
-            let mut s = conn.prepare(&format!(
+        let existing: Vec<(String, String, String, i64, i64)> = eng.db.query_rows(
+            "rev_behind",
+            &format!(
                 "SELECT \"repo\",\"refname\",\"upstream\",\"behind\",\"ahead\" \
-                 FROM {} ORDER BY 1,2,3,4,5", txt_tbl("rev_behind")))?;
-            let rs = s.query_map([], |r| Ok((
+                 FROM {} ORDER BY 1,2,3,4,5", txt_tbl("rev_behind")
+            ),
+            &[],
+            |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
-                r.get::<_, i64>(3)?, r.get::<_, i64>(4)?)))?;
-            rs.filter_map(|x| x.ok()).collect()
-        };
+                r.get::<_, i64>(3)?, r.get::<_, i64>(4)?,
+            )),
+        )?;
         if existing == rows { return Ok(false); }
         let out: Vec<Vec<Value>> = rows.into_iter()
             .map(|(r, n, u, b, a)| vec![Value::Text(r), Value::Text(n), Value::Text(u),
@@ -417,16 +423,18 @@ impl RelKind for CreatedKind {
             }
         }
         created.sort();
-        let existing: Vec<(String, String, String, i64)> = {
-            let conn = eng.db.conn();
-            let mut s = conn.prepare(&format!(
+        let existing: Vec<(String, String, String, i64)> = eng.db.query_rows(
+            "created",
+            &format!(
                 "SELECT \"path\",\"name\",\"email\",\"ts\" FROM {} ORDER BY 1,2,3,4",
-                txt_tbl("created")))?;
-            let rows = s.query_map([], |r| Ok((
+                txt_tbl("created")
+            ),
+            &[],
+            |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?, r.get::<_, i64>(3)?)))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
+                r.get::<_, String>(2)?, r.get::<_, i64>(3)?,
+            )),
+        )?;
         if existing == created { return Ok(false); }
         let rows: Vec<Vec<Value>> = created.into_iter()
             .map(|(p, n, e, t)| vec![Value::Text(p), Value::Text(n), Value::Text(e), Value::Int(t)])

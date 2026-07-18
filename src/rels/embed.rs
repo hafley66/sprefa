@@ -3,6 +3,7 @@
 use anyhow::Result;
 
 use crate::ast::{Col, RelDecl, Type, Value};
+use crate::db::SqlVal;
 use crate::engine::{knn_rows, Engine};
 use crate::lower::txt_tbl;
 
@@ -47,24 +48,21 @@ impl RelKind for EmbedKind {
 
         // Content with no vector for THIS backend. Capped: only the first `max`
         // un-embedded strings are encoded per tick (the rest catch up next tick).
-        let to_embed: Vec<(String, String)> = {
-            let conn = eng.db.conn();
-            // `s.id` is INTEGER (StringId::sqlite()) as of the intern-key arc;
-            // `_embeddings.sid` stays TEXT (content-addressed key, not a `sym`
-            // column any rule joins), so the join needs the cast — the id's
-            // decimal string is the SAME representation `span_at`/`string_spans`
-            // use for their opaque sid handles.
-            let mut s = conn.prepare(
-                "SELECT CAST(s.id AS TEXT), s.content FROM _strings s
-                 WHERE s.id != 0
-                   AND NOT EXISTS (SELECT 1 FROM _embeddings e
-                                   WHERE e.sid = CAST(s.id AS TEXT) AND e.backend = ?1)
-                 LIMIT ?2")?;
-            let v: Vec<(String, String)> = s.query_map(rusqlite::params![backend, max as i64], |r|
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
-                .filter_map(|x| x.ok()).collect();
-            v
-        };
+        // `s.id` is INTEGER (StringId::sqlite()) as of the intern-key arc;
+        // `_embeddings.sid` stays TEXT (content-addressed key, not a `sym`
+        // column any rule joins), so the join needs the cast — the id's
+        // decimal string is the SAME representation `span_at`/`string_spans`
+        // use for their opaque sid handles.
+        let to_embed: Vec<(String, String)> = eng.db.query_rows(
+            "_strings",
+            "SELECT CAST(s.id AS TEXT), s.content FROM _strings s
+             WHERE s.id != 0
+               AND NOT EXISTS (SELECT 1 FROM _embeddings e
+                               WHERE e.sid = CAST(s.id AS TEXT) AND e.backend = ?1)
+             LIMIT ?2",
+            &[SqlVal::from(&backend), SqlVal::from(max as i64)],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )?;
         if !to_embed.is_empty() {
             let texts: Vec<&str> = to_embed.iter().map(|(_, c)| c.as_str()).collect();
             let vecs = embedder.encode(&texts)?;
@@ -81,8 +79,12 @@ impl RelKind for EmbedKind {
         }
 
         // Steady state: no new content AND `similar` already built -> no recompute.
-        let similar_rows: i64 = eng.db.conn().query_row(
-            &format!("SELECT count(*) FROM {}", txt_tbl("similar")), [], |r| r.get(0))?;
+        let similar_rows: i64 = eng.db.query_one(
+            "similar",
+            &format!("SELECT count(*) FROM {}", txt_tbl("similar")),
+            &[],
+            |r| Ok(r.get(0)?),
+        )?;
         if to_embed.is_empty() && similar_rows > 0 { return Ok(false); }
 
         refresh_similar_rel(eng, &backend, max)?;
@@ -97,16 +99,15 @@ impl RelKind for EmbedKind {
 fn refresh_similar_rel(eng: &Engine, backend: &str, max: usize) -> Result<()> {
     let k: usize = std::env::var("SPREFA_SIMILAR_K").ok()
         .and_then(|s| s.parse().ok()).unwrap_or(8);
-    let pool: Vec<(String, Vec<f32>)> = {
-        let conn = eng.db.conn();
-        let mut s = conn.prepare("SELECT sid, vec FROM _embeddings WHERE backend = ?1 LIMIT ?2")?;
-        let v: Vec<(String, Vec<f32>)> = s.query_map(rusqlite::params![backend, max as i64], |r|
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
-            .filter_map(|x| x.ok())
-            .map(|(sid, txt): (String, String)| (sid, crate::embed::parse_vec(&txt)))
-            .collect();
-        v
-    };
+    let pool: Vec<(String, Vec<f32>)> = eng.db.query_rows(
+        "_embeddings",
+        "SELECT sid, vec FROM _embeddings WHERE backend = ?1 LIMIT ?2",
+        &[SqlVal::from(backend), SqlVal::from(max as i64)],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+    )?
+        .into_iter()
+        .map(|(sid, txt)| (sid, crate::embed::parse_vec(&txt)))
+        .collect();
     if pool.len() > 2000 {
         eprintln!("[similar] brute-force KNN over {} vectors (O(n^2)); \
                    cap with SPREFA_EMBED_MAX or wire sqlite-vec", pool.len());

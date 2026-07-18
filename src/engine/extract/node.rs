@@ -38,16 +38,16 @@ impl Engine {
                 }
             })
             .collect();
-        let stored: std::collections::HashSet<String> = {
-            let conn = self.db.conn();
-            let mut s =
-                conn.prepare(&format!("SELECT id FROM {}", crate::lower::txt_tbl("node")))?;
-            let set: std::collections::HashSet<String> = s
-                .query_map([], |r| r.get::<_, String>(0))?
-                .filter_map(|x| x.ok())
-                .collect();
-            set
-        };
+        let stored: std::collections::HashSet<String> = self
+            .db
+            .query_rows(
+                "node",
+                &format!("SELECT id FROM {}", crate::lower::txt_tbl("node")),
+                &[],
+                |r| Ok(r.get::<_, String>(0)?),
+            )?
+            .into_iter()
+            .collect();
         if stored == computed {
             // Same node id set means the same content, already interned by a
             // prior run — drop the sink's queued interns unflushed (harmless
@@ -68,7 +68,7 @@ impl Engine {
             &node_rows,
         )?;
         self.refresh_rel("child", &["parent", "child"], &child_rows)?;
-        self.db.exec("DELETE FROM _node_path")?;
+        self.db.exec_on("_node_path", "DELETE FROM _node_path")?;
         self.db
             .insert_rows("_node_path", &["id", "path"], &path_by_id)?;
         Ok(true)
@@ -150,17 +150,20 @@ impl Engine {
         only: Option<&HashSet<String>>,
     ) -> Result<Vec<(String, String, String, String)>> {
         let mut files: Vec<(String, String, String, String)> = Vec::new();
-        let conn = self.db.conn();
-        let mut sel = conn.prepare("SELECT repo, path, rev, hash FROM _file ORDER BY repo, path, rev")?;
-        let rows = sel.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, String>(3)?,
-            ))
-        })?;
-        for row in rows.flatten() {
+        let rows = self.db.query_rows(
+            "_file",
+            "SELECT repo, path, rev, hash FROM _file ORDER BY repo, path, rev",
+            &[],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            },
+        )?;
+        for row in rows {
             if let Some(set) = only {
                 if !set.contains(&row.1) {
                     continue;

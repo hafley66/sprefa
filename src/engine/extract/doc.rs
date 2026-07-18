@@ -12,22 +12,19 @@ impl Engine {
     /// PLUS the stored `extract:type` digest (which identifies the type
     /// family's inputs; type refresh runs before doc in both tick paths).
     pub(crate) fn refresh_doc_rels(&self) -> Result<bool> {
-        let mut files: Vec<ExtractFile> = Vec::new();
-        {
-            let mut sel = self.db.conn().prepare(
-                "SELECT repo, path, rev, hash FROM _file WHERE path LIKE '%.md' OR path LIKE '%.markdown' ORDER BY repo, path, rev")?;
-            let rows = sel.query_map([], |r| {
+        let files: Vec<ExtractFile> = self.db.query_rows(
+            "_file",
+            "SELECT repo, path, rev, hash FROM _file WHERE path LIKE '%.md' OR path LIKE '%.markdown' ORDER BY repo, path, rev",
+            &[],
+            |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
                     r.get::<_, String>(2)?,
                     r.get::<_, Option<String>>(3)?.unwrap_or_default(),
                 ))
-            })?;
-            for row in rows.flatten() {
-                files.push(row);
-            }
-        }
+            },
+        )?;
         // Per-rev skip, riding the type family per rev: the doc_ref bridge reads
         // type_entity, so each rev's doc digest folds the SAME rev's stored
         // `extract:type:<rev>` (type refresh runs before doc in both tick paths).

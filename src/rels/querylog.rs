@@ -52,29 +52,29 @@ impl RelKind for QueryLogKind {
         "the built-in server-query-history relation"
     }
     fn refresh(&self, eng: &Engine) -> Result<bool> {
-        let want: Vec<Row> = {
-            let conn = eng.db.conn();
-            let mut s = conn.prepare(
-                "SELECT ts, source, method, body, params FROM _query_log ORDER BY rowid")?;
-            let rows = s.query_map([], |r| Ok((
+        let want: Vec<Row> = eng.db.query_rows(
+            "_query_log",
+            "SELECT ts, source, method, body, params FROM _query_log ORDER BY rowid",
+            &[],
+            |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
                 r.get::<_, String>(3)?, r.get::<_, String>(4)?,
-            )))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
+            )),
+        )?;
         // The _txt VIEW has no rowid, so the change check compares sorted
         // multisets; insertion below keeps _query_log's append (rowid) order.
-        let have: Vec<Row> = {
-            let conn = eng.db.conn();
-            let mut s = conn.prepare(&format!(
+        let have: Vec<Row> = eng.db.query_rows(
+            "query_log",
+            &format!(
                 "SELECT \"ts\", \"source\", \"method\", \"body\", \"params\" FROM {}",
-                txt_tbl("query_log")))?;
-            let rows = s.query_map([], |r| Ok((
+                txt_tbl("query_log")
+            ),
+            &[],
+            |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
                 r.get::<_, String>(3)?, r.get::<_, String>(4)?,
-            )))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
+            )),
+        )?;
         let mut have_sorted = have;
         have_sorted.sort();
         let mut want_sorted = want.clone();
