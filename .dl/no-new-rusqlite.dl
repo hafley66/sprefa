@@ -149,7 +149,7 @@ conn_baseline("src/anchor.rs", 2).
 conn_baseline("src/daemon_read.rs", 3).
 conn_baseline("src/effect.rs", 18).
 conn_baseline("src/engine/cold_stage.rs", 12).
-conn_baseline("src/engine/declare.rs", 21).
+conn_baseline("src/engine/declare.rs", 20).
 conn_baseline("src/engine/decls.rs", 4).
 conn_baseline("src/engine/derive.rs", 25).
 conn_baseline("src/engine/extract/call.rs", 1).
