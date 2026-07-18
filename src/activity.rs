@@ -279,10 +279,14 @@ pub fn snapshot() -> Snapshot {
 mod tests {
     use super::*;
 
-    // One sequential test: the slot is process-global, so parallel tests
-    // mutating it would race. The full lifecycle in one function is race-free.
+    // The slot is process-global, so every test that mutates it must hold
+    // this lock or parallel runs stomp each other mid-assertion (seen live:
+    // lifecycle_round_trips reading "" after root_stamp's end_tick()).
+    static SLOT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn lifecycle_round_trips() {
+        let _slot = SLOT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         end_tick(); // start clean
         begin_tick(7, ".dl/*.dl", Path::new("/tmp/root"));
         set(Phase::Declare, "");
@@ -319,6 +323,7 @@ mod tests {
     /// the test brackets against its own prior state instead of assuming idle.
     #[test]
     fn root_stamp_routes_activity_and_perf_path() {
+        let _slot = SLOT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         end_tick(); // start clean
         let active = PathBuf::from(format!("/tmp/dl_stamp_{}", std::process::id()));
         std::env::remove_var("DL_PERF_LOG");
