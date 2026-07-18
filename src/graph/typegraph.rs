@@ -1072,6 +1072,7 @@ fn ts_flow_stmt(stmt: &ts_ast::Statement, file: &str, starts: &[usize], out: &mu
                 ts_flow_decl(d, file, starts, out);
             }
         }
+        S::ClassDeclaration(c) => ts_flow_class(c, file, starts, out),
         S::VariableDeclaration(_) | S::ExpressionStatement(_) | S::ReturnStatement(_) => {
             let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
             let fn_sym = mint_sym(file, EntityKind::Function, "<top>", None);
@@ -1093,7 +1094,30 @@ fn ts_flow_decl(d: &ts_ast::Declaration, file: &str, starts: &[usize], out: &mut
                 ts_flow_body(body, file, starts, &fn_sym, &mut scope, out);
             }
         }
+        D::ClassDeclaration(c) => ts_flow_class(c, file, starts, out),
         _ => {}
+    }
+}
+
+/// `class Owner { ... }`: each method body (instance, static, getter, setter,
+/// constructor) flows like a free function's, scoped under the same
+/// `Owner.method` sym `ts_class_call_defs`/`ts_class_entity` already mint for
+/// the method — so an interprocedural hop lands on the node this walk wrote.
+/// Field initializers are not covered: a `PropertyDefinition`'s init
+/// expression has no natural enclosing fn scope to attach nodes to (see
+/// docs/df-coverage.md).
+fn ts_flow_class(c: &ts_ast::Class, file: &str, starts: &[usize], out: &mut DataflowFacts) {
+    let Some(id) = &c.id else { return };
+    let owner = id.name.to_string();
+    for el in &c.body.body {
+        let ts_ast::ClassElement::MethodDefinition(m) = el else { continue };
+        let ts_ast::PropertyKey::StaticIdentifier(k) = &m.key else { continue };
+        let Some(body) = m.value.body.as_deref() else { continue };
+        let method_name = k.name.to_string();
+        let fn_sym = mint_sym(file, EntityKind::Method, &method_name, Some(&owner));
+        let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        ts_seed_params(&m.value.params, file, starts, &fn_sym, &mut scope, out);
+        ts_flow_body(body, file, starts, &fn_sym, &mut scope, out);
     }
 }
 

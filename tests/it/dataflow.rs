@@ -209,6 +209,97 @@ fn rust_lift_closes_transitively() {
     );
 }
 
+/// TS/JS class methods were a documented gap: `ts_flow_stmt` had no
+/// `ClassDeclaration` arm, so a class method's body never reached the
+/// dataflow walk even though the type/call extraction saw it fine (see
+/// docs/df-coverage.md, "known gaps"). The method's param and its let-bound
+/// call result must both mint `df_node` rows scoped under the `Widget.render`
+/// fn sym — the same sym `ts_class_call_defs`/`ts_class_entity` already mint
+/// for the method — and `name` must REACH `label` transitively via
+/// `closure(df_edge)`, the same asymmetry proof `rust_lift_closes_transitively`
+/// uses: not a direct edge (it routes through a `var_read` and the call's
+/// `call_res`), yet reachable.
+#[test]
+fn ts_class_method_body_flows_like_a_function() {
+    let d = sandbox("ts_class");
+    fs::create_dir_all(d.join("src")).unwrap();
+    fs::write(
+        d.join("src/widget.ts"),
+        "function format(value: string): string { return value; }\n\
+         class Widget {\n    \
+             render(name: string): string {\n        \
+                 const label = format(name);\n        \
+                 return label;\n    \
+             }\n\
+         }\n",
+    )
+    .unwrap();
+    let prog = concat!(
+        "rel seen(path: file).\n",
+        "seen(path) <- scan(\"WORK\", \"src/**/*.ts\", path, rev), match(path, rev, /./, line).\n",
+        "rel df_reaches(from: text, to: text).\n",
+        "df_reaches(a, b) <- closure(df_edge).\n",
+        "? df_node(id, kind, var, fn, file, line).\n",
+        "? df_edge(from, to).\n",
+        "? df_reaches(from, to).\n",
+    );
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "TS class lift must not error:\n{err}");
+
+    let secs = sections(&out);
+    assert!(secs.len() >= 3, "expected 3 query sections:\n{out}");
+
+    let mut nodes: HashMap<String, (String, String, String)> = HashMap::new();
+    for r in rows(&secs[0]) {
+        assert!(r.len() >= 4, "df_node row too short: {r:?}");
+        nodes.insert(r[0].clone(), (r[1].clone(), r[2].clone(), r[3].clone()));
+    }
+    let mut edges: HashSet<(String, String)> = HashSet::new();
+    for r in rows(&secs[1]) {
+        assert!(r.len() >= 2, "df_edge row too short: {r:?}");
+        edges.insert((r[0].clone(), r[1].clone()));
+    }
+    let mut reaches: HashSet<(String, String)> = HashSet::new();
+    for r in rows(&secs[2]) {
+        assert!(r.len() >= 2, "df_reaches row too short: {r:?}");
+        reaches.insert((r[0].clone(), r[1].clone()));
+    }
+
+    // The method's param `name` must be scoped under Widget.render's fn sym.
+    let name_params: Vec<&String> = nodes
+        .iter()
+        .filter(|(_, (kind, var, fn_sym))| kind == "param" && var == "name" && fn_sym.contains("Widget.render"))
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(name_params.len(), 1, "expected one param `name` under Widget.render:\n{out}");
+    let name_id = name_params[0].clone();
+
+    // The body's `const label = format(name)` must mint a let_bind under the
+    // same fn scope.
+    let label_binds: Vec<&String> = nodes
+        .iter()
+        .filter(|(_, (kind, var, fn_sym))| kind == "let_bind" && var == "label" && fn_sym.contains("Widget.render"))
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(label_binds.len(), 1, "expected one let_bind `label` under Widget.render:\n{out}");
+    let label_id = label_binds[0].clone();
+
+    // There is a real graph to walk, not an empty one.
+    assert!(!edges.is_empty(), "df_edge is empty for the method body:\n{out}");
+
+    // name -> label is NOT a direct df_edge (it routes through a var_read and
+    // format(name)'s call_res) ...
+    assert!(
+        !edges.contains(&(name_id.clone(), label_id.clone())),
+        "name->label must NOT be a direct df_edge:\n{out}"
+    );
+    // ... yet closure reaches it: the method body's flow is a connected chain.
+    assert!(
+        reaches.contains(&(name_id, label_id)),
+        "name must REACH label transitively through the method body:\n{out}"
+    );
+}
+
 /// THE TAINT GATE. Exact dataflow says `m = a + 1` is NOT `a` (a new value), so
 /// `a` would not reach `m`. Taint tracking propagates `a` THROUGH the operation
 /// into `m`, so the source param `q` reaches the sink argument `m`. That reach,

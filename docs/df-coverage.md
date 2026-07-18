@@ -10,11 +10,11 @@ complete and where it is knowingly sparse.
 
 | language | constructs covered | known gaps | evidence |
 |---|---|---|---|
-| Rust | free fns, impl methods, params, `let`, `let mut`, reassignment, return/tail, if/match/block tails, loop break values, closures, calls, methods, struct literals, fields, borrows, binops/unops, string literals | trait methods, const/static bodies, macros, async/await, `try` blocks, indexed (`[]`) reads | `src/graph/typegraph.rs:4055-4624` |
-| TypeScript / JavaScript | free fns, const-bound arrows/function exprs, params (incl. destructured), `let`/`const`/`var`, return, calls, member calls, `new`, object/array literals, JSX elements, member access, binops, `+` concat, template/tagged templates, ternary/short-circuit, arrows as values, top-level module statements | **class methods**, class field initializers, exported arrow/function expression bodies, switch/with, yield, await (transparent but body still walked) | `src/graph/typegraph.rs:1041-1763` |
+| Rust | free fns, impl methods, params, `let`, `let mut`, reassignment, return/tail, if/match/block tails, loop break values, closures, calls, methods, struct literals, fields, borrows, binops/unops, string literals | trait methods, const/static bodies, macros, async/await, `try` blocks, indexed (`[]`) reads | `src/graph/typegraph.rs:4079-4648` |
+| TypeScript / JavaScript | free fns, const-bound arrows/function exprs, params (incl. destructured), `let`/`const`/`var`, return, calls, member calls, `new`, object/array literals, JSX elements, member access, binops, `+` concat, template/tagged templates, ternary/short-circuit, arrows as values, top-level module statements, **class methods (instance, static, constructor, getters, setters)** | class field initializers, exported arrow/function expression bodies, switch/with, yield, await (transparent but body still walked) | `src/graph/typegraph.rs:1041-1787` |
 | Kotlin | free/top-level and nested `fun`, params, `val`/`var`, return, calls, member calls, constructors, member access, lambdas, binops, string/numeric literals, loops (span only) | if/when/match as value nodes (recursed but no union node), try/catch, break labels as values, destructuring binds | `src/graph/typegraph.rs:612-959` |
-| Go | functions, methods, params, `:=`, `var`/`const`, assignments, return, calls, method calls, composite literals, selectors, binops/unops, `func` literals, loops (span + node), if | if as a value node (walked but no union node), switch/select, range with index/value slicing, defer/go statement values | `src/graph/typegraph.rs:5395-5858` |
-| Python | functions, methods, params, assignments, return, calls, method calls, attribute/subscript, binops/unops, conditional expressions, lambdas, list/set/tuple/dict literals, comprehensions | f-string interpolation values (treated as `lit`), walrus `:=`, `with`/`try` values, async/await (transparent but body still walked), generators beyond comprehensions | `src/graph/typegraph.rs:6777-7325` |
+| Go | functions, methods, params, `:=`, `var`/`const`, assignments, return, calls, method calls, composite literals, selectors, binops/unops, `func` literals, loops (span + node), if | if as a value node (walked but no union node), switch/select, range with index/value slicing, defer/go statement values | `src/graph/typegraph.rs:5419-5882` |
+| Python | functions, methods, params, assignments, return, calls, method calls, attribute/subscript, binops/unops, conditional expressions, lambdas, list/set/tuple/dict literals, comprehensions | f-string interpolation values (treated as `lit`), walrus `:=`, `with`/`try` values, async/await (transparent but body still walked), generators beyond comprehensions | `src/graph/typegraph.rs:6801-7349` |
 
 ## Rust
 
@@ -23,29 +23,29 @@ Parser: `syn`. Node ids are `file:line:col:kind`.
 Covered:
 
 - Free functions and `impl` block methods (`Item::Fn`, `Item::Impl` with
-  `ImplItem::Fn`) — `src/graph/typegraph.rs:4058-4073`.
+  `ImplItem::Fn`) — `src/graph/typegraph.rs:4082-4097`.
 - Params (typed params only; `self` is skipped so positional indices align with
-  `type_sig`) — `src/graph/typegraph.rs:4124-4145`.
+  `type_sig`) — `src/graph/typegraph.rs:4148-4169`.
 - `let` bindings and `let mut`, including tuple/struct destructuring
-  (`bind_pat`) — `src/graph/typegraph.rs:4178-4186`, `src/graph/typegraph.rs:4631-4674`.
+  (`bind_pat`) — `src/graph/typegraph.rs:4202-4210`, `src/graph/typegraph.rs:4655-4698`.
 - Reassignment via `=` (`Expr::Assign`) mints a `var_write` slot
-  — `src/graph/typegraph.rs:4618-4700`.
+  — `src/graph/typegraph.rs:4642-4724`.
 - Explicit `return EXPR` and implicit block/match/if tails: the last
   expression of a function body flows into a `ret` node
-  — `src/graph/typegraph.rs:4146-4160`; `if`/`match`/`block` tails were recently
+  — `src/graph/typegraph.rs:4170-4184`; `if`/`match`/`block` tails were recently
   added and now feed a dedicated `if`/`match`/`block` node that itself becomes
-  the value — `src/graph/typegraph.rs:4516-4567`.
+  the value — `src/graph/typegraph.rs:4540-4591`.
 - Loop break values: `loop { ... break v ... }` collects break-value tails and
-  edges them into the `loop` node — `src/graph/typegraph.rs:4425-4515`. `for`/`while`
+  edges them into the `loop` node — `src/graph/typegraph.rs:4449-4539`. `for`/`while`
   do not yield break values (matches Rust semantics).
 - Calls and method calls, with args recorded in `df_arg` (receiver at slot -1)
-  — `src/graph/typegraph.rs:4310-4351`.
+  — `src/graph/typegraph.rs:4334-4375`.
 - Struct literals / tuple-struct/enum-variant constructors (`new`) and field
-  reads (`member`) — `src/graph/typegraph.rs:4356-4391`.
-- References (`borrow`), binary/unary operators — `src/graph/typegraph.rs:4393-4412`.
+  reads (`member`) — `src/graph/typegraph.rs:4380-4415`.
+- References (`borrow`), binary/unary operators — `src/graph/typegraph.rs:4417-4436`.
 - Closures lifted as their own fn scope (`param`, `ret`, `closure` value node)
-  — `src/graph/typegraph.rs:4576-4614`.
-- String literals populate `df_lit` — `src/graph/typegraph.rs:4297-4303`.
+  — `src/graph/typegraph.rs:4600-4638`.
+- String literals populate `df_lit` — `src/graph/typegraph.rs:4321-4327`.
 
 Known gaps:
 
@@ -68,34 +68,44 @@ from a byte-offset index. Handles `.ts`/`.tsx`/`.js`/`.jsx`/`.mjs`/`.cjs`/`.mts`
 Covered:
 
 - `function` declarations and exported function declarations
-  — `src/graph/typegraph.rs:1058-1098`.
+  — `src/graph/typegraph.rs:1058-1100`.
 - `const`/`let`/`var` bindings, including destructuring targets that fall back
-  to a single whole-pattern bind — `src/graph/typegraph.rs:1152-1184`.
+  to a single whole-pattern bind — `src/graph/typegraph.rs:1176-1208`.
 - `const`-bound arrow functions and function expressions are lifted as their own
-  fn scope (`param`, body, `ret`) — `src/graph/typegraph.rs:1158-1173`,
-  `src/graph/typegraph.rs:1118-1140`.
+  fn scope (`param`, body, `ret`) — `src/graph/typegraph.rs:1182-1197`,
+  `src/graph/typegraph.rs:1142-1164`.
 - Inline arrow/function expressions produce a `closure` value node whose `var`
-  is the synthetic lambda sym — `src/graph/typegraph.rs:1487-1499`.
+  is the synthetic lambda sym — `src/graph/typegraph.rs:1511-1523`.
 - Calls, member calls, `new`, object/array literals, JSX elements/fragments;
   receiver at `df_arg` slot -1, named props/attrs in `df_field`
-  — `src/graph/typegraph.rs:1298-1763`.
+  — `src/graph/typegraph.rs:1322-1787`.
 - Member access (`recv.prop`, `recv?.prop`, `recv[expr]`) as `member`
-  — `src/graph/typegraph.rs:1335-1349`.
+  — `src/graph/typegraph.rs:1359-1373`.
 - `+` concat, other binary operators, logical short-circuit, ternary
-  — `src/graph/typegraph.rs:1455-1590`.
+  — `src/graph/typegraph.rs:1479-1614`.
 - Template literals and tagged templates, with raw source slices in `df_lit`
-  — `src/graph/typegraph.rs:1604-1628`.
+  — `src/graph/typegraph.rs:1628-1652`.
 - Top-level module statements are wrapped in a synthetic `<top>` fn scope
-  — `src/graph/typegraph.rs:1075-1079`.
+  — `src/graph/typegraph.rs:1076-1080`.
+- Class methods — instance, static, constructor, getters, setters — flow like a
+  free function's body, scoped under the `Owner.method` fn sym
+  `ts_class_call_defs`/`ts_class_entity` already mint for the same method
+  (`ts_flow_class`, reached from `ts_flow_stmt`'s `ClassDeclaration` arm and
+  `ts_flow_decl`'s for the `export class` path)
+  — `src/graph/typegraph.rs:1075`, `src/graph/typegraph.rs:1097`,
+  `src/graph/typegraph.rs:1109-1122`. A getter and setter of the same name
+  share one fn sym (`Owner.count` for both `get count()`/`set count()`) since
+  neither the dataflow lift nor the call/type extraction distinguishes them —
+  their df_node rows don't collide (ids are `file:byte_off:kind`) but a query
+  joining on fn sym alone can't tell get from set.
 
 Known gaps:
 
-- **Class methods and class field initializers emit zero `df_node` rows.** The
-  dataflow statement walker (`ts_flow_stmt`) handles `FunctionDeclaration`,
-  `ExportNamedDeclaration`, `VariableDeclaration`, `ExpressionStatement`, and
-  `ReturnStatement`, but has no arm for `ClassDeclaration`
-  — `src/graph/typegraph.rs:1058-1082`. Class methods are handled by the
-  type/call passes but never reach the dataflow walk.
+- **Class field initializers emit zero `df_node` rows.** A `PropertyDefinition`
+  init expression (`class C { x = f(); }`) has no natural enclosing fn scope
+  for `ts_flow_class` to attach nodes to — routing it through the constructor's
+  scope would misrepresent field-init order relative to constructor statements,
+  and TS/JS also allows fields with no constructor at all.
 - Exported arrow/function expression bodies are lifted only when the binding is
   a `const`/`let`/`var` declaration; standalone exported function expressions
   are unverified.
@@ -150,18 +160,18 @@ internally and bumped to 1-based before output.
 Covered:
 
 - `function_declaration` and `method_declaration` (with receiver type)
-  — `src/graph/typegraph.rs:5407-5428`.
+  — `src/graph/typegraph.rs:5431-5452`.
 - Params, including grouped params (`a, b int`), one param node per declared name
-  — `src/graph/typegraph.rs:5435-5458`.
+  — `src/graph/typegraph.rs:5459-5482`.
 - `:=` short declarations, `var`/`const` declarations, assignments (with
-  `var_write` for identifier targets) — `src/graph/typegraph.rs:5582-5618`.
+  `var_write` for identifier targets) — `src/graph/typegraph.rs:5606-5642`.
 - `return` statements, one `ret` node per returned expression
-  — `src/graph/typegraph.rs:5623-5642`.
+  — `src/graph/typegraph.rs:5647-5666`.
 - Calls, method calls, selectors, composite literals, `func` literals
-  — `src/graph/typegraph.rs:5493-5742`.
-- Binary/unary operators — `src/graph/typegraph.rs:5564-5576`.
+  — `src/graph/typegraph.rs:5517-5766`.
+- Binary/unary operators — `src/graph/typegraph.rs:5588-5600`.
 - `if` statements and `for` loops (span + `loop`/`if` value node)
-  — `src/graph/typegraph.rs:5643-5710`.
+  — `src/graph/typegraph.rs:5667-5734`.
 
 Known gaps:
 
@@ -182,18 +192,18 @@ internally and bumped to 1-based before output.
 Covered:
 
 - `function_definition` anywhere in the file (module-level, method, or nested);
-  `decorated_definition` is unwrapped first — `src/graph/typegraph.rs:6786-6795`.
+  `decorated_definition` is unwrapped first — `src/graph/typegraph.rs:6810-6819`.
 - Params; `self`/`cls` are skipped so positional indices align with `type_sig`
-  — `src/graph/typegraph.rs:6808-6835`.
-- Assignments, return statements — `src/graph/typegraph.rs:6860-6868`.
+  — `src/graph/typegraph.rs:6832-6859`.
+- Assignments, return statements — `src/graph/typegraph.rs:6884-6892`.
 - Calls, method calls, attribute/subscript reads
-  — `src/graph/typegraph.rs:7108-7193`.
+  — `src/graph/typegraph.rs:7132-7217`.
 - Binary/boolean/comparison/unary operators, conditional expressions
-  — `src/graph/typegraph.rs:7194-7226`.
-- Lambdas lifted as their own fn scope — `src/graph/typegraph.rs:7242-7263`.
+  — `src/graph/typegraph.rs:7218-7250`.
+- Lambdas lifted as their own fn scope — `src/graph/typegraph.rs:7266-7287`.
 - List/set/tuple/dict literals and comprehensions (list/set/dict/generator)
-  — `src/graph/typegraph.rs:7264-7315`.
-- `for`/`while` loop spans — `src/graph/typegraph.rs:6869-7001`.
+  — `src/graph/typegraph.rs:7288-7339`.
+- `for`/`while` loop spans — `src/graph/typegraph.rs:6893-7025`.
 
 Known gaps:
 
