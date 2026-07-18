@@ -19,6 +19,11 @@ pub type SqlRow<'a> = Row<'a>;
 /// mention.
 pub type SqlRowResult<T> = rusqlite::Result<T>;
 
+/// Same reasoning as [`SqlRow`]: the zero-copy cell view `Row::get_ref`
+/// returns, for a reader that must branch on the SQLite storage type (a
+/// `sym`-typed column may store INTEGER, not TEXT) instead of assuming one.
+pub type SqlValueRef<'a> = rusqlite::types::ValueRef<'a>;
+
 /// Profile mode: `--profile` or `DL_PROFILE=1`. When on, every SQL statement
 /// over the slow threshold logs with its wall time (via SQLite's profile hook,
 /// so the `.conn()` escape hatches are covered too), each repo×rev scan logs

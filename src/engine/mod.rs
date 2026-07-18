@@ -232,13 +232,14 @@ fn closure_query_max_edges() -> usize {
 /// type error, which a `.filter_map(Result::ok)`/`.flatten()` reader would
 /// silently drop the whole row for (the intern-key arc's first regression:
 /// closure(df_edge) read zero rows because every edge row errored here).
-fn cell_as_string(r: &rusqlite::Row, i: usize) -> rusqlite::Result<String> {
+fn cell_as_string(r: &crate::db::SqlRow, i: usize) -> crate::db::SqlRowResult<String> {
+    use crate::db::SqlValueRef;
     Ok(match r.get_ref(i)? {
-        rusqlite::types::ValueRef::Null => String::new(),
-        rusqlite::types::ValueRef::Integer(n) => n.to_string(),
-        rusqlite::types::ValueRef::Real(f) => f.to_string(),
-        rusqlite::types::ValueRef::Text(t) => String::from_utf8_lossy(t).into_owned(),
-        rusqlite::types::ValueRef::Blob(b) => String::from_utf8_lossy(b).into_owned(),
+        SqlValueRef::Null => String::new(),
+        SqlValueRef::Integer(n) => n.to_string(),
+        SqlValueRef::Real(f) => f.to_string(),
+        SqlValueRef::Text(t) => String::from_utf8_lossy(t).into_owned(),
+        SqlValueRef::Blob(b) => String::from_utf8_lossy(b).into_owned(),
     })
 }
 
@@ -1396,9 +1397,10 @@ impl Engine {
         }
         // Retention: keep the last 200 ticks. Safe on first ticks (tick - 200
         // underflows i64 to a large negative, deleting nothing).
-        self.db.conn().execute(
+        self.db.exec_params(
+            "_write_ledger",
             "DELETE FROM _write_ledger WHERE tick < ?1",
-            [tick.saturating_sub(200)],
+            &[crate::db::SqlVal::from(tick.saturating_sub(200))],
         )?;
         let rows: Vec<Vec<Value>> = combined
             .into_iter()
@@ -1440,8 +1442,7 @@ impl Engine {
         if self.load_rel_digest(&content_key)? == Some(digest) {
             let live: i64 = self
                 .db
-                .conn()
-                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+                .query_one(rel, &format!("SELECT COUNT(*) FROM {table}"), &[], |r| Ok(r.get(0)?))
                 .unwrap_or(-1);
             if live == encoded.len() as i64 {
                 crate::verdict::debug_verdict(

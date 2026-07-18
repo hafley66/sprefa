@@ -7,7 +7,7 @@
 
 #[cfg(test)]
 mod tests {
-    use rusqlite::{params, Connection};
+    use crate::db::{self, Db, SqlVal};
 
     const SHADOW_DDL: &str = r#"
         PRAGMA foreign_keys=ON;
@@ -190,18 +190,20 @@ mod tests {
         WHERE c.operation=1 AND e.fact_id IS NULL
     "#;
 
-    fn contract_db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(SHADOW_DDL).unwrap();
-        conn
+    fn contract_db() -> Db {
+        let db = db::open(None).unwrap();
+        db.execute_batch_on("_repo_identity_v1", SHADOW_DDL).unwrap();
+        db
     }
 
-    fn explain(conn: &Connection, sql: &str) -> Vec<String> {
-        let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
-        stmt.query_map(params![vec![0x44_u8; 16]], |row| row.get::<_, String>(3))
-            .unwrap()
-            .map(Result::unwrap)
-            .collect()
+    fn explain(db: &Db, sql: &str) -> Vec<String> {
+        db.query_rows(
+            "_explain_plan",
+            &format!("EXPLAIN QUERY PLAN {sql}"),
+            &[SqlVal::from(vec![0x44_u8; 16])],
+            |row| Ok(row.get::<_, String>(3)?),
+        )
+        .unwrap()
     }
 
     fn assert_delta_plan_is_bounded(plan: &[String]) {
@@ -229,29 +231,31 @@ mod tests {
     }
 
     fn insert_fact(
-        conn: &Connection,
+        db: &Db,
         fact_id: &[u8; 16],
         id: i64,
         kind: i64,
         owner_count: i64,
-    ) -> rusqlite::Result<usize> {
-        conn.execute(
+    ) -> anyhow::Result<usize> {
+        db.exec_params(
+            "_fact_df_node_v1",
             "INSERT INTO _fact_df_node_v1
              (fact_id,owner_count,id,kind,var,fn,file,line)
              VALUES (?1,?2,?3,?4,12,13,14,15)",
-            params![fact_id.as_slice(), owner_count, id, kind],
+            &[
+                SqlVal::from(fact_id.as_slice()),
+                SqlVal::from(owner_count),
+                SqlVal::from(id),
+                SqlVal::from(kind),
+            ],
         )
     }
 
     #[test]
     fn shadow_contract_uses_foreign_keys_and_file_temp() {
-        let conn = contract_db();
-        let foreign_keys: i64 = conn
-            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
-            .unwrap();
-        let temp_store: i64 = conn
-            .query_row("PRAGMA temp_store", [], |r| r.get(0))
-            .unwrap();
+        let db = contract_db();
+        let foreign_keys = db.pragma_i64("foreign_keys").unwrap();
+        let temp_store = db.pragma_i64("temp_store").unwrap();
         assert_eq!(foreign_keys, 1);
         assert_eq!(temp_store, 1);
         for table in [
@@ -264,11 +268,12 @@ mod tests {
             "_df_stage_owner_v1",
             "_stage_df_node_v1",
         ] {
-            let found: i64 = conn
-                .query_row(
+            let found: i64 = db
+                .query_one(
+                    "sqlite_master",
                     "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
-                    [table],
-                    |r| r.get(0),
+                    &[SqlVal::from(table)],
+                    |r| Ok(r.get(0)?),
                 )
                 .unwrap();
             assert_eq!(found, 1, "missing contract table {table}");
@@ -277,27 +282,37 @@ mod tests {
 
     #[test]
     fn fact_id_and_semantic_key_conflicts_roll_back_atomically() {
-        let mut conn = contract_db();
+        let db = contract_db();
         let fact_a = [0x11; 16];
         let fact_b = [0x22; 16];
 
-        let tx = conn.transaction().unwrap();
-        insert_fact(&tx, &fact_a, 7, 8, 0).unwrap();
-        let collision = insert_fact(&tx, &fact_a, 7, 9, 0).unwrap_err();
+        db.begin().unwrap();
+        insert_fact(&db, &fact_a, 7, 8, 0).unwrap();
+        let collision = insert_fact(&db, &fact_a, 7, 9, 0).unwrap_err();
         assert!(collision.to_string().contains("UNIQUE constraint failed"));
-        tx.rollback().unwrap();
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM _fact_df_node_v1", [], |r| r.get(0))
+        db.rollback().unwrap();
+        let count: i64 = db
+            .query_one(
+                "_fact_df_node_v1",
+                "SELECT COUNT(*) FROM _fact_df_node_v1",
+                &[],
+                |r| Ok(r.get(0)?),
+            )
             .unwrap();
         assert_eq!(count, 0, "FactId collision must roll back the generation");
 
-        let tx = conn.transaction().unwrap();
-        insert_fact(&tx, &fact_a, 7, 8, 0).unwrap();
-        let semantic = insert_fact(&tx, &fact_b, 7, 8, 0).unwrap_err();
+        db.begin().unwrap();
+        insert_fact(&db, &fact_a, 7, 8, 0).unwrap();
+        let semantic = insert_fact(&db, &fact_b, 7, 8, 0).unwrap_err();
         assert!(semantic.to_string().contains("UNIQUE constraint failed"));
-        tx.rollback().unwrap();
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM _fact_df_node_v1", [], |r| r.get(0))
+        db.rollback().unwrap();
+        let count: i64 = db
+            .query_one(
+                "_fact_df_node_v1",
+                "SELECT COUNT(*) FROM _fact_df_node_v1",
+                &[],
+                |r| Ok(r.get(0)?),
+            )
             .unwrap();
         assert_eq!(
             count, 0,
@@ -307,26 +322,28 @@ mod tests {
 
     #[test]
     fn flat_delta_plans_probe_persistent_indexes() {
-        let conn = contract_db();
-        let removed = explain(&conn, REMOVED_PLAN);
-        let added = explain(&conn, ADDED_PLAN);
+        let db = contract_db();
+        let removed = explain(&db, REMOVED_PLAN);
+        let added = explain(&db, ADDED_PLAN);
         assert_delta_plan_is_bounded(&removed);
         assert_delta_plan_is_bounded(&added);
     }
 
     #[test]
     fn flat_bulk_upsert_applies_owner_counts() {
-        let conn = contract_db();
+        let db = contract_db();
         let fact_id = [0x33; 16];
-        insert_fact(&conn, &fact_id, 21, 22, 1).unwrap();
-        conn.execute(
+        insert_fact(&db, &fact_id, 21, 22, 1).unwrap();
+        db.exec_params(
+            "tx_fact_apply_df_node",
             "INSERT INTO tx_fact_apply_df_node
              (fact_id,old_count,new_count,id,kind,var,fn,file,line)
              VALUES (?1,1,3,21,22,12,13,14,15)",
-            params![fact_id.as_slice()],
+            &[SqlVal::from(fact_id.as_slice())],
         )
         .unwrap();
-        conn.execute_batch(
+        db.execute_batch_on(
+            "_fact_df_node_v1",
             "INSERT INTO _fact_df_node_v1
                (fact_id,owner_count,id,kind,var,fn,file,line)
              SELECT fact_id,new_count,id,kind,var,fn,file,line
@@ -336,11 +353,12 @@ mod tests {
                owner_count=excluded.owner_count;",
         )
         .unwrap();
-        let count: i64 = conn
-            .query_row(
+        let count: i64 = db
+            .query_one(
+                "_fact_df_node_v1",
                 "SELECT owner_count FROM _fact_df_node_v1 WHERE fact_id=?1",
-                params![fact_id.as_slice()],
-                |r| r.get(0),
+                &[SqlVal::from(fact_id.as_slice())],
+                |r| Ok(r.get(0)?),
             )
             .unwrap();
         assert_eq!(count, 3);

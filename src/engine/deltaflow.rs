@@ -4,7 +4,8 @@
 //! participate in production execution; it proves candidate revalidation and
 //! public-presence transitions before the runtime is wired to a typed plan.
 
-use rusqlite::{params, Connection, OptionalExtension, Result};
+use crate::db::{self, Db, SqlVal};
+use anyhow::Result;
 use std::collections::BTreeSet;
 
 /// SQLite's default compiled bound-parameter ceiling is 999; stay under it so a
@@ -65,7 +66,7 @@ impl DeltaMetrics {
 }
 
 pub(crate) struct BooleanDeltaFixture {
-    db: Connection,
+    db: Db,
     generation: u64,
     executed_mutations: Vec<&'static str>,
     write_statements: usize,
@@ -73,8 +74,9 @@ pub(crate) struct BooleanDeltaFixture {
 
 impl BooleanDeltaFixture {
     pub(crate) fn new() -> Result<Self> {
-        let db = Connection::open_in_memory()?;
-        db.execute_batch(
+        let db = db::open(None)?;
+        db.execute_batch_on(
+            "src",
             "
             PRAGMA foreign_keys=ON;
             PRAGMA temp_store=FILE;
@@ -116,7 +118,7 @@ impl BooleanDeltaFixture {
         let mut changed_src_syms = BTreeSet::new();
         let mut changed_stable_syms = BTreeSet::new();
         self.write_statements = 0;
-        self.db.execute_batch("BEGIN IMMEDIATE")?;
+        self.db.begin_immediate()?;
 
         // --- input deltas ---------------------------------------------------
         // Group the incoming deltas into per-(rel, direction) sets and flush
@@ -182,16 +184,16 @@ impl BooleanDeltaFixture {
                         changed_stable_syms.insert(sym.clone());
                     }
                 }
-                _ => return Err(rusqlite::Error::InvalidQuery),
+                _ => anyhow::bail!("InputChange diff must be +1 or -1"),
             }
         }
         let src_add_rows = triples(&src_add);
         let src_del_rows = triples(&src_del);
         let stable_add_rows = doubles(&stable_add);
         let stable_del_rows = doubles(&stable_del);
-        self.batch_insert("INSERT OR IGNORE INTO src(repo,sym,kind)", 3, &src_add_rows)?;
+        self.batch_insert("src", "INSERT OR IGNORE INTO src(repo,sym,kind)", 3, &src_add_rows)?;
         self.batch_delete("src", &["repo", "sym", "kind"], &src_del_rows)?;
-        self.batch_insert("INSERT OR IGNORE INTO stable(sym,payload)", 2, &stable_add_rows)?;
+        self.batch_insert("stable", "INSERT OR IGNORE INTO stable(sym,payload)", 2, &stable_add_rows)?;
         self.batch_delete("stable", &["sym", "payload"], &stable_del_rows)?;
 
         // --- projected (source-driven presence) -----------------------------
@@ -207,15 +209,20 @@ impl BooleanDeltaFixture {
         if !projected_candidates.is_empty() {
             metrics.rules_run += 1;
             for sym in &projected_candidates {
-                let want = self.db.query_row(
+                let want: bool = self.db.query_one(
+                    "src",
                     "SELECT EXISTS(SELECT 1 FROM src WHERE sym=?1 AND kind='keep')",
-                    [sym],
-                    |row| row.get::<_, bool>(0),
+                    &[SqlVal::from(sym)],
+                    |row| Ok(row.get::<_, bool>(0)?),
                 )?;
                 let have = self
                     .db
-                    .query_row("SELECT 1 FROM projected WHERE sym=?1", [sym], |_| Ok(true))
-                    .optional()?
+                    .query_opt(
+                        "projected",
+                        "SELECT 1 FROM projected WHERE sym=?1",
+                        &[SqlVal::from(sym)],
+                        |_| Ok(true),
+                    )?
                     .unwrap_or(false);
                 if want != have {
                     if want {
@@ -228,7 +235,7 @@ impl BooleanDeltaFixture {
                 }
             }
         }
-        self.batch_insert("INSERT INTO projected(sym)", 1, &projected_insert)?;
+        self.batch_insert("projected", "INSERT INTO projected(sym)", 1, &projected_insert)?;
         if !projected_delete.is_empty() {
             self.executed_mutations.push(DELETE_PROJECTED_SCOPED);
         }
@@ -243,15 +250,21 @@ impl BooleanDeltaFixture {
             .collect();
         let mut joined_candidates = BTreeSet::new();
         for sym in joined_syms {
-            let mut old = self.db.prepare("SELECT payload FROM joined WHERE sym=?1")?;
-            let rows = old.query_map([&sym], |row| row.get::<_, String>(0))?;
-            for payload in rows {
-                joined_candidates.insert((sym.clone(), payload?));
+            for payload in self.db.query_rows(
+                "joined",
+                "SELECT payload FROM joined WHERE sym=?1",
+                &[SqlVal::from(&sym)],
+                |row| Ok(row.get::<_, String>(0)?),
+            )? {
+                joined_candidates.insert((sym.clone(), payload));
             }
-            let mut current = self.db.prepare("SELECT payload FROM stable WHERE sym=?1")?;
-            let rows = current.query_map([&sym], |row| row.get::<_, String>(0))?;
-            for payload in rows {
-                joined_candidates.insert((sym.clone(), payload?));
+            for payload in self.db.query_rows(
+                "stable",
+                "SELECT payload FROM stable WHERE sym=?1",
+                &[SqlVal::from(&sym)],
+                |row| Ok(row.get::<_, String>(0)?),
+            )? {
+                joined_candidates.insert((sym.clone(), payload));
             }
         }
 
@@ -264,18 +277,20 @@ impl BooleanDeltaFixture {
         if !joined_candidates.is_empty() {
             metrics.rules_run += 1;
             for (sym, payload) in &joined_candidates {
-                let want = self.db.query_row(
+                let want: bool = self.db.query_one(
+                    "projected",
                     "SELECT EXISTS(SELECT 1 FROM projected WHERE sym=?1) AND EXISTS(SELECT 1 FROM stable WHERE sym=?1 AND payload=?2)",
-                    params![sym, payload], |row| row.get::<_, bool>(0),
+                    &[SqlVal::from(sym), SqlVal::from(payload)],
+                    |row| Ok(row.get::<_, bool>(0)?),
                 )?;
                 let have = self
                     .db
-                    .query_row(
+                    .query_opt(
+                        "joined",
                         "SELECT 1 FROM joined WHERE sym=?1 AND payload=?2",
-                        params![sym, payload],
+                        &[SqlVal::from(sym), SqlVal::from(payload)],
                         |_| Ok(true),
-                    )
-                    .optional()?
+                    )?
                     .unwrap_or(false);
                 if want != have {
                     if want {
@@ -288,7 +303,7 @@ impl BooleanDeltaFixture {
                 }
             }
         }
-        self.batch_insert("INSERT INTO joined(sym,payload)", 2, &joined_insert)?;
+        self.batch_insert("joined", "INSERT INTO joined(sym,payload)", 2, &joined_insert)?;
         if !joined_delete.is_empty() {
             self.executed_mutations.push(DELETE_JOINED_SCOPED);
         }
@@ -303,15 +318,20 @@ impl BooleanDeltaFixture {
         if !out_candidates.is_empty() {
             metrics.rules_run += 1;
             for sym in &out_candidates {
-                let want = self.db.query_row(
+                let want: bool = self.db.query_one(
+                    "joined",
                     "SELECT EXISTS(SELECT 1 FROM joined WHERE sym=?1 AND payload LIKE 'emit:%')",
-                    [sym],
-                    |row| row.get::<_, bool>(0),
+                    &[SqlVal::from(sym)],
+                    |row| Ok(row.get::<_, bool>(0)?),
                 )?;
                 let have = self
                     .db
-                    .query_row("SELECT 1 FROM out WHERE sym=?1", [sym], |_| Ok(true))
-                    .optional()?
+                    .query_opt(
+                        "out",
+                        "SELECT 1 FROM out WHERE sym=?1",
+                        &[SqlVal::from(sym)],
+                        |_| Ok(true),
+                    )?
                     .unwrap_or(false);
                 if want != have {
                     if want {
@@ -323,13 +343,13 @@ impl BooleanDeltaFixture {
                 }
             }
         }
-        self.batch_insert("INSERT INTO out(sym)", 1, &out_insert)?;
+        self.batch_insert("out", "INSERT INTO out(sym)", 1, &out_insert)?;
         if !out_delete.is_empty() {
             self.executed_mutations.push(DELETE_OUT_SCOPED);
         }
         self.batch_delete("out", &["sym"], &out_delete)?;
 
-        self.db.execute_batch("COMMIT")?;
+        self.db.commit()?;
         self.generation += 1;
         metrics.write_statements = self.write_statements;
         Ok(metrics)
@@ -338,30 +358,37 @@ impl BooleanDeltaFixture {
     fn src_present(&self, repo: &str, sym: &str, kind: &str) -> Result<bool> {
         Ok(self
             .db
-            .query_row(
+            .query_opt(
+                "src",
                 "SELECT 1 FROM src WHERE repo=?1 AND sym=?2 AND kind=?3",
-                params![repo, sym, kind],
+                &[SqlVal::from(repo), SqlVal::from(sym), SqlVal::from(kind)],
                 |_| Ok(()),
-            )
-            .optional()?
+            )?
             .is_some())
     }
 
     fn stable_present(&self, sym: &str, payload: &str) -> Result<bool> {
         Ok(self
             .db
-            .query_row(
+            .query_opt(
+                "stable",
                 "SELECT 1 FROM stable WHERE sym=?1 AND payload=?2",
-                params![sym, payload],
+                &[SqlVal::from(sym), SqlVal::from(payload)],
                 |_| Ok(()),
-            )
-            .optional()?
+            )?
             .is_some())
     }
 
     /// One INSERT statement per chunk (chunked under `MAX_BOUND_PARAMS`), never
-    /// one per row. `head` is everything before `VALUES`; `arity` its columns.
-    fn batch_insert(&mut self, head: &str, arity: usize, rows: &[Vec<String>]) -> Result<()> {
+    /// one per row. `head` is everything before `VALUES`; `arity` its columns;
+    /// `rel` names the table `head` inserts into (N+1 counter key).
+    fn batch_insert(
+        &mut self,
+        rel: &str,
+        head: &str,
+        arity: usize,
+        rows: &[Vec<String>],
+    ) -> Result<()> {
         if rows.is_empty() {
             return Ok(());
         }
@@ -370,8 +397,8 @@ impl BooleanDeltaFixture {
         for chunk in rows.chunks(per_stmt) {
             let values = vec![tuple.as_str(); chunk.len()].join(",");
             let sql = format!("{head} VALUES {values}");
-            let flat: Vec<&String> = chunk.iter().flatten().collect();
-            self.db.execute(&sql, rusqlite::params_from_iter(flat))?;
+            let flat: Vec<SqlVal> = chunk.iter().flatten().map(SqlVal::from).collect();
+            self.db.exec_params(rel, &sql, &flat)?;
             self.write_statements += 1;
         }
         Ok(())
@@ -394,8 +421,8 @@ impl BooleanDeltaFixture {
         for chunk in rows.chunks(per_stmt) {
             let values = vec![tuple.as_str(); chunk.len()].join(",");
             let sql = format!("DELETE FROM {table} WHERE {key} IN (VALUES {values})");
-            let flat: Vec<&String> = chunk.iter().flatten().collect();
-            self.db.execute(&sql, rusqlite::params_from_iter(flat))?;
+            let flat: Vec<SqlVal> = chunk.iter().flatten().map(SqlVal::from).collect();
+            self.db.exec_params(table, &sql, &flat)?;
             self.write_statements += 1;
         }
         Ok(())
@@ -413,32 +440,34 @@ impl BooleanDeltaFixture {
     fn assert_clean_rebuild_parity(&self) -> Result<()> {
         let expected_projected = strings(
             &self.db,
+            "src",
             "SELECT DISTINCT sym FROM src WHERE kind='keep' ORDER BY sym",
         )?;
-        let actual_projected = strings(&self.db, "SELECT sym FROM projected ORDER BY sym")?;
+        let actual_projected = strings(&self.db, "projected", "SELECT sym FROM projected ORDER BY sym")?;
         assert_eq!(
             actual_projected, expected_projected,
             "projected differs from clean rebuild"
         );
-        let expected_joined = pairs(&self.db,
+        let expected_joined = pairs(&self.db, "src",
             "SELECT DISTINCT p.sym,s.payload FROM (SELECT DISTINCT sym FROM src WHERE kind='keep') p JOIN stable s USING(sym) ORDER BY p.sym,s.payload")?;
         let actual_joined = pairs(
             &self.db,
+            "joined",
             "SELECT sym,payload FROM joined ORDER BY sym,payload",
         )?;
         assert_eq!(
             actual_joined, expected_joined,
             "joined differs from clean rebuild"
         );
-        let expected_out = strings(&self.db,
+        let expected_out = strings(&self.db, "src",
             "SELECT DISTINCT p.sym FROM (SELECT DISTINCT sym FROM src WHERE kind='keep') p JOIN stable s USING(sym) WHERE s.payload LIKE 'emit:%' ORDER BY p.sym")?;
-        let actual_out = strings(&self.db, "SELECT sym FROM out ORDER BY sym")?;
+        let actual_out = strings(&self.db, "out", "SELECT sym FROM out ORDER BY sym")?;
         assert_eq!(actual_out, expected_out, "out differs from clean rebuild");
         Ok(())
     }
 
     fn seed_clean_unrelated(&mut self, count: usize) -> Result<()> {
-        self.db.execute_batch(&format!(
+        self.db.execute_batch_on("src", &format!(
             "
             WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<{count})
               INSERT INTO src SELECT 'bulk',printf('u%05d',i),'keep' FROM n;
@@ -477,18 +506,12 @@ fn pair_bytes(rows: &BTreeSet<(String, String)>) -> usize {
         .sum()
 }
 
-fn strings(db: &Connection, sql: &str) -> Result<Vec<String>> {
-    let mut stmt = db.prepare(sql)?;
-    let rows = stmt.query_map([], |row| row.get(0))?.collect();
-    rows
+fn strings(db: &Db, rel: &str, sql: &str) -> Result<Vec<String>> {
+    db.query_rows(rel, sql, &[], |row| Ok(row.get(0)?))
 }
 
-fn pairs(db: &Connection, sql: &str) -> Result<Vec<(String, String)>> {
-    let mut stmt = db.prepare(sql)?;
-    let rows = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-        .collect();
-    rows
+fn pairs(db: &Db, rel: &str, sql: &str) -> Result<Vec<(String, String)>> {
+    db.query_rows(rel, sql, &[], |row| Ok((row.get(0)?, row.get(1)?)))
 }
 
 #[cfg(test)]
@@ -566,7 +589,7 @@ mod tests {
         let metrics =
             f.apply_generation(&[src("r", "s", "keep", 1), stable("s", "ignore:value", 1)])?;
         assert_eq!((metrics.public_plus, metrics.public_minus), (2, 0));
-        assert!(strings(&f.db, "SELECT sym FROM out")?.is_empty());
+        assert!(strings(&f.db, "out", "SELECT sym FROM out")?.is_empty());
         f.assert_clean_rebuild_parity()
     }
 

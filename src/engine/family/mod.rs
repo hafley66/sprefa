@@ -13,7 +13,7 @@ use anyhow::Result;
 use std::collections::HashSet;
 
 use crate::ast::Value;
-use crate::db::Db;
+use crate::db::{Db, SqlVal};
 
 pub(crate) mod call_def;
 pub(crate) mod call_def_rev;
@@ -173,18 +173,15 @@ impl<'a> Ctx<'a> {
             col_list.push_str(c);
         }
         let sql = format!("SELECT {col_list} FROM {rel}");
-        let mut stmt = self.db.prepare(&sql)?;
-        let rows: Vec<(i64, OutRow)> = stmt
-            .query_map([], |row| {
-                let pk: i64 = row.get(0)?;
-                let mut out = Vec::with_capacity(cols.len());
-                for i in 0..cols.len() {
-                    let cell: Option<i64> = row.get(i + 1)?;
-                    out.push(cell.map(Value::Int).unwrap_or(Value::Null));
-                }
-                Ok((pk, out))
-            })?
-            .collect::<rusqlite::Result<_>>()?;
+        let rows: Vec<(i64, OutRow)> = self.db.query_rows(rel, &sql, &[], |row| {
+            let pk: i64 = row.get(0)?;
+            let mut out = Vec::with_capacity(cols.len());
+            for i in 0..cols.len() {
+                let cell: Option<i64> = row.get(i + 1)?;
+                out.push(cell.map(Value::Int).unwrap_or(Value::Null));
+            }
+            Ok((pk, out))
+        })?;
         for (pk, _) in &rows {
             self.deps.insert(DepKey { rel, pk: *pk });
         }
@@ -394,11 +391,10 @@ fn gamma() {
         engine.declare_builtins().unwrap();
         engine
             .db
-            .conn()
-            .execute(
+            .exec_on(
+                "_file",
                 "INSERT INTO _file (repo, path, rev, hash, mtime, size) \
                  VALUES ('', 'lib.rs', 'WORK', '', 0, 0)",
-                [],
             )
             .unwrap();
         engine
@@ -414,27 +410,26 @@ fn gamma() {
         engine.declare_builtins().unwrap();
         engine
             .db
-            .conn()
-            .execute(
+            .exec_params(
+                "_file",
                 "INSERT INTO _file (repo, path, rev, hash, mtime, size) \
                  VALUES ('', 'lib.rs', 'WORK', ?1, 0, 0)",
-                [hash],
+                &[SqlVal::from(hash)],
             )
             .unwrap();
         engine
     }
 
     fn names(engine: &Engine) -> Vec<[i64; 2]> {
-        let mut s = engine
+        let mut v: Vec<[i64; 2]> = engine
             .db
-            .conn()
-            .prepare("SELECT sym, name FROM rel_call_name")
+            .query_rows(
+                "rel_call_name",
+                "SELECT sym, name FROM rel_call_name",
+                &[],
+                |row| Ok([row.get(0)?, row.get(1)?]),
+            )
             .unwrap();
-        let mut v: Vec<[i64; 2]> = s
-            .query_map([], |row| Ok([row.get(0)?, row.get(1)?]))
-            .unwrap()
-            .filter_map(|r| r.ok())
-            .collect();
         v.sort();
         v
     }
@@ -455,32 +450,28 @@ fn gamma() {
 
     fn snapshot(engine: &Engine) -> (Vec<[i64; 5]>, Vec<[i64; 3]>) {
         let site: Vec<[i64; 5]> = {
-            let mut s = engine
+            let mut v: Vec<[i64; 5]> = engine
                 .db
-                .conn()
-                .prepare("SELECT repo, caller, callee, file, line FROM rel_call_site")
+                .query_rows(
+                    "rel_call_site",
+                    "SELECT repo, caller, callee, file, line FROM rel_call_site",
+                    &[],
+                    |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?]),
+                )
                 .unwrap();
-            let mut v: Vec<[i64; 5]> = s
-                .query_map([], |row| {
-                    Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?])
-                })
-                .unwrap()
-                .filter_map(|r| r.ok())
-                .collect();
             v.sort();
             v
         };
         let edge: Vec<[i64; 3]> = {
-            let mut s = engine
+            let mut v: Vec<[i64; 3]> = engine
                 .db
-                .conn()
-                .prepare("SELECT caller, callee, kind FROM rel_call_edge")
+                .query_rows(
+                    "rel_call_edge",
+                    "SELECT caller, callee, kind FROM rel_call_edge",
+                    &[],
+                    |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?]),
+                )
                 .unwrap();
-            let mut v: Vec<[i64; 3]> = s
-                .query_map([], |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?]))
-                .unwrap()
-                .filter_map(|r| r.ok())
-                .collect();
             v.sort();
             v
         };
@@ -606,8 +597,7 @@ fn gamma() {
         // Real working-tree edit: rewrite the file and bump its fact digest.
         fs::write(dir.join("lib.rs"), V2).unwrap();
         engine.db
-            .conn()
-            .execute("UPDATE _file SET hash = 'v2' WHERE path = 'lib.rs'", [])
+            .exec_on("_file", "UPDATE _file SET hash = 'v2' WHERE path = 'lib.rs'")
             .unwrap();
 
         // Drive the genuine incremental path.

@@ -60,11 +60,7 @@ rusqlite_count(source_file, count(line_number)) <-
 # Lower a row when your commit shrinks the file's count; never raise one.
 rel rusqlite_baseline(source_file: file, allowed: int).
 rusqlite_baseline("src/agent.rs", 2).
-rusqlite_baseline("src/engine/deltaflow.rs", 4).
 rusqlite_baseline("src/engine/extract/call_render_tests.rs", 2).
-rusqlite_baseline("src/engine/family/mod.rs", 1).
-rusqlite_baseline("src/engine/mod.rs", 6).
-rusqlite_baseline("src/engine/ownership.rs", 2).
 rusqlite_baseline("src/engine/staged_delta/mod.rs", 4).
 rusqlite_baseline("src/engine/staged_delta/sql.rs", 3).
 rusqlite_baseline("src/engine/staged_delta/tests.rs", 1).
@@ -133,9 +129,6 @@ conn_baseline("src/engine/extract/doc.rs", 1).
 conn_baseline("src/engine/extract/mod.rs", 17).
 conn_baseline("src/engine/extract/node.rs", 2).
 conn_baseline("src/engine/extract/text.rs", 3).
-conn_baseline("src/engine/family/mod.rs", 6).
-conn_baseline("src/engine/mod.rs", 2).
-conn_baseline("src/engine/tick.rs", 7).
 conn_baseline("src/jobq/tests.rs", 5).
 conn_baseline("src/rels/analysis.rs", 7).
 conn_baseline("src/rels/embed.rs", 3).
@@ -203,7 +196,6 @@ sqlite_swallow_count(source_file, count(line_number)) <-
 rel sqlite_swallow_baseline(source_file: file, allowed: int).
 sqlite_swallow_baseline("src/invlog.rs", 2).
 sqlite_swallow_baseline("src/jobq/tests.rs", 1).
-sqlite_swallow_baseline("src/engine/tick.rs", 1).
 
 diag(
     path: source_file,
