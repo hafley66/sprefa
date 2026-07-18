@@ -398,7 +398,7 @@ impl ServedRoot {
         // client (instant) re-query and re-render, and a churn of empty ticks
         // amplified into a webview render storm (2026-07-18). Timer-driven
         // ticks keep broadcasting — clock/every subscribers rely on them.
-        if report.changed || !report.changed_rels.is_empty() || report.derived_moved {
+        if tick_warrants_broadcast(&report) {
             self.broadcast_diag_changed();
         }
         Ok(())
@@ -2759,6 +2759,17 @@ pub(crate) fn served_repos(is_config: bool) -> Vec<config::RepoConfig> {
     }
 }
 
+/// Whether a full tick's outcome justifies telling subscribers anything
+/// changed. A no-op tick (nothing reconciled, no timer boundary, no derived
+/// digest move) must stay silent: every broadcast makes a subscribed client
+/// (instant) re-query and re-render, and a churn of empty ticks amplified
+/// into a webview render storm + WindowServer seize (failure-modes class 19,
+/// 2026-07-18). Timer ticks keep broadcasting — clock/every subscribers rely
+/// on the bucket boundary.
+fn tick_warrants_broadcast(report: &crate::engine::TickReport) -> bool {
+    report.changed || !report.changed_rels.is_empty() || report.derived_moved
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2842,5 +2853,27 @@ mod tests {
         assert_eq!(daemon_thread_count(16, Some("0")), 4);
         assert_eq!(daemon_thread_count(16, Some("")), 4);
         assert_eq!(daemon_thread_count(16, Some("bogus")), 4);
+    }
+    /// Fail-pre-fix witness for class 19: pre-fix, run_tick_full broadcast
+    /// unconditionally, so the no-op report below would have pushed a
+    /// diag_changed frame at every churned tick.
+    #[test]
+    fn noop_tick_stays_silent_but_timer_and_change_ticks_broadcast() {
+        let noop = crate::engine::TickReport {
+            changed: false,
+            derived_moved: false,
+            changed_rels: vec![],
+            staged_next: false,
+            inflight_effects: 0,
+            cold_pending: false,
+            cold_staged: vec![],
+        };
+        assert!(!super::tick_warrants_broadcast(&noop), "no-op tick must not broadcast");
+
+        let timer = crate::engine::TickReport { changed: true, changed_rels: vec!["clock".into()], ..noop.clone() };
+        assert!(super::tick_warrants_broadcast(&timer), "timer boundary must broadcast");
+
+        let derived = crate::engine::TickReport { derived_moved: true, ..noop.clone() };
+        assert!(super::tick_warrants_broadcast(&derived), "derived digest move must broadcast");
     }
 }
