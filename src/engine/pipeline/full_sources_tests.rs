@@ -87,7 +87,7 @@ fn prepared(engine: &Engine, base: [u8; 32]) -> PreparedSourceFacts {
 }
 
 #[test]
-fn prepared_rows_apply_with_provenance_then_cleanup() {
+fn prepared_rows_apply_with_source_marking_then_cleanup() {
     let mut engine = engine();
     let base = [7; 32];
     let prepared = prepared(&engine, base);
@@ -96,7 +96,7 @@ fn prepared_rows_apply_with_provenance_then_cleanup() {
         .unwrap();
     assert_eq!(inserted, 2);
     assert_eq!(live_rows(&engine), 2);
-    let provenance: i64 = engine
+    let source_count: i64 = engine
         .db
         .query_one(
             "_prov",
@@ -105,7 +105,7 @@ fn prepared_rows_apply_with_provenance_then_cleanup() {
             |row| Ok(row.get(0)?),
         )
         .unwrap();
-    assert_eq!(provenance, 2);
+    assert_eq!(source_count, 2);
     prepared.discard(&engine.db).unwrap();
     let staged: i64 = engine
         .db

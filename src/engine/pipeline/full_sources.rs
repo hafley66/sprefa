@@ -34,7 +34,7 @@ fn fresh_stage_id() -> StageId {
 
 /// Conservative stamp for the first source-only transaction cut. It covers the
 /// persisted generation coordinates, the live file catalog, source rules, and
-/// the source-stage/provenance codec domain. The whole-tick BaseStamp will add
+/// the source-stage row-marking codec domain. The whole-tick BaseStamp will add
 /// every external EDB before delta execution is enabled beyond this seam.
 pub(crate) fn source_stage_base(engine: &Engine, rules: &[&Rule]) -> Result<(i64, [u8; 32])> {
     let watermark = engine.read_generation_watermark()?;
