@@ -38,6 +38,12 @@ pub enum EntityKind {
     Alias,
     Function,
     Method,
+    /// An anonymous / inner callable: a closure, arrow function, function
+    /// expression, Kotlin/Go lambda literal, or Python `lambda`. Carries an
+    /// arrow type like `Function`/`Method`, but has no source-visible name, so
+    /// its sym is coordinate-derived (`lambda_sym`, the same `::closure::<coord>`
+    /// chain the dataflow lift mints — so a df<->call join is an exact match).
+    Lambda,
     Const,
     /// A Python source file's module scope, only minted so a module docstring
     /// (which documents no class/function) has a `type_entity` row to join.
@@ -55,13 +61,15 @@ impl EntityKind {
             EntityKind::Alias => "alias",
             EntityKind::Function => "function",
             EntityKind::Method => "method",
+            EntityKind::Lambda => "lambda",
             EntityKind::Const => "const",
             EntityKind::Module => "module",
         }
     }
-    /// Functions and methods carry an arrow type; everything else is a data type.
+    /// Functions, methods, and lambdas carry an arrow type; everything else is a
+    /// data type.
     pub fn is_callable(self) -> bool {
-        matches!(self, EntityKind::Function | EntityKind::Method)
+        matches!(self, EntityKind::Function | EntityKind::Method | EntityKind::Lambda)
     }
 }
 
@@ -282,7 +290,14 @@ pub struct CallSite {
 pub enum CallKind {
     Free,
     Method,
-    Closure,
+    /// An anonymous / inner callable's def-site kind. One vocabulary word for
+    /// the callable registry: `call_def.kind` reads "lambda", matching
+    /// `EntityKind::Lambda`'s tag and the `@callable <lang> lambda` markers.
+    /// (The dataflow `df_node.kind = "closure"` value node is a *different*
+    /// relation and concept — the closure-as-value in the enclosing scope, not
+    /// the callable definition — so it keeps its own word; see
+    /// docs/callable-coverage.md.)
+    Lambda,
 }
 
 impl CallKind {
@@ -290,7 +305,7 @@ impl CallKind {
         match self {
             CallKind::Free => "function",
             CallKind::Method => "method",
-            CallKind::Closure => "closure",
+            CallKind::Lambda => "lambda",
         }
     }
 }
@@ -385,6 +400,23 @@ pub fn mint_sym(file: &str, kind: EntityKind, name: &str, parent: Option<&str>) 
     }
 }
 
+/// Deterministic sym for an anonymous callable (closure / arrow / function
+/// expression / lambda literal / func literal). The enclosing callable's sym,
+/// then `::closure::<coord>`, where `coord` is the language's stable node
+/// coordinate — `<row>_<col>` for tree-sitter front-ends (Kotlin/Go/Python),
+/// the byte offset for the oxc front-end (TS/JS), `<line>_<col>` for syn (Rust).
+///
+/// This is the SAME string the dataflow lift mints as a closure's `lam_sym`
+/// (the `closure` value node's `var`, and the lifted body's `fn_sym`), so
+/// `call_def.sym == df_node.fn_sym` for the lambda body and
+/// `call_def.sym == df_node.var` for the closure value node are exact joins —
+/// the whole point of registering lambdas as callables. Both the df lift and
+/// the call_def emitter call this so there is one source of truth for the
+/// format; the `EntityKind::Lambda` tag names the *kind* column, not the sym.
+pub fn lambda_sym(enclosing_fn_sym: &str, coord: &str) -> String {
+    format!("{enclosing_fn_sym}::closure::{coord}")
+}
+
 /// The common interface: a language front-end that recognizes paths and turns a
 /// file's source into `TypeFacts`. The per-language specifics (syn, tree-sitter,
 /// oxc) live behind this; the engine asks the registry, never the extension.
@@ -470,7 +502,7 @@ impl TypeLang for GoTypes {
         let src = content.as_bytes();
         let root = tree.root_node();
         let mut defs = Vec::new();
-        go_walk_call_defs(root, src, file, &mut defs);
+        go_walk_call_defs(root, src, file, "", &mut defs);
         let mut sites = Vec::new();
         go_walk_call_sites(root, src, file, &mut sites);
         CallFacts { defs, sites }
@@ -580,7 +612,7 @@ impl TypeLang for KotlinTypes {
         let src = content.as_bytes();
         let root = tree.root_node();
         let mut defs = Vec::new();
-        kt_walk_call_defs(root, src, file, None, &mut defs);
+        kt_walk_call_defs(root, src, file, None, "", &mut defs);
         let mut sites = Vec::new();
         kt_walk_call_sites(root, src, file, &mut sites);
         CallFacts { defs, sites }
@@ -842,7 +874,7 @@ fn flow_kt(
         // higher-order hop uses; see std/flow.dl flow_lambda). The enclosing
         // scope is shared, so captures still resolve.
         "lambda_literal" => {
-            let lam_sym = format!("{fn_sym}::closure::{}_{}", pos.row, pos.column);
+            let lam_sym = lambda_sym(fn_sym, &format!("{}_{}", pos.row, pos.column));
             let mut seeded = false;
             if let Some(lp) = kt_first_child(node, "lambda_parameters") {
                 let mut cur = lp.walk();
@@ -1509,13 +1541,13 @@ fn ts_flow_expr(
         // lifted ret. (Fresh inner scope: captures were already a hole for
         // inline lambdas — the old catch-all didn't walk the body at all.)
         E::ArrowFunctionExpression(a) => {
-            let lam_sym = format!("{fn_sym}::closure::{off}");
+            let lam_sym = lambda_sym(fn_sym, &off.to_string());
             ts_lift_fn(&a.params, &a.body, a.expression, &lam_sym, file, starts, out);
             ts_push(out, file, starts, off, "closure", &lam_sym, fn_sym)
         }
         E::FunctionExpression(f) => match f.body.as_deref() {
             Some(body) => {
-                let lam_sym = format!("{fn_sym}::closure::{off}");
+                let lam_sym = lambda_sym(fn_sym, &off.to_string());
                 ts_lift_fn(&f.params, body, false, &lam_sym, file, starts, out);
                 ts_push(out, file, starts, off, "closure", &lam_sym, fn_sym)
             }
@@ -1830,7 +1862,16 @@ impl TypeLang for TsTypes {
             return CallFacts::default();
         }
         let starts = line_index(content);
-        let defs = ts_call_defs_from(&ret.program, file, &starts);
+        let mut defs = ts_call_defs_from(&ret.program, file, &starts);
+        // Unbound arrow / function-expression lambdas. The df lift is the one
+        // place that already mints their `::closure::<byte_off>` sym, and it
+        // mints a `closure` value node ONLY for an inline (unbound) function
+        // value — a const-bound arrow is lifted under its binding name with no
+        // closure node — so this set is exactly the unbound lambdas, disjoint
+        // from ts_var_call_defs. Reusing it makes call_def.sym == df fn_sym hold
+        // by construction. (Same already-parsed program, one extra walk.)
+        let df = ts_dataflow_from(&ret.program, file, content);
+        ts_push_lambda_defs(&df, file, &mut defs);
         let mut sites = TsCallSites { file, starts: &starts, sites: Vec::new() };
         sites.visit_program(&ret.program);
         CallFacts { defs, sites: sites.sites }
@@ -2330,6 +2371,7 @@ fn kt_walk_call_defs(
     src: &[u8],
     file: &str,
     parent: Option<&str>,
+    enclosing: &str,
     out: &mut Vec<CallDef>,
 ) {
     let mut cur = node.walk();
@@ -2338,8 +2380,13 @@ fn kt_walk_call_defs(
             "class_declaration" | "object_declaration" => {
                 let owner = kt_first_child(child, "type_identifier")
                     .map(|n| n.utf8_text(src).unwrap_or("").to_string());
-                kt_walk_call_defs(child, src, file, owner.as_deref(), out);
+                // A class body is not a fn scope: reset `enclosing` to "" (df
+                // lifts only function_declaration bodies) so a bare property-init
+                // lambda is skipped; a member fun opens its own Function/None scope.
+                kt_walk_call_defs(child, src, file, owner.as_deref(), "", out);
             }
+            // @callable kotlin function
+            // @callable kotlin method
             "function_declaration" => {
                 let name = kt_first_child(child, "simple_identifier")
                     .map(|n| n.utf8_text(src).unwrap_or("").to_string())
@@ -2355,6 +2402,10 @@ fn kt_walk_call_defs(
                     .end_position()
                     .row as u32
                     + 1;
+                // `kt_flow_fn` lifts EVERY function_declaration as Function/None
+                // (even a method), so a lambda inside this fn joins df under that
+                // sym, not the method sym. A nested local fun is Free (parent None).
+                let df_sym = mint_sym(file, EntityKind::Function, &name, None);
                 out.push(CallDef {
                     sym: mint_sym(file, ekind, &name, parent),
                     name,
@@ -2363,10 +2414,50 @@ fn kt_walk_call_defs(
                     line: child.start_position().row as u32 + 1,
                     end,
                 });
-                // a nested local fun is Free w.r.t. the enclosing scope.
-                kt_walk_call_defs(child, src, file, None, out);
+                kt_walk_call_defs(child, src, file, None, &df_sym, out);
             }
-            _ => kt_walk_call_defs(child, src, file, parent, out),
+            // Primary/secondary constructors: Method rows keyed to the class. df
+            // does not lift ctor bodies (no sym to match), so the sym is the
+            // JVM ctor name `<init>` (secondaries get a `@<row>` discriminator so
+            // several stay distinct rows). `name` is the class name, so a
+            // `Widget(x)` call site resolves here via the bare-name resolver.
+            // @callable kotlin method
+            "primary_constructor" | "secondary_constructor" => {
+                if let Some(owner) = parent {
+                    let pos = child.start_position();
+                    let seg = if child.kind() == "primary_constructor" {
+                        "<init>".to_string()
+                    } else {
+                        format!("<init>@{}", pos.row)
+                    };
+                    out.push(CallDef {
+                        sym: mint_sym(file, EntityKind::Method, &seg, Some(owner)),
+                        name: owner.to_string(),
+                        kind: CallKind::Method,
+                        file: file.to_string(),
+                        line: pos.row as u32 + 1,
+                        end: child.end_position().row as u32 + 1,
+                    });
+                }
+                kt_walk_call_defs(child, src, file, parent, enclosing, out);
+            }
+            // `{ it + 1 }` inside a fn body: Lambda with the SAME
+            // `lambda_sym(enclosing, "<row>_<col>")` `kotlin_dataflow_from` mints.
+            // @callable kotlin lambda
+            "lambda_literal" if !enclosing.is_empty() => {
+                let pos = child.start_position();
+                let sym = lambda_sym(enclosing, &format!("{}_{}", pos.row, pos.column));
+                out.push(CallDef {
+                    sym: sym.clone(),
+                    name: String::new(),
+                    kind: CallKind::Lambda,
+                    file: file.to_string(),
+                    line: pos.row as u32 + 1,
+                    end: child.end_position().row as u32 + 1,
+                });
+                kt_walk_call_defs(child, src, file, parent, &sym, out);
+            }
+            _ => kt_walk_call_defs(child, src, file, parent, enclosing, out),
         }
     }
 }
@@ -3603,6 +3694,7 @@ fn ts_decl_call_def(d: &ts_ast::Declaration, file: &str, starts: &[usize], out: 
     }
 }
 
+// @callable ts function
 fn ts_fn_call_def(f: &ts_ast::Function, file: &str, starts: &[usize], out: &mut Vec<CallDef>) {
     let Some(id) = &f.id else { return };
     let Some(body) = f.body.as_deref() else { return };
@@ -3617,20 +3709,24 @@ fn ts_fn_call_def(f: &ts_ast::Function, file: &str, starts: &[usize], out: &mut 
     });
 }
 
+// @callable ts method
 fn ts_class_call_defs(c: &ts_ast::Class, file: &str, starts: &[usize], out: &mut Vec<CallDef>) {
     let Some(id) = &c.id else { return };
     let owner = id.name.to_string();
     for el in &c.body.body {
         let ts_ast::ClassElement::MethodDefinition(m) = el else { continue };
-        // skip the constructor (no callable name) and computed/private keys.
-        if m.kind == ts_ast::MethodDefinitionKind::Constructor {
-            continue;
-        }
+        // computed/private keys have no static name to resolve.
         let ts_ast::PropertyKey::StaticIdentifier(k) = &m.key else { continue };
         let Some(body) = m.value.body.as_deref() else { continue };
-        let name = k.name.to_string();
+        let is_ctor = m.kind == ts_ast::MethodDefinitionKind::Constructor;
+        // The constructor's sym stays `mint_sym(Method, "constructor", owner)` —
+        // IDENTICAL to what `ts_flow_class` mints for its df body, so df<->call
+        // joins line up. Its call_name uses the CLASS name, so a `new Widget(x)`
+        // call site (callee "Widget") resolves to this ctor row. Every other
+        // method resolves by its own name (getters/setters share one sym).
+        let name = if is_ctor { owner.clone() } else { k.name.to_string() };
         out.push(CallDef {
-            sym: mint_sym(file, EntityKind::Method, &name, Some(&owner)),
+            sym: mint_sym(file, EntityKind::Method, &k.name, Some(&owner)),
             name,
             kind: CallKind::Method,
             file: file.to_string(),
@@ -3640,6 +3736,39 @@ fn ts_class_call_defs(c: &ts_ast::Class, file: &str, starts: &[usize], out: &mut
     }
 }
 
+/// Map the df lift's `closure` value nodes to Lambda call_defs. A closure node's
+/// `var` is the lam_sym — identical to the lifted body's `fn_sym` — so the
+/// call_def sym joins df exactly. `end` is the deepest body line (this lambda's
+/// own nodes plus any nested closures), the extent callsite containment needs;
+/// it falls back to the closure's own line for an empty body.
+// @callable ts lambda
+fn ts_push_lambda_defs(df: &DataflowFacts, file: &str, out: &mut Vec<CallDef>) {
+    for node in &df.nodes {
+        if node.kind != "closure" {
+            continue;
+        }
+        let lam_sym = &node.var;
+        let nested = format!("{lam_sym}::closure::");
+        let end = df
+            .nodes
+            .iter()
+            .filter(|n| &n.fn_sym == lam_sym || n.fn_sym.starts_with(&nested))
+            .map(|n| n.line)
+            .max()
+            .unwrap_or(node.line)
+            .max(node.line);
+        out.push(CallDef {
+            sym: lam_sym.clone(),
+            name: String::new(),
+            kind: CallKind::Lambda,
+            file: file.to_string(),
+            line: node.line,
+            end,
+        });
+    }
+}
+
+// @callable ts function
 fn ts_var_call_defs(v: &ts_ast::VariableDeclaration, file: &str, starts: &[usize], out: &mut Vec<CallDef>) {
     for d in &v.declarations {
         let ts_ast::BindingPattern::BindingIdentifier(name) = &d.id else { continue };
@@ -3683,6 +3812,22 @@ impl<'a, 'p> OxcVisit<'a> for TsCallSites<'p> {
             });
         }
         oxc_ast_visit::walk::walk_call_expression(self, c);
+    }
+    // `new Widget(x)` is a call behind the parens: the callee is the constructed
+    // type name, so it resolves (via `call_name`) to the class's ctor call_def
+    // (whose name is the class name; see `ts_class_call_defs`). Same trailing-
+    // segment convention as an ordinary call — `new a.b.C()` -> "C".
+    fn visit_new_expression(&mut self, n: &ts_ast::NewExpression<'a>) {
+        if let Some(callee) = ts_callee_name(&n.callee) {
+            self.sites.push(CallSite {
+                caller_sym: None,
+                callee,
+                callee_path: None,
+                file: self.file.to_string(),
+                line: line_at(self.starts, n.span.start as usize),
+            });
+        }
+        oxc_ast_visit::walk::walk_new_expression(self, n);
     }
     // `<Card .../>` is a call — jsx(Card, props) — so a component usage is a
     // call site and call_edge resolves caller -> Card like any other callee.
@@ -3948,37 +4093,118 @@ fn rust_fn_type(sig: &syn::Signature) -> TypeExpr {
 // attribute to the enclosing named def. ---
 
 fn rust_call_defs_from(parsed: &syn::File, file: &str) -> Vec<CallDef> {
-    let mut out = Vec::new();
-    let push = |out: &mut Vec<CallDef>, sym: String, name: String, kind: CallKind, line: u32, end: u32| {
-        out.push(CallDef {
-            sym, name, kind, file: file.to_string(), line, end,
-        });
-    };
+    let mut v = RustCallDefs { file, stack: Vec::new(), out: Vec::new() };
     for item in &parsed.items {
         match item {
+            // Top-level free fn: Free callable, then walk the body for nested
+            // named fns and closures under this fn's sym.
+            // @callable rust function
             Item::Fn(f) => {
                 let name = f.sig.ident.to_string();
-                let line = rust_line(f.sig.ident.span());
+                let sym = mint_sym(file, EntityKind::Function, &name, None);
                 let end = f.block.span().end().line as u32;
-                push(&mut out, mint_sym(file, EntityKind::Function, &name, None), name, CallKind::Free, line, end);
+                v.emit(sym.clone(), name, CallKind::Free, rust_line(f.sig.ident.span()), end);
+                v.walk_body(&sym, &f.block);
             }
+            // Impl method: Method keyed to the impl's primary type (existing
+            // identity — kept EXACTLY, `owner.as_deref()`), then walk the body.
+            // @callable rust method
             Item::Impl(i) => {
                 let owner = primary_type(&i.self_ty);
                 for ii in &i.items {
                     if let syn::ImplItem::Fn(m) = ii {
                         let name = m.sig.ident.to_string();
-                        let line = rust_line(m.sig.ident.span());
+                        let sym = mint_sym(file, EntityKind::Method, &name, owner.as_deref());
                         let end = m.block.span().end().line as u32;
-                        push(&mut out,
-                            mint_sym(file, EntityKind::Method, &name, owner.as_deref()),
-                            name, CallKind::Method, line, end);
+                        v.emit(sym.clone(), name, CallKind::Method, rust_line(m.sig.ident.span()), end);
+                        v.walk_body(&sym, &m.block);
+                    }
+                }
+            }
+            // Trait item fns: a signature-only declaration OR a default body,
+            // both Method-owned by the trait — so a call resolving through the
+            // trait has a target row. A default body is walked for closures.
+            // @callable rust method
+            Item::Trait(t) => {
+                let owner = t.ident.to_string();
+                for ti in &t.items {
+                    if let syn::TraitItem::Fn(m) = ti {
+                        let name = m.sig.ident.to_string();
+                        let sym = mint_sym(file, EntityKind::Method, &name, Some(&owner));
+                        let end = match &m.default {
+                            Some(block) => block.span().end().line as u32,
+                            None => m.sig.span().end().line as u32,
+                        };
+                        v.emit(sym.clone(), name, CallKind::Method, rust_line(m.sig.ident.span()), end);
+                        if let Some(block) = &m.default {
+                            v.walk_body(&sym, block);
+                        }
                     }
                 }
             }
             _ => {}
         }
     }
-    out
+    v.out
+}
+
+/// Walks fn/impl/trait bodies to collect the callables the top-level pass misses:
+/// nested named fns (Free, file-level mint) and closures (Lambda). `stack`'s top
+/// is the enclosing callable sym; a closure/nested-fn pushes its own sym before
+/// its body is walked, so a closure-in-a-closure or closure-in-a-nested-fn chains
+/// exactly like the dataflow lift. Const/static-initializer bodies and inline-mod
+/// items are NOT descended — the dataflow lift (`rust_dataflow_from`) walks only
+/// `Item::Fn`/`Item::Impl` too, so a lambda there would have no df scope to join;
+/// documented in docs/callable-coverage.md as a shared Rust gap.
+struct RustCallDefs<'a> {
+    file: &'a str,
+    stack: Vec<String>,
+    out: Vec<CallDef>,
+}
+
+impl<'a> RustCallDefs<'a> {
+    fn emit(&mut self, sym: String, name: String, kind: CallKind, line: u32, end: u32) {
+        self.out.push(CallDef { sym, name, kind, file: self.file.to_string(), line, end });
+    }
+    fn cur(&self) -> &str {
+        self.stack.last().map(String::as_str).unwrap_or("")
+    }
+    fn walk_body(&mut self, fn_sym: &str, block: &syn::Block) {
+        self.stack.push(fn_sym.to_string());
+        syn::visit::visit_block(self, block);
+        self.stack.pop();
+    }
+}
+
+impl<'ast, 'a> syn::visit::Visit<'ast> for RustCallDefs<'a> {
+    // A nested named fn (`fn helper() {}` inside a body). Reached only for nested
+    // items — the top-level driver visits bodies, never the ItemFn nodes it
+    // already emitted. File-level mint (df does not lift nested-fn bodies, so
+    // there is no owner-scoped df sym to match).
+    // @callable rust function
+    fn visit_item_fn(&mut self, f: &'ast syn::ItemFn) {
+        let name = f.sig.ident.to_string();
+        let sym = mint_sym(self.file, EntityKind::Function, &name, None);
+        let end = f.block.span().end().line as u32;
+        self.emit(sym.clone(), name, CallKind::Free, rust_line(f.sig.ident.span()), end);
+        self.walk_body(&sym, &f.block);
+    }
+    // A closure (`|x| ...`). Sym is `lambda_sym(enclosing, "<line>_<col>")` — the
+    // SAME string `rust_dataflow_from`'s closure arm mints from the closure expr's
+    // span start, so the lifted body's df nodes (fn_sym = this sym) and the
+    // closure value node (var = this sym) join `call_def.sym` exactly.
+    // @callable rust lambda
+    fn visit_expr_closure(&mut self, c: &'ast syn::ExprClosure) {
+        let start = c.span().start();
+        let (line, col) = (start.line as u32, start.column as u32);
+        let sym = lambda_sym(self.cur(), &format!("{line}_{col}"));
+        let end = c.body.span().end().line as u32;
+        self.emit(sym.clone(), String::new(), CallKind::Lambda, line, end);
+        // Walk only the body (params hold no callables) under the closure sym.
+        self.stack.push(sym);
+        syn::visit::visit_expr(self, &c.body);
+        self.stack.pop();
+    }
 }
 
 /// The trailing identifier of a callee expression's source text: the last run
@@ -4598,7 +4824,7 @@ fn flow_expr(
         // between the value and its lifted scope. The enclosing scope is shared,
         // so captures still resolve (a read of an outer var links to its slot).
         syn::Expr::Closure(c) => {
-            let lam_sym = format!("{fn_sym}::closure::{line}_{col}");
+            let lam_sym = lambda_sym(fn_sym, &format!("{line}_{col}"));
             let mut pos: u32 = 0;
             for inp in &c.inputs {
                 // `|x|` is Pat::Ident; `|x: T|` wraps it in Pat::Type. Either
@@ -5231,43 +5457,58 @@ fn go_type_spec_edges(spec: tree_sitter::Node, src: &[u8], out: &mut BTreeSet<(S
 // name (a selector callee's trailing field name, matching the Rust/Kotlin
 // trailing-segment convention). ---
 
-fn go_walk_call_defs(node: tree_sitter::Node, src: &[u8], file: &str, out: &mut Vec<CallDef>) {
+fn go_walk_call_defs(node: tree_sitter::Node, src: &[u8], file: &str, enclosing: &str, out: &mut Vec<CallDef>) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
+        let end_of = |c: tree_sitter::Node| c.child_by_field_name("body").unwrap_or(c).end_position().row as u32 + 1;
         match child.kind() {
+            // @callable go function
             "function_declaration" => {
                 if let Some(name_node) = child.child_by_field_name("name") {
                     let name = go_text(name_node, src).to_string();
-                    let end = child.child_by_field_name("body").unwrap_or(child).end_position().row as u32 + 1;
+                    let sym = mint_sym(file, EntityKind::Function, &name, None);
                     out.push(CallDef {
-                        sym: mint_sym(file, EntityKind::Function, &name, None),
-                        name,
-                        kind: CallKind::Free,
-                        file: file.to_string(),
-                        line: child.start_position().row as u32 + 1,
-                        end,
+                        sym: sym.clone(), name, kind: CallKind::Free, file: file.to_string(),
+                        line: child.start_position().row as u32 + 1, end: end_of(child),
                     });
+                    go_walk_call_defs(child, src, file, &sym, out);
+                    continue;
                 }
             }
+            // @callable go method
             "method_declaration" => {
                 if let (Some(name_node), Some(owner)) =
                     (child.child_by_field_name("name"), go_receiver_type(child, src))
                 {
                     let name = go_text(name_node, src).to_string();
-                    let end = child.child_by_field_name("body").unwrap_or(child).end_position().row as u32 + 1;
+                    let sym = mint_sym(file, EntityKind::Method, &name, Some(&owner));
                     out.push(CallDef {
-                        sym: mint_sym(file, EntityKind::Method, &name, Some(&owner)),
-                        name,
-                        kind: CallKind::Method,
-                        file: file.to_string(),
-                        line: child.start_position().row as u32 + 1,
-                        end,
+                        sym: sym.clone(), name, kind: CallKind::Method, file: file.to_string(),
+                        line: child.start_position().row as u32 + 1, end: end_of(child),
                     });
+                    go_walk_call_defs(child, src, file, &sym, out);
+                    continue;
                 }
+            }
+            // `func(...) {...}` inside a fn/method body: a Lambda whose sym is the
+            // SAME `lambda_sym(enclosing, "<row>_<col>")` `go_dataflow_from` mints
+            // (0-based tree-sitter coords), so df<->call joins line up. A
+            // package-level `var f = func(){}` (enclosing == "") is skipped — the
+            // df lift only walks fn/method bodies, so there is no scope to join.
+            // @callable go lambda
+            "func_literal" if !enclosing.is_empty() => {
+                let pos = child.start_position();
+                let sym = lambda_sym(enclosing, &format!("{}_{}", pos.row, pos.column));
+                out.push(CallDef {
+                    sym: sym.clone(), name: String::new(), kind: CallKind::Lambda, file: file.to_string(),
+                    line: pos.row as u32 + 1, end: end_of(child),
+                });
+                go_walk_call_defs(child, src, file, &sym, out);
+                continue;
             }
             _ => {}
         }
-        go_walk_call_defs(child, src, file, out);
+        go_walk_call_defs(child, src, file, enclosing, out);
     }
 }
 
@@ -5740,7 +5981,7 @@ fn flow_go(
         // `df_arg` row records when the literal is passed straight to a call,
         // e.g. `go func(){ ... }()`/`defer func(){ ... }()`).
         "func_literal" => {
-            let lam_sym = format!("{fn_sym}::closure::{}_{}", pos.row, pos.column);
+            let lam_sym = lambda_sym(fn_sym, &format!("{}_{}", pos.row, pos.column));
             let mut lpos: u32 = 0;
             if let Some(params) = node.child_by_field_name("parameters") {
                 let mut cursor = params.walk();
@@ -6547,7 +6788,7 @@ fn py_collect_body_annotation_refs(node: tree_sitter::Node, src: &[u8], tparams:
 
 fn py_call_defs_from(root: tree_sitter::Node, src: &[u8], file: &str) -> Vec<CallDef> {
     let mut out = Vec::new();
-    py_walk_call_defs(root, src, file, None, &mut out);
+    py_walk_call_defs(root, src, file, None, "", &mut out);
     out
 }
 
@@ -6556,6 +6797,7 @@ fn py_walk_call_defs(
     src: &[u8],
     file: &str,
     parent: Option<&str>,
+    enclosing: &str,
     out: &mut Vec<CallDef>,
 ) {
     let mut cur = node.walk();
@@ -6564,10 +6806,15 @@ fn py_walk_call_defs(
         match target.kind() {
             "class_definition" => {
                 let owner = target.child_by_field_name("name").map(|n| py_text(n, src));
+                // A class body is not a fn scope: reset `enclosing` to "" so a
+                // bare class-attribute lambda (`x = lambda: 1`) is skipped, as df
+                // does — only its methods open new (Function/None) scopes.
                 if let Some(body) = target.child_by_field_name("body") {
-                    py_walk_call_defs(body, src, file, owner.as_deref(), out);
+                    py_walk_call_defs(body, src, file, owner.as_deref(), "", out);
                 }
             }
+            // @callable python function
+            // @callable python method
             "function_definition" => {
                 let name = target.child_by_field_name("name").map(|n| py_text(n, src)).unwrap_or_default();
                 let (kind, ekind) = match parent {
@@ -6575,6 +6822,10 @@ fn py_walk_call_defs(
                     None => (CallKind::Free, EntityKind::Function),
                 };
                 let end = target.child_by_field_name("body").unwrap_or(target).end_position().row as u32 + 1;
+                // `py_flow_fn` lifts EVERY function_definition as Function/None
+                // (even a method), so a lambda in this body joins df under that
+                // sym. A nested `def` is Free (parent None).
+                let df_sym = mint_sym(file, EntityKind::Function, &name, None);
                 out.push(CallDef {
                     sym: mint_sym(file, ekind, &name, parent),
                     name,
@@ -6583,12 +6834,30 @@ fn py_walk_call_defs(
                     line: py_row1(target),
                     end,
                 });
-                // a nested `def` is Free with respect to the enclosing scope.
                 if let Some(body) = target.child_by_field_name("body") {
-                    py_walk_call_defs(body, src, file, None, out);
+                    py_walk_call_defs(body, src, file, None, &df_sym, out);
                 }
             }
-            _ => py_walk_call_defs(target, src, file, parent, out),
+            // `lambda x: ...` inside a fn body: Lambda with the SAME
+            // `lambda_sym(enclosing, "<row>_<col>")` `py_dataflow_from` mints.
+            // `is_named` gate: the `lambda` KEYWORD token shares the node kind
+            // "lambda" with the expression, so without it a descent re-matches
+            // the keyword at the same coord and double-emits.
+            // @callable python lambda
+            "lambda" if !enclosing.is_empty() && target.is_named() => {
+                let pos = target.start_position();
+                let sym = lambda_sym(enclosing, &format!("{}_{}", pos.row, pos.column));
+                out.push(CallDef {
+                    sym: sym.clone(),
+                    name: String::new(),
+                    kind: CallKind::Lambda,
+                    file: file.to_string(),
+                    line: pos.row as u32 + 1,
+                    end: target.end_position().row as u32 + 1,
+                });
+                py_walk_call_defs(target, src, file, parent, &sym, out);
+            }
+            _ => py_walk_call_defs(target, src, file, parent, enclosing, out),
         }
     }
 }
@@ -7264,7 +7533,7 @@ fn py_flow_expr(
         // `var` (the join key `std/flow.dl`'s higher-order hop reads). The
         // enclosing `scope` is shared so captures resolve.
         "lambda" => {
-            let lam_sym = format!("{fn_sym}::closure::{}_{}", pos.row, pos.column);
+            let lam_sym = lambda_sym(fn_sym, &format!("{}_{}", pos.row, pos.column));
             if let Some(params) = node.child_by_field_name("parameters") {
                 let mut cur = params.walk();
                 for (i, p) in params.named_children(&mut cur).enumerate() {
