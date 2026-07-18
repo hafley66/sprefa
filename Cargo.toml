@@ -170,6 +170,24 @@ tokio-util = "0.7"
 # shutdown, which for two routes is more code than axum's `Router` + `axum::serve`
 # `.with_graceful_shutdown`. It rides the tokio runtime already pulled in above.
 axum = "0.7"
+# Supervision arc (plans/2026-07-18-infra-library-adoption.md section 3,
+# standing law a1f049ff "infra is bought, never built"): cross-platform OS
+# service-manager adapter (launchd/systemd/rc.d/sc.exe). We use it for
+# install/uninstall only, passing a hand-authored plist/unit through
+# `ServiceInstallCtx.contents`; start/stop/restart are thin `launchctl`/
+# `systemctl` wrappers in src/supervise.rs per the plan's verdict. Exact-pinned:
+# research (plan section 3.3) is done, no drive-by version bumps.
+service-manager = "=0.11.0"
+# Single-instance witness for `run_daemon` (belt-and-suspenders against a
+# `dl daemon start --foreground` racing the launchd-supervised instance, per
+# plan section 3.3): advisory fd lock, kernel-released on SIGKILL, no
+# stale-lock cleanup needed. Doubles as the pid/start-time witness the old
+# bespoke pidfile carried.
+fd-lock = "=4.0.4"
+# Linux systemd readiness/watchdog notification (`Type=notify`, plan section
+# 3.2); a no-op on macOS (returns `Ok(())` immediately when `NOTIFY_SOCKET` is
+# unset, verified in the vendored source — no cfg-gating needed).
+sd-notify = "=0.5.0"
 
 [build-dependencies]
 # Compiles the vendored grammar C sources (vendor/grammars/) into the crate.
