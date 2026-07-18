@@ -467,6 +467,44 @@ sites but not against new code. **missing** = nothing.
   (`scripts/dl-trace.sh`) — the 2026-07-18 RCA came from one sample naming
   the exact function, after a day of plausible wrong theories.
 
+## 19. Subscriber render storm, daemon exhaust feedback
+
+- WHAT IT LOOKS LIKE: the machine's UI phases (WindowServer CPU, input latency
+  up to 10s, swap pressure) while the daemon looks healthy — CPU governed,
+  no crash, no respawn. The victim is a subscribed client (instant), not dl.
+- HOW IT BIT US (2026-07-18 evening, numbers): the daemon appended telemetry
+  (`perf.jsonl`) inside the watched root; each append was a change event; each
+  event scheduled a tick; each tick appended again — a tick every ~2s,
+  ~350MB/min of no-op reconcile writes, daemon rss 19→438MB. Every tick then
+  broadcast `diag_changed` to subscribers UNCONDITIONALLY (tick counter always
+  advances, so every frame looked fresh). instant re-queried and re-rendered
+  its webview per frame; WindowServer composited every repaint; swap hit
+  3.7GB/5GB; typing lagged ~10s systemwide. A/B receipt: daemon stopped →
+  instant instantly responsive. Separately measured on the same trail: every
+  binary deploy invalidates every root's extraction (`extract:{exe_stamp}:…`
+  digest key), so each redeploy is a full re-extract — 1.1GB written in the
+  first 58s (tick 0, phase=extract), 266s worst tick on instant (12,561
+  parsed / 12,432 retracted). Four deploys that day = four write storms.
+- THE LAW: the daemon's own outputs are never inputs — not to its watcher
+  (exhaust files inside watched roots), not to its subscribers (a no-op tick
+  is not a change). Push frames must encode "something changed", not "a tick
+  happened".
+- THE RAIL: partial. Landed same day: (1) watcher filter — daemon-owned
+  `.dl` state (perf.jsonl, why.jsonl, cache.db*) never schedules a tick,
+  unit-tested (`watch_filter_tests`); (2) no-op ticks (nothing reconciled, no
+  timer boundary, no digest move) skip `broadcast_diag_changed`. Gaps, open:
+  no fail-pre-fix it-test for either (the unit test covers the path filter
+  only); cold-extract write RATE is unbounded (the write-volume budget lever,
+  scheduler arc); `exe_stamp` deploy invalidation is by design but uncosted —
+  a per-family extractor version would invalidate only what changed;
+  perf.jsonl grows without rotation (64MB observed in the daemon home);
+  client-side amplification (instant's per-push wholesale re-render) under
+  audit in instant's repo.
+- SAY THIS TO AN AGENT: if the machine lags while `dl daemon why` shows a
+  healthy governed daemon, count ticks per minute and ask who told the client
+  to redraw. A subscribed UI multiplies every needless push by its render
+  cost, and WindowServer pays the bill.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
