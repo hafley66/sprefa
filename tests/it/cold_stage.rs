@@ -387,6 +387,435 @@ fn crash_mid_chunk_reruns_only_pending_chunks() {
     }
 }
 
+// ---- comment/template/unresolved chunking (2026-07-18 incident: a single
+// corpus-global `cold:<root>:comment-rels:0` job ran 109s on a real corpus).
+// Same seam as dataflow: chunked==inline equivalence + crash-mid-chunk resume
+// per family (`CommentFamily`/`TemplateFamily`/`UnresolvedFamily::
+// shardable_cold() == true` in `src/rels/extract_family.rs`).
+
+/// A many-small-files Rust corpus with one line comment per file, so the
+/// comment family emits non-empty `comment_node` rows. `comment_file_set`
+/// covers `.rs` via the tree-sitter Rust grammar (same as `write_many_files`'s
+/// files, but these also carry a comment).
+fn write_many_commented_files(dir: &Path, n: usize) {
+    for idx in 0..n {
+        fs::write(
+            dir.join(format!("src/f{idx}.rs")),
+            format!("// comment {idx}\npub fn f{idx}() -> u32 {{ {idx} }}\n"),
+        )
+        .unwrap();
+    }
+}
+
+const PROG_COMMENT: &str = r#"
+rel seen(path: file).
+seen(path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /pub fn /, line).
+rel comment_touch(path: text).
+comment_touch(path) <- comment_node(path, line, col, end_line, end_col, text, kind).
+"#;
+
+const COMPARE_RELS_COMMENT: &[&str] = &["comment_node", "comment_touch"];
+
+fn parse_comment() -> sprefa_v5::ast::Program {
+    parse::parse(lex::lex(PROG_COMMENT).unwrap()).unwrap()
+}
+
+/// Chunked drain: with >64 files the comment family splits into multiple
+/// chunks; draining every chunk + the completion tick produces a db
+/// row-count-equivalent (per rel) to the inline cold path.
+#[test]
+fn chunked_comment_drain_matches_inline() {
+    let prog = parse_comment();
+    let n_files = 150;
+
+    let di = sandbox("comment_chunk_inline");
+    write_many_commented_files(&di, n_files);
+    let conn_i = db::open(Some(di.join("db").to_str().unwrap())).unwrap();
+    let mut eng_inline = Engine::new(conn_i, di.clone());
+    eng_inline.tick(&prog, true).unwrap();
+
+    let ds = sandbox("comment_chunk_staged");
+    write_many_commented_files(&ds, n_files);
+    let conn_s = db::open(Some(ds.join("db").to_str().unwrap())).unwrap();
+    let mut eng_staged = Engine::new(conn_s, ds.clone());
+    eng_staged.poll_loop = true;
+
+    let report = eng_staged.tick_report(&prog, true).unwrap();
+    assert!(report.cold_pending, "comment chunk seed tick is cold-pending");
+
+    let comment_shards = eng_staged
+        .query_sql("SELECT n_shards FROM _cold_node WHERE family='comment-rels'", &[])
+        .unwrap();
+    assert!(!comment_shards.is_empty(), "comment-rels node(s) seeded");
+    let n_comment_shards = comment_shards[0][0].as_i64().unwrap();
+    assert!(n_comment_shards >= 3, "comment chunked into >=3 slices, got {n_comment_shards}");
+
+    drain_all(&mut eng_staged, &prog, report.cold_staged.clone());
+    assert!(eng_staged.cold_nodes_complete().unwrap(), "all nodes done after chunked comment drain");
+    eng_staged.tick(&prog, true).unwrap();
+
+    assert!(eng_staged.count_rows("comment_node").unwrap() > 0, "chunked comment_node non-empty");
+    for rel in COMPARE_RELS_COMMENT {
+        let inline = eng_inline.count_rows(rel).unwrap();
+        let staged = eng_staged.count_rows(rel).unwrap();
+        assert_eq!(inline, staged, "rel `{rel}`: inline={inline} staged={staged}");
+    }
+}
+
+/// Crash mid-chunk (comment): drain everything except the last comment chunk,
+/// "crash", reopen. Resume re-enqueues ONLY the still-pending comment
+/// chunk(s); the finished db still matches inline.
+#[test]
+fn crash_mid_chunk_reruns_only_pending_comment_chunks() {
+    let prog = parse_comment();
+    let n_files = 150;
+
+    let di = sandbox("comment_midchunk_inline");
+    write_many_commented_files(&di, n_files);
+    let conn_i = db::open(Some(di.join("db").to_str().unwrap())).unwrap();
+    let mut eng_inline = Engine::new(conn_i, di.clone());
+    eng_inline.tick(&prog, true).unwrap();
+
+    let ds = sandbox("comment_midchunk_staged");
+    write_many_commented_files(&ds, n_files);
+    let db_path = ds.join("db");
+
+    let last_comment_shard;
+    {
+        let conn = db::open(Some(db_path.to_str().unwrap())).unwrap();
+        let mut eng = Engine::new(conn, ds.clone());
+        eng.poll_loop = true;
+        let report = eng.tick_report(&prog, true).unwrap();
+        let mut staged = report.cold_staged.clone();
+        staged.sort_by(|a, b| b.2.cmp(&a.2));
+        last_comment_shard = staged
+            .iter()
+            .filter(|(fam, _, _)| fam == "comment-rels")
+            .map(|(_, shard, _)| *shard)
+            .max()
+            .expect("comment chunks seeded");
+        for (family, shard, _) in &staged {
+            if family == "comment-rels" && *shard == last_comment_shard {
+                continue; // leave one chunk pending
+            }
+            eng.run_cold_node(&prog, family, *shard).unwrap();
+        }
+        assert!(!eng.cold_nodes_complete().unwrap(), "not complete: one chunk left");
+    }
+
+    let conn2 = db::open(Some(db_path.to_str().unwrap())).unwrap();
+    let mut eng2 = Engine::new(conn2, ds.clone());
+    eng2.poll_loop = true;
+    let report2 = eng2.tick_report(&prog, true).unwrap();
+    assert!(report2.cold_pending, "resume tick is cold-pending");
+    let reenqueued: Vec<(String, u32)> =
+        report2.cold_staged.iter().map(|j| (j.0.clone(), j.1)).collect();
+    assert_eq!(
+        reenqueued,
+        vec![("comment-rels".to_string(), last_comment_shard)],
+        "resume re-enqueues exactly the one pending comment chunk; got {reenqueued:?}"
+    );
+
+    drain_all(&mut eng2, &prog, report2.cold_staged.clone());
+    assert!(eng2.cold_nodes_complete().unwrap(), "complete after resume drain");
+    eng2.tick(&prog, true).unwrap();
+    for rel in COMPARE_RELS_COMMENT {
+        let inline = eng_inline.count_rows(rel).unwrap();
+        let staged = eng2.count_rows(rel).unwrap();
+        assert_eq!(inline, staged, "post-recovery rel `{rel}`: inline={inline} staged={staged}");
+    }
+}
+
+/// A many-small-files TS corpus: each file has one template literal
+/// (`template_parts`) and one dynamic import whose argument is NOT a string
+/// literal (`unresolved`'s `dynamic-import` reason), so both TS-family
+/// chunked families emit non-empty rows from the same fixture.
+fn write_many_ts_files(dir: &Path, n: usize) {
+    for idx in 0..n {
+        fs::write(
+            dir.join(format!("src/f{idx}.ts")),
+            format!(
+                "export function f{idx}(x: number): string {{ const label = `item-${{x}}`; return label; }}\n\
+                 export async function load{idx}(x: number) {{ const mod = await import(`./mod-${{x}}`); return mod; }}\n"
+            ),
+        )
+        .unwrap();
+    }
+}
+
+const PROG_TS: &str = r#"
+rel seen(path: file).
+seen(path) <- scan("WORK", "src/**/*.ts", path, rev), match(path, rev, /export/, line).
+rel template_touch(node: text).
+template_touch(node) <- template_parts(file, line, node, idx, kind, text).
+rel unresolved_touch(file: text).
+unresolved_touch(file) <- unresolved(file, line, reason, detail).
+"#;
+
+const COMPARE_RELS_TS: &[&str] =
+    &["template_parts", "unresolved", "template_touch", "unresolved_touch"];
+
+fn parse_ts() -> sprefa_v5::ast::Program {
+    parse::parse(lex::lex(PROG_TS).unwrap()).unwrap()
+}
+
+/// Chunked drain (template + unresolved together — one TS fixture drives
+/// both families): with >64 files both split into multiple chunks; draining
+/// every chunk + the completion tick produces a db row-count-equivalent (per
+/// rel, per family) to the inline cold path.
+#[test]
+fn chunked_template_unresolved_drain_matches_inline() {
+    let prog = parse_ts();
+    let n_files = 150;
+
+    let di = sandbox("ts_chunk_inline");
+    write_many_ts_files(&di, n_files);
+    let conn_i = db::open(Some(di.join("db").to_str().unwrap())).unwrap();
+    let mut eng_inline = Engine::new(conn_i, di.clone());
+    eng_inline.tick(&prog, true).unwrap();
+
+    let ds = sandbox("ts_chunk_staged");
+    write_many_ts_files(&ds, n_files);
+    let conn_s = db::open(Some(ds.join("db").to_str().unwrap())).unwrap();
+    let mut eng_staged = Engine::new(conn_s, ds.clone());
+    eng_staged.poll_loop = true;
+
+    let report = eng_staged.tick_report(&prog, true).unwrap();
+    assert!(report.cold_pending, "ts chunk seed tick is cold-pending");
+
+    for family in ["template-rels", "unresolved-rels"] {
+        let shards = eng_staged
+            .query_sql(&format!("SELECT n_shards FROM _cold_node WHERE family='{family}'"), &[])
+            .unwrap();
+        assert!(!shards.is_empty(), "{family} node(s) seeded");
+        let n = shards[0][0].as_i64().unwrap();
+        assert!(n >= 3, "{family} chunked into >=3 slices, got {n}");
+    }
+
+    drain_all(&mut eng_staged, &prog, report.cold_staged.clone());
+    assert!(eng_staged.cold_nodes_complete().unwrap(), "all nodes done after chunked ts drain");
+    eng_staged.tick(&prog, true).unwrap();
+
+    assert!(eng_staged.count_rows("template_parts").unwrap() > 0, "chunked template_parts non-empty");
+    assert!(eng_staged.count_rows("unresolved").unwrap() > 0, "chunked unresolved non-empty");
+    for rel in COMPARE_RELS_TS {
+        let inline = eng_inline.count_rows(rel).unwrap();
+        let staged = eng_staged.count_rows(rel).unwrap();
+        assert_eq!(inline, staged, "rel `{rel}`: inline={inline} staged={staged}");
+    }
+}
+
+/// Crash mid-chunk (template): drain everything except the last template
+/// chunk (unresolved's chunks all drain normally), "crash", reopen. Resume
+/// re-enqueues ONLY the still-pending template chunk; the finished db still
+/// matches inline for both TS families.
+#[test]
+fn crash_mid_chunk_reruns_only_pending_template_chunks() {
+    let prog = parse_ts();
+    let n_files = 150;
+
+    let di = sandbox("template_midchunk_inline");
+    write_many_ts_files(&di, n_files);
+    let conn_i = db::open(Some(di.join("db").to_str().unwrap())).unwrap();
+    let mut eng_inline = Engine::new(conn_i, di.clone());
+    eng_inline.tick(&prog, true).unwrap();
+
+    let ds = sandbox("template_midchunk_staged");
+    write_many_ts_files(&ds, n_files);
+    let db_path = ds.join("db");
+
+    let last_template_shard;
+    {
+        let conn = db::open(Some(db_path.to_str().unwrap())).unwrap();
+        let mut eng = Engine::new(conn, ds.clone());
+        eng.poll_loop = true;
+        let report = eng.tick_report(&prog, true).unwrap();
+        let mut staged = report.cold_staged.clone();
+        staged.sort_by(|a, b| b.2.cmp(&a.2));
+        last_template_shard = staged
+            .iter()
+            .filter(|(fam, _, _)| fam == "template-rels")
+            .map(|(_, shard, _)| *shard)
+            .max()
+            .expect("template chunks seeded");
+        for (family, shard, _) in &staged {
+            if family == "template-rels" && *shard == last_template_shard {
+                continue; // leave one chunk pending
+            }
+            eng.run_cold_node(&prog, family, *shard).unwrap();
+        }
+        assert!(!eng.cold_nodes_complete().unwrap(), "not complete: one chunk left");
+    }
+
+    let conn2 = db::open(Some(db_path.to_str().unwrap())).unwrap();
+    let mut eng2 = Engine::new(conn2, ds.clone());
+    eng2.poll_loop = true;
+    let report2 = eng2.tick_report(&prog, true).unwrap();
+    assert!(report2.cold_pending, "resume tick is cold-pending");
+    let reenqueued: Vec<(String, u32)> =
+        report2.cold_staged.iter().map(|j| (j.0.clone(), j.1)).collect();
+    assert_eq!(
+        reenqueued,
+        vec![("template-rels".to_string(), last_template_shard)],
+        "resume re-enqueues exactly the one pending template chunk; got {reenqueued:?}"
+    );
+
+    drain_all(&mut eng2, &prog, report2.cold_staged.clone());
+    assert!(eng2.cold_nodes_complete().unwrap(), "complete after resume drain");
+    eng2.tick(&prog, true).unwrap();
+    for rel in COMPARE_RELS_TS {
+        let inline = eng_inline.count_rows(rel).unwrap();
+        let staged = eng2.count_rows(rel).unwrap();
+        assert_eq!(inline, staged, "post-recovery rel `{rel}`: inline={inline} staged={staged}");
+    }
+}
+
+/// Crash mid-chunk (unresolved): mirrors the template test with `unresolved`
+/// left pending instead — the two families chunk independently even though
+/// they share the same TS-family file set.
+#[test]
+fn crash_mid_chunk_reruns_only_pending_unresolved_chunks() {
+    let prog = parse_ts();
+    let n_files = 150;
+
+    let di = sandbox("unresolved_midchunk_inline");
+    write_many_ts_files(&di, n_files);
+    let conn_i = db::open(Some(di.join("db").to_str().unwrap())).unwrap();
+    let mut eng_inline = Engine::new(conn_i, di.clone());
+    eng_inline.tick(&prog, true).unwrap();
+
+    let ds = sandbox("unresolved_midchunk_staged");
+    write_many_ts_files(&ds, n_files);
+    let db_path = ds.join("db");
+
+    let last_unresolved_shard;
+    {
+        let conn = db::open(Some(db_path.to_str().unwrap())).unwrap();
+        let mut eng = Engine::new(conn, ds.clone());
+        eng.poll_loop = true;
+        let report = eng.tick_report(&prog, true).unwrap();
+        let mut staged = report.cold_staged.clone();
+        staged.sort_by(|a, b| b.2.cmp(&a.2));
+        last_unresolved_shard = staged
+            .iter()
+            .filter(|(fam, _, _)| fam == "unresolved-rels")
+            .map(|(_, shard, _)| *shard)
+            .max()
+            .expect("unresolved chunks seeded");
+        for (family, shard, _) in &staged {
+            if family == "unresolved-rels" && *shard == last_unresolved_shard {
+                continue; // leave one chunk pending
+            }
+            eng.run_cold_node(&prog, family, *shard).unwrap();
+        }
+        assert!(!eng.cold_nodes_complete().unwrap(), "not complete: one chunk left");
+    }
+
+    let conn2 = db::open(Some(db_path.to_str().unwrap())).unwrap();
+    let mut eng2 = Engine::new(conn2, ds.clone());
+    eng2.poll_loop = true;
+    let report2 = eng2.tick_report(&prog, true).unwrap();
+    assert!(report2.cold_pending, "resume tick is cold-pending");
+    let reenqueued: Vec<(String, u32)> =
+        report2.cold_staged.iter().map(|j| (j.0.clone(), j.1)).collect();
+    assert_eq!(
+        reenqueued,
+        vec![("unresolved-rels".to_string(), last_unresolved_shard)],
+        "resume re-enqueues exactly the one pending unresolved chunk; got {reenqueued:?}"
+    );
+
+    drain_all(&mut eng2, &prog, report2.cold_staged.clone());
+    assert!(eng2.cold_nodes_complete().unwrap(), "complete after resume drain");
+    eng2.tick(&prog, true).unwrap();
+    for rel in COMPARE_RELS_TS {
+        let inline = eng_inline.count_rows(rel).unwrap();
+        let staged = eng2.count_rows(rel).unwrap();
+        assert_eq!(inline, staged, "post-recovery rel `{rel}`: inline={inline} staged={staged}");
+    }
+}
+
+/// Wall-time receipt (not a CI gate — run with `--ignored`): on the SAME
+/// large synthetic corpus, run comment/template/unresolved as ONE wholesale
+/// node (`DL_COLD_CHUNK_FILES`/`DL_COLD_CHUNK_BYTES` set absurdly high, so
+/// `cold_chunk_slices_of` emits exactly one slice — the pre-chunking shape a
+/// `cold:<root>:comment-rels:0` job had) vs the DEFAULT chunked config, and
+/// prints the longest single node's wall time for each — the 2026-07-18
+/// incident's 109s corpus-global job, reproduced at synthetic scale.
+#[test]
+#[ignore]
+fn measure_comment_template_unresolved_chunking_receipt() {
+    let n_files = 800;
+    let comment_dir = sandbox("receipt_comment");
+    write_many_commented_files(&comment_dir, n_files);
+    let ts_dir = sandbox("receipt_ts");
+    write_many_ts_files(&ts_dir, n_files);
+
+    let run_family = |dir: &Path, prog_src: &str, wholesale: bool, family: &str| -> (u128, usize) {
+        if wholesale {
+            std::env::set_var("DL_COLD_CHUNK_FILES", "10000000");
+            std::env::set_var("DL_COLD_CHUNK_BYTES", "10000000000");
+        } else {
+            std::env::remove_var("DL_COLD_CHUNK_FILES");
+            std::env::remove_var("DL_COLD_CHUNK_BYTES");
+        }
+        let prog = parse::parse(lex::lex(prog_src).unwrap()).unwrap();
+        let d = sandbox(&format!(
+            "receipt_run_{family}_{}",
+            if wholesale { "before" } else { "after" }
+        ));
+        // Reuse the already-written fixture directory's files by pointing the
+        // engine root at `dir` (write_* already populated `dir/src`), so both
+        // the wholesale and chunked runs parse the identical corpus.
+        let _ = &d; // sandbox() only needs to exist for its `db` dir; root is `dir`.
+        let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
+        let mut eng = Engine::new(conn, dir.to_path_buf());
+        eng.poll_loop = true;
+        let report = eng.tick_report(&prog, true).unwrap();
+        let mut staged = report.cold_staged.clone();
+        staged.sort_by(|a, b| b.2.cmp(&a.2));
+        let n_shards = staged.iter().filter(|(fam, ..)| fam == family).count();
+        let mut longest = 0u128;
+        for (fam, shard, _) in &staged {
+            let t = std::time::Instant::now();
+            eng.run_cold_node(&prog, fam, *shard).unwrap();
+            if fam == family {
+                longest = longest.max(t.elapsed().as_millis());
+            }
+        }
+        (longest, n_shards)
+    };
+
+    let (comment_before, shards_before) =
+        run_family(&comment_dir, PROG_COMMENT, true, "comment-rels");
+    let (comment_after, shards_after) =
+        run_family(&comment_dir, PROG_COMMENT, false, "comment-rels");
+    println!(
+        "[receipt] comment-rels: wholesale(1 node)={comment_before}ms  \
+         chunked({shards_after} nodes)={comment_after}ms longest-single-node (was {shards_before} node)"
+    );
+
+    let (template_before, tshards_before) =
+        run_family(&ts_dir, PROG_TS, true, "template-rels");
+    let (template_after, tshards_after) =
+        run_family(&ts_dir, PROG_TS, false, "template-rels");
+    println!(
+        "[receipt] template-rels: wholesale(1 node)={template_before}ms  \
+         chunked({tshards_after} nodes)={template_after}ms longest-single-node (was {tshards_before} node)"
+    );
+
+    let (unresolved_before, ushards_before) =
+        run_family(&ts_dir, PROG_TS, true, "unresolved-rels");
+    let (unresolved_after, ushards_after) =
+        run_family(&ts_dir, PROG_TS, false, "unresolved-rels");
+    println!(
+        "[receipt] unresolved-rels: wholesale(1 node)={unresolved_before}ms  \
+         chunked({ushards_after} nodes)={unresolved_after}ms longest-single-node (was {ushards_before} node)"
+    );
+
+    std::env::remove_var("DL_COLD_CHUNK_FILES");
+    std::env::remove_var("DL_COLD_CHUNK_BYTES");
+}
+
 /// Wall-time receipt (not a CI gate — run with `--ignored`): stage a cold boot
 /// over sprefa's OWN `src/**/*.rs` corpus and print the per-node wall time, so
 /// the longest single ColdExtract job is visible before/after chunking. Point

@@ -11,16 +11,19 @@
 //! `ColdExtract` job; when the last node lands, the completion tick does the
 //! single blank-slate derived rebuild over the now-complete fact base.
 //!
-//! Scope of THIS arc (D2/D4 as implemented): every used family runs WHOLESALE as
-//! one node — `n_shards = 1`. Per-file sharding of an individual family (the
-//! plan's Shape B) is deferred: the type/call/dataflow resolvers run a
-//! corpus-global name→def barrier and the `extract:<family>` skip digest is
-//! per-rev, not per-shard, so a per-file slice cannot be made digest-consistent
-//! without new infra — and a wrong slice would poison the digest skip and break
-//! the inline-equivalence contract. `cold_shard_count` carries the D2 formula
-//! (`ceil(files/200)` capped at 16) behind a `shardable()` gate that no family
-//! sets this arc, so the node table and seam are ready for Shape B. The plan
-//! sanctions exactly this: "a wholesale family is just a family with N_SHARDS=1".
+//! Scope as of the D2/D4 landing: every used family runs WHOLESALE as one node
+//! — `n_shards = 1`. Per-file sharding of an individual family (the plan's
+//! Shape B) needs a family with NO corpus-global resolver barrier, since a
+//! wrong slice would poison the digest skip and break the inline-equivalence
+//! contract; `module`/`type`/`call`/`spine` keep `shardable_cold() == false`
+//! for exactly that reason (a corpus-global name→def barrier or a
+//! `_strings`/`_where_bytes` projection). `dataflow`/`comment`/`template`/
+//! `unresolved` (2026-07-18 chunking arc) ARE barrier-free — every row is a
+//! pure function of its own file's bytes — so each sets `shardable_cold() ==
+//! true` and `cold_shard_count` partitions its OWN family-scoped file set (see
+//! `cold_family_files`) into `cold_chunk_slices_of`'s byte-bounded runs. The
+//! plan sanctions exactly this: "a wholesale family is just a family with
+//! N_SHARDS=1".
 //!
 //! The `_cold_node` table lives in the corpus db next to `_reldigest` /
 //! `_derived_complete` (engine FACT state: which slices are extracted); the
@@ -79,12 +82,34 @@ impl Engine {
         self.db.execute_batch(COLD_SCHEMA)
     }
 
-    /// Deterministic closed partition of the corpus file set into contiguous
-    /// byte-bounded chunks (see `COLD_CHUNK_TARGET_BYTES`). The order is
-    /// `extract_file_set()`'s canonical `ORDER BY repo, path, rev`, so chunk `k`
-    /// is the same slice at seed and at every crash resume (the corpus is frozen
-    /// during cold start). A wholesale family maps to one chunk = the whole set.
-    fn cold_chunk_slices(&self) -> Result<Vec<Vec<crate::engine::extract::ExtractFile>>> {
+    /// The file set a shardable family partitions, keyed by family name: each
+    /// barrier-free family's OWN scope, which can differ from the corpus-wide
+    /// `extract_file_set()` — `comment-rels` also covers `.md` and the broader
+    /// `AST_LANG_TABLE` grammars extract_file_set skips, and `template-rels`/
+    /// `unresolved-rels` cover the TS/JS-family extensions only. Partitioning
+    /// against the wrong (too-wide or too-narrow) set would silently miscount
+    /// shards or drop a file from every chunk, so each family answers for
+    /// itself; `dataflow-rels` (and any future family with no narrower scope)
+    /// falls back to `extract_file_set()`.
+    fn cold_family_files(&self, family: &str) -> Result<Vec<crate::engine::extract::ExtractFile>> {
+        match family {
+            "comment-rels" => self.comment_file_set(),
+            "template-rels" => self.template_file_set(),
+            "unresolved-rels" => self.unresolved_file_set(),
+            _ => self.extract_file_set(),
+        }
+    }
+
+    /// Deterministic closed partition of `files` into contiguous byte-bounded
+    /// chunks (see `COLD_CHUNK_TARGET_BYTES`). `files` must already be in a
+    /// stable canonical order (every `cold_family_files` query is `ORDER BY
+    /// repo, path, rev`), so chunk `k` is the same slice at seed and at every
+    /// crash resume (the corpus is frozen during cold start). A wholesale
+    /// family maps to one chunk = its whole set.
+    fn cold_chunk_slices_of(
+        &self,
+        files: Vec<crate::engine::extract::ExtractFile>,
+    ) -> Result<Vec<Vec<crate::engine::extract::ExtractFile>>> {
         let target = std::env::var("DL_COLD_CHUNK_BYTES")
             .ok()
             .and_then(|s| s.parse::<i64>().ok())
@@ -95,7 +120,6 @@ impl Engine {
             .and_then(|s| s.parse::<usize>().ok())
             .filter(|n| *n > 0)
             .unwrap_or(COLD_CHUNK_MAX_FILES);
-        let files = self.extract_file_set()?;
         // Per-file bytes from `_file.size`, keyed by (repo, path, rev).
         let sizes: std::collections::HashMap<(String, String, String), i64> = {
             let conn = self.db.conn();
@@ -116,6 +140,10 @@ impl Engine {
                 .get(&(f.0.clone(), f.1.clone(), f.2.clone()))
                 .copied()
                 .unwrap_or(0);
+            tracing::trace!(
+                repo = %f.0, path = %f.1, rev = %f.2, bytes, cur_bytes, slices = slices.len(),
+                "[cold-chunk] file assigned to chunk"
+            );
             cur.push(f);
             cur_bytes += bytes.max(0);
             if cur_bytes >= target || cur.len() >= cap {
@@ -129,13 +157,15 @@ impl Engine {
         Ok(slices)
     }
 
-    /// Chunk count for a family: the byte-partition size for a shardable
-    /// (barrier-free) family, else 1 (wholesale single node).
-    fn cold_shard_count(&self, shardable: bool) -> Result<u32> {
+    /// Chunk count for a family: the byte-partition size over ITS OWN file set
+    /// (`cold_family_files`) for a shardable (barrier-free) family, else 1
+    /// (wholesale single node).
+    fn cold_shard_count(&self, family: &str, shardable: bool) -> Result<u32> {
         if !shardable {
             return Ok(1);
         }
-        let n = self.cold_chunk_slices()?.len().max(1);
+        let files = self.cold_family_files(family)?;
+        let n = self.cold_chunk_slices_of(files)?.len().max(1);
         Ok(n as u32)
     }
 
@@ -246,7 +276,7 @@ impl Engine {
             push(COLD_SCIP_FAMILY, 0, 1, (count + 1) as i64, &mut rows, &mut jobs);
         }
         for (idx, fam) in families.iter().enumerate() {
-            let n_shards = self.cold_shard_count(fam.shardable_cold())?;
+            let n_shards = self.cold_shard_count(fam.name(), fam.shardable_cold())?;
             let priority = self.cold_family_priority(idx, count);
             for shard in 0..n_shards {
                 push(fam.name(), shard, n_shards, priority, &mut rows, &mut jobs);
@@ -357,10 +387,18 @@ impl Engine {
             // type/call node parses through the same bundle the inline path used.
             super::extract::prime_analysis_bundles(self, prog)?;
             if fam.shardable_cold() {
-                let slices = self.cold_chunk_slices()?;
+                let files = self.cold_family_files(family)?;
+                let slices = self.cold_chunk_slices_of(files)?;
                 let slice = slices.get(shard as usize).cloned().unwrap_or_default();
+                tracing::debug!(
+                    family, shard, slice_files = slice.len(), total_slices = slices.len(),
+                    "[cold-chunk] running chunk"
+                );
                 match family {
                     "dataflow-rels" => self.refresh_dataflow_rels_slice(&slice)?,
+                    "comment-rels" => self.refresh_comment_rels_slice(&slice)?,
+                    "template-rels" => self.refresh_template_rels_slice(&slice)?,
+                    "unresolved-rels" => self.refresh_unresolved_rel_slice(&slice)?,
                     other => bail!("cold-chunk: family '{other}' is shardable but has no slice refresh"),
                 }
             } else {
@@ -401,6 +439,9 @@ impl Engine {
             if pending == 0 {
                 match family {
                     "dataflow-rels" => self.save_dataflow_cold_digest()?,
+                    "comment-rels" => self.save_comment_cold_digest()?,
+                    "template-rels" => self.save_template_cold_digest()?,
+                    "unresolved-rels" => self.save_unresolved_cold_digest()?,
                     _ => {}
                 }
             }
