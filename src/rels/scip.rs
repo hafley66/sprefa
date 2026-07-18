@@ -64,13 +64,13 @@ impl RelKind for ScipKind {
                     col("line", Type::Int), col("col", Type::Int),
                     col("end_line", Type::Int), col("end_col", Type::Int),
                     col("role", Type::Text), col("repo", Type::Text)], group: "scip",
-                doc: "every SCIP occurrence with its 0-based line/col span, role (definition/import/write/read/reference), and origin repo — the position handle scip_ref lacked", ..Default::default() },
+                doc: "every SCIP occurrence with its line/col span, role (definition/import/write/read/reference), and origin repo — the position handle scip_ref lacked; line/col: 0-based", ..Default::default() },
             RelDecl { name: "scip_binding".into(), cols: vec![
                     col("file", Type::Path), col("symbol", Type::Text),
                     col("local_name", Type::Text),
                     col("line", Type::Int), col("col", Type::Int),
                     col("repo", Type::Text)], group: "scip",
-                doc: "an occurrence's LOCAL binding text (source slice at its range) joined to the canonical symbol — resolves an alias/default import (import { foo as bar }) that scip_name's canonical-only name drops; WORK content slice, 0-based line/col", ..Default::default() },
+                doc: "an occurrence's LOCAL binding text (source slice at its range) joined to the canonical symbol — resolves an alias/default import (import { foo as bar }) that scip_name's canonical-only name drops; WORK content slice; line/col: 0-based", ..Default::default() },
         ]
     }
     fn reserved_msg(&self) -> &'static str {

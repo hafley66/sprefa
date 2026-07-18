@@ -259,7 +259,7 @@ pub(crate) fn diag_rel_decls() -> Vec<RelDecl> {
             c("severity", Type::Text), c("code", Type::Text),
             c("msg", Type::Text), c("hint", Type::Text)],
             group: "diag",
-            doc: "diagnostic sink; head it from a rule to emit an editor squiggle (--lsp), a --check finding, or a daemon-hook message. Fixed 9-col schema — write only the cols you need via named args (diag(path: p, line: l, msg: m)); the rest are NULL and default (severity warn, end_line=line, ints 0). path is TEXT so a synthetic origin isn't file-checked away",
+            doc: "diagnostic sink; head it from a rule to emit an editor squiggle (--lsp), a --check finding, or a daemon-hook message. Fixed 9-col schema — write only the cols you need via named args (diag(path: p, line: l, msg: m)); the rest are NULL and default (severity warn, end_line=line, ints 0). path is TEXT so a synthetic origin isn't file-checked away; line/col: 0-based",
             ..Default::default() },
     ]
 }
@@ -273,7 +273,7 @@ pub(crate) fn hover_note_rel_decls() -> Vec<RelDecl> {
             c("path", Type::File), c("line", Type::Int), c("col", Type::Int),
             c("end_line", Type::Int), c("end_col", Type::Int), c("md", Type::Text)],
             group: "diag",
-            doc: "markdown hover note attached to a source span; head it from a rule, shown by the LSP on hover. Positions are 0-based, same convention as diag (end_line/end_col inclusive); several notes on one span all show, appended after the synthesized entity hover",
+            doc: "markdown hover note attached to a source span; head it from a rule, shown by the LSP on hover. Positions are 0-based, same convention as diag (end_line/end_col inclusive); several notes on one span all show, appended after the synthesized entity hover; line/col: 0-based",
             ..Default::default() },
     ]
 }
@@ -290,7 +290,7 @@ pub(crate) fn graph_rel_decls() -> Vec<RelDecl> {
             c("id", Type::Text), c("label", Type::Text), c("kind", Type::Text),
             c("file", Type::Text), c("line", Type::Int), c("parent", Type::Text)],
             group: "graph",
-            doc: "drawable-graph vertex sink: head graph_node(id, label, kind[, file, line, parent]) from a rule and the flow panel's always-available Graph preset draws it — no bespoke node SQL. Fixed 6-col schema; write only the cols you need via named args (graph_node(id: text, label: name, kind: k)); file/line place the node in the fs-tree + jump target, parent nests it in list view, all NULL by default",
+            doc: "drawable-graph vertex sink: head graph_node(id, label, kind[, file, line, parent]) from a rule and the flow panel's always-available Graph preset draws it — no bespoke node SQL. Fixed 6-col schema; write only the cols you need via named args (graph_node(id: text, label: name, kind: k)); file/line place the node in the fs-tree + jump target, parent nests it in list view, all NULL by default; line: writer-defined",
             ..Default::default() },
         RelDecl { name: "graph_edge".into(), cols: vec![
             c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text)],
@@ -332,7 +332,7 @@ pub(crate) fn demand_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "def_target".into(), cols: vec![
             c("name", Type::Text), c("file", Type::Path), c("line", Type::Int), c("kind", Type::Text)],
             group: "demand",
-            doc: "LSP go-to-definition sink: head def_target(name, file, line, kind) and textDocument/definition resolves a symbol reference to (file, line) by name; falls back to the module-edge specifier match when empty. Read by column name, so a subset written via named args works",
+            doc: "LSP go-to-definition sink: head def_target(name, file, line, kind) and textDocument/definition resolves a symbol reference to (file, line) by name; falls back to the module-edge specifier match when empty. Read by column name, so a subset written via named args works; line: writer-defined",
             ..Default::default() },
         RelDecl { name: "effect_cmd".into(), cols: vec![
             c("kind", Type::Text), c("template", Type::Text)],
@@ -443,17 +443,17 @@ pub(crate) fn module_rel_decls() -> Vec<RelDecl> {
     vec![
         RelDecl { name: "module_import".into(), cols: vec![
             c("file", Type::Path), c("rev", Type::Text), c("specifier", Type::Text), c("kind", Type::Text), c("line", Type::Int)], group: "module",
-            doc: "import statements (Rust + TS + Kotlin); Kotlin adds kind=same-package rows for bare uses of another file's column-0 decl, and an expect/actual decl fans edges to all declaring files", ..Default::default() },
+            doc: "import statements (Rust + TS + Kotlin); Kotlin adds kind=same-package rows for bare uses of another file's column-0 decl, and an expect/actual decl fans edges to all declaring files; line: 1-based", ..Default::default() },
         RelDecl { name: "module_edge".into(), cols: vec![c("src", Type::Path), c("dst", Type::Path)], group: "module",
             doc: "resolved file-to-file import graph (rev-deduped union)", ..Default::default() },
         RelDecl { name: "module_edge_rev".into(), cols: vec![c("src", Type::Path), c("dst", Type::Path), c("rev", Type::Text)], group: "module",
             doc: "rev-aware module_edge", ..Default::default() },
         RelDecl { name: "module_unresolved".into(), cols: vec![
             c("file", Type::Path), c("specifier", Type::Text), c("reason", Type::Text), c("line", Type::Int)], group: "module",
-            doc: "broken imports: a reference that resolved to no project file (the linter question)", ..Default::default() },
+            doc: "broken imports: a reference that resolved to no project file (the linter question); line: 1-based", ..Default::default() },
         RelDecl { name: "module_unresolved_rev".into(), cols: vec![
             c("file", Type::Path), c("rev", Type::Text), c("specifier", Type::Text), c("reason", Type::Text), c("line", Type::Int)], group: "module",
-            doc: "rev-aware module_unresolved", ..Default::default() },
+            doc: "rev-aware module_unresolved; line: 1-based", ..Default::default() },
         RelDecl { name: "crate_edge".into(), cols: vec![c("src", Type::Text), c("dst", Type::Text), c("kind", Type::Text), c("rev", Type::Text)], group: "module",
             doc: "workspace-internal Cargo dependency edges", ..Default::default() },
         RelDecl { name: "module_binding_resolved_rev".into(), cols: vec![
@@ -481,11 +481,11 @@ pub(crate) fn type_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "type_entity".into(), cols: vec![
             c("repo", Type::Text), c("sym", Type::Text), c("name", Type::Text), Col::branded("kind", "type_entity_kind"),
             c("parent", Type::Text), c("file", Type::Path), c("line", Type::Int)], group: "type",
-            doc: "every declared type; sym is file::kind::name, the cross-graph join key; scip_ref overrides name resolution when a SCIP index is present", ..Default::default() },
+            doc: "every declared type; sym is file::kind::name, the cross-graph join key; scip_ref overrides name resolution when a SCIP index is present; line: 1-based", ..Default::default() },
         RelDecl { name: "type_entity_rev".into(), cols: vec![
             c("repo", Type::Text), c("sym", Type::Text), c("name", Type::Text), Col::branded("kind", "type_entity_kind"),
             c("parent", Type::Text), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Text)], group: "type",
-            doc: "rev-aware type_entity (rev is a column, never folded into the sym, so a diff compares the same sym across revs); legacy type_entity is the rev-deduped union", ..Default::default() },
+            doc: "rev-aware type_entity (rev is a column, never folded into the sym, so a diff compares the same sym across revs); legacy type_entity is the rev-deduped union; line: 1-based", ..Default::default() },
         RelDecl { name: "type_sig".into(), cols: vec![
             c("sym", Type::Text), c("slot", Type::Text), c("pos", Type::Int), c("ref", Type::Text)], group: "type",
             doc: "type signature slots (params, fields) per sym", ..Default::default() },
@@ -501,7 +501,7 @@ pub(crate) fn doc_text_rel_decls() -> Vec<RelDecl> {
     vec![
         RelDecl { name: "doc_comment".into(), cols: vec![
             c("repo", Type::Text), c("sym", Type::Text), c("line", Type::Int), Col::raw("text", Type::Text)], group: "type",
-            doc: "doc comment per type_entity sym: (repo, sym, line, text); AST-located per language (Rust #[doc] attrs, Kotlin KDoc sibling, TS leading /** */)", ..Default::default() },
+            doc: "doc comment per type_entity sym: (repo, sym, line, text); AST-located per language (Rust #[doc] attrs, Kotlin KDoc sibling, TS leading /** */); line: 1-based", ..Default::default() },
         RelDecl { name: "doc_tag".into(), cols: vec![
             c("repo", Type::Text), c("sym", Type::Text), c("tag", Type::Text),
             c("arg", Type::Text), Col::raw("text", Type::Text)], group: "type",
@@ -516,7 +516,7 @@ pub(crate) fn comment_rel_decls() -> Vec<RelDecl> {
             c("path", Type::Path), c("line", Type::Int), c("col", Type::Int),
             c("end_line", Type::Int), c("end_col", Type::Int),
             Col::raw("text", Type::Text), c("kind", Type::Text)], group: "comment",
-            doc: "every comment in every parsed file: (path, line, col, end_line, end_col, text, kind is line/block/doc); grammar-backed (oxc for TS/TSX, tree-sitter for Rust, Kotlin, Python, Go, C, ...), so a comment marker inside a string is never a row; text has the comment tokens stripped; std/suppress.dl parses it into the eslint/biome disable grammar", ..Default::default() },
+            doc: "every comment in every parsed file: (path, line, col, end_line, end_col, text, kind is line/block/doc); grammar-backed (oxc for TS/TSX, tree-sitter for Rust, Kotlin, Python, Go, C, ...), so a comment marker inside a string is never a row; text has the comment tokens stripped; std/suppress.dl parses it into the eslint/biome disable grammar; line: 1-based; col: 0-based", ..Default::default() },
     ]
 }
 
@@ -526,7 +526,7 @@ pub(crate) fn template_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "template_parts".into(), cols: vec![
             c("file", Type::Path), c("line", Type::Int), c("node", Type::Text),
             c("idx", Type::Int), c("kind", Type::Text), Col::raw("text", Type::Text)], group: "template",
-            doc: "every template literal's ordered static/interpolated pieces: (file, line, node, idx, kind is static/expr, text); TS/TSX/JS/JSX/MJS/CJS only (oxc), one line per file's occurrence group via node = the df_node/df_lit id for the SAME template occurrence (join key: node = df_lit.id, node = df_edge.to for whatever flows in); text is verbatim (raw static chunk or the interpolated expression's exact source); template-built import paths/URLs/keys become joinable", ..Default::default() },
+            doc: "every template literal's ordered static/interpolated pieces: (file, line, node, idx, kind is static/expr, text); TS/TSX/JS/JSX/MJS/CJS only (oxc), one line per file's occurrence group via node = the df_node/df_lit id for the SAME template occurrence (join key: node = df_lit.id, node = df_edge.to for whatever flows in); text is verbatim (raw static chunk or the interpolated expression's exact source); template-built import paths/URLs/keys become joinable; line: 1-based", ..Default::default() },
     ]
 }
 
@@ -535,7 +535,7 @@ pub(crate) fn unresolved_rel_decls() -> Vec<RelDecl> {
     vec![
         RelDecl { name: "unresolved".into(), cols: vec![
             c("file", Type::Path), c("line", Type::Int), c("reason", Type::Text), Col::raw("detail", Type::Text)], group: "unresolved",
-            doc: "an edge that could exist but whose target is computed at runtime (as opposed to module_unresolved's no-edge-at-all case); (file, line 1-based, reason, detail is the computed thing's exact source text); TS/TSX/JS/JSX/MJS/CJS only (oxc) in v1; reason is a closed vocabulary: dynamic-import (import(expr)/require(expr) with a non-literal argument), computed-member-call (obj[key]() callee), spread-call-args (f(...args)); Python star-imports/sys.path mutation stay out of v1 (already surfaced via module_unresolved / an eprintln)", ..Default::default() },
+            doc: "an edge that could exist but whose target is computed at runtime (as opposed to module_unresolved's no-edge-at-all case); (file, line, reason, detail is the computed thing's exact source text); TS/TSX/JS/JSX/MJS/CJS only (oxc) in v1; reason is a closed vocabulary: dynamic-import (import(expr)/require(expr) with a non-literal argument), computed-member-call (obj[key]() callee), spread-call-args (f(...args)); Python star-imports/sys.path mutation stay out of v1 (already surfaced via module_unresolved / an eprintln); line: 1-based", ..Default::default() },
     ]
 }
 
@@ -545,15 +545,15 @@ pub(crate) fn call_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "call_def".into(), cols: vec![
             c("repo", Type::Text), c("sym", Type::Text), c("kind", Type::Text),
             c("file", Type::Path), c("line", Type::Int), c("end", Type::Int)], group: "call",
-            doc: "every callable; sym is repo-qualified repo::file::kind::name", ..Default::default() },
+            doc: "every callable; sym is repo-qualified repo::file::kind::name; line/end: 1-based", ..Default::default() },
         RelDecl { name: "call_def_rev".into(), cols: vec![
             c("repo", Type::Text), c("sym", Type::Text), c("kind", Type::Text),
             c("file", Type::Path), c("line", Type::Int), c("end", Type::Int), c("rev", Type::Text)], group: "call",
-            doc: "rev-aware call_def (rev is a column, never folded into the sym); legacy call_def is the rev-deduped union", ..Default::default() },
+            doc: "rev-aware call_def (rev is a column, never folded into the sym); legacy call_def is the rev-deduped union; line/end: 1-based", ..Default::default() },
         RelDecl { name: "call_site".into(), cols: vec![
             c("repo", Type::Text), c("caller", Type::Text), c("callee", Type::Text),
             c("file", Type::Path), c("line", Type::Int)], group: "call",
-            doc: "each call occurrence; caller is the resolved fn sym, callee the bare text; changed_line joins here for line-scoped rails", ..Default::default() },
+            doc: "each call occurrence; caller is the resolved fn sym, callee the bare text; changed_line joins here for line-scoped rails; line: 1-based", ..Default::default() },
         RelDecl { name: "call_edge".into(), cols: vec![
             c("caller", Type::Text), c("callee", Type::Text), c("kind", Type::Text)], group: "call",
             doc: "resolved caller-sym to callee-sym edge (single-def or SCIP override)", ..Default::default() },
@@ -583,7 +583,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "df_node".into(), cols: vec![
             c("id", Type::Text), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
             c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int)], group: "dataflow",
-            doc: "intra-procedural dataflow node (call_res/let_bind/param/ret/new/member/...); id is an interned StringId over file::line::kind (sym — BREAKING as of the intern-key arc) — the full kind vocabulary is rel_col's variants for this column", ..Default::default() },
+            doc: "intra-procedural dataflow node (call_res/let_bind/param/ret/new/member/...); id is an interned StringId over file::line::kind (sym — BREAKING as of the intern-key arc) — the full kind vocabulary is rel_col's variants for this column; line: 1-based", ..Default::default() },
         // rev-aware df_node: id is salt_rev(raw id, rev) so two revs' file:line:col
         // ids stay disjoint in one table (unlike syms, a df id embeds a line so
         // the same point is different code across revs). legacy df_node keeps the
@@ -592,7 +592,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "df_node_rev".into(), cols: vec![
             c("id", Type::Text), Col::branded("kind", "df_node_kind"), c("var", Type::Text),
             c("fn", Type::Text), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Text)], group: "dataflow",
-            doc: "rev-aware df_node; id is salt_rev(raw id, rev) so revs stay disjoint; legacy df_node keeps the raw id", ..Default::default() },
+            doc: "rev-aware df_node; id is salt_rev(raw id, rev) so revs stay disjoint; legacy df_node keeps the raw id; line: 1-based", ..Default::default() },
         // (df_node id, repo) — the repo (nearest `.git` basename) the node's file
         // was read from. df_node ids are path-keyed (file:line:col, no repo), so
         // this side table is the repo handle a cross-repo query needs to scope a
@@ -615,7 +615,7 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "loop_over".into(), cols: vec![
             c("file", Type::Path), c("start", Type::Int), c("end", Type::Int),
             c("var", Type::Text), c("collection", Type::Text), c("fn", Type::Text)], group: "dataflow",
-            doc: "one row per loop with its span, iter var, and collection", ..Default::default() },
+            doc: "one row per loop with its span, iter var, and collection; start/end: 1-based", ..Default::default() },
         // one row per fn whose body builds a collection (Vec/HashMap/String ctor
         // or .collect/.clone/.to_string). The cost signal that cuts the
         // loop-invariant-call suspect list down to recomputation candidates.
@@ -691,11 +691,11 @@ pub(crate) fn const_value_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "const_value".into(), cols: vec![
             c("repo", Type::Text), c("sym", Type::Text), c("field", Type::Text), Col::raw("text", Type::Text),
             Col::branded("kind", "const_value_kind"), c("file", Type::Path), c("line", Type::Int)], group: "type",
-            doc: "string value folded from a const (or as const) binding; sym is the owning type_entity (the const itself, or the enum for a string member), field is \"\" for a bare const or a dotted key path (\"home\", \"nested.a\") for an object literal; a let/var string initializer is never emitted (soundness rule); line is 1-based", ..Default::default() },
+            doc: "string value folded from a const (or as const) binding; sym is the owning type_entity (the const itself, or the enum for a string member), field is \"\" for a bare const or a dotted key path (\"home\", \"nested.a\") for an object literal; a let/var string initializer is never emitted (soundness rule); line: 1-based", ..Default::default() },
         RelDecl { name: "const_value_rev".into(), cols: vec![
             c("repo", Type::Text), c("sym", Type::Text), c("field", Type::Text), Col::raw("text", Type::Text),
             Col::branded("kind", "const_value_kind"), c("file", Type::Path), c("line", Type::Int), c("rev", Type::Text)], group: "type",
-            doc: "rev-aware const_value (rev is a plain trailing column, like type_entity_rev — sym never collides across revs); legacy const_value is the rev-deduped union", ..Default::default() },
+            doc: "rev-aware const_value (rev is a plain trailing column, like type_entity_rev — sym never collides across revs); legacy const_value is the rev-deduped union; line: 1-based", ..Default::default() },
     ]
 }
 
@@ -708,7 +708,7 @@ pub(crate) fn doc_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "doc_node".into(), cols: vec![
             c("repo", Type::Text), c("file", Type::Path), c("line", Type::Int),
             c("kind", Type::Text), Col::raw("name", Type::Text), Col::raw("parent", Type::Text)], group: "doc",
-            doc: "structural nodes from non-source text (markdown headings + code blocks via tree-sitter-md: ATX/setext headings, fenced/indented blocks); parent is the enclosing heading", ..Default::default() },
+            doc: "structural nodes from non-source text (markdown headings + code blocks via tree-sitter-md: ATX/setext headings, fenced/indented blocks); parent is the enclosing heading; line: 1-based", ..Default::default() },
         // doc→code bridge: (file, line, sym, kind, matched_name). For each row,
         // `kind` is the doc_node kind that produced it ("heading" or
         // "code_block") and `matched_name` is the doc-side string that matched a
@@ -720,7 +720,7 @@ pub(crate) fn doc_rel_decls() -> Vec<RelDecl> {
         RelDecl { name: "doc_ref".into(), cols: vec![
             c("repo", Type::Text), c("file", Type::Path), c("line", Type::Int), c("sym", Type::Text),
             c("kind", Type::Text), Col::raw("matched_name", Type::Text)], group: "doc",
-            doc: "doc-to-code bridge: name-matches doc_node headings to type_entity symbols (exact + normalized) and scans code blocks for identifier mentions; empty unless the program also uses type relations", ..Default::default() },
+            doc: "doc-to-code bridge: name-matches doc_node headings to type_entity symbols (exact + normalized) and scans code blocks for identifier mentions; empty unless the program also uses type relations; line: 1-based", ..Default::default() },
     ]
 }
 

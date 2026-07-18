@@ -179,7 +179,7 @@ impl RelKind for DlDiagKind {
             col("path", Type::Path), col("line", Type::Int), col("col", Type::Int),
             col("end_line", Type::Int), col("end_col", Type::Int),
             col("severity", Type::Text), col("code", Type::Text), col("msg", Type::Text)], group: "meta",
-            doc: "parse/type diagnostics for each scanned `.dl` file (path, line, col, end_line, end_col, severity, code, msg); the engine's own lexer/parser/typechecker run over `file` rows ending in `.dl`, byte spans mapped to 1-based line / 0-based col — join agent_changed for lint-on-edit", ..Default::default() }]
+            doc: "parse/type diagnostics for each scanned `.dl` file (path, line, col, end_line, end_col, severity, code, msg); the engine's own lexer/parser/typechecker run over `file` rows ending in `.dl` — join agent_changed for lint-on-edit; line: 1-based; col: 0-based", ..Default::default() }]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in dl self-diagnostics relation"

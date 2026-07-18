@@ -81,7 +81,7 @@ impl RelKind for ChangedLineKind {
         vec![RelDecl {
             name: "changed_line".into(),
             cols: vec![col("path", Type::Path), col("line", Type::Int)], group: "changed",
-            doc: "new-side lines of git diff -U0 HEAD hunks plus every line of untracked files; pure-deletion hunks emit nothing; line-scoped rails precision", ..Default::default() }]
+            doc: "new-side lines of git diff -U0 HEAD hunks plus every line of untracked files; pure-deletion hunks emit nothing; line-scoped rails precision; line: 1-based", ..Default::default() }]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in line-diff relation"
