@@ -736,3 +736,94 @@ fn nest_composes_over_call_edge_into_symbolic_cost() {
     );
     // That reach is the symbolic cost shape: leaf is "depth-2 over C" via middle.
 }
+
+/// Branch-tail flow: a value-position `if`/`match` must carry each branch's
+/// tail value through to the binding. Pre-fix, `let x = if c { produce() }
+/// else { fallback() }` dead-ended both call results inside their branches
+/// (the arch_df unifier starvation): the `if` node had no incoming edges, so
+/// nothing produced inside a branch ever reached `x`.
+#[test]
+fn rust_lift_carries_branch_tails_into_bindings() {
+    let d = sandbox("branchtails");
+    fs::create_dir_all(d.join("src")).unwrap();
+    fs::write(
+        d.join("src/lib.rs"),
+        "fn produce() -> i64 { 1 }\n\
+         fn fallback() -> i64 { 0 }\n\
+         fn pick(k: i64) -> i64 { k }\n\
+         fn consume(v: i64) {}\n\
+         fn orchestrate(flag: bool, k: i64) {\n    \
+             let x = if flag { produce() } else { fallback() };\n    \
+             consume(x);\n    \
+             let y = match k {\n        \
+                 0 => pick(k),\n        \
+                 _ => fallback(),\n    \
+             };\n    \
+             consume(y);\n\
+         }\n",
+    )
+    .unwrap();
+    let prog = concat!(
+        "rel seen(path: file).\n",
+        "seen(path) <- scan(\"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /./, line).\n",
+        "rel df_reaches(from: text, to: text).\n",
+        "df_reaches(a, b) <- closure(df_edge).\n",
+        "? df_node(id, kind, var, fn, file, line).\n",
+        "? df_reaches(from, to).\n",
+    );
+    let (code, out, err) = run(&d, prog);
+    assert_eq!(code, 0, "Rust lift must not error:\n{err}");
+
+    let secs = sections(&out);
+    assert!(secs.len() >= 2, "expected 2 query sections:\n{out}");
+
+    let mut nodes: HashMap<String, (String, String, String)> = HashMap::new();
+    for r in rows(&secs[0]) {
+        assert!(r.len() >= 6, "df_node row too short: {r:?}");
+        nodes.insert(r[0].clone(), (r[1].clone(), r[2].clone(), r[5].clone()));
+    }
+    let mut reaches: HashSet<(String, String)> = HashSet::new();
+    for r in rows(&secs[1]) {
+        assert!(r.len() >= 2, "df_reaches row too short: {r:?}");
+        reaches.insert((r[0].clone(), r[1].clone()));
+    }
+
+    // Source nodes: the call_res on the `if` line (produce()/fallback() calls,
+    // line 6) and on the match arms (lines 9/10). Sinks: let_bind x and y.
+    let call_res_on = |line: &str| -> Vec<String> {
+        nodes
+            .iter()
+            .filter(|(_, (k, _, l))| k == "call_res" && l == line)
+            .map(|(id, _)| id.clone())
+            .collect()
+    };
+    let bind_of = |var: &str| -> String {
+        let hits: Vec<String> = nodes
+            .iter()
+            .filter(|(_, (k, v, _))| k == "let_bind" && v == var)
+            .map(|(id, _)| id.clone())
+            .collect();
+        assert_eq!(hits.len(), 1, "expected one let_bind `{var}`:\n{out}");
+        hits[0].clone()
+    };
+
+    let x_id = bind_of("x");
+    let if_calls = call_res_on("6");
+    assert_eq!(if_calls.len(), 2, "expected produce+fallback call_res on the if line:\n{out}");
+    for c in &if_calls {
+        assert!(
+            reaches.contains(&(c.clone(), x_id.clone())),
+            "if-branch tail call_res {c} must reach let_bind x:\n{out}"
+        );
+    }
+
+    let y_id = bind_of("y");
+    let arm_calls: Vec<String> = call_res_on("9").into_iter().chain(call_res_on("10")).collect();
+    assert_eq!(arm_calls.len(), 2, "expected pick+fallback call_res on the match arms:\n{out}");
+    for c in &arm_calls {
+        assert!(
+            reaches.contains(&(c.clone(), y_id.clone())),
+            "match-arm tail call_res {c} must reach let_bind y:\n{out}"
+        );
+    }
+}

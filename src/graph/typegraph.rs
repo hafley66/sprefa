@@ -4451,13 +4451,24 @@ fn flow_expr(
             push_node(out, file, line, col, "loop", "", fn_sym)
         }
         // `if cond { then } else { els }`: flow each branch; taint is the union.
+        // Branch TAILS flow into the `if` node itself, so a value-position if
+        // (`let x = if c { a() } else { b() }`) carries a()/b() through to the
+        // binding instead of dead-ending at the branch (the arch_df starvation).
         syn::Expr::If(i) => {
             let _ = flow_expr(&i.cond, file, fn_sym, scope, out);
-            flow_block(&i.then_branch, file, fn_sym, scope, out);
-            if let Some((_, els)) = &i.else_branch {
-                let _ = flow_expr(els, file, fn_sym, scope, out);
+            let then_tail = flow_block(&i.then_branch, file, fn_sym, scope, out);
+            let else_tail = i
+                .else_branch
+                .as_ref()
+                .map(|(_, els)| flow_expr(els, file, fn_sym, scope, out));
+            let id = push_node(out, file, line, col, "if", "", fn_sym);
+            if let Some((t, _, _)) = then_tail {
+                out.edges.push(DfEdge { from: t, to: id.clone() });
             }
-            push_node(out, file, line, col, "if", "", fn_sym)
+            if let Some(e) = else_tail {
+                out.edges.push(DfEdge { from: e, to: id.clone() });
+            }
+            id
         }
         // `match scrut { arms }`: scrut + each arm body; guards too. Arm-bound
         // patterns (`Stmt::Expr(e) => ...`) derive from the scrutinee, so each is
@@ -4465,19 +4476,31 @@ fn flow_expr(
         // when the scrutinee is the loop variable.
         syn::Expr::Match(m) => {
             let scrut = flow_expr(&m.expr, file, fn_sym, scope, out);
+            let mut arm_tails = Vec::new();
             for arm in &m.arms {
                 for (_, bid) in bind_pat(&arm.pat, file, fn_sym, scope, out) {
                     out.edges.push(DfEdge { from: scrut.clone(), to: bid });
                 }
                 if let Some((_, g)) = &arm.guard { let _ = flow_expr(g, file, fn_sym, scope, out); }
-                let _ = flow_expr(&arm.body, file, fn_sym, scope, out);
+                arm_tails.push(flow_expr(&arm.body, file, fn_sym, scope, out));
             }
-            push_node(out, file, line, col, "match", "", fn_sym)
+            // Arm tails flow into the `match` node: a value-position match
+            // carries every arm's value to the consumer (same as `if` above).
+            let id = push_node(out, file, line, col, "match", "", fn_sym);
+            for t in arm_tails {
+                out.edges.push(DfEdge { from: t, to: id.clone() });
+            }
+            id
         }
-        // `{ stmts }` as an expression: reuse the block walker.
+        // `{ stmts }` as an expression: reuse the block walker; the tail
+        // statement's value flows through the block node.
         syn::Expr::Block(b) => {
-            flow_block(&b.block, file, fn_sym, scope, out);
-            push_node(out, file, line, col, "block", "", fn_sym)
+            let tail = flow_block(&b.block, file, fn_sym, scope, out);
+            let id = push_node(out, file, line, col, "block", "", fn_sym);
+            if let Some((t, _, _)) = tail {
+                out.edges.push(DfEdge { from: t, to: id.clone() });
+            }
+            id
         }
         // `|params| body`: lift the lambda as its OWN fn scope — kind "param"
         // nodes with df_param slots, body walked under the lambda sym, the body
