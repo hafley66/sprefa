@@ -2291,6 +2291,47 @@ impl Engine {
 }
 
 #[cfg(test)]
+mod n1_counter_tests {
+    //! Completion markers are written once per dependency component — a crash
+    //! rail (see `crash_window_tests` below): the mark must land right after
+    //! ITS component converges so a SIGKILL mid-pass leaves completed
+    //! components marked+populated. A many-rel program therefore issues
+    //! O(components) small `_derived_complete` inserts per rebuild pass.
+    //! Those are keyed per rel set (`insert_rows_keyed`) so the per-tick N+1
+    //! scream — one shared statement key repeated past `N1_THRESHOLD` — stays
+    //! silent for them; this test pins that a multi-rel program's tick does
+    //! not flag them (a genuine per-row loop still repeats ONE key and
+    //! screams).
+
+    use crate::{db, engine::Engine, lex, parse};
+
+    #[test]
+    fn per_component_completion_marks_do_not_trip_the_n1_scream() {
+        // 70 independent derived rels (> N1_THRESHOLD = 64), each its own
+        // singleton dependency component, all fed by one fact rel.
+        let mut prog_text = String::from("rel base_word(word: text).\nbase_word(\"alpha\").\n");
+        for rel_index in 0..70 {
+            prog_text.push_str(&format!(
+                "rel derived_{rel_index:02}(word: text).\n\
+                 derived_{rel_index:02}(word) <- base_word(word).\n"
+            ));
+        }
+        let prog = parse::parse(lex::lex(&prog_text).unwrap()).unwrap();
+        let dir = std::env::temp_dir().join(format!("n1_marks_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let conn = db::open(Some(dir.join("db").to_str().unwrap())).unwrap();
+        let mut eng = Engine::new(conn, dir.clone());
+        eng.tick(&prog, true).unwrap();
+        assert!(
+            eng.last_n1.is_none(),
+            "no statement may trip the per-tick N+1 scream on a 70-rel derived program, got {:?}",
+            eng.last_n1
+        );
+    }
+}
+
+#[cfg(test)]
 mod crash_window_tests {
     //! Force-kill crash window: `rebuild_derived` wipes + marks completion
     //! PER COMPONENT (not one upfront DELETE + one final mark), and the tick

@@ -1181,11 +1181,18 @@ impl Engine {
             .collect())
     }
 
-    /// Mark every rel in `derived_rels` as having completed a rebuild pass —
-    /// called once at the end of `rebuild_derived` for exactly the rels it was
-    /// asked to rebuild (whatever row count they end with, including zero).
-    /// `INSERT OR IGNORE` via the plural `insert_rows` seam, so this is one
-    /// statement (chunked), never a per-rel write.
+    /// Mark every rel in `derived_rels` as having completed a rebuild pass
+    /// (whatever row count they end with, including zero) — called by
+    /// `rebuild_derived` once per dependency component, right after THAT
+    /// component converges. The per-component timing is the crash rail: a
+    /// SIGKILL mid-pass leaves completed components marked+populated, so the
+    /// next boot re-runs only the in-flight/unreached ones (see the
+    /// crash-window notes in `rebuild_derived` and `crash_window_tests`).
+    /// One batched set-insert per call via the plural seam; the N+1 counter
+    /// key names the rel set so O(components) legitimate calls per pass
+    /// don't misread as a per-row write loop (`exec_derived`-style keying —
+    /// a genuine per-row loop repeats ONE key O(rows) times and still
+    /// screams).
     pub(crate) fn mark_derived_complete(&self, derived_rels: &[String]) -> Result<()> {
         if derived_rels.is_empty() {
             return Ok(());
@@ -1194,7 +1201,12 @@ impl Engine {
             .iter()
             .map(|r| vec![Value::Text(r.clone())])
             .collect();
-        self.db.insert_rows("_derived_complete", &["rel"], &rows)?;
+        self.db.insert_rows_keyed(
+            "_derived_complete",
+            &format!("INSERT _derived_complete ({})", derived_rels.join(",")),
+            &["rel"],
+            &rows,
+        )?;
         Ok(())
     }
 

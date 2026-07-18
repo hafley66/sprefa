@@ -1232,11 +1232,27 @@ impl Db {
     /// Insert a set of rows in chunked multi-row `VALUES` statements — ONE logical
     /// op (a few executes for very large N), never one-per-row. `INSERT OR IGNORE`.
     pub fn insert_rows(&self, table: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
+        self.insert_rows_keyed(table, &format!("INSERT {table}"), cols, rows)
+    }
+
+    /// `insert_rows` with a caller-chosen N+1 counter key. For the rare call
+    /// site that legitimately issues O(program) batched set-inserts per tick
+    /// (one completion mark per dependency component, crash-ordering
+    /// required) and would misread as a per-row loop under the shared
+    /// `INSERT {table}` key — the same exemption class as `exec_derived`'s
+    /// full-SQL keying. A true per-row loop (the same key repeated O(rows)
+    /// times) still trips the scream.
+    pub fn insert_rows_keyed(
+        &self,
+        table: &str,
+        bump_key: &str,
+        cols: &[&str],
+        rows: &[Vec<Value>],
+    ) -> Result<usize> {
         if rows.is_empty() { return Ok(0); }
         let ncol = cols.len();
         let collist = cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
-        let key = format!("INSERT {table}");
-        self.bump(&key);
+        self.bump(bump_key);
         let chunk_rows = (PARAM_BUDGET / ncol.max(1)).max(1);
         let multi = rows.len() > chunk_rows;
         let owns_tx = multi && self.conn.is_autocommit();
