@@ -888,6 +888,8 @@ Do not hand-edit between the markers.
 | [`anim-deck.dl`](examples/anim-deck.dl) | Maintains the machine-written regions of the sprefa chapter in the anim deck |
 | [`anim-self.dl`](examples/anim-self.dl) | The deck tours its own diff. Scan anim's TypeScript (readable by dl as of |
 | [`arch-conformance.dl`](examples/arch-conformance.dl) | arch-conformance.dl — declared layering vs the import graph that actually |
+| [`arch-expr.dl`](examples/arch-expr.dl) | arch-expr.dl — the architecture draws ITSELF as an rx-flavored expression. |
+| [`arch-flow.dl`](examples/arch-flow.dl) | arch-flow.dl — how ARCH nodes literally intersect in the code, three ways, |
 | [`author-test-clones.dl`](examples/author-test-clones.dl) | "What is the most-used / most-similar code in the test files created by ONE |
 | [`auto-doc.dl`](examples/auto-doc.dl) | auto-doc.dl — generate a code reference doc from the lexical indexer. |
 | [`autodoc-plans.dl`](examples/autodoc-plans.dl) | Autodoc: transclude tagged markdown comments from session logs into PLANS.md. |
@@ -901,6 +903,7 @@ Do not hand-edit between the markers.
 | [`callgraph-sg.dl`](examples/callgraph-sg.dl) | Same call graph as callgraph-ast.dl, but using ast-grep PATTERNS instead of |
 | [`callgraph-typed.dl`](examples/callgraph-typed.dl) | Typed call graph: nodes are QUALIFIED names (Type::method), so two functions |
 | [`callgraph.dl`](examples/callgraph.dl) | Call graph of dl's own source, queried as a graph. `path: file` is a checked |
+| [`chaos-soak.dl`](examples/chaos-soak.dl) | chaos-soak.dl — the engine's own coverage soak, authored as one dl program. |
 | [`chat-marks.dl`](examples/chat-marks.dl) | chat-marks.dl — chat sectioning authored as datalog, off the harness-hook seam. |
 | [`checked-notes.dl`](examples/checked-notes.dl) | checked-notes.dl — notes that POINT AT CODE and warn when the code moves out |
 | [`cli-doc.dl`](examples/cli-doc.dl) | cli-doc.dl — keep the README CLI flag table fresh from the clap `Cli` struct |

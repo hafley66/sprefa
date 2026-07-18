@@ -3,176 +3,106 @@
 Persistent progress doc for the driving-window autonomous session. The task
 list (R1-R8) is the queue; this file is the narrative record you read later.
 
-**How to read this doc:** start with "The story so far" right below — it is
+**How to read this doc:** start with the caveman story right below — it is
 written to be read cold, no context, each finding explained gently with the
 why before the what. The tables and History further down are the terse
 bookkeeping version of the same events.
 
-## The story so far (plain language, newest at the bottom)
+## The story, caveman version (newest at bottom)
 
-**Where we were when you started driving.** Over the last three days we chased
-down why installing a new `dl` binary made your laptop beachball: six separate
-bugs stacked on top of each other, the deepest being that the code extractor
-rolled dice — two runs over the exact same files produced different rows, so
-the engine honestly believed the data changed and rebuilt everything. That is
-fixed and receipted (4.7GB per boot down to 111MB). The write-up lives in
-docs/rca-exe-swap-write-storm.md if you ever want the full war story.
+### before this session
+- install new dl binary = laptop beachball. every time. for weeks.
+- 6 stacked bugs. deepest one: extractor rolled dice.
+- same files in, different rows out. engine believed it. rebuilt the world.
+- fixed. receipt: 4.7GB per boot -> 111MB.
+- war story: docs/rca-exe-swap-write-storm.md
 
-**What this session is doing.** Two things in parallel. First, building
-"rails": automated tripwires that fail loudly if anyone (including us) ever
-writes those same bug shapes again. Second, your newest problem — running
-`dl` from your ~/projects/instant repo locks up the terminal — jumped the
-queue and is being diagnosed right now.
+### finding 1: determinism rail
+- test: tiny fake repo. extract twice. rows must match byte for byte.
+- trap I checked: if "force 2nd extraction" silently no-ops, test compares
+  run to itself. always green. smoke detector, no battery.
+- traced the delete keys. they are real. rail is live.
+- commit a45c34d9
 
-**Finding 1 — the determinism rail is real, and I checked it can't lie.**
-kimi wrote a test that builds a tiny fake codebase, extracts facts from it
-twice, and demands byte-identical results. The subtle risk with a test like
-this: if the "force the second extraction" step silently doesn't work, the
-test compares a run against itself and always passes — a smoke detector with
-no battery. I traced the database keys it deletes to force the re-run and
-confirmed they are the real ones the engine checks. The rail is live,
-committed as a45c34d9.
+### finding 2: WHY instant froze your terminal
+1. one-shot dl = thread cap only. no disk throttle. no low priority.
+   (2 threads on 4 cores = your exact 50% cpu)
+2. code comment literally admits: disk throttle is the only thing
+   between a cold rebuild and a beachball. one-shots never got it.
+3. bonus trap: dl asks busy daemon for work, reply wait has NO timeout.
+   hang looks identical to a freeze.
+4. also: ad-hoc runs scan your global config repos ON TOP of cwd.
+   "index 203 files" becomes "also re-chew sprefa".
 
-**Why your instant terminal freezes (hypothesis, being verified).** The
-daemon — the long-running background version of dl — got strict resource
-manners this week: low CPU priority, throttled disk, capped threads. But all
-of that is applied at the daemon's front door only. When you run `dl` directly
-in a terminal, the work happens in that process, which never walks through
-that door: it gets every core, full-speed disk, and no time limit. On a repo
-dl has never indexed, that can mean scanning everything under the directory
-at full blast. An agent is currently mapping every way `dl` can start work
-and what it actually did in your instant repo; the fix will make one-shot
-runs obey the same budget plus a hard timeout.
+### finding 3: architecture measures, round 1 (sprefa)
+| measure | top-10 says | verdict material |
+|---|---|---|
+| fan-out | tick/dispatch orchestrators | correct answer |
+| fan-in | TypeArena.get, Parser.next, Db.conn | correct answer |
+| blast radius | same names as fan-in, bigger numbers | maybe kill? |
+| cycles | ONE cluster: typegraph.rs visitor | real recursion, bless it |
 
-**Finding 2 — the instant diagnosis came back, and the hypothesis held, with
-three sharper details.** The agent mapped every way a typed `dl` command can
-run and found: (a) when `dl` does the work in your terminal process instead
-of handing it to the daemon, it gets the daemon's thread cap (2 threads —
-which is exactly your observed ~50% cpu on 4 cores) but NONE of the disk
-throttle or low priority. The code itself contains a comment admitting the
-disk throttle is the only thing standing between a cold rebuild and a
-beachball; one-shot runs never get it. (b) It doesn't just scan instant:
-any ad-hoc run quietly ADDS every repo from your global config on top of the
-directory you ran it in, so "index this little 203-file repo" becomes "also
-re-chew sprefa". (c) There is no time limit anywhere on that path, and one
-more trap: if `dl` tries to hand work to the daemon while the daemon is busy,
-the wait for a reply has no timeout either — your command just hangs
-silently, indistinguishable from a freeze. Fix has three legs: same budget
-caps for one-shot runs, a hard wall-clock deadline that dies loudly saying
-what it was doing, and a reply timeout that reports what the daemon is busy
-with instead of hanging. Being implemented by an opus agent now.
+- 78k rows, +131KB, 4.7s. no explosion.
+- full tables: scratchpad r6-measures-round1.md
 
-**Finding 3 — the architecture measures ran, and the data is interesting.**
-Recall the goal: express "which code is expensive to change" as queries over
-dl's own fact tables, using this repo as the guinea pig. Four measures ran on
-a snapshot of the real index in under 5 seconds: *fan-out* (how many functions
-does X call — high means orchestrator, split candidate) top-10 is exactly the
-daemon's tick/dispatch entry points, which is the right answer. *Fan-in* (how
-many call X — high means its signature is expensive to touch) top-10 is the
-tiny utility primitives (TypeArena.get, Parser.next, Db.conn), also the right
-answer. *Blast radius* (transitive dependents, the fancy recursive one)
-mostly re-ranked the same names fan-in already found — a keep/kill question
-for you: it may not earn its cost at top-10 depth. *Cycle detection* found
-exactly one mutual-recursion cluster, the TypeScript AST visitor in
-typegraph.rs — a true recursive algorithm, the "bless it" case rather than an
-accident, which means the measure works. Also: the engine's ban on
-materializing full closures forced the rewrite into the depth-capped lattice
-idiom, and it stayed small — 78k rows, +131KB, no explosion. Full tables:
-scratchpad r6-measures-round1.md.
+### finding 4: new footgun found
+- query file with no scan rule + db copy = engine ERASES the copy's file tables
+- "program scans nothing" read as "no files exist". reconciled to zero.
+- on a real db that is data loss.
+- guard queued as task #9. (later: fixed, c3c587c9)
 
-**Finding 4 — the measures run tripped over a new engine footgun.** Running
-dl standalone against a copy of the database, with a query file that declares
-no file scan of its own, silently ERASES the copy's file-derived tables: the
-engine treats "this program scans nothing" as "the set of files is truly
-empty" and dutifully reconciles everything down to zero. On a scratch copy
-that's confusing; on a real db it would be data loss. The agent proved it on
-two fresh snapshots, worked around it by adding a one-line scan to the query
-file, and I've queued a proper guard (engine should refuse or warn when a
-program's scan scope is empty but the db already has files). New task #9.
+### finding 5: storm rails in, proven against history
+- 4 tripwires committed. your requirement honored:
+- oracle script checks out the ACTUAL pre-fix commits. each rail must fire
+  there. each rail must be quiet on the fixed sites at HEAD. all PASS.
+- found + closed one oracle hole (empty capture = vacuous pass).
+- warning tier only. your commits never block.
+- audit lists on HEAD: 48 / 25 / 40 / 1 findings, left for triage.
+- commit 792cc902
 
-**Finding 5 — all the storm rails are now in and proven against history.**
-The four "never write this shape again" tripwires are committed, and the part
-you insisted on is done: an oracle script checks out the actual pre-fix
-commits and confirms each rail catches the actual historical defect it was
-built from — the unordered-query rail flags all five files from before the
-determinism fix, the dishonest-flag rail flags the three files that used to
-hardcode "yes, things changed", and the lossy-dedup rail keeps today's known
-lossy sites on an audit list. I found and closed one hole in the oracle
-itself (a case where an empty capture would have made one check pass without
-testing anything), re-ran it clean, and committed everything as 792cc902.
-The rails are warning-severity, so they will not block your commits — they
-produce audit lists (48/25/40/1 findings on today's code) for deliberate
-triage later.
+### finding 6: orphaned effects, REAL root cause
+- was never a timing race.
+- templates stored as interned integer ids. loader asked for text. got None.
+- so: every dynamic effect template was invisible. every boot: "no template,
+  park it."
+- fix: read the text view. plus re-check parked effects each cycle.
+- boot receipt: 6/6 done, 0 orphaned (was 5 orphaned EVERY boot).
+- commit 67ed59fe
 
-**Finding 6 — the "orphaned effects" mystery has a real root cause, found by
-accident.** Background: some background commands ("effects") kept getting
-stranded at every daemon boot, and we assumed a startup timing race. While
-implementing the planned workaround (re-check stranded effects each cycle),
-kimi hit the actual cause: the effect templates defined in your dl programs
-are stored in the database as numeric string-ids (everything in the engine is
-interned), but the code that loads them asked for them as text and silently
-got nothing back. So dynamically-defined effect commands were invisible —
-every boot, the engine concluded "no template exists for this" and parked the
-effect. The fix reads the text-resolved view instead, at both loading sites,
-plus the planned re-check so old strandees recover on their own. A new test
-pins the full recovery path. Suite green (840 tests).
+### finding 7: instant fix, live receipt
+- ran plain dl from ~/projects/instant, your exact invocation:
+  - line 1: budget caps confirmed on
+  - every 10s: "waiting on daemon (40s): derived call_target"
+  - result at 71s. that was the WORST case (cold boot, new binary, new root)
+- your terminal process: 0.03s cpu, 10MB. all heavy work in background daemon.
+- if anything wedges: self-kill at 5 min, prints what it was doing.
+  DL_MAX_WALL_SECS to tune.
+- commit e7d29829
 
-**Finding 7 — your instant problem is fixed, receipt in hand.** I installed
-the fixed binary and ran plain `dl` from ~/projects/instant, exactly your
-invocation. What used to be a frozen terminal is now: one line confirming the
-resource caps are on, then a heartbeat every 10 seconds telling you what the
-engine is chewing on ("waiting on daemon (40s): derived call_target"...),
-then your query result at 71 seconds — and that 71s was the worst case, a
-cold boot where the daemon re-indexed everything on a new binary. Your
-terminal process itself used 0.03s of CPU and 10MB of memory; all heavy work
-happened in the background daemon at low priority with throttled disk. Next
-runs attach warm and answer immediately. If anything ever does wedge, the run
-kills itself at 5 minutes and prints what it was doing (tune with
-DL_MAX_WALL_SECS). Committed as e7d29829.
+### finding 8: crash-tested the daemon on purpose
+- triggered big rebuild. waited for heaviest phase. kill -9. restarted.
+- old disease: every kill armed the next boot to redo everything forever.
+- now: finished interrupted work once. settled. next cycles under 1 second.
+- caveat, honest: "crash costs one component" not provable live from this
+  trigger. stays pinned by test suite.
+- bonus bug found: per-project perf logs all dumped in one unlabeled file.
+  filed #10. (later: fixed, c33ffc04)
 
-**Finding 8 — I crash-tested the daemon on purpose, and it shrugged.** With
-everything settled I triggered a big rebuild, waited until the daemon was
-mid-way through the heaviest phase, and killed it with the OS's most violent
-signal (the one that allows no cleanup — same as your force-quits). Restarted
-it. The old disease was that every kill armed the next boot to redo
-everything forever; this time it finished the interrupted work once, settled,
-and follow-up cycles dropped to under a second. The stranded-effects check
-from Finding 6 also held through the crash. One honest caveat: I couldn't
-cleanly measure the "a crash costs only the one interrupted piece" guarantee
-live, because the trigger I used legitimately requires a full redo — that
-guarantee stays pinned by the test suite. Bonus: reading the crash evidence
-exposed that per-project performance logs stopped being filed per-project
-(everything lands in one shared file with no project label). Filed as task
-#10, not urgent, but it would have made tonight's forensics one query
-instead of three.
+### finding 9: measures round 2 (smashy, TypeScript)
+- same .dl file, zero rule edits. portability: confirmed.
+- lesson 1: fixed thresholds do not travel. smashy max fan-out = 10,
+  sprefa cutoff was 40. every "hot" list came back empty. need top-K.
+- lesson 2: TS call graph 4x sparser than rust. known extraction gap.
+  TS conclusions undercount until fixed.
+- verdicts + data: docs/arch-measures-review.md, commit 1c3ff4a6
 
-**Finding 9 — the measures work is wrapped, and the portability answer is
-"yes, with two lessons".** The same measures file ran on smashy (the
-TypeScript game repo) without changing a single rule — that's the "take this
-analysis anywhere" property you wanted, confirmed. The two lessons: fixed
-number thresholds don't travel (smashy's whole call graph is smaller than
-sprefa's top function, so every "hot" list came back empty until rescaled —
-a portable version needs top-K or percentiles instead), and TypeScript call
-graphs come out 4x sparser than Rust's, which ties to the known gap where
-TS class-method bodies extract nothing. Everything — both rounds' data, per
-measure keep/kill questions, and the concrete next steps if you keep them —
-is in docs/arch-measures-review.md, committed as 1c3ff4a6 along with the
-prototype. The database-wipe footgun from Finding 4 is also fixed properly
-in the engine now (c3c587c9): a query-only program warns and leaves your
-data alone instead of erasing it.
-
-**Finding 10 — the engine now keeps receipts on itself.** The single biggest
-"we had to dig for it" cost of the storm saga was that nothing recorded which
-relation wrote how many rows each cycle — attribution came from correlating
-an OS sampler against timestamps. That ledger now exists: every cycle, every
-writer that actually wrote rows is recorded (batched, self-pruning, and
-excluded from the "are we settled" check so it can't cause the perpetual-tick
-bug it is meant to help debug). Next time anything writes gigabytes, one SQL
-query names the culprit. I also caught and reverted one thing in kimi's
-version before committing: it bumped the database schema version, which
-would have silently forced a from-scratch rebuild of every project you serve
-at next boot — unnecessary, since the table creates itself on existing dbs.
-Committed as 4e87840f.
+### finding 10: engine now keeps receipts on itself
+- new: per-tick ledger. every relation that wrote rows, recorded.
+- next "what wrote gigabytes": ONE sql query.
+- excluded from settle check (cannot cause the bug it debugs).
+- caught in review: kimi bumped schema version. would have force-rebuilt
+  every project you serve, from scratch, at next boot. reverted.
+- commit 4e87840f
 
 ## Priorities (user-set)
 
