@@ -155,7 +155,7 @@ fn unknown_keys(raw: &toml::Value) -> Vec<(&'static str, String)> {
 fn warn_unknown_keys(raw: &toml::Value, path: &Path) {
     for (table, key) in unknown_keys(raw) {
         eprintln!("[config] {}: unknown key `{key}` in {table} — ignored (typo or renamed field?)",
-            path.display());
+            path.display()); // @eprintln-ok: human-facing config typo warning
     }
 }
 
@@ -231,7 +231,8 @@ impl SprfConfig {
                     .unwrap_or_else(|| "org".to_string()));
             let flatten = org_name == ".";
             if !dir.is_dir() {
-                eprintln!("[config] org dir {} is not a directory; skipping", dir.display());
+                let dir_disp = dir.display();
+                tracing::warn!(dir = %dir_disp, "[config] org dir is not a directory; skipping");
                 continue;
             }
             let depth = org.max_depth.unwrap_or(ORG_DEFAULT_DEPTH);

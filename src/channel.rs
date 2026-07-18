@@ -54,7 +54,7 @@ impl<R: BufRead, W: Write> Channel for StdioChannel<R, W> {
             }
             match serde_json::from_str(t) {
                 Ok(v) => return Ok(Some(Frame::Rpc(v))),
-                Err(e) => eprintln!("[mcp] unparseable frame skipped: {e}"),
+                Err(e) => tracing::warn!("[mcp] unparseable frame skipped: {e}"),
             }
         }
     }

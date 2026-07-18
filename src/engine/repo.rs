@@ -173,7 +173,9 @@ impl Engine {
         match Self::ensure_cloned(rc) {
             Ok(()) => Ok(()),
             Err(e) if rc.allow_missing && !rc.root.exists() => {
-                eprintln!(
+                tracing::warn!(
+                    slug = ?rc.slug,
+                    error = %e,
                     "[missing] repo {:?} (allow_missing); scan returns zero rows. details: {e}",
                     rc.slug,
                 );
@@ -201,7 +203,8 @@ impl Engine {
         if let Some(parent) = rc.root.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        eprintln!("[clone] {} <- {url}", rc.root.display());
+        let root = rc.root.display();
+        tracing::debug!(root = %root, url = %url, "[clone] {root} <- {url}");
         let out = Command::new("git")
             .args(["clone", url])
             .arg(&rc.root)
@@ -460,7 +463,7 @@ impl Engine {
                         vec![(slug.clone(), root.clone(), url.clone(), true)]
                     }
                     _ => {
-                        eprintln!("[repo-sink] ground-fact head must be literal (slug[, root[, url]]); skipping");
+                        tracing::warn!("[repo-sink] ground-fact head must be literal (slug[, root[, url]]); skipping");
                         continue;
                     }
                 }
@@ -475,7 +478,7 @@ impl Engine {
                     })
                     .collect();
                 if vars.len() != rule.head.terms.len() {
-                    eprintln!("[repo-sink] head must be all variables (slug, root, url) or an all-literal ground fact; skipping");
+                    tracing::warn!("[repo-sink] head must be all variables (slug, root, url) or an all-literal ground fact; skipping");
                     continue;
                 }
                 let sql = crate::lower::lower_gen(&vars, &rule.body, &self.rels)?;
@@ -495,7 +498,7 @@ impl Engine {
             };
             for (slug, root_str, url, explicit) in rows {
                 if slug.is_empty() {
-                    eprintln!("[repo-sink] skip row with empty slug");
+                    tracing::warn!("[repo-sink] skip row with empty slug");
                     continue;
                 }
                 if self.repos.iter().any(|r| {
@@ -506,10 +509,12 @@ impl Engine {
                 let org = Self::parse_github_org(&url);
                 let allowed = explicit || org.as_ref().is_some_and(|o| allowlist.contains(o));
                 if !allowed {
-                    eprintln!(
-                        "[repo-sink] skip {slug}: org {:?} not in allowlist ({} listed)",
-                        org,
-                        allowlist.len()
+                    tracing::warn!(
+                        slug = %slug,
+                        org = ?org,
+                        allowlist_len = allowlist.len(),
+                        "[repo-sink] skip {slug}: org {org:?} not in allowlist ({allowlist_len} listed)",
+                        allowlist_len = allowlist.len()
                     );
                     continue;
                 }
@@ -526,14 +531,21 @@ impl Engine {
                 };
                 match Self::ensure_cloned(&rc) {
                     Ok(()) => {
-                        eprintln!(
-                            "[repo-sink] pulled {slug} -> {} (org {org:?})",
-                            root.display()
+                        let root_display = root.display();
+                        tracing::debug!(
+                            slug = %slug,
+                            root = %root_display,
+                            org = ?org,
+                            "[repo-sink] pulled {slug} -> {root_display} (org {org:?})"
                         );
                         self.repos.push(rc);
                         pulled = true;
                     }
-                    Err(e) => eprintln!("[repo-sink] clone {slug} failed: {e}"),
+                    Err(e) => tracing::warn!(
+                        slug = %slug,
+                        error = %e,
+                        "[repo-sink] clone {slug} failed: {e}"
+                    ),
                 }
             }
         }
@@ -651,7 +663,11 @@ impl Engine {
             let pr_heads = matches!(pr.as_str(), "1" | "true" | "yes" | "pr");
             match self.resolve_repo(&repo) {
                 Ok((slug, root)) => jobs.push((slug, root, branch, pr_heads)),
-                Err(e) => eprintln!("[checkout] skip {repo}: {e}"),
+                Err(e) => tracing::warn!(
+                    repo = %repo,
+                    error = %e,
+                    "[checkout] skip {repo}: {e}"
+                ),
             }
         }
         // Min-interval gate: a `checkout` rule driven by a short clock used to
@@ -730,11 +746,16 @@ impl Engine {
         };
         let mut done_rows: Vec<Vec<Value>> = Vec::with_capacity(results.len());
         for (slug, branch, out) in &results {
-            eprintln!(
-                "[checkout{}] {slug}: {} {}",
-                if dry_run { " (plan)" } else { "" },
-                out.action,
-                out.detail
+            let dry_run_suffix = if dry_run { " (plan)" } else { "" };
+            let action = out.action.to_string();
+            let detail = &out.detail;
+            tracing::debug!(
+                slug = %slug,
+                branch = %branch,
+                dry_run,
+                action = %action,
+                detail = %detail,
+                "[checkout{dry_run_suffix}] {slug}: {action} {detail}"
             );
             done_rows.push(vec![
                 Value::Text(slug.clone()),

@@ -78,7 +78,7 @@ pub fn verdict(kind: &str, msg: &str, fields: &[(&str, &str)]) {
     if level() == Level::Quiet {
         return;
     }
-    eprintln!("{msg}");
+    eprintln!("{msg}"); // @eprintln-ok: human-facing verdict line is the command's stderr output contract
     write_jsonl(kind, fields);
 }
 
@@ -89,7 +89,7 @@ pub fn debug_verdict(kind: &str, msg: &str, fields: &[(&str, &str)]) {
     if level() != Level::Debug {
         return;
     }
-    eprintln!("{msg}");
+    eprintln!("{msg}"); // @eprintln-ok: human-facing verdict line is the command's stderr output contract
     write_jsonl(kind, fields);
 }
 

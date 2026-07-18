@@ -204,13 +204,19 @@ impl Engine {
                 result.changed_source_rels = changed_rels;
                 result.changed_facts = true;
                 if let Err(error) = cleanup {
-                    eprintln!("[stage] committed path generation; TEMP cleanup deferred: {error}");
+                    tracing::warn!(
+                        error = %error,
+                        "[stage] committed path generation; TEMP cleanup deferred: {error}"
+                    );
                 }
                 Ok(result)
             }
             Err(error) => {
                 if let Err(cleanup_error) = cleanup {
-                    eprintln!("[stage] path rollback cleanup failed: {cleanup_error}");
+                    tracing::warn!(
+                        error = %cleanup_error,
+                        "[stage] path rollback cleanup failed: {cleanup_error}"
+                    );
                 }
                 Err(error)
             }

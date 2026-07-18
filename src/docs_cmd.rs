@@ -172,7 +172,7 @@ fn run_search(query: &[String]) -> i32 {
     let joined = query.join(" ");
     let terms: Vec<String> = joined.split_whitespace().map(|t| t.to_lowercase()).collect();
     if terms.is_empty() {
-        eprintln!("usage: dl docs search <words>");
+        eprintln!("usage: dl docs search <words>"); // @eprintln-ok: usage/help text
         return 1;
     }
     // (total hits, distinct terms matched, label, best lines) per doc.
@@ -243,7 +243,7 @@ pub fn run(args: &[String]) -> Result<i32> {
             Some(selector) => match chapter_body(selector) {
                 Some(body) => { print!("{body}"); return Ok(0); }
                 None => {
-                    eprintln!("dl docs: no book chapter {selector:?}\n");
+                    eprintln!("dl docs: no book chapter {selector:?}\n"); // @eprintln-ok: final user-facing error print at CLI top level
                     print_topics();
                     return Ok(1);
                 }
@@ -259,7 +259,7 @@ pub fn run(args: &[String]) -> Result<i32> {
                 match lesson {
                     Some((.., body)) => { print!("{body}"); return Ok(0); }
                     None => {
-                        eprintln!("dl docs: no tutorial lesson {selector:?}\n");
+                        eprintln!("dl docs: no tutorial lesson {selector:?}\n"); // @eprintln-ok: final user-facing error print at CLI top level
                         print_topics();
                         return Ok(1);
                     }
@@ -275,7 +275,7 @@ pub fn run(args: &[String]) -> Result<i32> {
         print!("{body}");
         return Ok(0);
     }
-    eprintln!("dl docs: unknown topic {topic:?}\n");
+    eprintln!("dl docs: unknown topic {topic:?}\n"); // @eprintln-ok: final user-facing error print at CLI top level
     print_topics();
     Ok(1)
 }

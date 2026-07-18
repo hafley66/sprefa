@@ -427,7 +427,8 @@ impl Engine {
         // crawling tick says WHERE it is spending the wait.
         let phase = |label: &'static str, t: std::time::Instant| {
             if crate::db::profiling() {
-                eprintln!("[profile] {label}: {:.1}ms", t.elapsed().as_secs_f64() * 1000.0);
+                let ms = t.elapsed().as_secs_f64() * 1000.0;
+                tracing::debug!(label, ms, "[profile] {label}: {ms:.1}ms");
             }
         };
         let t = std::time::Instant::now();
@@ -454,7 +455,10 @@ impl Engine {
                 .query_row("SELECT COUNT(*) FROM _file", [], |r| r.get(0))
                 .unwrap_or(0);
             if file_count > 0 {
-                eprintln!("[reconcile] program has no scan rules; leaving {file_count} existing files untouched");
+                tracing::warn!(
+                    file_count,
+                    "[reconcile] program has no scan rules; leaving {file_count} existing files untouched"
+                );
                 Reconcile {
                     changed: false,
                     extracted: 0,
@@ -822,9 +826,12 @@ impl Engine {
                         let mut names: Vec<&str> =
                             program_scope.iter().map(|s| s.as_str()).collect();
                         names.sort_unstable();
-                        eprintln!(
-                            "[derived-scope] program edit scoped to {} rel(s): {}",
-                            names.len(), names.join(", ")
+                        let names_str = names.join(", ");
+                        tracing::debug!(
+                            rel_count = names.len(),
+                            names = %names_str,
+                            "[derived-scope] program edit scoped to {} rel(s): {names_str}",
+                            names.len()
                         );
                     }
                 }
@@ -900,9 +907,24 @@ impl Engine {
         if !quiet {
             let (slowest_rel, slowest_ms) = self.slowest_stmt_ms();
             let reason = full_reason.as_deref().unwrap_or("-");
-            eprintln!("[tick] files {}/{} parsed, +{} -{} source facts, derived {} | source {:.1}ms, derived {:.1}ms, slowest {slowest_rel}={slowest_ms}ms, trigger=full, reason={reason}",
-                recon.parsed, recon.total, recon.extracted, recon.retracted,
-                if changed || !program_scope.is_empty() { "rebuilt" } else { "unchanged" }, src_ms, der_ms);
+            let parsed = recon.parsed;
+            let total = recon.total;
+            let extracted = recon.extracted;
+            let retracted = recon.retracted;
+            let derived = if changed || !program_scope.is_empty() { "rebuilt" } else { "unchanged" };
+            tracing::debug!(
+                parsed,
+                total,
+                extracted,
+                retracted,
+                derived,
+                src_ms,
+                der_ms,
+                slowest_rel = %slowest_rel,
+                slowest_ms,
+                reason = %reason,
+                "[tick] files {parsed}/{total} parsed, +{extracted} -{retracted} source facts, derived {derived} | source {src_ms:.1}ms, derived {der_ms:.1}ms, slowest {slowest_rel}={slowest_ms}ms, trigger=full, reason={reason}"
+            );
             crate::verdict::verdict(
                 "tick-verdict",
                 &format!("[tick-verdict] full derived_ms={der_ms:.1} slowest_rel={slowest_rel} slowest_ms={slowest_ms} trigger=full reason={reason}"),
@@ -972,7 +994,8 @@ impl Engine {
                 // later answer behind one broken question.
                 if let Item::Query(q) = item {
                     if let Err(e) = self.run_query(q, &closures) {
-                        eprintln!("[dl] query `{}` failed: {e}", q.head.rel);
+                        let rel = q.head.rel.as_str();
+                        tracing::warn!(rel = %rel, error = %e, "[dl] query `{rel}` failed: {e}");
                     }
                 }
             }
@@ -984,7 +1007,11 @@ impl Engine {
         // `drain_external_sinks` off-tick on its cadence; one-shot CLI runs opt
         // in via `--apply` / `DL_APPLY_SINKS=1`.
         if self.dropped > 0 {
-            eprintln!("[checked-type] dropped {} rows failing file/dir/path checks", self.dropped);
+            let dropped = self.dropped;
+            tracing::warn!(
+                dropped,
+                "[checked-type] dropped {dropped} rows failing file/dir/path checks"
+            );
             self.dropped = 0;
         }
         if tick_audit() {
@@ -995,8 +1022,11 @@ impl Engine {
                 counts.push((rel.clone(), n));
             }
             counts.sort_by(|a, b| a.0.cmp(&b.0));
-            eprintln!("[audit] {} relation(s)", counts.len());
-            for (rel, n) in &counts { eprintln!("[audit]   {rel}: {n}"); }
+            let rel_count = counts.len();
+            tracing::debug!(rel_count, "[audit] {rel_count} relation(s)");
+            for (rel, n) in &counts {
+                tracing::debug!(rel = %rel, n, "[audit]   {rel}: {n}");
+            }
         }
         // @next staging: now that the tick has converged, each @next rule's body
         // is evaluated over tick-T's relations and its head rows land in
@@ -1392,7 +1422,16 @@ impl Engine {
                        else { rebuilt.join(",") };
             let (slowest_rel, slowest_ms) = self.slowest_stmt_ms();
             let trigger = format!("file-event({npaths})");
-            eprintln!("[tick] {npaths} path(s) changed, +{extracted} -{retracted} source facts, rebuilt derived: {what}, slowest {slowest_rel}={slowest_ms}ms, trigger={trigger}");
+            tracing::debug!(
+                npaths,
+                extracted,
+                retracted,
+                what = %what,
+                slowest_rel = %slowest_rel,
+                slowest_ms,
+                trigger = %trigger,
+                "[tick] {npaths} path(s) changed, +{extracted} -{retracted} source facts, rebuilt derived: {what}, slowest {slowest_rel}={slowest_ms}ms, trigger={trigger}"
+            );
             crate::verdict::verdict(
                 "tick-summary",
                 &format!("[tick-verdict] incremental slowest_rel={slowest_rel} slowest_ms={slowest_ms} trigger={trigger}"),
@@ -1439,7 +1478,8 @@ impl Engine {
             for item in &prog.items {
                 if let Item::Query(q) = item {
                     if let Err(e) = self.run_query(q, &closures) {
-                        eprintln!("[dl] query `{}` failed: {e}", q.head.rel);
+                        let rel = q.head.rel.as_str();
+                        tracing::warn!(rel = %rel, error = %e, "[dl] query `{rel}` failed: {e}");
                     }
                 }
             }
@@ -1448,7 +1488,11 @@ impl Engine {
         // full tick — a computed `rel name: shape.` resolves next tick.
         self.persist_type_decl_shapes(prog)?;
         self.run_gens(prog, quiet)?;
-        if self.dropped > 0 { eprintln!("[checked-type] dropped {} rows", self.dropped); self.dropped = 0; }
+        if self.dropped > 0 {
+            let dropped = self.dropped;
+            tracing::warn!(dropped, "[checked-type] dropped {dropped} rows");
+            self.dropped = 0;
+        }
         self.last_n1 = self.db.tick_end();
         self.flush_write_ledger(tick)?;
         // Surface a slow incremental tick in the LSP server log so live
@@ -1457,7 +1501,12 @@ impl Engine {
         // `DL_TICK_LOG_MS`, default 250ms) so a normal fast tick is silent.
         let tick_ms = _tick_started.elapsed().as_secs_f64() * 1000.0;
         if tick_ms >= tick_log_ms() {
-            eprintln!("[tick] incremental tick took {tick_ms:.1}ms over {} changed path(s)", changed.len());
+            let changed_paths = changed.len();
+            tracing::debug!(
+                tick_ms,
+                changed_paths,
+                "[tick] incremental tick took {tick_ms:.1}ms over {changed_paths} changed path(s)"
+            );
         }
         self.last_derived_rebuilt = rebuilt.clone();
         crate::perflog::emit_tick(&crate::perflog::TickRec {

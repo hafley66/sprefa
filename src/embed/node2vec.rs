@@ -211,7 +211,13 @@ mod tests {
 
         let within = cos(&get("a1"), &get("a2"));   // same clique
         let across = cos(&get("a1"), &get("b1"));   // different clique
-        eprintln!("[node2vec] within-cluster cos={within:.3}  across-cluster cos={across:.3}");
+        let within_fmt = format!("{within:.3}");
+        let across_fmt = format!("{across:.3}");
+        tracing::debug!(
+            within = %within_fmt,
+            across = %across_fmt,
+            "[node2vec] within-cluster cos={within_fmt}  across-cluster cos={across_fmt}"
+        );
         assert!(within > across,
             "within-cluster cos {within:.3} should exceed across-cluster cos {across:.3}");
     }

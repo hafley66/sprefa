@@ -302,15 +302,19 @@ impl Engine {
             const_mutable_skips += f.const_mutable_skips;
         }
         if const_spread_skips > 0 {
-            eprintln!(
-                "[typegraph:const_value] {const_spread_skips} object-literal spread propert{} skipped (never followed — the value is opaque without evaluating the spread source)",
-                if const_spread_skips == 1 { "y" } else { "ies" },
+            let suffix = if const_spread_skips == 1 { "y" } else { "ies" };
+            tracing::warn!(
+                const_spread_skips,
+                suffix = %suffix,
+                "[typegraph:const_value] {const_spread_skips} object-literal spread propert{suffix} skipped (never followed — the value is opaque without evaluating the spread source)"
             );
         }
         if const_mutable_skips > 0 {
-            eprintln!(
-                "[typegraph:const_value] {const_mutable_skips} let/var string initializer{} skipped (soundness rule: only const/as const bindings are folded)",
-                if const_mutable_skips == 1 { "" } else { "s" },
+            let suffix = if const_mutable_skips == 1 { "" } else { "s" };
+            tracing::warn!(
+                const_mutable_skips,
+                suffix = %suffix,
+                "[typegraph:const_value] {const_mutable_skips} let/var string initializer{suffix} skipped (soundness rule: only const/as const bindings are folded)"
             );
         }
         // type_edge_rev is the rev-carrying twin: write it through the rev-scoped

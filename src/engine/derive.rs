@@ -52,7 +52,8 @@ impl StmtWatch {
                         unreachable!("derived statements do not overlap")
                     }
                     Err(RecvTimeoutError::Timeout) => {
-                        eprintln!(
+                        tracing::warn!(
+                            rel = %rel,
                             "[stmt-slow] began statement for `{rel}`; still running after 10s"
                         );
                         match rx.recv() {
@@ -175,7 +176,7 @@ impl Engine {
         // (or the graph is legitimately empty and we recorded the all-zero digest).
         if self.load_rel_digest(&dkey)? == Some(digest) && (edges.is_empty() || have_cur > 0) {
             if trace {
-                eprintln!("[node2vec] graph '{edge}': skip (digest unchanged)");
+                tracing::trace!(edge = %edge, "[node2vec] graph '{edge}': skip (digest unchanged)");
             }
             return Ok(());
         }
@@ -198,7 +199,7 @@ impl Engine {
                 .conn()
                 .execute("DELETE FROM _node_emb_seen WHERE graph = ?1", [edge])?;
             if trace {
-                eprintln!("[node2vec] graph '{edge}': empty (cleared)");
+                tracing::trace!(edge = %edge, "[node2vec] graph '{edge}': empty (cleared)");
             }
             self.save_rel_digest(&dkey, &digest)?;
             self.save_stmt_ms_one(&format!("node2vec:{edge}"), t.elapsed().as_millis() as i64)?;
@@ -211,7 +212,7 @@ impl Engine {
         // genuinely new graph pays the embed.
         let pool: Vec<(String, Vec<f32>)> = if have_cur > 0 {
             if trace {
-                eprintln!("[node2vec] graph '{edge}': cache hit (digest seen)");
+                tracing::trace!(edge = %edge, "[node2vec] graph '{edge}': cache hit (digest seen)");
             }
             let conn = self.db.conn();
             let mut s = conn.prepare(
@@ -227,18 +228,22 @@ impl Engine {
             v
         } else {
             if trace {
-                eprintln!(
-                    "[node2vec] graph '{edge}': re-embed ({} edges)",
-                    edges.len()
+                let edge_count = edges.len();
+                tracing::trace!(
+                    edge = %edge,
+                    edge_count,
+                    "[node2vec] graph '{edge}': re-embed ({edge_count} edges)"
                 );
             }
             self.node2vec_recomputed += 1;
             let pool = crate::embed::node2vec::embed_graph(&edges, &cfg);
             if pool.len() > 2000 {
-                eprintln!(
-                    "[node2vec] brute-force KNN over {} nodes (O(n^2)); \
-                           shrink the edge rel or cap SPREFA_N2V_*",
-                    pool.len()
+                let n = pool.len();
+                tracing::warn!(
+                    edge = %edge,
+                    n,
+                    "[node2vec] brute-force KNN over {n} nodes (O(n^2)); \
+                           shrink the edge rel or cap SPREFA_N2V_*"
                 );
             }
             // Persist this digest's vectors (one flush, never N+1).
@@ -340,7 +345,7 @@ impl Engine {
             // identifiable from stderr (the _stmt_ms table only records
             // completed statements).
             if std::env::var_os("DL_STMT_TRACE").is_some() {
-                eprintln!("[stmt-trace] {rel}");
+                tracing::trace!(rel = %rel, "[stmt-trace] {rel}");
             }
             stmt_watch.begin(rel);
             let t = std::time::Instant::now();
@@ -616,10 +621,9 @@ impl Engine {
         macro_rules! miss {
             ($why:expr) => {{
                 if std::env::var_os("DL_BFS_TRACE").is_some() {
-                    eprintln!(
-                        "[bfs-miss] {}: {}",
-                        derived_rules[comp_rules[0]].head.rel, $why
-                    );
+                    let rel = &derived_rules[comp_rules[0]].head.rel;
+                    let why = $why;
+                    tracing::trace!(rel = %rel, why = %why, "[bfs-miss] {rel}: {why}");
                 }
                 return Ok(false);
             }};
@@ -955,13 +959,20 @@ impl Engine {
         }
         insert_result?;
         if std::env::var_os("DL_BFS_TRACE").is_some() {
-            eprintln!(
-                "[bfs] {head_rel}: load={}ms bfs={}ms out+insert={}ms rows={} nodes={}",
-                load_elapsed.as_millis(),
-                bfs_elapsed.as_millis(),
-                output_started.elapsed().as_millis(),
-                reached.len(),
-                adjacency.len()
+            let head_rel = head_rel.as_str();
+            let load_ms = load_elapsed.as_millis();
+            let bfs_ms = bfs_elapsed.as_millis();
+            let out_ms = output_started.elapsed().as_millis();
+            let rows = reached.len();
+            let nodes = adjacency.len();
+            tracing::debug!(
+                head_rel = %head_rel,
+                load_ms,
+                bfs_ms,
+                out_ms,
+                rows,
+                nodes,
+                "[bfs] {head_rel}: load={load_ms}ms bfs={bfs_ms}ms out+insert={out_ms}ms rows={rows} nodes={nodes}"
             );
         }
         self.save_stmt_ms_one(
@@ -1005,10 +1016,9 @@ impl Engine {
         macro_rules! miss {
             ($why:expr) => {{
                 if std::env::var_os("DL_BFS_TRACE").is_some() {
-                    eprintln!(
-                        "[bfs-miss] {}: {}",
-                        derived_rules[comp_rules[0]].head.rel, $why
-                    );
+                    let rel = &derived_rules[comp_rules[0]].head.rel;
+                    let why = $why;
+                    tracing::trace!(rel = %rel, why = %why, "[bfs-miss] {rel}: {why}");
                 }
                 return Ok(false);
             }};
@@ -1356,13 +1366,20 @@ impl Engine {
         }
         insert_res?;
         if std::env::var_os("DL_BFS_TRACE").is_some() {
-            eprintln!(
-                "[bfs] {head_rel}: load={}ms bfs={}ms out+insert={}ms rows={} nodes={}",
-                t_load.as_millis(),
-                t_bfs.as_millis(),
-                t_out0.elapsed().as_millis(),
-                pairs.len(),
-                adj.len()
+            let head_rel = head_rel.as_str();
+            let load_ms = t_load.as_millis();
+            let bfs_ms = t_bfs.as_millis();
+            let out_ms = t_out0.elapsed().as_millis();
+            let rows = pairs.len();
+            let nodes = adj.len();
+            tracing::debug!(
+                head_rel = %head_rel,
+                load_ms,
+                bfs_ms,
+                out_ms,
+                rows,
+                nodes,
+                "[bfs] {head_rel}: load={load_ms}ms bfs={bfs_ms}ms out+insert={out_ms}ms rows={rows} nodes={nodes}"
             );
         }
         self.save_stmt_ms_one(
@@ -1764,7 +1781,13 @@ impl Engine {
                 .is_some_and(|cache| cache.key == cache_key)
             {
                 if std::env::var_os("DL_BFS_TRACE").is_some() {
-                    eprintln!("[bfs-cache] reuse edge={edge} columns={c0},{c1} sym={sym}");
+                    tracing::trace!(
+                        edge = %edge,
+                        c0 = %c0,
+                        c1 = %c1,
+                        sym,
+                        "[bfs-cache] reuse edge={edge} columns={c0},{c1} sym={sym}"
+                    );
                 }
                 drop(cache_slot);
                 return Ok(std::cell::RefMut::map(
@@ -1776,7 +1799,13 @@ impl Engine {
         let (adjacency, key_to_node, node_keys, text_by_node) =
             self.load_edges_keyed(edge, c0, c1, sym)?;
         if std::env::var_os("DL_BFS_TRACE").is_some() {
-            eprintln!("[bfs-cache] load edge={edge} columns={c0},{c1} sym={sym}");
+            tracing::trace!(
+                edge = %edge,
+                c0 = %c0,
+                c1 = %c1,
+                sym,
+                "[bfs-cache] load edge={edge} columns={c0},{c1} sym={sym}"
+            );
         }
         let mut cache_slot = self.adjacency_cache.borrow_mut();
         *cache_slot = Some(AdjacencyCache {

@@ -99,7 +99,7 @@ pub fn run(args: &[String]) -> Result<i32> {
             print!("{body}");
             return Ok(0);
         }
-        eprintln!("dl examples: no example or std lib named {name:?}");
+        eprintln!("dl examples: no example or std lib named {name:?}"); // @eprintln-ok: final user-facing error print at CLI top level
         return Ok(1);
     }
     if list_std {
@@ -126,5 +126,5 @@ pub fn run(args: &[String]) -> Result<i32> {
 }
 
 fn print_help() {
-    eprintln!("usage: dl examples [<query>…] [--show NAME] [--std] [-n K]");
+    eprintln!("usage: dl examples [<query>…] [--show NAME] [--std] [-n K]"); // @eprintln-ok: usage/help text
 }

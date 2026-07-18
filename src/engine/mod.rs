@@ -1274,11 +1274,15 @@ impl Engine {
             if let Some(first_slug) = seen.get(&key) {
                 let pair = (rc.slug.clone(), first_slug.clone());
                 if self.logged_repo_dedup.insert(pair) {
-                    eprintln!(
-                        "[config] repo {:?} and {:?} resolve to the same directory {}; keeping {:?}",
+                    let dir = key.display();
+                    tracing::warn!(
+                        repo = ?rc.slug,
+                        other = ?first_slug,
+                        dir = %dir,
+                        kept = ?first_slug,
+                        "[config] repo {:?} and {:?} resolve to the same directory {dir}; keeping {:?}",
                         rc.slug,
                         first_slug,
-                        key.display(),
                         first_slug,
                     );
                 }

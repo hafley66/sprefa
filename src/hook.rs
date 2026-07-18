@@ -343,7 +343,8 @@ fn rels_inproc(ev: &HookEvent, programs: &[String], db_path: Option<&str>, root:
     prog.items.retain(|i| !matches!(i, ast::Item::Query(_) | ast::Item::Gen(_)));
     if type_diags.iter().any(|d| d.severity == ast::Severity::Error) {
         for d in type_diags.iter().filter(|d| d.severity == ast::Severity::Error) {
-            eprintln!("dl --hook: program error: {}", d.msg);
+            let msg = &d.msg;
+            tracing::warn!(msg = %msg, "dl --hook: program error: {msg}");
         }
         return Ok(EmitRels { broken: true, ..Default::default() });
     }
@@ -473,7 +474,8 @@ fn hook_work(
                 note,
                 "[hook] cold in-process engine skipped — no-op (a cold build cannot fit the hook deadline)"
             );
-            eprintln!(
+            tracing::warn!(
+                note,
                 "[hook] db blank or absent — cold build skipped, no-op ({note}); warm it: dl daemon start, or a one-shot dl run"
             );
             return Ok(None);
@@ -490,16 +492,16 @@ fn hook_work(
             match rels_via_daemon(&ev, &root) {
                 Ok(r) => Some(r),
                 Err(e) => {
-                    eprintln!("[daemon] hook attach failed, in-process: {e}");
+                    tracing::warn!(error = %e, "[daemon] hook attach failed, in-process: {e}");
                     inproc_or_skip("daemon attach failed")?
                 }
             }
         } else {
-            eprintln!("[hook] no daemon running — a hook never starts one (dl daemon start)");
+            tracing::warn!("[hook] no daemon running — a hook never starts one (dl daemon start)");
             inproc_or_skip("no daemon running")?
         }
     } else {
-        eprintln!("[hook] no daemon serving this root — one-shot engine on .dl/.state/cache.db (start one: dl daemon start)");
+        tracing::warn!("[hook] no daemon serving this root — one-shot engine on .dl/.state/cache.db (start one: dl daemon start)");
         inproc_or_skip("root not daemon-served")?
     };
     let Some(rels) = rels else {
@@ -520,7 +522,7 @@ fn hook_work(
     for name in rels.skills {
         match resolve_skill(&name, &root) {
             Some(body) => ctx.push(format!("# Skill `{name}` (auto-loaded by dl --hook)\n\n{body}")),
-            None => eprintln!("dl --hook: skill `{name}` not found under .agents/skills or .claude/skills"),
+            None => tracing::warn!(name = %name, "dl --hook: skill `{name}` not found under .agents/skills or .claude/skills"),
         }
     }
 
@@ -590,16 +592,18 @@ pub fn run_hook(
             // stderr only surfaces in harness debug views). The invocation row
             // closes with exit 0 in invlog at the CLI exit seam.
             let a = crate::activity::snapshot();
+            let phase = a.phase.as_str();
             tracing::warn!(
                 elapsed_ms = started.elapsed().as_millis() as u64,
                 deadline_ms,
-                phase = a.phase.as_str(),
+                phase,
                 detail = %a.detail,
                 "[hook] deadline hit — abandoning work, no-op reply"
             );
-            eprintln!(
-                "[hook] deadline {deadline_ms}ms hit (phase={}) — no-op; raise with DL_HOOK_DEADLINE_MS=<ms> or 0 to disable",
-                a.phase.as_str()
+            tracing::warn!(
+                deadline_ms,
+                phase,
+                "[hook] deadline {deadline_ms}ms hit (phase={phase}) — no-op; raise with DL_HOOK_DEADLINE_MS=<ms> or 0 to disable"
             );
             Ok(0)
         }

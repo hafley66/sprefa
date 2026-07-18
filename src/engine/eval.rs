@@ -613,9 +613,11 @@ pub(crate) fn parse_file(
                     .current_dir(root)
                     .output()?;
                 if crate::db::profiling() && t_cmd.elapsed().as_millis() >= 250 {
-                    eprintln!(
-                        "[cmd {:.0}ms] {cmdline}",
-                        t_cmd.elapsed().as_secs_f64() * 1000.0
+                    let ms = t_cmd.elapsed().as_secs_f64() * 1000.0;
+                    tracing::debug!(
+                        ms,
+                        cmdline = %cmdline,
+                        "[cmd {ms:.0}ms] {cmdline}"
                     );
                 }
                 let stdout = String::from_utf8_lossy(&output.stdout).into_owned();

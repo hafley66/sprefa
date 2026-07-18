@@ -268,7 +268,7 @@ impl ScipKind {
             };
             if key == self_slug { continue; } // self index already an input
             let Some(root) = roots.get(&key) else {
-                eprintln!("[scip_want] skip {repo}: unknown repo slug");
+                tracing::warn!(repo = %repo, "[scip_want] skip {repo}: unknown repo slug");
                 continue;
             };
             if let Some(p) = crate::scip_setup::ensure_index(root)? {

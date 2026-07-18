@@ -2302,13 +2302,13 @@ fn read_frame_watched(stream: &mut UnixStream) -> Result<String> {
                 if budget != 0 && waited >= budget {
                     eprintln!(
                         "[daemon] no response after {waited}s — the daemon is busy or wedged"
-                    );
-                    eprintln!("  run `dl daemon why` to see what it is doing; giving up (75)");
+                    ); // @eprintln-ok: final user-facing error before process exit
+                    eprintln!("  run `dl daemon why` to see what it is doing; giving up (75)"); // @eprintln-ok: final user-facing error before process exit
                     std::process::exit(75);
                 }
                 let phase = crate::why::last_phase(&daemon_home())
                     .unwrap_or_else(|| "phase unknown, run: dl daemon why".to_string());
-                eprintln!("waiting on daemon ({waited}s): {phase}");
+                tracing::debug!("waiting on daemon ({waited}s): {phase}");
             }
             Err(e) => {
                 let _ = stream.set_read_timeout(None);
@@ -2432,7 +2432,7 @@ pub fn restart() -> Result<()> {
     eprintln!("[daemon] {} (build {}){}",
         if was_running { "restarted" } else { "started" },
         build_id(),
-        if ready { "" } else { " — starting (first tick still in progress)" });
+        if ready { "" } else { " — starting (first tick still in progress)" }); // @eprintln-ok: human-facing status report for dl daemon restart
     Ok(())
 }
 
@@ -2699,7 +2699,7 @@ pub(crate) fn load_repos_eager() -> Vec<config::RepoConfig> {
     match config::SprfConfig::load_default() {
         Ok(cfg) if !cfg.repos.is_empty() => cfg.repos,
         Ok(_) => Vec::new(),
-        Err(e) => { eprintln!("[config] ignored: {e}"); Vec::new() }
+        Err(e) => { tracing::warn!("[config] ignored: {e}"); Vec::new() }
     }
 }
 

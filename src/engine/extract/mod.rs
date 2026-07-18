@@ -577,7 +577,9 @@ impl Engine {
         // refresh rather than silently leaving affected imports unresolved.
         let sys_path_mutators = modgraph::count_sys_path_mutators(&fileset, &reader);
         if sys_path_mutators > 0 {
-            eprintln!(
+            tracing::warn!(
+                sys_path_mutators,
+                rev = %rev,
                 "[modgraph:py] {sys_path_mutators} file(s) mutate sys.path at runtime ({rev}); imports they enable may show unresolved"
             );
         }

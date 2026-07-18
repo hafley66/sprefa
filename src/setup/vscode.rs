@@ -64,7 +64,7 @@ pub(super) fn install_vscode_extension() -> Result<i32> {
                 eprintln!(
                     "[dl setup] `code --install-extension` exited {s}; VSIX left at {}",
                     vsix.display()
-                );
+                ); // @eprintln-ok: human-facing report of external command failure
                 journal.save()?;
                 Ok(1)
             }
@@ -102,16 +102,13 @@ fn build_vscode_vsix(journal: &mut SetupJournal) -> Option<PathBuf> {
             .map(|st| st.success())
             .unwrap_or(false)
     };
-    eprintln!(
-        "[dl setup] building the extension from {} ...",
-        src.display()
-    );
+    tracing::debug!("[dl setup] building the extension from {} ...", src.display());
     if !src.join("node_modules").exists() && !run(&["npm", "ci"]) && !run(&["npm", "install"]) {
-        eprintln!("[dl setup] npm install failed; using the embedded VSIX instead");
+        tracing::warn!("[dl setup] npm install failed; using the embedded VSIX instead");
         return None;
     }
     if !run(&["npm", "run", "compile"]) {
-        eprintln!("[dl setup] extension compile failed; using the embedded VSIX instead");
+        tracing::warn!("[dl setup] extension compile failed; using the embedded VSIX instead");
         return None;
     }
     let out = std::env::temp_dir().join(format!("dl-lsp-fresh-{}.vsix", std::process::id()));
@@ -126,7 +123,7 @@ fn build_vscode_vsix(journal: &mut SetupJournal) -> Option<PathBuf> {
         if journal.record_staged(&out).is_err() { return None; }
         Some(out)
     } else {
-        eprintln!("[dl setup] `vsce package` failed; using the embedded VSIX instead");
+        tracing::warn!("[dl setup] `vsce package` failed; using the embedded VSIX instead");
         None
     }
 }

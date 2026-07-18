@@ -108,8 +108,9 @@ fn refresh_similar_rel(eng: &Engine, backend: &str, max: usize) -> Result<()> {
         v
     };
     if pool.len() > 2000 {
-        eprintln!("[similar] brute-force KNN over {} vectors (O(n^2)); \
-                   cap with SPREFA_EMBED_MAX or wire sqlite-vec", pool.len());
+        let n = pool.len();
+        tracing::debug!(n, "[similar] brute-force KNN over {n} vectors (O(n^2)); \
+                   cap with SPREFA_EMBED_MAX or wire sqlite-vec");
     }
     let rows = knn_rows(&pool, k);
     eng.refresh_rel("similar", &["a", "b", "score"], &rows)?;

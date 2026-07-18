@@ -64,7 +64,8 @@ impl Engine {
         self.apply_zones(&zones, &mut written, &write_roots)?;
         self.apply_appends(&appends, &claimed, &mut written, &write_roots)?;
         if !written.is_empty() && !quiet {
-            eprintln!("[gen] wrote {}", written.join(", "));
+            let files = written.join(", ");
+            tracing::debug!(files = %files, "[gen] wrote {files}");
         }
         Ok(())
     }

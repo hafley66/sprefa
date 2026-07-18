@@ -210,7 +210,7 @@ pub fn run_index(args: &[String]) -> Result<i32> {
         return Ok(0);
     }
     if let Some(u) = opts.unknown {
-        eprintln!("dl index: unknown arg {u}");
+        eprintln!("dl index: unknown arg {u}"); // @eprintln-ok: final user-facing error print at CLI top level
         print_index_help();
         return Ok(2);
     }
@@ -233,27 +233,31 @@ pub fn run_index(args: &[String]) -> Result<i32> {
     // aggregation dir (the serving home, or a folder of checked-out repos) would
     // fan the indexer over everything. Refuse those unless --force.
     if root == crate::daemon::daemon_home() && !opts.force {
-        eprintln!("[dl index] {} is the daemon serving home, not a single project.", root.display());
-        eprintln!("[dl index] cd into a specific repo and run `dl index` there (or pass --force).");
+        let root_display = root.display();
+        tracing::warn!(root = %root_display, "[dl index] {root_display} is the daemon serving home, not a single project.");
+        tracing::warn!("[dl index] cd into a specific repo and run `dl index` there (or pass --force).");
         return Ok(2);
     }
     if let Some(repos) = nested_repos(&root) {
         if !opts.force {
-            eprintln!("[dl index] {} looks like a collection of {} repos (nested .git dirs):",
-                root.display(), repos.len());
-            for r in repos.iter().take(5) { eprintln!("             {r}"); }
-            if repos.len() > 5 { eprintln!("             … and {} more", repos.len() - 5); }
-            eprintln!("[dl index] indexing here would run the indexer over every repo. Run `dl index`");
-            eprintln!("[dl index] inside one repo, or pass --force to index this whole tree deliberately.");
+            let root_display = root.display();
+            let repo_count = repos.len();
+            tracing::warn!(root = %root_display, repo_count, "[dl index] {root_display} looks like a collection of {repo_count} repos (nested .git dirs):");
+            for r in repos.iter().take(5) { tracing::warn!("             {r}"); }
+            if repos.len() > 5 { tracing::warn!("             … and {} more", repos.len() - 5); }
+            tracing::warn!("[dl index] indexing here would run the indexer over every repo. Run `dl index`");
+            tracing::warn!("[dl index] inside one repo, or pass --force to index this whole tree deliberately.");
             return Ok(2);
         }
     }
 
     let found = detect(&root);
     if found.is_empty() {
-        eprintln!("[dl index] no known language markers under {}", root.display());
-        eprintln!("[dl index] looked for: {}", INDEXERS.iter()
-            .flat_map(|i| i.markers.iter().copied()).collect::<Vec<_>>().join(", "));
+        let root_display = root.display();
+        let markers = INDEXERS.iter()
+            .flat_map(|i| i.markers.iter().copied()).collect::<Vec<_>>().join(", ");
+        tracing::warn!(root = %root_display, markers = %markers, "[dl index] no known language markers under {root_display}");
+        tracing::warn!(markers = %markers, "[dl index] looked for: {markers}");
         return Ok(1);
     }
     println!("[dl index] detected: {}", found.iter().map(|i| i.lang).collect::<Vec<_>>().join(", "));
@@ -292,12 +296,12 @@ pub fn run_index(args: &[String]) -> Result<i32> {
             ran_any = true;
             parts.push(part);
         } else {
-            eprintln!("[dl index] {} failed; skipping {}", ix.bin, ix.lang);
+            tracing::warn!("[dl index] {} failed; skipping {}", ix.bin, ix.lang);
         }
     }
 
     if !ran_any {
-        eprintln!("[dl index] no indexer ran; nothing written.");
+        tracing::warn!("[dl index] no indexer ran; nothing written.");
         return Ok(1);
     }
 
@@ -322,12 +326,16 @@ pub fn run_index(args: &[String]) -> Result<i32> {
             println!("[dl index] scip_def={} scip_ref={} scip_edge={} scip_fn_edge={}",
                 rows.defs.len(), rows.refs.len(), rows.edges.len(), rows.fn_edges.len());
             if !path_join_ok(&root, &rows) {
-                eprintln!("[dl index] WARNING: index paths do not join under {} — \
+                let root_display = root.display();
+                tracing::warn!(root = %root_display, "[dl index] WARNING: index paths do not join under {root_display} — \
                     the scip_* rules will return empty. Run `dl index` from the \
-                    workspace root (or pass it as DIR).", root.display());
+                    workspace root (or pass it as DIR).");
             }
         }
-        Err(e) => eprintln!("[dl index] wrote {} but failed to read it back: {e}", out.display()),
+        Err(e) => {
+            let out_display = out.display();
+            tracing::error!(out = %out_display, error = %e, "[dl index] wrote {out_display} but failed to read it back: {e}");
+        }
     }
     println!("[dl index] scip_* relations now load automatically when you run dl from {}.", root.display());
     Ok(0)
@@ -347,8 +355,8 @@ pub fn ensure_index(root: &Path) -> Result<Option<PathBuf>> {
     let found = detect(root);
     let present: Vec<&&Indexer> = found.iter().filter(|ix| installed(ix.bin)).collect();
     if present.is_empty() {
-        eprintln!("[scip_want] {}: no installed indexer for detected markers; skipping",
-            root.display());
+        let root_display = root.display();
+        tracing::warn!(root = %root_display, "[scip_want] {root_display}: no installed indexer for detected markers; skipping");
         return Ok(None);
     }
     let dl_dir = crate::state_dir(root);
@@ -357,11 +365,12 @@ pub fn ensure_index(root: &Path) -> Result<Option<PathBuf>> {
     let mut parts: Vec<PathBuf> = Vec::new();
     for ix in present {
         let part = dl_dir.join(format!("index.{}.scip", ix.lang.replace('/', "_")));
-        eprintln!("[scip_want] indexing {} with {}", root.display(), ix.bin);
+        let root_display = root.display();
+        tracing::debug!(root = %root_display, bin = ix.bin, "[scip_want] indexing {root_display} with {}", ix.bin);
         if run_indexer(ix, root, &part)? {
             parts.push(part);
         } else {
-            eprintln!("[scip_want] {} failed under {}; skipping {}", ix.bin, root.display(), ix.lang);
+            tracing::warn!("[scip_want] {} failed under {}; skipping {}", ix.bin, root.display(), ix.lang);
         }
     }
     if parts.is_empty() {
@@ -394,7 +403,7 @@ fn run_indexer(ix: &Indexer, root: &Path, out: &Path) -> Result<bool> {
     match status {
         Ok(s) => Ok(s.success()),
         Err(e) => {
-            eprintln!("[dl index] could not launch {}: {e}", ix.bin);
+            tracing::warn!(bin = ix.bin, error = %e, "[dl index] could not launch {}: {e}", ix.bin);
             Ok(false)
         }
     }
@@ -405,19 +414,19 @@ fn run_install(cmd: &str) {
     let status = std::process::Command::new("sh").arg("-c").arg(cmd).status();
     match status {
         Ok(s) if s.success() => {}
-        Ok(s) => eprintln!("[dl index] install command exited {s}"),
-        Err(e) => eprintln!("[dl index] could not run install command: {e}"),
+        Ok(s) => tracing::warn!(status = %s, "[dl index] install command exited {s}"),
+        Err(e) => tracing::error!(error = %e, "[dl index] could not run install command: {e}"),
     }
 }
 
 fn print_index_help() {
-    eprintln!("usage: dl index [DIR] [--install] [--rev REV] [--force]");
-    eprintln!("  DIR                  workspace root to index (default: cwd)");
-    eprintln!("  --install            run the install command for any missing indexer");
-    eprintln!("  --rev REV            print the worktree-and-index recipe for a git rev");
-    eprintln!("  detects rust / typescript / python / go / kotlin-java / cpp by marker files,");
-    eprintln!("  runs each indexer with cwd=root, merges to <root>/.dl/.state/index.scip (gitignored).");
-    eprintln!("  see `dl doctor` for the health screen.");
+    eprintln!("usage: dl index [DIR] [--install] [--rev REV] [--force]"); // @eprintln-ok: usage/help text
+    eprintln!("  DIR                  workspace root to index (default: cwd)"); // @eprintln-ok: usage/help text
+    eprintln!("  --install            run the install command for any missing indexer"); // @eprintln-ok: usage/help text
+    eprintln!("  --rev REV            print the worktree-and-index recipe for a git rev"); // @eprintln-ok: usage/help text
+    eprintln!("  detects rust / typescript / python / go / kotlin-java / cpp by marker files,"); // @eprintln-ok: usage/help text
+    eprintln!("  runs each indexer with cwd=root, merges to <root>/.dl/.state/index.scip (gitignored)."); // @eprintln-ok: usage/help text
+    eprintln!("  see `dl doctor` for the health screen."); // @eprintln-ok: usage/help text
 }
 
 // ── dl doctor ───────────────────────────────────────────────────────────────
@@ -425,9 +434,9 @@ fn print_index_help() {
 pub fn run_doctor(args: &[String]) -> Result<i32> {
     let (root, opts) = resolve_dir(args)?;
     if opts.help {
-        eprintln!("usage: dl doctor [DIR]");
-        eprintln!("  reports detected languages, indexer availability, index presence +");
-        eprintln!("  freshness, path-join sanity, and scip_* row counts for the workspace.");
+        eprintln!("usage: dl doctor [DIR]"); // @eprintln-ok: usage/help text
+        eprintln!("  reports detected languages, indexer availability, index presence +"); // @eprintln-ok: usage/help text
+        eprintln!("  freshness, path-join sanity, and scip_* row counts for the workspace."); // @eprintln-ok: usage/help text
         return Ok(0);
     }
     println!("dl doctor — {}", root.display());
