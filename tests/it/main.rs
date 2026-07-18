@@ -22,6 +22,7 @@ mod call_rels;
 mod changed;
 mod check_daemon;
 mod check_deadline;
+mod cold_stage;
 mod const_value;
 mod string_flow;
 mod changed_line;

@@ -1,6 +1,42 @@
 # Cold-start staging: extract one family-shard per tick, not the whole corpus at once
 
-Status: DESIGN ONLY (no code). Written 2026-07-17.
+Status: IMPLEMENTED 2026-07-18 (branch `cold-stage`). Riding the existing `src/jobq/`
+queue as greenlit; the D1–D6 proposals below were accepted as the decisions taken.
+Code: `src/engine/cold_stage.rs` (node table + seed/run/complete/resume), the staging
+gate in `src/engine/tick.rs::tick_report`, `JobKind::ColdExtract` + `JobRow::cold_extract`
+in `src/jobq/mod.rs`, and the daemon wiring in `src/daemon.rs` (single-flight cold
+worker, `ServedRoot::run_cold_node`, `cold_start_pending` on status/ping, `poll_idle`
+guard). Tests: `tests/it/cold_stage.rs`.
+
+## Decisions taken (D1–D6)
+
+- **D1 — enable/default:** staged path taken ONLY when `Engine::poll_loop` is set (the
+  daemon). One-shot `--no-daemon` keeps the inline cold tick and never touches
+  `_cold_node`. `DL_NO_COLD_STAGE=1` disables staging even under the daemon.
+- **D2 — shard count/domain:** `cold_shard_count` carries `ceil(files/200)` capped at
+  16 (`DL_COLD_SHARD_FILES` overrides the 200), behind a per-family `shardable_cold()`
+  gate. Hash-by-`blake3(path)` slicing is the Shape-B follow-up.
+- **D3 — hot subset inline:** deferred (pure staging). Hot-priority is a follow-up.
+- **D4 — which families shard:** in this arc EVERY used family runs WHOLESALE as one
+  node (`n_shards = 1`; `shardable_cold()` is false for all). Per-file sharding of an
+  individual family is deferred: the type/call/dataflow resolvers run a corpus-global
+  name→def barrier and the `extract:<family>` skip digest is per-rev (not per-shard),
+  so a per-file slice cannot be made digest-consistent without new infra — and a wrong
+  slice would poison the digest skip and break the inline-equivalence contract. This is
+  exactly the plan's sanctioned "a wholesale family is just a family with N_SHARDS=1".
+  Cross-shard call-edge resolution is therefore a non-issue this arc; the completion
+  Tick is the single correctness guarantee (it re-runs the normal blank-slate path,
+  whose per-family digest skips make the already-extracted families cheap). `node`
+  (CST) and `spine` are NOT staged (they lack a pre-walk skip digest and would re-run
+  on the completion tick anyway; `spine` also needs `node` first) — they run on the
+  completion tick, same as inline.
+- **D5 — query semantics during cold start:** serve partial. `cold_start_pending` is
+  exposed on the status + ping RPCs; `poll_idle` returns not-idle (await-settle blocks)
+  while cold-pending; `dl daemon jobs` lists the `cold_extract` rows for free.
+- **D6 — relation to J3:** `ColdExtract` is a separate `JobKind` from the reserved
+  `DeriveStratum` (J3); both ride the same node-table shape.
+
+Written 2026-07-17.
 
 Question from the user: on a cold db, one tick extracts every used family over the
 whole corpus in a single synchronous body. Can that be staged/queued across ticks
