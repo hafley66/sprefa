@@ -1,4 +1,5 @@
 use super::*;
+use crate::db::SqlVal;
 
 #[derive(Clone, Debug)]
 pub(in crate::engine::pipeline) struct SourceRowCursor {
@@ -28,7 +29,7 @@ impl SourceStage<'_> {
         if current_base != ready.base {
             return Err(SourceStageError::StaleBase);
         }
-        verify_ready(self.conn, ready)
+        verify_ready(self.db, ready)
     }
 
     /// Materialize one bounded page, closing its SQLite cursor before the
@@ -40,8 +41,11 @@ impl SourceStage<'_> {
         row_limit: usize,
         byte_limit: usize,
     ) -> Result<Vec<SourceStageRow>, SourceStageError> {
-        if let Some(after) = after {
-            let mut stmt = self.conn.prepare(
+        let stage_id = SqlVal::Blob(ready.stage_id.0.to_vec());
+        let limit = i64::try_from(row_limit).map_err(|_| SourceStageError::EncodingTooLarge)?;
+        let rows = if let Some(after) = after {
+            self.db.query_rows(
+                "_source_stage_row",
                 "SELECT relation,repo,path,ordinal,encoded FROM _source_stage_row
                  WHERE stage_id=?1 AND (
                    relation>?2
@@ -49,47 +53,67 @@ impl SourceStage<'_> {
                    OR (relation=?2 AND ordinal=?3 AND repo>?4)
                    OR (relation=?2 AND ordinal=?3 AND repo=?4 AND path>?5))
                  ORDER BY relation,ordinal,repo,path LIMIT ?6",
-            )?;
-            let mut rows = stmt.query(params![
-                ready.stage_id.0.as_slice(),
-                after.relation,
-                i64::try_from(after.ordinal).map_err(|_| SourceStageError::EncodingTooLarge)?,
-                after.repo,
-                after.path,
-                i64::try_from(row_limit).map_err(|_| SourceStageError::EncodingTooLarge)?,
-            ])?;
-            collect_page(&mut rows, row_limit, byte_limit)
+                &[
+                    stage_id,
+                    SqlVal::Text(after.relation.clone()),
+                    SqlVal::Int(after.ordinal as i64),
+                    SqlVal::Text(after.repo.clone()),
+                    SqlVal::Text(after.path.clone()),
+                    SqlVal::Int(limit),
+                ],
+                |row| {
+                    let encoded: Vec<u8> = row.get(4)?;
+                    Ok((
+                        SourceStageRow {
+                            relation: row.get(0)?,
+                            repo: row.get(1)?,
+                            path: row.get(2)?,
+                            ordinal: row.get::<_, i64>(3)? as u64,
+                            values: decode_values(&encoded)?,
+                        },
+                        encoded.len(),
+                    ))
+                },
+            )
         } else {
-            let mut stmt = self.conn.prepare(
+            self.db.query_rows(
+                "_source_stage_row",
                 "SELECT relation,repo,path,ordinal,encoded FROM _source_stage_row
                  WHERE stage_id=?1 ORDER BY relation,ordinal,repo,path LIMIT ?2",
-            )?;
-            let mut rows = stmt.query(params![
-                ready.stage_id.0.as_slice(),
-                i64::try_from(row_limit).map_err(|_| SourceStageError::EncodingTooLarge)?,
-            ])?;
-            collect_page(&mut rows, row_limit, byte_limit)
+                &[stage_id, SqlVal::Int(limit)],
+                |row| {
+                    let encoded: Vec<u8> = row.get(4)?;
+                    Ok((
+                        SourceStageRow {
+                            relation: row.get(0)?,
+                            repo: row.get(1)?,
+                            path: row.get(2)?,
+                            ordinal: row.get::<_, i64>(3)? as u64,
+                            values: decode_values(&encoded)?,
+                        },
+                        encoded.len(),
+                    ))
+                },
+            )
         }
+        .map_err(SourceStageError::Db)?;
+        collect_page(rows, row_limit, byte_limit)
     }
 }
 
 fn collect_page(
-    rows: &mut rusqlite::Rows<'_>,
+    rows: Vec<(SourceStageRow, usize)>,
     row_limit: usize,
     byte_limit: usize,
 ) -> Result<Vec<SourceStageRow>, SourceStageError> {
     let mut out = Vec::with_capacity(row_limit.min(4096));
     let mut page_bytes = 0usize;
-    while let Some(row) = rows.next()? {
-        let relation: String = row.get(0)?;
-        let repo: String = row.get(1)?;
-        let path: String = row.get(2)?;
-        let encoded: Vec<u8> = row.get(4)?;
+    for (row, encoded_len) in rows {
         let bytes = 24usize
-            .checked_add(relation.len())
-            .and_then(|n| n.checked_add(repo.len()))
-            .and_then(|n| n.checked_add(path.len()))
-            .and_then(|n| n.checked_add(encoded.len()))
+            .checked_add(row.relation.len())
+            .and_then(|n| n.checked_add(row.repo.len()))
+            .and_then(|n| n.checked_add(row.path.len()))
+            .and_then(|n| n.checked_add(encoded_len))
             .ok_or(SourceStageError::EncodingTooLarge)?;
         if !out.is_empty()
             && page_bytes
@@ -101,13 +125,7 @@ fn collect_page(
         page_bytes = page_bytes
             .checked_add(bytes)
             .ok_or(SourceStageError::EncodingTooLarge)?;
-        out.push(SourceStageRow {
-            relation,
-            repo,
-            path,
-            ordinal: row.get::<_, i64>(3)? as u64,
-            values: decode_values(&encoded)?,
-        });
+        out.push(row);
         if out.len() == row_limit {
             break;
         }

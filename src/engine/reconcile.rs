@@ -338,7 +338,7 @@ impl Engine {
                 total: rule_files.len(),
             })
         });
-        let cleanup = prepared.discard(self.db.conn());
+        let cleanup = prepared.discard(&self.db);
         match outcome {
             Ok(report) => {
                 self.rev_index = next_rev_index;

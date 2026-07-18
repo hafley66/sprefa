@@ -33,13 +33,17 @@ fn engine() -> Engine {
 fn live_rows(engine: &Engine) -> i64 {
     engine
         .db
-        .conn()
-        .query_row("SELECT count(*) FROM rel_staged_fact", [], |row| row.get(0))
+        .query_one(
+            "rel_staged_fact",
+            "SELECT count(*) FROM rel_staged_fact",
+            &[],
+            |row| Ok(row.get(0)?),
+        )
         .unwrap()
 }
 
 fn prepared(engine: &Engine, base: [u8; 32]) -> PreparedSourceFacts {
-    let mut stage = FullSourceStageBuilder::new(engine.db.conn(), 1, base).unwrap();
+    let mut stage = FullSourceStageBuilder::new(&engine.db, 1, base).unwrap();
     stage
         .push(
             "staged_fact",
@@ -94,21 +98,23 @@ fn prepared_rows_apply_with_provenance_then_cleanup() {
     assert_eq!(live_rows(&engine), 2);
     let provenance: i64 = engine
         .db
-        .conn()
-        .query_row(
+        .query_one(
+            "_prov",
             "SELECT count(*) FROM _prov WHERE rel='staged_fact' AND repo='repo' AND path='a.rs'",
-            [],
-            |row| row.get(0),
+            &[],
+            |row| Ok(row.get(0)?),
         )
         .unwrap();
     assert_eq!(provenance, 2);
-    prepared.discard(engine.db.conn()).unwrap();
+    prepared.discard(&engine.db).unwrap();
     let staged: i64 = engine
         .db
-        .conn()
-        .query_row("SELECT count(*) FROM _source_stage_row", [], |row| {
-            row.get(0)
-        })
+        .query_one(
+            "_source_stage_row",
+            "SELECT count(*) FROM _source_stage_row",
+            &[],
+            |row| Ok(row.get(0)?),
+        )
         .unwrap();
     assert_eq!(staged, 0);
 }
@@ -126,43 +132,45 @@ fn apply_error_rolls_back_live_rows_and_stale_base_is_refused() {
     assert_eq!(live_rows(&engine), 0);
     let spans: i64 = engine
         .db
-        .conn()
-        .query_row(
+        .query_one(
+            "_where_bytes",
             "SELECT count(*) FROM _where_bytes WHERE repo='repo' AND path='a.rs'",
-            [],
-            |row| row.get(0),
+            &[],
+            |row| Ok(row.get(0)?),
         )
         .unwrap();
     let strings: i64 = engine
         .db
-        .conn()
-        .query_row(
+        .query_one(
+            "_strings",
             "SELECT count(*) FROM _strings WHERE content='prepared-span'",
-            [],
-            |row| row.get(0),
+            &[],
+            |row| Ok(row.get(0)?),
         )
         .unwrap();
     assert_eq!((spans, strings), (0, 0));
     assert!(prepared.apply(&engine, [9; 32]).is_err());
     assert_eq!(live_rows(&engine), 0);
-    prepared.discard(engine.db.conn()).unwrap();
+    prepared.discard(&engine.db).unwrap();
 }
 
 #[test]
 fn failed_builder_is_cleaned_up_on_drop() {
     let engine = engine();
     {
-        let mut stage = FullSourceStageBuilder::new(engine.db.conn(), 1, [3; 32]).unwrap();
+        let mut stage = FullSourceStageBuilder::new(&engine.db, 1, [3; 32]).unwrap();
         stage
             .push("staged_fact", "repo", "a.rs", 0, &[Value::Int(1)])
             .unwrap();
     }
     let staged: i64 = engine
         .db
-        .conn()
-        .query_row("SELECT count(*) FROM _source_stage_row", [], |row| {
-            row.get(0)
-        })
+        .query_one(
+            "_source_stage_row",
+            "SELECT count(*) FROM _source_stage_row",
+            &[],
+            |row| Ok(row.get(0)?),
+        )
         .unwrap();
     assert_eq!(staged, 0);
 }
@@ -171,7 +179,7 @@ fn failed_builder_is_cleaned_up_on_drop() {
 fn located_spans_share_the_sealed_stage_and_apply_in_batches() {
     let mut engine = engine();
     let base = [5; 32];
-    let mut stage = FullSourceStageBuilder::new(engine.db.conn(), 1, base).unwrap();
+    let mut stage = FullSourceStageBuilder::new(&engine.db, 1, base).unwrap();
     stage
         .push_where(
             "repo",
@@ -195,30 +203,30 @@ fn located_spans_share_the_sealed_stage_and_apply_in_batches() {
         .unwrap();
     let spans: i64 = engine
         .db
-        .conn()
-        .query_row(
+        .query_one(
+            "_where_bytes",
             "SELECT count(*) FROM _where_bytes WHERE repo='repo' AND path='a.rs'",
-            [],
-            |row| row.get(0),
+            &[],
+            |row| Ok(row.get(0)?),
         )
         .unwrap();
     let strings: i64 = engine
         .db
-        .conn()
-        .query_row(
+        .query_one(
+            "_strings",
             "SELECT count(*) FROM _strings WHERE content='alpha'",
-            [],
-            |row| row.get(0),
+            &[],
+            |row| Ok(row.get(0)?),
         )
         .unwrap();
     assert_eq!((spans, strings), (1, 1));
-    prepared.discard(engine.db.conn()).unwrap();
+    prepared.discard(&engine.db).unwrap();
 }
 
 #[test]
 fn reserved_span_rows_are_typed_and_count_toward_stage_bytes() {
     let engine = engine();
-    let mut stage = FullSourceStageBuilder::new(engine.db.conn(), 1, [6; 32]).unwrap();
+    let mut stage = FullSourceStageBuilder::new(&engine.db, 1, [6; 32]).unwrap();
     assert!(stage
         .push("@where", "repo", "a.rs", 0, &[Value::Int(1)])
         .is_err());
@@ -236,7 +244,7 @@ fn reserved_span_rows_are_typed_and_count_toward_stage_bytes() {
 fn apply_pages_past_cursor_and_keeps_extraction_order_for_keyed_facts() {
     let mut engine = engine();
     let base = [4; 32];
-    let mut stage = FullSourceStageBuilder::new(engine.db.conn(), 1, base).unwrap();
+    let mut stage = FullSourceStageBuilder::new(&engine.db, 1, base).unwrap();
     for ordinal in 0..4101u64 {
         stage
             .push(
@@ -285,13 +293,13 @@ fn apply_pages_past_cursor_and_keeps_extraction_order_for_keyed_facts() {
     assert_eq!(live_rows(&engine), 4101);
     let selected: i64 = engine
         .db
-        .conn()
-        .query_row(
+        .query_one(
+            "rel_keyed_fact",
             "SELECT value FROM rel_keyed_fact WHERE key='same'",
-            [],
-            |row| row.get(0),
+            &[],
+            |row| Ok(row.get(0)?),
         )
         .unwrap();
     assert_eq!(selected, 1);
-    prepared.discard(engine.db.conn()).unwrap();
+    prepared.discard(&engine.db).unwrap();
 }

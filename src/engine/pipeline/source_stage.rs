@@ -1,8 +1,7 @@
 //! Bounded, sealed source-row staging on the engine's SQLite connection.
 
-use rusqlite::{params, Connection, OptionalExtension};
-
 use crate::ast::Value;
+use crate::db::{Db, SqlVal};
 
 const MAX_BUFFERED_ROWS: usize = 4096;
 const MAX_BUFFERED_BYTES: usize = 256 * 1024;
@@ -96,16 +95,19 @@ pub(super) struct SourceStageOwner {
 }
 
 pub(super) struct SourceStage<'a> {
-    conn: &'a Connection,
+    db: &'a Db,
 }
 
 impl<'a> SourceStage<'a> {
-    pub(super) fn open(conn: &'a Connection) -> Result<Self, SourceStageError> {
-        let temp_store: i64 = conn.query_row("PRAGMA temp_store", [], |row| row.get(0))?;
+    pub(super) fn open(db: &'a Db) -> Result<Self, SourceStageError> {
+        let temp_store: i64 = db
+            .query_one("_pragma", "PRAGMA temp_store", &[], |row| Ok(row.get(0)?))
+            .map_err(SourceStageError::Db)?;
         if temp_store != 1 {
             return Err(SourceStageError::TempStoreNotFile);
         }
-        conn.execute_batch(
+        db.execute_batch_on(
+            "_source_stage",
             "PRAGMA temp.cache_size=-256;
             PRAGMA cache_spill=ON;
             CREATE TEMP TABLE IF NOT EXISTS _source_stage_row(
@@ -134,14 +136,15 @@ impl<'a> SourceStage<'a> {
                 encoded_bytes INTEGER NOT NULL,
                 digest BLOB NOT NULL CHECK(length(digest) = 32)
             ) WITHOUT ROWID;",
-        )?;
-        Ok(Self { conn })
+        )
+        .map_err(SourceStageError::Db)?;
+        Ok(Self { db })
     }
 
     /// Borrow an already-open stage without issuing TEMP DDL or PRAGMAs.
     /// Apply uses this inside the main WAL transaction, where TEMP is read-only.
-    pub(super) const fn existing(conn: &'a Connection) -> Self {
-        Self { conn }
+    pub(super) const fn existing(db: &'a Db) -> Self {
+        Self { db }
     }
 
     pub(super) fn begin(
@@ -150,20 +153,30 @@ impl<'a> SourceStage<'a> {
         limits: StageLimits,
     ) -> Result<StageWriter<'a>, SourceStageError> {
         validate_limits(limits)?;
-        self.conn.execute(
-            "DELETE FROM _source_stage_ready WHERE stage_id = ?1",
-            [stage_id.0.as_slice()],
-        )?;
-        self.conn.execute(
-            "DELETE FROM _source_stage_row WHERE stage_id = ?1",
-            [stage_id.0.as_slice()],
-        )?;
-        self.conn.execute(
-            "DELETE FROM _source_stage_owner WHERE stage_id = ?1",
-            [stage_id.0.as_slice()],
-        )?;
+        let id_val = SqlVal::Blob(stage_id.0.to_vec());
+        self.db
+            .exec_params(
+                "_source_stage_ready",
+                "DELETE FROM _source_stage_ready WHERE stage_id = ?1",
+                &[id_val.clone()],
+            )
+            .map_err(SourceStageError::Db)?;
+        self.db
+            .exec_params(
+                "_source_stage_row",
+                "DELETE FROM _source_stage_row WHERE stage_id = ?1",
+                &[id_val.clone()],
+            )
+            .map_err(SourceStageError::Db)?;
+        self.db
+            .exec_params(
+                "_source_stage_owner",
+                "DELETE FROM _source_stage_owner WHERE stage_id = ?1",
+                &[id_val],
+            )
+            .map_err(SourceStageError::Db)?;
         Ok(StageWriter {
-            conn: self.conn,
+            db: self.db,
             stage_id,
             limits,
             buffered_bytes: 0,
@@ -178,21 +191,24 @@ impl<'a> SourceStage<'a> {
         generation: i64,
         base: StageBase,
     ) -> Result<SealedSourceStage, SourceStageError> {
-        let ready = derive_ready(self.conn, stage_id, generation, base)?;
-        self.conn.execute(
-            "INSERT INTO _source_stage_ready(
-                 stage_id,generation,base_stamp,key_count,row_count,encoded_bytes,digest)
-             VALUES (?1,?2,?3,?4,?5,?6,?7)",
-            params![
-                stage_id.0.as_slice(),
-                generation,
-                base.0.as_slice(),
-                ready.key_count,
-                ready.row_count,
-                ready.encoded_bytes,
-                ready.digest.as_slice()
-            ],
-        )?;
+        let ready = derive_ready(self.db, stage_id, generation, base)?;
+        self.db
+            .exec_params(
+                "_source_stage_ready",
+                "INSERT INTO _source_stage_ready(
+                     stage_id,generation,base_stamp,key_count,row_count,encoded_bytes,digest)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                &[
+                    SqlVal::Blob(stage_id.0.to_vec()),
+                    SqlVal::Int(generation),
+                    SqlVal::Blob(base.0.to_vec()),
+                    SqlVal::Int(ready.key_count as i64),
+                    SqlVal::Int(ready.row_count as i64),
+                    SqlVal::Int(ready.encoded_bytes as i64),
+                    SqlVal::Blob(ready.digest.to_vec()),
+                ],
+            )
+            .map_err(SourceStageError::Db)?;
         Ok(ready)
     }
 
@@ -206,21 +222,28 @@ impl<'a> SourceStage<'a> {
         if current_base != ready.base {
             return Err(SourceStageError::StaleBase);
         }
-        verify_ready(self.conn, ready)?;
-        let mut stmt = self.conn.prepare(
-            "SELECT relation,repo,path,ordinal,encoded FROM _source_stage_row
-             WHERE stage_id=?1 ORDER BY relation,repo,path,ordinal",
-        )?;
-        let mut rows = stmt.query([ready.stage_id.0.as_slice()])?;
+        verify_ready(self.db, ready)?;
+        let rows = self
+            .db
+            .query_rows(
+                "_source_stage_row",
+                "SELECT relation,repo,path,ordinal,encoded FROM _source_stage_row
+                 WHERE stage_id=?1 ORDER BY relation,repo,path,ordinal",
+                &[SqlVal::Blob(ready.stage_id.0.to_vec())],
+                |row| {
+                    Ok(SourceStageRow {
+                        relation: row.get(0)?,
+                        repo: row.get(1)?,
+                        path: row.get(2)?,
+                        ordinal: row.get::<_, i64>(3)? as u64,
+                        values: decode_values(&row.get::<_, Vec<u8>>(4)?)?,
+                    })
+                },
+            )
+            .map_err(SourceStageError::Db)?;
         let mut visited = 0;
-        while let Some(row) = rows.next()? {
-            visit(SourceStageRow {
-                relation: row.get(0)?,
-                repo: row.get(1)?,
-                path: row.get(2)?,
-                ordinal: row.get::<_, i64>(3)? as u64,
-                values: decode_values(&row.get::<_, Vec<u8>>(4)?)?,
-            })?;
+        for row in rows {
+            visit(row).map_err(|_| SourceStageError::VisitorFailed)?;
             visited += 1;
         }
         Ok(visited)
@@ -235,19 +258,26 @@ impl<'a> SourceStage<'a> {
         if current_base != ready.base {
             return Err(SourceStageError::StaleBase);
         }
-        verify_ready(self.conn, ready)?;
-        let mut stmt = self.conn.prepare(
-            "SELECT relation,repo,path FROM _source_stage_owner
-             WHERE stage_id=?1 ORDER BY relation,repo,path",
-        )?;
-        let mut rows = stmt.query([ready.stage_id.0.as_slice()])?;
+        verify_ready(self.db, ready)?;
+        let rows = self
+            .db
+            .query_rows(
+                "_source_stage_owner",
+                "SELECT relation,repo,path FROM _source_stage_owner
+                 WHERE stage_id=?1 ORDER BY relation,repo,path",
+                &[SqlVal::Blob(ready.stage_id.0.to_vec())],
+                |row| {
+                    Ok(SourceStageOwner {
+                        relation: row.get(0)?,
+                        repo: row.get(1)?,
+                        path: row.get(2)?,
+                    })
+                },
+            )
+            .map_err(SourceStageError::Db)?;
         let mut visited = 0;
-        while let Some(row) = rows.next()? {
-            visit(SourceStageOwner {
-                relation: row.get(0)?,
-                repo: row.get(1)?,
-                path: row.get(2)?,
-            })?;
+        for row in rows {
+            visit(row).map_err(|_| SourceStageError::VisitorFailed)?;
             visited += 1;
         }
         Ok(visited)
@@ -257,18 +287,28 @@ impl<'a> SourceStage<'a> {
     /// main WAL semantic transaction commits or aborts; consume itself never
     /// mutates TEMP seal/row state inside that transaction.
     pub(super) fn discard(&self, stage_id: StageId) -> Result<(), SourceStageError> {
-        self.conn.execute(
-            "DELETE FROM _source_stage_ready WHERE stage_id=?1",
-            [stage_id.0.as_slice()],
-        )?;
-        self.conn.execute(
-            "DELETE FROM _source_stage_row WHERE stage_id=?1",
-            [stage_id.0.as_slice()],
-        )?;
-        self.conn.execute(
-            "DELETE FROM _source_stage_owner WHERE stage_id=?1",
-            [stage_id.0.as_slice()],
-        )?;
+        let id_val = SqlVal::Blob(stage_id.0.to_vec());
+        self.db
+            .exec_params(
+                "_source_stage_ready",
+                "DELETE FROM _source_stage_ready WHERE stage_id=?1",
+                &[id_val.clone()],
+            )
+            .map_err(SourceStageError::Db)?;
+        self.db
+            .exec_params(
+                "_source_stage_row",
+                "DELETE FROM _source_stage_row WHERE stage_id=?1",
+                &[id_val.clone()],
+            )
+            .map_err(SourceStageError::Db)?;
+        self.db
+            .exec_params(
+                "_source_stage_owner",
+                "DELETE FROM _source_stage_owner WHERE stage_id=?1",
+                &[id_val],
+            )
+            .map_err(SourceStageError::Db)?;
         Ok(())
     }
 }
@@ -283,7 +323,7 @@ struct BufferedRow {
 }
 
 pub(super) struct StageWriter<'a> {
-    conn: &'a Connection,
+    db: &'a Db,
     stage_id: StageId,
     limits: StageLimits,
     buffered_bytes: usize,
@@ -366,18 +406,35 @@ impl StageWriter<'_> {
         repo: &str,
         path: &str,
     ) -> Result<(), SourceStageError> {
-        let inserted = self.conn.execute(
-            "INSERT OR IGNORE INTO _source_stage_owner(
-                 stage_id,relation,repo,path,completed) VALUES (?1,?2,?3,?4,1)",
-            params![self.stage_id.0.as_slice(), relation, repo, path],
-        )?;
+        let inserted = self
+            .db
+            .exec_params(
+                "_source_stage_owner",
+                "INSERT OR IGNORE INTO _source_stage_owner(
+                     stage_id,relation,repo,path,completed) VALUES (?1,?2,?3,?4,1)",
+                &[
+                    SqlVal::Blob(self.stage_id.0.to_vec()),
+                    SqlVal::Text(relation.into()),
+                    SqlVal::Text(repo.into()),
+                    SqlVal::Text(path.into()),
+                ],
+            )
+            .map_err(SourceStageError::Db)?;
         if inserted != 0 {
             if self.stats.owners == self.limits.max_owners {
-                self.conn.execute(
-                    "DELETE FROM _source_stage_owner
-                     WHERE stage_id=?1 AND relation=?2 AND repo=?3 AND path=?4",
-                    params![self.stage_id.0.as_slice(), relation, repo, path],
-                )?;
+                self.db
+                    .exec_params(
+                        "_source_stage_owner",
+                        "DELETE FROM _source_stage_owner
+                         WHERE stage_id=?1 AND relation=?2 AND repo=?3 AND path=?4",
+                        &[
+                            SqlVal::Blob(self.stage_id.0.to_vec()),
+                            SqlVal::Text(relation.into()),
+                            SqlVal::Text(repo.into()),
+                            SqlVal::Text(path.into()),
+                        ],
+                    )
+                    .map_err(SourceStageError::Db)?;
                 return Err(SourceStageError::StageLimitExceeded);
             }
             self.stats.owners += 1;
@@ -389,24 +446,47 @@ impl StageWriter<'_> {
         if self.buffered.is_empty() {
             return Ok(());
         }
-        let mut insert = self.conn.prepare_cached(
-            "INSERT INTO _source_stage_row(stage_id,relation,repo,path,ordinal,encoded)
-             VALUES (?1,?2,?3,?4,?5,?6)",
-        )?;
+        insert_source_rows(self.db, self.stage_id, &self.buffered)
+            .map_err(SourceStageError::Db)?;
         for row in self.buffered.drain(..) {
-            insert.execute(params![
-                self.stage_id.0.as_slice(),
-                row.relation,
-                row.repo,
-                row.path,
-                row.ordinal,
-                row.encoded
-            ])?;
             self.buffered_bytes -= row.bytes;
         }
         self.stats.flushes += 1;
         Ok(())
     }
+}
+
+/// Chunked multi-row insert into the temp staging table. One logical statement
+/// per chunk (N+1 law); never recorded in the source write ledger because this
+/// is internal staging, not a public relation.
+fn insert_source_rows(
+    db: &Db,
+    stage_id: StageId,
+    rows: &[BufferedRow],
+) -> anyhow::Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    const NCOL: usize = 6;
+    let chunk_rows = (crate::db::PARAM_BUDGET / NCOL).max(1);
+    let tuple = "(?,?,?,?,?,?)";
+    for chunk in rows.chunks(chunk_rows) {
+        let values = vec![tuple; chunk.len()].join(", ");
+        let sql = format!(
+            "INSERT INTO _source_stage_row(stage_id,relation,repo,path,ordinal,encoded) VALUES {values}"
+        );
+        let mut params: Vec<SqlVal> = Vec::with_capacity(chunk.len() * NCOL);
+        for row in chunk {
+            params.push(SqlVal::Blob(stage_id.0.to_vec()));
+            params.push(SqlVal::Text(row.relation.clone()));
+            params.push(SqlVal::Text(row.repo.clone()));
+            params.push(SqlVal::Text(row.path.clone()));
+            params.push(SqlVal::Int(row.ordinal as i64));
+            params.push(SqlVal::Blob(row.encoded.clone()));
+        }
+        db.exec_params("_source_stage_row", &sql, &params)?;
+    }
+    Ok(())
 }
 
 fn validate_limits(limits: StageLimits) -> Result<(), SourceStageError> {
@@ -427,19 +507,20 @@ fn validate_limits(limits: StageLimits) -> Result<(), SourceStageError> {
 }
 
 fn derive_ready(
-    conn: &Connection,
+    db: &Db,
     stage_id: StageId,
     generation: i64,
     base: StageBase,
 ) -> Result<SealedSourceStage, SourceStageError> {
-    let incomplete = conn
-        .query_row(
+    let incomplete: Option<(String, String, String)> = db
+        .query_opt(
+            "_source_stage_row",
             "SELECT r.relation,r.repo,r.path FROM _source_stage_row AS r
          LEFT JOIN _source_stage_owner AS o
            ON o.stage_id=r.stage_id AND o.relation=r.relation
           AND o.repo=r.repo AND o.path=r.path
          WHERE r.stage_id=?1 AND o.stage_id IS NULL LIMIT 1",
-            [stage_id.0.as_slice()],
+            &[SqlVal::Blob(stage_id.0.to_vec())],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -448,7 +529,7 @@ fn derive_ready(
                 ))
             },
         )
-        .optional()?;
+        .map_err(SourceStageError::Db)?;
     if let Some((relation, repo, path)) = incomplete {
         return Err(SourceStageError::OwnerIncomplete {
             relation,
@@ -463,31 +544,48 @@ fn derive_ready(
     hash.update(&base.0);
     let mut key_count = 0usize;
     {
-        let mut stmt = conn.prepare(
-            "SELECT relation,repo,path FROM _source_stage_owner
-             WHERE stage_id=?1 ORDER BY relation,repo,path",
-        )?;
-        let mut owners = stmt.query([stage_id.0.as_slice()])?;
-        while let Some(owner) = owners.next()? {
+        let owners = db
+            .query_rows(
+                "_source_stage_owner",
+                "SELECT relation,repo,path FROM _source_stage_owner
+                 WHERE stage_id=?1 ORDER BY relation,repo,path",
+                &[SqlVal::Blob(stage_id.0.to_vec())],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .map_err(SourceStageError::Db)?;
+        for (relation, repo, path) in owners {
             hash.update(&[1]);
-            hash_str(&mut hash, &owner.get::<_, String>(0)?)?;
-            hash_str(&mut hash, &owner.get::<_, String>(1)?)?;
-            hash_str(&mut hash, &owner.get::<_, String>(2)?)?;
+            hash_str(&mut hash, &relation)?;
+            hash_str(&mut hash, &repo)?;
+            hash_str(&mut hash, &path)?;
             key_count += 1;
         }
     }
-    let mut stmt = conn.prepare(
-        "SELECT relation,repo,path,ordinal,encoded FROM _source_stage_row
-         WHERE stage_id=?1 ORDER BY relation,repo,path,ordinal",
-    )?;
-    let mut rows = stmt.query([stage_id.0.as_slice()])?;
+    let rows = db
+        .query_rows(
+            "_source_stage_row",
+            "SELECT relation,repo,path,ordinal,encoded FROM _source_stage_row
+             WHERE stage_id=?1 ORDER BY relation,repo,path,ordinal",
+            &[SqlVal::Blob(stage_id.0.to_vec())],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, Vec<u8>>(4)?,
+                ))
+            },
+        )
+        .map_err(SourceStageError::Db)?;
     let (mut row_count, mut encoded_bytes) = (0usize, 0usize);
-    while let Some(row) = rows.next()? {
-        let relation: String = row.get(0)?;
-        let repo: String = row.get(1)?;
-        let path: String = row.get(2)?;
-        let ordinal: i64 = row.get(3)?;
-        let encoded: Vec<u8> = row.get(4)?;
+    for (relation, repo, path, ordinal, encoded) in rows {
         let values = decode_values(&encoded)?;
         if encode_values(&values)? != encoded {
             return Err(SourceStageError::NonCanonical);
@@ -521,12 +619,13 @@ fn derive_ready(
     })
 }
 
-fn verify_ready(conn: &Connection, expected: &SealedSourceStage) -> Result<(), SourceStageError> {
-    let stored = conn
-        .query_row(
+fn verify_ready(db: &Db, expected: &SealedSourceStage) -> Result<(), SourceStageError> {
+    let stored = db
+        .query_opt(
+            "_source_stage_ready",
             "SELECT generation,base_stamp,key_count,row_count,encoded_bytes,digest
          FROM _source_stage_ready WHERE stage_id=?1",
-            [expected.stage_id.0.as_slice()],
+            &[SqlVal::Blob(expected.stage_id.0.to_vec())],
             |row| {
                 Ok(SealedSourceStage {
                     stage_id: expected.stage_id,
@@ -539,9 +638,9 @@ fn verify_ready(conn: &Connection, expected: &SealedSourceStage) -> Result<(), S
                 })
             },
         )
-        .optional()?
+        .map_err(SourceStageError::Db)?
         .ok_or(SourceStageError::Unsealed)?;
-    let actual = derive_ready(conn, expected.stage_id, expected.generation, expected.base)?;
+    let actual = derive_ready(db, expected.stage_id, expected.generation, expected.base)?;
     if stored != *expected || actual != *expected {
         return Err(SourceStageError::SealMismatch);
     }
@@ -555,15 +654,15 @@ fn hash_str(hash: &mut blake3::Hasher, value: &str) -> Result<(), SourceStageErr
     Ok(())
 }
 
-fn blob_array<const N: usize>(bytes: Vec<u8>) -> rusqlite::Result<[u8; N]> {
+fn blob_array<const N: usize>(bytes: Vec<u8>) -> Result<[u8; N], SourceStageError> {
     bytes
         .try_into()
-        .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(N, N as i64))
+        .map_err(|_| SourceStageError::EncodingTooLarge)
 }
 
 #[derive(Debug)]
 pub(super) enum SourceStageError {
-    Sqlite(rusqlite::Error),
+    Db(anyhow::Error),
     InvalidLimits,
     TempStoreNotFile,
     RowTooLarge {
@@ -585,16 +684,16 @@ pub(super) enum SourceStageError {
     VisitorFailed,
 }
 
-impl From<rusqlite::Error> for SourceStageError {
-    fn from(error: rusqlite::Error) -> Self {
-        Self::Sqlite(error)
+impl From<anyhow::Error> for SourceStageError {
+    fn from(error: anyhow::Error) -> Self {
+        Self::Db(error)
     }
 }
 
 impl std::fmt::Display for SourceStageError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Sqlite(error) => error.fmt(f),
+            Self::Db(error) => error.fmt(f),
             Self::InvalidLimits => f.write_str("source-stage limits exceed hard bounds"),
             Self::TempStoreNotFile => f.write_str("source staging requires PRAGMA temp_store=FILE"),
             Self::RowTooLarge { bytes, limit } => {
