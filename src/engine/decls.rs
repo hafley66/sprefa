@@ -975,14 +975,14 @@ pub(crate) fn rels_used(prog: &Program, rels: &[&str]) -> bool {
 
 /// Classify a call site's bare callee name as `read` or `write`. Heuristic by
 /// method name only (no receiver type); rail-side joins (`conn_fn` for the
-/// .conn() rail) narrow to db-shaped sites, so a `HashMap::insert` false
+/// conn() ratchet) narrow to db-shaped sites, so a `HashMap::insert` false
 /// positive in an unrelated fn never reaches a diag because that fn has no
-/// `.conn()` site. The table is deliberately rusqlite-shaped: `insert`/
+/// Db::conn site. The table is deliberately rusqlite-shaped: `insert`/
 /// `update`/`delete`/`replace`/`commit` are dropped because they collide with
 /// collection methods (`HashMap::insert`) and would pollute the table for
-/// little gain — the rail's `conn_fn` join already gates on `.conn()`, so the
-/// only writes that matter are the ones chained off a `.conn()` or `Db::` call,
-/// which in rusqlite are `execute`/`execute_batch`/`execute_returning`.
+/// little gain — the rail's `conn_fn` join already gates on the conn method,
+/// so the only writes that matter are the ones chained off a `Db::conn` or
+/// `Db::` call, which in rusqlite are `execute`/`execute_batch`/`execute_returning`.
 /// `None` for anything not clearly a db read or write.
 pub(crate) fn classify_call_kind(callee: &str) -> Option<&'static str> {
     Some(match callee {

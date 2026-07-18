@@ -146,15 +146,12 @@ impl Engine {
             edge_meta.cols[0].name.clone(),
             edge_meta.cols[1].name.clone(),
         );
-        let edges: Vec<(String, String)> = {
-            let conn = self.db.conn();
-            let mut s = conn.prepare(&format!("SELECT \"{c0}\", \"{c1}\" FROM {}", txt_tbl(edge)))?;
-            let v: Vec<(String, String)> = s
-                .query_map([], |r| Ok((cell_as_string(r, 0)?, cell_as_string(r, 1)?)))?
-                .filter_map(|x| x.ok())
-                .collect();
-            v
-        };
+        let edges: Vec<(String, String)> = self.db.query_rows(
+            edge,
+            &format!("SELECT \"{c0}\", \"{c1}\" FROM {}", txt_tbl(edge)),
+            &[],
+            |r| Ok((cell_as_string(r, 0)?, cell_as_string(r, 1)?)),
+        )?;
 
         // W1 digest-skip: node2vec is a GLOBAL op (walks touch the whole graph),
         // so it is not cheaply incrementalizable. Most git checkouts move file
@@ -165,10 +162,11 @@ impl Engine {
         let dhex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
         let dkey = format!("node2vec:{edge}");
         // Vectors for THIS exact digest (W2 keeps the last N digests per graph).
-        let have_cur: i64 = self.db.conn().query_row(
+        let have_cur: i64 = self.db.query_one(
+            "_node_embeddings",
             "SELECT COUNT(*) FROM _node_embeddings WHERE graph = ?1 AND edge_digest = ?2",
-            rusqlite::params![edge, dhex],
-            |r| r.get(0),
+            &[edge.into(), dhex.clone().into()],
+            |r| Ok(r.get::<_, i64>(0)?),
         )?;
         let trace = std::env::var("SPREFA_N2V_TRACE").is_ok();
         // Skip when node_sim already reflects this digest and its vectors exist
@@ -191,12 +189,16 @@ impl Engine {
         if edges.is_empty() {
             // Empty graph: drop this graph's whole vector cache, record the
             // all-zero digest so a later empty tick skips.
-            self.db
-                .conn()
-                .execute("DELETE FROM _node_embeddings WHERE graph = ?1", [edge])?;
-            self.db
-                .conn()
-                .execute("DELETE FROM _node_emb_seen WHERE graph = ?1", [edge])?;
+            self.db.exec_params(
+                "_node_embeddings",
+                "DELETE FROM _node_embeddings WHERE graph = ?1",
+                &[edge.into()],
+            )?;
+            self.db.exec_params(
+                "_node_emb_seen",
+                "DELETE FROM _node_emb_seen WHERE graph = ?1",
+                &[edge.into()],
+            )?;
             if trace {
                 eprintln!("[node2vec] graph '{edge}': empty (cleared)");
             }
@@ -213,15 +215,15 @@ impl Engine {
             if trace {
                 eprintln!("[node2vec] graph '{edge}': cache hit (digest seen)");
             }
-            let conn = self.db.conn();
-            let mut s = conn.prepare(
-                "SELECT node, vec FROM _node_embeddings WHERE graph = ?1 AND edge_digest = ?2",
-            )?;
-            let v: Vec<(String, Vec<f32>)> = s
-                .query_map(rusqlite::params![edge, dhex], |r| {
-                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-                })?
-                .filter_map(|x| x.ok())
+            let v: Vec<(String, Vec<f32>)> = self
+                .db
+                .query_rows(
+                    "_node_embeddings",
+                    "SELECT node, vec FROM _node_embeddings WHERE graph = ?1 AND edge_digest = ?2",
+                    &[edge.into(), dhex.clone().into()],
+                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+                )?
+                .into_iter()
                 .map(|(n, txt): (String, String)| (n, crate::embed::parse_vec(&txt)))
                 .collect();
             v
@@ -265,29 +267,35 @@ impl Engine {
 
         // LRU: stamp this digest most-recently-used, prune each graph to the N
         // most-recent distinct digests (SPREFA_N2V_CACHE, default 4).
-        let seq: i64 = self.db.conn().query_row(
+        let seq: i64 = self.db.query_one(
+            "_node_emb_seen",
             "SELECT COALESCE(MAX(last_tick), 0) + 1 FROM _node_emb_seen",
-            [],
-            |r| r.get(0),
+            &[],
+            |r| Ok(r.get::<_, i64>(0)?),
         )?;
-        self.db.conn().execute(
+        self.db.exec_params(
+            "_node_emb_seen",
             "INSERT INTO _node_emb_seen(graph, digest, last_tick) VALUES (?1, ?2, ?3)
              ON CONFLICT(graph, digest) DO UPDATE SET last_tick = excluded.last_tick",
-            rusqlite::params![edge, dhex, seq],
+            &[edge.into(), dhex.clone().into(), seq.into()],
         )?;
         let cap: i64 = std::env::var("SPREFA_N2V_CACHE")
             .ok()
             .and_then(|s| s.parse().ok())
             .filter(|n| *n >= 1)
             .unwrap_or(4);
-        self.db.conn().execute(
+        self.db.exec_params(
+            "_node_embeddings",
             "DELETE FROM _node_embeddings WHERE graph = ?1 AND edge_digest NOT IN
                  (SELECT digest FROM _node_emb_seen WHERE graph = ?1 ORDER BY last_tick DESC LIMIT ?2)",
-            rusqlite::params![edge, cap])?;
-        self.db.conn().execute(
+            &[edge.into(), cap.into()],
+        )?;
+        self.db.exec_params(
+            "_node_emb_seen",
             "DELETE FROM _node_emb_seen WHERE graph = ?1 AND digest NOT IN
                  (SELECT digest FROM _node_emb_seen WHERE graph = ?1 ORDER BY last_tick DESC LIMIT ?2)",
-            rusqlite::params![edge, cap])?;
+            &[edge.into(), cap.into()],
+        )?;
 
         // Fill the head with KNN pairs (reuses the text path's cosine top-k).
         let k: usize = std::env::var("SPREFA_NODE_SIM_K")
@@ -344,7 +352,7 @@ impl Engine {
             }
             stmt_watch.begin(rel);
             let t = std::time::Instant::now();
-            let result = self.db.conn().execute(sql, []);
+            let result = self.db.exec_on(rel, sql);
             stmt_watch.complete();
             let n = result?;
             if sql.trim_start().to_ascii_uppercase().starts_with("INSERT") {
@@ -865,58 +873,54 @@ impl Engine {
             })
             .collect::<Vec<_>>()
             .join(", ");
-        let mut head_statement = self
-            .db
-            .conn()
-            .prepare(&format!("SELECT {head_select} FROM {}", tbl(&head_rel)))?;
-        let head_rows = head_statement.query_map([], |row| {
-            let node_key = row.get::<_, i64>(node_index)?;
-            let depth = row.get::<_, i64>(depth_index)?;
-            let tag_value = tag_index
-                .map(|column_index| cell_as_string(row, column_index))
-                .transpose()?;
-            Ok((tag_value, node_key, depth))
-        })?;
-        for head_row in head_rows {
-            let (tag_value, node_key, depth) = head_row?;
-            let tag_id = match tag_value {
-                Some(tag_text) => match tag_ids.get(&tag_text) {
+        self.db.for_each_row(
+            &head_rel,
+            &format!("SELECT {head_select} FROM {}", tbl(&head_rel)),
+            &[],
+            |row| {
+                let node_key = row.get::<_, i64>(node_index)?;
+                let depth = row.get::<_, i64>(depth_index)?;
+                let tag_value = tag_index
+                    .map(|column_index| cell_as_string(row, column_index))
+                    .transpose()?;
+                let tag_id = match tag_value {
+                    Some(tag_text) => match tag_ids.get(&tag_text) {
+                        Some(&existing_id) => existing_id,
+                        None => {
+                            let new_id = tag_names.len() as u32;
+                            tag_names.push(tag_text.clone());
+                            tag_ids.insert(tag_text, new_id);
+                            new_id
+                        }
+                    },
+                    None => 0,
+                };
+                let node_id = match key_to_node.get(&node_key) {
                     Some(&existing_id) => existing_id,
                     None => {
-                        let new_id = tag_names.len() as u32;
-                        tag_names.push(tag_text.clone());
-                        tag_ids.insert(tag_text, new_id);
+                        let new_id = adjacency.len() as u32;
+                        adjacency.push(Vec::new());
+                        node_keys.push(node_key);
+                        key_to_node.insert(node_key, new_id);
                         new_id
                     }
-                },
-                None => 0,
-            };
-            let node_id = match key_to_node.get(&node_key) {
-                Some(&existing_id) => existing_id,
-                None => {
-                    let new_id = adjacency.len() as u32;
-                    adjacency.push(Vec::new());
-                    node_keys.push(node_key);
-                    key_to_node.insert(node_key, new_id);
-                    new_id
-                }
-            };
-            starts.push((tag_id, node_id, depth));
-        }
+                };
+                starts.push((tag_id, node_id, depth));
+                Ok(())
+            },
+        )?;
 
         let bfs_started = std::time::Instant::now();
         let reached = crate::walk::multi_source_walk(&*adjacency, &starts, None, Some(depth_cap));
         let bfs_elapsed = bfs_started.elapsed();
         let output_started = std::time::Instant::now();
-        self.db.exec(&format!("DELETE FROM {}", tbl(&head_rel)))?;
-        let secondary_indexes: Vec<(String, String)> = {
-            let mut index_statement = self.db.conn().prepare(
-                "SELECT name, sql FROM sqlite_master WHERE tbl_name = ?1 AND type = 'index' AND sql IS NOT NULL")?;
-            let index_rows = index_statement.query_map([tbl(&head_rel)], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })?;
-            index_rows.collect::<rusqlite::Result<Vec<_>>>()?
-        };
+        self.db.exec_on(&head_rel, &format!("DELETE FROM {}", tbl(&head_rel)))?;
+        let secondary_indexes: Vec<(String, String)> = self.db.query_rows(
+            "sqlite_master",
+            "SELECT name, sql FROM sqlite_master WHERE tbl_name = ?1 AND type = 'index' AND sql IS NOT NULL",
+            &[tbl(&head_rel).into()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )?;
         for (index_name, _) in &secondary_indexes {
             self.db.exec(&format!("DROP INDEX \"{index_name}\""))?;
         }
@@ -1218,27 +1222,31 @@ impl Engine {
                 head_meta.cols[1].name,
                 txt_tbl(&head_rel)
             );
-            let mut stmt = self.db.conn().prepare(&base_sql)?;
-            let rows =
-                stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
-            for row in rows.flatten() {
-                let (tag_s, node_s) = row;
-                let tid = match tag_id.get(&tag_s) {
-                    Some(&i) => i,
-                    None => {
-                        let i = tag_names.len() as u32;
-                        tag_names.push(tag_s.clone());
-                        tag_id.insert(tag_s, i);
-                        i
+            self.db.for_each_row(
+                &head_rel,
+                &base_sql,
+                &[],
+                |r| {
+                    let tag_s = r.get::<_, String>(0)?;
+                    let node_s = r.get::<_, String>(1)?;
+                    let tid = match tag_id.get(&tag_s) {
+                        Some(&i) => i,
+                        None => {
+                            let i = tag_names.len() as u32;
+                            tag_names.push(tag_s.clone());
+                            tag_id.insert(tag_s, i);
+                            i
+                        }
+                    };
+                    let key = StringId::of(&node_s).sqlite();
+                    let nid = intern_key(key, &node_s, adj, id2key, interner, text_by_id);
+                    if text_by_id.is_none() {
+                        sym_text.entry(nid).or_insert_with(|| node_s.clone());
                     }
-                };
-                let key = StringId::of(&node_s).sqlite();
-                let nid = intern_key(key, &node_s, adj, id2key, interner, text_by_id);
-                if text_by_id.is_none() {
-                    sym_text.entry(nid).or_insert_with(|| node_s.clone());
-                }
-                starts.push((tid, nid));
-            }
+                    starts.push((tid, nid));
+                    Ok(())
+                },
+            )?;
         }
 
         // 4. Halt mask over the (possibly extended) node id space.
@@ -1246,13 +1254,18 @@ impl Engine {
         {
             let hc0 = halt_meta.cols[0].name.clone();
             let sql = format!("SELECT DISTINCT \"{hc0}\" FROM {}", txt_tbl(&halt_rel));
-            let mut stmt = self.db.conn().prepare(&sql)?;
-            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-            for name in rows.flatten() {
-                if let Some(&id) = interner.get(&StringId::of(&name).sqlite()) {
-                    halt_mask[id as usize] = true;
-                }
-            }
+            self.db.for_each_row(
+                &halt_rel,
+                &sql,
+                &[],
+                |r| {
+                    let name = r.get::<_, String>(0)?;
+                    if let Some(&id) = interner.get(&StringId::of(&name).sqlite()) {
+                        halt_mask[id as usize] = true;
+                    }
+                    Ok(())
+                },
+            )?;
         }
 
         // 5. Native BFS — pure u32 pairs, no strings touched.
@@ -1280,19 +1293,19 @@ impl Engine {
             // strings (which are being written out regardless).
             let keys: Vec<i64> = need.iter().map(|&nid| id2key[nid as usize]).collect();
             let mut keymap: HashMap<i64, String> = HashMap::with_capacity(keys.len());
-            for chunk in keys.chunks(30000) {
-                let placeholders = std::iter::repeat("?")
-                    .take(chunk.len())
-                    .collect::<Vec<_>>()
-                    .join(",");
-                let sql = format!("SELECT id, content FROM _strings WHERE id IN ({placeholders})");
-                let mut stmt = self.db.conn().prepare(&sql)?;
-                let rows = stmt.query_map(rusqlite::params_from_iter(chunk.iter()), |r| {
-                    Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
-                })?;
-                for row in rows.flatten() {
-                    keymap.insert(row.0, row.1);
-                }
+            let key_params: Vec<crate::db::SqlVal> = keys.iter().map(|&k| k.into()).collect();
+            let rows = self.db.query_in_chunks(
+                "_strings",
+                |n| format!(
+                    "SELECT id, content FROM _strings WHERE id IN ({})",
+                    crate::db::holes(n)
+                ),
+                &[],
+                &key_params,
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+            )?;
+            for (id, content) in rows {
+                keymap.insert(id, content);
             }
             for &nid in &need {
                 sym_text.insert(
@@ -1315,19 +1328,16 @@ impl Engine {
         //    is one chunk — never the whole result materialized. Secondary indexes
         //    are deferred and rebuilt after (per-row upkeep dominates a bulk load);
         //    the unique autoindex stays and the BFS output is already deduped.
-        self.db.exec(&format!("DELETE FROM {}", tbl(&head_rel)))?;
-        let sidx: Vec<(String, String)> = {
-            let mut stmt = self.db.conn().prepare(
-                "SELECT name, sql FROM sqlite_master \
-                 WHERE tbl_name = ?1 AND type = 'index' AND sql IS NOT NULL",
-            )?;
-            let rows = stmt.query_map([tbl(&head_rel)], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-            })?;
-            rows.flatten().collect()
-        };
+        self.db.exec_on(&head_rel, &format!("DELETE FROM {}", tbl(&head_rel)))?;
+        let sidx: Vec<(String, String)> = self.db.query_rows(
+            "sqlite_master",
+            "SELECT name, sql FROM sqlite_master \
+             WHERE tbl_name = ?1 AND type = 'index' AND sql IS NOT NULL",
+            &[tbl(&head_rel).into()],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )?;
         for (name, _) in &sidx {
-            self.db.exec(&format!("DROP INDEX \"{name}\""))?;
+            self.db.exec_on(&head_rel, &format!("DROP INDEX \"{name}\""))?;
         }
         let cols: Vec<&str> = head_meta.cols.iter().map(|c| c.name.as_str()).collect();
         const CHUNK: usize = 16000;
@@ -1458,15 +1468,14 @@ impl Engine {
                 .collect();
             for prefix in ["_delta_", "_delta_new_"] {
                 self.db
-                    .conn()
-                    .execute(&format!("DROP TABLE IF EXISTS {prefix}{rel}"), [])?;
-                self.db.conn().execute(
+                    .exec_on(rel, &format!("DROP TABLE IF EXISTS {prefix}{rel}"))?;
+                self.db.exec_on(
+                    rel,
                     &format!(
                         "CREATE TEMP TABLE {prefix}{rel} ({}, PRIMARY KEY ({}))",
                         col_defs.join(", "),
                         col_names.join(", ")
                     ),
-                    [],
                 )?;
             }
         }
@@ -1536,10 +1545,11 @@ impl Engine {
                         tbl(rel)
                     ),
                 )?;
-                let n: i64 = self.db.conn().query_row(
+                let n: i64 = self.db.query_one(
+                    rel,
                     &format!("SELECT COUNT(*) FROM _delta_new_{rel}"),
-                    [],
-                    |r| r.get(0),
+                    &[],
+                    |r| Ok(r.get::<_, i64>(0)?),
                 )?;
                 total_new += n as usize;
             }
@@ -1604,10 +1614,10 @@ impl Engine {
             .keys()
             .map(|r| format!("'{}'", r.replace('\'', "''")))
             .collect();
-        self.db.exec(&format!(
-            "DELETE FROM _stmt_ms WHERE rel IN ({})",
-            names.join(",")
-        ))?;
+        self.db.exec_on(
+            "_stmt_ms",
+            &format!("DELETE FROM _stmt_ms WHERE rel IN ({})", names.join(","))
+        )?;
         let rows: Vec<Vec<Value>> = stmt_ms
             .iter()
             .map(|(rel, (ms, n))| vec![Value::Text(rel.clone()), Value::Int(*ms), Value::Int(*n)])
@@ -1637,10 +1647,11 @@ impl Engine {
     /// the tick record a `full_reason` of `closure-missing:<edge>`.
     pub(crate) fn first_empty_closure_edge(&self, edges: &[&str]) -> Result<Option<String>> {
         for edge in edges {
-            let n: i64 = self.db.conn().query_row(
+            let n: i64 = self.db.query_one(
+                edge,
                 &format!("SELECT COUNT(*) FROM {}", scc_node_tbl(edge)),
-                [],
-                |r| r.get(0),
+                &[],
+                |r| Ok(r.get::<_, i64>(0)?),
             )?;
             if n == 0 {
                 return Ok(Some(edge.to_string()));
@@ -1657,10 +1668,12 @@ impl Engine {
         for rel in rels {
             let n: i64 = self
                 .db
-                .conn()
-                .query_row(&format!("SELECT COUNT(*) FROM {}", tbl(rel)), [], |r| {
-                    r.get(0)
-                })
+                .query_opt(
+                    rel,
+                    &format!("SELECT COUNT(*) FROM {}", tbl(rel)),
+                    &[],
+                    |r| Ok(r.get::<_, i64>(0)?),
+                )?
                 .unwrap_or(0);
             if n == 0 {
                 return Ok(true);
@@ -1697,23 +1710,33 @@ impl Engine {
         // and yield an empty adjacency (the walk then never leaves its seeds).
         let source = if sym { tbl(edge) } else { txt_tbl(edge) };
         let sql = format!("SELECT \"{c0}\", \"{c1}\" FROM {source}");
-        let mut stmt = self.db.conn().prepare(&sql)?;
         let mut interner: HashMap<i64, u32> = HashMap::new();
         let mut id2key: Vec<i64> = Vec::new();
         let mut text_by_id: Option<Vec<String>> = if sym { None } else { Some(Vec::new()) };
         let mut pairs: Vec<(u32, u32)> = Vec::new();
         // Read each endpoint as its (key, optional text): text -> (i64 cell, None);
         // text -> (hash(cell), Some(cell)).
-        let read = |r: &rusqlite::Row, idx: usize| -> rusqlite::Result<(i64, Option<String>)> {
-            if sym {
-                Ok((r.get::<_, i64>(idx)?, None))
-            } else {
-                let s = cell_as_string(r, idx)?;
-                Ok((StringId::of(&s).sqlite(), Some(s)))
-            }
-        };
-        let rows = stmt.query_map([], |r| Ok((read(r, 0)?, read(r, 1)?)))?;
-        for row in rows.flatten() {
+        let rows = self.db.query_rows(
+            edge,
+            &sql,
+            &[],
+            |r| {
+                let a = if sym {
+                    (r.get::<_, i64>(0)?, None)
+                } else {
+                    let s = cell_as_string(r, 0)?;
+                    (StringId::of(&s).sqlite(), Some(s))
+                };
+                let b = if sym {
+                    (r.get::<_, i64>(1)?, None)
+                } else {
+                    let s = cell_as_string(r, 1)?;
+                    (StringId::of(&s).sqlite(), Some(s))
+                };
+                Ok((a, b))
+            },
+        )?;
+        for row in rows {
             let ((ka, ta), (kb, tb)) = row;
             let mut intern = |key: i64, text: Option<String>| -> u32 {
                 if let Some(&i) = interner.get(&key) {
@@ -1745,10 +1768,11 @@ impl Engine {
         c1: &str,
         sym: bool,
     ) -> Result<std::cell::RefMut<'_, AdjacencyCache>> {
-        let row_count: i64 = self.db.conn().query_row(
+        let row_count: i64 = self.db.query_one(
+            edge,
             &format!("SELECT COUNT(*) FROM {}", tbl(edge)),
-            [],
-            |row| row.get(0),
+            &[],
+            |row| Ok(row.get::<_, i64>(0)?),
         )?;
         let cache_key = AdjacencyCacheKey {
             edge_relation: edge.to_string(),
@@ -1798,12 +1822,16 @@ impl Engine {
         c1: &str,
     ) -> Result<(Vec<Vec<u32>>, Vec<String>)> {
         let sql = format!("SELECT \"{c0}\", \"{c1}\" FROM {}", txt_tbl(edge));
-        let mut stmt = self.db.conn().prepare(&sql)?;
         let mut intern: HashMap<String, u32> = HashMap::new();
         let mut names: Vec<String> = Vec::new();
         let mut pairs: Vec<(u32, u32)> = Vec::new();
-        let rows = stmt.query_map([], |r| Ok((cell_as_string(r, 0)?, cell_as_string(r, 1)?)))?;
-        for row in rows.flatten() {
+        let rows = self.db.query_rows(
+            edge,
+            &sql,
+            &[],
+            |r| Ok((cell_as_string(r, 0)?, cell_as_string(r, 1)?)),
+        )?;
+        for row in rows {
             let mut id = |s: String| -> u32 {
                 if let Some(&i) = intern.get(&s) {
                     return i;
@@ -1864,8 +1892,8 @@ impl Engine {
                     edge_rows.push(vec![Value::Int(cu as i64), Value::Int(cw as i64)]);
                 }
             }
-            self.db.exec(&format!("DELETE FROM {nt}"))?;
-            self.db.exec(&format!("DELETE FROM {et}"))?;
+            self.db.exec_on(edge, &format!("DELETE FROM {nt}"))?;
+            self.db.exec_on(edge, &format!("DELETE FROM {et}"))?;
             self.db
                 .insert_rows(&nt, &["name", "comp", "cyclic"], &node_rows)?;
             self.db
@@ -1887,19 +1915,23 @@ impl Engine {
     pub(crate) fn edge_content_digest(&self, edge: &str, c0: &str, c1: &str) -> Result<[u8; 32]> {
         let mut acc = [0u8; 32];
         let sql = format!("SELECT \"{c0}\", \"{c1}\" FROM {}", txt_tbl(edge));
-        let mut stmt = self.db.conn().prepare(&sql)?;
-        let mut rows = stmt.query([])?;
-        while let Some(row) = rows.next()? {
-            let a = cell_as_string(row, 0)?;
-            let b = cell_as_string(row, 1)?;
-            let mut h = blake3::Hasher::new();
-            h.update(a.as_bytes());
-            h.update(&[0]);
-            h.update(b.as_bytes());
-            for (x, y) in acc.iter_mut().zip(h.finalize().as_bytes().iter()) {
-                *x ^= *y;
-            }
-        }
+        self.db.for_each_row(
+            edge,
+            &sql,
+            &[],
+            |row| {
+                let a = cell_as_string(row, 0)?;
+                let b = cell_as_string(row, 1)?;
+                let mut h = blake3::Hasher::new();
+                h.update(a.as_bytes());
+                h.update(&[0]);
+                h.update(b.as_bytes());
+                for (x, y) in acc.iter_mut().zip(h.finalize().as_bytes().iter()) {
+                    *x ^= *y;
+                }
+                Ok(())
+            },
+        )?;
         Ok(acc)
     }
 

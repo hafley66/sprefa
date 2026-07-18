@@ -63,9 +63,7 @@ rusqlite_baseline("src/agent.rs", 2).
 rusqlite_baseline("src/anchor.rs", 15).
 rusqlite_baseline("src/effect.rs", 16).
 rusqlite_baseline("src/engine/cold_stage.rs", 2).
-rusqlite_baseline("src/engine/declare.rs", 4).
 rusqlite_baseline("src/engine/deltaflow.rs", 4).
-rusqlite_baseline("src/engine/derive.rs", 8).
 rusqlite_baseline("src/engine/extract/call_render_tests.rs", 2).
 rusqlite_baseline("src/engine/family/mod.rs", 1).
 rusqlite_baseline("src/engine/gen.rs", 1).
@@ -144,9 +142,6 @@ rel conn_baseline(source_file: file, allowed: int).
 conn_baseline("src/anchor.rs", 2).
 conn_baseline("src/effect.rs", 18).
 conn_baseline("src/engine/cold_stage.rs", 12).
-conn_baseline("src/engine/declare.rs", 21).
-conn_baseline("src/engine/decls.rs", 4).
-conn_baseline("src/engine/derive.rs", 25).
 conn_baseline("src/engine/extract/call.rs", 1).
 conn_baseline("src/engine/extract/call_render_tests.rs", 20).
 conn_baseline("src/engine/extract/doc.rs", 1).
