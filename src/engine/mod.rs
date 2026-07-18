@@ -21,6 +21,7 @@ pub use crate::effect::{async_effect_arity, shell_templates, EffectExec, ShellEf
 // Built-in graph/CST/spine/daemon extractor methods (bucket E) live in a child
 // module to shrink this file; they're still `impl Engine` methods called as
 // `self.refresh_*` from the tick orchestrator (engine breakdown Stage 4).
+mod cold_stage;
 mod declare;
 #[cfg(test)]
 mod deltaflow;

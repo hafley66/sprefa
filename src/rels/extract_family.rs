@@ -154,6 +154,16 @@ pub trait ExtractFamily: Sync {
     fn used(&self, prog: &Program) -> bool {
         engine::rels_used(prog, self.rels())
     }
+    /// Cold-start staging (plan `2026-07-17-cold-start-staging.md`): may this
+    /// family split into per-file shards, or must it run wholesale as one node?
+    /// Default `false` (wholesale, `N_SHARDS=1`). No family sets this in the
+    /// staging arc: the type/call/dataflow resolvers run a corpus-global name→def
+    /// barrier and the `extract:<family>` skip digest is per-rev, so a per-file
+    /// slice cannot be made digest-consistent without new infra (Shape B is a
+    /// follow-up; see the cold_stage module doc).
+    fn shardable_cold(&self) -> bool {
+        false
+    }
 }
 
 pub struct ModuleFamily;

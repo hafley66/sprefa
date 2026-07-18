@@ -76,6 +76,14 @@ pub struct TickReport {
     /// `pending_effect` rows queued|running whose kind is NOT a `@stream`
     /// subscription — an off-tick drain still owes a response (Phase 3).
     pub inflight_effects: usize,
+    /// Cold-start staging: this tick deferred the extract fan-out onto the queue
+    /// (a blank-slate seed, or a resume re-enqueue after `kill -9`) and did NOT
+    /// rebuild derived. `is_settled()` is forced false while true, so
+    /// `await-settle` / the poll loop keep waiting until the corpus is warm.
+    pub cold_pending: bool,
+    /// The `(family, shard, priority)` cold nodes the caller (daemon shell) must
+    /// enqueue as `ColdExtract` jobs. Empty on a normal tick.
+    pub cold_staged: Vec<(String, u32, i64)>,
 }
 
 /// Whether a path-scoped tick may widen into the existing full-tick fallback.
@@ -125,7 +133,8 @@ impl TickReport {
     /// timer-driven program still reports settled at a quiet point instead of
     /// spinning forever.
     pub fn is_settled(&self) -> bool {
-        !self.derived_moved
+        !self.cold_pending
+            && !self.derived_moved
             && self.changed_rels.iter().all(|r| is_timer_rel(r) || crate::rels::is_bookkeeping_rel(r))
             && !self.staged_next
             && self.inflight_effects == 0
@@ -197,6 +206,9 @@ impl Engine {
         // inside `declare_all` reads `_shapes` (Phase 5).
         self.ensure_meta()?;
         self.declare_all(prog, &closures)?;
+        // Retire `_cold_node` rows for families no longer used (mirrors the
+        // `_derived_complete` declare-time cleanup); a fresh db has none.
+        self.sweep_cold_nodes(prog)?;
 
         let source_rules: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_source()).collect();
         // `repo`-sink + `checkout`-sink rules are NOT drained here: they hit the
@@ -493,6 +505,44 @@ impl Engine {
         // existing fact caches once before the independent family refreshers;
         // those refreshers retain ownership of digests, resolution, and rows.
         super::extract::prime_analysis_bundles(self, prog)?;
+        // Cold-start staging (daemon poll loop only, D1): on a blank slate defer
+        // the extract-family fan-out + derived rebuild onto the durable queue —
+        // one `ColdExtract` job per used family — instead of running every family
+        // over the whole corpus in this one lock-held tick. Reconcile + scip +
+        // prime (the family INPUTS) already ran inline above; each family node
+        // then runs its wholesale refresh in its own budget-throttled tick, and
+        // the completion tick does the single blank-slate derived rebuild. A
+        // resume tick (`kill -9` mid-start) re-enqueues only the still-pending
+        // nodes. See `engine/cold_stage.rs`.
+        // Only the daemon poll loop stages (D1); a one-shot `--no-daemon` tick
+        // keeps the inline cold path and never touches `_cold_node`.
+        let cold_staged: Vec<(String, u32, i64)> = if !self.poll_loop {
+            Vec::new()
+        } else if self.cold_start_should_seed(prog)? {
+            self.seed_cold_nodes(prog)?
+                .into_iter()
+                .map(|j| (j.family, j.shard, j.priority))
+                .collect()
+        } else if self.cold_start_in_progress()? {
+            self.pending_cold_jobs(prog)?
+                .into_iter()
+                .map(|j| (j.family, j.shard, j.priority))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if !cold_staged.is_empty() {
+            // Short tick: facts intentionally incomplete, derived NOT rebuilt.
+            // Report reads UNSETTLED (`cold_pending`) so await-settle waits.
+            self.last_n1 = self.db.tick_end();
+            self.flush_write_ledger(tick)?;
+            self.clear_exe_identity_cache();
+            return Ok(TickReport {
+                cold_pending: true,
+                cold_staged,
+                ..Default::default()
+            });
+        }
         for fam in crate::rels::extract_families_pre_node() {
             if !fam.used(prog) { continue; }
             crate::activity::detail(fam.name());
@@ -966,6 +1016,8 @@ impl Engine {
             changed_rels,
             staged_next,
             inflight_effects,
+            cold_pending: false,
+            cold_staged: Vec::new(),
         })
     }
 
