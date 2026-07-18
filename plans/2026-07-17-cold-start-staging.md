@@ -634,3 +634,22 @@ last shard never leaves a digest that would wrongly skip the completion tick.
   emit+write (the actual 4.4 s hog) delivers the bound the user asked for; the
   chunk's durable output is its APPENDED ROWS, not a persisted bundle.
 
+
+## 3. Receipt (verified, release, this repo's 3.37 MB corpus)
+
+`measure_longest_cold_node` (`#[ignore]`) over `src/**/*.rs` (157 files, module/
+type/call/dataflow/scip used):
+
+| Metric | Wholesale (1 dataflow node) | MB-chunked (512 KiB) |
+|---|---|---|
+| cold nodes | 5 | 11 (7 dataflow chunks + module/type/call/scip) |
+| **longest single node** | **dataflow/0 = 2468 ms** | **dataflow/3 = 766 ms** (3.2x shorter) |
+| next-longest node | call = 595 ms | call = 591 ms (irreducible barrier) |
+| dataflow family total | 2468 ms | ~2975 ms (~20% overhead: per-slice re-parse + flush) |
+| completion tick | — | 119 ms, dataflow phase 0.1 ms (SKIPPED via saved digest) |
+
+The chunk-written rows survive the completion tick (df_node 115 902 unchanged) —
+the deferred family digest makes the wholesale refresh skip, so the ~20% per-slice
+overhead is the only added cost and it buys a 3.2x shorter worst-case tick. The
+longest single ColdExtract job is now the call resolution barrier (~591 ms), the
+honest floor. Larger corpora scale the chunk COUNT, not the per-chunk time.
