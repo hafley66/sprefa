@@ -427,6 +427,101 @@ atom positions) is unchanged; narrowing that heuristic itself (e.g. requiring
 an equality-selective WHERE, not just co-occurrence) is a separate, riskier
 lever not taken here.
 
+### Step 4a receipt (landed 2026-07-18)
+
+**Mechanism landed.** `Engine::declare` (src/engine/declare.rs) emits
+`WITHOUT ROWID` for a rel decl `wants_without_rowid` classifies as a pure
+junction: `d.pk_never_null` (new), `d.key.is_none()`, every column SQLite
+INTEGER, 2..=4 columns. A rowid-mode mismatch is a drift trigger (drop +
+recreate) alongside the existing column-set/key-shape drift checks, so
+flipping the classifier for a rel is revertable by construction — no separate
+migration path.
+
+**Scope cut from the plan's own examples, and why.** The plan named
+`flow_edge`/`df_edge_src_kind` as receipt evidence; this step does NOT
+convert them. The first version of the classifier judged by shape alone and
+broke tests/it/named_args.rs `named_args_in_a_rule_head_resolve` in this
+arc's own it-suite run: `WITHOUT ROWID` requires every PK column NOT NULL,
+but a plain rowid table's composite PK tolerates NULL, and the `.dl`
+surface's named-arg partial-head padding (`person(name: "z").` leaves `age`
+NULL) can put a NULL in any column of ANY `.dl`-parsed rel — `INSERT OR
+IGNORE` silently dropped the padded row. `flow_edge`/`df_edge_src_kind`/
+`named_call_site` are declared through the `.dl` parser (std/flow.dl,
+.dl/storage-seam-map.dl, .dl/rails.dl), so they get the same exposure any
+`.dl` rel gets, even though their CURRENT rule bodies happen to be fully
+positional. The rail: `pk_never_null` on `RelDecl` (src/ast.rs), default
+`false` for every parsed decl, `true` only at 17 Rust-authored decls (9
+dataflow in src/engine/decls.rs, 8 scip in src/rels/scip.rs) whose insert
+path was read line-by-line and confirmed to push a fixed-arity, non-`Option`
+row every time. See docs/failure-modes.md class 17 (STEP-4a NULL-IN-PK
+INCIDENT). Extending coverage to `.dl`-declared rels needs either a
+whole-program "no rule ever uses a partial head for this rel" check or a
+`.dl`-surface opt-in the author explicitly asserts — both deferred.
+
+**Tables converted (this repo's own corpus, no scip index present so the
+scip rels carry 0 rows here).** `rel_df_edge`, `rel_df_arg`,
+`rel_df_arg_rev`, `rel_df_field`, `rel_df_field_rev`, `rel_df_param`,
+`rel_nest`, `rel_df_node_repo`, `rel_df_node_repo_rev` (dataflow, 9);
+`rel_scip_def`, `rel_scip_name`, `rel_scip_ref`, `rel_scip_edge`,
+`rel_scip_fn_edge`, `rel_scip_callee_type`, `rel_scip_local`,
+`rel_scip_impl` (scip, 8).
+
+**Byte receipt (real extraction, this repo's own corpus, `dl` discovery mode
+over `.dl/*.dl`, DL_NO_DAEMON=1, identical source tree for both binaries —
+only the step-4a commit differs).**
+
+| | before (pre-4a) | after (post-4a) |
+|---|---|---|
+| db bytes, post-VACUUM | 571,772,928 | 561,913,856 |
+
+Delta 9,859,072 bytes (9.40MB, 1.72%). Per-table `dbstat` (table + its
+`sqlite_autoindex_*` twin), pre-VACUUM:
+
+| table | before | after | delta |
+|---|---|---|---|
+| rel_df_node_repo | 19,423,232 | 5,074,944 | 14,348,288 |
+| rel_df_node_repo_rev | 16,244,736 | 7,794,688 | 8,450,048 |
+| rel_df_edge | 17,506,304 | 12,140,544 | 5,365,760 |
+| rel_df_arg | 7,483,392 | 2,015,232 | 5,468,160 |
+| rel_df_arg_rev | 6,148,096 | 2,998,272 | 3,149,824 |
+| rel_nest | 1,118,208 | 516,096 | 602,112 |
+| rel_df_field | 565,248 | 159,744 | 405,504 |
+| rel_df_field_rev | 442,368 | 233,472 | 208,896 |
+| rel_df_param | 339,968 | 159,744 | 180,224 |
+| 8 scip rels (0 rows each) | 8,192 x8 | 4,096 x8 | 32,768 |
+
+The per-table sum (~36.4MB) exceeds the whole-file post-VACUUM delta
+(~9.4MB) because `dbstat` pgsize reflects each table's CURRENT b-tree, while
+the file's high-water mark also reflects transient page churn from earlier
+ticks during discovery (multiple `.dl/*.dl` programs tick the same db); VACUUM
+repacks the file but does not make the two numbers equal. This corpus (7.3MB
+source, no `index.scip` present) is far smaller than the 929MB incident root
+the plan's `-60 to -90MB` estimate was scaled from — the dataflow family
+(df_node_repo/df_node_repo_rev/df_edge/df_arg family) is where this step's
+real weight sits here; the scip family is present but empty. The 8.6MB
+`flow_edge`/8.3MB `df_edge_src_kind` savings the plan estimated stay on the
+table for the deferred `.dl`-declared-rel follow-up.
+
+**Query-equivalence proof (not asserted, proven).** Three representative
+queries against the decoded `_txt` views, same corpus, before vs after:
+`rel_df_edge_txt` (183,870 rows), `rel_df_arg_txt` (72,985 rows),
+`rel_nest_txt` (18,828 rows), each `ORDER BY` every column. All three:
+identical row counts, `diff` empty, matching SHA1 across the full TSV dump.
+
+**Gates.** `cargo check --lib` clean. `cargo test --lib`: 593 passed, 0
+failed, 1 pre-existing ignore. Full `cargo test --test it` (943 tests):
+before the `pk_never_null` fix, 912 passed / 1 failed
+(`named_args_in_a_rule_head_resolve`, the fail-pre-fix proof); after the fix,
+914 passed / 0 failed / 20 ignored. New tests:
+tests/it/storage_diet_without_rowid.rs (5: a vouched builtin gets WITHOUT
+ROWID with no autoindex via a real dataflow-lift fixture; an unvouched `.dl`
+rel of the IDENTICAL shape stays a rowid table — the regression pin; a
+`key(...)`-narrowed rel and a 5-column rel both stay rowid tables; a raw-SQL
+byte receipt proving the DDL mechanism itself) plus 6 classifier unit tests
+beside `wants_without_rowid` in src/engine/declare.rs (shape boundaries, the
+`pk_never_null` gate itself, including the exact `person(name, age)` shape
+that regressed).
+
 ## 4. Open decisions with recommendations
 
 USER RULINGS (2026-07-18, voice): A = 1a dense dictionary ("dense, hash,
