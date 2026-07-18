@@ -55,10 +55,16 @@ static_n1_test_hit(source_file, execute_line) <-
 
 # Waiver: @per-row-ok: in a comment from just above the loop through the
 # execute line.
+# Waiver comment lines (source-only rel; the range join lives in the derived
+# rule below — a source-op body cannot join other rels, the S6 sharp edge).
+rel static_n1_waiver_line(source_file: file, waiver_line: int).
+static_n1_waiver_line(source_file, waiver_line) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    comment(source_file, source_rev, /@per-row-ok:/, waiver_line, label: _).
+
 rel static_n1_waiver(source_file: file, execute_line: int).
 static_n1_waiver(source_file, execute_line) <-
-    scan("WORK", "src/**/*.rs", source_file, source_rev),
-    comment(source_file, source_rev, /@per-row-ok:/, waiver_line, label: _),
+    static_n1_waiver_line(source_file, waiver_line),
     static_n1_pair(source_file, for_line, execute_line),
     waiver_line >= for_line - 2,
     waiver_line <= execute_line.
