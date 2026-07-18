@@ -102,13 +102,27 @@ async fn handle_connection(daemon: Arc<Daemon>, ctx: ShellCtx, stream: tokio::ne
         }
 
         let is_shutdown = req.method == "shutdown";
+        let req_id = crate::reqid::next();
+        let method = req.method.clone();
+        let root = req.params.get("root").and_then(|v| v.as_str()).map(String::from);
+        let bytes_in = body.len();
+        let t = std::time::Instant::now();
         let d = daemon.clone();
+        let req_id_for_dispatch = req_id.clone();
         // Engine dispatch is sync and lock-taking: run it on the blocking pool.
-        let resp = match tokio::task::spawn_blocking(move || daemon::handle_request(&d, &req)).await {
+        let resp = match tokio::task::spawn_blocking(move || {
+            daemon::handle_request(&d, &req, &req_id_for_dispatch)
+        })
+        .await
+        {
             Ok(r) => r,
             Err(_) => Response::err(0, INTERNAL_ERROR, "dispatch task panicked"),
         };
         let out = serde_json::to_string(&resp.to_json()).unwrap_or_else(|_| "{}".into());
+        daemon::log_access(
+            "sock", &req_id, &method, root.as_deref(),
+            t.elapsed().as_millis() as u64, resp.error.is_none(), bytes_in, out.len(),
+        );
         if write_frame(&mut write, &out).await.is_err() {
             return;
         }

@@ -75,6 +75,14 @@ CREATE TABLE IF NOT EXISTS _job(
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS _job_ready ON _job(state, run_at, priority);";
 
+/// The client-request id (`crate::reqid`) whose thread-local scope was active
+/// when this job was last enqueued, or `None` for organically-triggered work
+/// (a file-watcher tick, a poll-timer sink drain) that no client request
+/// caused. Added as an idempotent migration (`ALTER TABLE`) rather than the
+/// base `SCHEMA` so an existing `jobs.sqlite` from before this arc upgrades
+/// in place instead of needing a fresh db.
+const MIGRATE_REQ_ID: &str = "ALTER TABLE _job ADD COLUMN req_id TEXT";
+
 /// Poison-tolerant mutex lock (same policy as `daemon::lock`). A worker
 /// panicking mid-claim should not brick the queue for every other worker; the
 /// guarded state is a `Db` behind SQLite transactions that roll back on unwind.
@@ -168,6 +176,15 @@ pub(crate) struct JobRow {
     #[allow(dead_code)]
     pub attempts: i64,
     pub run_at: i64,
+    /// See `crate::reqid` and `MIGRATE_REQ_ID`'s doc comment: the request
+    /// that was in scope on the constructing thread when this row was built,
+    /// captured automatically (every constructor below reads
+    /// `crate::reqid::current()`) so a call site never has to remember to
+    /// thread it through by hand. `None` on every organically-triggered
+    /// enqueue today (the file watcher and poll timer never enter a request
+    /// scope) — this is honest, not a gap: nothing has been LOST, those jobs
+    /// truly are not caused by a request.
+    pub req_id: Option<String>,
 }
 
 impl JobRow {
@@ -182,6 +199,7 @@ impl JobRow {
             priority: 0,
             attempts: 0,
             run_at: 0,
+            req_id: crate::reqid::current(),
         }
     }
 
@@ -195,6 +213,7 @@ impl JobRow {
             priority: 0,
             attempts: 0,
             run_at: 0,
+            req_id: crate::reqid::current(),
         }
     }
 
@@ -212,6 +231,7 @@ impl JobRow {
             priority,
             attempts: 0,
             run_at: 0,
+            req_id: crate::reqid::current(),
         }
     }
 
@@ -257,6 +277,10 @@ impl JobQueue {
         let db_path = home.join("jobs.sqlite");
         let db = crate::db::open(Some(&db_path.to_string_lossy()))?;
         db.execute_batch(SCHEMA)?;
+        // Duplicate-column errors are the expected steady state (every boot
+        // after the first); anything else would surface loudly the next time
+        // this connection is used, so swallowing here is safe.
+        let _ = db.conn().execute(MIGRATE_REQ_ID, []);
         Ok(Arc::new(JobQueue {
             db_path,
             db: Mutex::new(db),
@@ -289,8 +313,8 @@ impl JobQueue {
                 let run_at = job.run_at.max(0);
                 conn.execute(
                     "INSERT INTO _job(key, kind, root, arg, priority, state, dirty, cancelled, \
-                       attempts, run_at, enqueued_at) \
-                     VALUES(?1,?2,?3,?4,?5,'pending',0,0,0,?6,?7) \
+                       attempts, run_at, enqueued_at, req_id) \
+                     VALUES(?1,?2,?3,?4,?5,'pending',0,0,0,?6,?7,?8) \
                      ON CONFLICT(key) DO UPDATE SET \
                        arg = ?4, \
                        priority = max(priority, ?5), \
@@ -302,8 +326,9 @@ impl JobQueue {
                        enqueued_at = ?7, \
                        started_at = CASE WHEN state='running' THEN started_at ELSE NULL END, \
                        finished_at = CASE WHEN state='running' THEN finished_at ELSE NULL END, \
-                       last_error = CASE WHEN state='running' THEN last_error ELSE NULL END",
-                    params![job.key, job.kind.as_str(), job.root, merged, job.priority, run_at, now],
+                       last_error = CASE WHEN state='running' THEN last_error ELSE NULL END, \
+                       req_id = ?8",
+                    params![job.key, job.kind.as_str(), job.root, merged, job.priority, run_at, now, job.req_id],
                 )?;
                 Ok(())
             })();
@@ -333,18 +358,19 @@ impl JobQueue {
         let conn = db.conn();
         conn.execute_batch("BEGIN IMMEDIATE")?;
         let body = (|| -> Result<Option<JobRow>> {
-            let picked: Option<(String, String, String, String, i64, i64, i64)> = conn
+            #[allow(clippy::type_complexity)]
+            let picked: Option<(String, String, String, String, i64, i64, i64, Option<String>)> = conn
                 .query_row(
                     &format!(
-                        "SELECT key, kind, root, arg, priority, attempts, run_at FROM _job \
+                        "SELECT key, kind, root, arg, priority, attempts, run_at, req_id FROM _job \
                          WHERE state='pending' AND cancelled=0 AND run_at<=?1 AND kind IN ({kind_list}) \
                          ORDER BY priority DESC, run_at ASC, enqueued_at ASC LIMIT 1"
                     ),
                     params![now],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
                 )
                 .optional()?;
-            let Some((key, kind_s, root, arg_s, priority, attempts, run_at)) = picked else {
+            let Some((key, kind_s, root, arg_s, priority, attempts, run_at, req_id)) = picked else {
                 return Ok(None);
             };
             conn.execute(
@@ -353,7 +379,7 @@ impl JobQueue {
             )?;
             let kind = JobKind::parse(&kind_s).unwrap_or(JobKind::Tick);
             let arg = serde_json::from_str(&arg_s).unwrap_or_else(|_| json!({}));
-            Ok(Some(JobRow { key, kind, root, arg, priority, attempts, run_at }))
+            Ok(Some(JobRow { key, kind, root, arg, priority, attempts, run_at, req_id }))
         })();
         finish_tx(conn, &body)?;
         body

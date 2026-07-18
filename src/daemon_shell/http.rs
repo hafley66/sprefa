@@ -143,15 +143,27 @@ async fn rpc(State(daemon): State<Arc<Daemon>>, body: String) -> Response {
             ),
         );
     }
+    let req_id = crate::reqid::next();
+    let method = req.method.clone();
+    let root_owned = req.params.get("root").and_then(|v| v.as_str()).map(String::from);
+    let bytes_in = body.len();
+    let t = std::time::Instant::now();
     let d = daemon.clone();
-    let resp = match tokio::task::spawn_blocking(move || daemon::handle_request(&d, &req)).await {
+    let req_id_for_dispatch = req_id.clone();
+    let resp = match tokio::task::spawn_blocking(move || {
+        daemon::handle_request(&d, &req, &req_id_for_dispatch)
+    })
+    .await
+    {
         Ok(r) => r,
         Err(_) => RpcResponse::err(0, crate::rpc::INTERNAL_ERROR, "dispatch task panicked"),
     };
-    json_response(
-        StatusCode::OK,
-        serde_json::to_string(&resp.to_json()).unwrap_or_else(|_| "{}".into()),
-    )
+    let out = serde_json::to_string(&resp.to_json()).unwrap_or_else(|_| "{}".into());
+    daemon::log_access(
+        "http", &req_id, &method, root_owned.as_deref(),
+        t.elapsed().as_millis() as u64, resp.error.is_none(), bytes_in, out.len(),
+    );
+    json_response(StatusCode::OK, out)
 }
 
 /// Anything but the two routes: 404 with a JSON error, mirroring the old

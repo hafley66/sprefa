@@ -52,7 +52,12 @@ async fn worker_loop(
         match claimed {
             Ok(Ok(Some(job))) => {
                 let key = job.key.clone();
+                let kind = job.kind;
+                let root = job.root.clone();
+                let req_id = job.req_id.clone().unwrap_or_default();
+                tracing::info!(kind = ?kind, key = %key, root = %root, req_id, "[daemon] job claimed");
                 let r = runner.clone();
+                let t = std::time::Instant::now();
                 // A panicking runner (a tick that unwinds) surfaces as a
                 // `JoinError` here; treat it as a job failure so the queue backs
                 // it off instead of the worker dying.
@@ -60,11 +65,15 @@ async fn worker_loop(
                     Ok(res) => res,
                     Err(_) => Err(anyhow::anyhow!("job runner panicked")),
                 };
+                let ms = t.elapsed().as_millis() as u64;
+                if let Err(e) = &outcome {
+                    tracing::warn!(kind = ?kind, key = %key, req_id, ms, "[daemon] job failed: {e}");
+                }
                 let q2 = queue.clone();
                 match tokio::task::spawn_blocking(move || q2.finish(&key, outcome)).await {
-                    Ok(Ok(req)) => tracing::debug!("[daemon] job -> {req:?}"),
-                    Ok(Err(e)) => tracing::warn!("[daemon] job finish error: {e}"),
-                    Err(_) => tracing::warn!("[daemon] job finish task panicked"),
+                    Ok(Ok(req)) => tracing::info!(kind = ?kind, req_id, ms, "[daemon] job done -> {req:?}"),
+                    Ok(Err(e)) => tracing::warn!(kind = ?kind, "[daemon] job finish error: {e}"),
+                    Err(_) => tracing::warn!(kind = ?kind, "[daemon] job finish task panicked"),
                 }
             }
             Ok(Ok(None)) => {

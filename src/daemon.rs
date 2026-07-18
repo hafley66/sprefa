@@ -1179,21 +1179,32 @@ fn apply_daemon_budget() -> (&'static str, i32, usize) {
 /// `with_target(false)` drops the module path since call sites already carry a
 /// `[daemon]`/`[<root>]` bracket, and `compact()` keeps each line short.
 ///
+/// Also composes in the two rolling FILE layers (`dl.log`/`error.log` under
+/// `<home>/log/`, see `crate::trace::file_layers`) so a foreground/background
+/// daemon writes the same apache-style access/error log every other `dl`
+/// invocation does — this is the one process where `crate::trace::init`
+/// deliberately defers (see its doc comment) specifically so THIS init wins
+/// the race and installs both the stderr layer and the file layers together.
+///
 /// Idempotent by design: `try_init` returns `Err` (ignored) when a global
 /// subscriber is already installed, so a foreground daemon started inside a
 /// process that already configured tracing — and a test that calls this twice —
-/// does not panic. `crate::trace::init` deliberately skips claiming the global
-/// slot unless `RUST_LOG`/`DL_TRACE` is set, so in the common case this `try_init`
-/// is the one that wins and governs daemon output.
+/// does not panic.
 fn init_daemon_tracing() {
+    use tracing_subscriber::prelude::*;
     let filter = tracing_subscriber::EnvFilter::try_from_env("DL_LOG")
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    let _ = tracing_subscriber::fmt()
+    let stderr_layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
         .with_thread_names(true)
         .with_target(false)
         .compact()
-        .with_env_filter(filter)
+        .with_filter(filter);
+    let home = daemon_home();
+    let _ = tracing_subscriber::registry()
+        .with(stderr_layer)
+        .with(crate::trace::dl_log_layer(&home))
+        .with(crate::trace::error_log_layer(&home))
         .try_init();
 }
 
@@ -1503,7 +1514,7 @@ impl crate::jobq::JobRunner for DaemonJobRunner {
 
 /// Identity of the currently-running `dl` binary: crate version + the exe's
 /// mtime. A client that rebuilt/reinstalled computes a different id and respawns.
-fn build_id() -> String {
+pub(crate) fn build_id() -> String {
     let version = env!("CARGO_PKG_VERSION");
     let mtime = std::env::current_exe().ok()
         .and_then(|p| std::fs::metadata(p).ok())
@@ -1601,6 +1612,29 @@ fn poll_interval_secs() -> Option<u64> {
     }
 }
 
+/// One access-log line per inbound request, either transport. The apache-
+/// style line this arc exists for: request id, which door it came through,
+/// the RPC method, which root it addressed (empty = config view / not yet
+/// resolved), how long dispatch took, and whether it succeeded. Byte counts
+/// are the caller's to add when cheap (the HTTP body length; the UDS path
+/// already has the framed body in hand) — optional, so `0` means "not
+/// counted" rather than "empty body".
+pub(crate) fn log_access(
+    surface: &str,
+    req_id: &str,
+    method: &str,
+    root: Option<&str>,
+    ms: u64,
+    ok: bool,
+    bytes_in: usize,
+    bytes_out: usize,
+) {
+    tracing::info!(
+        req_id, surface, method, root = root.unwrap_or(""), ms, ok, bytes_in, bytes_out,
+        "[access]"
+    );
+}
+
 pub(crate) fn parse_request(v: Value) -> Option<Request> {
     let id = v.get("id")?.as_u64()?;
     let method = v.get("method")?.as_str()?.to_string();
@@ -1620,7 +1654,13 @@ fn req_root(req: &Request) -> Option<String> {
 /// both transports intercept it (the UDS task registers the write half with the
 /// subscriber pump; the HTTP path rejects it), so a `subscribe` never reaches
 /// this function.
-pub(crate) fn handle_request(d: &Arc<Daemon>, req: &Request) -> Response {
+pub(crate) fn handle_request(d: &Arc<Daemon>, req: &Request, req_id: &str) -> Response {
+    // Anything synchronous on THIS thread for the rest of the call — an
+    // inline tick from `run_eval` (the `eval`/`load mode=once` path), a
+    // `JobRow` built here — can read this id back via `crate::reqid::current`
+    // and tag its own event/row with it. Dropped (restoring whatever was
+    // active before, normally nothing) on every return path via RAII.
+    let _reqid_scope = crate::reqid::scope(req_id);
     // ----- process-level methods (no root routing) -----
     match req.method.as_str() {
         "shutdown" => return Response::ok(req.id, json!({"ok": true})),
@@ -2305,7 +2345,7 @@ pub fn ensure_singleton() -> Result<()> {
                 match running {
                     Some(id) if id == build_id() => return Ok(()),
                     Some(_) => {
-                        eprintln!("[daemon] running binary changed — restarting daemon");
+                        tracing::warn!("[daemon] running binary changed — restarting daemon");
                         let _ = stop();
                     }
                     None => return Ok(()),
@@ -2313,6 +2353,13 @@ pub fn ensure_singleton() -> Result<()> {
             }
         }
     }
+    // The respawn-storm event: this client found no live daemon and is about
+    // to spawn one. A one-shot `dl --check` autostarting a daemon, killed
+    // externally, then re-autostarting on the NEXT invocation — repeatedly —
+    // is exactly the incident this warning is for; it lands in the CALLING
+    // process's own dl.log/error.log (via `crate::trace::init`), not the new
+    // daemon's, since the daemon doesn't exist yet to log it.
+    tracing::warn!(pid = std::process::id(), "[daemon] no live singleton found — spawning one");
     spawn_detached()?;
     wait_ready()
 }
