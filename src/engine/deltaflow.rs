@@ -7,6 +7,18 @@
 use rusqlite::{params, Connection, OptionalExtension, Result};
 use std::collections::BTreeSet;
 
+/// SQLite's default compiled bound-parameter ceiling is 999; stay under it so a
+/// batched write stays a single statement across realistic touched-candidate
+/// sets, and chunks (never a per-row write) beyond it.
+const MAX_BOUND_PARAMS: usize = 800;
+
+/// Representative shapes recorded in `executed_mutations` for the derived-rel
+/// deletes. They keep the scoped `WHERE` so `has_whole_derived_delete` still
+/// distinguishes a targeted delete from a whole-table wipe after batching.
+const DELETE_PROJECTED_SCOPED: &str = "DELETE FROM projected WHERE sym IN (VALUES ...)";
+const DELETE_JOINED_SCOPED: &str = "DELETE FROM joined WHERE (sym,payload) IN (VALUES ...)";
+const DELETE_OUT_SCOPED: &str = "DELETE FROM out WHERE sym IN (VALUES ...)";
+
 #[derive(Clone, Debug)]
 pub(crate) enum InputChange {
     Src {
@@ -31,6 +43,10 @@ pub(crate) struct DeltaMetrics {
     pub(crate) rules_run: usize,
     pub(crate) peak_queued_rows: usize,
     pub(crate) peak_queued_estimated_bytes: usize,
+    /// Number of INSERT/DELETE statements this generation actually executed.
+    /// Batched: a handful of chunked writes, NOT one per changed row. The N+1
+    /// guard test reads this to prove the per-row write path stayed gone.
+    pub(crate) write_statements: usize,
 }
 
 impl DeltaMetrics {
@@ -52,6 +68,7 @@ pub(crate) struct BooleanDeltaFixture {
     db: Connection,
     generation: u64,
     executed_mutations: Vec<&'static str>,
+    write_statements: usize,
 }
 
 impl BooleanDeltaFixture {
@@ -86,6 +103,7 @@ impl BooleanDeltaFixture {
             db,
             generation: 0,
             executed_mutations: Vec::new(),
+            write_statements: 0,
         })
     }
 
@@ -97,8 +115,21 @@ impl BooleanDeltaFixture {
         let mut metrics = DeltaMetrics::default();
         let mut changed_src_syms = BTreeSet::new();
         let mut changed_stable_syms = BTreeSet::new();
+        self.write_statements = 0;
         self.db.execute_batch("BEGIN IMMEDIATE")?;
 
+        // --- input deltas ---------------------------------------------------
+        // Group the incoming deltas into per-(rel, direction) sets and flush
+        // each set as ONE batched write instead of a write per change. The
+        // membership probe against the pre-batch db state reproduces the old
+        // per-change `changes()` accounting for the distinct deltas the
+        // InputChange stream models (BTreeSet dedups a repeated change; a
+        // same-row +/- pair inside one generation is outside that contract).
+        // BTreeSet iteration order keeps the batched rows deterministic.
+        let mut src_add: BTreeSet<(String, String, String)> = BTreeSet::new();
+        let mut src_del: BTreeSet<(String, String, String)> = BTreeSet::new();
+        let mut stable_add: BTreeSet<(String, String)> = BTreeSet::new();
+        let mut stable_del: BTreeSet<(String, String)> = BTreeSet::new();
         for change in changes {
             match change {
                 InputChange::Src {
@@ -107,11 +138,9 @@ impl BooleanDeltaFixture {
                     kind,
                     diff: 1,
                 } => {
-                    let changed = self.db.execute(
-                        "INSERT OR IGNORE INTO src(repo,sym,kind) VALUES(?1,?2,?3)",
-                        params![repo, sym, kind],
-                    )?;
-                    if changed != 0 {
+                    if !self.src_present(repo, sym, kind)?
+                        && src_add.insert((repo.clone(), sym.clone(), kind.clone()))
+                    {
                         metrics.delta_input_rows += 1;
                         changed_src_syms.insert(sym.clone());
                     }
@@ -122,11 +151,9 @@ impl BooleanDeltaFixture {
                     kind,
                     diff: -1,
                 } => {
-                    let changed = self.db.execute(
-                        "DELETE FROM src WHERE repo=?1 AND sym=?2 AND kind=?3",
-                        params![repo, sym, kind],
-                    )?;
-                    if changed != 0 {
+                    if self.src_present(repo, sym, kind)?
+                        && src_del.insert((repo.clone(), sym.clone(), kind.clone()))
+                    {
                         metrics.delta_input_rows += 1;
                         changed_src_syms.insert(sym.clone());
                     }
@@ -136,11 +163,9 @@ impl BooleanDeltaFixture {
                     payload,
                     diff: 1,
                 } => {
-                    let changed = self.db.execute(
-                        "INSERT OR IGNORE INTO stable(sym,payload) VALUES(?1,?2)",
-                        params![sym, payload],
-                    )?;
-                    if changed != 0 {
+                    if !self.stable_present(sym, payload)?
+                        && stable_add.insert((sym.clone(), payload.clone()))
+                    {
                         metrics.delta_input_rows += 1;
                         changed_stable_syms.insert(sym.clone());
                     }
@@ -150,11 +175,9 @@ impl BooleanDeltaFixture {
                     payload,
                     diff: -1,
                 } => {
-                    let changed = self.db.execute(
-                        "DELETE FROM stable WHERE sym=?1 AND payload=?2",
-                        params![sym, payload],
-                    )?;
-                    if changed != 0 {
+                    if self.stable_present(sym, payload)?
+                        && stable_del.insert((sym.clone(), payload.clone()))
+                    {
                         metrics.delta_input_rows += 1;
                         changed_stable_syms.insert(sym.clone());
                     }
@@ -162,7 +185,16 @@ impl BooleanDeltaFixture {
                 _ => return Err(rusqlite::Error::InvalidQuery),
             }
         }
+        let src_add_rows = triples(&src_add);
+        let src_del_rows = triples(&src_del);
+        let stable_add_rows = doubles(&stable_add);
+        let stable_del_rows = doubles(&stable_del);
+        self.batch_insert("INSERT OR IGNORE INTO src(repo,sym,kind)", 3, &src_add_rows)?;
+        self.batch_delete("src", &["repo", "sym", "kind"], &src_del_rows)?;
+        self.batch_insert("INSERT OR IGNORE INTO stable(sym,payload)", 2, &stable_add_rows)?;
+        self.batch_delete("stable", &["sym", "payload"], &stable_del_rows)?;
 
+        // --- projected (source-driven presence) -----------------------------
         let projected_candidates: Vec<String> = changed_src_syms.into_iter().collect();
         metrics.candidate_rows += projected_candidates.len();
         metrics.observe_queue(
@@ -170,34 +202,41 @@ impl BooleanDeltaFixture {
             string_bytes(&projected_candidates),
         );
         let mut projected_transitions = BTreeSet::new();
+        let mut projected_insert: Vec<Vec<String>> = Vec::new();
+        let mut projected_delete: Vec<Vec<String>> = Vec::new();
         if !projected_candidates.is_empty() {
             metrics.rules_run += 1;
-            for sym in projected_candidates {
+            for sym in &projected_candidates {
                 let want = self.db.query_row(
                     "SELECT EXISTS(SELECT 1 FROM src WHERE sym=?1 AND kind='keep')",
-                    [&sym],
+                    [sym],
                     |row| row.get::<_, bool>(0),
                 )?;
                 let have = self
                     .db
-                    .query_row("SELECT 1 FROM projected WHERE sym=?1", [&sym], |_| Ok(true))
+                    .query_row("SELECT 1 FROM projected WHERE sym=?1", [sym], |_| Ok(true))
                     .optional()?
                     .unwrap_or(false);
                 if want != have {
                     if want {
-                        self.db
-                            .execute("INSERT INTO projected(sym) VALUES(?1)", [&sym])?;
+                        projected_insert.push(vec![sym.clone()]);
                     } else {
-                        const SQL: &str = "DELETE FROM projected WHERE sym=?1";
-                        self.executed_mutations.push(SQL);
-                        self.db.execute(SQL, [&sym])?;
+                        projected_delete.push(vec![sym.clone()]);
                     }
                     metrics.transition(want);
-                    projected_transitions.insert(sym);
+                    projected_transitions.insert(sym.clone());
                 }
             }
         }
+        self.batch_insert("INSERT INTO projected(sym)", 1, &projected_insert)?;
+        if !projected_delete.is_empty() {
+            self.executed_mutations.push(DELETE_PROJECTED_SCOPED);
+        }
+        self.batch_delete("projected", &["sym"], &projected_delete)?;
 
+        // --- joined candidate gather (read-only; NOT a per-row write) --------
+        // This loop only SELECTs, filling the in-memory candidate set; there is
+        // no db mutation to batch. It stays row-at-a-time on purpose.
         let joined_syms: BTreeSet<String> = projected_transitions
             .into_iter()
             .chain(changed_stable_syms)
@@ -215,12 +254,16 @@ impl BooleanDeltaFixture {
                 joined_candidates.insert((sym.clone(), payload?));
             }
         }
+
+        // --- joined (projected AND stable) ----------------------------------
         metrics.candidate_rows += joined_candidates.len();
         metrics.observe_queue(joined_candidates.len(), pair_bytes(&joined_candidates));
         let mut joined_transition_syms = BTreeSet::new();
+        let mut joined_insert: Vec<Vec<String>> = Vec::new();
+        let mut joined_delete: Vec<Vec<String>> = Vec::new();
         if !joined_candidates.is_empty() {
             metrics.rules_run += 1;
-            for (sym, payload) in joined_candidates {
+            for (sym, payload) in &joined_candidates {
                 let want = self.db.query_row(
                     "SELECT EXISTS(SELECT 1 FROM projected WHERE sym=?1) AND EXISTS(SELECT 1 FROM stable WHERE sym=?1 AND payload=?2)",
                     params![sym, payload], |row| row.get::<_, bool>(0),
@@ -236,53 +279,126 @@ impl BooleanDeltaFixture {
                     .unwrap_or(false);
                 if want != have {
                     if want {
-                        self.db.execute(
-                            "INSERT INTO joined(sym,payload) VALUES(?1,?2)",
-                            params![sym, payload],
-                        )?;
+                        joined_insert.push(vec![sym.clone(), payload.clone()]);
                     } else {
-                        const SQL: &str = "DELETE FROM joined WHERE sym=?1 AND payload=?2";
-                        self.executed_mutations.push(SQL);
-                        self.db.execute(SQL, params![sym, payload])?;
+                        joined_delete.push(vec![sym.clone(), payload.clone()]);
                     }
                     metrics.transition(want);
-                    joined_transition_syms.insert(sym);
+                    joined_transition_syms.insert(sym.clone());
                 }
             }
         }
+        self.batch_insert("INSERT INTO joined(sym,payload)", 2, &joined_insert)?;
+        if !joined_delete.is_empty() {
+            self.executed_mutations.push(DELETE_JOINED_SCOPED);
+        }
+        self.batch_delete("joined", &["sym", "payload"], &joined_delete)?;
 
+        // --- out (joined emits) ---------------------------------------------
         let out_candidates: Vec<String> = joined_transition_syms.into_iter().collect();
         metrics.candidate_rows += out_candidates.len();
         metrics.observe_queue(out_candidates.len(), string_bytes(&out_candidates));
+        let mut out_insert: Vec<Vec<String>> = Vec::new();
+        let mut out_delete: Vec<Vec<String>> = Vec::new();
         if !out_candidates.is_empty() {
             metrics.rules_run += 1;
-            for sym in out_candidates {
+            for sym in &out_candidates {
                 let want = self.db.query_row(
                     "SELECT EXISTS(SELECT 1 FROM joined WHERE sym=?1 AND payload LIKE 'emit:%')",
-                    [&sym],
+                    [sym],
                     |row| row.get::<_, bool>(0),
                 )?;
                 let have = self
                     .db
-                    .query_row("SELECT 1 FROM out WHERE sym=?1", [&sym], |_| Ok(true))
+                    .query_row("SELECT 1 FROM out WHERE sym=?1", [sym], |_| Ok(true))
                     .optional()?
                     .unwrap_or(false);
                 if want != have {
                     if want {
-                        self.db.execute("INSERT INTO out(sym) VALUES(?1)", [&sym])?;
+                        out_insert.push(vec![sym.clone()]);
                     } else {
-                        const SQL: &str = "DELETE FROM out WHERE sym=?1";
-                        self.executed_mutations.push(SQL);
-                        self.db.execute(SQL, [&sym])?;
+                        out_delete.push(vec![sym.clone()]);
                     }
                     metrics.transition(want);
                 }
             }
         }
+        self.batch_insert("INSERT INTO out(sym)", 1, &out_insert)?;
+        if !out_delete.is_empty() {
+            self.executed_mutations.push(DELETE_OUT_SCOPED);
+        }
+        self.batch_delete("out", &["sym"], &out_delete)?;
 
         self.db.execute_batch("COMMIT")?;
         self.generation += 1;
+        metrics.write_statements = self.write_statements;
         Ok(metrics)
+    }
+
+    fn src_present(&self, repo: &str, sym: &str, kind: &str) -> Result<bool> {
+        Ok(self
+            .db
+            .query_row(
+                "SELECT 1 FROM src WHERE repo=?1 AND sym=?2 AND kind=?3",
+                params![repo, sym, kind],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    fn stable_present(&self, sym: &str, payload: &str) -> Result<bool> {
+        Ok(self
+            .db
+            .query_row(
+                "SELECT 1 FROM stable WHERE sym=?1 AND payload=?2",
+                params![sym, payload],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    /// One INSERT statement per chunk (chunked under `MAX_BOUND_PARAMS`), never
+    /// one per row. `head` is everything before `VALUES`; `arity` its columns.
+    fn batch_insert(&mut self, head: &str, arity: usize, rows: &[Vec<String>]) -> Result<()> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let per_stmt = (MAX_BOUND_PARAMS / arity).max(1);
+        let tuple = format!("({})", vec!["?"; arity].join(","));
+        for chunk in rows.chunks(per_stmt) {
+            let values = vec![tuple.as_str(); chunk.len()].join(",");
+            let sql = format!("{head} VALUES {values}");
+            let flat: Vec<&String> = chunk.iter().flatten().collect();
+            self.db.execute(&sql, rusqlite::params_from_iter(flat))?;
+            self.write_statements += 1;
+        }
+        Ok(())
+    }
+
+    /// One DELETE statement per chunk, keyed by an N-column tuple `IN (VALUES
+    /// ...)`. Never one delete per row.
+    fn batch_delete(&mut self, table: &str, cols: &[&str], rows: &[Vec<String>]) -> Result<()> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let arity = cols.len();
+        let per_stmt = (MAX_BOUND_PARAMS / arity).max(1);
+        let key = if arity == 1 {
+            cols[0].to_string()
+        } else {
+            format!("({})", cols.join(","))
+        };
+        let tuple = format!("({})", vec!["?"; arity].join(","));
+        for chunk in rows.chunks(per_stmt) {
+            let values = vec![tuple.as_str(); chunk.len()].join(",");
+            let sql = format!("DELETE FROM {table} WHERE {key} IN (VALUES {values})");
+            let flat: Vec<&String> = chunk.iter().flatten().collect();
+            self.db.execute(&sql, rusqlite::params_from_iter(flat))?;
+            self.write_statements += 1;
+        }
+        Ok(())
     }
 
     pub(crate) fn has_whole_derived_delete(&self) -> bool {
@@ -335,6 +451,18 @@ impl BooleanDeltaFixture {
         ))?;
         Ok(())
     }
+}
+
+fn doubles(rows: &BTreeSet<(String, String)>) -> Vec<Vec<String>> {
+    rows.iter()
+        .map(|(first, second)| vec![first.clone(), second.clone()])
+        .collect()
+}
+
+fn triples(rows: &BTreeSet<(String, String, String)>) -> Vec<Vec<String>> {
+    rows.iter()
+        .map(|(first, second, third)| vec![first.clone(), second.clone(), third.clone()])
+        .collect()
 }
 
 fn string_bytes(rows: &[String]) -> usize {
@@ -439,6 +567,52 @@ mod tests {
             f.apply_generation(&[src("r", "s", "keep", 1), stable("s", "ignore:value", 1)])?;
         assert_eq!((metrics.public_plus, metrics.public_minus), (2, 0));
         assert!(strings(&f.db, "SELECT sym FROM out")?.is_empty());
+        f.assert_clean_rebuild_parity()
+    }
+
+    // N+1 structural guard, sibling to tests/it/derived_intern_n1.rs. A single
+    // generation touches K distinct symbols, each cascading a public row into
+    // all three derived rels — 2*K input rows written plus 3*K derived rows. A
+    // per-row write path issues one INSERT/DELETE statement per row (>= 5*K).
+    // Batched, the whole generation collapses to a handful of chunked writes,
+    // structurally below even the 2*K change count. Read off the write-statement
+    // counter, not a timing vibe; restoring any per-row `db.execute` inside a
+    // loop trips the `< changes.len()` bound.
+    #[test]
+    fn batched_writes_do_not_scale_with_change_count() -> Result<()> {
+        const K: usize = 200;
+        let mut f = BooleanDeltaFixture::new()?;
+        let mut changes = Vec::with_capacity(2 * K);
+        for i in 0..K {
+            let sym = format!("sym{i:05}");
+            changes.push(src("r", &sym, "keep", 1));
+            changes.push(stable(&sym, "emit:value", 1));
+        }
+        let metrics = f.apply_generation(&changes)?;
+
+        // Every symbol reached a public row in projected, joined, and out.
+        assert_eq!(metrics.public_plus, 3 * K, "expected a full cascade per symbol");
+        assert_eq!(metrics.delta_input_rows, 2 * K);
+        assert!(
+            changes.len() > 64,
+            "fixture must write enough rows to expose the N+1 (got {})",
+            changes.len()
+        );
+        // The structural guarantee: 5*K rows written this generation must NOT
+        // cost 5*K write statements. Pre-fix this loop issued one execute per
+        // changed row and blew past the change count.
+        assert!(
+            metrics.write_statements < changes.len(),
+            "write statements {} did not stay below the {}-row change count — a \
+             per-row write slipped back into apply_generation",
+            metrics.write_statements,
+            changes.len()
+        );
+        assert!(
+            metrics.write_statements <= 16,
+            "unexpected batched write fan-out: {}",
+            metrics.write_statements
+        );
         f.assert_clean_rebuild_parity()
     }
 
