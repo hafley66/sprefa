@@ -38,6 +38,7 @@
   - [8. Argmax and friends](08-argmax-and-friends.md)
 <!-- END: summary-chapters -->
   - [Further study](further-study.md)
+  - [Drawing the change: graph diff visualization](graph-diff-drawing.md)
 
 ## The math companion
 
