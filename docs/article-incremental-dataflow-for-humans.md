@@ -207,3 +207,71 @@ Read the table twice. Down the first column: near-unanimity, because the algebra
 - pg_ivm: <https://github.com/sraoss/pg_ivm>
 - Salsa: <https://github.com/salsa-rs/salsa>
 - pathfinding (Rust crate): <https://docs.rs/pathfinding>
+- Adapton: <https://github.com/Adapton/adapton.rust>
+
+---
+
+## Part III: paths, trees, and the address of everything
+
+Parts I and II never asked what a node's *name* is. Not its label — its address, the thing you write down to point at exactly one occurrence of it. Trees answer for free. Graphs make you work for it. This part is about exactly when the work succeeds.
+
+## Trees name their nodes
+
+In a tree, every node has exactly one path from the root, so the path is the node's identity. `main/a/b` does not describe `b`; it *is* `b` — write it down and anyone can walk to the same node.
+
+You read such addresses all day. A URL route is a path from the site root. An XPath is a path from the document root. A React fiber path — the chain of component instances from the root of the rendered tree down to one element — is what a component stack trace prints. One node, one address, always. The whole apparatus of pointing breaks the moment that stops being true.
+
+## The first breakage: sharing
+
+Extend the Part I call graph with one diamond: `a` calls `b` and `c`, and both call `d`. The edge table is now `(main,a)`, `(a,b)`, `(a,c)`, `(b,d)`, `(c,d)`.
+
+`d` has two parents, and therefore two addresses: `main/a/b/d` and `main/a/c/d`. A directed acyclic graph — a DAG, edges with direction and no way to follow them back to where you started — permits exactly this failure. Nothing is wrong with the graph. What is wrong is the assumption that a node has one address.
+
+The repair is to give up on the node and keep the paths.
+
+> **Definition (unfolding).** The *unfolding* of a graph from an entry point is the tree you get by walking every path out of the entry and copying each node once per distinct path that reaches it. Sharing is destroyed on purpose; the path becomes the node. Graph theorists call the result the universal cover.
+
+Worked on the diamond:
+
+```
+main                        main
+└── a          unfolds      └── a
+    ├── b      ───────►         ├── b
+    │   └── d                   │   └── d      ← first copy
+    └── c                       └── c
+        └── d                       └── d      ← second copy
+```
+
+Two copies of `d`, one address each. Pointing works again — at a price. A node's copy count is its number of distinct paths, and distinct paths multiply: chain *k* diamonds and the last node has 2^*k* addresses. The unfolding is one-to-one with the original exactly when every node has at most one parent — which is to say, when the graph was already a tree. Unfolding never lies; it bills you for the sharing it removed.
+
+## The second breakage: cycles
+
+A DAG at least unfolds to something finite. Give `d` an edge back to `a` and unfolding never terminates: `main/a/b/d/a/b/d/...` The universal cover of a cycle is an infinite tree, and no address scheme built from root paths survives it.
+
+The repair is to stop distinguishing the nodes that keep you going in circles.
+
+> **Definition (condensation).** A *strongly connected component* is a set of nodes where each one can reach all the others. Collapse every such component into a single super-node and the result — the *condensation* — is always a DAG, whatever the original graph was. Inside a component there is no canonical order: every node reaches every other, so "which comes first" has an answer only relative to where you entered.
+
+With cycles gone, the DAG can be lined up. A *topological order* is any listing of the nodes in which every edge points forward; its coarse-grained form is *topological layers* — layer 0 for nodes with no outgoing edges, layer *n* for nodes whose longest chain downward has length *n*. The layers are the reading-order rungs of the graph: bottom rung first, each rung resting only on rungs below it.
+
+This repo ships both halves: `scc` is a built-in op that binds `(representative, member)` per node, and `examples/dag-layers.dl` layers a condensed file graph in exactly this way.
+
+## Rendering a graph as a document
+
+The practical version of this problem is one you have already met: writing a graph out as a document. Documents are trees — sections nest inside chapters. Depth-first search is the machine that decides what nests and what links.
+
+Walk the graph depth-first: from each node, fully explore one successor before moving to the next, marking nodes as you first reach them. Every edge now falls into one of two classes. A *tree edge* led you to a node never seen before; render it as nesting — the destination goes inside the source. Every other edge points at a node already visited, already placed; it cannot nest without duplicating, so render it as a link. The tree edges touch every node and form a *spanning tree* — a tree containing the whole node set. That is how a DAG becomes HTML: the spanning tree becomes element nesting, and the sharing becomes `id` attributes with `href` anchors pointing at them. The DOM is a tree, but `id` plus `href` makes it a graph. An anchor is an edge that got turned into data.
+
+## The quiet trick: reifying edges
+
+That last move deserves its own section, because this engine already runs on it. To *reify* an edge — to make a thing of it — is to store it as a row with its own identity, after which it is addressable, joinable, queryable: a node in fact-space. `call_edge` and `df_edge` in `std/` are exactly this: edges you can put in a rule body. Graph theory has two older constructions in the same family. The *line graph* of G has one node per edge of G, two adjacent when their edges share an endpoint. The *incidence graph* keeps both nodes and edges as nodes, alternating. Reification is the database version: the edge table is the line graph minus the ceremony.
+
+It is also safe at scale, for a reason Part II already supplied. An edge space is bounded by the node count squared, which sounds frightening until you remember where rows live: a reified edge is a row, and rows are disk, not RAM — the non-resident shape applies to edges exactly as it applied to everything else. Squared is a fine bound when the square is allowed to be cold.
+
+## Building the graph while it runs
+
+One loop remains to close. Every graph so far was *extracted* — someone read source code and wrote rows. Reactive systems build the same graph at runtime, from the inside, using a device worth knowing by name: the compute stack.
+
+A computation about to run pushes itself onto a stack. While it runs, every read it makes of another computation's value registers an edge — reader depends on read. When it finishes, it pops. That is the entire mechanism. It is how salsa builds its memo graph, how Adapton builds its dependency graph, and how MobX's autorun learns which observables to re-run on. It is also how you would build an RxJS subscription-tree debugger: intercept `subscribe`, and the same push-read-pop discipline hands you the live tree of who subscribed to whom.
+
+Notice what falls out. The path of pushes sitting on the stack at the moment an edge registers *is* the fiber path of the running computation — a dynamic address, built for free by the act of running. Unfolding gives static addresses: every path that could exist, named. The compute stack gives dynamic addresses: the path that did exist, named once. When the program is deterministic — same inputs, same walk — they are the same tree.
