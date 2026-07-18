@@ -65,7 +65,8 @@ impl Engine {
         self.apply_appends(&appends, &claimed, &mut written, &write_roots)?;
         if !written.is_empty() && !quiet {
             let files = written.join(", ");
-            tracing::debug!(files = %files, "[gen] wrote {files}");
+            // @eprintln-ok: gen sink file-write summary is the command's stderr output contract
+            eprintln!("[gen] wrote {files}");
         }
         Ok(())
     }

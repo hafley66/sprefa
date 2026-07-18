@@ -310,7 +310,8 @@ fn apply_cli_budget() {
         };
         let nice = if cfg!(unix) { 10 } else { 0 };
         let threads = rayon::current_num_threads();
-        tracing::debug!(qos = %qos, nice = nice, iopol = %iopol, threads = threads, "[budget] qos={qos} nice={nice} iopol={iopol} threads={threads}");
+        // @eprintln-ok: DL_BUDGET_DEBUG env-gated debug line is the command's stderr output contract
+        eprintln!("[budget] qos={qos} nice={nice} iopol={iopol} threads={threads}");
     }
 }
 

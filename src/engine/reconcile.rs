@@ -175,8 +175,8 @@ impl Engine {
                 targets.join(", ")
             };
             if consumed.contains(rel) {
-                // (b) consumed helper — quiet, no fix-it note.
-                tracing::debug!(
+                // (b) consumed helper — quiet, no fix-it note, but still visible by default.
+                tracing::warn!(
                     rel = %rel,
                     glob = %glob,
                     where_ = %where_,

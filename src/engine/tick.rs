@@ -827,12 +827,8 @@ impl Engine {
                             program_scope.iter().map(|s| s.as_str()).collect();
                         names.sort_unstable();
                         let names_str = names.join(", ");
-                        tracing::debug!(
-                            rel_count = names.len(),
-                            names = %names_str,
-                            "[derived-scope] program edit scoped to {} rel(s): {names_str}",
-                            names.len()
-                        );
+                        // @eprintln-ok: DL_STMT_TRACE companion line is the command's stderr output contract
+                        eprintln!("[derived-scope] program edit scoped to {} rel(s): {names_str}", names.len());
                     }
                 }
             }

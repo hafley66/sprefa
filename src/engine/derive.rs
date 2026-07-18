@@ -176,7 +176,8 @@ impl Engine {
         // (or the graph is legitimately empty and we recorded the all-zero digest).
         if self.load_rel_digest(&dkey)? == Some(digest) && (edges.is_empty() || have_cur > 0) {
             if trace {
-                tracing::trace!(edge = %edge, "[node2vec] graph '{edge}': skip (digest unchanged)");
+                // @eprintln-ok: SPREFA_N2V_TRACE env-gated debug line is the command's stderr output contract
+                eprintln!("[node2vec] graph '{edge}': skip (digest unchanged)");
             }
             return Ok(());
         }
@@ -199,7 +200,8 @@ impl Engine {
                 .conn()
                 .execute("DELETE FROM _node_emb_seen WHERE graph = ?1", [edge])?;
             if trace {
-                tracing::trace!(edge = %edge, "[node2vec] graph '{edge}': empty (cleared)");
+                // @eprintln-ok: SPREFA_N2V_TRACE env-gated debug line is the command's stderr output contract
+                eprintln!("[node2vec] graph '{edge}': empty (cleared)");
             }
             self.save_rel_digest(&dkey, &digest)?;
             self.save_stmt_ms_one(&format!("node2vec:{edge}"), t.elapsed().as_millis() as i64)?;
@@ -212,7 +214,8 @@ impl Engine {
         // genuinely new graph pays the embed.
         let pool: Vec<(String, Vec<f32>)> = if have_cur > 0 {
             if trace {
-                tracing::trace!(edge = %edge, "[node2vec] graph '{edge}': cache hit (digest seen)");
+                // @eprintln-ok: SPREFA_N2V_TRACE env-gated debug line is the command's stderr output contract
+                eprintln!("[node2vec] graph '{edge}': cache hit (digest seen)");
             }
             let conn = self.db.conn();
             let mut s = conn.prepare(
@@ -229,11 +232,8 @@ impl Engine {
         } else {
             if trace {
                 let edge_count = edges.len();
-                tracing::trace!(
-                    edge = %edge,
-                    edge_count,
-                    "[node2vec] graph '{edge}': re-embed ({edge_count} edges)"
-                );
+                // @eprintln-ok: SPREFA_N2V_TRACE env-gated debug line is the command's stderr output contract
+                eprintln!("[node2vec] graph '{edge}': re-embed ({edge_count} edges)");
             }
             self.node2vec_recomputed += 1;
             let pool = crate::embed::node2vec::embed_graph(&edges, &cfg);
@@ -345,7 +345,8 @@ impl Engine {
             // identifiable from stderr (the _stmt_ms table only records
             // completed statements).
             if std::env::var_os("DL_STMT_TRACE").is_some() {
-                tracing::trace!(rel = %rel, "[stmt-trace] {rel}");
+                // @eprintln-ok: DL_STMT_TRACE env-gated debug line is the command's stderr output contract
+                eprintln!("[stmt-trace] {rel}");
             }
             stmt_watch.begin(rel);
             let t = std::time::Instant::now();
@@ -965,15 +966,8 @@ impl Engine {
             let out_ms = output_started.elapsed().as_millis();
             let rows = reached.len();
             let nodes = adjacency.len();
-            tracing::debug!(
-                head_rel = %head_rel,
-                load_ms,
-                bfs_ms,
-                out_ms,
-                rows,
-                nodes,
-                "[bfs] {head_rel}: load={load_ms}ms bfs={bfs_ms}ms out+insert={out_ms}ms rows={rows} nodes={nodes}"
-            );
+            // @eprintln-ok: DL_BFS_TRACE env-gated debug line is the command's stderr output contract
+            eprintln!("[bfs] {head_rel}: load={load_ms}ms bfs={bfs_ms}ms out+insert={out_ms}ms rows={rows} nodes={nodes}");
         }
         self.save_stmt_ms_one(
             &format!("walk:{head_rel}"),
@@ -1372,15 +1366,8 @@ impl Engine {
             let out_ms = t_out0.elapsed().as_millis();
             let rows = pairs.len();
             let nodes = adj.len();
-            tracing::debug!(
-                head_rel = %head_rel,
-                load_ms,
-                bfs_ms,
-                out_ms,
-                rows,
-                nodes,
-                "[bfs] {head_rel}: load={load_ms}ms bfs={bfs_ms}ms out+insert={out_ms}ms rows={rows} nodes={nodes}"
-            );
+            // @eprintln-ok: DL_BFS_TRACE env-gated debug line is the command's stderr output contract
+            eprintln!("[bfs] {head_rel}: load={load_ms}ms bfs={bfs_ms}ms out+insert={out_ms}ms rows={rows} nodes={nodes}");
         }
         self.save_stmt_ms_one(
             &format!("halt_bfs:{head_rel}"),
@@ -1781,13 +1768,8 @@ impl Engine {
                 .is_some_and(|cache| cache.key == cache_key)
             {
                 if std::env::var_os("DL_BFS_TRACE").is_some() {
-                    tracing::trace!(
-                        edge = %edge,
-                        c0 = %c0,
-                        c1 = %c1,
-                        sym,
-                        "[bfs-cache] reuse edge={edge} columns={c0},{c1} sym={sym}"
-                    );
+                    // @eprintln-ok: DL_BFS_TRACE env-gated debug line is the command's stderr output contract
+                    eprintln!("[bfs-cache] reuse edge={edge} columns={c0},{c1} sym={sym}");
                 }
                 drop(cache_slot);
                 return Ok(std::cell::RefMut::map(
@@ -1799,13 +1781,8 @@ impl Engine {
         let (adjacency, key_to_node, node_keys, text_by_node) =
             self.load_edges_keyed(edge, c0, c1, sym)?;
         if std::env::var_os("DL_BFS_TRACE").is_some() {
-            tracing::trace!(
-                edge = %edge,
-                c0 = %c0,
-                c1 = %c1,
-                sym,
-                "[bfs-cache] load edge={edge} columns={c0},{c1} sym={sym}"
-            );
+            // @eprintln-ok: DL_BFS_TRACE env-gated debug line is the command's stderr output contract
+            eprintln!("[bfs-cache] load edge={edge} columns={c0},{c1} sym={sym}");
         }
         let mut cache_slot = self.adjacency_cache.borrow_mut();
         *cache_slot = Some(AdjacencyCache {

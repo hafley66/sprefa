@@ -381,7 +381,8 @@ pub fn run_check(programs: &[String], db_path: Option<&str>, db_defaulted: bool,
             }
         }
     } else if daemon_eligible {
-        tracing::debug!("[check] no daemon serving this root — one-shot engine on .dl/.state/cache.db (start one: dl daemon start)");
+        // @eprintln-ok: cold --check fallback must be loud to a human at a TTY
+        eprintln!("[check] no daemon serving this root — one-shot engine on .dl/.state/cache.db (start one: dl daemon start)");
     }
     run_check_inproc(programs, db_path, root, json, stage)
 }
@@ -598,7 +599,8 @@ pub fn run_settle(programs: &[String], db_path: Option<&str>, root: PathBuf,
             eng.set_prime_tick(false);
             eng.run(&prog)?;
             let ticks = iter + 1;
-            tracing::debug!(ticks, "[settle] converged after {ticks} tick(s)");
+            // @eprintln-ok: --settle convergence report is the command's stderr output contract
+            eprintln!("[settle] converged after {ticks} tick(s)");
             return Ok(());
         }
         let non_timer: Vec<&String> = report.changed_rels.iter()
@@ -784,7 +786,8 @@ pub fn run_move(db_path: Option<&str>, root: PathBuf, repo: Option<String>, mv: 
         if multi {
             let repo = label;
             let root = troot.display();
-            tracing::debug!(repo = %repo, root = %root, "[move] repo {repo} ({root})");
+            // @eprintln-ok: --move multi-repo fan-out summary is the command's stderr output contract
+            eprintln!("[move] repo {repo} ({root})");
         }
         // A file db is only safe for a single target; fan-out gets a transient
         // in-memory db per repo so their `_file` caches don't clobber each other.
@@ -973,11 +976,13 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
         }
     }
     if by_file.is_empty() {
-        tracing::debug!("[move] no use-path references to rewrite");
+        // @eprintln-ok: --move no-op report is the command's stderr output contract
+        eprintln!("[move] no use-path references to rewrite");
     } else {
         let status = if fix { ", applied" } else { " (dry run; pass --fix to apply)" };
         let edit_count = total;
-        tracing::debug!(edit_count, files = files, fix = fix, status, "[move] {edit_count} edit(s) across {files} file(s){status}");
+        // @eprintln-ok: --move edit summary is the command's stderr output contract
+        eprintln!("[move] {edit_count} edit(s) across {files} file(s){status}");
     }
 
     // PASS 3 — the physical move: rename on disk, then for Rust re-home the

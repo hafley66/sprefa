@@ -749,14 +749,8 @@ impl Engine {
             let dry_run_suffix = if dry_run { " (plan)" } else { "" };
             let action = out.action.to_string();
             let detail = &out.detail;
-            tracing::debug!(
-                slug = %slug,
-                branch = %branch,
-                dry_run,
-                action = %action,
-                detail = %detail,
-                "[checkout{dry_run_suffix}] {slug}: {action} {detail}"
-            );
+            // @eprintln-ok: checkout sink plan/outcome is the command's stderr output contract
+            eprintln!("[checkout{dry_run_suffix}] {slug}: {action} {detail}");
             done_rows.push(vec![
                 Value::Text(slug.clone()),
                 Value::Text(branch.clone()),

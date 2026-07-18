@@ -32,6 +32,7 @@ fn run(dir: &Path, prog_path: &str, extra: &[&str]) -> (i32, String, String) {
         .args(["--no-daemon"])
         .env("SPREFA_CONFIG", &cfg)
         .env("DL_NO_DAEMON", "1")
+        .env("DL_TRACE", "debug")
         .args(extra)
         .current_dir(dir)
         .output().expect("run dl");

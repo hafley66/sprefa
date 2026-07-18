@@ -53,6 +53,7 @@ fn changed(dir: &Path, rel: &str) -> String {
         .current_dir(dir)
         .args(["--db", dir.join("db").to_str().unwrap(),
                "--changed", rel])
+        .env("DL_TRACE", "debug")
         .output().expect("changed run");
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
