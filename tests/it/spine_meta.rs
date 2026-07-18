@@ -1,4 +1,4 @@
-use rusqlite::Connection;
+use sprefa_v5::db::ReadDb;
 use sprefa_v5::spine::{content_hash_hex, FileId, StringId, WhereBytes, WhereBytesId, ZERO_HASH_HEX};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -78,24 +78,26 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
 "#;
     run(&d, prog);
 
-    let conn = Connection::open(d.join("db")).unwrap();
+    let db = ReadDb::open(d.join("db").to_str().unwrap()).unwrap();
     // No stored `norm` column (storage-diet Direction 3b, 2026-07-18): the
     // `string` rel's third column is now folded at read time from `content`
     // via the `sprf_norm` scalar — see tests/it/storage_diet_norm.rs for the
     // dedicated coverage of that projection and the schema shape itself.
-    let string_row: (i64, String) = conn
-        .query_row(
+    let string_row: (i64, String) = db
+        .query_one(
+            "_strings",
             "SELECT id, content FROM _strings WHERE id = 0",
-            [],
+            &[],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
     assert_eq!(string_row, (StringId::EMPTY.sqlite(), String::new()));
 
-    let file_row: (String, String, String, i64) = conn
-        .query_row(
+    let file_row: (String, String, String, i64) = db
+        .query_one(
+            "_files",
             "SELECT id, content_hash, path, size FROM _files WHERE id = '0'",
-            [],
+            &[],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .unwrap();
@@ -109,10 +111,11 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
         )
     );
 
-    let content_row: (String, String, String, i64) = conn
-        .query_row(
+    let content_row: (String, String, String, i64) = db
+        .query_one(
+            "_files",
             "SELECT id, content_hash, path, size FROM _files WHERE id = ?1",
-            [FileId::of_bytes(SRC.as_bytes()).to_string()],
+            &[FileId::of_bytes(SRC.as_bytes()).to_string().into()],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .unwrap();
@@ -126,10 +129,11 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
         )
     );
 
-    let where_row: (String, i64, String, i64, i64, String, String) = conn
-        .query_row(
+    let where_row: (String, i64, String, i64, i64, String, String) = db
+        .query_one(
+            "_where_bytes",
             "SELECT id, string_id, file_id, lo, hi, repo, rev FROM _where_bytes WHERE id = '0'",
-            [],
+            &[],
             |r| {
                 Ok((
                     r.get(0)?,
@@ -156,10 +160,11 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
         )
     );
 
-    let symbol_row: (i64, String) = conn
-        .query_row(
+    let symbol_row: (i64, String) = db
+        .query_one(
+            "_strings",
             "SELECT id, content FROM _strings WHERE id = ?1",
-            [StringId::of("AuthService").sqlite()],
+            &[StringId::of("AuthService").sqlite().into()],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
@@ -180,7 +185,7 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
 "#;
     run(&d, prog);
 
-    let conn = Connection::open(d.join("db")).unwrap();
+    let db = ReadDb::open(d.join("db").to_str().unwrap()).unwrap();
     let file_id = FileId::of_bytes(SRC.as_bytes());
     let string_id = StringId::of("AuthService");
     // "struct AuthService;\n" → "AuthService" spans bytes [7, 18).
@@ -194,10 +199,11 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
         ..Default::default()
     }, "spine_meta_where_bytes", "src/a.rs");
 
-    let row: (String, i64, String, i64, i64, String, String) = conn
-        .query_row(
+    let row: (String, i64, String, i64, i64, String, String) = db
+        .query_one(
+            "_where_bytes",
             "SELECT id, string_id, file_id, lo, hi, repo, rev FROM _where_bytes WHERE id = ?1",
-            [expect_id.to_string()],
+            &[expect_id.to_string().into()],
             |r| {
                 Ok((
                     r.get(0)?,
@@ -238,7 +244,7 @@ sym(N, path) <- scan("WORK", "src/**/*.rs", path, rev), sg(path, rev, :rust, "st
 "#;
     run(&d, prog);
 
-    let conn = Connection::open(d.join("db")).unwrap();
+    let db = ReadDb::open(d.join("db").to_str().unwrap()).unwrap();
     let lo = SRC.find("AuthService").unwrap() as i64;
     let hi = lo + "AuthService".len() as i64;
     let expect_id = WhereBytesId::of_located(WhereBytes {
@@ -248,10 +254,11 @@ sym(N, path) <- scan("WORK", "src/**/*.rs", path, rev), sg(path, rev, :rust, "st
         hi: hi as u32,
         ..Default::default()
     }, "spine_meta_where_bytes_sg", "src/a.rs");
-    let span: (i64, i64) = conn
-        .query_row(
+    let span: (i64, i64) = db
+        .query_one(
+            "_where_bytes",
             "SELECT lo, hi FROM _where_bytes WHERE id = ?1",
-            [expect_id.to_string()],
+            &[expect_id.to_string().into()],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
@@ -282,7 +289,7 @@ sym(name, path) <- scan("HEAD", "src/**/*.rs", path, rev), match(path, rev, /str
 "#;
     run(&d, prog);
 
-    let conn = Connection::open(d.join("db")).unwrap();
+    let db = ReadDb::open(d.join("db").to_str().unwrap()).unwrap();
     let lo = SRC.find("AuthService").unwrap() as i64;
     let hi = lo + "AuthService".len() as i64;
     // The located span is keyed on the git blob OID file id, so it joins _files.
@@ -293,10 +300,11 @@ sym(name, path) <- scan("HEAD", "src/**/*.rs", path, rev), match(path, rev, /str
         hi: hi as u32,
         ..Default::default()
     }, "spine_meta_where_bytes_git", "src/a.rs");
-    let got: (String, i64, i64) = conn
-        .query_row(
+    let got: (String, i64, i64) = db
+        .query_one(
+            "_where_bytes",
             "SELECT file_id, lo, hi FROM _where_bytes WHERE id = ?1",
-            [expect_id.to_string()],
+            &[expect_id.to_string().into()],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .unwrap();
@@ -356,22 +364,24 @@ rel located(text: text, lo: int, hi: int).
         .output()
         .expect("run dl --changed");
 
-    let conn = Connection::open(d.join("db")).unwrap();
-    let stale: i64 = conn
-        .query_row(
+    let db = ReadDb::open(d.join("db").to_str().unwrap()).unwrap();
+    let stale: i64 = db
+        .query_one(
+            "_where_bytes",
             "SELECT COUNT(*) FROM _where_bytes w JOIN _strings s ON s.id = w.string_id
              WHERE s.content = 'AuthService'",
-            [],
-            |r| r.get(0),
+            &[],
+            |r| Ok(r.get(0)?),
         )
         .unwrap();
     assert_eq!(stale, 0, "stale AuthService span must be retracted");
-    let fresh: i64 = conn
-        .query_row(
+    let fresh: i64 = db
+        .query_one(
+            "_where_bytes",
             "SELECT COUNT(*) FROM _where_bytes w JOIN _strings s ON s.id = w.string_id
              WHERE s.content = 'BillingService'",
-            [],
-            |r| r.get(0),
+            &[],
+            |r| Ok(r.get(0)?),
         )
         .unwrap();
     assert_eq!(fresh, 1, "renamed BillingService span must be present");
@@ -405,11 +415,12 @@ symbol(name, path) <- scan("HEAD", "src/**/*.rs", path, rev), match(path, rev, /
 "#;
     run(&d, prog);
 
-    let conn = Connection::open(d.join("db")).unwrap();
-    let content_row: (String, String, String, i64) = conn
-        .query_row(
+    let db = ReadDb::open(d.join("db").to_str().unwrap()).unwrap();
+    let content_row: (String, String, String, i64) = db
+        .query_one(
+            "_files",
             "SELECT id, content_hash, path, size FROM _files WHERE id = ?1",
-            [file_id.to_string()],
+            &[file_id.to_string().into()],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .unwrap();

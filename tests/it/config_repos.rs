@@ -254,15 +254,16 @@ fn byte_identical_files_across_repos_keep_distinct_located_rows() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "run failed: {stdout}\n{}", String::from_utf8_lossy(&out.stderr));
 
-    let conn = rusqlite::Connection::open(d.join("db")).unwrap();
-    let repos: Vec<String> = conn
-        .prepare("SELECT w.repo FROM _where_bytes w JOIN _strings s ON s.id = w.string_id \
-                  WHERE s.content = 'Auth' ORDER BY w.repo")
-        .unwrap()
-        .query_map([], |r| r.get::<_, String>(0))
-        .unwrap()
-        .map(|r| r.unwrap())
-        .collect();
+    let read_db = db::ReadDb::open(d.join("db").to_str().unwrap()).unwrap();
+    let repos: Vec<String> = read_db
+        .query_rows(
+            "_where_bytes",
+            "SELECT w.repo FROM _where_bytes w JOIN _strings s ON s.id = w.string_id \
+             WHERE s.content = 'Auth' ORDER BY w.repo",
+            &[],
+            |r| Ok(r.get(0)?),
+        )
+        .unwrap();
     assert_eq!(repos, vec!["ra".to_string(), "rb".to_string()],
         "one located row per repo, attributed by slug: got {repos:?}");
 }

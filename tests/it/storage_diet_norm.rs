@@ -17,7 +17,8 @@
 //!   - the migration reclaims real bytes on a fixture db shaped like the
 //!     measured production corpus (`migration_reclaims_measurable_bytes`).
 
-use rusqlite::Connection;
+use sprefa_v5::ast::Value;
+use sprefa_v5::db::{self, Db};
 use sprefa_v5::spine::{normalize, StringId};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -57,18 +58,13 @@ fn run(dir: &Path, db: &Path, prog: &str) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-fn columns(conn: &Connection, table: &str) -> Vec<String> {
-    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})")).unwrap();
-    stmt.query_map([], |r| r.get::<_, String>(1)).unwrap()
-        .collect::<rusqlite::Result<_>>().unwrap()
+fn columns(db: &Db, table: &str) -> Vec<String> {
+    db.query_rows("_pragma", &format!("PRAGMA table_info({table})"), &[], |r| Ok(r.get(1)?))
+        .unwrap()
 }
 
-fn index_names(conn: &Connection, table: &str) -> Vec<String> {
-    let mut stmt = conn
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ?1")
-        .unwrap();
-    stmt.query_map([table], |r| r.get::<_, String>(0)).unwrap()
-        .collect::<rusqlite::Result<_>>().unwrap()
+fn index_names(db: &Db, table: &str) -> Vec<String> {
+    db.secondary_indexes(table).unwrap().into_iter().map(|(name, _sql)| name).collect()
 }
 
 /// Data rows from a `?` query's tab-separated body, skipping the `? rel =>
@@ -93,13 +89,13 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
 ? symbol(name, path).
 "#);
 
-    let conn = Connection::open(d.join("db")).unwrap();
+    let db = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
     assert_eq!(
-        columns(&conn, "_strings"),
+        columns(&db, "_strings"),
         vec!["id".to_string(), "content".to_string()],
         "no stored norm column on a freshly created db"
     );
-    let idx = index_names(&conn, "_strings");
+    let idx = index_names(&db, "_strings");
     assert!(
         !idx.iter().any(|n| n == "_strings_norm_idx"),
         "no norm index on a freshly created db: {idx:?}"
@@ -149,13 +145,14 @@ located(t, norm_val, want) <- string(_, t, norm_val), want = norm(t).
 /// and return the db path.
 fn old_schema_db(dir: &Path) -> PathBuf {
     let db_path = dir.join("db");
-    let conn = Connection::open(&db_path).unwrap();
-    conn.execute_batch(
+    let stored_db = db::open(Some(db_path.to_str().unwrap())).unwrap();
+    stored_db.execute_batch_on(
+        "_strings",
         "CREATE TABLE _strings (id INTEGER PRIMARY KEY, content TEXT NOT NULL, norm TEXT NOT NULL);
          CREATE INDEX _strings_norm_idx ON _strings(norm);
          INSERT INTO _strings (id, content, norm) VALUES (0, '', '');",
     ).unwrap();
-    drop(conn);
+    drop(stored_db);
     db_path
 }
 
@@ -166,9 +163,9 @@ fn old_schema_db_is_migrated_on_open() {
     let db_path = old_schema_db(&d);
 
     {
-        let conn = Connection::open(&db_path).unwrap();
-        assert!(columns(&conn, "_strings").iter().any(|c| c == "norm"), "fixture setup sanity");
-        assert!(index_names(&conn, "_strings").iter().any(|n| n == "_strings_norm_idx"));
+        let db = db::open(Some(db_path.to_str().unwrap())).unwrap();
+        assert!(columns(&db, "_strings").iter().any(|c| c == "norm"), "fixture setup sanity");
+        assert!(index_names(&db, "_strings").iter().any(|n| n == "_strings_norm_idx"));
     }
 
     let out = run(&d, &db_path, r#"
@@ -178,14 +175,14 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
 "#);
     assert!(out.contains("AuthService2"), "db still answers queries post-migration:\n{out}");
 
-    let conn = Connection::open(&db_path).unwrap();
+    let db = db::open(Some(db_path.to_str().unwrap())).unwrap();
     assert_eq!(
-        columns(&conn, "_strings"),
+        columns(&db, "_strings"),
         vec!["id".to_string(), "content".to_string()],
         "norm column dropped by the on-open migration"
     );
     assert!(
-        !index_names(&conn, "_strings").iter().any(|n| n == "_strings_norm_idx"),
+        !index_names(&db, "_strings").iter().any(|n| n == "_strings_norm_idx"),
         "norm index dropped by the on-open migration"
     );
 }
@@ -204,16 +201,17 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
     let out2 = run(&d, &db_path, prog); // second open: must be a schema no-op, not an error
     assert!(out2.contains("AuthService2"), "second run still answers queries:\n{out2}");
 
-    let conn = Connection::open(&db_path).unwrap();
-    assert_eq!(columns(&conn, "_strings"), vec!["id".to_string(), "content".to_string()]);
-    assert!(!index_names(&conn, "_strings").iter().any(|n| n == "_strings_norm_idx"));
+    let db = db::open(Some(db_path.to_str().unwrap())).unwrap();
+    assert_eq!(columns(&db, "_strings"), vec!["id".to_string(), "content".to_string()]);
+    assert!(!index_names(&db, "_strings").iter().any(|n| n == "_strings_norm_idx"));
 }
 
-fn object_bytes(conn: &Connection, name: &str) -> i64 {
-    conn.query_row(
+fn object_bytes(db: &Db, name: &str) -> i64 {
+    db.query_one(
+        "dbstat",
         "SELECT COALESCE(SUM(pgsize), 0) FROM dbstat WHERE name = ?1",
-        [name],
-        |r| r.get(0),
+        &[name.into()],
+        |r| Ok(r.get(0)?),
     ).unwrap_or(0)
 }
 
@@ -231,32 +229,29 @@ fn migration_reclaims_measurable_bytes() {
     let db_path = old_schema_db(&d);
 
     {
-        let conn = Connection::open(&db_path).unwrap();
-        conn.execute_batch("BEGIN IMMEDIATE").unwrap();
-        {
-            let mut stmt = conn
-                .prepare("INSERT INTO _strings (id, content, norm) VALUES (?1, ?2, ?3)")
-                .unwrap();
-            for i in 0..ROWS {
-                // Coordinate-composite shape from the plan's measurement:
-                // "src/module_XXXX/file_XXXX.rs:LINE:COL:kind_something".
-                let content = format!(
-                    "src/module_{i:04}/file_{i:04}.rs:{line}:{col}:kind_something",
-                    line = i * 3 + 1,
-                    col = i % 80,
-                );
-                let norm = normalize(&content);
-                let id = StringId::of(&content).sqlite();
-                stmt.execute(rusqlite::params![id, content, norm]).unwrap();
-            }
+        let db = db::open(Some(db_path.to_str().unwrap())).unwrap();
+        // Collect every row once and hand the whole set to insert_rows in one
+        // statement (N+1 law) instead of a per-row execute loop.
+        let mut fixture_rows: Vec<Vec<Value>> = Vec::with_capacity(ROWS);
+        for i in 0..ROWS {
+            // Coordinate-composite shape from the plan's measurement:
+            // "src/module_XXXX/file_XXXX.rs:LINE:COL:kind_something".
+            let content = format!(
+                "src/module_{i:04}/file_{i:04}.rs:{line}:{col}:kind_something",
+                line = i * 3 + 1,
+                col = i % 80,
+            );
+            let norm = normalize(&content);
+            let id = StringId::of(&content).sqlite();
+            fixture_rows.push(vec![Value::Int(id), Value::Text(content), Value::Text(norm)]);
         }
-        conn.execute_batch("COMMIT").unwrap();
-        conn.execute_batch("VACUUM").unwrap();
+        db.insert_rows("_strings", &["id", "content", "norm"], &fixture_rows).unwrap();
+        db.execute_batch_on("_strings", "VACUUM").unwrap();
     }
 
     let (before_table, before_index) = {
-        let conn = Connection::open(&db_path).unwrap();
-        (object_bytes(&conn, "_strings"), object_bytes(&conn, "_strings_norm_idx"))
+        let db = db::open(Some(db_path.to_str().unwrap())).unwrap();
+        (object_bytes(&db, "_strings"), object_bytes(&db, "_strings_norm_idx"))
     };
     assert!(before_index > 0, "fixture's norm index must carry real bytes pre-migration");
 
@@ -267,10 +262,10 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
 "#);
 
     let after_table = {
-        let conn = Connection::open(&db_path).unwrap();
-        conn.execute_batch("VACUUM").unwrap();
-        let bytes = object_bytes(&conn, "_strings");
-        assert_eq!(object_bytes(&conn, "_strings_norm_idx"), 0, "index object must be gone post-VACUUM");
+        let db = db::open(Some(db_path.to_str().unwrap())).unwrap();
+        db.execute_batch_on("_strings", "VACUUM").unwrap();
+        let bytes = object_bytes(&db, "_strings");
+        assert_eq!(object_bytes(&db, "_strings_norm_idx"), 0, "index object must be gone post-VACUUM");
         bytes
     };
 
