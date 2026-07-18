@@ -334,6 +334,43 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                     relation and build the json in a derived rule that reads it", rule.head.rel),
             });
         }
+        // S6: a source-extract rule's body atom is legitimate ONLY when it
+        // supplies an INPUT to the source op itself (the data-driven scan/rev
+        // coordinate pattern `Engine::resolve_scan_bindings` compiles) — any
+        // other plain `BodyItem::Pos`/`Neg` atom is ignored by file
+        // extraction (`parse_file`'s dispatch loop has no arm for it) and
+        // ends up neither filtering nor joining anything. This is the
+        // typecheck-time twin of `desugar::reject_source_relation_joins`'s
+        // tick-time bail — same `source_input_vars`/`term_vars`
+        // classification (shared fn, so the two can never disagree on which
+        // atom is legitimate), just surfaced before any scan runs, through
+        // `--check`/`--parse-only`/the LSP. Same fix shape as the rel-level
+        // source+derived co-heading bail (`tick.rs`): split the join into its
+        // own relation and union/join it in a third derived rule.
+        let source_inputs = crate::engine::desugar::source_input_vars(rule);
+        let extra_atoms: Vec<&str> = rule.body.iter().filter_map(|b| match b {
+            BodyItem::Pos(a) | BodyItem::Neg(a) => {
+                let supplies_input = a.terms.iter()
+                    .any(|t| crate::engine::desugar::term_vars(t, &source_inputs));
+                if supplies_input { None } else { Some(a.rel.as_str()) }
+            }
+            _ => None,
+        }).collect();
+        if !extra_atoms.is_empty() {
+            let atom_list = extra_atoms.iter().map(|r| format!("`{r}`")).collect::<Vec<_>>().join(", ");
+            let pronoun = if extra_atoms.len() == 1 { "it" } else { "them" };
+            diags.push(TypeDiag {
+                path: dl_path.to_string(), span: (0, 0),
+                severity: Severity::Error, code: "source-rule-extra-atom".into(),
+                msg: format!("relation `{}` is a source-extract rule (scan/match/ast/sg/json/\
+                    comment) whose body also joins {atom_list}; that atom supplies no input to \
+                    the source op (not the data-driven scan/rev coordinate pattern), so no \
+                    extraction code path ever evaluates it against the scanned rows — it is \
+                    silently dropped and does nothing. Put the source-extract rule and the join \
+                    to {pronoun} in two separate relations and combine them in a third derived \
+                    rule.", rule.head.rel),
+            });
+        }
     }
 
     let visit_atom = |a: &Atom, diags: &mut Vec<TypeDiag>, seen: &mut HashMap<String, ColTy>| {

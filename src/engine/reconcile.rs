@@ -206,6 +206,55 @@ impl Engine {
                 to_retract.insert((repo.clone(), path.clone()));
             }
         }
+        // scan-narrowing guard (the SOME-scan-rules twin of `tick.rs`'s
+        // no-scan-rules guard — read that one first): a program with scan
+        // rules narrows an existing db to its own glob/root scope every tick.
+        // That is honest reconcile semantics (unlike the no-scan-rules case,
+        // there is no ambiguity to soften), but a program whose scope is far
+        // smaller than what the db already knows about can silently prune
+        // most of the corpus in one tick — the 618->68-file smashy incident
+        // (docs/arch-measures-review.md). Warn, never block, when the files
+        // falling outside this tick's scan scope exceed a threshold share of
+        // the db's total known files. Path-grain (repo, path), ignoring rev,
+        // matches `to_retract`'s own key and the incident's "N files" framing.
+        // `DL_SCAN_NARROW_THRESHOLD` (0.0-1.0, default 0.5) tunes the trigger.
+        {
+            let prev_paths: HashSet<(&str, &str)> = prev
+                .keys()
+                .map(|(repo, path, _rev)| (repo.as_str(), path.as_str()))
+                .collect();
+            let before = prev_paths.len();
+            if before > 0 {
+                let current_paths: HashSet<(&str, &str)> = current
+                    .keys()
+                    .map(|(repo, path, _rev)| (repo.as_str(), path.as_str()))
+                    .collect();
+                let out_of_scope = prev_paths.iter().filter(|k| !current_paths.contains(*k)).count();
+                let threshold: f64 = std::env::var("DL_SCAN_NARROW_THRESHOLD")
+                    .ok()
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .filter(|t| *t > 0.0 && *t <= 1.0)
+                    .unwrap_or(0.5);
+                let share = out_of_scope as f64 / before as f64;
+                if share > threshold {
+                    let after = current_paths.len();
+                    self.shape_diags.push(DiagRow {
+                        path: "(scan)".into(), line: 1, col: 0, end_line: 1, end_col: 0,
+                        severity: "warn".into(), code: "scan-narrowing".into(),
+                        msg: format!(
+                            "this tick's scan scope covers {after} of the {before} file(s) this \
+                             db already knows about — {out_of_scope} ({:.0}%) fall outside it and \
+                             reconcile is about to drop their source rows. This is reconcile \
+                             semantics (the db narrows to whatever the program scans this tick), \
+                             not a bug; if that is unintended, broaden the program's scan \
+                             glob/root or start a fresh --db instead of reconciling this one.",
+                            share * 100.0,
+                        ),
+                        hint: None,
+                    });
+                }
+            }
+        }
         for (idx, repo, path, _rev, _h, _hb) in &rule_files {
             if dirty_rels.contains(&source_rules[*idx].head.rel) {
                 to_retract.insert((repo.clone(), path.clone()));
