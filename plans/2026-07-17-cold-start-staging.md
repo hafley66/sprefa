@@ -451,3 +451,186 @@ daemon jobs` already lists queue rows, so cold-start progress is visible for fre
   whether `ColdExtract` and `DeriveStratum` are one arc (a general "staged work"
   JobKind carrying a phase) or two. Proposal: keep them separate kinds; both ride the
   same `_cold_node`-style node table shape.
+
+---
+
+# Addendum 2026-07-18: MB-bounded chunking (replacing the wholesale-family node)
+
+Status: MEASURED + DESIGNED + IMPLEMENTED on branch `cold-chunks`.
+
+User directive: "1 family could still hog. Partition the work TOTAL into chunks
+that are reasonable, instead of arbitrarily slicing an open set." Family is an
+arbitrary axis with unbounded per-node cost; the partition unit must be MEASURED
+work — a closed chunk list computed from the actual corpus (bytes, file count),
+each chunk bounding a tick's wall time. Coordinator additions: (1) chunk axis =
+total MB of files, file-count as a secondary cap; validate the bytes↔parse-ms
+correlation. (2) SCIP ingestion must be its own staged node, ordered before the
+resolution it feeds.
+
+## 1. Measurements (this repo's own corpus)
+
+Corpus: `src/**/*.rs` = 157 files, 3.37 MB, heavy skew (one 395 KB `typegraph.rs`,
+many <10 KB). Program uses module/type/call/dataflow. Cold boot, fresh db, timed
+with `DL_PROFILE=1` per-phase + temporary `DL_MEAS` split timers inside
+`prime_analysis_bundles` and `refresh_dataflow_rels` (reverted after measuring).
+
+| Phase | DEBUG ms | RELEASE ms | Nature |
+|---|---|---|---|
+| reconcile-sources | 143 | 170 | scan + source stage (kept inline) |
+| **prime parse** (par_iter, 3.37 MB) | 984 | **277** | per-file PARALLEL, MB-correlated (~82 ms/MB release) |
+| module-rels | 163 | 61 | per-rev resolve; IS the resolver input barrier |
+| type-rels | 218 | 142 | corpus-global name→def barrier + write |
+| **call-rels** | 2041 | **1409** | corpus-global resolution BARRIER + persist + router |
+| dataflow emit (dedup+build 115 487 df_node rows) | 3761 | 2295 | per-file-INDEPENDENT (no name→def), only dedup HashSets |
+| dataflow write (refresh_rel ×15 wholesale) | 5163 | 2085 | wholesale DELETE+insert |
+| **dataflow-rels total** | 8940 | **4434** | THE hog |
+| doc-rels | 0.3 | 0.3 | empty (no md) |
+
+Total extraction: ~14.9 s debug / ~6.3 s release.
+
+### What the numbers say
+
+- **Parse is NOT the hog.** 277 ms release = ~4% of extraction. The user's
+  MB↔parse-cost intuition holds for the parse phase (277 ms / 3.37 MB ≈ 82 ms/MB,
+  linear and per-file-parallel) but parse is a small fraction of the total. MB
+  correlates with TOTAL cost via ROW COUNT (115 k df_node rows from 3.37 MB), not
+  via parse.
+- **The measured hog is dataflow (4.4 s release).** It splits emit 2.3 s
+  (per-file-independent: node ids are `file:line:col`-derived, deduped by
+  per-run HashSets, NO name→def resolution) + wholesale write 2.1 s. This family
+  has NO corpus-global resolver barrier — it is the one heavy family that CAN be
+  partitioned per file.
+- **call (1.4 s) is an irreducible corpus-global resolution barrier.** It builds
+  a name→def index (`by_name`/`def_buckets`/`scip_name_defs`/`module_import_map`)
+  over ALL files before it can resolve a single callee. It cannot emit any edge
+  until the whole corpus's defs are indexed. Per-file chunking would corrupt
+  resolution (a callee defined in another chunk resolves to nothing). SCOPED OUT
+  honestly; call is the new documented floor for the longest single node.
+- type/module/doc: also carry corpus-global barriers (type name→def index; doc
+  reads the whole `type_entity` table and folds `extract:type`; module builds the
+  `ProjectCx` resolver and IS the input every other barrier reads). Left wholesale.
+- comment/template/unresolved: barrier-free like dataflow (only dedup HashSets),
+  small on this corpus but structurally chunkable by the same seam.
+
+## 2. Design — chunk the barrier-free families by MB; wholesale for the barriers
+
+### 2a. What a chunk is
+
+A chunk is a deterministic CLOSED contiguous run of the byte-sorted
+`extract_file_set()` (the same deterministic order reconcile writes `_file` in),
+accumulated until `sum(bytes) >= COLD_CHUNK_TARGET_BYTES` (default 512 KiB,
+`DL_COLD_CHUNK_BYTES` override) OR `count >= COLD_CHUNK_MAX_FILES` (default 64,
+`DL_COLD_CHUNK_FILES`). Bytes is the primary axis (correlates with parse + emit +
+row count); the file cap bounds a many-tiny-files corpus. A single file larger
+than the target is its own chunk (a chunk always holds >=1 file — the irreducible
+floor is one file, since a parse cannot split mid-file). Contiguous runs (not
+`hash(path) % N`) keep locality and reuse reconcile's stable order, so the
+partition is identical at seed and at every resume.
+
+### 2b. Type signatures
+
+```rust
+// cold_stage.rs
+const COLD_CHUNK_TARGET_BYTES: i64 = 512 * 1024;
+const COLD_CHUNK_MAX_FILES: usize = 64;
+
+// Deterministic closed partition of the corpus file set into byte-bounded runs.
+// Each inner Vec is one chunk's files, in reconcile order. Index = shard number.
+fn cold_chunk_slices(&self) -> Result<Vec<Vec<ExtractFile>>>;
+
+// ExtractFamily gains a real shardable_cold(): true for the barrier-free
+// families (dataflow + comment/template/unresolved). cold_shard_count(fam)
+// returns the chunk count for a shardable family, else 1.
+
+// dataflow.rs — factor the 280-line body into collect + two writers:
+struct DataflowRowSet { node, node_repo, edge, loop_, alloc, nest, param,
+                        arg, field, lit, node_rev, node_repo_rev,
+                        arg_rev, field_rev, lit_rev: Vec<Vec<Value>> }
+fn collect_dataflow_rows(&self, files: &[ExtractFile]) -> Result<DataflowRowSet>;
+// Wholesale (inline / n_shards=1): refresh_rel + refresh_rel_for_revs + save digest.
+pub(crate) fn refresh_dataflow_rels(&self) -> Result<bool>;
+// Chunk append (n_shards>1): insert_rows (INSERT OR IGNORE) for THIS slice, no
+// wholesale delete, NO digest save (deferred to the finalize gate).
+pub(crate) fn refresh_dataflow_rels_slice(&self, files: &[ExtractFile]) -> Result<()>;
+
+// run_cold_node dispatch (cold_stage.rs):
+//   family=="scip-index" -> the scip pre-extract RelKind refresh (n_shards=1).
+//   shardable + n_shards>1 -> refresh_<family>_slice(chunk_slices()[shard]).
+//   else -> wholesale fam.refresh(self).
+//   After marking the node done: if this was the LAST pending shard of a
+//   chunked family, save that family's corpus extract digest so the completion
+//   tick's wholesale refresh SKIPS it (moved_extract_revs empty). This is the
+//   deferred-digest pattern the crash-window arc established.
+fn finalize_chunked_family_if_complete(&self, family: &str) -> Result<()>;
+```
+
+### 2c. Why append is correct + equivalent (the two hazards)
+
+1. **Cross-chunk id stability.** Every id-handle column interns through
+   `SymSink::sym` = `StringId::of(text)`, which is CONTENT-ADDRESSED. Two chunks
+   interning the same id string get the same integer, so `INSERT OR IGNORE` on the
+   rel PK dedups across chunk boundaries and joins stay integer-equal. (Verified:
+   `spine.rs:109`.)
+2. **Cross-chunk row dedup order.** dataflow's `seen_*` HashSets dedup WITHIN a
+   run; across chunks each chunk has its own. A df id is `file:line:col`-derived,
+   so it never collides across files — the dedup is intra-file, so a per-file
+   partition emits the identical row multiset. Where a duplicate COULD occur,
+   `INSERT OR IGNORE` keeps the first-written, and chunks run in file order
+   (highest shard priority = lowest index first), matching wholesale's
+   first-in-iteration winner. The equivalence it-test (per-rel counts,
+   staged == inline) is the enforcing rail.
+
+### 2d. SCIP as its own node (coordinator item 2)
+
+The scip pre-extract (`RelKind::pre_extract` refresh, tick.rs) loads the entire
+SCIP index and feeds `scip_ref` / `scip_name_defs` — the FIRST rung of the
+call/type resolution ladder. It becomes a `scip-index` cold node, seeded with the
+HIGHEST priority so the single-flight worker drains it before module/type/call.
+On this corpus there is no scip index (0 ms), but it still rides the queue so a
+large external index can never hide inside another family's tick. Chunking the
+index by document count is a future lever (single node suffices until an index
+measures heavy); noted, not built.
+
+### 2e. Drain order + completion gate
+
+Priority (single-flight worker claims highest first):
+`scip-index` > `module` > `type` > `call` > `doc` > dataflow/text chunks (any
+order among themselves) > (spine + node CST + derived run on the completion tick).
+
+Ordering CONSTRAINTS enforced by priority: scip before type/call (resolution
+reads scip); module before type/call/doc (narrowing reads `module_edge_rev`);
+type before doc (doc folds `extract:type`). The barrier-free chunks have no
+ordering constraint. When the LAST node (any kind) lands, `cold_nodes_complete`
+gates the completion `tick_full`: the chunked families already wrote their rows +
+saved their digest, so the completion tick's wholesale refresh SKIPS them
+(digest match) and only runs node/spine + the one blank-slate derived rebuild.
+
+### 2f. Storage, lifetimes, uniqueness
+
+`_cold_node` schema is UNCHANGED: `(family, shard)` PK, `n_shards`, `state`,
+`input_digest`, `done_at`. A chunked family seeds `n_shards = chunk_count` rows
+`shard in 0..n_shards`; `shard` is the chunk index into the deterministic
+partition. The partition is recomputed (not stored) from `_file` at seed and at
+every resume — identical because `_file` + its order are durable and frozen during
+cold start. A `kill -9` mid-chunk leaves that shard `pending` (its rows' append +
+the `state='done'` UPDATE share one tick transaction); resume re-runs only pending
+shards; `INSERT OR IGNORE` makes a re-run of a partially-written shard idempotent.
+The family digest is saved ONLY when every shard is done, so a crash before the
+last shard never leaves a digest that would wrongly skip the completion tick.
+
+### 2g. Scoped out, with numbers
+
+- **call (1.4 s release):** corpus-global resolution barrier. Cannot be split per
+  file without corrupting cross-file callee resolution. Stays one node; it is the
+  documented longest single node after this change.
+- **type / module / doc:** same barrier shape (name→def index / ProjectCx /
+  whole-`type_entity` read). Stay wholesale single nodes (61–142 ms each release —
+  not hogs).
+- **spine:** pure whole-`_strings`/`_where_bytes` SQL projection, no per-file
+  dimension. Runs on the completion tick as today.
+- **Durable bundle persistence** (serializing parsed facts so the parse itself
+  chunks durably) was rejected: parse is 277 ms (4%), the facts types carry no
+  serde, and the win does not justify the derive surface. Chunking dataflow's
+  emit+write (the actual 4.4 s hog) delivers the bound the user asked for; the
+  chunk's durable output is its APPENDED ROWS, not a persisted bundle.
+
