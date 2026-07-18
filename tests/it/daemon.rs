@@ -1081,6 +1081,44 @@ seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
 }
 
+/// Supervision arc (plans/2026-07-18-infra-library-adoption.md section 3.3):
+/// the fd-lock single-instance witness. A second `run_daemon` against the SAME
+/// home must fail fast — before touching the job queue or engine dbs — naming
+/// the lock file, while the first instance keeps serving undisturbed. The old
+/// bespoke pidfile was informational only and enforced nothing; this pins the
+/// new behavior.
+#[test]
+fn second_daemon_in_same_home_refused_by_fd_lock() {
+    let sb = Sandbox::new("fdlock");
+    fs::write(sb.root.join("p.dl"), "rel marker(name: text).\nmarker(\"held\").\n").unwrap();
+    let mut first = sb.spawn(Some(&sb.root.join("p.dl")), &[]);
+    assert!(sb.wait_ready(), "first singleton not ready");
+
+    // Second foreground daemon in the SAME sandbox home: must exit non-zero
+    // with the fd-lock refusal instead of double-serving.
+    let out = Command::new(DL)
+        .args(["daemon", "start", "--foreground"])
+        .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home)
+        .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+        .output().expect("run second daemon");
+    assert!(!out.status.success(),
+        "second daemon in the same home must be refused (stdout: {} stderr: {})",
+        String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("another dl daemon instance already holds"),
+        "refusal must name the fd-lock witness: {stderr}");
+
+    // The holder is untouched: still alive, still answering pings.
+    assert!(matches!(first.try_wait(), Ok(None)), "first daemon must still be running");
+    let ping = rpc_root(&sb.sock(), 5, "ping", &sb.root, serde_json::json!({}));
+    assert!(ping.is_some(), "first daemon must still answer pings after the refused second start");
+
+    sb.shutdown();
+    let status = first.wait_timeout(std::time::Duration::from_secs(5))
+        .expect("first daemon did not exit after shutdown");
+    assert!(status.success(), "first daemon should exit 0 after shutdown");
+}
+
 // ---------- helpers ----------
 
 fn read_frame(s: &mut std::os::unix::net::UnixStream) -> Option<String> {
