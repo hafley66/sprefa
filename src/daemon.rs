@@ -393,7 +393,14 @@ impl ServedRoot {
         self.last_full_tick_count.store(n, Ordering::Relaxed);
         self.touch();
         *lock(&self.last_changed_paths) = Vec::new();
-        self.broadcast_diag_changed();
+        // A no-op tick (nothing reconciled, no timer boundary, no digest move)
+        // must not tell subscribers anything changed: every broadcast makes a
+        // client (instant) re-query and re-render, and a churn of empty ticks
+        // amplified into a webview render storm (2026-07-18). Timer-driven
+        // ticks keep broadcasting — clock/every subscribers rely on them.
+        if report.changed || !report.changed_rels.is_empty() || report.derived_moved {
+            self.broadcast_diag_changed();
+        }
         Ok(())
     }
 
