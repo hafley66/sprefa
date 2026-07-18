@@ -58,10 +58,29 @@ async fn worker_loop(
                 tracing::info!(kind = ?kind, key = %key, root = %root, req_id, "[daemon] job claimed");
                 let r = runner.clone();
                 let t = std::time::Instant::now();
+                let (span_key, span_root, span_req_id) = (key.clone(), root.clone(), req_id.clone());
                 // A panicking runner (a tick that unwinds) surfaces as a
                 // `JoinError` here; treat it as a job failure so the queue backs
                 // it off instead of the worker dying.
-                let outcome = match tokio::task::spawn_blocking(move || r.run(&job)).await {
+                let outcome = match tokio::task::spawn_blocking(move || {
+                    // The "job" span for the DL_TRACE_CHROME timeline. Entered
+                    // INSIDE the spawn_blocking closure: `r.run` executes the
+                    // whole tick synchronously on this same blocking thread, so
+                    // the tick/phase spans `activity::begin_tick`/`set` open
+                    // (thread-local entered spans) nest under this one via
+                    // tracing's current-span stack.
+                    let _job_span = tracing::info_span!(
+                        "job",
+                        kind = ?kind,
+                        key = %span_key,
+                        root = %span_root,
+                        req_id = %span_req_id,
+                    )
+                    .entered();
+                    r.run(&job)
+                })
+                .await
+                {
                     Ok(res) => res,
                     Err(_) => Err(anyhow::anyhow!("job runner panicked")),
                 };
