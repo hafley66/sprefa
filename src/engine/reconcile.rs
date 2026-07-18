@@ -445,7 +445,6 @@ impl Engine {
     /// freshly-drained body. The join is bounded by the read relations (the
     /// response/page set), not the repo; the downstream rebuild is gated on the
     /// returned changed flag, so a steady state does not re-run the fixpoint.
-
     pub(crate) fn eval_extract_rules(&self, extract_rules: &[&Rule]) -> Result<bool> {
         if extract_rules.is_empty() {
             return Ok(false);
@@ -489,7 +488,14 @@ impl Engine {
                     .collect()
             };
             let mut before: Vec<Vec<String>> = {
-                let sql = format!("SELECT * FROM {}", tbl(head_rel));
+                // Project the DECLARED columns only: `SELECT *` also returns the
+                // `__src` bookkeeping column every rel table carries, which the
+                // extracted rows below never have — the arity mismatch made this
+                // set compare report "changed" on every tick a head had rows,
+                // and the caller then forced a whole-program derived rebuild
+                // (the 2026-07-18 271-rel full-wipe-per-tick storm).
+                let quoted: Vec<String> = cols.iter().map(|c| format!("\"{c}\"")).collect();
+                let sql = format!("SELECT {} FROM {}", quoted.join(", "), tbl(head_rel));
                 self.db
                     .query_values(&tbl(head_rel), &sql, &[])?
                     .into_iter()
@@ -498,7 +504,10 @@ impl Engine {
                             .map(|cell| match cell {
                                 crate::db::SqlVal::Int(x) => format!("i{x}"),
                                 crate::db::SqlVal::Text(s) => format!("t{s}"),
-                                crate::db::SqlVal::Null => "t".to_string(),
+                                // Must match `key`'s Value::Null arm ("n"); the
+                                // old "t" encoding made any NULL cell read as a
+                                // permanent before/after diff.
+                                crate::db::SqlVal::Null => "n".to_string(),
                                 other => format!("{other:?}"),
                             })
                             .collect()

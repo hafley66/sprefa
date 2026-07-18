@@ -178,6 +178,40 @@ fn d_tick_paths_also_respects_the_completion_marker() {
         eng.last_derived_rebuilt);
 }
 
+/// (f) A term-extract (json-over-bound-string) head whose row set is in steady
+/// state must NOT flip `extract_changed` — before the fix, `eval_extract_rules`
+/// compared `SELECT *` rows (which carry the `__src` bookkeeping column) against
+/// the freshly extracted rows (declared columns only), so the sets never matched
+/// once the head had a row, and every full tick escalated into a whole-program
+/// derived rebuild (271 `[derived] full wipe` lines per tick on the sprefa root,
+/// 2026-07-18 daemon.log).
+#[test]
+fn f_term_extract_steady_state_does_not_force_full_rebuild() {
+    const EXTRACT_PROG: &str = r#"
+rel payload(body: text).
+payload("[{\"word\": \"alpha\"}]").
+rel item(word: text).
+item(word) <- payload(body), json(body, q:[... { word: $word }]).
+rel downstream(word: text).
+downstream(word) <- item(word).
+"#;
+    let d = sandbox("extract_steady");
+    let prog = parse::parse(lex::lex(EXTRACT_PROG).unwrap()).unwrap();
+    let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+
+    eng.tick(&prog, true).unwrap();
+    let rows = eng.query_sql("SELECT word FROM rel_item_txt", &[]).unwrap();
+    assert_eq!(rows.len(), 1, "the json extract must land its row");
+
+    for i in 0..3 {
+        eng.tick(&prog, true).unwrap();
+        assert!(eng.last_derived_rebuilt.is_empty(),
+            "unchanged tick #{i}: a steady-state extract head must not force a \
+             full derived rebuild, got {:?}", eng.last_derived_rebuilt);
+    }
+}
+
 const DL: &str = env!("CARGO_BIN_EXE_dl");
 
 /// P2/P3 end-to-end: run the real one-shot `--check --no-daemon` binary
