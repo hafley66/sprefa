@@ -19,11 +19,17 @@ dedup_insert_gate(source_file, line_number) <-
     sg(source_file, source_rev, :rust, "if $SET.insert($$$K) { $$$B }", line: line_number).
 
 # Waiver: @dedup-key-complete: in a comment within the three lines above the
-# insert gate.
+# insert gate. Split into a pure-scan rel + a derived join (S6 — a source
+# rule's body can't join another rel atom; the engine bails at typecheck
+# instead of silently dropping it).
+rel dedup_key_complete_comment(source_file: file, waiver_line: int).
+dedup_key_complete_comment(source_file, waiver_line) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    comment(source_file, source_rev, /@dedup-key-complete:/, waiver_line, label: _).
+
 rel dedup_insert_waiver(source_file: file, gate_line: int).
 dedup_insert_waiver(source_file, gate_line) <-
-    scan("WORK", "src/**/*.rs", source_file, source_rev),
-    comment(source_file, source_rev, /@dedup-key-complete:/, waiver_line, label: _),
+    dedup_key_complete_comment(source_file, waiver_line),
     dedup_insert_gate(source_file, gate_line),
     waiver_line >= gate_line - 3,
     waiver_line < gate_line.

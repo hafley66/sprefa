@@ -91,10 +91,17 @@ honest_signal_in_fn(source_file, fn_line, fn_end_line) <-
     signal_line <= fn_end_line.
 
 # Waiver: @flag-honest: in a comment from just above the fn through its body.
+# Split into a pure-scan rel + a derived join (S6 — a source rule's body can't
+# join another rel atom; the engine bails at typecheck instead of silently
+# dropping it).
+rel flag_honest_comment(source_file: file, waiver_line: int).
+flag_honest_comment(source_file, waiver_line) <-
+    scan("WORK", "src/**/*.rs", source_file, source_rev),
+    comment(source_file, source_rev, /@flag-honest:/, waiver_line, label: _).
+
 rel dishonest_flag_waiver(source_file: file, fn_line: int).
 dishonest_flag_waiver(source_file, fn_line) <-
-    scan("WORK", "src/**/*.rs", source_file, source_rev),
-    comment(source_file, source_rev, /@flag-honest:/, waiver_line, label: _),
+    flag_honest_comment(source_file, waiver_line),
     refresh_or_flip_fn(source_file, fn_line, fn_end_line, _),
     waiver_line >= fn_line - 3,
     waiver_line <= fn_end_line.
