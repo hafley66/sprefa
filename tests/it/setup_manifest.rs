@@ -300,7 +300,17 @@ fn uninstall_removes_journal_and_wiring_but_leaves_unowned_content() {
     assert_eq!(fs::read_to_string(nested).unwrap(), "never recurse here\n");
     assert!(!sandbox.repo.join(".dl/dl-self-lint.dl").exists());
     assert!(!sandbox.manifest().exists());
-    assert!(!sandbox.state.join("sprefa").exists());
+    // `<state>/sprefa` itself now legitimately survives `uninstall`: every
+    // `dl` invocation (including `setup`/`uninstall` themselves) writes the
+    // machine-global invocation log + rolling `dl.log`/`error.log` there
+    // (`src/invlog.rs`, `src/trace.rs`) — deliberately, so an incident during
+    // `uninstall` is still diagnosable afterward. What `uninstall` DOES own
+    // and must still clear is any daemon lifecycle state (a resident
+    // process's pid/socket/registered roots) — assert those specifically
+    // rather than the whole directory being gone.
+    assert!(!sandbox.state.join("sprefa/daemon.pid").exists());
+    assert!(!sandbox.state.join("sprefa/daemon.sock").exists());
+    assert!(!sandbox.state.join("sprefa/roots.json").exists());
 }
 
 #[test]

@@ -217,12 +217,42 @@ struct Cli {
     apply: bool,
 }
 
+/// `true` for the two invocations that call `daemon::run_daemon` IN this
+/// process (`dl daemon serve`, and `dl daemon start` with `--foreground` or
+/// `--tray`, per `src/cli/daemon.rs`'s own foreground check) — these install
+/// their own combined stderr+file tracing subscriber
+/// (`daemon::init_daemon_tracing`) and must win the global `try_init` race,
+/// so `crate::trace::init` must not claim the slot first for them. Every
+/// other invocation, including a bare `dl daemon start` (which detaches a
+/// child and returns), gets `trace::init`'s file-only subscriber.
+fn is_daemon_foreground(raw: &[String]) -> bool {
+    if raw.first().map(String::as_str) != Some("daemon") {
+        return false;
+    }
+    match raw.get(1).map(String::as_str) {
+        Some("serve") => true,
+        Some("start") => raw[2..].iter().any(|a| a == "--foreground" || a == "--tray"),
+        _ => false,
+    }
+}
+
 /// The `dl` entry point. `main` is a one-liner over this.
 // ARCH {"url":"10-cli","role":"dispatch"}
 pub fn run() -> Result<()> {
-    crate::trace::init();
-    crate::engine::init_thread_pool();
     let raw: Vec<String> = std::env::args().skip(1).collect();
+    crate::trace::init(is_daemon_foreground(&raw));
+    crate::engine::init_thread_pool();
+    // Global invocation log (the access-log twin of `why.jsonl`): every
+    // invocation logs, including `--no-daemon`, `daemon why`, hooks, clients.
+    // `argv` is the FULL process args (`std::env::args()`, unlike `raw` which
+    // already skipped argv[0]) so the recorded command line is copy-pasteable.
+    let full_argv: Vec<String> = std::env::args().collect();
+    let inv_id = crate::invlog::record_start(&full_argv);
+    // Process start seam: fires on EVERY invocation regardless of whether it
+    // ever ticks an engine (e.g. `dl daemon why`), so `dl.log` always carries
+    // at least this one line per process — the guarantee the log-files test
+    // relies on.
+    tracing::info!(pid = std::process::id(), argv = %full_argv.join(" "), "[process] start");
     // Standing law: nothing seizes the machine. Every one-shot CLI mode runs
     // under the same CPU/IO budget the daemon uses. The daemon-serve verb
     // (`dl daemon ...` -> run_daemon) applies its own budget with a thread cap,
@@ -233,6 +263,12 @@ pub fn run() -> Result<()> {
         apply_cli_budget();
     }
     if let Some(code) = dispatch_subcommand(&raw)? {
+        // A SIGKILL between here and `record_end` leaves the row open
+        // (ts_end_ms NULL) — that IS the kill evidence `invlog::report_recent`
+        // flags. `std::process::exit` does not run `Drop`, so this call must
+        // be explicit, not an RAII guard.
+        crate::invlog::record_end(inv_id, code);
+        tracing::info!(pid = std::process::id(), code, "[process] end");
         std::process::exit(code);
     }
     // `dl load <target>` is a synonym for the one-shot `dl <target>` (the `load`
@@ -244,7 +280,14 @@ pub fn run() -> Result<()> {
     };
     let cli = Cli::parse_from(std::iter::once("dl".to_string()).chain(rest));
     apply_global_toggles(&cli);
-    dispatch_mode(cli)
+    let result = dispatch_mode(cli);
+    let exit_code = match &result {
+        Ok(()) => 0,
+        Err(_) => 1,
+    };
+    crate::invlog::record_end(inv_id, exit_code);
+    tracing::info!(pid = std::process::id(), code = exit_code, "[process] end");
+    result
 }
 
 /// Apply the process CPU/disk-I/O scheduling budget for a one-shot CLI run

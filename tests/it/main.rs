@@ -9,6 +9,8 @@ mod extract_digest_namespace;
 mod ensure_families;
 mod jsonl;
 mod json_agg;
+mod invlog;
+mod access_log;
 mod arith;
 mod arith_in_body;
 mod ast_grammars;

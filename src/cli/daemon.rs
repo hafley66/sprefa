@@ -9,7 +9,7 @@ use std::path::Path;
 
 use super::root;
 
-const VERBS: &str = "verbs: status start [--foreground] stop restart drop <root> [--purge] load load-once rows jobs await-settle url why";
+const VERBS: &str = "verbs: status start [--foreground] stop restart drop <root> [--purge] load load-once rows jobs await-settle url why invocations [--limit N]";
 
 /// Dispatch `dl daemon <verb> [args]`. Returns the process exit code.
 pub fn run_cmd(args: &[String]) -> Result<i32> {
@@ -121,6 +121,15 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
             // Reads only `<home>/why.jsonl` — no socket, no lock — so it
             // answers while the daemon is wedged and after a kill/crash.
             print!("{}", crate::why::report(&crate::daemon::daemon_home()));
+            Ok(0)
+        }
+        "invocations" => {
+            // Reads only `<home>/invocations.db` — no engine lock — so it
+            // answers regardless of daemon state. An open row whose pid is
+            // dead is direct kill evidence (same idiom as `why`, one level up:
+            // process, not daemon tick).
+            let limit: usize = flag_value(args, "--limit").and_then(|s| s.parse().ok()).unwrap_or(50);
+            print!("{}", crate::invlog::report_recent(limit));
             Ok(0)
         }
         "await-settle" => {
