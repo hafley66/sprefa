@@ -1,5 +1,7 @@
-//! End-to-end tests for the daemon's standard HTTP/JSON transport
-//! (`src/daemon_http.rs`), the second door beside the UDS socket.
+//! End-to-end tests for the daemon's HTTP/JSON transport
+//! (`src/daemon_shell/http.rs`): ONE axum router served over both the
+//! localhost TCP door and the UDS socket (which carries HTTP too since the
+//! axum adoption arc).
 //!
 //! HERMETICITY: same sandbox contract as `daemon.rs` — every test points
 //! `XDG_STATE_HOME` at its own temp dir so the singleton's home (socket, pid,
@@ -112,12 +114,10 @@ fn http_post(base: &str, path: &str, body: &str) -> Option<(u16, String)> {
     http_request(base, "POST", path, Some(body))
 }
 
-// ---------- UDS framed RPC (mirrors daemon.rs test helpers) ----------
+// ---------- UDS HTTP RPC (mirrors daemon.rs test helpers) ----------
 
 fn rpc(sock: &Path, body: &str) -> Option<String> {
-    let mut s = std::os::unix::net::UnixStream::connect(sock).ok()?;
-    write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).ok()?;
-    read_frame(&mut s)
+    crate::util::uds_rpc(sock, body)
 }
 
 fn rpc_root(sock: &Path, id: u64, method: &str, root: &Path, mut params: serde_json::Value)
@@ -129,31 +129,6 @@ fn rpc_root(sock: &Path, id: u64, method: &str, root: &Path, mut params: serde_j
     serde_json::from_str(&resp).ok()
 }
 
-fn read_frame(s: &mut std::os::unix::net::UnixStream) -> Option<String> {
-    let mut buf = Vec::new();
-    let mut byte = [0u8; 1];
-    let mut content_length: Option<usize> = None;
-    let mut line = Vec::<u8>::new();
-    loop {
-        line.clear();
-        loop {
-            if s.read(&mut byte).ok()? == 0 { return None; }
-            line.push(byte[0]);
-            if byte[0] == b'\n' { break; }
-        }
-        let mut end = line.len();
-        while end > 0 && (line[end - 1] == b'\n' || line[end - 1] == b'\r') { end -= 1; }
-        let trimmed = &line[..end];
-        if trimmed.is_empty() { break; }
-        if let Some(rest) = trimmed.strip_prefix(b"Content-Length:") {
-            content_length = Some(std::str::from_utf8(rest).ok()?.trim().parse().ok()?);
-        }
-    }
-    let len = content_length?;
-    buf.resize(len, 0);
-    s.read_exact(&mut buf).ok()?;
-    String::from_utf8(buf).ok()
-}
 
 const EDGE_PROGRAM: &str =
     "rel edge(a: text, b: text).\nedge(\"a\", \"b\").\nedge(\"b\", \"c\").\n? edge(a, b).\n";
@@ -213,14 +188,15 @@ fn rpc_over_http_equals_uds_result() {
     assert_eq!(bad_status, 400, "undeserializable body is 400: {bad_body}");
     assert!(serde_json::from_str::<serde_json::Value>(&bad_body).is_ok(), "400 body is json: {bad_body}");
 
-    // `subscribe` needs a kept-open stream: a clean JSON error naming the socket.
+    // The retired `subscribe` method: a clean JSON error naming `GET /watch`,
+    // the SSE stream that replaced the kept-open-socket push.
     let sub = serde_json::json!({"jsonrpc":"2.0","id":6,"method":"subscribe","params":{}}).to_string();
     let (sub_status, sub_body) = http_post(&sb.base_url(), "/rpc", &sub).expect("subscribe post");
-    assert_eq!(sub_status, 400, "subscribe over http is rejected: {sub_body}");
+    assert_eq!(sub_status, 400, "the retired subscribe method is rejected: {sub_body}");
     let sub_v: serde_json::Value = serde_json::from_str(&sub_body).expect("json error");
     let msg = sub_v["error"]["message"].as_str().unwrap_or("");
-    assert!(msg.contains(&sb.sock().to_string_lossy().to_string()),
-        "subscribe rejection must name the UDS socket path: {sub_body}");
+    assert!(msg.contains("/watch"),
+        "subscribe rejection must point at GET /watch: {sub_body}");
 
     sb.shutdown();
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
@@ -338,6 +314,61 @@ fn fifty_concurrent_health_all_answer_under_engine_lock() {
     let _ = bg.join();
     assert_eq!(ok, 50,
         "all 50 concurrent /health calls must answer 200 while the engine mutex is held");
+
+    sb.shutdown();
+    let _ = child.wait_timeout(std::time::Duration::from_secs(5));
+}
+
+/// `GET /watch` over the UDS socket streams a `diag_changed` SSE event when a
+/// tick broadcasts. The trigger is a watched `load` (its reload path always
+/// broadcasts after the re-tick), so the test is deterministic — no watcher
+/// timing. This is the e2e witness for the subscribe-method replacement.
+#[test]
+fn watch_sse_streams_diag_changed_over_uds() {
+    let sb = Sandbox::new("watchsse");
+    fs::write(sb.root.join("p.dl"), EDGE_PROGRAM).unwrap();
+    let mut child = sb.spawn(&sb.root.join("p.dl"));
+    assert!(sb.wait_ready(), "not ready");
+
+    // Open the SSE stream on the UDS door (kept open; chunked body).
+    let mut stream = std::os::unix::net::UnixStream::connect(sb.sock()).expect("connect uds");
+    stream.set_read_timeout(Some(std::time::Duration::from_millis(500))).unwrap();
+    stream
+        .write_all(b"GET /watch HTTP/1.1\r\nHost: dl-daemon\r\nAccept: text/event-stream\r\n\r\n")
+        .expect("send watch request");
+
+    // Trigger a broadcast: a watched `load` re-ticks and always pushes
+    // `diag_changed` after the reload.
+    fs::write(sb.root.join("extra.dl"), "rel extra_mark(t: text).\nextra_mark(\"x\").\n").unwrap();
+    let load = serde_json::json!({
+        "jsonrpc": "2.0", "id": 7, "method": "load",
+        "params": {
+            "root": sb.root.to_string_lossy(),
+            "path": sb.root.join("extra.dl").to_string_lossy(),
+            "mode": "watched",
+        },
+    }).to_string();
+    let load_resp = rpc(&sb.sock(), &load).expect("load rpc");
+    assert!(load_resp.contains("result"), "watched load must succeed: {load_resp}");
+
+    // Accumulate the stream until the pushed notification shows up (bounded).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let mut seen = String::new();
+    let mut chunk = [0u8; 4096];
+    while std::time::Instant::now() < deadline {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => seen.push_str(&String::from_utf8_lossy(&chunk[..n])),
+            Err(_) => {} // read timeout slice; keep polling until the deadline
+        }
+        if seen.contains("diag_changed") {
+            break;
+        }
+    }
+    assert!(seen.contains("200"), "watch stream answers 200: {seen}");
+    assert!(seen.contains("data:"), "watch stream carries SSE data events: {seen}");
+    assert!(seen.contains("diag_changed"),
+        "a watched load's re-tick must push diag_changed to /watch subscribers: {seen}");
 
     sb.shutdown();
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));

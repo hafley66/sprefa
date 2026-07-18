@@ -46,23 +46,7 @@ impl Sandbox {
 }
 
 fn rpc(sock: &Path, body: &str) -> String {
-    use std::io::{Read, Write};
-    let mut s = std::os::unix::net::UnixStream::connect(sock).expect("connect daemon");
-    write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
-    let mut buf = Vec::new();
-    let mut byte = [0u8; 1];
-    loop {
-        if s.read(&mut byte).unwrap() == 0 { panic!("daemon closed"); }
-        buf.push(byte[0]);
-        if buf.ends_with(b"\r\n\r\n") { break; }
-    }
-    let header = String::from_utf8_lossy(&buf);
-    let len: usize = header.lines()
-        .find_map(|l| l.strip_prefix("Content-Length:"))
-        .expect("Content-Length").trim().parse().unwrap();
-    let mut body = vec![0u8; len];
-    s.read_exact(&mut body).unwrap();
-    String::from_utf8(body).unwrap()
+    crate::util::uds_rpc(sock, body).expect("daemon rpc over the uds socket")
 }
 
 fn rpc_root(sock: &Path, id: u64, method: &str, root: &Path) -> Option<serde_json::Value> {

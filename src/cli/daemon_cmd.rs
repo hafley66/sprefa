@@ -85,6 +85,7 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
                 .collect();
             let init_root = root_opt.map(|p| p.to_path_buf());
             if let (Some(root), Some(outside)) = (root_opt, program_outside_unset_root(&programs, root_opt)) {
+                // @eprintln-ok: final user-facing refusal at CLI top level
                 eprintln!(
                     "dl daemon start: {outside} is outside the resolved root {} \
                      (no DL_DAEMON_ROOT set, so the root fell back to the nearest \
@@ -282,6 +283,7 @@ pub fn run_watch(args: &[String]) -> Result<i32> {
             return Ok(1);
         }
     }
+    // @eprintln-ok: command's output contract for a human at a TTY
     eprintln!(
         "[watch] {} program(s) joined the daemon serving {} — hot-reloading on edit.\n\
          inspect: dl daemon rows <rel>    status: dl daemon status    stop: dl daemon stop",

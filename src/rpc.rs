@@ -1,11 +1,12 @@
-//! JSON-RPC 2.0 over `Content-Length`-framed messages (LSP-style framing).
-//! Same codec on the daemon's local socket and on the LSP stdio bridge, so a
-//! client that speaks this codec is transport-agnostic.
+//! JSON-RPC 2.0 envelopes (`Request`/`Response`), plus the legacy
+//! `Content-Length` frame codec.
 //!
-//! Wire shape:
-//!   Content-Length: N\r\n
-//!   \r\n
-//!   <N bytes of JSON-RPC>
+//! The envelopes ride every daemon RPC — carried over HTTP since the axum
+//! adoption arc (`POST /rpc` body IS the envelope; see
+//! `src/daemon_shell/http.rs` server-side, `src/daemon_client.rs`
+//! client-side). The frame codec (`read_frame`/`write_frame`, LSP-style
+//! `Content-Length: N\r\n\r\n<body>` framing) no longer carries the daemon
+//! socket; it stays for stdio-framed tooling and as the codec reference.
 //!
 //! JSON-RPC 2.0 envelopes:
 //!   request:       {"jsonrpc":"2.0","id":N,"method":"X","params":{...}}

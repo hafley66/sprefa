@@ -86,12 +86,10 @@ impl Sandbox {
     }
 }
 
-/// Raw framed RPC: write the exact body, read one framed response.
+/// One JSON-RPC exchange over the UDS socket (which carries HTTP since the
+/// axum adoption arc): `POST /rpc`, response body back.
 fn rpc(sock: &Path, body: &str) -> Option<String> {
-    use std::io::Write;
-    let mut s = std::os::unix::net::UnixStream::connect(sock).ok()?;
-    write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).ok()?;
-    read_frame(&mut s)
+    crate::util::uds_rpc(sock, body)
 }
 
 /// RPC with the `root` envelope injected into params. Returns parsed JSON.
@@ -1120,38 +1118,6 @@ fn second_daemon_in_same_home_refused_by_fd_lock() {
 }
 
 // ---------- helpers ----------
-
-fn read_frame(s: &mut std::os::unix::net::UnixStream) -> Option<String> {
-    use std::io::Read;
-    let mut buf = Vec::new();
-    let mut byte = [0u8; 1];
-    let mut content_length: Option<usize> = None;
-    let mut line = Vec::<u8>::new();
-    loop {
-        line.clear();
-        loop {
-            if s.read(&mut byte).ok()? == 0 { return None; }
-            line.push(byte[0]);
-            if byte[0] == b'\n' { break; }
-        }
-        let trimmed = trim_crlf(&line);
-        if trimmed.is_empty() { break; }
-        if let Some(rest) = trimmed.strip_prefix(b"Content-Length:") {
-            let val = std::str::from_utf8(rest).ok()?.trim();
-            content_length = Some(val.parse().ok()?);
-        }
-    }
-    let len = content_length?;
-    buf.resize(len, 0);
-    s.read_exact(&mut buf).ok()?;
-    String::from_utf8(buf).ok()
-}
-
-fn trim_crlf(b: &[u8]) -> &[u8] {
-    let mut e = b.len();
-    while e > 0 && (b[e-1] == b'\n' || b[e-1] == b'\r') { e -= 1; }
-    &b[..e]
-}
 
 trait WaitTimeoutExt {
     fn wait_timeout(&mut self, dur: std::time::Duration) -> Option<std::process::ExitStatus>;

@@ -93,10 +93,7 @@ impl Sandbox {
 }
 
 fn rpc(sock: &std::path::Path, body: &str) -> Option<String> {
-    use std::io::Write;
-    let mut s = std::os::unix::net::UnixStream::connect(sock).ok()?;
-    write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).ok()?;
-    read_frame(&mut s)
+    crate::util::uds_rpc(sock, body)
 }
 
 fn rpc_root(sock: &std::path::Path, id: u64, method: &str, root: &std::path::Path, mut params: serde_json::Value)
@@ -108,22 +105,6 @@ fn rpc_root(sock: &std::path::Path, id: u64, method: &str, root: &std::path::Pat
     serde_json::from_str(&resp).ok()
 }
 
-fn read_frame(s: &mut std::os::unix::net::UnixStream) -> Option<String> {
-    use std::io::{BufRead, BufReader, Read};
-    let mut reader = BufReader::new(s);
-    let mut len: usize = 0;
-    loop {
-        let mut line = String::new();
-        reader.read_line(&mut line).ok()?;
-        if line == "\r\n" || line.is_empty() { break; }
-        if let Some(v) = line.trim().strip_prefix("Content-Length:") {
-            len = v.trim().parse().ok()?;
-        }
-    }
-    let mut buf = vec![0u8; len];
-    reader.read_exact(&mut buf).ok()?;
-    String::from_utf8(buf).ok()
-}
 
 /// (a) A sandboxed daemon serving the fixture root answers `--check` in
 /// discovery mode, and no fresh in-process extraction happens: `cache.db`

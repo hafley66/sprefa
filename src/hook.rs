@@ -39,7 +39,6 @@ use crate::stage;
 use anyhow::Result;
 use std::collections::HashSet;
 use std::io::Read;
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 
 /// R7: how many sample diags an `agent-session` summary lists under the counts.
@@ -155,7 +154,7 @@ fn val_str(v: &serde_json::Value) -> String {
 /// One `query_sql` read of a rel's column 0 off the daemon. A rel the program
 /// never declared has no `rel_<name>` table; the daemon returns an error
 /// response, read here as empty.
-fn daemon_col(s: &mut UnixStream, root: &Path, table: &str) -> Vec<String> {
+fn daemon_col(s: &mut crate::daemon_client::DaemonClient, root: &Path, table: &str) -> Vec<String> {
     let req = crate::rpc::Request::new(1, "query_sql",
         serde_json::json!({ "root": root.to_string_lossy(), "sql": format!("SELECT * FROM {table}") }));
     let Ok(resp) = crate::daemon::rpc_call(s, &req) else { return Vec::new() };
@@ -251,7 +250,7 @@ fn render_inject(dialect: HookDialect, event_kind: &str, ctx: &str) -> String {
 }
 
 /// Feed one event into the daemon's warm engine (`hook_event` RPC: append + tick).
-fn daemon_feed_event(s: &mut UnixStream, root: &Path, ev: &HookEvent) -> Result<()> {
+fn daemon_feed_event(s: &mut crate::daemon_client::DaemonClient, root: &Path, ev: &HookEvent) -> Result<()> {
     let req = crate::rpc::Request::new(1, "hook_event", serde_json::json!({
         "root": root.to_string_lossy(),
         "kind": ev.kind, "session": ev.session, "seq": ev.seq, "json": ev.json,
@@ -285,7 +284,7 @@ fn diag_from_json(v: &serde_json::Value) -> DiagRow {
 /// R7: read the diags + `diag_stage` routes + `agent_touch` paths off the
 /// daemon in one `diag` RPC (the handler bundles all three). A missing field is
 /// tolerated as empty.
-fn diags_via_daemon(s: &mut UnixStream, root: &Path) -> (Vec<DiagRow>, Vec<Vec<String>>, Vec<String>) {
+fn diags_via_daemon(s: &mut crate::daemon_client::DaemonClient, root: &Path) -> (Vec<DiagRow>, Vec<Vec<String>>, Vec<String>) {
     let req = crate::rpc::Request::new(1, "diag",
         serde_json::json!({ "root": root.to_string_lossy() }));
     let Ok(resp) = crate::daemon::rpc_call(s, &req) else { return (vec![], vec![], vec![]) };

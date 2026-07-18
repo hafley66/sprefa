@@ -25,7 +25,9 @@ struct Opts {
 
 /// Hand-parse the verb args (the pre-clap subcommands never reach clap). A bare
 /// value is the positional; `--limit`/`--offset`/`--db` take a value;
-/// `--no-daemon` is a switch.
+/// `--no-daemon` is an INTERNAL-ONLY switch (one server code path — user
+/// directive 2026-07-18): still parsed for tests and daemon-spawned children,
+/// absent from every usage line.
 fn parse_opts(args: &[String]) -> Opts {
     let mut o = Opts::default();
     let mut i = 0;
@@ -85,16 +87,16 @@ fn print_answer(columns: &[String], rows: &[Vec<String>], total: usize, notes: &
     }
 }
 
-/// `dl what <anchor> [--limit N] [--offset M] [--no-daemon] [--db PATH]`.
+/// `dl what <anchor> [--limit N] [--offset M] [--db PATH]`.
 pub fn run_what(args: &[String]) -> Result<i32> {
     if args.iter().any(|arg| arg == "-h" || arg == "--help") {
-        eprintln!("usage: dl what <anchor> [--limit N] [--offset N] [--no-daemon] [--db PATH]"); // @eprintln-ok: usage/help text
+        eprintln!("usage: dl what <anchor> [--limit N] [--offset N] [--db PATH]"); // @eprintln-ok: usage/help text
         eprintln!("  resolve a name, glob, path, or path:line and show its graph neighborhood"); // @eprintln-ok: usage/help text
         return Ok(0);
     }
     let o = parse_opts(args);
     let Some(anchor) = o.positional.clone() else {
-        eprintln!("usage: dl what <anchor> [--limit N] [--offset N] [--no-daemon] [--db PATH]"); // @eprintln-ok: usage/help text
+        eprintln!("usage: dl what <anchor> [--limit N] [--offset N] [--db PATH]"); // @eprintln-ok: usage/help text
         return Ok(2);
     };
     let target = root::daemon_target()?;
@@ -142,12 +144,12 @@ fn parse_q_opts(args: &[String]) -> (Option<String>, Option<String>, Opts) {
     (it.next(), it.next(), o)
 }
 
-/// `dl q <verb> <target> [--limit N] [--offset M] [--no-daemon] [--db PATH]`.
+/// `dl q <verb> <target> [--limit N] [--offset M] [--db PATH]`.
 /// A bare `dl q` (no verb) lists the available verbs. Verbs are embedded `.dl`
 /// programs with a `q_target` fact injected; see [`crate::verbs`].
 pub fn run_q(args: &[String]) -> Result<i32> {
     if args.iter().any(|arg| arg == "-h" || arg == "--help") {
-        eprintln!("usage: dl q <verb> <name> [--limit N] [--offset N] [--no-daemon] [--db PATH]"); // @eprintln-ok: usage/help text
+        eprintln!("usage: dl q <verb> <name> [--limit N] [--offset N] [--db PATH]"); // @eprintln-ok: usage/help text
         eprintln!("  verbs: who-calls, where-defined"); // @eprintln-ok: usage/help text
         return Ok(0);
     }
@@ -161,7 +163,7 @@ pub fn run_q(args: &[String]) -> Result<i32> {
         return Ok(2);
     }
     let Some(target) = target else {
-        eprintln!("usage: dl q {verb} <name> [--limit N] [--offset M] [--no-daemon]"); // @eprintln-ok: usage/help text
+        eprintln!("usage: dl q {verb} <name> [--limit N] [--offset M]"); // @eprintln-ok: usage/help text
         return Ok(2);
     };
     let daemon_target = root::daemon_target()?;
@@ -187,16 +189,16 @@ fn list_verbs() {
     println!("(also queryable as `? verb_catalog(verb, args, doc).`)");
 }
 
-/// `dl summary <path> [--no-daemon] [--db PATH]`.
+/// `dl summary <path> [--db PATH]`.
 pub fn run_summary(args: &[String]) -> Result<i32> {
     if args.iter().any(|arg| arg == "-h" || arg == "--help") {
-        eprintln!("usage: dl summary <path> [--no-daemon] [--db PATH]"); // @eprintln-ok: usage/help text
+        eprintln!("usage: dl summary <path> [--db PATH]"); // @eprintln-ok: usage/help text
         eprintln!("  report entities, imports, callable fan, and documentation for a file"); // @eprintln-ok: usage/help text
         return Ok(0);
     }
     let o = parse_opts(args);
     let Some(path) = o.positional.clone() else {
-        eprintln!("usage: dl summary <path> [--no-daemon] [--db PATH]"); // @eprintln-ok: usage/help text
+        eprintln!("usage: dl summary <path> [--db PATH]"); // @eprintln-ok: usage/help text
         return Ok(2);
     };
     let target = root::daemon_target()?;

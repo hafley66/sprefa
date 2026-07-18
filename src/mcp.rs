@@ -31,7 +31,6 @@
 use crate::ast::{self, Item, PortDir};
 use crate::channel::{Channel, Frame, StdioChannel};
 use anyhow::Result;
-use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 
 /// The port qualifier of a named rel decl, if any.
@@ -49,19 +48,19 @@ pub fn port_decl<'a>(prog: &'a ast::Program, name: &str) -> Option<&'a ast::Port
 /// or a failed attach — a cold in-process engine, hermetic, right for CI.
 pub enum Pump {
     Local(Box<crate::engine::Engine>),
-    Daemon { stream: UnixStream, next_id: u64, root: PathBuf },
+    Daemon { client: crate::daemon_client::DaemonClient, next_id: u64, root: PathBuf },
 }
 
 impl Pump {
     fn rpc(&mut self, method: &str, mut params: serde_json::Value) -> Result<crate::rpc::Response> {
-        let Pump::Daemon { stream, next_id, root } = self else {
+        let Pump::Daemon { client, next_id, root } = self else {
             anyhow::bail!("rpc on a local pump");
         };
         // Name the served root so the singleton routes to this program's engine.
         params["root"] = serde_json::json!(root.to_string_lossy());
         let req = crate::rpc::Request::new(*next_id, method, params);
         *next_id += 1;
-        let resp = crate::daemon::rpc_call(stream, &req)?;
+        let resp = crate::daemon::rpc_call(client, &req)?;
         if let Some(e) = &resp.error {
             anyhow::bail!("daemon {method}: {}", e.message);
         }
@@ -527,8 +526,8 @@ pub fn run_mcp(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Res
             // Register + cold-tick this root before the first mcp_request, so the
             // port drift-guard reads the served program (auto-add would race it).
             crate::daemon::add_root(&root)?;
-            let stream = crate::daemon::connect()?;
-            Ok(Pump::Daemon { stream, next_id: 1, root: root.clone() })
+            let client = crate::daemon::connect()?;
+            Ok(Pump::Daemon { client, next_id: 1, root: root.clone() })
         };
         match attach() {
             Ok(p) => p,
