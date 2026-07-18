@@ -423,9 +423,18 @@ sites but not against new code. **missing** = nothing.
   to absorb.
 - THE RAIL: missing. No size accounting, no ratio ceiling, no storage diet.
   Candidate rail: a boot-time verdict line (db bytes, corpus bytes, ratio) plus
-  a `--check` warning above a ratio ceiling. Diet arc candidates, measured:
-  `_strings` interning (187MB), autoindex duplication (463 tables), rev tables
-  bounded at 2 revs (99MB — not the problem).
+  a `--check` warning above a ratio ceiling. Diet arc candidates, measured
+  (2026-07-18 quantification of CLAUDE.md debt shape 3, string-inline-
+  everywhere): 89% of the 1.35M `_strings` rows (1.20M) are unique-by-
+  construction coordinate composites (`file:line:col:kind` syms, avg 43 chars)
+  — interning them buys zero sharing; rev-scoped syms concatenate a full
+  40-char sha onto each (`<sha><path>:<line>:<col>:<kind>`, a second string
+  population per rev); each string is stored as content + norm + a 63MB norm
+  index (~3x bytes); autoindex duplication doubles all 463 rel tables.
+  Comparison points: scip index for the same repo is 21MB (~3x source); CodeQL
+  dbs run 5-20x source; this db is ~120x. Fix shapes: coordinates as integer
+  columns (the v1 coordinate model), rev as a `(rev_id, sym_id)` pair, syms as
+  strings only at query/display boundaries.
 - SAY THIS TO AN AGENT: Before blaming CPU for a slow or thrashing daemon, `ls
   -la` the root db and its WAL — reads scale with db bytes, and a GB-scale db
   on a MB-scale corpus is the defect.
