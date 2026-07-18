@@ -1,5 +1,6 @@
 # callable-coverage: a self-verifying rail for the per-language callable
-# registry (call_def). Every emitter arm in src/graph/typegraph.rs carries a
+# registry (call_def). Every emitter arm in src/graph/typegraph/ (split into
+# per-language modules 2026-07-18, was one file) carries a
 # `// @callable <lang> <kind>` marker; a fixture file under
 # tests/fixtures/callables/ exercises every emitted kind per language. This
 # program joins the two: for every marked (lang, kind) there must be a matching
@@ -15,10 +16,13 @@
 # rule (cov_src) is separate from every rule that joins comment_node / call_def
 # (the S6 split), and no source rule heads a diag.
 
-# --- the corpus in scope: the emitter file (for markers) + the fixtures (for
-# call_def). A bare scan rule, joined by nothing (S6). ---
+# --- the corpus in scope: the emitter files (for markers) + the fixtures (for
+# call_def). A bare scan rule, joined by nothing (S6). typegraph.rs split into
+# src/graph/typegraph/ per-language modules (2026-07-18 decomposition-
+# normalization step 1); markers moved with their emitter arms, so the glob
+# widened from the single file to the whole tree. ---
 rel cov_src(path: file, rev: text).
-cov_src(path, rev) <- scan("WORK", "src/graph/typegraph.rs", path, rev).
+cov_src(path, rev) <- scan("WORK", "src/graph/typegraph/**/*.rs", path, rev).
 cov_src(path, rev) <- scan("WORK", "tests/fixtures/callables/rust.rs", path, rev).
 cov_src(path, rev) <- scan("WORK", "tests/fixtures/callables/ts.ts", path, rev).
 cov_src(path, rev) <- scan("WORK", "tests/fixtures/callables/kotlin.kt", path, rev).
@@ -76,8 +80,8 @@ diag(path: file, line: line, severity: "error", code: "callable-coverage",
 # guarded by `scip_active`, which is empty unless a scip index is loaded
 # (SPREFA_SCIP_INDEX / `just oracle-index`) — so with no index these rels are
 # empty and the rail stays green on the AST tier alone. When an index IS loaded,
-# every NAMED Rust callable in the emitter file (typegraph.rs is a real crate
-# file, unlike the fixtures) must pair with a scip definition by name+line, the
+# every NAMED Rust callable in the emitter file (typegraph/rust/mod.rs is a
+# real crate file, unlike the fixtures) must pair with a scip definition by name+line, the
 # `examples/loop-nests.dl` coordinate convention (occ_line + 1 for scip's 0-based
 # line). Closures are excluded: rust-analyzer emits no symbol for an anonymous
 # callable, so a lambda never pairs — that is the documented finding, not a gap.
@@ -90,7 +94,7 @@ rust_named_def(name, file, line) <-
     call_def(_, sym, kind, file, line, _),
     kind != "lambda",
     call_name(sym, name),
-    file =~ /typegraph\.rs$/.
+    file =~ /typegraph\/rust\/mod\.rs$/.
 
 rel scip_def_here(file: file, name: text, line: int).
 scip_def_here(file, sname, occ_line + 1) <-

@@ -8,46 +8,56 @@ edges from child values into their parent. Anything not explicitly handled is
 silently skipped (no placeholder rows). Use this map to know where the graph is
 complete and where it is knowingly sparse.
 
+Citations below are `file fn-name` anchors (2026-07-18 decomposition-
+normalization step 3): `typegraph.rs` split into `src/graph/typegraph/`
+per-language modules, and raw line numbers drift with every edit — a
+function name survives a refactor a line number doesn't. Each per-language
+extractor centers on one recursive expression walker (`flow_expr` for Rust,
+`ts_flow_expr` for TS, `flow_kt` for Kotlin, `flow_go` for Go, `py_flow_expr`
+for Python) that handles most value-bearing constructs as match arms, so it
+recurs as the anchor for several bullets below; narrower bullets cite the
+specific fn that owns that behavior.
+
 ## Summary
 
 | language | constructs covered | known gaps | evidence |
 |---|---|---|---|
-| Rust | free fns, impl methods, params, `let`, `let mut`, reassignment, return/tail, if/match/block tails, loop break values, closures, calls, methods, struct literals, fields, borrows, binops/unops, string literals | trait methods, const/static bodies, macros, async/await, `try` blocks, indexed (`[]`) reads | `src/graph/typegraph.rs:4079-4648` |
-| TypeScript / JavaScript | free fns, const-bound arrows/function exprs, params (incl. destructured), `let`/`const`/`var`, return, calls, member calls, `new`, object/array literals, JSX elements, member access, binops, `+` concat, template/tagged templates, ternary/short-circuit, arrows as values, top-level module statements, **class methods (instance, static, constructor, getters, setters)** | class field initializers, exported arrow/function expression bodies, switch/with, yield, await (transparent but body still walked) | `src/graph/typegraph.rs:1041-1787` |
-| Kotlin | free/top-level and nested `fun`, params, `val`/`var`, return, calls, member calls, constructors, member access, lambdas, binops, string/numeric literals, loops (span only) | if/when/match as value nodes (recursed but no union node), try/catch, break labels as values, destructuring binds | `src/graph/typegraph.rs:612-959` |
-| Go | functions, methods, params, `:=`, `var`/`const`, assignments, return, calls, method calls, composite literals, selectors, binops/unops, `func` literals, loops (span + node), if | if as a value node (walked but no union node), switch/select, range with index/value slicing, defer/go statement values | `src/graph/typegraph.rs:5419-5882` |
-| Python | functions, methods, params, assignments, return, calls, method calls, attribute/subscript, binops/unops, conditional expressions, lambdas, list/set/tuple/dict literals, comprehensions | f-string interpolation values (treated as `lit`), walrus `:=`, `with`/`try` values, async/await (transparent but body still walked), generators beyond comprehensions | `src/graph/typegraph.rs:6801-7349` |
+| Rust | free fns, impl methods, params, `let`, `let mut`, reassignment, return/tail, if/match/block tails, loop break values, closures, calls, methods, struct literals, fields, borrows, binops/unops, string literals | trait methods, const/static bodies, macros, async/await, `try` blocks, indexed (`[]`) reads | `src/graph/typegraph/rust/mod.rs` `rust_dataflow_from` |
+| TypeScript / JavaScript | free fns, const-bound arrows/function exprs, params (incl. destructured), `let`/`const`/`var`, return, calls, member calls, `new`, object/array literals, JSX elements, member access, binops, `+` concat, template/tagged templates, ternary/short-circuit, arrows as values, top-level module statements, **class methods (instance, static, constructor, getters, setters)** | class field initializers, exported arrow/function expression bodies, switch/with, yield, await (transparent but body still walked) | `src/graph/typegraph/ts/flow.rs` `ts_dataflow_from` |
+| Kotlin | free/top-level and nested `fun`, params, `val`/`var`, return, calls, member calls, constructors, member access, lambdas, binops, string/numeric literals, loops (span only) | if/when/match as value nodes (recursed but no union node), try/catch, break labels as values, destructuring binds | `src/graph/typegraph/kotlin.rs` `kotlin_dataflow_from` |
+| Go | functions, methods, params, `:=`, `var`/`const`, assignments, return, calls, method calls, composite literals, selectors, binops/unops, `func` literals, loops (span + node), if | if as a value node (walked but no union node), switch/select, range with index/value slicing, defer/go statement values | `src/graph/typegraph/go.rs` `go_dataflow_from` |
+| Python | functions, methods, params, assignments, return, calls, method calls, attribute/subscript, binops/unops, conditional expressions, lambdas, list/set/tuple/dict literals, comprehensions | f-string interpolation values (treated as `lit`), walrus `:=`, `with`/`try` values, async/await (transparent but body still walked), generators beyond comprehensions | `src/graph/typegraph/python.rs` `py_dataflow_from` |
 
 ## Rust
 
-Parser: `syn`. Node ids are `file:line:col:kind`.
+Parser: `syn`. Node ids are `file:line:col:kind`. File: `src/graph/typegraph/rust/mod.rs`.
 
 Covered:
 
 - Free functions and `impl` block methods (`Item::Fn`, `Item::Impl` with
-  `ImplItem::Fn`) — `src/graph/typegraph.rs:4082-4097`.
+  `ImplItem::Fn`) — `rust_dataflow_from`.
 - Params (typed params only; `self` is skipped so positional indices align with
-  `type_sig`) — `src/graph/typegraph.rs:4148-4169`.
+  `type_sig`) — `flow_fn_body`.
 - `let` bindings and `let mut`, including tuple/struct destructuring
-  (`bind_pat`) — `src/graph/typegraph.rs:4202-4210`, `src/graph/typegraph.rs:4655-4698`.
+  — `bind_pat`.
 - Reassignment via `=` (`Expr::Assign`) mints a `var_write` slot
-  — `src/graph/typegraph.rs:4642-4724`.
+  — `assign_flow`.
 - Explicit `return EXPR` and implicit block/match/if tails: the last
   expression of a function body flows into a `ret` node
-  — `src/graph/typegraph.rs:4170-4184`; `if`/`match`/`block` tails were recently
-  added and now feed a dedicated `if`/`match`/`block` node that itself becomes
-  the value — `src/graph/typegraph.rs:4540-4591`.
+  — `flow_expr` (`Expr::Return`/`Expr::If`/`Expr::Match` arms), `flow_block`
+  (implicit block tail).
 - Loop break values: `loop { ... break v ... }` collects break-value tails and
-  edges them into the `loop` node — `src/graph/typegraph.rs:4449-4539`. `for`/`while`
-  do not yield break values (matches Rust semantics).
+  edges them into the `loop` node — `flow_expr` (`Expr::Loop`/break arm).
+  `for`/`while` do not yield break values (matches Rust semantics).
 - Calls and method calls, with args recorded in `df_arg` (receiver at slot -1)
-  — `src/graph/typegraph.rs:4334-4375`.
+  — `flow_expr`.
 - Struct literals / tuple-struct/enum-variant constructors (`new`) and field
-  reads (`member`) — `src/graph/typegraph.rs:4380-4415`.
-- References (`borrow`), binary/unary operators — `src/graph/typegraph.rs:4417-4436`.
+  reads (`member`) — `flow_expr` (`Expr::Struct`/`Expr::Field` arms).
+- References (`borrow`), binary/unary operators — `flow_expr`
+  (`Expr::Reference`/`Expr::Binary`/`Expr::Unary` arms).
 - Closures lifted as their own fn scope (`param`, `ret`, `closure` value node)
-  — `src/graph/typegraph.rs:4600-4638`.
-- String literals populate `df_lit` — `src/graph/typegraph.rs:4321-4327`.
+  — `flow_expr` (`Expr::Closure` arm).
+- String literals populate `df_lit` — `flow_expr` (`Expr::Lit` arm).
 
 Known gaps:
 
@@ -66,38 +76,38 @@ Known gaps:
 
 Parser: `oxc`. Node ids are `file:<byte_off>:kind`; line numbers are recovered
 from a byte-offset index. Handles `.ts`/`.tsx`/`.js`/`.jsx`/`.mjs`/`.cjs`/`.mts`/`.cts`.
+File: `src/graph/typegraph/ts/flow.rs`.
 
 Covered:
 
 - `function` declarations and exported function declarations
-  — `src/graph/typegraph.rs:1058-1100`.
+  — `ts_flow_stmt`.
 - `const`/`let`/`var` bindings, including destructuring targets that fall back
-  to a single whole-pattern bind — `src/graph/typegraph.rs:1176-1208`.
+  to a single whole-pattern bind — `ts_flow_body_stmt`.
 - `const`-bound arrow functions and function expressions are lifted as their own
-  fn scope (`param`, body, `ret`) — `src/graph/typegraph.rs:1182-1197`,
-  `src/graph/typegraph.rs:1142-1164`.
+  fn scope (`param`, body, `ret`) — `ts_lift_fn`, reached from
+  `ts_flow_body_stmt`.
 - Inline arrow/function expressions produce a `closure` value node whose `var`
-  is the synthetic lambda sym — `src/graph/typegraph.rs:1511-1523`.
+  is the synthetic lambda sym — `ts_flow_expr`.
 - Calls, member calls, `new`, object/array literals, JSX elements/fragments;
   receiver at `df_arg` slot -1, named props/attrs in `df_field`
-  — `src/graph/typegraph.rs:1322-1787`.
+  — `ts_flow_call`, `ts_flow_member`, `ts_flow_expr`, `ts_flow_jsx_element`.
 - Member access (`recv.prop`, `recv?.prop`, `recv[expr]`) as `member`
-  — `src/graph/typegraph.rs:1359-1373`.
+  — `ts_flow_member`.
 - `+` concat, other binary operators, logical short-circuit, ternary
-  — `src/graph/typegraph.rs:1479-1614`.
+  — `ts_flow_expr`.
 - Template literals and tagged templates, with raw source slices in `df_lit`
-  — `src/graph/typegraph.rs:1628-1652`.
+  — `ts_flow_expr`.
 - Top-level module statements are wrapped in a synthetic `<top>` fn scope
-  — `src/graph/typegraph.rs:1076-1080`.
+  — `ts_flow_stmt`.
 - Class methods — instance, static, constructor, getters, setters — flow like a
   free function's body, scoped under the `Owner.method` fn sym
   `ts_class_call_defs`/`ts_class_entity` already mint for the same method
   (`ts_flow_class`, reached from `ts_flow_stmt`'s `ClassDeclaration` arm and
   `ts_flow_decl`'s for the `export class` path)
-  — `src/graph/typegraph.rs:1075`, `src/graph/typegraph.rs:1097`,
-  `src/graph/typegraph.rs:1109-1122`. A getter and setter of the same name
-  share one fn sym (`Owner.count` for both `get count()`/`set count()`) since
-  neither the dataflow lift nor the call/type extraction distinguishes them —
+  — `ts_flow_class`, `ts_flow_stmt`, `ts_flow_decl`. A getter and setter of the
+  same name share one fn sym (`Owner.count` for both `get count()`/`set count()`)
+  since neither the dataflow lift nor the call/type extraction distinguishes them —
   their df_node rows don't collide (ids are `file:byte_off:kind`) but a query
   joining on fn sym alone can't tell get from set.
 
@@ -123,24 +133,23 @@ Known gaps:
 ## Kotlin
 
 Parser: `tree-sitter-kotlin`. Node ids are `file:row:col:kind`; rows are 0-based
-internally and bumped to 1-based before output.
+internally and bumped to 1-based before output. File: `src/graph/typegraph/kotlin.rs`.
 
 Covered:
 
 - `function_declaration` anywhere in the file (top-level, nested, or inside a
-  class body) — `src/graph/typegraph.rs:627-635`.
-- Params and `val`/`var` property declarations — `src/graph/typegraph.rs:643-654`,
-  `src/graph/typegraph.rs:798-825`.
+  class body) — `kt_walk_fns`.
+- Params and `val`/`var` property declarations — `kt_flow_fn`.
 - Explicit `return` (`jump_expression`) and implicit function-body tail
-  — `src/graph/typegraph.rs:655-664`, `src/graph/typegraph.rs:875-890`.
+  — `kt_flow_fn` (implicit tail), `flow_kt` (`jump_expression` arm).
 - Calls, member calls, constructors (capitalized bare callee treated as `new`)
-  — `src/graph/typegraph.rs:702-776`.
+  — `flow_kt` (`call_expression` arm).
 - Member access outside call position (`navigation_expression`) —
-  `src/graph/typegraph.rs:782-796`.
+  `flow_kt` (`navigation_expression` arm).
 - Lambda literals lifted as their own fn scope; implicit `it` param when no
-  parameter list is declared — `src/graph/typegraph.rs:844-874`.
-- Binary/infix operators (`binop`) and literals — `src/graph/typegraph.rs:897-909`.
-- Loop spans recorded for `for`/`while`/`do_while` — `src/graph/typegraph.rs:910-935`.
+  parameter list is declared — `flow_kt` (`lambda_literal` arm).
+- Binary/infix operators (`binop`) and literals — `flow_kt`.
+- Loop spans recorded for `for`/`while`/`do_while` — `flow_kt`.
 
 Known gaps:
 
@@ -157,23 +166,25 @@ but no `loop` value node is minted).
 ## Go
 
 Parser: `tree-sitter-go`. Node ids are `file:row:col:kind`; rows are 0-based
-internally and bumped to 1-based before output.
+internally and bumped to 1-based before output. File: `src/graph/typegraph/go.rs`.
 
 Covered:
 
 - `function_declaration` and `method_declaration` (with receiver type)
-  — `src/graph/typegraph.rs:5431-5452`.
+  — `go_walk_fns`.
 - Params, including grouped params (`a, b int`), one param node per declared name
-  — `src/graph/typegraph.rs:5459-5482`.
+  — `go_flow_fn`.
 - `:=` short declarations, `var`/`const` declarations, assignments (with
-  `var_write` for identifier targets) — `src/graph/typegraph.rs:5606-5642`.
+  `var_write` for identifier targets) — `flow_go` (`short_var_declaration`/
+  `assignment_statement` arms, via `go_bind`).
 - `return` statements, one `ret` node per returned expression
-  — `src/graph/typegraph.rs:5647-5666`.
+  — `flow_go`.
 - Calls, method calls, selectors, composite literals, `func` literals
-  — `src/graph/typegraph.rs:5517-5766`.
-- Binary/unary operators — `src/graph/typegraph.rs:5588-5600`.
+  — `flow_go`.
+- Binary/unary operators — `flow_go` (`binary_expression`/`unary_expression`
+  arms).
 - `if` statements and `for` loops (span + `loop`/`if` value node)
-  — `src/graph/typegraph.rs:5667-5734`.
+  — `flow_go` (`if_statement`/`for_statement` arms).
 
 Known gaps:
 
@@ -189,23 +200,24 @@ Known gaps:
 ## Python
 
 Parser: `tree-sitter-python`. Node ids are `file:row:col:kind`; rows are 0-based
-internally and bumped to 1-based before output.
+internally and bumped to 1-based before output. File: `src/graph/typegraph/python.rs`.
 
 Covered:
 
 - `function_definition` anywhere in the file (module-level, method, or nested);
-  `decorated_definition` is unwrapped first — `src/graph/typegraph.rs:6810-6819`.
+  `decorated_definition` is unwrapped first — `py_walk_fns`.
 - Params; `self`/`cls` are skipped so positional indices align with `type_sig`
-  — `src/graph/typegraph.rs:6832-6859`.
-- Assignments, return statements — `src/graph/typegraph.rs:6884-6892`.
+  — `py_flow_fn`.
+- Assignments, return statements — `py_flow_stmt` (dispatches to
+  `py_flow_assignment` for assignment, handles `return_statement` directly).
 - Calls, method calls, attribute/subscript reads
-  — `src/graph/typegraph.rs:7132-7217`.
+  — `py_flow_expr`.
 - Binary/boolean/comparison/unary operators, conditional expressions
-  — `src/graph/typegraph.rs:7218-7250`.
-- Lambdas lifted as their own fn scope — `src/graph/typegraph.rs:7266-7287`.
+  — `py_flow_expr`.
+- Lambdas lifted as their own fn scope — `py_flow_expr` (`lambda` arm).
 - List/set/tuple/dict literals and comprehensions (list/set/dict/generator)
-  — `src/graph/typegraph.rs:7288-7339`.
-- `for`/`while` loop spans — `src/graph/typegraph.rs:6893-7025`.
+  — `py_flow_expr`, `py_comprehension_flow`.
+- `for`/`while` loop spans — `py_flow_for`, `py_flow_while`.
 
 Known gaps:
 
