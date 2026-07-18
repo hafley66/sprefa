@@ -178,6 +178,7 @@ mod sg_json_id;
 mod sg_kwargs;
 mod sg_span;
 mod spine_meta;
+mod storage_diet_index;
 mod storage_diet_norm;
 mod string_fns;
 mod gh_cache;

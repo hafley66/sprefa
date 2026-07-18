@@ -326,7 +326,7 @@ receipts law (failure-modes.md "how a new rail gets born" step 5).
 | # | step | direction | expected MB | gate / receipt |
 |---|---|---|---|---|
 | 1 | drop `_strings_norm_idx` | 3a | -66.7 | EXPLAIN shows no plan used it; db 937 -> ~871 |
-| 2 | index audit: EXPLAIN the df/scip/named_call hot shapes, drop indexes no plan chooses; make `auto_indexes` demand-aware | 5 | -150 to -220 | per-drop EXPLAIN + timing receipt; db ~871 -> ~660-720 |
+| 2 | index audit: EXPLAIN the df/scip/named_call hot shapes, drop indexes no plan chooses; make `auto_indexes` demand-aware | 5 | -150 to -220 | LANDED — see step 2 receipt below |
 | 3 | drop `norm` column, recompute in the `string` projection | 3b | -46 | `string` rel byte-identical; db -> ~615-675 |
 | 4 | WITHOUT ROWID for measured pure junction rels (flow_edge, df_edge, edge tables) | 4a | -60 to -90 | classifier + dbstat per table; determinism oracle |
 | 5 | structural df_node identity (dense dictionary, 1a); df_node PK -> `(node_id)` | 1 | -95 to -110 | df_node_sym byte-identical; dataflow tests green; removes coord strings from `_strings` |
@@ -352,6 +352,80 @@ single-consumer, and independently revertable, so they ship first and buy the
 most ratio per unit risk. Steps 4-7 are the structural wave and are ordered so
 that identity (5) precedes the autoindex collapse it enables (6), and rev (7)
 lands last because it is the most entangled with other arcs.
+
+### Step 2 receipt (landed 2026-07-18)
+
+**Mechanism landed.** `Engine::create_auto_indexes` (src/engine/declare.rs) is
+now a demand-aware reconcile, not a monotonic `CREATE INDEX IF NOT EXISTS`
+loop: every tick it computes the join-key index set the CURRENTLY served
+program's derived rules need (`auto_indexes`, unchanged), then sweeps every
+existing `idx_<rel>_<col>`-named index NOT in that set with `DROP INDEX`
+before (re)creating the wanted ones. The sweep is scoped to the `idx_` naming
+convention only — every other engine-created index uses a different scheme
+(`node_file_span_idx`, `_write_ledger_tick_idx`, the `_family_migration_*`
+etc.), so hand-authored indexes are never touched (pinned by
+`hand_authored_index_survives_the_sweep`). This delivers user ruling C's
+"both levers" as one mechanism: the very first tick against an
+already-inflated db acts as the per-table drop, and every tick after that is
+the ongoing demand-aware policy that stops regrowth — a program dropped from
+discovery never leaves its indexes behind again, and a program that
+temporarily stops being served pays only a one-time index rebuild the next
+time it runs, never a permanent leak.
+
+**Read-shape audit (evidence the mechanism targets the right pool).** SQL
+statement capture (`DL_PROFILE=1 DL_PROFILE_SQL_MS=0`, temporarily widened
+statement-text truncation) over a `dl --check` discovery run (29
+`.dl/*.dl` files) against a fresh cold-built fixture db (own corpus, 725
+files) yielded 4,657 unique SQL statements, 1,395 read shapes (SELECT /
+INSERT-SELECT). Running `EXPLAIN QUERY PLAN` for each shape (Python sqlite3,
+stub scalar functions registered for planning only) against both the
+fixture and a read-only `.backup` snapshot of the live incident db
+(`~/.local/state/sprefa/roots/fbabddda40d22347/db.sqlite`, untouched):
+
+| db | idx_ indexes total | chosen by >=1 captured plan | never chosen | never-chosen bytes |
+|---|---|---|---|---|
+| synthetic fixture (579.6MB, this repo's own corpus via discovery) | 768 | 376 (49%) | 392 (51%) | 104.5MB |
+| live incident db copy (921.9MB, read-only `.backup`, untouched) | 755 | 370 (49%) | 385 (51%) | 162.4MB |
+
+Consistent ~49/51 split on two independently-built dbs. The "never chosen"
+number is a lower bound on true redundancy (the captured shapes come from one
+discovery run, not every program ever served — an index unused here could
+still serve an uncaptured examples/*.dl or std/*.dl direct invocation), which
+is exactly why the landed fix is the reconcile (self-correcting, safe by
+construction) rather than a one-time hardcoded DROP list against evidence
+that can't prove completeness.
+
+**Demand-aware reconcile receipt (the mechanism actually exercised).**
+Controlled shrink: the 579.6MB / 768-idx_-index fixture (built by running the
+full 29-file `.dl/*.dl` discovery set), re-run against a 3-file subset
+(`.dl/bom.dl .dl/file-size.dl .dl/watch-ext.dl`) on the SAME db:
+
+| | idx_ indexes | db bytes | post-VACUUM db bytes |
+|---|---|---|---|
+| before (29-file discovery) | 768 | 579,588,096 | — |
+| after (3-file subset tick) | 296 (-472, -61%) | 579,670,016 | 325,582,848 (-254.1MB, -44%) |
+
+Small-scale it-test receipt (`tests/it/storage_diet_index.rs`,
+`pruning_reclaims_measurable_index_bytes`, 4000-row fixture): index bytes
+before=139,264 after=0 (both `idx_symbol_name`/`idx_other_name` objects gone
+post-VACUUM), db bytes delta=143,360.
+
+**Correctness gates.** `extraction_is_deterministic_across_identical_rebuilds`
+green (index shape never affects logical row digests). Full suites: lib
+562/0 (1 pre-existing ignore), it suite green (see commit). Fail-pre-fix
+proven: `stale_join_key_index_is_pruned_when_no_longer_needed` fails on the
+pre-fix `CREATE INDEX IF NOT EXISTS`-only code (stale `idx_symbol_name`
+survives), passes after.
+
+**What it does not do.** No index was hand-dropped by name based on the
+EXPLAIN audit (lever 1's naive form) — the incomplete-evidence risk above
+made that unsafe as a one-shot list. The demand-aware reconcile achieves the
+same end state more safely: any index the audit undercounted as "unused"
+gets recreated automatically the next time its owning program is actually
+served. `auto_indexes()`'s own join-key heuristic (a variable in >=2 body
+atom positions) is unchanged; narrowing that heuristic itself (e.g. requiring
+an equality-selective WHERE, not just co-occurrence) is a separate, riskier
+lever not taken here.
 
 ## 4. Open decisions with recommendations
 

@@ -228,25 +228,62 @@ impl Engine {
         Ok(())
     }
 
-    /// Create the join-key indexes derived rules need (see auto_indexes). Skips
-    /// closure heads, which are views. Idempotent (CREATE INDEX IF NOT EXISTS).
+    /// Create the join-key indexes derived rules need (see auto_indexes), and
+    /// drop any previously auto-created index that no rule of the currently
+    /// served program needs anymore. Skips closure heads, which are views.
+    ///
+    /// Demand-aware reconcile (storage-diet plan, Direction 5 / step 2, index
+    /// audit): `CREATE INDEX IF NOT EXISTS` alone is monotonic-add-only — a
+    /// `.dl` program dropped from discovery left its join-key indexes behind
+    /// forever, which is how the sprefa root accumulated 758 indexes across
+    /// every program ever served (329.6MB, more than the entire autoindex
+    /// pool). This function is a full reconcile of the `idx_<rel>_<col>`
+    /// naming convention against the currently-wanted set every tick: every
+    /// other engine-created index uses a different naming scheme (grep
+    /// receipt: `node_file_span_idx`, `_write_ledger_tick_idx`, etc., never
+    /// the `idx_` prefix), so the sweep only ever touches indexes this
+    /// function itself created.
     pub(crate) fn create_auto_indexes(
         &self,
         derived_rules: &[&Rule],
         closures: &HashMap<String, String>,
     ) -> Result<()> {
-        for (rel, col) in auto_indexes(derived_rules, &self.rels) {
-            if closures.contains_key(&rel) {
-                continue;
-            }
-            let ix = format!("idx_{rel}_{col}");
-            self.db.conn().execute(
-                &format!(
-                    "CREATE INDEX IF NOT EXISTS \"{ix}\" ON {}(\"{col}\")",
-                    tbl(&rel)
-                ),
-                [],
+        let wanted: Vec<(String, String)> = auto_indexes(derived_rules, &self.rels)
+            .into_iter()
+            .filter(|(rel, _)| !closures.contains_key(rel))
+            .collect();
+        let wanted_names: HashSet<String> = wanted
+            .iter()
+            .map(|(rel, col)| format!("idx_{rel}_{col}"))
+            .collect();
+
+        let existing: Vec<String> = {
+            let mut stmt = self.db.prepare(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx\\_%' ESCAPE '\\'",
             )?;
+            let mut names = Vec::new();
+            for row in stmt.query_map([], |r| r.get::<_, String>(0))? {
+                names.push(row?);
+            }
+            names
+        };
+        let stale: Vec<&String> = existing.iter().filter(|n| !wanted_names.contains(*n)).collect();
+        if !stale.is_empty() {
+            tracing::debug!(
+                pruned = stale.len(),
+                "create_auto_indexes: dropping join-key indexes no longer needed by the served program"
+            );
+        }
+        for name in stale {
+            self.db.exec(&format!("DROP INDEX \"{name}\""))?;
+        }
+
+        for (rel, col) in &wanted {
+            let ix = format!("idx_{rel}_{col}");
+            self.db.exec(&format!(
+                "CREATE INDEX IF NOT EXISTS \"{ix}\" ON {}(\"{col}\")",
+                tbl(rel)
+            ))?;
         }
         Ok(())
     }
