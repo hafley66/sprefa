@@ -48,6 +48,7 @@ pub fn init(is_daemon_foreground: bool) {
     // user-visible even without DL_TRACE/RUST_LOG.
     let stderr_warn_layer = fmt::layer()
         .with_target(false)
+        .with_writer(std::io::stderr)
         .with_span_events(fmt::format::FmtSpan::CLOSE)
         .compact()
         .with_filter(tracing::level_filters::LevelFilter::WARN);
@@ -67,6 +68,7 @@ pub fn init(is_daemon_foreground: bool) {
         .unwrap_or_else(|_| EnvFilter::new("off"));
     let stderr_layer = fmt::layer()
         .with_target(false)
+        .with_writer(std::io::stderr)
         .with_span_events(fmt::format::FmtSpan::CLOSE)
         .compact()
         .with_filter(filter);
