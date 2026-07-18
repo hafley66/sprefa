@@ -1062,6 +1062,27 @@ pub(crate) fn apply_process_budget() {
 fn apply_daemon_budget() -> (&'static str, i32, usize) {
     apply_process_budget();
 
+    #[cfg(target_os = "macos")]
+    {
+        // The daemon additionally drops into the darwin BACKGROUND resource
+        // tier — the OS switch that keeps a background process from competing
+        // with the user at all (CPU to leftover cycles, disk to the throttled
+        // tier with deeper backoff, network deprioritized). QoS UTILITY +
+        // nice + IOPOL_THROTTLE demonstrably did NOT prevent a 4.2GB/min boot
+        // rebuild from freezing the foreground (2026-07-17 receipts); this
+        // tier is what Time Machine and Spotlight reindex actually run under.
+        // Daemon-only: one-shot CLI runs keep UTILITY so an interactive
+        // `dl` answer is not starved behind foreground load.
+        // PRIO_DARWIN_PROCESS=4, PRIO_DARWIN_BG=0x1000 per <sys/resource.h>.
+        if std::env::var("DL_NO_BUDGET").ok().as_deref() != Some("1") {
+            const PRIO_DARWIN_PROCESS: libc::c_int = 4;
+            const PRIO_DARWIN_BG: libc::c_int = 0x1000;
+            // SAFETY: setpriority on this process with documented darwin
+            // constants; ignore EPERM.
+            unsafe { libc::setpriority(PRIO_DARWIN_PROCESS, 0 as libc::id_t, PRIO_DARWIN_BG) };
+        }
+    }
+
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(2);
