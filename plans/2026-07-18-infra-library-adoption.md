@@ -470,6 +470,24 @@ consistent with the obs plan's subscriber migration.
    respawn + macOS nice/IOPOL calls, fd-lock single-instance, re-point
    stale-binary rail. Unblocks decomposition step 6 with a smaller
    daemon.rs.
+   **EXECUTED 2026-07-18** (worktree-agent-a3a419ec7ee159685):
+   `src/supervise.rs` (service-manager install/uninstall via hand-authored
+   plist/unit `contents`, launchctl/systemctl wrappers for
+   start/stop/restart, `debug_print` second witness on `dl daemon why`);
+   `dl daemon install`/`uninstall` verbs; supervised
+   start/stop/restart routing in daemon_cmd gated on
+   `use_supervision()` (real home only — sandboxed `XDG_STATE_HOME`
+   stays on the fallback); nice/IOPOL/QoS/PRIO_DARWIN_BG skipped
+   in-process when `XPC_SERVICE_NAME` is set (plist `Nice`/
+   `LowPriorityIO` own it; gate-2 verdict: no `ProcessType`); bespoke
+   pidfile replaced by an fd-lock single-instance witness in
+   `run_daemon` (it-test `second_daemon_in_same_home_refused_by_fd_lock`);
+   `sd_notify(Ready)` after UDS bind; stale-binary rail re-pointed at the
+   supervised daemon's `build_id` mtime in the supervised status path.
+   `spawn_detached`/`restart` remain as the section-3.4 fallback (no
+   service manager, CI, sandboxed tests). Live install/uninstall
+   round-trip against the real `gui/$UID` domain deliberately not run in
+   this arc (redeploy is user-gated).
 2. **HTTP/UDS** second — axum shell, one Router, erase the public
    no-daemon split in the same arc (queued directive lands here, once).
    Unblocks decomposition step 10.
