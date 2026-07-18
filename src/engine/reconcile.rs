@@ -11,6 +11,13 @@ impl Engine {
     ) -> Result<Reconcile> {
         // Load prior file metadata first so enumerate can use the mtime fast-path.
         let prev = self.load_file_meta()?;
+        // Reference second from the walk that produced `prev`, for the
+        // racy-window guard in `enumerate_with_hash` (see its doc comment).
+        // `now_secs` becomes the NEW reference, persisted below once this
+        // tick's walk has actually happened, so a quiet daemon still keeps
+        // the guard advancing tick over tick.
+        let prev_walk_ref_secs = self.load_walk_ref_secs()?;
+        let now_secs = unix_secs();
 
         let mut current: FileMeta = HashMap::new();
         // (rule idx, repo slug, path, rev, hash) for every enumerated file. A
@@ -55,7 +62,14 @@ impl Engine {
                 for (_, g, _) in rules {
                     union.add(globset::Glob::new(g)?);
                 }
-                let files = enumerate_with_hash(slug, repo_root, rev, &union.build()?, &prev)?;
+                let files = enumerate_with_hash(
+                    slug,
+                    repo_root,
+                    rev,
+                    &union.build()?,
+                    &prev,
+                    prev_walk_ref_secs,
+                )?;
                 if crate::db::profiling() {
                     eprintln!(
                         "[scan {slug}@{}] {} file(s) in {:.1}ms",
@@ -248,6 +262,7 @@ impl Engine {
             let retracted = engine.retract_paths(&retract_refs, source_rels)?;
             let extracted = prepared.apply(engine, current_base)?;
             engine.save_file_meta(&current, &prev)?;
+            engine.save_walk_ref_secs(now_secs)?;
             for (key, digest) in &pending_digests {
                 engine.save_rel_digest(key, digest)?;
             }

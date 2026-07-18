@@ -222,6 +222,9 @@ impl Engine {
                  mtime INTEGER DEFAULT 0, size INTEGER DEFAULT 0, lines INTEGER DEFAULT -1, PRIMARY KEY (repo, path, rev));
              CREATE TABLE IF NOT EXISTS _prov (rel TEXT, repo TEXT NOT NULL DEFAULT '', path TEXT, src TEXT, PRIMARY KEY (rel, repo, path, src));
              CREATE TABLE IF NOT EXISTS _reldigest (rel TEXT PRIMARY KEY, digest TEXT);
+             -- Singleton: wall-clock second as of the last completed WORK-arm
+             -- walk in `enumerate_with_hash`. See `load_walk_ref_secs`.
+             CREATE TABLE IF NOT EXISTS _file_walk (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), ref_secs INTEGER NOT NULL DEFAULT 0);
              -- Singleton commit watermark for the semantic database state. A
              -- prepared generation compares all three fields after acquiring
              -- BEGIN IMMEDIATE, then advances this row in the same transaction
@@ -1320,6 +1323,37 @@ impl Engine {
             &rows,
         )?;
         self.insert_spine_files(&delta)?;
+        Ok(())
+    }
+
+    /// Wall-clock second as of the last completed WORK-arm walk (see
+    /// `_file_walk` in `ensure_meta`). Zero before any walk has ever
+    /// completed, which makes the racy-window guard in `enumerate_with_hash`
+    /// a no-op on a cold db — correct, since `prev` is empty then too and
+    /// every file takes the full-hash path regardless.
+    pub(crate) fn load_walk_ref_secs(&self) -> Result<i64> {
+        Ok(self
+            .db
+            .conn()
+            .query_row(
+                "SELECT ref_secs FROM _file_walk WHERE singleton = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0))
+    }
+
+    /// Persist this tick's walk reference for the NEXT walk's racy-window
+    /// guard (`enumerate_with_hash`). Written once per tick regardless of
+    /// whether any file actually changed, so a row disqualified by the guard
+    /// self-heals as soon as real wall-clock time moves past its mtime's
+    /// whole-second tick.
+    pub(crate) fn save_walk_ref_secs(&self, now_secs: i64) -> Result<()> {
+        self.db.conn().execute(
+            "INSERT INTO _file_walk(singleton, ref_secs) VALUES (1, ?1)
+             ON CONFLICT(singleton) DO UPDATE SET ref_secs = excluded.ref_secs",
+            rusqlite::params![now_secs],
+        )?;
         Ok(())
     }
 

@@ -19,8 +19,27 @@ pub(crate) fn module_stem(path: &str) -> &str {
 /// however many rules scan it. Free function (no `&self`) so groups enumerate
 /// in parallel across repos. For WORK, stat each file and reuse the stored hash
 /// when mtime+size are unchanged (the fast-path), reading+hashing only changed
-/// files. A git rev uses the blob OID from `ls-tree`, so unchanged blobs are
-/// detected without fetching content. The walk skips `.git` explicitly:
+/// files.
+///
+/// Racy-write guard: mtime here is whole-second resolution (`mtime_secs`), so
+/// an edit that lands in the same filesystem-timestamp second as a prior write
+/// — same content length too — is invisible to the mtime+size compare alone.
+/// `walk_ref_secs` is the wall-clock second as of the walk that produced
+/// `prev` (persisted by the caller via `save_walk_ref_secs`, mirroring git's
+/// racy-index check and watchman's cookie sync): a cached row whose mtime is
+/// `>= walk_ref_secs` was captured in or after the same tick its own walk
+/// completed in, so a same-tick rewrite immediately after that capture cannot
+/// be ruled out — the fast path is skipped and the file is rehashed. This is
+/// deliberately whole-second, not nanosecond: `st_mtime` nanosecond fields
+/// (APFS's `st_mtimespec`) are real where the filesystem supports them, but a
+/// zero or coarse sub-second component elsewhere doesn't mean "exactly on the
+/// second," so the guard can't assume finer-than-second precision is
+/// meaningful and must stay conservative at the resolution `mtime_secs`
+/// actually stores. Self-healing: once wall-clock time advances past a row's
+/// mtime second, `mtime < walk_ref_secs` holds again and the fast path
+/// resumes for that file. A git rev uses the blob OID from `ls-tree`, so
+/// unchanged blobs are detected without fetching content; the guard does not
+/// apply there (mtime is always 0 for that arm). The walk skips `.git` explicitly:
 /// `hidden(false)` un-hides it, and crawling the object store made big-repo
 /// scans pathological. A directory below the root that itself owns a `.git`
 /// entry (dir or file — a submodule worktree's is a file) is a foreign repo
@@ -112,6 +131,7 @@ pub(crate) fn enumerate_with_hash(
     rev: &str,
     union: &globset::GlobSet,
     prev: &FileMeta,
+    walk_ref_secs: i64,
 ) -> Result<Vec<(String, String, i64, i64, i64)>> {
     let max_size = max_filesize();
     if rev == "WORK" {
@@ -167,7 +187,7 @@ pub(crate) fn enumerate_with_hash(
                 if let Some((h, pmt, psz, plines)) =
                     prev.get(&(repo.to_string(), rel.clone(), "WORK".to_string()))
                 {
-                    if pmt == mt && psz == sz {
+                    if pmt == mt && psz == sz && *pmt < walk_ref_secs {
                         if *plines >= 0 {
                             return (rel.clone(), h.clone(), *mt, *sz, *plines);
                         }

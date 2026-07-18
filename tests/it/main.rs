@@ -29,6 +29,7 @@ mod clock_lock;
 mod closure_incremental_bench;
 mod closure_query_guard;
 mod extract_cache;
+mod racy_mtime;
 mod graph_diff_rev;
 mod perf_facts;
 mod perf_rels;
