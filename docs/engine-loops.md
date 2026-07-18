@@ -97,47 +97,34 @@ law).
   failures (warn).
 - **Exits**: returns on `ctx.cancel.cancelled()`; never otherwise.
 
-### 7. Subscriber-push pump — `spawn_subscriber_pump`
-`src/daemon_shell/mod.rs:139` (loop `:143`)
+### 7. Subscriber-push broadcast (no loop of its own)
+`ShellCtx.broadcast_tx` (`src/daemon_shell/mod.rs`), a `tokio::sync::broadcast`
+channel
 
-- **Wakes on**: `tokio::select!` on `ctx.cancel.cancelled()` vs `rx.recv()` on
-  the unbounded `BroadcastMsg` channel fed by tick methods (from
-  `spawn_blocking` threads).
-- **Logs**: none inside the loop (a dropped subscriber write is silently
-  swallowed, best-effort push).
-- **Exits**: returns on cancel, or when `rx.recv()==None` (all senders
-  dropped).
+- The former hand-written pump task (`spawn_subscriber_pump`, owned the
+  kept-open UDS write halves) is gone with the framed wire: tick methods
+  `send` pre-serialized notification bodies, and every open `GET /watch` SSE
+  stream holds its own receiver inside the axum serve loop (section 9). A
+  lagged receiver skips overwritten frames; zero receivers = the send errors
+  and is ignored (best-effort push, same policy as before).
 
-### 8. UDS accept loop — `spawn_accept`
-`src/daemon_shell/uds.rs:28` (loop `:38`)
+### 8/8b. (retired) UDS accept + per-connection loops
+`src/daemon_shell/uds.rs` was deleted in the axum adoption arc (plan section
+2.4): the UDS socket now serves the SAME axum router as TCP (section 9), so
+the hand-written accept loop and per-connection frame loop no longer exist.
+The `[access]` line per request (request id, `surface=sock`, method, root,
+ms, ok, byte counts) is logged from the shared `/rpc` handler instead.
 
-- **Wakes on**: `tokio::select!` on cancel vs `listener.accept()` (OS socket
-  accept event).
-- **Logs**: `[daemon] adopt UDS listener into runtime: {e}` (error, setup),
-  `[daemon] accept error: {e}` (warn).
-- **Exits**: `break` on cancel; accept errors just log and continue.
-
-### 8b. UDS per-connection loop — `handle_connection`
-`src/daemon_shell/uds.rs:58` (loop `:61`), one task per accepted connection
-
-- **Wakes on**: `read_frame(&mut reader).await` — one iteration per client
-  request frame; NOT selected against `ctx.cancel` (no doorbell for graceful
-  mid-request cancel).
-- **Logs** (this arc): one `[access]` line per request via
-  `daemon::log_access` (info) — request id, `surface=sock`, method, root, ms,
-  ok, byte counts. Previously: only `[daemon] read error: {e}` (warn).
-- **Exits**: returns on clean EOF (`Ok(None)`), read/write error, or after
-  flushing a `shutdown` method's response (then calls `ctx.cancel.cancel()`
-  and returns).
-
-### 9. HTTP axum serve loop — `http::spawn`
-`src/daemon_shell/http.rs:40`, `axum::serve(...)` at `:70`
+### 9. axum serve loops (TCP + UDS) — `http::spawn_tcp` / `http::spawn_uds`
+`src/daemon_shell/http.rs`, `axum::serve(...)` in each
 
 - **Wakes on**: `axum::serve(listener, app).with_graceful_shutdown(cancel.cancelled())`
   — the accept loop lives inside the axum/hyper crate, not hand-written here.
-- **Logs** (this arc): one `[access]` line per `/rpc` request via
-  `daemon::log_access` (info) — request id, `surface=http`, method, root, ms,
-  ok, byte counts. Unchanged: bind/listener-adoption failures (warn).
+  Two thin listeners, one router; a `Transport` extension stamps the access
+  log's `surface` label (`http` for TCP, `sock` for UDS).
+- **Logs**: one `[access]` line per `/rpc` request via `daemon::log_access`
+  (info) — request id, surface, method, root, ms, ok, byte counts. Unchanged:
+  bind/listener-adoption failures (warn).
 - **Exits**: graceful shutdown driven by `cancel.cancelled()`.
 
 ### 10. Signal handler — `spawn_signal`
@@ -162,12 +149,13 @@ law).
 ## Client-side / non-daemon loops
 
 ### 12. LSP daemon-push subscriber — `spawn_daemon_subscriber`
-`src/lsp.rs:326` (loop `:339`), `std::thread::Builder::new().name("dl-lsp-subscriber")`
+`src/lsp.rs` (`std::thread::Builder::new().name("dl-lsp-subscriber")`)
 
-- **Wakes on**: blocking `rpc::read_frame(&mut s)` on the UDS socket
-  subscribed to `diag_changed`.
+- **Wakes on**: SSE events read from the daemon's `GET /watch` stream
+  (`DaemonClient::watch`, `src/daemon_client.rs` — hyper body frames on the
+  UDS socket).
 - **Logs**: none in the loop.
-- **Exits**: `return` on any non-`Ok(Some(_))` result (socket closed/error) —
+- **Exits**: returns on stream end, transport error, or a closed LSP sender —
   no cancellation token; thread dies with the connection.
 
 ### 13. LSP main pump — `run_lsp`

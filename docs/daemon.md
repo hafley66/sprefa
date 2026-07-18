@@ -182,14 +182,18 @@ Quit item. Windows/Linux trays are deferred. Source:
 
 ## RPC surface
 
-JSON-RPC 2.0 over `Content-Length`-framed messages (LSP-style framing, same
-codec on the local socket and the LSP stdio bridge — see [src/rpc.rs](../src/rpc.rs)).
-A client speaking this codec is transport-agnostic.
+JSON-RPC 2.0 envelopes (see [src/rpc.rs](../src/rpc.rs)) carried over HTTP:
+ONE axum router (`src/daemon_shell/http.rs`) with `POST /rpc` (the body IS the
+JSON-RPC request), `GET /health`, and `GET /watch` (SSE push stream), served
+identically over the UDS socket and the published localhost TCP port
+(`http.json`). The old bespoke `Content-Length`-framed socket wire is gone
+(infra-library-adoption plan, section 2.4); any HTTP client — `curl
+--unix-socket` included — speaks to the daemon directly.
 
 **The `root` envelope.** Every root-scoped method carries `params.root` = the
 absolute root path; the daemon routes it to that root's engine (auto-registering
 it on a miss when it owns `.dl/`). `params.root` absent addresses the config view.
-`add_root` / `drop_root` / `subscribe` / `shutdown`, and a `ping`/`status` with no
+`add_root` / `drop_root` / `shutdown`, and a `ping`/`status` with no
 `root`, are process-level. Methods (`handle_request`, `src/daemon.rs`):
 
 | method | params | returns |
@@ -206,9 +210,13 @@ it on a miss when it owns `.dl/`). `params.root` absent addresses the config vie
 | `definition` | `{file, text}` | def-target `[file, line]` pairs (LSP go-to-def) |
 | `hover` | `{file, text}` | hover markdown |
 | `schema` | — | every relation's columns + the backing `_*` source tables |
-| `subscribe` | `{events[]}` | registers the open socket for server-sent notifications (e.g. `diag_changed`, one per tick); requires a kept-open connection |
 | `load` | `{path, mode}` | `mode="watched"` joins the script to the program (reactive, hot-reloaded); `mode="once"` evals on a throwaway engine and returns `?` results |
 | `shutdown` | — | `{ok}`, then the daemon exits |
+
+Push notifications (`diag_changed` per broadcast-worthy tick, `rev_advanced`
+on a watched ref move) stream from `GET /watch` as SSE `data:` events, one
+JSON-RPC notification envelope per event — the retired `subscribe` method's
+replacement, reachable over either transport.
 
 `dl daemon load <script>` / `dl daemon load-once <script>` are the CLI
 front-ends for `load` (both start the singleton first if it is down and register

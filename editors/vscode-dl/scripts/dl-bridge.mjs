@@ -1,17 +1,23 @@
 #!/usr/bin/env node
 // HTTP -> dl daemon bridge, so media/flow-panel.html runs in any plain browser
 // (or instant, or anything that can fetch) without VS Code. One POST /rpc per
-// JSON-RPC request, forwarded Content-Length-framed over the daemon's unix
-// socket at <root>/.dl/daemon.sock. Start the daemon first (`dl` in the repo,
-// or let the LSP/daemon mode spawn it), then:
+// JSON-RPC request, forwarded to the singleton daemon's unix socket — which
+// carries HTTP itself since the axum adoption arc, so the forward is a plain
+// http.request over `socketPath`. Start the daemon first (`dl daemon start`),
+// then:
 //
-//   node scripts/dl-bridge.mjs --root ~/projects/foo [--port 7379]
+//   node scripts/dl-bridge.mjs [--sock /path/to/daemon.sock] [--port 7379]
 //   open media/flow-panel.html?dl=http://127.0.0.1:7379
+//
+// The default socket is the singleton home's (`$XDG_STATE_HOME/sprefa/
+// daemon.sock`, falling back to `~/.local/state/sprefa/daemon.sock`). Name the
+// target repo per-request via the JSON-RPC `params.root` envelope, the same
+// way every dl client does.
 //
 // CORS is wide open on purpose: this binds 127.0.0.1 and serves your own
 // local code graph.
 import http from "node:http";
-import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 
@@ -20,30 +26,30 @@ function flag(name, dflt) {
   const i = args.indexOf("--" + name);
   return i >= 0 ? args[i + 1] : dflt;
 }
-const root = path.resolve(flag("root", process.cwd()));
+const stateHome = process.env.XDG_STATE_HOME
+  ? process.env.XDG_STATE_HOME
+  : path.join(os.homedir(), ".local", "state");
+const sock = flag("sock", path.join(stateHome, "sprefa", "daemon.sock"));
 const port = Number(flag("port", "7379"));
-const sock = path.join(root, ".dl", "daemon.sock");
 
-/** One framed JSON-RPC exchange over a fresh unix-socket connection. */
+/** One JSON-RPC exchange: POST /rpc over the daemon's unix socket (HTTP). */
 function rpc(body) {
   return new Promise((resolve, reject) => {
-    const c = net.createConnection(sock);
-    let buf = Buffer.alloc(0);
-    c.on("error", reject);
-    c.on("connect", () => {
-      c.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
-    });
-    c.on("data", (d) => {
-      buf = Buffer.concat([buf, d]);
-      const sep = buf.indexOf("\r\n\r\n");
-      if (sep < 0) return;
-      const header = buf.slice(0, sep).toString();
-      const len = Number(/Content-Length:\s*(\d+)/i.exec(header)?.[1] ?? 0);
-      if (buf.length >= sep + 4 + len) {
-        c.end();
-        resolve(buf.slice(sep + 4, sep + 4 + len).toString());
-      }
-    });
+    const req = http.request(
+      {
+        socketPath: sock,
+        path: "/rpc",
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      },
+      (res) => {
+        let out = "";
+        res.on("data", (d) => (out += d));
+        res.on("end", () => resolve(out));
+      },
+    );
+    req.on("error", reject);
+    req.end(body);
   });
 }
 
