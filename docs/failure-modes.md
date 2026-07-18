@@ -374,6 +374,62 @@ sites but not against new code. **missing** = nothing.
   never `Ok(true)` unconditionally; a change flag is a claim you must defend
   with a delta.
 
+## 16. Kill-respawn cold-restart loop
+
+- WHAT IT LOOKS LIKE: killing the daemon while a still-alive client (a hook, an
+  agent's `dl --check`, an editor) is attached — the client autostarts a fresh
+  singleton, which starts the cold rebuild from zero; every kill multiplies the
+  total work instead of stopping it.
+- HOW IT BIT US: 2026-07-18 morning. An external agent session ran a bash line
+  invoking `dl --check` twice in ~/projects/games/smash; ambient config
+  registered the sprefa root too. Six singleton generations in 7 minutes (pids
+  2144, 3546, 9220, 9840, 12281 in .dl/perf.jsonl), each booting blank
+  ("first-run" on every family — deferred digest saves mean a kill mid-extract
+  persists nothing). The user killed it repeatedly; each kill bought a fresh
+  cold start. Per-generation cost from `dl daemon why` on the killed pid 12281:
+  409.6MB disk read in one 13s window, 499MB read total — ~6 generations
+  ≈ 3GB read on the boot volume. Budgets held (nice 10, iothrottle, 3 threads);
+  the machine beachballed anyway on sustained throttled reads.
+- THE LAW: a kill is a stop order, not a restart trigger. Clients may autostart
+  a daemon at most once per invocation, with backoff; cold-extract progress
+  must persist at bounded intervals so generation N+1 resumes where N died,
+  never from zero.
+- THE RAIL: missing. No spawn backoff, no respawn-once semantics, no
+  mid-cold-extract digest persistence (completion-gate saves only). The
+  invocation log + spawn-attribution work (obs-logging arc) makes the loop
+  visible; nothing yet prevents it. Discriminating test needed: kill the daemon
+  mid-cold-extract, assert the next boot resumes (no "first-run" reason) —
+  fail-pre-fix provable today.
+- SAY THIS TO AN AGENT: Never wrap `dl --check` in a retry or call it twice in
+  one bash line — each call can spawn a daemon; and if the user kills the
+  daemon, stop invoking dl entirely until told otherwise.
+
+## 17. Unbounded db growth, open-cost amplification
+
+- WHAT IT LOOKS LIKE: the per-root db grows without bound relative to its
+  corpus; every daemon boot, WAL recovery, and reconcile pays reads
+  proportional to db size, not corpus size.
+- HOW IT BIT US: same incident. The singleton's sprefa root db
+  (roots/fbabddda40d22347/db.sqlite) was 979MB + 81MB WAL for a 7.3MB, 712-file
+  corpus (~140x). VACUUM reclaimed only 84MB (979 → 895MB) — the bloat is live
+  rows: `_strings` 1.35M rows (124MB + 63MB index), 463 rel tables each doubled
+  by a unique autoindex. A second world existed: the per-root-era fossil
+  ~/projects/sprefa/.dl/.state/cache.db at 1.7GB + 225MB WAL, last fed by
+  one-shot runs 2026-07-17 (deleted 2026-07-18, ~2GB freed). Every respawn in
+  class 16 re-read against the 1GB file — db size is the amplifier that turned
+  a respawn loop into a machine seize.
+- THE LAW: db bytes are a budgeted resource like CPU and I/O. A root db an
+  order of magnitude larger than its corpus is a defect to explain, not a cost
+  to absorb.
+- THE RAIL: missing. No size accounting, no ratio ceiling, no storage diet.
+  Candidate rail: a boot-time verdict line (db bytes, corpus bytes, ratio) plus
+  a `--check` warning above a ratio ceiling. Diet arc candidates, measured:
+  `_strings` interning (187MB), autoindex duplication (463 tables), rev tables
+  bounded at 2 revs (99MB — not the problem).
+- SAY THIS TO AN AGENT: Before blaming CPU for a slow or thrashing daemon, `ls
+  -la` the root db and its WAL — reads scale with db bytes, and a GB-scale db
+  on a MB-scale corpus is the defect.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
@@ -393,6 +449,8 @@ sites but not against new code. **missing** = nothing.
 | 13 | stale-binary verification | half | hook compares installed `build_id` (src/cli/daemon.rs:209) against the worktree target; refuse or warn on mismatch |
 | 14 | pre-commit worktree hang | missing | worktree-root detection or hook fast-path for blank-db roots (CLAUDE.md:70(i)) |
 | 15 | dishonest change flags | half | waiver-audit the 25 HEAD findings, promote `.dl/dishonest-flag.dl` to error severity (792cc902) |
+| 16 | kill-respawn cold-restart loop | missing | client autostart-once + backoff; mid-cold digest persistence; kill-mid-cold resume it-test (fail-pre-fix provable) |
+| 17 | unbounded db growth | missing | boot verdict line (db bytes, corpus bytes, ratio) + `--check` ceiling warn; storage diet arc (`_strings` 187MB, autoindex doubling) |
 
 ## How a new rail gets born here
 
