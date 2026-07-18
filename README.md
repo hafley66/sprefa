@@ -635,14 +635,18 @@ doc-comment in [src/cli/mod.rs](src/cli/mod.rs) and rerun the generator.
 <!-- BEGIN: cli -->
 | flag | effect |
 |---|---|
+| `--apply` | _undocumented_ |
 | `--changed <CHANGED>` | Drive one incremental tick for these changed paths (the delta path the watcher uses), instead of a full run. Repeatable |
 | `--check` | Lint/ban mode: render the `diag` relation to stderr. Exit 0 clean, 2 if any `error`-severity row exists (Claude Code's blocking-hook code), 1 on a broken program. For pre-commit / CI / Claude Code hooks. See docs/rails.md |
 | `--cmd-budget <CMD_BUDGET>` | Cap `cmd` invocations per tick (or DL_CMD_BUDGET); over budget is a loud error, never a silent truncation. Default: unlimited |
 | `--db <DB>` | Persist derived tables to a SQLite db at this path (default: in-memory; discovery mode defaults to `<root>/.dl/cache.db`). Derived relations land as plain-TEXT `rel_<name>` tables, queryable by anything that reads SQLite |
 | `--diag-json` | Like --check but emit the diagnostics as a JSON array on stdout |
+| `--dialect` | _undocumented_ |
 | `--fix` | With --move, write the rewritten files instead of previewing |
+| `--format <FORMAT>` | Emit `?` query results as JSON instead of the human TSV block: one JSON array of row-objects (each row keyed by column name), one array per query. Only `json` is recognized today |
 | `--hook` | Harness-hook mode: read a Claude Code hook event (PostToolUse JSON) on stdin, tick the rules, emit the hook output (additionalContext / block) on stdout. The program heads `inject`/`inject_skill`/`block` over the agent built-ins. The condition is a dl rule; no editor, no bash. See docs/skill-injection.md |
 | `--lsp` | Run as an LSP server over stdio: the program's `diag` relation becomes live editor diagnostics (lint on open/save). See docs/lsp.md |
+| `--max-wall` | _undocumented_ |
 | `--mcp` | _undocumented_ |
 | `--move <MOVE>` | Auto-refactor: rewrite `use`-path references for a module move `OLD_FILE=NEW_FILE` (repo-relative Rust paths). Dry-run unless --fix. Repeatable. Ignores the `program` positional |
 | `--no-daemon` | Force the in-process path this invocation (do not auto-attach). Same as `DL_NO_DAEMON=1`. Useful when the daemon socket is wedged |
@@ -655,9 +659,6 @@ doc-comment in [src/cli/mod.rs](src/cli/mod.rs) and rerun the generator.
 | `--tick-audit` | After each tick, print every relation's row count (or DL_TICK_AUDIT=1) |
 | `--verify <VERIFY>` | Verify-rollback: run the program (applying `gen` edits), then run this shell command as a checker in the root. Keep the edits only if it exits 0; otherwise restore every touched file to its pre-run state and exit 1. Transactional codemod — apply, test, keep-if-pass. See christmas #14 |
 | `--watch` | Re-tick on file changes in the source root (in-process watcher, the pre-daemon path). For the warm long-lived watcher, use `dl daemon start` |
-| `--apply` | _undocumented_ |
-| `--dialect` | _undocumented_ |
-| `--max-wall` | _undocumented_ |
 <!-- END: cli -->
 
 ## Git hook / Claude Code hook
@@ -959,6 +960,7 @@ Do not hand-edit between the markers.
 | [`lint-unwrap.dl`](examples/lint-unwrap.dl) | Lint: flag `.unwrap()` outside test code. Run as a live linter: |
 | [`lints/rust.dl`](examples/lints/rust.dl) | Rust lint pack — ast-grep patterns surfaced as LSP diagnostics. |
 | [`lints/ts.dl`](examples/lints/ts.dl) | TypeScript/JS lint pack — ast-grep patterns surfaced as LSP diagnostics. |
+| [`loop-nests.dl`](examples/loop-nests.dl) | loop-nests.dl — nested loop paths, lexical AND through the call graph. |
 | [`lsp-def-target.dl`](examples/lsp-def-target.dl) | lsp-def-target.dl — go-to-def driven by a program-declared relation. |
 | [`madge.dl`](examples/madge.dl) | madge.dl — madge's readout as dl rules: the resolved JS/TS module dependency |
 | [`mcp-echo.dl`](examples/mcp-echo.dl) | mcp-echo.dl — a JSON-RPC server authored as datalog. |
@@ -968,6 +970,7 @@ Do not hand-edit between the markers.
 | [`missing-repo.dl`](examples/missing-repo.dl) | Progressive multi-repo: a missing clone is non-fatal when its config row |
 | [`missing-type.dl`](examples/missing-type.dl) | missing-type.dl — auto-detect "missing type" smells from local-name repetition. |
 | [`module-history.dl`](examples/module-history.dl) | Rev-aware module graph. |
+| [`n-plus-one.dl`](examples/n-plus-one.dl) | n-plus-one.dl — static N+1 hunt: SQL issued per loop iteration. |
 | [`net-atlas.dl`](examples/net-atlas.dl) | net-atlas.dl — networking concepts modeled as facts and rules, teaching the |
 | [`node2vec-callgraph.dl`](examples/node2vec-callgraph.dl) | structural embedding of the v5 call graph |
 | [`npm-crawl.dl`](examples/npm-crawl.dl) | npm-crawl.dl — point at ONE public npm package, progressively crawl its whole |

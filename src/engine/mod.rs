@@ -46,7 +46,7 @@ mod source_prepare;
 #[cfg(test)]
 mod staged_delta;
 mod symbols;
-pub(crate) use query::emit_query_json;
+pub(crate) use query::{emit_query_json, emit_query_json_rows, QueryOutputFormat};
 pub(crate) use repo::git_batch_read;
 mod decls;
 pub(crate) use decls::*;
@@ -1024,9 +1024,10 @@ pub struct Engine {
     /// flip; retained for the engine's life (unlike `adjacency_cache`, the
     /// memo is the point).
     call_router: std::cell::RefCell<Option<family::FamilyRouter<'static>>>,
-    /// Emit `?` query results as JSON-lines (one object per query) instead of the
-    /// human TSV block. For tools/editors consuming answers (`--query-json`).
-    query_json: bool,
+    /// How `?` query results print: the human TSV block (default), NDJSON
+    /// (`--query-json`), or JSON row-arrays (`--format json`). See
+    /// `QueryOutputFormat`'s doc for the shape of each.
+    query_format: query::QueryOutputFormat,
     /// When true, skip the `?` query-evaluation pass at the end of a tick. Used
     /// for the foreground one-shot's PRIMING tick: a data-driven scan or
     /// repo-sink reads last tick's coordinate/pull state, so a fresh run has
@@ -1191,7 +1192,7 @@ impl Engine {
             rev_index: std::collections::HashSet::new(),
             repos: Vec::new(),
             logged_repo_dedup: HashSet::new(),
-            query_json: false,
+            query_format: query::QueryOutputFormat::Text,
             prime_tick: false,
             root_implicit: false,
             poll_loop: false,
@@ -1222,9 +1223,10 @@ impl Engine {
         }
     }
 
-    /// Emit query results as JSON-lines instead of the human TSV block.
-    pub fn set_query_json(&mut self, on: bool) {
-        self.query_json = on;
+    /// Set how `?` query results print (`QueryOutputFormat::Text`/`Ndjson`/
+    /// `JsonRows`); see that type's doc for the shape of each.
+    pub fn set_query_format(&mut self, format: QueryOutputFormat) {
+        self.query_format = format;
     }
 
     /// Skip `?` evaluation on the next tick (the foreground priming pass).

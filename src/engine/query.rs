@@ -1,5 +1,26 @@
 use super::*;
 
+/// How a `?` query's result prints. `Text` (default) is the `? rel => cols`
+/// header plus one tab-separated row per line plus a `(N rows)` footer.
+/// `Ndjson` (`--query-json`, 2026-07-09) wraps each query's full result in one
+/// `{query, columns, rows, count}` object (rows as arrays), one line per
+/// query — kept exactly as-is for its existing consumers (seam_bench,
+/// ghcacher-parity, the per-language AST-grammar suites). `JsonRows`
+/// (`--format json`) is a second, additive JSON shape: one JSON array of
+/// `{col: val}` row-objects per query, no envelope — for a caller that wants
+/// rows it can index by column name without also parsing a wrapper object.
+/// Because a query's rows are fully materialized before any of these print
+/// (`query_one_sql` collects into a `Vec` first — the printer streams per
+/// QUERY as the tick's item loop reaches each `?`, never per ROW), `JsonRows`
+/// prints one complete array per query rather than one object per row.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum QueryOutputFormat {
+    #[default]
+    Text,
+    Ndjson,
+    JsonRows,
+}
+
 impl Engine {
     pub(crate) fn run_query(&self, q: &Query, closures: &HashMap<String, String>) -> Result<()> {
         // Seeded Rust path on a closure head: src pinned + dst free is a forward
@@ -56,29 +77,31 @@ impl Engine {
         // on tabs must not see a leading space glued onto cell 0), and cells
         // are tab-separated. The trailing `(N rows)` summary line keeps its
         // two-space indent (it is not a data row).
-        if self.query_json {
-            emit_query_json(&res.rel, &res.columns, &res.rows);
-        } else {
-            println!(
-                "? {} => {}",
-                res.rel,
-                if res.columns.is_empty() {
-                    "(count)".into()
-                } else {
-                    res.columns.join("\t")
-                }
-            );
-            for cells in &res.rows {
+        match self.query_format {
+            QueryOutputFormat::Ndjson => emit_query_json(&res.rel, &res.columns, &res.rows),
+            QueryOutputFormat::JsonRows => emit_query_json_rows(&res.columns, &res.rows),
+            QueryOutputFormat::Text => {
                 println!(
-                    "{}",
-                    cells
-                        .iter()
-                        .map(json_cell_tsv)
-                        .collect::<Vec<_>>()
-                        .join("\t")
+                    "? {} => {}",
+                    res.rel,
+                    if res.columns.is_empty() {
+                        "(count)".into()
+                    } else {
+                        res.columns.join("\t")
+                    }
                 );
+                for cells in &res.rows {
+                    println!(
+                        "{}",
+                        cells
+                            .iter()
+                            .map(json_cell_tsv)
+                            .collect::<Vec<_>>()
+                            .join("\t")
+                    );
+                }
+                println!("  ({} rows)\n", res.rows.len());
             }
-            println!("  ({} rows)\n", res.rows.len());
         }
     }
 
@@ -204,4 +227,32 @@ pub(crate) fn emit_query_json(rel: &str, columns: &[String], rows: &[Vec<serde_j
         "count": rows.len(),
     });
     println!("{obj}");
+}
+
+/// One JSON array of row-objects, each row keyed by column name (`--format
+/// json`'s shape) — e.g. `[{"src":"a","dst":"b"}, ...]`. No envelope: a row
+/// with a column missing from `columns` (should not happen; `columns.len()`
+/// tracks `cells.len()` by construction in every caller) is silently dropped
+/// from that row's object via `zip`. Extra cells beyond `columns.len()` are
+/// likewise dropped — neither case is reachable from `query_one_sql`'s output,
+/// which always sizes `cells` to the column count. One array per query,
+/// mirroring `emit_query_json`'s one-line-per-query granularity (see
+/// `QueryOutputFormat`'s doc for why: the printer streams per query, not per
+/// row) — a multi-query program's `?` lines print as separate JSON arrays,
+/// each on its own line, with no per-line tag naming which query it is
+/// (unlike `emit_query_json`'s `"query"` field): a caller mixing several `?`
+/// queries under `--format json` in one program should route them through
+/// `--query-json` instead, or run one query per invocation.
+pub(crate) fn emit_query_json_rows(columns: &[String], rows: &[Vec<serde_json::Value>]) {
+    let objects: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|cells| {
+            let mut obj = serde_json::Map::with_capacity(columns.len());
+            for (col, cell) in columns.iter().zip(cells.iter()) {
+                obj.insert(col.clone(), cell.clone());
+            }
+            serde_json::Value::Object(obj)
+        })
+        .collect();
+    println!("{}", serde_json::Value::Array(objects));
 }

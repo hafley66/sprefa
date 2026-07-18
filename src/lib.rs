@@ -161,14 +161,14 @@ pub fn render_type_diags_eprintln(diags: &[ast::TypeDiag]) {
     }
 }
 
-pub fn run_file(programs: &[String], db_path: Option<&str>, db_defaulted: bool, root: PathBuf, query_json: bool) -> Result<()> {
+pub fn run_file(programs: &[String], db_path: Option<&str>, db_defaulted: bool, root: PathBuf, query_format: engine::QueryOutputFormat) -> Result<()> {
     // An explicit multi-file merge is an ad-hoc in-process run: the daemon
     // serves its own loaded program set, not the positionals.
     if daemon::enabled_for(&root) && (db_path.is_none() || db_defaulted) && programs.len() <= 1 {
         // An explicit `--db` opts out (in-process against that file). The
         // discovery-mode default db does NOT opt out: it names the same
         // `.dl/cache.db` the daemon owns, so it must still attach.
-        match run_file_via_daemon(programs.first().map(|s| s.as_str()), &root, query_json) {
+        match run_file_via_daemon(programs.first().map(|s| s.as_str()), &root, query_format) {
             Ok(()) => return Ok(()),
             Err(e) => {
                 // Daemon path failed; fall through to in-process so a transient
@@ -178,12 +178,12 @@ pub fn run_file(programs: &[String], db_path: Option<&str>, db_defaulted: bool, 
             }
         }
     }
-    run_file_inproc(programs, db_path, root, query_json)
+    run_file_inproc(programs, db_path, root, query_format)
 }
 
 /// Daemon path: ensure the daemon is up, send `query` + `diag` RPCs, render the
 /// results in the same shape as `run_file_inproc` prints.
-fn run_file_via_daemon(program: Option<&str>, root: &Path, query_json: bool) -> Result<()> {
+fn run_file_via_daemon(program: Option<&str>, root: &Path, query_format: engine::QueryOutputFormat) -> Result<()> {
     daemon::ensure_daemon(root, program)?;
     let mut s = daemon::connect()?;
     // The `root` envelope key names which engine to query; an unregistered `.dl`
@@ -192,27 +192,50 @@ fn run_file_via_daemon(program: Option<&str>, root: &Path, query_json: bool) -> 
     let resp = daemon::rpc_call(&mut s, &req)?;
     if let Some(e) = resp.error { anyhow::bail!("daemon query: {}", e.message); }
     let results = resp.result.and_then(|v| v.get("results").cloned()).unwrap_or(serde_json::Value::Array(vec![]));
-    if query_json {
-        // Emit one JSON-lines object per query, same shape as --query-json.
-        if let Some(arr) = results.as_array() {
-            for r in arr {
-                println!("{}", serde_json::to_string(r)?);
+    match query_format {
+        engine::QueryOutputFormat::Ndjson => {
+            // One JSON-lines object per query, same shape as --query-json.
+            if let Some(arr) = results.as_array() {
+                for r in arr {
+                    println!("{}", serde_json::to_string(r)?);
+                }
             }
         }
-    } else {
-        if let Some(arr) = results.as_array() {
-            for r in arr {
-                let rel = r.get("rel").and_then(|v| v.as_str()).unwrap_or("?");
-                let cols: Vec<String> = r.get("columns").and_then(|v| v.as_array())
-                    .map(|a| a.iter().filter_map(|c| c.as_str().map(String::from)).collect())
-                    .unwrap_or_default();
-                let rows = r.get("rows").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-                println!("? {} => {}", rel, if cols.is_empty() { "(count)".into() } else { cols.join("\t") });
-                for cells in rows.iter().filter_map(|r| r.as_array()) {
-                    let s: Vec<String> = cells.iter().map(json_cell_tsv_render).collect();
-                    println!("{}", s.join("\t"));
+        engine::QueryOutputFormat::JsonRows => {
+            // One JSON array of {col: val} row-objects per query, same shape
+            // as --format json's in-process path (`emit_query_json_rows`).
+            if let Some(arr) = results.as_array() {
+                for r in arr {
+                    let cols: Vec<String> = r.get("columns").and_then(|v| v.as_array())
+                        .map(|a| a.iter().filter_map(|c| c.as_str().map(String::from)).collect())
+                        .unwrap_or_default();
+                    let rows = r.get("rows").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                    let objects: Vec<serde_json::Value> = rows.iter().filter_map(|row| row.as_array()).map(|cells| {
+                        let mut obj = serde_json::Map::with_capacity(cols.len());
+                        for (col, cell) in cols.iter().zip(cells.iter()) {
+                            obj.insert(col.clone(), cell.clone());
+                        }
+                        serde_json::Value::Object(obj)
+                    }).collect();
+                    println!("{}", serde_json::Value::Array(objects));
                 }
-                println!("  ({} rows)\n", rows.len());
+            }
+        }
+        engine::QueryOutputFormat::Text => {
+            if let Some(arr) = results.as_array() {
+                for r in arr {
+                    let rel = r.get("rel").and_then(|v| v.as_str()).unwrap_or("?");
+                    let cols: Vec<String> = r.get("columns").and_then(|v| v.as_array())
+                        .map(|a| a.iter().filter_map(|c| c.as_str().map(String::from)).collect())
+                        .unwrap_or_default();
+                    let rows = r.get("rows").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                    println!("? {} => {}", rel, if cols.is_empty() { "(count)".into() } else { cols.join("\t") });
+                    for cells in rows.iter().filter_map(|r| r.as_array()) {
+                        let s: Vec<String> = cells.iter().map(json_cell_tsv_render).collect();
+                        println!("{}", s.join("\t"));
+                    }
+                    println!("  ({} rows)\n", rows.len());
+                }
             }
         }
     }
@@ -229,7 +252,7 @@ fn json_cell_tsv_render(v: &serde_json::Value) -> String {
 
 /// The pre-daemon `run_file` body, in-process. Kept for the no-daemon fallback
 /// and the test path (`DL_NO_DAEMON=1`).
-fn run_file_inproc(programs: &[String], db_path: Option<&str>, root: PathBuf, query_json: bool) -> Result<()> {
+fn run_file_inproc(programs: &[String], db_path: Option<&str>, root: PathBuf, query_format: engine::QueryOutputFormat) -> Result<()> {
     watchdog::arm_wall_watchdog("run_file");
     watchdog::test_hang_hook();
     let files = resolve_programs(programs, &root)?;
@@ -239,7 +262,7 @@ fn run_file_inproc(programs: &[String], db_path: Option<&str>, root: PathBuf, qu
     if n_errors == 0 {
         let conn = db::open(db_path)?;
         let mut eng = engine::Engine::new(conn, root);
-        eng.set_query_json(query_json);
+        eng.set_query_format(query_format);
         eng.set_repos(load_repos());
         // A data-driven scan (variable repo/rev) and a `repo`-sink both read
         // LAST tick's coordinate/pull state. A fresh one-shot run has no prior
@@ -513,7 +536,7 @@ pub fn run_changed(programs: &[String], db_path: Option<&str>, root: PathBuf, ch
 /// within `budget` ticks (a `@next` counter, an always-changing poll), naming
 /// the still-moving rels/effects. See plans/2026-07-06-settle-quiescence.md.
 pub fn run_settle(programs: &[String], db_path: Option<&str>, root: PathBuf,
-                  budget: usize, query_json: bool) -> Result<()> {
+                  budget: usize, query_format: engine::QueryOutputFormat) -> Result<()> {
     watchdog::arm_wall_watchdog("run_settle");
     let files = resolve_programs(programs, &root)?;
     let (prog, type_diags, _) = prepare_paths(&files)?;
@@ -524,7 +547,7 @@ pub fn run_settle(programs: &[String], db_path: Option<&str>, root: PathBuf,
     }
     let conn = db::open(db_path)?;
     let mut eng = engine::Engine::new(conn, root);
-    eng.set_query_json(query_json);
+    eng.set_query_format(query_format);
     eng.set_repos(load_repos());
     // Drive the loop quietly (prime_tick skips `?` eval); the answers print once
     // at the end via `run` (a final non-quiet tick).

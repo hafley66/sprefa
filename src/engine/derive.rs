@@ -2009,19 +2009,26 @@ impl Engine {
                 ]
             }
         };
-        if self.query_json {
-            let rows: Vec<Vec<serde_json::Value>> = hits.iter().map(|h| row(h)).collect();
-            emit_query_json(&q.head.rel, &[header(0), header(1)], &rows);
-        } else {
-            println!("? {} => {}\t{}", q.head.rel, header(0), header(1));
-            for h in &hits {
-                if forward {
-                    println!("{seed}\t{h}");
-                } else {
-                    println!("{h}\t{seed}");
-                }
+        match self.query_format {
+            QueryOutputFormat::Ndjson => {
+                let rows: Vec<Vec<serde_json::Value>> = hits.iter().map(|h| row(h)).collect();
+                emit_query_json(&q.head.rel, &[header(0), header(1)], &rows);
             }
-            println!("  ({} rows)\n", hits.len());
+            QueryOutputFormat::JsonRows => {
+                let rows: Vec<Vec<serde_json::Value>> = hits.iter().map(|h| row(h)).collect();
+                emit_query_json_rows(&[header(0), header(1)], &rows);
+            }
+            QueryOutputFormat::Text => {
+                println!("? {} => {}\t{}", q.head.rel, header(0), header(1));
+                for h in &hits {
+                    if forward {
+                        println!("{seed}\t{h}");
+                    } else {
+                        println!("{h}\t{seed}");
+                    }
+                }
+                println!("  ({} rows)\n", hits.len());
+            }
         }
         Ok(())
     }
@@ -2053,14 +2060,16 @@ impl Engine {
         } else {
             Vec::new()
         };
-        if self.query_json {
-            emit_query_json(&q.head.rel, &[header(0), header(1)], &rows);
-        } else {
-            println!("? {} => {}\t{}", q.head.rel, header(0), header(1));
-            if hit {
-                println!("{src}\t{dst}");
+        match self.query_format {
+            QueryOutputFormat::Ndjson => emit_query_json(&q.head.rel, &[header(0), header(1)], &rows),
+            QueryOutputFormat::JsonRows => emit_query_json_rows(&[header(0), header(1)], &rows),
+            QueryOutputFormat::Text => {
+                println!("? {} => {}\t{}", q.head.rel, header(0), header(1));
+                if hit {
+                    println!("{src}\t{dst}");
+                }
+                println!("  ({} rows)\n", rows.len());
             }
-            println!("  ({} rows)\n", rows.len());
         }
         Ok(())
     }

@@ -145,6 +145,15 @@ struct Cli {
     /// {query, columns, rows, count}) instead of the human TSV block.
     #[arg(long, help_heading = "Run modes")]
     query_json: bool,
+    /// Emit `?` query results as JSON instead of the human TSV block: one
+    /// JSON array of row-objects (each row keyed by column name), one array
+    /// per query. Only `json` is recognized today; any other value (or
+    /// omitting the flag) leaves the default text output — or `--query-json`
+    /// unchanged — in place. A multi-`?` program under `--format json` prints
+    /// one array per query with no per-line tag naming which query it is; use
+    /// `--query-json` instead if that matters.
+    #[arg(long, help_heading = "Run modes", value_name = "FORMAT")]
+    format: Option<String>,
     /// Run in-process until the program SETTLES: drive ticks (draining `@async`/
     /// `sh`/`sh*` effects off-tick, the way the daemon does) until no non-timer
     /// relation moves, no `@next` carry is pending, and no effect is in-flight —
@@ -382,6 +391,16 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
     // files merge into one program in the given order (a rail file beside the
     // program it watches). Empty = `.dl/*.dl` discovery inside resolve_programs.
     let programs = &programs;
+    // `--format json` wins over `--query-json` when both are given; either
+    // alone selects its shape; neither leaves the default text block. See
+    // `QueryOutputFormat`'s doc for what each variant prints.
+    let query_format = if cli.format.as_deref() == Some("json") {
+        crate::engine::QueryOutputFormat::JsonRows
+    } else if cli.query_json {
+        crate::engine::QueryOutputFormat::Ndjson
+    } else {
+        crate::engine::QueryOutputFormat::Text
+    };
     if cli.lsp {
         crate::run_lsp(programs, db.as_deref(), db_defaulted, root)
     } else if cli.hook {
@@ -441,14 +460,14 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
             db.as_deref(),
             root,
             cli.settle_max.unwrap_or(200),
-            cli.query_json,
+            query_format,
         )
     } else if !cli.changed.is_empty() {
         crate::run_changed(programs, db.as_deref(), root, cli.changed)
     } else if cli.watch {
         crate::run_watch(programs, db.as_deref(), root)
     } else {
-        crate::run_file(programs, db.as_deref(), db_defaulted, root, cli.query_json)
+        crate::run_file(programs, db.as_deref(), db_defaulted, root, query_format)
     }
 }
 
