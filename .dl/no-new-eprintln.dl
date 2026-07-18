@@ -52,7 +52,7 @@ eprintln_count(source_file, count(line_number)) <-
 # Lower a row when your commit shrinks the file's count; never raise one.
 rel eprintln_baseline(source_file: file, allowed: int).
 eprintln_baseline("src/cli/check_deadline.rs", 2).
-eprintln_baseline("src/cli/daemon.rs", 20).
+eprintln_baseline("src/cli/daemon_cmd.rs", 20).
 eprintln_baseline("src/cli/mod.rs", 2).
 eprintln_baseline("src/cli/query.rs", 10).
 eprintln_baseline("src/config.rs", 1).
