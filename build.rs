@@ -55,7 +55,7 @@ fn embed_corpus(manifest: &Path) {
     // examples/*.dl (flat) -> (filename, body)
     let mut ex: Vec<std::path::PathBuf> = std::fs::read_dir(manifest.join("examples"))
         .into_iter().flatten().filter_map(|e| e.ok()).map(|e| e.path())
-        .filter(|p| p.extension().map_or(false, |x| x == "dl")).collect();
+        .filter(|p| p.extension().is_some_and(|x| x == "dl")).collect();
     ex.sort();
     s.push_str("pub static EMBEDDED_EXAMPLES: &[(&str, &str)] = &[\n");
     for p in &ex {
@@ -115,7 +115,7 @@ fn collect_dl(dir: &Path, base: &Path, out: &mut Vec<(String, String)>) {
         let p = e.path();
         if p.is_dir() {
             collect_dl(&p, base, out);
-        } else if p.extension().map_or(false, |x| x == "dl") {
+        } else if p.extension().is_some_and(|x| x == "dl") {
             let rel = p.strip_prefix(base).unwrap().to_string_lossy().into_owned();
             out.push((rel, p.display().to_string()));
         }

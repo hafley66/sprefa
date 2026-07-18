@@ -55,7 +55,7 @@ fn serve(dir: &Path, prog: &Path, requests: &[&str]) -> (i32, Vec<serde_json::Va
      String::from_utf8_lossy(&out.stderr).into_owned())
 }
 
-fn by_id<'a>(msgs: &'a [serde_json::Value], id: serde_json::Value) -> &'a serde_json::Value {
+fn by_id(msgs: &[serde_json::Value], id: serde_json::Value) -> &serde_json::Value {
     msgs.iter().find(|m| m.get("id") == Some(&id))
         .unwrap_or_else(|| panic!("no response with id {id}: {msgs:?}"))
 }

@@ -102,7 +102,7 @@ fn main() {
     for (name, props) in &kernels {
         let filtered = sprefa_v5::propose::feasibility_filter(props.to_vec());
         let raw_top = props.iter().map(|p| p.gain).max().unwrap_or(0);
-        let wgt_top = filtered.iter().map(|p| sprefa_v5::propose::weighted_gain(p)).max().unwrap_or(0);
+        let wgt_top = filtered.iter().map(sprefa_v5::propose::weighted_gain).max().unwrap_or(0);
         println!("{:<10} {:>8} {:>8} {:>12} {:>12}",
             name, props.len(), filtered.len(), raw_top, wgt_top);
     }
@@ -186,7 +186,7 @@ fn consensus_ranges(kernels: &[(&str, &[sprefa_v5::propose::Proposal])]) -> Vec<
         groups.entry(find(&mut parent, i)).or_default().push(i);
     }
     let mut out: Vec<(usize, usize, usize, usize, Vec<String>)> = Vec::new();
-    for (_, members) in &groups {
+    for members in groups.values() {
         let mut names: Vec<String> = Vec::new();
         for &i in members {
             let k = triples[i].3.to_string();

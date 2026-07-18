@@ -180,7 +180,7 @@ fn dl_rows(dir: &Path) -> std::collections::HashMap<String, Vec<Vec<String>>> {
     for line in stdout.lines() {
         // header shape: `? dep => a\tb`
         if let Some(rest) = line.strip_prefix("? ") {
-            cur = rest.split(|c: char| c == ' ' || c == '(')
+            cur = rest.split([' ', '('])
                 .next().map(String::from);
             continue;
         }

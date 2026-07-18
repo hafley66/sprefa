@@ -86,7 +86,7 @@ fn copy_source_tree(src: &Path, dst: &Path) {
         } else if name_s == "index.scip" {
             continue;
         } else {
-            std::fs::copy(&path, &dst.join(&name)).unwrap();
+            std::fs::copy(&path, dst.join(&name)).unwrap();
         }
     }
 }

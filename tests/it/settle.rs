@@ -5,7 +5,6 @@
 //! reads (`is_settled`, `inflight_effects`, `staged_next`), and CLI e2e over the
 //! real `dl --settle` binary (the only non-daemon path that drains effects).
 
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;

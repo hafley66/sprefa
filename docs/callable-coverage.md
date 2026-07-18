@@ -4,7 +4,7 @@ The `call_def` relation is the callable registry: one row per callable the
 front-end can see — named *or anonymous*. This page audits which *kinds* of
 callable each language extractor emits, in two tiers:
 
-- **AST-tier** — does the diet (syntactic) front-end in `src/graph/typegraph.rs`
+- **AST-tier** — does the diet (syntactic) front-end in `src/graph/typegraph/`
   emit a `call_def` row for this kind?
 - **scip-tier** — can that row be paired with a compiler-truth scip symbol
   (`scip_occurrence`/`scip_def`) by a coordinate join (file + line + name)? The
@@ -18,18 +18,31 @@ Every marked `(lang, kind)` must have a matching fixture row and vice versa
 (`callable-coverage` error otherwise). The rail + fixtures are the living source
 of truth; this doc is the human-readable projection.
 
-The emitters live in `src/graph/typegraph.rs`:
+Citations below are `file fn-name` anchors (2026-07-18 decomposition-
+normalization step 3): `typegraph.rs` split into `src/graph/typegraph/`
+per-language modules, and raw line numbers drift with every edit — a
+function name survives a refactor a line number doesn't.
 
-- Rust: `rust_call_defs_from` + the `RustCallDefs` syn visitor (free/nested fns,
-  impl/trait methods, closures)
-- TypeScript / JavaScript: `ts_call_defs_from` / `ts_fn_call_def` /
-  `ts_class_call_defs` / `ts_var_call_defs` + `ts_push_lambda_defs` (unbound
-  lambdas, derived from the df closure nodes)
-- Kotlin: `kt_walk_call_defs` (fns, primary/secondary ctors, lambda literals)
-- Go: `go_walk_call_defs` (fns, methods, func literals)
-- Python: `py_call_defs_from` / `py_walk_call_defs` (fns, methods, `__init__`,
-  lambdas)
+The emitters live across `src/graph/typegraph/`, split per language:
+
+- Rust (`src/graph/typegraph/rust/mod.rs`): `rust_call_defs_from` + the
+  `RustCallDefs` syn visitor (free/nested fns, impl/trait methods, closures)
+- TypeScript / JavaScript (`src/graph/typegraph/ts/mod.rs`):
+  `ts_call_defs_from` / `ts_fn_call_def` / `ts_class_call_defs` /
+  `ts_var_call_defs` + `ts_push_lambda_defs` (unbound lambdas, derived from
+  the df closure nodes), `TsNestedFnDefs` (nested fn visitor), `TsCallSites`
+  (call-site visitor incl. `new` constructor calls)
+- Kotlin (`src/graph/typegraph/kotlin.rs`): `kt_walk_call_defs` (fns,
+  primary/secondary ctors, lambda literals)
+- Go (`src/graph/typegraph/go.rs`): `go_walk_call_defs` (fns, methods, func
+  literals)
+- Python (`src/graph/typegraph/python.rs`): `py_call_defs_from` /
+  `py_walk_call_defs` (fns, methods, `__init__`, lambdas)
 - C: no extractor (see C status below)
+
+Shared helpers live in `src/graph/typegraph/mod.rs`: `mint_sym` (sym minting
+for named callables) and `lambda_sym` (anonymous-callable sym scheme, shared
+with the dataflow lift).
 
 ## Model + vocabulary
 
@@ -96,8 +109,9 @@ join, so registering it would only create an orphan.
 ### Rust scip pairing (empirical)
 
 `just oracle-index` produces `index.scip` (rust-analyzer) over sprefa's own
-`src/`. Pairing measured on `src/graph/typegraph.rs` (the emitter file itself,
-rich in closures and nested fns) by joining `call_def` name+line against
+`src/`. Pairing measured on `src/graph/typegraph/rust/mod.rs` (the emitter
+file itself, rich in closures and nested fns) by joining `call_def` name+line
+against
 `scip_occurrence` definition occurrences resolved through `scip_name`
 (`occ_line + 1` for the 0-based scip line, the `examples/loop-nests.dl`
 convention):

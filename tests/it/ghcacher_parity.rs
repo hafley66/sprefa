@@ -70,7 +70,7 @@ impl EffectExec for CondGet {
         } else {
             // 304: status + empty remaining slots (one per non-status output).
             let mut v = vec!["304".to_string()];
-            v.extend(std::iter::repeat(String::new()).take(self.out200.len() - 1));
+            v.extend(std::iter::repeat_n(String::new(), self.out200.len() - 1));
             v
         })
     }

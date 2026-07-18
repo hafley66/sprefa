@@ -9,7 +9,6 @@
 // Usage: cargo run --example reward_oracle
 //
 // Output: hit/miss matrix + per-kernel recall %.
-use std::collections::HashSet;
 
 fn main() {
     let patterns = validated_patterns();

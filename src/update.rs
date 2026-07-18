@@ -27,14 +27,25 @@ enum Action {
 }
 
 fn parse(args: &[String]) -> Action {
+    // A recognized flag wins as soon as it's seen, wherever it sits in the
+    // arg list; an unrecognized token doesn't short-circuit the scan — it's
+    // only reported if no recognized flag turns up anywhere in `args`.
+    let mut unknown: Option<String> = None;
     for a in args {
         match a.as_str() {
             "--check" | "-n" => return Action::Check,
             "-h" | "--help" => return Action::Help,
-            other => return Action::Unknown(other.to_string()),
+            other => {
+                if unknown.is_none() {
+                    unknown = Some(other.to_string());
+                }
+            }
         }
     }
-    Action::Install
+    match unknown {
+        Some(u) => Action::Unknown(u),
+        None => Action::Install,
+    }
 }
 
 pub fn run(args: &[String]) -> Result<i32> {
@@ -147,6 +158,31 @@ mod tests {
     #[test]
     fn parse_unknown_is_reported() {
         assert_eq!(parse(&["--wat".into()]), Action::Unknown("--wat".into()));
+    }
+
+    #[test]
+    fn parse_scans_past_a_leading_unknown_token_to_find_a_valid_flag() {
+        // A recognized flag anywhere in the args wins, even behind a token
+        // that doesn't match any known flag — the scan doesn't bail on the
+        // first unrecognized arg. Regression for the never_loop bug where
+        // `dl update --bogus --check` reported "unknown arg --bogus" and
+        // never reached the valid `--check`.
+        assert_eq!(
+            parse(&["--bogus".into(), "--check".into()]),
+            Action::Check
+        );
+        assert_eq!(
+            parse(&["--bogus".into(), "--help".into()]),
+            Action::Help
+        );
+    }
+
+    #[test]
+    fn parse_reports_the_first_unknown_token_when_nothing_matches() {
+        assert_eq!(
+            parse(&["--foo".into(), "--bar".into()]),
+            Action::Unknown("--foo".into())
+        );
     }
 
     #[test]
