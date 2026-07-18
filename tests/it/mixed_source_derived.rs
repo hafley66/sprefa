@@ -101,8 +101,15 @@ fn source_rule_body_relation_join_bails_loudly() {
          rel hit(x: text).\n\
          hit(x) <- scan(\"WORK\", \"src/**/*.txt\", p, rev), match(p, rev, /(?<x>.+)/, line), keep(x).\n");
     assert_ne!(code, 0, "mixed source/body relation must bail");
-    assert!(err.contains("mixes source extraction with relation atom 'keep'"), "names ignored atom: {err}");
-    assert!(err.contains("separate relation, then join 'keep' in a derived rule"), "names fix: {err}");
+    // S6 (CLAUDE.md ledger): `check_rule_types` now catches this at typecheck
+    // time (code `source-rule-extra-atom`), before the tick-time
+    // `desugar::reject_source_relation_joins` backstop this test used to
+    // exercise ever runs — same underlying `source_input_vars` classification
+    // (see src/engine/desugar.rs), so it fires on the identical shape, just
+    // earlier and through --check/--parse-only/the LSP too.
+    assert!(err.contains("source-rule-extra-atom"), "names the typecheck code: {err}");
+    assert!(err.contains("joins `keep`"), "names ignored atom: {err}");
+    assert!(err.contains("two separate relations and combine them in a third derived rule"), "names fix: {err}");
 }
 
 /// The relation atom in a data-driven scan supplies the scan's rev INPUT, so

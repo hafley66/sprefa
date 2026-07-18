@@ -288,6 +288,15 @@ pub fn desugar_mixed_rels(prog: &Program) -> Result<Option<(Program, Vec<MixedRe
 /// scan/rev pattern); `resolve_scan_bindings` compiles precisely that body slice
 /// before extracting. An atom with no such binding, however, is ignored by file
 /// extraction and must be refused rather than silently treated as a filter.
+///
+/// This is the runtime backstop (a tick-time bail, so it also catches a
+/// program built by RPC/snippet paths that skip the frontend's static pass).
+/// `check_rule_types` (src/typecheck.rs, code `source-rule-extra-atom`) is its
+/// typecheck-time twin, sharing this fn's `source_input_vars`/`term_vars`
+/// classification so the two can never disagree on which atom is legitimate —
+/// the typecheck diag fires first for the common `--check`/`--parse-only`/LSP
+/// path, surfacing the defect before any scan runs; this bail is what a
+/// program reaches if it somehow skips that pass.
 fn reject_source_relation_joins(prog: &Program) -> Result<()> {
     for item in &prog.items {
         let Item::Rule(rule) = item else {
@@ -313,54 +322,32 @@ fn reject_source_relation_joins(prog: &Program) -> Result<()> {
     Ok(())
 }
 
-/// Variables used as INPUTS to file extraction ops. Output slots such as scan
-/// `path`/`rev_out` and match captures are deliberately excluded: a relation
-/// atom sharing only one of those is still an ignored post-extract filter.
-fn source_input_vars(rule: &Rule) -> HashSet<String> {
+/// Variables used as INPUTS to file extraction ops: `scan`'s OWN `repo`/`rev`
+/// coordinate slots, the ONLY place a body atom is ever actually consumed
+/// (`Engine::resolve_scan_bindings`'s data-driven-scan SELECT, when either is
+/// a `Term::Var`). `scan`'s `path`/`rev_out` OUTPUTS, `glob` (always a
+/// literal — a data-driven glob has no resolver), and every other source op's
+/// `path`/`rev`/`src` field are deliberately excluded even though they are
+/// syntactically required to reference a bound var: that var is always an
+/// ALIAS of scan's own path/rev_out output (there is no other way to get a
+/// valid file coordinate into `match`/`ast`/`sg`/`json`/`cmd`/`comment`), so a
+/// relation atom sharing ONLY one of those is still an ignored post-extract
+/// filter — the exact "tag/allowlist keyed on the scanned path" shape a real
+/// program is most likely to write (see the `source-rule-extra-atom` typecheck
+/// diag and the fail-pre-fix receipt in `tests/it/source_rule_extra_atom.rs`).
+pub(crate) fn source_input_vars(rule: &Rule) -> HashSet<String> {
     let mut vars = HashSet::new();
     let mut add = |term: &Term| collect_term_vars(term, &mut vars);
     for body in &rule.body {
-        match body {
-            BodyItem::Scan {
-                repo, rev, glob, ..
-            } => {
-                add(repo);
-                add(rev);
-                add(glob);
-            }
-            BodyItem::Match { path, rev, .. }
-            | BodyItem::Ast { path, rev, .. }
-            | BodyItem::AstYaml { path, rev, .. }
-            | BodyItem::Cmd { path, rev, .. }
-            | BodyItem::Comment { path, rev, .. } => {
-                add(path);
-                add(rev);
-            }
-            BodyItem::Sg {
-                src,
-                rev: Some(rev),
-                ..
-            }
-            | BodyItem::JsonP {
-                src,
-                rev: Some(rev),
-                ..
-            }
-            | BodyItem::Json {
-                src,
-                rev: Some(rev),
-                ..
-            } => {
-                add(src);
-                add(rev);
-            }
-            _ => {}
+        if let BodyItem::Scan { repo, rev, .. } = body {
+            add(repo);
+            add(rev);
         }
     }
     vars
 }
 
-fn term_vars(term: &Term, wanted: &HashSet<String>) -> bool {
+pub(crate) fn term_vars(term: &Term, wanted: &HashSet<String>) -> bool {
     match term {
         Term::Var(name) => wanted.contains(name),
         Term::Interp(parts) => parts

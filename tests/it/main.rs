@@ -206,3 +206,5 @@ mod write_ledger;
 mod budget_cpu;
 mod db_ratio;
 mod stale_binary;
+mod source_rule_extra_atom;
+mod scan_narrowing;
