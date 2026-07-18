@@ -65,6 +65,10 @@ struct Activity {
     /// The root pushed by the current `begin_tick`/`set_root` pair; `end_tick`
     /// pops it so open/tick lifecycle stays balanced.
     tick_root: Option<PathBuf>,
+    /// Set by `begin_tick`, read by `end_tick` for the whole-tick duration
+    /// logged there — distinct from `since`, which `set()` resets at every
+    /// phase boundary and so only ever holds the CURRENT phase's start.
+    tick_since: Instant,
 }
 
 impl Activity {
@@ -79,6 +83,7 @@ impl Activity {
             root_counts: HashMap::new(),
             root_stack: Vec::new(),
             tick_root: None,
+            tick_since: Instant::now(),
         }
     }
 
@@ -146,6 +151,17 @@ pub fn set(phase: Phase, detail: impl Into<String>) {
     if a.phase != Phase::Idle && a.phase != phase {
         let ms = a.since.elapsed().as_millis() as u64;
         crate::perflog::emit_phase(a.tick, a.phase.as_str(), ms, &a.detail);
+        // The seam for "extract family begin/end" / "derived rebuild
+        // begin/end": every phase transition (Declare -> Reconcile ->
+        // ParseExtract -> Derived -> Operators -> Query) closes out the
+        // phase that just ended with how long it ran and its last detail
+        // string (per-family name for ParseExtract, per-component rel list
+        // for Derived — see the `activity::detail()` call sites in
+        // `engine/tick.rs` and `engine/derive.rs`).
+        tracing::info!(
+            tick = a.tick, phase = a.phase.as_str(), ms, detail = %a.detail,
+            "[tick] phase done"
+        );
     }
     a.phase = phase;
     a.detail = detail.into();
@@ -187,6 +203,8 @@ pub fn begin_tick(tick: u64, program: &str, root: &Path) {
     a.tick_root = Some(root.to_path_buf());
     a.sync_root();
     a.since = Instant::now();
+    a.tick_since = a.since;
+    tracing::info!(tick, root = %root.display(), program, "[tick] begin");
 }
 
 /// Mark the tick done: phase back to Idle, detail + root cleared. Emits a
@@ -197,6 +215,9 @@ pub fn end_tick() {
         let ms = a.since.elapsed().as_millis() as u64;
         crate::perflog::emit_phase(a.tick, a.phase.as_str(), ms, &a.detail);
     }
+    let tick = a.tick;
+    let root = a.tick_root.clone();
+    let total_ms = a.tick_since.elapsed().as_millis() as u64;
     a.phase = Phase::Idle;
     a.detail.clear();
     a.program.clear();
@@ -204,6 +225,9 @@ pub fn end_tick() {
         a.pop_root(&r);
     }
     a.sync_root();
+    if let Some(root) = root {
+        tracing::info!(tick, root = %root.display(), ms = total_ms, "[tick] end");
+    }
 }
 
 /// Stamp the repo root for a scope (e.g. a daemon job). The root stays active
