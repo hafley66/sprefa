@@ -286,6 +286,11 @@ pub struct ServedRoot {
     /// Whether the last FULL tick left the program quiescent (the poll loop drives
     /// toward this; `await_quiescent` blocks on it).
     pub settled: AtomicBool,
+    /// Cold-start staging in flight: the last full tick deferred the extract
+    /// fan-out onto the queue and some `_cold_node` is still pending. Surfaced on
+    /// the status RPC (`cold_start_pending`) so a client reads "warming", and
+    /// `poll_idle` returns not-idle while true (await-settle blocks until warm).
+    pub cold_pending: AtomicBool,
     /// The paths touched by the most recent tick (absolute). Empty after a full
     /// tick.
     pub last_changed_paths: Mutex<Vec<PathBuf>>,
@@ -367,6 +372,19 @@ impl ServedRoot {
         drop(eng);
         drop(prog);
         crate::activity::end_tick();
+        // Cold-start staging: a blank-slate seed or a resume re-enqueue defers the
+        // extract fan-out onto the queue. Record the warming flag (status +
+        // poll_idle read it) and enqueue the staged `ColdExtract` jobs.
+        self.cold_pending.store(report.cold_pending, Ordering::Relaxed);
+        if !report.cold_staged.is_empty() {
+            let job_root_id = self.job_root_id();
+            for (family, shard, priority) in &report.cold_staged {
+                let job = crate::jobq::JobRow::cold_extract(&job_root_id, family, *shard, *priority);
+                if let Err(e) = self.enqueue_job(job) {
+                    tracing::warn!("[{}] cold-start enqueue {family}/{shard}: {e}", self.root_label());
+                }
+            }
+        }
         self.settled.store(report.is_settled(), Ordering::Relaxed);
         let n = self.tick_count.fetch_add(1, Ordering::Relaxed) + 1;
         // This WAS a full tick, so it just ran `rebuild_async` over the
@@ -397,6 +415,36 @@ impl ServedRoot {
         self.touch();
         *lock(&self.last_changed_paths) = paths.to_vec();
         self.broadcast_diag_changed();
+        Ok(())
+    }
+
+    /// Run ONE cold-start extraction node (a `ColdExtract` job): the family's
+    /// wholesale refresh under the engine mutex, marked `done` on the
+    /// `_cold_node` row. When the last node lands, run the completion tick — a
+    /// normal full tick that (cold no longer in progress) does the single
+    /// blank-slate derived rebuild over the now-complete fact base. Budget caps
+    /// (QoS/IOPOL/BG tier + rayon width) govern the tempo of the many nodes; this
+    /// changes NONE of them (standing law "nothing seizes the machine").
+    pub(crate) fn run_cold_node(&self, family: &str, shard: u32) -> Result<()> {
+        crate::activity::set(
+            crate::activity::Phase::ParseExtract,
+            format!("cold-extract {family}"),
+        );
+        {
+            let prog = lock(&self.prog);
+            let mut eng = lock(&self.eng);
+            eng.run_cold_node(&prog, family, shard)?;
+        }
+        crate::activity::end_tick();
+        self.touch();
+        let complete = lock(&self.eng).cold_nodes_complete()?;
+        if complete {
+            // The completion tick reads `cold_start_in_progress == false` (all
+            // nodes done) → normal path → blank-slate `need_full` → the one full
+            // `rebuild_derived`. Clears `cold_pending`, refreshes the read view,
+            // broadcasts diag — all via `tick_full`.
+            self.tick_full(true)?;
+        }
         Ok(())
     }
 
@@ -511,6 +559,11 @@ impl ServedRoot {
     /// not a regression (such a root already relied on the always-full-tick
     /// poll before this fix).
     pub(crate) fn poll_idle(&self) -> Result<bool> {
+        // Cold start in flight: never idle — the queue is draining `ColdExtract`
+        // nodes, and `await-settle` must block until the corpus is warm.
+        if self.cold_pending.load(Ordering::Relaxed) {
+            return Ok(false);
+        }
         let cadence_driven = {
             let prog = lock(&self.prog);
             crate::engine::every_rels_used(&prog) || crate::engine::clock_rels_used(&prog)
@@ -740,8 +793,23 @@ impl ServedRoot {
         eng.set_repos(served_repos(is_config));
         crate::activity::set_root(Some(&eng_root));
         crate::activity::set(crate::activity::Phase::ColdTick, display.as_str());
-        eng.tick(&prog, false)?;
+        let cold_report = eng.tick_report(&prog, false)?;
         crate::activity::end_tick();
+        // Cold-start staging: the cold tick may have deferred the extract
+        // fan-out onto the queue (blank-slate seed, or a resume re-enqueue after
+        // a `kill -9`). Enqueue its `ColdExtract` jobs now — `shared` is in scope
+        // here, before the `ServedRoot` exists, so this is the first enqueue
+        // point on a fresh boot.
+        let cold_start_pending = cold_report.cold_pending;
+        if !cold_report.cold_staged.is_empty() {
+            let job_root_id = key.clone().unwrap_or_else(|| CONFIG_JOB_ID.to_string());
+            for (family, shard, priority) in &cold_report.cold_staged {
+                let job = crate::jobq::JobRow::cold_extract(&job_root_id, family, *shard, *priority);
+                if let Err(e) = shared.enqueue(job) {
+                    tracing::warn!("[daemon] cold-start enqueue {family}/{shard}: {e}");
+                }
+            }
+        }
         let canon_files: Vec<PathBuf> = files
             .iter()
             .map(|f| std::fs::canonicalize(f).unwrap_or_else(|_| f.clone()))
@@ -774,6 +842,7 @@ impl ServedRoot {
             last_activity: Mutex::new(Instant::now()),
             tick_count: AtomicU64::new(1),
             settled: AtomicBool::new(false),
+            cold_pending: AtomicBool::new(cold_start_pending),
             last_changed_paths: Mutex::new(Vec::new()),
             stopped: Arc::new(AtomicBool::new(false)),
             // The cold tick just above (`eng.tick(&prog, false)`) IS a full
@@ -1228,11 +1297,22 @@ pub fn run_daemon(
     daemon_shell::jobs::spawn(
         &shell,
         jobs.clone(),
-        runner,
+        runner.clone(),
         n_workers,
         vec![crate::jobq::JobKind::Tick, crate::jobq::JobKind::SinkDrain],
     );
-    tracing::info!("[daemon] job dispatcher: {n_workers} worker(s)");
+    // Cold-start staging: a dedicated SINGLE worker for `ColdExtract`. One node
+    // in flight at a time + the canonical priority (module highest) makes the
+    // staged extraction run in the same dependency order as the inline tick
+    // (module before type/call resolution), so the warmed db matches inline.
+    daemon_shell::jobs::spawn(
+        &shell,
+        jobs.clone(),
+        runner,
+        1,
+        vec![crate::jobq::JobKind::ColdExtract],
+    );
+    tracing::info!("[daemon] job dispatcher: {n_workers} tick worker(s) + 1 cold-extract worker");
 
     // Bind the socket (reap a stale one first) BEFORE registering roots, so a
     // second daemon fails fast rather than cold-ticking every root then losing
@@ -1413,6 +1493,10 @@ impl crate::jobq::JobRunner for DaemonJobRunner {
         match job.kind {
             crate::jobq::JobKind::Tick => sr.tick_paths(&job.paths(), true),
             crate::jobq::JobKind::SinkDrain => sr.poll_tick().map(|_| ()),
+            crate::jobq::JobKind::ColdExtract => match job.cold_target() {
+                Some((family, shard)) => sr.run_cold_node(&family, shard),
+                None => Ok(()), // malformed arg; drop
+            },
         }
     }
 }
@@ -1603,6 +1687,7 @@ fn daemon_summary(d: &Arc<Daemon>, req: &Request) -> Response {
             "tick_count": sr.tick_count.load(Ordering::Relaxed),
             "program": sr.program_display,
             "settled": sr.settled.load(Ordering::Relaxed),
+            "cold_start_pending": sr.cold_pending.load(Ordering::Relaxed),
             "effects_failed": fx_failed,
             "effects_orphaned": fx_orphaned,
         })
@@ -1636,6 +1721,7 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                 "key": sr.key,
                 "tick_count": sr.tick_count.load(Ordering::Relaxed),
                 "settled": sr.settled.load(Ordering::Relaxed),
+                "cold_start_pending": sr.cold_pending.load(Ordering::Relaxed),
                 "program": sr.program_display,
                 "program_files": lock(&sr.program_files).iter()
                     .map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
