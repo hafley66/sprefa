@@ -2,10 +2,10 @@
 //! intercepts (`setup`/`examples`/`index`/`doctor`/`docs`/`update`/`daemon`),
 //! and the run-mode dispatch. `main` is a thin shell over [`run`].
 //!
-//! Layout: [`root`] resolves the working root, [`daemon`] owns the daemon
+//! Layout: [`root`] resolves the working root, [`daemon_cmd`] owns the daemon
 //! subcommand + shared output helpers, and this module wires the two together.
 
-mod daemon;
+mod daemon_cmd;
 mod check_deadline;
 mod inputs;
 mod query;
@@ -219,7 +219,7 @@ struct Cli {
 
 /// `true` for the two invocations that call `daemon::run_daemon` IN this
 /// process (`dl daemon serve`, and `dl daemon start` with `--foreground` or
-/// `--tray`, per `src/cli/daemon.rs`'s own foreground check) — these install
+/// `--tray`, per `src/cli/daemon_cmd.rs`'s own foreground check) — these install
 /// their own combined stderr+file tracing subscriber
 /// (`daemon::init_daemon_tracing`) and must win the global `try_init` race,
 /// so `crate::trace::init` must not claim the slot first for them. Every
@@ -331,8 +331,8 @@ fn dispatch_subcommand(raw: &[String]) -> Result<Option<i32>> {
         "doctor" => crate::scip_setup::run_doctor(rest)?,
         "docs" => crate::docs_cmd::run(rest)?,
         "update" => crate::update::run(rest)?,
-        "daemon" => daemon::run_cmd(rest)?,
-        "watch" => daemon::run_watch(rest)?,
+        "daemon" => daemon_cmd::run_cmd(rest)?,
+        "watch" => daemon_cmd::run_watch(rest)?,
         "what" => query::run_what(rest)?,
         "summary" => query::run_summary(rest)?,
         "q" => query::run_q(rest)?,
