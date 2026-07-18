@@ -319,45 +319,35 @@ fn client_root_uri(init_params: &serde_json::Value) -> Option<PathBuf> {
         .and_then(to_path)
 }
 
-/// Best-effort daemon subscription thread. Tries to attach, send `subscribe`,
-/// and read framed notifications forever. Each `diag_changed` is forwarded as
-/// a synthetic LSP Notification (`dl/diagChanged`) through the connection's
-/// sender; the main loop recognizes the method name and re-publishes. Returns
-/// silently on any failure (no daemon = no push; the LSP still works save-driven).
+/// Best-effort daemon subscription thread. Tries to attach and stream the
+/// daemon's push notifications from `GET /watch` (SSE over the UDS socket).
+/// Each pushed notification is forwarded as a synthetic LSP Notification
+/// (`dl/diagChanged`) through the connection's sender; the main loop recognizes
+/// the method name and re-publishes. Returns silently on any failure (no
+/// daemon = no push; the LSP still works save-driven).
 fn spawn_daemon_subscriber(root: PathBuf, sender: crossbeam_channel::Sender<lsp_server::Message>) {
-    use crate::{daemon, rpc};
+    use crate::daemon;
     if !daemon::enabled_for(&root) { return; }
     if !daemon::is_running() {
         let _ = daemon::ensure_singleton();
     }
     // Register this workspace root with the singleton so its engine ticks + pushes.
     let _ = daemon::add_root(&root);
-    let mut s = match daemon::connect() { Ok(s) => s, Err(_) => return };
-    // Subscribe is process-wide; the forwarded diag_changed notifications carry a
+    let client = match daemon::connect() { Ok(c) => c, Err(_) => return };
+    // The push stream is process-wide; each notification's params carry a
     // `root` field so the client can tell which engine moved.
-    let req = rpc::Request::new(0, "subscribe",
-        serde_json::json!({"events": ["diag_changed"]}));
-    if daemon::rpc_call(&mut s, &req).is_err() { return; }
-    loop {
-        match rpc::read_frame(&mut s) {
-            Ok(Some(body)) => {
-                // Forward the framed JSON-RPC notification's params through to
-                // the LSP main loop. The synthetic method name (`dl/diagChanged`)
-                // is what the main loop matches on; the params carry the
-                // changed-paths array.
-                let v: serde_json::Value = match serde_json::from_str(&body) {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-                let params = v.get("params").cloned().unwrap_or(serde_json::Value::Null);
-                let _ = sender.send(lsp_server::Message::Notification(lsp_server::Notification {
-                    method: "dl/diagChanged".into(),
-                    params,
-                }));
-            }
-            _ => return,
-        }
-    }
+    let _ = client.watch(|note| {
+        // Forward the JSON-RPC notification's params through to the LSP main
+        // loop. The synthetic method name (`dl/diagChanged`) is what the main
+        // loop matches on; the params carry the changed-paths array.
+        let params = note.get("params").cloned().unwrap_or(serde_json::Value::Null);
+        sender
+            .send(lsp_server::Message::Notification(lsp_server::Notification {
+                method: "dl/diagChanged".into(),
+                params,
+            }))
+            .is_ok()
+    });
 }
 
 /// Query `diag` (optionally for one file), group by path, and send one

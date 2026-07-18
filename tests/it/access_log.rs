@@ -102,9 +102,7 @@ impl Sandbox {
 }
 
 fn rpc(sock: &Path, body: &str) -> Option<String> {
-    let mut s = std::os::unix::net::UnixStream::connect(sock).ok()?;
-    write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).ok()?;
-    read_frame(&mut s)
+    crate::util::uds_rpc(sock, body)
 }
 
 fn rpc_root(sock: &Path, id: u64, method: &str, root: &Path, mut params: serde_json::Value)
@@ -114,32 +112,6 @@ fn rpc_root(sock: &Path, id: u64, method: &str, root: &Path, mut params: serde_j
     let body = serde_json::json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}).to_string();
     let resp = rpc(sock, &body)?;
     serde_json::from_str(&resp).ok()
-}
-
-fn read_frame(s: &mut std::os::unix::net::UnixStream) -> Option<String> {
-    let mut buf = Vec::new();
-    let mut byte = [0u8; 1];
-    let mut content_length: Option<usize> = None;
-    let mut line = Vec::<u8>::new();
-    loop {
-        line.clear();
-        loop {
-            if s.read(&mut byte).ok()? == 0 { return None; }
-            line.push(byte[0]);
-            if byte[0] == b'\n' { break; }
-        }
-        let mut end = line.len();
-        while end > 0 && (line[end - 1] == b'\n' || line[end - 1] == b'\r') { end -= 1; }
-        let trimmed = &line[..end];
-        if trimmed.is_empty() { break; }
-        if let Some(rest) = trimmed.strip_prefix(b"Content-Length:") {
-            content_length = Some(std::str::from_utf8(rest).ok()?.trim().parse().ok()?);
-        }
-    }
-    let len = content_length?;
-    buf.resize(len, 0);
-    s.read_exact(&mut buf).ok()?;
-    String::from_utf8(buf).ok()
 }
 
 fn http_post(base: &str, path: &str, body: &str) -> Option<(u16, String)> {

@@ -171,11 +171,30 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "
 # `CancellationToken`: one token both the shutdown RPC and the signal handler
 # cancel; every shell task selects on it for a graceful stop.
 tokio-util = "0.7"
-# axum for the two-route HTTP transport (POST /rpc, GET /health). Chosen over
-# bare hyper: hyper 1.x makes you hand-roll the accept loop + service + graceful
-# shutdown, which for two routes is more code than axum's `Router` + `axum::serve`
-# `.with_graceful_shutdown`. It rides the tokio runtime already pulled in above.
-axum = "0.7"
+# axum: the ONE handler layer for the daemon's client-facing serving (plan
+# 2026-07-18-infra-library-adoption.md section 2.4 verdict). One `Router`
+# (POST /rpc, GET /health, GET /watch SSE) served by TWO thin listeners — the
+# localhost TCP socket and the UDS socket both carry HTTP — sharing one
+# shutdown token. 0.8 is the verdict version: `tokio::net::UnixListener`
+# implements `axum::serve::Listener` there, which is what lets the UDS
+# transport ride the same `axum::serve` call as TCP. Chosen over bare hyper:
+# hyper 1.x makes you hand-roll the accept loop + service + graceful shutdown,
+# which is more code than axum's `Router` + `axum::serve`.
+axum = "0.8"
+# Request-scoped tracing spans on every route (`TraceLayer`), per the same
+# verdict — hooks the existing `tracing` spine, no bespoke access plumbing.
+tower-http = { version = "0.6", features = ["trace"] }
+# The CLI/LSP/MCP client half of the HTTP-over-UDS transport (plan 2.5 open
+# question resolved: raw hyper client-conn on a `UnixStream`, not hyperlocal —
+# one non-pooled connection per client needs no connector/URI layer, and hyper
+# is already in the tree under axum). `http1` + `client` only.
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+# `BroadcastStream`: adapts the subscriber broadcast channel into the SSE
+# response stream for `GET /watch`.
+tokio-stream = { version = "0.1", features = ["sync"] }
 # Supervision arc (plans/2026-07-18-infra-library-adoption.md section 3,
 # standing law a1f049ff "infra is bought, never built"): cross-platform OS
 # service-manager adapter (launchd/systemd/rc.d/sc.exe). We use it for

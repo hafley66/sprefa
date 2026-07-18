@@ -1,7 +1,31 @@
 //! Shared helpers for it-tests that spawn a real `dl --daemon` child.
 
+use std::io::{Read, Write};
 use std::ops::{Deref, DerefMut};
 use std::process::Child;
+
+/// One JSON-RPC exchange with a sandboxed daemon over its UDS socket. The
+/// socket carries HTTP since the axum adoption arc (one Router, two listeners
+/// — plan 2026-07-18-infra-library-adoption.md section 2.4), so this is a
+/// minimal `POST /rpc` with `Connection: close` written by hand, mirroring the
+/// raw-HTTP posture `daemon_http.rs` already uses for the TCP door. Returns
+/// the response body (a JSON-RPC envelope on 200 AND on the 4xx error paths);
+/// `None` on connect/transport failure.
+pub fn uds_rpc(sock: &std::path::Path, body: &str) -> Option<String> {
+    let mut stream = std::os::unix::net::UnixStream::connect(sock).ok()?;
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(60))).ok()?;
+    let request = format!(
+        "POST /rpc HTTP/1.1\r\nHost: dl-daemon\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream.write_all(request.as_bytes()).ok()?;
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).ok()?;
+    let text = String::from_utf8_lossy(&raw);
+    let header_end = text.find("\r\n\r\n")? + 4;
+    Some(text[header_end..].to_string())
+}
 
 /// Kill-on-drop wrapper for a spawned daemon child. If a test panics (or
 /// returns) while the child is still running, `Drop` kills and reaps it so a

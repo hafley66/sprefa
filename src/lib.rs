@@ -10,6 +10,7 @@ pub mod config;
 pub mod corpus;
 pub mod cst;
 pub mod daemon;
+pub mod daemon_client;
 pub mod daemon_http;
 pub mod daemon_read;
 pub mod daemon_shell;

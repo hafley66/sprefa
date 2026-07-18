@@ -6,7 +6,6 @@
 //! is tests/it/json_agg.rs. Same sandbox harness.
 
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -204,33 +203,6 @@ fn run_daemon(dir: &PathBuf) -> DaemonGuard {
         .spawn().expect("spawn dl daemon"))
 }
 
-fn read_frame(s: &mut std::os::unix::net::UnixStream) -> Option<String> {
-    use std::io::Read;
-    let mut byte = [0u8; 1];
-    let mut content_length: Option<usize> = None;
-    let mut line = Vec::<u8>::new();
-    loop {
-        line.clear();
-        loop {
-            if s.read(&mut byte).ok()? == 0 { return None; }
-            line.push(byte[0]);
-            if byte[0] == b'\n' { break; }
-        }
-        let trimmed = {
-            let mut e = line.len();
-            while e > 0 && (line[e-1] == b'\n' || line[e-1] == b'\r') { e -= 1; }
-            &line[..e]
-        };
-        if trimmed.is_empty() { break; }
-        if let Some(rest) = trimmed.strip_prefix(b"Content-Length:") {
-            content_length = Some(std::str::from_utf8(rest).ok()?.trim().parse().ok()?);
-        }
-    }
-    let len = content_length?;
-    let mut buf = vec![0u8; len];
-    s.read_exact(&mut buf).ok()?;
-    String::from_utf8(buf).ok()
-}
 
 /// An aggregated `?` answered over the daemon `query` RPC: the daemon runs its
 /// loaded program's queries through `run_queries_capture` -> `lower_query`, the
@@ -250,14 +222,11 @@ fn query_aggregate_over_daemon() {
     }
     assert!(ready, "daemon socket not ready");
 
-    let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
     let body = serde_json::json!({
         "jsonrpc": "2.0", "id": 2, "method": "query",
         "params": {"root": dir.to_string_lossy()},
     }).to_string();
-    let body = body.as_str();
-    write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
-    let resp = read_frame(&mut s).expect("query response");
+    let resp = crate::util::uds_rpc(&sock, &body).expect("query response");
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
     let results = v["result"]["results"].as_array().expect("results array");
     let sale = results.iter().find(|r| r["rel"] == "sale").expect("sale query result");
@@ -271,9 +240,7 @@ fn query_aggregate_over_daemon() {
     assert_eq!(got, vec![("food".to_string(), 2), ("toy".to_string(), 1)], "grouped counts over daemon: {resp}");
 
     // Clean shutdown.
-    let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
-    let body = r#"{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}"#;
-    write!(s, "Content-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
-    let _ = read_frame(&mut s);
+    let _ = crate::util::uds_rpc(&sock,
+        r#"{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}"#);
     let _ = child.wait();
 }

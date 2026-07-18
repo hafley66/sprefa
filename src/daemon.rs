@@ -44,13 +44,12 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock, RwLockReadGuard};
 use std::time::{Duration, Instant, SystemTime};
 
-use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::Notify;
 
 use crate::ast::Program;
-use crate::daemon_shell::{self, BroadcastMsg, ShellCtx};
+use crate::daemon_shell::{self, ShellCtx};
 use crate::engine::{DiagRow, Engine};
-use crate::rpc::{self, Request, Response, INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND};
+use crate::rpc::{Request, Response, INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND};
 use crate::{config, db};
 
 const DEFAULT_IDLE_SECS: u64 = 30 * 60;
@@ -237,11 +236,11 @@ fn open_pid_lock_file() -> Result<std::fs::File> {
 #[derive(Clone)]
 struct Shared {
     build_id: Arc<str>,
-    /// Subscriber-push channel: tick methods (on `spawn_blocking` threads) send
-    /// a serialized `diag_changed` / `rev_advanced` frame here; the async
-    /// subscriber pump fans it out over the kept-open UDS write halves. Replaces
-    /// the old `Arc<Mutex<Vec<Arc<Mutex<UnixStream>>>>>` inline-write list.
-    broadcast_tx: UnboundedSender<BroadcastMsg>,
+    /// Subscriber-push broadcast: tick methods (on `spawn_blocking` threads)
+    /// send a serialized `diag_changed` / `rev_advanced` notification body
+    /// here; every open `GET /watch` SSE stream holds a receiver. Replaces the
+    /// old kept-open-socket subscriber pump.
+    broadcast_tx: tokio::sync::broadcast::Sender<String>,
     /// Job doorbell: `enqueue` rings it so a parked dispatcher task wakes.
     job_notify: Arc<Notify>,
     /// The durable job queue (J1). Watchers/pollers `enqueue` tick + sink-drain
@@ -261,9 +260,10 @@ impl Shared {
         Ok(())
     }
 
-    /// Push a pre-serialized notification frame to all subscribers (best-effort).
+    /// Push a pre-serialized notification body to all `/watch` subscribers
+    /// (best-effort; zero subscribers = the send errors and is ignored).
     fn push_frame(&self, body: String) {
-        let _ = self.broadcast_tx.send(BroadcastMsg::Frame(body));
+        let _ = self.broadcast_tx.send(body);
     }
 }
 
@@ -1344,16 +1344,18 @@ pub fn run_daemon(
     let runtime = daemon_shell::build_runtime().context("build shell runtime")?;
     let cancel = tokio_util::sync::CancellationToken::new();
     let job_notify = Arc::new(Notify::new());
-    let (broadcast_tx, broadcast_rx) = tokio::sync::mpsc::unbounded_channel();
+    // Subscriber push: ticks broadcast pre-serialized notification bodies; each
+    // open `GET /watch` SSE stream subscribes its own receiver. 256 frames of
+    // lag buffer per subscriber; a slower one skips overwritten frames
+    // (best-effort push, same policy the old kept-open-socket pump had). The
+    // initial receiver is dropped — a send with zero receivers just errs.
+    let (broadcast_tx, _) = tokio::sync::broadcast::channel::<String>(256);
     let shell = ShellCtx {
         rt: runtime.handle().clone(),
         cancel: cancel.clone(),
         job_notify: job_notify.clone(),
         broadcast_tx: broadcast_tx.clone(),
     };
-    // The subscriber-push pump owns the kept-open write halves and drains the
-    // broadcast channel.
-    daemon_shell::spawn_subscriber_pump(&shell, broadcast_rx);
 
     // The durable job queue (J1), in its own `<home>/jobs.sqlite`.
     let jobs = crate::jobq::JobQueue::open(&home).context("open job queue db")?;
@@ -1538,11 +1540,12 @@ pub fn run_daemon(
         daemon.shell.rt.spawn(daemon_shell::timers::poll_task(daemon.clone(), shell.clone(), secs));
     }
 
-    // UDS accept + standard HTTP/JSON transport. HTTP binds 127.0.0.1:0 and
-    // publishes `<home>/http.json`; a bind failure is logged non-fatal (the UDS
-    // transport stays authoritative).
-    daemon_shell::uds::spawn_accept(&shell, daemon.clone(), listener);
-    if let Err(e) = daemon_shell::http::spawn(&shell, daemon.clone(), &build_id) {
+    // ONE router, two thin listeners (plan section 2.4): the UDS socket and the
+    // localhost TCP socket both serve the same axum app. TCP binds 127.0.0.1:0
+    // and publishes `<home>/http.json`; a TCP bind failure is logged non-fatal
+    // (the UDS transport stays authoritative).
+    daemon_shell::http::spawn_uds(&shell, daemon.clone(), listener);
+    if let Err(e) = daemon_shell::http::spawn_tcp(&shell, daemon.clone(), &build_id) {
         tracing::warn!("[daemon] http transport disabled: {e}");
     }
 
@@ -2363,10 +2366,10 @@ pub fn is_running() -> bool {
     UnixStream::connect(socket_path()).is_ok()
 }
 
-/// Connect to the singleton (must be already running). Returns a framed stream.
-pub fn connect() -> Result<UnixStream> {
-    UnixStream::connect(socket_path())
-        .with_context(|| format!("connect daemon socket {}", socket_path().display()))
+/// Connect to the singleton (must be already running). Returns an HTTP-over-UDS
+/// client (`crate::daemon_client`); the JSON-RPC envelopes are unchanged.
+pub fn connect() -> Result<crate::daemon_client::DaemonClient> {
+    crate::daemon_client::DaemonClient::connect_to(&socket_path())
 }
 
 /// Inject the `root` envelope key into a params object (no-op for `None`).
@@ -2377,74 +2380,13 @@ fn with_root(mut params: Value, root: Option<&Path>) -> Value {
     params
 }
 
-/// Send one request, read one response — but never block forever on a wedged
-/// daemon. The read runs under [`read_frame_watched`], which polls on a 10s
-/// socket read timeout and gives up after `DL_MAX_WALL_SECS` (default 300).
-pub fn rpc_call(stream: &mut UnixStream, req: &Request) -> Result<Response> {
-    let body = serde_json::to_string(&req.to_json())?;
-    rpc::write_frame(stream, &body)?;
-    let resp_body = read_frame_watched(stream)?;
-    let v: Value = serde_json::from_str(&resp_body)?;
-    let r = Response::from_value(v)?;
-    Ok(r)
-}
-
-/// Poll interval for a blocked attach client, in seconds.
-const ATTACH_POLL_SECS: u64 = 10;
-
-/// Read one response frame without an unbounded silent wait. Sets a 10s socket
-/// read timeout; on each timeout it prints one stderr line naming the daemon's
-/// current phase (from the same on-disk `why.jsonl` trail `dl daemon why` reads,
-/// no socket, no engine lock), and after `DL_MAX_WALL_SECS` total (default 300)
-/// it exits 75 pointing at `dl daemon why`. `DL_MAX_WALL_SECS=0` disables the
-/// give-up deadline but keeps the 10s "still waiting" heartbeat.
-fn read_frame_watched(stream: &mut UnixStream) -> Result<String> {
-    let budget = crate::watchdog::max_wall_secs();
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(ATTACH_POLL_SECS)));
-    let start = Instant::now();
-    loop {
-        match rpc::read_frame(stream) {
-            Ok(Some(body)) => {
-                let _ = stream.set_read_timeout(None);
-                return Ok(body);
-            }
-            Ok(None) => {
-                let _ = stream.set_read_timeout(None);
-                bail!("daemon closed connection without responding");
-            }
-            Err(e) if is_read_timeout(&e) => {
-                let waited = start.elapsed().as_secs();
-                if budget != 0 && waited >= budget {
-                    eprintln!(
-                        "[daemon] no response after {waited}s — the daemon is busy or wedged"
-                    ); // @eprintln-ok: final user-facing error before process exit
-                    eprintln!("  run `dl daemon why` to see what it is doing; giving up (75)"); // @eprintln-ok: final user-facing error before process exit
-                    std::process::exit(75);
-                }
-                let phase = crate::why::last_phase(&daemon_home())
-                    .unwrap_or_else(|| "phase unknown, run: dl daemon why".to_string());
-                tracing::debug!("waiting on daemon ({waited}s): {phase}");
-            }
-            Err(e) => {
-                let _ = stream.set_read_timeout(None);
-                return Err(e);
-            }
-        }
-    }
-}
-
-/// True iff `e` is a socket read-timeout (the 10s poll expired with no bytes),
-/// as opposed to a real transport error. `read_frame` surfaces the raw
-/// `io::Error` through `?`, so it downcasts cleanly.
-fn is_read_timeout(e: &anyhow::Error) -> bool {
-    e.downcast_ref::<std::io::Error>()
-        .map(|io| {
-            matches!(
-                io.kind(),
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-            )
-        })
-        .unwrap_or(false)
+/// Send one request, wait for the response — but never block forever on a
+/// wedged daemon. The wait runs inside `DaemonClient::call`, which heartbeats
+/// every 10s with the daemon's current phase (from the same on-disk `why.jsonl`
+/// trail `dl daemon why` reads) and gives up with exit 75 after
+/// `DL_MAX_WALL_SECS` total (default 300; `0` disables the deadline).
+pub fn rpc_call(client: &mut crate::daemon_client::DaemonClient, req: &Request) -> Result<Response> {
+    client.call(req)
 }
 
 /// Ensure the singleton daemon is running (spawn detached if not). Attaches only
@@ -2645,7 +2587,7 @@ pub(crate) fn wait_ready() -> Result<()> {
         if start.elapsed() > timeout {
             bail!("daemon did not become ready in {}s", CONNECT_TOTAL_TIMEOUT_SECS);
         }
-        if let Ok(mut s) = UnixStream::connect(socket_path()) {
+        if let Ok(mut s) = connect() {
             let req = Request::new(0, "ping", json!({}));
             if let Ok(resp) = rpc_call(&mut s, &req) {
                 if resp.error.is_none() { return Ok(()); }
@@ -2700,10 +2642,11 @@ pub fn drop_root(root: &Path, purge: bool) -> Result<()> {
     Ok(())
 }
 
-/// Block until the given root reports quiescent, or `timeout_ms` elapses.
+/// Block until the given root reports quiescent, or `timeout_ms` elapses. The
+/// client's watched wait (10s heartbeats, `DL_MAX_WALL_SECS` cap) covers the
+/// long server-side hold.
 pub fn await_quiescent(root: Option<&Path>, timeout_ms: u64) -> Result<(bool, u64)> {
     let mut s = connect()?;
-    let _ = s.set_read_timeout(Some(Duration::from_millis(timeout_ms + 5_000)));
     let params = with_root(json!({"timeout_ms": timeout_ms}), root);
     let req = Request::new(0, "await_quiescent", params);
     let resp = rpc_call(&mut s, &req)?;
