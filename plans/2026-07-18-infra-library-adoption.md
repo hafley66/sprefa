@@ -442,6 +442,8 @@ consistent with the obs plan's subscriber migration.
 2. **ProcessType=Background clamp** (3.6 q1) — decides whether first-run
    rebuild stays acceptable on efficiency cores; shapes the budget split.
 3. **rc pin tolerance** — user call: pin apalis rc.9 now vs wait for 1.0.
+   **DECIDED 2026-07-18 (user)**: pin the rc (`=` pins + committed lockfile);
+   absorb the rc→1.0 diff whenever upstream ships it.
 
 ### 5.3 Sequencing (each step shippable, ordered by independence)
 
