@@ -310,6 +310,7 @@ fn apply_cli_budget() {
         };
         let nice = if cfg!(unix) { 10 } else { 0 };
         let threads = rayon::current_num_threads();
+        // @eprintln-ok: DL_BUDGET_DEBUG env-gated debug line is the command's stderr output contract
         eprintln!("[budget] qos={qos} nice={nice} iopol={iopol} threads={threads}");
     }
 }
@@ -497,7 +498,7 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
             crate::run_check(programs, db.as_deref(), db_defaulted, root, cli.diag_json, &stage)?
         };
         if errors > 0 {
-            eprintln!("{errors} error-severity diagnostic(s) found");
+            eprintln!("{errors} error-severity diagnostic(s) found"); // @eprintln-ok: final user-facing error count before exit 2
             std::process::exit(2);
         }
         Ok(())

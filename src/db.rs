@@ -57,7 +57,8 @@ fn profile_hook(sql: &str, dur: Duration) {
         let compact: String = sql.split_whitespace().collect::<Vec<_>>().join(" ");
         let head: String = compact.chars().take(160).collect();
         let ellipsis = if compact.chars().count() > 160 { "…" } else { "" };
-        eprintln!("[sql {:.1}ms] {head}{ellipsis}", dur.as_secs_f64() * 1000.0);
+        let ms = dur.as_secs_f64() * 1000.0;
+        tracing::debug!(ms, head = %head, ellipsis = %ellipsis, "[sql {ms:.1}ms] {head}{ellipsis}");
     }
 }
 
@@ -191,7 +192,8 @@ pub fn open(path: Option<&str>) -> Result<Db> {
     if let Some(p) = path {
         let _ = conn.execute_batch("PRAGMA busy_timeout=50;");
         if conn.execute_batch("BEGIN IMMEDIATE;").is_err() {
-            eprintln!(
+            tracing::warn!(
+                path = p,
                 "[dl] warning: another process appears to hold a write lock on {p} \
                  (a resident daemon, or a concurrent dl run) — this process may block \
                  on writes or serve stale reads; use --no-daemon to isolate"
@@ -501,18 +503,20 @@ impl Db {
     pub fn tick_end(&self) -> Option<(String, u32)> {
         if profiling() {
             let (n, ms) = sql_stats_take();
-            eprintln!("[profile] sql: {n} statements, {ms:.1}ms inside sqlite");
+            tracing::debug!(n, ms, "[profile] sql: {n} statements, {ms:.1}ms inside sqlite");
             let counts = self.counts.borrow();
             let mut top: Vec<(&String, &u32)> = counts.iter().filter(|(_, n)| **n > 1).collect();
             top.sort_by(|a, b| b.1.cmp(a.1));
             for (key, n) in top.iter().take(5) {
-                eprintln!("[profile] {n}x {key}");
+                let key = *key;
+                let count = **n;
+                tracing::debug!(key = %key, count, "[profile] {count}x {key}");
             }
         }
         let counts = self.counts.borrow();
         let (key, &n) = counts.iter().max_by_key(|(_, n)| **n)?;
         if n > N1_THRESHOLD {
-            eprintln!("[n+1] '{key}' ran {n}x this tick — collect the set and call Db::insert_rows once");
+            tracing::warn!(key = %key, n, "[n+1] '{key}' ran {n}x this tick — collect the set and call Db::insert_rows once");
             return Some((key.clone(), n));
         }
         None

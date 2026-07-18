@@ -92,7 +92,10 @@ pub fn run(args: &[String]) -> Result<i32> {
             "--global" => undo_global = true,
             "--root" => {
                 i += 1;
-                let Some(root) = args.get(i) else { eprintln!("dl setup: --root needs a path"); return Ok(2) };
+                let Some(root) = args.get(i) else {
+                    eprintln!("dl setup: --root needs a path"); // @eprintln-ok: final user-facing CLI argument error
+                    return Ok(2)
+                };
                 undo_root = Some(PathBuf::from(root));
             }
             "--vscode" => vscode = true,
@@ -117,7 +120,7 @@ pub fn run(args: &[String]) -> Result<i32> {
                 return Ok(0);
             }
             other => {
-                eprintln!("dl setup: unknown arg {other}");
+                eprintln!("dl setup: unknown arg {other}"); // @eprintln-ok: final user-facing CLI argument error
                 print_help();
                 return Ok(2);
             }
@@ -133,7 +136,10 @@ pub fn run(args: &[String]) -> Result<i32> {
         return SetupJournal::load()?.list();
     }
     if undo {
-        if undo_global && undo_root.is_some() { eprintln!("dl setup: --root and --global are mutually exclusive"); return Ok(2); }
+        if undo_global && undo_root.is_some() {
+            eprintln!("dl setup: --root and --global are mutually exclusive"); // @eprintln-ok: final user-facing CLI argument error
+            return Ok(2);
+        }
         let root = undo_root.map(|path| path.canonicalize()).transpose()?;
         return SetupJournal::load()?.undo(root.as_deref(), undo_global, dry_run);
     }
@@ -151,18 +157,18 @@ pub fn run(args: &[String]) -> Result<i32> {
 }
 
 fn print_help() {
-    eprintln!("usage: dl setup [--project [DIR]] [--undo|--list|--adopt] [--dry-run] [--vscode] [-y|--yes] [--skills-dir DIR] [--print]");
-    eprintln!("  (no args)         install the global skill + wire detected agents");
-    eprintln!("  --project [DIR]    bootstrap a repo: .dl/ rails + AGENTS/CLAUDE always;");
-    eprintln!("                     Claude Code hook / git pre-commit / VSCode ext prompt on");
-    eprintln!("                     a TTY, are skipped when piped, or forced with --yes");
-    eprintln!("  --vscode           install the dl LSP VSCode extension (needs `code`); builds a");
+    eprintln!("usage: dl setup [--project [DIR]] [--undo|--list|--adopt] [--dry-run] [--vscode] [-y|--yes] [--skills-dir DIR] [--print]"); // @eprintln-ok: usage/help text
+    eprintln!("  (no args)         install the global skill + wire detected agents"); // @eprintln-ok: usage/help text
+    eprintln!("  --project [DIR]    bootstrap a repo: .dl/ rails + AGENTS/CLAUDE always;"); // @eprintln-ok: usage/help text
+    eprintln!("                     Claude Code hook / git pre-commit / VSCode ext prompt on"); // @eprintln-ok: usage/help text
+    eprintln!("                     a TTY, are skipped when piped, or forced with --yes"); // @eprintln-ok: usage/help text
+    eprintln!("  --vscode           install the dl LSP VSCode extension (needs `code`); builds a"); // @eprintln-ok: usage/help text
     eprintln!(
-        "                     fresh VSIX from editors/vscode-dl in a checkout, else embedded"
+        "                     fresh VSIX from editors/vscode-dl in a checkout, else embedded" // @eprintln-ok: usage/help text
     );
-    eprintln!("  -y, --yes          wire every integration without prompting (scripts / CI)");
-    eprintln!("  --skills-dir DIR   override the skill destination");
-    eprintln!("  --print            print the embedded skill to stdout");
+    eprintln!("  -y, --yes          wire every integration without prompting (scripts / CI)"); // @eprintln-ok: usage/help text
+    eprintln!("  --skills-dir DIR   override the skill destination"); // @eprintln-ok: usage/help text
+    eprintln!("  --print            print the embedded skill to stdout"); // @eprintln-ok: usage/help text
 }
 
 // ── project: bootstrap a repo ─────────────────────────────────────────────────

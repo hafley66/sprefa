@@ -64,7 +64,9 @@ impl Engine {
         self.apply_zones(&zones, &mut written, &write_roots)?;
         self.apply_appends(&appends, &claimed, &mut written, &write_roots)?;
         if !written.is_empty() && !quiet {
-            eprintln!("[gen] wrote {}", written.join(", "));
+            let files = written.join(", ");
+            // @eprintln-ok: gen sink file-write summary is the command's stderr output contract
+            eprintln!("[gen] wrote {files}");
         }
         Ok(())
     }

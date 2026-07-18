@@ -216,9 +216,11 @@ fn dispatcher_runs_coalesced_tick_once_with_both_paths() {
         vec![PathBuf::from("/one.rs"), PathBuf::from("/two.rs")],
         "the single execution's arg carries both coalesced paths"
     );
-    eprintln!(
+    let path_strs: Vec<String> = paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+    tracing::debug!(
+        path_strs = ?path_strs,
         "[coalesce-proof] 2 enqueues -> 1 execution; arg paths = {:?}",
-        paths.iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>()
+        path_strs
     );
 }
 

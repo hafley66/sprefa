@@ -60,14 +60,20 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
                      `.dl/` ancestor of the current directory). Refusing: run this \
                      from inside the target repo, or set DL_DAEMON_ROOT=<dir>.",
                     root.display()
-                );
+                ); // @eprintln-ok: final user-facing error print at CLI top level
                 return Ok(2);
             }
             if foreground {
                 match &init_root {
-                    Some(r) => eprintln!("[daemon] starting singleton (foreground); registering {}", r.display()),
-                    None => eprintln!("[daemon] starting the rootless singleton (config view, foreground) at {}",
-                        crate::daemon::daemon_home().display()),
+                    Some(r) => {
+                        let root = r.display();
+                        tracing::debug!(root = %root, "[daemon] starting singleton (foreground); registering {root}");
+                    }
+                    None => {
+                        let home = crate::daemon::daemon_home();
+                        let home_display = home.display();
+                        tracing::debug!(home = %home_display, "[daemon] starting the rootless singleton (config view, foreground) at {home_display}");
+                    }
                 }
                 crate::daemon::run_daemon(&programs, db, init_root, true, tray)?;
                 Ok(0)
@@ -76,10 +82,14 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
                 match &init_root {
                     Some(r) => {
                         crate::daemon::add_root(r)?;
-                        eprintln!("daemon started (detached); serving {} — `dl daemon status`", r.display());
+                        let root = r.display();
+                        tracing::debug!(root = %root, "daemon started (detached); serving {root} — `dl daemon status`");
                     }
-                    None => eprintln!("the rootless singleton started (detached, config view) at {} — `dl daemon status`",
-                        crate::daemon::daemon_home().display()),
+                    None => {
+                        let home = crate::daemon::daemon_home();
+                        let home_display = home.display();
+                        tracing::debug!(home = %home_display, "the rootless singleton started (detached, config view) at {home_display} — `dl daemon status`");
+                    }
                 }
                 Ok(0)
             }
@@ -151,26 +161,26 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
             Ok(if settled { 0 } else { 3 })
         }
         other => {
-            eprintln!("dl daemon: unknown verb `{other}`\n{VERBS}");
+            eprintln!("dl daemon: unknown verb `{other}`\n{VERBS}"); // @eprintln-ok: final user-facing error print at CLI top level
             Ok(2)
         }
     }
 }
 
 fn print_help() {
-    eprintln!("usage: dl daemon <verb> [options]");
-    eprintln!("  status                         show daemon and root status");
-    eprintln!("  start [PROGRAMS] [--foreground] start the singleton (or run it in this process)");
-    eprintln!("  stop                           stop the singleton");
-    eprintln!("  restart                        restart the singleton");
-    eprintln!("  drop <ROOT> [--purge]          unregister a root, optionally purge its db");
-    eprintln!("  load <FILE.dl>                 load a watched program");
-    eprintln!("  load-once <FILE.dl>            load a program for one run");
-    eprintln!("  rows <REL>                     print live relation rows");
-    eprintln!("  jobs                           list the tick/sink-drain job queue (newest first)");
-    eprintln!("  await-settle [--ms N]          wait for the root to become quiescent");
-    eprintln!("  url                            print the daemon's HTTP base URL (from http.json)");
-    eprintln!("options: --db PATH, --tray (start); --ms N (await-settle)");
+    eprintln!("usage: dl daemon <verb> [options]"); // @eprintln-ok: usage/help text
+    eprintln!("  status                         show daemon and root status"); // @eprintln-ok: usage/help text
+    eprintln!("  start [PROGRAMS] [--foreground] start the singleton (or run it in this process)"); // @eprintln-ok: usage/help text
+    eprintln!("  stop                           stop the singleton"); // @eprintln-ok: usage/help text
+    eprintln!("  restart                        restart the singleton"); // @eprintln-ok: usage/help text
+    eprintln!("  drop <ROOT> [--purge]          unregister a root, optionally purge its db"); // @eprintln-ok: usage/help text
+    eprintln!("  load <FILE.dl>                 load a watched program"); // @eprintln-ok: usage/help text
+    eprintln!("  load-once <FILE.dl>            load a program for one run"); // @eprintln-ok: usage/help text
+    eprintln!("  rows <REL>                     print live relation rows"); // @eprintln-ok: usage/help text
+    eprintln!("  jobs                           list the tick/sink-drain job queue (newest first)"); // @eprintln-ok: usage/help text
+    eprintln!("  await-settle [--ms N]          wait for the root to become quiescent"); // @eprintln-ok: usage/help text
+    eprintln!("  url                            print the daemon's HTTP base URL (from http.json)"); // @eprintln-ok: usage/help text
+    eprintln!("options: --db PATH, --tray (start); --ms N (await-settle)"); // @eprintln-ok: usage/help text
 }
 
 /// `dl watch <target>`: serve a program reactively (the daemon watches +
@@ -179,14 +189,14 @@ fn print_help() {
 /// Starts the daemon if it is down.
 pub fn run_watch(args: &[String]) -> Result<i32> {
     if args.is_empty() {
-        eprintln!("usage: dl watch <file.dl | folder/ | 'head <- body.'>");
+        eprintln!("usage: dl watch <file.dl | folder/ | 'head <- body.'>"); // @eprintln-ok: usage/help text
         return Ok(2);
     }
     let target = root::daemon_target()?;
     let root_opt = target.root();
     let expanded = super::inputs::expand(args)?;
     if expanded.files.is_empty() {
-        eprintln!("dl watch: nothing to watch");
+        eprintln!("dl watch: nothing to watch"); // @eprintln-ok: final user-facing error print at CLI top level
         return Ok(2);
     }
     crate::daemon::start_singleton()?;
@@ -194,7 +204,7 @@ pub fn run_watch(args: &[String]) -> Result<i32> {
     for file in &expanded.files {
         let resp = crate::daemon::load(root_opt, file, "watched")?;
         if let Some(err) = resp.error {
-            eprintln!("{}", err.message);
+            eprintln!("{}", err.message); // @eprintln-ok: command's output contract for failure at CLI top level
             return Ok(1);
         }
     }
@@ -203,7 +213,7 @@ pub fn run_watch(args: &[String]) -> Result<i32> {
          inspect: dl daemon rows <rel>    status: dl daemon status    stop: dl daemon stop",
         expanded.files.len(),
         root_opt.map(|p| p.display().to_string()).unwrap_or_else(|| "the config view".to_string()),
-    );
+    ); // @eprintln-ok: command's output contract for a human at a TTY
     Ok(0)
 }
 
@@ -293,7 +303,7 @@ fn print_jobs() -> Result<i32> {
 /// paths.
 pub fn print_load_response(resp: crate::rpc::Response) -> Result<()> {
     if let Some(err) = resp.error {
-        eprintln!("{}", err.message);
+        eprintln!("{}", err.message); // @eprintln-ok: final user-facing error print at CLI top level
         std::process::exit(1);
     }
     if let Some(result) = resp.result {

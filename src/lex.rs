@@ -158,7 +158,8 @@ pub fn lex(src: &str) -> Result<Vec<Tok>> {
                 while i < b.len() && b[i] != b'"' {
                     if b[i] == b'\\' && i + 1 < b.len() {
                         if matches!(b[i + 1], b's' | b'd' | b'w' | b'b' | b'n') {
-                            eprintln!("warning[plain-string-escape]: `\\\\{}` in a plain string drops the backslash; use r\"...\" for regex text", b[i + 1] as char);
+                            let c = b[i + 1] as char;
+                            tracing::warn!(c = %c, "warning[plain-string-escape]: `\\\\{c}` in a plain string drops the backslash; use r\"...\" for regex text");
                         }
                         cur.push(b[i + 1] as char); i += 2;
                     } else if b[i] == b'$' && b.get(i + 1) == Some(&b'{') {

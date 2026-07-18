@@ -1594,7 +1594,7 @@ mod tests {
                     .collect();
             }
             Err(_) => {
-                eprintln!("[scip] no index; skipping symbol-⊆-ast property test");
+                tracing::warn!("[scip] no index; skipping symbol-⊆-ast property test");
                 return;
             }
         }

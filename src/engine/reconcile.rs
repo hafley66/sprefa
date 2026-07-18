@@ -71,15 +71,19 @@ impl Engine {
                     prev_walk_ref_secs,
                 )?;
                 if crate::db::profiling() {
-                    eprintln!(
-                        "[scan {slug}@{}] {} file(s) in {:.1}ms",
-                        if rev == "WORK" {
-                            "WORK"
-                        } else {
-                            &rev[..rev.len().min(8)]
-                        },
-                        files.len(),
-                        t.elapsed().as_secs_f64() * 1000.0
+                    let rev_short = if rev == "WORK" {
+                        "WORK"
+                    } else {
+                        &rev[..rev.len().min(8)]
+                    };
+                    let file_count = files.len();
+                    let ms = t.elapsed().as_secs_f64() * 1000.0;
+                    tracing::debug!(
+                        slug = %slug,
+                        rev = %rev_short,
+                        file_count,
+                        ms,
+                        "[scan {slug}@{rev_short}] {file_count} file(s) in {ms:.1}ms"
                     );
                 }
                 Ok(files)
@@ -171,16 +175,21 @@ impl Engine {
                 targets.join(", ")
             };
             if consumed.contains(rel) {
-                // (b) consumed helper — quiet, no fix-it note.
-                eprintln!("[dl] source `{rel}` matched 0 files this tick: scan(\"{glob}\") under {where_} (feeds a rule — transient if mid-edit)");
+                // (b) consumed helper — quiet, no fix-it note, but still visible by default.
+                tracing::warn!(
+                    rel = %rel,
+                    glob = %glob,
+                    where_ = %where_,
+                    "[dl] source `{rel}` matched 0 files this tick: scan(\"{glob}\") under {where_} (feeds a rule — transient if mid-edit)"
+                );
                 continue;
             }
-            eprintln!("[dl] source `{rel}` matched 0 files: scan(\"{glob}\") under {where_}",);
-            // The glob matches paths relative to the working root (the cwd `dl`
-            // ran in). The usual miss is an anchored glob (`src/…`) run from ABOVE
-            // the repo, or a rev with no such path. `*` already crosses `/`, so
-            // recursion is not the issue.
-            eprintln!("       note: the glob matches paths relative to the working root; run `dl` from the repo (its cwd is the root — there is no --root) and check the leading path segments match");
+            tracing::warn!(
+                rel = %rel,
+                glob = %glob,
+                where_ = %where_,
+                "[dl] source `{rel}` matched 0 files: scan(\"{glob}\") under {where_}\n       note: the glob matches paths relative to the working root; run `dl` from the repo (its cwd is the root — there is no --root) and check the leading path segments match"
+            );
         }
 
         let hash_of = |m: &FileMeta, repo: &str, p: &str, r: &str| {
@@ -345,7 +354,8 @@ impl Engine {
                 self.dropped += prepared_dropped;
                 self.extraction_drops.extend(prepared_drop_diags);
                 if let Err(error) = cleanup {
-                    eprintln!(
+                    tracing::warn!(
+                        error = %error,
                         "[stage] committed source generation; TEMP cleanup deferred: {error}"
                     );
                 }
@@ -353,7 +363,10 @@ impl Engine {
             }
             Err(error) => {
                 if let Err(cleanup_error) = cleanup {
-                    eprintln!("[stage] source rollback cleanup failed: {cleanup_error}");
+                    tracing::warn!(
+                        error = %cleanup_error,
+                        "[stage] source rollback cleanup failed: {cleanup_error}"
+                    );
                 }
                 Err(error)
             }

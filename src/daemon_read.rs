@@ -396,7 +396,7 @@ mod tests {
         let elapsed = start.elapsed();
         assert_eq!(read["results"][0]["rows"].as_array().unwrap().len(), 6,
             "read returns correct rows while the engine mutex is held");
-        eprintln!("[SLA] read RPC completed in {elapsed:?} while a 3s engine-lock hold was in flight");
+        tracing::debug!("[SLA] read RPC completed in {elapsed:?} while a 3s engine-lock hold was in flight");
         assert!(elapsed < Duration::from_millis(500),
             "read completed in {elapsed:?} while a 3s engine-lock hold was in flight");
 

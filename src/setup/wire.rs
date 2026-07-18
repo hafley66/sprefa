@@ -77,7 +77,7 @@ pub(crate) fn refresh_after_update() {
     println!("[dl update] refreshing the on-disk skill from the new binary...");
     match wire_global(None) {
         Ok(_) => {}
-        Err(e) => eprintln!("[dl update] skill refresh failed ({e}); run `dl setup` by hand"),
+        Err(e) => tracing::error!("[dl update] skill refresh failed ({e}); run `dl setup` by hand"),
     }
     if vscode_extension_installed() {
         println!("[dl update] reinstalling the dl LSP VSCode extension...");
@@ -132,7 +132,7 @@ fn resolve_skills_dir(flag: Option<String>) -> Result<PathBuf> {
         "[dl setup] no Claude Code (~/.claude) or opencode config found; \
                stashing the skill under ~/.config/sprefa/skills. Point an agent at \
                it with SPREFA_SKILLS_DIR=<dir> or `dl setup --skills-dir <dir>`."
-    );
+    ); // @eprintln-ok: human-facing report of fallback skill location
     Ok(h.join(".config/sprefa/skills"))
 }
 

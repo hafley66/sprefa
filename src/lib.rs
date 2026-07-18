@@ -162,7 +162,7 @@ pub fn render_type_diags_eprintln(diags: &[ast::TypeDiag]) {
     for d in diags {
         if d.code == "coerce-text-path" && !show_coerce { continue; }
         if !seen.insert((d.code.clone(), d.msg.clone())) { continue; }
-        eprintln!("{}:1: {}[{}]: {}", d.path, d.severity.as_str(), d.code, d.msg);
+        eprintln!("{}:1: {}[{}]: {}", d.path, d.severity.as_str(), d.code, d.msg); // @eprintln-ok: diagnostic output contract for --check/--parse-only
     }
 }
 
@@ -179,7 +179,8 @@ pub fn run_file(programs: &[String], db_path: Option<&str>, db_defaulted: bool, 
                 // Daemon path failed; fall through to in-process so a transient
                 // socket error never blocks the user. Tests opt out via
                 // DL_NO_DAEMON=1 and never hit this branch.
-                eprintln!("[daemon] attach failed, falling back to in-process: {e}");
+                let error = e;
+                tracing::warn!(error = %error, "[daemon] attach failed, falling back to in-process: {error}");
             }
         }
     }
@@ -310,11 +311,12 @@ fn render_type_diags(diags: &[ast::TypeDiag], json: bool) {
 fn load_repos() -> Vec<config::RepoConfig> {
     match config::SprfConfig::load_default() {
         Ok(cfg) if !cfg.repos.is_empty() => {
-            eprintln!("[config] {} repo(s) registered (scan + type/call/doc ingestion)", cfg.repos.len());
+            let count = cfg.repos.len();
+            tracing::debug!(count, "[config] {count} repo(s) registered (scan + type/call/doc ingestion)");
             cfg.repos
         }
         Ok(_) => Vec::new(),
-        Err(e) => { eprintln!("[config] ignored: {e}"); Vec::new() }
+        Err(e) => { let error = e; tracing::warn!(error = %error, "[config] ignored: {error}"); Vec::new() }
     }
 }
 
@@ -350,19 +352,19 @@ pub fn run_verify(programs: &[String], db_path: Option<&str>, root: PathBuf, che
     eng.begin_verify();
     eng.run(&prog)?;
 
-    eprintln!("[verify] checker: {checker}");
+    tracing::debug!(checker = %checker, "[verify] checker: {checker}");
     let status = std::process::Command::new("sh")
         .arg("-c").arg(checker)
         .current_dir(&root)
         .status()?;
     if status.success() {
-        let n = eng.commit_writes();
-        eprintln!("[verify] checker passed — kept {n} edited file(s)");
+        let edited = eng.commit_writes();
+        tracing::debug!(edited, "[verify] checker passed — kept {edited} edited file(s)");
         Ok(true)
     } else {
-        let n = eng.rollback_writes()?;
-        eprintln!("[verify] checker failed (exit {}) — rolled back {n} file(s)",
-            status.code().map_or("signal".into(), |c| c.to_string()));
+        let rolled_back = eng.rollback_writes()?;
+        let exit_code = status.code().map_or("signal".into(), |c| c.to_string());
+        tracing::warn!(exit = %exit_code, rolled_back, "[verify] checker failed (exit {exit_code}) — rolled back {rolled_back} file(s)");
         Ok(false)
     }
 }
@@ -375,9 +377,13 @@ pub fn run_check(programs: &[String], db_path: Option<&str>, db_defaulted: bool,
     if daemon_eligible && daemon::enabled_for(&root) {
         match run_check_via_daemon(programs.first().map(|s| s.as_str()), &root, json, stage) {
             Ok(n) => return Ok(n),
-            Err(e) => eprintln!("[daemon] check attach failed, falling back to in-process: {e}"),
+            Err(e) => {
+                let error = e;
+                tracing::warn!(error = %error, "[daemon] check attach failed, falling back to in-process: {error}")
+            }
         }
     } else if daemon_eligible {
+        // @eprintln-ok: cold --check fallback must be loud to a human at a TTY
         eprintln!("[check] no daemon serving this root — one-shot engine on .dl/.state/cache.db (start one: dl daemon start)");
     }
     run_check_inproc(programs, db_path, root, json, stage)
@@ -417,9 +423,9 @@ fn run_check_via_daemon(program: Option<&str>, root: &Path, json: bool, stage: &
             let code = d.get("code").and_then(|v| v.as_str()).unwrap_or("");
             let msg = d.get("message").and_then(|v| v.as_str()).unwrap_or("");
             let code_s = if code.is_empty() { String::new() } else { format!("[{code}]") };
-            eprintln!("{path}:{line}: {sev}{code_s}: {msg}");
+            eprintln!("{path}:{line}: {sev}{code_s}: {msg}"); // @eprintln-ok: diagnostic output contract for --check
             if let Some(h) = d.get("hint").and_then(|v| v.as_str()) {
-                if !h.is_empty() { eprintln!("    hint: {h}"); }
+                if !h.is_empty() { eprintln!("    hint: {h}"); } // @eprintln-ok: diagnostic output contract for --check
             }
         }
     }
@@ -490,8 +496,8 @@ fn run_check_inproc(programs: &[String], db_path: Option<&str>, root: PathBuf, j
         render_type_diags(&type_diags, false);
         for d in &diags {
             let code = if d.code.is_empty() { String::new() } else { format!("[{}]", d.code) };
-            eprintln!("{}:{}: {}{}: {}", d.path, d.line, d.severity, code, d.msg);
-            if let Some(h) = &d.hint { eprintln!("    hint: {h}"); }
+            eprintln!("{}:{}: {}{}: {}", d.path, d.line, d.severity, code, d.msg); // @eprintln-ok: diagnostic output contract for --check
+            if let Some(h) = &d.hint { eprintln!("    hint: {h}"); } // @eprintln-ok: diagnostic output contract for --check
         }
     }
     let n_type = type_diags.iter().filter(|d| d.severity == ast::Severity::Error).count();
@@ -601,7 +607,9 @@ pub fn run_settle(programs: &[String], db_path: Option<&str>, root: PathBuf,
         if report.is_settled() && drained == 0 {
             eng.set_prime_tick(false);
             eng.run(&prog)?;
-            eprintln!("[settle] converged after {} tick(s)", iter + 1);
+            let ticks = iter + 1;
+            // @eprintln-ok: --settle convergence report is the command's stderr output contract
+            eprintln!("[settle] converged after {ticks} tick(s)");
             return Ok(());
         }
         let non_timer: Vec<&String> = report.changed_rels.iter()
@@ -640,7 +648,8 @@ pub fn run_watch(programs: &[String], db_path: Option<&str>, root: PathBuf) -> R
     // (repo pulls + checkout sweeps) on each re-tick, the way the daemon poll
     // loop does. (No --apply needed; --watch is explicit "do work reactively".)
     let _ = eng.drain_external_sinks(&prog);
-    eprintln!("[watch] watching {} (ctrl-c to stop)", root.display());
+    let root_display = root.display();
+    tracing::debug!(root = %root_display, "[watch] watching {root_display} (ctrl-c to stop)");
 
     let (tx, rx) = std::sync::mpsc::channel();
     let mut watcher = notify::recommended_watcher(move |res| { let _ = tx.send(res); })?;
@@ -654,7 +663,8 @@ pub fn run_watch(programs: &[String], db_path: Option<&str>, root: PathBuf) -> R
     if let Some(cp) = &cfg_path {
         if let Some(dir) = cp.parent() {
             if dir.exists() && watcher.watch(dir, RecursiveMode::NonRecursive).is_ok() {
-                eprintln!("[watch] also watching config {}", cp.display());
+                let config_path = cp.display();
+                tracing::debug!(config_path = %config_path, "[watch] also watching config {config_path}");
             }
         }
     }
@@ -680,7 +690,8 @@ pub fn run_watch(programs: &[String], db_path: Option<&str>, root: PathBuf) -> R
                         let mode = if recursive { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
                         let _ = watcher.watch(&path, mode);
                     }
-                    eprintln!("[watch] also watching refs in {}", gdp.display());
+                    let git_dir = gdp.display();
+                    tracing::debug!(git_dir = %git_dir, "[watch] also watching refs in {git_dir}");
                 }
             }
         }
@@ -709,7 +720,7 @@ pub fn run_watch(programs: &[String], db_path: Option<&str>, root: PathBuf) -> R
             }
         }
         if rescan {
-            eprintln!("[watch] watch error/overflow; full re-tick");
+            tracing::warn!("[watch] watch error/overflow; full re-tick");
             eng.tick(&prog, false)?;
             let _ = eng.drain_external_sinks(&prog);
             continue;
@@ -725,7 +736,7 @@ pub fn run_watch(programs: &[String], db_path: Option<&str>, root: PathBuf) -> R
         }
         if touches_cfg {
             eng.set_repos(load_repos());
-            eprintln!("[watch] config changed; repos reloaded");
+            tracing::debug!("[watch] config changed; repos reloaded");
             eng.tick(&prog, false)?;
             let _ = eng.drain_external_sinks(&prog);
         } else if touches_git || paths.is_empty() {
@@ -781,7 +792,12 @@ pub fn run_move(db_path: Option<&str>, root: PathBuf, repo: Option<String>, mv: 
 
     let multi = targets.len() > 1;
     for (label, troot) in targets {
-        if multi { eprintln!("[move] repo {label} ({})", troot.display()); }
+        if multi {
+            let repo = label;
+            let root = troot.display();
+            // @eprintln-ok: --move multi-repo fan-out summary is the command's stderr output contract
+            eprintln!("[move] repo {repo} ({root})");
+        }
         // A file db is only safe for a single target; fan-out gets a transient
         // in-memory db per repo so their `_file` caches don't clobber each other.
         let conn = db::open(if multi { None } else { db_path })?;
@@ -813,7 +829,10 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
             .map_err(|e| anyhow::anyhow!("--move {old}: cannot read the file to move: {e}"))?;
         match ktpath::plan_move(old, new, &content) {
             Ok(mv) => kt_moves.push((old.clone(), new.clone(), mv)),
-            Err(e) => eprintln!("[move] {e} — its references will not be rewritten"),
+            Err(e) => {
+                let error = e;
+                tracing::warn!(error = %error, "[move] {error} — its references will not be rewritten")
+            }
         }
     }
 
@@ -830,8 +849,11 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
     for (old, new) in &rs_moves {
         match (rspath::file_to_mod_path_rooted(old, &roots), rspath::file_to_mod_path_rooted(new, &roots)) {
             (Some(om), Some(nm)) => rs_mods.push((old.clone(), new.clone(), om, nm)),
-            _ => eprintln!("[move] cannot derive a module path for {old} or {new} \
-                (under no crate root) — its references will not be rewritten"),
+            _ => {
+                let old_path = old;
+                let new_path = new;
+                tracing::warn!(old_path = %old_path, new_path = %new_path, "[move] cannot derive a module path for {old_path} or {new_path} (under no crate root) — its references will not be rewritten")
+            }
         }
     }
 
@@ -924,8 +946,8 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
         )
     }).count();
     if skipped > 0 {
-        eprintln!("[move] {skipped} move-relevant import(s) left alone \
-            (a brace leaf whose rewrite leaves the brace head cannot be spliced in place)");
+        let skipped_count = skipped;
+        tracing::warn!(skipped_count, "[move] {skipped_count} move-relevant import(s) left alone (a brace leaf whose rewrite leaves the brace head cannot be spliced in place)");
     }
     // Kotlin-specific honesty: a wildcard import of the old package may or may
     // not still cover the moved decls, and a same-package bare use breaks when
@@ -933,14 +955,18 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
     for (_, _, mv) in &kt_moves {
         let wild = imports.iter().filter(|(_, spec)| *spec == mv.old_wildcard()).count();
         if wild > 0 {
-            eprintln!("[move] {wild} wildcard import(s) of {} left alone \
-                (moved decls may need explicit imports of {})", mv.old_pkg, mv.new_pkg);
+            let wild_count = wild;
+            let old_pkg = &mv.old_pkg;
+            let new_pkg = &mv.new_pkg;
+            tracing::warn!(wild_count, old_pkg = %old_pkg, new_pkg = %new_pkg, "[move] {wild_count} wildcard import(s) of {old_pkg} left alone (moved decls may need explicit imports of {new_pkg})");
         }
         let bare = eng.same_package_uses()?.into_iter()
             .filter(|(_, spec)| mv.decls.iter().any(|d| d == spec)).count();
         if bare > 0 {
-            eprintln!("[move] {bare} same-package bare use(s) of moved decl(s) left alone \
-                (the file leaves {}; add imports of {} manually)", mv.old_pkg, mv.new_pkg);
+            let bare_count = bare;
+            let old_pkg = &mv.old_pkg;
+            let new_pkg = &mv.new_pkg;
+            tracing::warn!(bare_count, old_pkg = %old_pkg, new_pkg = %new_pkg, "[move] {bare_count} same-package bare use(s) of moved decl(s) left alone (the file leaves {old_pkg}; add imports of {new_pkg} manually)");
         }
     }
 
@@ -959,10 +985,13 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
         }
     }
     if by_file.is_empty() {
+        // @eprintln-ok: --move no-op report is the command's stderr output contract
         eprintln!("[move] no use-path references to rewrite");
     } else {
-        eprintln!("[move] {} edit(s) across {} file(s){}",
-            total, files, if fix { ", applied" } else { " (dry run; pass --fix to apply)" });
+        let status = if fix { ", applied" } else { " (dry run; pass --fix to apply)" };
+        let edit_count = total;
+        // @eprintln-ok: --move edit summary is the command's stderr output contract
+        eprintln!("[move] {edit_count} edit(s) across {files} file(s){status}");
     }
 
     // PASS 3 — the physical move: rename on disk, then for Rust re-home the
@@ -970,7 +999,8 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
     // parent-module chain up to an existing ancestor). Dry run prints the plan.
     for (old, new) in moves {
         if !root.join(old).is_file() {
-            eprintln!("[move] {old} does not exist on disk — rename skipped");
+            let path = old;
+            tracing::warn!(path = %path, "[move] {path} does not exist on disk — rename skipped");
             continue;
         }
         // a moved Rust file's child `mod x;` decls resolve relative to its
@@ -979,8 +1009,9 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
             if let Ok(content) = std::fs::read_to_string(root.join(old)) {
                 let kids = refactor::child_mod_decls(&content);
                 if !kids.is_empty() {
-                    eprintln!("[move] {old} declares child module(s) {kids:?} — \
-                        their files do not follow the rename; move them separately");
+                    let path = old;
+                    let children = &kids;
+                    tracing::warn!(path = %path, children = ?children, "[move] {path} declares child module(s) {children:?} — their files do not follow the rename; move them separately");
                 }
             }
         }
@@ -1006,8 +1037,9 @@ fn rust_mod_surgery(root: &Path, old: &str, new: &str, fix: bool) -> Result<()> 
     let stem = |p: &str| Path::new(p).file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
     let (old_stem, new_stem) = (stem(old), stem(new));
     if matches!(old_stem.as_str(), "mod" | "lib" | "main") || matches!(new_stem.as_str(), "mod" | "lib" | "main") {
-        eprintln!("[move] {old} or {new} is a directory-defining file (mod.rs/lib.rs/main.rs) — \
-            mod-decl surgery skipped; adjust declarations manually");
+        let old_path = old;
+        let new_path = new;
+        tracing::warn!(old_path = %old_path, new_path = %new_path, "[move] {old_path} or {new_path} is a directory-defining file (mod.rs/lib.rs/main.rs) — mod-decl surgery skipped; adjust declarations manually");
         return Ok(());
     }
 
@@ -1027,8 +1059,9 @@ fn rust_mod_surgery(root: &Path, old: &str, new: &str, fix: bool) -> Result<()> 
         }
     }
     if !removed {
-        eprintln!("[move] no `mod {old_stem};` declaration found near {old} \
-            (a #[path] decl or non-standard layout) — remove it manually");
+        let old_path = old;
+        let old_stem = &old_stem;
+        tracing::warn!(old_path = %old_path, old_stem = %old_stem, "[move] no `mod {old_stem};` declaration found near {old_path} (a #[path] decl or non-standard layout) — remove it manually");
     }
 
     // a private decl is crate-visible only at the crate root; relocating it
@@ -1055,8 +1088,9 @@ fn rust_mod_surgery(root: &Path, old: &str, new: &str, fix: bool) -> Result<()> 
         // no parent module file exists: create the directory's sibling file
         // (`a/b.rs` for files in `a/b/`) and register IT in its own parent
         let Some(dir) = Path::new(&at).parent().and_then(|d| d.to_str()).filter(|d| !d.is_empty()) else {
-            eprintln!("[move] no parent module file found for {new} and none creatable — \
-                declare `mod {name};` manually");
+            let new_path = new;
+            let module_name = &name;
+            tracing::warn!(new_path = %new_path, module_name = %module_name, "[move] no parent module file found for {new_path} and none creatable — declare `mod {module_name};` manually");
             return Ok(());
         };
         let parent_file = format!("{dir}.rs");

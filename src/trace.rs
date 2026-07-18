@@ -1,7 +1,9 @@
 //! Structured tracing (`tracing` crate). Two independent knobs:
 //!
-//!   - `DL_TRACE`/`RUST_LOG` (CLI-entry only): an stderr layer, off by
-//!     default — set it to see spans/events live on a one-shot run.
+//!   - `DL_TRACE`/`RUST_LOG` (CLI-entry only): an stderr layer for extra
+//!     verbosity, off by default — set it to see debug/trace spans/events live
+//!     on a one-shot run. `warn` and `error` events ALWAYS go to stderr so
+//!     user-visible failures are never silently swallowed.
 //!   - `DL_LOG` (always on): the rolling FILE layers under
 //!     `<daemon_home>/log/` — `dl.log` (DL_LOG level, default `info`) and
 //!     `error.log` (always `warn`-and-up, independent of DL_LOG, so a quiet
@@ -11,8 +13,8 @@
 //!     incident was missing.
 //!
 //! Span CLOSE events carry durations, so the tick phases and reactivity
-//! decisions surface as timed lines without recompiling or scattering
-//! `eprintln!`s. Keep span levels graded: `info` for whole ticks, `debug` for
+//! decisions surface as timed lines without recompiling or scattering ad-hoc
+//! writes to stderr. Keep span levels graded: `info` for whole ticks, `debug` for
 //! phases (reconcile/refresh/rebuild/gens/pulls), `trace` for per-file work.
 //!
 //! Tests never call `init`, so they stay silent (no subscriber => no overhead
@@ -42,11 +44,20 @@ pub fn init(is_daemon_foreground: bool) {
         return;
     }
     let home = crate::daemon::daemon_home();
+    // Warn/error always reach stderr so tracing-converted anomalies remain
+    // user-visible even without DL_TRACE/RUST_LOG.
+    let stderr_warn_layer = fmt::layer()
+        .with_target(false)
+        .with_writer(std::io::stderr)
+        .with_span_events(fmt::format::FmtSpan::CLOSE)
+        .compact()
+        .with_filter(tracing::level_filters::LevelFilter::WARN);
     let registry = tracing_subscriber::registry()
         .with(dl_log_layer(&home))
-        .with(error_log_layer(&home));
+        .with(error_log_layer(&home))
+        .with(stderr_warn_layer);
     if std::env::var_os("RUST_LOG").is_none() && std::env::var_os("DL_TRACE").is_none() {
-        // No live-stderr knob requested: file layers only, cheap and silent.
+        // No extra verbosity requested: file layers + stderr warn/error only.
         let _ = registry.try_init();
         return;
     }
@@ -57,6 +68,7 @@ pub fn init(is_daemon_foreground: bool) {
         .unwrap_or_else(|_| EnvFilter::new("off"));
     let stderr_layer = fmt::layer()
         .with_target(false)
+        .with_writer(std::io::stderr)
         .with_span_events(fmt::format::FmtSpan::CLOSE)
         .compact()
         .with_filter(filter);

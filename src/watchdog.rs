@@ -39,15 +39,15 @@ pub fn arm_wall_watchdog(label: &str) {
         .spawn(move || {
             std::thread::sleep(Duration::from_secs(secs));
             let a = crate::activity::snapshot();
-            eprintln!("[WALL TIMEOUT] {secs}s elapsed in `{label}` — hard-exiting (124)");
+            eprintln!("[WALL TIMEOUT] {secs}s elapsed in `{label}` — hard-exiting (124)"); // @eprintln-ok: final user-facing timeout report
             eprintln!(
                 "  phase={} detail={} root={}",
                 a.phase.as_str(),
                 if a.detail.is_empty() { "-" } else { &a.detail },
                 if a.root.is_empty() { "-" } else { &a.root },
-            );
-            eprintln!("  tick={} phase-elapsed={}ms", a.tick, a.elapsed_ms);
-            eprintln!("  raise with DL_MAX_WALL_SECS=<n> or 0 to disable");
+            ); // @eprintln-ok: final user-facing timeout report
+            eprintln!("  tick={} phase-elapsed={}ms", a.tick, a.elapsed_ms); // @eprintln-ok: final user-facing timeout report
+            eprintln!("  raise with DL_MAX_WALL_SECS=<n> or 0 to disable"); // @eprintln-ok: final user-facing timeout report
             std::process::exit(124);
         });
 }

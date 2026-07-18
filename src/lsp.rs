@@ -101,7 +101,7 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, db_defaulted: bool, r
         (Some(abs), type_diags_to_diagrows(&type_diags, &src))
     } else {
         for d in &type_diags {
-            eprintln!("{}:1: {}[{}]: {}", d.path, d.severity.as_str(), d.code, d.msg);
+            tracing::warn!("{}:1: {}[{}]: {}", d.path, d.severity.as_str(), d.code, d.msg);
         }
         (None, Vec::new())
     };
@@ -124,8 +124,9 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, db_defaulted: bool, r
     // Cold tick over the whole tree, then publish every file that has diags.
     eng.tick(&prog, true)?;
     let n = eng.diags(None)?.len();
-    eprintln!("[lsp] ready: {n} diagnostic(s) from {} ({} type diag(s))",
-        display, type_diags.len());
+    let n_type = type_diags.len();
+    let display_name = display;
+    tracing::debug!(n, n_type, display = %display_name, "[lsp] ready: {n} diagnostic(s) from {display_name} ({n_type} type diag(s))");
     // The `.dl` program's own diagnostics (brand/literal type errors) publish once;
     // they do not change between ticks (the program is not re-read).
     if let Some(pa) = &prog_abs {
@@ -170,13 +171,13 @@ pub fn run_lsp(programs: &[String], db_path: Option<&str>, db_defaulted: bool, r
                     .unwrap_or_default();
                 if paths.is_empty() {
                     if let Err(e) = publish(&connection, &eng, &root, None) {
-                        eprintln!("[lsp] daemon-push republish failed: {e}");
+                        tracing::warn!(error = %e, "[lsp] daemon-push republish failed: {e}");
                     }
                 } else {
                     for p in paths {
                         let abs = PathBuf::from(&p);
                         if let Err(e) = publish(&connection, &eng, &root, Some(&abs)) {
-                            eprintln!("[lsp] daemon-push republish failed for {p}: {e}");
+                            tracing::warn!(path = %p, error = %e, "[lsp] daemon-push republish failed for {p}: {e}");
                         }
                     }
                 }

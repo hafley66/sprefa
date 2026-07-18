@@ -295,7 +295,7 @@ impl RelKind for RevBehindKind {
                 _ => repo.clone(),
             };
             let Some(root) = roots.get(&key) else {
-                eprintln!("[rev_behind] skip {repo}/{refname}: unknown repo slug");
+                tracing::warn!(repo = %repo, refname = %refname, "[rev_behind] skip {repo}/{refname}: unknown repo slug");
                 continue;
             };
             let is_shallow = match shallow.get(&key) {
@@ -306,9 +306,9 @@ impl RelKind for RevBehindKind {
                         .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "true")
                         .unwrap_or(false);
                     if s {
-                        eprintln!("[rev_behind] skip {repo}: shallow clone — ancestry \
-                                   counts would be wrong; `git -C {} fetch --unshallow`",
-                            root.display());
+                        let root_disp = root.display();
+                        tracing::warn!(repo = %repo, root = %root_disp, "[rev_behind] skip {repo}: shallow clone — ancestry \
+                                   counts would be wrong; `git -C {root_disp} fetch --unshallow`");
                     }
                     shallow.insert(key.clone(), s);
                     s
@@ -319,7 +319,7 @@ impl RelKind for RevBehindKind {
                 .args(["rev-list", "--left-right", "--count",
                        &format!("{upstream}...{refname}")]).output()?;
             if !out.status.success() {
-                eprintln!("[rev_behind] skip {repo}: {upstream}...{refname} did not resolve");
+                tracing::warn!(repo = %repo, upstream = %upstream, refname = %refname, "[rev_behind] skip {repo}: {upstream}...{refname} did not resolve");
                 continue;
             }
             let text = String::from_utf8_lossy(&out.stdout);

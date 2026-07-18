@@ -137,8 +137,13 @@ fn repro_slow_rule_and_tick_overbudget_fire_onsite() {
     let expected_loc = format!("expensive.dl:{triple_line}:");
     assert!(findings.contains(&expected_loc),
         "the finding is positioned at the rule's own head line ({expected_loc}):\n{findings}");
-    assert!(!findings.contains("slow-rule]"),
-        "no un-located fallback finding when a rule head IS found:\n{findings}");
+    // `triple` has a rule head in the scanned corpus, so it must be reported
+    // via the located `slow-rule-onsite` code, not the fallback `slow-rule`.
+    let triple_fallback = findings.lines().any(|line| {
+        line.contains("warning[slow-rule]:") && line.contains("`triple`")
+    });
+    assert!(!triple_fallback,
+        "`triple` has a rule head; no un-located fallback finding for it:\n{findings}");
 
     assert!(contract().contains(&("tick-over-budget".into(), "warning".into())),
         "the rail fixture records tick-over-budget as warning");

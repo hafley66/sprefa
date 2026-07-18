@@ -288,7 +288,7 @@ impl ExtractFamily for CallFamily {
             }
             CallPathRefreshOutcome::Unchanged => Ok(RefreshOutcome::Unchanged),
             CallPathRefreshOutcome::Unsupported(reason) => {
-                eprintln!("[call-delta] fallback reason={reason} scope=call-family");
+                tracing::debug!(reason = %reason, "[call-delta] fallback reason={reason} scope=call-family");
                 self.refresh(eng)
             }
         }

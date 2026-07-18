@@ -621,10 +621,12 @@ impl Engine {
     fn warn_orphan_kind_once(&self, kind: &str) {
         let mut seen = self.warned_orphan_effect_kinds.borrow_mut();
         if seen.insert(kind.to_string()) {
-            eprintln!(
-                "[{}] no effect command registered for kind `{kind}`; parking its queued \
-                 request(s) (state=orphaned) instead of retrying every poll",
-                self.self_slug()
+            let slug = self.self_slug();
+            tracing::warn!(
+                slug = %slug,
+                kind = %kind,
+                "[{slug}] no effect command registered for kind `{kind}`; parking its queued \
+                 request(s) (state=orphaned) instead of retrying every poll"
             );
         }
     }

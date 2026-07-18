@@ -515,7 +515,8 @@ pub fn run_mcp(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Res
     let n_err = type_diags.iter().filter(|d| d.severity == ast::Severity::Error).count();
     if n_err > 0 {
         for d in type_diags.iter().filter(|d| d.severity == ast::Severity::Error) {
-            eprintln!("dl --mcp: program error: {}", d.msg);
+            let msg = &d.msg;
+            tracing::warn!(msg = %msg, "dl --mcp: program error: {msg}");
         }
         anyhow::bail!("{n_err} program error(s)");
     }
@@ -532,7 +533,7 @@ pub fn run_mcp(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Res
         match attach() {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("[daemon] mcp attach failed, in-process: {e}");
+                tracing::warn!(error = %e, "[daemon] mcp attach failed, in-process: {e}");
                 local_pump(&prog, db_path, root)?
             }
         }

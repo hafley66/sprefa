@@ -26,6 +26,6 @@ pub(crate) fn run<T: Send + 'static>(secs: u64, work: impl FnOnce() -> Result<T>
 }
 
 fn timed_out(secs: u64) {
-    eprintln!("[CHECK TIMED OUT] partial report only — --max-wall {secs}s elapsed; results may be incomplete");
-    eprintln!("(check):1: warning[check-timed-out]: check exceeded its {secs}s wall deadline; partial report only, exiting 0");
+    eprintln!("[CHECK TIMED OUT] partial report only — --max-wall {secs}s elapsed; results may be incomplete"); // @eprintln-ok: command's output contract for a human at a TTY
+    eprintln!("(check):1: warning[check-timed-out]: check exceeded its {secs}s wall deadline; partial report only, exiting 0"); // @eprintln-ok: command's output contract for a human at a TTY
 }
