@@ -116,8 +116,9 @@ Remove the binary with `cargo uninstall sprefa-dl` or delete the downloaded
 binary. These commands land in the same release as this README; check
 `dl setup --help` in your build. If absent, manually remove
 `.claude/skills/sprefa-dl`, the dl entries in `.claude/settings.json`, and
-`.dl/` in wired repos. Emergency-stop the daemon with `dl daemon stop`;
-`--no-daemon` or `DL_NO_DAEMON=1` runs any command isolated.
+`.dl/` in wired repos. Emergency-stop the daemon with `dl daemon stop`; with
+no daemon running, every command falls back to an isolated in-process run
+(`DL_NO_DAEMON=1` is the internal escape hatch tests use to force that path).
 
 ## Feedback (humans and agents)
 
@@ -664,7 +665,6 @@ doc-comment in [src/cli/mod.rs](src/cli/mod.rs) and rerun the generator.
 | `--max-wall` | _undocumented_ |
 | `--mcp` | _undocumented_ |
 | `--move <MOVE>` | Auto-refactor: rewrite `use`-path references for a module move `OLD_FILE=NEW_FILE` (repo-relative Rust paths). Dry-run unless --fix. Repeatable. Ignores the `program` positional |
-| `--no-daemon` | Force the in-process path this invocation (do not auto-attach). Same as `DL_NO_DAEMON=1`. Useful when the daemon socket is wedged |
 | `--parse-only` | _undocumented_ |
 | `--profile` | Profile mode (or DL_PROFILE=1): log slow SQL statements (threshold DL_PROFILE_SQL_MS, default 25), per-repo scan times, tick phase breakdown, and per-tick statement counts |
 | `--query-json` | Emit `?` query results as JSON-lines (one object per query: {query, columns, rows, count}) instead of the human TSV block |
@@ -751,7 +751,8 @@ for the boundary.
 Daemon-first, like `--hook`: with `.dl/` at the root the `--mcp` process is
 a thin stdio adapter over the daemon's warm engine (`mcp_request` /
 `mcp_retire` RPCs), so requests between edits see fresh facts with no cold
-scan. `--no-daemon` keeps a hermetic in-process engine (CI).
+scan. With no daemon running (CI), the same command falls back to a hermetic
+in-process engine.
 
 The MCP lifecycle is just methods, so a registerable server is plain rules —
 [examples/mcp-server.dl](examples/mcp-server.dl) implements `initialize` /

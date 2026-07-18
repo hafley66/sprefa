@@ -120,8 +120,10 @@ per-root scheme is inert (nothing binds it anymore); delete it at leisure.
   (re-parse, swap the `Program`, re-tick) — one process exit would kill every
   served root, so the old exit-for-respawn path is gone. Source files
   (`.rs`/`.kt`/...) editing just re-ticks the affected root.
-- **Opt out.** `DL_NO_DAEMON=1` (or `--no-daemon`) forces the in-process path —
-  no attach, no spawn. Used by tests and when a socket is wedged.
+- **Opt out (internal-only).** `DL_NO_DAEMON=1` forces the in-process path —
+  no attach, no spawn. Since the one-server-code-path directive (2026-07-18)
+  this is an internal escape hatch for tests and daemon-spawned children, not
+  a documented flag; the hidden `--no-daemon` spelling still parses.
 - **Shutdown vs drop.** `dl daemon stop` sends `shutdown` and stops the whole
   singleton (every root). `dl daemon drop <root> [--purge]` deregisters ONE root
   (stops its watcher, closes its engine; `--purge` deletes its db dir) and leaves
@@ -240,7 +242,6 @@ One-shot / mode flags (there is **no `--root`**; the root is the cwd):
 | `--profile` (or `DL_PROFILE=1`) | log slow SQL, per-repo×rev scan times, tick phase breakdown, per-tick statement counts |
 | `--cmd-budget N` (or `DL_CMD_BUDGET`) | cap `cmd` invocations per tick; over budget errors loudly. Default unlimited |
 | `--tick-audit` (or `DL_TICK_AUDIT=1`) | after each tick, print every relation's row count |
-| `--no-daemon` (or `DL_NO_DAEMON=1`) | force the in-process path; never attach or spawn |
 
 Daemon control is the `dl daemon <verb>` subcommand (addressed root = cwd's
 nearest `.dl/` ancestor, or `DL_DAEMON_ROOT` for a spawned helper):
@@ -261,7 +262,7 @@ nearest `.dl/` ancestor, or `DL_DAEMON_ROOT` for a spawned helper):
 
 | var | effect |
 |---|---|
-| `DL_NO_DAEMON=1` | opt out of the daemon (same as `--no-daemon`) |
+| `DL_NO_DAEMON=1` | INTERNAL-ONLY: force the in-process path (tests, daemon-spawned children) |
 | `DL_DAEMON_IDLE_SECS=N` | override the 30-min idle timeout |
 | `DL_PROFILE=1` | profile mode (same as `--profile`) |
 | `DL_PROFILE_SQL_MS=N` | slow-SQL threshold in ms (default 25) |

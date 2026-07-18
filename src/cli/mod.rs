@@ -32,12 +32,12 @@ ROOT & DAEMON (the two things that bite):
   ROOT is the cwd. There is NO --root flag: point dl at a repo by running it
     from that directory (or set DL_DAEMON_ROOT for a spawned daemon).
   A one-shot AUTO-ATTACHES to a per-root daemon and auto-restarts it when the
-    binary changed. Control it with the `dl daemon` subcommand:
+    binary changed. There is ONE server code path — the daemon. Control it
+    with the `dl daemon` subcommand:
   dl daemon status           is it up? build_id, tick_count, settled, program
   dl daemon restart          after `cargo install`, respawn with the new binary
   dl daemon stop             shut it down
   dl daemon rows REL         print a relation's live rows from the daemon
-  dl --no-daemon / DL_NO_DAEMON=1   force in-process, bypass the daemon entirely
 
  RULE BASICS:
    head <- body.              a rule; head is a fact/relation, body joins atoms
@@ -204,9 +204,12 @@ struct Cli {
     /// After each tick, print every relation's row count (or DL_TICK_AUDIT=1).
     #[arg(long, help_heading = "Perf & debug")]
     tick_audit: bool,
-    /// Force the in-process path this invocation (do not auto-attach). Same as
-    /// `DL_NO_DAEMON=1`. Useful when the daemon socket is wedged.
-    #[arg(long, help_heading = "Daemon")]
+    /// INTERNAL-ONLY (user directive 2026-07-18: one server code path; the
+    /// public --no-daemon split is erased). Force the in-process path this
+    /// invocation (do not auto-attach); same as `DL_NO_DAEMON=1`. Still parsed
+    /// — the test suite and daemon-spawned children ride it — but hidden from
+    /// `--help` and no longer part of the documented surface.
+    #[arg(long, hide = true)]
     no_daemon: bool,
     /// Run the network/mutating sinks (`repo` pulls, `checkout` sweeps) on this
     /// one-shot. By default a bare `dl prog.dl` is a pure READ: a `?` query never
