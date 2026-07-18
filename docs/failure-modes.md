@@ -438,6 +438,28 @@ sites but not against new code. **missing** = nothing.
 - SAY THIS TO AN AGENT: Before blaming CPU for a slow or thrashing daemon, `ls
   -la` the root db and its WAL — reads scale with db bytes, and a GB-scale db
   on a MB-scale corpus is the defect.
+- STEP-4a NULL-IN-PK INCIDENT (2026-07-18, caught in-arc, pre-land): the diet's
+  step 4a puts `WITHOUT ROWID` on pure junction rels to drop the full-row PK
+  autoindex twin. The FIRST classifier judged by shape alone (no `key()`,
+  all-INTEGER, 2..=4 columns) and silently broke tests/it/named_args.rs
+  `named_args_in_a_rule_head_resolve`: `WITHOUT ROWID` requires every PK
+  column NOT NULL, a plain rowid table's composite PK tolerates NULL (SQLite
+  treats it as always-distinct there), and the `.dl` surface's named-arg
+  partial-head padding (`person(name: "z").` leaves `age` NULL) can put a NULL
+  in any column of any parsed rel — `INSERT OR IGNORE` then silently DROPPED
+  the NULL-padded row. RCA: the classifier conflated storage shape with a
+  nullability contract the parser cannot give. The rail: an explicit per-decl
+  `pk_never_null` vouch on `RelDecl` (src/ast.rs), default `false` for every
+  `.dl`-parsed decl, set `true` only at Rust construction sites whose insert
+  path is audited to push fixed-arity non-`Option` rows (dataflow decls in
+  src/engine/decls.rs, scip decls in src/rels/scip.rs, each with the push site
+  named in a comment); `wants_without_rowid` (src/engine/declare.rs) checks
+  the vouch FIRST. Fail-pre-fix: the named_args test IS the discriminating
+  test (it failed on the shape-only classifier); the vouch gate is pinned by
+  classifier unit tests beside `wants_without_rowid` and end-to-end by
+  tests/it/storage_diet_without_rowid.rs (vouched builtin gets WITHOUT ROWID
+  and no autoindex, an unvouched `.dl` rel of the identical shape stays a
+  rowid table, plus a byte receipt vs the pre-4a DDL shape).
 
 ## 18. Per-rule parse amplification, tiers-not-ceiling
 
@@ -525,7 +547,7 @@ sites but not against new code. **missing** = nothing.
 | 14 | pre-commit worktree hang | missing | worktree-root detection or hook fast-path for blank-db roots (CLAUDE.md:70(i)) |
 | 15 | dishonest change flags | half | waiver-audit the 25 HEAD findings, promote `.dl/dishonest-flag.dl` to error severity (792cc902) |
 | 16 | kill-respawn cold-restart loop | half | `--hook` is attach-only since 2026-07-18 (never autostarts; sub-second self-deadline); still missing: `--check` autostart-once + backoff, mid-cold digest persistence, kill-mid-cold resume it-test |
-| 17 | unbounded db growth | half | boot verdict line (db bytes, corpus bytes, ratio) + `--check` ceiling warn; diet steps 1+3 landed (norm drop, -60% `_strings` on fixture), step 2 index audit + 4a WITHOUT ROWID open |
+| 17 | unbounded db growth | half | boot verdict line (db bytes, corpus bytes, ratio) + `--check` ceiling warn; diet steps 1+3 landed (norm drop, -60% `_strings` on fixture); 4a WITHOUT ROWID landed on vouched Rust-authored junctions (`pk_never_null` vouch, 17 autoindex twins dropped; see the step-4a NULL-in-PK incident in this class) — `.dl`-declared junctions (flow_edge, df_edge_src_kind) still open pending a derived-nullability story; step 2 index audit open |
 | 18 | per-rule parse amplification / tiers-not-ceiling | enforced | — (parse-counter tests + governor toggle test; `dl --hook` self-deadline `DL_HOOK_DEADLINE_MS` landed same day) |
 
 ## How a new rail gets born here

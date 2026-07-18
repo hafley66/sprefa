@@ -619,15 +619,23 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // fill/param to its own folder instead of fanning across every repo that
         // shares the constructed type's NAME. First-seen wins (same dedup as
         // df_node). 1:1 with df_node.
+        // pk_never_null: dataflow.rs pushes `vec![sym(&n.id), t(repo)]` per row
+        // (extract/dataflow.rs) — a fixed 2-element literal from plain &str
+        // fields, never Option, so no row can carry a NULL id/repo.
         RelDecl { name: "df_node_repo".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text)], group: "dataflow",
-            doc: "(df_node id, repo) — the repo (nearest .git basename) each node's file was read from; scopes df joins per-repo (df_node ids are path-keyed)", ..Default::default() },
+            doc: "(df_node id, repo) — the repo (nearest .git basename) each node's file was read from; scopes df joins per-repo (df_node ids are path-keyed)", pk_never_null: true, ..Default::default() },
         // rev-aware df_node_repo: id salted by rev (matches df_node_rev.id), rev
         // as a column. Repo attribution stays orthogonal to rev — a multi-repo PR
         // diff wants both axes.
+        // pk_never_null: same push site as df_node_repo, `vec![sym(&salted),
+        // t(repo), t(rev)]` — fixed 3-element literal, never Option.
         RelDecl { name: "df_node_repo_rev".into(), cols: vec![c("id", Type::Text), c("repo", Type::Text), c("rev", Type::Text)], group: "dataflow",
-            doc: "rev-aware df_node_repo; id is salt_rev(raw id, rev), matching df_node_rev.id; legacy df_node_repo keeps the raw id", ..Default::default() },
+            doc: "rev-aware df_node_repo; id is salt_rev(raw id, rev), matching df_node_rev.id; legacy df_node_repo keeps the raw id", pk_never_null: true, ..Default::default() },
+        // pk_never_null: `edge_rows.push(vec![sym(&e.from), sym(&e.to)])`
+        // (extract/dataflow.rs) — both from a `TypeFacts` edge struct's plain
+        // String fields, never Option; no row can carry a NULL endpoint.
         RelDecl { name: "df_edge".into(), cols: vec![c("from", Type::Text), c("to", Type::Text)], group: "dataflow",
-            doc: "intra-procedural dataflow dependency edge", ..Default::default() },
+            doc: "intra-procedural dataflow dependency edge", pk_never_null: true, ..Default::default() },
         // one row per loop, with its source span + loop variable. The flag rule
         // joins this against df_node/df_edge to find loop-invariant calls: a
         // call whose line falls in [start,end] taking an argument that is a
@@ -646,44 +654,63 @@ pub(crate) fn dataflow_rel_decls() -> Vec<RelDecl> {
         // is the loop's nesting rank (1 = outermost), `collection` is the inner
         // loop's iterated collection text ("" until extractors fill it). The
         // raw material for symbolic Big-O composed over call_edge.
+        // pk_never_null: `nest_rows.push(vec![t(&ns.call_id), t(&ns.loop_id),
+        // i(ns.depth), t(&ns.collection)])` — fixed 4-element literal from a
+        // plain struct's fields (collection defaults to "" upstream, never
+        // Option), never Option.
         RelDecl { name: "nest".into(), cols: vec![
             c("call_id", Type::Text), c("loop_id", Type::Text),
             c("depth", Type::Int), c("collection", Type::Text)], group: "dataflow",
-            doc: "one row per (call, enclosing loop); depth is nesting rank (1=outermost); raw material for symbolic Big-O over call_edge", ..Default::default() },
+            doc: "one row per (call, enclosing loop); depth is nesting rank (1=outermost); raw material for symbolic Big-O over call_edge", pk_never_null: true, ..Default::default() },
         // (param df_node id, positional index) — the index counts only typed
         // params (the Rust receiver `self` is skipped), so it aligns with
         // type_sig's `pos`. Lets a query bind a specific param node to its
         // declared type at node granularity, not just per-fn.
+        // pk_never_null: `param_rows.push(vec![sym(id), i(*pos)])` — fixed
+        // 2-element literal off a `(String, i64)` tuple iteration, never
+        // Option.
         RelDecl { name: "df_param".into(), cols: vec![c("id", Type::Text), c("pos", Type::Int)], group: "dataflow",
-            doc: "(param df_node id, positional index); index counts typed params only (self skipped) so it aligns with type_sig.pos for node-level type joins", ..Default::default() },
+            doc: "(param df_node id, positional index); index counts typed params only (self skipped) so it aligns with type_sig.pos for node-level type joins", pk_never_null: true, ..Default::default() },
         // (call/new node id, position, arg node id) — which argument slot a
         // value feeds. 0-based, method receivers at -1 (mirroring the skipped
         // `self` in df_param), so joining df_arg.pos = df_param.pos makes the
         // interprocedural arg -> param hop positional instead of blanket.
+        // pk_never_null: `arg_rows.push(vec![sym(call), Value::Int(*pos),
+        // sym(arg)])` — fixed 3-element literal off a `(String, i64, String)`
+        // tuple iteration, never Option.
         RelDecl { name: "df_arg".into(), cols: vec![
             c("call", Type::Text), c("pos", Type::Int), c("arg", Type::Text)], group: "dataflow",
-            doc: "(call/new df_node id, slot, arg df_node id); 0-based, receiver at -1; aligns with df_param.pos for the positional arg->param hop", ..Default::default() },
+            doc: "(call/new df_node id, slot, arg df_node id); 0-based, receiver at -1; aligns with df_param.pos for the positional arg->param hop", pk_never_null: true, ..Default::default() },
         // rev-aware df_arg: both id columns (call, arg) salted by rev to match
         // df_node_rev.id, so the arg->node join stays within one rev. legacy
         // df_arg keeps raw ids.
+        // pk_never_null: same loop as df_arg, `arg_rev_rows.push(vec![
+        // sym(&scall), Value::Int(*pos), sym(&sarg), t(rev)])` — fixed
+        // 4-element literal, never Option.
         RelDecl { name: "df_arg_rev".into(), cols: vec![
             c("call", Type::Text), c("pos", Type::Int), c("arg", Type::Text), c("rev", Type::Text)], group: "dataflow",
-            doc: "rev-aware df_arg; call and arg are salt_rev(raw id, rev), matching df_node_rev.id; legacy df_arg keeps raw ids", ..Default::default() },
+            doc: "rev-aware df_arg; call and arg are salt_rev(raw id, rev), matching df_node_rev.id; legacy df_arg keeps raw ids", pk_never_null: true, ..Default::default() },
         // (new/call node id, field name, value node id) — named value flow
         // into a composite: Rust struct-literal fields (`..base` under the
         // pseudo-field ".."), TS object-literal properties (spread likewise),
         // Kotlin named arguments. Matching a df_field write against a member
         // read of the same name (df_node kind=member, var=name) gives
         // field-sensitive flow.
+        // pk_never_null: `field_rows.push(vec![sym(id), t(field), sym(value)])`
+        // — fixed 3-element literal off a `(String, String, String)` tuple
+        // iteration, never Option.
         RelDecl { name: "df_field".into(), cols: vec![
             c("id", Type::Text), c("field", Type::Text), c("value", Type::Text)], group: "dataflow",
-            doc: "(new/call df_node id, field name, value df_node id); struct-literal fields, object-literal properties, Kotlin named args; \"..\" for spread/functional-update bases", ..Default::default() },
+            doc: "(new/call df_node id, field name, value df_node id); struct-literal fields, object-literal properties, Kotlin named args; \"..\" for spread/functional-update bases", pk_never_null: true, ..Default::default() },
         // rev-aware df_field: both id columns (id, value) salted by rev — value is
         // always a value df_node id (never a literal), so it salts like id. legacy
         // df_field keeps raw ids.
+        // pk_never_null: same loop as df_field, `field_rev_rows.push(vec![
+        // sym(&sid), t(field), sym(&svalue), t(rev)])` — fixed 4-element
+        // literal, never Option.
         RelDecl { name: "df_field_rev".into(), cols: vec![
             c("id", Type::Text), c("field", Type::Text), c("value", Type::Text), c("rev", Type::Text)], group: "dataflow",
-            doc: "rev-aware df_field; id and value are salt_rev(raw id, rev), matching df_node_rev.id; legacy df_field keeps raw ids", ..Default::default() },
+            doc: "rev-aware df_field; id and value are salt_rev(raw id, rev), matching df_node_rev.id; legacy df_field keeps raw ids", pk_never_null: true, ..Default::default() },
         // (df_node id, text, kind) — one row per STRING-carrying value node
         // (string-values arc item 1). `kind` is lit/template/concat: `lit` is
         // the cooked string literal value; `template`/`concat` carry the RAW

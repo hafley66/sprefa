@@ -181,6 +181,7 @@ mod sg_span;
 mod spine_meta;
 mod storage_diet_index;
 mod storage_diet_norm;
+mod storage_diet_without_rowid;
 mod string_fns;
 mod gh_cache;
 mod ghcacher_parity;

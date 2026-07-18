@@ -42,23 +42,29 @@ impl RelKind for ScipKind {
           "scip_occurrence", "scip_binding"]
     }
     fn decls(&self) -> Vec<RelDecl> {
+        // pk_never_null (storage-diet step 4a) on every 2-4 column rel below:
+        // each row is built by `rows.<field>.iter().map(|(a, b[, c[, d]])|
+        // vec![t(a), t(b), ...])` off a `Vec<(String, ...)>` tuple field on
+        // `ScipRows` — a fixed-arity literal per row, never `Option`, so no
+        // column can ever be NULL. scip_occurrence/scip_binding (8/6 cols)
+        // are excluded by the column-count cap regardless.
         vec![
             RelDecl { name: "scip_def".into(), cols: vec![col("symbol", Type::Text), col("file", Type::Path), col("repo", Type::Text)], group: "scip",
-                doc: "symbol defs from an existing index.scip (root or $SPREFA_SCIP_INDEX); repo = origin index", ..Default::default() },
+                doc: "symbol defs from an existing index.scip (root or $SPREFA_SCIP_INDEX); repo = origin index", pk_never_null: true, ..Default::default() },
             RelDecl { name: "scip_name".into(), cols: vec![col("symbol", Type::Text), col("name", Type::Text)], group: "scip",
-                doc: "descriptor name (last identifier run) of a moniker, computed in-engine", ..Default::default() },
+                doc: "descriptor name (last identifier run) of a moniker, computed in-engine", pk_never_null: true, ..Default::default() },
             RelDecl { name: "scip_ref".into(), cols: vec![col("file", Type::Path), col("symbol", Type::Text), col("def_file", Type::Path), col("repo", Type::Text)], group: "scip",
-                doc: "compiler-backed references (ref file, symbol, def file, origin repo)", ..Default::default() },
+                doc: "compiler-backed references (ref file, symbol, def file, origin repo)", pk_never_null: true, ..Default::default() },
             RelDecl { name: "scip_edge".into(), cols: vec![col("src", Type::Path), col("dst", Type::Path), col("repo", Type::Text)], group: "scip",
-                doc: "file-to-file SCIP dependency edges (with origin repo)", ..Default::default() },
+                doc: "file-to-file SCIP dependency edges (with origin repo)", pk_never_null: true, ..Default::default() },
             RelDecl { name: "scip_fn_edge".into(), cols: vec![col("caller", Type::Text), col("callee", Type::Text)], group: "scip",
-                doc: "function-level call edge; caller is the innermost enclosing fn def", ..Default::default() },
+                doc: "function-level call edge; caller is the innermost enclosing fn def", pk_never_null: true, ..Default::default() },
             RelDecl { name: "scip_callee_type".into(), cols: vec![col("sym", Type::Text), col("type", Type::Text)], group: "scip",
-                doc: "receiver type parsed from a method moniker's impl/for segment", ..Default::default() },
+                doc: "receiver type parsed from a method moniker's impl/for segment", pk_never_null: true, ..Default::default() },
             RelDecl { name: "scip_local".into(), cols: vec![col("fn", Type::Text), col("name", Type::Text)], group: "scip",
-                doc: "local-variable + parameter declarations attributed to their enclosing fn", ..Default::default() },
+                doc: "local-variable + parameter declarations attributed to their enclosing fn", pk_never_null: true, ..Default::default() },
             RelDecl { name: "scip_impl".into(), cols: vec![col("impl", Type::Text), col("iface", Type::Text)], group: "scip",
-                doc: "interface/supertype dispatch edge from SCIP is_implementation (impl to iface)", ..Default::default() },
+                doc: "interface/supertype dispatch edge from SCIP is_implementation (impl to iface)", pk_never_null: true, ..Default::default() },
             RelDecl { name: "scip_occurrence".into(), cols: vec![
                     col("file", Type::Path), col("symbol", Type::Text),
                     col("line", Type::Int), col("col", Type::Int),
