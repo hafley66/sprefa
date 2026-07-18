@@ -43,7 +43,7 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
-fn mb(bytes: u64) -> f64 {
+pub(crate) fn mb(bytes: u64) -> f64 {
     (bytes as f64 / 1e6 * 10.0).round() / 10.0
 }
 
@@ -139,8 +139,19 @@ fn append_line(home: &Path, line: &Value) {
 
 /// Boot / shutdown markers. `boot` is written before the sampler starts so a
 /// crash in the very first tick still leaves a bracket to diagnose against.
+/// `threads` is `rayon::current_num_threads()` sampled once at boot (cheap: a
+/// relaxed atomic-ish read on an already-initialized pool) — the "thread
+/// budget" half of `why`'s enrichment. A LIVE per-sample thread count would
+/// need `ps -M -p <pid> | wc -l` every sample, which is not cheap enough to
+/// run on the sampler's cadence (see `start_sampler`), so this is a
+/// boot-time snapshot, not a live gauge; the daemon's rayon pool size is
+/// fixed for the process lifetime anyway (`apply_daemon_budget` sets it once),
+/// so a snapshot loses nothing a live sample would have added.
 pub fn mark_boot(home: &Path, build: &str) {
-    append_line(home, &json!({"kind":"boot","ts":now_secs(),"pid":std::process::id(),"build":build}));
+    append_line(home, &json!({
+        "kind":"boot","ts":now_secs(),"pid":std::process::id(),"build":build,
+        "threads": rayon::current_num_threads(),
+    }));
 }
 
 pub fn mark_shutdown(home: &Path) {
@@ -187,7 +198,7 @@ pub fn start_sampler(home: PathBuf, jobs: std::sync::Arc<crate::jobq::JobQueue>)
 
 // ---------- reader (`dl daemon why`) ----------
 
-fn pid_alive(pid: u32) -> bool {
+pub(crate) fn pid_alive(pid: u32) -> bool {
     // SAFETY: signal 0 = existence probe, no signal delivered.
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
 }
@@ -223,19 +234,29 @@ pub fn last_phase(home: &Path) -> Option<String> {
 }
 
 /// Render the report from the on-disk trail alone. Works with the daemon
-/// alive, hung, or dead.
+/// alive, hung, or dead. The `recent invocations` section (from
+/// `crate::invlog`, deliverable 1's global access log) prints unconditionally
+/// via `finish`, even when no daemon trail exists at all — the respawn-storm
+/// incident this arc answers is exactly "many one-shot clients, no daemon
+/// ever settled," and that shape only shows up in the invocation log, never
+/// in `why.jsonl` (which needs a daemon boot to exist).
 pub fn report(home: &Path) -> String {
+    let finish = |mut out: String| -> String {
+        out += "\nrecent invocations:\n";
+        out += &crate::invlog::report_recent(5);
+        out
+    };
     let path = trail_path(home);
     let Ok(text) = std::fs::read_to_string(&path) else {
-        return format!(
+        return finish(format!(
             "no trail at {} — the daemon has not run with self-diagnosis yet\n\
              (reinstall the binary, then the next daemon run writes it)\n",
             path.display()
-        );
+        ));
     };
     let lines: Vec<Value> = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
     let Some(boot_at) = lines.iter().rposition(|l| l["kind"] == "boot") else {
-        return format!("{}: no boot marker found ({} lines)\n", path.display(), lines.len());
+        return finish(format!("{}: no boot marker found ({} lines)\n", path.display(), lines.len()));
     };
     let run = &lines[boot_at..];
     let pid = run[0]["pid"].as_u64().unwrap_or(0) as u32;
@@ -244,6 +265,7 @@ pub fn report(home: &Path) -> String {
     let now = now_secs();
 
     let mut out = String::new();
+    let dead = !shutdown && !pid_alive(pid);
     let state = if shutdown {
         "exited clean"
     } else if pid_alive(pid) {
@@ -252,10 +274,22 @@ pub fn report(home: &Path) -> String {
         "DEAD without a shutdown marker — killed or crashed"
     };
     out += &format!("daemon pid {pid}: {state}\n");
+    if let Some(threads) = run[0]["threads"].as_u64() {
+        out += &format!("rayon thread budget at boot: {threads}\n");
+    }
+    // Invocation-log join (`crate::invlog`): who spawned this pid, and with
+    // what argv. Only meaningful once the pid is confirmed dead — a live
+    // daemon's own spawn info is not "why is it stuck", it's just history.
+    if dead {
+        let spawned = crate::invlog::spawned_by_line(pid);
+        if !spawned.is_empty() {
+            out += &spawned;
+        }
+    }
 
     let Some(last) = samples.last() else {
         out += "no samples in this run (died within the first sample interval)\n";
-        return out;
+        return finish(out);
     };
     let last_ts = last["ts"].as_i64().unwrap_or(0);
     let job = last["job"].as_str().unwrap_or("");
@@ -309,7 +343,7 @@ pub fn report(home: &Path) -> String {
             phase_secs.iter().map(|(phase, t)| format!("{phase} {t}s")).collect();
         out += &format!("phase time (window): {}\n", parts.join(", "));
     }
-    out
+    finish(out)
 }
 
 #[cfg(test)]
