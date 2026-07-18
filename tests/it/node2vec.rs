@@ -141,6 +141,51 @@ node_sim(a, b, score) <- node2vec(edge).
         "integer edges must not be silently dropped: {}", String::from_utf8_lossy(&out.stdout));
 }
 
+/// Edge columns named with SQL reserved words (`from`/`to`) must work across
+/// every graph op. The node2vec edge reader interpolated the column names
+/// unquoted (`SELECT from, to FROM ...` -> syntax error); closure/scc share the
+/// same program here so a future unquoted reader in any of the three fails this.
+#[test]
+fn graph_ops_accept_reserved_word_edge_columns() {
+    let dir = sandbox("reserved_cols");
+    let program = r#"
+rel dep(from: text, to: text).
+dep("alpha", "beta").
+dep("beta", "gamma").
+dep("gamma", "alpha").
+rel dep_sim(node_a: text, node_b: text, score: int).
+dep_sim(node_a, node_b, score) <- node2vec(dep).
+rel dep_reach(from: text, to: text).
+dep_reach(from, to) <- closure(dep).
+rel dep_scc(rep: text, member: text).
+dep_scc(rep, member) <- scc(dep).
+? dep_reach(from, to).
+? dep_scc(rep, member).
+? dep_sim(node_a, node_b, score).
+"#;
+    fs::write(dir.join("p.dl"), program).unwrap();
+    let out = Command::new(DL)
+        .arg(dir.join("p.dl"))
+        .args(["--no-daemon", "--db", dir.join("db").to_str().unwrap()])
+        .current_dir(&dir)
+        .env("SPREFA_N2V_DIM", "8")
+        .env("SPREFA_N2V_NUMWALKS", "4")
+        .env("SPREFA_N2V_WALKLEN", "4")
+        .env("SPREFA_N2V_EPOCHS", "1")
+        .env("SPREFA_N2V_SEED", "1")
+        .output().expect("run reserved-column graph ops");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "stderr: {stderr}\nstdout: {stdout}");
+    assert!(!stderr.contains("syntax error"),
+        "reserved-word edge columns must be quoted in graph-op SQL: {stderr}");
+    // 3-cycle: closure reaches all 9 ordered pairs, scc has one component.
+    let reach = stdout.split("? dep_reach").nth(1).expect("dep_reach section");
+    assert!(reach.contains("(9 rows)"), "closure over the 3-cycle: {stdout}");
+    let scc = stdout.split("? dep_scc").nth(1).expect("dep_scc section");
+    assert!(scc.contains("(3 rows)"), "one 3-member component: {stdout}");
+}
+
 /// One `dl` run over the given edge content, sharing a persistent `--db`, with
 /// the W1/W2 digest trace on. Returns stderr (carries the `[node2vec] graph
 /// 'edge': ...` marker: re-embed / cache hit / skip).

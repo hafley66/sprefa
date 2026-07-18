@@ -62,10 +62,12 @@ impl RelKind for QueryLogKind {
             )))?;
             rows.filter_map(|x| x.ok()).collect()
         };
+        // The _txt VIEW has no rowid, so the change check compares sorted
+        // multisets; insertion below keeps _query_log's append (rowid) order.
         let have: Vec<Row> = {
             let conn = eng.db.conn();
             let mut s = conn.prepare(&format!(
-                "SELECT \"ts\", \"source\", \"method\", \"body\", \"params\" FROM {} ORDER BY rowid",
+                "SELECT \"ts\", \"source\", \"method\", \"body\", \"params\" FROM {}",
                 txt_tbl("query_log")))?;
             let rows = s.query_map([], |r| Ok((
                 r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
@@ -73,7 +75,11 @@ impl RelKind for QueryLogKind {
             )))?;
             rows.filter_map(|x| x.ok()).collect()
         };
-        if have == want { return Ok(false); }
+        let mut have_sorted = have;
+        have_sorted.sort();
+        let mut want_sorted = want.clone();
+        want_sorted.sort();
+        if have_sorted == want_sorted { return Ok(false); }
         let rows: Vec<Vec<Value>> = want.into_iter()
             .map(|(ts, source, method, body, params)| vec![
                 Value::Text(ts), Value::Text(source), Value::Text(method),

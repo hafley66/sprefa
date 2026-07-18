@@ -78,3 +78,22 @@ fn perf_rel_names_are_reserved() {
     assert!(err.contains("reserved-name") && err.contains("relation `rel_count`")
         && err.contains("write to the built-in directly"), "parse-tier reservation/fix:\n{err}");
 }
+
+/// `query_log` shares the perf projection shape (`_query_log` -> queryable rel).
+/// Regression: the refresh compared against the `_txt` VIEW with `ORDER BY
+/// rowid`; a view has no rowid, so any program touching `query_log` crashed.
+/// A fresh one-shot query must succeed (empty: nothing served yet).
+#[test]
+fn query_log_queryable_on_fresh_db() {
+    let d = sandbox("query_log_fresh");
+    fs::write(d.join("p.dl"), "rel probe(name: text).\nprobe(\"x\").\n? query_log(ts, source, method).\n").unwrap();
+    let out = Command::new(DL)
+        .arg(d.join("p.dl"))
+        .current_dir(&d)
+        .args(["--no-daemon", "--db", d.join("db").to_str().unwrap()])
+        .output().expect("run dl");
+    let err = String::from_utf8_lossy(&out.stderr);
+    let o = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code().unwrap_or(-1), 0, "query_log query crashed:\n{err}");
+    assert!(o.contains("? query_log"), "query_log section printed:\n{o}");
+}

@@ -148,7 +148,7 @@ impl Engine {
         );
         let edges: Vec<(String, String)> = {
             let conn = self.db.conn();
-            let mut s = conn.prepare(&format!("SELECT {c0}, {c1} FROM {}", txt_tbl(edge)))?;
+            let mut s = conn.prepare(&format!("SELECT \"{c0}\", \"{c1}\" FROM {}", txt_tbl(edge)))?;
             let v: Vec<(String, String)> = s
                 .query_map([], |r| Ok((cell_as_string(r, 0)?, cell_as_string(r, 1)?)))?
                 .filter_map(|x| x.ok())

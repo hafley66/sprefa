@@ -305,9 +305,7 @@ diag(path: path, line: 1, severity: "error", code: "chaos-coverage",
 ? program(path: probe).
 ? propose_clone(kernel: probe).
 ? propose_extract(path: probe).
-# query_log: referenced by name only — `? query_log(...)` currently crashes on a
-# fresh db (engine bug, src/rels/querylog.rs:68 orders the rowless _txt VIEW by
-# rowid). The token above keeps it covered without tripping the bug.
+? query_log(ts: probe).
 ? ref(id: probe).
 ? rel_col(rel: probe).
 ? rel_count(rel: probe).
