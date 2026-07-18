@@ -63,7 +63,7 @@ fn sections(out: &str) -> Vec<String> {
 
 fn rows(sec: &str) -> Vec<Vec<String>> {
     sec.lines()
-        .filter(|l| l.starts_with("  ") && l.contains('\t') && !l.contains("(0 rows)"))
+        .filter(|l| !l.starts_with("? ") && l.contains('\t') && !l.contains("(0 rows)"))
         .map(|l| l.trim_start().split('\t').map(|s| s.trim_end().to_string()).collect())
         .collect()
 }

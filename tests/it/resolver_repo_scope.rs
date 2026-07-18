@@ -149,9 +149,9 @@ fn sorted_module_dump(stdout: &str) -> String {
             rel = "module_edge_rev";
         } else if line.starts_with("? module_edge") {
             rel = "module_edge";
-        } else if !rel.is_empty() && line.starts_with("  ") {
+        } else if !rel.is_empty() && !line.is_empty() {
             rows.push(format!("{rel}\t{}", line.trim()));
-        } else if !line.starts_with("  ") {
+        } else {
             rel = "";
         }
     }

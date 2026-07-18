@@ -62,7 +62,7 @@ fn rows(sec: &str) -> Vec<Vec<String>> {
     // strip only the 2-space indent, not leading tabs: an empty FIRST column
     // (the anonymous object-literal ty) must survive as "".
     sec.lines()
-        .filter(|l| l.starts_with("  ") && l.contains('\t') && !l.contains("(0 rows)"))
+        .filter(|l| !l.starts_with("? ") && l.contains('\t') && !l.contains("(0 rows)"))
         .map(|l| {
             l.strip_prefix("  ")
                 .unwrap_or(l)

@@ -65,8 +65,8 @@ fn run(dir: &Path, prog: &str) -> (bool, String, String) {
 fn dsts(out: &str, after: &str) -> Vec<String> {
     let block = out.split(after).nth(1).unwrap_or("");
     block.lines()
+        .skip(1) // the header remnant line (the "... => col1\tcol2" tail)
         .take_while(|l| !l.contains("rows)"))
-        .filter(|l| l.starts_with("  "))
         .map(|l| l.trim().rsplit('\t').next().unwrap().to_string())
         .collect()
 }
@@ -119,8 +119,8 @@ fn regex_filter_via_nested_rule() {
         "{GRAPH}\nrel def(name: text).\ndef(n) <- fndef(n, _, _, _).\nrel just_a(name: text).\njust_a(n) <- def(n), n =~ /^a$/.\n? just_a(name).\n");
     let (ok, out, err) = run(&d, &prog);
     assert!(ok, "stderr: {err}");
-    assert!(out.contains("\n  a\n") || out.contains("  a\n  ("), "expected only 'a': {out}");
-    assert!(!out.contains("  b\n") && !out.contains("  c\n"), "must exclude b,c: {out}");
+    assert!(out.contains("\na\n") || out.contains("a\n  ("), "expected only 'a': {out}");
+    assert!(!out.contains("\nb\n") && !out.contains("\nc\n"), "must exclude b,c: {out}");
 }
 
 #[test]

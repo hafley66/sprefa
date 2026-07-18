@@ -52,7 +52,10 @@ impl Engine {
 
     fn print_query_result(&self, res: &QueryResult) {
         // Human query output is a block: the header starts with `?`, each data
-        // row has exactly two spaces of indentation, and cells are tab-separated.
+        // row starts at column 0 (NO leading indent — a tool splitting stdout
+        // on tabs must not see a leading space glued onto cell 0), and cells
+        // are tab-separated. The trailing `(N rows)` summary line keeps its
+        // two-space indent (it is not a data row).
         if self.query_json {
             emit_query_json(&res.rel, &res.columns, &res.rows);
         } else {
@@ -67,7 +70,7 @@ impl Engine {
             );
             for cells in &res.rows {
                 println!(
-                    "  {}",
+                    "{}",
                     cells
                         .iter()
                         .map(json_cell_tsv)

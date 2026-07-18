@@ -57,7 +57,7 @@ fn rows_of(stdout: &str, head: &str) -> Vec<String> {
     let mut out: Vec<String> = stdout.lines()
         .skip_while(|l| !l.starts_with(&format!("? {head} =>")))
         .skip(1)
-        .take_while(|l| l.starts_with("  "))
+        .take_while(|l| !l.is_empty())
         .filter(|l| !l.trim().starts_with('('))
         .map(|l| l.trim().to_string())
         .collect();

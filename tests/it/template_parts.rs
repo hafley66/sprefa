@@ -11,12 +11,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// `dl`'s text query output is `? rel => col\tcol...` then one indented row
-/// per line, then a `  (N rows)` footer — pull out just the indented data
-/// rows, tab-split.
+/// `dl`'s text query output is `? rel => col\tcol...` then one data row per
+/// line (no indent — column 0 is the first cell), then a `  (N rows)`
+/// footer — pull out just the data rows, tab-split.
 fn data_rows(out: &str) -> Vec<Vec<String>> {
     out.lines()
-        .filter(|l| l.starts_with("  ") && !l.trim_start().starts_with('('))
+        .filter(|l| !l.is_empty() && !l.starts_with("? ") && !l.trim_start().starts_with('('))
         .map(|l| l.trim().split('\t').map(|s| s.to_string()).collect())
         .collect()
 }

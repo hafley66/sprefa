@@ -210,7 +210,7 @@ fn run_file_via_daemon(program: Option<&str>, root: &Path, query_json: bool) -> 
                 println!("? {} => {}", rel, if cols.is_empty() { "(count)".into() } else { cols.join("\t") });
                 for cells in rows.iter().filter_map(|r| r.as_array()) {
                     let s: Vec<String> = cells.iter().map(json_cell_tsv_render).collect();
-                    println!("  {}", s.join("\t"));
+                    println!("{}", s.join("\t"));
                 }
                 println!("  ({} rows)\n", rows.len());
             }

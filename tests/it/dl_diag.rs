@@ -51,7 +51,7 @@ fn flags_broken_dl_no_git() {
     assert_eq!(code, 0, "stderr: {err}");
     assert!(out.contains("bad.dl"), "broken file must be flagged:\n{out}");
     assert!(out.contains("parse"), "parse code expected:\n{out}");
-    assert!(!out.contains("\tok.dl\t") && !out.lines().any(|l| l.contains("  ok.dl\t")),
+    assert!(!out.contains("\tok.dl\t") && !out.lines().any(|l| l.starts_with("ok.dl\t")),
         "valid file must not be flagged:\n{out}");
 }
 

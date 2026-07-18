@@ -2016,9 +2016,9 @@ impl Engine {
             println!("? {} => {}\t{}", q.head.rel, header(0), header(1));
             for h in &hits {
                 if forward {
-                    println!("  {seed}\t{h}");
+                    println!("{seed}\t{h}");
                 } else {
-                    println!("  {h}\t{seed}");
+                    println!("{h}\t{seed}");
                 }
             }
             println!("  ({} rows)\n", hits.len());
@@ -2058,7 +2058,7 @@ impl Engine {
         } else {
             println!("? {} => {}\t{}", q.head.rel, header(0), header(1));
             if hit {
-                println!("  {src}\t{dst}");
+                println!("{src}\t{dst}");
             }
             println!("  ({} rows)\n", rows.len());
         }
