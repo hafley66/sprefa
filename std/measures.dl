@@ -1,0 +1,125 @@
+# Standard library: architectural measures over the resolved call graph.
+#
+# Canonical home for fan_out / fan_in / blast / cycle_member, ported from
+# examples/measures-proto.dl per the round 1+2 review (docs/arch-measures-review.md).
+# User verdict 2026-07-18: KEEP ALL measures — they are research instruments;
+# overlap between them (blast's top-10 duplicating fan_in almost 1:1 on both
+# corpora) is a documented DATA finding, not a reason to drop a measure.
+# examples/measures-proto.dl stays in place as the round 1+2 receipt (its own
+# scan + the absolute n>40/n>60/n>300/n>5 thresholds that produced the review's
+# raw numbers); this file is the importable, portable version.
+#
+# Portability fix from the review: RANK-based top-K views replace absolute
+# thresholds. A threshold does not port across corpus size (smashy's max
+# fan_out was 10 against sprefa's 91 — a ~130x call_edge drop needs a
+# ~10-20x threshold rescale); rank does, at the cost of returning a set that
+# is exactly-K only when there are no ties (RANK()-style: tied rows share a
+# rank, so e.g. fan_in_top10 can hold more than 10 rows if #11 ties #10).
+#
+#   use "std/measures.dl".
+#   ? fan_out_top10(caller, n).
+#   ? blast_top10(callee, dependents).
+#
+# This file scans nothing; the importer's scan rules decide which files feed
+# call_edge (the engine's built-in resolved call graph — same contract as
+# std/flow.dl and std/entry.dl). NO `?` queries live here — a `use`d module
+# must not perturb the importer's query output order.
+#
+# reach_from is a plain seeded-recursion lattice (key/merge MinBy), the same
+# shape as std/entry.dl's entry_reach_node/op_reach_node — an incremental
+# fixpoint rule the engine re-evaluates on call_edge deltas, not a from-scratch
+# global recompute in Rust, so it carries no @recompute waiver.
+#
+# ── exports ──────────────────────────────────────────────────────────────────
+#   fan_out(caller, n)            calls made BY caller (orchestrator signal)
+#   fan_in(callee, n)             calls made INTO callee (signature-cost signal)
+#   reach_from(src, callee, d)    min hops src -> callee via call_edge, cap 32
+#   blast(callee, dependents)     count(src) that transitively reach callee
+#   cycle_pair(fn_a, fn_b)        mutual reach at fn granularity (fn_a < fn_b)
+#   cycle_member(fn, partners)    count of cycle partners per fn
+#   fan_out_top10(caller, n)      RANK < 10 view of fan_out
+#   fan_in_top10(callee, n)       RANK < 10 view of fan_in
+#   blast_top10(callee, dependents)   RANK < 10 view of blast
+#   cycle_member_top10(fn, partners)  RANK < 10 view of cycle_member
+
+# ── M1: fan-out / fan-in per function (instability raw material) ─────────────
+# High fan-out = orchestrator; high fan-in = load point whose signature is
+# expensive to change. The refactor each drives: split (fan-out), or
+# interface-extract (fan-in).
+rel fan_out(caller: text, n: int).
+fan_out(caller, count(callee)) <- call_edge(caller, callee, _).
+
+rel fan_in(callee: text, n: int).
+fan_in(callee, count(caller)) <- call_edge(caller, callee, _).
+
+# ── M2: blast radius — transitive dependents per function ────────────────────
+# reach_from(src, callee): src transitively calls callee. Dependents of f =
+# srcs that reach f. `closure(call_edge)` read unpinned is banned ("rule
+# 'blast' reads closure relation 'reach' in its body in an unpinned shape" —
+# src/engine/strata.rs:214, the recursive view only materializes pinned), so
+# this uses the depth-lattice idiom from std/entry.dl: key(src, callee) +
+# merge(MinBy(d)) keeps one row per pair no matter how many paths/cycles
+# reach it, so the row count stays O(pairs) not O(pairs x depths). d0 < 32
+# bounds the walk (entry_reach_node uses 64; this call graph is shallower).
+rel reach_from(src: text, callee: text, d: int) key(src, callee) merge(MinBy(d)).
+reach_from(src, callee, 0) <- call_edge(src, callee, _).
+reach_from(src, to, d0 + 1) <-
+    reach_from(src, from, d0), call_edge(from, to, _), d0 < 32.
+
+rel blast(callee: text, dependents: int).
+blast(callee, count(src)) <- reach_from(src, callee, _).
+
+# ── M3: call cycles — mutual reach pairs (SCC proxy) ──────────────────────────
+# A pair of functions each reachable from the other = a recursion knot or a
+# module cycle at fn granularity. The refactor: break the cycle (invert one
+# dependency) or bless it (a real recursive algorithm) with a waiver.
+rel cycle_pair(fn_a: text, fn_b: text).
+cycle_pair(fn_a, fn_b) <-
+    reach_from(fn_a, fn_b, _), reach_from(fn_b, fn_a, _), fn_a < fn_b.
+
+rel cycle_member(fn: text, partners: int).
+cycle_member(fn, count(other)) <- cycle_pair(fn, other).
+cycle_member(fn, count(other)) <- cycle_pair(other, fn).
+
+# ── top-K views: RANK by strictly-greater-row count, filtered rank < 10 ──────
+# rank(row) = count of OTHER rows whose metric is strictly bigger — the
+# standard datalog top-K idiom (SQL RANK() semantics: ties share a rank, so
+# a view can hold more than K rows when a tie sits on the boundary). K=10 is
+# a plain literal, the same style as the d0 < 32 / d0 < 64 depth caps above.
+rel fan_out_rank(caller: text, n: int, rank: int).
+fan_out_rank(caller, n, count(other_caller)) <-
+    fan_out(caller, n), fan_out(other_caller, other_n), other_n > n.
+
+rel fan_out_top10(caller: text, n: int).
+fan_out_top10(caller, n) <- fan_out_rank(caller, n, rank), rank < 10.
+fan_out_top10(caller, n) <- fan_out(caller, n), !fan_out_rank(caller, n, _).
+
+rel fan_in_rank(callee: text, n: int, rank: int).
+fan_in_rank(callee, n, count(other_callee)) <-
+    fan_in(callee, n), fan_in(other_callee, other_n), other_n > n.
+
+rel fan_in_top10(callee: text, n: int).
+fan_in_top10(callee, n) <- fan_in_rank(callee, n, rank), rank < 10.
+fan_in_top10(callee, n) <- fan_in(callee, n), !fan_in_rank(callee, n, _).
+
+rel blast_rank(callee: text, dependents: int, rank: int).
+blast_rank(callee, dependents, count(other_callee)) <-
+    blast(callee, dependents), blast(other_callee, other_dependents),
+    other_dependents > dependents.
+
+rel blast_top10(callee: text, dependents: int).
+blast_top10(callee, dependents) <-
+    blast_rank(callee, dependents, rank), rank < 10.
+blast_top10(callee, dependents) <-
+    blast(callee, dependents), !blast_rank(callee, dependents, _).
+
+rel cycle_member_rank(fn: text, partners: int, rank: int).
+cycle_member_rank(fn, partners, count(other_fn)) <-
+    cycle_member(fn, partners), cycle_member(other_fn, other_partners),
+    other_partners > partners.
+
+rel cycle_member_top10(fn: text, partners: int).
+cycle_member_top10(fn, partners) <-
+    cycle_member_rank(fn, partners, rank), rank < 10.
+cycle_member_top10(fn, partners) <-
+    cycle_member(fn, partners), !cycle_member_rank(fn, partners, _).

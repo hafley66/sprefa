@@ -432,10 +432,12 @@ failure mode). Rules and queries splice verbatim.
 <!-- BEGIN: stdlib -->
 | file | summary |
 |---|---|
+| [`std/arch.dl`](std/arch.dl) | architecture self-documentation from ARCH JSON markers. |
 | [`std/callgraph.dl`](std/callgraph.dl) | one-shot call-graph extraction over the resolved graph. |
 | [`std/entry.dl`](std/entry.dl) | gateway inventory and reachability from entry points. |
 | [`std/flow-collections.dl`](std/flow-collections.dl) | propagation facts for common collection combinators. |
 | [`std/flow.dl`](std/flow.dl) | the shared interprocedural value-flow base. |
+| [`std/measures.dl`](std/measures.dl) | architectural measures over the resolved call graph. |
 | [`std/parsers/openapi.dl`](std/parsers/openapi.dl) | OpenAPI operation extraction. |
 | [`std/strings.dl`](std/strings.dl) | string-only value-flow relations. |
 | [`std/suppress.dl`](std/suppress.dl) | suppression relations for eslint and Biome directives. |
