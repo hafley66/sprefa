@@ -8,6 +8,17 @@ use std::time::Duration;
 
 use crate::ast::Value;
 
+/// Re-exported so a generic row-mapping closure parameter outside the seam
+/// (e.g. a tolerant-read helper's `FnMut` bound) can name its argument type
+/// without importing `rusqlite` directly — the seam stays the only file that
+/// spells `rusqlite::`.
+pub type SqlRow<'a> = Row<'a>;
+
+/// Same reasoning as [`SqlRow`]: the raw per-cell `rusqlite::Result` a
+/// `Row::get` call returns, named without an outside-the-seam `rusqlite::`
+/// mention.
+pub type SqlRowResult<T> = rusqlite::Result<T>;
+
 /// Profile mode: `--profile` or `DL_PROFILE=1`. When on, every SQL statement
 /// over the slow threshold logs with its wall time (via SQLite's profile hook,
 /// so the `.conn()` escape hatches are covered too), each repo×rev scan logs
@@ -481,6 +492,16 @@ pub enum SqlVal {
 }
 
 impl SqlVal {
+    /// Borrow the text payload, if this cell is text.
+    pub fn as_text(&self) -> Option<&str> {
+        match self { SqlVal::Text(s) => Some(s), _ => None }
+    }
+
+    /// Borrow the integer payload, if this cell is an integer.
+    pub fn as_int(&self) -> Option<i64> {
+        match self { SqlVal::Int(i) => Some(*i), _ => None }
+    }
+
     /// The param mapping engine/rpc.rs::query_sql and daemon_read.rs::json_rows
     /// duplicate today: String->Text, i64->Int, f64->Real, Null->Null,
     /// other->Text(v.to_string()).

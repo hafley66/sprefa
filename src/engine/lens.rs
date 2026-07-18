@@ -1,4 +1,5 @@
 use super::*;
+use crate::db::SqlVal;
 use crate::lower::txt_tbl;
 
 impl Engine {
@@ -8,21 +9,21 @@ impl Engine {
     /// is the contiguous source at that span. With a scan-only source program the
     /// only rows are import refs (no capture spans), so this is the `--move` feed.
     pub fn located_spans(&self) -> Result<Vec<(String, u32, u32, String)>> {
-        let conn = self.db.conn();
-        let mut s = conn.prepare(
+        self.db.query_rows(
+            "_where_bytes",
             "SELECT w.path, w.lo, w.hi, s.content FROM _where_bytes w \
              JOIN _strings s ON s.id = w.string_id \
              WHERE w.id != '0' AND w.path != ''",
-        )?;
-        let rows = s.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, i64>(1)? as u32,
-                r.get::<_, i64>(2)? as u32,
-                r.get::<_, String>(3)?,
-            ))
-        })?;
-        Ok(rows.filter_map(|x| x.ok()).collect())
+            &[],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)? as u32,
+                    r.get::<_, i64>(2)? as u32,
+                    r.get::<_, String>(3)?,
+                ))
+            },
+        )
     }
 
     /// The WORK-content `FileId` for `path`, derived from the `_file` cache's
@@ -31,18 +32,16 @@ impl Engine {
     /// its offsets index the old blob, so only rows whose file id matches the
     /// current WORK content are positionally valid for an editor cursor.
     pub(crate) fn work_file_id(&self, path: &str) -> Result<Option<spine::FileId>> {
-        let conn = self.db.conn();
-        let mut s =
-            conn.prepare("SELECT hash, size FROM _file WHERE path = ?1 AND rev = 'WORK' LIMIT 1")?;
-        let row = s.query_row(rusqlite::params![path], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
-        });
-        match row {
-            Ok((hash, size)) => Ok(spine::FileId::from_content_address(&hash, size)
-                .filter(|f| *f != spine::FileId::SYNTHETIC)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
+        let row = self.db.query_opt(
+            "_file",
+            "SELECT hash, size FROM _file WHERE path = ?1 AND rev = 'WORK' LIMIT 1",
+            &[SqlVal::from(path)],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+        )?;
+        Ok(row.and_then(|(hash, size)| {
+            spine::FileId::from_content_address(&hash, size)
+                .filter(|f| *f != spine::FileId::SYNTHETIC)
+        }))
     }
 
     /// The innermost located WORK span containing `byte` in `path`, with its
@@ -54,27 +53,23 @@ impl Engine {
         let Some(fid) = self.work_file_id(path)? else {
             return Ok(None);
         };
-        let conn = self.db.conn();
-        let mut s = conn.prepare(
+        self.db.query_opt(
+            "_where_bytes",
             "SELECT w.string_id, s.content, w.lo, w.hi FROM _where_bytes w \
              JOIN _strings s ON s.id = w.string_id \
              WHERE w.id != '0' AND w.path = ?1 AND w.file_id = ?2 \
                AND w.lo <= ?3 AND ?3 < w.hi \
              ORDER BY (w.hi - w.lo) ASC LIMIT 1",
-        )?;
-        let row = s.query_row(rusqlite::params![path, fid.to_string(), byte as i64], |r| {
-            Ok((
-                r.get::<_, i64>(0)?.to_string(),
-                r.get::<_, String>(1)?,
-                r.get::<_, i64>(2)? as u32,
-                r.get::<_, i64>(3)? as u32,
-            ))
-        });
-        match row {
-            Ok(v) => Ok(Some(v)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
+            &[SqlVal::from(path), SqlVal::from(fid.to_string()), SqlVal::from(byte as i64)],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?.to_string(),
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)? as u32,
+                    r.get::<_, i64>(3)? as u32,
+                ))
+            },
+        )
     }
 
     /// Every located WORK span of `string_id`, as (path, lo, hi). The
@@ -84,23 +79,21 @@ impl Engine {
     /// returned by `span_at`); parsed back to i64 to bind the INTEGER column.
     pub fn string_spans(&self, string_id: &str) -> Result<Vec<(String, u32, u32)>> {
         let sid: i64 = string_id.parse().unwrap_or(0);
-        let candidates: Vec<(String, String, u32, u32)> = {
-            let conn = self.db.conn();
-            let mut s = conn.prepare(
-                "SELECT path, file_id, lo, hi FROM _where_bytes \
-                 WHERE string_id = ?1 AND id != '0' AND path != '' \
-                 ORDER BY path, lo",
-            )?;
-            let rows = s.query_map(rusqlite::params![sid], |r| {
+        let candidates: Vec<(String, String, u32, u32)> = self.db.query_rows(
+            "_where_bytes",
+            "SELECT path, file_id, lo, hi FROM _where_bytes \
+             WHERE string_id = ?1 AND id != '0' AND path != '' \
+             ORDER BY path, lo",
+            &[SqlVal::from(sid)],
+            |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
                     r.get::<_, i64>(2)? as u32,
                     r.get::<_, i64>(3)? as u32,
                 ))
-            })?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
+            },
+        )?;
         let mut work_ids: HashMap<String, Option<String>> = HashMap::new();
         let mut out = Vec::new();
         for (path, fid, lo, hi) in candidates {
@@ -160,12 +153,12 @@ impl Engine {
                     txt_tbl("def_target"),
                     meta.cols[*ni].name
                 );
-                let conn = self.db.conn();
-                let mut s = conn.prepare(&sql)?;
-                let rows = s.query_map(rusqlite::params![text], |r| {
-                    Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
-                })?;
-                let out: Vec<(String, i64)> = rows.filter_map(|x| x.ok()).collect();
+                let out: Vec<(String, i64)> = self.db.query_rows(
+                    "def_target",
+                    &sql,
+                    &[SqlVal::from(text)],
+                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+                )?;
                 let _ = cols; // (kept for symmetry with diags; unused today)
                 if !out.is_empty() {
                     return Ok(out);
@@ -174,15 +167,15 @@ impl Engine {
         }
 
         // Fallback: module_edge by specifier-segment match. Line 0 (file-level).
-        let dsts: Vec<String> = {
-            let conn = self.db.conn();
-            let mut s = conn.prepare(&format!(
+        let dsts: Vec<String> = self.db.query_rows(
+            "module_edge",
+            &format!(
                 "SELECT DISTINCT \"dst\" FROM {} WHERE \"src\" = ?1",
                 txt_tbl("module_edge")
-            ))?;
-            let rows = s.query_map(rusqlite::params![file], |r| r.get::<_, String>(0))?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
+            ),
+            &[SqlVal::from(file)],
+            |r| Ok(r.get::<_, String>(0)?),
+        )?;
         let segs: HashSet<&str> = text
             .split(|c: char| c == ':' || c == '/')
             .filter(|s| !s.is_empty() && !matches!(*s, "crate" | "self" | "super" | "." | ".."))
@@ -216,21 +209,19 @@ impl Engine {
         // type_entity(_, name=text, kind, parent, file, line) -> one row per
         // entity whose bare name matches.
         let te = txt_tbl("type_entity");
-        let te_rows: Vec<(String, String, String, i64)> = {
-            let conn = self.db.conn();
-            let mut s = conn.prepare(&format!(
-                "SELECT \"sym\", \"kind\", \"file\", \"line\" FROM {te} WHERE \"name\" = ?1"
-            ))?;
-            let rows = s.query_map(rusqlite::params![text], |r| {
+        let te_rows: Vec<(String, String, String, i64)> = self.db.query_rows(
+            "type_entity",
+            &format!("SELECT \"sym\", \"kind\", \"file\", \"line\" FROM {te} WHERE \"name\" = ?1"),
+            &[SqlVal::from(text)],
+            |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
                     r.get::<_, String>(2)?,
                     r.get::<_, i64>(3)?,
                 ))
-            })?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
+            },
+        )?;
         for (sym, kind, file, line) in te_rows {
             if seen.insert(sym.clone()) {
                 entries.push((kind, sym, file, line));
@@ -242,23 +233,23 @@ impl Engine {
         // name may map to several defs (overloads, distinct modules).
         let cd = txt_tbl("call_def");
         let cn = txt_tbl("call_name");
-        let cd_rows: Vec<(String, String, String, i64)> = {
-            let conn = self.db.conn();
-            let mut s = conn.prepare(&format!(
+        let cd_rows: Vec<(String, String, String, i64)> = self.db.query_rows(
+            "call_def",
+            &format!(
                 "SELECT d.\"sym\", d.\"kind\", d.\"file\", d.\"line\" \
                  FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" \
                  WHERE n.\"name\" = ?1"
-            ))?;
-            let rows = s.query_map(rusqlite::params![text], |r| {
+            ),
+            &[SqlVal::from(text)],
+            |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
                     r.get::<_, String>(2)?,
                     r.get::<_, i64>(3)?,
                 ))
-            })?;
-            rows.filter_map(|x| x.ok()).collect()
-        };
+            },
+        )?;
         for (sym, kind, file, line) in cd_rows {
             if seen.insert(sym.clone()) {
                 entries.push((kind, sym, file, line));
@@ -300,13 +291,14 @@ impl Engine {
     pub fn hover_notes_at(&self, path: &str, line: u32, character: u32) -> Result<Vec<String>> {
         let hn = txt_tbl("hover_note");
         Ok(self.try_rows(
+            "hover_note",
             &format!(
                 "SELECT \"md\" FROM {hn} WHERE \"path\" = ?1 \
                  AND (\"line\" < ?2 OR (\"line\" = ?2 AND \"col\" <= ?3)) \
                  AND (\"end_line\" > ?2 OR (\"end_line\" = ?2 AND \"end_col\" >= ?3)) \
                  ORDER BY \"md\""
             ),
-            &[&path, &line, &character],
+            &[SqlVal::from(path), SqlVal::from(line), SqlVal::from(character)],
             |r| r.get::<_, String>(0),
         ))
     }
@@ -319,9 +311,9 @@ impl Engine {
     pub(crate) fn type_profile_overlay(&self, sym: &str) -> Option<String> {
         let name = sym.rsplit("::").next()?;
         let edge = txt_tbl("type_edge");
-        let conn = self.db.conn();
         let q = |sql: String| -> Option<i64> {
-            conn.query_row(&sql, rusqlite::params![name], |r| r.get::<_, i64>(0))
+            self.db
+                .query_one("type_edge", &sql, &[SqlVal::from(name)], |r| Ok(r.get::<_, i64>(0)?))
                 .ok()
         };
         let ca = q(format!(
@@ -348,26 +340,22 @@ impl Engine {
 
     /// Best-effort SELECT that tolerates a missing table (a builtin type/call/
     /// module rel the program never referenced, so its `rel_<name>` table was
-    /// never created). Any prepare/query error yields an empty vec, so
+    /// never created). Any prepare/query/row-map error yields an empty vec, so
     /// `refs_lens` degrades to whatever families ARE populated instead of
-    /// erroring out.
+    /// erroring out. `rel` names the table chiefly read (N+1 counter key).
     pub(crate) fn try_rows<T, F>(
         &self,
+        rel: &str,
         sql: &str,
-        params: &[&dyn rusqlite::types::ToSql],
+        params: &[SqlVal],
         mut f: F,
     ) -> Vec<T>
     where
-        F: FnMut(&rusqlite::Row) -> rusqlite::Result<T>,
+        F: FnMut(&crate::db::SqlRow) -> crate::db::SqlRowResult<T>,
     {
-        let conn = self.db.conn();
-        let Ok(mut stmt) = conn.prepare(sql) else {
-            return Vec::new();
-        };
-        let Ok(rows) = stmt.query_map(params, |r| f(r)) else {
-            return Vec::new();
-        };
-        rows.filter_map(|x| x.ok()).collect()
+        self.db
+            .query_rows(rel, sql, params, |r| Ok(f(r)?))
+            .unwrap_or_default()
     }
 
     /// The repo slug a WORK file answers to, from the `_file` cache. Used to
@@ -375,8 +363,9 @@ impl Engine {
     /// right repo; falls back to the self slug when the path isn't cached.
     pub(crate) fn repo_for_path(&self, path: &str) -> String {
         self.try_rows(
+            "_file",
             "SELECT repo FROM _file WHERE path = ?1 AND rev = 'WORK' LIMIT 1",
-            &[&path],
+            &[SqlVal::from(path)],
             |r| r.get::<_, String>(0),
         )
         .into_iter()
@@ -414,8 +403,9 @@ impl Engine {
     pub(crate) fn resolve_sym_hit(&self, sym: &str, role: &str) -> Option<RefHit> {
         let te = txt_tbl("type_entity");
         if let Some((repo, file, line, parent)) = self.try_rows(
+            "type_entity",
             &format!("SELECT \"repo\", \"file\", \"line\", \"parent\" FROM {te} WHERE \"sym\" = ?1 LIMIT 1"),
-            &[&sym],
+            &[SqlVal::from(sym)],
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?)),
         ).into_iter().next() {
             let container = if parent.is_empty() { sym.to_string() } else { parent };
@@ -424,10 +414,11 @@ impl Engine {
         let cd = txt_tbl("call_def");
         if let Some((repo, file, line)) = self
             .try_rows(
+                "call_def",
                 &format!(
                     "SELECT \"repo\", \"file\", \"line\" FROM {cd} WHERE \"sym\" = ?1 LIMIT 1"
                 ),
-                &[&sym],
+                &[SqlVal::from(sym)],
                 |r| {
                     Ok((
                         r.get::<_, String>(0)?,
@@ -476,11 +467,12 @@ impl Engine {
     pub(crate) fn scip_def_hits(&self, sym: &str, role: &str) -> Vec<RefHit> {
         let so = txt_tbl("scip_occurrence");
         self.try_rows(
+            "scip_occurrence",
             &format!(
                 "SELECT \"file\", \"line\", \"col\", \"end_line\", \"end_col\", \"repo\" \
                       FROM {so} WHERE \"symbol\" = ?1 AND \"role\" = 'definition'"
             ),
-            &[&sym],
+            &[SqlVal::from(sym)],
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,
@@ -534,11 +526,12 @@ impl Engine {
 
         // The innermost occurrence covering the cursor in this file/repo.
         let mut covering: Vec<(String, i64, i64, i64, i64)> = self.try_rows(
+            "scip_occurrence",
             &format!(
                 "SELECT \"symbol\", \"line\", \"col\", \"end_line\", \"end_col\" \
                       FROM {so} WHERE \"file\" = ?1 AND \"repo\" = ?2"
             ),
-            &[&path, &repo],
+            &[SqlVal::from(path), SqlVal::from(&repo)],
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,
@@ -564,8 +557,9 @@ impl Engine {
         let sb = txt_tbl("scip_binding");
         let mut aliases: HashMap<(String, i64, i64), String> = HashMap::new();
         for (file, line, col, name) in self.try_rows(
+            "scip_binding",
             &format!("SELECT \"file\", \"line\", \"col\", \"local_name\" FROM {sb} WHERE \"symbol\" = ?1"),
-            &[&symbol],
+            &[SqlVal::from(&symbol)],
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?)),
         ) {
             aliases.insert((file, line, col), name);
@@ -577,9 +571,10 @@ impl Engine {
         let mut declarations: Vec<RefHit> = Vec::new();
         let mut uses: Vec<RefHit> = Vec::new();
         for (file, line, col, el, ec, role, orepo) in self.try_rows(
+            "scip_occurrence",
             &format!("SELECT \"file\", \"line\", \"col\", \"end_line\", \"end_col\", \"role\", \"repo\" \
                       FROM {so} WHERE \"symbol\" = ?1"),
-            &[&symbol],
+            &[SqlVal::from(&symbol)],
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?,
                     r.get::<_, i64>(3)?, r.get::<_, i64>(4)?, r.get::<_, String>(5)?, r.get::<_, String>(6)?)),
         ) {
@@ -602,8 +597,9 @@ impl Engine {
         let si = txt_tbl("scip_impl");
         let mut containing_types: Vec<RefHit> = Vec::new();
         for iface in self.try_rows(
+            "scip_impl",
             &format!("SELECT \"iface\" FROM {si} WHERE \"impl\" = ?1"),
-            &[&symbol],
+            &[SqlVal::from(&symbol)],
             |r| r.get::<_, String>(0),
         ) {
             containing_types.extend(self.scip_def_hits(&iface, "impl"));
@@ -614,15 +610,17 @@ impl Engine {
         let mut callers: Vec<RefHit> = Vec::new();
         let mut callees: Vec<RefHit> = Vec::new();
         for caller in self.try_rows(
+            "scip_fn_edge",
             &format!("SELECT \"caller\" FROM {sfe} WHERE \"callee\" = ?1"),
-            &[&symbol],
+            &[SqlVal::from(&symbol)],
             |r| r.get::<_, String>(0),
         ) {
             callers.extend(self.scip_def_hits(&caller, "caller"));
         }
         for callee in self.try_rows(
+            "scip_fn_edge",
             &format!("SELECT \"callee\" FROM {sfe} WHERE \"caller\" = ?1"),
-            &[&symbol],
+            &[SqlVal::from(&symbol)],
             |r| r.get::<_, String>(0),
         ) {
             callees.extend(self.scip_def_hits(&callee, "callee"));
@@ -677,11 +675,12 @@ impl Engine {
 
         let te = txt_tbl("type_entity");
         for (repo, sym, kind, parent, file, line) in self.try_rows(
+            "type_entity",
             &format!(
                 "SELECT \"repo\", \"sym\", \"kind\", \"parent\", \"file\", \"line\" \
                       FROM {te} WHERE \"name\" = ?1"
             ),
-            &[&text],
+            &[SqlVal::from(&text)],
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,
@@ -712,11 +711,12 @@ impl Engine {
         let cd = txt_tbl("call_def");
         let cn = txt_tbl("call_name");
         for (repo, sym, kind, file, line) in self.try_rows(
+            "call_def",
             &format!(
                 "SELECT d.\"repo\", d.\"sym\", d.\"kind\", d.\"file\", d.\"line\" \
                       FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" WHERE n.\"name\" = ?1"
             ),
-            &[&text],
+            &[SqlVal::from(&text)],
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,
@@ -762,8 +762,9 @@ impl Engine {
         let tl = txt_tbl("type_link");
         for sym in &syms {
             for (src, kind) in self.try_rows(
+                "type_link",
                 &format!("SELECT \"src\", \"kind\" FROM {tl} WHERE \"dst\" = ?1"),
-                &[sym],
+                &[SqlVal::from(sym)],
                 |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
             ) {
                 if let Some(hit) = self.resolve_sym_hit(&src, &kind) {
@@ -774,10 +775,11 @@ impl Engine {
         // call_site(repo, caller, callee, file, line): callee is the bare name.
         let cs = txt_tbl("call_site");
         for (repo, caller, file, line) in self.try_rows(
+            "call_site",
             &format!(
                 "SELECT \"repo\", \"caller\", \"file\", \"line\" FROM {cs} WHERE \"callee\" = ?1"
             ),
-            &[&text],
+            &[SqlVal::from(&text)],
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,
@@ -793,11 +795,12 @@ impl Engine {
         // specifier names this identifier as one of its path segments.
         let mi = txt_tbl("module_import");
         for (file, specifier, line) in self.try_rows(
+            "module_import",
             &format!(
                 "SELECT \"file\", \"specifier\", \"line\" FROM {mi} \
                       WHERE \"kind\" IN ('use', 'import') AND \"specifier\" LIKE ?1"
             ),
-            &[&format!("%{text}%")],
+            &[SqlVal::from(format!("%{text}%"))],
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,
@@ -830,8 +833,9 @@ impl Engine {
         let ce = txt_tbl("call_edge");
         for sym in &syms {
             for caller in self.try_rows(
+                "call_edge",
                 &format!("SELECT \"caller\" FROM {ce} WHERE \"callee\" = ?1"),
-                &[sym],
+                &[SqlVal::from(sym)],
                 |r| r.get::<_, String>(0),
             ) {
                 if let Some(hit) = self.resolve_sym_hit(&caller, "caller") {
@@ -839,8 +843,9 @@ impl Engine {
                 }
             }
             for callee in self.try_rows(
+                "call_edge",
                 &format!("SELECT \"callee\" FROM {ce} WHERE \"caller\" = ?1"),
-                &[sym],
+                &[SqlVal::from(sym)],
                 |r| r.get::<_, String>(0),
             ) {
                 if let Some(hit) = self.resolve_sym_hit(&callee, "callee") {
@@ -874,11 +879,12 @@ impl Engine {
     pub(crate) fn scip_def_site(&self, sym: &str) -> Option<(String, String, i64)> {
         let so = txt_tbl("scip_occurrence");
         self.try_rows(
+            "scip_occurrence",
             &format!(
                 "SELECT \"repo\", \"file\", \"line\" FROM {so} \
                       WHERE \"symbol\" = ?1 AND \"role\" = 'definition' LIMIT 1"
             ),
-            &[&sym],
+            &[SqlVal::from(sym)],
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,
@@ -917,11 +923,12 @@ impl Engine {
         let (cl, cc) = (cl as i64, cc as i64);
 
         let mut covering: Vec<(String, i64, i64, i64, i64, String)> = self.try_rows(
+            "scip_occurrence",
             &format!(
                 "SELECT \"symbol\", \"line\", \"col\", \"end_line\", \"end_col\", \"role\" \
                       FROM {so} WHERE \"file\" = ?1 AND \"repo\" = ?2"
             ),
-            &[&path, &repo],
+            &[SqlVal::from(path), SqlVal::from(&repo)],
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,
@@ -973,8 +980,9 @@ impl Engine {
 
         let te = txt_tbl("type_entity");
         let mut candidates: Vec<(String, String, String, String, i64)> = self.try_rows(
+            "type_entity",
             &format!("SELECT \"repo\", \"sym\", \"kind\", \"file\", \"line\" FROM {te} WHERE \"name\" = ?1"),
-            &[&text],
+            &[SqlVal::from(text)],
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
                     r.get::<_, String>(3)?, r.get::<_, i64>(4)?)),
         );
@@ -982,11 +990,12 @@ impl Engine {
             let cd = txt_tbl("call_def");
             let cn = txt_tbl("call_name");
             candidates = self.try_rows(
+                "call_def",
                 &format!(
                     "SELECT d.\"repo\", d.\"sym\", d.\"kind\", d.\"file\", d.\"line\" \
                           FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" WHERE n.\"name\" = ?1"
                 ),
-                &[&text],
+                &[SqlVal::from(text)],
                 |r| {
                     Ok((
                         r.get::<_, String>(0)?,
@@ -1052,11 +1061,12 @@ impl Engine {
     /// (grep-grade). Used when the identifier resolves to no symbol.
     pub(crate) fn textual_lens(&self, text: &str) -> Result<RefLens> {
         let candidates: Vec<(String, String, String, u32, u32)> = self.try_rows(
+            "_where_bytes",
             "SELECT w.repo, w.path, w.file_id, w.lo, w.hi FROM _where_bytes w \
              JOIN _strings s ON s.id = w.string_id \
              WHERE s.content = ?1 AND w.id != '0' AND w.path != '' \
              ORDER BY w.path, w.lo",
-            &[&text],
+            &[SqlVal::from(text)],
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,

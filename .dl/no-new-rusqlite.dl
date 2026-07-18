@@ -60,17 +60,11 @@ rusqlite_count(source_file, count(line_number)) <-
 # Lower a row when your commit shrinks the file's count; never raise one.
 rel rusqlite_baseline(source_file: file, allowed: int).
 rusqlite_baseline("src/agent.rs", 2).
-rusqlite_baseline("src/anchor.rs", 15).
 rusqlite_baseline("src/engine/deltaflow.rs", 4).
 rusqlite_baseline("src/engine/extract/call_render_tests.rs", 2).
 rusqlite_baseline("src/engine/family/mod.rs", 1).
-rusqlite_baseline("src/engine/gen.rs", 1).
-rusqlite_baseline("src/engine/generation.rs", 7).
-rusqlite_baseline("src/engine/lens.rs", 12).
 rusqlite_baseline("src/engine/mod.rs", 6).
 rusqlite_baseline("src/engine/ownership.rs", 2).
-rusqlite_baseline("src/engine/reconcile.rs", 8).
-rusqlite_baseline("src/engine/repo.rs", 4).
 rusqlite_baseline("src/engine/staged_delta/mod.rs", 4).
 rusqlite_baseline("src/engine/staged_delta/sql.rs", 3).
 rusqlite_baseline("src/engine/staged_delta/tests.rs", 1).
@@ -133,7 +127,6 @@ conn_count(source_file, count(line_number)) <-
 
 # Grandfathered .conn() baseline, measured 2026-07-18. Ratchet down only.
 rel conn_baseline(source_file: file, allowed: int).
-conn_baseline("src/anchor.rs", 2).
 conn_baseline("src/engine/extract/call.rs", 1).
 conn_baseline("src/engine/extract/call_render_tests.rs", 20).
 conn_baseline("src/engine/extract/doc.rs", 1).
@@ -141,12 +134,7 @@ conn_baseline("src/engine/extract/mod.rs", 17).
 conn_baseline("src/engine/extract/node.rs", 2).
 conn_baseline("src/engine/extract/text.rs", 3).
 conn_baseline("src/engine/family/mod.rs", 6).
-conn_baseline("src/engine/gen.rs", 1).
-conn_baseline("src/engine/lens.rs", 10).
 conn_baseline("src/engine/mod.rs", 2).
-conn_baseline("src/engine/path_reconcile.rs", 2).
-conn_baseline("src/engine/reconcile.rs", 4).
-conn_baseline("src/engine/repo.rs", 9).
 conn_baseline("src/engine/tick.rs", 7).
 conn_baseline("src/jobq/tests.rs", 5).
 conn_baseline("src/rels/analysis.rs", 7).

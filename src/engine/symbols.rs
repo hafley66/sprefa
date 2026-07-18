@@ -1,4 +1,5 @@
 use super::*;
+use crate::db::SqlVal;
 use crate::lower::txt_tbl;
 
 impl Engine {
@@ -30,11 +31,12 @@ impl Engine {
         let like = like_contains(query);
         let te = txt_tbl("type_entity");
         let mut rows: Vec<SymbolRow> = self.try_rows(
+            "type_entity",
             &format!(
                 "SELECT \"repo\", \"sym\", \"name\", \"kind\", \"parent\", \"file\", \"line\" \
                       FROM {te} WHERE \"name\" LIKE ?1 ESCAPE '\\'"
             ),
-            &[&like],
+            &[SqlVal::from(&like)],
             |r| {
                 Ok(SymbolRow {
                     repo: r.get::<_, String>(0)?,
@@ -56,12 +58,13 @@ impl Engine {
         let cd = txt_tbl("call_def");
         let cn = txt_tbl("call_name");
         let calls: Vec<SymbolRow> = self.try_rows(
+            "call_def",
             &format!(
                 "SELECT d.\"repo\", d.\"sym\", n.\"name\", d.\"kind\", d.\"file\", d.\"line\" \
                       FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" \
                       WHERE n.\"name\" LIKE ?1 ESCAPE '\\'"
             ),
-            &[&like],
+            &[SqlVal::from(&like)],
             |r| {
                 Ok(SymbolRow {
                     repo: r.get::<_, String>(0)?,
@@ -104,11 +107,12 @@ impl Engine {
     pub fn document_symbols(&self, path: &str) -> Result<Vec<SymbolRow>> {
         let te = txt_tbl("type_entity");
         Ok(self.try_rows(
+            "type_entity",
             &format!(
                 "SELECT \"repo\", \"sym\", \"name\", \"kind\", \"parent\", \"line\" \
                       FROM {te} WHERE \"file\" = ?1 ORDER BY \"line\""
             ),
-            &[&path],
+            &[SqlVal::from(path)],
             |r| {
                 Ok(SymbolRow {
                     repo: r.get::<_, String>(0)?,
@@ -163,8 +167,9 @@ impl Engine {
         let sfe = txt_tbl("scip_fn_edge");
         let participates = !self
             .try_rows(
+                "scip_fn_edge",
                 &format!("SELECT 1 FROM {sfe} WHERE \"caller\" = ?1 OR \"callee\" = ?1 LIMIT 1"),
-                &[&hit.symbol],
+                &[SqlVal::from(&hit.symbol)],
                 |r| r.get::<_, i64>(0),
             )
             .is_empty();
@@ -192,11 +197,12 @@ impl Engine {
         let cd = txt_tbl("call_def");
         let cn = txt_tbl("call_name");
         let candidates: Vec<(String, String, String, String, i64, i64)> = self.try_rows(
+            "call_def",
             &format!(
                 "SELECT d.\"repo\", d.\"sym\", d.\"kind\", d.\"file\", d.\"line\", d.\"end\" \
                       FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" WHERE n.\"name\" = ?1"
             ),
-            &[&text],
+            &[SqlVal::from(text)],
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,
@@ -257,9 +263,10 @@ impl Engine {
         let cd = txt_tbl("call_def");
         let cn = txt_tbl("call_name");
         self.try_rows(
+            "call_def",
             &format!("SELECT d.\"repo\", d.\"kind\", d.\"file\", d.\"line\", d.\"end\", n.\"name\" \
                       FROM {cd} d JOIN {cn} n ON n.\"sym\" = d.\"sym\" WHERE d.\"sym\" = ?1 LIMIT 1"),
-            &[&sym],
+            &[SqlVal::from(sym)],
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
                     r.get::<_, i64>(3)?, r.get::<_, i64>(4)?, r.get::<_, String>(5)?)),
         )
@@ -280,8 +287,9 @@ impl Engine {
     fn resolved_call_site_lines(&self, caller_sym: &str, callee_name: &str) -> Vec<u32> {
         let cs = txt_tbl("call_site");
         self.try_rows(
+            "call_site",
             &format!("SELECT \"line\" FROM {cs} WHERE \"caller\" = ?1 AND \"callee\" = ?2"),
-            &[&caller_sym, &callee_name],
+            &[SqlVal::from(caller_sym), SqlVal::from(callee_name)],
             |r| r.get::<_, i64>(0),
         )
         .into_iter()
@@ -292,8 +300,9 @@ impl Engine {
     fn resolved_incoming(&self, item: &HierarchyItem) -> Result<Vec<HierarchyCallEdge>> {
         let ce = txt_tbl("call_edge");
         let callers: Vec<String> = self.try_rows(
+            "call_edge",
             &format!("SELECT \"caller\" FROM {ce} WHERE \"callee\" = ?1"),
-            &[&item.sym],
+            &[SqlVal::from(&item.sym)],
             |r| r.get::<_, String>(0),
         );
         let mut out = Vec::new();
@@ -313,8 +322,9 @@ impl Engine {
     fn resolved_outgoing(&self, item: &HierarchyItem) -> Result<Vec<HierarchyCallEdge>> {
         let ce = txt_tbl("call_edge");
         let callees: Vec<String> = self.try_rows(
+            "call_edge",
             &format!("SELECT \"callee\" FROM {ce} WHERE \"caller\" = ?1"),
-            &[&item.sym],
+            &[SqlVal::from(&item.sym)],
             |r| r.get::<_, String>(0),
         );
         let mut out = Vec::new();
@@ -339,8 +349,9 @@ impl Engine {
     fn scip_call_site_lines(&self, sym: &str, file: &str) -> Vec<u32> {
         let so = txt_tbl("scip_occurrence");
         self.try_rows(
+            "scip_occurrence",
             &format!("SELECT \"line\" FROM {so} WHERE \"symbol\" = ?1 AND \"file\" = ?2 AND \"role\" != 'definition'"),
-            &[&sym, &file],
+            &[SqlVal::from(sym), SqlVal::from(file)],
             |r| r.get::<_, i64>(0),
         )
         .into_iter()
@@ -351,8 +362,9 @@ impl Engine {
     fn compiler_incoming(&self, item: &HierarchyItem) -> Result<Vec<HierarchyCallEdge>> {
         let sfe = txt_tbl("scip_fn_edge");
         let callers: Vec<String> = self.try_rows(
+            "scip_fn_edge",
             &format!("SELECT \"caller\" FROM {sfe} WHERE \"callee\" = ?1"),
-            &[&item.scip_symbol],
+            &[SqlVal::from(&item.scip_symbol)],
             |r| r.get::<_, String>(0),
         );
         let mut out = Vec::new();
@@ -383,8 +395,9 @@ impl Engine {
     fn compiler_outgoing(&self, item: &HierarchyItem) -> Result<Vec<HierarchyCallEdge>> {
         let sfe = txt_tbl("scip_fn_edge");
         let callees: Vec<String> = self.try_rows(
+            "scip_fn_edge",
             &format!("SELECT \"callee\" FROM {sfe} WHERE \"caller\" = ?1"),
-            &[&item.scip_symbol],
+            &[SqlVal::from(&item.scip_symbol)],
             |r| r.get::<_, String>(0),
         );
         let mut out = Vec::new();
@@ -447,15 +460,17 @@ impl Engine {
         let si = txt_tbl("scip_impl");
         let is_impl = !self
             .try_rows(
+                "scip_impl",
                 &format!("SELECT 1 FROM {si} WHERE \"impl\" = ?1 LIMIT 1"),
-                &[&hit.symbol],
+                &[SqlVal::from(&hit.symbol)],
                 |r| r.get::<_, i64>(0),
             )
             .is_empty();
         let is_iface = !self
             .try_rows(
+                "scip_impl",
                 &format!("SELECT 1 FROM {si} WHERE \"iface\" = ?1 LIMIT 1"),
-                &[&hit.symbol],
+                &[SqlVal::from(&hit.symbol)],
                 |r| r.get::<_, i64>(0),
             )
             .is_empty();
@@ -488,9 +503,10 @@ impl Engine {
         let path_repo = self.repo_for_path(path);
         let te = txt_tbl("type_entity");
         let candidates: Vec<(String, String, String, String, i64)> = self.try_rows(
+            "type_entity",
             &format!("SELECT \"repo\", \"sym\", \"kind\", \"file\", \"line\" FROM {te} \
                       WHERE \"name\" = ?1 AND \"kind\" IN ('struct', 'enum', 'trait', 'class', 'interface')"),
-            &[&text],
+            &[SqlVal::from(text)],
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
                     r.get::<_, String>(3)?, r.get::<_, i64>(4)?)),
         );
@@ -545,10 +561,11 @@ impl Engine {
         let tl = txt_tbl("type_link");
         let te = txt_tbl("type_entity");
         let dsts: Vec<String> = self.try_rows(
+            "type_link",
             &format!("SELECT tl.\"dst\" FROM {tl} tl JOIN {te} te ON te.\"sym\" = tl.\"src\" \
                       WHERE tl.\"src\" = ?1 \
                       AND (tl.\"kind\" = 'impl' OR (tl.\"kind\" = 'generic' AND te.\"kind\" IN ('interface', 'trait')))"),
-            &[&item.sym], |r| r.get::<_, String>(0),
+            &[SqlVal::from(&item.sym)], |r| r.get::<_, String>(0),
         );
         Ok(dsts
             .into_iter()
@@ -560,10 +577,11 @@ impl Engine {
         let tl = txt_tbl("type_link");
         let te = txt_tbl("type_entity");
         let srcs: Vec<String> = self.try_rows(
+            "type_link",
             &format!("SELECT tl.\"src\" FROM {tl} tl JOIN {te} te ON te.\"sym\" = tl.\"src\" \
                       WHERE tl.\"dst\" = ?1 \
                       AND (tl.\"kind\" = 'impl' OR (tl.\"kind\" = 'generic' AND te.\"kind\" IN ('interface', 'trait')))"),
-            &[&item.sym], |r| r.get::<_, String>(0),
+            &[SqlVal::from(&item.sym)], |r| r.get::<_, String>(0),
         );
         Ok(srcs
             .into_iter()
@@ -576,8 +594,9 @@ impl Engine {
     fn resolved_type_item(&self, sym: &str) -> Option<HierarchyItem> {
         let te = txt_tbl("type_entity");
         self.try_rows(
+            "type_entity",
             &format!("SELECT \"repo\", \"name\", \"kind\", \"file\", \"line\" FROM {te} WHERE \"sym\" = ?1 LIMIT 1"),
-            &[&sym],
+            &[SqlVal::from(sym)],
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
                     r.get::<_, String>(3)?, r.get::<_, i64>(4)?)),
         )
@@ -593,8 +612,9 @@ impl Engine {
     fn compiler_supertypes(&self, item: &HierarchyItem) -> Result<Vec<HierarchyItem>> {
         let si = txt_tbl("scip_impl");
         let ifaces: Vec<String> = self.try_rows(
+            "scip_impl",
             &format!("SELECT \"iface\" FROM {si} WHERE \"impl\" = ?1"),
-            &[&item.scip_symbol],
+            &[SqlVal::from(&item.scip_symbol)],
             |r| r.get::<_, String>(0),
         );
         Ok(ifaces
@@ -619,8 +639,9 @@ impl Engine {
     fn compiler_subtypes(&self, item: &HierarchyItem) -> Result<Vec<HierarchyItem>> {
         let si = txt_tbl("scip_impl");
         let impls: Vec<String> = self.try_rows(
+            "scip_impl",
             &format!("SELECT \"impl\" FROM {si} WHERE \"iface\" = ?1"),
-            &[&item.scip_symbol],
+            &[SqlVal::from(&item.scip_symbol)],
             |r| r.get::<_, String>(0),
         );
         Ok(impls
