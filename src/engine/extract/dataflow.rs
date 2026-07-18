@@ -18,7 +18,48 @@ impl Engine {
         if moved.is_empty() {
             return Ok(false);
         }
+        let rows = self.collect_dataflow_rows(&files)?;
+        let changed = self.write_dataflow_wholesale(&files, &rows)?;
+        // Persisted only after the writes land, so a failed refresh retries.
+        for (rev, digest) in &moved {
+            self.save_rel_digest(&extract_digest_key("dataflow", rev), digest)?;
+        }
+        Ok(changed)
+    }
 
+    /// Cold-start chunk write (`cold_stage.rs`): parse `files` (one byte-bounded
+    /// slice of the corpus) and APPEND their dataflow rows via `append_rel`
+    /// (`INSERT OR IGNORE`) — no wholesale delete, no digest save. dataflow has
+    /// no corpus-global resolver (node ids are `file:line:col`-derived and
+    /// self-contained), so a per-file slice emits exactly the rows it would in a
+    /// whole-corpus pass; the completion gate saves the family digest once every
+    /// slice has landed. See the plan's "Addendum 2026-07-18".
+    pub(crate) fn refresh_dataflow_rels_slice(&self, files: &[ExtractFile]) -> Result<()> {
+        if files.is_empty() {
+            return Ok(());
+        }
+        let rows = self.collect_dataflow_rows(files)?;
+        self.append_dataflow_rows(&rows)
+    }
+
+    /// Cold completion gate: save dataflow's per-rev `extract:` digest over the
+    /// whole corpus once every chunk slice has been appended, so the completion
+    /// tick's wholesale `refresh_dataflow_rels` sees the family unchanged and
+    /// SKIPS it (the rows are already written). The deferred-digest pattern from
+    /// the crash-window arc: the digest never lands before its rows.
+    pub(crate) fn save_dataflow_cold_digest(&self) -> Result<()> {
+        let files = self.extract_file_set()?;
+        for (rev, digest) in self.moved_extract_revs("dataflow", &files, false)? {
+            self.save_rel_digest(&extract_digest_key("dataflow", &rev), &digest)?;
+        }
+        Ok(())
+    }
+
+    /// Parse `files` and build every dataflow rel's row set (dedup + intern),
+    /// flushing the interned id strings to `_strings`. Shared by the wholesale
+    /// refresh and the cold-chunk slice append; the ONLY difference between them
+    /// is the write path (`write_dataflow_wholesale` vs `append_dataflow_rows`).
+    fn collect_dataflow_rows(&self, files: &[ExtractFile]) -> Result<DataflowRowSet> {
         let root = self.root.clone();
         // Read each file from its OWN repo root (same as type/call), so a config
         // repo's WORK content lifts too; reading everything from `self.root`
@@ -30,7 +71,7 @@ impl Engine {
         let facts: Vec<(String, String, String, Arc<typegraph::DataflowFacts>)> =
             cached_facts_profiled(
                 &self.df_facts_cache,
-                &files,
+                files,
                 &self.extract_files_parsed,
                 "dataflow",
                 |repo, path, rev| {
@@ -211,71 +252,144 @@ impl Engine {
         // the N+1 law applies to this intern just like any other.
         self.db.flush_syms(&mut sink)?;
 
-        let mut rows_changed = false;
+        Ok(DataflowRowSet {
+            node: node_rows,
+            node_repo: node_repo_rows,
+            edge: edge_rows,
+            loop_over: loop_rows,
+            alloc: alloc_rows,
+            nest: nest_rows,
+            param: param_rows,
+            arg: arg_rows,
+            field: field_rows,
+            lit: lit_rows,
+            node_rev: node_rev_rows,
+            node_repo_rev: node_repo_rev_rows,
+            arg_rev: arg_rev_rows,
+            field_rev: field_rev_rows,
+            lit_rev: lit_rev_rows,
+        })
+    }
 
+    /// Whole-corpus write: `refresh_rel` (delete + reinsert) for the raw rels and
+    /// `refresh_rel_for_revs` (rev-scoped delete + reinsert) for the salted twins.
+    fn write_dataflow_wholesale(
+        &self,
+        files: &[ExtractFile],
+        rows: &DataflowRowSet,
+    ) -> Result<bool> {
+        let mut rows_changed = false;
         rows_changed |= self.refresh_rel(
             "df_node",
             &["id", "kind", "var", "fn", "file", "line"],
-            &node_rows,
+            &rows.node,
         )?;
-        rows_changed |= self.refresh_rel("df_node_repo", &["id", "repo"], &node_repo_rows)?;
-        rows_changed |= self.refresh_rel("df_edge", &["from", "to"], &edge_rows)?;
+        rows_changed |= self.refresh_rel("df_node_repo", &["id", "repo"], &rows.node_repo)?;
+        rows_changed |= self.refresh_rel("df_edge", &["from", "to"], &rows.edge)?;
         rows_changed |= self.refresh_rel(
             "loop_over",
             &["file", "start", "end", "var", "collection", "fn"],
-            &loop_rows,
+            &rows.loop_over,
         )?;
-        rows_changed |= self.refresh_rel("allocates", &["fn"], &alloc_rows)?;
+        rows_changed |= self.refresh_rel("allocates", &["fn"], &rows.alloc)?;
         rows_changed |= self.refresh_rel(
             "nest",
             &["call_id", "loop_id", "depth", "collection"],
-            &nest_rows,
+            &rows.nest,
         )?;
-        rows_changed |= self.refresh_rel("df_param", &["id", "pos"], &param_rows)?;
-        rows_changed |= self.refresh_rel("df_arg", &["call", "pos", "arg"], &arg_rows)?;
-        rows_changed |= self.refresh_rel("df_field", &["id", "field", "value"], &field_rows)?;
-        rows_changed |= self.refresh_rel("df_lit", &["id", "text", "kind"], &lit_rows)?;
+        rows_changed |= self.refresh_rel("df_param", &["id", "pos"], &rows.param)?;
+        rows_changed |= self.refresh_rel("df_arg", &["call", "pos", "arg"], &rows.arg)?;
+        rows_changed |= self.refresh_rel("df_field", &["id", "field", "value"], &rows.field)?;
+        rows_changed |= self.refresh_rel("df_lit", &["id", "text", "kind"], &rows.lit)?;
         // Rev-carrying twins: same delete scope as type/call — wipe every corpus
         // rev and reinsert the whole-corpus salted rows (the emit above is
         // whole-corpus; a rev absent from the corpus is D5.5's retraction sweep,
         // not this path). Legacy df rels above stay raw-id, no rebuild needed
         // (the salt is not cleanly reversible in SQL and the raw rows are in hand).
-        let all_revs = Self::corpus_revs(&files);
+        let all_revs = Self::corpus_revs(files);
         let all_rev_refs: Vec<&str> = all_revs.iter().map(|s| s.as_str()).collect();
         rows_changed |= self.refresh_rel_for_revs(
             "df_node_rev",
             &["id", "kind", "var", "fn", "file", "line", "rev"],
-            &node_rev_rows,
+            &rows.node_rev,
             &all_rev_refs,
         )?;
         rows_changed |= self.refresh_rel_for_revs(
             "df_node_repo_rev",
             &["id", "repo", "rev"],
-            &node_repo_rev_rows,
+            &rows.node_repo_rev,
             &all_rev_refs,
         )?;
         rows_changed |= self.refresh_rel_for_revs(
             "df_arg_rev",
             &["call", "pos", "arg", "rev"],
-            &arg_rev_rows,
+            &rows.arg_rev,
             &all_rev_refs,
         )?;
         rows_changed |= self.refresh_rel_for_revs(
             "df_field_rev",
             &["id", "field", "value", "rev"],
-            &field_rev_rows,
+            &rows.field_rev,
             &all_rev_refs,
         )?;
         rows_changed |= self.refresh_rel_for_revs(
             "df_lit_rev",
             &["id", "text", "kind", "rev"],
-            &lit_rev_rows,
+            &rows.lit_rev,
             &all_rev_refs,
         )?;
-        // Persisted only after the writes land, so a failed refresh retries.
-        for (rev, d) in &moved {
-            self.save_rel_digest(&extract_digest_key("dataflow", rev), d)?;
-        }
         Ok(rows_changed)
     }
+
+    /// Cold-chunk write: `append_rel` (`INSERT OR IGNORE`, no delete) for every
+    /// rel, raw and salted twin alike. The rel starts empty at cold start and the
+    /// slices are disjoint by file, so an append is equivalent to the wholesale
+    /// reinsert; `INSERT OR IGNORE` covers a crash-resumed slice and the rare
+    /// content-addressed id shared across two slices.
+    fn append_dataflow_rows(&self, rows: &DataflowRowSet) -> Result<()> {
+        self.append_rel("df_node", &["id", "kind", "var", "fn", "file", "line"], &rows.node)?;
+        self.append_rel("df_node_repo", &["id", "repo"], &rows.node_repo)?;
+        self.append_rel("df_edge", &["from", "to"], &rows.edge)?;
+        self.append_rel(
+            "loop_over",
+            &["file", "start", "end", "var", "collection", "fn"],
+            &rows.loop_over,
+        )?;
+        self.append_rel("allocates", &["fn"], &rows.alloc)?;
+        self.append_rel("nest", &["call_id", "loop_id", "depth", "collection"], &rows.nest)?;
+        self.append_rel("df_param", &["id", "pos"], &rows.param)?;
+        self.append_rel("df_arg", &["call", "pos", "arg"], &rows.arg)?;
+        self.append_rel("df_field", &["id", "field", "value"], &rows.field)?;
+        self.append_rel("df_lit", &["id", "text", "kind"], &rows.lit)?;
+        self.append_rel(
+            "df_node_rev",
+            &["id", "kind", "var", "fn", "file", "line", "rev"],
+            &rows.node_rev,
+        )?;
+        self.append_rel("df_node_repo_rev", &["id", "repo", "rev"], &rows.node_repo_rev)?;
+        self.append_rel("df_arg_rev", &["call", "pos", "arg", "rev"], &rows.arg_rev)?;
+        self.append_rel("df_field_rev", &["id", "field", "value", "rev"], &rows.field_rev)?;
+        self.append_rel("df_lit_rev", &["id", "text", "kind", "rev"], &rows.lit_rev)?;
+        Ok(())
+    }
+}
+
+/// Every dataflow rel's built rows from one `collect_dataflow_rows` pass, split
+/// so the wholesale and cold-chunk write paths share the parse+emit exactly.
+struct DataflowRowSet {
+    node: Vec<Vec<Value>>,
+    node_repo: Vec<Vec<Value>>,
+    edge: Vec<Vec<Value>>,
+    loop_over: Vec<Vec<Value>>,
+    alloc: Vec<Vec<Value>>,
+    nest: Vec<Vec<Value>>,
+    param: Vec<Vec<Value>>,
+    arg: Vec<Vec<Value>>,
+    field: Vec<Vec<Value>>,
+    lit: Vec<Vec<Value>>,
+    node_rev: Vec<Vec<Value>>,
+    node_repo_rev: Vec<Vec<Value>>,
+    arg_rev: Vec<Vec<Value>>,
+    field_rev: Vec<Vec<Value>>,
+    lit_rev: Vec<Vec<Value>>,
 }

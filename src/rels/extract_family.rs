@@ -304,6 +304,13 @@ impl ExtractFamily for DataflowFamily {
         eng.refresh_dataflow_rels().map(RefreshOutcome::from_legacy)
     }
     fn used(&self, prog: &Program) -> bool { engine::dataflow_rels_used(prog) }
+    // Cold-start chunking (plan Addendum 2026-07-18): dataflow is the measured
+    // hog (4.4s release: emit 2.3s + wholesale write 2.1s over 115k rows) and has
+    // NO corpus-global resolver barrier — node ids are `file:line:col`-derived, so
+    // a byte-bounded file slice emits exactly its own rows. Its cold node splits
+    // into `cold_chunk_slices()` slices, each an `refresh_dataflow_rels_slice`
+    // append; the family digest is saved once at the completion gate.
+    fn shardable_cold(&self) -> bool { true }
 }
 
 impl ExtractFamily for DocFamily {

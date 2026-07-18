@@ -46,11 +46,22 @@ CREATE TABLE IF NOT EXISTS _cold_node(
   PRIMARY KEY (family, shard)
 ) WITHOUT ROWID;";
 
-/// D2 target files per shard; a family with more files splits into
-/// `ceil(files / this)` shards, capped at `COLD_MAX_SHARDS`. Overridable for
-/// tests via `DL_COLD_SHARD_FILES`.
-const COLD_TARGET_FILES_PER_SHARD: i64 = 200;
-const COLD_MAX_SHARDS: u32 = 16;
+/// MB-bounded chunking (plan Addendum 2026-07-18). A shardable (barrier-free)
+/// family partitions the corpus into contiguous byte-bounded runs of the
+/// deterministically-ordered `extract_file_set()`: a chunk closes when its
+/// summed file bytes reach `COLD_CHUNK_TARGET_BYTES` OR it holds
+/// `COLD_CHUNK_MAX_FILES` files (the many-tiny-files cap). Bytes is the primary
+/// axis — it tracks parse + emit + row-count cost (measured ~82 ms/MB parse,
+/// dataflow ~1.3 s/MB total, release). A single file over the target is its own
+/// chunk (a parse cannot split mid-file). Overridable for tests via
+/// `DL_COLD_CHUNK_BYTES` / `DL_COLD_CHUNK_FILES`.
+const COLD_CHUNK_TARGET_BYTES: i64 = 512 * 1024;
+const COLD_CHUNK_MAX_FILES: usize = 64;
+
+/// The scip pre-extract's own cold node (coordinator item 2): the SCIP index
+/// load feeds the call/type resolution ladder, so it drains FIRST (highest
+/// priority) and never hides inside another family's tick.
+const COLD_SCIP_FAMILY: &str = "scip-index";
 
 /// One seeded `(family, shard)` node the tick hands back to the caller (the
 /// daemon shell) to enqueue as a `ColdExtract` job. `priority` is the canonical
@@ -68,19 +79,64 @@ impl Engine {
         self.db.execute_batch(COLD_SCHEMA)
     }
 
-    /// D2 shard count for a family over `file_count` files. Wholesale (1) unless
-    /// the family opts into sharding; no family does this arc (see module doc).
-    fn cold_shard_count(&self, shardable: bool, file_count: i64) -> u32 {
-        if !shardable || file_count <= 0 {
-            return 1;
-        }
-        let target = std::env::var("DL_COLD_SHARD_FILES")
+    /// Deterministic closed partition of the corpus file set into contiguous
+    /// byte-bounded chunks (see `COLD_CHUNK_TARGET_BYTES`). The order is
+    /// `extract_file_set()`'s canonical `ORDER BY repo, path, rev`, so chunk `k`
+    /// is the same slice at seed and at every crash resume (the corpus is frozen
+    /// during cold start). A wholesale family maps to one chunk = the whole set.
+    fn cold_chunk_slices(&self) -> Result<Vec<Vec<crate::engine::extract::ExtractFile>>> {
+        let target = std::env::var("DL_COLD_CHUNK_BYTES")
             .ok()
             .and_then(|s| s.parse::<i64>().ok())
             .filter(|n| *n > 0)
-            .unwrap_or(COLD_TARGET_FILES_PER_SHARD);
-        let n = ((file_count + target - 1) / target).max(1);
-        (n as u32).min(COLD_MAX_SHARDS)
+            .unwrap_or(COLD_CHUNK_TARGET_BYTES);
+        let cap = std::env::var("DL_COLD_CHUNK_FILES")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|n| *n > 0)
+            .unwrap_or(COLD_CHUNK_MAX_FILES);
+        let files = self.extract_file_set()?;
+        // Per-file bytes from `_file.size`, keyed by (repo, path, rev).
+        let sizes: std::collections::HashMap<(String, String, String), i64> = {
+            let conn = self.db.conn();
+            let mut stmt = conn.prepare("SELECT repo, path, rev, size FROM _file")?;
+            let found = stmt.query_map([], |r| {
+                Ok((
+                    (r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?),
+                    r.get::<_, i64>(3)?,
+                ))
+            })?;
+            found.filter_map(|x| x.ok()).collect()
+        };
+        let mut slices: Vec<Vec<crate::engine::extract::ExtractFile>> = Vec::new();
+        let mut cur: Vec<crate::engine::extract::ExtractFile> = Vec::new();
+        let mut cur_bytes: i64 = 0;
+        for f in files {
+            let bytes = sizes
+                .get(&(f.0.clone(), f.1.clone(), f.2.clone()))
+                .copied()
+                .unwrap_or(0);
+            cur.push(f);
+            cur_bytes += bytes.max(0);
+            if cur_bytes >= target || cur.len() >= cap {
+                slices.push(std::mem::take(&mut cur));
+                cur_bytes = 0;
+            }
+        }
+        if !cur.is_empty() {
+            slices.push(cur);
+        }
+        Ok(slices)
+    }
+
+    /// Chunk count for a family: the byte-partition size for a shardable
+    /// (barrier-free) family, else 1 (wholesale single node).
+    fn cold_shard_count(&self, shardable: bool) -> Result<u32> {
+        if !shardable {
+            return Ok(1);
+        }
+        let n = self.cold_chunk_slices()?.len().max(1);
+        Ok(n as u32)
     }
 
     /// The used extract families in canonical (inline-tick) order — the cold-node
@@ -148,30 +204,52 @@ impl Engine {
         Ok(pending > 0)
     }
 
-    /// Seed one `_cold_node` row per used family (one batched insert — N+1 law),
-    /// returning the `ColdJob`s for the caller to enqueue. Idempotent: the PK
+    /// Does the program use any `pre_extract` RelKind (scip)? Gates the
+    /// `scip-index` cold node.
+    fn cold_pre_extract_used(&self, prog: &Program) -> bool {
+        crate::rels::rel_kinds()
+            .iter()
+            .any(|k| k.pre_extract() && k.used(prog))
+    }
+
+    /// Priority for a family at canonical index `idx` of `count` used families:
+    /// module (idx 0) highest, spine-adjacent last. The `scip-index` node sits
+    /// above every family (`count + 1`) so it drains first.
+    fn cold_family_priority(&self, idx: usize, count: usize) -> i64 {
+        (count - idx) as i64
+    }
+
+    /// Seed the cold-node set (one batched insert — N+1 law): one `scip-index`
+    /// node (if scip is used), one node per WHOLESALE family, and one node per
+    /// CHUNK of each shardable (barrier-free) family. Idempotent: PK
     /// `(family, shard)` + `INSERT OR IGNORE` make a re-seed a no-op.
     pub(crate) fn seed_cold_nodes(&self, prog: &Program) -> Result<Vec<ColdJob>> {
         self.ensure_cold_schema()?;
         let families = self.cold_families(prog);
         let count = families.len();
-        let file_count = self.cold_corpus_file_count();
         let mut rows: Vec<Vec<Value>> = Vec::new();
         let mut jobs: Vec<ColdJob> = Vec::new();
+        let mut push = |family: &str, shard: u32, n_shards: u32, priority: i64,
+                        rows: &mut Vec<Vec<Value>>, jobs: &mut Vec<ColdJob>| {
+            rows.push(vec![
+                Value::Text(family.to_string()),
+                Value::Int(shard as i64),
+                Value::Int(n_shards as i64),
+                Value::Text("pending".to_string()),
+                Value::Null,
+                Value::Null,
+            ]);
+            jobs.push(ColdJob { family: family.to_string(), shard, priority });
+        };
+        // scip first (feeds the call/type resolution ladder), above every family.
+        if self.cold_pre_extract_used(prog) {
+            push(COLD_SCIP_FAMILY, 0, 1, (count + 1) as i64, &mut rows, &mut jobs);
+        }
         for (idx, fam) in families.iter().enumerate() {
-            let n_shards = self.cold_shard_count(fam.shardable_cold(), file_count);
-            // Priority = reverse canonical rank so module (idx 0) claims first.
-            let priority = (count - idx) as i64;
+            let n_shards = self.cold_shard_count(fam.shardable_cold())?;
+            let priority = self.cold_family_priority(idx, count);
             for shard in 0..n_shards {
-                rows.push(vec![
-                    Value::Text(fam.name().to_string()),
-                    Value::Int(shard as i64),
-                    Value::Int(n_shards as i64),
-                    Value::Text("pending".to_string()),
-                    Value::Null,
-                    Value::Null,
-                ]);
-                jobs.push(ColdJob { family: fam.name().to_string(), shard, priority });
+                push(fam.name(), shard, n_shards, priority, &mut rows, &mut jobs);
             }
         }
         self.db.insert_rows(
@@ -201,12 +279,16 @@ impl Engine {
         })?;
         for row in found {
             let (family, shard) = row?;
-            // A node whose family is no longer used (program shrank mid-start)
-            // gets the lowest priority; it will be swept at declare time.
-            let priority = rank
-                .get(family.as_str())
-                .map(|idx| (count - idx) as i64)
-                .unwrap_or(0);
+            // scip stays above every family (mirrors seed); a node whose family is
+            // no longer used (program shrank mid-start) gets the lowest priority;
+            // it will be swept at declare time.
+            let priority = if family == COLD_SCIP_FAMILY {
+                (count + 1) as i64
+            } else {
+                rank.get(family.as_str())
+                    .map(|idx| self.cold_family_priority(*idx, count))
+                    .unwrap_or(0)
+            };
             jobs.push(ColdJob { family, shard, priority });
         }
         jobs.sort_by(|a, b| b.priority.cmp(&a.priority));
@@ -225,45 +307,90 @@ impl Engine {
         Ok(total > 0 && pending == 0)
     }
 
-    /// Run ONE cold node: dispatch to the family's wholesale refresh, then mark
-    /// the row `done`. Runs under the engine mutex like any tick. Idempotent — an
-    /// already-`done` node is a no-op; a re-run after a crash re-does the family's
-    /// wholesale wipe+repopulate. The mark runs only AFTER `refresh` commits, so a
-    /// `done` node always has fully-written rows; a crash before the mark leaves
-    /// the node `pending` for an idempotent redo.
-    pub fn run_cold_node(&mut self, prog: &Program, family: &str, _shard: u32) -> Result<()> {
+    /// Run ONE cold node `(family, shard)`, then mark exactly that row `done`.
+    /// Runs under the engine mutex like any tick. Idempotent — an already-`done`
+    /// node is a no-op; a re-run after a crash re-does its work (wholesale refresh
+    /// = wipe+repopulate; chunk append = `INSERT OR IGNORE`). The mark runs only
+    /// AFTER the write commits, so a `done` node always has fully-written rows; a
+    /// crash before the mark leaves the node `pending` for an idempotent redo.
+    ///
+    /// Dispatch:
+    /// - `scip-index` → the `pre_extract` RelKind refresh (the SCIP index load).
+    /// - a shardable (barrier-free) family → `refresh_<family>_slice(chunk)` over
+    ///   the `shard`-th byte-bounded slice, an `INSERT OR IGNORE` append; when the
+    ///   family's LAST shard lands, its `extract:` digest is saved so the
+    ///   completion tick skips the already-written family.
+    /// - else a wholesale family → `fam.refresh` (full corpus, saves its own digest).
+    pub fn run_cold_node(&mut self, prog: &Program, family: &str, shard: u32) -> Result<()> {
         self.ensure_cold_schema()?;
-        let done: i64 = self
+        let already_done: i64 = self
             .db
             .conn()
             .query_row(
-                "SELECT COUNT(*) FROM _cold_node WHERE family=?1 AND state='done'",
-                [family],
+                "SELECT COUNT(*) FROM _cold_node WHERE family=?1 AND shard=?2 AND state='done'",
+                rusqlite::params![family, shard as i64],
                 |r| r.get(0),
             )
             .unwrap_or(0);
-        if done > 0 {
+        if already_done > 0 {
             return Ok(());
         }
-        let Some(fam) = crate::rels::extract_families_pre_node()
-            .iter()
-            .copied()
-            .find(|fam| fam.name() == family)
-        else {
-            bail!("cold-start: unknown extract family '{family}'");
-        };
         self.db.tick_begin();
         self.db.clear_write_ledger();
-        // The scip pre-extract already loaded on the seed tick; re-prime the
-        // per-file analysis caches (idempotent — cached) so a type/call node
-        // parses through the same bundle the inline path used.
-        super::extract::prime_analysis_bundles(self, prog)?;
-        fam.refresh(self)?;
+        if family == COLD_SCIP_FAMILY {
+            // The SCIP index load (and any other pre_extract RelKind). Its rows
+            // feed the call/type resolution the later family nodes run.
+            for k in crate::rels::rel_kinds() {
+                if k.pre_extract() && k.used(prog) {
+                    k.refresh(self)?;
+                }
+            }
+        } else {
+            let Some(fam) = crate::rels::extract_families_pre_node()
+                .iter()
+                .copied()
+                .find(|fam| fam.name() == family)
+            else {
+                bail!("cold-start: unknown extract family '{family}'");
+            };
+            // Re-prime the per-file analysis caches (idempotent — cached) so a
+            // type/call node parses through the same bundle the inline path used.
+            super::extract::prime_analysis_bundles(self, prog)?;
+            if fam.shardable_cold() {
+                let slices = self.cold_chunk_slices()?;
+                let slice = slices.get(shard as usize).cloned().unwrap_or_default();
+                match family {
+                    "dataflow-rels" => self.refresh_dataflow_rels_slice(&slice)?,
+                    other => bail!("cold-chunk: family '{other}' is shardable but has no slice refresh"),
+                }
+            } else {
+                fam.refresh(self)?;
+            }
+        }
         let now = super::now_secs();
         self.db.conn().execute(
-            "UPDATE _cold_node SET state='done', done_at=?2 WHERE family=?1",
-            rusqlite::params![family, now],
+            "UPDATE _cold_node SET state='done', done_at=?3 WHERE family=?1 AND shard=?2",
+            rusqlite::params![family, shard as i64, now],
         )?;
+        // Completion gate for a chunked family: once every shard is done, save its
+        // `extract:` digest so the completion tick's wholesale refresh skips it.
+        if family != COLD_SCIP_FAMILY {
+            let pending: i64 = self
+                .db
+                .conn()
+                .query_row(
+                    "SELECT COUNT(*) FROM _cold_node WHERE family=?1 AND state != 'done'",
+                    [family],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            if pending == 0 {
+                match family {
+                    "dataflow-rels" => self.save_dataflow_cold_digest()?,
+                    _ => {}
+                }
+            }
+        }
         self.last_n1 = self.db.tick_end();
         Ok(())
     }
@@ -284,8 +411,12 @@ impl Engine {
         if exists == 0 {
             return Ok(());
         }
-        let used: std::collections::HashSet<&'static str> =
+        let mut used: std::collections::HashSet<&'static str> =
             self.cold_families(prog).iter().map(|fam| fam.name()).collect();
+        // The scip-index node is not an extract family but is a valid cold node.
+        if self.cold_pre_extract_used(prog) {
+            used.insert(COLD_SCIP_FAMILY);
+        }
         let stored: Vec<String> = {
             let conn = self.db.conn();
             let mut stmt = conn.prepare("SELECT DISTINCT family FROM _cold_node")?;

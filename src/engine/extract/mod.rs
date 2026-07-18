@@ -37,7 +37,7 @@ mod text;
 mod type_rels;
 
 /// One extraction-corpus row: (repo, path, rev, content hash) from `_file`.
-type ExtractFile = (String, String, String, String);
+pub(crate) type ExtractFile = (String, String, String, String);
 
 /// Per-file fact cache for one extractor family (perf gap A): (repo, path,
 /// content hash) -> (derived repo id, extracted facts). See the field docs on
@@ -846,7 +846,7 @@ impl Engine {
     /// per-file fact cache content-keyed (perf gap A). The four plain-JS
     /// extensions ride `TsTypes` alongside `.ts`/`.tsx` (Win H); `.go` rides
     /// `GoTypes`.
-    fn extract_file_set(&self) -> Result<Vec<ExtractFile>> {
+    pub(crate) fn extract_file_set(&self) -> Result<Vec<ExtractFile>> {
         let mut files: Vec<ExtractFile> = Vec::new();
         let mut sel = self.db.conn().prepare(
             "SELECT repo, path, rev, hash FROM _file WHERE path LIKE '%.rs' OR path LIKE '%.kt' OR path LIKE '%.kts' \

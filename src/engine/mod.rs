@@ -26,7 +26,7 @@ mod declare;
 #[cfg(test)]
 mod deltaflow;
 mod derive;
-mod extract;
+pub(crate) mod extract;
 pub(crate) mod family;
 mod gen;
 #[cfg(test)]
@@ -1474,6 +1474,27 @@ impl Engine {
         }
         let _ = n;
         Ok(true)
+    }
+
+    /// Cold-chunk append: encode `rows` exactly as `refresh_rel` would (interned
+    /// columns re-symmed) and `INSERT OR IGNORE` them into `rel` WITHOUT the
+    /// wholesale `DELETE` and WITHOUT saving a content digest. The append is the
+    /// per-file-slice write path for the barrier-free extraction families under
+    /// cold-start chunking (`cold_stage.rs`): each chunk contributes its slice's
+    /// rows to an initially-empty rel; `INSERT OR IGNORE` makes a re-run of a
+    /// crash-interrupted chunk idempotent and dedups the rare row a
+    /// content-addressed id shares across two slices. The family's `extract:`
+    /// digest is saved once at the completion gate, not here, so the completion
+    /// tick's wholesale refresh skips the already-appended family.
+    pub(crate) fn append_rel(&self, rel: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<()> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let encoded = self.encode_rel_rows(rel, cols, rows)?;
+        self.db
+            .insert_rows(&crate::lower::tbl(rel), cols, &encoded)
+            .with_context(|| format!("append relation {rel}"))?;
+        Ok(())
     }
 }
 

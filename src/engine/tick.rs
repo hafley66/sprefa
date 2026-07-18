@@ -531,40 +531,43 @@ impl Engine {
         if any_extract {
             crate::activity::set(crate::activity::Phase::ParseExtract, "extract");
         }
-        // Pre-extract RelKinds (scip): the index load is an INPUT to the
-        // extract families below (the type/call resolvers read `scip_ref`),
-        // so it must land first — otherwise a fresh db's first tick extracts
-        // index-blind and only heals on tick 2 via the digest fold.
-        for k in crate::rels::rel_kinds() {
-            if k.pre_extract() && k.used(prog) && k.refresh(self)? && !(self.poll_loop && k.bookkeeping()) {
-                changed = true;
-                for r in k.rels() { changed_source_rels.insert(r.to_string()); }
-            }
-        }
-        // Type/call/dataflow share a parsed representation in language front
-        // ends that implement `extract_bundle` (currently Rust). Prime their
-        // existing fact caches once before the independent family refreshers;
-        // those refreshers retain ownership of digests, resolution, and rows.
-        super::extract::prime_analysis_bundles(self, prog)?;
         // Cold-start staging (daemon poll loop only, D1): on a blank slate defer
-        // the extract-family fan-out + derived rebuild onto the durable queue —
-        // one `ColdExtract` job per used family — instead of running every family
-        // over the whole corpus in this one lock-held tick. Reconcile + scip +
-        // prime (the family INPUTS) already ran inline above; each family node
-        // then runs its wholesale refresh in its own budget-throttled tick, and
-        // the completion tick does the single blank-slate derived rebuild. A
-        // resume tick (`kill -9` mid-start) re-enqueues only the still-pending
-        // nodes. See `engine/cold_stage.rs`.
-        // Only the daemon poll loop stages (D1); a one-shot `--no-daemon` tick
-        // keeps the inline cold path and never touches `_cold_node`.
-        let cold_staged: Vec<(String, u32, i64)> = if !self.poll_loop {
-            Vec::new()
-        } else if self.cold_start_should_seed(prog)? {
+        // the extract-family fan-out + derived rebuild onto the durable queue
+        // instead of running every family over the whole corpus in this one
+        // lock-held tick. Under MB-chunking (plan Addendum 2026-07-18) the SCIP
+        // pre-extract and the analysis prime also move OFF this tick: scip is its
+        // own `scip-index` node (drains first, feeds the resolution ladder) and
+        // each family node primes its own caches, so the seed/resume tick stays
+        // short. A resume tick (`kill -9` mid-start) re-enqueues only the still-
+        // pending nodes. See `engine/cold_stage.rs`.
+        let cold_should_seed = self.cold_start_should_seed(prog)?;
+        let cold_resume =
+            !cold_should_seed && self.poll_loop && self.cold_start_in_progress()?;
+        let cold_staging_active = cold_should_seed || cold_resume;
+        // Pre-extract RelKinds (scip): the index load is an INPUT to the extract
+        // families below (the type/call resolvers read `scip_ref`), so it must
+        // land first — otherwise a fresh db's first tick extracts index-blind and
+        // only heals on tick 2 via the digest fold. When cold-staging, scip is
+        // deferred to its own node and prime to the family nodes.
+        if !cold_staging_active {
+            for k in crate::rels::rel_kinds() {
+                if k.pre_extract() && k.used(prog) && k.refresh(self)? && !(self.poll_loop && k.bookkeeping()) {
+                    changed = true;
+                    for r in k.rels() { changed_source_rels.insert(r.to_string()); }
+                }
+            }
+            // Type/call/dataflow share a parsed representation in language front
+            // ends that implement `extract_bundle` (currently Rust). Prime their
+            // existing fact caches once before the independent family refreshers;
+            // those refreshers retain ownership of digests, resolution, and rows.
+            super::extract::prime_analysis_bundles(self, prog)?;
+        }
+        let cold_staged: Vec<(String, u32, i64)> = if cold_should_seed {
             self.seed_cold_nodes(prog)?
                 .into_iter()
                 .map(|j| (j.family, j.shard, j.priority))
                 .collect()
-        } else if self.cold_start_in_progress()? {
+        } else if cold_resume {
             self.pending_cold_jobs(prog)?
                 .into_iter()
                 .map(|j| (j.family, j.shard, j.priority))
