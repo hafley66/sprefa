@@ -900,6 +900,7 @@ Do not hand-edit between the markers.
 | [`banned-word-guard.dl`](examples/banned-word-guard.dl) | Flag a banned word in the agent's OWN output — turn text OR a plan-tool body — |
 | [`builtin-rels.dl`](examples/builtin-rels.dl) | builtin-rels.dl — render the engine's self-describing `rel_catalog` into the |
 | [`call-seams.dl`](examples/call-seams.dl) | Call-seam finder: where can a big file be cut with the LEAST call traffic |
+| [`callable-coverage.dl`](examples/callable-coverage.dl) | callable-coverage: a self-verifying rail for the per-language callable |
 | [`callgraph-ast.dl`](examples/callgraph-ast.dl) | Call graph of dl's own source, this time via tree-sitter AST queries |
 | [`callgraph-c.dl`](examples/callgraph-c.dl) | Resolved call graph for C, e.g. the Linux kernel. Same shape as |
 | [`callgraph-resolved.dl`](examples/callgraph-resolved.dl) | Resolved call graph: A calls B only when a bare call B(...) appears INSIDE A's |
@@ -917,6 +918,7 @@ Do not hand-edit between the markers.
 | [`debug_type.dl`](examples/debug_type.dl) | debug_type.dl — check what's in type_edge and type_entity |
 | [`debug_type_link.dl`](examples/debug_type_link.dl) | debug_type_link.dl — inspect type_link content |
 | [`doc-coverage.dl`](examples/doc-coverage.dl) | doc-coverage.dl — the "undocumented API" rail, built on the doc spine. A |
+| [`doc-marks.dl`](examples/doc-marks.dl) | doc-marks.dl — marker-driven doc routing from agent/user chat. |
 | [`dup-collapse.dl`](examples/dup-collapse.dl) | dup-collapse.dl — RECOMMENDER, bootstrapped from measured tuples #1 and #2. |
 | [`endpoint-flows.dl`](examples/endpoint-flows.dl) | endpoint-flows.dl — "which HTTP endpoints is this function involved in?" |
 | [`experiment-auto-arch.dl`](examples/experiment-auto-arch.dl) | experiment-auto-arch.dl — test graph-topology zonings against manual ARCH markers. |

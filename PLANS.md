@@ -26,7 +26,19 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `decision` plans/2026-07-10-change-cost-friction-inventory.md:152 — item 5 — a resolution_source column (values scip|syntactic|alias|narrowed) on call_edge/type_link (rev twins included), plus a public eng.ensure_families(&[...])
 - `decision` plans/2026-07-11-codex-feedback-queue.md:122 — CLI flag taxonomy — query/mutate/effects axes
 - `decision` plans/2026-07-11-scip-atlas.md:147 — coordinate policy — no new line-keyed joins; byte spans + edge projection; migrate call_site/df joins when touched
+- `decision` plans/2026-07-15-family-derive-reactive-engine.md:123 — decide whether Ctx::unique_def takes the full resolve signature or splits into occ/name/alias hops mirroring refresh_call_rels:200
+- `decision` plans/2026-07-15-family-derive-reactive-engine.md:163 — sequence the alias gate (patch the current memo, slices 1-4) versus hosting call on the engine (delete the bug class). Hosting is more code before payoff but removes the gate entirely
 - `decision` plans/2026-07-15-structural-parsing-coverage.md:107 — whether to add a `doc_inline` rel for link/image URL+text separation, or keep overloaded in `doc_node`
+- `decision` plans/2026-07-16-arch-doc-saga.md:437 — arch-doc format — markdown + markers (rec) vs .dl facts vs fully-generated doc
+- `decision` plans/2026-07-16-arch-doc-saga.md:439 — arch node identity — pinned @arch + slug fallback (rec) vs slug-only vs pinned-only
+- `decision` plans/2026-07-16-arch-doc-saga.md:441 — arch tree source — id slash-path surgery (rec) vs doc_node heading nesting
+- `decision` plans/2026-07-16-arch-doc-saga.md:444 — arch marker grammar — one @arch token both sides (rec) vs separate @node decl token vs JSON-only
+- `decision` plans/2026-07-16-arch-doc-saga.md:447 — arch diag severities — seed/unfulfilled = info (rec) vs hint vs warn; per-node gate escalation deferred
+- `decision` plans/2026-07-16-arch-doc-saga.md:449 — arch doc-set declaration — importer-headed arch_doc contract rel (rec) vs hardcoded glob
+- `decision` plans/2026-07-16-arch-doc-saga.md:453 — direction-2 stubs — unplaced-seeds zone + opt-in draft file (rec) vs gen auto-insert into the hand doc
+- `decision` plans/2026-07-16-arch-doc-saga.md:456 — memo-spill depth — M1+M2+M3 (rec) vs stop at M1 vs stop at M2
+- `decision` plans/2026-07-16-arch-doc-saga.md:459 — doc-internal xref marks — every doc-file @arch mark is a decl in v1 (rec); form="xref" variant deferred
+- `decision` plans/2026-07-18-db-seam-migration.md:463 — the pre-existing Storage trait (src/storage.rs) predates the struct ruling; collapse it into Db's inherent API or keep it for CallStore — decided outside this arc
 - `docs` plans/2026-07-10-change-cost-friction-inventory.md:151 — item 6 — a generated per-language coverage table (which node kinds each TypeLang lift emits, tested counts on a fixture) in docs/reference
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:105 — match() trailing positional is a match ID not captured text — rename convention to match_id in shipped examples, show named-capture form in the op quickref
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:106 — comment_node.text strips comment tokens — state it in the relations table row, not only the buried authoring bullet
@@ -44,6 +56,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `docs` plans/2026-07-11-book-toc.md:83 — book restructure per this TOC, Part III (flow) first
 - `docs` plans/2026-07-11-docs-and-dogfood-audit.md:20 — CHANGELOG drift rail — commit window vs entries cross-check
 - `docs` plans/2026-07-11-docs-and-dogfood-audit.md:28 — book/tutorial refresh for sym/file_lines/--max-wall/semi-naive
+- `docs` plans/2026-07-18-db-seam-migration.md:464 — src/db.rs grows past 1500 lines under this plan; it is already in scripts/filesize-allow.txt, but a future split into src/db/ requires extending rusqlite_seam in .dl/no-new-rusqlite.dl
 - `feature` plans/2026-07-10-change-cost-friction-inventory.md:148 — item 1 — a first-class --hermetic flag that implies all three, plus the already-ledgered loud "daemon is serving this root, writes went there" warning on hijack
 - `feature` plans/2026-07-10-change-cost-friction-inventory.md:150 — item 3 — --format=json (or tsv) for ? query blocks and one paragraph documenting the human format's contract
 - `feature` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:103 — agent_edit carries line/span columns so touched-region x AST-span joins work (guarded-MATCH vs guarded-FILE)
@@ -74,8 +87,15 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-07-11-scip-atlas.md:80 — argmax aggregate sugar
 - `feature` plans/2026-07-14-bounded-single-sweep-runtime.md:188 — implement the durable coalescing intent store, generation watermark protocol, and capacity-one Tokio wakeup
 - `feature` plans/2026-07-14-bounded-single-sweep-runtime.md:377 — add committed-generation reads during staging and the crash-injection integration matrix
+- `feature` plans/2026-07-15-family-derive-reactive-engine.md:136 — extract the affected-key + reproject machinery from storage/call.rs:405-555 into the generic engine
+- `feature` plans/2026-07-15-family-derive-reactive-engine.md:189 — port type_rels, doc, text, dataflow as Family impls in step 5
 - `feature` plans/2026-07-15-reproducible-reactivity-evidence.md:233 — project benchmark artifacts into typed node/edge and table relations so sprefa can visualize its own phase, scale, and baseline/candidate history
 - `feature` plans/2026-07-15-structural-parsing-coverage.md:91 — confirm tree-sitter-vue/svelte/astro crates exist and compile before committing to the dep
+- `feature` plans/2026-07-16-family-cutover-completion-map.md:66 — C3 declared schema — family declares schema() -> RowSchema; framework derives owned-table DDL + insert/retract, retiring hand-written SQLITE_CALL_DELTA_SCHEMA per rel (src/storage/call.rs). Bites only when a family needs a NEW owned input table (e.g. call_def_rev's extended _call_def)
+- `feature` plans/2026-07-16-family-cutover-completion-map.md:67 — C4 writer helper — owned-table persist + public-rel write route through one framework writer keyed off the declared schema, not per-family persist_sqlite_call_family/DDL (src/storage/call.rs)
+- `feature` plans/2026-07-16-family-cutover-completion-map.md:68 — C5 reactive signature — formalize SubscribePolicy/memo as a declared per-op reactive signature over the existing DepKey read-capture; reconcile/retract (built) is the render (src/engine/family/router.rs)
+- `feature` plans/2026-07-16-family-cutover-completion-map.md:80 — capstone — after C1-C6 land, host call_kind/call_edge_rev/call_def_rev and cut over to families-as-sole-writer with live react_deltas render, proving the surface end-to-end; freeze 6-rel golden snapshots BEFORE deleting legacy (legacy is the parity oracle)
+- `feature` plans/2026-07-18-db-seam-migration.md:462 — extend .dl/no-new-rusqlite.dl scans from src/**/*.rs to tests/**/*.rs so the rail covers the it suite
 - `perf` plans/2026-07-11-codex-feedback-queue.md:92 — semi-naive delta-growth bail + wedge visibility
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:189 — replace corpus-wide extraction payload caches with bounded byte-weighted reuse and stream WORK and Git inventories into staging
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:190 — replace per-connection 512 MiB SQLite cache and mmap settings with one measured process-wide budget and permit disk-backed large temporary work
@@ -84,6 +104,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `perf` plans/2026-07-15-call-family-delta-refresh.md:269 — route WORK call-family path deltas through the owner-scoped refresh and report every unsupported widening reason
 - `perf` plans/2026-07-15-call-family-delta-refresh.md:89 — add durable call definition/site/edge ownership tables and indexes without changing the public call relation schemas
 - `perf` plans/2026-07-15-call-family-delta-refresh.md:91 — enforce the call storage-key invariant with schema and dbstat rails: integer surrogates for entities/occurrences, StringId integers for repeated identities, and no raw TEXT in owner/provenance/TEMP hot tables
+- `perf` plans/2026-07-15-family-derive-reactive-engine.md:187 — measure engine-hosted call rederive wall time vs the 73 ms/1000-file baseline from reproducible-reactivity-evidence, once step 3 lands
 - `perf` plans/2026-07-15-relational-storage-key-audit.md:30 — measure and remove or compact universal rel __src storage, preserving source provenance and public set semantics
 - `perf` plans/2026-07-15-relational-storage-key-audit.md:32 — emit WITHOUT ROWID for measured pure composite-integer junction relations and retain a schema escape hatch
 - `perf` plans/2026-07-15-relational-storage-key-audit.md:34 — normalize remaining identity storage in SCIP occurrences, entity keys, internal metadata, checkout, and embeddings using measured family migrations
@@ -93,6 +114,8 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `perf` plans/2026-07-15-reproducible-reactivity-evidence.md:179 — capture immutable cold, unchanged, one-file-edit, and clean-rebuild JSON artifacts without running dl on the sprefa workspace or any production corpus
 - `perf` plans/2026-07-15-reproducible-reactivity-evidence.md:204 — attribute the one-file edit to exact derived relations, SQL statements/plans, invalidation scope, and fallback boundaries, then select one representative vertical slice
 - `perf` plans/2026-07-15-reproducible-reactivity-evidence.md:214 — route one measured relation family through owner-scoped source deltas and affected derived maintenance while retaining a loud production fallback
+- `perf` plans/2026-07-16-arch-doc-saga.md:494 — measure A5 wall time vs the 73 ms/1000-file baseline from plans/2026-07-15-family-derive-reactive-engine.md:187 once M3 lands
+- `perf` plans/2026-07-18-db-seam-migration.md:461 — after the seam migration, profile a chunk-loop-heavy --check run; if prepare-per-call regressed a hot loop, add a seam-internal statement cache keyed by SQL
 - `triage` plans/2026-07-11-cross-harness-agent-tooling.md:147 — a CodexSessions AgentHarness arm for agent_* rels — session-store format needs research
 - `triage` plans/2026-07-11-docs-and-dogfood-audit.md:40 — re-enable hooks (timeout+advisory) — relights the dark event arm; Chris flips
 - `triage` plans/2026-07-11-engine-mod-split.md:72 — SG_LANG_TABLE final home (src/sg.rs vs engine/lang_tables.rs) when the lang_tables cluster moves
@@ -178,6 +201,11 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-15-call-family-delta-refresh.md:89 `perf` — add durable call definition/site/edge ownership tables and indexes without changing the public call relation schemas
 - plans/2026-07-15-call-family-delta-refresh.md:91 `perf` — enforce the call storage-key invariant with schema and dbstat rails: integer surrogates for entities/occurrences, StringId integers for repeated identities, and no raw TEXT in owner/provenance/TEMP hot tables
 - plans/2026-07-15-call-family-delta-refresh.md:269 `perf` — route WORK call-family path deltas through the owner-scoped refresh and report every unsupported widening reason
+- plans/2026-07-15-family-derive-reactive-engine.md:123 `decision` — decide whether Ctx::unique_def takes the full resolve signature or splits into occ/name/alias hops mirroring refresh_call_rels:200
+- plans/2026-07-15-family-derive-reactive-engine.md:136 `feature` — extract the affected-key + reproject machinery from storage/call.rs:405-555 into the generic engine
+- plans/2026-07-15-family-derive-reactive-engine.md:163 `decision` — sequence the alias gate (patch the current memo, slices 1-4) versus hosting call on the engine (delete the bug class). Hosting is more code before payoff but removes the gate entirely
+- plans/2026-07-15-family-derive-reactive-engine.md:187 `perf` — measure engine-hosted call rederive wall time vs the 73 ms/1000-file baseline from reproducible-reactivity-evidence, once step 3 lands
+- plans/2026-07-15-family-derive-reactive-engine.md:189 `feature` — port type_rels, doc, text, dataflow as Family impls in step 5
 - plans/2026-07-15-relational-storage-key-audit.md:30 `perf` — measure and remove or compact universal rel __src storage, preserving source provenance and public set semantics
 - plans/2026-07-15-relational-storage-key-audit.md:32 `perf` — emit WITHOUT ROWID for measured pure composite-integer junction relations and retain a schema escape hatch
 - plans/2026-07-15-relational-storage-key-audit.md:34 `perf` — normalize remaining identity storage in SCIP occurrences, entity keys, internal metadata, checkout, and embeddings using measured family migrations
@@ -191,12 +219,32 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-15-structural-parsing-coverage.md:91 `feature` — confirm tree-sitter-vue/svelte/astro crates exist and compile before committing to the dep
 - plans/2026-07-15-structural-parsing-coverage.md:107 `decision` — whether to add a `doc_inline` rel for link/image URL+text separation, or keep overloaded in `doc_node`
 - plans/2026-07-15-structural-parsing-coverage.md:119 `triage` — CSS comment_node coverage depends on tree-sitter-css being published for tree-sitter 0.25; verify availability
+- plans/2026-07-16-arch-doc-saga.md:437 `decision` — arch-doc format — markdown + markers (rec) vs .dl facts vs fully-generated doc
+- plans/2026-07-16-arch-doc-saga.md:439 `decision` — arch node identity — pinned @arch + slug fallback (rec) vs slug-only vs pinned-only
+- plans/2026-07-16-arch-doc-saga.md:441 `decision` — arch tree source — id slash-path surgery (rec) vs doc_node heading nesting
+- plans/2026-07-16-arch-doc-saga.md:444 `decision` — arch marker grammar — one @arch token both sides (rec) vs separate @node decl token vs JSON-only
+- plans/2026-07-16-arch-doc-saga.md:447 `decision` — arch diag severities — seed/unfulfilled = info (rec) vs hint vs warn; per-node gate escalation deferred
+- plans/2026-07-16-arch-doc-saga.md:449 `decision` — arch doc-set declaration — importer-headed arch_doc contract rel (rec) vs hardcoded glob
+- plans/2026-07-16-arch-doc-saga.md:453 `decision` — direction-2 stubs — unplaced-seeds zone + opt-in draft file (rec) vs gen auto-insert into the hand doc
+- plans/2026-07-16-arch-doc-saga.md:456 `decision` — memo-spill depth — M1+M2+M3 (rec) vs stop at M1 vs stop at M2
+- plans/2026-07-16-arch-doc-saga.md:459 `decision` — doc-internal xref marks — every doc-file @arch mark is a decl in v1 (rec); form="xref" variant deferred
+- plans/2026-07-16-arch-doc-saga.md:494 `perf` — measure A5 wall time vs the 73 ms/1000-file baseline from plans/2026-07-15-family-derive-reactive-engine.md:187 once M3 lands
+- plans/2026-07-16-family-cutover-completion-map.md:66 `feature` — C3 declared schema — family declares schema() -> RowSchema; framework derives owned-table DDL + insert/retract, retiring hand-written SQLITE_CALL_DELTA_SCHEMA per rel (src/storage/call.rs). Bites only when a family needs a NEW owned input table (e.g. call_def_rev's extended _call_def)
+- plans/2026-07-16-family-cutover-completion-map.md:67 `feature` — C4 writer helper — owned-table persist + public-rel write route through one framework writer keyed off the declared schema, not per-family persist_sqlite_call_family/DDL (src/storage/call.rs)
+- plans/2026-07-16-family-cutover-completion-map.md:68 `feature` — C5 reactive signature — formalize SubscribePolicy/memo as a declared per-op reactive signature over the existing DepKey read-capture; reconcile/retract (built) is the render (src/engine/family/router.rs)
+- plans/2026-07-16-family-cutover-completion-map.md:80 `feature` — capstone — after C1-C6 land, host call_kind/call_edge_rev/call_def_rev and cut over to families-as-sole-writer with live react_deltas render, proving the surface end-to-end; freeze 6-rel golden snapshots BEFORE deleting legacy (legacy is the parity oracle)
+- plans/2026-07-18-db-seam-migration.md:461 `perf` — after the seam migration, profile a chunk-loop-heavy --check run; if prepare-per-call regressed a hot loop, add a seam-internal statement cache keyed by SQL
+- plans/2026-07-18-db-seam-migration.md:462 `feature` — extend .dl/no-new-rusqlite.dl scans from src/**/*.rs to tests/**/*.rs so the rail covers the it suite
+- plans/2026-07-18-db-seam-migration.md:463 `decision` — the pre-existing Storage trait (src/storage.rs) predates the struct ruling; collapse it into Db's inherent API or keep it for CallStore — decided outside this arc
+- plans/2026-07-18-db-seam-migration.md:464 `docs` — src/db.rs grows past 1500 lines under this plan; it is already in scripts/filesize-allow.txt, but a future split into src/db/ requires extending rusqlite_seam in .dl/no-new-rusqlite.dl
 <!-- END: plans-by-plan -->
 
 ## By code file
 
 <!-- BEGIN: code-by-file -->
-- untriaged debt: 3 bare TODO/FIXME comments in src
+- feature src/cst.rs:230 — add html once tree-sitter-html is a Cargo dep.
+- feature src/engine/lang_tables.rs:47 — add html once tree-sitter-html is a Cargo dep.
+- untriaged debt: 4 bare TODO/FIXME comments in src
 <!-- END: code-by-file -->
 
 ## Hand-owned notes (pre-index rows, migrated from chat_log/NOTES.md)
