@@ -2340,26 +2340,69 @@ pub fn ensure_daemon(_root: &Path, _program: Option<&str>) -> Result<()> {
     ensure_singleton()
 }
 
-/// Spawn-if-missing for the singleton.
+/// Client autostart gate (failure-modes class 16, user ruling 2026-07-18):
+/// implicit attach paths (`dl file.dl`, `dl --check`, mcp, lsp) never spawn a
+/// server — they attach if one runs, otherwise fall back in-process. Only
+/// `DL_AUTOSTART=1` (test harnesses) re-enables implicit spawning. Explicit
+/// verbs (`dl daemon start`/`load`/`load-once`, `dl watch`) call
+/// `start_singleton`, which always may spawn.
+pub fn autostart_allowed() -> bool {
+    matches!(std::env::var("DL_AUTOSTART").ok().as_deref(), Some("1") | Some("true"))
+}
+
+/// Attach-or-spawn for implicit call sites; spawning gated by `autostart_allowed`.
 pub fn ensure_singleton() -> Result<()> {
-    if is_running() {
+    ensure_singleton_inner(false)
+}
+
+/// Attach-or-spawn for EXPLICIT user commands (`dl daemon start`, `dl watch`).
+pub fn start_singleton() -> Result<()> {
+    ensure_singleton_inner(true)
+}
+
+fn ensure_singleton_inner(explicit: bool) -> Result<()> {
+    let pid = std::process::id();
+    let ppid = std::os::unix::process::parent_id();
+    tracing::debug!(pid, ppid, explicit,
+        autostart_env = ?std::env::var("DL_AUTOSTART").ok(),
+        "[daemon] ensure_singleton: enter");
+    let running = is_running();
+    tracing::debug!(pid, running, "[daemon] ensure_singleton: liveness probe");
+    if running {
         let mut s = connect()?;
         let req = Request::new(0, "ping", json!({}));
-        if let Ok(r) = rpc_call(&mut s, &req) {
-            if r.error.is_none() {
-                let running = r.result.as_ref()
+        match rpc_call(&mut s, &req) {
+            Ok(r) if r.error.is_none() => {
+                let running_id = r.result.as_ref()
                     .and_then(|v| v.get("build_id"))
                     .and_then(|v| v.as_str());
-                match running {
+                tracing::debug!(pid,
+                    running_build = ?running_id, self_build = build_id(),
+                    "[daemon] ensure_singleton: ping ok");
+                match running_id {
                     Some(id) if id == build_id() => return Ok(()),
-                    Some(_) => {
-                        tracing::warn!("[daemon] running binary changed — restarting daemon");
+                    Some(stale) => {
+                        tracing::warn!(pid, running_build = %stale, self_build = build_id(),
+                            "[daemon] running binary changed — restarting daemon");
                         let _ = stop();
                     }
                     None => return Ok(()),
                 }
             }
+            Ok(r) => tracing::warn!(pid, error = ?r.error,
+                "[daemon] ensure_singleton: ping returned rpc error"),
+            Err(e) => tracing::warn!(pid, error = %e,
+                "[daemon] ensure_singleton: ping failed on live socket"),
         }
+    }
+    if !explicit && !autostart_allowed() {
+        // The class-16 stop order made structural: a kill stays a kill. No
+        // implicit client resurrects the daemon behind the user's back.
+        tracing::warn!(pid, ppid,
+            "[daemon] no live singleton and autostart is disabled — refusing to spawn \
+             (start one: `dl daemon start`; tests: DL_AUTOSTART=1)");
+        anyhow::bail!(
+            "no daemon running and autostart is disabled — start one with `dl daemon start`");
     }
     // The respawn-storm event: this client found no live daemon and is about
     // to spawn one. A one-shot `dl --check` autostarting a daemon, killed
@@ -2367,9 +2410,16 @@ pub fn ensure_singleton() -> Result<()> {
     // is exactly the incident this warning is for; it lands in the CALLING
     // process's own dl.log/error.log (via `crate::trace::init`), not the new
     // daemon's, since the daemon doesn't exist yet to log it.
-    tracing::warn!(pid = std::process::id(), "[daemon] no live singleton found — spawning one");
+    tracing::warn!(pid, ppid, explicit, "[daemon] no live singleton found — spawning one");
+    let spawn_started = std::time::Instant::now();
     spawn_detached()?;
-    wait_ready()
+    tracing::debug!(pid, ms = spawn_started.elapsed().as_millis() as u64,
+        "[daemon] ensure_singleton: spawned detached, waiting ready");
+    let ready = wait_ready();
+    tracing::debug!(pid, ok = ready.is_ok(),
+        ms = spawn_started.elapsed().as_millis() as u64,
+        "[daemon] ensure_singleton: wait_ready done");
+    ready
 }
 
 /// Stop the singleton and respawn it detached with the CURRENT binary. The

@@ -440,6 +440,9 @@ impl JobQueue {
                         let msg = e.to_string();
                         let attempts_new = attempts + 1;
                         if attempts_new >= MAX_ATTEMPTS {
+                            tracing::warn!(key, attempts = attempts_new, max = MAX_ATTEMPTS,
+                                error = %msg,
+                                "[jobq] job PARKED failed — attempt cap hit, no more retries");
                             conn.execute(
                                 "UPDATE _job SET state='failed', attempts=?2, started_at=NULL, \
                                  finished_at=?3, last_error=?4 WHERE key=?1",
@@ -448,6 +451,9 @@ impl JobQueue {
                             Ok(Requeue::Parked)
                         } else {
                             let run_at = now + jittered_backoff(attempts_new, jitter_seed(key, now));
+                            tracing::warn!(key, attempts = attempts_new, max = MAX_ATTEMPTS,
+                                retry_in_secs = run_at - now, error = %msg,
+                                "[jobq] job failed — backoff repend");
                             conn.execute(
                                 "UPDATE _job SET state='pending', attempts=?2, run_at=?3, \
                                  started_at=NULL, finished_at=NULL, last_error=?4 WHERE key=?1",

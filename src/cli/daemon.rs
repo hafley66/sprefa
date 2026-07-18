@@ -62,7 +62,7 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
                 crate::daemon::run_daemon(&programs, db, init_root, true, tray)?;
                 Ok(0)
             } else {
-                crate::daemon::ensure_singleton()?;
+                crate::daemon::start_singleton()?;
                 match &init_root {
                     Some(r) => {
                         crate::daemon::add_root(r)?;
@@ -93,14 +93,14 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
             // "serve this file reactively" in one command: start the singleton if
             // down, register the cwd root, then push the program as a watched set.
             let path = arg(args, 1, "dl daemon load <file.dl>")?;
-            crate::daemon::ensure_singleton()?;
+            crate::daemon::start_singleton()?;
             if let Some(r) = root_opt { crate::daemon::add_root(r)?; }
             print_load_response(crate::daemon::load(root_opt, path, "watched")?)?;
             Ok(0)
         }
         "load-once" => {
             let path = arg(args, 1, "dl daemon load-once <file.dl>")?;
-            crate::daemon::ensure_singleton()?;
+            crate::daemon::start_singleton()?;
             if let Some(r) = root_opt { crate::daemon::add_root(r)?; }
             print_load_response(crate::daemon::load(root_opt, path, "once")?)?;
             Ok(0)
@@ -179,7 +179,7 @@ pub fn run_watch(args: &[String]) -> Result<i32> {
         eprintln!("dl watch: nothing to watch");
         return Ok(2);
     }
-    crate::daemon::ensure_singleton()?;
+    crate::daemon::start_singleton()?;
     if let Some(r) = root_opt { crate::daemon::add_root(r)?; }
     for file in &expanded.files {
         let resp = crate::daemon::load(root_opt, file, "watched")?;
