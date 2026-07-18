@@ -240,7 +240,6 @@ sqlite_swallow_count(source_file, count(line_number)) <-
 # wherever it lives, seam included.)
 rel sqlite_swallow_baseline(source_file: file, allowed: int).
 sqlite_swallow_baseline("src/engine/meta.rs", 7).
-sqlite_swallow_baseline("src/db.rs", 4).
 sqlite_swallow_baseline("src/engine/pipeline/apply.rs", 3).
 sqlite_swallow_baseline("src/jobq/mod.rs", 2).
 sqlite_swallow_baseline("src/invlog.rs", 2).
