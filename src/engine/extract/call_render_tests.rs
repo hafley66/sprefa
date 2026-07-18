@@ -67,11 +67,10 @@ fn fresh_engine(root: &PathBuf) -> Engine {
     engine.declare_builtins().unwrap();
     engine
         .db
-        .conn()
-        .execute(
+        .exec_on(
+            "_file",
             "INSERT INTO _file (repo, path, rev, hash, mtime, size) \
              VALUES ('', 'lib.rs', 'WORK', '', 0, 0)",
-            [],
         )
         .unwrap();
     engine
@@ -83,11 +82,11 @@ fn engine_at(dir: &PathBuf, hash: &str) -> Engine {
     engine.declare_builtins().unwrap();
     engine
         .db
-        .conn()
-        .execute(
+        .exec_params(
+            "_file",
             "INSERT INTO _file (repo, path, rev, hash, mtime, size) \
              VALUES ('', 'lib.rs', 'WORK', ?1, 0, 0)",
-            [hash],
+            &[hash.into()],
         )
         .unwrap();
     engine
@@ -108,16 +107,15 @@ fn make_dir(tag: &str) -> PathBuf {
 }
 
 fn site_rows(engine: &Engine) -> Vec<[i64; 5]> {
-    let mut stmt = engine
+    let mut rows: Vec<[i64; 5]> = engine
         .db
-        .conn()
-        .prepare("SELECT repo, caller, callee, file, line FROM rel_call_site")
+        .query_rows(
+            "rel_call_site",
+            "SELECT repo, caller, callee, file, line FROM rel_call_site",
+            &[],
+            |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?]),
+        )
         .unwrap();
-    let mut rows: Vec<[i64; 5]> = stmt
-        .query_map([], |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?]))
-        .unwrap()
-        .filter_map(|r| r.ok())
-        .collect();
     rows.sort();
     rows
 }
@@ -156,17 +154,15 @@ const CALL_REL_QUERIES: &[(&str, &str, usize)] = &[
 fn public_call_rel_snapshot(engine: &Engine) -> Vec<(&'static str, Vec<Vec<i64>>)> {
     let mut out = Vec::with_capacity(CALL_REL_QUERIES.len());
     for (name, sql, ncols) in CALL_REL_QUERIES {
-        let mut stmt = engine.db.conn().prepare(sql).unwrap();
-        let rows: Vec<Vec<i64>> = stmt
-            .query_map([], |row| {
+        let rows: Vec<Vec<i64>> = engine
+            .db
+            .query_rows(name, sql, &[], |row| {
                 let mut v = Vec::with_capacity(*ncols);
                 for i in 0..*ncols {
                     v.push(row.get(i)?);
                 }
                 Ok(v)
             })
-            .unwrap()
-            .collect::<rusqlite::Result<_>>()
             .unwrap();
         let mut sorted = rows;
         sorted.sort();
@@ -210,18 +206,16 @@ fn assert_all_call_rels_match_memo(engine: &Engine) {
         rows
     };
 
-    let rel_as_sorted_i64 = |sql: &str, ncols: usize| {
-        let mut stmt = engine.db.conn().prepare(sql).unwrap();
-        let mut rows: Vec<Vec<i64>> = stmt
-            .query_map([], |row| {
+    let rel_as_sorted_i64 = |rel: &str, sql: &str, ncols: usize| {
+        let mut rows: Vec<Vec<i64>> = engine
+            .db
+            .query_rows(rel, sql, &[], |row| {
                 let mut v = Vec::with_capacity(ncols);
                 for i in 0..ncols {
                     v.push(row.get(i)?);
                 }
                 Ok(v)
             })
-            .unwrap()
-            .collect::<rusqlite::Result<_>>()
             .unwrap();
         rows.sort();
         rows
@@ -252,7 +246,7 @@ fn assert_all_call_rels_match_memo(engine: &Engine) {
     for (name, sql, ncols) in cases {
         assert_eq!(
             memo_as_sorted_i64(name),
-            rel_as_sorted_i64(sql, *ncols),
+            rel_as_sorted_i64(name, sql, *ncols),
             "public rel {name} diverged from router memo"
         );
     }
@@ -353,11 +347,7 @@ fn render_warm_family_empty_delta_issues_no_writes() {
     let mut engine = fresh_engine(&dir);
     engine.refresh_call_rels().unwrap();
     let before = site_rows(&engine);
-    let data_version_before: i64 = engine
-        .db
-        .conn()
-        .query_row("PRAGMA data_version", [], |row| row.get(0))
-        .unwrap();
+    let data_version_before: i64 = engine.db.pragma_i64("data_version").unwrap();
 
     // Re-pass the full input set: every family reruns, but because the owned
     // tables are unchanged the deltas are empty and no write call should land.
@@ -376,11 +366,7 @@ fn render_warm_family_empty_delta_issues_no_writes() {
         "warm empty-delta flip must still report every family as rerun"
     );
     assert_eq!(site_rows(&engine), before, "rel_call_site must be untouched");
-    let data_version_after: i64 = engine
-        .db
-        .conn()
-        .query_row("PRAGMA data_version", [], |row| row.get(0))
-        .unwrap();
+    let data_version_after: i64 = engine.db.pragma_i64("data_version").unwrap();
     assert_eq!(
         data_version_before, data_version_after,
         "empty-delta warm flip must issue zero writes (data_version unchanged)"
@@ -404,8 +390,7 @@ fn render_warm_family_insert_only_delta() {
     fs::write(dir.join("lib.rs"), V1_PLUS_DELTA).unwrap();
     engine
         .db
-        .conn()
-        .execute("UPDATE _file SET hash = 'v1-plus' WHERE path = 'lib.rs'", [])
+        .exec_on("_file", "UPDATE _file SET hash = 'v1-plus' WHERE path = 'lib.rs'")
         .unwrap();
     engine.refresh_call_rels().unwrap();
 
@@ -437,8 +422,7 @@ fn render_warm_family_retract_only_delta() {
     fs::write(dir.join("lib.rs"), RUST_SRC).unwrap();
     engine
         .db
-        .conn()
-        .execute("UPDATE _file SET hash = 'v1' WHERE path = 'lib.rs'", [])
+        .exec_on("_file", "UPDATE _file SET hash = 'v1' WHERE path = 'lib.rs'")
         .unwrap();
     engine.refresh_call_rels().unwrap();
 
@@ -465,8 +449,7 @@ fn render_warm_family_mixed_delta() {
     fs::write(dir.join("lib.rs"), V1_RETARGET).unwrap();
     engine
         .db
-        .conn()
-        .execute("UPDATE _file SET hash = 'v2' WHERE path = 'lib.rs'", [])
+        .exec_on("_file", "UPDATE _file SET hash = 'v2' WHERE path = 'lib.rs'")
         .unwrap();
     engine.refresh_call_rels().unwrap();
 
@@ -492,18 +475,24 @@ fn render_flip_inside_caller_owned_transaction() {
     // inside the caller-owned transaction.
     engine
         .db
-        .conn()
-        .execute("DELETE FROM _call_resolution WHERE site_id IN (SELECT site_id FROM _call_resolution LIMIT 1)", [])
+        .exec_on(
+            "_call_resolution",
+            "DELETE FROM _call_resolution WHERE site_id IN (SELECT site_id FROM _call_resolution LIMIT 1)",
+        )
         .unwrap();
 
-    engine.db.conn().execute_batch("BEGIN IMMEDIATE").unwrap();
+    engine.db.begin_immediate().unwrap();
     assert!(!engine.db.is_autocommit(), "fixture: caller must own a transaction");
     let edge_before = {
-        let mut stmt = engine.db.conn().prepare("SELECT caller, callee, kind FROM rel_call_edge").unwrap();
-        let mut rows: Vec<[i64; 3]> = stmt.query_map([], |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?]))
-            .unwrap()
-            .filter_map(|r| r.ok())
-            .collect();
+        let mut rows: Vec<[i64; 3]> = engine
+            .db
+            .query_rows(
+                "rel_call_edge",
+                "SELECT caller, callee, kind FROM rel_call_edge",
+                &[],
+                |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?]),
+            )
+            .unwrap();
         rows.sort();
         rows
     };
@@ -521,15 +510,19 @@ fn render_flip_inside_caller_owned_transaction() {
         "flip must not issue a nested COMMIT; outer transaction still owns it"
     );
 
-    engine.db.conn().execute_batch("COMMIT").unwrap();
+    engine.db.commit().unwrap();
     assert!(engine.db.is_autocommit(), "outer transaction must commit cleanly");
 
     let edge_after = {
-        let mut stmt = engine.db.conn().prepare("SELECT caller, callee, kind FROM rel_call_edge").unwrap();
-        let mut rows: Vec<[i64; 3]> = stmt.query_map([], |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?]))
-            .unwrap()
-            .filter_map(|r| r.ok())
-            .collect();
+        let mut rows: Vec<[i64; 3]> = engine
+            .db
+            .query_rows(
+                "rel_call_edge",
+                "SELECT caller, callee, kind FROM rel_call_edge",
+                &[],
+                |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?]),
+            )
+            .unwrap();
         rows.sort();
         rows
     };
@@ -555,10 +548,9 @@ fn render_error_clears_memo_and_cold_recovery_converges() {
     // families that read _call_resolution.
     engine
         .db
-        .conn()
-        .execute(
+        .exec_on(
+            "_call_resolution",
             "DELETE FROM _call_resolution WHERE site_id IN (SELECT site_id FROM _call_resolution LIMIT 1)",
-            [],
         )
         .unwrap();
 
@@ -566,10 +558,9 @@ fn render_error_clears_memo_and_cold_recovery_converges() {
     // successfully, then call_edge_rev errors because its table is gone.
     engine
         .db
-        .conn()
-        .execute(
+        .exec_on(
+            "rel_call_edge_rev",
             "ALTER TABLE rel_call_edge_rev RENAME TO rel_call_edge_rev_broken",
-            [],
         )
         .unwrap();
 
@@ -580,10 +571,9 @@ fn render_error_clears_memo_and_cold_recovery_converges() {
     // Restore the table so we can inspect the rolled-back public rels.
     engine
         .db
-        .conn()
-        .execute(
+        .exec_on(
+            "rel_call_edge_rev_broken",
             "ALTER TABLE rel_call_edge_rev_broken RENAME TO rel_call_edge_rev",
-            [],
         )
         .unwrap();
 
@@ -637,10 +627,9 @@ fn react_deltas_derive_failure_does_not_poison_memo() {
     // deriving one of the families that reads _call_resolution.
     engine
         .db
-        .conn()
-        .execute(
+        .exec_on(
+            "_call_resolution",
             "ALTER TABLE _call_resolution RENAME TO _call_resolution_broken",
-            [],
         )
         .unwrap();
 
@@ -656,10 +645,9 @@ fn react_deltas_derive_failure_does_not_poison_memo() {
     // the failure.
     engine
         .db
-        .conn()
-        .execute(
+        .exec_on(
+            "_call_resolution_broken",
             "ALTER TABLE _call_resolution_broken RENAME TO _call_resolution",
-            [],
         )
         .unwrap();
 
