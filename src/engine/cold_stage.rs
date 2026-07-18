@@ -372,6 +372,20 @@ impl Engine {
             "UPDATE _cold_node SET state='done', done_at=?3 WHERE family=?1 AND shard=?2",
             rusqlite::params![family, shard as i64, now],
         )?;
+        // Cold-start progress is always see-able: one verdict line per node
+        // (stderr + perf.jsonl), N/M cumulative.
+        {
+            let (done, total): (i64, i64) = self.db.query_row(
+                "SELECT SUM(state='done'), COUNT(*) FROM _cold_node",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            crate::verdict::verdict(
+                "cold-progress",
+                &format!("{done}/{total} nodes done"),
+                &[("family", family), ("shard", &shard.to_string())],
+            );
+        }
         // Completion gate for a chunked family: once every shard is done, save its
         // `extract:` digest so the completion tick's wholesale refresh skips it.
         if family != COLD_SCIP_FAMILY {

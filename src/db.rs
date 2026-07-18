@@ -635,6 +635,7 @@ impl Db {
     /// takes the plain `DELETE`+insert path.
     pub fn reload_rel(&self, table: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
         const INDEX_DROP_MIN: usize = 4096;
+        tracing::debug!(table, rows = rows.len(), "[rel] wipe + reload");
         self.exec(&format!("DELETE FROM {table}"))?;
         if rows.len() < INDEX_DROP_MIN {
             return self.insert_rows(table, cols, rows);

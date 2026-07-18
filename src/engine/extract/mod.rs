@@ -140,6 +140,8 @@ fn cached_facts_profiled<T: Send + Sync>(
     // cheap and taken unconditionally; the per-file emit below is gated on
     // `profile_enabled()`. `ms` is the parse+extract cost for that one file.
     let parsed: Vec<(&ExtractFile, String, Arc<T>, u64)> = misses.par_iter().filter_map(|f| {
+        crate::budget::throttle_point();
+        tracing::trace!(file = %f.1, family, "[extract] parse file");
         let start = std::time::Instant::now();
         let (rid, facts) = parse(&f.0, &f.1, &f.2)?;
         Some((*f, rid, Arc::new(facts), start.elapsed().as_millis() as u64))
@@ -240,6 +242,8 @@ pub(crate) fn prime_analysis_bundles(eng: &Engine, prog: &Program) -> Result<()>
         bundle: typegraph::AnalysisBundle,
     }
     let primed: Vec<Primed<'_>> = misses.par_iter().filter_map(|(f, mask)| {
+        crate::budget::throttle_point();
+        tracing::trace!(file = %f.1, "[extract] prime analysis bundle");
         let lang = typegraph::type_langs().iter().find(|l| l.matches(&f.1))?;
         if !lang.supports_analysis_bundle() { return None }
         let froot = roots.get(&f.0).map(|p| p.as_path()).unwrap_or(&root);
@@ -586,6 +590,8 @@ impl Engine {
             .collect();
 
         let batches: Vec<ModuleRows> = selected.par_iter().map(|(path, hash)| {
+            crate::budget::throttle_point();
+            tracing::trace!(file = %path, "[extract] module resolve");
             let mut rows = ModuleRows::default();
             let ext = Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("");
             if let Some(res) = resolvers.iter().find(|r| r.exts().contains(&ext)) {

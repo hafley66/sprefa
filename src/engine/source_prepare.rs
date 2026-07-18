@@ -100,6 +100,11 @@ pub(super) fn prepare_source_batch(
                     if producer_cancel.load(Ordering::Acquire) {
                         return;
                     }
+                    crate::budget::throttle_point();
+                    tracing::trace!(
+                        file = %job.path, rule = job.rule_idx, repo = %job.repo,
+                        "[source] extract file x rule"
+                    );
                     // Cancellation is cooperative: parse_file runs to completion
                     // once entered, then its result is discarded if a peer failed.
                     let result = root_by_repo
@@ -249,6 +254,8 @@ fn prepare_work_path_batch_with_reader(
                     if producer_cancel.load(Ordering::Acquire) {
                         return;
                     }
+                    crate::budget::throttle_point();
+                    tracing::trace!(file = %job.path, "[source] extract WORK file");
                     let parsed = parse_work_path(
                         ordinal,
                         owner_bases[ordinal],

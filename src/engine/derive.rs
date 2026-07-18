@@ -402,6 +402,10 @@ impl Engine {
                 // (a big table's DELETE is not free), so it rides `timed`.
                 self.unmark_derived_complete(&comp_rels)?;
                 for rel in &comp_rels {
+                    // The full-wipe is the class-3 storm signature; every one
+                    // is visible at info so an unattributable rebuild can never
+                    // hide again.
+                    tracing::info!(rel, "[derived] full wipe");
                     timed(rel, &format!("DELETE FROM {}", tbl(rel)))?;
                 }
                 // Test-only crash-window injection: bail after the wipe+unmark

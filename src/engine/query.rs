@@ -23,6 +23,7 @@ pub(crate) enum QueryOutputFormat {
 
 impl Engine {
     pub(crate) fn run_query(&self, q: &Query, closures: &HashMap<String, String>) -> Result<()> {
+        tracing::debug!(rel = %q.head.rel, "[query] ? firing");
         // Seeded Rust path on a closure head: src pinned + dst free is a forward
         // walk (callees); dst pinned + src free is a reverse walk (callers).
         // Both-pinned, both-free, or anything else falls through to the SQL view.

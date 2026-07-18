@@ -348,6 +348,9 @@ impl JobQueue {
         if kinds.is_empty() {
             return Ok(None);
         }
+        // Governor gate between jobs: a worker never starts new work while the
+        // process is over its CPU ceiling.
+        crate::budget::throttle_point();
         let now = now_secs();
         let kind_list = kinds
             .iter()
