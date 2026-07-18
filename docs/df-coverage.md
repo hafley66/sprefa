@@ -1,5 +1,7 @@
 # Per-language dataflow coverage
 
+Callable-kind coverage (call_def): docs/callable-coverage.md
+
 The engine's `df_node`/`df_edge` lift is syntax-only and conservative: every
 language walk mints a node for each value-bearing position it understands and
 edges from child values into their parent. Anything not explicitly handled is
