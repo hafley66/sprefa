@@ -90,10 +90,19 @@ impl RelKind for ScipKind {
             || super::TypeFamily.used(prog)
             || super::CallFamily.used(prog)
     }
-    fn dirty(&self, changed: &HashSet<String>) -> bool {
+    fn dirty(&self, eng: &Engine, changed: &HashSet<String>) -> bool {
         // Match the root `index.scip` and the `.dl/index.scip` that `dl index`
         // writes (the changed-path string carries the relative prefix).
-        changed.iter().any(|c| c.ends_with("index.scip"))
+        if changed.iter().any(|c| c.ends_with("index.scip")) {
+            return true;
+        }
+        // A gitignored index never enters the corpus walk, so the changed set
+        // cannot see a re-index; stat the self index directly and compare with
+        // the digest `refresh` stored after its last load. Self repo only:
+        // statting a wanted repo's index would require `ensure_index`, which
+        // may run an indexer — too heavy for a per-tick gate.
+        let stored = eng.load_rel_digest(SCIP_INDEX_STAT_KEY).ok().flatten();
+        stored != Some(self_index_stat_digest(eng))
     }
     fn refresh(&self, eng: &Engine) -> Result<bool> {
         let t = |s: &str| Value::Text(s.to_string());
@@ -119,6 +128,7 @@ impl RelKind for ScipKind {
                 &["file", "symbol", "line", "col", "end_line", "end_col", "role", "repo"], &[])?;
             rows_changed |= eng.refresh_rel("scip_binding",
                 &["file", "symbol", "local_name", "line", "col", "repo"], &[])?;
+            eng.save_rel_digest(SCIP_INDEX_STAT_KEY, &self_index_stat_digest(eng))?;
             return Ok(rows_changed);
         }
         let mut all = scip_import::ScipRows::default();
@@ -184,8 +194,38 @@ impl RelKind for ScipKind {
             &["file", "symbol", "line", "col", "end_line", "end_col", "role", "repo"], &occurrences)?;
         rows_changed |= eng.refresh_rel("scip_binding",
             &["file", "symbol", "local_name", "line", "col", "repo"], &bindings)?;
+        eng.save_rel_digest(SCIP_INDEX_STAT_KEY, &self_index_stat_digest(eng))?;
         Ok(rows_changed)
     }
+}
+
+/// `_reldigest` key for the self index's stat digest (`scip:` namespace,
+/// distinct from row-content `drv:`/`src:` keys).
+const SCIP_INDEX_STAT_KEY: &str = "scip:index-stat";
+
+/// Stat digest of the self repo's index file: blake3 over (resolved path,
+/// mtime, len), or a fixed "absent" digest when no index resolves. Cheap
+/// enough for the per-tick `dirty` gate; content is NOT read — `refresh_rel`'s
+/// row diff already dedups a touched-but-identical index downstream.
+fn self_index_stat_digest(eng: &Engine) -> [u8; 32] {
+    let mut h = blake3::Hasher::new();
+    match scip_import::index_path(&eng.root) {
+        None => {
+            h.update(b"absent");
+        }
+        Some(path) => {
+            h.update(path.to_string_lossy().as_bytes());
+            if let Ok(md) = std::fs::metadata(&path) {
+                h.update(&md.len().to_le_bytes());
+                if let Ok(mtime) = md.modified() {
+                    if let Ok(d) = mtime.duration_since(std::time::UNIX_EPOCH) {
+                        h.update(&d.as_nanos().to_le_bytes());
+                    }
+                }
+            }
+        }
+    }
+    *h.finalize().as_bytes()
 }
 
 impl ScipKind {

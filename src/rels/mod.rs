@@ -118,11 +118,14 @@ pub trait RelKind: Sync {
     }
     /// Should an *incremental* tick (`tick_paths`) call `refresh`? Default: yes,
     /// every tick — the self-diffing families re-read and early-out on a no-op.
-    /// `ScipKind` overrides to gate on `index.scip` being in the changed set, so
-    /// editing source code never forces a full SCIP-index reload. Not consulted
+    /// `ScipKind` overrides to gate on `index.scip` moving: in the changed set,
+    /// or (because a gitignored index never enters the corpus walk, so the
+    /// changed set cannot see it) by a stat digest of the index file itself.
+    /// Editing source code never forces a full SCIP-index reload. Not consulted
     /// on a full `tick` (which always refreshes every used family). `changed` is
-    /// the set of repo-relative paths the incremental tick saw move.
-    fn dirty(&self, _changed: &HashSet<String>) -> bool {
+    /// the set of repo-relative paths the incremental tick saw move; `eng`
+    /// gives access to stored digests for out-of-corpus inputs.
+    fn dirty(&self, _eng: &Engine, _changed: &HashSet<String>) -> bool {
         true
     }
     /// A bookkeeping family projects state the tick itself writes (`stmt_ms`

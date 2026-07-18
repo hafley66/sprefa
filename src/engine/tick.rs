@@ -1139,7 +1139,7 @@ impl Engine {
         // index.scip-only delta keeps the old semantics (rows load and mark
         // changed; extraction re-reads them on its next run).
         for k in crate::rels::rel_kinds() {
-            if k.pre_extract() && k.used(prog) && k.dirty(&seen) && k.refresh(self)? {
+            if k.pre_extract() && k.used(prog) && k.dirty(self, &seen) && k.refresh(self)? {
                 for r in k.rels() { changed_source_rels.insert(r.to_string()); }
                 changed_facts = true;
             }
@@ -1239,7 +1239,7 @@ impl Engine {
         // joins it; the false-on-no-op result keeps the rebuild scope tight.
         for k in crate::rels::rel_kinds() {
             if k.pre_extract() { continue; } // ran before the extract families
-            if k.used(prog) && k.dirty(&seen) && k.refresh(self)? {
+            if k.used(prog) && k.dirty(self, &seen) && k.refresh(self)? {
                 for r in k.rels() { changed_source_rels.insert(r.to_string()); }
                 changed_facts = true;
             }

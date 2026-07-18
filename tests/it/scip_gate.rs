@@ -295,3 +295,93 @@ fn name_map_resolves_when_file_has_no_occurrences() {
         "name-map fallback must resolve to b.go, got {callee}"
     );
 }
+
+/// A re-index must reach the db even though the index file is OUTSIDE the
+/// corpus (real repos gitignore it, so it never appears in a tick's changed
+/// set). `ScipKind::dirty` stats the self index directly and compares against
+/// the digest `refresh` stored — without that, the incremental tick below
+/// keeps serving the v1 index forever (the two-day-stale `.dl/.state` index
+/// this test retires).
+#[test]
+fn reindex_reloads_when_index_invisible_to_corpus() {
+    let d = sandbox("reindex");
+    write_fixture(&d);
+    write_index(
+        &d.join("index.scip"),
+        vec![
+            document("b.go", vec![occurrence(SYM, SymbolRole::Definition as i32)]),
+            document("caller.go", vec![occurrence(SYM, 0)]),
+        ],
+    );
+    let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
+    let mut eng = Engine::new(conn, d.clone());
+    let (prog, diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
+    assert_eq!(
+        diags.iter().filter(|x| x.severity == sprefa_v5::ast::Severity::Error).count(),
+        0,
+        "program should typecheck: {diags:?}"
+    );
+    eng.tick(&prog, true).unwrap();
+    let edges = eng.rel_rows("edge", 2);
+    let callee = &edges
+        .iter()
+        .find(|r| r[0].contains("caller.go"))
+        .unwrap_or_else(|| panic!("v1 index must resolve: {edges:?}"))[1];
+    assert!(callee.contains("b.go::"), "v1 resolves to b.go, got {callee}");
+
+    // Re-index: v2 says helper's def is a.go. The index is NOT in the corpus
+    // (p.dl scans only *.go), so the incremental tick's changed set is blind
+    // to it — only the stat-digest gate can notice.
+    write_index(
+        &d.join("index.scip"),
+        vec![
+            document("a.go", vec![occurrence(SYM_OTHER, SymbolRole::Definition as i32)]),
+            document("caller.go", vec![occurrence(SYM_OTHER, 0)]),
+        ],
+    );
+    // An ordinary source edit drives the tick; the appended comment leaves the
+    // call lines untouched.
+    let caller = d.join("caller.go");
+    let mut body = fs::read_to_string(&caller).unwrap();
+    body.push_str("// touched\n");
+    fs::write(&caller, body).unwrap();
+    eng.tick_paths(&prog, std::slice::from_ref(&caller), true).unwrap();
+
+    let edges = eng.rel_rows("edge", 2);
+    let callee = &edges
+        .iter()
+        .find(|r| r[0].contains("caller.go"))
+        .unwrap_or_else(|| panic!("edge must survive the re-index: {edges:?}"))[1];
+    assert!(
+        callee.contains("a.go::"),
+        "incremental tick must reload the re-written index (def moved to a.go), got {callee}"
+    );
+}
+
+/// `index_path` picks the NEWEST existing candidate, not a fixed location
+/// order: a fixed order let a stale `.dl/.state/index.scip` shadow a fresh
+/// root `index.scip` for two days.
+#[test]
+fn index_path_newest_wins() {
+    let d = sandbox("newestwins");
+    let state = sprefa_v5::state_dir(&d);
+    fs::create_dir_all(&state).unwrap();
+    let doc = vec![document("b.go", vec![occurrence(SYM, SymbolRole::Definition as i32)])];
+    write_index(&state.join("index.scip"), doc.clone());
+    // APFS mtime is fine-grained, but hold a full second so coarse filesystems
+    // order the two writes too.
+    std::thread::sleep(std::time::Duration::from_millis(1050));
+    write_index(&d.join("index.scip"), doc.clone());
+    assert_eq!(
+        sprefa_v5::scip_import::index_path(&d),
+        Some(d.join("index.scip")),
+        "fresher root index must win over the state-dir index"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(1050));
+    write_index(&state.join("index.scip"), doc);
+    assert_eq!(
+        sprefa_v5::scip_import::index_path(&d),
+        Some(state.join("index.scip")),
+        "fresher state-dir index must win over the root index"
+    );
+}

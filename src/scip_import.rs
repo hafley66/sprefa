@@ -58,27 +58,34 @@ pub struct ScipRows {
     pub impls: Vec<(String, String)>,
 }
 
-/// Where the importer looks for a SCIP index, in priority order:
+/// Where the importer looks for a SCIP index:
 ///   1. `$SPREFA_SCIP_INDEX` (explicit override)
-///   2. `<root>/index.scip` (the `just oracle-index` / rust-analyzer default)
-///   3. `<root>/.dl/.state/index.scip` (current `dl index` output location —
-///      out of the tree, gitignored, nested under the engine runtime dir so
-///      `.dl/` shows only authored files)
-///   4. `<root>/.dl/index.scip` (pre-move location, kept last so an index
-///      written before the `.state/` move still resolves)
+///   2. the NEWEST (mtime) existing candidate among
+///      `<root>/index.scip` (the `just oracle-index` / rust-analyzer default),
+///      `<root>/.dl/.state/index.scip` (current `dl index` output location),
+///      `<root>/.dl/index.scip` (pre-`.state/` location).
+/// Newest-wins, not a fixed location order: a fixed order silently shadows a
+/// fresh re-index at any lower-priority path (a Jul-15 `.dl/.state/index.scip`
+/// served every load for two days while a fresh root `index.scip` sat ignored
+/// — the arch-flow staleness rail caught it). Whichever tool wrote an index
+/// most recently is the index the user means.
 pub fn index_path(root: &Path) -> Option<PathBuf> {
     if let Ok(path) = std::env::var("SPREFA_SCIP_INDEX") {
         let path = PathBuf::from(path);
         if path.is_file() { return Some(path); }
     }
-    for cand in [
+    [
+        root.join("index.scip"),
         crate::state_dir(root).join("index.scip"),
         root.join(".dl").join("index.scip"),
-        root.join("index.scip"),
-    ] {
-        if cand.is_file() { return Some(cand); }
-    }
-    None
+    ]
+    .into_iter()
+    .filter(|cand| cand.is_file())
+    .max_by_key(|cand| {
+        std::fs::metadata(cand)
+            .and_then(|md| md.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+    })
 }
 
 /// Load one index and tag every def/ref/edge row with the repo id of its
