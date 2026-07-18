@@ -1,0 +1,74 @@
+# n-plus-one.dl — static N+1 hunt: SQL issued per loop iteration.
+#
+# The tick counter ([n+1] INSERT ... ran Nx) is the RUNTIME rail; this is its
+# static twin over the source. Two tiers:
+#   loop_sql_direct  a rusqlite call (execute/prepare/query_*) textually
+#                    inside a loop span — SQL every iteration
+#   loop_sql_hop     the loop calls a corpus fn (compiler-verified on the
+#                    call line) whose own body contains a rusqlite call —
+#                    SQL every iteration, one hop removed (the shape the
+#                    per-statement flush_pending_syms bug had)
+# Judgement stays with the reader: a prepared-statement fill inside one
+# transaction can be deliberate. The rows are receipts, not verdicts.
+#
+#   dl examples/n-plus-one.dl
+
+rel src(path: file).
+src(path) <- scan("WORK", "src/**/*.rs", path, rev).
+
+# ── the SQL surface: rusqlite entry points by name ───────────────────────────
+rel sql_call(file: text, line: int, method: text).
+sql_call(file, line, method) <-
+  call_site(_, _, method, file, line),
+  method =~ /^(execute|execute_batch|prepare|prepare_cached|query_row|query_map|insert_rows)$/.
+
+# ── tier 1: SQL directly inside a loop span ──────────────────────────────────
+# A call on the loop's HEADER line is the iteration source (`for r in
+# rows_of(..)`) and runs once, so it is excluded — the cost is missing a
+# single-line loop body, which this codebase's style does not produce.
+rel loop_sql_direct(file: text, loop_start: int, sql_line: int, method: text).
+loop_sql_direct(file, loop_start, sql_line, method) <-
+  loop_over(file, loop_start, loop_end, _, _, _),
+  sql_call(file, sql_line, method),
+  loop_start < sql_line, sql_line <= loop_end.
+
+# ── fn bodies that contain SQL ───────────────────────────────────────────────
+rel fndef(name: text, file: file, body_start: int, body_end: int).
+fndef(name, file, body_start, body_end) <-
+  scan("WORK", "src/**/*.rs", file, rev),
+  ast(file, rev, :rust,
+      "(function_item name: (identifier) @name) @fn", body_start, body_end).
+
+rel fn_sql(name: text, file: text).
+fn_sql(name, file) <-
+  fndef(name, file, body_start, body_end),
+  sql_call(file, sql_line, _),
+  body_start <= sql_line, sql_line <= body_end.
+
+# ── compiler-verified call line (same guard as loop-nests.dl) ────────────────
+rel scip_line_callee(file: text, call_line: int, callee: text, callee_file: text).
+scip_line_callee(file, occ_line + 1, callee, callee_file) <-
+  scip_occurrence(file, sym, occ_line, _, _, _, "reference", _),
+  sym =~ /\(\)\.$/,
+  scip_name(sym, callee),
+  scip_def(sym, callee_file, _).
+
+# ── tier 2: loop calls a corpus fn that does SQL ─────────────────────────────
+rel loop_sql_hop(file: text, loop_start: int, call_line: int,
+                 callee: text, callee_file: text).
+loop_sql_hop(file, loop_start, call_line, callee, callee_file) <-
+  loop_over(file, loop_start, loop_end, _, _, _),
+  call_site(_, _, callee, file, call_line),
+  loop_start < call_line, call_line <= loop_end,
+  scip_line_callee(file, call_line, callee, callee_file),
+  fn_sql(callee, callee_file).
+
+# ── rank: which loops issue SQL the most ways ────────────────────────────────
+rel loop_sql_weight(file: text, loop_start: int, sql_sites: int).
+loop_sql_weight(file, loop_start, count(sql_line)) <-
+  loop_sql_direct(file, loop_start, sql_line, _).
+
+# ── output ───────────────────────────────────────────────────────────────────
+? loop_sql_direct(file, loop_start, sql_line, method).
+? loop_sql_hop(file, loop_start, call_line, callee, callee_file).
+? loop_sql_weight(file, loop_start, sql_sites).

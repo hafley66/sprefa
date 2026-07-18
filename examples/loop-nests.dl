@@ -1,0 +1,92 @@
+# loop-nests.dl — nested loop paths, lexical AND through the call graph.
+#
+# Three layers:
+#   loop_lex_nest   two loops in the same file, inner span inside outer span
+#   loop_call_nest  a loop whose body CALLS a fn that itself contains a loop —
+#                   with the call line as the receipt ("called from here")
+#   loop_reach      transitive: chain lexical + call steps, so a loop that
+#                   calls a fn whose loop calls another loopy fn still shows
+#
+# Supporting: loopy_hot ranks callees whose loops run under the most outer
+# loops (the fan-in view of hidden quadratic work).
+#
+#   dl examples/loop-nests.dl
+
+rel src(path: file).
+src(path) <- scan("WORK", "src/**/*.rs", path, rev).
+
+# ── lexical: inner strictly inside outer, same file ──────────────────────────
+rel loop_lex_nest(file: text, outer_start: int, inner_start: int).
+loop_lex_nest(file, outer_start, inner_start) <-
+  loop_over(file, outer_start, outer_end, _, _, _),
+  loop_over(file, inner_start, inner_end, _, _, _),
+  outer_start < inner_start, inner_end <= outer_end.
+
+# ── through a call: loop body line calls a fn that owns a loop ───────────────
+# call_site gives the call LINE, call_edge the resolved callee sym; the callee
+# sym minus its repo prefix equals loop_over's fn column, and the callee's
+# trailing identifier must match the name call_site recorded at that line
+# (a caller fn with several calls would otherwise cross-join its edges).
+rel loop_call_nest(outer_file: text, outer_start: int, call_line: int,
+                   callee: text, inner_file: text, inner_start: int).
+loop_call_nest(outer_file, outer_start, call_line, callee, inner_file, inner_start) <-
+  loop_over(outer_file, outer_start, outer_end, _, _, _),
+  call_site(_, caller_sym, callee, outer_file, call_line),
+  outer_start <= call_line, call_line <= outer_end,
+  call_edge(caller_sym, callee_sym, _),
+  callee = replace_re(callee_sym, "^.*[.:]", ""),
+  short_sym = replace_re(callee_sym, "^[a-z_-]+::", ""),
+  loop_over(inner_file, inner_start, _, _, _, inner_fn),
+  inner_fn = short_sym.
+
+# ── scip-verified call steps ─────────────────────────────────────────────────
+# The native join above is name-keyed, so `r[5].parse()` (std str::parse)
+# resolves to this repo's `parse` fn — a false nest. Keep a call step only
+# when a compiler-backed reference occurrence of a same-named fn sits on that
+# exact call line AND defs to the inner loop's file. scip lines are 0-based.
+rel scip_line_callee(file: text, call_line: int, callee: text, callee_file: text).
+scip_line_callee(file, occ_line + 1, callee, callee_file) <-
+  scip_occurrence(file, sym, occ_line, _, _, _, "reference", _),
+  sym =~ /\(\)\.$/,
+  scip_name(sym, callee),
+  scip_def(sym, callee_file, _).
+
+rel loop_call_nest_proof(outer_file: text, outer_start: int, call_line: int,
+                         callee: text, inner_file: text, inner_start: int).
+loop_call_nest_proof(outer_file, outer_start, call_line, callee, inner_file, inner_start) <-
+  loop_call_nest(outer_file, outer_start, call_line, callee, inner_file, inner_start),
+  scip_line_callee(outer_file, call_line, callee, inner_file).
+
+rel loop_call_nest_dropped(outer_file: text, call_line: int, callee: text).
+loop_call_nest_dropped(outer_file, call_line, callee) <-
+  loop_call_nest(outer_file, _, call_line, callee, _, _),
+  !scip_line_callee(outer_file, call_line, callee, _).
+
+# ── transitive reach over both step kinds ────────────────────────────────────
+rel loop_edge(outer_file: text, outer_start: int, inner_file: text, inner_start: int).
+loop_edge(file, outer_start, file, inner_start) <-
+  loop_lex_nest(file, outer_start, inner_start).
+loop_edge(outer_file, outer_start, inner_file, inner_start) <-
+  loop_call_nest_proof(outer_file, outer_start, _, _, inner_file, inner_start).
+
+rel loop_reach(outer_file: text, outer_start: int, inner_file: text, inner_start: int).
+loop_reach(outer_file, outer_start, inner_file, inner_start) <-
+  loop_edge(outer_file, outer_start, inner_file, inner_start).
+loop_reach(outer_file, outer_start, inner_file, inner_start) <-
+  loop_reach(outer_file, outer_start, mid_file, mid_start),
+  loop_edge(mid_file, mid_start, inner_file, inner_start).
+
+# ── who hides loops under the most outer loops ───────────────────────────────
+rel loopy_hot(callee: text, inner_file: text, outer_loops: int).
+loopy_hot(callee, inner_file, count(outer_start)) <-
+  loop_call_nest_proof(_, outer_start, _, callee, inner_file, _).
+
+rel reach_count(pairs: int).
+reach_count(count(inner_start)) <- loop_reach(_, _, _, inner_start).
+
+# ── output ───────────────────────────────────────────────────────────────────
+? loop_call_nest_proof(outer_file, outer_start, call_line, callee, inner_file, inner_start).
+? loopy_hot(callee, inner_file, outer_loops).
+? loop_lex_nest(file, outer_start, inner_start).
+? loop_call_nest_dropped(outer_file, call_line, callee).
+? reach_count(pairs).
