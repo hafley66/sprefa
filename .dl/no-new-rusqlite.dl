@@ -59,7 +59,6 @@ rusqlite_count(source_file, count(line_number)) <-
 # Grandfathered baseline, measured 2026-07-18 with the rail's own regex.
 # Lower a row when your commit shrinks the file's count; never raise one.
 rel rusqlite_baseline(source_file: file, allowed: int).
-rusqlite_baseline("src/engine/extract/call_render_tests.rs", 2).
 rusqlite_baseline("src/engine/staged_delta/tests.rs", 1).
 rusqlite_baseline("src/jobq/mod.rs", 1).
 
@@ -118,8 +117,6 @@ conn_count(source_file, count(line_number)) <-
 
 # Grandfathered .conn() baseline, measured 2026-07-18. Ratchet down only.
 rel conn_baseline(source_file: file, allowed: int).
-conn_baseline("src/engine/extract/call_render_tests.rs", 20).
-conn_baseline("src/jobq/tests.rs", 5).
 
 diag(
     path: source_file,
@@ -175,7 +172,6 @@ sqlite_swallow_count(source_file, count(line_number)) <-
 # (The seam files are IN this ratchet: a swallowed Result is a defect risk
 # wherever it lives, seam included.)
 rel sqlite_swallow_baseline(source_file: file, allowed: int).
-sqlite_swallow_baseline("src/jobq/tests.rs", 1).
 
 diag(
     path: source_file,

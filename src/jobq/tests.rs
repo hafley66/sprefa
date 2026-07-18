@@ -156,8 +156,7 @@ fn failure_backs_off_then_parks_after_the_attempt_bound() {
     for _ in 1..MAX_ATTEMPTS {
         {
             let db = plock(&q.db);
-            db.conn()
-                .execute("UPDATE _job SET run_at=0 WHERE key='tick:r1' AND state='pending'", [])
+            db.exec_on("_job", "UPDATE _job SET run_at=0 WHERE key='tick:r1' AND state='pending'")
                 .unwrap();
         }
         q.claim(&[JobKind::Tick]).unwrap().expect("re-claim before the next attempt");
@@ -242,10 +241,7 @@ fn dispatcher_parks_a_persistently_failing_job() {
     for _ in 0..MAX_ATTEMPTS {
         {
             let db = plock(&q.db);
-            let _ = db.conn().execute(
-                "UPDATE _job SET run_at=0 WHERE key='sink:r1' AND state='pending'",
-                [],
-            );
+            let _ = db.exec_on("_job", "UPDATE _job SET run_at=0 WHERE key='sink:r1' AND state='pending'");
         }
         q.wake();
         for _ in 0..100 {
@@ -377,8 +373,7 @@ fn sweep_reclaims_an_expired_running_lease() {
     // wall-second the claim stamped.
     {
         let db = plock(&q.db);
-        db.conn()
-            .execute("UPDATE _job SET started_at=1 WHERE key='tick:r1'", [])
+        db.exec_on("_job", "UPDATE _job SET started_at=1 WHERE key='tick:r1'")
             .unwrap();
     }
 
@@ -407,8 +402,7 @@ fn finish_declines_to_stomp_a_reclaimed_row() {
     // worker is still running the job.
     {
         let db = plock(&q.db);
-        db.conn()
-            .execute("UPDATE _job SET state='pending', started_at=NULL WHERE key='tick:r1'", [])
+        db.exec_on("_job", "UPDATE _job SET state='pending', started_at=NULL WHERE key='tick:r1'")
             .unwrap();
     }
     // The slow worker's late success must be a no-op, not a stomp to `done`.
@@ -431,8 +425,7 @@ fn sweep_trims_old_done_rows_but_keeps_fresh_ones() {
     // Backdate only the `old` row's finish time past the retention window.
     {
         let db = plock(&q.db);
-        db.conn()
-            .execute("UPDATE _job SET finished_at=1 WHERE key='tick:old'", [])
+        db.exec_on("_job", "UPDATE _job SET finished_at=1 WHERE key='tick:old'")
             .unwrap();
     }
 
@@ -526,16 +519,16 @@ fn active_cold_root_picks_earliest_seeded_when_no_root_has_progress() {
     // Backdates `enqueued_at` so the earliest-seeded assertion below is
     // unambiguous regardless of same-wall-clock-second ties (same
     // test-scenario poke shape as `finish_declines_to_stomp_a_reclaimed_row`).
-    // @rusqlite-ok: test-only direct `_job` write
-    let conn = db.conn();
-    conn.execute(
+    db.exec_params(
+        "_job",
         "UPDATE _job SET enqueued_at=?1 WHERE key='cold:root-z:module-rels:0'",
-        params![now - 100],
+        &[(now - 100).into()],
     )
     .unwrap();
-    conn.execute(
+    db.exec_params(
+        "_job",
         "UPDATE _job SET enqueued_at=?1 WHERE key='cold:root-a:module-rels:0'",
-        params![now],
+        &[now.into()],
     )
     .unwrap();
     let root = active_cold_root(&db, now + 1).unwrap();
@@ -557,24 +550,18 @@ fn active_cold_root_falls_through_a_backed_off_root() {
         // — simulate "mid-batch but backed off" by marking root-a done directly
         // (same test-scenario poke shape as the sibling
         // `active_cold_root_picks_earliest_seeded...` test).
-        // @rusqlite-ok: test-only direct `_job` write
-        let conn = db.conn();
-        conn.execute(
-            "UPDATE _job SET state='done' WHERE key='cold:root-a:module-rels:0'",
-            [],
-        )
-        .unwrap();
+        db.exec_on("_job", "UPDATE _job SET state='done' WHERE key='cold:root-a:module-rels:0'")
+            .unwrap();
     }
     q.enqueue(JobRow::cold_extract("root-a", "type-rels", 0, 2)).unwrap();
     let db = plock(&q.db);
-    // Same test-scenario poke as above, plus reuses this transaction's
-    // connection to call `active_cold_root` directly (the raw connection type
-    // it takes is the same seam-adjacent shape `claim` passes it).
-    // @rusqlite-ok: test-only direct `_job` write
-    let conn = db.conn();
-    conn.execute(
+    // Same test-scenario poke as above, plus reuses this locked `Db` guard to
+    // call `active_cold_root` directly (the seam-typed `&Db` shape `claim`
+    // passes it).
+    db.exec_params(
+        "_job",
         "UPDATE _job SET run_at=?1 WHERE key='cold:root-a:type-rels:0'",
-        params![now + 10_000],
+        &[(now + 10_000).into()],
     )
     .unwrap();
     let root = active_cold_root(&db, now).unwrap();

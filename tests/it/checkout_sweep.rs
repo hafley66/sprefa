@@ -9,6 +9,8 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use sprefa_v5::db;
+
 const DL: &str = env!("CARGO_BIN_EXE_dl");
 
 fn git(dir: &Path, args: &[&str]) {
@@ -97,9 +99,9 @@ fn checkout_sink_fast_forwards_current_branch_via_ff_only() {
     assert_eq!(head(&work), upstream_head, "work clone fast-forwarded to upstream HEAD");
 
     // the outcome is queryable via the checkout_done rel (repo, branch, action, ok, detail)
-    let conn = rusqlite::Connection::open(d.join("db")).unwrap();
-    let (repo, action, ok): (String, String, i64) = conn.query_row(
-        "SELECT repo, action, ok FROM rel_checkout_done_txt", [],
+    let read_db = db::ReadDb::open(d.join("db").to_str().unwrap()).unwrap();
+    let (repo, action, ok): (String, String, i64) = read_db.query_one(
+        "rel_checkout_done_txt", "SELECT repo, action, ok FROM rel_checkout_done_txt", &[],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).expect("checkout_done row");
     assert_eq!((repo.as_str(), action.as_str(), ok), ("work", "ff", 1),
         "checkout_done records the successful fast-forward");
@@ -301,9 +303,10 @@ fn checkout_sink_dirty_working_tree_left_untouched() {
         "no stash created: {}", String::from_utf8_lossy(&stash_out.stdout));
 
     // checkout_done carries the skip row
-    let conn = rusqlite::Connection::open(d.join("db")).unwrap();
-    let (action, ok): (String, i64) = conn.query_row(
-        "SELECT action, ok FROM rel_checkout_done_txt", [], |r| Ok((r.get(0)?, r.get(1)?)))
+    let read_db = db::ReadDb::open(d.join("db").to_str().unwrap()).unwrap();
+    let (action, ok): (String, i64) = read_db.query_one(
+        "rel_checkout_done_txt", "SELECT action, ok FROM rel_checkout_done_txt", &[],
+        |r| Ok((r.get(0)?, r.get(1)?)))
         .expect("checkout_done row");
     assert_eq!((action.as_str(), ok), ("skip", 1),
         "checkout_done records the dirty-skip with ok=1 (intentional)");
@@ -431,11 +434,13 @@ fn checkout_sink_dry_run_emits_plan_without_mutating() {
     // HEAD did NOT move — no merge ran
     assert_eq!(head(&work), work_before, "dry-run must not advance the clone");
     // rows land in checkout_plan (not checkout_done)
-    let conn = rusqlite::Connection::open(d.join("db")).unwrap();
-    let plan_count: i64 = conn.query_row("SELECT COUNT(*) FROM rel_checkout_plan", [], |r| r.get(0))
+    let read_db = db::ReadDb::open(d.join("db").to_str().unwrap()).unwrap();
+    let plan_count: i64 = read_db.query_one(
+        "rel_checkout_plan", "SELECT COUNT(*) FROM rel_checkout_plan", &[], |r| Ok(r.get(0)?))
         .unwrap_or(0);
     assert_eq!(plan_count, 1, "checkout_plan has the one preview row");
-    let done_count: i64 = conn.query_row("SELECT COUNT(*) FROM rel_checkout_done", [], |r| r.get(0))
+    let done_count: i64 = read_db.query_one(
+        "rel_checkout_done", "SELECT COUNT(*) FROM rel_checkout_done", &[], |r| Ok(r.get(0)?))
         .unwrap_or(0);
     assert_eq!(done_count, 0, "checkout_done empty in dry-run (nothing was done)");
 }

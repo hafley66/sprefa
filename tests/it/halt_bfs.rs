@@ -65,23 +65,20 @@ fn rows_of(stdout: &str, head: &str) -> Vec<String> {
     out
 }
 
-fn raw_depth_rows(db: &PathBuf, table: &str, columns: &str) -> Vec<String> {
-    let connection = rusqlite::Connection::open(db).unwrap();
-    let mut statement = connection.prepare(&format!("SELECT {columns} FROM rel_{table}")).unwrap();
-    let mut rows = statement.query([]).unwrap();
-    let mut output = Vec::new();
-    while let Some(row) = rows.next().unwrap() {
-        let mut cells = Vec::new();
-        for column_index in 0..row.as_ref().column_count() {
-            cells.push(match row.get_ref(column_index).unwrap() {
-                rusqlite::types::ValueRef::Integer(value) => value.to_string(),
-                rusqlite::types::ValueRef::Text(value) => String::from_utf8_lossy(value).into_owned(),
-                rusqlite::types::ValueRef::Null => String::new(),
-                other => format!("{other:?}"),
-            });
-        }
-        output.push(cells.join("\t"));
-    }
+fn raw_depth_rows(db_path: &PathBuf, table: &str, columns: &str) -> Vec<String> {
+    let rel = format!("rel_{table}");
+    let db = sprefa_v5::db::open(Some(db_path.to_str().unwrap())).unwrap();
+    let mut output: Vec<String> = db
+        .query_values(&rel, &format!("SELECT {columns} FROM {rel}"), &[])
+        .unwrap()
+        .into_iter()
+        .map(|row| {
+            row.into_iter()
+                .map(|cell| cell.to_lossy_string())
+                .collect::<Vec<_>>()
+                .join("\t")
+        })
+        .collect();
     output.sort();
     output
 }
