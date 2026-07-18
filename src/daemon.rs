@@ -368,7 +368,7 @@ impl ServedRoot {
 
     pub(crate) fn tick_full(&self, quiet: bool) -> Result<()> {
         let tick_next = self.tick_count.load(Ordering::Relaxed) + 1;
-        crate::activity::begin_tick(tick_next, &self.program_display, &self.root);
+        crate::activity::begin_tick(tick_next, &self.program_display, &self.root, "full");
         let prog = lock(&self.prog);
         let mut eng = lock(&self.eng);
         let report = eng.tick_report(&prog, quiet)?;
@@ -413,7 +413,7 @@ impl ServedRoot {
 
     fn tick_paths(&self, paths: &[PathBuf], quiet: bool) -> Result<()> {
         let tick_next = self.tick_count.load(Ordering::Relaxed) + 1;
-        crate::activity::begin_tick(tick_next, &self.program_display, &self.root);
+        crate::activity::begin_tick(tick_next, &self.program_display, &self.root, "paths");
         crate::activity::set(
             crate::activity::Phase::Reconcile,
             format!("{} changed path(s)", paths.len()),
@@ -440,9 +440,11 @@ impl ServedRoot {
     /// (QoS/IOPOL/BG tier + rayon width) govern the tempo of the many nodes; this
     /// changes NONE of them (standing law "nothing seizes the machine").
     pub(crate) fn run_cold_node(&self, family: &str, shard: u32) -> Result<()> {
+        let tick_now = self.tick_count.load(Ordering::Relaxed);
+        crate::activity::begin_tick(tick_now, &self.program_display, &self.root, "cold-extract");
         crate::activity::set(
             crate::activity::Phase::ParseExtract,
-            format!("cold-extract {family}"),
+            format!("cold-extract {family} shard {shard}"),
         );
         {
             let prog = lock(&self.prog);
@@ -806,7 +808,11 @@ impl ServedRoot {
         eng.poll_loop = true;
         if is_config { eng.set_root_implicit(true); }
         eng.set_repos(served_repos(is_config));
-        crate::activity::set_root(Some(&eng_root));
+        // `begin_tick` (not the bare `set_root` this replaced) both pushes the
+        // root AND opens the tick-level span for this root's very first cold
+        // tick (tick 0, no `ServedRoot`/`tick_count` yet) — the boot-time
+        // counterpart to `tick_full`'s "full" / `tick_paths`'s "paths".
+        crate::activity::begin_tick(0, &display, &eng_root, "cold-boot");
         crate::activity::set(crate::activity::Phase::ColdTick, display.as_str());
         let cold_report = eng.tick_report(&prog, false)?;
         crate::activity::end_tick();
@@ -1268,10 +1274,15 @@ fn init_daemon_tracing() {
         .compact()
         .with_filter(filter);
     let home = daemon_home();
+    // DL_TRACE_CHROME composes the same way here as it does in
+    // `crate::trace::init` for a one-shot: absent -> `chrome_layer` returns
+    // `None` -> no layer installed, zero overhead. `shutdown_cleanup` below
+    // calls `finish_chrome_trace` on every exit path this fn's caller has.
     let _ = tracing_subscriber::registry()
         .with(stderr_layer)
         .with(crate::trace::dl_log_layer(&home))
         .with(crate::trace::error_log_layer(&home))
+        .with(crate::trace::chrome_layer())
         .try_init();
 }
 
@@ -1579,6 +1590,12 @@ pub(crate) fn shutdown_cleanup(d: &Daemon) {
         let _ = std::fs::remove_file(pid_path());
         crate::why::mark_shutdown(&d.home);
         tracing::info!("[daemon] shut down cleanly");
+        // Both callers of this fn (the shutdown task, right before its
+        // `process::exit(0)`, and the main thread's post-block_on path) reach
+        // this ONE place — closes the chrome trace's `]` here rather than
+        // duplicating the call at both call sites. No-op if DL_TRACE_CHROME
+        // was never set.
+        crate::trace::finish_chrome_trace();
     });
 }
 

@@ -11,6 +11,7 @@ mod jsonl;
 mod json_agg;
 mod invlog;
 mod access_log;
+mod trace_chrome;
 mod arith;
 mod arith_in_body;
 mod ast_grammars;

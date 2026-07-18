@@ -252,6 +252,19 @@ discard duplicates, rather than joining only the new frontier), and indexes are
 single-column equality only (a range join such as `s <= l <= e` still scans).
 Both are documented in [book/07-the-fast-paths.md](book/07-the-fast-paths.md).
 
+## Observability: a zoomable trace of a run
+
+`DL_TRACE_CHROME=<path>` exports every tick/phase/job as a `tracing` span to a
+chrome-trace JSON file:
+
+```sh
+DL_TRACE_CHROME=/tmp/dl-trace.json DL_NO_DAEMON=1 ./target/debug/dl <prog> --check
+```
+
+Then open [ui.perfetto.dev](https://ui.perfetto.dev) and load `/tmp/dl-trace.json`.
+Unset (the default), the layer costs one env lookup. Details, span vocabulary,
+and exactly what a `kill -9` mid-run loses: [docs/tracing-chrome.md](docs/tracing-chrome.md).
+
 ## Program structure
 
 A `.dl` program is a sequence of items, each terminated by `.`:

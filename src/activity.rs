@@ -11,11 +11,52 @@
 //! Ticks are serialized by the eng lock, so in practice there is one writer;
 //! `ping` handlers (each on its own connection thread) take the lock only long
 //! enough to clone the small struct.
+//!
+//! This module ALSO owns the `tracing` SPAN half of that same non-lexical
+//! transition logic: `begin_tick`/`set`/`end_tick` already track "phase
+//! changed, close the old one out" for the perf log (see `set`'s body); the
+//! same call sites now enter/exit a `tracing::Span` per tick and per phase, so
+//! a `DL_TRACE_CHROME` export renders the identical boundaries as a nested
+//! timeline (tick span containing phase spans) instead of just perf-log text
+//! lines. Spans live in THREAD-LOCAL storage (`TICK_SPAN`/`PHASE_SPAN`), not
+//! in the process-global `Activity` struct above: `tracing::span::EnteredSpan`
+//! is deliberately `!Send` (a span guard must not cross threads), so it
+//! cannot live in a `Mutex<Activity>` behind a `'static` `OnceLock` — that
+//! static requires its contents to be `Sync`, which a `!Send` field breaks.
+//! Thread-local storage sidesteps this entirely (no cross-thread requirement)
+//! and is ALSO the more correct model: unlike the shared `phase`/`tick`
+//! fields (which already get clobbered if two roots tick concurrently on
+//! different threads — a pre-existing, undocumented-here limitation), each
+//! thread's own span nesting stays correct regardless of what any other
+//! thread's tick is doing.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
+
+thread_local! {
+    /// The whole-tick span, entered in `begin_tick`, exited in `end_tick`.
+    /// Parent of every `PHASE_SPAN` created on this same thread while it is
+    /// entered (tracing derives span parentage from the thread-local "current
+    /// span" stack, which is exactly what holding this entered accomplishes).
+    static TICK_SPAN: RefCell<Option<tracing::span::EnteredSpan>> = const { RefCell::new(None) };
+    /// The current phase's span, opened by `set`, closed by the NEXT `set`
+    /// call or by `end_tick` — mirrors the existing non-lexical
+    /// "close the previous phase when a new one starts" logic `set` already
+    /// runs for the perf log, just for the span instead.
+    static PHASE_SPAN: RefCell<Option<tracing::span::EnteredSpan>> = const { RefCell::new(None) };
+}
+
+/// Exit whichever span is in `cell`, if any. Shared by `set`/`begin_tick`
+/// (defensive: an unmatched prior `begin_tick`/`set` shouldn't leak a
+/// dangling entered span forever) and `end_tick`.
+fn exit_span(cell: &RefCell<Option<tracing::span::EnteredSpan>>) {
+    if let Some(prev) = cell.borrow_mut().take() {
+        prev.exit();
+    }
+}
 
 /// Coarse step the current tick is in. `as_str` is the wire form `ping` ships.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -145,7 +186,9 @@ pub struct Snapshot {
 /// Mark a phase boundary with a fresh detail string. Resets the phase timer.
 /// Closes out the previous phase by emitting a perf-log record of how long it
 /// ran (driven from the same transition `ping`/`status` read, so the perf log
-/// costs no extra instrumentation points).
+/// costs no extra instrumentation points) AND by exiting its `PHASE_SPAN` (a
+/// child of the enclosing tick's `TICK_SPAN`, if one is open — a bare `set`
+/// with no `begin_tick` still opens a span, just parentless).
 pub fn set(phase: Phase, detail: impl Into<String>) {
     let mut a = slot().lock().unwrap_or_else(|p| p.into_inner());
     if a.phase != Phase::Idle && a.phase != phase {
@@ -164,8 +207,16 @@ pub fn set(phase: Phase, detail: impl Into<String>) {
         );
     }
     a.phase = phase;
-    a.detail = detail.into();
+    let detail_s: String = detail.into();
+    a.detail = detail_s.clone();
     a.since = Instant::now();
+    let tick = a.tick;
+    drop(a); // release the eng-status lock before touching thread-local span state.
+    PHASE_SPAN.with(|cell| {
+        exit_span(cell);
+        let span = tracing::info_span!("phase", tick, name = phase.as_str(), detail = %detail_s);
+        *cell.borrow_mut() = Some(span.entered());
+    });
 }
 
 /// Set the repo root currently being served. Called by the daemon when it opens
@@ -194,8 +245,11 @@ pub fn detail(detail: impl Into<String>) {
 /// Record the tick number + program + served root at tick start. Does not
 /// touch the phase; the first `set` inside the tick establishes it. Between
 /// `begin_tick` and that first `set`, a reader sees the previous tick's
-/// terminal `Idle`.
-pub fn begin_tick(tick: u64, program: &str, root: &Path) {
+/// terminal `Idle`. Opens `TICK_SPAN` (fields: tick number, root, `trigger` —
+/// what caused this tick: `"full"`, `"paths"`, ... — see call sites in
+/// `daemon.rs`); every `set()` call before the matching `end_tick` nests its
+/// `PHASE_SPAN` under this one via tracing's thread-local current-span stack.
+pub fn begin_tick(tick: u64, program: &str, root: &Path, trigger: &str) {
     let mut a = slot().lock().unwrap_or_else(|p| p.into_inner());
     a.tick = tick;
     a.program = program.to_string();
@@ -204,11 +258,20 @@ pub fn begin_tick(tick: u64, program: &str, root: &Path) {
     a.sync_root();
     a.since = Instant::now();
     a.tick_since = a.since;
-    tracing::info!(tick, root = %root.display(), program, "[tick] begin");
+    drop(a);
+    tracing::info!(tick, root = %root.display(), program, trigger, "[tick] begin");
+    TICK_SPAN.with(|cell| {
+        // Defensive: an unmatched prior begin_tick (missing end_tick) must not
+        // leak a dangling entered span forever.
+        exit_span(cell);
+        let span = tracing::info_span!("tick", tick, root = %root.display(), trigger);
+        *cell.borrow_mut() = Some(span.entered());
+    });
 }
 
 /// Mark the tick done: phase back to Idle, detail + root cleared. Emits a
-/// final perf-log record for the phase that was running when the tick ended.
+/// final perf-log record for the phase that was running when the tick ended,
+/// and closes both `PHASE_SPAN` (if still open) and `TICK_SPAN`.
 pub fn end_tick() {
     let mut a = slot().lock().unwrap_or_else(|p| p.into_inner());
     if a.phase != Phase::Idle {
@@ -225,6 +288,14 @@ pub fn end_tick() {
         a.pop_root(&r);
     }
     a.sync_root();
+    drop(a);
+    PHASE_SPAN.with(exit_span);
+    TICK_SPAN.with(exit_span);
+    // Best-effort mid-run flush (BufWriter -> disk, no closing bracket): bounds
+    // a DL_TRACE_CHROME daemon run's kill-loss window to "the tick in flight",
+    // not "everything since process start". No-op when no chrome layer is
+    // installed (see `crate::trace::flush_chrome_trace`'s doc).
+    crate::trace::flush_chrome_trace();
     if let Some(root) = root {
         tracing::info!(tick, root = %root.display(), ms = total_ms, "[tick] end");
     }
@@ -288,7 +359,7 @@ mod tests {
     fn lifecycle_round_trips() {
         let _slot = SLOT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         end_tick(); // start clean
-        begin_tick(7, ".dl/*.dl", Path::new("/tmp/root"));
+        begin_tick(7, ".dl/*.dl", Path::new("/tmp/root"), "full");
         set(Phase::Declare, "");
         let s = snapshot();
         assert_eq!(s.phase, Phase::Declare);

@@ -400,7 +400,7 @@ mod tests {
         let jobs = crate::jobq::JobQueue::open(&dir).unwrap();
 
         crate::activity::end_tick(); // start clean
-        crate::activity::begin_tick(7, "test.dl", Path::new("/tmp/myroot"));
+        crate::activity::begin_tick(7, "test.dl", Path::new("/tmp/myroot"), "full");
         let line = sample_line(&jobs);
         crate::activity::end_tick();
 
