@@ -35,6 +35,16 @@ file keeps only the standing laws + currently-open work.
   status — following its "how a new rail gets born" pipeline (incident -> RCA ->
   fail-pre-fix test -> rail -> entry). No incident closes without its entry. Do
   not rely on skill self-updates to carry this knowledge; the doc is the record.
+- **Infra is bought, never built** (user-set 2026-07-18 PM, supersedes the
+  scheduler plan's build-on-jobq verdict): scheduling, job queue, HTTP serving,
+  daemon lifecycle/supervision, and logging/telemetry run on established Rust
+  libraries (or the OS service manager). Logging = the `tracing` crate spine —
+  new signals land as tracing events/subscribers, never a parallel bespoke
+  pipeline (invlog/why/verdict are migration targets onto subscribers).
+  Bespoke versions of these subsystems are migration targets, and no new
+  bespoke line lands in them beyond keep-the-lights-on fixes. The datalog
+  engine core (lowering, fixpoint, extraction) remains the one legitimately
+  bespoke layer.
 
 ## v5 Work — open items only (landed detail: .agent/memories/sprefa-task-ledger.md)
 

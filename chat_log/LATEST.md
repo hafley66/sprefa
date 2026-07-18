@@ -1,1 +1,1 @@
-20260718.2.obs-governor-parse-amplification.md
+20260718.3.fleet-seam-instant-revival.md
