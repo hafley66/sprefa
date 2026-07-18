@@ -198,6 +198,17 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
             // Reads only `<home>/why.jsonl` — no socket, no lock — so it
             // answers while the daemon is wedged and after a kill/crash.
             print!("{}", crate::why::report(&crate::daemon::daemon_home()));
+            // Second witness (plan section 3.1): raw `launchctl print` text
+            // when a supervision unit is installed for the real home — launchd
+            // records last exit status and spawn/throttle history a SIGKILLed
+            // daemon could not journal itself. Format is explicitly not
+            // API-stable, so it is printed verbatim, never parsed.
+            if use_supervision() {
+                if let Some(supervision_text) = crate::supervise::debug_print() {
+                    println!("--- supervision (launchctl print, second witness) ---");
+                    print!("{supervision_text}");
+                }
+            }
             Ok(0)
         }
         "invocations" => {
