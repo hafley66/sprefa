@@ -70,3 +70,39 @@ diag(path: path, line: line, severity: "error", code: "callable-coverage",
 diag(path: file, line: line, severity: "error", code: "callable-coverage",
      msg: "fixture emits a (" + lang + " " + kind + ") call_def with no @callable emitter marker") <-
     present_row(lang, kind, file, line), !claimed(lang, kind).
+
+# --- optional scip proof tier ------------------------------------------------
+# The diet AST syms must be PAIRABLE with compiler-truth scip. This stratum is
+# guarded by `scip_active`, which is empty unless a scip index is loaded
+# (SPREFA_SCIP_INDEX / `just oracle-index`) — so with no index these rels are
+# empty and the rail stays green on the AST tier alone. When an index IS loaded,
+# every NAMED Rust callable in the emitter file (typegraph.rs is a real crate
+# file, unlike the fixtures) must pair with a scip definition by name+line, the
+# `examples/loop-nests.dl` coordinate convention (occ_line + 1 for scip's 0-based
+# line). Closures are excluded: rust-analyzer emits no symbol for an anonymous
+# callable, so a lambda never pairs — that is the documented finding, not a gap.
+# INFO severity: a stale index surfaces without failing the AST-tier check.
+rel scip_active(present: int).
+scip_active(1) <- scip_occurrence(_, _, _, _, _, _, _, _).
+
+rel rust_named_def(name: text, file: file, line: int).
+rust_named_def(name, file, line) <-
+    call_def(_, sym, kind, file, line, _),
+    kind != "lambda",
+    call_name(sym, name),
+    file =~ /typegraph\.rs$/.
+
+rel scip_def_here(file: file, name: text, line: int).
+scip_def_here(file, sname, occ_line + 1) <-
+    scip_occurrence(file, symbol, occ_line, _, _, _, "definition", _),
+    scip_name(symbol, sname).
+
+rel scip_unpaired(name: text, file: file, line: int).
+scip_unpaired(name, file, line) <-
+    scip_active(_),
+    rust_named_def(name, file, line),
+    !scip_def_here(file, name, line).
+
+diag(path: file, line: line, severity: "info", code: "callable-coverage-scip",
+     msg: "named Rust callable `" + name + "` did not pair with a scip definition (index stale?)") <-
+    scip_unpaired(name, file, line).
