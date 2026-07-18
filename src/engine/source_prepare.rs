@@ -10,13 +10,24 @@ use std::sync::{
 
 const READY_FILE_SLOTS: usize = 2;
 
+/// One FILE of the full-batch inventory, carrying every source rule that
+/// matched it. Per-file (not per-(file, rule)) on purpose: the preparer reads
+/// the content once and shares one `AstTreeCache` across the rules, so K ast
+/// rules over the file cost one parse per grammar, never K.
 #[derive(Clone, Debug)]
 pub(super) struct SourceExtractJob {
-    pub(super) rule_idx: usize,
     pub(super) repo: String,
     pub(super) path: String,
     pub(super) rev: String,
     pub(super) hash: String,
+    pub(super) rules: Vec<SourceExtractRule>,
+}
+
+/// One rule's slot within a `SourceExtractJob`. `head_binds` are the
+/// data-driven coordinate values this (rule, file) pairing was scanned under.
+#[derive(Clone, Debug)]
+pub(super) struct SourceExtractRule {
+    pub(super) rule_idx: usize,
     pub(super) head_binds: Vec<(String, String)>,
 }
 type ParsedFile = (
@@ -86,9 +97,20 @@ pub(super) fn prepare_source_batch(
         crate::engine::pipeline::FullSourceStageBuilder::new(engine.db.conn(), generation, base)?;
     let mut dropped = 0usize;
     let mut drop_diags = Vec::new();
-    let (sender, receiver) = sync_channel::<(usize, String, Result<ParsedFile>)>(READY_FILE_SLOTS);
+    let (sender, receiver) = sync_channel::<(String, Result<Vec<ParsedWorkRule>>)>(READY_FILE_SLOTS);
     let cancel = Arc::new(AtomicBool::new(false));
     let rels = &engine.rels;
+    // Owner ordinals stay per-(file, rule) — the stage ordering key — laid out
+    // exactly as the pre-grouping flat job list: file ordinal runs of length
+    // `rules.len()`, so grouping changes no staged byte.
+    let mut next_owner_ordinal = 0usize;
+    let mut owner_bases = Vec::with_capacity(jobs.len());
+    for job in jobs {
+        owner_bases.push(next_owner_ordinal);
+        next_owner_ordinal = next_owner_ordinal
+            .checked_add(job.rules.len())
+            .ok_or_else(|| anyhow::anyhow!("too many staged source owners"))?;
+    }
 
     std::thread::scope(|scope| -> Result<()> {
         let producer = sender.clone();
@@ -96,43 +118,37 @@ pub(super) fn prepare_source_batch(
         scope.spawn(move || {
             jobs.par_iter()
                 .enumerate()
-                .for_each_with(producer, |sender, (ordinal, job)| {
+                .for_each_with(producer, |sender, (file_idx, job)| {
                     if producer_cancel.load(Ordering::Acquire) {
                         return;
                     }
-                    // Cancellation is cooperative: parse_file runs to completion
-                    // once entered, then its result is discarded if a peer failed.
-                    let result = root_by_repo
-                        .get(&job.repo)
-                        .ok_or_else(|| anyhow::anyhow!("no root for repo {}", job.repo))
-                        .and_then(|root| {
-                            let (rows, wheres, dropped) = parse_file(
-                                source_rules[job.rule_idx],
-                                &job.repo,
-                                &job.path,
-                                &job.rev,
-                                &job.hash,
-                                root,
-                                rels,
-                                rev_index,
-                                &job.head_binds,
-                                None,
-                            )?;
-                            Ok((
-                                source_rules[job.rule_idx].head.rel.clone(),
-                                job.path.clone(),
-                                rows,
-                                wheres,
-                                dropped,
-                            ))
-                        });
+                    tracing::trace!(
+                        repo = %job.repo,
+                        path = %job.path,
+                        rev = %job.rev,
+                        rules = job.rules.len(),
+                        "[source] extract file"
+                    );
+                    // Cancellation is cooperative: a rule already extracting runs
+                    // to completion, then its result is discarded if a peer failed;
+                    // no later rule of this file starts after cancellation.
+                    let result = parse_source_job(
+                        job,
+                        owner_bases[file_idx],
+                        root_by_repo,
+                        source_rules,
+                        rels,
+                        rev_index,
+                        &producer_cancel,
+                    );
                     let result = match result {
-                        Ok(parsed) => {
+                        Ok(Some(parsed)) => {
                             if producer_cancel.load(Ordering::Acquire) {
                                 return;
                             }
                             Ok(parsed)
                         }
+                        Ok(None) => return,
                         Err(error) => {
                             if producer_cancel.swap(true, Ordering::AcqRel) {
                                 return;
@@ -140,33 +156,36 @@ pub(super) fn prepare_source_batch(
                             Err(error)
                         }
                     };
-                    if sender.send((ordinal, job.repo.clone(), result)).is_err() {
+                    if sender.send((job.repo.clone(), result)).is_err() {
                         producer_cancel.store(true, Ordering::Release);
                     }
                 });
         });
         drop(sender);
 
-        while let Ok((file_ordinal, repo, parsed)) = receiver.recv() {
-            let parsed = match parsed {
-                Ok(parsed) => parsed,
+        while let Ok((repo, parsed)) = receiver.recv() {
+            let rules = match parsed {
+                Ok(rules) => rules,
                 Err(error) => {
                     cancel.store(true, Ordering::Release);
                     drop(receiver);
                     return Err(error);
                 }
             };
-            if let Err(error) = stage_parsed_file(
-                &mut stage,
-                file_ordinal,
-                &repo,
-                Ok(parsed),
-                &mut dropped,
-                &mut drop_diags,
-            ) {
-                cancel.store(true, Ordering::Release);
-                drop(receiver);
-                return Err(error);
+            tracing::trace!(repo = %repo, rules = rules.len(), "[source] stage parsed file");
+            for rule in rules {
+                if let Err(error) = stage_parsed_file(
+                    &mut stage,
+                    rule.owner_ordinal,
+                    &repo,
+                    Ok(rule.parsed),
+                    &mut dropped,
+                    &mut drop_diags,
+                ) {
+                    cancel.store(true, Ordering::Release);
+                    drop(receiver);
+                    return Err(error);
+                }
             }
         }
         Ok(())
@@ -177,6 +196,70 @@ pub(super) fn prepare_source_batch(
         dropped,
         drop_diags,
     })
+}
+
+/// Extract one full-batch FILE: read the content once, then run every matching
+/// rule over the shared snapshot and one shared `AstTreeCache` (at most one
+/// tree-sitter parse per grammar for the whole file). Returns `Ok(None)` when
+/// cancelled between rules.
+fn parse_source_job(
+    job: &SourceExtractJob,
+    owner_base: usize,
+    root_by_repo: &HashMap<String, PathBuf>,
+    source_rules: &[&Rule],
+    rels: &Rels,
+    rev_index: &HashSet<(String, String, String)>,
+    cancel: &AtomicBool,
+) -> Result<Option<Vec<ParsedWorkRule>>> {
+    let root = root_by_repo
+        .get(&job.repo)
+        .ok_or_else(|| anyhow::anyhow!("no root for repo {}", job.repo))?;
+    let content = read_source_content(root, &job.rev, &job.path)?;
+    let rule_indices: Vec<usize> = job.rules.iter().map(|rule| rule.rule_idx).collect();
+    let mut tree_cache = AstTreeCache::default();
+    let parsed = collect_work_rules(&rule_indices, cancel, |rule_offset, rule_idx| {
+        tracing::trace!(
+            path = %job.path,
+            rule_idx,
+            rel = %source_rules[rule_idx].head.rel,
+            "[source] extract file x rule"
+        );
+        let (rows, wheres, dropped) = parse_file(
+            source_rules[rule_idx],
+            &job.repo,
+            &job.path,
+            &job.rev,
+            &job.hash,
+            root,
+            rels,
+            rev_index,
+            &job.rules[rule_offset].head_binds,
+            Some(&content),
+            &mut tree_cache,
+        )?;
+        Ok(ParsedWorkRule {
+            owner_ordinal: owner_base
+                .checked_add(rule_offset)
+                .ok_or_else(|| anyhow::anyhow!("too many staged source owners"))?,
+            parsed: (
+                source_rules[rule_idx].head.rel.clone(),
+                job.path.clone(),
+                rows,
+                wheres,
+                dropped,
+            ),
+        })
+    })?;
+    if parsed.is_some() {
+        tracing::debug!(
+            path = %job.path,
+            rules = job.rules.len(),
+            grammars = ?tree_cache.grammar_labels(),
+            parses = tree_cache.parse_count(),
+            "[source] file parsed once per grammar"
+        );
+    }
+    Ok(parsed)
 }
 
 /// Watcher-only preparation. Jobs retain path identities and rule indices;
@@ -296,6 +379,11 @@ fn prepare_work_path_batch_with_reader(
             match parsed {
                 ParsedWorkPath::Unchanged => {}
                 ParsedWorkPath::Changed { meta, rules } => {
+                    tracing::trace!(
+                        path = %meta.path,
+                        rules = rules.len(),
+                        "[source] stage parsed file"
+                    );
                     for rule in rules {
                         if let Err(error) = stage_parsed_file(
                             &mut stage,
@@ -352,7 +440,18 @@ fn parse_work_path(
         .ok()
         .map(|meta| mtime_secs(&meta))
         .unwrap_or(0);
+    // One tree cache per file snapshot: every matching rule shares it, so the
+    // path tick parses the file at most once per grammar.
+    // One tree cache per file snapshot: every matching rule shares it, so the
+    // path tick parses the file at most once per grammar.
+    let mut tree_cache = AstTreeCache::default();
     let Some(rules) = collect_work_rules(&job.rule_indices, cancel, |rule_offset, rule_idx| {
+        tracing::trace!(
+            path = %job.path,
+            rule_idx,
+            rel = %source_rules[rule_idx].head.rel,
+            "[source] extract file x rule"
+        );
         let (rows, wheres, dropped) = parse_file(
             source_rules[rule_idx],
             &job.repo,
@@ -364,6 +463,7 @@ fn parse_work_path(
             rev_index,
             &[],
             Some(content.as_ref()),
+            &mut tree_cache,
         )?;
         Ok(ParsedWorkRule {
             owner_ordinal: owner_base
@@ -381,6 +481,13 @@ fn parse_work_path(
     else {
         return Ok(None);
     };
+    tracing::debug!(
+        path = %job.path,
+        rules = job.rule_indices.len(),
+        grammars = ?tree_cache.grammar_labels(),
+        parses = tree_cache.parse_count(),
+        "[source] file parsed once per grammar"
+    );
     let meta = PreparedWorkPath {
         ordinal,
         repo: job.repo.clone(),
@@ -507,6 +614,200 @@ mod tests {
     #[test]
     fn ready_file_queue_stays_tiny() {
         assert!(super::READY_FILE_SLOTS <= 2);
+    }
+
+    /// Serializes the tests that read `AST_PARSE_COUNT` deltas; no other
+    /// in-process test exercises the `ast` op, so a held lock makes the
+    /// global counter's delta attributable to the guarded section alone.
+    static PARSE_COUNT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn ast_parse_count() -> usize {
+        AST_PARSE_COUNT.load(Ordering::SeqCst)
+    }
+
+    /// Two ast rules + one comment rule, all over the same Rust files. The
+    /// parse-amplification defect: each ast rule used to tree-sitter-parse the
+    /// file again (K rules = K parses); the comment rule is regex-driven and
+    /// must never force a parse.
+    const AST_FIXTURE_PROG: &str = r#"
+        rel fn_item(path: text, line: int).
+        rel use_item(path: text, line: int).
+        rel todo_note(path: text, line: int).
+        fn_item(path, line) <- scan("WORK", "*.rs", path, rev),
+            ast(path, rev, :rust, "(function_item name: (identifier) @fn_name)", line).
+        use_item(path, line) <- scan("WORK", "*.rs", path, rev),
+            ast(path, rev, :rust, "(use_declaration) @use_node", line).
+        todo_note(path, line) <- scan("WORK", "*.rs", path, rev),
+            comment(path, rev, /TODO/, line).
+    "#;
+
+    const AST_FIXTURE_CONTENT: &str =
+        "// TODO tidy this fixture\nuse std::fmt;\nfn alpha() {}\nfn beta() {}\n";
+
+    fn ast_fixture(tag: &str) -> (Engine, Program) {
+        let program = crate::parse::parse(crate::lex::lex(AST_FIXTURE_PROG).unwrap()).unwrap();
+        let root = std::env::temp_dir().join(format!("sprefa-source-prepare-ast-{tag}"));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let mut engine = Engine::new(crate::db::open(None).unwrap(), root);
+        engine.ensure_meta().unwrap();
+        engine.declare_all(&program, &HashMap::new()).unwrap();
+        (engine, program)
+    }
+
+    /// Fail-pre-fix repro (work path): one file, two ast rules on the same
+    /// grammar. Pre-fix each rule parsed the file itself: counter delta was 2.
+    /// Post-fix the shared per-file `AstTreeCache` makes it 1, and the comment
+    /// rule adds 0. Both ast rels still get their rows from the shared tree.
+    #[test]
+    fn work_path_parses_once_per_grammar_across_ast_rules() {
+        let _guard = PARSE_COUNT_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let (mut engine, program) = ast_fixture("work");
+        let rules = source_rules(&program);
+        let (generation, base) =
+            crate::engine::pipeline::source_stage_base(&engine, &rules).unwrap();
+        let job = WorkPathExtractJob {
+            repo: "repo".into(),
+            path: "a.rs".into(),
+            rev: "WORK".into(),
+            rule_indices: vec![0, 1, 2],
+        };
+        let before = ast_parse_count();
+        let prepared = prepare_work_path_batch_with_reader(
+            &engine,
+            &rules,
+            &[job],
+            &FileMeta::new(),
+            &HashSet::new(),
+            generation,
+            base,
+            &|_| Ok(AST_FIXTURE_CONTENT.into()),
+        )
+        .unwrap();
+        assert_eq!(
+            ast_parse_count() - before,
+            1,
+            "one file under one grammar must parse exactly once, \
+             no matter how many ast rules match (pre-fix: 2)"
+        );
+        assert_eq!(prepared.changed.len(), 1);
+        let PreparedWorkPathBatch { facts, .. } = prepared;
+        engine
+            .with_semantic_generation(|engine| facts.apply(engine, base))
+            .unwrap();
+        facts.discard(engine.db.conn()).unwrap();
+        for (table, expected) in [("rel_fn_item", 2i64), ("rel_use_item", 1), ("rel_todo_note", 1)]
+        {
+            let count: i64 = engine
+                .db
+                .conn()
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, expected, "{table} rows from the shared tree");
+        }
+    }
+
+    /// Fail-pre-fix repro (full-batch path): three files, two ast rules + one
+    /// comment rule each. Pre-fix the batch ran one job per (file, rule) and
+    /// parsed per job: counter delta was 6 (3 files x 2 ast rules). Post-fix
+    /// jobs are per file with a shared tree cache: delta is 3.
+    #[test]
+    fn full_batch_parses_once_per_file_per_grammar() {
+        let _guard = PARSE_COUNT_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let (mut engine, program) = ast_fixture("batch");
+        let rules = source_rules(&program);
+        let (generation, base) =
+            crate::engine::pipeline::source_stage_base(&engine, &rules).unwrap();
+        let root = engine.root.clone();
+        let paths = ["a.rs", "b.rs", "c.rs"];
+        let mut jobs = Vec::new();
+        for path in paths {
+            std::fs::write(root.join(path), AST_FIXTURE_CONTENT).unwrap();
+            jobs.push(SourceExtractJob {
+                repo: "repo".into(),
+                path: path.into(),
+                rev: "WORK".into(),
+                hash: blake3::hash(AST_FIXTURE_CONTENT.as_bytes()).to_hex().to_string(),
+                rules: (0..3)
+                    .map(|rule_idx| SourceExtractRule {
+                        rule_idx,
+                        head_binds: Vec::new(),
+                    })
+                    .collect(),
+            });
+        }
+        let root_by_repo = HashMap::from([("repo".to_string(), root)]);
+        let before = ast_parse_count();
+        let prepared = prepare_source_batch(
+            &engine,
+            &rules,
+            &jobs,
+            &root_by_repo,
+            &HashSet::new(),
+            generation,
+            base,
+        )
+        .unwrap();
+        assert_eq!(
+            ast_parse_count() - before,
+            3,
+            "three files under one grammar must parse exactly three times, \
+             no matter how many ast rules match each (pre-fix: 6)"
+        );
+        let PreparedSourceBatch { facts, .. } = prepared;
+        engine
+            .with_semantic_generation(|engine| facts.apply(engine, base))
+            .unwrap();
+        facts.discard(engine.db.conn()).unwrap();
+        for (table, expected) in [("rel_fn_item", 6i64), ("rel_use_item", 3), ("rel_todo_note", 3)]
+        {
+            let count: i64 = engine
+                .db
+                .conn()
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, expected, "{table} rows across the batch");
+        }
+    }
+
+    /// Non-tree rule kinds (match/comment here; scan/json by the same seam)
+    /// must never force a tree-sitter parse.
+    #[test]
+    fn non_tree_rules_do_not_parse() {
+        let _guard = PARSE_COUNT_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let (engine, program) = fixture();
+        let rules = source_rules(&program);
+        let (generation, base) =
+            crate::engine::pipeline::source_stage_base(&engine, &rules).unwrap();
+        let rev_index = HashSet::from([("repo".into(), "WORK".into(), "a.txt".into())]);
+        let before = ast_parse_count();
+        let prepared = prepare_work_path_batch_with_reader(
+            &engine,
+            &rules,
+            &[work_job()],
+            &FileMeta::new(),
+            &rev_index,
+            generation,
+            base,
+            &|_| Ok("x\n".into()),
+        )
+        .unwrap();
+        assert_eq!(
+            ast_parse_count() - before,
+            0,
+            "match/comment-only rules must not tree-sitter-parse"
+        );
+        prepared.facts.discard(engine.db.conn()).unwrap();
     }
 
     #[test]

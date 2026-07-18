@@ -48,9 +48,16 @@ static AST_LANG_TABLE: &[(&str, &[&str], TsLangCtor)] = &[
 ];
 
 pub(crate) fn ts_lang(lang: &str) -> Result<tree_sitter::Language> {
+    ts_lang_resolved(lang).map(|(_, language)| language)
+}
+
+/// Resolve a lang label (canonical or alias) to `(canonical name, grammar)`.
+/// The canonical name is the per-file `AstTreeCache` key, so alias spellings
+/// (`:rs` / `:rust`) share one parsed tree.
+pub(crate) fn ts_lang_resolved(lang: &str) -> Result<(&'static str, tree_sitter::Language)> {
     for (canon, aliases, ctor) in AST_LANG_TABLE {
         if lang == *canon || aliases.contains(&lang) {
-            return Ok(ctor());
+            return Ok((canon, ctor()));
         }
     }
     let compiled = AST_LANG_TABLE

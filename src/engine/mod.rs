@@ -55,7 +55,7 @@ pub use decls::{
     op_docs, undocumented_builtins, undocumented_fns,
 };
 pub use lang_tables::ast_langs;
-pub(crate) use lang_tables::ts_lang;
+pub(crate) use lang_tables::{ts_lang, ts_lang_resolved};
 /// The structured result of one `checkout_one` sweep. `action` ∈
 /// ff|branch-f|skip; `ok` = the git op succeeded (skip-dirty carries ok=true —
 /// the SKIP is intentional); `detail` = the human line. Fed into both the
