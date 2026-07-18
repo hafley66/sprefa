@@ -1,6 +1,7 @@
 pub mod activity;
 pub mod agent;
 pub mod anchor;
+pub mod budget;
 pub mod ast;
 pub mod channel;
 pub mod cli;

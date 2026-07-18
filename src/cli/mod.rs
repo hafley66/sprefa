@@ -299,6 +299,9 @@ fn apply_cli_budget() {
         return;
     }
     crate::daemon::apply_process_budget();
+    // One-shot runs stay un-governed by default (interactive latency);
+    // DL_MAX_CPU_PCT opts a run into the same hard ceiling the daemon gets.
+    crate::budget::start_governor(crate::budget::ceiling_from_env(0));
     if std::env::var("DL_BUDGET_DEBUG").ok().as_deref() == Some("1") {
         let (qos, iopol) = if cfg!(target_os = "macos") {
             ("utility", "throttle")

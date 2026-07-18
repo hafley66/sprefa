@@ -1152,6 +1152,14 @@ fn apply_daemon_budget() -> (&'static str, i32, usize) {
         }
     }
 
+    // The tiers above are scheduling advice; the governor is the ceiling
+    // (receipt 2026-07-18: 278% cpu through a full re-extract with every tier
+    // applied). Daemon default 100% of one core; DL_MAX_CPU_PCT overrides,
+    // 0 disables.
+    if std::env::var("DL_NO_BUDGET").ok().as_deref() != Some("1") {
+        crate::budget::start_governor(crate::budget::ceiling_from_env(100));
+    }
+
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(2);
