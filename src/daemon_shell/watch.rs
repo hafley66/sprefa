@@ -74,12 +74,19 @@ pub(crate) async fn watch_task(d: Arc<ServedRoot>, ctx: ShellCtx, launch_exe_sta
         if rc.root.exists() { watch_count += watch_git_narrow(&mut watcher, &mut gate, &rc.root); }
     }
 
-    tracing::info!("[{}] watcher ready — {watch_count} watch(es)", d.root_label());
-    let watcher_start = std::time::Instant::now();
-    const STARTUP_GRACE: Duration = Duration::from_secs(1);
     let mut watched: std::collections::HashSet<PathBuf> = std::collections::HashSet::from_iter(
         [d.root.clone()].into_iter()
             .chain(corpus.iter().filter(|r| r.root.exists()).map(|r| r.root.clone())));
+    let mut watched_roots: Vec<String> =
+        watched.iter().map(|p| p.display().to_string()).collect();
+    watched_roots.sort();
+    tracing::info!(
+        "[{}] watcher ready — {watch_count} watch(es), recursive roots: {}",
+        d.root_label(),
+        watched_roots.join(", ")
+    );
+    let watcher_start = std::time::Instant::now();
+    const STARTUP_GRACE: Duration = Duration::from_secs(1);
     loop {
         // Observe the drop flag + cancellation between events so `drop_root` and
         // daemon shutdown can retire us. The 1s timeout doubles as the guard
