@@ -319,6 +319,61 @@ fn fifty_concurrent_health_all_answer_under_engine_lock() {
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
 }
 
+/// `GET /watch` over the UDS socket streams a `diag_changed` SSE event when a
+/// tick broadcasts. The trigger is a watched `load` (its reload path always
+/// broadcasts after the re-tick), so the test is deterministic — no watcher
+/// timing. This is the e2e witness for the subscribe-method replacement.
+#[test]
+fn watch_sse_streams_diag_changed_over_uds() {
+    let sb = Sandbox::new("watchsse");
+    fs::write(sb.root.join("p.dl"), EDGE_PROGRAM).unwrap();
+    let mut child = sb.spawn(&sb.root.join("p.dl"));
+    assert!(sb.wait_ready(), "not ready");
+
+    // Open the SSE stream on the UDS door (kept open; chunked body).
+    let mut stream = std::os::unix::net::UnixStream::connect(sb.sock()).expect("connect uds");
+    stream.set_read_timeout(Some(std::time::Duration::from_millis(500))).unwrap();
+    stream
+        .write_all(b"GET /watch HTTP/1.1\r\nHost: dl-daemon\r\nAccept: text/event-stream\r\n\r\n")
+        .expect("send watch request");
+
+    // Trigger a broadcast: a watched `load` re-ticks and always pushes
+    // `diag_changed` after the reload.
+    fs::write(sb.root.join("extra.dl"), "rel extra_mark(t: text).\nextra_mark(\"x\").\n").unwrap();
+    let load = serde_json::json!({
+        "jsonrpc": "2.0", "id": 7, "method": "load",
+        "params": {
+            "root": sb.root.to_string_lossy(),
+            "path": sb.root.join("extra.dl").to_string_lossy(),
+            "mode": "watched",
+        },
+    }).to_string();
+    let load_resp = rpc(&sb.sock(), &load).expect("load rpc");
+    assert!(load_resp.contains("result"), "watched load must succeed: {load_resp}");
+
+    // Accumulate the stream until the pushed notification shows up (bounded).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let mut seen = String::new();
+    let mut chunk = [0u8; 4096];
+    while std::time::Instant::now() < deadline {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => seen.push_str(&String::from_utf8_lossy(&chunk[..n])),
+            Err(_) => {} // read timeout slice; keep polling until the deadline
+        }
+        if seen.contains("diag_changed") {
+            break;
+        }
+    }
+    assert!(seen.contains("200"), "watch stream answers 200: {seen}");
+    assert!(seen.contains("data:"), "watch stream carries SSE data events: {seen}");
+    assert!(seen.contains("diag_changed"),
+        "a watched load's re-tick must push diag_changed to /watch subscribers: {seen}");
+
+    sb.shutdown();
+    let _ = child.wait_timeout(std::time::Duration::from_secs(5));
+}
+
 // ---------- child wait helper (mirrors daemon.rs) ----------
 
 trait WaitTimeoutExt {
