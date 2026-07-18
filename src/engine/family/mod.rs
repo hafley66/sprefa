@@ -643,3 +643,346 @@ fn gamma() {
         );
     }
 }
+
+// --- Extraction-family rel-name inventories -----------------------------
+// The per-family reserved relation lists, relocated from `engine/mod.rs`
+// (decomposition plan step 7) to live beside the family registry. Consumed
+// via `engine::*` re-exports; declare/decls/tick loop over them each tick.
+
+/// The module-graph relations (modgraph.rs). Reserved like BUILTIN_RELS, declared
+/// every tick, but populated by `refresh_module_rels` only when the program
+/// references one (resolution parses every file, so it is lazy). `module_edge` is
+/// the 2-col convenience closure edge; `module_edge_rev` is the rev-aware form.
+pub(crate) const MODULE_RELS: [&str; 10] = [
+    "module_import",
+    "module_edge",
+    "module_edge_rev",
+    "module_unresolved",
+    "module_unresolved_rev",
+    "crate_edge",
+    "module_binding_resolved_rev",
+    "module_binding_resolved",
+    "module_binding_rev",
+    "module_binding",
+];
+
+/// Syntax-only type graph. `kind` is edge metadata; closure(type_edge) walks
+/// the first two columns. `type_edge`/`type_edge_rev` are name-keyed (the
+/// historic contract) with a trailing `repo` column so two trees scanned in
+/// the same engine instance that happen to share a type name (e.g. two
+/// frozen prior versions of the same crate) don't collapse into one node —
+/// the column is appended last specifically so it never shifts `from`/`to`
+/// out of cols[0]/cols[1]. The sem-style additions are def-keyed: `type_entity`
+/// is the declared-symbol table (kind, parent, location), `type_sig` is each
+/// callable's arrow `[...A] => B` exploded by slot, and `type_link` is the
+/// SCIP-resolved graph where endpoints are definition symbols, not bare names
+/// (already repo-prefixed via type_entity's sym, so it doesn't need its own
+/// repo column).
+pub(crate) const TYPE_RELS: [&str; 7] = [
+    "type_edge",
+    "type_edge_rev",
+    "type_entity",
+    "type_entity_rev",
+    "type_sig",
+    "type_link",
+    "type_link_rev",
+];
+
+/// Phase D diet-SCIP call graph. `call_def` is each callable (sym, kind, file,
+/// span); `call_site` is each call occurrence (caller sym, callee text, file,
+/// line); `call_edge` is the resolved closure edge; `call_edge_rev` is the
+/// rev-aware source of truth (same split as type_edge / type_edge_rev).
+/// `call_kind` is the per-fn read/write classification of those call sites,
+/// keyed by the bare callee name (execute/query_row/etc.) so a rail can join
+/// on `write` only. Symbols are `file::kind::name`, the same shape
+/// `type_entity` uses, so the call and type graphs share nodes and a join
+/// reaches both.
+pub(crate) const CALL_RELS: [&str; 7] = [
+    "call_def",
+    "call_def_rev",
+    "call_site",
+    "call_edge",
+    "call_edge_rev",
+    "call_name",
+    "call_kind",
+];
+
+/// Intra-procedural dataflow lift: `df_node(id, kind, var, fn, file, line)` is a
+/// value-bearing program point, `df_edge(from, to)` is local value flow. A rule
+/// `df_reaches(a,b) <- closure(df_edge)` walks the lifted graph on the shared SCC
+/// engine. `loop_over` records each loop's span + variable for the
+/// loop-invariant-call flag; `allocates` marks fns whose body builds a
+/// collection; `nest(call_id, loop_id, depth, collection)` records each call's
+/// enclosing loop nest, composing over `call_edge` into symbolic Big-O
+/// ("depth-N over C") without resolving trip counts. `df_arg` records which
+/// positional slot an argument value feeds (receiver = -1); `df_field` is named
+/// value flow into a composite (struct-literal field, object-literal property,
+/// Kotlin named argument). See `typegraph::DataflowFacts`.
+/// `df_node`/`df_node_repo`/`df_arg`/`df_field` gain `_rev` twins (D5.4): the
+/// diff-consumed df rels carry rev, with node ids salted by rev (`salt_rev`) so
+/// two revs' `file:line:col` ids stay disjoint in one table. The legacy rels
+/// keep raw ids (single-rev daemon sees today's behavior). `df_edge`/`loop_over`/
+/// `allocates`/`nest`/`df_param` stay WORK-only (flow/perf inputs, deferred).
+/// `df_lit`/`df_lit_rev` (string-values arc, item 1): one row per STRING-
+/// carrying `df_node` (kind lit/template/concat) with its cooked/raw text;
+/// same rev-salted-id shape as `df_field`/`df_field_rev`. See
+/// `typegraph::DataflowFacts::lits`.
+pub(crate) const DATAFLOW_RELS: [&str; 15] = [
+    "df_node",
+    "df_node_rev",
+    "df_node_repo",
+    "df_node_repo_rev",
+    "df_edge",
+    "loop_over",
+    "allocates",
+    "nest",
+    "df_param",
+    "df_arg",
+    "df_arg_rev",
+    "df_field",
+    "df_field_rev",
+    "df_lit",
+    "df_lit_rev",
+];
+
+/// Document structure from non-source text (markdown today; comments and other
+/// tree-sitter grammars to follow via `ingest::IngestLang`). `doc_node` is one row
+/// per heading / code block / section: (file, line, kind, name, parent). The
+/// `parent` column is the enclosing heading text, so a rule can walk the section
+/// tree. `doc_ref` is the doc→code bridge: (file, line, sym) where a heading's
+/// name matches a `type_entity` name. Populated by the `ingest` registry over
+/// `_file`'s document-typed files (a source rule scanning `**/*.md` feeds `_file`,
+/// same as the source langs).
+pub(crate) const DOC_RELS: [&str; 2] = ["doc_node", "doc_ref"];
+
+/// Doc comments attached to declared entities (Tier 1/2 doc gen). `doc_comment`
+/// is one row per documented `type_entity`: (repo, sym, line, text), the cleaned
+/// block bound to the same sym. `doc_tag` is the structured split: (repo, sym,
+/// tag, arg, text) where tag is `param`/`returns`/`deprecated`/`section`/... .
+/// Both are populated in `refresh_type_rels` from the one parse that already
+/// builds `type_entity`, by the per-language AST locators in `typegraph`.
+pub(crate) const DOC_TEXT_RELS: [&str; 2] = ["doc_comment", "doc_tag"];
+
+/// String values folded from `const`/`as const` bindings (string-values arc,
+/// item 3): `const_value(repo, sym, field, text, kind, file, line)` — one row
+/// per string-valued leaf, `sym` the owning `type_entity` (the const itself,
+/// or the enum for a string member), `field` a dotted key path ("" for a bare
+/// const). `const_value_rev` is the rev-carrying twin (rev is a plain trailing
+/// column, like `type_entity_rev` — sym never collides across revs the way a
+/// line-keyed df id does, so no id-salting here). Both ride `refresh_type_rels`
+/// (the same TypeFacts parse `doc_comment` rides), so a program that asks for
+/// either gates the type family the same way `doc_text_rels_used` does. `line`
+/// is 1-based (rustc/tsc convention), same as `type_entity.line`.
+pub(crate) const CONST_VALUE_RELS: [&str; 2] = ["const_value", "const_value_rev"];
+
+/// Every comment in every parsed file as a grammar-backed fact:
+/// `comment_node(path, line, col, end_line, end_col, text, kind)`. Unlike
+/// `doc_comment` (which rides the TypeLang parse and covers only the three
+/// TypeLang languages' DOC comments bound to an entity), `comment_node` is its
+/// OWN family: it records EVERY comment — line, block, and doc — across the
+/// oxc TS/TSX front-end AND every tree-sitter grammar the `ast` op loads
+/// (Rust, Kotlin, Python, Go, C, bash, ...). `line`/`col` are 1-based line,
+/// 0-based byte column (the `sg`/`diag` convention); `text` is the comment body
+/// with tokens stripped; `kind` ∈ line | block | doc. String-literal safe: a
+/// `//` inside a string is lexed as string content, never a comment row. The
+/// eslint/biome suppression grammar (`std/suppress.dl`) is pure dl over this.
+pub(crate) const COMMENT_RELS: [&str; 1] = ["comment_node"];
+
+/// Every template literal in every TS/TSX/JS/JSX/MJS/CJS file, split into its
+/// ordered static/interpolated pieces:
+/// `template_parts(file, line, node, idx, kind, text)`. Own family (rides the
+/// oxc parse `TsTypes` already does, but is not gated behind `type`/`call`/
+/// `dataflow` — a program reading only `template_parts` shouldn't pay for
+/// those passes). `node` groups a template literal occurrence's pieces (the
+/// byte offset of its own span start, stable across ticks for unchanged
+/// content); `idx` orders them 0-based; `kind` is `static` | `expr`; `text` is
+/// the static chunk verbatim (raw, unescaped) or the interpolated expression's
+/// exact source text. `line` is 1-based (the `comment_node`/`sg`/`diag`
+/// convention). Template-built import paths / URLs / route keys become
+/// joinable: `template_parts(file, _, node, 0, "static", "GET /users/"), ...`.
+/// Kotlin string templates and Rust `format!`-style macros are OUT of scope
+/// (Rust has no native template-literal syntax); this family emits nothing
+/// for either language rather than guessing at a shape.
+pub(crate) const TEMPLATE_RELS: [&str; 1] = ["template_parts"];
+
+/// Every runtime-computed edge marker in every TS/TSX/JS/JSX/MJS/CJS file:
+/// `unresolved(file, line, reason, detail)`. Own family (rides the oxc parse,
+/// not gated behind `type`/`call`/`dataflow`/`module`, matching
+/// `template_parts`). Distinguishes "an edge exists but its target is
+/// computed at runtime" from `module_unresolved`'s "no edge exists" (a
+/// specifier that resolved to no project file at all) — this rel does NOT
+/// replace `module_unresolved`, it is a separate, generic surface for the
+/// runtime-computed flavor. `line` is 1-based (the `comment_node`/`sg`/`diag`
+/// convention); `detail` is the computed thing's exact source text, verbatim.
+/// `reason` is a closed v1 vocabulary, each bucket re-derived from an AST
+/// shape another pass in this codebase already visits for a different
+/// purpose: `dynamic-import` (`import(expr)` / `require(expr)` whose argument
+/// isn't a plain string literal), `computed-member-call` (`obj[key]()` — the
+/// call-site walk already sees this callee shape and silently drops it),
+/// `spread-call-args` (`f(...args)` — the dataflow arg walk already sees a
+/// spread argument and silently drops it). TS/TSX/JS/JSX/MJS/CJS only in v1;
+/// Python star-imports and `sys.path` mutation stay out (already surfaced via
+/// `module_unresolved` / a loud eprintln respectively) to avoid a
+/// cross-family digest dependency — see `typegraph::UnresolvedRef`.
+pub(crate) const UNRESOLVED_RELS: [&str; 1] = ["unresolved"];
+
+// The git-derived families `changed` / `changed_line` / `created`, the analysis
+// families `agent` / `dl_diag` / `type_shape` / `type_lgg` / catalog, the SCIP
+// importer `scip_*`, the clone proposers `propose_extract` / `propose_clone`,
+// and the embedding `similar` now live behind `trait RelKind` in the `rels`
+// module dir (decls + gate + refresh per family, one registry the
+// tick/declare/guard sites loop over).
+
+/// Ref-spine query relations: thin views over the `_strings` / `_where_bytes`
+/// meta tables. `string(id, text, norm)` resolves an interned StringId to its
+/// content; `ref(id, string, file, lo, hi)` locates each interned string's byte
+/// span, `id` being the `_where_bytes` id (the rewrite coordinate an `edit` keys
+/// off). Join them to ask "where does <text> occur": `string(s, "Foo", _),
+/// ref(_, s, f, lo, hi)`. Populated for regex/ast/sg captures and import refs.
+pub(crate) const SPINE_RELS: [&str; 2] = ["string", "ref"];
+
+/// CST-as-relation (christmas #3): every NAMED tree-sitter node of every scanned
+/// file as a row. `node(id, kind, file, lo, hi, parent)` — `id`/`parent` are
+/// kind-salted `_where_bytes` ids (so `ref(id, sid, _, lo, hi)` ->
+/// `string(sid, text, _)` recovers each node's source bytes); `file` is the
+/// content FileId, `kind` the tree-sitter node kind, `[lo, hi)` the byte span.
+/// `child(parent, child)` is the 2-col edge so `anc(a,b) <- closure(child).`
+/// gives ancestor/descendant with the engine's existing recursion. Populated by
+/// `refresh_node_rels` over the whole tree (no query) when the rels are used.
+pub(crate) const NODE_RELS: [&str; 2] = ["node", "child"];
+
+/// Daemon-state query relations: thin views over the persisted `_program` /
+/// `_ref` / `_rev_log` meta tables, so a dashboard can ask the warm engine what
+/// it loaded and which watched refs have moved. `program(path, hash, mtime)` is
+/// the loaded `.dl` file set; `head(repo, name, oid)` is the last-seen oid of
+/// every watched ref (HEAD plus each program-scanned rev); `rev_advanced(repo,
+/// name, old, new)` is the advance log the daemon appends when a watched ref
+/// moves. Populated by `refresh_daemon_rels`; the daemon writes the underlying
+/// tables via `save_program_meta` / `save_repos_meta` / `observe_ref`.
+pub(crate) const DAEMON_RELS: [&str; 3] = ["program", "head", "rev_advanced"];
+
+/// The clock relation. `every(secs)` is an engine-populated source rel that holds
+/// the interval `N` only on the tick that crosses an `N`-second boundary (and on
+/// the first tick), so a body atom `every(30)` self-throttles the rule that joins
+/// it. Edge-triggered off wall-clock seconds, bucket-per-N stored in `_carry_meta`
+/// (`every:N`), so the cadence is exact regardless of how often the daemon ticks.
+pub(crate) const EVERY_RELS: [&str; 1] = ["every"];
+
+/// The persistent clock relation. `clock(secs, bucket)` holds, on EVERY tick, the
+/// current bucket `now / secs` for each `secs` period the program names — a
+/// monotone integer that advances once per `secs` wall-clock seconds. Unlike the
+/// edge-triggered `every` (present only on the boundary tick), `clock` is always
+/// present, so a body atom `clock(300, b)` binds `b` to the live bucket and varies
+/// any join — or an `@async` request digest — exactly once per period. That is the
+/// dl-native cadence primitive: time as a fact you join against, no `@next`
+/// counter. Reuses `now_secs`; lazy per `clock_rels_used`.
+pub(crate) const CLOCK_RELS: [&str; 1] = ["clock"];
+
+/// The effect-drain audit view: a thin query rel over `pending_effect`, the job
+/// table @async/@stream requests land in. One row per distinct request (digest
+/// `id`), carrying its template `kind`, the `head` rel it rebuilds, the job
+/// `state` (queued|running|done|failed|orphaned), the request `args` JSON (the hole map —
+/// the call's parameters, the endpoint analog), and `req_tx` (the tx it was
+/// queued at). This is the dl-native call log: `? effect_log(...)` shows the
+/// drain queue live, and it doubles as the parity surface against ghcacher's
+/// `call_log`. Lazy like every other built-in group; a program that never reads
+/// it pays nothing (`pending_effect` is still written, just not projected).
+pub(crate) const EFFECT_RELS: [&str; 1] = ["effect_log"];
+
+/// The diagnostic sink. Unlike every other built-in, `diag` is engine-declared
+/// but USER-WRITTEN: a rule heads it to emit an editor squiggle (`--lsp`), a
+/// check finding (`--check` exit code), or a daemon-hook message. Fixed 9-col
+/// schema (was a magic user-declared name whose columns the engine mapped by
+/// NAME — the merged `.dl/` namespace collided when two files declared it with
+/// different columns). Write only the columns you need via named args
+/// (`diag(path: p, line: l, msg: m) <- ...`); the rest lower to NULL and take
+/// defaults in `Engine::diags` (severity "warn", end_line = line, ints 0). Read
+/// only, never populated by a refresh — `rebuild_derived` fills it from the
+/// program's rules like any other derived rel.
+pub(crate) const DIAG_RELS: [&str; 1] = ["diag"];
+
+/// The diag-stage routing sink. Same shape as `diag` (engine-declared,
+/// USER-WRITTEN): a rail heads `diag_stage(code, stage)` to route a diagnostic
+/// code to a surface (live / commit / agent-turn / agent-session). Fixed 2-col
+/// schema. Read only, never populated by a refresh — `rebuild_derived` fills it
+/// from the program's rules like any other derived rel. Presentation-time
+/// filtering only; the db keeps every `diag` row. See R7 (src/stage.rs).
+pub(crate) const DIAG_STAGE_RELS: [&str; 1] = ["diag_stage"];
+
+/// The hover-note sink. Same shape as `diag` (engine-declared, USER-WRITTEN): a
+/// rule heads `hover_note(path, line, col, end_line, end_col, md)` to attach
+/// markdown to a source span; the LSP hover path appends each matching row's
+/// `md` to the hover it synthesizes at that position. Positions are 0-based,
+/// the same convention as `diag`. Fixed 6-col schema. Read only, never
+/// populated by a refresh — `rebuild_derived` fills it from the program's
+/// rules like any other derived rel; a program that never heads it leaves the
+/// table empty (or undeclared, tolerated by `Engine::hover_notes_at`).
+pub(crate) const HOVER_RELS: [&str; 1] = ["hover_note"];
+
+/// The drawable-graph SINK relations. A user HEADS these from a rule (like
+/// `diag`) to emit a graph the flow panel draws with ZERO bespoke SQL:
+/// `graph_node(id, label, kind, file, line, parent)` is one vertex,
+/// `graph_edge(src, dst, kind)` one edge. Fixed schema so any program's graph
+/// composes into the same two tables the panel's always-available "Graph"
+/// preset reads (`rel_graph_node` / `rel_graph_edge`). Pre-declared (catalogued,
+/// so the binding shows in `rel_catalog`) and reserved against a `rel`
+/// re-declaration — head them directly, name only the columns you use (the rest
+/// lower to NULL: no file/line/parent = an unplaced, unnested node). Read only,
+/// never populated by a refresh — `rebuild_derived` fills them from the
+/// program's rules like any other derived rel, so an unheaded program leaves
+/// them empty (and the preset shows the "nothing to draw" hint).
+pub(crate) const GRAPH_RELS: [&str; 2] = ["graph_node", "graph_edge"];
+
+/// The harness-hook event log. `hook_event(kind, session, seq, json)` accumulates
+/// one row per coding-agent hook invocation (`dl --hook`): kind = the harness
+/// event name (UserPromptSubmit / PostToolUse / ...), session = the event's
+/// session id, seq = an ingest-time monotone millis stamp (orders events within a
+/// session), json = the raw event JSON. Rows are written out-of-tick by the
+/// `hook_event` RPC / the in-process feed, never by a refresh; a program extracts
+/// fields with the term-form `json`/`jsonp` predicates, mirroring how
+/// `mcp_request` carries raw JSON. Lazy per `hook_rels_used`.
+pub(crate) const HOOK_RELS: [&str; 1] = ["hook_event"];
+
+/// The diagnostic-mute set. `diag_mute(code)` holds one row per diagnostic code
+/// the editor session has silenced. Engine-owned and WRITABLE, but only through
+/// `toggle_diag_mute` (the LSP `dl.toggleDiagCode` command), never a rule head —
+/// so it mirrors `hook_event`'s out-of-tick write shape, not `diag`'s
+/// rule-headed one. Rows persist in the db, so a mute survives a daemon restart.
+/// Read at the LSP publish seam to drop muted `diag` rows before they reach the
+/// editor; `--check` / `--parse-only` read `diag` directly and are UNAFFECTED
+/// (mute is an editor affordance, not a CI gate — see the lsp.rs module doc).
+pub(crate) const MUTE_RELS: [&str; 1] = ["diag_mute"];
+
+/// The demand / overlay SINK relations. A user HEADS these from a rule (like
+/// `diag` / `repo`), and the rows drive engine behavior the name is bound to:
+/// `scip_want` → SCIP index demand, `rev_cmp_want` → git ancestry demand,
+/// `def_target` → LSP go-to-definition, `effect_cmd` → per-kind effect-template
+/// overlay, `checkout` → git checkout sweep (clone-missing + fetch +
+/// fast-forward the default branch to origin, the ghcacher keep-current half).
+/// Pre-declared builtins (so the binding shows in `rel_catalog` /
+/// `dl docs relations`) and reserved against a `rel` re-declaration — head them
+/// directly, do not `rel`-declare them, exactly like `diag`. This is what makes
+/// them first-class instead of magic: the engine reading them by name is reading
+/// a catalogued builtin, not an undocumented convention. See docs/reference/
+/// magic-rels.md and the `.dl/magic-rel-audit.dl` rail.
+pub(crate) const DEMAND_RELS: [&str; 5] = [
+    "scip_want",
+    "rev_cmp_want",
+    "def_target",
+    "effect_cmd",
+    "checkout",
+];
+
+/// The derived-shape SINK relation. A user HEADS `type_decl_row(shape, pos, col,
+/// ty)` from a rule (like `diag` / `graph_node`) to DERIVE a relation schema from
+/// data — column names + base types computed by rules rather than written by
+/// hand. The engine consumes it across a one-tick phase delay: at the end of a
+/// tick its rows persist to the `_shapes` meta table; on the NEXT tick's declare,
+/// a `rel name: shape.` decl whose shape has no syntax `type name(...)` decl
+/// resolves its columns from the persisted rows (a `shape-pending` info diag until
+/// then). Syntax shapes win on a name clash (`shape-shadowed` warn). Pre-declared
+/// (catalogued, group "types") and reserved against a `rel` re-declaration — head
+/// it directly, like diag. Derived-only: it must be filled by a derived rule (a
+/// term-extract rule feeding it must route through its own rel first, the repo
+/// mixed-kind law).
+pub(crate) const TYPE_DECL_RELS: [&str; 1] = ["type_decl_row"];
