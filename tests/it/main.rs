@@ -70,6 +70,7 @@ mod process_budget;
 mod wall_watchdog;
 mod cst_node_rel;
 mod chat_marks;
+mod hook_deadline;
 mod hook_inject;
 mod http_loopback;
 mod setup_manifest;

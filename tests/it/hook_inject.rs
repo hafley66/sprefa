@@ -57,11 +57,14 @@ fn write_transcript(store: &Path, root: &Path, lines: &[String]) {
 }
 
 /// Run `dl --hook PROG` with cwd set to ROOT, feeding `event` on stdin. Returns stdout.
+/// DL_HOOK_DEADLINE_MS=0 is the test-harness escape: these fixtures run cold
+/// (blank db every call), which the deadlined hook path deliberately skips.
 fn run_hook(root: &Path, store: &Path, prog_path: &Path, event: &str) -> String {
     let mut child = Command::new(DL)
         .arg("--hook").arg(prog_path)
         .current_dir(root)
         .args(["--db", root.join("db").to_str().unwrap(), "--no-daemon"])
+        .env("DL_HOOK_DEADLINE_MS", "0")
         .env("SPREFA_CLAUDE_PROJECTS", store)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .spawn().unwrap();
@@ -144,6 +147,7 @@ fn setup_bootstrap_then_hook_injects() {
         .arg("--hook")
         .current_dir(&root)
         .args(["--db", root.join("db").to_str().unwrap(), "--no-daemon"])
+        .env("DL_HOOK_DEADLINE_MS", "0")
         .env("SPREFA_CLAUDE_PROJECTS", &store)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .spawn().unwrap();
@@ -160,6 +164,7 @@ fn run_hook_args(root: &Path, store: &Path, prog_path: &Path, event: &str, extra
         .args(extra)
         .current_dir(root)
         .args(["--db", root.join("db").to_str().unwrap(), "--no-daemon"])
+        .env("DL_HOOK_DEADLINE_MS", "0")
         .env("SPREFA_CLAUDE_PROJECTS", store)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .spawn().unwrap();

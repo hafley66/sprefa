@@ -33,6 +33,9 @@ fn feed(root: &Path, db: &Path, event: &str) {
     let mut child = Command::new(DL)
         .arg("--hook").arg(PROG)
         .args(["--db", db.to_str().unwrap(), "--no-daemon"])
+        // Test-harness escape: this fixture's db starts blank, which the
+        // deadlined hook path deliberately cold-skips.
+        .env("DL_HOOK_DEADLINE_MS", "0")
         .current_dir(root)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .spawn().unwrap();

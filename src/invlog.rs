@@ -20,6 +20,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection};
@@ -155,6 +156,7 @@ fn exe_mtime_ms() -> Option<i64> {
 /// back to `record_end`, or `None` if logging is disabled (`DL_INVLOG=0`) or
 /// the write failed — in which case `record_end` is a no-op too.
 pub fn record_start(argv: &[String]) -> Option<i64> {
+    *CURRENT_ID.lock().unwrap() = None;
     if !enabled() {
         return None;
     }
@@ -172,7 +174,23 @@ pub fn record_start(argv: &[String]) -> Option<i64> {
         params![now_ms(), pid, ppid, ancestry, argv_json, cwd, exe_mtime_ms(), build],
     )
     .ok()?;
-    Some(conn.last_insert_rowid())
+    let id = conn.last_insert_rowid();
+    *CURRENT_ID.lock().unwrap() = Some(id);
+    Some(id)
+}
+
+/// The current process's open invocation row id, for exit paths that
+/// `std::process::exit` before `cli::run`'s own `record_end` (the `--hook`
+/// dispatch arm). Set by `record_start`, taken by `record_end_current`.
+static CURRENT_ID: Mutex<Option<i64>> = Mutex::new(None);
+
+/// Close the invocation row from an exit path that bypasses `cli::run`'s
+/// `record_end` (a `std::process::exit` inside a dispatch arm). `take`s the
+/// stored id, so a second close attempt is a no-op; the row UPDATE itself is
+/// idempotent by id regardless.
+pub fn record_end_current(exit_code: i32) {
+    let id = CURRENT_ID.lock().ok().and_then(|mut current| current.take());
+    record_end(id, exit_code);
 }
 
 /// Finalize the row `record_start` opened: end timestamp, exit code, and the

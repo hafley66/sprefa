@@ -45,6 +45,28 @@ use std::path::{Path, PathBuf};
 /// R7: how many sample diags an `agent-session` summary lists under the counts.
 const SESSION_TOP_N: usize = 10;
 
+/// Whole-invocation wall deadline for `dl --hook`, in milliseconds
+/// (`DL_HOOK_DEADLINE_MS`; `0` disables the deadline AND the cold-db skip —
+/// the internal test-harness escape the `--hook` it-suites run under).
+/// Default 900ms: an agent harness gives a hook command roughly one second
+/// before the turn visibly stalls, and the give-up path still needs headroom
+/// for process spawn, stdin drain, and the final write — so the engine work
+/// gets 900 of those ~1000ms. On expiry dl emits the dialect-correct no-op
+/// (empty stdout, exit 0 — never 2, which would block the agent) and abandons
+/// the worker. Prior art: the one-shot `DL_MAX_WALL_SECS` watchdog
+/// (`src/watchdog.rs`) — same thread+channel shape, hook-sized budget.
+const DEFAULT_HOOK_DEADLINE_MS: u64 = 900;
+
+/// The hook deadline in milliseconds (`DL_HOOK_DEADLINE_MS`, `0` = disabled).
+/// A malformed value falls back to the default rather than disabling the guard
+/// (same posture as `watchdog::max_wall_secs`).
+fn hook_deadline_ms() -> u64 {
+    match std::env::var("DL_HOOK_DEADLINE_MS") {
+        Ok(s) => s.trim().parse().unwrap_or(DEFAULT_HOOK_DEADLINE_MS),
+        Err(_) => DEFAULT_HOOK_DEADLINE_MS,
+    }
+}
+
 /// The harness whose JSON shapes `dl --hook` reads on stdin and writes on
 /// stdout. Parse/render arms only — no engine or rel-contract difference.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -283,8 +305,20 @@ fn diags_via_daemon(s: &mut UnixStream, root: &Path) -> (Vec<DiagRow>, Vec<Vec<S
 /// Read the emit rels from the running daemon — the primary reactive engine.
 /// Feed the event (append the `hook_event` row + tick), then read the emit rels
 /// off the re-derived tables. One connection: feed, then the reads.
-fn rels_via_daemon(ev: &HookEvent, program: Option<&str>, root: &Path) -> Result<EmitRels> {
-    crate::daemon::ensure_daemon(root, program)?;
+///
+/// Attach-only: the caller checked `is_running`; a lost race lands in the
+/// attach-failed fallback. A hook NEVER spawns (or build-id-replaces) the
+/// daemon — a boot + cold build can never answer within the hook deadline, and
+/// implicit autostart is exactly what seeded the kill-respawn storms
+/// (failure-modes classes 16+17).
+///
+/// Cancellation residual: on deadline expiry the client process exits, which
+/// closes this socket — but the daemon's `hook_event` handler runs its tick to
+/// completion regardless. Cheap daemon-side cancellation would need the tick
+/// loop to poll a per-request cancel flag keyed by `req_id` (`src/reqid.rs`;
+/// `JobRow.req_id` is plumbed but always `None` today) — deep plumbing, so the
+/// let-go stops at dropping the connection.
+fn rels_via_daemon(ev: &HookEvent, root: &Path) -> Result<EmitRels> {
     let mut s = crate::daemon::connect()?;
     daemon_feed_event(&mut s, root, ev)?;
     let (diags, stage_rows, touch_paths) = diags_via_daemon(&mut s, root);
@@ -381,16 +415,43 @@ fn staged_diag_context(
     }
 }
 
-/// `dl --hook`: read the event, get the emit rels (daemon-first, in-process
-/// fallback), emit the harness hook JSON. Exit 0 for a well-formed program (block
-/// rides the JSON, not the code), 1 if the program is broken (user-facing only,
-/// never fed to the agent — same 1/2 split as `--check`).
-pub fn run_hook(
-    programs: &[String],
-    db_path: Option<&str>,
+/// What the hook run decided to say: `payload` is the one stdout JSON line
+/// (`None` = the silent no-op) and `code` the process exit code. Rendering is
+/// separated from printing so the deadline wrapper owns stdout: an abandoned
+/// worker must never race a line onto the pipe after the give-up.
+struct HookOutcome {
+    payload: Option<String>,
+    code: i32,
+}
+
+impl HookOutcome {
+    /// The dialect-correct no-op: empty stdout + exit 0 reads as "proceed
+    /// silently" in every supported harness (claude/codex/opencode).
+    fn noop() -> Self {
+        HookOutcome { payload: None, code: 0 }
+    }
+}
+
+/// True when the in-process fallback would be a COLD engine: no db path (the
+/// in-memory engine is blank by construction) or a blank/absent db file.
+fn inproc_db_is_cold(db_path: Option<&str>) -> bool {
+    match db_path {
+        None => true,
+        Some(p) => std::fs::metadata(p).map(|m| m.len() == 0).unwrap_or(true),
+    }
+}
+
+/// The whole hook body — stdin drain, event parse, daemon-first emit-rel read,
+/// render — runs on the deadline worker thread. `cold_skip` (deadline active)
+/// refuses to start a cold in-process build: it can never fit under the hook
+/// budget, and a hook is the wrong place to start one.
+fn hook_work(
+    programs: Vec<String>,
+    db_path: Option<String>,
     root: PathBuf,
     dialect: Option<HookDialect>,
-) -> Result<i32> {
+    cold_skip: bool,
+) -> Result<HookOutcome> {
     // Drain stdin (the harness pipes the event) and parse it into a `hook_event`
     // row: kind = the event name, session = its session id, json = the raw text.
     // The condition reads the row via term-form json/jsonp, so any event field is
@@ -398,30 +459,59 @@ pub fn run_hook(
     let mut stdin_s = String::new();
     std::io::stdin().read_to_string(&mut stdin_s).ok();
     let (ev, dialect) = HookEvent::parse(&stdin_s, dialect);
+    // Injected slow point (DL_TEST_HANG_SECS): inert in real runs; lets the
+    // deadline it-test face work that exceeds the budget deterministically.
+    crate::watchdog::test_hang_hook();
+
+    let db_path = db_path.as_deref();
+    // The in-process arm, gated: a blank/absent db under an active deadline is
+    // an immediate no-op (`None`) instead of a cold build.
+    let inproc_or_skip = |note: &str| -> Result<Option<EmitRels>> {
+        if cold_skip && inproc_db_is_cold(db_path) {
+            tracing::warn!(
+                db = db_path.unwrap_or("<in-memory>"),
+                note,
+                "[hook] cold in-process engine skipped — no-op (a cold build cannot fit the hook deadline)"
+            );
+            eprintln!(
+                "[hook] db blank or absent — cold build skipped, no-op ({note}); warm it: dl daemon start, or a one-shot dl run"
+            );
+            return Ok(None);
+        }
+        rels_inproc(&ev, &programs, db_path, &root).map(Some)
+    };
 
     // Prefer the daemon (primary mode): feed the event into its warm engine, then
-    // read the emit rels off the re-derived tables. Fall back to a cold in-process
-    // tick when no daemon serves this root, or if attach fails.
+    // read the emit rels off the re-derived tables. Attach-only — see
+    // [`rels_via_daemon`] for why a hook never autostarts. Fall back to the
+    // (cold-gated) in-process tick when no daemon serves this root or attach fails.
     let rels = if crate::daemon::enabled_for(&root) && db_path.is_none() && programs.len() <= 1 {
-        match rels_via_daemon(&ev, programs.first().map(|s| s.as_str()), &root) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("[daemon] hook attach failed, in-process: {e}");
-                rels_inproc(&ev, programs, db_path, &root)?
+        if crate::daemon::is_running() {
+            match rels_via_daemon(&ev, &root) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    eprintln!("[daemon] hook attach failed, in-process: {e}");
+                    inproc_or_skip("daemon attach failed")?
+                }
             }
+        } else {
+            eprintln!("[hook] no daemon running — a hook never starts one (dl daemon start)");
+            inproc_or_skip("no daemon running")?
         }
     } else {
         eprintln!("[hook] no daemon serving this root — one-shot engine on .dl/.state/cache.db (start one: dl daemon start)");
-        rels_inproc(&ev, programs, db_path, &root)?
+        inproc_or_skip("root not daemon-served")?
+    };
+    let Some(rels) = rels else {
+        return Ok(HookOutcome::noop());
     };
     if rels.broken {
-        return Ok(1);
+        return Ok(HookOutcome { payload: None, code: 1 });
     }
 
     // A block short-circuits: emit the decision, inject nothing.
     if let Some(reason) = rels.blocks.into_iter().next() {
-        println!("{}", render_block(dialect, &reason));
-        return Ok(0);
+        return Ok(HookOutcome { payload: Some(render_block(dialect, &reason)), code: 0 });
     }
 
     // The rule already filtered `inject_skill` against `!skill_loaded`, so every
@@ -442,20 +532,100 @@ pub fn run_hook(
     }
 
     if ctx.is_empty() {
-        return Ok(0); // silent: condition didn't fire (or all skills already loaded)
+        return Ok(HookOutcome::noop()); // silent: condition didn't fire (or all skills already loaded)
     }
     // claude/codex: `additionalContext` rides `hookSpecificOutput.hookEventName`,
     // which must echo the event we received (UserPromptSubmit / PostToolUse /
     // ...); the harness keys the output arm off it. Fall back to PostToolUse
     // when the event carried no name (an old harness, or a bare invocation).
     let event_name = if ev.kind.is_empty() { "PostToolUse" } else { ev.kind.as_str() };
-    println!("{}", render_inject(dialect, event_name, &ctx.join("\n\n---\n\n")));
-    Ok(0)
+    Ok(HookOutcome {
+        payload: Some(render_inject(dialect, event_name, &ctx.join("\n\n---\n\n"))),
+        code: 0,
+    })
+}
+
+/// `dl --hook`: read the event, get the emit rels (daemon-first, in-process
+/// fallback), emit the harness hook JSON. Exit 0 for a well-formed program (block
+/// rides the JSON, not the code), 1 if the program is broken (user-facing only,
+/// never fed to the agent — same 1/2 split as `--check`).
+///
+/// The whole invocation self-times-out (`DL_HOOK_DEADLINE_MS`, default
+/// [`DEFAULT_HOOK_DEADLINE_MS`]): the body runs on a worker thread under
+/// [`crate::watchdog::run_with_deadline`]; on expiry dl lets go — no-op reply
+/// (empty stdout), exit 0, a warn-level trace naming elapsed + engine phase —
+/// and the abandoned worker dies with the process (the CLI exit right after
+/// this return closes any daemon socket it held).
+pub fn run_hook(
+    programs: &[String],
+    db_path: Option<&str>,
+    root: PathBuf,
+    dialect: Option<HookDialect>,
+) -> Result<i32> {
+    let deadline_ms = hook_deadline_ms();
+    let started = std::time::Instant::now();
+    let outcome = if deadline_ms == 0 {
+        // Test-harness escape: unbounded, inline, cold builds allowed.
+        Some(hook_work(programs.to_vec(), db_path.map(str::to_string), root, dialect, false)?)
+    } else {
+        let programs = programs.to_vec();
+        let db_path = db_path.map(str::to_string);
+        crate::watchdog::run_with_deadline(
+            std::time::Duration::from_millis(deadline_ms),
+            "dl-hook-work",
+            move || hook_work(programs, db_path, root, dialect, true),
+        )?
+    };
+    match outcome {
+        Some(out) => {
+            if let Some(line) = out.payload {
+                println!("{line}");
+            }
+            Ok(out.code)
+        }
+        None => {
+            // Deadline hit: the give-up is the answer to "why was the hook
+            // slow" — record elapsed + the engine phase the worker was in
+            // (warn-level, lands in dl.log), plus one stderr line (exit-0
+            // stderr only surfaces in harness debug views). The invocation row
+            // closes with exit 0 in invlog at the CLI exit seam.
+            let a = crate::activity::snapshot();
+            tracing::warn!(
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                deadline_ms,
+                phase = a.phase.as_str(),
+                detail = %a.detail,
+                "[hook] deadline hit — abandoning work, no-op reply"
+            );
+            eprintln!(
+                "[hook] deadline {deadline_ms}ms hit (phase={}) — no-op; raise with DL_HOOK_DEADLINE_MS=<ms> or 0 to disable",
+                a.phase.as_str()
+            );
+            Ok(0)
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The deadline env parse (the 0-disables + malformed-falls-back contract);
+    // the give-up behavior itself is exercised end-to-end by the subprocess
+    // it-test (tests/it/hook_deadline.rs), the only place an abandoned worker
+    // thread and process exit are safe to observe.
+    #[test]
+    fn deadline_env_parse() {
+        std::env::remove_var("DL_HOOK_DEADLINE_MS");
+        assert_eq!(hook_deadline_ms(), DEFAULT_HOOK_DEADLINE_MS);
+        std::env::set_var("DL_HOOK_DEADLINE_MS", "0");
+        assert_eq!(hook_deadline_ms(), 0, "0 disables");
+        std::env::set_var("DL_HOOK_DEADLINE_MS", "250");
+        assert_eq!(hook_deadline_ms(), 250);
+        std::env::set_var("DL_HOOK_DEADLINE_MS", "garbage");
+        assert_eq!(hook_deadline_ms(), DEFAULT_HOOK_DEADLINE_MS, "malformed falls back to default");
+        std::env::remove_var("DL_HOOK_DEADLINE_MS");
+    }
 
     #[test]
     fn dialect_flag_parses_the_three_harness_names() {

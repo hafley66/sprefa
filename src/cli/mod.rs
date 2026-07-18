@@ -458,6 +458,13 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
             .map(crate::hook::HookDialect::from_flag)
             .transpose()?;
         let code = crate::hook::run_hook(programs, db.as_deref(), root, dialect)?;
+        // This arm exits without returning to `run`, which would skip its
+        // `record_end` — close the invocation row here so a hook run (deadline
+        // give-up included) is invlog-visible as a finished exit, not an open
+        // row that reads as a kill. Also required to shed an abandoned deadline
+        // worker: `std::process::exit` is what tears its thread down.
+        crate::invlog::record_end_current(code);
+        tracing::info!(pid = std::process::id(), code, "[process] end");
         std::process::exit(code);
     } else if cli.mcp {
         crate::mcp::run_mcp(programs, db.as_deref(), root)
