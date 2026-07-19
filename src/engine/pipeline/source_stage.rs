@@ -2,6 +2,7 @@
 
 use crate::ast::Value;
 use crate::db::{Db, SqlVal};
+use std::collections::HashSet;
 
 const MAX_BUFFERED_ROWS: usize = 4096;
 const MAX_BUFFERED_BYTES: usize = 256 * 1024;
@@ -181,6 +182,8 @@ impl<'a> SourceStage<'a> {
             limits,
             buffered_bytes: 0,
             buffered: Vec::with_capacity(limits.max_rows),
+            buffered_owners: Vec::new(),
+            owner_set: HashSet::new(),
             stats: StageStats::default(),
         })
     }
@@ -328,6 +331,16 @@ pub(super) struct StageWriter<'a> {
     limits: StageLimits,
     buffered_bytes: usize,
     buffered: Vec<BufferedRow>,
+    /// Owner completions accumulated since the last flush; landed as one
+    /// chunked INSERT alongside the row buffer (N+1 law — `complete_owner`
+    /// fires once per (relation, repo, path), which is once per file-rel pair
+    /// per tick, and a per-call INSERT was the `_source_stage_owner` runtime
+    /// N+1 scream).
+    buffered_owners: Vec<(String, String, String)>,
+    /// Every owner completed over the writer's lifetime — the in-memory twin
+    /// of the table's INSERT OR IGNORE dedup, so repeat completions neither
+    /// re-buffer nor double-count `stats.owners`, across flushes.
+    owner_set: HashSet<(String, String, String)>,
     stats: StageStats,
 }
 
@@ -406,54 +419,69 @@ impl StageWriter<'_> {
         repo: &str,
         path: &str,
     ) -> Result<(), SourceStageError> {
-        let inserted = self
-            .db
-            .exec_params(
-                "_source_stage_owner",
-                "INSERT OR IGNORE INTO _source_stage_owner(
-                     stage_id,relation,repo,path,completed) VALUES (?1,?2,?3,?4,1)",
-                &[
-                    SqlVal::Blob(self.stage_id.0.to_vec()),
-                    SqlVal::Text(relation.into()),
-                    SqlVal::Text(repo.into()),
-                    SqlVal::Text(path.into()),
-                ],
-            )
-            .map_err(SourceStageError::Db)?;
-        if inserted != 0 {
-            if self.stats.owners == self.limits.max_owners {
-                self.db
-                    .exec_params(
-                        "_source_stage_owner",
-                        "DELETE FROM _source_stage_owner
-                         WHERE stage_id=?1 AND relation=?2 AND repo=?3 AND path=?4",
-                        &[
-                            SqlVal::Blob(self.stage_id.0.to_vec()),
-                            SqlVal::Text(relation.into()),
-                            SqlVal::Text(repo.into()),
-                            SqlVal::Text(path.into()),
-                        ],
-                    )
-                    .map_err(SourceStageError::Db)?;
-                return Err(SourceStageError::StageLimitExceeded);
-            }
-            self.stats.owners += 1;
+        let key = (relation.to_string(), repo.to_string(), path.to_string());
+        if self.owner_set.contains(&key) {
+            return Ok(());
         }
+        if self.stats.owners == self.limits.max_owners {
+            return Err(SourceStageError::StageLimitExceeded);
+        }
+        self.buffered_owners.push(key.clone());
+        self.owner_set.insert(key);
+        self.stats.owners += 1;
         Ok(())
     }
 
     fn flush(&mut self) -> Result<(), SourceStageError> {
-        if self.buffered.is_empty() {
-            return Ok(());
+        if !self.buffered.is_empty() {
+            insert_source_rows(self.db, self.stage_id, &self.buffered)
+                .map_err(SourceStageError::Db)?;
+            for row in self.buffered.drain(..) {
+                self.buffered_bytes -= row.bytes;
+            }
+            // `flushes` keeps meaning ROW-buffer flushes (pinned by the
+            // stats tests); an owner-only flush does not count.
+            self.stats.flushes += 1;
         }
-        insert_source_rows(self.db, self.stage_id, &self.buffered)
-            .map_err(SourceStageError::Db)?;
-        for row in self.buffered.drain(..) {
-            self.buffered_bytes -= row.bytes;
+        if !self.buffered_owners.is_empty() {
+            insert_source_owners(self.db, self.stage_id, &self.buffered_owners)
+                .map_err(SourceStageError::Db)?;
+            self.buffered_owners.clear();
         }
-        self.stats.flushes += 1;
         Ok(())
     }
+}
+
+/// Chunked multi-row insert of buffered owner completions — the batched twin
+/// of `insert_source_rows` for `_source_stage_owner`. OR IGNORE is belt-and-
+/// suspenders: `owner_set` already dedups within the writer's lifetime, and
+/// `begin` cleared the stage's prior rows.
+fn insert_source_owners(
+    db: &Db,
+    stage_id: StageId,
+    owners: &[(String, String, String)],
+) -> anyhow::Result<()> {
+    if owners.is_empty() {
+        return Ok(());
+    }
+    const NCOL: usize = 4;
+    let chunk_rows = (crate::db::PARAM_BUDGET / NCOL).max(1);
+    let tuple = "(?,?,?,?,1)";
+    for chunk in owners.chunks(chunk_rows) {
+        let values = vec![tuple; chunk.len()].join(", ");
+        let sql = format!(
+            "INSERT OR IGNORE INTO _source_stage_owner(stage_id,relation,repo,path,completed) VALUES {values}"
+        );
+        let mut params: Vec<SqlVal> = Vec::with_capacity(chunk.len() * NCOL);
+        for (relation, repo, path) in chunk {
+            params.push(SqlVal::Blob(stage_id.0.to_vec()));
+            params.push(SqlVal::Text(relation.clone()));
+            params.push(SqlVal::Text(repo.clone()));
+            params.push(SqlVal::Text(path.clone()));
+        }
+        db.exec_params("_source_stage_owner", &sql, &params)?;
+    }
+    Ok(())
 }
 
 /// Chunked multi-row insert into the temp staging table. One logical statement

@@ -362,3 +362,42 @@ fn ready_row_pages_obey_encoded_byte_budget() {
     drop(db);
     remove_db(&path);
 }
+
+/// Fail-pre-fix N+1 pin: 200 owner completions (well past db.rs's
+/// N1_THRESHOLD of 64) must land as chunked inserts at flush time, not one
+/// INSERT per `complete_owner` call. Pre-fix `tick_end` screamed
+/// `('_source_stage_owner', 201)`; post-fix the whole stage stays under the
+/// threshold for every statement key.
+#[test]
+fn owner_completions_batch_and_never_trip_the_n1_scream() {
+    let (db, path) = file_connection();
+    let stage = SourceStage::open(&db).unwrap();
+    let id = stage_id(11);
+    let mut writer = stage.begin(id, StageLimits::default()).unwrap();
+    db.tick_begin();
+    for i in 0..200 {
+        let owner_path = format!("src/f{i}.rs");
+        writer
+            .push("fn", "repo", &owner_path, 0, &[Value::Int(1)])
+            .unwrap();
+        writer.complete_owner("fn", "repo", &owner_path).unwrap();
+    }
+    writer.finish().unwrap();
+    assert_eq!(
+        db.tick_end(),
+        None,
+        "owner completions must land batched, not one statement per call"
+    );
+    // The batched path lands the same owner set the per-call path did.
+    let owners: i64 = db
+        .query_one(
+            "_source_stage_owner",
+            "SELECT COUNT(*) FROM _source_stage_owner WHERE stage_id=?1",
+            &[SqlVal::Blob(id.0.to_vec())],
+            |row| Ok(row.get(0)?),
+        )
+        .unwrap();
+    assert_eq!(owners, 200);
+    drop(db);
+    remove_db(&path);
+}
