@@ -74,7 +74,7 @@ file keeps only the standing laws + currently-open work.
 
 ### Parked (wake on demand; plans exist)
 - Auto-architect umbrella (docs/vision-auto-architect.md); decomposition + resource-scheduler children written, unexecuted.
-- Auto-refactor residuals (brace-head use rewrite, physical file move) — plans/2026-05-31.
+- ~~Auto-refactor residuals~~ CLOSED 2026-07-18 (branch auto-refactor): audit found both "residuals" (brace-head rewrite, physical move + mod surgery) landed 2026-06-12 (#17, f859585e); this arc added the last gap, statement-level regroup when a brace leaf's rewrite exits its head. Audit table in plans/2026-05-31.
 - vscode Wave 4; LSP thin client; turnkey query surface (`dl q`, verbs, MCP tools); measures top-K views; deck-graph sym-key migration.
 - Change-cost friction inventory (plans/2026-07-10-change-cost-friction-inventory.md); ambient-config hermeticity top.
 - Kimi trio prompts (reading-order/lib-taint/session-compile) — worktrees stale off old next; recut or delete.

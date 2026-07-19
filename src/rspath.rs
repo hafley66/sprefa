@@ -176,8 +176,9 @@ pub fn rewrite_use_path(
 /// when the moved-module boundary sits INSIDE the leaf, where the shared head
 /// span can't reach (`use crate::{old::A, b}`). Returns the new leaf text;
 /// `None` when the leaf is unaffected, or when the rewritten path no longer
-/// sits under the unchanged brace head (then it stays a loud skip). An empty
-/// `prefix` (bare use) returns the whole rewritten path.
+/// sits under the unchanged brace head (the move sink then regenerates the
+/// whole statement body via `regroup_use_items`). An empty `prefix` (bare use)
+/// returns the whole rewritten path.
 pub fn rewrite_brace_leaf(
     full: &str,
     prefix: &str,
@@ -188,6 +189,42 @@ pub fn rewrite_brace_leaf(
     let new_full = rewrite_use_path(full, old_mod, new_mod, from_mod)?;
     if prefix.is_empty() { return Some(new_full); }
     new_full.strip_prefix(&format!("{prefix}::")).map(str::to_string)
+}
+
+/// Regenerate a whole `use` statement body after a move forces at least one
+/// brace leaf OUT of its shared head (`use crate::a::{b::X, c}` with `a::b`
+/// moved to `z::b` — the new path `crate::z::b::X` no longer sits under
+/// `crate::a`). `items` are the statement's leaves in original order as
+/// `(full_path, alias)`, each path already rewritten. Factors the longest
+/// common `::`-segment prefix back out; a single leaf collapses to a bare
+/// path; a leaf equal to the common prefix renders as `self`.
+pub fn regroup_use_items(items: &[(String, Option<String>)]) -> String {
+    let with_alias = |path: &str, alias: &Option<String>| match alias {
+        Some(alias_name) => format!("{path} as {alias_name}"),
+        None => path.to_string(),
+    };
+    let [(only_path, only_alias)] = items else {
+        let segmented: Vec<Vec<&str>> = items.iter()
+            .map(|(path, _)| path.split("::").collect()).collect();
+        let mut common = 0usize;
+        while let Some(first_seg) = segmented[0].get(common) {
+            if !segmented.iter().all(|segs| segs.get(common) == Some(first_seg)) { break; }
+            common += 1;
+        }
+        let grouped: Vec<String> = segmented.iter().zip(items)
+            .map(|(segs, (_, alias))| {
+                let rest = segs[common..].join("::");
+                with_alias(if rest.is_empty() { "self" } else { &rest }, alias)
+            })
+            .collect();
+        let group = grouped.join(", ");
+        return if common == 0 {
+            format!("{{{group}}}")
+        } else {
+            format!("{}::{{{group}}}", segmented[0][..common].join("::"))
+        };
+    };
+    with_alias(only_path, only_alias)
 }
 
 /// Re-anchor a `use` path written inside the MOVED file itself: the file's own
@@ -404,6 +441,36 @@ mod tests {
             rewrite_brace_leaf("crate::a::utils::Foo", "crate::a",
                 "crate::a::utils", "crate::b::utils", "crate::app"),
             None);
+    }
+
+    #[test]
+    fn regroup_factors_common_prefix() {
+        let path = |text: &str| (text.to_string(), None);
+        // one leaf collapses to a bare path
+        assert_eq!(regroup_use_items(&[path("crate::z::b::X")]), "crate::z::b::X");
+        // an exiting leaf plus a staying sibling refactor onto the shared `crate`
+        assert_eq!(
+            regroup_use_items(&[path("crate::z::b::X"), path("crate::a::c")]),
+            "crate::{z::b::X, a::c}");
+        // deeper common prefix stays factored
+        assert_eq!(
+            regroup_use_items(&[path("crate::a::b::X"), path("crate::a::b::Y")]),
+            "crate::a::b::{X, Y}");
+        // no common prefix -> top-level brace group
+        assert_eq!(
+            regroup_use_items(&[path("std::io::Read"), path("crate::a::c")]),
+            "{std::io::Read, crate::a::c}");
+        // a leaf equal to the common prefix renders as `self`
+        assert_eq!(
+            regroup_use_items(&[path("crate::a"), path("crate::a::c")]),
+            "crate::a::{self, c}");
+        // aliases ride along
+        assert_eq!(
+            regroup_use_items(&[
+                ("crate::z::b::X".to_string(), Some("Ex".to_string())),
+                path("crate::a::c"),
+            ]),
+            "crate::{z::b::X as Ex, a::c}");
     }
 
     #[test]

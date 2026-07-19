@@ -181,6 +181,11 @@ pub struct UseLeaf {
     pub prefix: String,
     pub leaf: (u32, u32),
     pub head: Option<(u32, u32)>,
+    /// Span of the whole `use` statement BODY (between `use ` and `;`), shared
+    /// by every leaf of the statement — the splice coordinate when a move
+    /// forces a statement-level regroup. Body-relative `(0, body.len())` out of
+    /// `expand_use_leaves`; file-absolute out of `rust_use_leaves`.
+    pub body: (u32, u32),
     /// `self` / `*` leaf: its own span is the keyword, not a rewritable path.
     pub collapsed: bool,
     /// The ` as alias` binding on this leaf, when present (`r#` stripped);
@@ -262,6 +267,7 @@ pub fn expand_use_leaves(body: &str) -> Vec<UseLeaf> {
                     prefix: prefix.replace("r#", ""),
                     leaf: (seg_off as u32, (seg_off + leaf.len()) as u32),
                     head: head_span,
+                    body: (0, 0), // filled by the caller (body length unknown here)
                     collapsed,
                     alias: if collapsed { None } else { alias },
                 });
@@ -270,6 +276,9 @@ pub fn expand_use_leaves(body: &str) -> Vec<UseLeaf> {
     }
     let mut out = Vec::new();
     rec("", body, 0, None, &mut out);
+    for l in &mut out {
+        l.body = (0, body.len() as u32);
+    }
     out
 }
 
@@ -284,6 +293,7 @@ pub fn rust_use_leaves(content: &str) -> Vec<UseLeaf> {
         for mut l in expand_use_leaves(&c[1]) {
             l.leaf = (body_start + l.leaf.0, body_start + l.leaf.1);
             l.head = l.head.map(|(lo, hi)| (body_start + lo, body_start + hi));
+            l.body = (body_start + l.body.0, body_start + l.body.1);
             out.push(l);
         }
     }
@@ -306,7 +316,7 @@ impl RustCrates {
         let mut roots: Vec<(String, String)> = Vec::new();
         let mut renames: HashMap<(String, String), String> = HashMap::new();
         let mut sorted_manifests: Vec<_> = manifests.iter().collect();
-        sorted_manifests.sort_by(|(ap, _), (bp, _)| ap.cmp(bp));
+        sorted_manifests.sort_by_key(|(manifest_path, _)| *manifest_path);
         for (path, content) in sorted_manifests {
             if !path.ends_with("Cargo.toml") {
                 continue;
